@@ -1,7 +1,5 @@
-import type { JsonValue } from '@terminay/protocol';
 import type { FormEvent, RefObject } from 'react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { TerminalSettingsClient } from '../hooks/useTerminalSettings';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
 	isRemoteAccessPairingPinConfigured,
 	PAIRING_PIN_PATTERN,
@@ -9,18 +7,14 @@ import {
 	saveRemoteAccessPairingPin,
 } from '../remotePairingPin';
 import type { RemoteAccessStatusClient } from '../services/remoteAccessStatusClient';
-import type { TerminalSettings } from '../types/settings';
 import type { RemoteAccessStatus } from '../types/terminay';
 
-export type RemotePairingMode = 'lan' | 'webrtc';
 export function useRemoteAccessController(
 	pairingPinClient: RemotePairingPinClient | undefined,
 	statusClient: RemoteAccessStatusClient | undefined,
-	settingsClient: TerminalSettingsClient,
 	openSettings: (sectionId: string) => Promise<void>,
 ) {
 	const [status, setStatus] = useState<RemoteAccessStatus | null>(null);
-	const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
 	const [actionError, setActionError] = useState<string | null>(null);
 	const [isToggling, setIsToggling] = useState(false);
 	const [isPairingModalOpen, setIsPairingModalOpen] = useState(false);
@@ -28,7 +22,6 @@ export function useRemoteAccessController(
 	const [pinInput, setPinInput] = useState('');
 	const [pinError, setPinError] = useState<string | null>(null);
 	const [isSavingPin, setIsSavingPin] = useState(false);
-	const [selectedMode, setSelectedMode] = useState<RemotePairingMode>('webrtc');
 	const [isLinkCopied, setIsLinkCopied] = useState(false);
 	const [isMenuOpen, setIsMenuOpen] = useState(false);
 	const menuRef = useRef<HTMLDivElement | null>(null);
@@ -52,10 +45,6 @@ export function useRemoteAccessController(
 		};
 	}, [statusClient]);
 
-	// The primary exposure journey is always WebRTC. The direct listener is an
-	// independently labelled advanced setting, never an alternate QR type.
-	useEffect(() => setSelectedMode('webrtc'), []);
-
 	const previousConnectionCountRef = useRef<number | null>(null);
 	useEffect(() => {
 		const current = status?.activeConnectionCount ?? null;
@@ -71,38 +60,6 @@ export function useRemoteAccessController(
 		previousConnectionCountRef.current = current;
 	}, [status?.activeConnectionCount, isPairingModalOpen]);
 
-	const selectMode = useCallback(
-		async (mode: RemotePairingMode) => {
-			setSelectedMode(mode);
-			setActionError(null);
-			try {
-				if (statusClient === undefined) {
-					setActionError(
-						'Remote access controls are unavailable in this host.',
-					);
-					return false;
-				}
-				const settings = await settingsClient.get<TerminalSettings>();
-				if (settings.remoteAccess.pairingMode !== mode) {
-					await settingsClient.update<TerminalSettings>({
-						...settings,
-						remoteAccess: { ...settings.remoteAccess, pairingMode: mode },
-					} as unknown as JsonValue);
-				}
-				setStatus(await statusClient.getStatus());
-				return true;
-			} catch (error) {
-				setActionError(
-					error instanceof Error
-						? error.message
-						: 'Could not save the remote pairing mode.',
-				);
-				return false;
-			}
-		},
-		[settingsClient, statusClient],
-	);
-
 	const closePinModal = useCallback((configured: boolean) => {
 		pinRequestRef.current?.(configured);
 		pinRequestRef.current = null;
@@ -112,23 +69,19 @@ export function useRemoteAccessController(
 		setIsSavingPin(false);
 	}, []);
 
-	const ensurePin = useCallback(
-		async (mode: RemotePairingMode) => {
-			if (pairingPinClient === undefined) {
-				setActionError('Remote access pairing is unavailable in this host.');
-				return false;
-			}
-			if (await isRemoteAccessPairingPinConfigured(pairingPinClient, mode))
-				return true;
-			setPinInput('');
-			setPinError(null);
-			setIsPinModalOpen(true);
-			return new Promise<boolean>((resolve) => {
-				pinRequestRef.current = resolve;
-			});
-		},
-		[pairingPinClient],
-	);
+	const ensurePin = useCallback(async () => {
+		if (pairingPinClient === undefined) {
+			setActionError('Remote access pairing is unavailable in this host.');
+			return false;
+		}
+		if (await isRemoteAccessPairingPinConfigured(pairingPinClient)) return true;
+		setPinInput('');
+		setPinError(null);
+		setIsPinModalOpen(true);
+		return new Promise<boolean>((resolve) => {
+			pinRequestRef.current = resolve;
+		});
+	}, [pairingPinClient]);
 
 	const submitPin = useCallback(
 		async (event: FormEvent<HTMLFormElement>) => {
@@ -160,7 +113,9 @@ export function useRemoteAccessController(
 
 	const recordFailure = useCallback((error: unknown) => {
 		const message =
-			error instanceof Error ? error.message : 'Unable to start remote access.';
+			error instanceof Error
+				? error.message
+				: 'Unable to change remote access.';
 		setActionError(message);
 		setStatus((current) =>
 			current ? { ...current, errorMessage: message } : current,
@@ -174,11 +129,7 @@ export function useRemoteAccessController(
 			if (statusClient === undefined) {
 				throw new Error('Remote access controls are unavailable in this host.');
 			}
-			if (
-				!status?.isRunning &&
-				selectedMode === 'webrtc' &&
-				status?.webRtcStatus === 'error'
-			) {
+			if (!status?.isRunning && status?.webRtcStatus === 'error') {
 				throw new Error(
 					status.webRtcStatusMessage ??
 						'WebRTC exposure is unavailable in this build.',
@@ -188,8 +139,7 @@ export function useRemoteAccessController(
 				await openSettings('remote-access-host');
 				return;
 			}
-			if (!status?.isRunning && !(await selectMode('webrtc'))) return;
-			if (!status?.isRunning && !(await ensurePin('webrtc'))) return;
+			if (!status?.isRunning && !(await ensurePin())) return;
 			const next = await statusClient.toggleServer();
 			setStatus(next);
 			setActionError(next.errorMessage);
@@ -200,88 +150,54 @@ export function useRemoteAccessController(
 		}
 	}, [
 		ensurePin,
+		openSettings,
 		recordFailure,
-		selectMode,
 		status?.configurationIssue,
 		status?.isRunning,
+		status?.webRtcStatus,
+		status?.webRtcStatusMessage,
 		statusClient,
-		openSettings,
 	]);
 
-	const openPairingQr = useCallback(
-		async (_mode: RemotePairingMode = 'webrtc') => {
-			const mode: RemotePairingMode = 'webrtc';
-			setActionError(null);
-			try {
-				if (statusClient === undefined) {
-					throw new Error(
-						'Remote access controls are unavailable in this host.',
-					);
-				}
-				if (
-					!status?.isRunning &&
-					mode === 'webrtc' &&
-					status?.webRtcStatus === 'error'
-				) {
-					throw new Error(
-						status.webRtcStatusMessage ??
-							'WebRTC exposure is unavailable in this build.',
-					);
-				}
-				if (status?.configurationIssue) {
-					await openSettings('remote-access-host');
-					return;
-				}
-				if (!(await selectMode(mode))) return;
-				let next = status;
-				if (!next?.isRunning) {
-					if (!(await ensurePin(mode))) return;
-					setIsToggling(true);
-					try {
-						next = await statusClient.toggleServer();
-						setStatus(next);
-						setActionError(next.errorMessage);
-					} finally {
-						setIsToggling(false);
-					}
-				}
-				const effectiveMode = next?.pairingMode ?? mode;
-				setSelectedMode(effectiveMode);
-				const hasPairingQr =
-					effectiveMode === 'webrtc'
-						? (next?.webRtcPairingUrl ?? next?.webRtcPairingQrCodeDataUrl)
-						: (next?.lanPairingUrl ??
-							next?.lanPairingQrCodeDataUrl ??
-							next?.pairingQrCodeDataUrl);
-				if (hasPairingQr) setIsPairingModalOpen(true);
-			} catch (error) {
-				recordFailure(error);
+	const openPairingQr = useCallback(async () => {
+		setActionError(null);
+		try {
+			if (statusClient === undefined) {
+				throw new Error('Remote access controls are unavailable in this host.');
 			}
-		},
-		[
-			ensurePin,
-			openSettings,
-			recordFailure,
-			selectMode,
-			selectedMode,
-			status,
-			statusClient,
-		],
-	);
+			if (!status?.isRunning && status?.webRtcStatus === 'error') {
+				throw new Error(
+					status.webRtcStatusMessage ??
+						'WebRTC exposure is unavailable in this build.',
+				);
+			}
+			if (status?.configurationIssue) {
+				await openSettings('remote-access-host');
+				return;
+			}
+			let next = status;
+			if (!next?.isRunning) {
+				if (!(await ensurePin())) return;
+				setIsToggling(true);
+				try {
+					next = await statusClient.toggleServer();
+					setStatus(next);
+					setActionError(next.errorMessage);
+				} finally {
+					setIsToggling(false);
+				}
+			}
+			if (next?.webRtcPairingUrl || next?.webRtcPairingQrCodeDataUrl) {
+				setIsPairingModalOpen(true);
+			}
+		} catch (error) {
+			recordFailure(error);
+		}
+	}, [ensurePin, openSettings, recordFailure, status, statusClient]);
 
-	const addresses = status?.availableAddresses ?? [];
-	const pairingUrl =
-		selectedMode === 'webrtc'
-			? status?.webRtcPairingUrl
-			: (status?.lanPairingUrl ?? status?.pairingUrl);
-	const pairingQrCodeDataUrl =
-		selectedMode === 'webrtc'
-			? status?.webRtcPairingQrCodeDataUrl
-			: (status?.lanPairingQrCodeDataUrl ?? status?.pairingQrCodeDataUrl);
-	const pairingExpiresAt =
-		selectedMode === 'webrtc'
-			? status?.webRtcPairingExpiresAt
-			: (status?.lanPairingExpiresAt ?? status?.pairingExpiresAt);
+	const pairingUrl = status?.webRtcPairingUrl;
+	const pairingQrCodeDataUrl = status?.webRtcPairingQrCodeDataUrl;
+	const pairingExpiresAt = status?.webRtcPairingExpiresAt;
 	const [generatedQrCodeDataUrl, setGeneratedQrCodeDataUrl] = useState<
 		string | null
 	>(null);
@@ -313,46 +229,6 @@ export function useRemoteAccessController(
 		};
 	}, [pairingQrCodeDataUrl, pairingUrl]);
 
-	const isWebRtcReady =
-		selectedMode !== 'webrtc' || status?.webRtcStatus === 'pairing-ready';
-	const visibleQrCodeDataUrl = isWebRtcReady
-		? (pairingQrCodeDataUrl ?? generatedQrCodeDataUrl)
-		: null;
-	const webRtcDisplayUrl = useMemo(() => {
-		if (!status?.webRtcPairingUrl) return null;
-		try {
-			return new URL(status.webRtcPairingUrl).origin;
-		} catch {
-			return 'WebRTC session link ready.';
-		}
-	}, [status?.webRtcPairingUrl]);
-	const preferredAddress = useMemo(() => {
-		if (selectedMode === 'webrtc') return webRtcDisplayUrl;
-		if (!pairingUrl) return addresses[0] || null;
-		try {
-			const url = new URL(pairingUrl);
-			const origin = url.origin + url.pathname.replace(/\/$/, '');
-			return (
-				addresses.find((address) => address.startsWith(origin)) ??
-				addresses[0] ??
-				null
-			);
-		} catch {
-			return addresses[0] || null;
-		}
-	}, [addresses, pairingUrl, selectedMode, webRtcDisplayUrl]);
-
-	const selectAddress = useCallback(
-		async (address: string) => {
-			if (statusClient === undefined) {
-				setActionError('Remote access controls are unavailable in this host.');
-				return;
-			}
-			setStatus(await statusClient.setPairingAddress(address));
-		},
-		[statusClient],
-	);
-
 	useEffect(() => {
 		if (!isMenuOpen) return;
 		const onPointerDown = (event: globalThis.MouseEvent) => {
@@ -372,10 +248,8 @@ export function useRemoteAccessController(
 
 	return {
 		actionError,
-		addresses,
 		closeMenu,
 		closePinModal,
-		isAdvancedOpen,
 		isLinkCopied,
 		isMenuOpen,
 		isPairingModalOpen,
@@ -388,11 +262,6 @@ export function useRemoteAccessController(
 		pairingUrl,
 		pinError,
 		pinInput,
-		preferredAddress,
-		selectAddress,
-		selectedMode,
-		selectMode,
-		setIsAdvancedOpen,
 		setIsLinkCopied,
 		setIsMenuOpen,
 		setIsPairingModalOpen,
@@ -402,7 +271,8 @@ export function useRemoteAccessController(
 		statusMessage:
 			actionError ??
 			status?.errorMessage ??
-			(selectedMode === 'webrtc' ? status?.webRtcStatusMessage : null),
+			status?.webRtcStatusMessage ??
+			null,
 		submitPin,
 		toggleExposure,
 		tone: status?.isRunning
@@ -410,7 +280,9 @@ export function useRemoteAccessController(
 			: status?.configurationIssue || status?.errorMessage || actionError
 				? 'remote-access-button--warning'
 				: '',
-		visibleQrCodeDataUrl,
-		webRtcDisplayUrl,
+		visibleQrCodeDataUrl:
+			status?.webRtcStatus === 'pairing-ready'
+				? (pairingQrCodeDataUrl ?? generatedQrCodeDataUrl)
+				: null,
 	};
 }

@@ -1,4 +1,4 @@
-import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import type { ByteTransport } from '@terminay/protocol';
 import type {
 	NodeDataChannelSignal,
@@ -205,17 +205,17 @@ async function openAuthenticatedSignaling(
 				throw new Error('Desktop WebRTC signaling frame is invalid.');
 			socket.send(JSON.stringify(message));
 		},
-		sign: (signal) => signEnvelope(signal, bootstrap),
-		verify: (message) =>
-			verifyEnvelope(message, bootstrap, seen, options.now()),
+		encode: (signal) => encodeEnvelope(signal, bootstrap),
+		decode: (message) =>
+			decodeEnvelope(message, bootstrap, seen, options.now()),
 	};
 }
 
-function signEnvelope(
+function encodeEnvelope(
 	signal: NodeDataChannelSignal,
 	bootstrap: DesktopSignalingBootstrap,
 ): Record<string, unknown> {
-	const envelope = {
+	return {
 		deviceId: bootstrap.deviceId,
 		nonce: randomUUID(),
 		peerId: bootstrap.peerId,
@@ -223,13 +223,9 @@ function signEnvelope(
 		sessionOrigin: bootstrap.sessionOrigin,
 		...signal,
 	};
-	return {
-		...envelope,
-		signature: signature(envelope, bootstrap.signalingAuthToken),
-	};
 }
 
-function verifyEnvelope(
+function decodeEnvelope(
 	value: unknown,
 	bootstrap: DesktopSignalingBootstrap,
 	seen: Set<string>,
@@ -249,7 +245,6 @@ function verifyEnvelope(
 					'sdp',
 					'serverId',
 					'sessionOrigin',
-					'signature',
 					'type',
 				])
 			: input.type === 'ice'
@@ -261,7 +256,6 @@ function verifyEnvelope(
 						'peerId',
 						'serverId',
 						'sessionOrigin',
-						'signature',
 						'type',
 					])
 				: new Set<string>();
@@ -279,22 +273,9 @@ function verifyEnvelope(
 		input.sessionOrigin !== bootstrap.sessionOrigin ||
 		typeof nonce !== 'string' ||
 		nonce.length < 16 ||
-		nonce.length > 128 ||
-		typeof input.signature !== 'string'
+		nonce.length > 128
 	)
-		throw new Error('Desktop WebRTC signaling authentication failed.');
-	const unsigned = { ...input };
-	delete unsigned.signature;
-	const expected = Buffer.from(
-		signature(unsigned, bootstrap.signalingAuthToken),
-		'base64url',
-	);
-	const actual = Buffer.from(input.signature, 'base64url');
-	if (
-		actual.byteLength !== expected.byteLength ||
-		!timingSafeEqual(actual, expected)
-	)
-		throw new Error('Desktop WebRTC signaling authentication failed.');
+		throw new Error('Desktop WebRTC signaling frame does not match its authenticated relay session.');
 	if (seen.has(nonce))
 		throw new Error('Desktop WebRTC signaling replay was rejected.');
 	if (seen.size >= MAX_SEEN_NONCES)
@@ -312,23 +293,4 @@ function verifyEnvelope(
 	)
 		return { type: 'ice', candidate: input.candidate, mid: input.mid };
 	throw new Error('Desktop WebRTC signaling frame is invalid.');
-}
-
-function signature(value: object, token: string): string {
-	return createHmac('sha256', Buffer.from(token, 'base64url'))
-		.update(stableJson(value))
-		.digest('base64url');
-}
-
-function stableJson(value: unknown): string {
-	if (Array.isArray(value))
-		return `[${value.map((item) => stableJson(item)).join(',')}]`;
-	if (value && typeof value === 'object') {
-		const record = value as Record<string, unknown>;
-		return `{${Object.keys(record)
-			.sort()
-			.map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
-			.join(',')}}`;
-	}
-	return JSON.stringify(value);
 }

@@ -93,7 +93,7 @@ export async function verifyWebHostDeployment({
 	}
 	if (/Terminay Remote/iu.test(html)) {
 		throw new WebHostDeploymentVerificationError(
-			'web host shell is the legacy Terminay Remote manager',
+			'web host shell is not the Terminay connection manager',
 		);
 	}
 	requireHeader(shell, 'content-security-policy', /default-src/u);

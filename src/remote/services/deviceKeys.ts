@@ -1,67 +1,27 @@
-type StoredPairing = {
+/**
+ * Browser device identities are scoped to one stable Terminay session origin.
+ * The private key remains non-extractable in IndexedDB; only the public key is
+ * sent during enrollment.
+ */
+export type BrowserDeviceIdentity = Readonly<{
   deviceId: string
   deviceName: string
   origin: string
-  publicKeyPem: string
-}
-
-type PairingRecord = StoredPairing & {
   privateKey: CryptoKey
-}
-
-export type StoredReconnectGrant = {
-  expiresAt: string | null
-  issuedAt: string
-  origin: string
-  protocolVersion: 'v1'
-  sessionId: string
-}
-
-export type ReconnectGrantRecord = StoredReconnectGrant & {
-  proofKey: CryptoKey
-  signalingKey: CryptoKey
-}
-
-export type StoredReconnectHandle = {
-  handle: string
-  origin: string
-  sessionId: string
-}
-
-export type IssuedReconnectGrant = {
-  expiresAt: string | null
-  grant: string
-  handle: string
-  issuedAt: string
-  origin: string
-  protocolVersion: 'v1'
-  sessionId: string
-}
-
-export type ReversibleEstablishedPairing = Readonly<{
-  rollback(): Promise<void>
 }>
 
-const DB_NAME = 'terminay-remote'
-const DB_VERSION = 2
-const PAIRINGS_STORE = 'pairings'
-const RECONNECT_GRANTS_STORE = 'reconnectGrants'
-const RECONNECT_HANDLES_STORE = 'reconnectHandles'
+const DB_NAME = 'terminay-browser-device-identities'
+const DB_VERSION = 1
+const DEVICE_IDENTITIES_STORE = 'deviceIdentities'
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION)
-    request.onerror = () => reject(request.error ?? new Error('Unable to open IndexedDB.'))
+    request.onerror = () => reject(request.error ?? new Error('Unable to open browser device storage.'))
     request.onupgradeneeded = () => {
       const database = request.result
-      if (!database.objectStoreNames.contains(PAIRINGS_STORE)) {
-        database.createObjectStore(PAIRINGS_STORE, { keyPath: 'origin' })
-      }
-      if (!database.objectStoreNames.contains(RECONNECT_GRANTS_STORE)) {
-        database.createObjectStore(RECONNECT_GRANTS_STORE, { keyPath: 'origin' })
-      }
-      if (!database.objectStoreNames.contains(RECONNECT_HANDLES_STORE)) {
-        database.createObjectStore(RECONNECT_HANDLES_STORE, { keyPath: 'origin' })
+      if (!database.objectStoreNames.contains(DEVICE_IDENTITIES_STORE)) {
+        database.createObjectStore(DEVICE_IDENTITIES_STORE, { keyPath: 'origin' })
       }
     }
     request.onsuccess = () => resolve(request.result)
@@ -70,15 +30,15 @@ function openDatabase(): Promise<IDBDatabase> {
 
 function transactionRequest<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
-    request.onerror = () => reject(request.error ?? new Error('IndexedDB request failed.'))
+    request.onerror = () => reject(request.error ?? new Error('Browser device storage request failed.'))
     request.onsuccess = () => resolve(request.result)
   })
 }
 
 function transactionComplete(transaction: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
-    transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB transaction aborted.'))
-    transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB transaction failed.'))
+    transaction.onabort = () => reject(transaction.error ?? new Error('Browser device storage transaction aborted.'))
+    transaction.onerror = () => reject(transaction.error ?? new Error('Browser device storage transaction failed.'))
     transaction.oncomplete = () => resolve()
   })
 }
@@ -86,60 +46,28 @@ function transactionComplete(transaction: IDBTransaction): Promise<void> {
 function arrayBufferToBase64(arrayBuffer: ArrayBuffer): string {
   const bytes = new Uint8Array(arrayBuffer)
   let binary = ''
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte)
-  }
+  for (const byte of bytes) binary += String.fromCharCode(byte)
   return btoa(binary)
 }
 
-function base64UrlToArrayBuffer(value: string): ArrayBuffer {
-  if (!/^[A-Za-z0-9_-]+$/.test(value) || value.length % 4 === 1) {
-    throw new Error('Reconnect grant is not valid base64url.')
+export function normalizeSessionOrigin(value: string): string {
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    throw new TypeError('The session origin is invalid.')
   }
-  const base64 = value.replace(/-/g, '+').replace(/_/g, '/')
-  const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, '=')
-  const bytes = Uint8Array.from(atob(padded), (char) => char.charCodeAt(0))
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
-}
-
-async function createReconnectKeys(grant: string): Promise<{
-  proofKey: CryptoKey
-  signalingKey: CryptoKey
-}> {
-  const grantKey = await crypto.subtle.importKey(
-    'raw',
-    base64UrlToArrayBuffer(grant),
-    'HKDF',
-    false,
-    ['deriveBits'],
-  )
-
-  const verifierBytes = await crypto.subtle.deriveBits(
-    {
-      hash: 'SHA-256',
-      info: new TextEncoder().encode('terminay remote v1 reconnect proof verifier'),
-      name: 'HKDF',
-      salt: new Uint8Array(),
-    },
-    grantKey,
-    256,
-  )
-  return {
-    proofKey: await crypto.subtle.importKey(
-      'raw',
-      verifierBytes,
-      { hash: 'SHA-256', name: 'HMAC' },
-      false,
-      ['sign', 'verify'],
-    ),
-    signalingKey: await crypto.subtle.importKey(
-      'raw',
-      verifierBytes,
-      'HKDF',
-      false,
-      ['deriveKey'],
-    ),
+  if (
+    parsed.protocol !== 'https:' ||
+    parsed.username ||
+    parsed.password ||
+    parsed.pathname !== '/' ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new TypeError('The session origin must be an exact HTTPS origin.')
   }
+  return parsed.origin
 }
 
 export async function exportPublicKeyPem(publicKey: CryptoKey): Promise<string> {
@@ -149,10 +77,10 @@ export async function exportPublicKeyPem(publicKey: CryptoKey): Promise<string> 
   return `-----BEGIN PUBLIC KEY-----\n${body}\n-----END PUBLIC KEY-----`
 }
 
-export async function generateDeviceKeyPair(): Promise<{
+export async function generateDeviceKeyPair(): Promise<Readonly<{
   privateKey: CryptoKey
   publicKeyPem: string
-}> {
+}>> {
   const keyPair = await crypto.subtle.generateKey(
     {
       name: 'RSA-PSS',
@@ -163,156 +91,25 @@ export async function generateDeviceKeyPair(): Promise<{
     false,
     ['sign', 'verify'],
   )
-
-  return {
+  return Object.freeze({
     privateKey: keyPair.privateKey,
     publicKeyPem: await exportPublicKeyPem(keyPair.publicKey),
-  }
-}
-
-export async function savePairing(pairing: PairingRecord): Promise<void> {
-  const database = await openDatabase()
-  try {
-    const transaction = database.transaction(PAIRINGS_STORE, 'readwrite')
-    const complete = transactionComplete(transaction)
-    const request = transaction.objectStore(PAIRINGS_STORE).put({
-      deviceId: pairing.deviceId,
-      deviceName: pairing.deviceName,
-      origin: pairing.origin,
-      privateKey: pairing.privateKey,
-      publicKeyPem: pairing.publicKeyPem,
-    })
-    await transactionRequest(request)
-    await complete
-  } finally {
-    database.close()
-  }
-}
-
-/** Store a device registration and its reconnect material in one IndexedDB
- * transaction. Re-pairing removes old reconnect material when none is issued. */
-export async function saveEstablishedPairing(pairing: PairingRecord, issued?: IssuedReconnectGrant): Promise<void> {
-  await saveEstablishedPairingReversibly(pairing, issued)
-}
-
-/** Durably replaces all exact-origin device material and returns a conditional
- * rollback. The rollback retains opaque CryptoKey objects only in memory and
- * refuses to overwrite a newer pairing committed by another attempt/tab. */
-export async function saveEstablishedPairingReversibly(pairing: PairingRecord, issued?: IssuedReconnectGrant): Promise<ReversibleEstablishedPairing> {
-  if (issued !== undefined && issued.origin !== pairing.origin) throw new Error('Reconnect grant belongs to another origin.')
-  const reconnectKeys = issued === undefined ? undefined : await createReconnectKeys(issued.grant)
-  const database = await openDatabase()
-  let previousPairing: PairingRecord | undefined
-  let previousGrant: ReconnectGrantRecord | undefined
-  let previousHandle: StoredReconnectHandle | undefined
-  try {
-    const snapshotTransaction = database.transaction([PAIRINGS_STORE, RECONNECT_GRANTS_STORE, RECONNECT_HANDLES_STORE], 'readonly')
-    ;[previousPairing, previousGrant, previousHandle] = await Promise.all([
-      transactionRequest<PairingRecord | undefined>(snapshotTransaction.objectStore(PAIRINGS_STORE).get(pairing.origin)),
-      transactionRequest<ReconnectGrantRecord | undefined>(snapshotTransaction.objectStore(RECONNECT_GRANTS_STORE).get(pairing.origin)),
-      transactionRequest<StoredReconnectHandle | undefined>(snapshotTransaction.objectStore(RECONNECT_HANDLES_STORE).get(pairing.origin)),
-    ])
-    const transaction = database.transaction([PAIRINGS_STORE, RECONNECT_GRANTS_STORE, RECONNECT_HANDLES_STORE], 'readwrite')
-    const complete = transactionComplete(transaction)
-    const requests: Promise<unknown>[] = [
-      transactionRequest(transaction.objectStore(PAIRINGS_STORE).put({ deviceId: pairing.deviceId, deviceName: pairing.deviceName, origin: pairing.origin, privateKey: pairing.privateKey, publicKeyPem: pairing.publicKeyPem })),
-    ]
-    if (issued === undefined) {
-      requests.push(transactionRequest(transaction.objectStore(RECONNECT_GRANTS_STORE).delete(pairing.origin)))
-      requests.push(transactionRequest(transaction.objectStore(RECONNECT_HANDLES_STORE).delete(pairing.origin)))
-    } else {
-      const keys = reconnectKeys!
-      requests.push(transactionRequest(transaction.objectStore(RECONNECT_GRANTS_STORE).put({ expiresAt: issued.expiresAt, issuedAt: issued.issuedAt, origin: issued.origin, proofKey: keys.proofKey, signalingKey: keys.signalingKey, protocolVersion: issued.protocolVersion, sessionId: issued.sessionId })))
-      requests.push(transactionRequest(transaction.objectStore(RECONNECT_HANDLES_STORE).put({ handle: issued.handle, origin: issued.origin, sessionId: issued.sessionId })))
-    }
-    await Promise.all([...requests, complete])
-  } finally {
-    database.close()
-  }
-  return Object.freeze({
-    rollback: () => rollbackEstablishedPairing({ pairing, issued, previousPairing, previousGrant, previousHandle }),
   })
 }
 
-async function rollbackEstablishedPairing(input: Readonly<{
-  pairing: PairingRecord
-  issued?: IssuedReconnectGrant
-  previousPairing?: PairingRecord
-  previousGrant?: ReconnectGrantRecord
-  previousHandle?: StoredReconnectHandle
-}>): Promise<void> {
+export async function saveBrowserDeviceIdentity(identity: BrowserDeviceIdentity): Promise<void> {
+  const origin = normalizeSessionOrigin(identity.origin)
   const database = await openDatabase()
   try {
-    const current = await transactionRequest<PairingRecord | undefined>(
-      database.transaction(PAIRINGS_STORE, 'readonly').objectStore(PAIRINGS_STORE).get(input.pairing.origin),
-    )
-    if (current?.deviceId !== input.pairing.deviceId || current.publicKeyPem !== input.pairing.publicKeyPem) return
-    if (input.issued !== undefined) {
-      const handle = await transactionRequest<StoredReconnectHandle | undefined>(
-        database.transaction(RECONNECT_HANDLES_STORE, 'readonly').objectStore(RECONNECT_HANDLES_STORE).get(input.pairing.origin),
-      )
-      if (handle?.handle !== input.issued.handle) return
-    }
-    const transaction = database.transaction([PAIRINGS_STORE, RECONNECT_GRANTS_STORE, RECONNECT_HANDLES_STORE], 'readwrite')
-    const restore = (storeName: string, previous: unknown) => previous === undefined
-      ? transaction.objectStore(storeName).delete(input.pairing.origin)
-      : transaction.objectStore(storeName).put(previous)
+    const transaction = database.transaction(DEVICE_IDENTITIES_STORE, 'readwrite')
     const complete = transactionComplete(transaction)
-    restore(PAIRINGS_STORE, input.previousPairing)
-    restore(RECONNECT_GRANTS_STORE, input.previousGrant)
-    restore(RECONNECT_HANDLES_STORE, input.previousHandle)
-    await complete
-  } finally {
-    database.close()
-  }
-}
-
-export async function loadPairing(origin: string): Promise<PairingRecord | null> {
-  const database = await openDatabase()
-  const transaction = database.transaction(PAIRINGS_STORE, 'readonly')
-  const result = await transactionRequest<PairingRecord | undefined>(
-    transaction.objectStore(PAIRINGS_STORE).get(origin),
-  )
-  database.close()
-  return result ?? null
-}
-
-export async function removePairing(origin: string): Promise<void> {
-  const database = await openDatabase()
-  try {
-    const transaction = database.transaction(PAIRINGS_STORE, 'readwrite')
-    const complete = transactionComplete(transaction)
-    const request = transaction.objectStore(PAIRINGS_STORE).delete(origin)
-    await transactionRequest(request)
-    await complete
-  } finally {
-    database.close()
-  }
-}
-
-export async function saveReconnectGrant(issued: IssuedReconnectGrant): Promise<void> {
-  const { proofKey, signalingKey } = await createReconnectKeys(issued.grant)
-  const database = await openDatabase()
-  try {
-    const transaction = database.transaction([RECONNECT_GRANTS_STORE, RECONNECT_HANDLES_STORE], 'readwrite')
-    const complete = transactionComplete(transaction)
-    const grantRequest = transaction.objectStore(RECONNECT_GRANTS_STORE).put({
-      expiresAt: issued.expiresAt,
-      issuedAt: issued.issuedAt,
-      origin: issued.origin,
-      proofKey,
-      signalingKey,
-      protocolVersion: issued.protocolVersion,
-      sessionId: issued.sessionId,
-    })
-    const handleRequest = transaction.objectStore(RECONNECT_HANDLES_STORE).put({
-      handle: issued.handle,
-      origin: issued.origin,
-      sessionId: issued.sessionId,
-    })
     await Promise.all([
-      transactionRequest(grantRequest),
-      transactionRequest(handleRequest),
+      transactionRequest(transaction.objectStore(DEVICE_IDENTITIES_STORE).put({
+        deviceId: identity.deviceId,
+        deviceName: identity.deviceName,
+        origin,
+        privateKey: identity.privateKey,
+      })),
       complete,
     ])
   } finally {
@@ -320,36 +117,28 @@ export async function saveReconnectGrant(issued: IssuedReconnectGrant): Promise<
   }
 }
 
-export async function loadReconnectGrant(origin: string): Promise<ReconnectGrantRecord | null> {
-  const database = await openDatabase()
-  const transaction = database.transaction(RECONNECT_GRANTS_STORE, 'readonly')
-  const result = await transactionRequest<ReconnectGrantRecord | undefined>(
-    transaction.objectStore(RECONNECT_GRANTS_STORE).get(origin),
-  )
-  database.close()
-  return result ?? null
-}
-
-export async function loadReconnectHandle(origin: string): Promise<StoredReconnectHandle | null> {
-  const database = await openDatabase()
-  const transaction = database.transaction(RECONNECT_HANDLES_STORE, 'readonly')
-  const result = await transactionRequest<StoredReconnectHandle | undefined>(
-    transaction.objectStore(RECONNECT_HANDLES_STORE).get(origin),
-  )
-  database.close()
-  return result ?? null
-}
-
-export async function removeReconnectGrant(origin: string): Promise<void> {
+export async function loadBrowserDeviceIdentity(originInput: string): Promise<BrowserDeviceIdentity | null> {
+  const origin = normalizeSessionOrigin(originInput)
   const database = await openDatabase()
   try {
-    const transaction = database.transaction([RECONNECT_GRANTS_STORE, RECONNECT_HANDLES_STORE], 'readwrite')
+    const transaction = database.transaction(DEVICE_IDENTITIES_STORE, 'readonly')
+    const value = await transactionRequest<BrowserDeviceIdentity | undefined>(
+      transaction.objectStore(DEVICE_IDENTITIES_STORE).get(origin),
+    )
+    return value ?? null
+  } finally {
+    database.close()
+  }
+}
+
+export async function removeBrowserDeviceIdentity(originInput: string): Promise<void> {
+  const origin = normalizeSessionOrigin(originInput)
+  const database = await openDatabase()
+  try {
+    const transaction = database.transaction(DEVICE_IDENTITIES_STORE, 'readwrite')
     const complete = transactionComplete(transaction)
-    const grantRequest = transaction.objectStore(RECONNECT_GRANTS_STORE).delete(origin)
-    const handleRequest = transaction.objectStore(RECONNECT_HANDLES_STORE).delete(origin)
     await Promise.all([
-      transactionRequest(grantRequest),
-      transactionRequest(handleRequest),
+      transactionRequest(transaction.objectStore(DEVICE_IDENTITIES_STORE).delete(origin)),
       complete,
     ])
   } finally {
@@ -358,19 +147,16 @@ export async function removeReconnectGrant(origin: string): Promise<void> {
 }
 
 export async function signDeviceChallenge(privateKey: CryptoKey, signingInput: string): Promise<string> {
+  if (typeof signingInput !== 'string' || signingInput.length === 0 || signingInput.length > 16_384) {
+    throw new TypeError('The device challenge signing input is invalid.')
+  }
   const signature = await crypto.subtle.sign(
-    {
-      name: 'RSA-PSS',
-      saltLength: 32,
-    },
+    { name: 'RSA-PSS', saltLength: 32 },
     privateKey,
     new TextEncoder().encode(signingInput),
   )
-
   return arrayBufferToBase64(signature)
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/g, '')
 }
-
-export type { StoredPairing }

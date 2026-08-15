@@ -94,12 +94,8 @@ function setupSignaling() {
         inbound.push(listener)
         return () => inbound.splice(inbound.indexOf(listener), 1)
       },
-      sign: (message) => ({ ...message, signature: 'valid' }),
-      verify: (message) => message?.signature === 'valid'
-        ? { type: message.type, ...(message.sdp === undefined
-          ? { candidate: message.candidate, mid: message.mid }
-          : { sdp: message.sdp }) }
-        : null,
+      encode: (message) => ({ ...message }),
+		decode: (message) => message,
       close: () => { closed = true },
     },
     inbound,
@@ -151,8 +147,8 @@ test('server-owned node-datachannel host composes proof, signaling, four channel
 
   const pending = host.connect(proof('device-a'))
   await new Promise((resolve) => setImmediate(resolve))
-  signal.inbound[0]({ type: 'offer', sdp: 'offer-sdp', signature: 'valid' })
-  signal.inbound[0]({ type: 'ice', candidate: 'candidate', mid: '0', signature: 'valid' })
+  signal.inbound[0]({ type: 'offer', sdp: 'offer-sdp' })
+  signal.inbound[0]({ type: 'ice', candidate: 'candidate', mid: '0' })
   const session = await pending
 
   assert.equal(loadCount, 1)
@@ -166,7 +162,7 @@ test('server-owned node-datachannel host composes proof, signaling, four channel
   ])
   assert.equal(session.snapshot().state, 'connected')
   assert.equal(session.snapshot().peer.state, 'connected')
-  assert.deepEqual(signal.outbound, [{ type: 'answer', sdp: 'answer-sdp', signature: 'valid' }])
+  assert.deepEqual(signal.outbound, [{ type: 'answer', sdp: 'answer-sdp' }])
   assert.deepEqual(events.map((event) => event.type), ['connect-started', 'connected'])
   assert.equal(host.snapshot.activeSessions, 1)
   assert.equal(host.snapshot.measurements.iceConfigurations, 1)
@@ -255,7 +251,7 @@ test('throwing host lifecycle observers cannot interrupt authenticated setup or 
 
   const pending = host.connect(proof('device-observer-throws'))
   await new Promise((resolve) => setImmediate(resolve))
-  signal.inbound[0]({ type: 'offer', sdp: 'offer-sdp', signature: 'valid' })
+  signal.inbound[0]({ type: 'offer', sdp: 'offer-sdp' })
   const session = await pending
 
   assert.equal(session.snapshot().state, 'connected')
@@ -302,7 +298,7 @@ test('revoking a connected device closes signaling even when native channels omi
 
   const pending = host.connect(proof('device-silent-close'))
   await new Promise((resolve) => setImmediate(resolve))
-  signal.inbound[0]({ type: 'offer', sdp: 'offer-sdp', signature: 'valid' })
+  signal.inbound[0]({ type: 'offer', sdp: 'offer-sdp' })
   const session = await pending
   assert.equal(host.snapshot.activeSessions, 1)
 
@@ -369,14 +365,14 @@ test('a pending-capacity rejection does not consume another device WebRTC retry 
   assert.equal(signals.length, 1)
   assert.equal(FakePeer.instances.length, 1)
 
-  signals[0].inbound[0]({ type: 'offer', sdp: 'offer-sdp', signature: 'valid' })
+  signals[0].inbound[0]({ type: 'offer', sdp: 'offer-sdp' })
   const firstSession = await first
   await host.closePeer(firstSession.peerId)
 
   const replacement = host.connect(proof('device-capacity-rejected', 'retry-ticket'))
   await new Promise((resolve) => setImmediate(resolve))
   assert.equal(signals.length, 2, 'the capacity rejection must not consume the device retry window')
-  signals[1].inbound[0]({ type: 'offer', sdp: 'offer-sdp', signature: 'valid' })
+  signals[1].inbound[0]({ type: 'offer', sdp: 'offer-sdp' })
   const replacementSession = await replacement
   assert.equal(replacementSession.deviceId, 'device-capacity-rejected')
   await host.shutdown()
@@ -648,7 +644,7 @@ test('native channel teardown immediately releases the host session and emits on
 
 	const pending = host.connect(proof('device-closed'))
 	await new Promise((resolve) => setImmediate(resolve))
-	signal.inbound[0]({ type: 'offer', sdp: 'offer-sdp', signature: 'valid' })
+	signal.inbound[0]({ type: 'offer', sdp: 'offer-sdp' })
 	const session = await pending
 	for (const channel of FakePeer.instances[0].channels.values()) channel.close()
 	await new Promise((resolve) => setImmediate(resolve))
@@ -675,7 +671,7 @@ test('a stalled relay close cannot delay explicit native peer cleanup', async ()
 
 	const pending = host.connect(proof('device-stalled-relay-close'))
 	await new Promise((resolve) => setImmediate(resolve))
-	signal.inbound[0]({ type: 'offer', sdp: 'offer-sdp', signature: 'valid' })
+	signal.inbound[0]({ type: 'offer', sdp: 'offer-sdp' })
 	const session = await pending
 	signal.signaling.close = () => new Promise(() => {})
 
@@ -721,7 +717,7 @@ test('aggregate runtime measurements bound a sustained multi-peer setup probe wi
 
 	clock = 1_025
 	for (const signal of signals) {
-		signal.inbound[0]({ type: 'offer', sdp: 'offer-sdp', signature: 'valid' })
+		signal.inbound[0]({ type: 'offer', sdp: 'offer-sdp' })
 	}
 	const sessions = await Promise.all(connections)
 	assert.equal(sessions.length, 3)
@@ -769,7 +765,7 @@ test('aggregate connection-duration measurements remain finite under an extreme 
 		const pending = host.connect(proof(`device-extreme-clock-${suffix}`))
 		await new Promise((resolve) => setImmediate(resolve))
 		clock = Number.MAX_SAFE_INTEGER
-		signals.at(-1).inbound[0]({ type: 'offer', sdp: 'offer-sdp', signature: 'valid' })
+		signals.at(-1).inbound[0]({ type: 'offer', sdp: 'offer-sdp' })
 		await pending
 	}
 

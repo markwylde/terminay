@@ -1,17 +1,7 @@
-import {
-	constants,
-	hkdfSync,
-	randomBytes,
-	randomUUID,
-	verify as verifySignature,
-} from 'node:crypto';
+import { constants, verify as verifySignature } from 'node:crypto';
 import { lookup as dnsLookup } from 'node:dns';
-import { promises as fs } from 'node:fs';
-import https from 'node:https';
-import os from 'node:os';
 import path from 'node:path';
 import QRCode from 'qrcode';
-import { WebSocketServer } from 'ws';
 import WebSocket from 'ws';
 import type { RemoteAccessStatus } from '../../src/types/terminay';
 import type { RemoteAccessSettings } from '../../src/types/settings';
@@ -24,26 +14,10 @@ import {
 } from './deployedTerminalProtocol';
 import { ChallengeStore, serializeDeviceChallenge } from './challengeStore';
 import { AuditStore } from './auditStore';
-import {
-	resolveRemoteAccessConfig,
-	readRemoteAccessConfig,
-	type ResolvedRemoteAccessConfig,
-} from './config';
-import {
-	ConnectionStore,
-	webSocketPeer,
-	type RemoteConnectionPeer,
-} from './connectionStore';
+import { ConnectionStore, type RemoteConnectionPeer } from './connectionStore';
 import { DeviceStore } from './deviceStore';
 import { PairingManager } from './pairing';
 import { assertPairingPin, PairingPinFailureLimitError } from './pinGuard';
-import { readJsonBody } from './jsonBody';
-import {
-	ReconnectGrantStore,
-	resolveReconnectGrantLifetime,
-	type ReconnectGrantRecord,
-} from './reconnectGrantStore';
-import { ensureTlsMaterial } from './tls';
 import { WebRtcPairingManager } from './webrtc';
 import {
 	parseSignalingMessage,
@@ -112,34 +86,19 @@ export type RemoteAccessServiceOptions = {
 	onStatusChanged: (status: RemoteAccessStatus) => void;
 	publicDir: string;
 	rendererDistDir: string;
-	saveGeneratedTlsPaths: (paths: {
-		certPath: string;
-		keyPath: string;
-	}) => Promise<void> | void;
 	userDataPath?: string;
 	/** Authenticated server identity bound to the hosted UI bootstrap. */
 	serverId?: string;
 	serverVersion?: string;
 };
 
-type JsonResponse = Record<string, unknown>;
-
 type WebRtcHostConfig = {
 	appOrigin: string;
 	expiresAt: string;
 	iceServers: RTCIceServer[];
 	relayJoinTokenHash: string;
-	reconnectRegistrationToken: string;
-	reconnect?: {
-		attemptId: string;
-		protocolVersion: 'v1';
-		reconnectHandle: string;
-		savedSessionExpiresAt: string;
-		sessionId: string;
-	};
 	roomId: string;
 	sessionId: string;
-	signalingAuthToken: string;
 	signalingUrl: string;
 };
 
@@ -150,7 +109,6 @@ type WebRtcTerminalPeer = RemoteConnectionPeer & {
 
 type WebRtcHostRuntime = {
 	hostWindow: ReturnType<RemoteAccessServiceOptions['createWebRtcHostWindow']>;
-	ownsSignalSocket: boolean;
 	pendingSignalMessages: string[];
 	phase: 'waiting' | 'pairing' | 'connected' | 'failed';
 	ready: boolean;
@@ -158,47 +116,8 @@ type WebRtcHostRuntime = {
 	signalSocket: WebSocket | null;
 };
 
-type PendingWebRtcReconnect = {
-	appOrigin: string;
-	clientNonce: string;
-	expiresAt: number;
-	handle: string;
-	iceServers: RTCIceServer[];
-	origin: string;
-	sessionId: string;
-	signalingUrl: string;
-	socket: WebSocket;
-	webContentsId: number | null;
-};
-
-type ReconnectSignalAuth = {
-	attemptId: string;
-	expiresAt: string;
-	iceServers: RTCIceServer[];
-	keyId: string;
-	nonce: string;
-	protocolVersion: 'v1';
-	reconnectHandle: string;
-	salt: string;
-	sessionId: string;
-};
-
-type WebRtcReconnectAvailabilityRuntime = {
-	appOrigin: string;
-	iceServers: RTCIceServer[];
-	reconnectRegistrationToken: string;
-	registered: boolean;
-	refreshTimer: NodeJS.Timeout | null;
-	sessionId: string;
-	signalingUrl: string;
-	socket: WebSocket;
-};
-
 const MAX_BUFFER_LENGTH = 200_000;
 const MAX_SESSION_SNAPSHOT_BUFFER_LENGTH = 50_000;
-const RECONNECT_LEASE_MS = 5 * 60 * 1000;
-const RECONNECT_REFRESH_MIN_MS = 45 * 1000;
-const RECONNECT_REFRESH_JITTER_MS = 30 * 1000;
 
 type DnsLookupOptions = {
 	all?: boolean;
@@ -252,55 +171,6 @@ export function createWebRtcSignalingSocketOptions(
 	return options;
 }
 
-export function createReconnectLeaseTiming(
-	now = Date.now(),
-	random = Math.random(),
-): { expiresAt: string; refreshDelayMs: number } {
-	const boundedRandom = Math.min(1, Math.max(0, random));
-	return {
-		expiresAt: new Date(now + RECONNECT_LEASE_MS).toISOString(),
-		refreshDelayMs:
-			RECONNECT_REFRESH_MIN_MS +
-			Math.floor(boundedRandom * RECONNECT_REFRESH_JITTER_MS),
-	};
-}
-
-function serializeReconnectSignalContext(
-	auth: Omit<ReconnectSignalAuth, 'salt'>,
-): string {
-	return JSON.stringify({
-		attemptId: auth.attemptId,
-		expiresAt: auth.expiresAt,
-		iceServers: auth.iceServers.map((server) => ({
-			...(typeof server.credential === 'string'
-				? { credential: server.credential }
-				: {}),
-			urls: server.urls,
-			...(server.username ? { username: server.username } : {}),
-		})),
-		keyId: auth.keyId,
-		nonce: auth.nonce,
-		protocolVersion: auth.protocolVersion,
-		reconnectHandle: auth.reconnectHandle,
-		sessionId: auth.sessionId,
-	});
-}
-
-function deriveReconnectSignalingToken(
-	proofVerifier: string,
-	salt: string,
-	auth: Omit<ReconnectSignalAuth, 'salt'>,
-): string {
-	return Buffer.from(
-		hkdfSync(
-			'sha256',
-			Buffer.from(proofVerifier, 'base64url'),
-			Buffer.from(salt, 'base64url'),
-			serializeReconnectSignalContext(auth),
-			32,
-		),
-	).toString('base64url');
-}
 
 function appendToBuffer(current: string, chunk: string): string {
 	const next = current + chunk;
@@ -425,47 +295,6 @@ function assertIceServerUrl(value: string): void {
 	}
 }
 
-function jsonResponse(
-	body: JsonResponse,
-	status = 200,
-): { body: Buffer; contentType: string; status: number } {
-	return {
-		body: Buffer.from(JSON.stringify(body)),
-		contentType: 'application/json; charset=utf-8',
-		status,
-	};
-}
-
-function isAddressInUseError(error: unknown): boolean {
-	return (
-		typeof error === 'object' &&
-		error !== null &&
-		'code' in error &&
-		error.code === 'EADDRINUSE'
-	);
-}
-
-function getContentType(filePath: string): string {
-	const extension = path.extname(filePath).toLowerCase();
-	switch (extension) {
-		case '.css':
-			return 'text/css; charset=utf-8';
-		case '.html':
-			return 'text/html; charset=utf-8';
-		case '.js':
-			return 'application/javascript; charset=utf-8';
-		case '.json':
-		case '.webmanifest':
-			return 'application/manifest+json; charset=utf-8';
-		case '.png':
-			return 'image/png';
-		case '.svg':
-			return 'image/svg+xml';
-		default:
-			return 'application/octet-stream';
-	}
-}
-
 export class RemoteAccessService {
 	private readonly auditStore: AuditStore;
 	private readonly clientOperationQueues = new Map<string, Promise<void>>();
@@ -479,23 +308,14 @@ export class RemoteAccessService {
 	private readonly onStatusChanged: RemoteAccessServiceOptions['onStatusChanged'];
 	private readonly pairingManager = new PairingManager();
 	private readonly publicDir: string;
-	private readonly reconnectGrantStore: ReconnectGrantStore;
 	private readonly remoteDir: string;
 	private readonly rendererDistDir: string;
-	private readonly saveGeneratedTlsPaths: RemoteAccessServiceOptions['saveGeneratedTlsPaths'];
 	private readonly remoteSizeOverrideOwners = new Map<
 		string,
 		{ cols: number; connectionId: string; rows: number }
 	>();
 	private readonly sessions = new Map<string, SessionRecord>();
-	private config: ResolvedRemoteAccessConfig | null = null;
 	private errorMessage: string | null = null;
-	private httpsServer: https.Server | null = null;
-	private pairingQrCodeDataUrl: string | null = null;
-	private pairingQrCodePath: string | null = null;
-	private pairingUrl: string | null = null;
-	private rotatePairingTimer: NodeJS.Timeout | null = null;
-	private selectedPairingAddress: string | null = null;
 	private readonly webRtcPairingManager = new WebRtcPairingManager();
 	private webRtcPairingExpiresAt: string | null = null;
 	private webRtcPairingQrCodeDataUrl: string | null = null;
@@ -508,15 +328,6 @@ export class RemoteAccessService {
 		number,
 		WebRtcHostRuntime
 	>();
-	private readonly webRtcReconnectAvailabilityBySessionId = new Map<
-		string,
-		WebRtcReconnectAvailabilityRuntime
-	>();
-	private readonly webRtcReconnectAttemptsById = new Map<
-		string,
-		PendingWebRtcReconnect
-	>();
-	private readonly webRtcReconnectAuthorizedDevices = new Map<string, number>();
 	/** Immutable archive promise, prepared at most once per built server UI. */
 	private webRtcUiArchive: Promise<ServerUiArchive> | undefined;
 	private readonly webRtcTerminalConnectionsByChannelId = new Map<
@@ -529,7 +340,6 @@ export class RemoteAccessService {
 	>();
 	private webRtcStatus: RemoteAccessStatus['webRtcStatus'] = 'not-configured';
 	private webRtcStatusMessage: string | null = null;
-	private readonly wsServer = new WebSocketServer({ noServer: true });
 	private readonly serverId: string;
 
 	constructor(options: RemoteAccessServiceOptions) {
@@ -546,7 +356,6 @@ export class RemoteAccessService {
 		this.onStatusChanged = options.onStatusChanged;
 		this.publicDir = options.publicDir;
 		this.rendererDistDir = options.rendererDistDir;
-		this.saveGeneratedTlsPaths = options.saveGeneratedTlsPaths;
 		this.serverId = options.serverId ?? 'desktop-local';
 		this.remoteDir = path.join(userDataPath, 'remote-access');
 		this.auditStore = new AuditStore(
@@ -555,43 +364,15 @@ export class RemoteAccessService {
 		this.deviceStore = new DeviceStore(
 			path.join(this.remoteDir, 'devices.json'),
 		);
-		this.reconnectGrantStore = new ReconnectGrantStore(
-			path.join(this.remoteDir, 'reconnect-grants.json'),
-		);
 	}
 
 	getStatus(): RemoteAccessStatus {
-		const availableAddresses = this.httpsServer
-			? this.getAvailableAddresses()
-			: [];
-		const settings = this.getRemoteAccessSettings();
-		const pairingMode = settings.pairingMode === 'webrtc' ? 'webrtc' : 'lan';
-		const lanPairingExpiresAt =
-			this.pairingManager.getExpiresAt() === null
-				? null
-				: new Date(this.pairingManager.getExpiresAt() ?? 0).toISOString();
-		const activePairing =
-			pairingMode === 'webrtc'
-				? {
-						expiresAt: this.webRtcPairingExpiresAt,
-						qrCodeDataUrl: this.webRtcPairingQrCodeDataUrl,
-						qrCodePath: null,
-						url: this.webRtcPairingUrl,
-					}
-				: {
-						expiresAt: lanPairingExpiresAt,
-						qrCodeDataUrl: this.pairingQrCodeDataUrl,
-						qrCodePath: this.pairingQrCodePath,
-						url: this.pairingUrl,
-					};
-
 		const webRtcHostReady = this.isActiveWebRtcHostReady();
 
 		return {
 			activeConnectionCount: this.connectionStore.count(),
 			pendingWebRtcConnectionCount: this.getPendingWebRtcConnectionCount(),
 			auditEvents: this.auditStore.listRecent(),
-			availableAddresses,
 			connections: this.connectionStore.list().map((connection) => {
 				const device = this.deviceStore.get(connection.deviceId);
 				return {
@@ -601,35 +382,17 @@ export class RemoteAccessService {
 					deviceName: device?.name ?? 'Unknown Device',
 				};
 			}),
-			configurationIssue: this.getConfigurationIssue(),
+			configurationIssue: null,
 			configurationPath: 'File > Settings > Remote Access',
 			errorMessage: this.errorMessage,
 			isRunning: this.isRunning(),
-			directListenerRunning: this.httpsServer !== null,
-			lanPairingExpiresAt,
-			lanPairingQrCodeDataUrl: this.pairingQrCodeDataUrl,
-			lanPairingQrCodePath: this.pairingQrCodePath,
-			lanPairingUrl: this.pairingUrl,
-			origin: this.config?.origin ?? null,
 			pairedDeviceCount: this.deviceStore.listActive().length,
-			pairedDevices: this.deviceStore.listActive().map((device) => {
-				const grant = this.reconnectGrantStore.getSummaryForDevice(device.id);
-				return {
+			pairedDevices: this.deviceStore.listActive().map((device) => ({
 					addedAt: device.addedAt,
 					deviceId: device.id,
 					lastSeenAt: device.lastSeenAt,
 					name: device.name,
-					origin: device.origin,
-					reconnectGrantExpiresAt: grant.expiresAt,
-					reconnectGrantLastUsedAt: grant.lastUsedAt,
-					reconnectGrantStatus: grant.status,
-				};
-			}),
-			pairingMode,
-			pairingExpiresAt: activePairing.expiresAt,
-			pairingQrCodeDataUrl: activePairing.qrCodeDataUrl,
-			pairingQrCodePath: activePairing.qrCodePath,
-			pairingUrl: activePairing.url,
+			})),
 			webRtcPairingExpiresAt: this.webRtcPairingExpiresAt,
 			webRtcPairingQrCodeDataUrl: this.webRtcPairingQrCodeDataUrl,
 			webRtcPairingUrl: this.webRtcPairingUrl,
@@ -665,8 +428,6 @@ export class RemoteAccessService {
 	async revokeDevice(deviceId: string): Promise<RemoteAccessStatus> {
 		const device = this.deviceStore.get(deviceId);
 		await this.deviceStore.revoke(deviceId);
-		await this.reconnectGrantStore.revokeForDevice(deviceId);
-		await this.syncWebRtcReconnectAvailability();
 		for (const connection of this.connectionStore.list()) {
 			if (connection.deviceId === deviceId) {
 				this.clearRemoteSizeOverridesForConnection(connection.connectionId);
@@ -701,13 +462,6 @@ export class RemoteAccessService {
 			);
 		}
 
-		this.emitStatus();
-		return this.getStatus();
-	}
-
-	async setPairingAddress(address: string): Promise<RemoteAccessStatus> {
-		this.selectedPairingAddress = address;
-		await this.rotatePairingCode();
 		this.emitStatus();
 		return this.getStatus();
 	}
@@ -829,83 +583,6 @@ export class RemoteAccessService {
 		});
 	}
 
-	private getConfigurationIssue(): string | null {
-		try {
-			resolveRemoteAccessConfig(
-				readRemoteAccessConfig(this.getRemoteAccessSettings()),
-			);
-			return null;
-		} catch (error) {
-			return error instanceof Error
-				? error.message
-				: 'Remote access configuration is invalid.';
-		}
-	}
-
-	private getAvailableAddresses(): string[] {
-		try {
-			const config =
-				this.config ??
-				resolveRemoteAccessConfig(
-					readRemoteAccessConfig(this.getRemoteAccessSettings()),
-				);
-			const urls = new Set<string>();
-			const defaultPort = config.port === 443;
-			const portSegment = defaultPort ? '' : `:${config.port}`;
-
-			const addresses: string[] = [];
-
-			// Always allow explicit host from config if it's not a localhost address
-			if (config.host !== 'localhost' && config.host !== '127.0.0.1') {
-				addresses.push(config.host);
-			}
-
-			if (config.bindAddress === '0.0.0.0' || config.bindAddress === '::') {
-				for (const [, netInterface] of Object.entries(os.networkInterfaces())) {
-					for (const addr of netInterface ?? []) {
-						if (addr.internal || addr.family !== 'IPv4') {
-							continue;
-						}
-						addresses.push(addr.address);
-					}
-				}
-			} else if (!config.bindAddress.includes(':')) {
-				addresses.push(config.bindAddress);
-			}
-
-			// De-duplicate addresses
-			const uniqueAddresses = Array.from(new Set(addresses));
-
-			// Sort unique addresses: 192.* > 10.* > others
-			uniqueAddresses.sort((a, b) => {
-				const a192 = a.startsWith('192.');
-				const b192 = b.startsWith('192.');
-				if (a192 && !b192) return -1;
-				if (!a192 && b192) return 1;
-
-				const a10 = a.startsWith('10.');
-				const b10 = b.startsWith('10.');
-				if (a10 && !b10) return -1;
-				if (!a10 && b10) return 1;
-
-				return a.localeCompare(b, undefined, { numeric: true });
-			});
-
-			for (const host of uniqueAddresses) {
-				urls.add(`https://${host}${portSegment}`);
-			}
-
-			// If no external addresses were found, then we'll allow localhost as a fallback
-			if (urls.size === 0) {
-				urls.add(`https://localhost${portSegment}`);
-			}
-
-			return Array.from(urls);
-		} catch {
-			return [];
-		}
-	}
-
 	private async start(): Promise<void> {
 		this.errorMessage = null;
 
@@ -917,66 +594,8 @@ export class RemoteAccessService {
 				);
 			}
 			await this.deviceStore.load();
-			await this.reconnectGrantStore.load();
 			await this.auditStore.load();
-
-			if (settings.pairingMode === 'webrtc') {
-				this.config = null;
-				this.pairingQrCodeDataUrl = null;
-				this.pairingQrCodePath = null;
-				this.pairingUrl = null;
-				await this.rotateWebRtcPairingCode();
-				await this.syncWebRtcReconnectAvailability();
-				this.emitStatus();
-				return;
-			}
-
-			this.config = resolveRemoteAccessConfig(readRemoteAccessConfig(settings));
-			const tlsMaterial = await ensureTlsMaterial(this.config, this.remoteDir);
-			if (tlsMaterial.isSelfSigned) {
-				await this.saveGeneratedTlsPaths({
-					certPath: tlsMaterial.certPath,
-					keyPath: tlsMaterial.keyPath,
-				});
-				this.config = resolveRemoteAccessConfig(
-					readRemoteAccessConfig(this.getRemoteAccessSettings()),
-				);
-			}
-
-			this.httpsServer = https.createServer(
-				{
-					cert: tlsMaterial.cert,
-					key: tlsMaterial.key,
-				},
-				(request, response) => {
-					void this.handleRequest(request, response);
-				},
-			);
-
-			this.httpsServer.on('upgrade', (request, socket, head) => {
-				void this.handleUpgrade(request, socket, head);
-			});
-
-			try {
-				await new Promise<void>((resolve, reject) => {
-					this.httpsServer?.once('error', reject);
-					this.httpsServer?.listen(
-						this.config?.port,
-						this.config?.bindAddress,
-						() => {
-							this.httpsServer?.off('error', reject);
-							resolve();
-						},
-					);
-				});
-				await this.rotatePairingCode();
-			} catch (error) {
-				if (isAddressInUseError(error)) {
-					this.errorMessage = `Local Network server could not start because port ${this.config.port} is already in use.`;
-				}
-				throw error;
-			}
-
+			await this.rotateWebRtcPairingCode();
 			this.emitStatus();
 		} catch (error) {
 			this.errorMessage =
@@ -989,38 +608,17 @@ export class RemoteAccessService {
 	}
 
 	private async stop(): Promise<void> {
-		if (this.rotatePairingTimer) {
-			clearTimeout(this.rotatePairingTimer);
-			this.rotatePairingTimer = null;
-		}
-
 		for (const connection of this.connectionStore.list()) {
 			connection.socket.close(1001, 'Remote access stopped');
 		}
 		this.clearAllRemoteSizeOverrides();
 
-		await new Promise<void>((resolve) => {
-			this.wsServer.close(() => resolve());
-		});
-
-		if (this.httpsServer) {
-			await new Promise<void>((resolve) => {
-				this.httpsServer?.close(() => resolve());
-			});
-		}
-
-		this.httpsServer = null;
-		this.config = null;
-		this.pairingQrCodeDataUrl = null;
-		this.pairingQrCodePath = null;
-		this.pairingUrl = null;
 		this.webRtcPairingExpiresAt = null;
 		this.webRtcPairingQrCodeDataUrl = null;
 		this.webRtcPairingUrl = null;
 		this.webRtcRoomId = null;
 		this.webRtcActivePairingWebContentsId = null;
 		this.closeWebRtcPairingHost();
-		this.closeWebRtcReconnectAvailability();
 		this.webRtcStatus = 'not-configured';
 		this.webRtcStatusMessage = null;
 		this.emitStatus();
@@ -1049,50 +647,7 @@ export class RemoteAccessService {
 	}
 
 	private isRunning(): boolean {
-		return (
-			this.httpsServer !== null ||
-			this.webRtcHostRuntimesByWebContentsId.size > 0
-		);
-	}
-
-	private async rotatePairingCode(): Promise<void> {
-		if (!this.config) {
-			return;
-		}
-
-		const available = this.getAvailableAddresses();
-		const currentOrigin =
-			this.selectedPairingAddress &&
-			available.includes(this.selectedPairingAddress)
-				? this.selectedPairingAddress
-				: available[0] || this.config.origin;
-
-		const payload = this.pairingManager.create(currentOrigin);
-		this.pairingUrl = payload.pairingUrl;
-		this.pairingQrCodePath = path.join(this.remoteDir, 'pairing-qr.png');
-		await fs.mkdir(this.remoteDir, { recursive: true });
-		await QRCode.toFile(this.pairingQrCodePath, payload.pairingUrl, {
-			errorCorrectionLevel: 'H',
-			margin: 2,
-			width: 720,
-		});
-		this.pairingQrCodeDataUrl = await QRCode.toDataURL(payload.pairingUrl, {
-			errorCorrectionLevel: 'H',
-			margin: 2,
-			width: 720,
-		});
-
-		if (this.rotatePairingTimer) {
-			clearTimeout(this.rotatePairingTimer);
-		}
-
-		const delay = Math.max(
-			5_000,
-			new Date(payload.pairingExpiresAt).getTime() - Date.now(),
-		);
-		this.rotatePairingTimer = setTimeout(() => {
-			void this.rotatePairingCode().then(() => this.emitStatus());
-		}, delay);
+		return this.webRtcHostRuntimesByWebContentsId.size > 0;
 	}
 
 	private async rotateWebRtcPairingCode(): Promise<void> {
@@ -1129,19 +684,13 @@ export class RemoteAccessService {
 					width: 720,
 				},
 			);
-			const reconnectRegistrationToken =
-				await this.reconnectGrantStore.getOrCreateHostRegistrationToken(
-					payload.sessionId,
-				);
 			this.openWebRtcPairingHost({
 				appOrigin: payload.appOrigin,
 				expiresAt: payload.expiresAt,
 				iceServers: parseWebRtcIceServers(settings.webRtcIceServers),
 				relayJoinTokenHash: payload.relayJoinTokenHash,
-				reconnectRegistrationToken,
 				roomId: payload.roomId,
 				sessionId: payload.sessionId,
-				signalingAuthToken: payload.signalingAuthToken,
 				signalingUrl: payload.signalingUrl,
 			});
 		} catch (error) {
@@ -1159,7 +708,7 @@ export class RemoteAccessService {
 	}
 
 	private createWebRtcPairingOrigin(appOrigin: string): string {
-		return `${appOrigin}#transport=webrtc:${appOrigin}`;
+		return new URL(appOrigin).origin;
 	}
 
 	private createWebRtcSessionId(appOrigin: string): string {
@@ -1185,9 +734,6 @@ export class RemoteAccessService {
 	): void {
 		const socket = runtime.signalSocket;
 		runtime.signalSocket = null;
-		if (!runtime.ownsSignalSocket) {
-			return;
-		}
 		if (
 			socket &&
 			socket.readyState !== WebSocket.CLOSING &&
@@ -1203,440 +749,13 @@ export class RemoteAccessService {
 		return this.webRtcHostRuntimesByWebContentsId.get(webContentsId) ?? null;
 	}
 
-	private isReconnectRelayMessage(
-		message: unknown,
-	): message is Record<string, unknown> {
-		return Boolean(
-			message &&
-				typeof message === 'object' &&
-				'type' in message &&
-				typeof (message as { type?: unknown }).type === 'string' &&
-				(message as { type: string }).type.startsWith('reconnect-'),
-		);
-	}
-
-	private async handleWebRtcReconnectRelayMessage(
-		config: WebRtcHostConfig,
-		socket: WebSocket,
-		message: Record<string, unknown>,
-	): Promise<void> {
-		if (
-			message.type === 'reconnect-host-registered' ||
-			message.type === 'reconnect-intent-accepted'
-		) {
-			return;
-		}
-
-		if (message.type === 'reconnect-intent') {
-			this.pruneWebRtcReconnectAttempts();
-			const sessionId = String(message.sessionId ?? '');
-			const reconnectHandle = String(message.reconnectHandle ?? '');
-			const clientNonce = String(message.clientNonce ?? '');
-			const origin = this.createWebRtcPairingOrigin(config.appOrigin);
-			const challenge = await this.reconnectGrantStore.createChallenge({
-				clientNonce,
-				handle: reconnectHandle,
-				origin,
-				sessionId,
-			});
-			this.webRtcReconnectAttemptsById.set(challenge.payload.attemptId, {
-				appOrigin: config.appOrigin,
-				clientNonce,
-				expiresAt: Date.parse(challenge.payload.expiresAt),
-				handle: reconnectHandle,
-				iceServers: config.iceServers,
-				origin,
-				sessionId,
-				signalingUrl: config.signalingUrl,
-				socket,
-				webContentsId: null,
-			});
-			socket.send(
-				JSON.stringify({
-					...challenge.payload,
-					reconnectHandle: challenge.payload.handle,
-					type: 'reconnect-challenge',
-				}),
-			);
-			return;
-		}
-
-		if (message.type === 'reconnect-proof') {
-			const attemptId = String(message.attemptId ?? '');
-			const attempt = this.webRtcReconnectAttemptsById.get(attemptId);
-			if (!attempt) {
-				throw new Error('This reconnect challenge is no longer valid.');
-			}
-			let grant: ReconnectGrantRecord;
-			try {
-				grant = await this.reconnectGrantStore.verifyProof({
-					attemptId,
-					clientNonce: String(message.clientNonce ?? ''),
-					handle: attempt.handle,
-					lifetime: resolveReconnectGrantLifetime(
-						this.getRemoteAccessSettings().reconnectGrantLifetime,
-					),
-					origin: attempt.origin,
-					proof: String(message.proof ?? ''),
-					verifyDeviceProof: (deviceId, signingInput) => {
-						const device = this.deviceStore.get(deviceId);
-						if (!device) return false;
-						return verifySignature(
-							'sha256',
-							Buffer.from(signingInput),
-							{
-								key: normalizePem(device.publicKeyPem),
-								padding: constants.RSA_PKCS1_PSS_PADDING,
-								saltLength: 32,
-							},
-							Buffer.from(String(message.deviceProof ?? ''), 'base64url'),
-						);
-					},
-				});
-			} catch (error) {
-				this.webRtcReconnectAttemptsById.delete(attemptId);
-				this.reconnectGrantStore.cancelChallenge(attemptId);
-				throw error;
-			}
-			const signalAuthWithoutSalt = {
-				attemptId,
-				expiresAt: new Date(Date.now() + 60 * 1000).toISOString(),
-				iceServers: attempt.iceServers,
-				keyId: randomUUID(),
-				nonce: randomBytes(24).toString('base64url'),
-				protocolVersion: 'v1' as const,
-				reconnectHandle: attempt.handle,
-				sessionId: grant.sessionId,
-			};
-			const signalSalt = randomBytes(32).toString('base64url');
-			const signalingAuthToken = deriveReconnectSignalingToken(
-				grant.proofVerifier,
-				signalSalt,
-				signalAuthWithoutSalt,
-			);
-			// The browser has just proved possession of both the reconnect grant
-			// and its paired device key. Permit exactly one subsequent API
-			// authentication without asking for the human PIN again.
-			this.webRtcReconnectAuthorizedDevices.set(
-				`${attempt.origin}\0${grant.deviceId}`,
-				Date.now() + 60_000,
-			);
-			socket.send(
-				JSON.stringify({
-					attemptId,
-					protocolVersion: 'v1',
-					reconnectHandle: attempt.handle,
-					sessionId: grant.sessionId,
-					type: 'reconnect-accepted',
-				}),
-			);
-			socket.send(
-				JSON.stringify({
-					...signalAuthWithoutSalt,
-					salt: signalSalt,
-					type: 'reconnect-signal-auth',
-				}),
-			);
-			attempt.webContentsId = this.openWebRtcReconnectHost({
-				appOrigin: attempt.appOrigin,
-				attemptId,
-				iceServers: attempt.iceServers,
-				reconnectHandle: attempt.handle,
-				savedSessionExpiresAt: grant.expiresAt ?? '',
-				sessionId: grant.sessionId,
-				signalingAuthToken,
-				signalingSocket: socket,
-				signalingUrl: attempt.signalingUrl,
-			});
-			return;
-		}
-
-		if (message.type === 'reconnect-complete') {
-			this.completeWebRtcReconnectAttempt(String(message.attemptId ?? ''));
-			return;
-		}
-
-		if (
-			message.type === 'reconnect-answer' ||
-			message.type === 'reconnect-ice'
-		) {
-			const attempt = this.webRtcReconnectAttemptsById.get(
-				String(message.attemptId ?? ''),
-			);
-			const webContentsId = attempt?.webContentsId;
-			if (!webContentsId) return;
-			this.getWebRtcHostRuntime(webContentsId)?.hostWindow.sendSignalMessage(
-				message,
-			);
-		}
-	}
-
-	private pruneWebRtcReconnectAttempts(): void {
-		const now = Date.now();
-		for (const [attemptId, attempt] of this.webRtcReconnectAttemptsById) {
-			if (attempt.expiresAt <= now) this.closeWebRtcReconnectAttempt(attemptId);
-		}
-	}
-
-	private closeWebRtcReconnectAttempt(attemptId: string): void {
-		const attempt = this.webRtcReconnectAttemptsById.get(attemptId);
-		if (!attempt) return;
-		this.webRtcReconnectAttemptsById.delete(attemptId);
-		this.reconnectGrantStore.cancelChallenge(attemptId);
-		if (attempt.webContentsId) {
-			this.closeWebRtcHostRuntime(
-				attempt.webContentsId,
-				'Reconnect attempt completed',
-			);
-		}
-	}
-
-	private completeWebRtcReconnectAttempt(attemptId: string): void {
-		if (!this.webRtcReconnectAttemptsById.delete(attemptId)) return;
-		this.reconnectGrantStore.cancelChallenge(attemptId);
-	}
-
-	private getWebRtcGrantAppOrigin(grant: ReconnectGrantRecord): string {
-		return new URL(grant.origin).origin;
-	}
-
-	private createWebRtcSignalingUrl(appOrigin: string): string {
-		const url = new URL(appOrigin);
-		url.protocol = url.protocol === 'http:' ? 'ws:' : 'wss:';
-		url.pathname = '/signal';
-		url.search = '';
-		url.hash = '';
-		return url.toString();
-	}
-
-	private closeWebRtcReconnectAvailability(sessionId?: string): void {
-		const entries = sessionId
-			? [
-					[
-						sessionId,
-						this.webRtcReconnectAvailabilityBySessionId.get(sessionId),
-					] as const,
-				]
-			: Array.from(this.webRtcReconnectAvailabilityBySessionId.entries());
-
-		for (const [entrySessionId, runtime] of entries) {
-			if (!runtime) continue;
-			this.webRtcReconnectAvailabilityBySessionId.delete(entrySessionId);
-			if (runtime.refreshTimer) clearTimeout(runtime.refreshTimer);
-			if (
-				runtime.socket.readyState !== WebSocket.CLOSING &&
-				runtime.socket.readyState !== WebSocket.CLOSED
-			) {
-				runtime.socket.close(1000, 'Reconnect availability stopped');
-			}
-		}
-	}
-
-	private async syncWebRtcReconnectAvailability(): Promise<void> {
-		const settings = this.getRemoteAccessSettings();
-		const grantsBySessionId = new Map<string, ReconnectGrantRecord>();
-		const initialRegistrations: Promise<void>[] = [];
-
-		for (const grant of this.reconnectGrantStore.listActive()) {
-			if (!grantsBySessionId.has(grant.sessionId)) {
-				grantsBySessionId.set(grant.sessionId, grant);
-			}
-		}
-
-		for (const sessionId of Array.from(
-			this.webRtcReconnectAvailabilityBySessionId.keys(),
-		)) {
-			if (!grantsBySessionId.has(sessionId)) {
-				this.closeWebRtcReconnectAvailability(sessionId);
-			}
-		}
-
-		for (const [sessionId, grant] of grantsBySessionId) {
-			const existing =
-				this.webRtcReconnectAvailabilityBySessionId.get(sessionId);
-			if (
-				existing &&
-				existing.socket.readyState !== WebSocket.CLOSED &&
-				existing.socket.readyState !== WebSocket.CLOSING
-			) {
-				continue;
-			}
-
-			const appOrigin = this.getWebRtcGrantAppOrigin(grant);
-			const signalingUrl = this.createWebRtcSignalingUrl(appOrigin);
-			const reconnectRegistrationToken =
-				await this.reconnectGrantStore.getOrCreateHostRegistrationToken(
-					sessionId,
-				);
-			const socket = new WebSocket(
-				signalingUrl,
-				createWebRtcSignalingSocketOptions(signalingUrl, appOrigin),
-			);
-			let resolveInitialRegistration: (() => void) | null = null;
-			let rejectInitialRegistration: ((error: Error) => void) | null = null;
-			const initialRegistration = new Promise<void>((resolve, reject) => {
-				resolveInitialRegistration = resolve;
-				rejectInitialRegistration = reject;
-			});
-			const initialRegistrationTimer = setTimeout(() => {
-				rejectInitialRegistration?.(
-					new Error(
-						'Timed out advertising saved-session reconnect availability.',
-					),
-				);
-				resolveInitialRegistration = null;
-				rejectInitialRegistration = null;
-				if (
-					this.webRtcReconnectAvailabilityBySessionId.get(sessionId)?.socket ===
-					socket
-				) {
-					this.closeWebRtcReconnectAvailability(sessionId);
-				}
-			}, 10_000);
-			initialRegistrationTimer.unref?.();
-			initialRegistrations.push(initialRegistration);
-			const runtime: WebRtcReconnectAvailabilityRuntime = {
-				appOrigin,
-				iceServers: parseWebRtcIceServers(settings.webRtcIceServers),
-				reconnectRegistrationToken,
-				registered: false,
-				refreshTimer: null,
-				sessionId,
-				signalingUrl,
-				socket,
-			};
-			this.webRtcReconnectAvailabilityBySessionId.set(sessionId, runtime);
-
-			const advertise = () => {
-				if (
-					this.webRtcReconnectAvailabilityBySessionId.get(sessionId)?.socket !==
-					socket
-				)
-					return;
-				const lease = createReconnectLeaseTiming();
-				socket.send(
-					JSON.stringify({
-						expiresAt: lease.expiresAt,
-						reconnectRegistrationToken,
-						sessionIds: [sessionId],
-						type: 'reconnect-host-ready',
-					}),
-				);
-				runtime.refreshTimer = setTimeout(advertise, lease.refreshDelayMs);
-				runtime.refreshTimer.unref?.();
-			};
-			socket.on('open', advertise);
-
-			socket.on('message', (raw) => {
-				if (
-					this.webRtcReconnectAvailabilityBySessionId.get(sessionId)?.socket !==
-					socket
-				)
-					return;
-				let message: unknown;
-				try {
-					message = parseSignalingMessage(raw.toString());
-				} catch {
-					return;
-				}
-				if (!this.isReconnectRelayMessage(message)) {
-					return;
-				}
-				if (message.type === 'reconnect-host-registered') {
-					const registeredSessionIds = Array.isArray(message.sessionIds)
-						? message.sessionIds.map((value) => String(value))
-						: [];
-					if (registeredSessionIds.includes(sessionId)) {
-						runtime.registered = true;
-						clearTimeout(initialRegistrationTimer);
-						resolveInitialRegistration?.();
-						resolveInitialRegistration = null;
-						rejectInitialRegistration = null;
-					}
-				}
-
-				const config: WebRtcHostConfig = {
-					appOrigin: runtime.appOrigin,
-					expiresAt: '',
-					iceServers: runtime.iceServers,
-					relayJoinTokenHash: '',
-					reconnectRegistrationToken,
-					roomId: runtime.sessionId,
-					sessionId: runtime.sessionId,
-					signalingAuthToken: '',
-					signalingUrl: runtime.signalingUrl,
-				};
-				void this.handleWebRtcReconnectRelayMessage(
-					config,
-					socket,
-					message,
-				).catch((error) => {
-					this.webRtcStatusMessage =
-						error instanceof Error
-							? error.message
-							: 'Saved-session reconnect failed.';
-					this.emitStatus();
-				});
-			});
-
-			socket.on('close', () => {
-				if (
-					this.webRtcReconnectAvailabilityBySessionId.get(sessionId)?.socket ===
-					socket
-				) {
-					if (runtime.refreshTimer) clearTimeout(runtime.refreshTimer);
-					for (const [attemptId, attempt] of this.webRtcReconnectAttemptsById) {
-						if (attempt.socket === socket)
-							this.closeWebRtcReconnectAttempt(attemptId);
-					}
-					this.webRtcReconnectAvailabilityBySessionId.delete(sessionId);
-				}
-				if (!runtime.registered) {
-					clearTimeout(initialRegistrationTimer);
-					rejectInitialRegistration?.(
-						new Error(
-							'Hosted reconnect availability closed before registration.',
-						),
-					);
-					resolveInitialRegistration = null;
-					rejectInitialRegistration = null;
-				}
-			});
-
-			socket.on('error', () => {
-				if (
-					this.webRtcReconnectAvailabilityBySessionId.get(sessionId)?.socket !==
-					socket
-				)
-					return;
-				this.webRtcStatusMessage =
-					'Could not advertise saved-session reconnect availability.';
-				this.emitStatus();
-				if (!runtime.registered) {
-					clearTimeout(initialRegistrationTimer);
-					rejectInitialRegistration?.(
-						new Error(
-							'Could not advertise saved-session reconnect availability.',
-						),
-					);
-					resolveInitialRegistration = null;
-					rejectInitialRegistration = null;
-				}
-			});
-		}
-
-		await Promise.all(initialRegistrations);
-	}
-
 	private openWebRtcPairingHost(options: {
 		appOrigin: string;
 		expiresAt: string;
 		iceServers: RTCIceServer[];
 		relayJoinTokenHash: string;
-		reconnectRegistrationToken: string;
 		roomId: string;
 		sessionId: string;
-		signalingAuthToken: string;
 		signalingUrl: string;
 	}): void {
 		const hostWindow = this.createWebRtcHostWindow(0);
@@ -1645,10 +764,8 @@ export class RemoteAccessService {
 			expiresAt: options.expiresAt,
 			iceServers: options.iceServers,
 			relayJoinTokenHash: options.relayJoinTokenHash,
-			reconnectRegistrationToken: options.reconnectRegistrationToken,
 			roomId: options.roomId,
 			sessionId: options.sessionId,
-			signalingAuthToken: options.signalingAuthToken,
 			signalingUrl: options.signalingUrl,
 		};
 		this.webRtcHostConfigByWebContentsId.set(
@@ -1657,7 +774,6 @@ export class RemoteAccessService {
 		);
 		const runtime: WebRtcHostRuntime = {
 			hostWindow,
-			ownsSignalSocket: true,
 			pendingSignalMessages: [],
 			phase: 'waiting',
 			ready: false,
@@ -1675,72 +791,10 @@ export class RemoteAccessService {
 		hostWindow.sendConfig(hostConfig);
 	}
 
-	private openWebRtcReconnectHost(options: {
-		appOrigin: string;
-		attemptId: string;
-		iceServers: RTCIceServer[];
-		reconnectHandle: string;
-		savedSessionExpiresAt: string;
-		sessionId: string;
-		signalingAuthToken: string;
-		signalingSocket: WebSocket;
-		signalingUrl: string;
-	}): number {
-		const hostWindow = this.createWebRtcHostWindow(0);
-		const hostConfig: WebRtcHostConfig = {
-			appOrigin: options.appOrigin,
-			expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
-			iceServers: options.iceServers,
-			reconnect: {
-				attemptId: options.attemptId,
-				protocolVersion: 'v1',
-				reconnectHandle: options.reconnectHandle,
-				savedSessionExpiresAt: options.savedSessionExpiresAt,
-				sessionId: options.sessionId,
-			},
-			relayJoinTokenHash: '',
-			reconnectRegistrationToken: '',
-			roomId: options.sessionId,
-			sessionId: options.sessionId,
-			signalingAuthToken: options.signalingAuthToken,
-			signalingUrl: options.signalingUrl,
-		};
-		this.webRtcHostConfigByWebContentsId.set(
-			hostWindow.webContentsId,
-			hostConfig,
-		);
-		const runtime: WebRtcHostRuntime = {
-			hostWindow,
-			ownsSignalSocket: false,
-			pendingSignalMessages: [],
-			phase: 'waiting',
-			ready: false,
-			signalSocket: options.signalingSocket,
-		};
-		this.webRtcHostRuntimesByWebContentsId.set(
-			hostWindow.webContentsId,
-			runtime,
-		);
-		runtime.removeDestroyedListener = hostWindow.onDestroyed?.(() => {
-			this.handleWebRtcHostDestroyed(hostWindow.webContentsId);
-		});
-		hostWindow.sendConfig(hostConfig);
-		return hostWindow.webContentsId;
-	}
-
 	handleWebRtcHostSignalReady(webContentsId: number): void {
 		const config = this.webRtcHostConfigByWebContentsId.get(webContentsId);
 		const runtime = this.getWebRtcHostRuntime(webContentsId);
 		if (!config || !runtime) return;
-
-		if (config.reconnect) {
-			runtime.ready = true;
-			runtime.hostWindow.sendSignalMessage({
-				roomId: config.roomId,
-				type: 'client-join',
-			});
-			return;
-		}
 
 		this.closeWebRtcSignalSocket(runtime);
 		const socket = new WebSocket(
@@ -1755,7 +809,6 @@ export class RemoteAccessService {
 				JSON.stringify({
 					expiresAt: config.expiresAt,
 					relayJoinTokenHash: config.relayJoinTokenHash,
-					reconnectRegistrationToken: config.reconnectRegistrationToken,
 					roomId: config.roomId,
 					sessionId: config.sessionId,
 					type: 'host-ready',
@@ -1769,23 +822,6 @@ export class RemoteAccessService {
 			try {
 				message = parseSignalingMessage(raw.toString());
 			} catch {
-				return;
-			}
-
-			if (this.isReconnectRelayMessage(message)) {
-				void this.handleWebRtcReconnectRelayMessage(
-					config,
-					socket,
-					message,
-				).catch((error) => {
-					this.handleWebRtcHostStatus(webContentsId, {
-						detail:
-							error instanceof Error
-								? error.message
-								: 'Saved-session reconnect failed.',
-						type: 'error',
-					});
-				});
 				return;
 			}
 
@@ -1832,8 +868,7 @@ export class RemoteAccessService {
 		}
 		if (!socket || socket.readyState !== WebSocket.OPEN) {
 			if (
-				runtime?.ownsSignalSocket &&
-				runtime.pendingSignalMessages.length < 256
+				runtime && runtime.pendingSignalMessages.length < 256
 			) {
 				const pendingBytes = runtime.pendingSignalMessages.reduce(
 					(total, pending) => total + Buffer.byteLength(pending),
@@ -1901,11 +936,7 @@ export class RemoteAccessService {
 			if (runtime.phase === 'pairing') {
 				runtime.phase = 'failed';
 			}
-			const config = this.webRtcHostConfigByWebContentsId.get(webContentsId);
-			if (
-				this.webRtcActivePairingWebContentsId === webContentsId ||
-				config?.reconnect
-			) {
+			if (this.webRtcActivePairingWebContentsId === webContentsId) {
 				if (this.webRtcActivePairingWebContentsId === webContentsId) {
 					this.webRtcStatus = 'error';
 				}
@@ -1955,10 +986,6 @@ export class RemoteAccessService {
 	handleWebRtcHostDestroyed(webContentsId: number): void {
 		const wasActivePairingHost =
 			this.webRtcActivePairingWebContentsId === webContentsId;
-		for (const [attemptId, attempt] of this.webRtcReconnectAttemptsById) {
-			if (attempt.webContentsId === webContentsId)
-				this.closeWebRtcReconnectAttempt(attemptId);
-		}
 		this.closeWebRtcHostRuntime(
 			webContentsId,
 			'WebRTC host renderer was destroyed',
@@ -1979,7 +1006,6 @@ export class RemoteAccessService {
 	}
 
 	private async assertPairingPinForSession(options: {
-		mode: 'lan' | 'webrtc';
 		origin: string;
 		pairingPin: string | undefined;
 		pairingSessionId: string;
@@ -1996,264 +1022,10 @@ export class RemoteAccessService {
 			}
 
 			this.pairingManager.invalidateSession(options.pairingSessionId);
-			if (options.mode === 'webrtc') {
-				await this.rotateWebRtcPairingCode();
-			} else {
-				await this.rotatePairingCode();
-			}
+			await this.rotateWebRtcPairingCode();
 			this.emitStatus();
 			throw new Error(
 				'Too many incorrect PIN attempts. Scan a fresh QR code to pair again.',
-			);
-		}
-	}
-
-	private async assertPairingPinForDevice(options: {
-		deviceId: string;
-		failureMessage?: string;
-		pairingPin: string | undefined;
-	}): Promise<void> {
-		try {
-			assertPairingPin(this.getRemoteAccessSettings(), options.pairingPin, {
-				contextKey: `device:${options.deviceId}`,
-				failureLimit: this.getPinFailureLimit(),
-				failureMessage: options.failureMessage,
-				requireConfigured: true,
-			});
-		} catch (error) {
-			if (!(error instanceof PairingPinFailureLimitError)) {
-				throw error;
-			}
-
-			await this.revokeDevice(options.deviceId);
-			throw new Error(
-				'Too many incorrect PIN attempts. This browser was revoked. Scan a fresh QR code to pair again.',
-			);
-		}
-	}
-
-	private async handleRequest(
-		request: import('node:http').IncomingMessage,
-		response: import('node:http').ServerResponse,
-	): Promise<void> {
-		try {
-			const config = this.config;
-			if (!config) {
-				throw new Error('Remote access is not running.');
-			}
-
-			const requestBaseOrigin = this.getRequestBaseOrigin(
-				request,
-				config.origin,
-			);
-			const requestUrl = new URL(request.url ?? '/', requestBaseOrigin);
-
-			if (request.method === 'GET') {
-				const staticResponse = await this.handleStaticRequest(
-					requestUrl.pathname,
-				);
-				if (staticResponse) {
-					response.writeHead(staticResponse.status, {
-						'cache-control': requestUrl.pathname.startsWith('/assets/')
-							? 'public, max-age=31536000, immutable'
-							: 'no-cache',
-						'content-security-policy':
-							"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self' wss:; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
-						'content-type': staticResponse.contentType,
-						'permissions-policy':
-							'camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=()',
-						'referrer-policy': 'no-referrer',
-						'x-content-type-options': 'nosniff',
-					});
-					response.end(staticResponse.body);
-					return;
-				}
-			}
-
-			if (
-				request.method === 'POST' &&
-				requestUrl.pathname === '/api/pairing/start'
-			) {
-				const requestOrigin = this.assertOrigin(request, requestUrl.origin);
-				const body = await readJsonBody<{
-					deviceName: string;
-					pairingPin?: string;
-					pairingSessionId: string;
-					pairingToken: string;
-					publicKeyPem: string;
-				}>(request);
-				await this.assertPairingPinForSession({
-					mode: 'lan',
-					origin: requestOrigin,
-					pairingPin: body.pairingPin,
-					pairingSessionId: body.pairingSessionId,
-				});
-
-				const result = await this.pairingManager.startRegistration({
-					deviceName: body.deviceName,
-					origin: requestOrigin,
-					pairingSessionId: body.pairingSessionId,
-					pairingToken: body.pairingToken,
-					publicKeyPem: normalizePem(body.publicKeyPem),
-				});
-
-				this.writeResponse(
-					response,
-					jsonResponse({
-						provisionalDeviceId: result.provisionalDeviceId,
-					}),
-				);
-				return;
-			}
-
-			if (
-				request.method === 'POST' &&
-				requestUrl.pathname === '/api/pairing/complete'
-			) {
-				const requestOrigin = this.assertOrigin(request, requestUrl.origin);
-				const body = await readJsonBody<{
-					provisionalDeviceId: string;
-				}>(request);
-
-				const pending = this.pairingManager.consumeRegistration({
-					origin: requestOrigin,
-					provisionalDeviceId: body.provisionalDeviceId,
-				});
-				const device = await this.deviceStore.create({
-					name: pending.deviceName,
-					origin: pending.origin,
-					publicKeyPem: pending.publicKeyPem,
-				});
-
-				this.pairingManager.invalidateSession(pending.pairingSessionId);
-				await this.auditStore.append({
-					action: 'pairing-completed',
-					connectionId: null,
-					deviceId: device.id,
-					deviceName: device.name,
-				});
-				await this.rotatePairingCode();
-				this.emitStatus();
-
-				this.writeResponse(
-					response,
-					jsonResponse({
-						deviceId: device.id,
-						deviceName: device.name,
-					}),
-				);
-				return;
-			}
-
-			if (
-				request.method === 'POST' &&
-				requestUrl.pathname === '/api/auth/options'
-			) {
-				const requestOrigin = this.assertOrigin(request, requestUrl.origin);
-				const body = await readJsonBody<{ deviceId: string }>(request);
-				const device = this.deviceStore.get(body.deviceId);
-				if (!device) {
-					throw new Error('This device is not paired with this host.');
-				}
-				if (device.origin !== requestOrigin) {
-					throw new Error('This device is paired with a different origin.');
-				}
-
-				const challenge = await this.challengeStore.create({
-					deviceId: device.id,
-					origin: device.origin,
-				});
-
-				this.writeResponse(
-					response,
-					jsonResponse({
-						deviceChallenge: challenge.payload,
-						signingInput: challenge.signingInput,
-					}),
-				);
-				return;
-			}
-
-			if (
-				request.method === 'POST' &&
-				requestUrl.pathname === '/api/auth/verify'
-			) {
-				const requestOrigin = this.assertOrigin(request, requestUrl.origin);
-				const body = await readJsonBody<{
-					challengeId: string;
-					deviceId: string;
-					deviceSignature: string;
-					pairingPin?: string;
-				}>(request);
-
-				const device = this.deviceStore.get(body.deviceId);
-				if (!device) {
-					throw new Error('This device is no longer trusted.');
-				}
-				if (device.origin !== requestOrigin) {
-					throw new Error('This device is paired with a different origin.');
-				}
-
-				const challenge = this.challengeStore.consume(
-					body.challengeId,
-					body.deviceId,
-					requestOrigin,
-				);
-				const verifiedDeviceSignature = verifySignature(
-					'sha256',
-					Buffer.from(serializeDeviceChallenge(challenge.payload)),
-					{
-						key: normalizePem(device.publicKeyPem),
-						padding: constants.RSA_PKCS1_PSS_PADDING,
-						saltLength: 32,
-					},
-					Buffer.from(body.deviceSignature, 'base64url'),
-				);
-
-				if (!verifiedDeviceSignature) {
-					throw new Error('The paired device key signature was invalid.');
-				}
-
-				await this.assertPairingPinForDevice({
-					deviceId: device.id,
-					failureMessage: 'Remote PIN was missing or incorrect.',
-					pairingPin: body.pairingPin,
-				});
-
-				await this.deviceStore.updateAuthentication(device.id);
-				await this.auditStore.append({
-					action: 'auth-verified',
-					connectionId: null,
-					deviceId: device.id,
-					deviceName: device.name,
-				});
-
-				const ticket = this.connectionStore.issueTicket(device.id);
-				this.emitStatus();
-
-				this.writeResponse(
-					response,
-					jsonResponse({
-						ticket,
-						websocketUrl: `${requestOrigin.replace(/^https:/, 'wss:')}/ws?ticket=${encodeURIComponent(ticket)}`,
-					}),
-				);
-				return;
-			}
-
-			this.writeResponse(response, jsonResponse({ error: 'Not found' }, 404));
-		} catch (error) {
-			this.writeResponse(
-				response,
-				jsonResponse(
-					{
-						error:
-							error instanceof Error
-								? error.message
-								: 'Unexpected remote access error.',
-					},
-					400,
-				),
 			);
 		}
 	}
@@ -2303,40 +1075,27 @@ export class RemoteAccessService {
 			};
 		}
 
-		if (pathname === '/api/pairing/start') {
+		if (pathname === '/api/devices/enroll') {
 			await this.assertPairingPinForSession({
-				mode: 'webrtc',
 				origin,
 				pairingPin: String(body.pairingPin ?? ''),
 				pairingSessionId: String(body.pairingSessionId ?? ''),
 			});
-			return this.pairingManager.startRegistration({
+			const registration = this.pairingManager.startRegistration({
 				deviceName: String(body.deviceName ?? ''),
 				origin,
 				pairingSessionId: String(body.pairingSessionId ?? ''),
 				pairingToken: String(body.pairingToken ?? ''),
 				publicKeyPem: normalizePem(String(body.publicKeyPem ?? '')),
 			});
-		}
-
-		if (pathname === '/api/pairing/complete') {
 			const pending = this.pairingManager.consumeRegistration({
 				origin,
-				provisionalDeviceId: String(body.provisionalDeviceId ?? ''),
+				provisionalDeviceId: registration.provisionalDeviceId,
 			});
 			const device = await this.deviceStore.create({
 				name: pending.deviceName,
 				origin: pending.origin,
 				publicKeyPem: pending.publicKeyPem,
-			});
-			const reconnectGrant = await this.reconnectGrantStore.issueGrant({
-				deviceId: device.id,
-				label: device.name,
-				lifetime: resolveReconnectGrantLifetime(
-					this.getRemoteAccessSettings().reconnectGrantLifetime,
-				),
-				origin: pending.origin,
-				sessionId: this.createWebRtcSessionId(appOrigin),
 			});
 			this.pairingManager.invalidateSession(pending.pairingSessionId);
 			await this.auditStore.append({
@@ -2345,12 +1104,12 @@ export class RemoteAccessService {
 				deviceId: device.id,
 				deviceName: device.name,
 			});
-			await this.syncWebRtcReconnectAvailability();
 			this.emitStatus();
-			return { deviceId: device.id, deviceName: device.name, reconnectGrant };
+			const ticket = this.connectionStore.issueConnectionTicket(device.id);
+			return { deviceId: device.id, deviceName: device.name, ...ticket };
 		}
 
-		if (pathname === '/api/auth/options') {
+		if (pathname === '/api/devices/challenge') {
 			const device = this.deviceStore.get(String(body.deviceId ?? ''));
 			if (!device) throw new Error('This device is not paired with this host.');
 			if (device.origin !== origin)
@@ -2358,14 +1117,15 @@ export class RemoteAccessService {
 			const challenge = await this.challengeStore.create({
 				deviceId: device.id,
 				origin: device.origin,
+				serverId: this.serverId,
 			});
 			return {
-				deviceChallenge: challenge.payload,
+				challenge: challenge.payload,
 				signingInput: challenge.signingInput,
 			};
 		}
 
-		if (pathname === '/api/auth/verify') {
+		if (pathname === '/api/devices/verify') {
 			const device = this.deviceStore.get(String(body.deviceId ?? ''));
 			if (!device) throw new Error('This device is no longer trusted.');
 			if (device.origin !== origin)
@@ -2387,17 +1147,6 @@ export class RemoteAccessService {
 			);
 			if (!verifiedDeviceSignature)
 				throw new Error('The paired device key signature was invalid.');
-			const reconnectAuthorization = `${origin}\0${device.id}`;
-			const reconnectAuthorizationExpiresAt =
-				this.webRtcReconnectAuthorizedDevices.get(reconnectAuthorization) ?? 0;
-			this.webRtcReconnectAuthorizedDevices.delete(reconnectAuthorization);
-			if (reconnectAuthorizationExpiresAt <= Date.now()) {
-				await this.assertPairingPinForDevice({
-					deviceId: device.id,
-					failureMessage: 'Remote PIN was missing or incorrect.',
-					pairingPin: String(body.pairingPin ?? ''),
-				});
-			}
 			await this.deviceStore.updateAuthentication(device.id);
 			await this.auditStore.append({
 				action: 'auth-verified',
@@ -2405,9 +1154,9 @@ export class RemoteAccessService {
 				deviceId: device.id,
 				deviceName: device.name,
 			});
-			const ticket = this.connectionStore.issueTicket(device.id);
+			const ticket = this.connectionStore.issueConnectionTicket(device.id);
 			this.emitStatus();
-			return { ticket };
+			return ticket;
 		}
 
 		throw new Error('Not found');
@@ -2559,137 +1308,6 @@ export class RemoteAccessService {
 			})
 			.then(() => this.emitStatus());
 		this.emitStatus();
-	}
-
-	private async handleStaticRequest(
-		pathname: string,
-	): Promise<{ body: Buffer; contentType: string; status: number } | null> {
-		const cleanedPath = pathname === '/' ? '/server.html' : pathname;
-		const safeRelative = cleanedPath.replace(/^\/+/, '');
-		const candidateDist = path.resolve(this.rendererDistDir, safeRelative);
-		const candidatePublic = path.resolve(this.publicDir, safeRelative);
-
-		if (candidateDist.startsWith(path.resolve(this.rendererDistDir))) {
-			try {
-				const body = await fs.readFile(candidateDist);
-				return {
-					body,
-					contentType: getContentType(candidateDist),
-					status: 200,
-				};
-			} catch {
-				// Fall through.
-			}
-		}
-
-		if (candidatePublic.startsWith(path.resolve(this.publicDir))) {
-			try {
-				const body = await fs.readFile(candidatePublic);
-				return {
-					body,
-					contentType: getContentType(candidatePublic),
-					status: 200,
-				};
-			} catch {
-				// Fall through.
-			}
-		}
-
-		return null;
-	}
-
-	private async handleUpgrade(
-		request: import('node:http').IncomingMessage,
-		socket: import('node:stream').Duplex,
-		head: Buffer,
-	): Promise<void> {
-		try {
-			const config = this.config;
-			if (!config) {
-				throw new Error('Remote access is not running.');
-			}
-
-			const requestBaseOrigin = this.getRequestBaseOrigin(
-				request,
-				config.origin,
-			);
-			const requestUrl = new URL(request.url ?? '/', requestBaseOrigin);
-			if (requestUrl.pathname !== '/ws') {
-				throw new Error('Unknown WebSocket endpoint.');
-			}
-
-			const ticket = requestUrl.searchParams.get('ticket');
-			if (!ticket) {
-				throw new Error('Missing WebSocket ticket.');
-			}
-
-			const ticketInfo = this.connectionStore.consumeTicket(ticket);
-			const device = this.deviceStore.get(ticketInfo.deviceId);
-			if (!device) {
-				throw new Error('This device is no longer trusted.');
-			}
-			this.assertOrigin(request, device.origin);
-
-			this.wsServer.handleUpgrade(request, socket, head, (websocket) => {
-				const connection = this.connectionStore.register(
-					webSocketPeer(websocket),
-					ticketInfo.connectionId,
-					ticketInfo.deviceId,
-				);
-				void this.auditStore
-					.append({
-						action: 'connection-opened',
-						connectionId: connection.connectionId,
-						deviceId: connection.deviceId,
-						deviceName: this.deviceStore.get(connection.deviceId)?.name ?? null,
-					})
-					.then(() => this.emitStatus());
-				this.attachWebSocket(websocket, connection.connectionId);
-				this.sendSessionList(connection.socket, connection.connectionId);
-				this.emitStatus();
-			});
-		} catch {
-			socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-			socket.destroy();
-		}
-	}
-
-	private attachWebSocket(socket: WebSocket, connectionId: string): void {
-		socket.on('message', (message) => {
-			const connection = this.connectionStore.get(connectionId);
-			if (!connection) {
-				return;
-			}
-
-			const parsed = parseRemoteClientMessage(message.toString());
-			if (!parsed) {
-				this.send(webSocketPeer(socket), {
-					message: 'Invalid remote message.',
-					type: 'error',
-				});
-				return;
-			}
-
-			void this.handleClientMessage(connectionId, parsed);
-		});
-
-		socket.on('close', () => {
-			const connection = this.connectionStore.get(connectionId);
-			this.clearRemoteSizeOverridesForConnection(connectionId);
-			this.clientOperationQueues.delete(connectionId);
-			this.connectionStore.unregister(connectionId);
-			void this.auditStore
-				.append({
-					action: 'connection-closed',
-					connectionId,
-					deviceId: connection?.deviceId ?? null,
-					deviceName: connection
-						? (this.deviceStore.get(connection.deviceId)?.name ?? null)
-						: null,
-				})
-				.then(() => this.emitStatus());
-			this.emitStatus();
-		});
 	}
 
 	private handleClientMessage(
@@ -2977,39 +1595,4 @@ export class RemoteAccessService {
 		socket.send(JSON.stringify(message));
 	}
 
-	private getRequestBaseOrigin(
-		request: import('node:http').IncomingMessage,
-		fallbackOrigin: string,
-	): string {
-		const host = request.headers.host?.trim();
-		if (!host) {
-			return fallbackOrigin;
-		}
-
-		return `https://${host}`;
-	}
-
-	private assertOrigin(
-		request: import('node:http').IncomingMessage,
-		expectedOrigin: string,
-	): string {
-		const origin = request.headers.origin;
-		if (origin !== expectedOrigin) {
-			throw new Error('Origin check failed.');
-		}
-
-		return origin;
-	}
-
-	private writeResponse(
-		response: import('node:http').ServerResponse,
-		payload: { body: Buffer; contentType: string; status: number },
-	): void {
-		response.writeHead(payload.status, {
-			'cache-control': 'no-store',
-			'content-type': payload.contentType,
-			'x-content-type-options': 'nosniff',
-		});
-		response.end(payload.body);
-	}
 }

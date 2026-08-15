@@ -1,4 +1,3 @@
-import { randomBytes } from 'node:crypto'
 import WebSocket from 'ws'
 import type { ByteTransport } from '@terminay/protocol'
 import { createRemoteStreamTransport } from '../../src/shared/remoteStreamTransport'
@@ -14,7 +13,6 @@ export type DesktopReconnectFetch = (
 
 const REQUEST_TIMEOUT_MS = 15_000
 const TOKEN = /^[A-Za-z0-9_-]{16,512}$/u
-const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u
 
 export interface DesktopReconnectTransport {
   /** Exact server origin; no credential material is represented here. */
@@ -28,15 +26,13 @@ export interface DesktopReconnectTransport {
 
 /**
  * Turn a paired Desktop credential into the same short-lived application
- * transport used by a browser reconnect.  The durable grant is never exposed
- * from DesktopDeviceCredentialStore: only its opaque handle and an HMAC proof
- * cross this main-process boundary.
+ * transport used by a browser reconnect. The protected private device key
+ * signs a short-lived server challenge; no second durable credential exists.
  */
 export async function createDesktopReconnectTransport(options: Readonly<{
   readonly origin: string
   readonly store: DesktopDeviceCredentialStore
   readonly fetch?: DesktopReconnectFetch
-  readonly clientNonce?: string
   readonly requestTimeoutMs?: number
 }>): Promise<DesktopReconnectTransport> {
   const origin = normalizeOrigin(options.origin)
@@ -46,25 +42,17 @@ export async function createDesktopReconnectTransport(options: Readonly<{
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 30_000) {
     throw new RangeError('Desktop reconnect request timeout must be between 1 and 30 seconds.')
   }
-  const clientNonce = options.clientNonce ?? randomBytes(24).toString('base64url')
-  if (!TOKEN.test(clientNonce)) throw new TypeError('Desktop reconnect nonce is invalid.')
-
-  // The opaque grant handle is intentionally the only credential-store value
-  // sent to the public challenge endpoint.  It cannot authenticate a request
-  // on its own and is never made available to a renderer.
-  const challengeHandle = await options.store.reconnectHandle(origin)
-  const challenge = await postJson(fetchImplementation, origin, '/protocol/reconnect/challenge', {
-    handle: challengeHandle,
-    clientNonce,
+  const device = await options.store.loadDevice(origin)
+  if (device === null) throw new Error('No paired device exists for this server origin.')
+  const challenge = await postJson(fetchImplementation, origin, '/api/devices/challenge', {
+    deviceId: device.deviceId,
   }, timeoutMs)
-  const normalizedChallenge = parseChallenge(challenge, challengeHandle, clientNonce)
-  const completed = await options.store.proveReconnectChallenge(origin, normalizedChallenge.signingInput)
-  if (completed.handle !== normalizedChallenge.handle) throw new Error('Desktop reconnect credential changed during the challenge.')
-  const completion = await postJson(fetchImplementation, origin, '/protocol/reconnect/complete', {
-    attemptId: normalizedChallenge.attemptId,
-    handle: normalizedChallenge.handle,
-    clientNonce,
-    proof: completed.proof,
+  const normalizedChallenge = parseChallenge(challenge, origin, device.deviceId)
+  const deviceSignature = await options.store.signChallenge(origin, normalizedChallenge.signingInput)
+  const completion = await postJson(fetchImplementation, origin, '/api/devices/verify', {
+    challengeId: normalizedChallenge.challengeId,
+    deviceId: device.deviceId,
+    deviceSignature,
   }, timeoutMs)
   const ticket = parseTicket(completion, origin)
   // createRemoteStreamTransport deliberately parses the fragment in memory and
@@ -111,14 +99,17 @@ async function postJson(fetchImplementation: DesktopReconnectFetch, origin: stri
   }
 }
 
-function parseChallenge(value: unknown, handle: string, clientNonce: string): Readonly<{ attemptId: string; handle: string; signingInput: string }> {
+function parseChallenge(value: unknown, origin: string, deviceId: string): Readonly<{ challengeId: string; signingInput: string }> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('Desktop reconnect returned an invalid challenge.')
   const input = value as Record<string, unknown>
-  if (Object.keys(input).some((key) => !['attemptId', 'handle', 'clientNonce', 'signingInput'].includes(key))) throw new Error('Desktop reconnect returned an invalid challenge.')
-  if (typeof input.attemptId !== 'string' || !ID.test(input.attemptId) || input.handle !== handle || input.clientNonce !== clientNonce || typeof input.signingInput !== 'string' || input.signingInput.length < 1 || input.signingInput.length > 16_384) {
+  if (Object.keys(input).some((key) => !['challenge', 'signingInput'].includes(key)) || typeof input.signingInput !== 'string' || input.signingInput.length < 1 || input.signingInput.length > 16_384 || typeof input.challenge !== 'object' || input.challenge === null || Array.isArray(input.challenge)) {
     throw new Error('Desktop reconnect returned an invalid challenge.')
   }
-  return Object.freeze({ attemptId: input.attemptId, handle, signingInput: input.signingInput })
+  const challenge = input.challenge as Record<string, unknown>
+  if (Object.keys(challenge).some((key) => !['action', 'challengeId', 'deviceId', 'expiresAt', 'issuedAt', 'nonce', 'origin', 'serverId'].includes(key)) || challenge.action !== 'connect' || typeof challenge.challengeId !== 'string' || !TOKEN.test(challenge.challengeId) || challenge.deviceId !== deviceId || challenge.origin !== origin || typeof challenge.serverId !== 'string' || challenge.serverId.length === 0 || typeof challenge.nonce !== 'string' || !TOKEN.test(challenge.nonce) || typeof challenge.expiresAt !== 'string' || !Number.isFinite(Date.parse(challenge.expiresAt)) || Date.parse(challenge.expiresAt) <= Date.now() || typeof challenge.issuedAt !== 'string' || !Number.isFinite(Date.parse(challenge.issuedAt))) {
+    throw new Error('Desktop reconnect returned an invalid challenge.')
+  }
+  return Object.freeze({ challengeId: challenge.challengeId, signingInput: input.signingInput })
 }
 
 function parseTicket(value: unknown, origin: string): Readonly<{ token: string; expiresAt: number; signalingBootstrap?: DesktopSignalingBootstrap }> {

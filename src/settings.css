@@ -1301,10 +1301,30 @@
   line-height: 1.6;
 }
 
-.settings-remote-overview {
+.settings-remote-stack {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.settings-remote-card--exposure {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 20px;
+  padding: 20px;
+  background: linear-gradient(135deg, rgba(79, 209, 180, 0.09), var(--settings-card-bg) 45%);
+}
+
+.settings-remote-exposure-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
   gap: 10px;
+}
+
+.settings-remote-exposure-actions .settings-remote-stat {
+  min-width: 112px;
 }
 
 .settings-remote-stat {
@@ -1340,12 +1360,6 @@
   color: var(--settings-accent);
 }
 
-.settings-remote-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 24px;
-}
-
 .settings-remote-card {
   border: 1px solid var(--settings-border);
   border-radius: 8px;
@@ -1355,10 +1369,6 @@
   flex-direction: column;
   gap: 16px;
   box-shadow: var(--settings-card-shadow);
-}
-
-.settings-remote-card--devices {
-  grid-column: span 2;
 }
 
 .settings-remote-card-header {
@@ -1399,36 +1409,6 @@
   color: var(--settings-text-muted);
   font-size: 12px;
   line-height: 1.4;
-}
-
-.settings-remote-toggle {
-  display: flex;
-  background: rgba(255, 255, 255, 0.04);
-  padding: 3px;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  width: fit-content;
-}
-
-.settings-remote-toggle-btn {
-  all: unset;
-  padding: 6px 14px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--settings-text-muted);
-  border-radius: 7px;
-  cursor: pointer;
-  transition: all 150ms ease;
-}
-
-.settings-remote-toggle-btn:hover {
-  color: var(--settings-text);
-}
-
-.settings-remote-toggle-btn--active {
-  background: var(--settings-accent);
-  color: #0d1117;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 .settings-remote-qr-card {
@@ -1536,21 +1516,6 @@
   white-space: nowrap;
 }
 
-.settings-remote-badge--valid,
-.settings-remote-badge--live {
-  border-color: rgba(63, 185, 80, 0.35);
-  color: #3fb950;
-  background: rgba(63, 185, 80, 0.08);
-}
-
-.settings-remote-badge--expired,
-.settings-remote-badge--revoked,
-.settings-remote-badge--none {
-  border-color: rgba(248, 81, 73, 0.35);
-  color: var(--settings-danger);
-  background: rgba(248, 81, 73, 0.08);
-}
-
 .settings-remote-device-details {
   display: flex;
   flex-wrap: wrap;
@@ -1559,12 +1524,6 @@
   color: var(--settings-text-muted);
   font-size: 12px;
   line-height: 1.4;
-}
-
-.settings-remote-revoke-button {
-  align-self: stretch;
-  min-width: 132px;
-  background: rgba(248, 81, 73, 0.08);
 }
 
 .settings-remote-item strong {
@@ -1577,21 +1536,6 @@
   color: var(--settings-text-muted);
   font-size: 12px;
   line-height: 1.4;
-}
-
-.settings-remote-item--stacked {
-  align-items: flex-start;
-  justify-content: flex-start;
-  flex-direction: column;
-}
-
-.settings-remote-empty-state {
-  padding: 16px;
-  border-radius: 10px;
-  border: 1px dashed var(--settings-border);
-  color: var(--settings-text-muted);
-  background: var(--settings-bg);
-  font-size: 13px;
 }
 
 .settings-switch {
@@ -1854,16 +1798,12 @@
     align-items: flex-start;
   }
 
-  .settings-remote-overview {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .settings-remote-grid {
+  .settings-remote-card--exposure {
     grid-template-columns: 1fr;
   }
 
-  .settings-remote-card--devices {
-    grid-column: span 1;
+  .settings-remote-exposure-actions {
+    justify-content: flex-start;
   }
 
   .settings-remote-device {
@@ -1872,11 +1812,6 @@
 
   .settings-remote-device-badges {
     justify-content: flex-start;
-  }
-
-  .settings-remote-revoke-button {
-    align-self: stretch;
-    width: 100%;
   }
 
   .settings-row-control,

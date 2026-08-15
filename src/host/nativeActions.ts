@@ -40,8 +40,12 @@ async function request(
 /** Desktop consumes pairing fragments in Electron, where durable credentials
  * remain in safeStorage. Browser hosts deliberately fall through to their
  * exact-origin pairing flow. */
-export async function pairDesktopConnection(pairingUrl: string): Promise<boolean> {
-	return (await request({ type: 'connection.pair', pairingUrl })).handled;
+export async function pairDesktopConnection(
+	pairingUrl: string,
+	pairingPin: string,
+): Promise<boolean> {
+	return (await request({ type: 'connection.pair', pairingUrl, pairingPin }))
+		.handled;
 }
 
 /** Clipboard writes are semantic user actions. Desktop owns the privileged

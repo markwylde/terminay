@@ -144,7 +144,6 @@ test('WebRTC host closes the terminal data channel when the desktop revokes the 
     iceServers: [],
     relayJoinTokenHash: 'relay-token-hash',
     roomId: 'room-a12345',
-    signalingAuthToken: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8',
     signalingUrl: 'wss://room-a12345.terminay.com/signal',
   })
 
@@ -218,7 +217,6 @@ test('WebRTC host owns relay registration and sends an offer after client join',
     iceServers: [],
     relayJoinTokenHash: 'relay-token-hash',
     roomId: 'room-a12345',
-    signalingAuthToken: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8',
     signalingUrl: 'wss://room-a12345.terminay.com/signal',
   })
 
@@ -233,8 +231,8 @@ test('WebRTC host owns relay registration and sends an offer after client join',
   const offerMessage = api.signalMessages.find((message) => message.type === 'offer')
   assert.equal(offerMessage.roomId, 'room-a12345')
   assert.equal(offerMessage.sdp.type, 'offer')
-  assert.equal(typeof offerMessage.signature, 'string')
-  assert.equal(typeof offerMessage.nonce, 'string')
+	assert.equal('signature' in offerMessage, false)
+	assert.equal('nonce' in offerMessage, false)
 
   cleanup()
 })
@@ -252,7 +250,6 @@ test('WebRTC host ignores signaling messages for another room', async () => {
     relayJoinTokenHash: 'relay-token-hash',
     roomId: 'room-a12345',
     sessionId: 'session-a',
-    signalingAuthToken: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8',
     signalingUrl: 'wss://session-a.terminay.com/signal',
   })
 
@@ -266,50 +263,32 @@ test('WebRTC host ignores signaling messages for another room', async () => {
   cleanup()
 })
 
-test('WebRTC host verifies a signal before reserving its nonce and rejects a verified replay', async () => {
-  const api = createHostApi()
-  const peer = new MockPeerConnection()
-  const signalingAuthToken = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8'
-  const config = {
+test('WebRTC host accepts relay-admitted answer frames without a derived signaling secret', async () => {
+	const api = createHostApi()
+	const peer = new MockPeerConnection()
+	const config = {
     appOrigin: 'https://session-a.terminay.com',
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
     iceServers: [],
     relayJoinTokenHash: 'relay-token-hash',
     roomId: 'room-a12345',
     sessionId: 'session-a',
-    signalingAuthToken,
-    signalingUrl: 'wss://session-a.terminay.com/signal',
-  }
-  const answer = {
-    nonce: 'same-nonce-is-valid-after-the-forgery',
-    roomId: config.roomId,
-    sdp: { sdp: 'v=0\r\n', type: 'answer' },
-    type: 'answer',
-  }
-  const validAnswer = {
-    ...answer,
-    signature: await signSignal(signalingAuthToken, answer),
-  }
+		signalingUrl: 'wss://session-a.terminay.com/signal',
+	}
+	const answer = {
+		roomId: config.roomId,
+		sdp: { sdp: 'v=0\r\n', type: 'answer' },
+		type: 'answer',
+	}
 
   const cleanup = await runHost(config, {
     api,
     createPeerConnection: () => peer,
   })
 
-  api.emitSignalMessage({
-    ...answer,
-    signature: 'forged-signature',
-  })
-  await waitFor(() => api.statusMessages.some((message) => /unauthenticated/.test(message.detail ?? '')))
-  assert.equal(peer.remoteDescription, undefined)
-
-  api.emitSignalMessage(validAnswer)
-  await waitFor(() => peer.remoteDescription)
-  assert.deepEqual(peer.remoteDescription, answer.sdp)
-
-  api.emitSignalMessage(validAnswer)
-  await waitFor(() => api.statusMessages.some((message) => /replayed/.test(message.detail ?? '')))
-  assert.deepEqual(peer.remoteDescription, answer.sdp)
+	api.emitSignalMessage(answer)
+	await waitFor(() => peer.remoteDescription)
+	assert.deepEqual(peer.remoteDescription, answer.sdp)
 
   cleanup()
 })
@@ -480,40 +459,8 @@ function createHostConfig() {
     relayJoinTokenHash: 'relay-token-hash',
     roomId: 'room-a12345',
     sessionId: 'session-a',
-    signalingAuthToken: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8',
-    signalingUrl: 'wss://session-a.terminay.com/signal',
-  }
-}
-
-function stableJson(value) {
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => stableJson(item)).join(',')}]`
-  }
-  if (value && typeof value === 'object') {
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`
-  }
-  return JSON.stringify(value)
-}
-
-async function signSignal(token, message) {
-  const key = await crypto.subtle.importKey(
-    'raw',
-    Buffer.from(token, 'base64url'),
-    { hash: 'SHA-256', name: 'HMAC' },
-    false,
-    ['sign'],
-  )
-  const canonical = stableJson({
-    nonce: message.nonce,
-    roomId: message.roomId ?? message.sessionId,
-    sdp: message.sdp,
-    type: message.type,
-  })
-  return Buffer.from(await crypto.subtle.sign(
-    'HMAC',
-    key,
-    new TextEncoder().encode(canonical),
-  )).toString('base64url')
+		signalingUrl: 'wss://session-a.terminay.com/signal',
+	}
 }
 
 async function waitFor(predicate, timeoutMs = 1000) {
