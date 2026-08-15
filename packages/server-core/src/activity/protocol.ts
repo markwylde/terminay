@@ -1,21 +1,34 @@
 import { protocolError, type JsonValue } from "@terminay/protocol";
 import type { AuthenticatedClient, CommandRequest, OperationRegistries, OrderedEvent, OrderedEventJournalLike, QueryRequest } from "../types.js";
 import { TerminalActivityService } from "./service.js";
+import type { ActivityClosePreflight, ActivityClosePreflightSession } from "./types.js";
+import type { TerminalForegroundObservation } from "../terminalService/types.js";
 
 /** Stable protocol names for the canonical activity authority. */
 export const ACTIVITY_OPERATIONS = Object.freeze({
   snapshot: "activity.snapshot",
   delta: "activity.delta",
+  closePreflight: "activity.closePreflight",
   acknowledge: "activity.acknowledge",
   event: "activity",
 } as const);
+
+export interface ActivityClosePreflightScope {
+  readonly projectId: string;
+  readonly sessionId?: string;
+}
 
 export interface ActivityOperationRegistryOptions {
   readonly service: TerminalActivityService;
   /** The same journal installed in ServerCore, so activity subscriptions have
    * normal replay and ordering semantics alongside other server events. */
   readonly eventJournal: OrderedEventJournalLike;
-  readonly beforeSnapshot?: (request: QueryRequest) => Promise<void>;
+  /** Bounded exact-session or project-scoped host observation for close
+   * protection. Snapshots never use this hook. */
+  readonly observeForeground?: (
+    request: QueryRequest,
+    scope: ActivityClosePreflightScope,
+  ) => Promise<readonly TerminalForegroundObservation[]>;
 }
 
 export interface ActivityOperationRegistry {
@@ -39,6 +52,7 @@ export function createActivityOperationRegistry(options: ActivityOperationRegist
       queries: {
         [ACTIVITY_OPERATIONS.snapshot]: (request: QueryRequest) => snapshot(request),
         [ACTIVITY_OPERATIONS.delta]: (request: QueryRequest) => delta(request),
+        [ACTIVITY_OPERATIONS.closePreflight]: (request: QueryRequest) => closePreflight(request),
       },
       commands: {
         [ACTIVITY_OPERATIONS.acknowledge]: (request: CommandRequest) => acknowledge(request),
@@ -46,16 +60,82 @@ export function createActivityOperationRegistry(options: ActivityOperationRegist
       policies: {
         [ACTIVITY_OPERATIONS.snapshot]: { scope: "read" },
         [ACTIVITY_OPERATIONS.delta]: { scope: "read" },
+        [ACTIVITY_OPERATIONS.closePreflight]: { scope: "read" },
         [ACTIVITY_OPERATIONS.acknowledge]: { scope: "read" },
       },
     },
     close: unsubscribe,
   };
 
-  async function snapshot(request: QueryRequest): Promise<JsonValue> {
+  function snapshot(request: QueryRequest): JsonValue {
     assertReadable(request);
-    await options.beforeSnapshot?.(request);
     return options.service.snapshotForProject(projectClaim(request)) as unknown as JsonValue;
+  }
+
+  async function closePreflight(request: QueryRequest): Promise<JsonValue> {
+    assertReadable(request);
+    const payload = objectPayload(request.envelope.payload);
+    const projectId = id(payload.projectId, "projectId");
+    const sessionId = payload.sessionId === undefined ? undefined : id(payload.sessionId, "sessionId");
+    const claimedProjectId = projectClaim(request);
+    if (claimedProjectId !== undefined && claimedProjectId !== projectId) {
+      throw protocolError("forbidden", "activity close preflight is outside the authenticated project scope");
+    }
+    const registeredProject = sessionId === undefined ? undefined : options.service.projectIdForSession(sessionId);
+    if (registeredProject !== undefined && registeredProject !== projectId) {
+      throw protocolError("forbidden", "activity close preflight is outside the session project");
+    }
+
+    const observed = options.observeForeground !== undefined;
+    let observations: readonly TerminalForegroundObservation[] = [];
+    try {
+      observations = observed
+        ? await options.observeForeground(request, {
+            projectId,
+            ...(sessionId === undefined ? {} : { sessionId }),
+          })
+        : [];
+    } catch {
+      return limitedPreflightResult(options.service, projectId, sessionId) as unknown as JsonValue;
+    }
+
+    if (observed) {
+      for (const observation of observations) {
+        if (observation.observation !== "limited") continue;
+        try {
+          options.service.ingestSignal({
+            serverId: options.service.serverId,
+            projectId: observation.projectId,
+            sessionId: observation.sessionId,
+          }, { kind: "foreground", observation: "limited" });
+        } catch {
+          // An exited session cannot change close-preflight availability.
+        }
+      }
+    }
+
+    const sessions: ActivityClosePreflightSession[] = observed
+      ? observations.map((observation) => {
+          const committed = options.service.snapshotForProject(observation.projectId).sessions[observation.sessionId];
+          return Object.freeze({
+            sessionId: observation.sessionId,
+            projectId: observation.projectId,
+            observation: observation.observation,
+            foregroundBusy: observation.observation === "available"
+              ? observation.foregroundBusy
+              : observation.foregroundBusy || committed?.foregroundBusy === true,
+          });
+        })
+      : fallbackLimitedSessions(options.service, projectId, sessionId);
+
+    const result: ActivityClosePreflight = Object.freeze({
+      observation: sessions.some((session) => session.observation === "limited") ? "limited" : "available",
+      runningSessionIds: Object.freeze(
+        sessions.filter((session) => session.foregroundBusy).map((session) => session.sessionId).sort(),
+      ),
+      sessions: Object.freeze(sessions),
+    });
+    return result as unknown as JsonValue;
   }
 
   function delta(request: QueryRequest): JsonValue {
@@ -138,6 +218,43 @@ export function createActivityEventProjector(service: TerminalActivityService): 
     if (snapshot !== undefined && (typeof snapshot !== "object" || snapshot === null || Array.isArray(snapshot) || (snapshot as Record<string, unknown>).projectId !== projectId)) return undefined;
     return event;
   };
+}
+
+function limitedPreflightResult(
+  service: TerminalActivityService,
+  projectId: string,
+  sessionId: string | undefined,
+): ActivityClosePreflight {
+  const sessions = fallbackLimitedSessions(service, projectId, sessionId);
+  return Object.freeze({
+    observation: "limited",
+    runningSessionIds: Object.freeze(
+      sessions.filter((session) => session.foregroundBusy).map((session) => session.sessionId).sort(),
+    ),
+    sessions: Object.freeze(sessions),
+  });
+}
+
+function fallbackLimitedSessions(
+  service: TerminalActivityService,
+  projectId: string,
+  sessionId: string | undefined,
+): ActivityClosePreflightSession[] {
+  if (sessionId !== undefined) {
+    const committed = service.snapshotForProject(projectId).sessions[sessionId];
+    return [Object.freeze({
+      sessionId,
+      projectId,
+      observation: "limited" as const,
+      foregroundBusy: committed?.foregroundBusy === true,
+    })];
+  }
+  return Object.values(service.snapshotForProject(projectId).sessions).map((session) => Object.freeze({
+    sessionId: session.sessionId,
+    projectId: session.projectId ?? projectId,
+    observation: "limited" as const,
+    foregroundBusy: session.foregroundBusy,
+  }));
 }
 
 function projectClaimFromContext(claims: unknown): string | undefined {
