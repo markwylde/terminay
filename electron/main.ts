@@ -12,7 +12,6 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
 	type ByteTransport,
-	type JsonValue,
 	type TerminayHostActionRequest,
 	type TerminayHostContext,
 } from '@terminay/protocol';
@@ -1189,7 +1188,6 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 }
 
 async function createServerOwnedTerminalSession(
-	webContentsId: number,
 	projectId: string,
 	cwd?: string,
 	projectRootOrigin?: 'explicit' | 'server-default',
@@ -3292,7 +3290,6 @@ if (process.env.TERMINAY_TEST === '1') {
 					? payload.projectId.trim()
 					: 'desktop';
 			const session = await createServerOwnedTerminalSession(
-				event.sender.id,
 				projectId,
 				cwd,
 			);

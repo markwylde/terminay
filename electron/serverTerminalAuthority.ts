@@ -39,8 +39,6 @@ import {
 	createServerCoreComposition,
 	type ServerCoreComposition,
 } from '../packages/server-core/src/composition';
-import {
-} from '../packages/server-core/src/control/index';
 import { OrderedEventJournal } from '../packages/server-core/src/events';
 import {
 	createDefaultExtensionManagement,
