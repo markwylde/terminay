@@ -36,9 +36,12 @@ configurable keyboard accelerators.
   application lifecycle are coordinated by Electron. Browser hosts provide a
   visible in-page menu bar for File, Edit, View, and Help so shared commands
   remain discoverable without native application menus.
-- In a macOS terminal, **Cmd+V** uses Electron's native paste handling, the
-  same route as Edit > Paste; it must not depend on renderer Clipboard API read
-  permission.
+- In a macOS Desktop terminal, **Cmd+V** uses the bound Electron smart-paste
+  route, not renderer Clipboard API read permission. It inserts copied file
+  paths or text directly and materializes an image-only clipboard item as a
+  temporary PNG whose shell-escaped path is inserted. This capability is
+  available only during an active user gesture; browser terminals retain their
+  exact-origin text paste route.
 - Host capability negotiation selects exactly one application-menu
   presentation. Desktop uses its native menu and the shared renderer does not
   render the browser menu bar. Browser hosts render the in-page menu. On macOS,

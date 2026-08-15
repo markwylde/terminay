@@ -12,6 +12,7 @@ import type { ServerUiHostBridge } from './serverUiHostContract';
 
 const GET_CONTEXT = 'server-ui-host:get-context';
 const REQUEST_ACTION = 'server-ui-host:request-action';
+const READ_TERMINAL_CLIPBOARD = 'server-ui-host:read-terminal-clipboard';
 let contextPromise: Promise<TerminayHostContext> | undefined;
 const context = () =>
 	(contextPromise ??= ipcRenderer
@@ -123,6 +124,13 @@ const bridge: ServerUiHostBridge = Object.freeze({
 		} catch {
 			return undefined;
 		}
+	},
+	// Clipboard reads are intentionally narrower than a general Electron API.
+	// This route is available only while a trusted user gesture is active and
+	// returns terminal-ready text (including a shell-escaped temp image path).
+	readTerminalClipboard: () => {
+		if (!navigator.userActivation.isActive) return Promise.resolve('');
+		return ipcRenderer.invoke(READ_TERMINAL_CLIPBOARD) as Promise<string>;
 	},
 });
 if (

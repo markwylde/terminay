@@ -17,7 +17,11 @@ forwards input, resize, and lifecycle commands through the application protocol.
   not maintain separate shell or cwd fallbacks.
 - Terminals support splits, search, copy/paste including bracketed-paste-aware
   input, dropped paths, guarded external links, resizing, scrollback, zoom, and
-  exit handling.
+  exit handling. On Desktop, a user-initiated terminal paste prefers copied
+  file paths, then text, then converts an image-only clipboard item into a PNG
+  in Terminay's temporary clipboard directory and inserts its shell-escaped
+  path. Clipboard images and their temporary paths are read and created only by
+  Electron; browser clients retain their ordinary exact-origin text paste.
 - On touch devices, a vertical drag over the terminal canvas scrolls xterm's
   retained buffer without emitting terminal input. A tap remains available for
   focus and the custom scrollbar remains an equivalent scroll control.

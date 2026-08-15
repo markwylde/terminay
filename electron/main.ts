@@ -264,6 +264,87 @@ async function openInBrowser(url: unknown): Promise<void> {
 	await shell.openExternal(normalizeExternalHttpsUrl(url));
 }
 
+function shellEscapePath(pathValue: string): string {
+	return `'${pathValue.replace(/'/g, `'\\''`)}'`;
+}
+
+function expandClipboardFormatCandidates(format: string): string[] {
+	const candidates = new Set<string>([format]);
+	if (format.includes('.') && !format.includes('/'))
+		candidates.add(format.replace('.', '/'));
+	if (format.includes('/') && !format.includes('.'))
+		candidates.add(format.replace('/', '.'));
+	return [...candidates];
+}
+
+function readClipboardFormatText(format: string): string | null {
+	for (const candidate of expandClipboardFormatCandidates(format)) {
+		try {
+			const text = clipboard.read(candidate);
+			if (text.length > 0) return text;
+		} catch {
+			// Try the next native format representation.
+		}
+		try {
+			const data = clipboard.readBuffer(candidate);
+			if (data.length > 0) return data.toString('utf8');
+		} catch {
+			// Try the next native format representation.
+		}
+	}
+	return null;
+}
+
+function readClipboardFilePaths(): string[] {
+	const availableFormats = new Set(
+		clipboard.availableFormats().map((format) => format.toLowerCase()),
+	);
+	for (const format of [
+		'public.file-url',
+		'public/file-url',
+		'text/uri-list',
+		'nsfilenamespboardtype',
+	]) {
+		if (!availableFormats.has(format)) continue;
+		const value = readClipboardFormatText(format);
+		if (!value) continue;
+		const paths = value
+			.split(/\r?\n/)
+			.map((entry) => entry.trim())
+			.filter((entry) => entry.length > 0)
+			.map((entry) => {
+				if (!entry.startsWith('file://')) return entry;
+				try {
+					return fileURLToPath(entry);
+				} catch {
+					return entry;
+				}
+			})
+			.filter((entry) => !entry.includes('\0'));
+		if (paths.length > 0) return paths;
+	}
+	return [];
+}
+
+function readClipboardImagePath(): string | null {
+	const imageBytes = clipboard.readImage().toPNG();
+	if (imageBytes.length === 0) return null;
+	const tempDir = path.join(app.getPath('temp'), 'terminay-clipboard');
+	mkdirSync(tempDir, { recursive: true });
+	const filePath = path.join(tempDir, `clipboard-${randomUUID()}.png`);
+	writeFileSync(filePath, imageBytes);
+	return filePath;
+}
+
+function readTerminalClipboard(): string {
+	const filePaths = readClipboardFilePaths();
+	if (filePaths.length > 0) return filePaths.map(shellEscapePath).join(' ');
+	const text = clipboard.readText();
+	if (text.length > 0) return text;
+	const imagePath = readClipboardImagePath();
+	return imagePath === null ? '' : shellEscapePath(imagePath);
+}
+
 function isAppNavigation(url: string): boolean {
 	try {
 		const parsedUrl = new URL(url);
@@ -2926,6 +3007,7 @@ function createWindow(options?: {
 			hostPartitionKey: launch.partitionKey,
 			initialUrl: entryUrl.toString(),
 			preloadPath,
+			readTerminalClipboard,
 			onLifecycleDiagnostic: (event) => {
 				void desktopDiagnostics.record(
 					{

@@ -10,6 +10,7 @@ type NativeHostBridge = Readonly<{
 	getContext(): Promise<TerminayHostContext>;
 	requestAction(request: TerminayHostActionRequest): Promise<unknown>;
 	resolveDroppedFilePath?(file: File): string | undefined;
+	readTerminalClipboard?(): Promise<string>;
 }>;
 
 function bridge(): NativeHostBridge | undefined {
@@ -65,6 +66,27 @@ export async function readClipboardText(): Promise<string> {
 
 export function canReadClipboardText(): boolean {
 	return navigator.clipboard?.readText !== undefined;
+}
+
+/** A Desktop terminal paste can safely read native clipboard formats within a
+ * real user gesture. Browser hosts remain on their exact-origin text route. */
+export async function readTerminalClipboard(): Promise<string> {
+	try {
+		const readDesktopClipboard = bridge()?.readTerminalClipboard;
+		if (readDesktopClipboard !== undefined)
+			return await readDesktopClipboard();
+	} catch {
+		return '';
+	}
+	return readClipboardText();
+}
+
+export function canReadTerminalClipboard(): boolean {
+	return bridge()?.readTerminalClipboard !== undefined || canReadClipboardText();
+}
+
+export function canUseDesktopTerminalClipboard(): boolean {
+	return bridge()?.readTerminalClipboard !== undefined;
 }
 
 /** Desktop-only native File lookup for user-initiated terminal drops. Browser
