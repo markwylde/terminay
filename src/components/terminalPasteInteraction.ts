@@ -3,6 +3,23 @@
  * failure handling separate so a denied or malformed clipboard read never
  * leaves a server-backed terminal input queue in an indeterminate state.
  */
+export function shouldHandleTerminalPasteShortcut(
+  event: Pick<KeyboardEvent, 'altKey' | 'ctrlKey' | 'key' | 'metaKey' | 'shiftKey'>,
+  isMac: boolean,
+): boolean {
+  const key = event.key.toLowerCase()
+  if (key !== 'v' || event.altKey) return false
+
+  // On macOS, leave Cmd+V to Chromium. This is the same native paste route as
+  // Edit > Paste and does not depend on renderer Clipboard API permission.
+  if (isMac && event.metaKey && !event.ctrlKey && !event.shiftKey) return false
+
+  return (
+    (event.ctrlKey && event.shiftKey && !event.metaKey) ||
+    (!isMac && event.metaKey && !event.ctrlKey && !event.shiftKey)
+  )
+}
+
 export async function pasteTerminalClipboard(
   readClipboardText: () => Promise<unknown> | unknown,
   options: {
