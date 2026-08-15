@@ -169,15 +169,15 @@ test('WebRTC host accepts bounded UTF-8 byte-view messages from a non-browser pe
     : label === 'terminal'
       ? terminalChannel
       : new MockDataChannel(label)
-  api.getAssetManifest = async () => ({ assets: [{ path: '/remote-app/bundle/remote.html' }] })
+	api.getUiArchive = async () => fixtureArchive('byte-view-bundle', 1)
 
   const cleanup = await runHost(createHostConfig(), {
     api,
     createPeerConnection: () => peer,
   })
   const encode = (value) => new TextEncoder().encode(JSON.stringify(value))
-  assetChannel.dispatchMessage(encode({ id: 'manifest', type: 'asset:get-manifest' }))
-  await waitFor(() => assetChannel.sent.some((raw) => JSON.parse(raw).id === 'manifest'))
+	assetChannel.dispatchMessage(encode({ archiveFormatVersion: 1, id: 'bundle', type: 'asset:get-bundle' }))
+	await waitFor(() => controlMessages(assetChannel).some((message) => message.id === 'bundle' && message.type === 'asset:bundle-start'))
 
   terminalChannel.dispatchMessage(encode({ ticket: 'ticket-1', type: 'terminal-auth' }))
   await api.waitForAttach()
@@ -185,6 +185,25 @@ test('WebRTC host accepts bounded UTF-8 byte-view messages from a non-browser pe
   await waitFor(() => api.terminalMessages.some(({ message }) => message === 'byte-view-terminal-input'))
 
   cleanup()
+})
+
+test('WebRTC host rejects retired manifest and per-file asset requests', async () => {
+	const api = createHostApi()
+	const assetChannel = new MockDataChannel('asset')
+	const peer = new MockPeerConnection()
+	peer.createDataChannel = (label) => label === 'asset' ? assetChannel : new MockDataChannel(label)
+	let archiveReads = 0
+	api.getUiArchive = async () => {
+		archiveReads += 1
+		return fixtureArchive('unused-bundle', 1)
+	}
+	const cleanup = await runHost(createHostConfig(), { api, createPeerConnection: () => peer })
+	assetChannel.dispatchMessage(JSON.stringify({ id: 'retired-manifest', type: 'asset:get-manifest' }))
+	assetChannel.dispatchMessage(JSON.stringify({ id: 'retired-file', path: '/remote-app/anything.js', type: 'asset:get' }))
+	await waitFor(() => controlMessages(assetChannel).filter((message) => message.type === 'asset:bundle-error').length === 2)
+	assert.equal(archiveReads, 0)
+	assert.equal(controlMessages(assetChannel).every((message) => message.code === 'invalid-request'), true)
+	cleanup()
 })
 
 test('WebRTC host owns relay registration and sends an offer after client join', async () => {
@@ -295,7 +314,7 @@ test('WebRTC host verifies a signal before reserving its nonce and rejects a ver
   cleanup()
 })
 
-test('WebRTC host bounds acknowledged asset chunks without starving API traffic', async () => {
+test('WebRTC host bounds acknowledged binary archive chunks without starving API traffic', async () => {
   const api = createHostApi()
   const assetChannel = new AutoAckDataChannel('asset')
   const apiChannel = new MockDataChannel('api')
@@ -305,12 +324,7 @@ test('WebRTC host bounds acknowledged asset chunks without starving API traffic'
     if (label === 'api') return apiChannel
     return new MockDataChannel(label)
   }
-  api.getAsset = async () => ({
-    bodyBase64: 'A'.repeat(10 * 64 * 1024),
-    contentType: 'application/javascript',
-    hash: 'asset-hash',
-    path: '/remote-app/bundle/assets/large.js',
-  })
+  api.getUiArchive = async () => fixtureArchive('large-bundle', 10 * 64 * 1024)
   api.handleApiRequest = async () => ({ responsive: true })
 
   const cleanup = await runHost(createHostConfig(), {
@@ -318,9 +332,9 @@ test('WebRTC host bounds acknowledged asset chunks without starving API traffic'
     createPeerConnection: () => peer,
   })
   assetChannel.dispatchMessage(JSON.stringify({
-    id: 'large-asset',
-    path: '/remote-app/bundle/assets/large.js',
-    type: 'asset:get',
+		archiveFormatVersion: 1,
+    id: 'large-bundle',
+    type: 'asset:get-bundle',
   }))
   apiChannel.dispatchMessage(JSON.stringify({
     body: {},
@@ -333,58 +347,50 @@ test('WebRTC host bounds acknowledged asset chunks without starving API traffic'
   await waitFor(() => assetChannel.acknowledged.size === 10)
   assert.equal(assetChannel.maxOutstanding <= 4, true)
   assert.deepEqual(
-    assetChannel.sent
-      .map((raw) => JSON.parse(raw))
-      .filter((message) => message.type === 'asset:chunk')
-      .map((message) => message.index),
+		binaryChunkIndexes(assetChannel),
     Array.from({ length: 10 }, (_, index) => index),
   )
 
   cleanup()
 })
 
-test('WebRTC host stops an unacknowledged asset transfer when the browser cancels it', async () => {
+test('WebRTC host stops an unacknowledged archive transfer when the browser cancels it', async () => {
   const api = createHostApi()
   const assetChannel = new MockDataChannel('asset')
   const peer = new MockPeerConnection()
   peer.createDataChannel = (label) => label === 'asset'
     ? assetChannel
     : new MockDataChannel(label)
-  api.getAsset = async () => ({
-    bodyBase64: 'A'.repeat(10 * 64 * 1024),
-    contentType: 'application/javascript',
-    hash: 'asset-hash',
-    path: '/remote-app/bundle/assets/cancel.js',
-  })
+  api.getUiArchive = async () => fixtureArchive('cancel-bundle', 10 * 64 * 1024)
 
   const cleanup = await runHost(createHostConfig(), {
     api,
     createPeerConnection: () => peer,
   })
   assetChannel.dispatchMessage(JSON.stringify({
-    id: 'cancel-asset',
-    path: '/remote-app/bundle/assets/cancel.js',
-    type: 'asset:get',
+		archiveFormatVersion: 1,
+    id: 'cancel-bundle',
+    type: 'asset:get-bundle',
   }))
-  await waitFor(() => assetChannel.sent.filter((raw) => JSON.parse(raw).type === 'asset:chunk').length === 4)
+  await waitFor(() => binaryChunkIndexes(assetChannel).length === 4)
   assetChannel.dispatchMessage(JSON.stringify({
-    id: 'cancel-asset',
-    type: 'asset:cancel',
+		id: 'cancel-bundle',
+    type: 'asset:bundle-cancel',
   }))
   await settle()
 
   assert.equal(
-    assetChannel.sent.filter((raw) => JSON.parse(raw).type === 'asset:chunk').length,
+    binaryChunkIndexes(assetChannel).length,
     4,
   )
   assert.equal(
-    assetChannel.sent.some((raw) => /cancelled/.test(JSON.parse(raw).error ?? '')),
+		controlMessages(assetChannel).some((message) => message.type === 'asset:bundle-error' && /cancelled/.test(message.message ?? '')),
     true,
   )
   cleanup()
 })
 
-test('WebRTC host admits one asset request per peer and rejects request-window multiplication', async () => {
+test('WebRTC host admits one archive request per peer and rejects request-window multiplication', async () => {
   const api = createHostApi()
   const assetChannel = new MockDataChannel('asset')
   const apiChannel = new MockDataChannel('api')
@@ -396,18 +402,11 @@ test('WebRTC host admits one asset request per peer and rejects request-window m
     if (label === 'terminal') return terminalChannel
     return new MockDataChannel(label)
   }
-  let assetReads = 0
-  api.getAsset = async (assetPath) => {
-    assetReads += 1
-    return {
-      bodyBase64: assetPath.endsWith('after-cancel.js')
-        ? 'small-response'
-        : 'A'.repeat(10 * 64 * 1024),
-      contentType: 'application/javascript',
-      hash: 'asset-hash',
-      path: assetPath,
-    }
-  }
+  let archiveReads = 0
+  api.getUiArchive = async () => {
+		archiveReads += 1
+		return fixtureArchive(`bundle-${archiveReads}`, archiveReads === 2 ? 1 : 10 * 64 * 1024)
+	}
   api.handleApiRequest = async () => ({ responsive: true })
 
   const cleanup = await runHost(createHostConfig(), {
@@ -417,18 +416,18 @@ test('WebRTC host admits one asset request per peer and rejects request-window m
   terminalChannel.dispatchMessage(JSON.stringify({ ticket: 'ticket-1', type: 'terminal-auth' }))
   await api.waitForAttach()
   assetChannel.dispatchMessage(JSON.stringify({
-    id: 'accepted-stalled-asset',
-    path: '/remote-app/bundle/assets/stalled.js',
-    type: 'asset:get',
+		archiveFormatVersion: 1,
+    id: 'accepted-stalled-bundle',
+    type: 'asset:get-bundle',
   }))
-  await waitFor(() => assetChannel.sent.filter((raw) => JSON.parse(raw).type === 'asset:chunk').length === 4)
+  await waitFor(() => binaryChunkIndexes(assetChannel).length === 4)
 
-  const rejectedIds = Array.from({ length: 12 }, (_, index) => `excess-asset-${index}`)
+  const rejectedIds = Array.from({ length: 12 }, (_, index) => `excess-bundle-${index}`)
   for (const id of rejectedIds) {
     assetChannel.dispatchMessage(JSON.stringify({
       id,
-      path: `/remote-app/bundle/assets/${id}.js`,
-      type: 'asset:get',
+			archiveFormatVersion: 1,
+      type: 'asset:get-bundle',
     }))
   }
   apiChannel.dispatchMessage(JSON.stringify({
@@ -440,32 +439,35 @@ test('WebRTC host admits one asset request per peer and rejects request-window m
   terminalChannel.dispatchMessage('terminal-under-admission-pressure')
 
   await waitFor(() => rejectedIds.every((id) => assetChannel.sent.some((raw) => {
-    const message = JSON.parse(raw)
-    return message.id === id && /limit reached.*262144/.test(message.error ?? '')
+    return typeof raw === 'string' && (() => {
+			const message = JSON.parse(raw)
+			return message.id === id && message.type === 'asset:bundle-error' && message.code === 'unavailable'
+		})()
   })))
   await waitFor(() => apiChannel.sent.some((raw) => JSON.parse(raw).id === 'api-under-admission-pressure'))
-  assert.equal(assetReads, 1)
+  assert.equal(archiveReads, 1)
   assert.equal(api.terminalMessages.some(({ message }) => message === 'terminal-under-admission-pressure'), true)
   assert.equal(
-    assetChannel.sent.filter((raw) => JSON.parse(raw).type === 'asset:chunk').length,
+    binaryChunkIndexes(assetChannel).length,
     4,
   )
 
   assetChannel.dispatchMessage(JSON.stringify({
-    id: 'accepted-stalled-asset',
-    type: 'asset:cancel',
+		id: 'accepted-stalled-bundle',
+    type: 'asset:bundle-cancel',
   }))
   await waitFor(() => assetChannel.sent.some((raw) => {
-    const message = JSON.parse(raw)
-    return message.id === 'accepted-stalled-asset' && /cancelled/.test(message.error ?? '')
+    if (typeof raw !== 'string') return false
+		const message = JSON.parse(raw)
+		return message.id === 'accepted-stalled-bundle' && message.type === 'asset:bundle-error' && /cancelled/.test(message.message ?? '')
   }))
   assetChannel.dispatchMessage(JSON.stringify({
+		archiveFormatVersion: 1,
     id: 'accepted-after-cancel',
-    path: '/remote-app/bundle/assets/after-cancel.js',
-    type: 'asset:get',
+    type: 'asset:get-bundle',
   }))
-  await waitFor(() => assetChannel.sent.some((raw) => JSON.parse(raw).id === 'accepted-after-cancel'))
-  assert.equal(assetReads, 2)
+  await waitFor(() => controlMessages(assetChannel).some((message) => message.id === 'accepted-after-cancel' && message.type === 'asset:bundle-start'))
+  assert.equal(archiveReads, 2)
 
   cleanup()
 })
@@ -570,8 +572,7 @@ function createHostApi() {
     emitSignalMessage(message) {
       for (const listener of signalListeners) listener(message)
     },
-    getAsset: async () => ({}),
-    getAssetManifest: async () => ({}),
+		getUiArchive: async () => fixtureArchive('default-bundle', 1),
     getConfig: async () => null,
     handleApiRequest: async () => ({}),
     handleTerminalMessage(channelId, message) {
@@ -636,22 +637,41 @@ class AutoAckDataChannel extends MockDataChannel {
 
   send(raw) {
     super.send(raw)
-    const message = JSON.parse(raw)
-    if (message.type !== 'asset:chunk') return
-    this.sentChunks.add(message.index)
+		if (typeof raw === 'string') {
+			const message = JSON.parse(raw)
+			if (message.type === 'asset:bundle-start') this.transferId = message.id
+			return
+		}
+		if (!(raw instanceof ArrayBuffer)) return
+		const index = new DataView(raw).getUint32(4, false)
+		this.sentChunks.add(index)
     this.maxOutstanding = Math.max(
       this.maxOutstanding,
       this.sentChunks.size - this.acknowledged.size,
     )
     setTimeout(() => {
-      this.acknowledged.add(message.index)
+      this.acknowledged.add(index)
       this.dispatchMessage(JSON.stringify({
-        id: message.id,
-        index: message.index,
-        type: 'asset:ack',
+			id: this.transferId,
+			index,
+			type: 'asset:bundle-ack',
       }))
     }, 2)
   }
+}
+
+function fixtureArchive(bundleId, compressedBytes) {
+	return { archiveFormatVersion: 1, bundleId, bytes: new Uint8Array(compressedBytes).fill(65), compressedBytes }
+}
+
+function controlMessages(channel) {
+	return channel.sent.filter((raw) => typeof raw === 'string').map((raw) => JSON.parse(raw))
+}
+
+function binaryChunkIndexes(channel) {
+	return channel.sent
+		.filter((raw) => raw instanceof ArrayBuffer)
+		.map((raw) => new DataView(raw).getUint32(4, false))
 }
 
 class MockPeerConnection extends EventTarget {

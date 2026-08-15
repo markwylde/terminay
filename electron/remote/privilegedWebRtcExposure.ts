@@ -194,8 +194,7 @@ class PrivilegedPeer {
 					service.attachWebRtcTerminal(this.options.id, channelId, ticket),
 				closeTerminal: (channelId, reason) =>
 					service.closeWebRtcTerminal(channelId, reason),
-				getAsset: (path) => service.getWebRtcAsset(path),
-				getAssetManifest: () => service.getWebRtcAssetManifest(),
+				getUiArchive: () => service.getWebRtcUiArchive(),
 				getConfig: async () => service.getWebRtcHostConfig(this.options.id),
 				handleApiRequest: (pathname, body, appOrigin) =>
 					service.handleWebRtcApiRequest(pathname, body, appOrigin),
