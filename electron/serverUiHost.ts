@@ -29,6 +29,8 @@ import {
 
 const SERVER_UI_GET_CONTEXT_CHANNEL = 'server-ui-host:get-context';
 const SERVER_UI_REQUEST_ACTION_CHANNEL = 'server-ui-host:request-action';
+const SERVER_UI_READ_TERMINAL_CLIPBOARD_CHANNEL =
+	'server-ui-host:read-terminal-clipboard';
 const OPAQUE_PARTITION_KEY_PATTERN = /^[a-zA-Z0-9_-]{22,128}$/;
 
 type ServerUiBinding = {
@@ -39,6 +41,7 @@ type ServerUiBinding = {
 		action: TerminayHostActionRequest,
 		context: TerminayHostContext,
 	) => Promise<unknown> | unknown;
+	readTerminalClipboard?: () => Promise<string> | string;
 	window: BrowserWindow;
 	lifecycle: DesktopDocumentLifecycle;
 };
@@ -50,6 +53,7 @@ export type CreateServerUiWindowOptions = {
 	initialUrl: string;
 	context: TerminayHostContext;
 	onHostAction?: ServerUiBinding['onHostAction'];
+	readTerminalClipboard?: ServerUiBinding['readTerminalClipboard'];
 	onLifecycleDiagnostic?: (event: DesktopDocumentLifecycleDiagnostic) => void;
 	preloadPath: string;
 	show?: boolean;
@@ -143,6 +147,10 @@ function installIpcHandlers(): void {
 			return binding.onHostAction?.(action, binding.context);
 		},
 	);
+	ipcMain.handle(SERVER_UI_READ_TERMINAL_CLIPBOARD_CHANNEL, async (event) => {
+		const binding = bindingForEvent(event);
+		return (await binding.readTerminalClipboard?.()) ?? '';
+	});
 }
 
 function isAllowedNavigation(

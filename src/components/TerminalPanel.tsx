@@ -35,9 +35,10 @@ import {
 } from 'react';
 import { useTerminalSettings } from '../hooks/useTerminalSettings';
 import {
-	canReadClipboardText,
+	canReadTerminalClipboard,
+	canUseDesktopTerminalClipboard,
 	openExternalUrl,
-	readClipboardText,
+	readTerminalClipboard,
 	resolveDesktopDroppedFilePath,
 	writeClipboardText,
 } from '../host/nativeActions';
@@ -838,14 +839,20 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				return true;
 			}
 
-			if (shouldHandleTerminalPasteShortcut(event, isMac)) {
+			if (
+				shouldHandleTerminalPasteShortcut(
+					event,
+					isMac,
+					canUseDesktopTerminalClipboard(),
+				)
+			) {
 				event.preventDefault();
 				event.stopPropagation();
 				if (event.type !== 'keydown') {
 					return false;
 				}
 
-				void pasteTerminalClipboard(readClipboardText, {
+				void pasteTerminalClipboard(readTerminalClipboard, {
 					// xterm emits this paste through onData, so both local and
 					// server-backed panels use writePanelInput below. Do not call a
 					// terminal preload write method from this UI-only clipboard path.
@@ -2097,7 +2104,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			return;
 		}
 
-		void pasteTerminalClipboard(readClipboardText, {
+		void pasteTerminalClipboard(readTerminalClipboard, {
 			announceInput: () => {
 				window.dispatchEvent(
 					new CustomEvent('terminay-terminal-user-input', {
@@ -2306,7 +2313,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 						{
 							key: 'terminal-paste',
 							label: 'Paste',
-							disabled: !canReadClipboardText(),
+							disabled: !canReadTerminalClipboard(),
 							onClick: pasteFromContextMenu,
 						},
 						...(terminalContextMenu.link
