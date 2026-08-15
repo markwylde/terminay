@@ -42,7 +42,6 @@ test("standalone release manifest binds package identity and every executable mo
   assert.equal(manifest.packageName, packageJson.name);
   assert.equal(manifest.version, packageJson.version);
   assert.ok(manifest.files.some((file) => file.path === "cli.js"));
-  assert.ok(manifest.files.some((file) => file.path === "mcpEntry.js"));
   await assertStandaloneReleaseIntegrity(distRoot);
 });
 

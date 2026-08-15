@@ -208,8 +208,8 @@ export class ProjectEnvironmentRouter {
 	}
 }
 
-/** Narrow service facade used by terminal, filesystem, Git, observation and
- * MCP composition without duplicating environment-selection logic. */
+/** Narrow service facade used by terminal, filesystem, Git, and observation
+ * composition without duplicating environment-selection logic. */
 export class EnvironmentRoutedProjectService {
 	constructor(
 		private readonly router: ProjectEnvironmentRouter,
@@ -232,7 +232,6 @@ export interface EnvironmentRoutedProjectServices {
 	readonly git: EnvironmentRoutedProjectService;
 	readonly processObservation: EnvironmentRoutedProjectService;
 	readonly agentJournal: EnvironmentRoutedProjectService;
-	readonly mcpBridge: EnvironmentRoutedProjectService;
 	readonly shellDiscovery: EnvironmentRoutedProjectService;
 	readonly infrastructure: EnvironmentRoutedProjectService;
 }
@@ -248,14 +247,13 @@ export function createEnvironmentRoutedProjectServices(router: ProjectEnvironmen
 		git: new EnvironmentRoutedProjectService(router, 'git'),
 		processObservation: new EnvironmentRoutedProjectService(router, 'process-observation'),
 		agentJournal: new EnvironmentRoutedProjectService(router, 'agent-journal'),
-		mcpBridge: new EnvironmentRoutedProjectService(router, 'mcp-bridge'),
 		shellDiscovery: new EnvironmentRoutedProjectService(router, 'shell-discovery'),
 		infrastructure: new EnvironmentRoutedProjectService(router, 'infrastructure'),
 	});
 }
 
 /** Environment passed to a remote shell is allowlisted by its provider. This
- * helper provides the mandatory first fence: server control/MCP/provider
+ * helper provides the mandatory first fence: server-control/provider
  * variables can never cross merely because the Terminay Server inherited
  * them. TERM/COLORTERM should be added afterwards by the remote provider. */
 export function filterRemoteTerminalEnvironment(
