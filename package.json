@@ -131,6 +131,7 @@
 		"test:remote-transport": "node --test scripts/remote-transport-runtime.test.mjs",
 		"test:remote-webrtc-service": "node --test scripts/webrtc-service-runtime.test.mjs",
 		"test:remote-webrtc-host": "node --test scripts/webrtc-host-revocation.test.mjs",
+		"test:server-ui-archive-integration": "node scripts/server-ui-archive-integration-proof.mjs",
 		"test:remote-webrtc": "node --test scripts/webrtc-pairing.test.mjs",
 		"test:remote-lan-exposure": "node --test scripts/embedded-lan-exposure.test.mjs",
 		"test:spike-headless-webrtc": "node --test scripts/headless-webrtc-werift.test.mjs",
