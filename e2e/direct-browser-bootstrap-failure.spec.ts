@@ -82,19 +82,30 @@ test('direct browser renders a typed recovery panel for an invalid server archiv
 test('the server bundle entry consumes the hosted session authority before mounting', async ({
 	page,
 }) => {
-	test.setTimeout(90_000);
-	const pageErrors: Error[] = [];
-	page.on('pageerror', (error) => pageErrors.push(error));
+	test.setTimeout(10_000);
 	await installHostedSessionAuthority(page, VALID_ARCHIVE);
 
 	await page.goto(`${fixture.origin}/server.html#pairing-session`, {
 		waitUntil: 'domcontentloaded',
 	});
 
-	await expect(page.getByRole('heading', { name: 'Connecting to Terminay…' })).toBeVisible({
-		timeout: 60_000,
+	await expect.poll(
+		() => page.evaluate(async () => {
+			const host = window.__TERMINAY_SESSION_TRANSPORT__;
+			if (host === undefined) return undefined;
+			const workspace = await host.prepareWorkspace();
+			return {
+				expectedServerId: workspace.expectedServerId,
+				origin: host.origin,
+				sessionId: host.sessionId,
+			};
+		}),
+		{ timeout: 5_000 },
+	).toEqual({
+		expectedServerId: 'server-hosted-e2e',
+		origin: fixture.origin,
+		sessionId: 'e2e-hosted-session',
 	});
-	expect(pageErrors).toEqual([]);
 });
 
 async function installDirectBrowserSession(

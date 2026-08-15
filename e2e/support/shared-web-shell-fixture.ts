@@ -72,7 +72,7 @@ export async function startSharedWebShellFixture(): Promise<SharedWebShellFixtur
 	await server.listen();
 	await Promise.all([
 		server.warmupRequest('/src/remote/main.tsx'),
-		server.warmupRequest('/src/web/main.tsx'),
+		server.warmupRequest('/src/web/serverEntry.ts'),
 	]);
 	const address = server.httpServer?.address();
 	if (
