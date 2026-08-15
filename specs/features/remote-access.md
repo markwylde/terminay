@@ -255,15 +255,19 @@ form whose session-host delegate is unavailable.
 The complete responsive workspace UI is part of the Terminay Server
 distribution.
 
-- The server publishes a signed/hash-addressed asset manifest that declares its
-  server and protocol compatibility.
-- The session bootstrap fetches assets through an isolated WebRTC asset
-  channel, validates manifest paths, sizes, counts, hashes, and total limits,
-  and installs them into the exact session origin's cache.
-- The service worker serves only a committed, fully verified bundle. A partial
-  or failed update leaves the last valid bundle available.
-- Assets use bounded chunks, cancellation, timeout, retry, and backpressure.
-- Large asset transfer cannot starve terminal control or application commands.
+- The server publishes one reusable binary `tar.gz` UI archive whose root
+  metadata declares its entry and server/protocol compatibility.
+- After authenticating the server, the session bootstrap requests that archive
+  once through the isolated WebRTC asset lane, performs bounded extraction into
+  the exact session-origin cache, and atomically commits the complete bundle.
+- The host does not allowlist generated filenames, request or hash files
+  independently, or understand the server's build layout. It rejects only
+  archive namespace escapes, links, duplicate paths, protected host routes,
+  malformed metadata, and resource-limit violations.
+- A partial or failed update leaves the last complete bundle available.
+- The binary archive stream uses bounded chunks, cancellation, timeout, retry,
+  and backpressure without base64 wrapping.
+- Archive transfer cannot starve terminal control or application commands.
 - Opening the session origin directly runs the exact UI bundled with that
   server.
 - Static session UI responses set same-origin CSP, deny frame/object execution,
@@ -273,7 +277,7 @@ distribution.
   full workspace application.
 
 The stable browser host contains only connection management, pairing/reconnect,
-compatible signaling/WebRTC bootstrap, verified bundle installation, and safe
+compatible signaling/WebRTC bootstrap, bounded archive installation, and safe
 launch/failure UI. After it establishes the authenticated asset channel, the
 selected server supplies the full workspace implementation and matching
 application client. The installed bundle executes in that server's exact
@@ -448,7 +452,7 @@ project paths, filenames, command history, PINs, tokens, or private keys.
   states.
 - An incompatible client can open the direct session origin to use the UI
   bundled with the server.
-- An interrupted bundle install keeps the prior verified bundle and offers a
+- An interrupted bundle install keeps the prior complete bundle and offers a
   retry.
 - Signaling rooms, pending requests, and orphaned peer state expire with
   explicit limits.
