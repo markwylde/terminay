@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" data-cache-version="1786747419" width="1280" height="224" viewBox="0 0 1280 224" role="img" aria-labelledby="title description" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-variant-numeric="tabular-nums">
+<svg xmlns="http://www.w3.org/2000/svg" data-cache-version="1786779320" width="1280" height="224" viewBox="0 0 1280 224" role="img" aria-labelledby="title description" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-variant-numeric="tabular-nums">
   <title id="title">Terminay specification progress</title>
-  <desc id="description">100% complete. 1660 done, 0 remaining, 1660 total checklist items.</desc>
+  <desc id="description">100% complete. 1679 done, 0 remaining, 1679 total checklist items.</desc>
   <defs>
     <linearGradient id="progress" x1="0" x2="1"><stop offset="0" stop-color="#33d17a"/><stop offset="1" stop-color="#58a6ff"/></linearGradient>
     <filter id="shadow" x="-10%" y="-20%" width="120%" height="150%"><feDropShadow dx="0" dy="7" stdDeviation="9" flood-color="#000" flood-opacity=".28"/></filter>
@@ -16,7 +16,7 @@
   <text x="344" y="31" fill="#6e7681" font-size="12">generated from specs/tasks</text>
   <g transform="translate(164 54)">
       <rect width="146" height="82" rx="16" fill="#0f211b" stroke="#1f5f46"/>
-      <text x="20" y="38" fill="#7ee2a8" font-size="30" font-weight="750">1660</text>
+      <text x="20" y="38" fill="#7ee2a8" font-size="30" font-weight="750">1679</text>
       <text x="20" y="64" fill="#8b949e" font-size="12" font-weight="700" letter-spacing="1.8">DONE</text>
     </g>
   <g transform="translate(326 54)">
@@ -26,7 +26,7 @@
     </g>
   <g transform="translate(488 54)">
       <rect width="146" height="82" rx="16" fill="#12171d" stroke="#30363d"/>
-      <text x="20" y="38" fill="#e6edf3" font-size="30" font-weight="750">1660</text>
+      <text x="20" y="38" fill="#e6edf3" font-size="30" font-weight="750">1679</text>
       <text x="20" y="64" fill="#8b949e" font-size="12" font-weight="700" letter-spacing="1.8">TOTAL</text>
     </g>
   <g transform="translate(676 54)">
@@ -36,7 +36,7 @@
     </g>
   <g transform="translate(838 54)">
       <rect width="146" height="82" rx="16" fill="#0f1c27" stroke="#274d69"/>
-      <text x="20" y="38" fill="#79c0ff" font-size="34" font-weight="750">62</text>
+      <text x="20" y="38" fill="#79c0ff" font-size="34" font-weight="750">63</text>
       <text x="20" y="64" fill="#8b949e" font-size="12" font-weight="700" letter-spacing="1.8">ARCHIVED</text>
     </g>
   <g transform="translate(1000 54)">
@@ -45,6 +45,6 @@
       <text x="20" y="64" fill="#8b949e" font-size="12" font-weight="700" letter-spacing="1.8">FEATURE SPECS</text>
     </g>
   <g filter="url(#shadow)"><rect x="164" y="164" width="1080" height="12" rx="6" fill="#1b2128"/><rect x="164" y="164" width="1080" height="12" rx="6" fill="url(#progress)"/></g>
-  <text x="164" y="204" fill="#8b949e" font-size="12">1660 of 1660 checklist items complete</text>
-  <text x="1244" y="204" text-anchor="end" fill="#8b949e" font-size="12">0 active · 62 archived · 24 feature specs</text>
+  <text x="164" y="204" fill="#8b949e" font-size="12">1679 of 1679 checklist items complete</text>
+  <text x="1244" y="204" text-anchor="end" fill="#8b949e" font-size="12">0 active · 63 archived · 24 feature specs</text>
 </svg>
