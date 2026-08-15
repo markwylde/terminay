@@ -3,10 +3,9 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
-const [ci, serverImage, webImage, triggerRelease, decision] = await Promise.all([
+const [ci, serverImage, triggerRelease, decision] = await Promise.all([
   read(".github/workflows/ci.yml"),
   read(".github/workflows/server-image.yml"),
-  read(".github/workflows/web-image.yml"),
   read(".github/workflows/trigger-release.yml"),
   read("specs/decisions/provider-portable-parallel-ci.md"),
 ]);
@@ -94,13 +93,10 @@ test("provider-specific Electron shards load only their compatible artifact acti
   }
 });
 
-test("image publication is versioned-release-only", () => {
+test("server image publication is versioned-release-only", () => {
   assert.doesNotMatch(serverImage, /^ {2}pull_request:/mu);
   assert.doesNotMatch(serverImage, /^ {4}branches:/mu);
   assert.match(serverImage, /^ {4}tags:/mu);
-  assert.match(webImage, /^ {2}workflow_dispatch:/mu);
-  assert.doesNotMatch(webImage, /^ {2}push:/mu);
-  assert.match(triggerRelease, /^ {2}build-web-image:/mu);
-  assert.match(triggerRelease, /ref: \$\{\{ needs\.release\.outputs\.tag \}\}/u);
+  assert.doesNotMatch(triggerRelease, /build-web-image|terminay-web|Dockerfile\.web|web-image-integration/u);
   assert.match(decision, /Native arm64 qualification belongs to the manually triggered release/u);
 });
