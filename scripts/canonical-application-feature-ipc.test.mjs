@@ -14,7 +14,6 @@ const preload = await readFile(
 test('application features have no renderer-owned Electron IPC backdoors', () => {
 	const obsoleteChannels = [
 		'desktop:connection-host:',
-		'desktop:mcp-install-host:',
 		'remote:get-status',
 		'remote:toggle-server',
 		'remote:revoke-device',
@@ -59,7 +58,7 @@ test('obsolete renderer-owned profile and broadcast helpers stay deleted', () =>
 
 test('canonical host routes retain server-owned application operations', () => {
 	assert.match(main, /applicationFeatures:\s*\{/u);
-	assert.match(main, /mcpInstall:\s*\{/u);
+	assert.doesNotMatch(main, /mcpInstall:\s*\{/u);
 	assert.match(main, /remoteAccess:\s*\{/u);
 	assert.match(
 		main,
