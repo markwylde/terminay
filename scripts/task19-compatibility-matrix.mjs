@@ -35,7 +35,6 @@ const featureRows = [
 		spec: 'specs/tasks_completed/10-server-mcp-control.md',
 		evidence: [
 			'apps/terminay-server/test/mcp-server-owned.test.mjs',
-			'scripts/mcp-renderer-free-boundary.test.mjs',
 			'packages/responsive-ui/test/ui.test.mjs',
 			'e2e/mcp-server.spec.ts',
 			'packages/client-core/test/mcp-server-control.test.mjs',
@@ -55,12 +54,10 @@ const featureRows = [
 		spec: 'specs/tasks_completed/16-shared-responsive-server-ui.md',
 		evidence: [
 			'packages/responsive-ui/test/ui.test.mjs',
-			'scripts/shared-responsive-entry.test.mjs',
+			'scripts/canonical-workspace-production-graph.test.mjs',
 			'e2e/desktop-shared-route-visual.spec.ts',
-			'e2e/desktop-remote-shared-shell.spec.ts',
 			'e2e/shared-production-routes.spec.ts',
 			'e2e/shared-responsive-shell.spec.ts',
-			'specs/decisions/evidence/task19-local-remote-desktop-shell.md',
 		],
 		status: {
 			'local-desktop': 'contract',
@@ -68,7 +65,7 @@ const featureRows = [
 			'wide-web': 'contract',
 			'mobile-web': 'contract',
 		},
-		gap: 'All production-mapped shared routes render without overflow in Desktop and wide/touch-mobile Chromium. A local authenticated remote-Desktop handoff rehydrates the production shared terminal route and creates a project-scoped server terminal; hosted deployment and physical-device execution remain operational evidence only.',
+		gap: 'All production-mapped shared routes render without overflow in Desktop and wide/touch-mobile Chromium. Hosted remote session pairing and reconnection are covered by the canonical remote-pairing task; hosted deployment and physical-device execution remain operational evidence only.',
 	},
 	{
 		id: 'workspace',
@@ -92,7 +89,6 @@ const featureRows = [
 		spec: 'specs/tasks_completed/8-server-terminal-service.md',
 		evidence: [
 			'packages/server-core/test/terminal-protocol.test.mjs',
-			'scripts/terminal-panel-migration.test.mjs',
 			'packages/responsive-ui/test/ui.test.mjs',
 			'e2e/shared-production-routes.spec.ts',
 			'specs/decisions/evidence/task19-mobile-chromium-terminal.md',

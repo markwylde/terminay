@@ -59,7 +59,7 @@ headless use and makes UI state part of the authorization path.
 - [x] Remove `control:request` renderer forwarding. Electron's compatibility
   socket now dispatches directly against the server-owned terminal service;
   main, preload, renderer types, and the old internal IPC protocol are covered
-  by `scripts/mcp-renderer-free-boundary.test.mjs`.
+  by the server-owned MCP contract tests.
 
 ### Stdio adapter and installation
 
@@ -68,7 +68,7 @@ headless use and makes UI state part of the authorization path.
   bounded schemas, passes MCP arguments through the typed adapter boundary,
   and preserves typed control error codes in renderer-free results. The
   machine-readable `SERVER_MCP_ENTRY` metadata and
-  `scripts/mcp-renderer-free-boundary.test.mjs` keep this authority explicit.
+  the server-owned MCP contract tests keep this authority explicit.
   A malformed local control response rejects only its originating socket, so
   the next MCP tool call opens a fresh local socket rather than being
   invalidated by the prior socket's late close event; this is covered by

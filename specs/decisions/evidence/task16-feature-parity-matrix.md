@@ -62,10 +62,6 @@ the complete lifecycle plus bounded route states; the Electron matrix proves
 the production renderer body and viewport contract without duplicating App's
 Dockview surface.
 
-`e2e/desktop-remote-shared-shell.spec.ts` additionally starts a second local
-standalone server, consumes its fragment-only one-time application handoff
-through the real Desktop connection menu, verifies the renderer switches to
-that authenticated remote authority, reloads the production shared terminal
-route, and creates another terminal for the remotely selected project. This is
-local deterministic remote-Desktop evidence; it does not claim hosted relay,
-deployment, or physical-device execution.
+Remote pairing is exercised only through the canonical hosted HTTPS session
+origin. The local shared-shell matrix does not create a direct loopback remote
+server or treat a loopback URL as a Desktop pairing target.
