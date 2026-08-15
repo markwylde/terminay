@@ -296,7 +296,11 @@ test('the actual packed standalone artifact is byte-reproducible and its CLI sta
 			],
 			{
 				cwd: packageRoot,
-				env: { ...process.env, TERMINAY_SERVER_VERSION: packageJson.version },
+				env: {
+					...process.env,
+					TERMINAY_SERVER_VERSION: packageJson.version,
+					TERMINAY_REMOTE_PAIRING_PIN: '123456',
+				},
 			},
 		);
 		assert.equal(pairing.stderr, '');
