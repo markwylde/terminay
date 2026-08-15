@@ -334,7 +334,7 @@ test('normal packaged Desktop startup launches the verified bundle through the c
 	assert.match(main, /bindServerUiWindow\(\{/u);
 	assert.match(
 		main,
-		/pathToFileURL\(path\.join\(launch\.assetRoot, launch\.entryPath\)\)/u,
+		/pathToFileURL\(\s*path\.join\(launch\.assetRoot, launch\.entryPath\),?\s*\)/u,
 	);
 	assert.match(main, /serverUiPreload\.cjs/u);
 	assert.doesNotMatch(
