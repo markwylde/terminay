@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
@@ -7,6 +7,14 @@ import test from 'node:test'
 import { build } from 'esbuild'
 
 const { buildServerUiArchive } = await importArchiveBuilder()
+
+test('server UI archive source uses strict-ESM-safe template delimiters', async () => {
+  const source = await readFile(new URL('../electron/remote/serverUiArchive.ts', import.meta.url), 'utf8')
+  // Electron loads the bundled main process as a strict ESM module. The legacy
+  // `\\0` sequence is forbidden inside a template literal there and terminates
+  // the process before it can create its first BrowserWindow.
+  assert.doesNotMatch(source, /`[^\r\n`]*\\0[^\r\n`]*`/u)
+})
 
 test('server UI archive is a deterministic reusable gzip tar with root metadata and arbitrary generated paths', async () => {
   const root = await mkdtemp(join(tmpdir(), 'terminay-server-ui-archive-'))

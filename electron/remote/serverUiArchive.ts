@@ -117,7 +117,9 @@ async function collectFiles(rendererDirectory: string, publicDirectory?: string)
 
 function deriveBundleId(files: readonly ArchiveFile[], entryPath: string, protocolVersion: string): string {
 	const hash = createHash('sha256');
-	hash.update(`terminay-server-ui-archive\0${SERVER_UI_ARCHIVE_FORMAT_VERSION}\0${protocolVersion}\0${entryPath}\0`);
+	// Template literals reject the legacy null escape in the strict ESM parser
+	// used by Electron. Keep the byte-level bundle identity delimiter explicit.
+	hash.update(`terminay-server-ui-archive\x00${SERVER_UI_ARCHIVE_FORMAT_VERSION}\x00${protocolVersion}\x00${entryPath}\x00`);
 	for (const file of files) {
 		hash.update(file.path);
 		hash.update('\0');
@@ -145,7 +147,7 @@ function createTar(files: readonly ArchiveFile[]): Buffer {
 		writeTarText(header, 329, 8, '0000000\0');
 		writeTarText(header, 337, 8, '0000000\0');
 		const checksum = header.reduce((sum, byte) => sum + byte, 0);
-		writeTarText(header, 148, 8, `${checksum.toString(8).padStart(6, '0')}\0 `);
+		writeTarText(header, 148, 8, `${checksum.toString(8).padStart(6, '0')}\x00 `);
 		output.push(header, file.bytes);
 		const padding = (512 - (file.bytes.byteLength % 512)) % 512;
 		if (padding > 0) output.push(Buffer.alloc(padding));
@@ -173,7 +175,7 @@ function writeTarPath(header: Buffer, value: string): void {
 
 function writeTarNumber(header: Buffer, offset: number, length: number, value: number): void {
 	if (!Number.isSafeInteger(value) || value < 0) throw new RangeError('Server UI archive size is invalid.');
-	writeTarText(header, offset, length, `${value.toString(8).padStart(length - 1, '0')}\0`);
+	writeTarText(header, offset, length, `${value.toString(8).padStart(length - 1, '0')}\x00`);
 }
 
 function writeTarText(header: Buffer, offset: number, length: number, value: string): void {
