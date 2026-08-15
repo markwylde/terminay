@@ -1,0 +1,89 @@
+.remote-control-window {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	min-height: 0;
+	overflow: hidden;
+	color: var(--settings-text);
+	background: var(--settings-bg);
+	font-family: var(--settings-font);
+}
+
+.remote-control-window__header {
+	flex: 0 0 auto;
+	padding: 42px 24px 16px;
+	border-bottom: 1px solid var(--settings-border);
+	-webkit-app-region: drag;
+}
+
+.remote-control-window__header h1 {
+	margin: 0;
+	color: var(--settings-text);
+	font-size: 14px;
+	font-weight: 600;
+	line-height: 1.25;
+}
+
+.remote-control-window__header p {
+	margin: 4px 0 0;
+	color: var(--settings-text-muted);
+	font-size: 12px;
+	line-height: 1.45;
+	-webkit-app-region: no-drag;
+}
+
+.remote-control-window__body {
+	min-height: 0;
+	flex: 1;
+	overflow: auto;
+	padding: 20px 24px 24px;
+	-webkit-app-region: no-drag;
+}
+
+.remote-control-window .shared-connections {
+	--connection-accent: var(--settings-accent);
+	--connection-surface: var(--settings-card-bg);
+	--connection-surface-hover: var(--settings-nav-hover);
+	--connection-muted: var(--settings-text-muted);
+	--connection-border: var(--settings-border);
+	font-family: var(--settings-font);
+}
+
+.remote-control-window .shared-connections__empty-title {
+	color: var(--settings-text);
+}
+
+.remote-control-window .shared-connection-card {
+	background: var(--settings-card-bg);
+	border-color: var(--settings-border);
+}
+
+.remote-control-window .shared-connections__action-panel input,
+.remote-control-window .shared-connections__action-panel textarea {
+	border-color: var(--settings-input-border);
+	background: var(--settings-input-bg);
+	color: var(--settings-text);
+}
+
+.remote-control-window .shared-connections__action-panel input:focus,
+.remote-control-window .shared-connections__action-panel textarea:focus {
+	border-color: var(--settings-accent);
+	background: var(--settings-input-bg);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--settings-accent) 20%, transparent);
+}
+
+.remote-control-window .shared-connections__profile-actions button:first-child,
+.remote-control-window .shared-connections__action-panel-actions button[type='submit'] {
+	border-color: var(--settings-accent);
+	background: var(--settings-accent);
+	color: #fff;
+}
+
+.connected-web-auxiliary-dialog--remote-control .remote-control-window__header {
+	display: none;
+}
+
+.connected-web-auxiliary-dialog--remote-control {
+	width: min(720px, 100%);
+	height: min(640px, calc(100dvh - 48px));
+}
