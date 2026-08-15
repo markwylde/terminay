@@ -74,34 +74,34 @@ hashes. Other tar members are regular server UI files.
 
 ### 2. Make the browser host a generic archive installer
 
-- [ ] Stream the archive from the authenticated Terminay Server, decompress it
+- [x] Stream the archive from the authenticated Terminay Server, decompress it
   with browser gzip support, unpack it, and stage its files in Cache Storage
   beneath a generated `/remote-app/<bundle-id>/` namespace.
-- [ ] Treat all files supplied by the authenticated server as authoritative for
+- [x] Treat all files supplied by the authenticated server as authoritative for
   that exact session subdomain. Remove filename allowlists, Vite-layout
   knowledge, per-file transfer requests, per-file SHA-256 requirements, and
   canonical `remote.html`/`server.html` assumptions.
-- [ ] Retain only containment and denial-of-service boundaries: reject absolute
+- [x] Retain only containment and denial-of-service boundaries: reject absolute
   paths, parent traversal, links, duplicate normalized paths, protected
   bootstrap/signaling routes, excessive compressed/expanded bytes, excessive
   entries, and excessive individual entries.
-- [ ] Atomically activate the archive only after complete extraction and valid
+- [x] Atomically activate the archive only after complete extraction and valid
   metadata. Cancellation, disconnect, malformed tar/gzip, unsupported archive
   version, and resource-limit failure retain the previous complete bundle and
   render a precise recovery message.
-- [ ] Launch the metadata-declared relative entry without interpreting its
+- [x] Launch the metadata-declared relative entry without interpreting its
   filename. Refresh must recreate the authenticated transport owner before
   executing cached server code; subresources may continue to be served from
   the exact session-origin cache.
 
 ### 3. Remove obsolete protocol and repository coupling
 
-- [ ] Delete the old WebRTC asset manifest, descriptor, response-hash,
+- [x] Delete the old WebRTC asset manifest, descriptor, response-hash,
   per-file request, and filename-allowlist protocol from Terminay and
   `terminay.com` once the archive path is deployed. This does not change the
   ordinary direct-HTTPS static bundle routes, which remain normal browser
   resource delivery rather than a WebRTC installation protocol.
-- [ ] Replace `terminay.com` CI's checkout/build of the private Terminay
+- [x] Replace `terminay.com` CI's checkout/build of the private Terminay
   repository with an in-repository fixture server that implements the public
   archive protocol and supplies a small executable archive.
 - [x] Remove Terminay source pins, deploy keys/tokens, source-host assumptions,
@@ -116,7 +116,7 @@ hashes. Other tar members are regular server UI files.
 
 - [ ] A real Terminay Server transfers its complete UI as one binary `tar.gz`
   exchange and the browser launches the declared entry on Chromium and Firefox.
-- [ ] A fixture archive with arbitrary nested generated filenames launches
+- [x] A fixture archive with arbitrary nested generated filenames launches
   without a manager change, proving the host does not understand build layout.
 - [ ] Tests cover fragmented binary delivery, backpressure, cancellation,
   malformed gzip/tar, traversal, links, duplicate paths, every resource limit,
