@@ -144,28 +144,79 @@ test("project claims receive only their activity snapshot, replay, and live even
   }
 });
 
-test("activity snapshot waits for the host foreground observation fence", async () => {
+test("activity snapshot returns committed state without waiting for host observation", async () => {
   const service = new TerminalActivityService({ serverId: identity.serverId });
-  let release;
-  const observed = new Promise((resolve) => { release = resolve; });
+  let observeCalls = 0;
   const registry = createActivityOperationRegistry({
     service,
     eventJournal: new OrderedEventJournal(),
-    beforeSnapshot: async () => {
-      await observed;
-      service.ingestSignal(identity, { kind: "foreground", busy: true, processName: "sleep" });
+    observeForeground: async () => {
+      observeCalls += 1;
+      await new Promise(() => {});
+      return [];
     },
   });
   service.register(identity);
+  service.ingestSignal(identity, { kind: "foreground", busy: true, processName: "sleep" });
 
-  const pending = registry.operations.queries[ACTIVITY_OPERATIONS.snapshot](query(ACTIVITY_OPERATIONS.snapshot, {}));
-  let settled = false;
-  void pending.then(() => { settled = true; });
-  await Promise.resolve();
-  assert.equal(settled, false);
-  release();
-
-  const snapshot = await pending;
+  const snapshot = registry.operations.queries[ACTIVITY_OPERATIONS.snapshot](query(ACTIVITY_OPERATIONS.snapshot, {}));
   assert.equal(snapshot.sessions[identity.sessionId].foregroundBusy, true);
+  assert.equal(snapshot.sessions[identity.sessionId].foregroundObservation, "available");
+  assert.equal(observeCalls, 0);
   registry.close();
+});
+
+test("activity close preflight observes only the addressed session and reports limited state", async () => {
+  const service = new TerminalActivityService({ serverId: identity.serverId });
+  const observed = [];
+  const registry = createActivityOperationRegistry({
+    service,
+    eventJournal: new OrderedEventJournal(),
+    observeForeground: async (_request, scope) => {
+      observed.push(scope);
+      return [{
+        sessionId: scope.sessionId ?? "missing",
+        projectId: scope.projectId,
+        observation: "limited",
+        foregroundBusy: false,
+        observationError: "timeout",
+      }];
+    },
+  });
+  service.register(identity);
+  try {
+    const result = await registry.operations.queries[ACTIVITY_OPERATIONS.closePreflight](query(ACTIVITY_OPERATIONS.closePreflight, {
+      projectId: identity.projectId,
+      sessionId: identity.sessionId,
+    }));
+    assert.deepEqual(observed, [{ projectId: identity.projectId, sessionId: identity.sessionId }]);
+    assert.equal(result.observation, "limited");
+    assert.deepEqual(result.runningSessionIds, []);
+    assert.equal(result.sessions[0].observation, "limited");
+    assert.equal(service.get(identity).foregroundObservation, "limited");
+  } finally {
+    registry.close();
+  }
+});
+
+test("activity close preflight reports limited state when observation throws", async () => {
+  const service = new TerminalActivityService({ serverId: identity.serverId });
+  const registry = createActivityOperationRegistry({
+    service,
+    eventJournal: new OrderedEventJournal(),
+    observeForeground: async () => {
+      throw new Error("host observation failed");
+    },
+  });
+  service.register(identity);
+  try {
+    const result = await registry.operations.queries[ACTIVITY_OPERATIONS.closePreflight](query(ACTIVITY_OPERATIONS.closePreflight, {
+      projectId: identity.projectId,
+      sessionId: identity.sessionId,
+    }));
+    assert.equal(result.observation, "limited");
+    assert.equal(result.sessions[0].observation, "limited");
+  } finally {
+    registry.close();
+  }
 });

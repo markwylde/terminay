@@ -66,6 +66,7 @@ test("foreground PTY lifecycle reaches the exact canonical activity session", as
     authority: "structured",
     claimed: false,
     foregroundBusy: true,
+    foregroundObservation: "available",
     projectId: "project-1",
     sessionId: "terminal-1",
     source: "structured:foreground",

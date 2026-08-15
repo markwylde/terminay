@@ -133,6 +133,23 @@ completion signals, acknowledgement, output timers, or activity-indicator
 settings. Clients use it solely for destructive close protection and do not
 infer it from output.
 
+The snapshot also identifies foreground observation as `available` or
+`limited`. `limited` means the exact environment cannot provide a current safe
+foreground answer; it does not mean that the terminal is idle.
+
+Foreground-process observation is exact-session, bounded derived state. Each
+session owns its own observation work: at most one sample executes and one
+latest requested sample remains pending. Continued output replaces obsolete
+pending work and never requires a terminal to become silent before the current
+state can settle. A slow, unavailable, or capability-limited observation is an
+explicit limited state for that session; it cannot delay activity, commands,
+workspace mutations, or close protection for another session. Activity
+snapshots return the latest committed projection and do not wait for live host
+observation. Destructive close protection obtains a bounded fresh observation
+only for its addressed session. If that sample cannot complete, it reports the
+limited state and uses the close flow's explicit safe confirmation rather than
+silently treating output or stale absence as proof that the shell is idle.
+
 ## Fallback interpretation
 
 Fallback interpretation remains provider-aware only to avoid known false
@@ -217,9 +234,13 @@ cursor while omitting sessions owned by other projects.
 The protocol exposes this projection as `activity.snapshot` and
 `activity.delta`, emits canonical `activity` events on the normal ordered event
 journal, and accepts `activity.acknowledge` only with the exact immutable
-`projectId` and `sessionId`. This is the client boundary used by both browser
-and Desktop hosts; no `terminal:activity` IPC message is part of the server
-contract.
+`projectId` and `sessionId`. Destructive close protection uses
+`activity.closePreflight` with that same exact project identity and, for a
+terminal close, the exact session identity. The preflight returns a bounded
+fresh observation for only those sessions; `activity.snapshot` and
+`activity.delta` remain committed projection reads and never wait for live host
+inspection. This is the client boundary used by both browser and Desktop hosts;
+no `terminal:activity` IPC message is part of the server contract.
 
 The server reducer fences every session to its first immutable project binding.
 An activity or acknowledgement request that names a different project is

@@ -21,8 +21,11 @@ export type TerminalActivitySignal =
   | { readonly kind: "command"; readonly phase: CommandPhase; readonly exitCode?: number }
   | { readonly kind: "notification"; readonly title?: string; readonly body?: string }
   | { readonly kind: "bell" }
-  | { readonly kind: "foreground"; readonly busy: boolean; readonly processName: string }
+  | { readonly kind: "foreground"; readonly observation: "limited" }
+  | { readonly kind: "foreground"; readonly observation?: "available"; readonly busy: boolean; readonly processName: string }
   | { readonly kind: "userInput" };
+
+export type ForegroundObservationState = "available" | "limited";
 
 export type TerminalActivityStatus = "working" | "idle";
 
@@ -59,6 +62,8 @@ export interface TerminalActivitySessionSnapshot {
   readonly projectId?: string;
   /** True only while a process other than the spawned shell owns the PTY foreground group. */
   readonly foregroundBusy: boolean;
+  /** `limited` means this session cannot currently provide a safe foreground answer. */
+  readonly foregroundObservation: ForegroundObservationState;
   readonly status: TerminalActivityStatus;
   readonly attention: boolean;
   readonly acknowledged: boolean;
@@ -76,6 +81,19 @@ export interface ActivitySnapshot {
   readonly revision: number;
   readonly cursor: string;
   readonly sessions: Readonly<Record<string, TerminalActivitySessionSnapshot>>;
+}
+
+export interface ActivityClosePreflightSession {
+  readonly sessionId: string;
+  readonly projectId: string;
+  readonly observation: ForegroundObservationState;
+  readonly foregroundBusy: boolean;
+}
+
+export interface ActivityClosePreflight {
+  readonly observation: ForegroundObservationState;
+  readonly runningSessionIds: readonly string[];
+  readonly sessions: readonly ActivityClosePreflightSession[];
 }
 
 export type ActivityEventType = "activity.changed" | "activity.removed";

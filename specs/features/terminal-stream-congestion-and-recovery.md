@@ -83,6 +83,14 @@ that leaves status, attention, acknowledgement, authority, and source
 unchanged does not advance the public activity revision or `updatedAt`.
 Semantic transitions remain ordered and replayable.
 
+PTY-derived host observation is also session-owned bounded work. A terminal's
+continued output can supersede that terminal's pending foreground-process
+sample, but it cannot create an unbounded observation backlog or require
+output silence before a current sample completes. Slow process observation is
+contained to its exact session and becomes an explicit limited state; it never
+starves application control, workspace operations, or a close request for a
+different terminal.
+
 Every non-terminal subscription event uses a separately bounded projection
 delivery class. Full snapshots use stable semantic keys so a pending value for
 the same subscription and entity supersedes its obsolete predecessor. Ordered
@@ -154,6 +162,10 @@ endpoint.
   interactive terminal or workspace command on the same connection.
 - Multiple noisy terminals receive fair progress; none can starve control
   traffic or another attachment indefinitely.
+- A continuously outputting or slow-to-observe terminal cannot delay closing an
+  unrelated idle terminal. The target close either observes its own foreground
+  state within a bounded deadline or presents an explicit safe limited-state
+  confirmation.
 - Congestion across UTF-8, CSI, OSC, DCS, alternate-screen, resize, and
   synchronized-output boundaries restores a presentation equivalent to the
   canonical checkpoint and later live stream.

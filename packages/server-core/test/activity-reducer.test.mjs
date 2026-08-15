@@ -56,6 +56,11 @@ test("provider activity has precedence over structured and raw fallback", () => 
   assert.equal(foreground.snapshot.foregroundBusy, true);
   const shell = reducer.applySignal("session-a", { kind: "foreground", busy: false, processName: "zsh" }, { now: 5 });
   assert.equal(shell.snapshot.foregroundBusy, false);
+  assert.equal(shell.snapshot.foregroundObservation, "available");
+
+  const limited = reducer.applySignal("session-a", { kind: "foreground", observation: "limited" }, { now: 5.5 });
+  assert.equal(limited.snapshot.foregroundBusy, false);
+  assert.equal(limited.snapshot.foregroundObservation, "limited");
 
   // Reordered and cross-run updates are fenced.
   assert.equal(reducer.applyProviderActivity("session-a", { provider: "codex", state: "working", sequence: 3 }, { now: 6 }), undefined);

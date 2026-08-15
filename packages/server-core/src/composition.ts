@@ -11,15 +11,17 @@ import { TerminalPresentationCheckpointAuthority } from "./terminalService/prese
 import {
   TerminalService,
 } from "./terminalService/service.js";
+import { TerminalServiceError } from "./terminalService/errors.js";
 import {
   createMacroOperationRegistry,
   type MacroOperationRegistry,
 } from "./macroService/protocol.js";
 import type { MacroRepository, MacroRunner } from "./macroService/index.js";
 import type { MacroExecutionEnvironment, MacroTarget } from "./macroService/types.js";
-import type {
-  PtyFactory,
-  TerminalServiceOptions,
+import {
+  TERMINAL_CLOSE_OBSERVATION_TIMEOUT_MS,
+  type PtyFactory,
+  type TerminalServiceOptions,
 } from "./terminalService/types.js";
 import {
   TerminalLaunchResolver,
@@ -61,15 +63,15 @@ import { createExtensionOperationHandlers, type ExtensionOperationOptions } from
  * process observation is available. It deliberately remains outside the
  * terminal protocol: it is input to server-owned agent reconciliation, not
  * terminal output or client-visible state.
- *
- * TerminalService does not emit this signal yet. Keeping the composition
- * boundary explicit means the later terminal-adapter change has one
- * authority to call and does not need to import activity or agent services.
  */
 export interface TerminalForegroundProcessLifecycle {
   readonly foregroundProcessChanged?: (
     identity: import("./terminalService/types.js").TerminalIdentity,
-    event: Readonly<{ processName: string; shellForeground: boolean }>,
+    event: Readonly<{
+      processName: string;
+      shellForeground: boolean;
+      observation?: "available" | "limited";
+    }>,
   ) => void;
 }
 
@@ -376,12 +378,61 @@ export function createServerCoreComposition(
     : createActivityOperationRegistry({
         service: options.activity,
         eventJournal,
-        beforeSnapshot: (request) => terminal.refreshForegroundProcesses(
-          typeof request.context.claims === "object" && request.context.claims !== null && !Array.isArray(request.context.claims) && typeof request.context.claims.projectId === "string"
-            ? request.context.claims.projectId
-            : undefined,
-          request.context.signal,
-        ),
+        observeForeground: async (request, scope) => {
+          const readScope = request.context.authScope === "none" ? "none" as const : "read" as const;
+          const authorization = {
+            serverId: terminal.serverId,
+            projectId: scope.projectId,
+            clientId: request.context.clientId,
+            scope: readScope,
+          };
+          try {
+            if (scope.sessionId !== undefined) {
+              const snapshot = terminal.getSession(scope.sessionId);
+              if (snapshot === undefined || snapshot.status !== "running") {
+                return [{
+                  sessionId: scope.sessionId,
+                  projectId: scope.projectId,
+                  observation: "available" as const,
+                  foregroundBusy: false,
+                }];
+              }
+              return [await terminal.observeForegroundProcess(
+                scope.sessionId,
+                {
+                  ...authorization,
+                  projectId: snapshot.projectId,
+                  sessionId: scope.sessionId,
+                },
+                TERMINAL_CLOSE_OBSERVATION_TIMEOUT_MS,
+              )];
+            }
+            return [...await terminal.observeProjectForegroundProcesses(
+              scope.projectId,
+              authorization,
+              TERMINAL_CLOSE_OBSERVATION_TIMEOUT_MS,
+            )];
+          } catch (error) {
+            if (error instanceof TerminalServiceError && (error.code === "session_not_found" || error.code === "session_exited" || error.code === "session_interrupted")) {
+              return [{
+                sessionId: scope.sessionId ?? "",
+                projectId: scope.projectId,
+                observation: "available" as const,
+                foregroundBusy: false,
+              }].filter((observation) => observation.sessionId.length > 0);
+            }
+            if (scope.sessionId !== undefined) {
+              return [{
+                sessionId: scope.sessionId,
+                projectId: scope.projectId,
+                observation: "limited" as const,
+                foregroundBusy: false,
+                observationError: "failed" as const,
+              }];
+            }
+            return [];
+          }
+        },
       });
   const agentOperations = options.agents === undefined
     ? undefined
@@ -672,11 +723,13 @@ export function composeActivityLifecycle(
       // cross the terminal event stream or any renderer-controlled boundary.
       if (activity !== undefined) {
         try {
-          activity.ingestSignal(identity, {
-            kind: "foreground",
-            busy: !event.shellForeground,
-            processName: event.processName,
-          });
+          activity.ingestSignal(identity, event.observation === "limited"
+            ? { kind: "foreground", observation: "limited" }
+            : {
+                kind: "foreground",
+                busy: !event.shellForeground,
+                processName: event.processName,
+              });
         } catch {
           // Foreground observation cannot change PTY supervision.
         }

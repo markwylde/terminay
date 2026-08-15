@@ -16,10 +16,11 @@ import type {
   TerminalExitEvent,
   TerminalExitMetadata,
   TerminalExitReason,
+  TerminalForegroundObservation,
+  TerminalIdentity,
   TerminalInactivityOptions,
   TerminalInactivityTimer,
   PtyForegroundProcess,
-  TerminalIdentity,
   TerminalOutputEvent,
   TerminalServiceLimits,
   TerminalSessionLifecycle,
@@ -30,6 +31,7 @@ import type {
   TerminalSubscriptionOptions,
   Unsubscribe,
 } from "./types.js";
+import { TERMINAL_CLOSE_OBSERVATION_TIMEOUT_MS } from "./types.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const DEFAULT_MAX_SESSIONS = 256;
@@ -81,6 +83,7 @@ interface MutableSession {
   pid?: number;
   exit?: TerminalExitMetadata;
   pendingExitReason?: TerminalExitReason;
+  lastForeground?: PtyForegroundProcess;
   dataUnsubscribe?: Unsubscribe;
   exitUnsubscribe?: Unsubscribe;
   foregroundProcessUnsubscribe?: Unsubscribe;
@@ -297,12 +300,86 @@ export class TerminalService {
     return () => this.inputListeners.delete(listener);
   }
 
-  /** Fence an activity snapshot against current host foreground state. */
-  async refreshForegroundProcesses(projectId?: string, signal?: AbortSignal): Promise<void> {
-    const refreshes = [...this.sessionsById.values()]
-      .filter((session) => session.status === "running" && (projectId === undefined || session.identity.projectId === projectId))
-      .map((session) => session.process?.refreshForegroundProcess?.(signal));
-    await Promise.all(refreshes);
+  /** Observe one exact session's current foreground process. Snapshots never
+   * call this; destructive close protection does, with a named deadline. */
+  async observeForegroundProcess(
+    session: string | TerminalIdentity,
+    authorization?: TerminalAuthorization,
+    timeoutMs = TERMINAL_CLOSE_OBSERVATION_TIMEOUT_MS,
+    signal?: AbortSignal,
+  ): Promise<TerminalForegroundObservation> {
+    const mutable = this.requireSession(session);
+    this.authorize(mutable, authorization, "read");
+    const { sessionId, projectId } = mutable.identity;
+    const lastBusy = mutable.lastForeground === undefined ? false : !mutable.lastForeground.shellForeground;
+    const result = (
+      observation: TerminalForegroundObservation["observation"],
+      foregroundBusy: boolean,
+      observationError?: TerminalForegroundObservation["observationError"],
+    ): TerminalForegroundObservation => Object.freeze({
+      sessionId,
+      projectId,
+      observation,
+      foregroundBusy,
+      ...(observationError === undefined ? {} : { observationError }),
+    });
+    if (mutable.status !== "running") return result("available", false);
+    if (mutable.process?.refreshForegroundProcess === undefined) {
+      return result("limited", lastBusy, "unavailable");
+    }
+    const controller = new AbortController();
+    const onOuterAbort = (): void => {
+      controller.abort(signal?.reason ?? new Error("foreground observation aborted"));
+    };
+    if (signal?.aborted) return result("limited", lastBusy, "failed");
+    signal?.addEventListener("abort", onOuterAbort, { once: true });
+    let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
+    try {
+      // Arm the deadline before host inspection so a synchronous probe cannot
+      // starve the timer callback.
+      const timeoutPromise = new Promise<never>((_resolve, reject) => {
+        timer = globalThis.setTimeout(() => {
+          const error = new Error("foreground observation timeout");
+          reject(error);
+          controller.abort(error);
+        }, timeoutMs);
+      });
+      timeoutPromise.catch(() => undefined);
+      const refreshPromise = Promise.resolve(mutable.process.refreshForegroundProcess(controller.signal));
+      refreshPromise.catch(() => undefined);
+      await Promise.race([refreshPromise, timeoutPromise]);
+      return observationFromLastForeground(mutable.lastForeground, lastBusy, result);
+    } catch (error) {
+      return result(
+        "limited",
+        busyFromLastForeground(mutable.lastForeground, lastBusy),
+        error instanceof Error && error.message === "foreground observation timeout" ? "timeout" : "failed",
+      );
+    } finally {
+      if (timer !== undefined) globalThis.clearTimeout(timer);
+      signal?.removeEventListener("abort", onOuterAbort);
+    }
+  }
+
+  /** Observe every running session in one project. Sibling projects are excluded. */
+  async observeProjectForegroundProcesses(
+    projectId: string,
+    authorization?: TerminalAuthorization,
+    timeoutMs = TERMINAL_CLOSE_OBSERVATION_TIMEOUT_MS,
+    signal?: AbortSignal,
+  ): Promise<readonly TerminalForegroundObservation[]> {
+    assertId(projectId, "projectId");
+    const sessions = [...this.sessionsById.values()].filter(
+      (session) => session.status === "running" && session.identity.projectId === projectId,
+    );
+    return Object.freeze(await Promise.all(
+      sessions.map((session) => this.observeForegroundProcess(
+        session.identity,
+        authorization === undefined ? undefined : { ...authorization, sessionId: undefined },
+        timeoutMs,
+        signal,
+      )),
+    ));
   }
 
   getSession(session: string | TerminalIdentity): TerminalSessionSnapshot | undefined {
@@ -710,6 +787,7 @@ export class TerminalService {
     };
     const onForegroundProcess = (event: PtyForegroundProcess) => {
       if (mutable.status !== "running") return;
+      mutable.lastForeground = event;
       try {
         this.sessionLifecycle?.foregroundProcessChanged?.(mutable.identity, event);
       } catch {
@@ -1078,6 +1156,26 @@ function copyEvent(event: TerminalEvent): TerminalEvent {
     return { ...event, bytes, data: bytes };
   }
   return { ...event };
+}
+
+function busyFromLastForeground(current: PtyForegroundProcess | undefined, lastBusy: boolean): boolean {
+  if (current !== undefined && current.processName.length > 0 && !current.shellForeground) return true;
+  return lastBusy;
+}
+
+function observationFromLastForeground(
+  current: PtyForegroundProcess | undefined,
+  lastBusy: boolean,
+  result: (
+    observation: TerminalForegroundObservation["observation"],
+    foregroundBusy: boolean,
+    observationError?: TerminalForegroundObservation["observationError"],
+  ) => TerminalForegroundObservation,
+): TerminalForegroundObservation {
+  if (current?.observation === "limited") {
+    return result("limited", busyFromLastForeground(current, lastBusy), "failed");
+  }
+  return result("available", current === undefined ? false : !current.shellForeground);
 }
 
 function normalizeUnsubscribe(value: Unsubscribe | undefined): Unsubscribe | undefined { return typeof value === "function" ? value : undefined; }
