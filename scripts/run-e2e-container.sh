@@ -22,6 +22,7 @@ if [ -z "$platform" ]; then
       ;;
   esac
 fi
+preloaded_image=${TERMINAY_E2E_IMAGE_IS_PRELOADED:-}
 image=${TERMINAY_E2E_IMAGE:-terminay-e2e:local-${platform#linux/}}
 run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
 container=terminay-e2e-$run_id
@@ -32,12 +33,19 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-docker build \
-  --pull \
-  --platform "$platform" \
-  --file "$repo_dir/Dockerfile.e2e" \
-  --tag "$image" \
-  "$repo_dir"
+if [ "$preloaded_image" = 1 ]; then
+  if ! docker image inspect "$image" >/dev/null 2>&1; then
+    echo "The preloaded Docker E2E image is not available: $image" >&2
+    exit 69
+  fi
+else
+  docker build \
+    --pull \
+    --platform "$platform" \
+    --file "$repo_dir/Dockerfile.e2e" \
+    --tag "$image" \
+    "$repo_dir"
+fi
 
 docker create \
   --platform "$platform" \

@@ -201,18 +201,24 @@ test('GHCR publication actions are pinned to immutable reviewed revisions', () =
 
 test('other project workflows pin every third-party action to a reviewed immutable revision', () => {
 	const expected = new Map([
-		['actions/checkout', '11d5960a326750d5838078e36cf38b85af677262'],
-		['actions/setup-node', '49933ea5288caeca8642d1e84afbd3f7d6820020'],
-		['actions/upload-artifact', 'ea165f8d65b6e75b540449e92b4886f43607fa02'],
-		['actions/download-artifact', 'd3f86a106a0bac45b974a628896c90dbdf5c8093'],
+		['actions/checkout', new Set(['11d5960a326750d5838078e36cf38b85af677262'])],
+		['actions/setup-node', new Set(['49933ea5288caeca8642d1e84afbd3f7d6820020'])],
+		['actions/upload-artifact', new Set([
+			'ea165f8d65b6e75b540449e92b4886f43607fa02',
+			'ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5',
+		])],
+		['actions/download-artifact', new Set([
+			'd3f86a106a0bac45b974a628896c90dbdf5c8093',
+			'9bc31d5ccc31df68ecc42ccf4149144866c47d8a',
+		])],
 		[
 			'apple-actions/import-codesign-certs',
-			'63fff01cd422d4b7b855d40ca1e9d34d2de9427d',
+			new Set(['63fff01cd422d4b7b855d40ca1e9d34d2de9427d']),
 		],
-		['docker/setup-buildx-action', '8d2750c68a42422c14e847fe6c8ac0403b4cbd6f'],
-		['docker/metadata-action', 'c299e40c65443455700f0fdfc63efafe5b349051'],
-		['docker/login-action', 'c94ce9fb468520275223c153574b00df6fe4bcc9'],
-		['docker/build-push-action', '10e90e3645eae34f1e60eeb005ba3a3d33f178e8'],
+		['docker/setup-buildx-action', new Set(['8d2750c68a42422c14e847fe6c8ac0403b4cbd6f'])],
+		['docker/metadata-action', new Set(['c299e40c65443455700f0fdfc63efafe5b349051'])],
+		['docker/login-action', new Set(['c94ce9fb468520275223c153574b00df6fe4bcc9'])],
+		['docker/build-push-action', new Set(['10e90e3645eae34f1e60eeb005ba3a3d33f178e8'])],
 	]);
 
 	for (const [name, contents] of workflows) {
@@ -228,10 +234,9 @@ test('other project workflows pin every third-party action to a reviewed immutab
 				/^[0-9a-f]{40}$/u,
 				`${name}: ${action} must use a full immutable commit SHA`,
 			);
-			assert.equal(
-				revision,
-				expected.get(action),
-				`${name}: ${action} revision must match the reviewed pin`,
+			assert.ok(
+				expected.get(action)?.has(revision),
+				`${name}: ${action} revision must match a reviewed pin`,
 			);
 		}
 	}
