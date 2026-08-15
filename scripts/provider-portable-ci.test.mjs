@@ -3,12 +3,13 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
-const [githubCi, giteaCi, serverImage, triggerRelease, decision] = await Promise.all([
+const [githubCi, giteaCi, serverImage, triggerRelease, decision, packageJson] = await Promise.all([
   read(".github/workflows/ci.yml"),
   read(".gitea/workflows/ci.yml"),
   read(".github/workflows/server-image.yml"),
   read(".github/workflows/trigger-release.yml"),
   read("specs/decisions/provider-portable-parallel-ci.md"),
+  read("package.json"),
 ]);
 
 function job(workflow, name) {
@@ -36,6 +37,9 @@ test("GitHub and Gitea discover separate provider-specific CI workflows", () => 
 });
 
 test("provider CI retains its shared-image fan-out and declared runner bounds", () => {
+  assert.match(JSON.parse(packageJson).scripts["test:ci"], /test:release-evidence/u);
+  assert.match(triggerRelease, /npm run test:release-evidence/u);
+  assert.match(decision, /test:release-evidence/u);
   for (const workflow of [githubCi, giteaCi]) {
     assert.match(workflow, /name: Build, lint, and unit tests/u);
     assert.match(workflow, /run: npm run test:ci/u);

@@ -61,6 +61,8 @@ test('standalone operations runbook documents paths, network trust, recovery, an
 
 test('release workflow keeps readiness, artifact builds, and hosted publication ordered', async () => {
   const release = await readFile(join(process.cwd(), '.github/workflows/trigger-release.yml'), 'utf8')
+  const packageJson = JSON.parse(await readFile(join(process.cwd(), 'package.json'), 'utf8'))
+  const evidence = packageJson.scripts['test:release-evidence']
 
   const smokeIndex = release.indexOf('  smoke-test:')
   const releaseIndex = release.indexOf('  release:')
@@ -74,10 +76,14 @@ test('release workflow keeps readiness, artifact builds, and hosted publication 
   assert.match(release.slice(binariesIndex, notesIndex), /needs: release/)
   assert.match(release.slice(notesIndex), /needs: \[release, build-binaries, build-standalone-server\]/)
   assert.doesNotMatch(release, /build-web-image|terminay-web|Dockerfile\.web|web-image-integration/)
-  assert.match(release, /npm run test:hosted-deployment-order/)
-  assert.match(release, /npm run test:task20-artifact-contract/)
-  assert.match(release, /npm run test:release-readiness/)
-  assert.match(release, /npm run test:security-fuzz/)
-  assert.match(release, /npm run test:security-boundaries/)
-  assert.match(release, /node scripts\/production-dependency-audit\.mjs/)
+  assert.match(packageJson.scripts['test:ci'], /test:release-evidence/)
+  assert.match(release, /npm run test:release-evidence/)
+  assert.match(evidence, /test:release-config/)
+  assert.match(evidence, /test:hosted-deployment-order/)
+  assert.match(evidence, /test:task20-artifact-contract/)
+  assert.match(evidence, /test:release-readiness/)
+  assert.match(evidence, /test:standalone-artifact/)
+  assert.match(evidence, /test:security-fuzz/)
+  assert.match(evidence, /test:security-boundaries/)
+  assert.match(evidence, /node scripts\/production-dependency-audit\.mjs/)
 })
