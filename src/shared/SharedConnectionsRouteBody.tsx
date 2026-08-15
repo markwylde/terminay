@@ -76,18 +76,16 @@ export function SharedConnectionsRouteBody({
 	const visibleConnections = profiles ?? connections;
 	const currentId = snapshot?.currentProfileId ?? activeConnectionId;
 	const profileActions =
-		profileStore === undefined ? null : (
+		canPair && onPairingHandoff !== undefined ? (
 			<nav
 				className="shared-connections__profile-actions"
 				aria-label="Connection profile actions"
 			>
-				{canPair && onPairingHandoff !== undefined && (
-					<button type="button" onClick={() => setShowPair(true)}>
-						Add connection…
-					</button>
-				)}
+				<button type="button" onClick={() => setShowPair(true)}>
+					Add connection…
+				</button>
 			</nav>
-		);
+		) : null;
 
 	const mutate = async (
 		key: string,

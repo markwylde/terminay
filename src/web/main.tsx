@@ -6,6 +6,7 @@ import type { TerminalPanelClientContextValue } from '../components/TerminalPane
 import { createConnectedServerClientContext } from '../shared/rendererServerClient';
 import type { SharedConnectionsRouteBodyProps } from '../shared/SharedConnectionsRouteBody';
 import { pairDesktopConnection } from '../host/nativeActions';
+import type { AppCommand } from '../types/terminay';
 import { createWebClientId } from './webClientIdentity';
 import { ConnectedWebRendererWorkspace } from './ConnectedWebRendererWorkspace';
 import {
@@ -212,6 +213,18 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 				onBack={() => {
 					void clientRef.current?.close().catch(() => undefined);
 				}}
+				subscribeAppCommands={
+					desktopContext === undefined || window.terminayHost === undefined
+						? undefined
+						: (listener: (command: AppCommand) => Promise<void> | void) =>
+								(
+									window.terminayHost as unknown as DesktopHostBridge
+								).subscribeEvent((event) => {
+									if (event.event.type === 'menu.command') {
+										return listener(event.event.command);
+									}
+								})
+				}
 				terminalClientContext={connection.context}
 			/>
 		);
