@@ -55,14 +55,6 @@ jobs:
           TERMINAY_RELEASE_DIAGNOSTICS_DIR: ${{ runner.temp }}/terminay-packaged-smoke
         run: npm run test:packaged-startup-macos
 
-      - name: Preserve packaged startup diagnostics
-        if: ${{ always() && github.server_url == 'https://github.com' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: packaged-startup-diagnostics
-          path: ${{ runner.temp }}/terminay-packaged-smoke
-          if-no-files-found: ignore
-
   build-and-test:
     name: Build, lint, and unit tests
     runs-on: ubuntu-latest
@@ -88,8 +80,9 @@ jobs:
       - name: Build, lint, and run fast tests
         run: npm run test:ci
 
-  e2e-image:
+  github-e2e-image:
     name: Build E2E image
+    if: ${{ github.server_url == 'https://github.com' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
@@ -137,8 +130,7 @@ jobs:
           gzip -t .docker-cache/e2e-image/terminay-e2e-image.tar.gz
           echo "image_id=$(docker image inspect --format '{{.Id}}' "$IMAGE_TAG")" >> "$GITHUB_OUTPUT"
 
-      - name: Upload shared E2E image on GitHub
-        if: ${{ github.server_url == 'https://github.com' }}
+      - name: Upload shared E2E image
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: terminay-e2e-image-${{ github.sha }}
@@ -147,20 +139,12 @@ jobs:
           compression-level: 0
           retention-days: 1
 
-      - name: Upload shared E2E image on Gitea
-        if: ${{ github.server_url != 'https://github.com' }}
-        uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3
-        with:
-          name: terminay-e2e-image-${{ github.sha }}
-          path: .docker-cache/e2e-image/terminay-e2e-image.tar.gz
-          if-no-files-found: error
-          retention-days: 1
-
-  e2e-test:
+  github-e2e-test:
     name: E2E (${{ matrix.shard }}/5)
+    if: ${{ github.server_url == 'https://github.com' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: e2e-image
+    needs: github-e2e-image
     strategy:
       fail-fast: false
       matrix:
@@ -183,15 +167,126 @@ jobs:
               ;;
           esac
 
-      - name: Download shared E2E image on GitHub
-        if: ${{ github.server_url == 'https://github.com' }}
+      - name: Download shared E2E image
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: terminay-e2e-image-${{ github.sha }}
           path: .docker-cache/e2e-image
 
-      - name: Download shared E2E image on Gitea
-        if: ${{ github.server_url != 'https://github.com' }}
+      - name: Load shared E2E image
+        run: docker load --input .docker-cache/e2e-image/terminay-e2e-image.tar.gz
+
+      - name: Verify shared E2E image
+        env:
+          IMAGE_TAG: ${{ needs.github-e2e-image.outputs.image }}
+          EXPECTED_IMAGE_ID: ${{ needs.github-e2e-image.outputs.image-id }}
+        run: test "$(docker image inspect --format '{{.Id}}' "$IMAGE_TAG")" = "$EXPECTED_IMAGE_ID"
+
+      - name: Run end-to-end test shard
+        env:
+          TERMINAY_E2E_IMAGE: ${{ needs.github-e2e-image.outputs.image }}
+          TERMINAY_E2E_IMAGE_IS_PRELOADED: "1"
+          TERMINAY_E2E_PLATFORM: linux/amd64
+          TERMINAY_E2E_ARTIFACT_DIR: ${{ github.workspace }}/.docker-cache/e2e/shard-${{ matrix.shard }}-of-5
+        run: npm run test:e2e -- --shard=${{ matrix.shard }}/5
+
+      - name: Upload Playwright artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: playwright-report-${{ matrix.shard }}-of-5
+          path: .docker-cache/e2e/shard-${{ matrix.shard }}-of-5
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 7
+
+  gitea-e2e-image:
+    name: Build E2E image
+    if: ${{ github.server_url != 'https://github.com' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      image: ${{ steps.image.outputs.tag }}
+      image-id: ${{ steps.archive.outputs.image_id }}
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Require amd64 Docker host
+        shell: bash
+        run: |
+          case "$(uname -m)" in
+            x86_64|amd64) ;;
+            *)
+              echo "The shared Linux E2E image requires an amd64 runner." >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Resolve E2E image reference
+        id: image
+        shell: bash
+        run: |
+          echo "tag=terminay-e2e:ci-$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Build and save E2E image
+        id: archive
+        env:
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+        run: |
+          docker build \
+            --pull \
+            --platform linux/amd64 \
+            --file Dockerfile.e2e \
+            --tag "$IMAGE_TAG" \
+            .
+          mkdir -p .docker-cache/e2e-image
+          docker save --output .docker-cache/e2e-image/terminay-e2e-image.tar "$IMAGE_TAG"
+          tar -tf .docker-cache/e2e-image/terminay-e2e-image.tar >/dev/null
+          gzip -1 --no-name .docker-cache/e2e-image/terminay-e2e-image.tar
+          gzip -t .docker-cache/e2e-image/terminay-e2e-image.tar.gz
+          echo "image_id=$(docker image inspect --format '{{.Id}}' "$IMAGE_TAG")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload shared E2E image
+        uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3
+        with:
+          name: terminay-e2e-image-${{ github.sha }}
+          path: .docker-cache/e2e-image/terminay-e2e-image.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  gitea-e2e-test:
+    name: E2E (${{ matrix.shard }}/5)
+    if: ${{ github.server_url != 'https://github.com' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: gitea-e2e-image
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Require amd64 Docker host
+        shell: bash
+        run: |
+          case "$(uname -m)" in
+            x86_64|amd64) ;;
+            *)
+              echo "The shared Linux E2E image requires an amd64 runner." >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Download shared E2E image
         uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
         with:
           name: terminay-e2e-image-${{ github.sha }}
@@ -202,30 +297,20 @@ jobs:
 
       - name: Verify shared E2E image
         env:
-          IMAGE_TAG: ${{ needs.e2e-image.outputs.image }}
-          EXPECTED_IMAGE_ID: ${{ needs.e2e-image.outputs.image-id }}
+          IMAGE_TAG: ${{ needs.gitea-e2e-image.outputs.image }}
+          EXPECTED_IMAGE_ID: ${{ needs.gitea-e2e-image.outputs.image-id }}
         run: test "$(docker image inspect --format '{{.Id}}' "$IMAGE_TAG")" = "$EXPECTED_IMAGE_ID"
 
       - name: Run end-to-end test shard
         env:
-          TERMINAY_E2E_IMAGE: ${{ needs.e2e-image.outputs.image }}
+          TERMINAY_E2E_IMAGE: ${{ needs.gitea-e2e-image.outputs.image }}
           TERMINAY_E2E_IMAGE_IS_PRELOADED: "1"
           TERMINAY_E2E_PLATFORM: linux/amd64
           TERMINAY_E2E_ARTIFACT_DIR: ${{ github.workspace }}/.docker-cache/e2e/shard-${{ matrix.shard }}-of-5
         run: npm run test:e2e -- --shard=${{ matrix.shard }}/5
 
-      - name: Upload Playwright artifacts on GitHub
-        if: ${{ always() && github.server_url == 'https://github.com' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: playwright-report-${{ matrix.shard }}-of-5
-          path: .docker-cache/e2e/shard-${{ matrix.shard }}-of-5
-          if-no-files-found: ignore
-          compression-level: 0
-          retention-days: 7
-
-      - name: Upload Playwright artifacts on Gitea
-        if: ${{ always() && github.server_url != 'https://github.com' }}
+      - name: Upload Playwright artifacts
+        if: ${{ always() }}
         uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3
         with:
           name: playwright-report-${{ matrix.shard }}-of-5
