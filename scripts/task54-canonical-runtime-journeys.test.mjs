@@ -14,7 +14,7 @@ test('canonical journey suite owns clean, populated, multi-window, and remote co
 	assert.match(freshAndPopulated, /populated canonical workspace reloads/u);
 	assert.match(multiWindow, /new window preserves its canonical project and terminal/u);
 	assert.match(multiWindow, /workspace-revision/u);
-	assert.match(connectionManager, /canonical remote profiles/u);
+	assert.match(connectionManager, /Remote Control as a full auxiliary window/u);
 	assert.match(connectionManager, /Continue pairing/u);
 });
 

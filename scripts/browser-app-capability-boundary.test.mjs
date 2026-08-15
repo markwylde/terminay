@@ -53,7 +53,7 @@ test('browser composition omits native host authority instead of fabricating pre
 	}
 	assert.match(
 		webWorkspace,
-		/host=\{Object\.freeze\(\{[\s\S]*auxiliaryRoutes,[\s\S]*onDisconnect: onBack,[\s\S]*\}\)\}/u,
+		/host=\{Object\.freeze\(\{[\s\S]*auxiliaryRoutes,[\s\S]*onDisconnect: onBack,[\s\S]*onOpenConnectionManager: \(\) =>[\s\S]*auxiliaryRoutes\.openRemoteControl\(\),?[\s\S]*\}\)\}/u,
 	);
 });
 

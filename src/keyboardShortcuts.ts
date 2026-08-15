@@ -64,6 +64,12 @@ export const appCommandMetadata: AppCommandMetadata[] = [
     keywords: 'project environment connections ssh puzed server',
   },
   {
+    command: 'open-remote-control',
+    title: 'Open Remote Control',
+    description: 'Manage Terminay server connections for this workspace.',
+    keywords: 'remote control connections pairing servers manage',
+  },
+  {
     command: 'open-extensions',
     title: 'Open Extensions',
     description: 'Manage extensions on the selected Terminay Server.',
@@ -127,6 +133,7 @@ export const defaultKeyboardShortcuts: KeyboardShortcutSettings = {
   'open-settings': '',
   'open-macros': '',
   'open-project-environments': '',
+  'open-remote-control': '',
   'open-extensions': '',
   'save-active': 'CmdOrCtrl+S',
   'split-horizontal': 'CmdOrCtrl+Shift+-',

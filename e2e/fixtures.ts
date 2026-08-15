@@ -11,6 +11,7 @@ import {
   openMacrosWindow,
   openProjectEnvironmentsWindow,
   openRecordingsWindow,
+  openRemoteControlWindow,
   openSettingsWindow,
   prepareWindow,
   sendAppCommand,
@@ -27,6 +28,7 @@ type ElectronFixtures = {
     openMacrosWindow: (page?: Page) => Promise<Page>
     openProjectEnvironmentsWindow: (page?: Page) => Promise<Page>
     openRecordingsWindow: (page?: Page) => Promise<Page>
+    openRemoteControlWindow: (page?: Page) => Promise<Page>
     openSettingsWindow: (options?: { page?: Page; sectionId?: string }) => Promise<Page>
     prepareWindow: (page: Page) => Promise<Page>
     sendAppCommand: (command: import('../src/types/terminay').AppCommand, page?: Page) => Promise<void>
@@ -300,6 +302,8 @@ export const test = base.extend<ElectronFixtures>({
       openProjectEnvironmentsWindow: (page = mainWindow) =>
         openProjectEnvironmentsWindow(electronApp, page),
       openRecordingsWindow: (page = mainWindow) => openRecordingsWindow(electronApp, page),
+      openRemoteControlWindow: (page = mainWindow) =>
+        openRemoteControlWindow(electronApp, page),
       openSettingsWindow: (options) =>
         openSettingsWindow(electronApp, options?.page ?? mainWindow, { sectionId: options?.sectionId }),
       prepareWindow,

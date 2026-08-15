@@ -163,7 +163,7 @@ export function RemoteAccessConnectionMenu(props: {
 							className="remote-access-menu__item"
 							onClick={props.onOpenConnection}
 						>
-							<span>Add connection…</span>
+							<span>Remote Control</span>
 							<span className="remote-access-menu__meta">Open</span>
 						</button>
 					</div>

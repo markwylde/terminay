@@ -58,6 +58,10 @@ test('Desktop and browser File menus converge on shared management commands',()=
 		assert.match(browser,new RegExp(command));
 		assert.match(app,new RegExp(command));
 	}
+	assert.match(desktop,/open-remote-control/);
+	assert.match(app,/open-remote-control/);
+	assert.match(browser,/Remote Control/);
+	assert.match(browser,/openRemoteControl/);
 });
 
 test('Extensions use the ordinary selected-server Settings surface',()=>{
