@@ -35,30 +35,24 @@ function run(command, args, options = {}) {
 }
 
 const mock = process.argv.includes('--mock');
-const hostedRepo = readOption('hosted-repo');
-const hostedScope = readOption('hosted-scope') ?? 'full';
 const expectedArch = readOption('expected-arch');
-assert.notEqual(mock, Boolean(hostedRepo), 'choose exactly one of --mock or --hosted-repo=PATH');
-assert.match(hostedScope, /^(?:bootstrap|bundle|full)$/, 'hosted scope must be bootstrap, bundle, or full');
-assert.ok(hostedRepo || hostedScope === 'full', '--hosted-scope requires --hosted-repo');
 if (expectedArch) assert.equal(process.arch, expectedArch);
+
+if (!mock) {
+	await run(process.execPath, ['scripts/server-ui-archive-integration-proof.mjs'], {
+		cwd: process.cwd(), timeoutMs: 120_000,
+	});
+	process.stdout.write(`webrtc-compatibility=server-ui-archive:${process.arch}:ok\n`);
+} else {
 
 const proofRoot = await mkdtemp(path.join(tmpdir(), 'terminay-webrtc-compatibility-'));
 try {
-	if (hostedRepo) {
-		await run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'build:app'], {
-			cwd: process.cwd(),
-			timeoutMs: 180_000,
-		});
-	}
 	const candidate = await buildSecureWeriftCandidate(path.join(proofRoot, 'runtime'));
 	await copyFile(
 		path.join(process.cwd(), 'build', 'webrtc-runtime', 'selection.json'),
 		path.join(candidate.auditRoot, 'selection.json'),
 	);
-	const specification = mock
-		? 'e2e/webrtc-production-turn-routes.spec.ts'
-		: 'e2e/webrtc-headless-node-host.spec.ts';
+	const specification = 'e2e/webrtc-production-turn-routes.spec.ts';
 	const args = [
 		'playwright',
 		'test',
@@ -72,19 +66,15 @@ try {
 		cwd: process.cwd(),
 		env: {
 			...process.env,
-			...(hostedRepo ? {
-				TERMINAY_HOSTED_PROOF_SCOPE: hostedScope,
-				TERMINAY_HOSTED_SERVER_REPO: path.resolve(hostedRepo),
-			} : {}),
 			TERMINAY_WEBRTC_SPIKE_ROOT: candidate.auditRoot,
 			TERMINAY_WEBRTC_SPIKE_RUNTIME: 'werift',
 			TERMINAY_WEBRTC_SELECTED_RUNTIME_ROOT: candidate.auditRoot,
 			TERMINAY_WEBRTC_STAGED_RUNTIME_ROOT: candidate.artifactRoot,
 		},
-		timeoutMs: hostedRepo ? 300_000 : 120_000,
+		timeoutMs: 120_000,
 	});
-	const proofName = mock ? 'mock' : `hosted-${hostedScope}`;
-	process.stdout.write(`webrtc-compatibility=${proofName}:${process.arch}:ok\n`);
+	process.stdout.write(`webrtc-compatibility=mock:${process.arch}:ok\n`);
 } finally {
 	await rm(proofRoot, { force: true, recursive: true });
+}
 }
