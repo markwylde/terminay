@@ -39,18 +39,21 @@
 	--connection-surface-hover: #1e293b;
 	--connection-muted: #94a3b8;
 	--connection-border: #1e293b;
-	gap: 24px;
 	font-family:
 		-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
 		sans-serif;
 }
 
-.shared-connections header {
+.shared-production-route.shared-connections {
+	gap: 24px;
+}
+
+.shared-production-route.shared-connections header {
 	display: grid;
 	gap: 8px;
 }
 
-.shared-connections header h1 {
+.shared-production-route.shared-connections header h1 {
 	margin: 0;
 	color: #fff;
 	font-size: 20px;
@@ -58,7 +61,7 @@
 	letter-spacing: -0.02em;
 }
 
-.shared-connections header > p:last-child {
+.shared-production-route.shared-connections header > p:last-child {
 	color: var(--connection-muted);
 	line-height: 1.5;
 }
