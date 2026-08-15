@@ -72,9 +72,14 @@ terminal title into an identity boundary.
   active selection absent rather than serializing an undefined optional field.
   The resulting workspace revision remains a valid snapshot/delta that every
   connected presentation can reconcile, including when local file panels remain.
-- Closing an idle terminal proceeds immediately. Closing a terminal whose PTY
-  has a non-shell foreground process asks whether to **Close Terminal** or
-  **Keep Running** before terminating it.
+- Closing an idle terminal proceeds immediately. Closing a terminal evaluates
+  foreground-process state only for that terminal's exact session; activity,
+  output, agent work, or process observation in another terminal cannot delay
+  it. Closing a terminal whose PTY has a non-shell foreground process asks
+  whether to **Close Terminal** or **Keep Running** before terminating it. If a
+  fresh target-session observation is unavailable by its bounded deadline, the
+  close surface identifies that limited state and defaults to **Keep Running**
+  rather than waiting without an outcome.
 - Closing a project proceeds immediately when all of its terminals are at their
   shell prompts. If one or more project terminals have non-shell foreground
   processes, Terminay reports the affected terminal count and asks whether to
@@ -115,6 +120,10 @@ client focus.
   hydrate the same panels and terminal sessions.
 - Terminal and project close warnings depend on canonical PTY foreground-process
   state, not recent output, agent status, tab attention, or display settings.
+- Sustained output or slow foreground-process observation in one terminal never
+  delays an unrelated terminal close, workspace command, or project-view
+  interaction. A terminal close remains scoped to its exact session; a project
+  close evaluates only the project's contained sessions.
 - A foreground process in one native window protects that window with a scoped
   close warning; confirming it never closes sibling project windows. Only the
   final native project-host window uses the application quit warning and
