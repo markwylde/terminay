@@ -9,6 +9,7 @@ import type { AppUpdateStatus } from '../types/terminay';
 type NativeHostBridge = Readonly<{
 	getContext(): Promise<TerminayHostContext>;
 	requestAction(request: TerminayHostActionRequest): Promise<unknown>;
+	resolveDroppedFilePath?(file: File): string | undefined;
 }>;
 
 function bridge(): NativeHostBridge | undefined {
@@ -64,6 +65,17 @@ export async function readClipboardText(): Promise<string> {
 
 export function canReadClipboardText(): boolean {
 	return navigator.clipboard?.readText !== undefined;
+}
+
+/** Desktop-only native File lookup for user-initiated terminal drops. Browser
+ * clients never receive a local pathname and use their server upload flow. */
+export function resolveDesktopDroppedFilePath(file: unknown): string | undefined {
+	if (!(file instanceof File)) return undefined;
+	try {
+		return bridge()?.resolveDroppedFilePath?.(file);
+	} catch {
+		return undefined;
+	}
 }
 
 /** External navigation is privileged in Desktop and ordinary browser
