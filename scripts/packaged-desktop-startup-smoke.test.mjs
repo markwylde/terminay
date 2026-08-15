@@ -294,27 +294,15 @@ function captureMainProcessFailures(process, failures) {
 
 async function closeElectronApp(electronApp) {
 	// Playwright disposes the ElectronApplication connection as part of close(),
-	// so obtain the ChildProcess before closing and inspect that stable handle.
+	// so obtain the ChildProcess before closing and await its final exit event.
+	// `ElectronApplication.close()` resolves after the inspector connection closes,
+	// which can precede the macOS process exit by a short interval.
 	const electronProcess = electronApp.process();
-	let timeout;
-	try {
-		await Promise.race([
-			electronApp.close(),
-			new Promise((_, reject) => {
-				timeout = setTimeout(
-					() => reject(new Error('packaged application did not shut down cleanly')),
-					10_000,
-				);
-			}),
-		]);
-	} finally {
-		if (timeout !== undefined) clearTimeout(timeout);
-	}
-	assert.notEqual(
-		electronProcess.exitCode,
-		null,
-		'clean shutdown must exit without SIGKILL',
-	);
+	const deadline = Date.now() + 10_000;
+	await withTimeout(electronApp.close(), remainingTime(deadline), 'packaged application did not shut down cleanly');
+	await waitForProcessExit(electronProcess, remainingTime(deadline));
+	assert.equal(electronProcess.signalCode, null, 'clean shutdown must not use a signal');
+	assert.equal(electronProcess.exitCode, 0, 'clean shutdown must exit successfully');
 }
 
 async function emergencyClose(electronApp) {
@@ -325,11 +313,60 @@ async function emergencyClose(electronApp) {
 		// The app may already have shut down and disposed Playwright's connection.
 		return;
 	}
-	if (electronProcess.exitCode !== null) return;
+	if (hasExited(electronProcess)) return;
 	try {
-		await electronApp.close();
+		await withTimeout(electronApp.close(), 5_000, 'emergency application close timed out');
+		await waitForProcessExit(electronProcess, 5_000);
 	} catch {
-		if (electronProcess.exitCode === null) electronProcess.kill('SIGKILL');
+		if (!hasExited(electronProcess)) electronProcess.kill('SIGKILL');
+		await waitForProcessExit(electronProcess, 5_000).catch(() => undefined);
+	}
+}
+
+function hasExited(process) {
+	return process.exitCode !== null || process.signalCode !== null;
+}
+
+async function waitForProcessExit(process, timeoutMs) {
+	if (hasExited(process)) return;
+	await new Promise((resolve, reject) => {
+		const timeout = setTimeout(() => {
+			cleanup();
+			reject(new Error('packaged application process did not exit'));
+		}, timeoutMs);
+		const onExit = () => {
+			cleanup();
+			resolve();
+		};
+		const onError = (error) => {
+			cleanup();
+			reject(error);
+		};
+		const cleanup = () => {
+			clearTimeout(timeout);
+			process.off('exit', onExit);
+			process.off('error', onError);
+		};
+		process.once('exit', onExit);
+		process.once('error', onError);
+	});
+}
+
+function remainingTime(deadline) {
+	return Math.max(0, deadline - Date.now());
+}
+
+async function withTimeout(promise, timeoutMs, message) {
+	let timeout;
+	try {
+		await Promise.race([
+			promise,
+			new Promise((_, reject) => {
+				timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+			}),
+		]);
+	} finally {
+		if (timeout !== undefined) clearTimeout(timeout);
 	}
 }
 
