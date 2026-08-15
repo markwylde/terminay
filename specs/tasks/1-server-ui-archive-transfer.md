@@ -104,7 +104,7 @@ hashes. Other tar members are regular server UI files.
 - [ ] Replace `terminay.com` CI's checkout/build of the private Terminay
   repository with an in-repository fixture server that implements the public
   archive protocol and supplies a small executable archive.
-- [ ] Remove Terminay source pins, deploy keys/tokens, source-host assumptions,
+- [x] Remove Terminay source pins, deploy keys/tokens, source-host assumptions,
   and Terminay build/install steps from the `terminay.com` workflow. The
   manager repository must prove its contract without GitHub or Gitea access to
   the Terminay source repository.
