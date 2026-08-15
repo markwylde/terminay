@@ -66,9 +66,9 @@ test('wires Apple signing secrets into the release workflow', () => {
 
   assert.match(
     workflow,
-    /uses:\s+apple-actions\/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d\s+# v3/,
+    /uses:\s+apple-actions\/import-codesign-certs@2dbeb2d7c37642111f938c56ef0feb5d51dad55d\s+# v4\.0\.1/,
   )
-  assert.doesNotMatch(workflow, /uses:\s+apple-actions\/import-codesign-certs@v3(?:\s|$)/)
+  assert.doesNotMatch(workflow, /uses:\s+apple-actions\/import-codesign-certs@v4(?:\s|$)/)
   assert.match(workflow, /MACOS_CERTIFICATE_P12/)
   assert.match(workflow, /MACOS_CERTIFICATE_PASSWORD/)
   assert.match(workflow, /APPLE_ID:\s+\$\{\{\s+matrix\.os\s*==\s*'macos-latest'\s*&&\s+vars\.APPLE_ID\s*\|\|\s*''\s+\}\}/)
