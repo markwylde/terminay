@@ -16,8 +16,9 @@ E2E-image build, and five Electron Playwright shards:
 3. Five `ubuntu-latest` jobs split the Electron Playwright suite with
    `--shard=N/5`.
 
-The fast gate is independent. GitHub runs the packaged macOS smoke; Gitea runs
-its explicit unavailable-runner fallback. Each provider selects one
+The fast gate is independent. The packaged macOS smoke uses a provider-resolved
+runner expression: GitHub runs the real macOS smoke and Gitea schedules its
+explicit unavailable-runner fallback on Ubuntu. Each provider selects one
 provider-specific E2E-image/shard pair at the job level; the five selected E2E
 shards depend only on that provider's E2E-image build, then run in parallel.
 

@@ -14,56 +14,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  github-packaged-macos-smoke:
+  packaged-macos-smoke:
     name: Packaged macOS startup smoke
-    if: ${{ github.server_url == 'https://github.com' }}
-    runs-on: macos-latest
+    runs-on: ${{ github.server_url == 'https://github.com' && 'macos-latest' || 'ubuntu-latest' }}
     timeout-minutes: 12
 
     steps:
+      - name: Record unavailable macOS runner
+        if: ${{ github.server_url != 'https://github.com' }}
+        run: echo 'The exact signed-app smoke runs on the GitHub macOS release fleet.'
+
       - name: Check out code
+        if: ${{ github.server_url == 'https://github.com' }}
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
       - name: Set up Node.js
+        if: ${{ github.server_url == 'https://github.com' }}
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24.15.0
           cache: npm
 
       - name: Install dependencies
+        if: ${{ github.server_url == 'https://github.com' }}
         run: |
           npm install --global npm@12.0.2
           npm ci
 
       - name: Build unsigned packaged application
+        if: ${{ github.server_url == 'https://github.com' }}
         run: |
           npm run build:app
           CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --dir --mac --arm64 --publish never
 
       - name: Boot packaged application and require workspace readiness
+        if: ${{ github.server_url == 'https://github.com' }}
         env:
           TERMINAY_RELEASE_DIAGNOSTICS_DIR: ${{ runner.temp }}/terminay-packaged-smoke
         run: npm run test:packaged-startup-macos
-
-      - name: Preserve packaged startup diagnostics
-        if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: packaged-startup-diagnostics
-          path: ${{ runner.temp }}/terminay-packaged-smoke
-          if-no-files-found: ignore
-
-  gitea-packaged-macos-smoke:
-    name: Packaged macOS startup smoke
-    if: ${{ github.server_url != 'https://github.com' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 12
-
-    steps:
-      - name: Record unavailable macOS runner
-        run: echo 'The exact signed-app smoke runs on the GitHub macOS release fleet.'
 
   build-and-test:
     name: Build, lint, and unit tests
