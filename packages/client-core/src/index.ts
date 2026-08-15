@@ -21,7 +21,6 @@ export * from "./gitClient.js";
 export * from "./settings.js";
 export * from "./macros.js";
 export * from "./health.js";
-export * from "./mcpServerControl.js";
 export * from "./shellProfiles.js";
 export * from "./projectEnvironments.js";
 export * from "./extensions.js";

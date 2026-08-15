@@ -17,7 +17,7 @@ for (const viewport of [{ name: 'wide', width: 1280, height: 900, layout: 'wide'
 		await route.locator('[data-shared-panel-contract="connection-error"] [data-shared-panel-action]').first().click()
 		const settingsRoute = page.locator('[data-shared-workspace-route="settings"]')
 		await expect(settingsRoute).toHaveAttribute('data-shared-workspace-layout', viewport.layout)
-		await expect(settingsRoute.locator('[data-shared-panel-contract]').evaluateAll(items => items.map(item => item.getAttribute('data-shared-panel-contract')))).resolves.toEqual(['settings', 'mcp-server-control', 'dictation-capture'])
+		await expect(settingsRoute.locator('[data-shared-panel-contract]').evaluateAll(items => items.map(item => item.getAttribute('data-shared-panel-contract')))).resolves.toEqual(['settings', 'dictation-capture'])
 		await expect(settingsRoute.locator('[data-shared-panel-contract="dictation-capture"]')).toHaveAttribute('role', 'dialog')
 		await expect(settingsRoute.locator('[data-shared-panel-contract="dictation-capture"]')).toHaveAttribute('aria-modal', 'true')
 		await settingsRoute.locator('[data-shared-panel-contract="dictation-capture"] [data-shared-panel-action="stop-dictation"]').click()

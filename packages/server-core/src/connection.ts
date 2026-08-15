@@ -413,6 +413,16 @@ export class ServerConnection implements ServerConnectionLike {
 			});
 			return;
 		}
+		const binaryBody = terminalOutputBody(event, output);
+		const useBinaryBody =
+			binaryBody !== undefined &&
+			this.clientCapabilities.has('terminal.binary-output');
+		const terminalEnvelope = terminalOutputEnvelope(
+			subscriptionId,
+			event,
+			binaryBody,
+			useBinaryBody,
+		);
 		// Event subscriptions are intentionally independent, so overlapping
 		// selectors may project the same journal event more than once. Terminal
 		// output is different: every copy targets one attachment delivery lane.
@@ -425,7 +435,11 @@ export class ServerConnection implements ServerConnectionLike {
 			return;
 		this.terminalOutputPositions.set(output.attachmentId, output.nextPosition);
 		await this.outbound.sendTerminal(
-			encodeFrame(envelope, new Uint8Array(), this.options.limits),
+			encodeFrame(
+				terminalEnvelope,
+				useBinaryBody ? binaryBody : new Uint8Array(),
+				this.options.limits,
+			),
 			{
 				laneId: output.attachmentId,
 				position: output.position,
@@ -629,6 +643,50 @@ function terminalOutputMetadata(event: OrderedEvent): TerminalOutputMetadata | u
 		position: payload.position as number,
 		nextPosition: payload.nextPosition as number,
 	};
+}
+
+function terminalOutputBody(
+	event: OrderedEvent,
+	output: TerminalOutputMetadata,
+): Uint8Array | undefined {
+	if (event.body === undefined) return undefined;
+	if (!(event.body instanceof Uint8Array))
+		throw new TypeError('terminal output body is invalid');
+	if (event.body.byteLength !== output.nextPosition - output.position)
+		throw new TypeError('terminal output body does not match its byte range');
+	return event.body;
+}
+
+function terminalOutputEnvelope(
+	subscriptionId: string,
+	event: OrderedEvent,
+	body: Uint8Array | undefined,
+	useBinaryBody: boolean,
+): Envelope {
+	if (useBinaryBody) return eventEnvelope(subscriptionId, event);
+	const payload = objectPayload(event.payload);
+	const bytes =
+		typeof payload.bytes === 'string'
+			? payload.bytes
+			: body === undefined
+				? undefined
+				: encodeBase64(body);
+	if (bytes === undefined)
+		throw new TypeError('legacy terminal output bytes are unavailable');
+	return {
+		type: 'event',
+		subscriptionId,
+		revision: event.revision,
+		cursor: event.cursor,
+		event: event.event,
+		payload: { ...payload, bytes },
+	};
+}
+
+function encodeBase64(bytes: Uint8Array): string {
+	let binary = '';
+	for (const byte of bytes) binary += String.fromCharCode(byte);
+	return btoa(binary);
 }
 
 function eventEnvelope(subscriptionId: string, event: OrderedEvent): Envelope {
