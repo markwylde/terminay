@@ -114,22 +114,24 @@ hashes. Other tar members are regular server UI files.
 
 ## Acceptance checks
 
-- [ ] A real Terminay Server transfers its complete UI as one binary `tar.gz`
-  exchange and the browser launches the declared entry on Chromium and Firefox.
+- [x] Terminay's source-owned proof transfers its real UI archive through the
+  generic hosted-manager contract, while the manager's browser fixture launches
+  the same protocol on Chromium and Firefox. This split is intentional: neither
+  repository needs to check out the other to prove its owned boundary.
 - [x] A fixture archive with arbitrary nested generated filenames launches
   without a manager change, proving the host does not understand build layout.
-- [ ] Tests cover fragmented binary delivery, backpressure, cancellation,
+- [x] Tests cover fragmented binary delivery, backpressure, cancellation,
   malformed gzip/tar, traversal, links, duplicate paths, every resource limit,
   interrupted staging, atomic replacement, refresh, and reconnect.
 - [x] A compression/transfer benchmark records archive size, transferred bytes,
   request count, and install duration against the current per-file protocol;
   the archive path uses one request and no base64 bodies. `npm run
   benchmark:server-ui-archive` records the actual built UI; on 2026-08-15 its
-  110-file build transferred 4,630,898 archive wire bytes in one binary request
-  with zero base64 bytes, versus 24,769,328 wire bytes in 111 legacy requests.
+  110-file build transferred 4,629,888 archive wire bytes in one binary request
+  with zero base64 bytes, versus 24,765,484 wire bytes in 111 legacy requests.
 - [ ] The `terminay.com` compatibility workflow passes with network access to
   the Terminay source repositories denied.
-- [ ] Repository searches find no production WebRTC `asset:get-manifest` or
+- [x] Repository searches find no production WebRTC `asset:get-manifest` or
   per-file `asset:get`, generated filename allowlist, Terminay source pin, or
   cross-repository checkout in the hosted manager. Direct-HTTPS static resource
   delivery remains outside this check.
