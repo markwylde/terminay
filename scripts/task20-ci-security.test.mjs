@@ -10,6 +10,18 @@ const workflows = new Map(await Promise.all(workflowNames.map(async (name) => [
   name,
   await readFile(new URL(name, workflowDirectory), "utf8"),
 ])));
+const giteaWorkflowDirectory = new URL("../.gitea/workflows/", import.meta.url);
+const giteaWorkflowNames = (await readdir(giteaWorkflowDirectory))
+  .filter((name) => /\.ya?ml$/u.test(name))
+  .sort();
+const giteaWorkflows = new Map(await Promise.all(giteaWorkflowNames.map(async (name) => [
+  name,
+  await readFile(new URL(name, giteaWorkflowDirectory), "utf8"),
+])));
+const providerWorkflows = new Map([
+  ...[...workflows].map(([name, contents]) => [`.github/workflows/${name}`, contents]),
+  ...[...giteaWorkflows].map(([name, contents]) => [`.gitea/workflows/${name}`, contents]),
+]);
 
 const reviewedPins = new Map([
   ["actions/checkout", "fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"],
@@ -33,8 +45,8 @@ function actionReferences(contents) {
   return [...contents.matchAll(/^\s*(?:-\s*)?uses:\s+([^@\s]+)@([^\s#]+)(?:\s+#.*)?$/gmu)];
 }
 
-test("all GitHub Actions dependencies use reviewed immutable commit pins", () => {
-  for (const [name, contents] of workflows) {
+test("all workflow actions use reviewed immutable commit pins", () => {
+  for (const [name, contents] of providerWorkflows) {
     const references = actionReferences(contents);
     assert.ok(references.length > 0, `${name} must be scanned for action pins`);
     for (const [, action, revision] of references) {
@@ -48,7 +60,7 @@ test("all GitHub Actions dependencies use reviewed immutable commit pins", () =>
 });
 
 test("checkouts never persist GitHub credentials into a runner worktree", () => {
-  for (const [name, contents] of workflows) {
+  for (const [name, contents] of providerWorkflows) {
     const lines = contents.split("\n");
     const checkoutLines = lines
       .map((line, index) => ({ line, index }))
@@ -72,7 +84,7 @@ test("checkouts never persist GitHub credentials into a runner worktree", () => 
 });
 
 test("every workflow declares a token policy instead of inheriting repository defaults", () => {
-  for (const [name, contents] of workflows) {
+  for (const [name, contents] of providerWorkflows) {
     assert.match(contents, /^\s{0,4}permissions:\s*$/mu, `${name} must declare GitHub token permissions`);
   }
 });
@@ -128,53 +140,44 @@ test("every release job has an explicit bounded runtime", () => {
 
 test("ordinary CI retains a read-only token while using provider-neutral E2E artifacts", () => {
   const ci = workflows.get("ci.yml");
+  const giteaCi = giteaWorkflows.get("ci.yml");
   assert.ok(ci, "ci.yml must exist");
-  assert.match(ci, /^permissions:\n {2}contents: read$/mu);
-  assert.doesNotMatch(ci, /^\s+(?:contents|packages|id-token|actions|checks|deployments|discussions|issues|pull-requests|security-events|statuses): write$/mu);
-  assert.doesNotMatch(ci, /docker (?:login|push|pull)/u);
+  assert.ok(giteaCi, ".gitea/workflows/ci.yml must exist");
+  for (const workflow of [ci, giteaCi]) {
+    assert.match(workflow, /^permissions:\n {2}contents: read$/mu);
+    assert.doesNotMatch(workflow, /^\s+(?:contents|packages|id-token|actions|checks|deployments|discussions|issues|pull-requests|security-events|statuses): write$/mu);
+    assert.doesNotMatch(workflow, /docker (?:login|push|pull)/u);
+  }
 });
 
 test("CI isolates incompatible artifact actions from every provider-runnable job", () => {
-  const ci = workflows.get("ci.yml");
-  assert.ok(ci, "ci.yml must exist");
+  const githubCi = workflows.get("ci.yml");
+  const giteaCi = giteaWorkflows.get("ci.yml");
+  assert.ok(githubCi, ".github/workflows/ci.yml must exist");
+  assert.ok(giteaCi, ".gitea/workflows/ci.yml must exist");
 
-  const job = (name) => {
+  const job = (workflow, name) => {
     const header = `  ${name}:\n`;
-    const start = ci.indexOf(header);
+    const start = workflow.indexOf(header);
     assert.notEqual(start, -1, `CI must declare ${name}`);
-    const remainder = ci.slice(start + header.length);
+    const remainder = workflow.slice(start + header.length);
     const next = remainder.search(/^  [a-z][a-z0-9-]+:\n/mu);
-    return next === -1 ? ci.slice(start) : ci.slice(start, start + header.length + next);
+    return next === -1 ? workflow.slice(start) : workflow.slice(start, start + header.length + next);
   };
 
-  const githubImage = job("github-e2e-image");
-  const githubShard = job("github-e2e-test");
-  const giteaImage = job("gitea-e2e-image");
-  const giteaShard = job("gitea-e2e-test");
-  assert.match(githubImage, /if: \$\{\{ github\.server_url == 'https:\/\/github\.com' \}\}/u);
-  assert.match(githubShard, /needs: github-e2e-image/u);
+  const githubImage = job(githubCi, "e2e-image");
+  const githubShard = job(githubCi, "e2e-test");
+  const giteaImage = job(giteaCi, "e2e-image");
+  const giteaShard = job(giteaCi, "e2e-test");
+  assert.match(githubShard, /needs: e2e-image/u);
   assert.match(githubShard, /d3f86a106a0bac45b974a628896c90dbdf5c8093/u);
   assert.doesNotMatch(`${githubImage}\n${githubShard}`, /(?:ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5|9bc31d5ccc31df68ecc42ccf4149144866c47d8a)/u);
-  assert.match(giteaImage, /if: \$\{\{ github\.server_url != 'https:\/\/github\.com' \}\}/u);
-  assert.match(giteaShard, /needs: gitea-e2e-image/u);
+  assert.match(giteaShard, /needs: e2e-image/u);
   assert.match(giteaShard, /9bc31d5ccc31df68ecc42ccf4149144866c47d8a/u);
   assert.doesNotMatch(`${giteaImage}\n${giteaShard}`, /(?:ea165f8d65b6e75b540449e92b4886f43607fa02|d3f86a106a0bac45b974a628896c90dbdf5c8093)/u);
 
-  const jobs = [...ci.slice(ci.indexOf("jobs:\n")).matchAll(
-    /^  ([a-z][a-z0-9-]+):\n([\s\S]*?)(?=^  [a-z][a-z0-9-]+:\n|(?![\s\S]))/gmu,
-  )];
-  for (const [, name, contents] of jobs) {
-    const githubOnly = /^    if: \$\{\{ github\.server_url == 'https:\/\/github\.com' \}\}$/mu.test(contents);
-    const giteaOnly = /^    if: \$\{\{ github\.server_url != 'https:\/\/github\.com' \}\}$/mu.test(contents);
-    if (!githubOnly) {
-      assert.doesNotMatch(contents, /(?:ea165f8d65b6e75b540449e92b4886f43607fa02|d3f86a106a0bac45b974a628896c90dbdf5c8093)/u,
-        `${name} can run on Gitea and must not resolve artifact v4`);
-    }
-    if (!giteaOnly) {
-      assert.doesNotMatch(contents, /(?:ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5|9bc31d5ccc31df68ecc42ccf4149144866c47d8a)/u,
-        `${name} can run on GitHub and must not resolve artifact v3`);
-    }
-  }
+  assert.doesNotMatch(githubCi, /(?:ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5|9bc31d5ccc31df68ecc42ccf4149144866c47d8a)/u);
+  assert.doesNotMatch(giteaCi, /(?:ea165f8d65b6e75b540449e92b4886f43607fa02|d3f86a106a0bac45b974a628896c90dbdf5c8093)/u);
 });
 
 test("production WebRTC evidence is pinned to an immutable hosted signaling commit", () => {

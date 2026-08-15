@@ -45,26 +45,27 @@ test("local Electron E2E defaults to an isolated Linux container", async () => {
 });
 
 test("CI shards Electron E2E through the same isolated Docker entrypoint", async () => {
-  const workflow = await text(".github/workflows/ci.yml");
-  const githubE2e = job(workflow, "github-e2e-test");
-  const giteaE2e = job(workflow, "gitea-e2e-test");
-  assert.match(workflow, /npm install --global npm@12\.0\.2/u);
-  assert.match(githubE2e, /if: \$\{\{ github\.server_url == 'https:\/\/github\.com' \}\}/u);
-  assert.match(giteaE2e, /if: \$\{\{ github\.server_url != 'https:\/\/github\.com' \}\}/u);
+  const [githubWorkflow, giteaWorkflow] = await Promise.all([
+    text(".github/workflows/ci.yml"),
+    text(".gitea/workflows/ci.yml"),
+  ]);
+  assert.match(githubWorkflow, /npm install --global npm@12\.0\.2/u);
+  assert.match(giteaWorkflow, /npm install --global npm@12\.0\.2/u);
 
-  for (const [provider, e2eJob, imageJob, downloadAction, excludedAction] of [
-    ["GitHub", githubE2e, "github-e2e-image", "d3f86a106a0bac45b974a628896c90dbdf5c8093", "9bc31d5ccc31df68ecc42ccf4149144866c47d8a"],
-    ["Gitea", giteaE2e, "gitea-e2e-image", "9bc31d5ccc31df68ecc42ccf4149144866c47d8a", "d3f86a106a0bac45b974a628896c90dbdf5c8093"],
+  for (const [provider, workflow, downloadAction, excludedAction] of [
+    ["GitHub", githubWorkflow, "d3f86a106a0bac45b974a628896c90dbdf5c8093", "9bc31d5ccc31df68ecc42ccf4149144866c47d8a"],
+    ["Gitea", giteaWorkflow, "9bc31d5ccc31df68ecc42ccf4149144866c47d8a", "d3f86a106a0bac45b974a628896c90dbdf5c8093"],
   ]) {
+    const e2eJob = job(workflow, "e2e-test");
     assert.match(e2eJob, /shard: \[1, 2, 3, 4, 5\]/u, `${provider} E2E job must retain five shards`);
-    assert.match(e2eJob, new RegExp(`needs: ${imageJob}`, "u"));
+    assert.match(e2eJob, /needs: e2e-image/u);
     assert.match(e2eJob, new RegExp(`uses: actions/download-artifact@${downloadAction}`, "u"));
     assert.doesNotMatch(e2eJob, new RegExp(excludedAction, "u"));
     assert.match(e2eJob, new RegExp([
-      "TERMINAY_E2E_IMAGE: \\$\\{\\{ needs\\.", imageJob, "\\.outputs\\.image \\}\\}",
+      "TERMINAY_E2E_IMAGE: \\$\\{\\{ needs\\.e2e-image\\.outputs\\.image \\}\\}",
     ].join(""), "u"));
     assert.match(e2eJob, new RegExp([
-      "EXPECTED_IMAGE_ID: \\$\\{\\{ needs\\.", imageJob, "\\.outputs\\.image-id \\}\\}",
+      "EXPECTED_IMAGE_ID: \\$\\{\\{ needs\\.e2e-image\\.outputs\\.image-id \\}\\}",
     ].join(""), "u"));
     assert.match(e2eJob, /TERMINAY_E2E_IMAGE_IS_PRELOADED: "1"/u);
     assert.match(e2eJob, /TERMINAY_E2E_PLATFORM: linux\/amd64/u);
