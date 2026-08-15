@@ -34,25 +34,43 @@ for (const viewport of [
     )
     const routeLatency = await page.evaluate(started => performance.now() - started, startedAt)
 
-    const result = await page.evaluate(async () => {
-      const probe = window as typeof window & {
+    const result = await waitForUntrustedStream(page)
+
+    expect(routeLatency).toBeLessThan(500)
+    expect(result).toEqual({ frames: 120, running: false, scriptElements: 0 })
+    await expect(page.locator('[data-task20-untrusted-stream] script')).toHaveCount(0)
+    await expect(page.locator('[data-task20-untrusted-stream] img')).toHaveCount(0)
+  })
+}
+
+async function waitForUntrustedStream(page: Page) {
+  // 120 rAF frames can take longer than two seconds on a loaded CI runner.
+  // Keep the interactivity bound and only wait for the probe to finish.
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const probe = (
+            window as typeof window & {
+              __terminayTask20UntrustedStream?: { running: boolean }
+            }
+          ).__terminayTask20UntrustedStream
+          return probe?.running === false
+        }),
+      { timeout: 10_000 },
+    )
+    .toBe(true)
+
+  return page.evaluate(() => {
+    return (
+      window as typeof window & {
         __terminayTask20UntrustedStream?: {
           frames: number
           running: boolean
           scriptElements: number
         }
       }
-      const deadline = performance.now() + 2_000
-      while (probe.__terminayTask20UntrustedStream?.running && performance.now() < deadline) {
-        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
-      }
-      return probe.__terminayTask20UntrustedStream
-    })
-
-    expect(routeLatency).toBeLessThan(500)
-    expect(result).toEqual({ frames: 120, running: false, scriptElements: 0 })
-    await expect(page.locator('[data-task20-untrusted-stream] script')).toHaveCount(0)
-    await expect(page.locator('[data-task20-untrusted-stream] img')).toHaveCount(0)
+    ).__terminayTask20UntrustedStream
   })
 }
 
