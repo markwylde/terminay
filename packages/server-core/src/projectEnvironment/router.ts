@@ -264,6 +264,7 @@ export function filterRemoteTerminalEnvironment(
 		const upper = name.toUpperCase();
 		if (
 			upper.startsWith('TERMINAY_') ||
+			upper.startsWith('MCP_') ||
 			upper === 'HOME' ||
 			upper === 'PATH' ||
 			upper === 'PWD' ||
