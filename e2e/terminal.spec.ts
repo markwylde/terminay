@@ -482,6 +482,96 @@ test.describe('terminal behavior', () => {
 		).toContainText('terminay-clipboard-image-paste');
 	});
 
+	test('pastes clipboard text with macOS Cmd+V', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		test.skip(
+			process.platform !== 'darwin',
+			'Requires Electron’s native macOS Cmd+V route.',
+		);
+		const marker = 'terminay-macos-clipboard-paste-424242';
+
+		await electronApp.evaluate(({ clipboard }, value) => {
+			clipboard.writeText(value);
+		}, marker);
+		await expect(
+			mainWindow.evaluate(() => window.terminayHost?.readTerminalClipboard()),
+		).resolves.toBe(marker);
+
+		await mainWindow.locator('.terminal-panel').first().click();
+		await expectTerminalInputFocused(mainWindow);
+		await mainWindow.keyboard.press('Meta+V');
+
+		await expect(
+			mainWindow.locator('.project-workspace--active .xterm-rows'),
+		).toContainText(marker);
+	});
+
+	test('pastes a clipboard image with macOS Cmd+V', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		test.skip(
+			process.platform !== 'darwin',
+			'Requires Electron’s native macOS Cmd+V route.',
+		);
+		const imagePng =
+			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL9WQAAAABJRU5ErkJggg==';
+
+		await electronApp.evaluate(({ clipboard, nativeImage }, png) => {
+			clipboard.writeImage(
+				nativeImage.createFromBuffer(Buffer.from(png, 'base64')),
+			);
+		}, imagePng);
+
+		await writeToTerminal(mainWindow, 'test -f ');
+		await mainWindow.keyboard.press('Meta+V');
+		await mainWindow.keyboard.type(
+			" && printf 'terminay-macos-clipboard-image-paste\\n'",
+		);
+		await mainWindow.keyboard.press('Enter');
+
+		await expect(
+			mainWindow.locator('.project-workspace--active .xterm-rows'),
+		).toContainText('terminay-macos-clipboard-image-paste');
+	});
+
+	test('pastes a clipboard image through native Edit Paste on macOS', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		test.skip(
+			process.platform !== 'darwin',
+			'Requires Electron’s native macOS Paste command.',
+		);
+		const imagePng =
+			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL9WQAAAABJRU5ErkJggg==';
+
+		await electronApp.evaluate(({ clipboard, nativeImage }, png) => {
+			clipboard.writeImage(
+				nativeImage.createFromBuffer(Buffer.from(png, 'base64')),
+			);
+		}, imagePng);
+
+		await writeToTerminal(mainWindow, 'test -f ');
+		await electronApp.evaluate(({ BrowserWindow }) => {
+			const window = BrowserWindow.getAllWindows().find(
+				(candidate) => !candidate.isDestroyed() && candidate.isVisible(),
+			);
+			if (!window) throw new Error('Main Terminay window is unavailable.');
+			window.webContents.paste();
+		});
+		await mainWindow.keyboard.type(
+			" && printf 'terminay-macos-native-image-paste\\n'",
+		);
+		await mainWindow.keyboard.press('Enter');
+
+		await expect(
+			mainWindow.locator('.project-workspace--active .xterm-rows'),
+		).toContainText('terminay-macos-native-image-paste');
+	});
+
 	test('accepts keyboard input after a terminal click', async ({
 		mainWindow,
 	}) => {
