@@ -33,6 +33,28 @@ test("macro normalization migrates template-only definitions and never serialize
   assert.throws(() => renderMacroTemplate("<% process.exit() %>", {}), /not allowed/);
 });
 
+test("macro normalization collapses duplicate persisted fields before enforcing limits", () => {
+  const duplicateFields = Array.from({ length: 129 }, (_value, index) => ({
+    id: `field-${index}`,
+    name: "Environment",
+    label: "Environment",
+    type: "text",
+  }));
+  const state = normalizeMacroState({
+    macros: [{ id: "deploy", template: "deploy {{Environment}}", fields: duplicateFields }],
+  });
+
+  assert.equal(state.macros[0].fields.length, 1);
+  assert.equal(state.macros[0].fields[0].name, "Environment");
+  assert.throws(
+    () => normalizeMacro({
+      id: "too-many-fields",
+      fields: Array.from({ length: 129 }, (_value, index) => ({ name: `field_${index}` })),
+    }),
+    /macro field count exceeds the limit/,
+  );
+});
+
 test("macro repository persists revisioned updates, rejects stale clients, and resets explicitly", async () => {
   let persisted;
   const repository = new MacroRepository({
