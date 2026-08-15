@@ -121,6 +121,7 @@ import {
 	clearSucceededFeatureFailure,
 	describeFeatureFailure,
 	describeServerFeatureFailure,
+	featureProjectRoot,
 	resolveProjectFeatureAuthority,
 } from './shared/featureQueryAuthority';
 import { composeProjectTerminalClientContext } from './shared/projectTerminalClientContext';
@@ -1224,6 +1225,17 @@ const ProjectWorkspace = forwardRef<
 			featureAvailability.state === 'available'
 				? featureAvailability.authority
 				: undefined;
+		const explorerProjectRoot = featureProjectRoot(
+			featureAvailability,
+			project.rootFolder,
+		);
+		const explorerProject = useMemo(
+			() =>
+				explorerProjectRoot === project.rootFolder
+					? project
+					: { ...project, rootFolder: explorerProjectRoot },
+			[explorerProjectRoot, project],
+		);
 		const terminalPanelClientContext =
 			useMemo<TerminalPanelClientContextValue | null>(
 				() =>
@@ -1289,8 +1301,8 @@ const ProjectWorkspace = forwardRef<
 			[featureAvailability, serverFileViewerClient],
 		);
 		const fileClientPath = useCallback(
-			(path: string) => getPathRelativeToRoot(path, project.rootFolder),
-			[project.rootFolder],
+			(path: string) => getPathRelativeToRoot(path, explorerProjectRoot),
+			[explorerProjectRoot],
 		);
 		const fileClientProjectId = project.id;
 		const serverRecordingsClient = featureAuthority?.recordingsClient;
@@ -2270,7 +2282,7 @@ const ProjectWorkspace = forwardRef<
 			onOperationSucceeded: clearFeatureFailure,
 			onSetError: setErrorText,
 			onUpdateProject,
-			project,
+			project: explorerProject,
 		});
 		const updateSidebarSettings = useCallback(
 			(patch: Partial<SidebarSettings>) => {
@@ -4340,7 +4352,7 @@ const ProjectWorkspace = forwardRef<
 								onOpenTerminal={handleOpenTerminalAt}
 								onCopyPath={handleCopyPath}
 								onCopyRelativePath={handleCopyRelativePath}
-								rootPath={project.rootFolder}
+								rootPath={explorerProjectRoot}
 							/>
 						),
 				},
