@@ -116,6 +116,20 @@ test("terminal panel adapter preserves raw bytes and routes input, resize, kill,
   assert.equal(panel.closed, true);
 });
 
+test("terminal panel consumes a live output frame body without base64 bytes", async () => {
+  const source = transport();
+  const panel = await new TerminayTerminalPanelClient(new TerminayTerminalClient(source)).attach({ ...identity, clientId: "panel-client" });
+  const outputs = [];
+  panel.onOutput((event) => outputs.push([...event.bytes]));
+
+  const wire = output(panel.position, new Uint8Array([0, 0xff, 0x1b]));
+  delete wire.bytes;
+  source.emit(wire, new Uint8Array([0, 0xff, 0x1b]));
+
+  assert.deepEqual(outputs, [[0, 0xff, 0x1b]]);
+  await panel.detach();
+});
+
 test("terminal panel adapter rejects unsafe dimensions and input after detach", async () => {
   const source = transport();
   const client = new TerminayTerminalClient(source);
