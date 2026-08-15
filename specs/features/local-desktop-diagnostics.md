@@ -230,7 +230,7 @@ Normal and failure logging excludes:
   screenshots;
 - project roots, current working directories, user-selected filenames, home
   directory, usernames, hostnames, and environment-variable values;
-- pairing links, URL query strings/fragments, PINs, reconnect grants, cookies,
+- pairing links, URL query strings/fragments, PINs, device private keys, cookies,
   authorization headers, API keys, vault values, and secret-bearing provider
   errors; and
 - raw application-protocol, WebRTC, MCP, Git, or network payloads.

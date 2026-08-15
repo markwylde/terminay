@@ -30,37 +30,6 @@ const { RTCPeerConnection: WeriftPeerConnection } = (weriftRuntime ?? {}) as {
 
 type SignalRecord = Record<string, unknown>
 
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
-  if (value && typeof value === 'object') {
-    const record = value as Record<string, unknown>
-    return `{${Object.keys(record).sort().map((key) =>
-      `${JSON.stringify(key)}:${stableJson(record[key])}`).join(',')}}`
-  }
-  return JSON.stringify(value)
-}
-
-function canonicalSignalPayload(message: SignalRecord): string {
-  const payload: SignalRecord = {
-    nonce: message.nonce,
-    roomId: message.roomId,
-    type: message.type,
-  }
-  if ('candidate' in message) payload.candidate = message.candidate
-  if ('sdp' in message) payload.sdp = message.sdp
-  return stableJson(payload)
-}
-
-function signSignal(token: string, message: SignalRecord): SignalRecord {
-  const signed = { ...message, nonce: crypto.randomUUID() }
-  return {
-    ...signed,
-    signature: createHmac('sha256', Buffer.from(token, 'base64url'))
-      .update(canonicalSignalPayload(signed))
-      .digest('base64url'),
-  }
-}
-
 function parseTurnSecret(raw: string): string {
   const line = raw.split(/\r?\n/).find((entry) => entry.startsWith('static-auth-secret='))
   if (!line) throw new Error('The isolated coturn config has no REST secret.')
@@ -160,7 +129,6 @@ async function exerciseRoute(
   hostPair: Awaited<ReturnType<typeof selectedPair>>
 }> {
   const roomId = crypto.randomUUID()
-  const signalingAuthToken = randomBytes(32).toString('base64url')
   const inbound = new Set<(message: unknown) => void>()
   const errors: string[] = []
   let hostPeer: RTCPeerConnection | null = null
@@ -169,7 +137,7 @@ async function exerciseRoute(
   const page = await browser.newPage()
 
   const emitToHost = (message: SignalRecord) => {
-    for (const listener of inbound) listener(signSignal(signalingAuthToken, message))
+    for (const listener of inbound) listener(message)
   }
   await page.exposeFunction('terminayRouteSignal', emitToHost)
   await page.evaluate(({ iceServers, policy, roomId }) => {
@@ -297,7 +265,6 @@ async function exerciseRoute(
       iceServers,
       relayJoinTokenHash: randomBytes(32).toString('base64url'),
       roomId,
-      signalingAuthToken,
       signalingUrl: 'wss://route-proof.invalid/signal',
     }
     cleanupHost = await runHost(config, {
@@ -392,7 +359,6 @@ async function exerciseWeriftRoute(
   hostPair: Awaited<ReturnType<typeof selectedPair>>
 }> {
   const roomId = crypto.randomUUID()
-  const signalingAuthToken = randomBytes(32).toString('base64url')
   const inbound = new Set<(message: unknown) => void>()
   const errors: string[] = []
   const pendingHostIce: RTCIceCandidateInit[] = []
@@ -404,7 +370,7 @@ async function exerciseWeriftRoute(
   let answerSent = false
 
   const emitToHost = (message: SignalRecord) => {
-    for (const listener of inbound) listener(signSignal(signalingAuthToken, message))
+    for (const listener of inbound) listener(message)
   }
   const installClient = async (offer: RTCSessionDescriptionInit) => {
     clientPeer = createWeriftPeer({ iceServers, iceTransportPolicy: policy })
@@ -506,7 +472,6 @@ async function exerciseWeriftRoute(
       iceServers,
       relayJoinTokenHash: randomBytes(32).toString('base64url'),
       roomId,
-      signalingAuthToken,
       signalingUrl: 'wss://route-proof.invalid/signal',
     }, {
       api,

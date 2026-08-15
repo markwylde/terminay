@@ -20,8 +20,6 @@ const forbiddenHostCouplings = [
   /HttpByteTransport/u,
   /TerminayClient/u,
   /TerminayTerminal/u,
-  /WebConnectionHost/u,
-  /WEB_MANAGER_ORIGIN/u,
   /localhost:4317/u,
   /127\.0\.0\.1/u,
 ]

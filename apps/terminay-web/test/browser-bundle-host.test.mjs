@@ -5,8 +5,7 @@ import test from 'node:test';
 import {
 	BrowserSessionBundleHost,
 	CacheStorageBrowserBundleStore,
-	createBrowserManagerBundleHost,
-	createDirectBrowserBundleHost,
+	createBrowserSessionBundleHost,
 	extractTerminayArchive,
 	MemoryBrowserBundleStore,
 } from '../dist/index.js';
@@ -91,18 +90,17 @@ test('cache storage publishes archive metadata last and restores only the exact 
 	assert.equal(await store.current('server-other'), undefined);
 });
 
-test('the generic manager and direct hosts never gate on browser brand or generated filenames', async () => {
+test('the session bundle host never gates on browser brand or generated filenames', async () => {
 	const selected = fixture('any-output-name');
-	for (const host of [createDirectBrowserBundleHost(new MemoryCacheStorage()), createBrowserManagerBundleHost(new MemoryCacheStorage())]) {
-		const launch = await host.installAndPrepare({ expectedServerId: 'server-prod', sessionOrigin: 'https://prod.example.test', context: context(selected.bundleId), endpoint: endpoint(), compressedArchive: selected.archive });
-		assert.equal(launch.bundle.metadata.entryPath, 'generated/workspace.html');
-	}
+	const host = createBrowserSessionBundleHost(new MemoryCacheStorage());
+	const launch = await host.installAndPrepare({ expectedServerId: 'server-prod', sessionOrigin: 'https://prod.example.test', context: context(selected.bundleId), endpoint: endpoint(), compressedArchive: selected.archive });
+	assert.equal(launch.bundle.metadata.entryPath, 'generated/workspace.html');
 });
 
 test('direct browser archives accept exact IPv4 and IPv6 loopback session origins', async () => {
 	const selected = fixture('loopback-origin');
 	for (const origin of ['http://127.0.0.1:4317', 'http://[::1]:4317']) {
-		const host = createDirectBrowserBundleHost(new MemoryCacheStorage());
+		const host = createBrowserSessionBundleHost(new MemoryCacheStorage());
 		const launch = await host.installAndPrepare({ expectedServerId: 'server-prod', sessionOrigin: origin, context: context(selected.bundleId), endpoint: endpoint(), compressedArchive: selected.archive });
 		assert.equal(launch.entryUrl, `${origin}/remote-app/${selected.bundleId}/generated/workspace.html`);
 	}

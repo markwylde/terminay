@@ -34,23 +34,16 @@ test('superseded renderer architecture and adapter recovery inventory stay absen
 	}
 });
 
-test('retained compatibility is persisted-data migration, deployed wire parsing, or fail-closed policy', async () => {
-	const [webMigration, recording, workspace, settings, runtime, remoteProtocol] =
-		await Promise.all([
-			readFile('apps/terminay-web/src/legacyMigration.ts', 'utf8'),
-			readFile('electron/recording/service.ts', 'utf8'),
-			readFile('packages/server-core/src/workspace.ts', 'utf8'),
-			readFile('packages/server-core/src/settings/normalize.ts', 'utf8'),
-			readFile('apps/terminay-server/src/remote/secureWeriftRuntime.ts', 'utf8'),
-			readFile('electron/remote/deployedTerminalProtocol.ts', 'utf8'),
-		]);
-	assert.match(webMigration, /consumeLegacyManagerMigration/u);
-	assert.match(webMigration, /removeItem/u);
-	assert.match(recording, /legacyCastPath/u);
-	assert.match(workspace, /legacyProjects/u);
-	assert.match(settings, /migrateLegacyShellSettings/u);
-	assert.match(runtime, /legacyNodeDataChannelFallback:\s*false/u);
-	assert.doesNotMatch(runtime, /legacyNodeDataChannelFallback:\s*true/u);
-	assert.match(remoteProtocol, /parseRemoteClientMessage/u);
-	assert.doesNotMatch(remoteProtocol, /BrowserWindow|ipcRenderer|WebContents|preload/u);
+test('the PWA and protocol expose one current connection-manager authority', async () => {
+	await assert.rejects(access('apps/terminay-web/src/legacyMigration.ts'), (error) => error?.code === 'ENOENT');
+	await assert.rejects(access('packages/server-core/src/migration/manager.ts'), (error) => error?.code === 'ENOENT');
+	const [webManager, origins] = await Promise.all([
+		readFile('apps/terminay-web/src/index.ts', 'utf8'),
+		readFile('packages/protocol/src/managerOrigins.ts', 'utf8'),
+	]);
+	assert.match(webManager, /PwaConnectionManager/u);
+	assert.match(origins, /TERMINAY_MANAGER_ORIGIN/u);
+	for (const source of [webManager, origins]) {
+		assert.doesNotMatch(source, /web\.terminay\.com|legacy|migration|reconnect grant|proof key/iu);
+	}
 });

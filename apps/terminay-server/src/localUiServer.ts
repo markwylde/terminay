@@ -68,66 +68,49 @@ export interface LocalUiServerOptions {
 	/** Accepts a short-lived protocol ticket in addition to the bootstrap
 	 * credential.  The ticket authority stays at the server boundary. */
 	readonly acceptCredential?: (token: string) => boolean | Promise<boolean>;
-	/** Optional pairing-to-reconnect boundary. These endpoints deliberately
-	 * return only an opaque handle and a proof result; grants never become
-	 * protocol bearer credentials. */
-	readonly reconnect?: {
+	/** Device enrollment and reconnect authority. Pairing material is accepted
+	 * only for enrollment; later requests prove possession of the device key. */
+	readonly deviceAuthentication?: {
 		readonly enroll: (input: {
-			readonly token: string;
-			readonly clientId: string;
+			readonly pairingSessionId: string;
+			readonly pairingToken: string;
+			readonly pairingExpiresAt: string;
+			readonly pairingPin: string;
+			readonly deviceName: string;
+			readonly publicKeyPem: string;
 		}) =>
-			| {
-					readonly handle: string;
-					readonly grant: string;
-					readonly signingOrigin: string;
-			  }
-			| Promise<{
-					readonly handle: string;
-					readonly grant: string;
-					readonly signingOrigin: string;
-			  }>;
+			| { readonly deviceId: string }
+			| Promise<{ readonly deviceId: string }>;
 		readonly challenge: (input: {
-			readonly handle: string;
-			readonly clientNonce: string;
+			readonly deviceId: string;
 		}) =>
 			| {
-					readonly attemptId: string;
-					readonly handle: string;
-					readonly clientNonce: string;
+					readonly challengeId: string;
+					readonly deviceId: string;
+					readonly serverId: string;
+					readonly sessionOrigin: string;
+					readonly nonce: string;
+					readonly issuedAt: number;
+					readonly expiresAt: number;
 					readonly signingInput: string;
 			  }
 			| Promise<{
-					readonly attemptId: string;
-					readonly handle: string;
-					readonly clientNonce: string;
+					readonly challengeId: string;
+					readonly deviceId: string;
+					readonly serverId: string;
+					readonly sessionOrigin: string;
+					readonly nonce: string;
+					readonly issuedAt: number;
+					readonly expiresAt: number;
 					readonly signingInput: string;
 			  }>;
-		readonly complete: (input: {
-			readonly attemptId: string;
-			readonly handle: string;
-			readonly clientNonce: string;
-			readonly proof: string;
+		readonly verify: (input: {
+			readonly deviceId: string;
+			readonly challengeId: string;
+			readonly deviceSignature: string;
 		}) =>
 			| { readonly ticket: string; readonly expiresAt: number }
 			| Promise<{ readonly ticket: string; readonly expiresAt: number }>;
-	};
-	/** Optional one-time PIN/device enrollment boundary. Pairing credentials are
-	 * accepted only in bounded POST bodies and are never interpreted by the
-	 * transport listener itself. */
-	readonly pairing?: {
-		readonly start: (input: {
-			readonly deviceName: string;
-			readonly pairingExpiresAt: string;
-			readonly pairingPin: string;
-			readonly pairingSessionId: string;
-			readonly pairingToken: string;
-			readonly publicKeyPem: string;
-		}) =>
-			| { readonly provisionalDeviceId: string }
-			| Promise<{ readonly provisionalDeviceId: string }>;
-		readonly complete: (input: {
-			readonly provisionalDeviceId: string;
-		}) => unknown | Promise<unknown>;
 	};
 }
 
@@ -445,8 +428,7 @@ export class LocalUiServer {
 				method !== 'HEAD' &&
 				!(
 					method === 'POST' &&
-					(request.url?.startsWith('/protocol/reconnect/') ||
-						request.url?.startsWith('/api/pairing/'))
+					request.url?.startsWith('/api/devices/')
 				)
 			) {
 				sendText(response, 405, 'method not allowed');
@@ -472,41 +454,29 @@ export class LocalUiServer {
 					return;
 				}
 			if (
-				url.pathname === '/api/pairing/start' ||
-				url.pathname === '/api/pairing/complete'
+				url.pathname === '/api/devices/enroll' ||
+				url.pathname === '/api/devices/challenge' ||
+				url.pathname === '/api/devices/verify'
 			) {
 				if (method !== 'POST') {
 					sendText(response, 405, 'method not allowed');
 					return;
 				}
-				await this.handlePairing(
+				await this.handleDeviceAuthentication(
 					request,
 					response,
-					url.pathname === '/api/pairing/start' ? 'start' : 'complete',
-				);
-				return;
-			}
-			if (
-				url.pathname === '/protocol/reconnect/challenge' ||
-				url.pathname === '/protocol/reconnect/complete'
-			) {
-				if (method !== 'POST') {
-					sendText(response, 405, 'method not allowed');
-					return;
-				}
-				await this.handleReconnect(
-					request,
-					response,
-					url.pathname === '/protocol/reconnect/challenge'
-						? 'challenge'
-						: 'complete',
+					url.pathname === '/api/devices/enroll'
+						? 'enroll'
+						: url.pathname === '/api/devices/challenge'
+							? 'challenge'
+							: 'verify',
 				);
 				return;
 			}
 			// The verified, immutable UI bundle is public bootstrap material. A
 			// browser navigation cannot attach a Bearer header, and URL fragments are
 			// intentionally never sent to HTTP. Keep application streams and
-			// reconnect enrollment credential-gated, while allowing the matching UI
+			// device enrollment is fragment-gated, while allowing the matching UI
 			// to boot and consume the one-time fragment in renderer memory.
 			if (
 				(method === 'GET' || method === 'HEAD') &&
@@ -522,14 +492,6 @@ export class LocalUiServer {
 				});
 				return;
 			}
-			if (url.pathname === '/protocol/reconnect/enroll') {
-				if (method !== 'POST') {
-					sendText(response, 405, 'method not allowed');
-					return;
-				}
-				await this.handleReconnectEnrollment(request, response, token);
-				return;
-			}
 			if (method === 'POST') {
 				sendText(response, 404, 'not found');
 				return;
@@ -538,73 +500,6 @@ export class LocalUiServer {
 		} catch {
 			if (!response.headersSent)
 				sendText(response, 500, 'local UI request failed');
-		}
-	}
-
-	private async handlePairing(
-		request: IncomingMessage,
-		response: ServerResponse,
-		kind: 'start' | 'complete',
-	): Promise<void> {
-		const pairing = this.options.pairing;
-		if (pairing === undefined) {
-			sendText(response, 404, 'pairing is unavailable');
-			return;
-		}
-		const value = await readReconnectBody(request, response);
-		if (value === undefined) return;
-		try {
-			if (kind === 'complete') {
-				if (
-					Object.keys(value).length !== 1 ||
-					typeof value.provisionalDeviceId !== 'string'
-				)
-					throw new TypeError('pairing completion is invalid');
-				sendJson(
-					response,
-					200,
-					await pairing.complete({
-						provisionalDeviceId: value.provisionalDeviceId,
-					}),
-				);
-				return;
-			}
-			const allowed = new Set([
-				'deviceName',
-				'pairingExpiresAt',
-				'pairingPin',
-				'pairingSessionId',
-				'pairingToken',
-				'publicKeyPem',
-			]);
-			if (
-				Object.keys(value).length !== allowed.size ||
-				Object.keys(value).some((key) => !allowed.has(key)) ||
-				[...allowed].some((key) => typeof value[key] !== 'string')
-			)
-				throw new TypeError('pairing request is invalid');
-			const result = await pairing.start(
-				value as {
-					deviceName: string;
-					pairingExpiresAt: string;
-					pairingPin: string;
-					pairingSessionId: string;
-					pairingToken: string;
-					publicKeyPem: string;
-				},
-			);
-			if (
-				typeof result.provisionalDeviceId !== 'string' ||
-				result.provisionalDeviceId.length === 0 ||
-				result.provisionalDeviceId.length > 512
-			)
-				throw new TypeError('pairing result is invalid');
-			sendJson(response, 200, result);
-		} catch (error) {
-			sendJson(response, 403, {
-				error:
-					error instanceof Error ? error.message : 'Device pairing failed.',
-			});
 		}
 	}
 
@@ -629,93 +524,84 @@ export class LocalUiServer {
 			: undefined;
 	}
 
-	private async handleReconnectEnrollment(
+	private async handleDeviceAuthentication(
 		request: IncomingMessage,
 		response: ServerResponse,
-		token: string,
+		kind: 'enroll' | 'challenge' | 'verify',
 	): Promise<void> {
-		const reconnect = this.options.reconnect;
-		if (reconnect === undefined) {
-			sendText(response, 404, 'reconnect is unavailable');
+		const deviceAuthentication = this.options.deviceAuthentication;
+		if (deviceAuthentication === undefined) {
+			sendText(response, 404, 'device authentication is unavailable');
 			return;
 		}
-		const value = await readReconnectBody(request, response);
+		const value = await readDeviceAuthenticationBody(request, response);
 		if (value === undefined) return;
-		const clientId = stringRecordField(value, 'clientId');
-		if (clientId === undefined || !isSafeId(clientId)) {
-			sendText(response, 400, 'reconnect client identity is invalid');
-			return;
-		}
 		try {
-			const enrollment = await reconnect.enroll({ token, clientId });
-			if (
-				!isReconnectHandle(enrollment.handle) ||
-				!isReconnectGrant(enrollment.grant) ||
-				!isReconnectSigningOrigin(enrollment.signingOrigin)
-			)
-				throw new TypeError('invalid reconnect enrollment');
-			sendJson(response, 200, enrollment);
-		} catch {
-			sendText(response, 403, 'reconnect enrollment denied');
-		}
-	}
-
-	private async handleReconnect(
-		request: IncomingMessage,
-		response: ServerResponse,
-		kind: 'challenge' | 'complete',
-	): Promise<void> {
-		const reconnect = this.options.reconnect;
-		if (reconnect === undefined) {
-			sendText(response, 404, 'reconnect is unavailable');
-			return;
-		}
-		const value = await readReconnectBody(request, response);
-		if (value === undefined) return;
-		const handle = stringRecordField(value, 'handle');
-		const clientNonce = stringRecordField(value, 'clientNonce');
-		if (!isReconnectHandle(handle) || !isReconnectNonce(clientNonce)) {
-			sendText(response, 400, 'reconnect request is invalid');
-			return;
-		}
-		try {
-			if (kind === 'challenge') {
-				const challenge = await reconnect.challenge({ handle, clientNonce });
+			if (kind === 'enroll') {
+				const allowed = new Set([
+					'pairingSessionId', 'pairingToken', 'pairingExpiresAt', 'pairingPin',
+					'deviceName', 'publicKeyPem',
+				]);
 				if (
-					!isSafeId(challenge.attemptId) ||
-					challenge.handle !== handle ||
-					challenge.clientNonce !== clientNonce ||
+					Object.keys(value).length !== allowed.size ||
+					Object.keys(value).some((key) => !allowed.has(key)) ||
+					[...allowed].some((key) => typeof value[key] !== 'string')
+				)
+					throw new TypeError('device enrollment is invalid');
+				const result = await deviceAuthentication.enroll(value as {
+					pairingSessionId: string; pairingToken: string; pairingExpiresAt: string;
+					pairingPin: string; deviceName: string; publicKeyPem: string;
+				});
+				if (!isSafeId(result.deviceId)) throw new TypeError('device enrollment is invalid');
+				sendJson(response, 200, result);
+				return;
+			}
+			const deviceId = stringRecordField(value, 'deviceId');
+			if (deviceId === undefined || !isSafeId(deviceId))
+				throw new TypeError('device identity is invalid');
+			if (kind === 'challenge') {
+				if (Object.keys(value).length !== 1)
+					throw new TypeError('device challenge is invalid');
+				const challenge = await deviceAuthentication.challenge({ deviceId });
+				if (
+					!isSafeId(challenge.challengeId) ||
+					challenge.deviceId !== deviceId ||
+					!isSafeId(challenge.serverId) ||
+					!isSessionOrigin(challenge.sessionOrigin) ||
+					!isDeviceNonce(challenge.nonce) ||
+					!Number.isSafeInteger(challenge.issuedAt) ||
+					!Number.isSafeInteger(challenge.expiresAt) ||
+					challenge.expiresAt <= challenge.issuedAt ||
 					!isSigningInput(challenge.signingInput)
 				)
-					throw new TypeError('invalid reconnect challenge');
+					throw new TypeError('device challenge is invalid');
 				sendJson(response, 200, challenge);
 				return;
 			}
-			const attemptId = stringRecordField(value, 'attemptId');
-			const proof = stringRecordField(value, 'proof');
+			const challengeId = stringRecordField(value, 'challengeId');
+			const deviceSignature = stringRecordField(value, 'deviceSignature');
 			if (
-				attemptId === undefined ||
-				!isSafeId(attemptId) ||
-				!isReconnectProof(proof)
+				Object.keys(value).length !== 3 ||
+				challengeId === undefined ||
+				!isSafeId(challengeId) ||
+				!isDeviceSignature(deviceSignature)
 			) {
-				sendText(response, 400, 'reconnect proof is invalid');
-				return;
+				throw new TypeError('device signature is invalid');
 			}
-			const complete = await reconnect.complete({
-				attemptId,
-				handle,
-				clientNonce,
-				proof,
+			const complete = await deviceAuthentication.verify({
+				deviceId,
+				challengeId,
+				deviceSignature: deviceSignature!,
 			});
 			if (
-				!isReconnectGrant(complete.ticket) ||
+				!isDeviceTicket(complete.ticket) ||
 				!Number.isSafeInteger(complete.expiresAt) ||
 				complete.expiresAt <= Date.now()
 			)
-				throw new TypeError('invalid reconnect ticket');
+				throw new TypeError('device ticket is invalid');
 			sendJson(response, 200, complete);
 		} catch {
-			sendText(response, 403, 'reconnect denied');
+			sendText(response, 403, 'device authentication denied');
 		}
 	}
 
@@ -888,7 +774,7 @@ function bearerToken(value: string | string[] | undefined): string | null {
 		: token;
 }
 
-async function readReconnectBody(
+async function readDeviceAuthenticationBody(
 	request: IncomingMessage,
 	response: ServerResponse,
 ): Promise<Record<string, unknown> | undefined> {
@@ -896,7 +782,7 @@ async function readReconnectBody(
 	try {
 		body = await readBoundedBody(request, MAX_HANDSHAKE_BYTES);
 	} catch {
-		sendText(response, 413, 'reconnect body exceeds limit');
+		sendText(response, 413, 'device authentication body exceeds limit');
 		return undefined;
 	}
 	try {
@@ -905,7 +791,7 @@ async function readReconnectBody(
 			throw new TypeError('not an object');
 		return value as Record<string, unknown>;
 	} catch {
-		sendText(response, 400, 'invalid reconnect JSON');
+		sendText(response, 400, 'invalid device authentication JSON');
 		return undefined;
 	}
 }
@@ -918,7 +804,7 @@ function stringRecordField(
 	return typeof field === 'string' ? field : undefined;
 }
 
-function isReconnectHandle(value: string | undefined): value is string {
+function isDeviceTicket(value: string | undefined): value is string {
 	return (
 		value !== undefined &&
 		value.length >= 32 &&
@@ -927,7 +813,7 @@ function isReconnectHandle(value: string | undefined): value is string {
 	);
 }
 
-function isReconnectGrant(value: string | undefined): value is string {
+function isDeviceNonce(value: string | undefined): value is string {
 	return (
 		value !== undefined &&
 		value.length >= 16 &&
@@ -936,25 +822,16 @@ function isReconnectGrant(value: string | undefined): value is string {
 	);
 }
 
-function isReconnectNonce(value: string | undefined): value is string {
+function isDeviceSignature(value: string | undefined): value is string {
 	return (
 		value !== undefined &&
 		value.length >= 16 &&
-		value.length <= 512 &&
-		/^[A-Za-z0-9._:-]+$/u.test(value)
-	);
-}
-
-function isReconnectProof(value: string | undefined): value is string {
-	return (
-		value !== undefined &&
-		value.length >= 32 &&
 		value.length <= 512 &&
 		/^[A-Za-z0-9_-]+$/u.test(value)
 	);
 }
 
-function isReconnectSigningOrigin(value: string | undefined): value is string {
+function isSessionOrigin(value: string | undefined): value is string {
 	if (value === undefined || value.length > 4096 || /[\0\r\n]/u.test(value))
 		return false;
 	try {
@@ -973,7 +850,7 @@ function isReconnectSigningOrigin(value: string | undefined): value is string {
 }
 
 function isSigningInput(value: string): boolean {
-	// The canonical reconnect signing domain uses NUL separators. Newlines are
+	// The canonical device signing domain uses NUL separators. Newlines are
 	// forbidden, but NUL is an expected protocol byte here.
 	return value.length >= 32 && value.length <= 4096 && !/[\r\n]/u.test(value);
 }
@@ -1089,7 +966,7 @@ function formatHost(host: string): string {
 function isProtocolPath(pathname: string): boolean {
 	return (
 		pathname === REMOTE_STREAM_PATH ||
-		pathname.startsWith('/protocol/reconnect/')
+		pathname.startsWith('/api/devices/')
 	);
 }
 function expandAllowedWebOriginAliases(value: string): readonly string[] {

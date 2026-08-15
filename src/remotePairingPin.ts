@@ -10,7 +10,6 @@ export const PAIRING_PIN_PATTERN = /^\d{6}$/;
 
 export async function isRemoteAccessPairingPinConfigured(
 	client: RemotePairingPinClient,
-	_pairingMode: 'lan' | 'webrtc',
 ): Promise<boolean> {
 	return client.isRemoteAccessPairingPinConfigured();
 }
