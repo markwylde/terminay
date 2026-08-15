@@ -535,7 +535,7 @@ export class ServerTerminalAuthority {
 			projectEnvironmentRegistry.register(
 				new ExtensionProjectEnvironmentRuntime(
 					'com.terminay.ssh/connection',
-					['terminal', 'filesystem', 'mcp-bridge'],
+					['terminal', 'filesystem'],
 					extensionManagement.hosts,
 					() => projectEnvironments.state,
 				),
@@ -1647,7 +1647,7 @@ export class ServerTerminalAuthority {
 
 	/** Sessions opened through the authenticated server MessagePort bypass the
 	 * Desktop compatibility creator. Adopt their immutable server identity on
-	 * first host lookup so test/MCP/recording integrations never assume a
+	 * first host lookup so test and recording integrations never assume a
 	 * renderer-created session is absent. PTY ownership remains in
 	 * TerminalService; this map only holds host metadata. */
 	private knownSession(id: string): AuthoritySession | undefined {
