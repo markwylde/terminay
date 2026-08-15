@@ -1,30 +1,25 @@
 import {
-	evaluateTerminayBundleCompatibility,
 	parseTerminayHostContext,
-	parseTerminayUiBundleCompatibilityManifest,
-	TERMINAY_HOST_CAPABILITY_NAMES,
-	type TerminayBundleCompatibilityResult,
-	type TerminayHostCapability,
-	type TerminayHostCompatibilityFailure,
-	type TerminayHostCapabilityVersions,
 	type TerminayHostContext,
-	type TerminayHostRuntimeSupport,
 } from '@terminay/protocol';
-import type { UiBundleAsset, UiBundleManifest } from '@terminay/ui-bundle';
+import {
+	decompressTerminayArchive,
+	extractTerminayArchive,
+	type TerminayArchiveMetadata,
+} from './archiveBundle.js';
 
-const HASH = /^[A-Za-z0-9_-]{43}$/u;
-const MAX_ASSETS = 1_024;
-const MAX_ASSET_BYTES = 16 * 1024 * 1024;
-const MAX_TOTAL_BYTES = 64 * 1024 * 1024;
+const MAX_COMPRESSED_BYTES = 32 * 1024 * 1024;
 
 export interface VerifiedBrowserBundle {
-	readonly manifest: UiBundleManifest;
+	readonly metadata: TerminayArchiveMetadata;
+	/** Absolute Cache Storage paths. These are derived only after archive
+	 * extraction, never supplied by a server manifest. */
 	readonly assets: ReadonlyMap<string, Uint8Array>;
 }
 
 export interface BrowserBundleStore {
 	current(serverId: string): Promise<VerifiedBrowserBundle | undefined>;
-	/** Implementations must publish the active pointer after all assets commit. */
+	/** Implementations publish the active pointer only after every asset commits. */
 	commit(serverId: string, bundle: VerifiedBrowserBundle): Promise<void>;
 }
 
@@ -33,8 +28,8 @@ export interface OpaqueBrowserByteEndpoint {
 	subscribe(listener: (frame: Uint8Array) => void): () => void;
 }
 
-/** The only browser presentation capabilities. They are derived from concrete
- * APIs, never from a browser name, runtime brand, or user-agent string. */
+/** Kept as a presentation capability seam. Archive installation itself is
+ * intentionally independent of browser name and generated app layout. */
 export interface BrowserCapabilityPlatform {
 	readonly clipboard?: Readonly<{ writeText?: unknown }>;
 	readonly Notification?: unknown;
@@ -45,21 +40,6 @@ export interface BrowserBundleLaunch {
 	readonly bundle: VerifiedBrowserBundle;
 	readonly entryUrl: string;
 	readonly endpoint: OpaqueBrowserByteEndpoint;
-	readonly compatibility: Extract<TerminayBundleCompatibilityResult, { compatible: true }>;
-}
-
-export class BrowserHostUpgradeRequiredError extends Error {
-	readonly failure: Exclude<TerminayBundleCompatibilityResult, { compatible: true }>;
-	readonly failures: readonly Exclude<TerminayBundleCompatibilityResult, { compatible: true }>[];
-	constructor(
-		failure: Exclude<TerminayBundleCompatibilityResult, { compatible: true }>,
-		failures: readonly Exclude<TerminayBundleCompatibilityResult, { compatible: true }>[] = [failure],
-	) {
-		super(`browser host upgrade required: ${failure.component}/${failure.code}`);
-		this.name = 'BrowserHostUpgradeRequiredError';
-		this.failure = failure;
-		this.failures = Object.freeze([...failures]);
-	}
 }
 
 export class MemoryBrowserBundleStore implements BrowserBundleStore {
@@ -72,295 +52,128 @@ export class MemoryBrowserBundleStore implements BrowserBundleStore {
 	}
 }
 
-/** Exact-session-origin Cache Storage backend. The active metadata cache is
- * updated only after the immutable bundle cache is complete, so an interrupted
- * write cannot replace the last launchable bundle. */
+/** Exact-session-origin Cache Storage backend. The immutable cache receives
+ * every extracted file before the active record changes, so interruption keeps
+ * the previous complete archive launchable. */
 export class CacheStorageBrowserBundleStore implements BrowserBundleStore {
 	constructor(
 		private readonly cacheStorage: CacheStorage,
-		private readonly namespace = 'terminay.session-bundles.v1',
+		private readonly namespace = 'terminay.session-archives.v1',
 	) {}
 
 	async current(serverId: string): Promise<VerifiedBrowserBundle | undefined> {
-		const metadata = await this.cacheStorage.open(`${this.namespace}.active`);
-		const record = await metadata.match(this.metadataRequest(serverId));
-		if (record === undefined) return undefined;
-		const manifest = parseBrowserBundleManifest(await record.json());
-		const cache = await this.cacheStorage.open(this.bundleCache(serverId, manifest.bundleId));
+		const metadataCache = await this.cacheStorage.open(`${this.namespace}.active`);
+		const response = await metadataCache.match(this.metadataRequest(serverId));
+		if (response === undefined) return undefined;
+		const value = await response.json();
+		if (!record(value) || !Array.isArray(value.paths)) return undefined;
+		let metadata: TerminayArchiveMetadata;
+		try { metadata = parseStoredMetadata(value.metadata); } catch { return undefined; }
+		const paths = value.paths;
+		if (paths.length === 0 || paths.some((path) => typeof path !== 'string')) return undefined;
+		const cache = await this.cacheStorage.open(this.bundleCache(serverId, metadata.bundleId));
 		const assets = new Map<string, Uint8Array>();
-		for (const asset of manifest.assets) {
-			const response = await cache.match(this.assetRequest(asset.path));
-			if (response === undefined) return undefined;
-			assets.set(asset.path, new Uint8Array(await response.arrayBuffer()));
+		for (const path of paths) {
+			const asset = await cache.match(this.assetRequest(path));
+			if (asset === undefined) return undefined;
+			assets.set(path, new Uint8Array(await asset.arrayBuffer()));
 		}
-		return Object.freeze({ manifest, assets: readonlyAssets(assets) });
+		return Object.freeze({ metadata, assets: readonlyAssets(assets) });
 	}
 
 	async commit(serverId: string, bundle: VerifiedBrowserBundle): Promise<void> {
-		const cacheName = this.bundleCache(serverId, bundle.manifest.bundleId);
+		const cacheName = this.bundleCache(serverId, bundle.metadata.bundleId);
 		const cache = await this.cacheStorage.open(cacheName);
 		try {
-			for (const asset of bundle.manifest.assets) {
-				const bytes = bundle.assets.get(asset.path);
-				if (bytes === undefined) throw new Error('verified browser bundle is incomplete');
-				await cache.put(this.assetRequest(asset.path), new Response(bytes as BodyInit, { headers: { 'Content-Type': asset.contentType } }));
-			}
-			const metadata = await this.cacheStorage.open(`${this.namespace}.active`);
-			await metadata.put(this.metadataRequest(serverId), new Response(JSON.stringify(bundle.manifest), { headers: { 'Content-Type': 'application/json' } }));
+			for (const [path, bytes] of bundle.assets)
+				await cache.put(this.assetRequest(path), new Response(bytes as BodyInit, { headers: { 'Content-Type': contentType(path) } }));
+			const active = await this.cacheStorage.open(`${this.namespace}.active`);
+			await active.put(this.metadataRequest(serverId), new Response(JSON.stringify({ metadata: bundle.metadata, paths: [...bundle.assets.keys()] }), { headers: { 'Content-Type': 'application/json' } }));
 		} catch (error) {
 			await this.cacheStorage.delete(cacheName);
 			throw error;
 		}
 	}
 
-	private metadataRequest(serverId: string): Request {
-		return new Request(`https://terminay.invalid/${this.namespace}/active/${encodeURIComponent(serverId)}`);
-	}
-
-	private assetRequest(path: string): Request {
-		return new Request(`https://terminay.invalid${path}`);
-	}
-
-	private bundleCache(serverId: string, bundleId: string): string {
-		return `${this.namespace}.bundle.${encodeURIComponent(serverId)}.${bundleId}`;
-	}
+	private metadataRequest(serverId: string): Request { return new Request(`https://terminay.invalid/${this.namespace}/active/${encodeURIComponent(serverId)}`); }
+	private assetRequest(path: string): Request { return new Request(`https://terminay.invalid${path}`); }
+	private bundleCache(serverId: string, bundleId: string): string { return `${this.namespace}.bundle.${encodeURIComponent(serverId)}.${bundleId}`; }
 }
 
 export class BrowserSessionBundleHost {
-	constructor(
-		private readonly options: Readonly<{
-			store: BrowserBundleStore;
-			runtime: TerminayHostRuntimeSupport;
-			crypto?: Pick<Crypto, 'subtle'>;
-		}>,
-	) {}
+	constructor(private readonly options: Readonly<{ store: BrowserBundleStore; }>) {}
 
 	async installAndPrepare(input: Readonly<{
-		manifest: unknown;
 		expectedServerId: string;
 		sessionOrigin: string;
 		context: unknown;
 		endpoint: OpaqueBrowserByteEndpoint;
-		readAsset(path: string): Promise<Uint8Array>;
+		compressedArchive: Uint8Array;
 	}>): Promise<BrowserBundleLaunch> {
 		const origin = exactSessionOrigin(input.sessionOrigin);
-		const manifest = parseBrowserBundleManifest(input.manifest);
+		const archive = extractTerminayArchive(await decompressTerminayArchive(input.compressedArchive, MAX_COMPRESSED_BYTES));
 		const suppliedContext = parseTerminayHostContext(input.context);
-		/* The browser shell is the trusted producer of presentation capabilities.
-		 * Do not accept a server/bootstrap claim that this browser has a native
-		 * capability just because it appeared in the supplied host context. */
-		const context = parseTerminayHostContext({
-			...suppliedContext,
-			capabilities: this.options.runtime.capabilities,
-		});
 		if (
-			context.hostKind !== 'browser' ||
-			context.serverId !== input.expectedServerId ||
-			context.bundleId !== manifest.bundleId
-		)
-			throw new TypeError('browser host context does not match the selected bundle');
-		const compatibility = evaluateTerminayBundleCompatibility(
-			manifest,
-			context,
-			this.options.runtime,
-		);
-		if (!compatibility.compatible)
-			throw new BrowserHostUpgradeRequiredError(
-				compatibility,
-				browserCompatibilityFailures(manifest, this.options.runtime, compatibility),
-			);
-
+			suppliedContext.hostKind !== 'browser' ||
+			suppliedContext.serverId !== input.expectedServerId ||
+			suppliedContext.bundleId !== archive.metadata.bundleId ||
+			suppliedContext.applicationProtocolVersion !== archive.metadata.applicationProtocolVersion
+		) throw new TypeError('browser host context does not match the server UI archive');
+		const prefix = `/remote-app/${archive.metadata.bundleId}/`;
 		const assets = new Map<string, Uint8Array>();
-		for (const asset of manifest.assets) {
-			const bytes = copyBytes(await input.readAsset(asset.path));
-			if (bytes.byteLength !== asset.size)
-				throw new TypeError(`browser bundle asset size mismatch: ${asset.path}`);
-			const actualHash = await sha256(bytes, this.options.crypto);
-			if (actualHash !== asset.hash)
-				throw new TypeError(`browser bundle asset hash mismatch: ${asset.path}`);
-			assets.set(asset.path, bytes);
-		}
-		const bundle = Object.freeze({ manifest, assets: readonlyAssets(assets) });
+		for (const entry of archive.entries) assets.set(`${prefix}${entry.path}`, Uint8Array.from(entry.bytes));
+		const entryPath = `${prefix}${archive.metadata.entryPath}`;
+		if (!assets.has(entryPath)) throw new TypeError('server UI archive entry is missing');
+		const bundle = Object.freeze({ metadata: archive.metadata, assets: readonlyAssets(assets) });
 		await this.options.store.commit(input.expectedServerId, bundle);
-		return Object.freeze({
-			context,
-			bundle,
-			entryUrl: new URL(manifest.entryPath, origin).toString(),
-			endpoint: input.endpoint,
-			compatibility,
-		});
+		return Object.freeze({ context: suppliedContext, bundle, entryUrl: new URL(entryPath, origin).toString(), endpoint: input.endpoint });
 	}
 }
 
-export function createBrowserManagerBundleHost(
-	cacheStorage: CacheStorage,
-	capabilities: TerminayHostCapabilityVersions = negotiateBrowserHostCapabilities(),
-): BrowserSessionBundleHost {
-	return new BrowserSessionBundleHost({
-		store: new CacheStorageBrowserBundleStore(cacheStorage, 'terminay.manager-session-bundles.v1'),
-		runtime: browserRuntime(capabilities),
-	});
+export function createBrowserManagerBundleHost(cacheStorage: CacheStorage): BrowserSessionBundleHost {
+	return new BrowserSessionBundleHost({ store: new CacheStorageBrowserBundleStore(cacheStorage, 'terminay.manager-session-archives.v1') });
 }
 
-export function createDirectBrowserBundleHost(
-	cacheStorage: CacheStorage,
-	capabilities: TerminayHostCapabilityVersions = negotiateBrowserHostCapabilities(),
-): BrowserSessionBundleHost {
-	return new BrowserSessionBundleHost({
-		store: new CacheStorageBrowserBundleStore(cacheStorage, 'terminay.direct-session-bundles.v1'),
-		runtime: browserRuntime(capabilities),
-	});
+export function createDirectBrowserBundleHost(cacheStorage: CacheStorage): BrowserSessionBundleHost {
+	return new BrowserSessionBundleHost({ store: new CacheStorageBrowserBundleStore(cacheStorage, 'terminay.direct-session-archives.v1') });
 }
 
-export function negotiateBrowserHostCapabilities(
-	platform: BrowserCapabilityPlatform = browserCapabilityPlatform(),
-): TerminayHostCapabilityVersions {
-	const capabilities: Partial<Record<TerminayHostCapability, number>> = {};
-	if (typeof platform.clipboard?.writeText === 'function') capabilities.clipboardWrite = 1;
-	if (typeof platform.Notification === 'function') capabilities.notifications = 1;
-	return Object.freeze(capabilities);
-}
-
-function browserRuntime(capabilities: TerminayHostCapabilityVersions): TerminayHostRuntimeSupport {
+/** No browser brand detection: capability negotiation remains available to the
+ * application bridge but is not a server-archive acceptance gate. */
+export function negotiateBrowserHostCapabilities(platform: BrowserCapabilityPlatform = browserCapabilityPlatform()): Readonly<Record<'clipboardWrite' | 'notifications', 1 | undefined>> {
 	return Object.freeze({
-		bootstrapVersion: 1,
-		bundleFormatVersion: 1,
-		hostBridgeVersion: 1,
-		byteEndpointVersion: 1,
-		capabilities: browserCapabilities(capabilities),
+		clipboardWrite: typeof platform.clipboard?.writeText === 'function' ? 1 : undefined,
+		notifications: typeof platform.Notification === 'function' ? 1 : undefined,
 	});
 }
 
 function browserCapabilityPlatform(): BrowserCapabilityPlatform {
-	const browser = globalThis as typeof globalThis & {
-		navigator?: { clipboard?: Readonly<{ writeText?: unknown }> };
-		Notification?: unknown;
-	};
-	return Object.freeze({
-		clipboard: browser.navigator?.clipboard,
-		Notification: browser.Notification,
-	});
+	const browser = globalThis as typeof globalThis & { navigator?: { clipboard?: Readonly<{ writeText?: unknown }> }; Notification?: unknown; };
+	return Object.freeze({ clipboard: browser.navigator?.clipboard, Notification: browser.Notification });
 }
-
-function browserCapabilities(value: TerminayHostCapabilityVersions): TerminayHostCapabilityVersions {
-	const capabilities: Partial<Record<TerminayHostCapability, number>> = {};
-	for (const capability of ['clipboardWrite', 'notifications'] as const) {
-		if (value[capability] === 1) capabilities[capability] = 1;
-	}
-	return Object.freeze(capabilities);
+function parseStoredMetadata(value: unknown): TerminayArchiveMetadata {
+	// Reuse full archive parser's strict metadata shape without accepting a
+	// synthetic file inventory in the cache pointer.
+	if (!record(value) || value.archiveFormatVersion !== 1 || typeof value.bundleId !== 'string' || typeof value.entryPath !== 'string' || typeof value.applicationProtocolVersion !== 'string') throw new TypeError('stored archive metadata is invalid');
+	return Object.freeze({ archiveFormatVersion: 1, bundleId: value.bundleId, entryPath: value.entryPath, applicationProtocolVersion: value.applicationProtocolVersion });
 }
-
-function browserCompatibilityFailures(
-	manifest: UiBundleManifest,
-	runtime: TerminayHostRuntimeSupport,
-	primary: Exclude<TerminayBundleCompatibilityResult, { compatible: true }>,
-): readonly Exclude<TerminayBundleCompatibilityResult, { compatible: true }>[] {
-	const failures: Exclude<TerminayBundleCompatibilityResult, { compatible: true }>[] = [primary];
-	for (const capability of TERMINAY_HOST_CAPABILITY_NAMES) {
-		const required = manifest.hostCompatibility?.requiredCapabilities[capability];
-		if (required === undefined) continue;
-		const actual = runtime.capabilities[capability];
-		const failure: TerminayHostCompatibilityFailure | undefined = actual === undefined
-			? Object.freeze({ compatible: false, component: 'host-capability', code: 'missing-capability', capability, required })
-			: actual < required.minimum
-				? Object.freeze({ compatible: false, component: 'host-capability', code: 'below-minimum', capability, required, actual })
-				: actual > required.maximum
-					? Object.freeze({ compatible: false, component: 'host-capability', code: 'above-maximum', capability, required, actual })
-					: undefined;
-		if (failure !== undefined && !failures.some((candidate) => candidate.component === failure.component && candidate.code === failure.code && candidate.capability === failure.capability)) failures.push(failure);
-	}
-	return Object.freeze(failures);
+function contentType(path: string): string {
+	const lower = path.toLowerCase();
+	if (lower.endsWith('.html') || lower.endsWith('.htm')) return 'text/html; charset=utf-8';
+	if (lower.endsWith('.js') || lower.endsWith('.mjs')) return 'text/javascript; charset=utf-8';
+	if (lower.endsWith('.css')) return 'text/css; charset=utf-8';
+	if (lower.endsWith('.json') || lower.endsWith('.webmanifest')) return 'application/json; charset=utf-8';
+	if (lower.endsWith('.svg')) return 'image/svg+xml';
+	if (lower.endsWith('.png')) return 'image/png';
+	if (lower.endsWith('.woff2')) return 'font/woff2';
+	return 'application/octet-stream';
 }
-
-export function parseBrowserBundleManifest(value: unknown): UiBundleManifest {
-	const compatibility = parseTerminayUiBundleCompatibilityManifest(value);
-	if (!record(value)) throw new TypeError('browser bundle manifest is invalid');
-	const bundleId = compatibility.bundleId;
-	if (!Array.isArray(value.assets) || value.assets.length === 0 || value.assets.length > MAX_ASSETS)
-		throw new TypeError('browser bundle asset count is invalid');
-	const prefix = `/remote-app/${bundleId}/`;
-	const seen = new Set<string>();
-	let total = 0;
-	const assets = value.assets.map((raw): UiBundleAsset => {
-		if (!record(raw)) throw new TypeError('browser bundle asset is invalid');
-		if (Object.keys(raw).sort().join('|') !== ['contentType', 'hash', 'path', 'size'].join('|'))
-			throw new TypeError('browser bundle asset contains an unknown field');
-		const path = safeBundlePath(raw.path, prefix);
-		if (seen.has(path)) throw new TypeError('browser bundle asset path is duplicated');
-		seen.add(path);
-		const size = raw.size;
-		if (!Number.isSafeInteger(size) || (size as number) < 0 || (size as number) > MAX_ASSET_BYTES)
-			throw new TypeError('browser bundle asset size is invalid');
-		total += size as number;
-		if (total > MAX_TOTAL_BYTES) throw new TypeError('browser bundle total size exceeds limit');
-		return Object.freeze({
-			path,
-			hash: bounded(raw.hash, 'asset hash', HASH),
-			size: size as number,
-			contentType: bounded(raw.contentType, 'asset content type', /^[^\r\n]{1,256}$/u),
-		});
-	});
-	const entryPath = safeBundlePath(value.entryPath, prefix);
-	if (!seen.has(entryPath)) throw new TypeError('browser bundle entry is not an asset');
-	const entry = assets.find((asset) => asset.path === entryPath);
-	if (entry === undefined || !/^text\/html(?:;|$)/iu.test(entry.contentType))
-		throw new TypeError('browser bundle entry must be an HTML document');
-	if (value.contentSecurityPolicy !== "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' wss:; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
-		throw new TypeError('browser bundle content security policy is unsupported');
-	const serverVersion = bounded(value.serverVersion, 'server version', /^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$/u);
-	return Object.freeze({
-		schemaVersion: 1,
-		bundleId,
-		entryPath,
-		protocolVersion: compatibility.protocolVersion,
-		serverVersion,
-		contentSecurityPolicy: value.contentSecurityPolicy,
-		bundleFormatVersion: compatibility.bundleFormatVersion,
-		assets: Object.freeze(assets),
-		hostCompatibility: compatibility.hostCompatibility,
-	});
-}
-
-function safeBundlePath(value: unknown, prefix: string): string {
-	if (typeof value !== 'string' || value.length > 512 || !value.startsWith(prefix))
-		throw new TypeError('browser bundle asset path is outside its namespace');
-	const suffix = value.slice(prefix.length);
-	if (!suffix || suffix.startsWith('/') || suffix.split('/').some((part) => !part || part === '.' || part === '..' || /[%\\\0]/u.test(part)))
-		throw new TypeError('browser bundle asset path is unsafe');
-	return value;
-}
-
 function exactSessionOrigin(value: string): string {
 	const parsed = new URL(value);
-	const loopback = parsed.protocol === 'http:' && (parsed.hostname === 'localhost' || parsed.hostname.endsWith('.localhost'));
-	if ((!loopback && parsed.protocol !== 'https:') || parsed.origin !== value || parsed.username || parsed.password)
-		throw new TypeError('browser session origin must be an exact HTTPS or loopback origin');
+	const loopback = parsed.protocol === 'http:' && isLoopbackHostname(parsed.hostname);
+	if ((!loopback && parsed.protocol !== 'https:') || parsed.origin !== value || parsed.username || parsed.password) throw new TypeError('browser session origin must be an exact HTTPS or loopback origin');
 	return parsed.origin;
 }
-
-function bounded(value: unknown, name: string, pattern: RegExp): string {
-	if (typeof value !== 'string' || !pattern.test(value)) throw new TypeError(`${name} is invalid`);
-	return value;
-}
-
-function record(value: unknown): value is Record<string, unknown> {
-	return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function copyBytes(value: unknown): Uint8Array {
-	if (!(value instanceof Uint8Array)) throw new TypeError('browser bundle asset reader returned invalid bytes');
-	return Uint8Array.from(value);
-}
-
-function readonlyAssets(assets: Map<string, Uint8Array>): ReadonlyMap<string, Uint8Array> {
-	return new Map([...assets].map(([path, bytes]) => [path, Uint8Array.from(bytes)]));
-}
-
-async function sha256(bytes: Uint8Array, cryptoApi?: Pick<Crypto, 'subtle'>): Promise<string> {
-	const subtle = cryptoApi?.subtle ?? globalThis.crypto?.subtle;
-	if (subtle === undefined) throw new Error('WebCrypto SHA-256 is unavailable');
-	const digest = new Uint8Array(await subtle.digest('SHA-256', bytes as BufferSource));
-	let binary = '';
-	for (const byte of digest) binary += String.fromCharCode(byte);
-	return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '');
-}
+function isLoopbackHostname(hostname: string): boolean { return hostname === 'localhost' || hostname.endsWith('.localhost') || hostname === '127.0.0.1' || hostname === '[::1]'; }
+function readonlyAssets(assets: Map<string, Uint8Array>): ReadonlyMap<string, Uint8Array> { return new Map([...assets].map(([path, bytes]) => [path, Uint8Array.from(bytes)])); }
+function record(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
