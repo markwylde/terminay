@@ -10,8 +10,7 @@ import {
   type TerminayHostCompatibilityResult, type TerminayHostContext,
   type TerminayHostRuntimeSupport,
 } from "@terminay/protocol";
-import { UiBundleStore, verifyUiBundle, type UiBundleManifest, type VerifiedUiBundle } from "@terminay/ui-bundle";
-import { extractTerminayArchive, parseTerminayArchiveMetadata, type TerminayArchiveMetadata } from "@terminay/web";
+import { UiBundleStore, verifyUiBundle, extractTerminayArchive, parseTerminayArchiveMetadata, type TerminayArchiveMetadata, type UiBundleManifest, type VerifiedUiBundle } from "@terminay/ui-bundle";
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const SAFE_PATH = /^[A-Za-z0-9._/-]{1,4096}$/u;
