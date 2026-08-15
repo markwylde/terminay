@@ -363,7 +363,7 @@ jobs:
 
       - name: Preserve packaged startup diagnostics
         if: ${{ always() && matrix.os == 'macos-latest' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: packaged-startup-diagnostics-${{ matrix.label }}
           path: ${{ runner.temp }}/terminay-packaged-smoke
