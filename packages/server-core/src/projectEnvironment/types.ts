@@ -11,7 +11,6 @@ export const PROJECT_ENVIRONMENT_CAPABILITIES = [
 	'git',
 	'process-observation',
 	'agent-journal',
-	'mcp-bridge',
 	'infrastructure',
 	'shell-discovery',
 ] as const;
@@ -127,8 +126,8 @@ export function createInitialProjectEnvironmentState(serverId: ProtocolId): Proj
 				pinnedRevision: 1,
 				name: 'This server',
 				endpointSummary: 'Local to this Terminay Server',
-				declaredCapabilities: ['terminal', 'filesystem', 'filesystem-observation', 'git', 'process-observation', 'agent-journal', 'mcp-bridge', 'shell-discovery'],
-				availableCapabilities: ['terminal', 'filesystem', 'filesystem-observation', 'git', 'process-observation', 'agent-journal', 'mcp-bridge', 'shell-discovery'],
+				declaredCapabilities: ['terminal', 'filesystem', 'filesystem-observation', 'git', 'process-observation', 'agent-journal', 'shell-discovery'],
+				availableCapabilities: ['terminal', 'filesystem', 'filesystem-observation', 'git', 'process-observation', 'agent-journal', 'shell-discovery'],
 				status: 'ready',
 				operationReferences: [],
 				projectReferenceCount: 0,
