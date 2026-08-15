@@ -2,12 +2,22 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-test('Desktop replaces a failed Local byte-transport generation', async () => {
+test('Desktop transport recovery and terminal Retry connection share one replacement operation', async () => {
 	const source = await readFile('src/web/main.tsx', 'utf8');
 	assert.match(
 		source,
-		/const \[desktopConnectionGeneration, setDesktopConnectionGeneration\][\s\S]*setDesktopConnectionGeneration\(\(generation\) => generation \+ 1\)[\s\S]*\[hasDesktopServerBootstrap, desktopConnectionGeneration\]/u,
-		'Desktop transport failure must acquire a fresh byte-transport generation',
+		/const recoverConnection = useCallback\([\s\S]*connectRef\s*\.current\(\{ replaceDesktopEndpoint: true \}\)/u,
+		'Desktop recovery must replace the failed byte endpoint',
+	);
+	assert.match(
+		source,
+		/retryConnection:\s*\(\) => recoverConnection\(\)/u,
+		'Terminal Retry connection must use the guarded Desktop recovery operation instead of directly closing and reconnecting the current client',
+	);
+	assert.match(
+		source,
+		/onClick=\{recoverConnection\}/u,
+		'The unavailable-connection Retry action must use the guarded recovery operation too',
 	);
 });
 
