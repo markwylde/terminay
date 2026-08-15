@@ -108,7 +108,7 @@ hashes. Other tar members are regular server UI files.
   and Terminay build/install steps from the `terminay.com` workflow. The
   manager repository must prove its contract without GitHub or Gitea access to
   the Terminay source repository.
-- [ ] Keep a separate integration proof in the Terminay repository that runs
+- [x] Keep a separate integration proof in the Terminay repository that runs
   the real server archive through a generic hosted-manager fixture. It must not
   make ordinary `terminay.com` pull requests depend on cloning Terminay.
 

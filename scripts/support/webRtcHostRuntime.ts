@@ -386,8 +386,10 @@ async function sendUiArchive(
 				throw new Error('UI archive channel closed during transfer.')
 			}
 			const offset = index * UI_ARCHIVE_CHUNK_BYTES
-			channel.send(binaryUiArchiveChunk(index, bundle.bytes.subarray(offset, offset + UI_ARCHIVE_CHUNK_BYTES)))
 			transfer.sent += 1
+			// Record before send: a deterministic test bridge (or a future local
+			// transport adapter) may synchronously deliver an acknowledgement.
+			channel.send(binaryUiArchiveChunk(index, bundle.bytes.subarray(offset, offset + UI_ARCHIVE_CHUNK_BYTES)))
 			await new Promise<void>((resolve) => setTimeout(resolve, 0))
 		}
 		await waitForUiArchiveTransfer(
