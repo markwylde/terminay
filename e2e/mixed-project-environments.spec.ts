@@ -6,6 +6,8 @@ import path from 'node:path';
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 
+const pairingPin = '123456';
+
 test.describe.configure({ timeout: 180_000 });
 
 async function reserveLoopbackPort(): Promise<number> {
@@ -110,7 +112,11 @@ test('Desktop selects a standalone server and its canonical session survives ren
 			],
 			{
 				cwd: process.cwd(),
-				env: { ...process.env, TERMINAY_AGENT_INTEGRATION: 'disabled' },
+				env: {
+					...process.env,
+					TERMINAY_AGENT_INTEGRATION: 'disabled',
+					TERMINAY_REMOTE_PAIRING_PIN: pairingPin,
+				},
 				stdio: ['ignore', 'pipe', 'pipe'],
 			},
 		);
@@ -124,6 +130,7 @@ test('Desktop selects a standalone server and its canonical session survives ren
 		await expect(dialog).toBeVisible();
 		await dialog.getByRole('button', { name: 'Add connection…' }).click();
 		await dialog.getByLabel('Pairing URL').fill(readiness.pairing.pairingUrl);
+		await dialog.getByLabel('Pairing PIN').fill(pairingPin);
 		await dialog
 			.getByRole('button', { name: 'Continue pairing', exact: true })
 			.click();

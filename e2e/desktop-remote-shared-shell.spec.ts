@@ -11,6 +11,8 @@ type ServerReadiness = {
 	serverId: string;
 };
 
+const pairingPin = '123456';
+
 async function readReadiness(
 	child: ChildProcessWithoutNullStreams,
 ): Promise<ServerReadiness> {
@@ -93,6 +95,7 @@ test('authenticated remote Desktop renders the project-scoped shared shell local
 			env: {
 				...process.env,
 				TERMINAY_AGENT_INTEGRATION: 'disabled',
+				TERMINAY_REMOTE_PAIRING_PIN: pairingPin,
 				TERMINAY_SERVER_VERSION: '1.0.0',
 			},
 			stdio: ['ignore', 'pipe', 'pipe'],
@@ -115,6 +118,7 @@ test('authenticated remote Desktop renders the project-scoped shared shell local
 		// journey; it is intentionally not imported into a remote host document.
 		await dialog.getByRole('button', { name: 'Add connection…' }).click();
 		await dialog.getByLabel('Pairing URL').fill(readiness.pairing.pairingUrl);
+		await dialog.getByLabel('Pairing PIN').fill(pairingPin);
 		await dialog
 			.getByRole('button', { name: 'Continue pairing', exact: true })
 			.click();
