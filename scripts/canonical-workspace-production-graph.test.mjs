@@ -71,10 +71,7 @@ test('the packaged graph excludes superseded preload and MCP adapters', async ()
 	const vite = await read('vite.config.ts');
 	assert.doesNotMatch(vite, /electron\/preload\.ts/u);
 	assert.doesNotMatch(vite, /electron\/mcpEntry\.ts/u);
-	assert.match(vite, /apps\/terminay-server\/src\/desktopMcpEntry\.ts/u);
-	const desktopMcpEntry = await read('apps/terminay-server/src/desktopMcpEntry.ts');
-	assert.match(desktopMcpEntry, /runServerMcpStdio/u);
-	assert.doesNotMatch(desktopMcpEntry, /assertStandaloneReleaseIntegrity/u);
+	assert.doesNotMatch(vite, /desktopMcpEntry/u);
 	for (const path of [
 		'index.html',
 		'src/main.tsx',
