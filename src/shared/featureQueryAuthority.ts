@@ -24,6 +24,21 @@ export type FeatureAvailability =
 	| Readonly<{ state: 'unavailable'; reason: string }>;
 
 /**
+ * File-feature paths must use the root that the server has already bound to
+ * the authenticated project. The local project presentation can lag behind a
+ * workspace root update for one render; relativizing its former root against
+ * the new one would manufacture a traversal request such as `../former`.
+ */
+export function featureProjectRoot(
+	availability: FeatureAvailability,
+	renderedProjectRoot: string,
+): string {
+	return availability.state === 'available'
+		? availability.authority.scope.projectRoot
+		: renderedProjectRoot;
+}
+
+/**
  * Bind feature clients to an identity proven by the latest hydrated workspace
  * snapshot.  UI components must not manufacture project/environment scope from
  * tab labels or host state.

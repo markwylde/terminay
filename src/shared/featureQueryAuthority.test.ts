@@ -5,6 +5,7 @@ import {
 	clearSucceededFeatureFailure,
 	describeFeatureFailure,
 	describeServerFeatureFailure,
+	featureProjectRoot,
 	resolveProjectFeatureAuthority,
 } from './featureQueryAuthority';
 
@@ -70,6 +71,14 @@ describe('project feature authority', () => {
 			resolveProjectFeatureAuthority(withoutAgentProjection as never, 'project-1').state,
 			'available',
 		);
+	});
+
+	it('uses the hydrated server root while the rendered project root is stale', () => {
+		const availability = resolveProjectFeatureAuthority(
+			context({ 'project-1': project }),
+			'project-1',
+		);
+		assert.equal(featureProjectRoot(availability, '/workspace/former'), '/workspace/one');
 	});
 
 	it('returns a typed unavailable state instead of inventing project scope', () => {

@@ -7,6 +7,7 @@ import { MessageChannel } from 'node:worker_threads'
 import { build } from 'esbuild'
 import {
   FileViewerClient,
+  ProjectEnvironmentsClient,
   TerminayClient,
   TerminayClientFacade,
   TerminayTerminalClient,
@@ -19,6 +20,7 @@ const {
   ServerTerminalAuthority,
   TerminalService,
   TerminalServiceError,
+  getPathRelativeToRoot,
   WorkspaceStore,
   createInitialWorkspace,
 } = await importAuthority()
@@ -377,6 +379,133 @@ test('embedded framed clients receive canonical agent and folder projections', a
   }
 })
 
+test('a newly created This-server project can list its Explorer root immediately', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'terminay-new-project-explorer-'))
+  await writeFile(join(root, 'README.md'), '# Explorer root\n')
+  const authority = new ServerTerminalAuthority({
+    serverId: 'new-project-explorer',
+    terminalService: new TerminalService({
+      serverId: 'new-project-explorer',
+      ptyFactory: createPtyFactory(),
+    }),
+  })
+  const channel = new MessageChannel()
+  let serverMessage
+  let serverMessageError
+  channel.port1.on('message', (data) => serverMessage?.({ data }))
+  channel.port1.on('messageerror', () => serverMessageError?.())
+  authority.acceptRendererPort({
+    get onmessage() { return serverMessage },
+    set onmessage(listener) { serverMessage = listener },
+    get onmessageerror() { return serverMessageError },
+    set onmessageerror(listener) { serverMessageError = listener },
+    postMessage: (data) => channel.port1.postMessage(data),
+    start: () => channel.port1.start(),
+    close: () => channel.port1.close(),
+  })
+  const protocol = new TerminayClient({
+    clientId: 'embedded-renderer-new-project',
+    clientVersion: 'test',
+    capabilities: ['terminal', 'files', 'workspace'],
+    transport: new ServerPortTransport(new ServerScopedMessagePort(channel.port2, 'new-project-explorer')),
+  })
+
+  try {
+    await authority.initializeWorkspace()
+    await protocol.connect()
+    const facade = new TerminayClientFacade(protocol)
+    const workspace = new WorkspaceClient(protocol)
+    const environments = new ProjectEnvironmentsClient(facade)
+    const files = new FileViewerClient(facade)
+    const viewId = (await workspace.snapshot()).viewOrder[0]
+    assert.ok(viewId, 'Local workspace must expose an initial view')
+
+    const created = await environments.createProject({
+      environmentId: 'terminay:this-server',
+      viewId,
+      root,
+    })
+    assert.equal(created.state, 'succeeded')
+    assert.ok(created.projectId, 'project creation must return the canonical project id')
+
+    const listing = await files.listFolder('.', created.projectId)
+    assert.deepEqual(listing.entries.map((entry) => entry.name), ['README.md'])
+  } finally {
+    await protocol.close().catch(() => undefined)
+    channel.port1.close()
+    channel.port2.close()
+    await authority.shutdown()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('a stale Explorer root after a server root update reproduces the forbidden files.list failure', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'terminay-stale-explorer-root-'))
+  const formerRoot = join(root, 'former')
+  const currentRoot = join(root, 'current')
+  await mkdir(formerRoot)
+  await mkdir(currentRoot)
+  const authority = new ServerTerminalAuthority({
+    serverId: 'stale-explorer-root',
+    terminalService: new TerminalService({
+      serverId: 'stale-explorer-root',
+      ptyFactory: createPtyFactory(),
+    }),
+  })
+  const channel = new MessageChannel()
+  let serverMessage
+  let serverMessageError
+  channel.port1.on('message', (data) => serverMessage?.({ data }))
+  channel.port1.on('messageerror', () => serverMessageError?.())
+  authority.acceptRendererPort({
+    get onmessage() { return serverMessage },
+    set onmessage(listener) { serverMessage = listener },
+    get onmessageerror() { return serverMessageError },
+    set onmessageerror(listener) { serverMessageError = listener },
+    postMessage: (data) => channel.port1.postMessage(data),
+    start: () => channel.port1.start(),
+    close: () => channel.port1.close(),
+  })
+  const protocol = new TerminayClient({
+    clientId: 'embedded-renderer-stale-root',
+    clientVersion: 'test',
+    capabilities: ['terminal', 'files', 'workspace'],
+    transport: new ServerPortTransport(new ServerScopedMessagePort(channel.port2, 'stale-explorer-root')),
+  })
+
+  try {
+    await authority.initializeWorkspace()
+    await protocol.connect()
+    const facade = new TerminayClientFacade(protocol)
+    const workspace = new WorkspaceClient(protocol)
+    const environments = new ProjectEnvironmentsClient(facade)
+    const files = new FileViewerClient(facade)
+    const viewId = (await workspace.snapshot()).viewOrder[0]
+    assert.ok(viewId)
+    const created = await environments.createProject({
+      environmentId: 'terminay:this-server',
+      viewId,
+      root: formerRoot,
+    })
+    assert.equal(created.state, 'succeeded')
+    assert.ok(created.projectId)
+    await workspace.updateProjectRoot({ projectId: created.projectId, root: currentRoot })
+
+    const stalePath = getPathRelativeToRoot(formerRoot, currentRoot)
+    assert.equal(stalePath, '../former')
+    await assert.rejects(
+      files.listFolder(stalePath, created.projectId),
+      (error) => error?.operation === 'files.list' && error?.cause?.code === 'forbidden',
+    )
+  } finally {
+    await protocol.close().catch(() => undefined)
+    channel.port1.close()
+    channel.port2.close()
+    await authority.shutdown()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('ServerTerminalAuthority reports only accepted writes and resizes to host bookkeeping', async () => {
   const pty = createPtyFactory()
   const service = new TerminalService({
@@ -639,6 +768,7 @@ async function importAuthority() {
           `export { TerminalServiceError } from ${JSON.stringify(new URL('../packages/server-core/src/terminalService/errors.ts', import.meta.url).pathname)}`,
           `export { WorkspaceStore, createInitialWorkspace } from ${JSON.stringify(new URL('../packages/server-core/src/workspace.ts', import.meta.url).pathname)}`,
           `export { ServerPortTransport, ServerScopedMessagePort } from ${JSON.stringify(new URL('../src/shared/serverPortTransport.ts', import.meta.url).pathname)}`,
+          `export { getPathRelativeToRoot } from ${JSON.stringify(new URL('../src/pathUtils.ts', import.meta.url).pathname)}`,
         ].join('\n'),
         loader: 'ts',
         resolveDir: process.cwd(),
