@@ -39,14 +39,21 @@ jobs:
 
       - name: Commit updated widget
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           if git diff --quiet -- docs/spec-progress.svg README.md; then
             echo "Specification progress is already current."
             exit 0
           fi
 
+          test -n "${GITHUB_TOKEN}"
           git config user.name "Terminay Actions"
           git config user.email "actions@terminay.com"
           git add docs/spec-progress.svg README.md
           git commit -m "docs(specs): update progress widget [skip ci]"
-          git push origin HEAD:main
+
+          # Checkout strips its token (persist-credentials: false). Re-apply it
+          # only for this push, using the same extraheader checkout itself uses.
+          AUTH="$(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 | tr -d '\n')"
+          GIT_TERMINAL_PROMPT=0 git -c "http.extraHeader=AUTHORIZATION: basic ${AUTH}" push origin HEAD:main
