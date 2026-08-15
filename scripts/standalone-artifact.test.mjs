@@ -417,6 +417,7 @@ test('the actual packed standalone artifact is byte-reproducible and its CLI sta
 					...process.env,
 					HOME: artifactHome,
 					TERMINAY_AGENT_INTEGRATION: 'enabled',
+					TERMINAY_REMOTE_PAIRING_PIN: '123456',
 					TERMINAY_SERVER_VERSION: packageJson.version,
 				},
 				stdio: ['ignore', 'pipe', 'pipe'],
