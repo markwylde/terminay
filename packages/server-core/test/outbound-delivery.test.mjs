@@ -709,6 +709,142 @@ test('overlapping event subscriptions admit each live terminal byte range once w
 	}
 });
 
+test('a binary-output-capable terminal subscriber receives raw frame bytes without base64 payload data', async () => {
+	const journal = new OrderedEventJournal();
+	const transport = new ControlledTransport();
+	const core = createServerCore({
+		serverId: 'binary-terminal-server',
+		serverVersion: 'test',
+		capabilities: [],
+		eventJournal: journal,
+		authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: 'read' }),
+	});
+	const connection = core.accept(transport);
+	const run = connection.start();
+	try {
+		transport.push(
+			encodeFrame({
+				type: 'client_hello',
+				protocolMin: 1,
+				protocolMax: 1,
+				clientId: 'binary-terminal-client',
+				clientVersion: 'test',
+				capabilities: ['events.resync', 'terminal.binary-output'],
+				limits: {},
+			}),
+		);
+		await waitFor(() => connection.state === 'open');
+		transport.push(
+			encodeFrame({
+				type: 'command',
+				commandId: 'binary-terminal-subscribe',
+				correlationId: 'binary-terminal-subscribe-correlation',
+				operation: 'events.subscribe',
+				payload: { subscriptionId: 'binary-terminal-subscription', fromRevision: 0 },
+			}),
+		);
+		await waitFor(() =>
+			transport.sent.some(
+				(frame) => decodeFrame(frame).envelope.type === 'command_result',
+			),
+		);
+
+		journal.publishTransient(
+			'terminal',
+			{
+				attachmentId: 'binary-terminal-attachment',
+				clientId: 'binary-terminal-client',
+				projectId: 'project-a',
+				serverId: 'binary-terminal-server',
+				sessionId: 'session-a',
+				type: 'output',
+				position: 0,
+				nextPosition: 3,
+			},
+			new Uint8Array([0, 0xff, 0x1b]),
+		);
+		await waitFor(() =>
+			transport.sent.some((frame) => {
+				const decoded = decodeFrame(frame);
+				return decoded.envelope.type === 'event' && decoded.envelope.event === 'terminal';
+			}),
+		);
+
+		const frame = transport.sent
+			.map((candidate) => decodeFrame(candidate))
+			.find(
+				(candidate) =>
+					candidate.envelope.type === 'event' &&
+					candidate.envelope.event === 'terminal',
+			);
+		assert.deepEqual([...frame.body], [0, 0xff, 0x1b]);
+		assert.equal(frame.envelope.payload.bytes, undefined);
+	} finally {
+		await connection.close().catch(() => undefined);
+		transport.end();
+		await run;
+	}
+});
+
+test('a legacy terminal subscriber receives a base64 fallback for a raw live body', async () => {
+	const journal = new OrderedEventJournal();
+	const transport = new ControlledTransport();
+	const core = createServerCore({
+		serverId: 'legacy-terminal-server',
+		serverVersion: 'test',
+		capabilities: [],
+		eventJournal: journal,
+		authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: 'read' }),
+	});
+	const connection = core.accept(transport);
+	const run = connection.start();
+	try {
+		transport.push(encodeFrame({
+			type: 'client_hello',
+			protocolMin: 1,
+			protocolMax: 1,
+			clientId: 'legacy-terminal-client',
+			clientVersion: 'test',
+			capabilities: ['events.resync'],
+			limits: {},
+		}));
+		await waitFor(() => connection.state === 'open');
+		transport.push(encodeFrame({
+			type: 'command',
+			commandId: 'legacy-terminal-subscribe',
+			correlationId: 'legacy-terminal-subscribe-correlation',
+			operation: 'events.subscribe',
+			payload: { subscriptionId: 'legacy-terminal-subscription', fromRevision: 0 },
+		}));
+		await waitFor(() => transport.sent.some((frame) => decodeFrame(frame).envelope.type === 'command_result'));
+
+		journal.publishTransient('terminal', {
+			attachmentId: 'legacy-terminal-attachment',
+			clientId: 'legacy-terminal-client',
+			projectId: 'project-a',
+			serverId: 'legacy-terminal-server',
+			sessionId: 'session-a',
+			type: 'output',
+			position: 0,
+			nextPosition: 3,
+		}, new Uint8Array([0, 0xff, 0x1b]));
+		await waitFor(() => transport.sent.some((frame) => {
+			const decoded = decodeFrame(frame);
+			return decoded.envelope.type === 'event' && decoded.envelope.event === 'terminal';
+		}));
+
+		const frame = transport.sent
+			.map((candidate) => decodeFrame(candidate))
+			.find((candidate) => candidate.envelope.type === 'event' && candidate.envelope.event === 'terminal');
+		assert.equal(frame.body.byteLength, 0);
+		assert.equal(frame.envelope.payload.bytes, 'AP8b');
+	} finally {
+		await connection.close().catch(() => undefined);
+		transport.end();
+		await run;
+	}
+});
+
 class ControlledTransport {
 	state = 'opening';
 	queuedBytes = 0;
