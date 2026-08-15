@@ -29,7 +29,6 @@ export function classifyProjectOperation(operation: string): ProjectOperationRou
 	if (operation.startsWith('files.') || operation.startsWith('file.')) return { capability: 'filesystem' };
 	if (operation.startsWith('git.')) return { capability: 'git' };
 	if (operation.startsWith('agents.') || operation.startsWith('agent.')) return { capability: 'agent-journal' };
-	if (operation.startsWith('mcp.')) return { capability: 'mcp-bridge' };
 	if (operation.startsWith('shell-profiles.')) return { capability: 'shell-discovery' };
 	return undefined;
 }
