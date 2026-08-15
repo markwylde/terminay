@@ -7,7 +7,7 @@ import {
 	type TerminayHostActionRequest,
 	type TerminayHostContext,
 } from '@terminay/protocol';
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { ServerUiHostBridge } from './serverUiHostContract';
 
 const GET_CONTEXT = 'server-ui-host:get-context';
@@ -110,6 +110,19 @@ const bridge: ServerUiHostBridge = Object.freeze({
 			hostEventsSubscribed = false;
 			ipcRenderer.off('server-ui-host:event', hostEventWrapper);
 		};
+	},
+	// Electron exposes a native pathname only to preload through webUtils. Keep
+	// that value out of IPC and return it solely for a direct, user-initiated
+	// Desktop terminal drop; browser File objects resolve to an empty path.
+	resolveDroppedFilePath: (file) => {
+		try {
+			const path = webUtils.getPathForFile(file);
+			return path.length > 0 && path.length <= 32_768 && !path.includes('\0')
+				? path
+				: undefined;
+		} catch {
+			return undefined;
+		}
 	},
 });
 if (
