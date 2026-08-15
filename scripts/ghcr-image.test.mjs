@@ -241,3 +241,41 @@ test('other project workflows pin every third-party action to a reviewed immutab
 		}
 	}
 });
+
+test('every provider-runnable CI job resolves only its compatible artifact action generation', () => {
+	const ci = workflows.get('ci.yml');
+	assert.ok(ci, 'ci.yml must exist');
+	const job = (name) => {
+		const header = `  ${name}:\n`;
+		const start = ci.indexOf(header);
+		assert.notEqual(start, -1, `CI must declare ${name}`);
+		const remainder = ci.slice(start + header.length);
+		const next = remainder.search(/^  [a-z][a-z0-9-]+:\n/mu);
+		return next === -1 ? ci.slice(start) : ci.slice(start, start + header.length + next);
+	};
+
+	const github = `${job('github-e2e-image')}\n${job('github-e2e-test')}`;
+	const gitea = `${job('gitea-e2e-image')}\n${job('gitea-e2e-test')}`;
+	assert.match(github, /github\.server_url == 'https:\/\/github\.com'/u);
+	assert.match(github, /(?:ea165f8d65b6e75b540449e92b4886f43607fa02|d3f86a106a0bac45b974a628896c90dbdf5c8093)/u);
+	assert.doesNotMatch(github, /(?:ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5|9bc31d5ccc31df68ecc42ccf4149144866c47d8a)/u);
+	assert.match(gitea, /github\.server_url != 'https:\/\/github\.com'/u);
+	assert.match(gitea, /(?:ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5|9bc31d5ccc31df68ecc42ccf4149144866c47d8a)/u);
+	assert.doesNotMatch(gitea, /(?:ea165f8d65b6e75b540449e92b4886f43607fa02|d3f86a106a0bac45b974a628896c90dbdf5c8093)/u);
+
+	const jobs = [...ci.slice(ci.indexOf('jobs:\n')).matchAll(
+		/^  ([a-z][a-z0-9-]+):\n([\s\S]*?)(?=^  [a-z][a-z0-9-]+:\n|(?![\s\S]))/gmu,
+	)];
+	for (const [, name, contents] of jobs) {
+		const githubOnly = /^    if: \$\{\{ github\.server_url == 'https:\/\/github\.com' \}\}$/mu.test(contents);
+		const giteaOnly = /^    if: \$\{\{ github\.server_url != 'https:\/\/github\.com' \}\}$/mu.test(contents);
+		if (!githubOnly) {
+			assert.doesNotMatch(contents, /(?:ea165f8d65b6e75b540449e92b4886f43607fa02|d3f86a106a0bac45b974a628896c90dbdf5c8093)/u,
+				`${name} can run on Gitea and must not resolve artifact v4`);
+		}
+		if (!giteaOnly) {
+			assert.doesNotMatch(contents, /(?:ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5|9bc31d5ccc31df68ecc42ccf4149144866c47d8a)/u,
+				`${name} can run on GitHub and must not resolve artifact v3`);
+		}
+	}
+});
