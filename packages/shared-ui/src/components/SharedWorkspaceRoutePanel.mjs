@@ -18,7 +18,7 @@ function route(label, panels) {
 const ROUTE_COPY = Object.freeze({
   workspace: route('Workspace', ['workspace-tabs', 'workspace-views', 'dockview-navigation', 'activity-indicator', 'activity-notifications', 'terminal-session', 'file-viewer', 'folder-browser', 'agent-status', 'ai-tab-metadata', 'command-surface', 'workspace-empty']),
   connections: route('Connections', ['connection-form', 'connection-switcher', 'connection-error']),
-  settings: route('Settings', ['settings', 'mcp-server-control', 'dictation-capture']),
+  settings: route('Settings', ['settings', 'dictation-capture']),
   recordings: route('Recordings', ['recordings-library', 'recording-detail']),
   macros: route('Macros', ['macro-library', 'macro-editor']),
   file: route('Files', ['file-viewer', 'folder-browser']),

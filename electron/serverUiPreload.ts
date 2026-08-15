@@ -7,11 +7,12 @@ import {
 	type TerminayHostActionRequest,
 	type TerminayHostContext,
 } from '@terminay/protocol';
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { ServerUiHostBridge } from './serverUiHostContract';
 
 const GET_CONTEXT = 'server-ui-host:get-context';
 const REQUEST_ACTION = 'server-ui-host:request-action';
+const READ_TERMINAL_CLIPBOARD = 'server-ui-host:read-terminal-clipboard';
 let contextPromise: Promise<TerminayHostContext> | undefined;
 const context = () =>
 	(contextPromise ??= ipcRenderer
@@ -110,6 +111,26 @@ const bridge: ServerUiHostBridge = Object.freeze({
 			hostEventsSubscribed = false;
 			ipcRenderer.off('server-ui-host:event', hostEventWrapper);
 		};
+	},
+	// Electron exposes a native pathname only to preload through webUtils. Keep
+	// that value out of IPC and return it solely for a direct, user-initiated
+	// Desktop terminal drop; browser File objects resolve to an empty path.
+	resolveDroppedFilePath: (file) => {
+		try {
+			const path = webUtils.getPathForFile(file);
+			return path.length > 0 && path.length <= 32_768 && !path.includes('\0')
+				? path
+				: undefined;
+		} catch {
+			return undefined;
+		}
+	},
+	// Clipboard reads are intentionally narrower than a general Electron API.
+	// This route is available only while a trusted user gesture is active and
+	// returns terminal-ready text (including a shell-escaped temp image path).
+	readTerminalClipboard: () => {
+		if (!navigator.userActivation.isActive) return Promise.resolve('');
+		return ipcRenderer.invoke(READ_TERMINAL_CLIPBOARD) as Promise<string>;
 	},
 });
 if (
@@ -248,20 +269,6 @@ if (
 					'test:emit-agent-journal-record',
 					payload,
 				) as Promise<boolean>,
-		}),
-	);
-	contextBridge.exposeInMainWorld(
-		'terminayMcpControlTest',
-		Object.freeze({
-			getControlEnvironment: (terminalSessionId: string) =>
-				ipcRenderer.invoke('test:get-mcp-control-environment', {
-					terminalSessionId,
-				}) as Promise<{
-					projectId: string;
-					sessionId: string;
-					socketPath: string;
-					token: string;
-				}>,
 		}),
 	);
 }

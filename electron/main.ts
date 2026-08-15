@@ -12,7 +12,6 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
 	type ByteTransport,
-	type JsonValue,
 	type TerminayHostActionRequest,
 	type TerminayHostContext,
 } from '@terminay/protocol';
@@ -99,18 +98,6 @@ import {
 	releaseServerUiWindowBinding,
 } from './serverUiHost';
 import {
-	CONTROL_SOCKET_ENV,
-	CONTROL_SOCKET_FILENAME,
-	CONTROL_TOKEN_ENV,
-	type ControlOp,
-} from './control/protocol';
-import {
-	type ControlForwardResult,
-	type ControlServer,
-	type ControlServerScope,
-	createControlServer,
-} from './control/server';
-import {
 	bindAppChildDiagnostics,
 	bindWebContentsDiagnostics,
 } from './diagnostics/electronEvents';
@@ -129,12 +116,6 @@ import {
 	bindMainWindowCloseConfirmation,
 	createCloseConfirmationDialog,
 } from './mainWindowCloseConfirmation';
-import {
-	getMcpInstallStatus,
-	installMcpAgent,
-	type McpServerCommand,
-	uninstallMcpAgent,
-} from './mcpInstall';
 import { TerminalRecordingService } from './recording/service';
 import { createDesktopReconnectTransport } from './remote/desktopReconnect';
 import { establishDesktopDevicePairing } from './remote/desktopPairing';
@@ -262,6 +243,87 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
 
 async function openInBrowser(url: unknown): Promise<void> {
 	await shell.openExternal(normalizeExternalHttpsUrl(url));
+}
+
+function shellEscapePath(pathValue: string): string {
+	return `'${pathValue.replace(/'/g, `'\\''`)}'`;
+}
+
+function expandClipboardFormatCandidates(format: string): string[] {
+	const candidates = new Set<string>([format]);
+	if (format.includes('.') && !format.includes('/'))
+		candidates.add(format.replace('.', '/'));
+	if (format.includes('/') && !format.includes('.'))
+		candidates.add(format.replace('/', '.'));
+	return [...candidates];
+}
+
+function readClipboardFormatText(format: string): string | null {
+	for (const candidate of expandClipboardFormatCandidates(format)) {
+		try {
+			const text = clipboard.read(candidate);
+			if (text.length > 0) return text;
+		} catch {
+			// Try the next native format representation.
+		}
+		try {
+			const data = clipboard.readBuffer(candidate);
+			if (data.length > 0) return data.toString('utf8');
+		} catch {
+			// Try the next native format representation.
+		}
+	}
+	return null;
+}
+
+function readClipboardFilePaths(): string[] {
+	const availableFormats = new Set(
+		clipboard.availableFormats().map((format) => format.toLowerCase()),
+	);
+	for (const format of [
+		'public.file-url',
+		'public/file-url',
+		'text/uri-list',
+		'nsfilenamespboardtype',
+	]) {
+		if (!availableFormats.has(format)) continue;
+		const value = readClipboardFormatText(format);
+		if (!value) continue;
+		const paths = value
+			.split(/\r?\n/)
+			.map((entry) => entry.trim())
+			.filter((entry) => entry.length > 0)
+			.map((entry) => {
+				if (!entry.startsWith('file://')) return entry;
+				try {
+					return fileURLToPath(entry);
+				} catch {
+					return entry;
+				}
+			})
+			.filter((entry) => !entry.includes('\0'));
+		if (paths.length > 0) return paths;
+	}
+	return [];
+}
+
+function readClipboardImagePath(): string | null {
+	const imageBytes = clipboard.readImage().toPNG();
+	if (imageBytes.length === 0) return null;
+	const tempDir = path.join(app.getPath('temp'), 'terminay-clipboard');
+	mkdirSync(tempDir, { recursive: true });
+	const filePath = path.join(tempDir, `clipboard-${randomUUID()}.png`);
+	writeFileSync(filePath, imageBytes);
+	return filePath;
+}
+
+function readTerminalClipboard(): string {
+	const filePaths = readClipboardFilePaths();
+	if (filePaths.length > 0) return filePaths.map(shellEscapePath).join(' ');
+	const text = clipboard.readText();
+	if (text.length > 0) return text;
+	const imagePath = readClipboardImagePath();
+	return imagePath === null ? '' : shellEscapePath(imagePath);
 }
 
 function isAppNavigation(url: string): boolean {
@@ -491,19 +553,6 @@ function applyAgentIntegrationSetting(
 	return applyAgentIntegrationPromise;
 }
 
-// --- MCP control surface state -------------------------------------------
-// Each terminal gets a unique capability token injected into its shell env.
-// The token both authorizes the local control socket and anchors scope (the
-// session, hence the project, the calling agent lives in).
-interface ControlTokenRecord {
-	projectId?: string;
-	token: string;
-	sessionId: string;
-	webContentsId: number;
-}
-const controlTokensByToken = new Map<string, ControlTokenRecord>();
-const controlTokensBySession = new Map<string, string>();
-let controlServer: ControlServer | null = null;
 // BrowserWindow identity outlives a renderer document and its transferred
 // MessagePort. Keep the selected authority separately so a reload reconnects
 // the same profile instead of allowing the Local load hook to take over.
@@ -773,7 +822,6 @@ function handleServerTerminalEvent(event: TerminalEvent): void {
 			event.exitCode,
 			event.signal,
 		);
-		removeControlToken(event.sessionId);
 		recordingService.finalize(event.sessionId, event.exitCode, event.signal);
 	}
 }
@@ -990,11 +1038,6 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		settings: embeddedServerSettings,
 		workspaceRepository: embeddedWorkspace,
 		applicationFeatures: {
-			mcpInstall: {
-				getStatus: getMcpInstallStatus,
-				install: (agent) => installMcpAgent(agent, getMcpServerCommand()),
-				uninstall: uninstallMcpAgent,
-			},
 			remoteAccess: {
 				getStatus: () => currentRemoteAccessStatus(),
 				command: async (operation, value) => {
@@ -1018,17 +1061,6 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 				},
 			},
 		},
-		remoteMcpDispatch: async (sessionId, op, params, signal) =>
-			JSON.parse(
-				JSON.stringify(
-					await dispatchServerControlRequest(
-						sessionId,
-						op as ControlOp,
-						params,
-						signal,
-					),
-				),
-			) as JsonValue,
 		macros: {
 			repository: embeddedMacros,
 			environmentFor: (request, target) => {
@@ -1242,7 +1274,6 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 }
 
 async function createServerOwnedTerminalSession(
-	webContentsId: number,
 	projectId: string,
 	cwd?: string,
 	projectRootOrigin?: 'explicit' | 'server-default',
@@ -1250,14 +1281,6 @@ async function createServerOwnedTerminalSession(
 ): Promise<Awaited<ReturnType<ServerTerminalAuthority['create']>>> {
 	const id = randomUUID();
 	const settings = readTerminalSettings();
-	let controlEnv: { socketPath: string; token: string } | undefined;
-	if (settings.terminayMcp.enabled) {
-		// The capability must exist before spawning the shell, while the
-		// authority session is only published by create() below. Bind the known
-		// requested project explicitly so resolution still fails closed later.
-		const token = registerControlToken(id, webContentsId, projectId);
-		controlEnv = { socketPath: getControlSocketPath(), token };
-	}
 	try {
 		const session = await serverTerminalAuthority!.create({
 			sessionId: id,
@@ -1265,7 +1288,7 @@ async function createServerOwnedTerminalSession(
 			...(cwd === undefined ? {} : { cwd }),
 			...(projectRootOrigin === undefined ? {} : { projectRootOrigin }),
 			...(activePanelId === undefined ? {} : { activePanelId }),
-			env: getTerminalSpawnEnv(controlEnv),
+			env: getTerminalSpawnEnv(),
 			cols: 80,
 			rows: 24,
 		});
@@ -1281,7 +1304,6 @@ async function createServerOwnedTerminalSession(
 		}
 		return session;
 	} catch (error) {
-		removeControlToken(id);
 		recordingService.finalize(id, null, null, 'failed');
 		throw error;
 	}
@@ -1636,10 +1658,7 @@ function ensureNodePtySpawnHelperIsExecutable(): void {
 	}
 }
 
-function getTerminalSpawnEnv(controlEnv?: {
-	socketPath: string;
-	token: string;
-}): Record<string, string | undefined> {
+function getTerminalSpawnEnv(): Record<string, string | undefined> {
 	// The canonical resolver already starts from the host environment and then
 	// applies the selected profile. Keep this overlay to server-protected,
 	// per-session values so it cannot accidentally overwrite profile variables.
@@ -1649,12 +1668,6 @@ function getTerminalSpawnEnv(controlEnv?: {
 	// when COLORTERM explicitly advertises it.
 	env.COLORTERM = 'truecolor';
 
-	// Inject the per-terminal MCP control socket + capability token so an agent
-	// running in this shell (and its `terminay mcp` child) can control siblings.
-	if (controlEnv) {
-		env[CONTROL_SOCKET_ENV] = controlEnv.socketPath;
-		env[CONTROL_TOKEN_ENV] = controlEnv.token;
-	}
 	if (process.platform !== 'darwin') {
 		return env;
 	}
@@ -1673,358 +1686,6 @@ function getTerminalSpawnEnv(controlEnv?: {
 	env.LC_CTYPE = normalizedLocale;
 
 	return env;
-}
-
-function getControlSocketPath(): string {
-	if (process.platform === 'win32') {
-		return '\\\\.\\pipe\\terminay-control';
-	}
-	return path.join(app.getPath('userData'), CONTROL_SOCKET_FILENAME);
-}
-
-function getMcpEntryPath(): string {
-	// serverMcpEntry.js is asar-unpacked because it runs under
-	// ELECTRON_RUN_AS_NODE. This is the server-owned, renderer-free entry.
-	const entry = path.join(MAIN_DIST, 'serverMcpEntry.js');
-	return entry.replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
-}
-
-function getMcpServerCommand(): McpServerCommand {
-	return {
-		command: process.execPath,
-		args: [getMcpEntryPath()],
-		env: { ELECTRON_RUN_AS_NODE: '1' },
-	};
-}
-
-function registerControlToken(
-	sessionId: string,
-	webContentsId: number,
-	projectId?: string,
-): string {
-	removeControlToken(sessionId);
-	const token = randomUUID();
-	const resolvedProjectId =
-		projectId ?? serverTerminalAuthority?.get(sessionId)?.projectId;
-	controlTokensByToken.set(token, {
-		token,
-		sessionId,
-		...(resolvedProjectId === undefined
-			? {}
-			: { projectId: resolvedProjectId }),
-		webContentsId,
-	});
-	controlTokensBySession.set(sessionId, token);
-	return token;
-}
-
-function removeControlToken(sessionId: string): void {
-	const token = controlTokensBySession.get(sessionId);
-	if (token) {
-		controlTokensByToken.delete(token);
-		controlTokensBySession.delete(sessionId);
-	}
-}
-
-function resolveControlScope(token: string): ControlServerScope | null {
-	const record = controlTokensByToken.get(token);
-	if (!record || controlTokensBySession.get(record.sessionId) !== token) {
-		return null;
-	}
-	const session = serverTerminalAuthority?.get(record.sessionId);
-	if (
-		session?.status !== 'running' ||
-		(record.projectId !== undefined && session.projectId !== record.projectId)
-	) {
-		return null;
-	}
-	return { sessionId: record.sessionId, webContentsId: record.webContentsId };
-}
-
-function forwardControlRequest(
-	scope: ControlServerScope,
-	op: ControlOp,
-	params: unknown,
-	context: { signal: AbortSignal },
-): Promise<ControlForwardResult> {
-	return dispatchServerControlRequest(
-		scope.sessionId,
-		op,
-		params,
-		context.signal,
-	);
-}
-
-/** Compatibility socket requests resolve directly against Local server state. */
-async function dispatchServerControlRequest(
-	sessionId: string,
-	op: ControlOp,
-	params: unknown,
-	signal: AbortSignal,
-): Promise<ControlForwardResult> {
-	const authority = serverTerminalAuthority;
-	const caller = authority?.get(sessionId);
-	if (!authority || !caller)
-		return {
-			ok: false,
-			error: {
-				code: 'invalid_token',
-				message: 'The terminal capability is no longer valid.',
-			},
-		};
-	if (signal.aborted)
-		return {
-			ok: false,
-			error: {
-				code: 'cancelled',
-				message: 'The control request was cancelled.',
-			},
-		};
-	const service = authority.service;
-	const authorization = {
-		serverId: service.serverId,
-		projectId: caller.projectId,
-		scope: 'admin' as const,
-	};
-	const targetId = readTerminalRef(params, sessionId);
-	const target = targetId === null ? undefined : service.getSession(targetId);
-	if (
-		op !== 'list_terminals' &&
-		op !== 'open_terminal' &&
-		(target === undefined || target.projectId !== caller.projectId)
-	) {
-		return {
-			ok: false,
-			error: {
-				code: 'terminal_not_found',
-				message: 'No terminal matches the requested terminal in this project.',
-			},
-		};
-	}
-	try {
-		switch (op) {
-			case 'list_terminals':
-				return {
-					ok: true,
-					result: {
-						terminals: service
-							.listSessions()
-							.filter((entry) => entry.projectId === caller.projectId)
-							.map((entry) => {
-								const activity = authority.activity.get({
-									serverId: entry.serverId,
-									projectId: entry.projectId,
-									sessionId: entry.sessionId,
-								});
-								return {
-									id: entry.sessionId,
-									name: entry.sessionId,
-									busy: activity?.status === 'working',
-									attention: activity?.attention ?? false,
-									cwd: entry.cwd || null,
-									lastActivityAgoMs:
-										activity === undefined
-											? null
-											: Math.max(0, Date.now() - activity.updatedAt),
-									exitCode: entry.exit?.exitCode ?? null,
-									isSelf: entry.sessionId === sessionId,
-								};
-							}),
-					},
-				};
-			case 'read_terminal': {
-				const subscription = service.subscribe(target!, {
-					authorization,
-					fromPosition: target!.replayFrom,
-				});
-				try {
-					const events = subscription.drain();
-					const bytes = events.flatMap((entry) =>
-						entry.type === 'output' ? [entry.bytes] : [],
-					);
-					const output = new TextDecoder().decode(concatTerminalBytes(bytes));
-					const lines = readRecordLines(params);
-					return {
-						ok: true,
-						result: {
-							id: target!.sessionId,
-							output:
-								lines === null
-									? output
-									: output.split(/\r?\n/u).slice(-lines).join('\n'),
-						},
-					};
-				} finally {
-					subscription.close();
-				}
-			}
-			case 'get_terminal_status':
-				return {
-					ok: true,
-					result: {
-						id: target!.sessionId,
-						status: target!.status,
-						exitCode: target!.exit?.exitCode ?? null,
-					},
-				};
-			case 'write_terminal':
-			case 'run_command': {
-				const text = readControlText(params, op === 'run_command');
-				await service.write(target!, text, authorization);
-				return {
-					ok: true,
-					result: {
-						id: target!.sessionId,
-						bytes: new TextEncoder().encode(text).byteLength,
-					},
-				};
-			}
-			case 'close_terminal':
-				await service.kill(target!, authorization);
-				return { ok: true, result: { id: target!.sessionId, closed: true } };
-			case 'open_terminal': {
-				const activePanelId = Object.values(
-					serverTerminalAuthority!.workspace.state.panels,
-				).find(
-					(panel) =>
-						panel.type === 'terminal' &&
-						panel.projectId === caller.projectId &&
-						panel.sessionId === caller.id,
-				)?.id;
-				const opened = await createServerOwnedTerminalSession(
-					0,
-					caller.projectId,
-					readOptionalControlString(params, 'cwd'),
-					undefined,
-					activePanelId,
-				);
-				return {
-					ok: true,
-					result: { id: opened.id, projectId: caller.projectId },
-				};
-			}
-			default:
-				return {
-					ok: false,
-					error: {
-						code: 'unsupported_op',
-						message: `control operation ${op} is unavailable without a canonical workspace view`,
-					},
-				};
-		}
-	} catch (error) {
-		return {
-			ok: false,
-			error: {
-				code: 'internal',
-				message: error instanceof Error ? error.message : String(error),
-			},
-		};
-	}
-}
-
-function readTerminalRef(params: unknown, fallback: string): string | null {
-	if (
-		params &&
-		typeof params === 'object' &&
-		typeof (params as { terminal?: unknown }).terminal === 'string'
-	)
-		return (params as { terminal: string }).terminal;
-	return fallback;
-}
-
-function readOptionalControlString(
-	params: unknown,
-	key: string,
-): string | undefined {
-	if (!params || typeof params !== 'object') return undefined;
-	const value = (params as Record<string, unknown>)[key];
-	return typeof value === 'string' ? value : undefined;
-}
-
-function readControlText(params: unknown, command: boolean): string {
-	const value =
-		readOptionalControlString(params, command ? 'command' : 'text') ?? '';
-	if (command) return `\u001b[200~${value}\u001b[201~\r`;
-	return (
-		value +
-		(params &&
-		typeof params === 'object' &&
-		(params as { submit?: unknown }).submit === true
-			? '\r'
-			: '')
-	);
-}
-
-function readRecordLines(params: unknown): number | null {
-	const value =
-		params && typeof params === 'object'
-			? (params as { lines?: unknown }).lines
-			: undefined;
-	return typeof value === 'number' &&
-		Number.isSafeInteger(value) &&
-		value > 0 &&
-		value <= 10_000
-		? value
-		: null;
-}
-
-function concatTerminalBytes(chunks: readonly Uint8Array[]): Uint8Array {
-	const result = new Uint8Array(
-		chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0),
-	);
-	let offset = 0;
-	for (const chunk of chunks) {
-		result.set(chunk, offset);
-		offset += chunk.byteLength;
-	}
-	return result;
-}
-
-async function startControlServer(): Promise<void> {
-	if (controlServer) {
-		return;
-	}
-
-	const server = createControlServer({
-		socketPath: getControlSocketPath(),
-		resolveScope: resolveControlScope,
-		forward: forwardControlRequest,
-		onError: (error) => {
-			console.error('[control] server error', error);
-		},
-	});
-	controlServer = server;
-
-	try {
-		await server.start();
-	} catch (error) {
-		console.error('[control] failed to start control server', error);
-		if (controlServer === server) {
-			controlServer = null;
-		}
-	}
-}
-
-async function stopControlServer(): Promise<void> {
-	const server = controlServer;
-	if (!server) {
-		return;
-	}
-	controlServer = null;
-	try {
-		await server.stop();
-	} catch (error) {
-		console.error('[control] failed to stop control server', error);
-	}
-}
-
-function applyControlServerSetting(): void {
-	if (readTerminalSettings().terminayMcp.enabled) {
-		void startControlServer();
-	} else {
-		void stopControlServer();
-	}
 }
 
 function detachSessionsForWebContents(webContentsId: number): void {
@@ -2931,6 +2592,7 @@ function createWindow(options?: {
 			hostPartitionKey: launch.partitionKey,
 			initialUrl: entryUrl.toString(),
 			preloadPath,
+			readTerminalClipboard,
 			onLifecycleDiagnostic: (event) => {
 				void desktopDiagnostics.record(
 					{
@@ -3715,7 +3377,6 @@ if (process.env.TERMINAY_TEST === '1') {
 					? payload.projectId.trim()
 					: 'desktop';
 			const session = await createServerOwnedTerminalSession(
-				event.sender.id,
 				projectId,
 				cwd,
 			);
@@ -3844,40 +3505,6 @@ if (process.env.TERMINAY_TEST === '1') {
 						claimed: snapshot.claimed,
 						source: snapshot.source,
 					};
-		},
-	);
-
-	ipcMain.handle(
-		'test:get-mcp-control-environment',
-		(event, payload?: { terminalSessionId?: unknown }) => {
-			assertBoundServerUiEvent(event);
-			const terminalSessionId = payload?.terminalSessionId;
-			if (
-				typeof terminalSessionId !== 'string' ||
-				terminalSessionId.length === 0
-			) {
-				throw new Error('A terminal session id is required.');
-			}
-			const serverSession = serverTerminalAuthority?.get(terminalSessionId);
-			if (serverSession?.status !== 'running') {
-				throw new Error('The requested terminal session is not available.');
-			}
-			// Canonical protocol-created terminals do not pass through the legacy
-			// Electron spawn wrapper that eagerly installs shell MCP environment.
-			// This test-only bridge may mint the same exact-session capability on
-			// demand; normal MCP discovery remains controlled by server-owned spawn
-			// configuration and the token cannot address another project/session.
-			// Mint a fresh document-bound capability for this explicit request.
-			// Restored sessions can retain a shell-era token; reusing it would make
-			// a later renderer/document scope ambiguous. Replacing it atomically
-			// also revokes that old capability.
-			const token = registerControlToken(terminalSessionId, event.sender.id);
-			return {
-				projectId: serverSession.projectId,
-				sessionId: serverSession.id,
-				socketPath: getControlSocketPath(),
-				token,
-			};
 		},
 	);
 
@@ -4106,7 +3733,6 @@ const handleBeforeQuit = createGracefulQuitHandler({
 				privilegedWebRtcExposure?.shutdown(),
 				desktopRemoteExposure.shutdown(),
 				serverTerminalAuthority?.shutdown(),
-				stopControlServer(),
 			]);
 			await desktopDiagnostics.record(
 				{
@@ -4248,7 +3874,6 @@ async function completeDesktopStartup(): Promise<void> {
 		throw error;
 	}
 	await launchDeferredCanonicalWindow(embeddedStartupWindow);
-	applyControlServerSetting();
 }
 
 async function recoverFailedDesktopBootstrap(error: unknown): Promise<void> {
