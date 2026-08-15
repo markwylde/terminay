@@ -4,6 +4,7 @@ import type {
   ActivityReplay,
   ActivitySnapshot,
   ActivityAuthority,
+  ForegroundObservationState,
   ProviderActivityState,
   ProviderActivityUpdate,
   TerminalActivityReducerOptions,
@@ -35,6 +36,7 @@ interface MutableSession {
   progressDeadline?: number;
   commandExecuting: boolean;
   foregroundBusy: boolean;
+  foregroundObservation: ForegroundObservationState;
   foregroundProcess?: string;
   explicitSeen: boolean;
   rawActivityAt?: number;
@@ -179,6 +181,10 @@ export class TerminalActivityReducer {
         }
         break;
       case "foreground":
+        if (signal.observation === "limited") {
+          session.foregroundObservation = "limited";
+          break;
+        }
         if (session.provider === undefined) {
           session.authority = "structured";
           session.source = "structured:foreground";
@@ -192,6 +198,7 @@ export class TerminalActivityReducer {
         }
         session.foregroundBusy = signal.busy;
         session.foregroundProcess = signal.processName;
+        session.foregroundObservation = "available";
         break;
       case "notification":
       case "bell":
@@ -455,8 +462,13 @@ export class TerminalActivityReducer {
       session.progressDeadline = signal.state === 0 ? undefined : at + this.progressStaleMs;
     }
     if (signal.kind === "foreground") {
-      session.foregroundBusy = signal.busy;
-      session.foregroundProcess = signal.processName;
+      if (signal.observation === "limited") {
+        session.foregroundObservation = "limited";
+      } else {
+        session.foregroundBusy = signal.busy;
+        session.foregroundProcess = signal.processName;
+        session.foregroundObservation = "available";
+      }
     }
   }
 
@@ -526,6 +538,7 @@ function createSession(sessionId: string, projectId: string | undefined, at: num
     progressBusy: false,
     commandExecuting: false,
     foregroundBusy: false,
+    foregroundObservation: "available",
     explicitSeen: false,
   };
 }
@@ -550,6 +563,7 @@ function snapshotOf(session: MutableSession): TerminalActivitySessionSnapshot {
     sessionId: session.sessionId,
     ...(session.projectId === undefined ? {} : { projectId: session.projectId }),
     foregroundBusy: session.foregroundBusy,
+    foregroundObservation: session.foregroundObservation,
     status: session.status,
     attention: session.attention,
     acknowledged: session.acknowledged,

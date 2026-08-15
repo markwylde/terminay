@@ -5,6 +5,8 @@ import { ActivitySnapshotStore } from "../dist/index.js";
 const session = (sessionId, projectId = "project-a", patch = {}) => ({
   sessionId,
   projectId,
+  foregroundBusy: false,
+  foregroundObservation: "available",
   status: "idle",
   attention: false,
   acknowledged: true,

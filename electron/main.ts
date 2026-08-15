@@ -685,12 +685,17 @@ function getRunningTerminalCount(): number {
 	const authority = serverTerminalAuthority;
 	if (authority === null) return 0;
 	return authority.list().filter(
-		(session) =>
-			authority.activity.get({
+		(session) => {
+			const activity = authority.activity.get({
 				serverId: session.serverId,
 				projectId: session.projectId,
 				sessionId: session.id,
-			})?.foregroundBusy === true,
+			});
+			return (
+				activity?.foregroundBusy === true ||
+				activity?.foregroundObservation === 'limited'
+			);
+		},
 	).length;
 }
 
@@ -712,10 +717,10 @@ function getRunningTerminalCountForWindow(webContentsId: number): number {
 			projectId: session.projectId,
 			sessionId: session.id,
 		});
-		// Foreground-process polling is asynchronous.  The canonical reducer
-		// marks the PTY working immediately on accepted/echoed input, which is
-		// the safe close boundary until that poll confirms the child process.
-		return activity?.foregroundBusy === true || activity?.status === 'working';
+		return (
+			activity?.foregroundBusy === true ||
+			activity?.foregroundObservation === 'limited'
+		);
 	}).length;
 }
 
@@ -3833,6 +3838,7 @@ if (process.env.TERMINAY_TEST === '1') {
 				? null
 				: {
 						foregroundBusy: snapshot.foregroundBusy,
+						foregroundObservation: snapshot.foregroundObservation,
 						status: snapshot.status,
 						acknowledged: snapshot.acknowledged,
 						claimed: snapshot.claimed,

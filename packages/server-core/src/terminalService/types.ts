@@ -44,10 +44,27 @@ export type PtyExitListener = (exit: PtyExit) => void;
  * server-internal PTY signal: it is not terminal output and is not exposed to
  * terminal stream subscribers.
  */
+export type TerminalForegroundObservationState = "available" | "limited";
+export type TerminalForegroundObservationError = "unavailable" | "failed" | "timeout";
+
 export interface PtyForegroundProcess {
   readonly processName: string;
   readonly shellForeground: boolean;
+  /** Absent events from older adapters are treated as a successful sample. */
+  readonly observation?: TerminalForegroundObservationState;
 }
+
+/** Bounded close-time observation of one exact terminal session. */
+export interface TerminalForegroundObservation {
+  readonly sessionId: string;
+  readonly projectId: string;
+  readonly observation: TerminalForegroundObservationState;
+  readonly foregroundBusy: boolean;
+  readonly observationError?: TerminalForegroundObservationError;
+}
+
+/** Close-time host observation must settle within this named deadline. */
+export const TERMINAL_CLOSE_OBSERVATION_TIMEOUT_MS = 1_000;
 
 export type PtyForegroundProcessListener = (event: PtyForegroundProcess) => void;
 /** Provider-owned journal evidence already bound to this exact PTY session.
@@ -75,7 +92,9 @@ export interface PtyProcess {
   readonly getCwd?: (signal?: AbortSignal) => TerminalMaybePromise<string | null>;
   /** Optional host capability for trusted foreground-process observation. */
   readonly onForegroundProcess?: (listener: PtyForegroundProcessListener) => Unsubscribe | undefined;
-  /** Await a current host foreground observation before a destructive decision. */
+  /** Await one fresh host foreground sample. Output cannot extend this into
+   * an unbounded catch-up loop; at most the current sample and one latest
+   * pending replacement run. */
   readonly refreshForegroundProcess?: (signal?: AbortSignal) => TerminalMaybePromise<void>;
   /** Optional trusted provider callback. Absence preserves PTY-output fallback. */
   readonly onAgentJournal?: (listener: PtyAgentJournalListener) => Unsubscribe | undefined;
