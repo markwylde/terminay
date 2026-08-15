@@ -33,11 +33,7 @@ function install(overrides = {}) {
 			sessionId: 'room',
 			origin: 'https://room.terminay.com',
 			prepareWorkspace: async () => ({}),
-			postJson: async () => ({}),
-			acquireApplicationEndpoint: async () => ({ generation: 2, endpoint: endpoint() }),
-			registerApplication() {},
 			connect: async () => endpoint(),
-			enroll: async () => ({}),
 			...overrides,
 		},
 	};
@@ -45,7 +41,10 @@ function install(overrides = {}) {
 
 test('accepts and returns only a runtime-validated opaque endpoint', async () => {
 	install();
-	const transport = await contract.acquireHostedApplicationTransport('ticket');
+	const transport = await contract.getSessionTransportHost().connect({
+		origin: 'https://room.terminay.com',
+		onStateChange: () => {},
+	});
 	assert.equal(transport.state, 'open');
 	assert.equal('channel' in transport, false);
 });
@@ -61,11 +60,7 @@ test('production bootstrap installs one immutable host from the narrow hosted au
 			byteEndpoint,
 			sessionId: 'room',
 			origin: 'https://room.terminay.com',
-			postJson: async () => ({}),
-			acquireApplicationEndpoint: async () => ({ generation: 1, endpoint: endpoint() }),
-			registerApplication() {},
 			connect: async () => endpoint(),
-			enroll: async () => ({}),
 		},
 	};
 	const host = contract.bootstrapHostedBrowserSession();
@@ -77,15 +72,15 @@ test('production bootstrap installs one immutable host from the narrow hosted au
 	assert.throws(() => { globalThis.window.__TERMINAY_SESSION_TRANSPORT__ = {}; }, /read only|assign/u);
 });
 
-test('rejects incompatible versions, origins, generations, and endpoint shapes', async () => {
+test('rejects incompatible versions, origins, and missing capabilities', async () => {
 	for (const overrides of [
 		{ version: 2 },
 		{ origin: 'https://sibling.terminay.com' },
-		{ acquireApplicationEndpoint: async () => ({ generation: 0, endpoint: endpoint() }) },
-		{ acquireApplicationEndpoint: async () => ({ generation: 1, endpoint: { send() {} } }) },
+		{ connect: undefined },
+		{ prepareWorkspace: undefined },
 	]) {
 		install(overrides);
-		await assert.rejects(contract.acquireHostedApplicationTransport('ticket'), /incompatible/u);
+		assert.throws(() => contract.getSessionTransportHost(), /incompatible/u);
 	}
 });
 
@@ -108,17 +103,14 @@ test('remote production entry consumes hosted authority before workspace prepara
 	assert.doesNotMatch(source, /window\.location\.replace\(preparedWorkspace\.entryUrl\)/u);
 });
 
-test('hosted fragment pairing classification uses the validated exact-origin host', async () => {
+test('the workspace never parses pairing credentials or performs browser enrollment', async () => {
 	const source = await readFile('src/web/main.tsx', 'utf8');
-	assert.match(source, /sessionHost !== undefined &&[\s\S]*pairingUrl\.origin === sessionHost\.origin &&[\s\S]*has\('pairingToken'\)/u);
-	assert.match(source, /searchParams\.get\('transport'\) === 'webrtc' \|\|[\s\S]*isHostedSessionPairing/u);
-	assert.doesNotMatch(source, /__TERMINAY_REMOTE_WEBRTC__|__TERMINAY_BROWSER_ENROLLMENT__/u);
+	assert.match(source, /transport = await sessionHost\.connect/u);
+	assert.doesNotMatch(source, /deviceEnrollment|loadBrowserDeviceIdentity|authenticateDevice/u);
 });
 
-test('replacement activation verifies the stable profile and authenticated server identity', async () => {
+test('the workspace labels its connection from the bound session origin', async () => {
 	const source = await readFile('src/web/main.tsx', 'utf8');
-	assert.match(source, /currentProfile\?\.origin !== profile\.origin[\s\S]*currentProfile\.archived === true/u);
-	assert.match(source, /profile\.status !== 'connecting' &&[\s\S]*hello\.serverId !== profile\.serverId[\s\S]*Recovered server identity does not match the saved profile/u);
-	assert.match(source, /profile\.status === 'connecting'[\s\S]*serverId: hello\.serverId[\s\S]*status: 'connected'/u);
-	assert.match(source, /connectionController\.current!\.activate/u);
+	assert.match(source, /origin = sessionHost\.origin[\s\S]*label = new URL\(origin\)\.host/u);
+	assert.match(source, /serverId: hello\.serverId/u);
 });

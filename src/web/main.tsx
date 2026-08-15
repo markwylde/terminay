@@ -13,7 +13,10 @@ import {
 	acquireDesktopServerBootstrap,
 	type DesktopHostBridge,
 } from './desktopByteTransport';
-import { getSessionTransportHost } from './sessionTransportHost';
+import {
+	bootstrapHostedBrowserSession,
+	getSessionTransportHost,
+} from './sessionTransportHost';
 import './index.css';
 
 type ConnectedSession = Readonly<{
@@ -23,22 +26,12 @@ type ConnectedSession = Readonly<{
 	serverId: string;
 }>;
 
-function pairingUrlFromLocation(): string | undefined {
-	if (window.location.hash.length <= 1) return undefined;
-	const pairingUrl = window.location.href;
-	const visibleUrl = new URL(pairingUrl);
-	visibleUrl.hash = '';
-	window.history.replaceState(null, '', visibleUrl);
-	return pairingUrl;
-}
-
 /**
  * The server-bundled browser entry runs only at a selected session origin (or
  * inside a Desktop-bound document). Connection bookmarks belong to the public
  * PWA and never enter this workspace shell.
  */
 export default function SessionWorkspaceApp(): React.JSX.Element {
-	const initialPairingUrl = useRef(pairingUrlFromLocation());
 	const clientRef = useRef<TerminayClient | undefined>(undefined);
 	const connectRef = useRef<
 		(options?: Readonly<{ replaceDesktopEndpoint?: boolean }>) => Promise<void>
@@ -46,12 +39,8 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 	const recoveryInFlight = useRef(false);
 	const [connection, setConnection] = useState<ConnectedSession>();
 	const [desktopContext, setDesktopContext] = useState<TerminayHostContext>();
-	const [deviceName, setDeviceName] = useState('Terminay Browser');
-	const [pairingPin, setPairingPin] = useState('');
 	const [error, setError] = useState<string>();
-	const [phase, setPhase] = useState<'connecting' | 'pairing' | 'ready'>(
-		initialPairingUrl.current === undefined ? 'connecting' : 'pairing',
-	);
+	const [phase, setPhase] = useState<'connecting' | 'ready'>('connecting');
 
 	const recoverConnection = useCallback(() => {
 		if (recoveryInFlight.current) return;
@@ -151,7 +140,6 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 	connectRef.current = connect;
 
 	useEffect(() => {
-		if (initialPairingUrl.current !== undefined) return;
 		void connect().catch((cause) => {
 			setError(cause instanceof Error ? cause.message : 'Unable to connect.');
 			setPhase('ready');
@@ -160,41 +148,6 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 			void clientRef.current?.close().catch(() => undefined);
 		};
 	}, [connect]);
-
-	const enroll = useCallback(
-		async (event: React.FormEvent<HTMLFormElement>) => {
-			event.preventDefault();
-			const pairingUrl = initialPairingUrl.current;
-			const sessionHost = getSessionTransportHost();
-			if (pairingUrl === undefined || sessionHost === undefined) return;
-			if (!/^\d{6}$/u.test(pairingPin)) {
-				setError('Enter the six-digit pairing PIN.');
-				return;
-			}
-			try {
-				setError(undefined);
-				setPhase('connecting');
-				await sessionHost.enroll({
-					deviceName: deviceName.trim(),
-					isCurrent: () => true,
-					origin: sessionHost.origin,
-					pairingPin,
-					pairingUrl,
-				});
-				initialPairingUrl.current = undefined;
-				setPairingPin('');
-				await connect();
-			} catch (cause) {
-				setError(
-					cause instanceof Error
-						? cause.message
-						: 'Unable to pair this device.',
-				);
-				setPhase('pairing');
-			}
-		},
-		[connect, deviceName, pairingPin],
-	);
 
 	const profiles = useMemo(() => {
 		if (connection?.origin === undefined) return undefined;
@@ -249,40 +202,6 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 		);
 	}
 
-	if (phase === 'pairing') {
-		return (
-			<main className="browser-host-shell">
-				<section
-					className="browser-host-shell__panel"
-					aria-labelledby="pair-title"
-				>
-					<h1 id="pair-title">Pair this browser</h1>
-					<p>Approve this browser with the pairing PIN for this server.</p>
-					<form onSubmit={enroll}>
-						<label>
-							Device name
-							<input
-								value={deviceName}
-								onChange={(event) => setDeviceName(event.target.value)}
-							/>
-						</label>
-						<label>
-							Pairing PIN
-							<input
-								inputMode="numeric"
-								maxLength={6}
-								value={pairingPin}
-								onChange={(event) => setPairingPin(event.target.value)}
-							/>
-						</label>
-						<button type="submit">Continue pairing</button>
-					</form>
-					{error !== undefined && <p role="alert">{error}</p>}
-				</section>
-			</main>
-		);
-	}
-
 	return (
 		<main className="browser-host-shell">
 			<section className="browser-host-shell__panel" aria-live="polite">
@@ -316,4 +235,15 @@ export function mountSessionWorkspace(root: HTMLElement): void {
 }
 
 const root = document.getElementById('web-root');
-if (root !== null) mountSessionWorkspace(root);
+if (root !== null) {
+	if (window.__TERMINAY_HOSTED_SESSION_AUTHORITY__ === undefined) {
+		mountSessionWorkspace(root);
+	} else {
+		// Consume the hosted shell authority before asynchronous module loading.
+		// Later browser modules use only the sealed session host.
+		bootstrapHostedBrowserSession();
+		void import('../remote/main').then(({ launchDirectBrowserWorkspace }) =>
+			launchDirectBrowserWorkspace(root),
+		);
+	}
+}

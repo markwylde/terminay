@@ -1,4 +1,4 @@
-import { normalizeSessionOrigin } from './deviceKeys'
+import { normalizeSessionOrigin } from './sessionOrigin'
 import type { PairingBootstrap } from './pairing'
 import type { RemoteApiTransport } from './transport'
 
