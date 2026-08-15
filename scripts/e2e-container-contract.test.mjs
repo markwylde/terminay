@@ -46,13 +46,15 @@ test("CI shards Electron E2E through the same isolated Docker entrypoint", async
   assert.match(e2eJob, /TERMINAY_E2E_PLATFORM: linux\/amd64/u);
   assert.match(e2eJob, /Require amd64 Docker host/u);
   assert.match(e2eJob, /x86_64\|amd64/u);
-  assert.match(e2eJob, /uses: actions\/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093/u);
+  assert.match(e2eJob, /if: \$\{\{ github\.server_url == 'https:\/\/github\.com' \}\}\n\s+uses: actions\/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093/u);
+  assert.match(e2eJob, /if: \$\{\{ github\.server_url != 'https:\/\/github\.com' \}\}\n\s+uses: actions\/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a/u);
   assert.match(e2eJob, /EXPECTED_IMAGE_ID: \$\{\{ needs\.e2e-image\.outputs\.image-id \}\}/u);
   assert.match(e2eJob, /docker image inspect --format '\{\{\.Id\}\}' "\$IMAGE_TAG"/u);
   assert.match(e2eJob, /TERMINAY_E2E_ARTIFACT_DIR: \$\{\{ github\.workspace \}\}\/.docker-cache\/e2e\/shard-\$\{\{ matrix\.shard \}\}-of-5/u);
   assert.match(e2eJob, /run: npm run test:e2e -- --shard=\$\{\{ matrix\.shard \}\}\/5/u);
   assert.doesNotMatch(e2eJob, /run: xvfb-run -a npm run test:e2e:host/u);
-  assert.match(e2eJob, /if: \$\{\{ always\(\) \}\}/u);
+  assert.match(e2eJob, /if: \$\{\{ always\(\) && github\.server_url == 'https:\/\/github\.com' \}\}/u);
+  assert.match(e2eJob, /if: \$\{\{ always\(\) && github\.server_url != 'https:\/\/github\.com' \}\}/u);
   assert.match(e2eJob, /name: playwright-report-\$\{\{ matrix\.shard \}\}-of-5/u);
   assert.match(e2eJob, /retention-days: 7/u);
 });
