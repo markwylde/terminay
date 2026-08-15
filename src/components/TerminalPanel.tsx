@@ -78,7 +78,10 @@ import {
 	isTerminalPresentationOwnershipError,
 	ServerTerminalInputQueue,
 } from './terminalPanelInputQueue';
-import { pasteTerminalClipboard } from './terminalPasteInteraction';
+import {
+	pasteTerminalClipboard,
+	shouldHandleTerminalPasteShortcut,
+} from './terminalPasteInteraction';
 import { buildTerminalPresentationOptions } from './terminalPresentationInteraction';
 import { getTerminalScrollbackAction } from './terminalScrollbackInteraction';
 import { isTerminalSearchShortcut } from './terminalSearchInteraction';
@@ -835,19 +838,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				return true;
 			}
 
-			const isPasteShortcut =
-				(event.ctrlKey &&
-					event.shiftKey &&
-					!event.altKey &&
-					!event.metaKey &&
-					key === 'v') ||
-				(event.metaKey &&
-					!event.ctrlKey &&
-					!event.altKey &&
-					!event.shiftKey &&
-					key === 'v');
-
-			if (isPasteShortcut) {
+			if (shouldHandleTerminalPasteShortcut(event, isMac)) {
 				event.preventDefault();
 				event.stopPropagation();
 				if (event.type !== 'keydown') {
