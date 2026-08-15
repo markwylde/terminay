@@ -16,7 +16,8 @@ E2E-image build, and five Electron Playwright shards:
 3. Five `ubuntu-latest` jobs split the Electron Playwright suite with
    `--shard=N/5`.
 
-The macOS smoke and fast gate are independent. Each provider selects one
+The fast gate is independent. GitHub runs the packaged macOS smoke; Gitea runs
+its explicit unavailable-runner fallback. Each provider selects one
 provider-specific E2E-image/shard pair at the job level; the five selected E2E
 shards depend only on that provider's E2E-image build, then run in parallel.
 
@@ -39,7 +40,8 @@ transfer image expires after one day; diagnostic shard reports expire after
 seven days. GitHub's E2E jobs contain only pinned artifact-action v4. The
 separate self-hosted Gitea E2E jobs contain only the pinned v3 action pair,
 because its artifact service does not support v4. Provider selection happens at
-the job level so GitHub never resolves the incompatible v3 actions.
+the job level so GitHub never resolves the incompatible v3 actions and no
+Gitea-runnable job references artifact-action v4.
 
 ## Work kept out of pull requests
 
