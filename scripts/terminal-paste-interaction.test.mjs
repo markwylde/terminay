@@ -82,11 +82,23 @@ test('terminal paste recovers from clipboard and xterm failures so the next past
   assert.equal(focusCalls, 1)
 })
 
-test('leaves macOS Cmd+V to Electron native paste rather than the renderer Clipboard API', () => {
+test('handles macOS Cmd+V through the Desktop smart clipboard bridge', () => {
   assert.equal(
     shouldHandleTerminalPasteShortcut(
       { altKey: false, ctrlKey: false, key: 'v', metaKey: true, shiftKey: false },
       true,
+      true,
+    ),
+    true,
+  )
+})
+
+test('leaves macOS Cmd+V to the browser when the Desktop bridge is unavailable', () => {
+  assert.equal(
+    shouldHandleTerminalPasteShortcut(
+      { altKey: false, ctrlKey: false, key: 'v', metaKey: true, shiftKey: false },
+      true,
+      false,
     ),
     false,
   )
@@ -96,6 +108,7 @@ test('continues to handle the terminal-specific Ctrl+Shift+V shortcut in the ren
   assert.equal(
     shouldHandleTerminalPasteShortcut(
       { altKey: false, ctrlKey: true, key: 'v', metaKey: false, shiftKey: true },
+      true,
       true,
     ),
     true,

@@ -461,6 +461,27 @@ test.describe('terminal behavior', () => {
 			.toContain('terminay-selectable-text');
 	});
 
+	test('pastes a clipboard image as a Desktop temporary file path', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		const imagePng =
+			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL9WQAAAABJRU5ErkJggg==';
+
+		await electronApp.evaluate(({ clipboard, nativeImage }, png) => {
+			clipboard.writeImage(nativeImage.createFromBuffer(Buffer.from(png, 'base64')));
+		}, imagePng);
+
+		await writeToTerminal(mainWindow, 'test -f ');
+		await mainWindow.keyboard.press('Control+Shift+V');
+		await mainWindow.keyboard.type(" && printf 'terminay-clipboard-image-paste\\n'");
+		await mainWindow.keyboard.press('Enter');
+
+		await expect(
+			mainWindow.locator('.project-workspace--active .xterm-rows'),
+		).toContainText('terminay-clipboard-image-paste');
+	});
+
 	test('accepts keyboard input after a terminal click', async ({
 		mainWindow,
 	}) => {
