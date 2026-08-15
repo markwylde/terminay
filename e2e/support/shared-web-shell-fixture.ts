@@ -20,12 +20,6 @@ export async function installSessionTransportHostStub(
 	page: Page,
 ): Promise<void> {
 	await page.addInitScript(() => {
-		type ApplicationDelegate = Readonly<{
-			connect(options: unknown): Promise<unknown>;
-			enroll(options: unknown): Promise<unknown>;
-		}>;
-
-		let application: ApplicationDelegate | undefined;
 		const unavailable = (): never => {
 			throw new Error(
 				'The E2E session transport stub does not provide a live endpoint.',
@@ -41,24 +35,7 @@ export async function installSessionTransportHostStub(
 				sessionId: 'e2e-browser-session',
 				origin: window.location.origin,
 				prepareWorkspace: unavailable,
-				postJson: unavailable,
-				acquireApplicationEndpoint: unavailable,
-				registerApplication(delegate: ApplicationDelegate) {
-					if (application !== undefined) {
-						throw new Error(
-							'The E2E session transport stub already has an application.',
-						);
-					}
-					application = delegate;
-				},
-				connect(options: unknown) {
-					if (application === undefined) unavailable();
-					return application.connect(options);
-				},
-				enroll(options: unknown) {
-					if (application === undefined) unavailable();
-					return application.enroll(options);
-				},
+				connect: unavailable,
 			}),
 		});
 	});
