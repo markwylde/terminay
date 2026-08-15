@@ -18,6 +18,10 @@ test('Desktop WebRTC bootstrap runs in the privileged selected runtime without a
 	assert.match(main, /new PrivilegedWebRtcExposure/u);
 	assert.match(main, /privilegedWebRtcExposure\?\.service\.appendSessionData/u);
 	assert.match(main, /privilegedWebRtcExposure!\.toggle\(\)/u);
+	assert.match(
+		main,
+		/onStatusChanged: \(\) =>\s*serverTerminalAuthority\?\.notifyRemoteAccessChanged\(\)/u,
+	);
 	const scripts = JSON.parse(packageJson).scripts;
 	assert.match(scripts.dev, /^npm run build:app &&/u);
 	assert.match(scripts.dev, /stage-selected-secure-werift-runtime\.mjs/u);
