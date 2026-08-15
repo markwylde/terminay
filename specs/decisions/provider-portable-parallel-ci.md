@@ -50,8 +50,11 @@ and Gitea never resolves artifact-action v4.
 
 - Native arm64 qualification belongs to the manually triggered release
   workflow.
-- Standalone artifact reproduction, release evidence, signing, auditing, and
-  publication belong to the release workflow.
+- The pull-request fast gate runs the same local `test:release-evidence`
+  contract as the release smoke job: pack-manifest inspection, hosted
+  deployment order, supply-chain and production-dependency audits, and
+  related release-config checks. Signing, notarization, native archive
+  reproduction, and publication stay on the release workflow.
 - The E2E workflow artifact is a CI test fixture, not a released server or web
   image. Its commit-derived local tag exists only to fan out one verified test
   environment to the five shards.
