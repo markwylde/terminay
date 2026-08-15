@@ -79,6 +79,24 @@ test('direct browser renders a typed recovery panel for an invalid server archiv
 	expect(pageErrors).toEqual([]);
 });
 
+test('the server bundle entry consumes the hosted session authority before mounting', async ({
+	page,
+}) => {
+	test.setTimeout(90_000);
+	const pageErrors: Error[] = [];
+	page.on('pageerror', (error) => pageErrors.push(error));
+	await installHostedSessionAuthority(page, VALID_ARCHIVE);
+
+	await page.goto(`${fixture.origin}/server.html#pairing-session`, {
+		waitUntil: 'domcontentloaded',
+	});
+
+	await expect(page.getByRole('heading', { name: 'Connecting to Terminay…' })).toBeVisible({
+		timeout: 60_000,
+	});
+	expect(pageErrors).toEqual([]);
+});
+
 async function installDirectBrowserSession(
 	page: Page,
 	compressedArchive: Uint8Array,
@@ -93,14 +111,17 @@ async function installDirectBrowserSession(
 				});
 			}
 
-			type ApplicationDelegate = Readonly<{
-				connect(options: unknown): Promise<unknown>;
-				enroll(options: unknown): Promise<unknown>;
-			}>;
-			let application: ApplicationDelegate | undefined;
-			const unavailable = (): never => {
-				throw new Error('The direct-browser E2E host has no live endpoint.');
-			};
+				const endpoint = Object.freeze({
+					bufferedBytes: 0,
+					close: async () => {},
+					incoming: { async *[Symbol.asyncIterator]() {} },
+					onStateChange: () => () => {},
+					open: async () => {},
+					queuedBytes: 0,
+					send: async () => {},
+					state: 'open',
+					waitForWritable: async () => {},
+				});
 			Object.defineProperty(window, '__TERMINAY_SESSION_TRANSPORT__', {
 				configurable: false,
 				enumerable: false,
@@ -134,25 +155,67 @@ async function installDirectBrowserSession(
 							}),
 							compressedArchive: new Uint8Array(archive),
 						}),
-					postJson: unavailable,
-					acquireApplicationEndpoint: unavailable,
-					registerApplication(delegate: ApplicationDelegate) {
-						application = delegate;
-						document.documentElement.dataset.e2eDirectBrowserRegistration =
-							'complete';
-					},
-					connect(options: unknown) {
-						if (application === undefined) unavailable();
-						return application.connect(options);
-					},
-					enroll(options: unknown) {
-						if (application === undefined) unavailable();
-						return application.enroll(options);
-					},
+					connect: async () => endpoint,
 				}),
 			});
 		},
 		{ archive: [...compressedArchive], userAgent },
+	);
+}
+
+async function installHostedSessionAuthority(
+	page: Page,
+	compressedArchive: Uint8Array,
+): Promise<void> {
+	await page.addInitScript(
+		({ archive }) => {
+				const endpoint = Object.freeze({
+					bufferedBytes: 0,
+					close: async () => {},
+					incoming: { async *[Symbol.asyncIterator]() {} },
+					onStateChange: () => () => {},
+					open: async () => {},
+					queuedBytes: 0,
+					send: async () => {},
+					state: 'open',
+					waitForWritable: async () => {},
+				});
+			Object.defineProperty(window, '__TERMINAY_HOSTED_SESSION_AUTHORITY__', {
+				configurable: false,
+				enumerable: false,
+				writable: false,
+				value: Object.freeze({
+					sessionId: 'e2e-hosted-session',
+					origin: window.location.origin,
+					managerUrl: 'https://app.terminay.com/',
+					managerAction: 'open',
+					serverId: 'server-hosted-e2e',
+					hostContext: Object.freeze({
+						schemaVersion: 1,
+						bootstrapVersion: 1,
+						sourceId: 'hosted-session-e2e',
+						windowId: 'hosted-session-e2e-window',
+						serverId: 'server-hosted-e2e',
+						profileId: 'profile-hosted-session-e2e',
+						bundleId: 'archive_direct_browser_e2e_0001',
+						applicationProtocolVersion: '1',
+						hostKind: 'browser',
+						hostBridgeVersion: 1,
+						byteEndpointVersion: 1,
+						capabilities: {},
+					}),
+					readBundle: async () => new Uint8Array(archive),
+					byteEndpoint: Object.freeze({
+						async send() {},
+						subscribe() {
+							return () => {};
+						},
+					}),
+					connect: async () => endpoint,
+				}),
+			});
+		},
+		{ archive: [...compressedArchive] },
 	);
 }
 
