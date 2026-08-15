@@ -6,6 +6,7 @@ import {
 	cancelEditWindow,
 	contextMenuItem,
 	openTerminalEditWindow,
+	setProjectRoot,
 	submitEditWindow,
 } from './support/ui';
 
@@ -131,6 +132,60 @@ test.describe('terminal behavior', () => {
 			initialTitles[1]!,
 			initialTitles[0]!,
 		]);
+	});
+
+	test('inserts a Desktop file path when a native screenshot is dropped onto the terminal', async ({
+		createWorkspace,
+		mainWindow,
+	}) => {
+		const project = await createWorkspace({ name: 'terminal-drop-project' });
+		const dropSource = await createWorkspace({ name: 'terminal-drop-source' });
+		const screenshotPath = await dropSource.writeBinary(
+			'CleanShot 2026-08-15 at 21.45.16@2x.png',
+			new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]),
+		);
+		await setProjectRoot(mainWindow, project.rootDir);
+
+		const picker = mainWindow.locator('#terminal-native-drop-source');
+		await mainWindow.evaluate(() => {
+			const input = document.createElement('input');
+			input.id = 'terminal-native-drop-source';
+			input.type = 'file';
+			document.body.append(input);
+		});
+		await picker.setInputFiles(screenshotPath);
+
+		const terminal = mainWindow.locator(
+			'.project-workspace--active .terminal-panel:visible',
+		);
+		await terminal.evaluate((element) => {
+			const file = (
+				document.querySelector('#terminal-native-drop-source') as HTMLInputElement
+			).files?.[0];
+			if (!file) throw new Error('The native screenshot fixture is unavailable.');
+
+			// The Desktop path bridge must resolve a native File before the renderer
+			// attempts a browser upload. This recreates the observed failure mode:
+			// native Finder drops cannot be uploaded, but their paths remain valid.
+			Object.defineProperty(file, 'arrayBuffer', {
+				value: () => Promise.reject(new Error('native file bytes are unavailable')),
+			});
+			const transfer = new DataTransfer();
+			transfer.items.add(file);
+			element.dispatchEvent(
+				new DragEvent('drop', {
+					bubbles: true,
+					cancelable: true,
+					dataTransfer: transfer,
+				}),
+			);
+		});
+
+		const output = terminal.locator('.xterm-rows');
+		await expect(output).toContainText(`'${screenshotPath}'`);
+		await expect(output).not.toContainText(
+			'[file drop failed: the file could not be uploaded]',
+		);
 	});
 
 	test('docks a terminal into a right-hand pane', async ({ mainWindow }) => {

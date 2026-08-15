@@ -38,6 +38,7 @@ import {
 	canReadClipboardText,
 	openExternalUrl,
 	readClipboardText,
+	resolveDesktopDroppedFilePath,
 	writeClipboardText,
 } from '../host/nativeActions';
 import { subscribeTerminalZoom } from '../host/nativeEvents';
@@ -664,11 +665,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		const terminalSessionUnavailable =
 			props.params.terminalSessionStatus !== undefined &&
 			props.params.terminalSessionStatus !== 'running';
-		const resolveDesktopDroppedFilePath = undefined;
 		const canUploadBrowserFiles = () => {
 			const browserDropContext = browserFileDropContextRef.current;
 			return (
-				resolveDesktopDroppedFilePath === undefined &&
+				window.terminayHost?.resolveDroppedFilePath === undefined &&
 				browserDropContext?.fileViewerClient !== undefined &&
 				browserDropContext.projectRoot !== undefined
 			);
