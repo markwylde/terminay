@@ -180,6 +180,67 @@ test.describe('workspace shell', () => {
 		).toHaveCount(0);
 	});
 
+	test('closes an idle terminal promptly while another terminal has a foreground process', async ({
+		appHarness,
+		mainWindow,
+	}) => {
+		await appHarness.sendAppCommand('new-terminal');
+		const closeButtons = mainWindow.getByLabel('Close terminal');
+		await expect(closeButtons).toHaveCount(2);
+
+		await mainWindow.locator('.terminal-panel').last().click();
+		const foregroundStarted = `sibling-foreground-${Date.now()}`;
+		await writeToActiveTerminal(
+			mainWindow,
+			`sleep 2.1; printf '${foregroundStarted}\\n'; sleep 30\n`,
+		);
+		await expect(
+			mainWindow.locator('.terminal-panel:visible .xterm-rows'),
+		).toContainText(foregroundStarted);
+
+		const idleTerminalClose = mainWindow
+			.locator('.dv-tab:visible')
+			.filter({ hasText: 'Terminal 1' })
+			.getByLabel('Close terminal');
+		await idleTerminalClose.click();
+		await expect(closeButtons).toHaveCount(1, { timeout: 5_000 });
+		await expect(mainWindow.locator('.terminal-tab-title')).toHaveText([
+			'Terminal 2',
+		]);
+	});
+
+	test('closes an idle terminal promptly while a sibling emits output every 50ms', async ({
+		appHarness,
+		mainWindow,
+	}) => {
+		await appHarness.sendAppCommand('new-terminal');
+		const closeButtons = mainWindow.getByLabel('Close terminal');
+		await expect(closeButtons).toHaveCount(2);
+
+		await mainWindow.locator('.terminal-panel').last().click();
+		const outputMarker = `sibling-stream-${Date.now()}`;
+		await writeToActiveTerminal(
+			mainWindow,
+			`while :; do printf '${outputMarker}\\n'; sleep 0.05; done\n`,
+		);
+		await expect(
+			mainWindow.locator('.terminal-panel:visible .xterm-rows'),
+		).toContainText(outputMarker);
+
+		const idleTerminalClose = mainWindow
+			.locator('.dv-tab:visible')
+			.filter({ hasText: 'Terminal 1' })
+			.getByLabel('Close terminal');
+		await idleTerminalClose.click();
+		await expect(closeButtons).toHaveCount(1, { timeout: 5_000 });
+		await expect(mainWindow.locator('.terminal-tab-title')).toHaveText([
+			'Terminal 2',
+		]);
+		await expect(
+			mainWindow.locator('.terminal-panel:visible .xterm-rows'),
+		).toContainText(outputMarker);
+	});
+
 	test('closes the project when its last tab is closed', async ({
 		appHarness,
 		mainWindow,
