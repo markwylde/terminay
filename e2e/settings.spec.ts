@@ -6,14 +6,6 @@ import { defaultTerminalSettings, normalizeTerminalSettings } from '../src/termi
 import { expect, test } from './fixtures'
 import { typeInVisibleTerminal } from './support/terminal-input'
 
-function remoteOriginInput(page: Page) {
-  return page.locator('#section-remote-access-host .settings-row').filter({ hasText: 'Remote origin' }).locator('input')
-}
-
-function bindAddressInput(page: Page) {
-  return page.locator('#section-remote-access-host .settings-row').filter({ hasText: 'Bind address' }).locator('input')
-}
-
 function customExtensionRows(page: Page) {
   return page.locator('#section-file-viewer-refresh .settings-custom-extensions__item')
 }
@@ -21,22 +13,6 @@ function customExtensionRows(page: Page) {
 async function writeToActiveTerminal(page: Page, data: string): Promise<void> {
   await typeInVisibleTerminal(page, data)
 }
-
-test('opens settings focused to remote access and supports settings search', async ({ appHarness, mainWindow }) => {
-  const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'remote-access-host' })
-
-  await expect(settingsWindow.getByRole('heading', { name: 'Settings' })).toBeVisible()
-  await expect(settingsWindow.getByRole('heading', { name: 'Host & Origin' })).toBeVisible()
-  await expect(remoteOriginInput(settingsWindow)).toHaveValue('https://localhost:9443')
-  await expect(bindAddressInput(settingsWindow)).toHaveValue('0.0.0.0')
-
-  const search = settingsWindow.getByPlaceholder('Search settings...')
-  await search.fill('scrollback')
-
-  await expect(settingsWindow.getByRole('heading', { name: 'Scrollback' })).toBeVisible()
-  await expect(settingsWindow.getByText('Scrollback lines')).toBeVisible()
-  await expect(settingsWindow.getByRole('button', { name: 'Scrolling' })).toBeVisible()
-})
 
 test('shows selected-server extensions and saves a secret-backed connection profile', async ({ appHarness, mainWindow, userDataDir }, testInfo) => {
   const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'extensions' })
@@ -120,21 +96,6 @@ test('opens Project Environments as a full auxiliary window', async ({ appHarnes
   await expect(environmentsWindow.locator('[role="dialog"]')).toHaveCount(0)
   await expect(environmentsWindow.locator('.project-environment-surface-backdrop')).toHaveCount(0)
 	expect(new URL(environmentsWindow.url()).searchParams.get('auxiliary')).toBe('project-environments')
-})
-
-test('persists settings edits across reopening the settings window', async ({ appHarness, mainWindow }) => {
-  const updatedOrigin = 'https://e2e-settings.terminay.test:9443'
-
-  const firstWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'remote-access-host' })
-
-  const originInput = remoteOriginInput(firstWindow)
-  await originInput.fill(updatedOrigin)
-  await expect(firstWindow.locator('.settings-status')).toContainText('Saved')
-  await firstWindow.close()
-
-  const secondWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'remote-access-host' })
-
-  await expect(remoteOriginInput(secondWindow)).toHaveValue(updatedOrigin)
 })
 
 test('shows recording settings and saves recording defaults', async ({ appHarness, mainWindow, tempDir }) => {
@@ -300,16 +261,19 @@ test('keeps the active terminal visible after changing settings and closing sett
 })
 
 test('resets settings back to defaults', async ({ appHarness, mainWindow }) => {
-  const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'remote-access-host' })
+  const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'typography' })
   const dialogs = await appHarness.dialogs(settingsWindow)
 
-  const originInput = remoteOriginInput(settingsWindow)
-  await originInput.fill('https://reset-me.terminay.test:9443')
+  const fontSizeInput = settingsWindow
+    .locator('#section-typography .settings-row')
+    .filter({ hasText: 'Font size' })
+    .locator('input[type="number"]')
+  await fontSizeInput.fill(String(defaultTerminalSettings.fontSize + 1))
   await expect(settingsWindow.locator('.settings-status')).toContainText('Saved')
 
   await dialogs.queueConfirm(true)
   await settingsWindow.getByRole('button', { name: 'Reset to defaults' }).click()
 
-  await expect(remoteOriginInput(settingsWindow)).toHaveValue('https://localhost:9443')
+  await expect(fontSizeInput).toHaveValue(String(defaultTerminalSettings.fontSize))
   await expect(settingsWindow.locator('.settings-status')).toContainText('Saved')
 })

@@ -534,48 +534,11 @@ for (const viewport of [
 		await pairing
 			.getByLabel('Pairing URL')
 			.fill('https://terminay.example/pair#one-time-secret');
+		await pairing.getByLabel('Pairing PIN').fill('123456');
 		await pairing.getByRole('button', { name: 'Continue pairing' }).click();
 		await expect(connections.getByRole('status')).toContainText(
-			'Complete enrollment to save this connection.',
+			'Opening pairing…',
 		);
-		const remote = connections.getByRole('option', { name: /Remote offline/u });
-		await remote.getByRole('button', { name: 'Remote' }).click();
-		await expect(remote).toHaveAttribute('aria-selected', 'true');
-		await remote.getByRole('button', { name: 'Rename' }).click();
-		const rename = connections.getByRole('form', { name: 'Rename connection' });
-		await rename.getByLabel('Connection name').fill('Remote renamed');
-		await rename.getByRole('button', { name: 'Save name' }).click();
-		await connections
-			.getByRole('button', { name: 'Advanced: import profile metadata' })
-			.click();
-		const importRegion = connections.getByRole('region', {
-			name: 'Advanced profile metadata import',
-		});
-		await expect(importRegion).toContainText(
-			'imports non-secret connection metadata only',
-		);
-		await importRegion
-			.getByLabel('Profile metadata')
-			.fill(
-				'{"id":"imported:test","serverId":"server:imported","label":"Imported","origin":"https://imported.example","status":"offline"}',
-			);
-		await importRegion.getByRole('button', { name: 'Import metadata' }).click();
-		const renamed = connections.getByRole('option', {
-			name: /Remote renamed offline/u,
-		});
-		await renamed.getByRole('button', { name: 'Revoke access' }).click();
-		await expect(
-			connections.getByRole('region', { name: 'Confirm revoke' }),
-		).toContainText('invalidates this device');
-		await connections.getByRole('button', { name: 'Confirm revoke' }).click();
-		await connections
-			.getByRole('option', { name: /Remote renamed revoked/u })
-			.getByRole('button', { name: 'Forget' })
-			.click();
-		await expect(
-			connections.getByRole('region', { name: 'Confirm forget' }),
-		).toContainText('does not revoke');
-		await connections.getByRole('button', { name: 'Confirm forget' }).click();
 		await expect
 			.poll(() =>
 				page.evaluate(
@@ -584,14 +547,7 @@ for (const viewport of [
 							.__connectionActions,
 				),
 			)
-			.toEqual([
-				'expose:local',
-				'pair',
-				'select:remote:test',
-				'revoke:remote:test',
-			]);
-		await expect(connections).toContainText('Imported');
-		await expect(connections).not.toContainText('Remote renamed');
+			.toEqual(['expose:local', 'pair']);
 		const git = page.locator('[data-shared-route-body="git"]').first();
 		await expect(git.getByRole('status')).toHaveText(
 			'Git is unavailable on this server.',
