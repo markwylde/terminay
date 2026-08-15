@@ -645,7 +645,10 @@ export function useFileExplorerController({
 				const result = await gitClient.remove(reference, worktree.head);
 				assertWorktreeRemoved(result);
 				onSetError(null);
-				void loadDirectory(parentPath(worktree.path) || project.rootFolder);
+				// Linked worktrees commonly sit beside the project root. Refreshing
+				// their parent would turn into a `..` server file request, which is
+				// deliberately outside this project's filesystem capability.
+				void loadDirectory(project.rootFolder);
 			} catch (error) {
 				console.error('[terminay] git.worktree.remove failed', error);
 				onOperationError('Git', error);
