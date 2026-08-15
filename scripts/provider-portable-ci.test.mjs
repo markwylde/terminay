@@ -23,10 +23,20 @@ function job(name) {
 test("pull-request CI selects one provider-specific E2E image and five-shard pair", () => {
   assert.deepEqual(
     [...ci.slice(ci.indexOf("jobs:\n")).matchAll(/^ {2}([a-z][a-z0-9-]+):$/gmu)].map((match) => match[1]),
-    ["packaged-macos-smoke", "build-and-test", "github-e2e-image", "github-e2e-test", "gitea-e2e-image", "gitea-e2e-test"],
+    ["github-packaged-macos-smoke", "gitea-packaged-macos-smoke", "build-and-test", "github-e2e-image", "github-e2e-test", "gitea-e2e-image", "gitea-e2e-test"],
   );
-  assert.match(ci, /name: Packaged macOS startup smoke/u);
-  assert.match(ci, /run: npm run test:packaged-startup-macos/u);
+  const githubMacSmoke = job("github-packaged-macos-smoke");
+  const giteaMacSmoke = job("gitea-packaged-macos-smoke");
+  assert.match(githubMacSmoke, /name: Packaged macOS startup smoke/u);
+  assert.match(githubMacSmoke, /if: \$\{\{ github\.server_url == 'https:\/\/github\.com' \}\}/u);
+  assert.match(githubMacSmoke, /runs-on: macos-latest/u);
+  assert.match(githubMacSmoke, /run: npm run test:packaged-startup-macos/u);
+  assert.match(githubMacSmoke, /uses: actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/u);
+  assert.match(giteaMacSmoke, /name: Packaged macOS startup smoke/u);
+  assert.match(giteaMacSmoke, /if: \$\{\{ github\.server_url != 'https:\/\/github\.com' \}\}/u);
+  assert.match(giteaMacSmoke, /runs-on: ubuntu-latest/u);
+  assert.match(giteaMacSmoke, /Record unavailable macOS runner/u);
+  assert.doesNotMatch(giteaMacSmoke, /(?:ea165f8d65b6e75b540449e92b4886f43607fa02|d3f86a106a0bac45b974a628896c90dbdf5c8093)/u);
   assert.match(ci, /name: Build, lint, and unit tests/u);
   assert.match(ci, /run: npm run test:ci/u);
   const githubImage = job("github-e2e-image");
@@ -63,11 +73,8 @@ test("pull-request CI selects one provider-specific E2E image and five-shard pai
 test("provider-specific E2E shards wait only for their own image and use declared runners", () => {
   assert.match(job("github-e2e-test"), /needs: github-e2e-image/u);
   assert.match(job("gitea-e2e-test"), /needs: gitea-e2e-image/u);
-  assert.equal((ci.match(/^ {4}runs-on: ubuntu-latest$/gmu) ?? []).length, 5);
-  assert.match(
-    ci,
-    /runs-on: \$\{\{ github\.server_url == 'https:\/\/github\.com' && 'macos-latest' \|\| 'ubuntu-latest' \}\}/u,
-  );
+  assert.equal((ci.match(/^ {4}runs-on: ubuntu-latest$/gmu) ?? []).length, 6);
+  assert.match(job("github-packaged-macos-smoke"), /runs-on: macos-latest/u);
   assert.match(ci, /if: \$\{\{ github\.server_url == 'https:\/\/github\.com' \}\}/u);
   assert.match(ci, /group: terminay-ci-\$\{\{ github\.ref \}\}/u);
   assert.match(ci, /cancel-in-progress: true/u);
