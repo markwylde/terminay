@@ -73,10 +73,13 @@ export function canReadClipboardText(): boolean {
 export async function readTerminalClipboard(): Promise<string> {
 	try {
 		const readDesktopClipboard = bridge()?.readTerminalClipboard;
-		if (readDesktopClipboard !== undefined)
-			return await readDesktopClipboard();
+		if (readDesktopClipboard !== undefined) {
+			const text = await readDesktopClipboard();
+			if (text.length > 0) return text;
+		}
 	} catch {
-		return '';
+		// Browser text paste remains a recoverable fallback when the narrow
+		// Desktop bridge cannot consume this particular interaction.
 	}
 	return readClipboardText();
 }
