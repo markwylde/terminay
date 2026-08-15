@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { gzipSync } from 'node:zlib';
 import test from 'node:test';
 import {
@@ -110,4 +111,15 @@ test('tar extraction rejects traversal, links, duplicates, metadata drift, and e
 	assert.throws(() => extractTerminayArchive(tar([...good(), ['large.bin', Buffer.alloc(8)]]), { maxEntryBytes: 4 }), /size limit/u);
 	assert.throws(() => extractTerminayArchive(tar(good()), { maxExpandedBytes: 1 }), /expanded size/u);
 	assert.throws(() => extractTerminayArchive(tar([['terminay-bundle.json', metadata], ['a'.repeat(20), 'x'], ['index.html', 'ok']]), { maxPathBytes: 10 }), /unsafe/u);
+});
+
+test('browser archive handling imports only the browser-safe shared archive subpath', async () => {
+	const [source, packageJson] = await Promise.all([
+		readFile(new URL('../src/archiveBundle.ts', import.meta.url), 'utf8'),
+		readFile(new URL('../../../packages/ui-bundle/package.json', import.meta.url), 'utf8'),
+	]);
+	assert.match(source, /from '@terminay\/ui-bundle\/archive'/u);
+	assert.doesNotMatch(source, /from '@terminay\/ui-bundle';/u);
+	const exports = JSON.parse(packageJson).exports;
+	assert.equal(exports['./archive'].import, './dist/archive.js');
 });
