@@ -46,6 +46,32 @@ contract.
   belong to the server bundle host, not the Desktop renderer or
   `terminay.com`.
 
+The v1 authenticated WebRTC asset-lane contract is:
+
+1. The host sends JSON `{ "type": "asset:get-bundle", "id": string,
+   "archiveFormatVersion": 1 }`.
+2. The server sends JSON `asset:bundle-start` with the same id,
+   `archiveFormatVersion`, `bundleId`, `compressedBytes`, `chunkBytes`, and
+   `chunks`.
+3. Each body message is binary, not JSON or base64: four bytes `0x54 0x42 0x01
+   0x01` (`TB`, archive protocol v1, chunk kind), followed by a big-endian
+   uint32 chunk index and then up to `chunkBytes` gzip bytes. Ordered WebRTC
+   delivery requires indexes to start at zero and increase without gaps.
+4. The host acknowledges each body with JSON
+   `{ "type": "asset:bundle-ack", "id": string, "index": number }`. The
+   server sends at most four unacknowledged chunks, applies a 15-second
+   acknowledgement timeout, and accepts
+   `{ "type": "asset:bundle-cancel", "id": string }`.
+5. After the final acknowledgement the server sends JSON
+   `asset:bundle-complete`. It reports typed JSON `asset:bundle-error` failures
+   with one of `cancelled`, `timeout`, `unavailable`, `invalid-request`, or
+   `internal`.
+
+The gzip tar root contains exactly one `terminay-bundle.json` metadata file
+with `{ "archiveFormatVersion": 1, "entryPath": string, "bundleId": string,
+"applicationProtocolVersion": string }`; it does not list asset names or
+hashes. Other tar members are regular server UI files.
+
 ### 2. Make the browser host a generic archive installer
 
 - [ ] Stream the archive from the authenticated Terminay Server, decompress it
