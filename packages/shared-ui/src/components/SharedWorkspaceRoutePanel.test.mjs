@@ -14,7 +14,6 @@ import { createCommandSurfacePanel } from './CommandSurfacePanel.mjs'
 import { createGitStatusPanel } from './GitStatusPanel.mjs'
 import { createMacroEditorRoutePanel } from './MacroEditorRoutePanel.mjs'
 import { createMacroLibraryPanel } from './MacroLibraryPanel.mjs'
-import { createMcpServerControlPanel } from './McpServerControlPanel.mjs'
 import { createQuickPushReviewPanel } from './QuickPushReviewPanel.mjs'
 import { createRecordingDetailRoutePanel } from './RecordingDetailRoutePanel.mjs'
 import { createRecordingsLibraryPanel } from './RecordingsLibraryPanel.mjs'
@@ -181,7 +180,7 @@ test('complete shared ready routes require every registered panel outside the wo
   })
   const routePanels = {
     connections: ['connection-form', 'connection-switcher', 'connection-error'],
-    settings: ['settings', 'mcp-server-control', 'dictation-capture'],
+    settings: ['settings', 'dictation-capture'],
     recordings: ['recordings-library', 'recording-detail'],
     macros: ['macro-library', 'macro-editor'],
     file: ['file-viewer', 'folder-browser'],
@@ -275,17 +274,12 @@ test('shared workspace route panel composes tab, project/view, and Dockview navi
   )
 })
 
-test('shared workspace route panel composes the real settings, MCP, and dictation contracts in canonical order', () => {
+test('shared workspace route panel composes the real settings and dictation contracts in canonical order', () => {
   const settings = createSettingsPanel({
     layout: 'narrow',
     status: 'ready',
     sections: [{ id: 'appearance', label: 'Appearance' }],
     selectedSectionId: 'appearance',
-  })
-  const mcp = createMcpServerControlPanel({
-    layout: 'narrow',
-    status: 'ready',
-    servers: [{ id: 'mcp:docs', label: 'Documentation', state: 'running' }],
   })
   const dictation = createDictationCapturePanel({
     layout: 'narrow',
@@ -306,17 +300,15 @@ test('shared workspace route panel composes the real settings, MCP, and dictatio
     layout: 'narrow',
     panels: [
       { id: 'dictation-capture', panel: dictation },
-      { id: 'mcp-server-control', panel: mcp },
       { id: 'settings', panel: settings },
     ],
   })
 
   assert.deepEqual(route.components.map(component => component.id), [
     'settings',
-    'mcp-server-control',
     'dictation-capture',
   ])
-  assert.equal(route.components[2].panel.role, 'dialog')
+  assert.equal(route.components[1].panel.role, 'dialog')
   assert.throws(
     () => createSharedWorkspaceRoutePanel({ route: 'workspace', layout: 'narrow', panels: [{ id: 'terminal-session', panel: dictation }] }),
     /except the settings dictation dialog/u,

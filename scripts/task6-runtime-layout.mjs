@@ -10,18 +10,14 @@ export const RUNTIME_LAYOUTS = Object.freeze({
 	development: Object.freeze({
 		cli: 'apps/terminay-server/dist/cli.js',
 		server: 'apps/terminay-server/dist/index.js',
-		mcp: 'apps/terminay-server/dist/mcpEntry.js',
 		ui: 'dist-web/server.html',
-		desktopMcp: 'dist-electron/serverMcpEntry.js',
 	}),
 	standalone: Object.freeze({
 		cli: 'dist/cli.js',
 		server: 'dist/index.js',
-		mcp: 'dist/mcpEntry.js',
 	}),
 	desktop: Object.freeze({
 		ui: 'resources/app.asar/dist-web/server.html',
-		desktopMcp: 'resources/app.asar.unpacked/dist-electron/serverMcpEntry.js',
 	}),
 });
 
@@ -114,10 +110,7 @@ export async function inspectRuntimeLayoutMetadata(root) {
 			'standalone server package must publish its dist directory',
 		);
 	}
-	if (
-		serverPackage.bin?.['terminay-server'] !== 'dist/cli.js' ||
-		serverPackage.bin?.['terminay-mcp'] !== 'dist/mcpEntry.js'
-	) {
+	if (serverPackage.bin?.['terminay-server'] !== 'dist/cli.js') {
 		throw new Error(
 			'standalone server package bin entries do not match the runtime layout',
 		);
@@ -131,17 +124,10 @@ export async function inspectRuntimeLayoutMetadata(root) {
 			'Desktop packaging must include the renderer and electron runtime directories',
 		);
 	}
-	if (!/"asarUnpack"\s*:\s*\[\s*"dist-electron\/\*\*"\s*\]/u.test(builder)) {
-		throw new Error(
-			'Desktop packaging must unpack dist-electron runtime entries',
-		);
-	}
 	return Object.freeze({
 		buildsServerWorkspace: true,
 		standaloneDist: true,
 		serverBin: serverPackage.bin['terminay-server'],
-		mcpBin: serverPackage.bin['terminay-mcp'],
-		desktopUnpacked: 'dist-electron/**',
 	});
 }
 
@@ -161,16 +147,8 @@ export async function inspectRuntimeDependencyResolution(root) {
 			'utf8',
 		),
 	);
-	const builder = await readFile(
-		join(rootDirectory, 'electron-builder.json5'),
-		'utf8',
-	);
 	const serverCli = await readFile(
 		join(rootDirectory, 'apps/terminay-server/src/cli.ts'),
-		'utf8',
-	);
-	const serverMcpOwnership = await readFile(
-		join(rootDirectory, 'apps/terminay-server/src/mcp/ownership.ts'),
 		'utf8',
 	);
 	const providerCli = await readFile(
@@ -192,22 +170,6 @@ export async function inspectRuntimeDependencyResolution(root) {
 	}
 	if (!/import \* as nodePty from ["']node-pty["']/u.test(serverCli)) {
 		throw new Error('standalone CLI must resolve node-pty through server-core');
-	}
-	if (
-		!/"asarUnpack"\s*:\s*\[\s*"dist-electron\/\*\*"\s*\]/u.test(builder)
-	) {
-		throw new Error(
-			'Desktop packaging must unpack dist-electron runtime assets',
-		);
-	}
-	if (
-		!/command:\s*["']terminay-mcp["']/u.test(serverMcpOwnership) ||
-		!/TERMINAY_CONTROL_SOCKET/u.test(serverMcpOwnership) ||
-		!/TERMINAY_CONTROL_TOKEN/u.test(serverMcpOwnership)
-	) {
-		throw new Error(
-			'server MCP ownership must name the command and inherited control environment',
-		);
 	}
 	if (
 		!/TERMINAY_CODEX_COMMAND\?\.trim\(\) \|\| ['"]codex['"]/u.test(
@@ -240,18 +202,6 @@ export async function inspectRuntimeDependencyResolution(root) {
 			provider: 'codex',
 			ownership: 'pty-process-tree',
 			delivery: 'rollout-jsonl',
-		}),
-		mcp: Object.freeze({
-			command: 'terminay-mcp',
-			standaloneArtifact: 'dist/mcpEntry.js',
-			requiredEnvironment: [
-				'TERMINAY_CONTROL_SOCKET',
-				'TERMINAY_CONTROL_TOKEN',
-			],
-		}),
-		unpackedAssets: Object.freeze({
-			desktop: 'dist-electron/**',
-			desktopMcp: RUNTIME_LAYOUTS.desktop.desktopMcp,
 		}),
 	});
 }

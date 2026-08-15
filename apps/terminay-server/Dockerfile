@@ -61,8 +61,7 @@ COPY --from=build --chown=10001:10001 /workspace/packages/server-core/dist ./pac
 COPY --from=build --chown=10001:10001 /workspace/packages/ui-bundle/package.json ./packages/ui-bundle/package.json
 COPY --from=build --chown=10001:10001 /workspace/packages/ui-bundle/dist ./packages/ui-bundle/dist
 COPY --chown=10001:10001 apps/terminay-server/entrypoint.sh /usr/local/bin/terminay-server-entrypoint
-RUN printf '%s\n' '#!/bin/sh' 'exec node /opt/terminay/apps/terminay-server/dist/mcpEntry.js "$@"' > /usr/local/bin/terminay-mcp \
-  && chmod 0755 /usr/local/bin/terminay-server-entrypoint /usr/local/bin/terminay-mcp \
+RUN chmod 0755 /usr/local/bin/terminay-server-entrypoint \
   && mkdir -p /var/lib/terminay \
   && chown 10001:10001 /var/lib/terminay
 

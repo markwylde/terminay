@@ -80,7 +80,7 @@ export async function validateExtractedArchive(root, target) {
   if (manifest.node?.version !== PTY_RUNTIME_NODE_VERSION || manifest.nodePty?.nativePath !== 'node_modules/node-pty/build/Release/pty.node') {
     throw new Error('standalone archive manifest runtime metadata is invalid')
   }
-  if (manifest.entrypoints?.server !== 'bin/terminay-server' || manifest.entrypoints?.mcp !== 'bin/terminay-mcp') {
+  if (manifest.entrypoints?.server !== 'bin/terminay-server') {
     throw new Error('standalone archive manifest entrypoints are invalid')
   }
   if (!Array.isArray(manifest.files) || manifest.files.length === 0) throw new Error('standalone archive manifest has no files')

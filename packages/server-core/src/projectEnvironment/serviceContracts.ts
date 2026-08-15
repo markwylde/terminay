@@ -20,7 +20,6 @@ export interface ProjectEnvironmentServiceOperations {
 	readonly git: { readonly protocol: { readonly input: ProjectProtocolOperationInput; readonly output: JsonValue } };
 	readonly 'process-observation': { readonly protocol: { readonly input: ProjectProtocolOperationInput; readonly output: JsonValue } };
 	readonly 'agent-journal': { readonly protocol: { readonly input: ProjectProtocolOperationInput; readonly output: JsonValue } };
-	readonly 'mcp-bridge': { readonly protocol: { readonly input: ProjectProtocolOperationInput; readonly output: JsonValue } };
 	readonly 'shell-discovery': { readonly protocol: { readonly input: ProjectProtocolOperationInput; readonly output: JsonValue } };
 	readonly infrastructure: { readonly protocol: { readonly input: ProjectProtocolOperationInput; readonly output: JsonValue } };
 }
