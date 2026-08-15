@@ -3,6 +3,11 @@
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
   "appId": "com.terminay.app",
   "asar": true,
+  // Electron's sandboxed preload must resolve as a regular file. Unpack the
+  // built electron runtime so serverUiPreload.cjs is not trapped inside asar.
+  "asarUnpack": [
+    "dist-electron/**"
+  ],
   "productName": "Terminay",
   "directories": {
     "output": "release/${version}"
