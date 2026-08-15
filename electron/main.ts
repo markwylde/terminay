@@ -2039,13 +2039,15 @@ function getFirstAppWindow(): BrowserWindow | null {
 	return null;
 }
 
-function sendCommandToFocusedWindow(command: AppCommand): void {
+function sendCommandToWindow(
+	targetWindow: BrowserWindow,
+	command: AppCommand,
+): void {
 	if (isQuitting) {
 		return;
 	}
 
-	const targetWindow = BrowserWindow.getFocusedWindow() ?? getFirstAppWindow();
-	if (!targetWindow || targetWindow.isDestroyed()) {
+	if (targetWindow.isDestroyed()) {
 		return;
 	}
 
@@ -2053,6 +2055,12 @@ function sendCommandToFocusedWindow(command: AppCommand): void {
 		type: 'menu.command',
 		command,
 	});
+}
+
+function sendCommandToFocusedWindow(command: AppCommand): void {
+	const targetWindow = BrowserWindow.getFocusedWindow() ?? getFirstAppWindow();
+	if (targetWindow === null) return;
+	sendCommandToWindow(targetWindow, command);
 }
 
 function isMacQuitInput(input: Electron.Input): boolean {
@@ -2988,7 +2996,7 @@ function createWindow(options?: {
 							?.focus();
 						return;
 					case 'menu.invoke':
-						sendCommandToFocusedWindow(action.command as AppCommand);
+						sendCommandToWindow(window, action.command as AppCommand);
 						return;
 					case 'menu.accelerators.update': {
 						const current = readTerminalSettings();
