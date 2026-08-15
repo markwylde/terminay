@@ -126,10 +126,9 @@ const bridge: ServerUiHostBridge = Object.freeze({
 		}
 	},
 	// Clipboard reads are intentionally narrower than a general Electron API.
-	// This route is available only while a trusted user gesture is active and
-	// returns terminal-ready text (including a shell-escaped temp image path).
+	// The bound Desktop document may request terminal-ready text, including a
+	// shell-escaped temporary image path, through the exact host IPC binding.
 	readTerminalClipboard: () => {
-		if (!navigator.userActivation.isActive) return Promise.resolve('');
 		return ipcRenderer.invoke(READ_TERMINAL_CLIPBOARD) as Promise<string>;
 	},
 });

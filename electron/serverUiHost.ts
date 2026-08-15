@@ -274,6 +274,7 @@ export function bindServerUiWindow(
 		expectedOrigin,
 		...(allowedFileRoot === undefined ? {} : { allowedFileRoot }),
 		onHostAction: options.onHostAction,
+		readTerminalClipboard: options.readTerminalClipboard,
 		window,
 		lifecycle,
 	};
