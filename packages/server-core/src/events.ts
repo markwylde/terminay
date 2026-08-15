@@ -59,13 +59,16 @@ export class OrderedEventJournal implements OrderedEventJournalLike {
    * replay/checkpoint authorities, rather than the generic journal, own
    * recovery.
    */
-  publishTransient(event: string, payload: JsonValue): OrderedEvent {
+  publishTransient(event: string, payload: JsonValue, body?: Uint8Array): OrderedEvent {
     validateEvent(event, payload);
+    if (body !== undefined && !(body instanceof Uint8Array))
+      throw new TypeError("transient event body is invalid");
     const transient = Object.freeze({
       revision: this.nextRevision,
       cursor: this.currentCursor,
       event,
       payload,
+      ...(body === undefined ? {} : { body: body.slice() }),
     });
     this.publish(transient);
     return transient;
