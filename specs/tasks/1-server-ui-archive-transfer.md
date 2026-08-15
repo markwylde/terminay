@@ -121,9 +121,12 @@ hashes. Other tar members are regular server UI files.
 - [ ] Tests cover fragmented binary delivery, backpressure, cancellation,
   malformed gzip/tar, traversal, links, duplicate paths, every resource limit,
   interrupted staging, atomic replacement, refresh, and reconnect.
-- [ ] A compression/transfer benchmark records archive size, transferred bytes,
+- [x] A compression/transfer benchmark records archive size, transferred bytes,
   request count, and install duration against the current per-file protocol;
-  the archive path uses one request and no base64 bodies.
+  the archive path uses one request and no base64 bodies. `npm run
+  benchmark:server-ui-archive` records the actual built UI; on 2026-08-15 its
+  110-file build transferred 4,630,898 archive wire bytes in one binary request
+  with zero base64 bytes, versus 24,769,328 wire bytes in 111 legacy requests.
 - [ ] The `terminay.com` compatibility workflow passes with network access to
   the Terminay source repositories denied.
 - [ ] Repository searches find no production WebRTC `asset:get-manifest` or
