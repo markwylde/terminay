@@ -118,7 +118,7 @@ foreground start emits a bounded readiness record and handles `SIGINT` and
 - macOS x64, Linux arm64 Desktop, Windows Desktop, standalone macOS and
   Windows Server, and Alpine/musl Linux are outside the supported matrix.
 - Release packaging validates the standalone distribution manifest, pinned Node
-  engine, required CLI/MCP entrypoints, payload hashes, and absence of Electron
+  engine, required CLI entrypoints, payload hashes, and absence of Electron
   imports before publication. Native OS/architecture/ABI probes remain release
   evidence; this manifest check does not claim signing or notarization.
 - Release artifact builds work from their narrow workspace entry points. A

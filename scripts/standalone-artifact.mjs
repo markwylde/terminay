@@ -50,6 +50,7 @@ export async function inspectStandaloneArtifact(root) {
   if (npmEvidence?.schemaVersion !== 1 || npmEvidence?.version !== NPM_INSTALLER || !Number.isSafeInteger(npmEvidence?.packageCount) || npmEvidence.packageCount < 50 || !Array.isArray(npmEvidence.packages) || npmEvidence.packages.length !== npmEvidence.packageCount || !/^[a-f0-9]{64}$/u.test(npmEvidence.closureSha256)) fail('bundled npm closure evidence is invalid')
   if (!Array.isArray(packageJson.files) || !packageJson.files.includes('dist')) fail('package files must include dist')
   if (packageJson.bin?.['terminay-server'] !== 'dist/cli.js') fail('terminay-server bin must point to dist/cli.js')
+  if (Object.keys(packageJson.bin ?? {}).join(',') !== 'terminay-server') fail('standalone artifact must expose only the terminay-server bin')
 
   const files = []
   for (const path of REQUIRED_FILES) {
