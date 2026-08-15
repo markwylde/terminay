@@ -121,7 +121,7 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 					context: Object.freeze({
 						...context,
 						connectionLabel: label,
-						retryConnection: () => void connect(),
+						retryConnection: () => recoverConnection(),
 						canRetryConnection: () => true,
 					}),
 					label,
@@ -213,13 +213,7 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 				{phase === 'ready' && (
 					<button
 						type="button"
-						onClick={() =>
-							void connect().catch((cause) =>
-								setError(
-									cause instanceof Error ? cause.message : 'Unable to connect.',
-								),
-							)
-						}
+						onClick={recoverConnection}
 					>
 						Retry connection
 					</button>

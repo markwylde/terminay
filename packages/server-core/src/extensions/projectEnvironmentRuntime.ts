@@ -13,7 +13,6 @@ const OPERATIONS: Readonly<Record<ProjectEnvironmentCapability, ReadonlySet<stri
   git: new Set(["discover", "status", "branches", "worktrees", "diff", "fetch", "quickPush", "cancel"]),
   "process-observation": new Set(["observe", "poll", "stop"]),
   "agent-journal": new Set(["observe", "stop"]),
-  "mcp-bridge": new Set(["open", "exchange", "close", "revoke"]),
   "shell-discovery": new Set(["list"]),
   infrastructure: new Set<string>(),
 });
@@ -104,8 +103,6 @@ function validateInput(capability: ProjectEnvironmentCapability, operation: stri
         ? ["payload","body","request"]
       : capability === "agent-journal"
         ? ({ observe: ["sessionId","cursor","maxRecords","maxBytes"], stop: ["sessionId"] } as Record<string,string[]>)[operation]
-      : capability === "mcp-bridge"
-        ? ({ open: ["sessionId","projectId","environmentId","environmentRevision","capability"], exchange: ["sessionId","action","frame"], close: ["sessionId"], revoke: ["sessionId"] } as Record<string,string[]>)[operation]
       : undefined;
   if (allowed === undefined || Object.keys(value).some((key) => !allowed.includes(key))) throw new TypeError("provider service input contains unknown fields");
   for (const key of ["sessionId","path","destination","signal","term"]) if (value[key] !== undefined && (typeof value[key] !== "string" || String(value[key]).length > 4096 || String(value[key]).includes("\0"))) throw new TypeError("provider service input is invalid");
@@ -123,10 +120,7 @@ function validateInput(capability: ProjectEnvironmentCapability, operation: stri
     const metadata = request as Record<string, unknown>;
     if (Object.keys(metadata).some((key) => !["clientId","authScope","expectedRevision"].includes(key)) || typeof metadata.clientId !== "string" || typeof metadata.authScope !== "string" || (metadata.expectedRevision !== undefined && !Number.isSafeInteger(metadata.expectedRevision))) throw new TypeError("Git protocol request is invalid");
   }
-  if (capability === "mcp-bridge") validateMcpBridgeInput(operation,value);
 }
-function validateMcpBridgeInput(operation:string,value:Record<string,unknown>):void{const safe=(entry:unknown):entry is string=>typeof entry==="string"&&/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(entry);if(!safe(value.sessionId))throw new TypeError("remote MCP session identity is invalid");if(operation==="open"){if(!safe(value.projectId)||!safe(value.environmentId)||!Number.isSafeInteger(value.environmentRevision)||Number(value.environmentRevision)<=0)throw new TypeError("remote MCP scope is invalid");const capability=value.capability;if(capability===null||typeof capability!=="object"||Array.isArray(capability))throw new TypeError("remote MCP capability is invalid");const item=capability as Record<string,unknown>;if(Object.keys(item).sort().join("|")!=="bootstrapSecret|bridgeId|expiresAt|issuedAt|serverInstanceId|version"||item.version!==1||!safe(item.bridgeId)||!safe(item.serverInstanceId)||typeof item.bootstrapSecret!=="string"||item.bootstrapSecret.length<32||item.bootstrapSecret.length>128||!Number.isSafeInteger(item.issuedAt)||!Number.isSafeInteger(item.expiresAt)||Number(item.expiresAt)<=Number(item.issuedAt))throw new TypeError("remote MCP capability is invalid");}if(operation==="exchange"){if(value.action!=="receive"&&value.action!=="respond")throw new TypeError("remote MCP exchange action is invalid");if(value.action==="receive"&&value.frame===undefined)return;const frame=value.frame;if(frame===null||typeof frame!=="object"||Array.isArray(frame)||Buffer.byteLength(JSON.stringify(frame))>64*1024)throw new TypeError("remote MCP request frame is invalid");}}
-
 function toJson(value: unknown): JsonValue {
   if (containsNonJson(value)) throw new TypeError("provider service input is invalid or too large");
   const encoded = JSON.stringify(value);

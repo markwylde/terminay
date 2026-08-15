@@ -198,24 +198,7 @@ test("extracted Desktop package starts the extracted shared embedded server runt
     });
     await assertNoSymlinks(desktopRoot);
 
-    // The staged Desktop closure must execute the shared server's actual MCP
-    // entry, rather than resolving a workspace copy or an Electron bridge.
-    // It completes its release-integrity preflight and then deliberately
-    // rejects the absent inherited local-control capability.
     const serverPackage = JSON.parse(await readFile(join(modules, "@terminay/server/package.json"), "utf8"));
-    const mcp = await runFailure(process.execPath, [join(modules, "@terminay/server", serverPackage.bin["terminay-mcp"])], {
-      cwd: desktopRoot,
-      env: {
-        ...process.env,
-        TERMINAY_SERVER_VERSION: serverPackage.version,
-        TERMINAY_CONTROL_SOCKET: "",
-        TERMINAY_CONTROL_TOKEN: "",
-      },
-    });
-    assert.equal(mcp.code, 1);
-    assert.equal(mcp.stdout, "");
-    assert.match(mcp.stderr, /terminay mcp failed: TypeError: Terminay MCP requires an absolute local control socket/);
-
     // The Desktop closure must also execute the shared server's real pairing
     // CLI, rather than resolving a workspace CLI or an Electron-owned remote
     // implementation. Pairing is intentionally a short-lived, fragment-only

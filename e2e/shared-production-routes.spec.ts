@@ -158,54 +158,6 @@ test('locally emulated touch-mobile Chromium observes restart and recovers its s
 	await context.close();
 });
 
-test('locally emulated touch-mobile Chromium lists and controls MCP servers with acknowledgement and failure', async ({
-	browser,
-}) => {
-	const context = await browser.newContext({
-		hasTouch: true,
-		isMobile: true,
-		viewport: { width: 390, height: 820 },
-	});
-	const page = await context.newPage();
-	await page.goto(
-		`${fixture.origin}/e2e/fixtures/shared-production-routes.html`,
-	);
-	const controls = page.getByRole('region', {
-		name: 'Mobile MCP server controls',
-	});
-
-	await controls.getByRole('button', { name: 'Load MCP servers' }).tap();
-	await expect(
-		controls.getByRole('list', { name: 'MCP server list' }),
-	).toContainText('Documentation stopped');
-	await expect(
-		controls.getByRole('list', { name: 'MCP server list' }),
-	).toContainText('Search failed');
-	await controls.getByRole('button', { name: 'Start Documentation' }).tap();
-	await expect(controls.getByLabel('Mobile MCP status')).toHaveText(
-		'docs acknowledged',
-	);
-	await expect(controls).toContainText('Documentation running');
-	await controls.getByRole('button', { name: 'Retry Search' }).tap();
-	await expect(controls.getByLabel('Mobile MCP status')).toHaveText(
-		'Retry was rejected',
-	);
-	await expect
-		.poll(() =>
-			page.evaluate(
-				() =>
-					(window as unknown as { __mobileMcpActions: string[] })
-						.__mobileMcpActions,
-			),
-		)
-		.toEqual([
-			'query:mcp.servers.list',
-			'command:mcp.servers.control:docs:start',
-			'command:mcp.servers.control:search:retry',
-		]);
-	await context.close();
-});
-
 test('locally emulated touch-mobile Chromium opens a server-owned file entry', async ({
 	browser,
 }) => {

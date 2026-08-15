@@ -17,7 +17,11 @@ forwards input, resize, and lifecycle commands through the application protocol.
   not maintain separate shell or cwd fallbacks.
 - Terminals support splits, search, copy/paste including bracketed-paste-aware
   input, dropped paths, guarded external links, resizing, scrollback, zoom, and
-  exit handling.
+  exit handling. On Desktop, a user-initiated terminal paste prefers copied
+  file paths, then text, then converts an image-only clipboard item into a PNG
+  in Terminay's temporary clipboard directory and inserts its shell-escaped
+  path. Clipboard images and their temporary paths are read and created only by
+  Electron; browser clients retain their ordinary exact-origin text paste.
 - On touch devices, a vertical drag over the terminal canvas scrolls xterm's
   retained buffer without emitting terminal input. A tap remains available for
   focus and the custom scrollbar remains an equivalent scroll control.
@@ -77,6 +81,18 @@ terminating the server-owned PTY. Exit metadata (code, signal, reason, and
 timestamp) is committed and published once. Server shutdown/restart marks live
 sessions interrupted once, while client disconnect, reload, and native-window
 close do not alter session lifetime.
+
+Live terminal output uses the protocol frame's binary body. Its event envelope
+contains only attachment-scoped identity, byte positions, and output metadata;
+the body length must exactly equal `nextPosition - position`. The server may
+coalesce adjacent PTY callbacks into one bounded, contiguous body before
+framing, but it never reorders, drops, or splits an ANSI sequence by inventing
+a byte position. A client advertises `terminal.binary-output` before receiving
+these binary event bodies; a compatible server retains the base64 event field
+only for clients that do not advertise that capability. Attach-result replay
+remains base64 because command-result events have no binary body. This keeps
+the wire format compatible while avoiding JSON/base64 expansion and per-chunk
+encoding work on the live high-volume path.
 
 The transport-neutral `TerminalServiceAdapter` supplies the attach/detach/resume
 boundary used by local and remote protocol adapters. It keeps a bounded
@@ -230,6 +246,14 @@ owning surface and submit its current viewport. A resize attempted before the
 asynchronous attach completed is retained and submitted once ownership is
 known, so an unshared terminal always fills its panel and never retains a
 stale observer viewport.
+
+The controlling renderer fits its local emulator on every layout observation,
+but coalesces a burst of changed viewport dimensions before submitting the
+authoritative PTY resize. The initial ownership and explicit-takeover viewport
+remain immediate; an interactive window or panel drag publishes its final
+settled dimensions once. This prevents resize-sensitive inline terminal UIs
+from redrawing their complete history for every intermediate layout frame while
+the local display remains responsive.
 
 The current presentation holder exclusively defines the canonical PTY columns
 and rows. Every accepted holder resize is published to each exact terminal

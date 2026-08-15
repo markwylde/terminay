@@ -25,7 +25,6 @@ export const SETTING_AUTHORITY: Readonly<Record<string, SettingAuthority>> = {
   shellProfiles: "server",
   smoothScrollDuration: "server",
   tabStopWidth: "server",
-  terminayMcp: "server",
   wordSeparator: "server",
 
   // Native accelerators, renderer appearance, and sidebar/window state are

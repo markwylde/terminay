@@ -35,9 +35,11 @@ import {
 } from 'react';
 import { useTerminalSettings } from '../hooks/useTerminalSettings';
 import {
-	canReadClipboardText,
+	canReadTerminalClipboard,
+	canUseDesktopTerminalClipboard,
 	openExternalUrl,
-	readClipboardText,
+	readTerminalClipboard,
+	resolveDesktopDroppedFilePath,
 	writeClipboardText,
 } from '../host/nativeActions';
 import { subscribeTerminalZoom } from '../host/nativeEvents';
@@ -209,6 +211,7 @@ const TERMINAL_CONTEXT_MAX_CHARS = 20_000;
 const MAX_INITIAL_SERVER_TERMINAL_REPLAY_BYTES = 32 * 1024;
 const TERMINAL_RECOVERY_RETRY_DELAY_MS = 100;
 const TERMINAL_RECOVERY_ATTEMPT_DEADLINE_MS = 15_000;
+const TERMINAL_PTY_RESIZE_COALESCE_DELAY_MS = 250;
 const REMOTE_TERMINAL_SCALE_PROPERTY = '--terminal-remote-scale';
 const EMPTY_TERMINAL_ROOT_SIZE = { height: 0, width: 0 };
 
@@ -664,11 +667,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		const terminalSessionUnavailable =
 			props.params.terminalSessionStatus !== undefined &&
 			props.params.terminalSessionStatus !== 'running';
-		const resolveDesktopDroppedFilePath = undefined;
 		const canUploadBrowserFiles = () => {
 			const browserDropContext = browserFileDropContextRef.current;
 			return (
-				resolveDesktopDroppedFilePath === undefined &&
+				window.terminayHost?.resolveDroppedFilePath === undefined &&
 				browserDropContext?.fileViewerClient !== undefined &&
 				browserDropContext.projectRoot !== undefined
 			);
@@ -703,6 +705,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		let recoveryStartedAt = 0;
 		let recoveryFailureReason: 'attach-error' | 'deadline' = 'attach-error';
 		let pendingPanelResize: { cols: number; rows: number } | null = null;
+		let panelResizeTimer: number | null = null;
 		let dataReplayDisposed = false;
 		let panelEventDisposer: (() => void) | null = null;
 		const reportTerminalRecovery = (
@@ -773,18 +776,44 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			serverInputQueue?.enqueue(data);
 		};
 
-		const resizePanel = (cols: number, rows: number) => {
+		const submitPendingPanelResize = () => {
+			panelResizeTimer = null;
+			if (
+				!useServerTerminal ||
+				serverAttachmentFailed ||
+				panelAttachment === null ||
+				!terminalPresentationControllerRef.current ||
+				pendingPanelResize === null
+			)
+				return;
+			const next = pendingPanelResize;
+			pendingPanelResize = null;
+			// Resize ownership can legitimately belong to another presentation.
+			// A rejected viewport claim must not detach this terminal stream.
+			void panelAttachment.resize(next).catch(() => {});
+		};
+
+		const resizePanel = (cols: number, rows: number, immediate = false) => {
 			if (!useServerTerminal || serverAttachmentFailed) return;
 			pendingPanelResize = { cols, rows };
 			if (
 				panelAttachment !== null &&
 				terminalPresentationControllerRef.current
 			) {
-				const next = pendingPanelResize;
-				pendingPanelResize = null;
-				// Resize ownership can legitimately belong to another presentation.
-				// A rejected viewport claim must not detach this terminal stream.
-				void panelAttachment.resize(next).catch(() => {});
+				if (panelResizeTimer !== null) {
+					window.clearTimeout(panelResizeTimer);
+					panelResizeTimer = null;
+				}
+				if (immediate) {
+					submitPendingPanelResize();
+					return;
+				}
+				// Keep xterm fitted for every layout frame, but avoid delivering a
+				// SIGWINCH to a TUI for every intermediate window-drag dimension.
+				panelResizeTimer = window.setTimeout(
+					submitPendingPanelResize,
+					TERMINAL_PTY_RESIZE_COALESCE_DELAY_MS,
+				);
 			}
 		};
 
@@ -838,14 +867,20 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				return true;
 			}
 
-			if (shouldHandleTerminalPasteShortcut(event, isMac)) {
+			if (
+				shouldHandleTerminalPasteShortcut(
+					event,
+					isMac,
+					canUseDesktopTerminalClipboard(),
+				)
+			) {
 				event.preventDefault();
 				event.stopPropagation();
 				if (event.type !== 'keydown') {
 					return false;
 				}
 
-				void pasteTerminalClipboard(readClipboardText, {
+				void pasteTerminalClipboard(readTerminalClipboard, {
 					// xterm emits this paste through onData, so both local and
 					// server-backed panels use writePanelInput below. Do not call a
 					// terminal preload write method from this UI-only clipboard path.
@@ -967,7 +1002,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				terminal.rows !== lastSentSize.rows
 			) {
 				lastSentSize = { cols: terminal.cols, rows: terminal.rows };
-				resizePanel(terminal.cols, terminal.rows);
+				resizePanel(terminal.cols, terminal.rows, force);
 			}
 		};
 
@@ -1360,6 +1395,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			const beginTerminalResync = (_event: TerminalStreamResyncEvent) => {
 				if (dataReplayDisposed || resyncing || serverAttachmentFailed) return;
 				resyncing = true;
+				if (panelResizeTimer !== null) {
+					window.clearTimeout(panelResizeTimer);
+					panelResizeTimer = null;
+				}
 				if (recoveryDeadlineTimer !== null)
 					window.clearTimeout(recoveryDeadlineTimer);
 				recoveryDeadlineTimer = null;
@@ -1859,6 +1898,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			panelEventDisposer?.();
 			if (presentationRenewTimer !== null)
 				window.clearTimeout(presentationRenewTimer);
+			if (panelResizeTimer !== null) window.clearTimeout(panelResizeTimer);
 			if (recoveryRetryTimer !== null) window.clearTimeout(recoveryRetryTimer);
 			if (recoveryDeadlineTimer !== null)
 				window.clearTimeout(recoveryDeadlineTimer);
@@ -2097,7 +2137,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			return;
 		}
 
-		void pasteTerminalClipboard(readClipboardText, {
+		void pasteTerminalClipboard(readTerminalClipboard, {
 			announceInput: () => {
 				window.dispatchEvent(
 					new CustomEvent('terminay-terminal-user-input', {
@@ -2306,7 +2346,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 						{
 							key: 'terminal-paste',
 							label: 'Paste',
-							disabled: !canReadClipboardText(),
+							disabled: !canReadTerminalClipboard(),
 							onClick: pasteFromContextMenu,
 						},
 						...(terminalContextMenu.link

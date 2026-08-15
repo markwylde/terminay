@@ -53,7 +53,6 @@ const SERVER_OWNED_TERMINAL_SETTING_KEYS = new Set<keyof TerminalSettings>([
 	'shell',
 	'smoothScrollDuration',
 	'tabStopWidth',
-	'terminayMcp',
 	'wordSeparator',
 ]);
 
@@ -376,7 +375,6 @@ export const defaultTerminalSettings: TerminalSettings = {
 		codexModel: '',
 		prompt: DEFAULT_GIT_PUSH_AGENT_PROMPT,
 	},
-	terminayMcp: { enabled: true },
 	allowTransparency: false,
 	altClickMovesCursor: true,
 	activityIndicators: {
@@ -687,33 +685,6 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				input: 'textarea',
 				placeholder: DEFAULT_GIT_PUSH_AGENT_PROMPT,
 				keywords: ['ai', 'git', 'push', 'prompt', 'template'],
-			}),
-		],
-	},
-	{
-		id: 'terminay-mcp',
-		categoryId: 'ai',
-		title: 'Terminay MCP',
-		description:
-			'Let AI agents running in a terminal control the other terminals in this window via the Model Context Protocol.',
-		fields: [
-			makeField({
-				key: 'terminayMcp.enabled',
-				label: 'Allow agents to control terminals',
-				description:
-					'When enabled, terminals expose a local control socket so in-terminal agents can read and drive the other terminals in this window.',
-				sectionId: 'terminay-mcp',
-				categoryId: 'ai',
-				input: 'boolean',
-				keywords: [
-					'mcp',
-					'model context protocol',
-					'agent',
-					'claude',
-					'codex',
-					'control',
-					'terminal',
-				],
 			}),
 		],
 	},
@@ -2184,10 +2155,6 @@ export function normalizeTerminalSettings(
 		typeof input.dictation === 'object' && input.dictation !== null
 			? input.dictation
 			: defaultTerminalSettings.dictation;
-	const terminayMcpInput =
-		typeof input.terminayMcp === 'object' && input.terminayMcp !== null
-			? input.terminayMcp
-			: defaultTerminalSettings.terminayMcp;
 	const activityIndicatorsInput =
 		typeof input.activityIndicators === 'object' &&
 		input.activityIndicators !== null
@@ -2317,12 +2284,6 @@ export function normalizeTerminalSettings(
 				5,
 				300,
 			),
-		},
-		terminayMcp: {
-			enabled:
-				typeof terminayMcpInput.enabled === 'boolean'
-					? terminayMcpInput.enabled
-					: defaultTerminalSettings.terminayMcp.enabled,
 		},
 		allowTransparency:
 			typeof input.allowTransparency === 'boolean'

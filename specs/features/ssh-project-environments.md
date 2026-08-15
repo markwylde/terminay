@@ -149,12 +149,12 @@ be unavailable. Cwd presentation may retain the spawn root, close protection
 reports its limited capability, and authoritative agent integration remains
 unavailable rather than inspecting the local SSH client process.
 
-Server-local launch environment is filtered at the provider boundary. Local
-MCP/control socket paths, provider homes, credentials, and host-only variables
-are never copied into the remote shell. Project/session identity variables are
-sent only when an explicit remote consumer capability exists.
+Server-local launch environment is filtered at the provider boundary. Provider
+homes, credentials, and host-only variables are never copied into the remote
+shell. Project/session identity variables are sent only when an explicit remote
+consumer capability exists.
 
-## Git, agents, MCP, and recording
+## Git, agents, and recording
 
 - Recording operates at Terminay Server's routed terminal-stream boundary and
   works without target-side storage.
@@ -162,9 +162,6 @@ sent only when an explicit remote consumer capability exists.
 - Authoritative journal/process-tree agent status is unavailable in SSH v1.
 - Git is unavailable until the extension provides an argv-safe bounded remote
   runner and POSIX path adapter. It never invokes local Git with a remote root.
-- The Terminay Server's local MCP/control socket is not injected remotely.
-  Remote MCP requires a future authenticated provider bridge/helper.
-
 Unavailable capabilities have explicit UI states; none silently execute on the
 Terminay Server machine.
 

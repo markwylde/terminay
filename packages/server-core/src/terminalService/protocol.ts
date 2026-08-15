@@ -29,6 +29,10 @@ const MAX_INPUT_BYTES = 1024 * 1024;
 // replay below half of the default 64 KiB header budget so the envelope and
 // metadata cannot turn a valid attach into a protocol-limit failure.
 const MAX_INITIAL_REPLAY_BYTES = 32 * 1024;
+// node-pty commonly reports one kernel read as many small callbacks. Keep a
+// live frame below half the default header limit so the base64 fallback for a
+// legacy client remains a valid protocol envelope as well.
+const MAX_LIVE_OUTPUT_BODY_BYTES = 32 * 1024;
 const TERMINAL_EVENT = "terminal";
 export const TERMINAL_PRESENTATION_CHECKPOINT_OPERATION = "terminal.presentation-checkpoint";
 const INITIAL_PRESENTATION_RESERVATION_MS = 10_000;
@@ -64,8 +68,16 @@ interface ProtocolAttachment {
   readonly clientId: string;
   readonly identity: TerminalIdentity;
   readonly attachment: TerminalAttachment;
-  readonly canWrite: boolean;
+	readonly canWrite: boolean;
 	outputSuppressed: boolean;
+	/** Drop a not-yet-published live-output batch on attachment teardown. */
+	readonly discardPendingOutput: () => void;
+}
+
+interface PendingTerminalOutput {
+  readonly event: Extract<TerminalEvent, { readonly type: "output" }>;
+  readonly chunks: Uint8Array[];
+  byteLength: number;
 }
 
 interface InitialPresentationReservation {
@@ -137,6 +149,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       for (const [id, value] of protocolAttachments) {
         if (value.clientId !== clientId) continue;
         releasedIdentities.set(sessionKey(value.clientId, value.identity), value.identity);
+			value.discardPendingOutput();
         attachments.detach(id);
         protocolAttachments.delete(id);
         if (byClientSession.get(sessionKey(value.clientId, value.identity)) === id) byClientSession.delete(sessionKey(value.clientId, value.identity));
@@ -154,7 +167,10 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     },
 		suppressOutput: (attachmentId, clientId) => {
 			const value = protocolAttachments.get(attachmentId);
-			if (value?.clientId === clientId) value.outputSuppressed = true;
+			if (value?.clientId === clientId) {
+				value.discardPendingOutput();
+				value.outputSuppressed = true;
+			}
 		},
   };
 
@@ -346,21 +362,78 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       const prior = protocolAttachments.get(priorId);
       if (prior !== undefined) presentations.releaseAttachment({ ...prior.identity, clientId: prior.clientId, attachmentId: prior.attachment.attachmentId });
       if (prior !== undefined) options.checkpoints?.releaseAttachment({ ...prior.identity, clientId: prior.clientId, attachmentId: prior.attachment.attachmentId });
+		if (prior !== undefined) prior.discardPendingOutput();
       attachments.detach(priorId);
       protocolAttachments.delete(priorId);
     }
     let attachmentId: string | undefined;
     let checkpointPublishing = preparedCheckpoint === undefined;
     const queuedCheckpointEvents: TerminalEvent[] = [];
-    const publishTerminalEvent = (event: TerminalEvent): void => {
+    let pendingOutput: PendingTerminalOutput | undefined;
+    let pendingOutputTimer: ReturnType<typeof setTimeout> | undefined;
+    const discardPendingOutput = (): void => {
+      if (pendingOutputTimer !== undefined) clearTimeout(pendingOutputTimer);
+      pendingOutputTimer = undefined;
+      pendingOutput = undefined;
+    };
+    const publishOutput = (event: Extract<TerminalEvent, { readonly type: "output" }>): void => {
       if (attachmentId === undefined) return;
-			if (
-				event.type === "output" &&
-				protocolAttachments.get(attachmentId)?.outputSuppressed === true
-			) return;
+      if (protocolAttachments.get(attachmentId)?.outputSuppressed === true) return;
+      options.eventJournal.publishTransient(
+        TERMINAL_EVENT,
+        terminalOutputMetadataPayload(event, attachmentId, clientId),
+        event.bytes,
+      );
+    };
+    const flushPendingOutput = (): void => {
+      if (pendingOutputTimer !== undefined) clearTimeout(pendingOutputTimer);
+      pendingOutputTimer = undefined;
+      const pending = pendingOutput;
+      pendingOutput = undefined;
+      if (pending === undefined) return;
+      const bytes = pending.chunks.length === 1
+        ? pending.chunks[0] ?? concatenateOutputChunks(pending.chunks, pending.byteLength)
+        : concatenateOutputChunks(pending.chunks, pending.byteLength);
+      publishOutput(Object.freeze({ ...pending.event, bytes, data: bytes }));
+    };
+    const queueOutput = (event: Extract<TerminalEvent, { readonly type: "output" }>): void => {
+      if (attachmentId === undefined || protocolAttachments.get(attachmentId)?.outputSuppressed === true) return;
+      const current = pendingOutput;
+      if (current !== undefined && (
+        current.event.nextPosition !== event.position ||
+        current.event.replay !== event.replay ||
+        current.byteLength + event.bytes.byteLength > MAX_LIVE_OUTPUT_BODY_BYTES
+      )) flushPendingOutput();
+      if (pendingOutput === undefined) {
+        // Preserve an unusually large source callback intact. The cap limits
+        // batching; it must not manufacture a byte split in terminal output.
+        if (event.bytes.byteLength > MAX_LIVE_OUTPUT_BODY_BYTES) {
+          publishOutput(event);
+          return;
+        }
+        pendingOutput = { event, chunks: [event.bytes], byteLength: event.bytes.byteLength };
+      } else {
+        pendingOutput.chunks.push(event.bytes);
+        pendingOutput.byteLength += event.bytes.byteLength;
+        pendingOutput = {
+          ...pendingOutput,
+          event: Object.freeze({ ...pendingOutput.event, nextPosition: event.nextPosition }),
+        };
+      }
+      if (pendingOutputTimer === undefined)
+        pendingOutputTimer = setTimeout(flushPendingOutput, 0);
+    };
+    const publishTerminalEvent = (event: TerminalEvent): void => {
+      if (event.type === "output") {
+        queueOutput(event);
+        return;
+      }
+      // A terminal exit is ordered after its preceding output, even when that
+      // output arrived in the same PTY turn.
+      flushPendingOutput();
+      if (attachmentId === undefined) return;
       const payload = terminalEventPayload(event, attachmentId, clientId);
-      if (event.type === "output") options.eventJournal.publishTransient(TERMINAL_EVENT, payload);
-      else options.eventJournal.append(TERMINAL_EVENT, payload);
+      options.eventJournal.append(TERMINAL_EVENT, payload);
     };
     let attachment: TerminalAttachment;
     try {
@@ -394,6 +467,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
         for (const event of queuedCheckpointEvents) publishTerminalEvent(event);
         queuedCheckpointEvents.length = 0;
       } catch (error) {
+		discardPendingOutput();
         attachments.detach(attachment);
         options.checkpoints?.release(preparedCheckpoint.checkpointId, { ...identity, clientId });
         throw error;
@@ -406,6 +480,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
 			attachment,
 			canWrite,
 			outputSuppressed: false,
+			discardPendingOutput,
 		});
     byClientSession.set(key, attachment.attachmentId);
     // The first write-authorized surface is the natural presentation owner.
@@ -524,6 +599,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
 
   async function detach(request: CommandRequest): Promise<JsonValue> {
     const value = attachmentFor(request, "read");
+		value.discardPendingOutput();
     attachments.detach(value.attachment);
     protocolAttachments.delete(value.attachment.attachmentId);
     const key = sessionKey(value.clientId, value.identity);
@@ -751,6 +827,30 @@ function terminalEventPayload(event: TerminalEvent, attachmentId: string, client
   if (event.type === "output") return { clientId, attachmentId, type: "output", serverId: event.serverId, projectId: event.projectId, sessionId: event.sessionId, position: event.position, nextPosition: event.nextPosition, replay: event.replay, bytes: encodeBase64(event.bytes) };
   if (event.type === "exit") return { clientId, attachmentId, type: "exit", serverId: event.serverId, projectId: event.projectId, sessionId: event.sessionId, exitCode: event.exitCode, signal: event.signal, reason: event.metadata.reason, at: event.metadata.at };
   return { clientId, attachmentId, type: "resync_required", serverId: event.serverId, projectId: event.projectId, sessionId: event.sessionId, fromPosition: event.fromPosition, replayFrom: event.replayFrom, outputPosition: event.outputPosition };
+}
+
+function terminalOutputMetadataPayload(event: Extract<TerminalEvent, { readonly type: "output" }>, attachmentId: string, clientId: string): JsonValue {
+  return {
+    clientId,
+    attachmentId,
+    type: "output",
+    serverId: event.serverId,
+    projectId: event.projectId,
+    sessionId: event.sessionId,
+    position: event.position,
+    nextPosition: event.nextPosition,
+    replay: event.replay,
+  };
+}
+
+function concatenateOutputChunks(chunks: readonly Uint8Array[], byteLength: number): Uint8Array {
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 function compactInitialEvents(events: readonly TerminalEvent[]): TerminalEvent[] {

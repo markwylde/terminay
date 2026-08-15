@@ -25,8 +25,6 @@ import {
 	AgentStatusService,
 	AiService,
 	CanonicalProjectPathResolver,
-	composeRemoteMcpTerminalLifecycle,
-	createEnvironmentRoutedProjectServices,
 	FileWorkspaceStateBackend,
 	createNodePtyFactory,
 	createNodeShellDiscoveryHost,
@@ -49,8 +47,6 @@ import {
 	ProjectEnvironmentRepository,
 	ProjectEnvironmentRouter,
 	RecordingService,
-	RemoteMcpBridgeAuthority,
-	RemoteMcpEnvironmentCoordinator,
 	type RemoteRegisteredDevice,
 	type ServerCoreComposition,
 	ServerFileAdapter,
@@ -81,11 +77,8 @@ import {
 	createLocalUiServer,
 	createServerHealthServer,
 	createServerRemoteExposure,
-	createServerTerminalControlAdapter,
 	createStandaloneServer,
-	createTerminalControlAdapter,
 	type LocalUiServer,
-	runServerMcpStdio,
 	type ServerPairingHandoff,
 	type ServerRemoteExposure,
 } from './index.js';
@@ -113,21 +106,7 @@ const options = parseServerCliOptions(process.argv.slice(2), process.env);
 if (options.command === 'help') process.stdout.write(formatServerHelp());
 else if (options.command === 'version')
 	process.stdout.write(`${options.serverVersion}\n`);
-else if (options.command === 'mcp') {
-	const socketPath = process.env.TERMINAY_CONTROL_SOCKET;
-	const token = process.env.TERMINAY_CONTROL_TOKEN ?? '';
-	if (socketPath === undefined || socketPath.length === 0) {
-		process.stderr.write('terminay mcp requires TERMINAY_CONTROL_SOCKET\n');
-		process.exitCode = 1;
-	} else {
-		runServerMcpStdio({ socketPath, token }).catch((error: unknown) => {
-			process.stderr.write(
-				`${error instanceof Error ? error.message : 'MCP adapter failed'}\n`,
-			);
-			process.exitCode = 1;
-		});
-	}
-} else {
+else {
 	const remotePairingPin = requiresRemotePairingPin(options)
 		? requiredRemotePairingPin(options)
 		: undefined;
@@ -389,7 +368,7 @@ async function createServerComposition(
 	projectEnvironmentRegistry.register(
 		new ExtensionProjectEnvironmentRuntime(
 			'com.terminay.ssh/connection',
-			['terminal', 'filesystem', 'mcp-bridge'],
+			['terminal', 'filesystem'],
 			extensions.hosts,
 			() => projectEnvironments.state,
 		),
@@ -471,7 +450,6 @@ async function createServerComposition(
 			}),
 		),
 	});
-	let remoteMcp: RemoteMcpEnvironmentCoordinator | undefined;
 	composition = createServerCoreComposition({
 		serverId: options.serverId,
 		serverVersion: options.serverVersion,
@@ -566,7 +544,6 @@ async function createServerComposition(
 			defaultEnvironment: process.env,
 			maxReplayBytes: 4 * 1024 * 1024,
 			maxQueuedOutputBytes: 512 * 1024,
-			sessionLifecycle: composeRemoteMcpTerminalLifecycle(() => remoteMcp),
 		},
 		operations: {
 			queries: {
@@ -581,56 +558,7 @@ async function createServerComposition(
 			},
 		},
 	});
-	const control = createTerminalControlAdapter({
-		adapter: createServerTerminalControlAdapter({
-			terminal: composition.terminal,
-			launchResolver: requireTerminalLaunchResolver(composition),
-			activity,
-		}),
-	});
-	const remoteMcpAuthority = new RemoteMcpBridgeAuthority({
-		dispatch: async (scope, op, params, { signal }) => {
-			const result = await control(
-				{
-					id: `${op}:${Date.now()}`,
-					version: 1,
-					op: op as never,
-					params: params as Record<string, unknown>,
-				},
-				{
-					terminalSessionId: scope.terminalSessionId,
-					projectId: scope.projectId,
-					scope: scope.scope,
-					connectionId: `remote-mcp:${scope.terminalSessionId}`,
-					requestId: `${op}:${Date.now()}`,
-					signal,
-				},
-			);
-			return JSON.parse(JSON.stringify(result)) as JsonValue;
-		},
-	});
-	remoteMcp = new RemoteMcpEnvironmentCoordinator(
-		createEnvironmentRoutedProjectServices(projectEnvironmentRouter).mcpBridge,
-		remoteMcpAuthority,
-	);
-	const baseShutdown = composition.shutdown;
-	composition = Object.freeze({
-		...composition,
-		shutdown: async () => {
-			parakeetProvider.stop();
-			await remoteMcp?.shutdown();
-			await baseShutdown();
-		},
-	});
 	return Object.freeze({ core: composition, vault, extensions, workspaceWasCreated: workspaceRepository.wasCreated });
-}
-
-function requireTerminalLaunchResolver(composition: ServerCoreComposition) {
-	if (composition.terminalLaunchResolver === undefined)
-		throw new Error(
-			'Remote MCP requires the canonical terminal launch resolver.',
-		);
-	return composition.terminalLaunchResolver;
 }
 
 function standaloneDictationSettings(

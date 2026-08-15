@@ -27,6 +27,8 @@ declare global {
 				action: unknown,
 				options?: { readonly userGesture?: boolean },
 			): Promise<unknown>;
+			resolveDroppedFilePath?(file: File): string | undefined;
+			readTerminalClipboard?(): Promise<string>;
 		};
 		terminayBytes?: {
 			readonly version: 1;
@@ -52,16 +54,6 @@ declare global {
 				noteResult?: string;
 				titleResult?: string;
 			}) => Promise<void>;
-		};
-		terminayMcpControlTest?: {
-			getControlEnvironment: (
-				terminalSessionId: string,
-			) => Promise<{
-				projectId: string;
-				sessionId: string;
-				socketPath: string;
-				token: string;
-			}>;
 		};
 	}
 }
