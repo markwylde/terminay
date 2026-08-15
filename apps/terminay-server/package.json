@@ -12,8 +12,8 @@
     }
   },
   "files": ["dist"],
-  "bin": { "terminay-server": "dist/cli.js", "terminay-mcp": "dist/mcpEntry.js" },
-  "dependencies": { "@terminay/server-core": "1.0.0", "@terminay/protocol": "1.0.0", "@modelcontextprotocol/sdk": "^1.29.0", "node-pty": "^1.1.0", "npm": "12.0.2", "ws": "^8.21.0", "zod": "^4.3.6" },
+  "bin": { "terminay-server": "dist/cli.js" },
+  "dependencies": { "@terminay/server-core": "1.0.0", "@terminay/protocol": "1.0.0", "node-pty": "^1.1.0", "npm": "12.0.2", "ws": "^8.21.0", "zod": "^4.3.6" },
   "engines": {
     "node": "24.15.0"
   },
