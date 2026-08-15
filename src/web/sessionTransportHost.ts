@@ -16,11 +16,10 @@ export type SessionTransportHost = Readonly<{
 	managerUrl?: string;
 	managerAction?: string;
 	prepareWorkspace(): Promise<Readonly<{
-		manifest: unknown;
 		expectedServerId: string;
 		context: unknown;
 		endpoint: OpaqueBrowserByteEndpoint;
-		readAsset(path: string): Promise<Uint8Array>;
+		compressedArchive: Uint8Array;
 	}>>;
 	postJson<TResponse>(pathname: string, body: unknown): Promise<TResponse>;
 	acquireApplicationEndpoint(ticket: string): Promise<Readonly<{
@@ -58,8 +57,7 @@ export type SessionTransportHost = Readonly<{
 export type HostedBrowserSessionAuthority = Omit<SessionTransportHost, 'version' | 'prepareWorkspace'> & Readonly<{
 	serverId: string;
 	hostContext: unknown;
-	assetManifest(): Promise<unknown>;
-	readAsset(path: string): Promise<Uint8Array>;
+	readBundle(): Promise<Uint8Array>;
 	byteEndpoint: OpaqueBrowserByteEndpoint;
 }>;
 
@@ -101,8 +99,7 @@ export function installHostedBrowserSession(authority: HostedBrowserSessionAutho
 	const {
 		serverId,
 		hostContext,
-		assetManifest,
-		readAsset,
+		readBundle,
 		byteEndpoint,
 		...lifecycle
 	} = authority;
@@ -110,11 +107,10 @@ export function installHostedBrowserSession(authority: HostedBrowserSessionAutho
 		...lifecycle,
 		version: 1,
 		prepareWorkspace: async () => Object.freeze({
-			manifest: await assetManifest(),
 			expectedServerId: serverId,
 			context: hostContext,
 			endpoint: byteEndpoint,
-			readAsset,
+			compressedArchive: await readBundle(),
 		}),
 	}));
 }
@@ -161,7 +157,7 @@ function isHostedBrowserSessionAuthority(
 	if (!isRecord(value)) return false;
 	const allowed = new Set([
 		'sessionId', 'origin', 'managerUrl', 'managerAction', 'serverId',
-		'hostContext', 'assetManifest', 'readAsset', 'byteEndpoint', 'postJson',
+		'hostContext', 'readBundle', 'byteEndpoint', 'postJson',
 		'acquireApplicationEndpoint', 'registerApplication', 'connect', 'enroll',
 	]);
 	if (Object.keys(value).some((name) => !allowed.has(name))) return false;
@@ -179,7 +175,7 @@ function isHostedBrowserSessionAuthority(
 		if (value[name] !== undefined && typeof value[name] !== 'string') return false;
 	}
 	for (const name of [
-		'assetManifest', 'readAsset', 'postJson', 'acquireApplicationEndpoint',
+		'readBundle', 'postJson', 'acquireApplicationEndpoint',
 		'registerApplication', 'connect', 'enroll',
 	] as const) {
 		if (typeof value[name] !== 'function') return false;

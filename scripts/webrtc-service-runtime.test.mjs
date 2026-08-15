@@ -925,7 +925,7 @@ test('RemoteAccessService updates remote resize ownership only after accepted re
   assert.equal(service.sessions.get('terminal-1').cols, 80)
 })
 
-test('RemoteAccessService binds canonical browser host context to its exact manifest and server', async () => {
+test('RemoteAccessService binds canonical browser host context to one cached server archive', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'terminay-host-context-test-'))
   await writeFile(join(tempDir, 'server.html'), '<!doctype html><title>Terminay Server UI</title>')
   const service = createTestService({
@@ -933,7 +933,8 @@ test('RemoteAccessService binds canonical browser host context to its exact mani
     serverId: 'server-context-proof',
     serverVersion: '3.2.1',
   })
-  const manifest = await service.getWebRtcAssetManifest()
+  const archive = await service.getWebRtcUiArchive()
+  assert.strictEqual(await service.getWebRtcUiArchive(), archive)
   const context = await service.handleWebRtcApiRequest(
     '/api/host-context',
     {},
@@ -941,13 +942,12 @@ test('RemoteAccessService binds canonical browser host context to its exact mani
   )
   assert.equal(context.serverId, 'server-context-proof')
   assert.equal(context.profileId, 'server-context-proof')
-  assert.equal(context.bundleId, manifest.bundleId)
-  assert.equal(context.applicationProtocolVersion, manifest.protocolVersion)
+  assert.equal(context.bundleId, archive.bundleId)
+  assert.equal(context.applicationProtocolVersion, '1')
   assert.equal(context.hostKind, 'browser')
   assert.equal(context.bootstrapVersion, 1)
-  assert.equal(manifest.serverVersion, '3.2.1')
-  assert.equal(manifest.entryPath.endsWith('/server.html'), true)
-  assert.equal(manifest.assets.some((asset) => asset.path.endsWith('/remote.html')), false)
+  assert.equal(archive.entryPath, 'server.html')
+  assert.equal(archive.bytes instanceof Uint8Array, true)
   const browserEntry = await service.handleStaticRequest('/')
   assert.equal(browserEntry.status, 200)
   assert.match(browserEntry.body.toString('utf8'), /Terminay Server UI/u)
