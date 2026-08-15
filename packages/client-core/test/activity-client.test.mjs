@@ -5,6 +5,8 @@ import { ActivityClient, AgentStatusClient } from "../dist/index.js";
 const session = (attention = false) => ({
   sessionId: "session-a",
   projectId: "project-a",
+  foregroundBusy: false,
+  foregroundObservation: "available",
   status: "idle",
   attention,
   acknowledged: !attention,
@@ -72,6 +74,31 @@ test("activity client sends acknowledgement only with immutable project/session 
   });
   await client.acknowledge({ projectId: "project-a", sessionId: "session-a" });
   assert.deepEqual(commands, [{ operation: "activity.acknowledge", payload: { projectId: "project-a", sessionId: "session-a" } }]);
+});
+
+test("activity client close preflight queries the exact project and session", async () => {
+  const queries = [];
+  const client = new ActivityClient({
+    query: async (operation, payload) => {
+      queries.push({ operation, payload });
+      if (operation === "activity.closePreflight") {
+        return {
+          observation: "limited",
+          runningSessionIds: [],
+          sessions: [{ sessionId: "session-a", projectId: "project-a", observation: "limited", foregroundBusy: false }],
+        };
+      }
+      return { revision: 0, cursor: "0", sessions: {} };
+    },
+    command: async () => null,
+    subscribe: async () => () => {},
+  });
+  const result = await client.closePreflight({ projectId: "project-a", sessionId: "session-a" });
+  assert.equal(result.observation, "limited");
+  assert.deepEqual(queries, [{
+    operation: "activity.closePreflight",
+    payload: { projectId: "project-a", sessionId: "session-a" },
+  }]);
 });
 
 test("activity client fences a viewed acknowledgement to its observed session update", async () => {

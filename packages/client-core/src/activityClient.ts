@@ -1,13 +1,25 @@
 import type { ClientEvent } from "./types.js";
 import type { QueryCommandTransport } from "./queryCommand.js";
-import { ActivitySnapshotStore, type ActivityApplyResult, type ActivityEvent, type ActivityReplay, type ActivitySnapshot } from "./activity.js";
+import {
+  ActivitySnapshotStore,
+  type ActivityApplyResult,
+  type ActivityClosePreflight,
+  type ActivityEvent,
+  type ActivityReplay,
+  type ActivitySnapshot,
+} from "./activity.js";
 
 export const ACTIVITY_OPERATIONS = Object.freeze({
   snapshot: "activity.snapshot",
   delta: "activity.delta",
+  closePreflight: "activity.closePreflight",
   acknowledge: "activity.acknowledge",
   event: "activity",
 } as const);
+
+/** Renderer-side bound for close preflight. Slightly above the server
+ * observation deadline so a wedged host still yields a limited confirmation. */
+export const ACTIVITY_CLOSE_PREFLIGHT_DEADLINE_MS = 2_500;
 
 export interface ActivityClientTransport extends QueryCommandTransport {
   /**
@@ -36,6 +48,21 @@ export class ActivityClient {
   async refresh(): Promise<ActivityApplyResult> {
     const snapshot = await this.transport.query(ACTIVITY_OPERATIONS.snapshot) as unknown as ActivitySnapshot;
     return this.store.applySnapshot(snapshot);
+  }
+
+  /** Bounded exact-session or project close observation. This is not a snapshot
+   * refresh and does not wait for unrelated terminals. */
+  async closePreflight(scope: {
+    readonly projectId: string;
+    readonly sessionId?: string;
+  }): Promise<ActivityClosePreflight> {
+    const result = await this.transport.query(ACTIVITY_OPERATIONS.closePreflight, {
+      projectId: scope.projectId,
+      ...(scope.sessionId === undefined ? {} : { sessionId: scope.sessionId }),
+    }, {
+      deadlineMs: ACTIVITY_CLOSE_PREFLIGHT_DEADLINE_MS,
+    }) as unknown as ActivityClosePreflight;
+    return normalizeClosePreflight(result);
   }
 
   /**
@@ -105,4 +132,32 @@ export class ActivityClient {
   }
 
   close(): void { this.unsubscribe?.(); }
+}
+
+const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+
+function normalizeClosePreflight(value: ActivityClosePreflight): ActivityClosePreflight {
+  if (!value || typeof value !== "object" || (value.observation !== "available" && value.observation !== "limited") || !Array.isArray(value.runningSessionIds) || !Array.isArray(value.sessions)) {
+    throw new TypeError("activity close preflight is invalid");
+  }
+  const sessions = value.sessions.map((session) => {
+    if (!session || typeof session !== "object" || !ID_PATTERN.test(session.sessionId) || !ID_PATTERN.test(session.projectId) || (session.observation !== "available" && session.observation !== "limited") || typeof session.foregroundBusy !== "boolean") {
+      throw new TypeError("activity close preflight session is invalid");
+    }
+    return Object.freeze({
+      sessionId: session.sessionId,
+      projectId: session.projectId,
+      observation: session.observation,
+      foregroundBusy: session.foregroundBusy,
+    });
+  });
+  const runningSessionIds = value.runningSessionIds.map((sessionId) => {
+    if (typeof sessionId !== "string" || !ID_PATTERN.test(sessionId)) throw new TypeError("activity close preflight is invalid");
+    return sessionId;
+  });
+  return Object.freeze({
+    observation: value.observation,
+    runningSessionIds: Object.freeze(runningSessionIds),
+    sessions: Object.freeze(sessions),
+  });
 }

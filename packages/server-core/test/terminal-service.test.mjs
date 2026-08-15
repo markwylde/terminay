@@ -109,6 +109,54 @@ test("TerminalService aborts a cwd observer when its bounded deadline expires", 
   assert.equal(aborted, true);
 });
 
+test("TerminalService close observation is session-scoped, bounded, and capability-limited", async () => {
+  const pty = createPtyFactory();
+  const service = new TerminalService({ serverId: "server-a", ptyFactory: pty });
+  const idle = await service.createSession({ projectId: "project-a", sessionId: "idle", cols: 80, rows: 24 });
+  const noisy = await service.createSession({ projectId: "project-a", sessionId: "noisy", cols: 80, rows: 24 });
+  const other = await service.createSession({ projectId: "project-b", sessionId: "other", cols: 80, rows: 24 });
+  const auth = (sessionId, projectId = "project-a") => ({
+    serverId: "server-a", projectId, sessionId, scope: "read",
+  });
+
+  assert.deepEqual(await service.observeForegroundProcess(idle.snapshot(), auth("idle"), 20), {
+    sessionId: "idle",
+    projectId: "project-a",
+    observation: "limited",
+    foregroundBusy: false,
+    observationError: "unavailable",
+  });
+
+  let noisyCalls = 0;
+  pty.processes[1].refreshForegroundProcess = (signal) => new Promise((_, reject) => {
+    noisyCalls += 1;
+    signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+  });
+  pty.processes[0].refreshForegroundProcess = async () => {
+    pty.processes[0].emitForegroundProcess({ processName: "zsh", shellForeground: true, observation: "available" });
+  };
+  pty.processes[2].refreshForegroundProcess = () => new Promise(() => {});
+
+  const started = Date.now();
+  const observedIdle = await service.observeForegroundProcess(idle.snapshot(), auth("idle"), 30);
+  const elapsed = Date.now() - started;
+  assert.equal(observedIdle.observation, "available");
+  assert.equal(observedIdle.foregroundBusy, false);
+  assert.equal(noisyCalls, 0);
+  assert.ok(elapsed < 200, "an idle session must not wait for a sibling observer");
+
+  const timedOut = await service.observeForegroundProcess(noisy.snapshot(), auth("noisy"), 20);
+  assert.equal(timedOut.observation, "limited");
+  assert.equal(timedOut.observationError, "timeout");
+  assert.equal(noisyCalls, 1);
+
+  const project = await service.observeProjectForegroundProcesses("project-a", { serverId: "server-a", projectId: "project-a", scope: "read" }, 20);
+  assert.deepEqual(project.map((entry) => entry.sessionId).sort(), ["idle", "noisy"]);
+  assert.equal(project.some((entry) => entry.sessionId === "other"), false);
+  await service.shutdown();
+});
+
+
 function createInactivityTimer() {
   let now = 0;
   let nextId = 0;

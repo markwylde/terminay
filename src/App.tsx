@@ -162,8 +162,8 @@ import type {
 	TerminalRecordingState,
 } from './types/terminay';
 import {
-	confirmRunningTerminalClose,
-	refreshRunningTerminalSessionIds,
+	confirmTerminalClose,
+	observeTerminalClosePreflight,
 } from './workspace/closeProtection';
 import { FileExplorerTree } from './workspace/FileExplorerTree';
 import { ProjectTabList } from './workspace/ProjectTabList';
@@ -3492,12 +3492,11 @@ const ProjectWorkspace = forwardRef<
 				const canonicalPanel = workspaceStore?.snapshot?.panels[panelId];
 				const sessionId = panelSessionMapRef.current.get(panelId);
 				if (sessionId !== undefined) {
-					const running = (
-						await refreshRunningTerminalSessionIds(serverActivityClient)
-					).includes(sessionId);
-					if (
-						!(await confirmRunningTerminalClose('terminal', running ? 1 : 0))
-					) {
+					const preflight = await observeTerminalClosePreflight(
+						serverActivityClient,
+						{ projectId: project.id, sessionId },
+					);
+					if (!(await confirmTerminalClose('terminal', preflight))) {
 						return;
 					}
 				}
@@ -5172,11 +5171,11 @@ function App({
 	);
 	const confirmProjectClose = useCallback(
 		async (projectId: string) => {
-			const running = await refreshRunningTerminalSessionIds(
+			const preflight = await observeTerminalClosePreflight(
 				terminalClientContext?.activityClient,
-				projectId,
+				{ projectId },
 			);
-			return confirmRunningTerminalClose('project', running.length);
+			return confirmTerminalClose('project', preflight);
 		},
 		[terminalClientContext?.activityClient],
 	);
