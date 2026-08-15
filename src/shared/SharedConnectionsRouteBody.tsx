@@ -153,14 +153,19 @@ export function SharedConnectionsRouteBody({
 		const profile = profileStore?.get(connection.id);
 		const local = profile?.isLocal === true;
 		const isCurrent = connection.id === currentId;
+		const optionProps = asOption
+			? {
+					role: 'option' as const,
+					'aria-label': `${connection.label} ${connection.status}`,
+					'aria-selected': isCurrent,
+					tabIndex: isCurrent ? 0 : -1,
+				}
+			: {};
 		return (
 			<div
 				key={connection.id}
-				role={asOption ? 'option' : undefined}
-				aria-label={`${connection.label} ${connection.status}`}
-				aria-selected={asOption ? isCurrent : undefined}
-				tabIndex={asOption ? (isCurrent ? 0 : -1) : undefined}
 				className={`shared-production-route__card shared-connection-card${isCurrent ? ' shared-connection-card--current' : ''}`}
+				{...optionProps}
 			>
 				<div className="shared-connection-card__identity">
 					<div className="shared-connection-card__title">
