@@ -24,7 +24,6 @@ test('WebRtcPairingManager creates compact v1 session-subdomain QR payloads with
   assert.equal(url.search, '')
   assert.equal(url.searchParams.has('relayJoinToken'), false)
   assert.equal(url.searchParams.has('pairingToken'), false)
-  assert.equal(url.searchParams.has('signalingAuthToken'), false)
   assert.equal(payload.signalingUrl, `wss://${payload.sessionId}.terminay.com/signal`)
 
   const qrSecret = url.hash.slice(1)
@@ -40,7 +39,6 @@ test('WebRtcPairingManager v1 secrets match HKDF-SHA256 labels', () => {
 
   assert.equal(payload.relayJoinToken, deriveSecret(qrSecretBytes, 'terminay remote v1 relay join'))
   assert.equal(payload.pairing.token, deriveSecret(qrSecretBytes, 'terminay remote v1 pairing'))
-  assert.equal(payload.signalingAuthToken, deriveSecret(qrSecretBytes, 'terminay remote v1 signaling hmac'))
   assert.equal(payload.assetInstallKey, deriveSecret(qrSecretBytes, 'terminay remote v1 asset install'))
   assert.equal(payload.csrfSeed, deriveSecret(qrSecretBytes, 'terminay remote v1 csrf seed'))
   assert.equal(payload.roomId, deriveSecret(qrSecretBytes, 'terminay remote v1 pairing room'))

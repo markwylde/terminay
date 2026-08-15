@@ -23,8 +23,12 @@ export interface SharedConnectionsRouteBodyProps {
 	readonly onSelect?: (profile: ConnectionProfile) => Promise<void> | void;
 	readonly onRevoke?: (profile: ConnectionProfile) => Promise<void> | void;
 	readonly onExpose?: (profile: ConnectionProfile) => Promise<void> | void;
-	readonly onPairingHandoff?: (pairingUrl: string) => Promise<void> | void;
-	readonly onRemember?: (profile: ConnectionProfile) => Promise<void> | void;
+	readonly onPairingHandoff?: (
+		input: Readonly<{
+			pairingPin: string;
+			pairingUrl: string;
+		}>,
+	) => Promise<void> | void;
 	readonly onRename?: (
 		profile: ConnectionProfile,
 		label: string,
@@ -48,7 +52,6 @@ export function SharedConnectionsRouteBody({
 	onRevoke,
 	onExpose,
 	onPairingHandoff,
-	onRemember,
 	onRename,
 	onForget,
 	embedded = false,
@@ -63,9 +66,8 @@ export function SharedConnectionsRouteBody({
 	}>();
 	const [rename, setRename] = useState<ConnectionProfile>();
 	const [renameLabel, setRenameLabel] = useState('');
-	const [showImport, setShowImport] = useState(false);
 	const [showPair, setShowPair] = useState(false);
-	const [importText, setImportText] = useState('');
+	const [pairingPin, setPairingPin] = useState('');
 	const [pairingUrl, setPairingUrl] = useState('');
 	const snapshot = profileStore?.snapshot();
 	const profiles = snapshot?.profiles.filter(
@@ -84,9 +86,6 @@ export function SharedConnectionsRouteBody({
 						Add connection…
 					</button>
 				)}
-				<button type="button" onClick={() => setShowImport(true)}>
-					Advanced: import profile metadata
-				</button>
 			</nav>
 		);
 
@@ -111,20 +110,6 @@ export function SharedConnectionsRouteBody({
 		} finally {
 			setBusy(undefined);
 		}
-	};
-
-	const importProfile = () => {
-		if (profileStore === undefined) return;
-		void mutate(
-			'import',
-			async () => {
-				const profile = profileStore.import(JSON.parse(importText) as unknown);
-				await onRemember?.(profile);
-				setImportText('');
-				setShowImport(false);
-			},
-			'Profile metadata imported. Pairing is required before connecting.',
-		);
 	};
 
 	const confirmDestructiveAction = () => {
@@ -191,8 +176,8 @@ export function SharedConnectionsRouteBody({
 							<div className="shared-connections__empty">
 								<strong>No saved servers yet</strong>
 								<span>
-									Add a connection with its pairing URL. Saved metadata that
-									lacks credentials will still require pairing.
+									Add a server with its pairing link. You can return here to
+									open it whenever you need it.
 								</span>
 							</div>
 						)}
@@ -384,30 +369,6 @@ export function SharedConnectionsRouteBody({
 					</button>
 				</section>
 			)}
-			{showImport && (
-				<section
-					aria-label="Advanced profile metadata import"
-					className="shared-connections__action-panel"
-				>
-					<p>
-						This imports non-secret connection metadata only. You will need a
-						fresh pairing URL before this browser can connect.
-					</p>
-					<label>
-						Profile metadata
-						<textarea
-							value={importText}
-							onChange={(event) => setImportText(event.target.value)}
-						/>
-					</label>
-					<button type="button" onClick={importProfile}>
-						Import metadata
-					</button>
-					<button type="button" onClick={() => setShowImport(false)}>
-						Cancel
-					</button>
-				</section>
-			)}
 			{showPair && (
 				<form
 					aria-label="Add connection"
@@ -415,14 +376,19 @@ export function SharedConnectionsRouteBody({
 					onSubmit={(event) => {
 						event.preventDefault();
 						const value = pairingUrl;
+						if (!/^\d{6}$/u.test(pairingPin)) {
+							setMessage('Enter the six-digit pairing PIN.');
+							return;
+						}
 						void mutate(
 							'pair',
 							async () => {
-								await onPairingHandoff?.(value);
+								await onPairingHandoff?.({ pairingPin, pairingUrl: value });
 								setPairingUrl('');
+								setPairingPin('');
 								setShowPair(false);
 							},
-							'Pairing details accepted. Complete enrollment to save this connection.',
+							'Opening pairing…',
 						);
 					}}
 				>
@@ -432,6 +398,16 @@ export function SharedConnectionsRouteBody({
 							type="url"
 							value={pairingUrl}
 							onChange={(event) => setPairingUrl(event.target.value)}
+							required
+						/>
+					</label>
+					<label>
+						Pairing PIN
+						<input
+							inputMode="numeric"
+							maxLength={6}
+							value={pairingPin}
+							onChange={(event) => setPairingPin(event.target.value)}
 							required
 						/>
 					</label>

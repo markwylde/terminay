@@ -226,60 +226,11 @@ function normalizeCustomExtension(value: string): string {
 	return `.${trimmed.replace(/^\.+/, '')}`;
 }
 
-function formatReconnectGrantSummary(device: {
-	reconnectGrantExpiresAt?: string | null;
-	reconnectGrantLastUsedAt?: string | null;
-	reconnectGrantStatus?: 'none' | 'valid' | 'expired' | 'revoked';
-}): string {
-	const status = device.reconnectGrantStatus ?? 'none';
-	if (status === 'none') {
-		return 'Saved reconnect not issued';
-	}
-	if (status === 'revoked') {
-		return 'Saved reconnect revoked';
-	}
-	if (status === 'expired') {
-		return 'Saved reconnect expired';
-	}
-
-	const expiry = device.reconnectGrantExpiresAt
-		? `expires ${new Date(device.reconnectGrantExpiresAt).toLocaleString()}`
-		: 'valid until revoked';
-	const lastUsed = device.reconnectGrantLastUsedAt
-		? ` · Last reconnect ${new Date(device.reconnectGrantLastUsedAt).toLocaleString()}`
-		: '';
-	return `Saved reconnect ${expiry}${lastUsed}`;
-}
-
 function formatDateTime(value: string | null | undefined): string {
 	if (!value) return 'Never';
 	const date = new Date(value);
 	if (Number.isNaN(date.getTime())) return 'Unknown';
 	return date.toLocaleString();
-}
-
-function getRemoteOriginLabel(origin: string): string {
-	const [sessionOrigin] = origin.split('#');
-	try {
-		return new URL(sessionOrigin).host;
-	} catch {
-		return sessionOrigin || origin;
-	}
-}
-
-function getReconnectGrantLabel(
-	status: 'none' | 'valid' | 'expired' | 'revoked' | undefined,
-): string {
-	switch (status) {
-		case 'valid':
-			return 'Saved reconnect';
-		case 'expired':
-			return 'Expired';
-		case 'revoked':
-			return 'Revoked';
-		default:
-			return 'Pair only';
-	}
 }
 
 function TerminalPreview({ settings }: { settings: TerminalSettings }) {
@@ -636,10 +587,6 @@ export function SettingsWindow({
 	const [remoteActionError, setRemoteActionError] = useState<string | null>(
 		null,
 	);
-	const [directListenerActionError, setDirectListenerActionError] = useState<
-		string | null
-	>(null);
-	const [, setSelectedRemotePairingMode] = useState<'lan' | 'webrtc'>('webrtc');
 	const [isTogglingRemoteAccess, setIsTogglingRemoteAccess] = useState(false);
 	const [isPairingPinModalOpen, setIsPairingPinModalOpen] = useState(false);
 	const [pairingPinInput, setPairingPinInput] = useState('');
@@ -651,9 +598,6 @@ export function SettingsWindow({
 		Set<string>
 	>(new Set());
 	const [isRevokingSelected, setIsRevokingSelected] = useState(false);
-	const [selectedRemoteTab, setSelectedRemoteTab] = useState<
-		'all' | 'lan' | 'webrtc'
-	>('all');
 	const [isPairingQrModalOpen, setIsPairingQrModalOpen] = useState(false);
 	const [listeningShortcutKey, setListeningShortcutKey] = useState<
 		string | null
@@ -852,12 +796,6 @@ export function SettingsWindow({
 			unsubscribe?.();
 		};
 	}, [loadDictationMicrophones, serverAiClient]);
-
-	useEffect(() => {
-		setSelectedRemotePairingMode(
-			remoteStatus?.pairingMode ?? draft.remoteAccess.pairingMode,
-		);
-	}, [remoteStatus?.pairingMode, draft.remoteAccess.pairingMode]);
 
 	const prevActiveConnectionCountRef = useRef<number | null>(null);
 	useEffect(() => {
@@ -2063,36 +2001,6 @@ export function SettingsWindow({
 		};
 	}, [listeningShortcutKey, updateShortcut]);
 
-	const selectRemotePairingMode = useCallback(
-		async (mode: 'lan' | 'webrtc') => {
-			setSelectedRemotePairingMode(mode);
-			setRemoteActionError(null);
-
-			try {
-				if (draftRef.current.remoteAccess.pairingMode !== mode) {
-					await saveDraft({
-						...draftRef.current,
-						remoteAccess: {
-							...draftRef.current.remoteAccess,
-							pairingMode: mode,
-						},
-					});
-				}
-
-				setRemoteStatus(await remoteAccessStatusClient.getStatus());
-				return true;
-			} catch (error) {
-				setRemoteActionError(
-					error instanceof Error
-						? error.message
-						: 'Could not save the remote pairing mode.',
-				);
-				return false;
-			}
-		},
-		[saveDraft],
-	);
-
 	const closePairingPinModal = useCallback((configured: boolean) => {
 		pairingPinRequestRef.current?.(configured);
 		pairingPinRequestRef.current = null;
@@ -2102,27 +2010,19 @@ export function SettingsWindow({
 		setIsSavingPairingPin(false);
 	}, []);
 
-	const ensureRemoteAccessPairingPin = useCallback(
-		async (mode: 'lan' | 'webrtc') => {
-			if (
-				await isRemoteAccessPairingPinConfigured(
-					remotePairingPinClient,
-					mode,
-				)
-			) {
-				return true;
-			}
+	const ensureRemoteAccessPairingPin = useCallback(async () => {
+		if (await isRemoteAccessPairingPinConfigured(remotePairingPinClient)) {
+			return true;
+		}
 
-			setPairingPinInput('');
-			setPairingPinError(null);
-			setIsPairingPinModalOpen(true);
+		setPairingPinInput('');
+		setPairingPinError(null);
+		setIsPairingPinModalOpen(true);
 
-			return new Promise<boolean>((resolve) => {
-				pairingPinRequestRef.current = resolve;
-			});
-		},
-		[],
-	);
+		return new Promise<boolean>((resolve) => {
+			pairingPinRequestRef.current = resolve;
+		});
+	}, []);
 
 	const submitPairingPin = useCallback(
 		async (event: FormEvent<HTMLFormElement>) => {
@@ -2138,10 +2038,7 @@ export function SettingsWindow({
 			setPairingPinError(null);
 
 			try {
-				await saveRemoteAccessPairingPin(
-					remotePairingPinClient,
-					pin,
-				);
+				await saveRemoteAccessPairingPin(remotePairingPinClient, pin);
 				closePairingPinModal(true);
 			} catch (error) {
 				setPairingPinError(
@@ -2167,17 +2064,7 @@ export function SettingsWindow({
 				return;
 			}
 
-			if (
-				!remoteStatus?.isRunning &&
-				!(await selectRemotePairingMode('webrtc'))
-			) {
-				return;
-			}
-
-			if (
-				!remoteStatus?.isRunning &&
-				!(await ensureRemoteAccessPairingPin('webrtc'))
-			) {
+			if (!remoteStatus?.isRunning && !(await ensureRemoteAccessPairingPin())) {
 				return;
 			}
 
@@ -2192,37 +2079,6 @@ export function SettingsWindow({
 			setRemoteActionError(message);
 			setRemoteStatus((current) =>
 				current ? { ...current, errorMessage: message } : current,
-			);
-		} finally {
-			setIsTogglingRemoteAccess(false);
-		}
-	};
-
-	const toggleDirectNetworkListener = async () => {
-		setIsTogglingRemoteAccess(true);
-		setDirectListenerActionError(null);
-		try {
-			if (
-				!remoteStatus?.directListenerRunning &&
-				!(await ensureRemoteAccessPairingPin('lan'))
-			)
-				return;
-			const wasRunning = remoteStatus?.directListenerRunning === true;
-			const nextStatus =
-				await remoteAccessStatusClient.toggleDirectListener();
-			if (nextStatus.directListenerRunning === wasRunning) {
-				throw new Error(
-					`This server did not confirm that the direct network listener ${
-						wasRunning ? 'stopped' : 'started'
-					}.`,
-				);
-			}
-			setRemoteStatus(nextStatus);
-		} catch (error) {
-			setDirectListenerActionError(
-				error instanceof Error
-					? error.message
-					: 'Unable to change the direct network listener.',
 			);
 		} finally {
 			setIsTogglingRemoteAccess(false);
@@ -2256,36 +2112,23 @@ export function SettingsWindow({
 		}
 
 		const remoteSummary = remoteStatus?.isRunning
-			? (remoteStatus.origin ?? 'Remote access is live.')
+			? 'This server is ready for remote connections.'
 			: remoteActionError || remoteStatus?.errorMessage
 				? 'Remote access could not start.'
 				: 'Remote access is ready.';
 
 		const remoteDescription = remoteStatus?.isRunning
-			? 'Scan the QR code from a phone or browser, then manage trusted devices and live connections here.'
+			? 'Share the pairing link with a new browser or Desktop device, then manage authorized devices and live connections here.'
 			: remoteActionError || remoteStatus?.errorMessage
-				? `${remoteActionError ?? remoteStatus?.errorMessage} You can also add your own certificate files below later if you want.`
-				: 'Terminay will use your Remote Access settings and generate a self-signed certificate automatically if you leave the TLS paths blank.';
-		const activePairingMode = selectedRemoteTab === 'lan' ? 'lan' : 'webrtc';
-		const selectedPairingUrl =
-			activePairingMode === 'webrtc'
-				? remoteStatus?.webRtcPairingUrl
-				: remoteStatus?.lanPairingUrl;
+				? (remoteActionError ?? remoteStatus?.errorMessage)
+				: 'Expose this server to create a secure WebRTC pairing link.';
+		const selectedPairingUrl = remoteStatus?.webRtcPairingUrl;
 		const selectedPairingQrCodeDataUrl =
-			activePairingMode === 'webrtc' &&
 			remoteStatus?.webRtcStatus !== 'pairing-ready'
 				? null
-				: activePairingMode === 'webrtc'
-					? remoteStatus?.webRtcPairingQrCodeDataUrl
-					: remoteStatus?.lanPairingQrCodeDataUrl;
-		const selectedPairingExpiresAt =
-			activePairingMode === 'webrtc'
-				? remoteStatus?.webRtcPairingExpiresAt
-				: remoteStatus?.lanPairingExpiresAt;
-		const selectedPairingLabel =
-			activePairingMode === 'webrtc'
-				? 'WebRTC pairing QR'
-				: 'Direct network pairing QR';
+				: remoteStatus?.webRtcPairingQrCodeDataUrl;
+		const selectedPairingExpiresAt = remoteStatus?.webRtcPairingExpiresAt;
+		const selectedPairingLabel = 'Pair device';
 		const pairedDevices = remoteStatus?.pairedDevices ?? [];
 		const activeConnections = remoteStatus?.connections ?? [];
 		const auditEvents = remoteStatus?.auditEvents ?? [];
@@ -2296,12 +2139,6 @@ export function SettingsWindow({
 				(liveConnectionsByDevice.get(connection.deviceId) ?? 0) + 1,
 			);
 		});
-		const reconnectableDeviceCount = pairedDevices.filter(
-			(device) => device.reconnectGrantStatus === 'valid',
-		).length;
-		const staleDeviceCount = pairedDevices.filter(
-			(device) => device.reconnectGrantStatus !== 'valid',
-		).length;
 
 		const toggleDeviceSelection = (deviceId: string) => {
 			setSelectedDevicesToRevoke((prev) => {
@@ -2335,319 +2172,65 @@ export function SettingsWindow({
 			}
 		};
 
-		const updateGrantLifetime = async (val: string) => {
-			const nextSettings = {
-				...draftRef.current,
-				remoteAccess: {
-					...draftRef.current.remoteAccess,
-					reconnectGrantLifetime: val as '1h' | '24h' | '7d' | 'until-revoked',
-				},
-			};
-			setDraft(nextSettings);
-			await settingsClient.update<TerminalSettings>(
-				nextSettings as unknown as import('@terminay/protocol').JsonValue,
-			);
-		};
-
-		const renderTabButton = (id: 'all' | 'lan' | 'webrtc', label: string) => (
-			<button
-				type="button"
-				className={`settings-remote-toggle-btn${selectedRemoteTab === id ? ' settings-remote-toggle-btn--active' : ''}`}
-				onClick={() => setSelectedRemoteTab(id)}
-				style={{
-					color: selectedRemoteTab === id ? '#fff' : undefined,
-					background:
-						selectedRemoteTab === id ? 'var(--settings-accent)' : 'transparent',
-					boxShadow:
-						selectedRemoteTab === id ? '0 2px 4px rgba(0,0,0,0.2)' : 'none',
-				}}
-			>
-				{label}
-			</button>
-		);
-
 		return (
 			<section
 				id="section-remote-access-management"
 				className="settings-section"
 			>
-				<header
-					className="settings-remote-panel-header"
-					style={{
-						display: 'flex',
-						justifyContent: 'space-between',
-						alignItems: 'center',
-						flexWrap: 'nowrap',
-						marginBottom: '24px',
-						gap: '16px',
-					}}
-				>
-					<div style={{ minWidth: 0 }}>
-						<p
-							className="settings-remote-kicker"
-							style={{
-								color: remoteStatus?.isRunning
-									? 'var(--settings-success)'
-									: 'var(--settings-accent)',
-								marginBottom: '4px',
-							}}
-						>
-							Remote Access: {remoteStatus?.isRunning ? 'Active' : 'Stopped'}
+				<header className="settings-remote-panel-header">
+					<div>
+						<p className="settings-remote-kicker">
+							Remote access · {remoteStatus?.isRunning ? 'Active' : 'Stopped'}
 						</p>
-						<h4
-							style={{
-								margin: 0,
-								fontSize: '18px',
-								whiteSpace: 'nowrap',
-								overflow: 'hidden',
-								textOverflow: 'ellipsis',
-							}}
-						>
-							{remoteSummary}
-						</h4>
-						<p style={{ margin: '6px 0 0', maxWidth: 720 }}>
-							{remoteDescription}
-						</p>
+						<h4>{remoteSummary}</h4>
+						<p>{remoteDescription}</p>
 					</div>
 					<button
 						type="button"
 						className="settings-primary-button"
-						style={{
-							flexShrink: 0,
-							background: remoteStatus?.isRunning
-								? 'var(--settings-danger)'
-								: undefined,
-							border: remoteStatus?.isRunning ? 'none' : undefined,
-						}}
 						onClick={() => void toggleRemoteAccess()}
 						disabled={isTogglingRemoteAccess}
 					>
 						{isTogglingRemoteAccess
-							? 'Working...'
+							? 'Working…'
 							: remoteStatus?.isRunning
-								? 'Stop Remote Access'
-								: 'Start Remote Access'}
+								? 'Stop exposure'
+								: 'Expose this server…'}
 					</button>
 				</header>
 
-				<div
-					className="settings-remote-tab-bar"
-					style={{
-						display: 'flex',
-						background: 'var(--settings-sidebar-bg)',
-						padding: '4px',
-						borderRadius: '10px',
-						marginBottom: '32px',
-						width: 'fit-content',
-						border: '1px solid var(--settings-border)',
-					}}
-				>
-					{renderTabButton('all', 'Overview')}
-					{renderTabButton('webrtc', 'WebRTC exposure')}
-					{renderTabButton('lan', 'Direct network listener')}
-				</div>
-
-				<div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
-					{(selectedRemoteTab === 'lan' || selectedRemoteTab === 'webrtc') && (
-						<div
-							className="settings-remote-card"
-							style={{
-								padding: '24px',
-								background: 'var(--settings-sidebar-bg)',
-								borderRadius: '12px',
-								border: '1px solid var(--settings-border)',
-								boxShadow: 'none',
-							}}
-						>
-							<div
-								style={{
-									display: 'flex',
-									justifyContent: 'space-between',
-									alignItems: 'flex-start',
-									marginBottom: '20px',
-									gap: '24px',
-								}}
-							>
-								<div style={{ flex: 1 }}>
-									<h5
-										style={{
-											margin: '0 0 8px',
-											fontSize: '15px',
-											fontWeight: 600,
-										}}
-									>
-										{selectedRemoteTab === 'webrtc'
-											? 'WebRTC exposure'
-											: 'Direct network listener'}
-									</h5>
-									<p
-										style={{
-											margin: 0,
-											fontSize: '13px',
-											color: 'var(--settings-text-muted)',
-											lineHeight: 1.6,
-										}}
-									>
-										{selectedRemoteTab === 'webrtc'
-											? 'Secure, encrypted peer-to-peer connection via Terminay Relay. Works over the internet without any firewall or router configuration.'
-											: 'Advanced direct HTTPS connection on your configured interface. It runs independently and is never started as a WebRTC fallback.'}
-									</p>
-								</div>
-								{((selectedRemoteTab === 'webrtc' && remoteStatus?.isRunning) ||
-									(selectedRemoteTab === 'lan' &&
-										remoteStatus?.directListenerRunning)) && (
-									<button
-										type="button"
-										className="settings-primary-button"
-										style={{
-											fontSize: '12px',
-											padding: '8px 16px',
-											flexShrink: 0,
-										}}
-										onClick={() => {
-											setSelectedRemotePairingMode(
-												selectedRemoteTab === 'webrtc' ? 'webrtc' : 'lan',
-											);
-											setIsPairingQrModalOpen(true);
-										}}
-									>
-										Show QR Code
-									</button>
-								)}
-								{selectedRemoteTab === 'lan' && (
-									<button
-										type="button"
-										className="settings-primary-button"
-										onClick={() => void toggleDirectNetworkListener()}
-										disabled={isTogglingRemoteAccess}
-									>
-										{isTogglingRemoteAccess
-											? remoteStatus?.directListenerRunning
-												? 'Stopping direct listener…'
-												: 'Starting direct listener…'
-											: remoteStatus?.directListenerRunning
-												? 'Stop direct listener'
-												: 'Start direct listener'}
-									</button>
-								)}
-							</div>
-							{selectedRemoteTab === 'lan' && directListenerActionError ? (
-								<div
-									role="alert"
-									data-testid="direct-listener-operation-error"
-									style={{
-										marginBottom: '20px',
-										padding: '12px 14px',
-										border: '1px solid var(--settings-danger)',
-										borderRadius: '8px',
-										color: 'var(--settings-danger)',
-										fontSize: '13px',
-										lineHeight: 1.5,
-									}}
-								>
-									<strong>Direct network listener could not be changed.</strong>{' '}
-									{directListenerActionError}
-								</div>
-							) : null}
-
-							<div
-								className="settings-row"
-								style={{
-									padding: '16px 0 0',
-									borderTop: '1px solid var(--settings-border)',
-									borderBottom: 'none',
-									background: 'transparent',
-								}}
-							>
-								<div className="settings-row-info">
-									<label
-										htmlFor="pairing-grant-lifetime"
-										className="settings-row-label"
-									>
-										Trust Duration
-									</label>
-									<span className="settings-row-description">
-										Set how long browsers remain authorized before requiring a
-										re-pair.
-									</span>
-								</div>
-								<div className="settings-row-control">
-									<select
-										id="pairing-grant-lifetime"
-										className="settings-input-text"
-										style={{ width: '160px', height: '32px' }}
-										value={
-											draft.remoteAccess.reconnectGrantLifetime ??
-											'until-revoked'
-										}
-										onChange={(e) => void updateGrantLifetime(e.target.value)}
-									>
-										<option value="1h">1 Hour</option>
-										<option value="24h">24 Hours</option>
-										<option value="7d">7 Days</option>
-										<option value="until-revoked">Until Revoked</option>
-									</select>
-								</div>
-							</div>
+				<div className="settings-remote-stack">
+					<section className="settings-remote-card settings-remote-card--exposure">
+						<div>
+							<span className="settings-remote-card-label">
+								WebRTC exposure
+							</span>
+							<p className="settings-remote-card-subtitle">
+								Terminay uses an authenticated WebRTC connection. The pairing
+								link enrolls one device; later visits use that device’s
+								identity.
+							</p>
 						</div>
-					)}
-
-					{selectedRemoteTab === 'all' && (
-						<div
-							className="settings-remote-overview"
-							style={{
-								display: 'grid',
-								gridTemplateColumns: 'repeat(4, 1fr)',
-								gap: '16px',
-							}}
-						>
-							<div
-								className="settings-remote-stat"
-								style={{
-									textAlign: 'center',
-									background: 'var(--settings-card-bg)',
-								}}
-							>
-								<span>Browsers</span>
+						<div className="settings-remote-exposure-actions">
+							<div className="settings-remote-stat">
+								<span>Authorized devices</span>
 								<strong>{pairedDevices.length}</strong>
 							</div>
-							<div
-								className="settings-remote-stat"
-								style={{
-									textAlign: 'center',
-									background: 'var(--settings-card-bg)',
-								}}
-							>
-								<span>Reconnects</span>
-								<strong>{reconnectableDeviceCount}</strong>
+							<div className="settings-remote-stat">
+								<span>Live connections</span>
+								<strong>{activeConnections.length}</strong>
 							</div>
-							<div
-								className="settings-remote-stat"
-								style={{
-									textAlign: 'center',
-									background: 'var(--settings-card-bg)',
-								}}
-							>
-								<span>Cleanup</span>
-								<strong>{staleDeviceCount}</strong>
-							</div>
-							<div
-								className="settings-remote-stat"
-								style={{
-									textAlign: 'center',
-									background: 'var(--settings-card-bg)',
-									borderColor: 'var(--settings-accent)',
-								}}
-							>
-								<span style={{ color: 'var(--settings-accent)' }}>
-									Live Now
-								</span>
-								<strong style={{ color: 'var(--settings-accent)' }}>
-									{activeConnections.length}
-								</strong>
-							</div>
+							{remoteStatus?.isRunning ? (
+								<button
+									type="button"
+									className="settings-secondary-button"
+									onClick={() => setIsPairingQrModalOpen(true)}
+								>
+									Show pairing link
+								</button>
+							) : null}
 						</div>
-					)}
+					</section>
 
 					<div
 						className="settings-remote-card"
@@ -2775,18 +2358,6 @@ export function SettingsWindow({
 													<strong style={{ fontSize: '14px' }}>
 														{device.name}
 													</strong>
-													<p
-														style={{
-															margin: '2px 0 0',
-															fontSize: '11px',
-															opacity: 0.6,
-															fontFamily: 'monospace',
-															overflow: 'hidden',
-															textOverflow: 'ellipsis',
-														}}
-													>
-														{getRemoteOriginLabel(device.origin)}
-													</p>
 												</div>
 												<div
 													className="settings-remote-device-badges"
@@ -2805,13 +2376,6 @@ export function SettingsWindow({
 															live
 														</span>
 													) : null}
-													<span
-														className={`settings-remote-badge settings-remote-badge--${device.reconnectGrantStatus ?? 'none'}`}
-													>
-														{getReconnectGrantLabel(
-															device.reconnectGrantStatus,
-														)}
-													</span>
 												</div>
 											</div>
 											<div
@@ -2828,7 +2392,6 @@ export function SettingsWindow({
 												<span>
 													Last seen {formatDateTime(device.lastSeenAt)}
 												</span>
-												<span>{formatReconnectGrantSummary(device)}</span>
 											</div>
 										</div>
 										<button
@@ -3067,27 +2630,25 @@ export function SettingsWindow({
 												{selectedPairingUrl}
 											</p>
 											<button
-											type="button"
-											className="settings-remote-copy-button"
-											onClick={() => {
-												void (
-											writeClipboardText(
-														selectedPairingUrl,
-													) ?? navigator.clipboard.writeText(selectedPairingUrl)
-												)
-													.then(() => {
-														setIsLinkCopied(true);
-														setTimeout(() => setIsLinkCopied(false), 2000);
-													})
-													.catch(() => setIsLinkCopied(false));
-											}}
-										>
-											{isLinkCopied ? 'Copied' : 'Copy Link'}
+												type="button"
+												className="settings-remote-copy-button"
+												onClick={() => {
+													void (
+														writeClipboardText(selectedPairingUrl) ??
+														navigator.clipboard.writeText(selectedPairingUrl)
+													)
+														.then(() => {
+															setIsLinkCopied(true);
+															setTimeout(() => setIsLinkCopied(false), 2000);
+														})
+														.catch(() => setIsLinkCopied(false));
+												}}
+											>
+												{isLinkCopied ? 'Copied' : 'Copy Link'}
 											</button>
 										</>
 									) : null}
-									{activePairingMode === 'webrtc' &&
-									remoteStatus?.webRtcStatusMessage ? (
+									{remoteStatus?.webRtcStatusMessage ? (
 										<p className="settings-remote-meta">
 											{remoteStatus.webRtcStatusMessage}
 										</p>
@@ -3095,8 +2656,7 @@ export function SettingsWindow({
 								</>
 							) : (
 								<p className="settings-remote-empty">
-									{activePairingMode === 'webrtc' &&
-									remoteStatus?.webRtcStatusMessage
+									{remoteStatus?.webRtcStatusMessage
 										? remoteStatus.webRtcStatusMessage
 										: 'Start remote access to generate a fresh pairing QR code for browsers.'}
 								</p>

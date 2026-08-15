@@ -45,7 +45,7 @@ test('compiled standalone pairing CLI emits a fragment-only handoff and does not
 		'--data-root', join(dataRoot, 'state'),
 	], {
 		cwd: fileURLToPath(new URL('../', import.meta.url)),
-		env: { ...process.env, TERMINAY_SERVER_VERSION: '0.0.0' },
+		env: { ...process.env, TERMINAY_REMOTE_PAIRING_PIN: '736941', TERMINAY_SERVER_VERSION: '0.0.0' },
 		stdio: ['ignore', 'pipe', 'pipe'],
 	});
 
@@ -75,6 +75,24 @@ test('compiled standalone pairing CLI emits a fragment-only handoff and does not
 	}
 });
 
+test('compiled standalone pairing CLI requires a configured PIN without revealing it', async () => {
+	const { TERMINAY_REMOTE_PAIRING_PIN: _omitted, ...environment } = process.env;
+	const child = spawn(process.execPath, ['dist/cli.js', '--pairing'], {
+		cwd: fileURLToPath(new URL('../', import.meta.url)),
+		env: { ...environment, TERMINAY_SERVER_VERSION: '0.0.0' },
+		stdio: ['ignore', 'pipe', 'pipe'],
+	});
+	let stdout = '';
+	let stderr = '';
+	child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+	child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+	const [code] = await once(child, 'exit');
+	assert.equal(code, 1);
+	assert.equal(stdout, '');
+	assert.match(stderr, /TERMINAY_REMOTE_PAIRING_PIN must be configured/u);
+	assert.doesNotMatch(stderr, /736941/u);
+});
+
 test('standalone CLI emits a pairing handoff and remains foreground until terminated', async () => {
 	const child = spawn(process.execPath, [
 		'dist/cli.js',
@@ -85,7 +103,7 @@ test('standalone CLI emits a pairing handoff and remains foreground until termin
 		'--vault-unlock-fd', '3',
 	], {
 		cwd: fileURLToPath(new URL('../', import.meta.url)),
-		env: { ...process.env, TERMINAY_SERVER_VERSION: 'test' },
+		env: { ...process.env, TERMINAY_REMOTE_PAIRING_PIN: '736941', TERMINAY_SERVER_VERSION: 'test' },
 		stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
 	});
 	child.stdio[3].end('test-vault-passphrase\n');

@@ -236,12 +236,12 @@ const featureRows = [
 		gap: 'Host-neutral menu/profile contracts and deterministic multi-window Desktop behavior are covered; deployed manager and real hosted pairing remain external blockers.',
 	},
 	{
-		id: 'pairing-and-reconnect',
-		spec: 'specs/tasks_completed/17-full-webrtc-server-connections.md',
+		id: 'device-pairing-and-authentication',
+		spec: 'specs/tasks/1-canonical-remote-pairing-and-pwa-manager.md',
 		evidence: [
-			'packages/server-core/test/remote-pairing.test.mjs',
-			'packages/server-core/test/remote-reconnect.test.mjs',
-			'scripts/task19-migration-reconnect.test.mjs',
+			'packages/server-core/test/remote-device-authentication.test.mjs',
+			'apps/terminay-server/test/server-device-authentication.test.mjs',
+			'scripts/device-pairing-flow.test.mjs',
 		],
 		status: {
 			'local-desktop': 'contract',
@@ -249,7 +249,7 @@ const featureRows = [
 			'wide-web': 'contract',
 			'mobile-web': 'contract',
 		},
-		gap: 'Deterministic pairing, reconnect, migration continuity, and rendered connection paths are project-covered. External hosted and physical-host execution is an operational follow-up.',
+		gap: 'Device enrollment, signed challenge verification, and one-use tickets are covered locally. External hosted and physical-host execution is an operational follow-up.',
 	},
 ];
 

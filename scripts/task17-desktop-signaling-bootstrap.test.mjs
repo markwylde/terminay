@@ -30,7 +30,6 @@ const valid = () => ({
   peerId: 'peer-a',
   sessionOrigin: 'https://session.example',
   signalingUrl: 'wss://session.example/signal',
-  signalingAuthToken: 'signaling_auth_token_123456',
   expiresAt: NOW + 60_000,
   iceServers: [
     { urls: 'stun:stun.example:3478' },

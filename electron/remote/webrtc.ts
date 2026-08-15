@@ -17,7 +17,6 @@ export type WebRtcPairingPayload = {
 	relayJoinTokenHash: string;
 	roomId: string;
 	sessionId: string;
-	signalingAuthToken: string;
 	signalingUrl: string;
 };
 
@@ -135,10 +134,6 @@ export class WebRtcPairingManager {
 		const relayJoinToken = deriveProtocolSecret(qrSecretBytes, 'relay join');
 		const relayJoinTokenHash = hashToken(relayJoinToken);
 		const pairingToken = deriveProtocolSecret(qrSecretBytes, 'pairing');
-		const signalingAuthToken = deriveProtocolSecret(
-			qrSecretBytes,
-			'signaling hmac',
-		);
 		const assetInstallKey = deriveProtocolSecret(
 			qrSecretBytes,
 			'asset install',
@@ -170,7 +165,6 @@ export class WebRtcPairingManager {
 			relayJoinTokenHash,
 			roomId,
 			sessionId,
-			signalingAuthToken,
 			signalingUrl,
 		};
 	}

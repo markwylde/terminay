@@ -56,13 +56,7 @@ export const DEFAULT_SERVER_SETTINGS: SettingsObject = {
 		disconnectPolicy: 'cancel',
 	},
 	remoteAccess: {
-		bindAddress: '0.0.0.0',
-		origin: 'https://localhost:9443',
-		pairingMode: 'lan',
 		pinFailureLimit: 3,
-		reconnectGrantLifetime: '24h',
-		tlsCertPath: '',
-		tlsKeyPath: '',
 		webRtcHostedDomain: 'terminay.com',
 		webRtcIceServers: 'stun:stun.l.google.com:19302',
 	},

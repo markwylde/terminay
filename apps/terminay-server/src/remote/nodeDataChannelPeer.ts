@@ -23,15 +23,16 @@ export interface NodeDataChannelPeerLike {
 }
 
 /**
- * Signaling is deliberately injected and cryptographically wrapped by the
- * host. This adapter never receives a PIN, device key, reconnect grant, or
- * signing secret; it only verifies/produces already-authenticated messages.
+ * Signaling is deliberately injected by the authenticated relay boundary.
+ * This adapter never receives a PIN, device key, long-lived credential, or
+ * derived signaling secret. The relay admits each peer; this boundary only
+ * validates the bounded message format and session binding it receives.
  */
 export interface NodeDataChannelSignaling {
 	send(message: unknown): void | Promise<void>;
 	onMessage(listener: (message: unknown) => void): () => void;
-	readonly sign: (message: NodeDataChannelSignal) => unknown | Promise<unknown>;
-	readonly verify: (message: unknown) => NodeDataChannelSignal | null | Promise<NodeDataChannelSignal | null>;
+	readonly encode: (message: NodeDataChannelSignal) => unknown | Promise<unknown>;
+	readonly decode: (message: unknown) => NodeDataChannelSignal | null | Promise<NodeDataChannelSignal | null>;
 }
 
 export interface NodeDataChannelPeerConnectorOptions {
@@ -40,39 +41,38 @@ export interface NodeDataChannelPeerConnectorOptions {
 	readonly bindAddress?: string;
 	readonly role?: 'answerer' | 'offerer';
 	readonly timeoutMs?: number;
-	/** Bound authenticated messages waiting for asynchronous verification. */
+	/** Bound relay-admitted messages waiting for asynchronous decoding. */
 	readonly maxQueuedSignals?: number;
 	/**
-	 * Bound one authenticated signaling verification operation. The verifier is
-	 * injected at the hosted boundary and may perform asynchronous key lookup;
-	 * a stalled verifier must not retain a peer's bounded queue indefinitely.
+	 * Bound one relay-message decoding operation. The decoder is injected at the
+	 * hosted boundary; a stalled decoder must not retain a peer queue indefinitely.
 	 */
-	readonly signalVerificationTimeoutMs?: number;
+	readonly signalDecodingTimeoutMs?: number;
 	/**
-	 * Bound native-generated SDP/ICE callbacks awaiting signing and relay send.
+	 * Bound native-generated SDP/ICE callbacks awaiting encoding and relay send.
 	 * Native callbacks are outside the server-owned protocol boundary and may
-	 * otherwise create an unbounded number of asynchronous signer operations.
+	 * otherwise create an unbounded number of asynchronous encoder operations.
 	 */
 	readonly maxQueuedOutboundSignals?: number;
 	/**
-	 * Bound one native-generated signal's signer and relay delivery. A peer can
+	 * Bound one native-generated signal's encoding and relay delivery. A peer can
 	 * remain established after setup, so the setup timeout alone cannot reclaim
 	 * a native callback whose hosted signer or relay never settles.
 	 */
 	readonly outboundSignalTimeoutMs?: number;
-	/** Bound verified SDP and ICE payload bytes before native peer delivery. */
+	/** Bound relay-decoded SDP and ICE payload bytes before native peer delivery. */
 	readonly maxSignalBytes?: number;
-	/** Bound authenticated ICE candidates received before the remote SDP. */
+	/** Bound relay-admitted ICE candidates received before the remote SDP. */
 	readonly maxPendingCandidates?: number;
 	/**
-	 * Bound every distinct authenticated remote ICE candidate for this peer,
+	 * Bound every distinct relay-admitted remote ICE candidate for this peer,
 	 * including candidates received after the SDP is accepted. This bounds the
 	 * replay-detection set as well as native candidate processing.
 	 */
 	readonly maxRemoteCandidates?: number;
 }
 
-/** Create an authenticated channel opener for createNodeDataChannelRuntimeAdapter. */
+/** Create a relay-admitted channel opener for createNodeDataChannelRuntimeAdapter. */
 export function createNodeDataChannelOpenChannels(
 	options: NodeDataChannelPeerConnectorOptions,
 ): (
@@ -82,8 +82,8 @@ export function createNodeDataChannelOpenChannels(
 	if (typeof options.signaling?.send !== 'function' || typeof options.signaling.onMessage !== 'function') {
 		throw new TypeError('node-datachannel signaling transport is required');
 	}
-	if (typeof options.signaling.sign !== 'function' || typeof options.signaling.verify !== 'function') {
-		throw new TypeError('node-datachannel signaling authentication is required');
+	if (typeof options.signaling.encode !== 'function' || typeof options.signaling.decode !== 'function') {
+		throw new TypeError('node-datachannel signaling codec is required');
 	}
 	// This value crosses an injected runtime boundary. Do not let an unchecked
 	// JavaScript caller silently fall through to the answerer behaviour: that
@@ -101,13 +101,13 @@ export function createNodeDataChannelOpenChannels(
 	if (!Number.isSafeInteger(maxQueuedSignals) || maxQueuedSignals <= 0 || maxQueuedSignals > 1_024) {
 		throw new RangeError('node-datachannel queued signaling limit is invalid');
 	}
-	const signalVerificationTimeoutMs = options.signalVerificationTimeoutMs ?? Math.min(timeoutMs, 10_000);
+	const signalDecodingTimeoutMs = options.signalDecodingTimeoutMs ?? Math.min(timeoutMs, 10_000);
 	if (
-		!Number.isSafeInteger(signalVerificationTimeoutMs) ||
-		signalVerificationTimeoutMs <= 0 ||
-		signalVerificationTimeoutMs > timeoutMs
+		!Number.isSafeInteger(signalDecodingTimeoutMs) ||
+		signalDecodingTimeoutMs <= 0 ||
+		signalDecodingTimeoutMs > timeoutMs
 	) {
-		throw new RangeError('node-datachannel signaling verification timeout is invalid');
+		throw new RangeError('node-datachannel signaling decoding timeout is invalid');
 	}
 	const maxQueuedOutboundSignals = options.maxQueuedOutboundSignals ?? 64;
 	if (
@@ -233,23 +233,23 @@ export function createNodeDataChannelOpenChannels(
 		const send = async (message: NodeDataChannelSignal): Promise<void> => {
 			if (closed) return;
 			// Native callbacks are outside the server-owned protocol boundary. Do
-			// not sign or send a malformed/oversized local SDP or ICE payload just
+			// not encode or send a malformed/oversized local SDP or ICE payload just
 			// because it originated from the optional native runtime; use the same
-			// bounded shape gate as authenticated inbound signaling.
+			// bounded shape gate as relay-admitted inbound signaling.
 			validateSignal(message, maxSignalBytes);
-			const signed = await runWithBudget(
-				() => options.signaling.sign(message),
+			const encoded = await runWithBudget(
+				() => options.signaling.encode(message),
 				context.signal,
 				outboundSignalTimeoutMs,
 				'node-datachannel outbound signaling timed out',
 			);
-			// Signing may be asynchronous. The connection can be revoked, aborted,
+			// Encoding may be asynchronous. The connection can be revoked, aborted,
 			// or otherwise fail while the signer is in flight; never publish a
-			// now-stale authenticated signal after that lifecycle boundary.
+			// now-stale relay signal after that lifecycle boundary.
 			if (closed) return;
-			if (signed === undefined || signed === null) throw new Error('node-datachannel signaling signer rejected a message');
+			if (encoded === undefined || encoded === null) throw new Error('node-datachannel signaling encoder rejected a message');
 			await runWithBudget(
-				() => options.signaling.send(signed),
+				() => options.signaling.send(encoded),
 				context.signal,
 				outboundSignalTimeoutMs,
 				'node-datachannel outbound signaling timed out',
@@ -258,13 +258,13 @@ export function createNodeDataChannelOpenChannels(
 		const handleSignal = async (raw: unknown): Promise<void> => {
 			if (closed) return;
 			const message = await runWithBudget(
-				() => options.signaling.verify(raw),
+				() => options.signaling.decode(raw),
 				context.signal,
-				signalVerificationTimeoutMs,
-				'node-datachannel signaling verification timed out',
+				signalDecodingTimeoutMs,
+				'node-datachannel signaling decoding timed out',
 			);
 			if (closed) return;
-			if (message === null) throw new Error('node-datachannel signaling authentication failed');
+			if (message === null) throw new Error('node-datachannel signaling relay binding failed');
 			validateSignal(message, maxSignalBytes);
 			if (message.type === 'offer' || message.type === 'answer') {
 				const expectedDescriptionType = options.role === 'offerer' ? 'answer' : 'offer';
@@ -316,10 +316,10 @@ export function createNodeDataChannelOpenChannels(
 		};
 		const enqueueOutboundSignal = (message: NodeDataChannelSignal): void => {
 			if (closed) return;
-			// A native peer can emit candidates faster than an asynchronous signer
+			// A native peer can emit candidates faster than an asynchronous encoder
 			// or hosted relay accepts them. Serialize that work and cap it before
 			// invoking either boundary so a compromised/faulty native binding cannot
-			// retain unbounded authenticated signaling state.
+			// retain unbounded relay signaling state.
 			if (pendingOutboundSignals >= maxQueuedOutboundSignals) {
 				fail(new Error('node-datachannel outbound signaling queue limit reached'));
 				return;
@@ -347,7 +347,7 @@ export function createNodeDataChannelOpenChannels(
 				if (closed) return;
 				// The native binding must not be allowed to change the negotiated
 				// direction. An answerer emitting an offer (or an offerer emitting an
-				// answer) could otherwise publish a signed, authenticated SDP that is
+			// answer) could otherwise publish an invalid relay SDP that is
 				// inconsistent with the server-owned role and remote-description gate.
 				const expectedLocalDescriptionType = options.role === 'offerer' ? 'offer' : 'answer';
 				if (type !== expectedLocalDescriptionType) {
@@ -482,7 +482,7 @@ function validateSignal(message: NodeDataChannelSignal, maxSignalBytes: number):
 	if (message.type === 'offer' || message.type === 'answer') {
 		// An empty (or whitespace-only) SDP is not a valid WebRTC description.
 		// Treat it as malformed at this boundary rather than allowing a native
-		// implementation to interpret it, or signing and relaying it when it was
+		// implementation to interpret it, or encoding and relaying it when it was
 		// produced by an optional native binding.
 		if (
 			typeof message.sdp !== 'string' ||

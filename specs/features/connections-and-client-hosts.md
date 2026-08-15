@@ -2,8 +2,9 @@
 
 ## Summary
 
-Terminay Desktop and `app.terminay.com` share one connection journey. The
-header server control is a current-server selector and connection menu.
+Terminay Desktop and browser clients use the same server identity, device
+enrollment, and connection model. The header server control is a current-server
+selector and connection menu.
 
 Desktop starts connected to its embedded server as **Local**. Browser clients
 have no embedded server and begin with a remembered connection or connection
@@ -59,19 +60,14 @@ The menu contains:
   exposure;
 - retry, disconnect, forget, and revoke actions with distinct language; and
 - diagnostics that distinguish server offline, relay unavailable, WebRTC
-  route failure, expired grant, revoked device, incompatible version, and
+  route failure, missing device identity, revoked device, invalid contract, and
   failed switch actions. Failed switch actions keep the selector visible and
   show the host-provided failure reason instead of logging only to the native
   terminal.
 
-The primary exposure control represents server-owned WebRTC availability. It
-must not label WebRTC **Ready**, offer **Expose & show QR**, silently substitute
-a LAN listener, or wait for a start-time exception when the host already knows
-that the WebRTC runtime or authenticated signaling authority is absent. An
+The primary exposure control represents server-owned WebRTC availability. An
 unavailable route remains visible for diagnosis and links to its configuration
-or build requirement, but its start action is disabled. Optional direct-network
-listening is an independent advanced control, not a QR type or alternate
-meaning of **Expose this server…**.
+or build requirement, and its start action is disabled.
 
 The shared browser-safe UI package projects this model into an accessible
 `menuitemradio` list with stable ordering, position/set-size metadata, and
@@ -87,8 +83,8 @@ eligible secondary routes in native auxiliary windows only when its
 
 Desktop development, packaged Desktop, and auxiliary routes execute the same
 server-bundled route bodies against the authenticated selected-server client.
-No host substitutes an alternate workspace renderer or placeholder feature
-body for connections, Git, agents, folders, or terminals.
+That selected-server bundle is the sole workspace renderer for connections,
+Git, agents, folders, and terminals.
 
 The existing activity/notification indicator remains separate. Connection
 status must not be conflated with terminal or agent attention.
@@ -129,10 +125,9 @@ status must not be conflated with terminal or agent attention.
   Remote server shutdown/update is never implied by closing its window.
 - Desktop stores non-secret profiles locally and credentials through OS-backed
   secure storage where available.
-- A Desktop connection created from a one-time standalone application URL uses
-  that authenticated first session to enroll reconnect material before saving
-  the profile as switchable. One-time URLs are never stored or reused for later
-  switching.
+- A Desktop connection created from a pairing URL enrolls a protected device
+  key and saves only the stable session origin as switchable profile metadata.
+  One-time URLs are never stored or reused.
 - Desktop keeps application traffic opaque after bootstrap. Its local and
   remote adapters provide bounded byte transports to the server-bundled
   client; they do not decode, translate, persist, or synthesize feature
@@ -141,7 +136,7 @@ status must not be conflated with terminal or agent attention.
 The Desktop host foundation keeps the connection manager deliberately separate
 from server workspace state. A profile record contains only its stable server
 identity, exact session origin, display metadata, timestamps, and a diagnostic
-status; pairing fragments, device keys, reconnect grants, terminal data, and
+status; pairing fragments, device keys, terminal data, and
 filesystem paths are not profile fields. The embedded server creates one
 immutable `Local` profile from its stable identity before the first workspace
 client is opened. A failed identity check marks that profile as an explicit
@@ -190,85 +185,66 @@ connected to three remote servers.
 
 The production shared Connections route accepts the host-local
 `ConnectionProfileStore` and narrow callbacks for switching, server revocation,
-exposure, and pairing handoff. It supports sanitized add/import and rename,
-keeps forget explicitly separate from revoke with different confirmation copy,
-and never writes a pairing URL into profile metadata. Unsupported actions stay
-absent or disabled. The production Desktop server-UI bridge supplies a
+exposure, pairing, and rename. It keeps forget explicitly separate from revoke
+with different confirmation copy and never writes a pairing URL into profile
+metadata. Unsupported actions stay absent or disabled. The production Desktop
+server-UI bridge supplies a
 sanitized profile snapshot and source-bound actions, rejects profiles outside
 the window's host context, allows exposure only for the current connection,
 and consumes pairing credentials without retaining them. Final persisted
 profile/window-registry callbacks use the exact `openProfileWindow` selection,
-flush host-local writes before returning, separate disconnect/forget from
-server revocation, and persist only the sanitized profile returned by pairing.
-The Web manager renders the same action body through `WebConnectionHost`;
-profile metadata remains at the exact manager origin, storage events rebuild
-the sanitized projection in other tabs, and one-time pairing fragments never
-enter localStorage. The connected shared workspace enables the Connections
-route with those same persisted callbacks. Desktop uses the same production
-server-UI window composition for normal Local and remote startup; no second
-workspace-window owner exists.
+flush host-local writes before returning, and separate disconnect/forget from
+server revocation.
+The PWA manager persists its bookmark list only at the exact manager origin.
+One-time pairing fragments never enter that storage. The connected shared
+workspace enables the Connections route for the authenticated selected server.
+Desktop uses the same production server-UI window composition for normal Local
+and remote startup; no second workspace-window owner exists.
 
 ## Web connection host
 
 - `app.terminay.com` has no Local server option and never claims browser
   filesystem/PTY authority.
-- Its disconnected state is a connection picker with add/import, remembered
-  profiles, offline/revoked status, and clear recovery.
+- Its disconnected state is a connection picker with **Add connection…**,
+  remembered profiles, rename, open, and forget actions.
 - Selecting a profile opens it in the current browser view; an explicit action
   can open another browser tab.
-- The host shell contains connection management, origin-isolated credential
-  bootstrap, WebRTC/signaling compatibility, bounded bundle installation, and
-  safe launch/failure UI only. It does not contain a full fallback
-  workspace application.
+- The PWA contains connection-profile management and navigation only.
+- Its installable application shell and saved profile list remain available
+  offline; opening a profile requires the selected session origin to be
+  reachable.
 - The exact session-origin shell owns one replaceable transport generation for
-  its mounted workspace. It exposes an opaque byte endpoint and lifecycle
-  operations, not raw WebRTC peers/channels or reconnect credentials.
+  its mounted workspace, device authentication, WebRTC/signaling, bundle
+  installation, and connection errors.
 - The host stores only non-secret connection metadata in localStorage or an
   equivalent browser store.
-- Origin-bound device keys and reconnect grants remain in IndexedDB/WebCrypto
-  storage on the exact server session origin.
+- The non-extractable browser device key remains in IndexedDB/WebCrypto storage
+  on the exact server session origin.
 - The connection host cannot read terminal output, project names, paths, device
-  keys, reconnect grants, PINs, or session-origin storage.
+  keys, PINs, or session-origin storage.
 
-The browser host implementation uses a Local-disabled `ConnectionProfileStore`
-and a versioned `terminay.web.connection-profiles.v1` metadata record. It
-restores malformed records defensively, keeps offline/relay/WebRTC/expired/
-revoked/unreachable statuses distinct, and requires explicit confirmation for
-forget or revoke. Opening a profile constructs a route-only URL on that exact
-HTTPS origin; an explicit new-tab action is host-controlled. Pairing fragments
-are consumed in memory and are not returned, persisted, or copied into the
-session URL. The host bridge accepts messages only from the exact selected
-session origin and expected window source, and rejects privileged payload keys.
+The PWA uses a Local-disabled `ConnectionProfileStore` and a versioned
+`terminay.web.connection-profiles.v1` metadata record. It restores malformed
+records defensively and requires explicit confirmation for forget. Opening a
+profile navigates to that exact HTTPS origin; an explicit new-tab action is
+host-controlled. Pairing fragments are handed to the stable session origin
+without being persisted or copied into the saved profile. Live connection,
+pairing, offline, and revocation states are presented by the session origin,
+not inferred by the manager.
 
-The manager accepts only sanitized profile metadata. A session record retains
-only a canonical origin; paths, queries, fragments, origin userinfo, pairing
-material, device keys, reconnect grants, and other credentials are rejected
-rather than becoming manager state or a session credential.
+The manager accepts only sanitized profile metadata. A profile retains only a
+label, canonical origin, and local created/last-opened timestamps. Pairing URL
+paths and fragments are discarded when the manager derives that profile.
+Queries, origin userinfo, pairing material, device keys, and other credentials
+never become manager state.
 
-`app.terminay.com` is a stable host/manager, not a latest independent workspace
-client. The selected server's verified bundle renders the workspace.
+`app.terminay.com` is the stable connection manager. The selected server's
+verified bundle renders the workspace at its stable session origin.
 
-The browser host exposes this boundary through a transactional archive
-installer. After authenticating the selected server, it requests one binary
-`tar.gz` server-UI archive over the asset lane, decompresses and unpacks it
-under a bundle-specific `/remote-app/<bundle-id>/` cache namespace, then
-launches the relative entry named by the archive metadata. The host treats the
-authenticated server as authoritative for every file inside its exact
-session-origin namespace. It does not allowlist generated filenames, interpret
-the server's build layout, request assets one by one, require per-file hashes,
-or compare the bundle against a checkout of the Terminay source repository.
-
-Containment and resource bounds remain host responsibilities. Archive entries
-must be relative, canonical paths beneath the generated bundle namespace;
-absolute paths, parent traversal, links, duplicate normalized paths, and writes
-to bootstrap/signaling routes are rejected. The host enforces compressed size,
-expanded size, entry-count, and individual-entry limits. A failed, interrupted,
-malformed, or over-limit installation leaves the previous complete bundle
-active. Cache Storage implementations stage a complete bundle and publish the
-active metadata record last. The launch callback receives only the parsed
-browser host context and an opaque byte endpoint; bundle bytes, credentials,
-reconnect material, and feature frames are never promoted into the manager
-origin.
+The stable session origin installs the selected server's bounded workspace
+bundle after authentication. Bundle transfer and validation follow
+[server runtime and application protocol](./server-runtime-and-protocol.md).
+Bundle bytes, credentials, and feature frames never enter the manager origin.
 
 ## Server-bundled workspace and host shell
 
@@ -287,20 +263,9 @@ The product has one full responsive workspace UI implementation:
   both dimensions; taking over an existing terminal cannot retain a stale
   compact viewport height after more vertical space becomes available.
 
-Desktop and web connection hosts may wrap that workspace in a small stable
-shell. Cross-origin communication is narrow, versioned, and validated:
-
-- parent-to-workspace messages may provide non-secret current-profile display
-  metadata and request safe navigation/focus actions;
-- workspace-to-parent messages may report sanitized readiness, connection
-  status, server display name, or request an allowed host action;
-- every browser message checks exact origin and source window;
-- no bridge passes terminal data, pairing secrets, device keys, reconnect
-  grants, arbitrary filesystem paths, or generic Electron IPC;
-- the server UI declares explicit `frame-ancestors` when embedding is used;
-  and
-- direct standalone mode provides its own compact connection action or a safe
-  route back to the manager.
+Desktop may wrap that workspace in a small native shell. Its host bridge is
+narrow, versioned, source-bound, and contains no terminal data, pairing
+secrets, device keys, arbitrary filesystem paths, or generic Electron IPC.
 
 Remote server-provided code inside Electron runs with sandboxing, context
 isolation, Node integration disabled, and no ambient privileged preload. A
@@ -324,35 +289,53 @@ from the embedded artifact and does not download it through a public listener.
 Remote reads through its authenticated asset lane into an atomic,
 content-addressed cache rooted beneath a digest of the exact server identity.
 Interrupted or invalid replacement retains the last complete verified bundle
-for that server; neither another server's cache nor the embedded Local bundle
-is a remote fallback.
+for that server. Every cache entry remains bound to its exact server identity.
 
 The resulting renderer context contains only non-secret identity, negotiated
 versions/capabilities, and an opaque byte-endpoint handle. Bootstrap
-credentials, reconnect grants, signaling state, transport objects, protected
+credentials, signaling state, transport objects, protected
 keys, and raw cache paths remain in Desktop main. Native window identity and
 server logical-view identity remain separate bindings, so focus/close does not
 mutate a logical view without a typed server command.
 
-## Adding and pairing a connection
+## Browser connection journeys
 
-1. The user chooses **Add connection…** and pastes/opens a secure pairing URL,
-   scans its QR code, or follows an OS deep link.
-2. The client consumes the one-time fragment in memory and removes it from
-   visible/history state.
-3. The hosted bootstrap and server establish WebRTC through the data-blind
-   signaling service.
-4. The server bundle is hash-verified and launched on the exact session origin.
-5. Device-key pairing and PIN/approval complete against the server.
-6. The selected server origin is the credential compartment. A static browser
-   host keeps the compartment in IndexedDB keyed by that exact server origin:
-   it derives a non-extractable WebCrypto proof key from the one-time grant,
-   discards the grant, and keeps only sanitized profile metadata in
-   `localStorage`.
-7. Later opening uses a server challenge, the origin-bound proof key, and a
-   fresh short-lived application ticket. Missing/expired/revoked credentials ask for
-   fresh pairing without destroying the remembered non-secret profile unless
-   the user forgets it.
+Terminay supports two browser entry journeys. Both use the same session-origin
+pairing, credential, server-bundle, and reconnect contracts.
+
+### Direct pairing link
+
+1. The user opens the generated pairing URL directly, including its one-time
+   fragment.
+2. The exact server session origin consumes the fragment in memory and removes
+   it from the visible URL and browser history before loading other resources.
+3. The session origin establishes WebRTC, verifies and launches the selected
+   server bundle, obtains the user's PIN or approval, creates the browser device
+   key, and completes server enrollment.
+4. The session origin stores its non-extractable device private key in its own
+   IndexedDB/WebCrypto compartment. The one-time fragment is discarded.
+5. The connected workspace opens in that browser view.
+6. A later visit to the stable session origin reconnects the enrolled browser
+   with its stored credential and a fresh short-lived application ticket. It
+   does not require or accept reuse of the pairing URL.
+
+### `app.terminay.com` PWA
+
+1. The user opens `https://app.terminay.com` and sees the connection manager.
+2. The user chooses **Add connection…** and pastes the generated pairing URL.
+3. The manager validates the URL, extracts its stable HTTPS origin, immediately
+   saves or updates a profile containing only that origin, a label, and local
+   timestamps, then navigates to the complete pairing URL without storing it.
+4. The session origin performs the direct-link pairing journey.
+5. Returning to the manager restores the saved profile from local browser
+   storage.
+6. Selecting the saved connection opens its stable session origin. That origin
+   reads its own device credential and reconnects without a pairing URL.
+
+The manager does not participate in pairing and never receives the device key,
+PIN, connection ticket, terminal data, or workspace data. A missing or revoked
+session-origin device identity requests a newly generated pairing URL. The
+saved manager profile remains until the user chooses **Forget**.
 
 Browser connection and device-enrollment prompts use the same centered,
 responsive modal surface and form controls as the rest of the disconnected
@@ -361,11 +344,6 @@ device name and six digits before enabling its primary action, and remains
 fully inset from the viewport at narrow sizes. Starting a fresh pairing flow
 does not show a missing-saved-credential warning; enrollment errors appear only
 after an enrollment attempt fails.
-
-Browser acceptance tests treat navigation commit as transport readiness and
-the visible enrollment dialog as application readiness. They do not use the
-page `load` event as a proxy for either: cold asset compilation or a loaded CI
-runner may delay that event without changing the pairing contract.
 
 Desktop may accept the pairing URL in its connection menu even when the URL
 would otherwise open a browser. Browser and Desktop flows must produce the same
@@ -379,10 +357,10 @@ serialized into the connection menu store; protocol pairing completes as a
 separate operation against that origin.
 
 On Desktop that operation is a closed host action: Electron performs device
-enrollment, stores the durable grant in its credential compartment, verifies
+enrollment, stores the device private key in its credential compartment, verifies
 the selected server bundle, and replaces the current document's byte lane only
 after the authenticated remote transport is ready. The renderer receives no
-pairing fragment, grant, private key, or reconnect handle.
+pairing fragment or private key.
 
 ## Exposing a server
 
@@ -398,17 +376,9 @@ pairing fragment, grant, private key, or reconnect handle.
 - The visible server/session origin is non-secret metadata. **Copy pairing
   link** and the QR contain the complete short-lived fragment credential and
   expiry; the UI does not present the bare origin as a usable connection URL.
-- An optional **Direct network listener** is configured and started/stopped
-  separately in advanced settings. It may publish its own origin-bound pairing
-  handoff, but cannot replace or masquerade as WebRTC exposure.
-- Desktop projects independent WebRTC and direct-listener state through its
-  privileged host boundary. Stopping either route leaves the other route and
-  the private Local MessagePort/server authority untouched; an unavailable
-  WebRTC composition never starts the direct listener as a fallback.
 - Generating a fresh pairing room does not disconnect existing clients.
 - Stopping WebRTC exposure prevents new WebRTC reconnect/pairing but does not
-  stop the Local server, its private local workspace, or an independently
-  enabled direct network listener.
+  stop the Local server or its private local workspace.
 - Standalone server CLI and UI use the same exposure/trust model.
 
 ## Responsive workspace behaviour
@@ -459,7 +429,7 @@ Allowed host-local profile data:
 Forbidden in connection-manager localStorage, URLs, host messages, and logs:
 
 - pairing URL fragments and full unconsumed pairing URLs;
-- PINs, device private keys, reconnect grants, proof keys, signaling HMACs,
+- PINs, device private keys,
   terminal tickets, or server secrets;
 - terminal output, command history, project roots, filenames, or recordings.
 
@@ -470,35 +440,26 @@ explicit device preferences. Workspace snapshots, application DTOs, project
 roots, panel/terminal state, server settings, and feature capability
 projections are forbidden in the host store. Unclassified fields fail closed.
 
+The PWA profile is narrower than the Desktop profile: it contains only label,
+stable session origin, created time, and last-opened time.
+
 ## Failure behaviour
 
-- A failed remote connection never falls back to Local or another remembered
-  server silently.
-- Offline preserves the profile and credentials and offers Retry through the
-  same host-owned recovery controller used by automatic transport failure.
-- Required-channel failure replaces the entire transport generation even when
-  the WebRTC peer still reports connected. Retry cannot reuse the closed lane,
-  call a retired renderer callback, or depend on a page reload.
-- A mounted generation is live only while both its required byte lanes and its
-  server-side application-protocol connection are live. Completion or failure
-  of the protocol reader retires that complete generation even when the WebRTC
-  peer and application data channel still report open. Peer/channel state is
-  transport evidence, not application-liveness authority.
-- Protocol termination reaches the host-owned recovery controller as one typed,
-  generation-scoped failure. Automatic recovery and Retry each retire the old
-  peer and client, obtain a new host transport generation, authenticate, and
-  hydrate before reporting connected. Retry never waits on or reuses the
-  apparently-open data channel whose protocol reader has ended.
+- A failed remote connection remains bound to its selected server.
+- Offline preserves the profile and device identity and offers Retry through
+  the session origin's reconnect operation.
 - Connection errors remain visible and terminal input remains disabled until
   the new client, subscriptions, workspace, and mounted terminal attachments
   have hydrated successfully.
-- Expired/revoked explains whether fresh pairing or server-side approval is
-  required.
+- Missing or revoked device identity requests a fresh pairing URL.
 - Forget and revoke require confirmation explaining their different scopes.
 - Closing/reloading the host preserves server-side sessions.
-- If the host shell cannot safely load or embed the server bundle, it offers
-  the direct session URL and diagnostics instead of weakening sandbox/origin
-  policy.
+- If the host shell cannot safely load the server bundle, it shows a typed
+  diagnostic and leaves the connection unopened.
+
+WebRTC generation replacement and terminal resynchronization follow
+[remote access](./remote-access.md) and
+[terminal stream congestion and recovery](./terminal-stream-congestion-and-recovery.md).
 
 ## Non-goals
 
@@ -521,22 +482,27 @@ projections are forbidden in the host store. Unclassified fields fail closed.
   without crossing server, project, or credential state.
 - The web host offers the same add/manage/switch journey without showing a
   Local option.
-- Direct server URLs and host-embedded sessions run the server's exact bundled
-  responsive UI.
+- The installed PWA can open its manager and saved profile list offline without
+  claiming that an unreachable session origin is connected.
+- Opening a pairing link directly enrolls the browser and later opening the
+  stable session origin reconnects without the one-time link.
+- Adding a pairing URL in `app.terminay.com` saves its stable-origin profile
+  before navigating to session-origin pairing.
+- Returning to `app.terminay.com` lists the saved connection, and selecting it
+  reconnects through the stable session origin without reusing pairing
+  material.
+- Stable session origins run the server's exact bundled responsive UI.
 - Local Desktop, remote Desktop, and browser sessions launched against one
   server report the same verified bundle id; only their transport and declared
   host capabilities differ.
-- A Desktop shell whose bootstrap, bundle format, byte transport, execution
-  runtime, and required bridge are compatible can connect without understanding
-  that server's application-protocol feature version.
+- A Desktop shell connects only when the selected bundle's declared bootstrap,
+  bundle format, byte transport, execution runtime, and required bridge
+  contracts validate successfully.
 - Forgetting a profile does not claim to revoke server access; revoking a
   device closes it server-side.
 - Forgetting or revoking an unrelated remote profile leaves an active Local
   workspace connected and its terminals usable without a retry.
 - A malicious or compromised server bundle cannot obtain Electron Node access
   or another session origin's credentials through the host bridge.
-- With a mounted browser workspace, ending only the server application-protocol
-  reader while leaving its native WebRTC peer and application channel open
-  triggers one replacement generation. Automatic recovery, and manual Retry if
-  recovery is held offline, restore ordered terminal input without page reload,
-  duplicate PTYs, or a persistent `client is not connected` presentation.
+- Browser recovery restores ordered terminal input without duplicate PTYs or
+  workspace mutations.

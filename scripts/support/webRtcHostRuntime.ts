@@ -3,16 +3,7 @@ export type HostConfig = {
   expiresAt: string
   iceServers?: RTCIceServer[]
   relayJoinTokenHash: string
-  reconnect?: {
-    attemptId: string
-    protocolVersion: 'v1'
-    reconnectHandle: string
-    savedSessionExpiresAt: string
-    sessionId: string
-  }
   roomId: string
-  sessionId?: string
-  signalingAuthToken: string
   signalingUrl: string
 }
 
@@ -170,120 +161,15 @@ function parseJson(raw: unknown): Record<string, unknown> | null {
   }
 }
 
-function base64UrlToBytes(value: string): ArrayBuffer {
-  const base64 = value.replace(/-/g, '+').replace(/_/g, '/')
-  const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, '=')
-  const bytes = Uint8Array.from(atob(padded), (char) => char.charCodeAt(0))
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
-}
-
-function bytesToBase64Url(bytes: ArrayBuffer): string {
-  const binary = Array.from(new Uint8Array(bytes), (byte) => String.fromCharCode(byte)).join('')
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => stableJson(item)).join(',')}]`
-  }
-  if (value && typeof value === 'object') {
-    const record = value as Record<string, unknown>
-    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(',')}}`
-  }
-  return JSON.stringify(value)
-}
-
-function canonicalSignalPayload(message: Record<string, unknown>): string {
-  const reconnect = typeof message.type === 'string' && message.type.startsWith('reconnect-')
-  const payload: Record<string, unknown> = reconnect
-    ? {
-        attemptId: message.attemptId ?? '',
-        nonce: message.nonce,
-        protocolVersion: message.protocolVersion ?? '',
-        reconnectHandle: message.reconnectHandle ?? '',
-        savedSessionExpiresAt: message.savedSessionExpiresAt ?? '',
-        sessionId: message.sessionId ?? '',
-        type: message.type,
-      }
-    : {
-        nonce: message.nonce,
-        roomId: message.roomId,
-        type: message.type,
-      }
-  if ('candidate' in message) payload.candidate = message.candidate
-  if ('sdp' in message) payload.sdp = message.sdp
-  return stableJson(payload)
-}
-
-function assertSignalContext(config: HostConfig, message: Record<string, unknown>): void {
-  if (!config.reconnect) return
-  if (
-    message.attemptId !== config.reconnect.attemptId ||
-    message.protocolVersion !== config.reconnect.protocolVersion ||
-    message.reconnectHandle !== config.reconnect.reconnectHandle ||
-    message.sessionId !== config.reconnect.sessionId
-  ) {
-    throw new Error('The browser sent WebRTC signaling for a different reconnect attempt.')
-  }
-}
-
 function isSignalForRoom(message: Record<string, unknown>, roomId: string): boolean {
-  return !('roomId' in message) || message.roomId === roomId
-}
-
-async function createSignalingAuthKey(token: string): Promise<CryptoKey> {
-  return crypto.subtle.importKey(
-    'raw',
-    base64UrlToBytes(token),
-    { hash: 'SHA-256', name: 'HMAC' },
-    false,
-    ['sign', 'verify'],
-  )
-}
-
-async function signSignalMessage(authKey: CryptoKey, message: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const signedMessage = {
-    ...message,
-    nonce: typeof message.nonce === 'string' && message.nonce ? message.nonce : crypto.randomUUID(),
-  }
-  const signature = await crypto.subtle.sign('HMAC', authKey, new TextEncoder().encode(canonicalSignalPayload(signedMessage)))
-  return { ...signedMessage, signature: bytesToBase64Url(signature) }
+  return message.roomId === roomId
 }
 
 function createOutboundSignalPayload(config: HostConfig, message: Record<string, unknown>): Record<string, unknown> {
-  if (config.reconnect) {
-    const payload: Record<string, unknown> = {
-      ...message,
-      attemptId: config.reconnect.attemptId,
-      protocolVersion: config.reconnect.protocolVersion,
-      reconnectHandle: config.reconnect.reconnectHandle,
-      sessionId: config.reconnect.sessionId,
-      type: message.type === 'offer'
-        ? 'reconnect-offer'
-        : message.type === 'ice'
-          ? 'reconnect-ice'
-          : message.type,
-    }
-    if (config.reconnect.savedSessionExpiresAt) {
-      payload.savedSessionExpiresAt = config.reconnect.savedSessionExpiresAt
-    }
-    return payload
-  }
-
   return {
     ...message,
     roomId: config.roomId,
   }
-}
-
-async function verifySignalMessage(authKey: CryptoKey, message: Record<string, unknown>): Promise<boolean> {
-  if (typeof message.signature !== 'string') return false
-  return crypto.subtle.verify(
-    'HMAC',
-    authKey,
-    base64UrlToBytes(message.signature),
-    new TextEncoder().encode(canonicalSignalPayload(message)),
-  )
 }
 
 function notifyUiArchiveTransfer(transfer: UiArchiveTransfer): void {
@@ -409,7 +295,6 @@ export async function runHost(
   const api = dependencies.api ?? window.terminayWebRtcHost
   if (!api) throw new Error('WebRTC host bridge is unavailable.')
 
-  const signalingAuthKey = await createSignalingAuthKey(config.signalingAuthToken)
   const peerConfiguration: RTCConfiguration = {
     iceServers: config.iceServers?.length ? config.iceServers : [{ urls: 'stun:stun.l.google.com:19302' }],
   }
@@ -431,7 +316,6 @@ export async function runHost(
   let terminalClosed = false
   let applicationClosed = false
   let terminalAuthenticated = false
-  const seenSignalNonces = new Set<string>()
   const closeTerminal = (reason = 'WebRTC terminal channel closed.') => {
     if (terminalClosed) return
     terminalClosed = true
@@ -453,10 +337,10 @@ export async function runHost(
 
   peer.addEventListener('icecandidate', (event) => {
     if (!event.candidate) return
-    void signSignalMessage(signalingAuthKey, createOutboundSignalPayload(config, {
+    api.sendSignalMessage(createOutboundSignalPayload(config, {
       candidate: event.candidate.toJSON(),
       type: 'ice',
-    })).then((message) => api.sendSignalMessage(message))
+    }))
   })
 
   const bindUiArchiveProtocol = (channel: RTCDataChannel) => channel.addEventListener('message', (event) => {
@@ -508,8 +392,7 @@ export async function runHost(
       }
     })()
   })
-	// `assets` is canonical; the existing singular browser lane carries the
-	// exact same archive protocol during the manager migration.
+	// Both named application lanes use the same bounded archive protocol.
 	bindUiArchiveProtocol(channels.assets)
 	bindUiArchiveProtocol(channels.asset)
 
@@ -626,24 +509,10 @@ export async function runHost(
           type: offer.type,
         }
         await peer.setLocalDescription(offerInit)
-        const signedOffer = await signSignalMessage(
-          signalingAuthKey,
-          createOutboundSignalPayload(config, { sdp: offerInit, type: 'offer' }),
-        )
-        api.sendSignalMessage(signedOffer)
-      } else if ((message.type === 'answer' || message.type === 'reconnect-answer') && message.sdp && typeof message.sdp === 'object') {
-        assertSignalContext(config, message)
-        if (!await verifySignalMessage(signalingAuthKey, message)) {
-          throw new Error('The browser sent an unauthenticated WebRTC answer.')
-        }
-        rejectSignalReplay(message, seenSignalNonces)
+        api.sendSignalMessage(createOutboundSignalPayload(config, { sdp: offerInit, type: 'offer' }))
+      } else if ((message.type === 'answer') && message.sdp && typeof message.sdp === 'object') {
         await peer.setRemoteDescription(message.sdp as RTCSessionDescriptionInit)
-      } else if ((message.type === 'ice' || message.type === 'reconnect-ice') && message.candidate && typeof message.candidate === 'object') {
-        assertSignalContext(config, message)
-        if (!await verifySignalMessage(signalingAuthKey, message)) {
-          throw new Error('The browser sent an unauthenticated WebRTC candidate.')
-        }
-        rejectSignalReplay(message, seenSignalNonces)
+      } else if ((message.type === 'ice') && message.candidate && typeof message.candidate === 'object') {
         await peer.addIceCandidate(message.candidate as RTCIceCandidateInit)
       } else if (message.type === 'error') {
         api.updateStatus?.({
@@ -676,14 +545,4 @@ export async function runHost(
 	activeUiArchiveRequestIds.clear()
     peer.close()
   }
-}
-
-function rejectSignalReplay(message: Record<string, unknown>, seenSignalNonces: Set<string>): void {
-  if (typeof message.nonce !== 'string' || !message.nonce) {
-    throw new Error('WebRTC signaling message was missing replay protection.')
-  }
-  if (seenSignalNonces.has(message.nonce)) {
-    throw new Error('WebRTC signaling message was replayed.')
-  }
-  seenSignalNonces.add(message.nonce)
 }
