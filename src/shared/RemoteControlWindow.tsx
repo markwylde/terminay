@@ -5,17 +5,16 @@ import './RemoteControlWindow.css';
 
 /** Settings-family chrome for the shared connections route. */
 export function RemoteControlWindow(
-	props: Omit<SharedConnectionsRouteBodyProps, 'state' | 'embedded'>,
+	props: Omit<
+		SharedConnectionsRouteBodyProps,
+		'state' | 'embedded' | 'presentation'
+	>,
 ) {
 	return (
-		<div className="remote-control-window">
-			<header className="remote-control-window__header">
-				<h1>Remote Control</h1>
-				<p>Choose and manage the Terminay server for this workspace.</p>
-			</header>
-			<div className="remote-control-window__body">
-				<SharedConnectionsRouteBody embedded state="ready" {...props} />
-			</div>
-		</div>
+		<SharedConnectionsRouteBody
+			presentation="management"
+			state="ready"
+			{...props}
+		/>
 	);
 }

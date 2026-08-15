@@ -90,12 +90,14 @@ File groups workspace creation separately from management surfaces:
 
 **Remote Control** opens the shared connections route as a first-class
 management window, the same presentation family as Settings, Macros,
-Recordings, and Project Environments. Desktop opens or focuses a native
-auxiliary window; the browser host presents the same route in-page. The
-window is not an Edit Tab sheet. Pairing URL and PIN fields stack at full
-width above continue/cancel actions. An empty saved-server list keeps its
-heading and pairing instructions on separate lines and hides that empty copy
-while the pairing form is open.
+Recordings, and Project Environments. It uses that family's sidebar-and-content
+chrome: title, subtitle, and **Add connection…** live in the left sidebar with
+the saved-server list; empty copy, selected-server details, and pairing live
+in the main pane. Desktop opens or focuses a native auxiliary window; the
+browser host presents the same route in-page. The window is not an Edit Tab
+sheet. Pairing URL and PIN fields stack at full width above continue/cancel
+actions. An empty saved-server list keeps its heading and pairing instructions
+on separate lines and hides that empty copy while the pairing form is open.
 
 Desktop development, packaged Desktop, and auxiliary routes execute the same
 server-bundled route bodies against the authenticated selected-server client.
@@ -500,7 +502,8 @@ WebRTC generation replacement and terminal resynchronization follow
 - The web host offers the same add/manage/switch journey without showing a
   Local option.
 - File → Remote Control and the header connection menu open the same
-  Remote Control management window as Settings/Macros, not an Edit Tab sheet.
+  Remote Control management window as Settings/Macros, including that family's
+  sidebar-and-content chrome, not an Edit Tab sheet.
 - The installed PWA can open its manager and saved profile list offline without
   claiming that an unreachable session origin is connected.
 - Opening a pairing link directly enrolls the browser and later opening the
