@@ -575,101 +575,12 @@ jobs:
           # is immutable, including its checksum and detached signature.
           gh release upload "$TAG" "$ARCHIVE" "$ARCHIVE.sha256" "$ARCHIVE.sig" --repo "$GH_REPO"
 
-  build-web-image:
-    name: Build Versioned Web Image
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    needs: release
-    if: needs.release.outputs.no_release != 'true'
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Check out immutable release tag
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ needs.release.outputs.tag }}
-          persist-credentials: false
-
-      - name: Verify immutable release tag source
-        env:
-          TAG: ${{ needs.release.outputs.tag }}
-          EXPECTED_COMMIT: ${{ needs.release.outputs.source_commit }}
-        run: |
-          test -n "$TAG"
-          test -n "$EXPECTED_COMMIT"
-          test "$(git rev-parse "$TAG^{commit}")" = "$EXPECTED_COMMIT"
-          test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
-
-      - name: Resolve versioned web image tags
-        id: web_tags
-        env:
-          TAG: ${{ needs.release.outputs.tag }}
-          EXPECTED_COMMIT: ${{ needs.release.outputs.source_commit }}
-          IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/terminay-web
-        run: |
-          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          VERSION="${TAG#v}"
-          MAJOR_MINOR="${VERSION%.*}"
-          {
-            echo 'tags<<EOF'
-            echo "$IMAGE_NAME:latest"
-            echo "$IMAGE_NAME:$VERSION"
-            echo "$IMAGE_NAME:$MAJOR_MINOR"
-            echo "$IMAGE_NAME:sha-$EXPECTED_COMMIT"
-            echo 'EOF'
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Verify actual production web image
-        run: npm run test:web-image-integration
-
-      - name: Publish versioned web image
-        id: web_image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          file: Dockerfile.web
-          push: true
-          tags: ${{ steps.web_tags.outputs.tags }}
-          platforms: linux/amd64
-          sbom: true
-          provenance: mode=max
-          build-args: |
-            TERMINAY_SOURCE_REVISION=${{ needs.release.outputs.source_commit }}
-
-      - name: Record immutable versioned web image
-        env:
-          DIGEST: ${{ steps.web_image.outputs.digest }}
-          TAG: ${{ needs.release.outputs.tag }}
-          EXPECTED_COMMIT: ${{ needs.release.outputs.source_commit }}
-          IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/terminay-web
-        run: |
-          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
-          {
-            echo "### Terminay web image for $TAG"
-            echo
-            echo "\`$IMAGE_NAME@$DIGEST\`"
-            echo
-            echo "Revision: \`$EXPECTED_COMMIT\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-
   publish-release-notes:
     name: Publish Release Notes
     runs-on: ubuntu-latest
     # Download, checksum verification, and the final release edit are bounded.
     timeout-minutes: 20
-    needs: [release, build-binaries, build-standalone-server, build-web-image]
+    needs: [release, build-binaries, build-standalone-server]
     if: needs.release.outputs.no_release != 'true'
     permissions:
       contents: write
