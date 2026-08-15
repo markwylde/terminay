@@ -124,6 +124,11 @@ export async function inspectRuntimeLayoutMetadata(root) {
 			'Desktop packaging must include the renderer and electron runtime directories',
 		);
 	}
+	if (!/"asarUnpack"\s*:\s*\[\s*"dist-electron\/\*\*"\s*\]/u.test(builder)) {
+		throw new Error(
+			'Desktop packaging must unpack dist-electron so the sandboxed preload is a regular file',
+		);
+	}
 	return Object.freeze({
 		buildsServerWorkspace: true,
 		standaloneDist: true,

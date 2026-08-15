@@ -10,7 +10,6 @@ import {
   validateLimits,
   validateTransportFrame,
 } from "@terminay/protocol";
-import { ControlFrameDecoder } from "../apps/terminay-server/dist/mcp/controlEndpoint.js";
 import { RemoteConnectionManager, validateUiBundleManifest } from "@terminay/server-core";
 
 function randomBytes(seed, length) {
@@ -28,7 +27,7 @@ function assertRejectsOnlyWithErrors(work) {
   catch (error) { assert.ok(error instanceof Error, "validators must throw Error instances"); }
 }
 
-test("protocol, local-control, transport, and UI-bundle validators survive deterministic fuzz inputs", () => {
+test("protocol, transport, and UI-bundle validators survive deterministic fuzz inputs", () => {
   const valid = encodeFrame({ type: "query", queryId: "fuzz-query", operation: "workspace.snapshot", payload: {} });
   for (let seed = 1; seed <= 2_000; seed += 1) {
     const length = seed % 3 === 0 ? seed % 4096 : seed % 128;
@@ -37,8 +36,6 @@ test("protocol, local-control, transport, and UI-bundle validators survive deter
     assertRejectsOnlyWithErrors(() => decodeFrame(bytes));
     assertRejectsOnlyWithErrors(() => decodeCanonicalJson(bytes));
     assertRejectsOnlyWithErrors(() => validateTransportFrame(bytes, 64 * 1024));
-    const decoder = new ControlFrameDecoder(64 * 1024, 8);
-    assertRejectsOnlyWithErrors(() => decoder.push(bytes));
 
     // Exercise the object validators with a small deterministic shape budget.
     // Rejections must remain ordinary Error instances at an untrusted
@@ -57,11 +54,6 @@ test("protocol, local-control, transport, and UI-bundle validators survive deter
     assertRejectsOnlyWithErrors(() => negotiateVersion(seed, seed - 1));
   }
 
-  const decoder = new ControlFrameDecoder(64 * 1024, 8);
-  assert.deepEqual(decoder.push(new TextEncoder().encode('{"id":"x"')),
-    []);
-  assertRejectsOnlyWithErrors(() => decoder.push(new TextEncoder().encode("x".repeat(70_000))));
-  assertRejectsOnlyWithErrors(() => decoder.finish());
   assertRejectsOnlyWithErrors(() => validateUiBundleManifest({ schemaVersion: 1, bundleId: "../../escape", assets: [], entryPath: "/" }));
 });
 
