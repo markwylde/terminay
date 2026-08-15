@@ -518,13 +518,18 @@ export function ConnectedWebRendererWorkspace({
 					}}
 				>
 					<section
-						aria-label="Browser connections"
+						aria-labelledby="connected-web-connections-title"
 						aria-modal="true"
 						className="connected-web-connection-dialog"
 						role="dialog"
 					>
 						<header>
-							<h2>Connections</h2>
+							<div>
+								<h2 id="connected-web-connections-title">Connections</h2>
+								<p>
+									Choose and manage the Terminay server for this workspace.
+								</p>
+							</div>
 							<button
 								type="button"
 								onClick={() => setIsConnectionManagerOpen(false)}
@@ -532,7 +537,11 @@ export function ConnectedWebRendererWorkspace({
 								Close
 							</button>
 						</header>
-						<SharedConnectionsRouteBody state="ready" {...connectionRoute} />
+						<SharedConnectionsRouteBody
+							embedded
+							state="ready"
+							{...connectionRoute}
+						/>
 					</section>
 				</div>
 			) : null}

@@ -3,6 +3,7 @@ import type {
 	ConnectionProfileStore,
 } from '@terminay/client-core';
 import { useState } from 'react';
+import './SharedProductionRoutes.css';
 
 interface ConnectionSummary {
 	readonly id: string;
@@ -76,7 +77,7 @@ export function SharedConnectionsRouteBody({
 	const visibleConnections = profiles ?? connections;
 	const currentId = snapshot?.currentProfileId ?? activeConnectionId;
 	const profileActions =
-		canPair && onPairingHandoff !== undefined ? (
+		canPair && onPairingHandoff !== undefined && !showPair ? (
 			<nav
 				className="shared-connections__profile-actions"
 				aria-label="Connection profile actions"
@@ -170,13 +171,15 @@ export function SharedConnectionsRouteBody({
 			{state === 'ready' && (
 				<>
 					<div role="listbox" aria-label="Saved Terminay servers">
-						{visibleConnections.length === 0 && (
+						{visibleConnections.length === 0 && !showPair && (
 							<div className="shared-connections__empty">
-								<strong>No saved servers yet</strong>
-								<span>
+								<p className="shared-connections__empty-title">
+									No saved servers yet
+								</p>
+								<p>
 									Add a server with its pairing link. You can return here to
 									open it whenever you need it.
-								</span>
+								</p>
 							</div>
 						)}
 						{visibleConnections.map((connection) => {
@@ -331,17 +334,21 @@ export function SharedConnectionsRouteBody({
 						);
 					}}
 				>
-					<label>
-						Connection name
-						<input
-							value={renameLabel}
-							onChange={(event) => setRenameLabel(event.target.value)}
-						/>
-					</label>
-					<button type="submit">Save name</button>
-					<button type="button" onClick={() => setRename(undefined)}>
-						Cancel
-					</button>
+					<div className="shared-connections__action-panel-fields">
+						<label>
+							Connection name
+							<input
+								value={renameLabel}
+								onChange={(event) => setRenameLabel(event.target.value)}
+							/>
+						</label>
+					</div>
+					<div className="shared-connections__action-panel-actions">
+						<button type="submit">Save name</button>
+						<button type="button" onClick={() => setRename(undefined)}>
+							Cancel
+						</button>
+					</div>
 				</form>
 			)}
 			{confirm !== undefined && (
@@ -359,12 +366,14 @@ export function SharedConnectionsRouteBody({
 							? 'This invalidates this device on the server.'
 							: 'Forgetting does not revoke server access.'}
 					</p>
-					<button type="button" onClick={confirmDestructiveAction}>
-						Confirm {confirm.action}
-					</button>
-					<button type="button" onClick={() => setConfirm(undefined)}>
-						Cancel
-					</button>
+					<div className="shared-connections__action-panel-actions">
+						<button type="button" onClick={confirmDestructiveAction}>
+							Confirm {confirm.action}
+						</button>
+						<button type="button" onClick={() => setConfirm(undefined)}>
+							Cancel
+						</button>
+					</div>
 				</section>
 			)}
 			{showPair && (
@@ -390,29 +399,36 @@ export function SharedConnectionsRouteBody({
 						);
 					}}
 				>
-					<label>
-						Pairing URL
-						<input
-							type="url"
-							value={pairingUrl}
-							onChange={(event) => setPairingUrl(event.target.value)}
-							required
-						/>
-					</label>
-					<label>
-						Pairing PIN
-						<input
-							inputMode="numeric"
-							maxLength={6}
-							value={pairingPin}
-							onChange={(event) => setPairingPin(event.target.value)}
-							required
-						/>
-					</label>
-					<button type="submit">Continue pairing</button>
-					<button type="button" onClick={() => setShowPair(false)}>
-						Cancel
-					</button>
+					<div className="shared-connections__action-panel-fields">
+						<label>
+							Pairing URL
+							<input
+								type="url"
+								value={pairingUrl}
+								onChange={(event) => setPairingUrl(event.target.value)}
+								placeholder="https://"
+								required
+							/>
+						</label>
+						<label>
+							Pairing PIN
+							<input
+								inputMode="numeric"
+								maxLength={6}
+								value={pairingPin}
+								onChange={(event) => setPairingPin(event.target.value)}
+								placeholder="000000"
+								autoComplete="one-time-code"
+								required
+							/>
+						</label>
+					</div>
+					<div className="shared-connections__action-panel-actions">
+						<button type="submit">Continue pairing</button>
+						<button type="button" onClick={() => setShowPair(false)}>
+							Cancel
+						</button>
+					</div>
 				</form>
 			)}
 		</main>
