@@ -45,8 +45,7 @@ export async function createDesktopBootstrappedWebRtcTransport(options: {
 }
 
 const unavailableAssetLane = Object.freeze({
-	manifest: async (): Promise<never> => { throw new Error('Desktop WebRTC asset lane is unavailable.'); },
-	read: async (): Promise<never> => { throw new Error('Desktop WebRTC asset lane is unavailable.'); },
+	getBundle: async (): Promise<never> => { throw new Error('Desktop WebRTC asset lane is unavailable.'); },
 });
 
 export async function createDesktopBootstrappedWebRtcConnection(options: {

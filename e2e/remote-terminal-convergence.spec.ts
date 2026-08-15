@@ -143,6 +143,31 @@ function terminalPanel(page: Page, sessionId: string) {
 	);
 }
 
+async function waitForBrowserTerminalAttachment(
+	mainWindow: Page,
+	browserPanel: Locator,
+	desktopSessionId: string,
+): Promise<void> {
+	let lastError: unknown;
+	for (let attempt = 1; attempt <= 5; attempt += 1) {
+		const marker = `__TERMINAY_RECONNECT_ATTACHMENT_${attempt}__`;
+		const encodedMarker = Buffer.from(`${marker}\n`, 'utf8').toString('base64');
+		await typeInVisibleTerminal(
+			mainWindow,
+			`printf '%s' '${encodedMarker}' | base64 -d\n`,
+			desktopSessionId,
+		);
+		try {
+			await expect(browserPanel).toContainText(marker, { timeout: 2_500 });
+			return;
+		} catch (error) {
+			lastError = error;
+		}
+	}
+	if (lastError instanceof Error) throw lastError;
+	throw new Error('Browser terminal did not complete reattachment.');
+}
+
 async function expectControlBarLayout(panel: Locator): Promise<void> {
 	const geometry = await panel.evaluate((element) => {
 		const bar = element.querySelector<HTMLElement>('.terminal-presentation-control');
@@ -424,13 +449,6 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 			}
 			await window.terminayRemoteProtocolFaultTest.failConnection(connectionId);
 		}, failedConnectionId);
-		await typeInVisibleTerminal(
-			mainWindow,
-			`printf '%s' '${encodedResumeProof}' | base64 -d\n`,
-			desktopSessionId,
-		);
-		await expect(mainWindow.locator('.project-tabbar')).toBeVisible();
-		await expect(desktopPanel).toContainText(resumeProof);
 		await expect
 			.poll(() =>
 				mainWindow.evaluate(() =>
@@ -438,6 +456,17 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 				),
 			)
 			.toEqual([expect.not.stringMatching(failedConnectionId)]);
+		// ServerCore records a replacement connection before the browser's terminal
+		// view has completed its reattachment. Prove that the rendered terminal is
+		// live before sending the single, non-duplicated resume marker below.
+		await waitForBrowserTerminalAttachment(mainWindow, browserPanel, desktopSessionId);
+		await typeInVisibleTerminal(
+			mainWindow,
+			`printf '%s' '${encodedResumeProof}' | base64 -d\n`,
+			desktopSessionId,
+		);
+		await expect(mainWindow.locator('.project-tabbar')).toBeVisible();
+		await expect(desktopPanel).toContainText(resumeProof);
 		await expect(terminalPanel(page, desktopSessionId)).toContainText(
 			resumeProof,
 			{

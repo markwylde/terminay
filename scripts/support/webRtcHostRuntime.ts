@@ -21,8 +21,8 @@ export type HostApi = {
   closeApplication?(channelId: string, reason?: string): void
   attachTerminal(channelId: string, ticket: string): Promise<void>
   closeTerminal(channelId: string, reason?: string): void
-  getAsset(path: string): Promise<unknown>
-  getAssetManifest(): Promise<unknown>
+	/** One immutable gzip-compressed tar bundle from the authenticated server. */
+	getUiArchive(): Promise<unknown>
   getConfig(): Promise<HostConfig | null>
   handleApiRequest(pathname: string, body: Record<string, unknown>, appOrigin: string): Promise<unknown>
   handleTerminalMessage(channelId: string, message: string): void
@@ -35,19 +35,15 @@ export type HostApi = {
   onTerminalMessage(listener: (message: { channelId: string; message: string }) => void): () => void
 }
 
-const ASSET_CHUNK_BODY_CHARS = 64 * 1024
-const ASSET_CHUNK_WINDOW = 4
-const ASSET_TRANSFER_TIMEOUT_MS = 15_000
-// The bundled browser installs its manifest and assets sequentially. One
-// active request is therefore sufficient for product behavior and prevents a
-// hostile peer from multiplying the per-transfer acknowledgement window.
-const MAX_ACTIVE_ASSET_REQUESTS = 1
-const MAX_UNACKNOWLEDGED_ASSET_BODY_CHARS =
-  MAX_ACTIVE_ASSET_REQUESTS * ASSET_CHUNK_WINDOW * ASSET_CHUNK_BODY_CHARS
+export const UI_ARCHIVE_CHUNK_BYTES = 64 * 1024
+export const UI_ARCHIVE_CHUNK_WINDOW = 4
+export const UI_ARCHIVE_TRANSFER_TIMEOUT_MS = 15_000
+export const UI_ARCHIVE_FORMAT_VERSION = 1
+const MAX_ACTIVE_UI_ARCHIVE_REQUESTS = 1
 const MAX_INBOUND_PROTOCOL_BYTES = 128 * 1024
 const DEFAULT_ICE_RECOVERY_GRACE_MS = 5_000
 
-type AssetTransfer = {
+type UiArchiveTransfer = {
   acknowledged: Set<number>
   cancelled: boolean
   notify: Set<() => void>
@@ -290,24 +286,24 @@ async function verifySignalMessage(authKey: CryptoKey, message: Record<string, u
   )
 }
 
-function notifyAssetTransfer(transfer: AssetTransfer): void {
+function notifyUiArchiveTransfer(transfer: UiArchiveTransfer): void {
   for (const notify of transfer.notify) notify()
   transfer.notify.clear()
 }
 
-async function waitForAssetTransfer(
-  transfer: AssetTransfer,
+async function waitForUiArchiveTransfer(
+	transfer: UiArchiveTransfer,
   predicate: () => boolean,
 ): Promise<void> {
   while (!predicate()) {
     if (transfer.cancelled) {
-      throw new Error('Asset transfer was cancelled.')
+		throw new Error('UI archive transfer was cancelled.')
     }
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
         transfer.notify.delete(onProgress)
-        reject(new Error('Asset transfer acknowledgement timed out.'))
-      }, ASSET_TRANSFER_TIMEOUT_MS)
+			reject(new Error('UI archive transfer acknowledgement timed out.'))
+		}, UI_ARCHIVE_TRANSFER_TIMEOUT_MS)
       const onProgress = () => {
         clearTimeout(timeout)
         resolve()
@@ -317,59 +313,92 @@ async function waitForAssetTransfer(
   }
 }
 
-async function sendAssetResponse(
-  channel: RTCDataChannel,
-  transfers: Map<string, AssetTransfer>,
-  id: string,
-  response: unknown,
+function sendUiArchiveError(
+	channel: RTCDataChannel,
+	id: string,
+	code: 'cancelled' | 'internal' | 'invalid-request' | 'timeout' | 'unavailable',
+	message: string,
+): void {
+	if (channel.readyState !== 'open') return
+	channel.send(JSON.stringify({ code, id, message, type: 'asset:bundle-error' }))
+}
+
+function asUiArchive(value: unknown): Readonly<{
+	archiveFormatVersion: number
+	bundleId: string
+	bytes: Uint8Array
+	compressedBytes: number
+}> {
+	if (typeof value !== 'object' || value === null) throw new TypeError('Server UI archive response is invalid.')
+	const archive = value as Record<string, unknown>
+	if (
+		archive.archiveFormatVersion !== UI_ARCHIVE_FORMAT_VERSION ||
+		typeof archive.bundleId !== 'string' ||
+		archive.bundleId.length < 8 ||
+		!(archive.bytes instanceof Uint8Array) ||
+		!Number.isSafeInteger(archive.compressedBytes) ||
+		archive.compressedBytes !== archive.bytes.byteLength ||
+		archive.compressedBytes < 1
+	) throw new TypeError('Server UI archive response is invalid.')
+	return archive as Readonly<{ archiveFormatVersion: number; bundleId: string; bytes: Uint8Array; compressedBytes: number }>
+}
+
+function binaryUiArchiveChunk(index: number, bytes: Uint8Array): ArrayBuffer {
+	const frame = new Uint8Array(8 + bytes.byteLength)
+	frame.set([0x54, 0x42, UI_ARCHIVE_FORMAT_VERSION, 0x01], 0)
+	new DataView(frame.buffer).setUint32(4, index, false)
+	frame.set(bytes, 8)
+	return frame.buffer
+}
+
+async function sendUiArchive(
+	channel: RTCDataChannel,
+	transfers: Map<string, UiArchiveTransfer>,
+	id: string,
+	archive: unknown,
 ): Promise<void> {
-  const bodyBase64 = typeof response === 'object' && response !== null && 'bodyBase64' in response
-    ? (response as { bodyBase64?: unknown }).bodyBase64
-    : null
-
-  if (typeof bodyBase64 !== 'string' || bodyBase64.length <= ASSET_CHUNK_BODY_CHARS) {
-    channel.send(JSON.stringify({ ...response as Record<string, unknown>, id }))
-    return
-  }
-
-  const total = Math.ceil(bodyBase64.length / ASSET_CHUNK_BODY_CHARS)
-  const metadata = { ...response as Record<string, unknown> }
-  delete metadata.bodyBase64
-  const transfer: AssetTransfer = {
-    acknowledged: new Set(),
+	const bundle = asUiArchive(archive)
+	const chunks = Math.ceil(bundle.compressedBytes / UI_ARCHIVE_CHUNK_BYTES)
+	if (chunks < 1 || chunks > 0xffff_ffff) throw new RangeError('Server UI archive chunk count is invalid.')
+	const transfer: UiArchiveTransfer = {
+		acknowledged: new Set(),
     cancelled: false,
     notify: new Set(),
     sent: 0,
   }
-  transfers.set(id, transfer)
-  try {
-    for (let index = 0; index < total; index += 1) {
-      await waitForAssetTransfer(
-        transfer,
-        () => transfer.sent - transfer.acknowledged.size < ASSET_CHUNK_WINDOW,
-      )
-      if (channel.readyState !== 'open') {
-        throw new Error('Asset channel closed during transfer.')
-      }
-      channel.send(JSON.stringify({
-        ...metadata,
-        bodyBase64Chunk: bodyBase64.slice(index * ASSET_CHUNK_BODY_CHARS, (index + 1) * ASSET_CHUNK_BODY_CHARS),
-        id,
-        index,
-        total,
-        type: 'asset:chunk',
-      }))
-      transfer.sent += 1
-      // Yield so API and terminal stream callbacks are not monopolized by a
-      // large cached UI asset.
-      await new Promise<void>((resolve) => setTimeout(resolve, 0))
-    }
-    await waitForAssetTransfer(
-      transfer,
-      () => transfer.acknowledged.size === total,
-    )
-  } finally {
-    transfers.delete(id)
+	transfers.set(id, transfer)
+	try {
+		channel.send(JSON.stringify({
+			archiveFormatVersion: UI_ARCHIVE_FORMAT_VERSION,
+			bundleId: bundle.bundleId,
+			chunkBytes: UI_ARCHIVE_CHUNK_BYTES,
+			chunks,
+			compressedBytes: bundle.compressedBytes,
+			id,
+			type: 'asset:bundle-start',
+		}))
+		for (let index = 0; index < chunks; index += 1) {
+			await waitForUiArchiveTransfer(
+				transfer,
+				() => transfer.sent - transfer.acknowledged.size < UI_ARCHIVE_CHUNK_WINDOW,
+			)
+			if (channel.readyState !== 'open') {
+				throw new Error('UI archive channel closed during transfer.')
+			}
+			const offset = index * UI_ARCHIVE_CHUNK_BYTES
+			transfer.sent += 1
+			// Record before send: a deterministic test bridge (or a future local
+			// transport adapter) may synchronously deliver an acknowledgement.
+			channel.send(binaryUiArchiveChunk(index, bundle.bytes.subarray(offset, offset + UI_ARCHIVE_CHUNK_BYTES)))
+			await new Promise<void>((resolve) => setTimeout(resolve, 0))
+		}
+		await waitForUiArchiveTransfer(
+			transfer,
+			() => transfer.acknowledged.size === chunks,
+		)
+		if (channel.readyState === 'open') channel.send(JSON.stringify({ id, type: 'asset:bundle-complete' }))
+	} finally {
+		transfers.delete(id)
   }
 }
 
@@ -397,8 +426,8 @@ export async function runHost(
   }
   const applicationChannelId = crypto.randomUUID()
   const terminalChannelId = crypto.randomUUID()
-  const assetTransfers = new Map<string, AssetTransfer>()
-  const activeAssetRequestIds = new Set<string>()
+	const uiArchiveTransfers = new Map<string, UiArchiveTransfer>()
+	const activeUiArchiveRequestIds = new Set<string>()
   let terminalClosed = false
   let applicationClosed = false
   let terminalAuthenticated = false
@@ -430,12 +459,12 @@ export async function runHost(
     })).then((message) => api.sendSignalMessage(message))
   })
 
-  const bindAssetProtocol = (channel: RTCDataChannel) => channel.addEventListener('message', (event) => {
+  const bindUiArchiveProtocol = (channel: RTCDataChannel) => channel.addEventListener('message', (event) => {
     void (async () => {
       const request = parseJson(event.data)
       if (!request || typeof request.id !== 'string') return
-      if (request.type === 'asset:ack') {
-        const transfer = assetTransfers.get(request.id)
+      if (request.type === 'asset:bundle-ack') {
+        const transfer = uiArchiveTransfers.get(request.id)
         const index = Number(request.index)
         if (
           transfer &&
@@ -444,52 +473,45 @@ export async function runHost(
           index < transfer.sent
         ) {
           transfer.acknowledged.add(index)
-          notifyAssetTransfer(transfer)
+          notifyUiArchiveTransfer(transfer)
         }
         return
       }
-      if (request.type === 'asset:cancel') {
-        const transfer = assetTransfers.get(request.id)
+      if (request.type === 'asset:bundle-cancel') {
+        const transfer = uiArchiveTransfers.get(request.id)
         if (transfer) {
           transfer.cancelled = true
-          notifyAssetTransfer(transfer)
+          notifyUiArchiveTransfer(transfer)
         }
         return
       }
       if (
-        activeAssetRequestIds.has(request.id) ||
-        activeAssetRequestIds.size >= MAX_ACTIVE_ASSET_REQUESTS
+        activeUiArchiveRequestIds.has(request.id) ||
+        activeUiArchiveRequestIds.size >= MAX_ACTIVE_UI_ARCHIVE_REQUESTS
       ) {
-        channel.send(JSON.stringify({
-          error:
-            `Asset request limit reached. Terminay permits ${MAX_ACTIVE_ASSET_REQUESTS} ` +
-            `active request and ${MAX_UNACKNOWLEDGED_ASSET_BODY_CHARS} ` +
-            'unacknowledged Base64 body characters per peer.',
-          id: request.id,
-        }))
+        sendUiArchiveError(channel, request.id, 'unavailable', 'A UI archive transfer is already active for this peer.')
         return
       }
-      activeAssetRequestIds.add(request.id)
+      if (request.type !== 'asset:get-bundle' || request.archiveFormatVersion !== UI_ARCHIVE_FORMAT_VERSION) {
+        sendUiArchiveError(channel, request.id, 'invalid-request', 'The requested UI archive format is unsupported.')
+        return
+      }
+      activeUiArchiveRequestIds.add(request.id)
       try {
-        const response = request.type === 'asset:get-manifest'
-          ? await api.getAssetManifest()
-          : await api.getAsset(String(request.path ?? ''))
-        await sendAssetResponse(channel, assetTransfers, request.id, response)
+        await sendUiArchive(channel, uiArchiveTransfers, request.id, await api.getUiArchive())
       } catch (error) {
-        channel.send(JSON.stringify({
-          error: error instanceof Error ? error.message : 'Asset request failed.',
-          id: request.id,
-        }))
+			const message = error instanceof Error ? error.message : 'UI archive transfer failed.'
+			const code = /cancelled/iu.test(message) ? 'cancelled' : /timed out/iu.test(message) ? 'timeout' : 'internal'
+			sendUiArchiveError(channel, request.id, code, message)
       } finally {
-        activeAssetRequestIds.delete(request.id)
+        activeUiArchiveRequestIds.delete(request.id)
       }
     })()
   })
-  // `assets` is the canonical authenticated lane used by native Desktop.
-  // Singular `asset` is a version-1 browser compatibility adapter and is not
-  // exposed through the canonical host context.
-  bindAssetProtocol(channels.assets)
-  bindAssetProtocol(channels.asset)
+	// `assets` is canonical; the existing singular browser lane carries the
+	// exact same archive protocol during the manager migration.
+	bindUiArchiveProtocol(channels.assets)
+	bindUiArchiveProtocol(channels.asset)
 
   channels.api.addEventListener('message', (event) => {
     void (async () => {
@@ -646,12 +668,12 @@ export async function runHost(
     stopTerminalCloseRequests()
     closeApplication('WebRTC host window stopped.')
     closeTerminal('WebRTC host window stopped.')
-    for (const transfer of assetTransfers.values()) {
-      transfer.cancelled = true
-      notifyAssetTransfer(transfer)
-    }
-    assetTransfers.clear()
-    activeAssetRequestIds.clear()
+	for (const transfer of uiArchiveTransfers.values()) {
+		transfer.cancelled = true
+		notifyUiArchiveTransfer(transfer)
+	}
+	uiArchiveTransfers.clear()
+	activeUiArchiveRequestIds.clear()
     peer.close()
   }
 }

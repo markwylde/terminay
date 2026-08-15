@@ -57,8 +57,7 @@ test('production bootstrap installs one immutable host from the narrow hosted au
 		__TERMINAY_HOSTED_SESSION_AUTHORITY__: {
 			serverId: 'server-a',
 			hostContext: { serverId: 'server-a' },
-			assetManifest: async () => ({ bundleId: 'bundle-a' }),
-			readAsset: async () => new Uint8Array(),
+			readBundle: async () => new Uint8Array([1, 2, 3]),
 			byteEndpoint,
 			sessionId: 'room',
 			origin: 'https://room.terminay.com',
@@ -72,7 +71,9 @@ test('production bootstrap installs one immutable host from the narrow hosted au
 	const host = contract.bootstrapHostedBrowserSession();
 	assert.equal(host, globalThis.window.__TERMINAY_SESSION_TRANSPORT__);
 	assert.equal(Object.isFrozen(host), true);
-	assert.equal((await host.prepareWorkspace()).expectedServerId, 'server-a');
+	const prepared = await host.prepareWorkspace();
+	assert.equal(prepared.expectedServerId, 'server-a');
+	assert.deepEqual([...prepared.compressedArchive], [1, 2, 3]);
 	assert.throws(() => { globalThis.window.__TERMINAY_SESSION_TRANSPORT__ = {}; }, /read only|assign/u);
 });
 

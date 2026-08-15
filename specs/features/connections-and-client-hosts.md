@@ -217,8 +217,8 @@ workspace-window owner exists.
 - Selecting a profile opens it in the current browser view; an explicit action
   can open another browser tab.
 - The host shell contains connection management, origin-isolated credential
-  bootstrap, WebRTC/signaling compatibility, bundle verification/installation,
-  and safe launch/failure UI only. It does not contain a full fallback
+  bootstrap, WebRTC/signaling compatibility, bounded bundle installation, and
+  safe launch/failure UI only. It does not contain a full fallback
   workspace application.
 - The exact session-origin shell owns one replaceable transport generation for
   its mounted workspace. It exposes an opaque byte endpoint and lifecycle
@@ -248,15 +248,27 @@ rather than becoming manager state or a session credential.
 `app.terminay.com` is a stable host/manager, not a latest independent workspace
 client. The selected server's verified bundle renders the workspace.
 
-The browser host exposes this boundary through a transactional bundle installer.
-It validates the selected server identity, exact session origin, Task 27 host
-compatibility declaration, bounded asset namespace, sizes, and SHA-256 hashes
-before changing the active bundle pointer. A failed or interrupted installation
-leaves the previous complete bundle active. The launch callback receives only
-the parsed browser host context and an opaque byte endpoint; bundle bytes,
-credentials, reconnect material, and feature frames are never promoted into the
-manager origin. Implementations backed by Cache Storage use a bundle-specific
-staging cache and publish the active metadata record last.
+The browser host exposes this boundary through a transactional archive
+installer. After authenticating the selected server, it requests one binary
+`tar.gz` server-UI archive over the asset lane, decompresses and unpacks it
+under a bundle-specific `/remote-app/<bundle-id>/` cache namespace, then
+launches the relative entry named by the archive metadata. The host treats the
+authenticated server as authoritative for every file inside its exact
+session-origin namespace. It does not allowlist generated filenames, interpret
+the server's build layout, request assets one by one, require per-file hashes,
+or compare the bundle against a checkout of the Terminay source repository.
+
+Containment and resource bounds remain host responsibilities. Archive entries
+must be relative, canonical paths beneath the generated bundle namespace;
+absolute paths, parent traversal, links, duplicate normalized paths, and writes
+to bootstrap/signaling routes are rejected. The host enforces compressed size,
+expanded size, entry-count, and individual-entry limits. A failed, interrupted,
+malformed, or over-limit installation leaves the previous complete bundle
+active. Cache Storage implementations stage a complete bundle and publish the
+active metadata record last. The launch callback receives only the parsed
+browser host context and an opaque byte endpoint; bundle bytes, credentials,
+reconnect material, and feature frames are never promoted into the manager
+origin.
 
 ## Server-bundled workspace and host shell
 

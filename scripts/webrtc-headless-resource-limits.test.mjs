@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { build } from 'esbuild'
 
 const PEER_COUNT = 12
-const ASSET_CHUNK_BODY_CHARS = 64 * 1024
+const UI_ARCHIVE_CHUNK_BYTES = 64 * 1024
 const ASSET_CHUNK_COUNT = 10
 const ASSET_WINDOW = 4
 
@@ -30,12 +30,7 @@ test('multi-peer asset pressure stays proportional to the fixed per-peer ACK win
     const apiChannel = new MockDataChannel('api')
     peer.channels.set('asset', asset)
     peer.channels.set('api', apiChannel)
-    api.getAsset = async () => ({
-      bodyBase64: 'A'.repeat(ASSET_CHUNK_COUNT * ASSET_CHUNK_BODY_CHARS),
-      contentType: 'application/javascript',
-      hash: `asset-hash-${index}`,
-      path: `/remote-app/bundle/assets/large-${index}.js`,
-    })
+    api.getUiArchive = async () => fixtureArchive(`bundle-${index}`, ASSET_CHUNK_COUNT * UI_ARCHIVE_CHUNK_BYTES)
     api.handleApiRequest = async () => ({ peer: index, responsive: true })
 
     const cleanup = await runHost(createHostConfig(index), {
@@ -48,8 +43,8 @@ test('multi-peer asset pressure stays proportional to the fixed per-peer ACK win
   for (const [index, runtime] of runtimes.entries()) {
     runtime.asset.dispatchMessage(JSON.stringify({
       id: `asset-${index}`,
-      path: `/remote-app/bundle/assets/large-${index}.js`,
-      type: 'asset:get',
+			archiveFormatVersion: 1,
+      type: 'asset:get-bundle',
     }))
     runtime.apiChannel.dispatchMessage(JSON.stringify({
       body: {},
@@ -71,7 +66,7 @@ test('multi-peer asset pressure stays proportional to the fixed per-peer ACK win
     `aggregate outstanding chunks exceeded ${PEER_COUNT} peers × ${ASSET_WINDOW}`,
   )
   assert.equal(aggregateOutstanding, 0)
-  assert.equal(runtimes.every(({ peer }) => peer.createdChannelCount === 3), true)
+	assert.equal(runtimes.every(({ peer }) => peer.createdChannelCount === 6), true)
 
   for (const runtime of runtimes) runtime.cleanup()
   assert.equal(runtimes.every(({ peer }) => peer.closeCount === 1), true)
@@ -87,12 +82,7 @@ test('a slow consumer can be cancelled without starving API or terminal traffic'
   peer.channels.set('asset', asset)
   peer.channels.set('api', apiChannel)
   peer.channels.set('terminal', terminal)
-  api.getAsset = async () => ({
-    bodyBase64: 'A'.repeat(ASSET_CHUNK_COUNT * ASSET_CHUNK_BODY_CHARS),
-    contentType: 'application/javascript',
-    hash: 'slow-asset-hash',
-    path: '/remote-app/bundle/assets/slow.js',
-  })
+  api.getUiArchive = async () => fixtureArchive('slow-bundle', ASSET_CHUNK_COUNT * UI_ARCHIVE_CHUNK_BYTES)
   api.handleApiRequest = async () => ({ responsive: true })
 
   const cleanup = await runHost(createHostConfig(20), {
@@ -103,10 +93,10 @@ test('a slow consumer can be cancelled without starving API or terminal traffic'
   await api.waitForAttach()
   asset.dispatchMessage(JSON.stringify({
     id: 'slow-asset',
-    path: '/remote-app/bundle/assets/slow.js',
-    type: 'asset:get',
+		archiveFormatVersion: 1,
+    type: 'asset:get-bundle',
   }))
-  await waitFor(() => asset.chunkMessages.length === ASSET_WINDOW)
+  await waitFor(() => asset.binaryChunkMessages.length === ASSET_WINDOW)
 
   apiChannel.dispatchMessage(JSON.stringify({
     body: {},
@@ -118,10 +108,10 @@ test('a slow consumer can be cancelled without starving API or terminal traffic'
   await waitFor(() => apiChannel.sent.some((raw) => JSON.parse(raw).id === 'api-during-slow-consumer'))
   assert.equal(api.terminalMessages.length, 1)
 
-  asset.dispatchMessage(JSON.stringify({ id: 'slow-asset', type: 'asset:cancel' }))
-  await waitFor(() => asset.sent.some((raw) => /cancelled/.test(JSON.parse(raw).error ?? '')))
+  asset.dispatchMessage(JSON.stringify({ id: 'slow-asset', type: 'asset:bundle-cancel' }))
+  await waitFor(() => asset.sent.some((raw) => isControl(raw, 'asset:bundle-error') && /cancelled/.test(JSON.parse(raw).message ?? '')))
   await settle()
-  assert.equal(asset.chunkMessages.length, ASSET_WINDOW)
+  assert.equal(asset.binaryChunkMessages.length, ASSET_WINDOW)
 
   cleanup()
   assert.equal(peer.closeCount, 1)
@@ -227,8 +217,7 @@ function createHostApi() {
     get listenerCount() {
       return closeRequestListeners.size + signalListeners.size + terminalMessageListeners.size
     },
-    getAsset: async () => ({}),
-    getAssetManifest: async () => ({}),
+		getUiArchive: async () => fixtureArchive('default-bundle', 1),
     getConfig: async () => null,
     handleApiRequest: async () => ({}),
     handleTerminalMessage(channelId, message) {
@@ -267,10 +256,9 @@ class MockDataChannel extends EventTarget {
     this.sent = []
   }
 
-  get chunkMessages() {
+  get binaryChunkMessages() {
     return this.sent
-      .map((raw) => JSON.parse(raw))
-      .filter((message) => message.type === 'asset:chunk')
+			.filter((raw) => raw instanceof ArrayBuffer)
   }
 
   close() {
@@ -301,20 +289,25 @@ class AutoAckDataChannel extends MockDataChannel {
 
   send(raw) {
     super.send(raw)
-    const message = JSON.parse(raw)
-    if (message.type !== 'asset:chunk') return
+		if (typeof raw === 'string') {
+			const message = JSON.parse(raw)
+			if (message.type === 'asset:bundle-start') this.transferId = message.id
+			return
+		}
+		if (!(raw instanceof ArrayBuffer)) return
+		const index = new DataView(raw).getUint32(4, false)
     this.outstanding += 1
     this.maximumOutstanding = Math.max(this.maximumOutstanding, this.outstanding)
     this.onOutstandingChange(1)
     setTimeout(() => {
       if (this.closed) return
       this.outstanding -= 1
-      this.acknowledged.add(message.index)
+      this.acknowledged.add(index)
       this.onOutstandingChange(-1)
       this.dispatchMessage(JSON.stringify({
-        id: message.id,
-        index: message.index,
-        type: 'asset:ack',
+			id: this.transferId,
+			index,
+			type: 'asset:bundle-ack',
       }))
     }, this.ackDelayMs)
   }
@@ -380,6 +373,14 @@ async function waitFor(predicate, timeoutMs = 2_000) {
 
 async function settle() {
   await new Promise((resolve) => setTimeout(resolve, 30))
+}
+
+function fixtureArchive(bundleId, compressedBytes) {
+	return { archiveFormatVersion: 1, bundleId, bytes: new Uint8Array(compressedBytes).fill(65), compressedBytes }
+}
+
+function isControl(raw, type) {
+	return typeof raw === 'string' && JSON.parse(raw).type === type
 }
 
 async function importWebRtcHost() {

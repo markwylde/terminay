@@ -44,7 +44,6 @@ export {
 	type BrowserBootstrapStep,
 } from './browserBootstrapFailure.js';
 export {
-	BrowserHostUpgradeRequiredError,
 	BrowserSessionBundleHost,
 	CacheStorageBrowserBundleStore,
 	createBrowserManagerBundleHost,
@@ -52,12 +51,22 @@ export {
 	negotiateBrowserHostCapabilities,
 	MemoryBrowserBundleStore,
 	type BrowserCapabilityPlatform,
-	parseBrowserBundleManifest,
 	type BrowserBundleLaunch,
 	type BrowserBundleStore,
 	type OpaqueBrowserByteEndpoint,
 	type VerifiedBrowserBundle,
 } from './browserBundleHost.js';
+export {
+	decompressTerminayArchive,
+	extractTerminayArchive,
+	parseTerminayArchiveMetadata,
+	TERMINAY_ARCHIVE_FORMAT_VERSION,
+	TERMINAY_ARCHIVE_METADATA_PATH,
+	type ArchiveEntry,
+	type ArchiveExtractionLimits,
+	type ExtractedTerminayArchive,
+	type TerminayArchiveMetadata,
+} from './archiveBundle.js';
 
 /** Stable manager origin used by the hosted connection shell. */
 export const WEB_MANAGER_ORIGIN = TERMINAY_WEB_MANAGER_ORIGIN;
