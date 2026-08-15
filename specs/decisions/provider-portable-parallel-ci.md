@@ -16,8 +16,9 @@ E2E-image build, and five Electron Playwright shards:
 3. Five `ubuntu-latest` jobs split the Electron Playwright suite with
    `--shard=N/5`.
 
-The macOS smoke and fast gate are independent. The five E2E shards depend only
-on the E2E-image build, then run in parallel.
+The macOS smoke and fast gate are independent. Each provider selects one
+provider-specific E2E-image/shard pair at the job level; the five selected E2E
+shards depend only on that provider's E2E-image build, then run in parallel.
 
 ## E2E isolation
 
@@ -35,8 +36,10 @@ avoiding registry credentials and package publication for GitHub/Gitea and fork
 pull requests. Each shard writes Playwright output to a distinct shard directory
 and uploads it with a unique artifact name, even when the test step fails. The
 transfer image expires after one day; diagnostic shard reports expire after
-seven days. GitHub uses pinned artifact-action v4; self-hosted Gitea uses the
-pinned v3 action pair because its artifact service does not support v4.
+seven days. GitHub's E2E jobs contain only pinned artifact-action v4. The
+separate self-hosted Gitea E2E jobs contain only the pinned v3 action pair,
+because its artifact service does not support v4. Provider selection happens at
+the job level so GitHub never resolves the incompatible v3 actions.
 
 ## Work kept out of pull requests
 
