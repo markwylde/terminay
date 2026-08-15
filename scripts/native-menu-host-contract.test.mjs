@@ -63,6 +63,7 @@ test('canonical preload exposes only protocol-validated semantic host events', a
 		'open-recordings',
 		'open-project-environments',
 		'open-extensions',
+		'open-remote-control',
 	]) {
 		assert.match(protocol, new RegExp(`'${command}'`));
 	}
@@ -81,7 +82,7 @@ test('auxiliary routes remain inside the capability-governed workspace shell', a
 	assert.ok(shellStart >= 0);
 	assert.match(shell, /hasNativeMenus \? null : \(/);
 	assert.match(shell, /ConnectedBrowserAuxiliaryDialog/);
-	assert.match(shell, /connected-web-connection-backdrop/);
+	assert.doesNotMatch(shell, /connected-web-connection-backdrop/);
 	assert.doesNotMatch(shell, /browser-host-titlebar/);
 });
 
