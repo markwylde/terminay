@@ -92,7 +92,7 @@ test('Desktop native offerer establishes four isolated lanes and exposes the fra
   assert.ok([...Peer.instance.channels.values()].every(channel => channel.closed))
 })
 
-test('Desktop authenticated assets lane fetches manifest and reassembles bounded acknowledged chunks', async () => {
+test('Desktop authenticated assets lane requests one archive and reassembles binary acknowledged chunks', async () => {
   let signalListener = () => {}
   const signaling = {
     onMessage(listener) { signalListener = listener; return () => { signalListener = () => {} } },
@@ -104,18 +104,17 @@ test('Desktop authenticated assets lane fetches manifest and reassembles bounded
   const decode = (frame) => JSON.parse(new TextDecoder().decode(frame))
   const encode = (value) => new TextEncoder().encode(JSON.stringify(value))
 
-  const manifestPromise = connection.assets.manifest()
-  const manifestRequest = decode(assets.sent.at(-1))
-  assets.emit(encode({ id: manifestRequest.id, bundleId: 'bundle', assets: [] }))
-  assert.deepEqual(await manifestPromise, { bundleId: 'bundle', assets: [] })
-
-  const readPromise = connection.assets.read('/remote-app/bundle/app.js')
-  const readRequest = decode(assets.sent.at(-1))
-  assets.emit(encode({ id: readRequest.id, type: 'asset:chunk', index: 0, total: 2, path: readRequest.path, bodyBase64Chunk: 'AQID' }))
-  assets.emit(encode({ id: readRequest.id, type: 'asset:chunk', index: 1, total: 2, path: readRequest.path, bodyBase64Chunk: '' }))
-  assert.deepEqual([...(await readPromise)], [1, 2, 3])
+  const bundlePromise = connection.assets.getBundle()
+  const request = decode(assets.sent.at(-1))
+  assert.deepEqual({ type: request.type, archiveFormatVersion: request.archiveFormatVersion }, { type: 'asset:get-bundle', archiveFormatVersion: 1 })
+  assets.emit(encode({ id: request.id, type: 'asset:bundle-start', archiveFormatVersion: 1, bundleId: 'bundle_1234', compressedBytes: 5, chunkBytes: 3, chunks: 2 }))
+  const chunk = (index, body) => { const frame = new Uint8Array(8 + body.length); frame.set([0x54, 0x42, 0x01, 0x01]); new DataView(frame.buffer).setUint32(4, index); frame.set(body, 8); return frame }
+  assets.emit(chunk(0, new Uint8Array([1, 2, 3])))
+  assets.emit(chunk(1, new Uint8Array([4, 5])))
+  assets.emit(encode({ id: request.id, type: 'asset:bundle-complete' }))
+  assert.deepEqual([...(await bundlePromise)], [1, 2, 3, 4, 5])
   assert.deepEqual(assets.sent.slice(-2).map(decode).map(({ type, index }) => ({ type, index })), [
-    { type: 'asset:ack', index: 0 }, { type: 'asset:ack', index: 1 },
+    { type: 'asset:bundle-ack', index: 0 }, { type: 'asset:bundle-ack', index: 1 },
   ])
   await connection.transport.close()
 })

@@ -14,12 +14,13 @@ import {
   createNodeDataChannelOpenChannels,
   type NodeDataChannelSignaling,
 } from '../../apps/terminay-server/src/remote/nodeDataChannelPeer'
-import type { DesktopAuthenticatedAssetLane } from '../../apps/terminay-desktop/src/main/serverBundleHost'
+import type { DesktopArchiveAssetLane, DesktopAuthenticatedAssetLane } from '../../apps/terminay-desktop/src/main/serverBundleHost'
 
 const textEncoder = new TextEncoder()
 const textDecoder = new TextDecoder('utf-8', { fatal: true })
 const ASSET_REQUEST_TIMEOUT_MS = 15_000
-const MAX_ASSET_RESPONSE_BYTES = 16 * 1024 * 1024
+const MAX_COMPRESSED_ARCHIVE_BYTES = 32 * 1024 * 1024
+const MAX_ARCHIVE_CHUNKS = 2_048
 
 const CHANNELS = Object.freeze([
   'control',
@@ -138,15 +139,17 @@ export async function createDesktopWebRtcConnection(options: Readonly<{
   }
 }
 
-class DesktopWebRtcAssetLane implements DesktopAuthenticatedAssetLane {
+class DesktopWebRtcAssetLane implements DesktopArchiveAssetLane {
   private sequence = 0
-  private readonly pending = new Map<string, {
-    readonly resolve: (value: unknown) => void
+  private pending: {
+    readonly id: string
+    readonly resolve: (value: Uint8Array) => void
     readonly reject: (error: Error) => void
-    readonly timer: ReturnType<typeof setTimeout>
-    chunks?: Array<string | undefined>
-    metadata?: Record<string, unknown>
-  }>()
+    timer: ReturnType<typeof setTimeout>
+    chunks?: Array<Uint8Array | undefined>
+    chunkBytes?: number
+    compressedBytes?: number
+  } | undefined
 
   constructor(private readonly channel: HeadlessDataChannel) {
     channel.onMessage((frame) => this.receive(frame))
@@ -155,32 +158,15 @@ class DesktopWebRtcAssetLane implements DesktopAuthenticatedAssetLane {
     })
   }
 
-  manifest(): Promise<unknown> { return this.request({ type: 'asset:get-manifest' }) }
-
-  async read(assetPath: string): Promise<Uint8Array> {
-    if (!assetPath.startsWith('/remote-app/') || assetPath.includes('..')) throw new TypeError('Remote bundle asset path is invalid.')
-    const response = await this.request({ type: 'asset:get', path: assetPath })
-    if (!isRecord(response) || typeof response.bodyBase64 !== 'string' || response.path !== assetPath) {
-      throw new Error('Remote bundle asset response is invalid.')
-    }
-    const bytes = Buffer.from(response.bodyBase64, 'base64')
-    if (bytes.byteLength > MAX_ASSET_RESPONSE_BYTES) throw new Error('Remote bundle asset exceeds the Desktop limit.')
-    return new Uint8Array(bytes)
-  }
-
-  private request(payload: Record<string, unknown>): Promise<unknown> {
+  getBundle(): Promise<Uint8Array> {
     if (this.channel.readyState !== 'open') return Promise.reject(new Error('Desktop WebRTC asset lane is unavailable.'))
-    if (this.pending.size >= 4) return Promise.reject(new Error('Desktop WebRTC asset request limit reached.'))
-    const id = `desktop-asset-${++this.sequence}`
+    if (this.pending !== undefined) return Promise.reject(new Error('Desktop WebRTC archive transfer is already active.'))
+    const id = `desktop-bundle-${++this.sequence}`
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id)
-        this.send({ type: 'asset:cancel', id })
-        reject(new Error('Desktop WebRTC asset request timed out.'))
-      }, ASSET_REQUEST_TIMEOUT_MS)
-      this.pending.set(id, { resolve, reject, timer })
-      try { this.send({ ...payload, id }) } catch (error) {
-        clearTimeout(timer); this.pending.delete(id); reject(error instanceof Error ? error : new Error(String(error)))
+      const timer = setTimeout(() => this.cancel(id, new Error('Desktop WebRTC archive transfer timed out.')), ASSET_REQUEST_TIMEOUT_MS)
+      this.pending = { id, resolve, reject, timer }
+      try { this.send({ type: 'asset:get-bundle', id, archiveFormatVersion: 1 }) } catch (error) {
+        this.finish(id, error instanceof Error ? error : new Error(String(error)))
       }
     })
   }
@@ -192,39 +178,60 @@ class DesktopWebRtcAssetLane implements DesktopAuthenticatedAssetLane {
   }
 
   private receive(frame: Uint8Array): void {
+    if (isBundleChunk(frame)) { this.receiveChunk(frame); return }
     let message: Record<string, unknown>
     try {
       const value = JSON.parse(textDecoder.decode(frame)) as unknown
       if (!isRecord(value) || typeof value.id !== 'string') return
       message = value
     } catch { this.failAll(new Error('Desktop WebRTC asset response is malformed.')); return }
-    const pending = this.pending.get(message.id as string)
-    if (!pending) return
-    if (typeof message.error === 'string') { this.finish(message.id as string, new Error(message.error)); return }
-    if (message.type === 'asset:chunk') {
-      const index = Number(message.index), total = Number(message.total)
-      if (!Number.isSafeInteger(index) || !Number.isSafeInteger(total) || index < 0 || total < 1 || total > 128 || index >= total || typeof message.bodyBase64Chunk !== 'string') {
-        this.finish(message.id as string, new Error('Remote bundle asset chunk is invalid.')); return
-      }
-      pending.chunks ??= Array<string | undefined>(total).fill(undefined)
-      if (pending.chunks.length !== total || pending.chunks[index] !== undefined) { this.finish(message.id as string, new Error('Remote bundle asset chunks are inconsistent.')); return }
-      pending.metadata ??= Object.fromEntries(Object.entries(message).filter(([key]) => !['bodyBase64Chunk', 'index', 'total', 'type'].includes(key)))
-      pending.chunks[index] = message.bodyBase64Chunk
-      this.send({ type: 'asset:ack', id: message.id, index })
-      if (pending.chunks.every((chunk) => chunk !== undefined)) this.finish(message.id as string, { ...pending.metadata, bodyBase64: pending.chunks.join('') })
-      return
+    const pending = this.pending
+    if (pending === undefined || message.id !== pending.id) return
+    if (message.type === 'asset:bundle-error') {
+      this.finish(pending.id, new Error(typeof message.message === 'string' ? message.message : 'Desktop WebRTC archive transfer failed.')); return
     }
-    const { id: _id, ...response } = message
-    this.finish(message.id as string, response)
+    if (message.type === 'asset:bundle-start') { this.receiveStart(message); return }
+    if (message.type === 'asset:bundle-complete') {
+      if (pending.chunks === undefined || pending.chunks.some((chunk) => chunk === undefined) || pending.compressedBytes === undefined) { this.finish(pending.id, new Error('Desktop WebRTC archive completed before all chunks arrived.')); return }
+      const bytes = combineChunks(pending.chunks as Uint8Array[], pending.compressedBytes)
+      this.finish(pending.id, bytes); return
+    }
+    this.cancel(pending.id, new Error('Desktop WebRTC archive response is invalid.'))
   }
 
-  private finish(id: string, value: unknown): void {
-    const pending = this.pending.get(id); if (!pending) return
-    clearTimeout(pending.timer); this.pending.delete(id)
+  private receiveStart(message: Record<string, unknown>): void {
+    const pending = this.pending; if (pending === undefined) return
+    const chunkBytes = message.chunkBytes, chunks = message.chunks, compressedBytes = message.compressedBytes
+    if (message.archiveFormatVersion !== 1 || typeof message.bundleId !== 'string' || !/^[A-Za-z0-9_-]{8,128}$/u.test(message.bundleId) || !Number.isSafeInteger(chunkBytes) || !Number.isSafeInteger(chunks) || !Number.isSafeInteger(compressedBytes)) { this.cancel(pending.id, new Error('Desktop WebRTC archive start is invalid.')); return }
+    const boundedChunkBytes = chunkBytes as number, boundedChunks = chunks as number, boundedCompressedBytes = compressedBytes as number
+    if (boundedChunkBytes < 1 || boundedChunkBytes > 1024 * 1024 || boundedChunks < 1 || boundedChunks > MAX_ARCHIVE_CHUNKS || boundedCompressedBytes < 1 || boundedCompressedBytes > MAX_COMPRESSED_ARCHIVE_BYTES || boundedChunks !== Math.ceil(boundedCompressedBytes / boundedChunkBytes)) { this.cancel(pending.id, new Error('Desktop WebRTC archive start is invalid.')); return }
+    pending.chunks = Array<Uint8Array | undefined>(boundedChunks).fill(undefined)
+    pending.chunkBytes = boundedChunkBytes; pending.compressedBytes = boundedCompressedBytes
+    this.resetTimer(pending)
+  }
+  private receiveChunk(frame: Uint8Array): void {
+    const pending = this.pending
+    if (pending === undefined || pending.chunks === undefined || pending.chunkBytes === undefined) { if (pending !== undefined) this.cancel(pending.id, new Error('Desktop WebRTC archive chunk arrived before its start record.')); return }
+    const index = new DataView(frame.buffer, frame.byteOffset, 8).getUint32(4, false)
+    const body = frame.subarray(8)
+    const expected = index === pending.chunks.length - 1 ? pending.compressedBytes! - pending.chunkBytes * index : pending.chunkBytes
+    if (index >= pending.chunks.length || pending.chunks[index] !== undefined || body.byteLength !== expected) { this.cancel(pending.id, new Error('Desktop WebRTC archive chunk is invalid.')); return }
+    pending.chunks[index] = Uint8Array.from(body)
+    try { this.send({ type: 'asset:bundle-ack', id: pending.id, index }); this.resetTimer(pending) }
+    catch (error) { this.finish(pending.id, error instanceof Error ? error : new Error(String(error))) }
+  }
+  private resetTimer(pending: NonNullable<DesktopWebRtcAssetLane['pending']>): void { clearTimeout(pending.timer); pending.timer = setTimeout(() => this.cancel(pending.id, new Error('Desktop WebRTC archive transfer timed out.')), ASSET_REQUEST_TIMEOUT_MS) }
+  private cancel(id: string, error: Error): void { try { this.send({ type: 'asset:bundle-cancel', id }) } catch {} this.finish(id, error) }
+  private finish(id: string, value: Uint8Array | Error): void {
+    const pending = this.pending; if (pending === undefined || pending.id !== id) return
+    clearTimeout(pending.timer); this.pending = undefined
     if (value instanceof Error) pending.reject(value); else pending.resolve(value)
   }
-  private failAll(error: Error): void { for (const id of [...this.pending.keys()]) this.finish(id, error) }
+  private failAll(error: Error): void { if (this.pending !== undefined) this.finish(this.pending.id, error) }
 }
+
+function isBundleChunk(frame: Uint8Array): boolean { return frame.byteLength >= 8 && frame[0] === 0x54 && frame[1] === 0x42 && frame[2] === 0x01 && frame[3] === 0x01 }
+function combineChunks(chunks: Uint8Array[], length: number): Uint8Array { const result = new Uint8Array(length); let offset = 0; for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.byteLength } if (offset !== length) throw new Error('Desktop WebRTC archive length is invalid.'); return result }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
