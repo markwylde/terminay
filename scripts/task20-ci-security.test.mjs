@@ -118,11 +118,12 @@ test("every release job has an explicit bounded runtime", () => {
   }
 });
 
-test("ordinary CI has a read-only token", () => {
+test("ordinary CI retains a read-only token while using provider-neutral E2E artifacts", () => {
   const ci = workflows.get("ci.yml");
   assert.ok(ci, "ci.yml must exist");
   assert.match(ci, /^permissions:\n {2}contents: read$/mu);
   assert.doesNotMatch(ci, /^\s+(?:contents|packages|id-token|actions|checks|deployments|discussions|issues|pull-requests|security-events|statuses): write$/mu);
+  assert.doesNotMatch(ci, /docker (?:login|push|pull)/u);
 });
 
 test("production WebRTC evidence is pinned to an immutable hosted signaling commit", () => {
