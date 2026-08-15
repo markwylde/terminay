@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 import test from "node:test";
 import { DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY, deriveUiBundleId } from "@terminay/server-core/ui-bundle";
 import { DesktopServerBundleHost, LocalServerUiSession, migrateDesktopHostState } from "../dist/index.js";
@@ -20,6 +21,23 @@ function fixture(text = "<!doctype html><title>server bundle</title>") {
   return { bytes, manifest: { schemaVersion: 1, bundleId, entryPath: path, protocolVersion: "1", serverVersion: "1.0.0", contentSecurityPolicy: DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY, bundleFormatVersion: 1, hostCompatibility: compatibility, assets: [{ ...provisional[0], path }] } };
 }
 
+function archiveFixture(name = "opaque", bundleIdOverride) {
+  const bundleId = bundleIdOverride ?? `archive_${name}_0001`;
+  return { bundleId, bytes: gzipSync(tar([
+    ["terminay-bundle.json", JSON.stringify({ archiveFormatVersion: 1, bundleId, entryPath: "nested/generated/server-entry.html", applicationProtocolVersion: "1" })],
+    ["nested/generated/server-entry.html", "<!doctype html><script type=module src=./assets/main.mjs></script>"],
+    ["nested/generated/assets/main.mjs", "globalThis.started=true"],
+  ])) };
+}
+function tar(entries) {
+  const records = [];
+  for (const [path, value, type = "0"] of entries) {
+    const body = Buffer.from(value); const header = Buffer.alloc(512);
+    header.write(path, 0, 100, "utf8"); header.write("0000644\0", 100, "ascii"); header.write("0000000\0", 108, "ascii"); header.write("0000000\0", 116, "ascii"); header.write(body.length.toString(8).padStart(11, "0") + "\0", 124, "ascii"); header.write("00000000000\0", 136, "ascii"); Buffer.alloc(8, 0x20).copy(header, 148); header.write(type, 156, "ascii"); header.write("ustar\0", 257, "ascii"); header.write("00", 263, "ascii"); let sum = 0; for (const byte of header) sum += byte; header.write(sum.toString(8).padStart(6, "0") + "\0 ", 148, "ascii"); records.push(header, body, Buffer.alloc((512 - body.length % 512) % 512));
+  }
+  return Buffer.concat([...records, Buffer.alloc(1024)]);
+}
+
 test("Local and remote use one verified preparation boundary with server-isolated cache", async () => {
   const root = await mkdtemp(join(tmpdir(), "terminay-desktop-bundle-host-"));
   try {
@@ -32,6 +50,21 @@ test("Local and remote use one verified preparation boundary with server-isolate
     const recovered = await host.prepareRemote({ profileId: "remote:one", serverId: "server-two", origin: "https://two.example", windowId: "window-three", lane: { manifest: async () => { throw new Error("interrupted"); }, read: async () => { throw new Error("interrupted"); } } });
     assert.equal(recovered.source, "remote-cache-recovery");
     await assert.rejects(host.prepareRemote({ profileId: "remote:other", serverId: "server-other", origin: "https://other.example", windowId: "window-four", lane: { manifest: async () => { throw new Error("offline"); }, read: async () => one.bytes } }), /offline/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("remote Desktop consumes one authenticated archive, materializes arbitrary names, and retains the prior archive on interruption", async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminay-desktop-archive-host-"));
+  try {
+    const host = new DesktopServerBundleHost({ cacheRoot: join(root, "cache"), capabilities: {} });
+    const first = archiveFixture("first");
+    const launch = await host.prepareRemote({ profileId: "remote:archive", serverId: "server-archive", origin: "https://archive.example", windowId: "archive-window", lane: { getBundle: async () => first.bytes } });
+    assert.equal(launch.entryPath, "nested/generated/server-entry.html");
+    assert.equal(launch.context.bundleId, first.bundleId);
+    assert.equal((await readFile(join(launch.assetRoot, launch.entryPath), "utf8")).startsWith("<!doctype html>"), true);
+    const recovered = await host.prepareRemote({ profileId: "remote:archive", serverId: "server-archive", origin: "https://archive.example", windowId: "archive-recovery", lane: { getBundle: async () => { throw new Error("transport interrupted"); } } });
+    assert.equal(recovered.source, "remote-cache-recovery");
+    assert.equal(recovered.context.bundleId, first.bundleId);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -88,12 +121,13 @@ test("actual Local Desktop, remote Desktop, direct browser, and manager composit
   try {
     const selected = fixture(); const serverId = "server-shared"; const profileId = "profile-shared";
     const localRoot = join(root, "local"); await mkdir(localRoot); await writeFile(join(localRoot, "manifest.json"), JSON.stringify(selected.manifest)); await writeFile(join(localRoot, "index.html"), selected.bytes);
+    const archive = archiveFixture("shared", selected.manifest.bundleId);
     const desktop = new DesktopServerBundleHost({ cacheRoot: join(root, "cache"), capabilities: {} });
     const local = await desktop.prepareLocal({ profileId, serverId, origin: "http://localhost:4317", windowId: "local-window", artifact: { rootDirectory: localRoot } });
-    const remote = await desktop.prepareRemote({ profileId, serverId, origin: "https://shared.example", windowId: "remote-window", lane: { manifest: async () => selected.manifest, read: async () => selected.bytes } });
+    const remote = await desktop.prepareRemote({ profileId, serverId, origin: "https://shared.example", windowId: "remote-window", lane: { getBundle: async () => archive.bytes } });
     const browserContext = (sourceId) => ({ schemaVersion: 1, bootstrapVersion: 1, sourceId, windowId: `${sourceId}-window`, serverId, profileId, bundleId: selected.manifest.bundleId, applicationProtocolVersion: selected.manifest.protocolVersion, hostKind: "browser", hostBridgeVersion: 1, byteEndpointVersion: 1, capabilities: { notifications: 1, clipboardWrite: 1 } });
-    const direct = await createDirectBrowserBundleHost(new MemoryCacheStorage(), 1).installAndPrepare({ manifest: selected.manifest, expectedServerId: serverId, sessionOrigin: "https://shared.example", context: browserContext("direct-browser"), endpoint, readAsset: async () => selected.bytes });
-    const manager = await createBrowserManagerBundleHost(new MemoryCacheStorage(), 1).installAndPrepare({ manifest: selected.manifest, expectedServerId: serverId, sessionOrigin: "https://shared.example", context: browserContext("browser-manager"), endpoint, readAsset: async () => selected.bytes });
+    const direct = await createDirectBrowserBundleHost(new MemoryCacheStorage()).installAndPrepare({ expectedServerId: serverId, sessionOrigin: "https://shared.example", context: browserContext("direct-browser"), endpoint, compressedArchive: archive.bytes });
+    const manager = await createBrowserManagerBundleHost(new MemoryCacheStorage()).installAndPrepare({ expectedServerId: serverId, sessionOrigin: "https://shared.example", context: browserContext("browser-manager"), endpoint, compressedArchive: archive.bytes });
     const identities = [local.context, remote.context, direct.context, manager.context].map(({ bundleId, serverId, profileId, applicationProtocolVersion }) => ({ bundleId, serverId, profileId, applicationProtocolVersion }));
     assert.deepEqual(identities, Array.from({ length: 4 }, () => identities[0]));
   } finally { await rm(root, { recursive: true, force: true }); }
