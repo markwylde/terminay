@@ -344,7 +344,7 @@ test('App delegates remote access menu rendering', () => {
 	assert.doesNotMatch(app, /className="remote-access-menu"/);
 	assert.match(remoteAccessMenu, /className="remote-access-menu"/);
 	assert.match(remoteAccessMenu, /Expose this server…/);
-	assert.match(remoteAccessMenu, /Add connection…/);
+	assert.match(remoteAccessMenu, /Remote Control/);
 });
 
 test('the remote access controller owns exposure and pairing lifecycle', () => {

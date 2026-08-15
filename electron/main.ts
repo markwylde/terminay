@@ -2173,6 +2173,11 @@ function createAppMenu(
 					accelerator: getMenuShortcut(settings, 'new-project'),
 					click: () => sendCommandToFocusedWindow('new-project'),
 				},
+				{ type: 'separator' },
+				{
+					label: 'Remote Control',
+					click: () => sendCommandToFocusedWindow('open-remote-control'),
+				},
 				{
 					label: 'Project Environments…',
 					click: () => sendCommandToFocusedWindow('open-project-environments'),
@@ -2180,22 +2185,6 @@ function createAppMenu(
 				{
 					label: 'Extensions…',
 					click: () => sendCommandToFocusedWindow('open-extensions'),
-				},
-				{
-					type: 'separator',
-				},
-				{
-					label: 'Save',
-					accelerator: getMenuShortcut(settings, 'save-active'),
-					click: () => sendCommandToFocusedWindow('save-active'),
-				},
-				{
-					type: 'separator',
-				},
-				{
-					label: 'Settings',
-					accelerator: 'CmdOrCtrl+,',
-					click: () => sendCommandToFocusedWindow('open-settings'),
 				},
 				{
 					label: 'Macros',
@@ -2208,12 +2197,9 @@ function createAppMenu(
 					click: () => sendCommandToFocusedWindow('open-recordings'),
 				},
 				{
-					type: 'separator',
-				},
-				{
-					label: 'Close Terminal',
-					accelerator: getMenuShortcut(settings, 'close-active'),
-					click: () => sendCommandToFocusedWindow('close-active'),
+					label: 'Settings',
+					accelerator: 'CmdOrCtrl+,',
+					click: () => sendCommandToFocusedWindow('open-settings'),
 				},
 			],
 		},
@@ -2249,6 +2235,12 @@ function createAppMenu(
 					label: 'Clear Terminal',
 					accelerator: getMenuShortcut(settings, 'clear-terminal'),
 					click: () => sendCommandToFocusedWindow('clear-terminal'),
+				},
+				{ type: 'separator' },
+				{
+					label: 'Close Terminal',
+					accelerator: getMenuShortcut(settings, 'close-active'),
+					click: () => sendCommandToFocusedWindow('close-active'),
 				},
 			],
 		},
@@ -2354,6 +2346,7 @@ const AUXILIARY_TITLES: Readonly<Record<string, string>> = Object.freeze({
 	macros: 'Macros',
 	'project-environments': 'Project Environments',
 	recordings: 'Recordings',
+	'remote-control': 'Remote Control',
 	settings: 'Settings',
 });
 

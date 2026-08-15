@@ -34,34 +34,43 @@
 }
 
 .shared-connections {
-	--connection-accent: var(--accent-primary, #65d7b5);
-	--connection-surface: var(--background-secondary, #121922);
-	--connection-surface-hover: var(--background-tertiary, #1a2633);
-	--connection-muted: var(--text-secondary, #9aaabd);
+	--connection-accent: #3b82f6;
+	--connection-surface: #0f172a;
+	--connection-surface-hover: #1e293b;
+	--connection-muted: #94a3b8;
+	--connection-border: #1e293b;
+	font-family:
+		-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
+		sans-serif;
+}
+
+.shared-production-route.shared-connections {
 	gap: 24px;
 }
 
-.shared-connections header {
+.shared-production-route.shared-connections header {
 	display: grid;
 	gap: 8px;
 }
 
-.shared-connections header h1 {
+.shared-production-route.shared-connections header h1 {
 	margin: 0;
-	font-size: clamp(26px, 4vw, 36px);
-	letter-spacing: -0.035em;
+	color: #fff;
+	font-size: 20px;
+	font-weight: 700;
+	letter-spacing: -0.02em;
 }
 
-.shared-connections header > p:last-child {
+.shared-production-route.shared-connections header > p:last-child {
 	color: var(--connection-muted);
 	line-height: 1.5;
 }
 
 .shared-connections__eyebrow {
-	color: var(--connection-accent);
+	color: var(--connection-muted);
 	font-size: 11px;
-	font-weight: 800;
-	letter-spacing: 0.13em;
+	font-weight: 600;
+	letter-spacing: 0.08em;
 	text-transform: uppercase;
 }
 
@@ -69,25 +78,36 @@
 	gap: 10px;
 }
 
+.shared-connections--embedded {
+	height: auto;
+	gap: 16px;
+	padding: 0;
+	overflow: visible;
+	background: transparent;
+}
+
 .shared-connections__empty {
 	display: grid;
-	gap: 7px;
-	padding: 22px;
-	border: 1px dashed var(--border-primary, #303946);
-	border-radius: 12px;
-	background: color-mix(in srgb, var(--connection-surface) 70%, transparent);
+	gap: 6px;
+	padding: 4px 0 8px;
 	color: var(--connection-muted);
-	text-align: center;
 }
 
-.shared-connections__empty strong {
-	color: var(--text-primary, #eef4f8);
+.shared-connections__empty-title,
+.shared-connections__empty p {
+	margin: 0;
+}
+
+.shared-connections__empty-title {
+	color: #f8fafc;
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.shared-connections__empty p {
 	font-size: 13px;
-}
-
-.shared-connections__empty span {
-	font-size: 12px;
-	line-height: 1.45;
+	font-weight: 400;
+	line-height: 1.5;
 }
 
 .shared-connection-card {
@@ -96,10 +116,10 @@
 		"identity status"
 		"actions actions";
 	align-items: center;
-	gap: 14px 18px;
-	padding: 18px;
-	border-color: var(--border-primary, #303946);
-	border-radius: 12px;
+	gap: 12px 16px;
+	padding: 14px 16px;
+	border-color: var(--connection-border);
+	border-radius: 10px;
 	background: var(--connection-surface);
 	transition:
 		border-color 140ms ease,
@@ -107,12 +127,8 @@
 }
 
 .shared-connection-card--current {
-	border-color: color-mix(in srgb, var(--connection-accent) 52%, transparent);
-	background: color-mix(
-		in srgb,
-		var(--connection-accent) 7%,
-		var(--connection-surface)
-	);
+	border-color: #334155;
+	background: #111827;
 }
 
 .shared-connection-card__identity {
@@ -131,8 +147,9 @@
 
 .shared-connection-card__title strong {
 	overflow: hidden;
-	color: var(--text-primary, #eef4f8);
-	font-size: 15px;
+	color: #f8fafc;
+	font-size: 14px;
+	font-weight: 600;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
@@ -140,10 +157,10 @@
 .shared-connection-card__current {
 	padding: 3px 7px;
 	border-radius: 999px;
-	background: color-mix(in srgb, var(--connection-accent) 13%, transparent);
-	color: var(--connection-accent);
-	font-size: 10px;
-	font-weight: 800;
+	background: #1e293b;
+	color: #94a3b8;
+	font-size: 9px;
+	font-weight: 700;
 	letter-spacing: 0.04em;
 	text-transform: uppercase;
 }
@@ -177,7 +194,7 @@
 }
 
 .shared-connection-card__status--connected {
-	color: var(--connection-accent);
+	color: #4ade80;
 }
 
 .shared-connection-card__status--reconnecting {
@@ -195,31 +212,42 @@
 .shared-connections__profile-actions button,
 .shared-connections__action-panel button {
 	min-height: 38px;
-	padding: 8px 12px;
-	border: 1px solid var(--border-primary, #34404d);
+	padding: 8px 14px;
+	border: 1px solid var(--connection-border);
 	border-radius: 8px;
 	background: transparent;
-	color: var(--text-primary, #e6edf3);
+	color: var(--connection-muted);
 	cursor: pointer;
 	font: inherit;
 	font-size: 12px;
-	font-weight: 700;
+	font-weight: 600;
+	transition:
+		background 0.2s ease,
+		border-color 0.2s ease,
+		color 0.2s ease;
 }
 
 .shared-connection-card__actions button:hover,
 .shared-connections__profile-actions button:hover,
 .shared-connections__action-panel button:hover {
-	background: var(--connection-surface-hover);
+	border-color: #334155;
+	background: rgba(255, 255, 255, 0.05);
+	color: #f1f5f9;
 }
 
 .shared-connection-card__actions .shared-connection-card__switch {
-	border-color: color-mix(in srgb, var(--connection-accent) 55%, transparent);
-	background: color-mix(in srgb, var(--connection-accent) 12%, transparent);
-	color: var(--connection-accent);
+	border-color: #334155;
+	color: #cbd5e1;
 }
 
 .shared-connection-card__actions .shared-connection-card__danger-action {
-	color: #f3a09a;
+	color: #fca5a5;
+}
+
+.shared-connection-card__actions .shared-connection-card__danger-action:hover {
+	border-color: rgba(239, 68, 68, 0.35);
+	background: rgba(239, 68, 68, 0.08);
+	color: #fecaca;
 }
 
 .shared-connections__profile-actions {
@@ -229,51 +257,76 @@
 	padding-top: 2px;
 }
 
-.shared-connections__profile-actions button:first-child {
-	border-color: color-mix(in srgb, var(--connection-accent) 55%, transparent);
-	background: color-mix(in srgb, var(--connection-accent) 10%, transparent);
-	color: var(--connection-accent);
+.shared-connections__profile-actions button:first-child,
+.shared-connections__action-panel-actions button[type="submit"] {
+	border-color: var(--connection-accent);
+	background: var(--connection-accent);
+	color: #fff;
+}
+
+.shared-connections__profile-actions button:first-child:hover,
+.shared-connections__action-panel-actions button[type="submit"]:hover {
+	border-color: #2563eb;
+	background: #2563eb;
+	color: #fff;
+	box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
 }
 
 .shared-connections__action-panel {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: end;
-	gap: 12px;
-	padding: 16px;
-	border: 1px solid var(--border-primary, #303946);
-	border-radius: 12px;
-	background: var(--connection-surface);
+	display: grid;
+	gap: 16px;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
 }
 
-.shared-connections__action-panel > label {
+.shared-connections__action-panel-fields {
 	display: grid;
-	flex: 1 1 240px;
-	gap: 7px;
-	color: var(--text-secondary, #b6c1ce);
+	gap: 16px;
+}
+
+.shared-connections__action-panel > label,
+.shared-connections__action-panel-fields > label {
+	display: grid;
+	gap: 8px;
+	color: var(--connection-muted);
 	font-size: 12px;
-	font-weight: 700;
+	font-weight: 600;
+}
+
+.shared-connections__action-panel-actions {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: 12px;
 }
 
 .shared-connections__action-panel input,
 .shared-connections__action-panel textarea {
 	box-sizing: border-box;
 	width: 100%;
-	min-height: 40px;
-	padding: 10px 12px;
-	border: 1px solid var(--border-primary, #3b4653);
+	min-height: 44px;
+	padding: 12px 16px;
+	border: 1px solid var(--connection-border);
 	border-radius: 8px;
 	outline: none;
-	background: var(--background-primary, #0d1117);
-	color: var(--text-primary, #e6edf3);
+	background: var(--connection-surface);
+	color: #f8fafc;
 	font: inherit;
+	font-size: 14px;
+	font-weight: 400;
+	transition:
+		border-color 0.2s ease,
+		background 0.2s ease,
+		box-shadow 0.2s ease;
 }
 
 .shared-connections__action-panel input:focus,
 .shared-connections__action-panel textarea:focus {
 	border-color: var(--connection-accent);
-	box-shadow: 0 0 0 3px
-		color-mix(in srgb, var(--connection-accent) 14%, transparent);
+	background: #1e293b;
+	box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
 }
 
 .shared-connections__action-panel--fields {

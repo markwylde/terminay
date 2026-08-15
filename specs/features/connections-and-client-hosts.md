@@ -55,7 +55,8 @@ The menu contains:
 - current server identity and connection state;
 - remembered connections, grouped or ordered consistently;
 - focus/open/switch actions appropriate to the host;
-- **Add connection…** and **Manage connections…**;
+- **Remote Control**, which opens the same connection-management surface as
+  File → Remote Control;
 - **Expose this server…** when the current device is allowed to manage
   exposure;
 - retry, disconnect, forget, and revoke actions with distinct language; and
@@ -80,6 +81,23 @@ The same package exposes a route registry for workspace, connections, settings
 Git surfaces. Browser hosts keep every route in-page; Desktop may present
 eligible secondary routes in native auxiliary windows only when its
 `nativeWindows` capability is declared.
+
+File groups workspace creation separately from management surfaces:
+
+- **Create a new terminal tab** and **Create a new project**;
+- then **Remote Control**, **Project Environments**, **Extensions**,
+  **Macros**, **Recordings**, and **Settings**.
+
+**Remote Control** opens the shared connections route as a first-class
+management window, the same presentation family as Settings, Macros,
+Recordings, and Project Environments. It uses that family's sidebar-and-content
+chrome: title, subtitle, and **Add connection…** live in the left sidebar with
+the saved-server list; empty copy, selected-server details, and pairing live
+in the main pane. Desktop opens or focuses a native auxiliary window; the
+browser host presents the same route in-page. The window is not an Edit Tab
+sheet. Pairing URL and PIN fields stack at full width above continue/cancel
+actions. An empty saved-server list keeps its heading and pairing instructions
+on separate lines and hides that empty copy while the pairing form is open.
 
 Desktop development, packaged Desktop, and auxiliary routes execute the same
 server-bundled route bodies against the authenticated selected-server client.
@@ -396,11 +414,12 @@ pairing fragment or private key.
   server-owned logical workspace views through in-page navigation rather than
   requiring popup windows.
 - Settings (including Extensions), project environments, macros, recordings,
-  and edit-tab surfaces use shared routes/components. Electron presents
-  Project Environments as a first-class native management window consistent
-  with Settings, Macros, and Recordings, while edit-tab routes may use modal
-  project-editor chrome. The web host presents the same shared routes in-page
-  with equivalent open, focus, save, cancel, and close semantics.
+  remote control, and edit-tab surfaces use shared routes/components. Electron
+  presents Remote Control and Project Environments as first-class native
+  management windows consistent with Settings, Macros, and Recordings, while
+  edit-tab routes may use modal project-editor chrome. The web host presents
+  the same routes in-page with equivalent open, focus, save, cancel, and close
+  semantics.
 - Project-tab and terminal-tab double-click editing is a shared command. On
   Desktop it may open the native modal edit window. In web it opens the
   in-page edit-tab surface and returns focus to the edited project or terminal
@@ -482,6 +501,9 @@ WebRTC generation replacement and terminal resynchronization follow
   without crossing server, project, or credential state.
 - The web host offers the same add/manage/switch journey without showing a
   Local option.
+- File → Remote Control and the header connection menu open the same
+  Remote Control management window as Settings/Macros, including that family's
+  sidebar-and-content chrome, not an Edit Tab sheet.
 - The installed PWA can open its manager and saved profile list offline without
   claiming that an unreachable session origin is connected.
 - Opening a pairing link directly enrolls the browser and later opening the
