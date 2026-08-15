@@ -40,6 +40,10 @@ function pairingUrlFromLocation(): string | undefined {
 export default function SessionWorkspaceApp(): React.JSX.Element {
 	const initialPairingUrl = useRef(pairingUrlFromLocation());
 	const clientRef = useRef<TerminayClient | undefined>(undefined);
+	const connectRef = useRef<
+		(options?: Readonly<{ replaceDesktopEndpoint?: boolean }>) => Promise<void>
+	>(async () => undefined);
+	const recoveryInFlight = useRef(false);
 	const [connection, setConnection] = useState<ConnectedSession>();
 	const [desktopContext, setDesktopContext] = useState<TerminayHostContext>();
 	const [deviceName, setDeviceName] = useState('Terminay Browser');
@@ -49,7 +53,28 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 		initialPairingUrl.current === undefined ? 'connecting' : 'pairing',
 	);
 
-	const connect = useCallback(async () => {
+	const recoverConnection = useCallback(() => {
+		if (recoveryInFlight.current) return;
+		recoveryInFlight.current = true;
+		setConnection(undefined);
+		setError(undefined);
+		setPhase('connecting');
+		void connectRef
+			.current({ replaceDesktopEndpoint: true })
+			.catch((cause) => {
+				setError(
+					cause instanceof Error ? cause.message : 'Unable to reconnect.',
+				);
+				setPhase('ready');
+			})
+			.finally(() => {
+				recoveryInFlight.current = false;
+			});
+	}, []);
+
+	const connect = useCallback(async (
+		options: Readonly<{ replaceDesktopEndpoint?: boolean }> = {},
+	) => {
 		setError(undefined);
 		setPhase('connecting');
 		await clientRef.current?.close().catch(() => undefined);
@@ -65,17 +90,14 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 			transport = await sessionHost.connect({
 				origin,
 				onStateChange: (state) => {
-					if (state === 'closed') {
-						setConnection(undefined);
-						setError('Connection lost. Retry to reconnect.');
-						setPhase('ready');
-					}
+					if (state === 'closed') recoverConnection();
 				},
 			});
 		} else {
 			const desktop = await acquireDesktopServerBootstrap(
 				window.terminayHost as DesktopHostBridge | undefined,
 				window.terminayBytes,
+				{ replaceEndpoint: options.replaceDesktopEndpoint },
 			);
 			if (desktop === undefined)
 				throw new Error(
@@ -104,11 +126,7 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 		try {
 			const hello = await client.connect();
 			const context = await createConnectedServerClientContext(client, hello, {
-				onTransportClosed: () => {
-					setConnection(undefined);
-					setError('Connection lost. Retry to reconnect.');
-					setPhase('ready');
-				},
+				onTransportClosed: recoverConnection,
 			});
 			setConnection(
 				Object.freeze({
@@ -129,7 +147,8 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 			if (clientRef.current === client) clientRef.current = undefined;
 			throw cause;
 		}
-	}, []);
+	}, [recoverConnection]);
+	connectRef.current = connect;
 
 	useEffect(() => {
 		if (initialPairingUrl.current !== undefined) return;

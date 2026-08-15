@@ -217,7 +217,6 @@ if (
 				}
 				const bound = await context();
 				for (const listener of [...byteListeners]) listener(null);
-				await bytes.replaceEndpoint();
 				return { connectionId: `local:${bound.windowId}` };
 			},
 		}),
