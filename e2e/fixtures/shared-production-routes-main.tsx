@@ -2,7 +2,6 @@ import {
 	ConnectionProfileStore,
 	FileViewerClient,
 	MacroClient,
-	McpServerControlClient,
 	RecordingsClient,
 	WorkspaceClient,
 } from '@terminay/client-core';
@@ -262,35 +261,6 @@ const mobileSettingsActions: string[] = [];
 (
 	window as unknown as { __mobileSettingsActions: string[] }
 ).__mobileSettingsActions = mobileSettingsActions;
-const mobileMcpActions: string[] = [];
-(window as unknown as { __mobileMcpActions: string[] }).__mobileMcpActions =
-	mobileMcpActions;
-const mobileMcpClient = new McpServerControlClient({
-	query: async (operation: string) => {
-		mobileMcpActions.push(`query:${operation}`);
-		return {
-			servers: [
-				{ id: 'docs', label: 'Documentation', state: 'stopped' },
-				{
-					id: 'search',
-					label: 'Search',
-					state: 'failed',
-					detail: 'Process exited',
-				},
-			],
-		};
-	},
-	command: async (
-		operation: string,
-		payload: { serverId: string; action: string },
-	) => {
-		mobileMcpActions.push(
-			`command:${operation}:${payload.serverId}:${payload.action}`,
-		);
-		if (payload.serverId === 'search') throw new Error('Retry was rejected');
-		return { serverId: payload.serverId, state: 'running', acknowledged: true };
-	},
-} as never);
 const mobileFileActions: string[] = [];
 (window as unknown as { __mobileFileActions: string[] }).__mobileFileActions =
 	mobileFileActions;
@@ -415,72 +385,6 @@ const recordingItem = {
 	formatVersion: 3,
 	errorMessage: null,
 } as const;
-
-function MobileMcpWorkflow() {
-	const [servers, setServers] = useState<
-		Array<{ id: string; label: string; state: string; detail?: string }>
-	>([]);
-	const [status, setStatus] = useState('Not loaded');
-	const load = () => {
-		setStatus('Loading MCP servers');
-		void mobileMcpClient
-			.list()
-			.then((items) => {
-				setServers(items.map((item) => ({ ...item })));
-				setStatus('MCP servers ready');
-			})
-			.catch((error) =>
-				setStatus(error instanceof Error ? error.message : 'MCP status failed'),
-			);
-	};
-	const control = (serverId: string, action: 'start' | 'retry') => {
-		void mobileMcpClient
-			.control(serverId, action)
-			.then((acknowledgement) => {
-				setServers((items) =>
-					items.map((item) =>
-						item.id === acknowledgement.serverId
-							? { ...item, state: acknowledgement.state }
-							: item,
-					),
-				);
-				setStatus(`${acknowledgement.serverId} acknowledged`);
-			})
-			.catch((error) =>
-				setStatus(
-					error instanceof Error ? error.message : 'MCP control failed',
-				),
-			);
-	};
-	return (
-		<section aria-label="Mobile MCP server controls">
-			<h1>MCP servers</h1>
-			<button type="button" onClick={load}>
-				Load MCP servers
-			</button>
-			<ul aria-label="MCP server list">
-				{servers.map((server) => (
-					<li key={server.id}>
-						<strong>{server.label}</strong> <span>{server.state}</span>
-						{server.detail === undefined ? null : <span>{server.detail}</span>}
-						<button
-							type="button"
-							onClick={() =>
-								control(
-									server.id,
-									server.state === 'failed' ? 'retry' : 'start',
-								)
-							}
-						>
-							{server.state === 'failed' ? 'Retry' : 'Start'} {server.label}
-						</button>
-					</li>
-				))}
-			</ul>
-			<output aria-label="Mobile MCP status">{status}</output>
-		</section>
-	);
-}
 
 function MobileFileViewerWorkflow() {
 	const [sessionId, setSessionId] = useState('');
@@ -1165,7 +1069,6 @@ createRoot(document.getElementById('root')!).render(
 			clientId="client:test"
 		/>
 		<MobileSettingsWorkflow />
-		<MobileMcpWorkflow />
 		<MobileMacrosWorkflow />
 		<MobileFileViewerWorkflow />
 		<MobileRecordingsWorkflow />

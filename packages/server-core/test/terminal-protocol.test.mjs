@@ -45,6 +45,10 @@ function request(operation, payload, commandId, authScope = "write", clientId = 
   };
 }
 
+function nextTurn() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 test("terminal operation registry binds the client contract to one server-owned session", async () => {
   const pty = createPtyFactory();
   const service = new TerminalService({ serverId: "server-a", ptyFactory: pty, generateSessionId: () => "session-a" });
@@ -63,6 +67,7 @@ test("terminal operation registry binds the client contract to one server-owned 
   assert.equal(attachment.presentation.role, "controller");
 
   pty.processes[0].emitData("hello");
+  await nextTurn();
   assert.equal(journal.revision, 1);
   const outputEvent = liveEvents.find((event) => event.payload.type === "output");
   assert.equal(outputEvent.payload.clientId, "client-a");
@@ -164,15 +169,19 @@ test("high terminal output stays live without evicting retained workspace events
   assert.equal(attached.ok, true, JSON.stringify(attached));
   journal.append("workspace", { marker: "first" });
   journal.append("workspace", { marker: "second" });
-  let deliveredOutput = 0;
+  const outputEvents = [];
   const unsubscribe = journal.subscribe((event) => {
-    if (event.event === "terminal" && event.payload.type === "output") deliveredOutput += 1;
+    if (event.event === "terminal" && event.payload.type === "output") outputEvents.push(event);
   });
 
   for (let index = 0; index < 10_000; index += 1) pty.processes[0].emitData("x");
 
+  await nextTurn();
   unsubscribe();
-  assert.equal(deliveredOutput, 10_000);
+  assert.equal(outputEvents.length, 1, "small PTY callbacks share one live frame");
+  assert.equal(outputEvents[0].body.byteLength, 10_000);
+  assert.equal(outputEvents[0].payload.position, 0);
+  assert.equal(outputEvents[0].payload.nextPosition, 10_000);
   assert.equal(journal.revision, 3, "raw output does not advance the durable revision");
   assert.deepEqual(journal.replay(1).events.map((event) => event.payload.marker), ["first", "second"]);
   await service.shutdown();

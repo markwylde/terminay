@@ -137,7 +137,13 @@ export class TerminayClient {
       clientVersion: this.options.clientVersion ?? "0.0.0",
       // The capability gates the additive event_resync envelope so older v1
       // peers continue to receive only envelopes they understand.
-      capabilities: [...new Set([...(this.options.capabilities ?? []), "events.resync"])],
+		capabilities: [
+			...new Set([
+				...(this.options.capabilities ?? []),
+				"events.resync",
+				"terminal.binary-output",
+			]),
+		],
       limits: { ...(this.options.limits ?? DEFAULT_PROTOCOL_LIMITS) },
     };
     const handshake = this.pendingPromise<ServerHello>();
@@ -391,16 +397,18 @@ export class TerminayClient {
       const subscription = this.events.get(envelope.subscriptionId);
       if (subscription === undefined) return;
       if (subscription.resync !== undefined) return;
+			const event: ClientEvent =
+				body.byteLength === 0 ? envelope : { ...envelope, body };
       if (subscription.listeners.size === 0) {
         if (subscription.buffered.length >= MAX_PRE_LISTENER_EVENTS) {
           subscription.overflow = new ClientError("resync_required", "subscription received too many events before a listener was attached", { retryable: true });
           subscription.buffered.length = 0;
         } else {
-          subscription.buffered.push(envelope);
+				subscription.buffered.push(event);
         }
         return;
       }
-      for (const listener of subscription.listeners) listener(envelope);
+			for (const listener of subscription.listeners) listener(event);
       diagnostic?.("client.complete.event");
     }
     if (envelope.type === "event_resync") {

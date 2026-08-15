@@ -179,7 +179,6 @@ function setValueAtPath(
 		'remoteAccess',
 		'shell',
 		'sidebar',
-		'terminayMcp',
 		'theme',
 	]);
 	const [root] = segments;

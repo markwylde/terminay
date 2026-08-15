@@ -4,7 +4,6 @@ import { createConnectionErrorPanel } from '../../packages/shared-ui/src/compone
 import { createConnectionFormPanel } from '../../packages/shared-ui/src/components/ConnectionFormPanel.mjs'
 import { createConnectionSwitcherPanel } from '../../packages/shared-ui/src/components/ConnectionSwitcherPanel.mjs'
 import { createDictationCapturePanel } from '../../packages/shared-ui/src/components/DictationCapturePanel.mjs'
-import { createMcpServerControlPanel } from '../../packages/shared-ui/src/components/McpServerControlPanel.mjs'
 import { createMacroEditorRoutePanel } from '../../packages/shared-ui/src/components/MacroEditorRoutePanel.mjs'
 import { createMacroLibraryPanel } from '../../packages/shared-ui/src/components/MacroLibraryPanel.mjs'
 import { createQuickPushReviewPanel } from '../../packages/shared-ui/src/components/QuickPushReviewPanel.mjs'
@@ -52,7 +51,6 @@ function Fixture() {
 	] }))
 	const settingsModel = routeLayoutModel(createCompleteSharedWorkspaceRoutePanel({ route: 'settings', layout: panelLayout, panels: [
 		{ id: 'settings', panel: createSettingsPanel({ layout: panelLayout, status: 'ready', selectedSectionId: 'appearance', sections: [{ id: 'appearance', label: 'Appearance' }] }) },
-		{ id: 'mcp-server-control', panel: createMcpServerControlPanel({ layout: panelLayout, status: 'ready', servers: [{ id: 'mcp:docs', label: 'Documentation', state: 'running' }] }) },
 		{ id: 'dictation-capture', panel: createDictationCapturePanel({
 			layout: panelLayout, status: 'recording', requestId: 'dictation:fixture', destinationDisclosure: 'Transcription is sent to this Terminay server.',
 			target: { serverId: 'server:local', projectId: 'project:app', panelId: 'panel:terminal', sessionId: 'terminal:build', terminalLabel: 'Build' },
