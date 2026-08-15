@@ -29,13 +29,13 @@ jobs:
 
     steps:
       - name: Check out code
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.15.0
           cache: npm
@@ -80,13 +80,13 @@ jobs:
 
     steps:
       - name: Check out code
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.15.0
           cache: npm
@@ -198,7 +198,7 @@ jobs:
 
     steps:
       - name: Check out code
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           # Build the immutable release tag, never a branch that could advance
           # after the release job creates the tag.
@@ -206,7 +206,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.15.0
           cache: npm
@@ -250,7 +250,7 @@ jobs:
 
       - name: Import Apple signing certificate
         if: matrix.os == 'macos-latest'
-        uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3
+        uses: apple-actions/import-codesign-certs@2dbeb2d7c37642111f938c56ef0feb5d51dad55d # v4.0.1
         with:
           p12-file-base64: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           p12-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -452,13 +452,13 @@ jobs:
 
     steps:
       - name: Check out code
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ needs.release.outputs.tag }}
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.15.0
           cache: npm
@@ -587,7 +587,7 @@ jobs:
 
     steps:
       - name: Check out release verification code
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ needs.release.outputs.tag }}
           persist-credentials: false

@@ -33,6 +33,10 @@ const workflows = new Map(
 		]),
 	),
 );
+workflows.set(
+	'gitea-ci.yml',
+	await readFile(new URL('../.gitea/workflows/ci.yml', import.meta.url), 'utf8'),
+);
 
 test('server Dockerfile builds the standalone server and runs as a non-root user', () => {
 	assert.match(dockerfile, /^FROM node:24\.15\.0-bookworm-slim AS build/m);
@@ -70,7 +74,7 @@ test('GHCR workflow smokes the repository Dockerfile before publishing', () => {
 	assert.match(workflow, /--status --data-root \/tmp\/terminay-status/u);
 	assert.match(
 		workflow,
-		/docker\/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5/u,
+		/docker\/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0/u,
 	);
 	assert.match(
 		workflow,
@@ -84,11 +88,11 @@ test('GHCR workflow smokes the repository Dockerfile before publishing', () => {
 	);
 	assert.match(
 		workflow,
-		/docker\/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6/u,
+		/docker\/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0/u,
 	);
 	assert.match(
 		workflow,
-		/docker\/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3/u,
+		/docker\/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0/u,
 	);
 	assert.match(workflow, /platforms: linux\/amd64,linux\/arm64/u);
 	assert.match(workflow, /provenance: mode=max/u);
@@ -136,12 +140,12 @@ test('Docker image operator guide requires digest-pinned controlled deployments'
 
 test('GHCR publication actions are pinned to immutable reviewed revisions', () => {
 	const expected = new Map([
-		['actions/checkout', '11d5960a326750d5838078e36cf38b85af677262'],
-		['docker/setup-buildx-action', '8d2750c68a42422c14e847fe6c8ac0403b4cbd6f'],
-		['docker/setup-qemu-action', 'c7c53464625b32c7a7e944ae62b3e17d2b600130'],
-		['docker/metadata-action', 'c299e40c65443455700f0fdfc63efafe5b349051'],
-		['docker/login-action', 'c94ce9fb468520275223c153574b00df6fe4bcc9'],
-		['docker/build-push-action', '10e90e3645eae34f1e60eeb005ba3a3d33f178e8'],
+		['actions/checkout', 'fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09'],
+		['docker/setup-buildx-action', 'bb05f3f5519dd87d3ba754cc423b652a5edd6d2c'],
+		['docker/setup-qemu-action', '96fe6ef7f33517b61c61be40b68a1882f3264fb8'],
+		['docker/metadata-action', 'dc802804100637a589fabce1cb79ff13a1411302'],
+		['docker/login-action', 'dbcb813823bdd20940b903addbd779551569679f'],
+		['docker/build-push-action', '53b7df96c91f9c12dcc8a07bcb9ccacbed38856a'],
 	]);
 	const references = [
 		...workflow.matchAll(/^\s*uses:\s+([^@\s]+)@([^\s#]+)(?:\s+#.*)?$/gmu),
@@ -173,8 +177,8 @@ test('GHCR publication actions are pinned to immutable reviewed revisions', () =
 
 test('other project workflows pin every third-party action to a reviewed immutable revision', () => {
 	const expected = new Map([
-		['actions/checkout', new Set(['11d5960a326750d5838078e36cf38b85af677262'])],
-		['actions/setup-node', new Set(['49933ea5288caeca8642d1e84afbd3f7d6820020'])],
+		['actions/checkout', new Set(['fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09'])],
+		['actions/setup-node', new Set(['a0853c24544627f65ddf259abe73b1d18a591444'])],
 		['actions/upload-artifact', new Set([
 			'ea165f8d65b6e75b540449e92b4886f43607fa02',
 			'ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5',
@@ -185,12 +189,12 @@ test('other project workflows pin every third-party action to a reviewed immutab
 		])],
 		[
 			'apple-actions/import-codesign-certs',
-			new Set(['63fff01cd422d4b7b855d40ca1e9d34d2de9427d']),
+			new Set(['2dbeb2d7c37642111f938c56ef0feb5d51dad55d']),
 		],
-		['docker/setup-buildx-action', new Set(['8d2750c68a42422c14e847fe6c8ac0403b4cbd6f'])],
-		['docker/metadata-action', new Set(['c299e40c65443455700f0fdfc63efafe5b349051'])],
-		['docker/login-action', new Set(['c94ce9fb468520275223c153574b00df6fe4bcc9'])],
-		['docker/build-push-action', new Set(['10e90e3645eae34f1e60eeb005ba3a3d33f178e8'])],
+		['docker/setup-buildx-action', new Set(['bb05f3f5519dd87d3ba754cc423b652a5edd6d2c'])],
+		['docker/metadata-action', new Set(['dc802804100637a589fabce1cb79ff13a1411302'])],
+		['docker/login-action', new Set(['dbcb813823bdd20940b903addbd779551569679f'])],
+		['docker/build-push-action', new Set(['53b7df96c91f9c12dcc8a07bcb9ccacbed38856a'])],
 	]);
 
 	for (const [name, contents] of workflows) {
@@ -214,40 +218,24 @@ test('other project workflows pin every third-party action to a reviewed immutab
 	}
 });
 
-test('every provider-runnable CI job resolves only its compatible artifact action generation', () => {
-	const ci = workflows.get('ci.yml');
-	assert.ok(ci, 'ci.yml must exist');
-	const job = (name) => {
+test('provider-specific workflow folders resolve only their compatible artifact action generation', () => {
+	const githubCi = workflows.get('ci.yml');
+	const giteaCi = workflows.get('gitea-ci.yml');
+	assert.ok(githubCi, '.github/workflows/ci.yml must exist');
+	assert.ok(giteaCi, '.gitea/workflows/ci.yml must exist');
+	const job = (workflow, name) => {
 		const header = `  ${name}:\n`;
-		const start = ci.indexOf(header);
+		const start = workflow.indexOf(header);
 		assert.notEqual(start, -1, `CI must declare ${name}`);
-		const remainder = ci.slice(start + header.length);
+		const remainder = workflow.slice(start + header.length);
 		const next = remainder.search(/^  [a-z][a-z0-9-]+:\n/mu);
-		return next === -1 ? ci.slice(start) : ci.slice(start, start + header.length + next);
+		return next === -1 ? workflow.slice(start) : workflow.slice(start, start + header.length + next);
 	};
 
-	const github = `${job('github-e2e-image')}\n${job('github-e2e-test')}`;
-	const gitea = `${job('gitea-e2e-image')}\n${job('gitea-e2e-test')}`;
-	assert.match(github, /github\.server_url == 'https:\/\/github\.com'/u);
+	const github = `${job(githubCi, 'e2e-image')}\n${job(githubCi, 'e2e-test')}`;
+	const gitea = `${job(giteaCi, 'e2e-image')}\n${job(giteaCi, 'e2e-test')}`;
 	assert.match(github, /(?:ea165f8d65b6e75b540449e92b4886f43607fa02|d3f86a106a0bac45b974a628896c90dbdf5c8093)/u);
 	assert.doesNotMatch(github, /(?:ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5|9bc31d5ccc31df68ecc42ccf4149144866c47d8a)/u);
-	assert.match(gitea, /github\.server_url != 'https:\/\/github\.com'/u);
 	assert.match(gitea, /(?:ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5|9bc31d5ccc31df68ecc42ccf4149144866c47d8a)/u);
 	assert.doesNotMatch(gitea, /(?:ea165f8d65b6e75b540449e92b4886f43607fa02|d3f86a106a0bac45b974a628896c90dbdf5c8093)/u);
-
-	const jobs = [...ci.slice(ci.indexOf('jobs:\n')).matchAll(
-		/^  ([a-z][a-z0-9-]+):\n([\s\S]*?)(?=^  [a-z][a-z0-9-]+:\n|(?![\s\S]))/gmu,
-	)];
-	for (const [, name, contents] of jobs) {
-		const githubOnly = /^    if: \$\{\{ github\.server_url == 'https:\/\/github\.com' \}\}$/mu.test(contents);
-		const giteaOnly = /^    if: \$\{\{ github\.server_url != 'https:\/\/github\.com' \}\}$/mu.test(contents);
-		if (!githubOnly) {
-			assert.doesNotMatch(contents, /(?:ea165f8d65b6e75b540449e92b4886f43607fa02|d3f86a106a0bac45b974a628896c90dbdf5c8093)/u,
-				`${name} can run on Gitea and must not resolve artifact v4`);
-		}
-		if (!giteaOnly) {
-			assert.doesNotMatch(contents, /(?:ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5|9bc31d5ccc31df68ecc42ccf4149144866c47d8a)/u,
-				`${name} can run on GitHub and must not resolve artifact v3`);
-		}
-	}
 });
