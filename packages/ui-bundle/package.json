@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js", "default": "./dist/index.js" }
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js", "default": "./dist/index.js" },
+    "./archive": { "types": "./dist/archive.d.ts", "import": "./dist/archive.js", "default": "./dist/archive.js" }
   },
   "files": ["dist"],
   "dependencies": {

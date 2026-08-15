@@ -7,7 +7,7 @@ export {
 	type ArchiveExtractionLimits,
 	type ExtractedTerminayArchive,
 	type TerminayArchiveMetadata,
-} from '@terminay/ui-bundle';
+} from '@terminay/ui-bundle/archive';
 
 /** Browser-only gzip decompression. Tar parsing/metadata validation stays in
  * @terminay/ui-bundle so Electron never imports an application package. */
