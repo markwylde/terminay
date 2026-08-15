@@ -2,6 +2,8 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
+const PROCESS_TABLE_LINE =
+	/^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S.*?)\s*$/u
 
 export async function resolveTerminalProcessCwd(rootPid: number, signal?: AbortSignal): Promise<string | null> {
 	if (!Number.isSafeInteger(rootPid) || rootPid <= 0) return null
@@ -15,8 +17,9 @@ export async function resolveTerminalProcessCwd(rootPid: number, signal?: AbortS
  * on every Unix host; TPGID is the kernel-owned foreground authority. */
 export async function resolveTerminalForegroundProcess(rootPid: number, signal?: AbortSignal): Promise<string | null> {
 	if (!Number.isSafeInteger(rootPid) || rootPid <= 0 || process.platform === 'win32') return null
-	const rootCommand = await resolveProcessCommand(rootPid, signal)
-	const descendants = await resolveTerminalLeafProcesses(rootPid, signal)
+	const table = await readHostProcessTable(signal)
+	const rootCommand = commandName(table.get(rootPid)?.command) ?? await resolveProcessCommand(rootPid, signal)
+	const descendants = resolveTerminalLeafProcesses(rootPid, table)
 	// A '+' in ps STAT is the kernel's foreground process-group marker. It
 	// remains reliable when a non-job-control shell shares its process group
 	// with the current command, where TPGID alone points back to the shell.
@@ -40,10 +43,10 @@ export async function resolveTerminalForegroundProcess(rootPid: number, signal?:
 		return rootCommand
 	}
 	try {
-		const { stdout: groupOutput } = await execFileAsync('ps', ['-o', 'tpgid=', '-p', String(rootPid)], { signal })
+		const { stdout: groupOutput } = await execHost('ps', ['-o', 'tpgid=', '-p', String(rootPid)], signal)
 		const groupPid = Number.parseInt(groupOutput.trim(), 10)
 		const groupCommand = Number.isSafeInteger(groupPid) && groupPid > 0
-			? await resolveProcessCommand(groupPid, signal)
+			? commandName(table.get(groupPid)?.command) ?? await resolveProcessCommand(groupPid, signal)
 			: null
 		return groupCommand ?? rootCommand
 	} catch {
@@ -53,53 +56,82 @@ export async function resolveTerminalForegroundProcess(rootPid: number, signal?:
 	}
 }
 
-async function resolveTerminalLeafProcesses(
+export function parseHostProcessTable(stdout: string): ReadonlyMap<number, HostProcessRow> {
+	const table = new Map<number, HostProcessRow>()
+	for (const line of stdout.split('\n')) {
+		const match = PROCESS_TABLE_LINE.exec(line)
+		if (match === null) continue
+		const pid = Number.parseInt(match[1], 10)
+		const ppid = Number.parseInt(match[2], 10)
+		const command = commandName(match[4])
+		if (!Number.isSafeInteger(pid) || pid <= 0 || command === null) continue
+		table.set(pid, {
+			pid,
+			ppid: Number.isSafeInteger(ppid) && ppid >= 0 ? ppid : 0,
+			stat: match[3],
+			command,
+		})
+	}
+	return table
+}
+
+interface HostProcessRow {
+	readonly pid: number
+	readonly ppid: number
+	readonly stat: string
+	readonly command: string
+}
+
+function resolveTerminalLeafProcesses(
 	rootPid: number,
-	signal?: AbortSignal,
-): Promise<ReadonlyArray<{ command: string; foreground: boolean }>> {
+	table: ReadonlyMap<number, HostProcessRow>,
+): ReadonlyArray<{ command: string; foreground: boolean }> {
+	const children = new Map<number, number[]>()
+	for (const row of table.values()) {
+		const siblings = children.get(row.ppid)
+		if (siblings === undefined) children.set(row.ppid, [row.pid])
+		else siblings.push(row.pid)
+	}
 	const pending = [rootPid]
 	const visited = new Set<number>([rootPid])
 	const leaves: number[] = []
 	while (pending.length > 0 && visited.size <= 64) {
 		const parent = pending.shift()!
-		const children = (await childProcessIds(parent, signal)).filter(
-			(pid) => !visited.has(pid),
-		)
-		if (children.length === 0) {
+		const next = (children.get(parent) ?? []).filter((pid) => !visited.has(pid))
+		if (next.length === 0) {
 			if (parent !== rootPid) leaves.push(parent)
 			continue
 		}
-		for (const child of children) {
+		for (const child of next) {
 			visited.add(child)
 			pending.push(child)
 		}
 	}
-	return (
-		await Promise.all(leaves.map((pid) => resolveProcessObservation(pid, signal)))
-	).filter((entry): entry is { command: string; foreground: boolean } => entry !== null)
+	return leaves.flatMap((pid) => {
+		const row = table.get(pid)
+		return row === undefined ? [] : [{ command: row.command, foreground: row.stat.includes('+') }]
+	})
 }
 
-async function resolveProcessObservation(
-	pid: number,
-	signal?: AbortSignal,
-): Promise<{ command: string; foreground: boolean } | null> {
+async function readHostProcessTable(signal?: AbortSignal): Promise<ReadonlyMap<number, HostProcessRow>> {
 	try {
-		const { stdout } = await execFileAsync('ps', ['-o', 'stat=,comm=', '-p', String(pid)], { signal })
-		const line = stdout.trim()
-		const match = /^(\S+)\s+(.+)$/u.exec(line)
-		if (match === null) return null
-		const command = match[2].trim().split(/[\\/]/u).pop()?.trim()
-		return command ? { command, foreground: match[1].includes('+') } : null
+		const command = process.platform === 'linux'
+			? ['ps', ['-eo', 'pid=,ppid=,stat=,comm=']] as const
+			: process.platform === 'darwin'
+				? ['ps', ['-axo', 'pid=,ppid=,stat=,comm=']] as const
+				: null
+		if (command === null) return new Map()
+		const { stdout } = await execHost(command[0], command[1], signal)
+		return parseHostProcessTable(stdout)
 	} catch {
-		return null
+		return new Map()
 	}
 }
 
 async function resolveProcessCommand(pid: number, signal?: AbortSignal): Promise<string | null> {
 	try {
-		const { stdout } = await execFileAsync('ps', ['-o', 'comm=', '-p', String(pid)], { signal })
-		const command = stdout.trim().split(/[\\/]/u).pop()?.trim()
-		return command || null
+		const { stdout } = await execHost('ps', ['-o', 'comm=', '-p', String(pid)], signal)
+		return commandName(stdout)
 	} catch {
 		return null
 	}
@@ -118,25 +150,12 @@ async function resolveDeepestProcessPid(rootPid: number, signal?: AbortSignal): 
 async function childProcessIds(pid: number, signal?: AbortSignal): Promise<number[]> {
 	try {
 		const command = process.platform === 'linux'
-			? ['ps', ['-eo', 'pid=,ppid=']] as const
+			? ['ps', ['-o', 'pid=', '--ppid', String(pid)]] as const
 			: process.platform === 'darwin'
 				? ['pgrep', ['-P', String(pid)]] as const
 				: null
 		if (command === null) return []
-		const { stdout } = await execFileAsync(command[0], command[1], { signal })
-		if (process.platform === 'linux') {
-			return stdout
-				.split('\n')
-				.flatMap((value) => {
-					const match = /^(\d+)\s+(\d+)$/u.exec(value.trim())
-					if (match === null) return []
-					const childPid = Number.parseInt(match[1], 10)
-					const parentPid = Number.parseInt(match[2], 10)
-					return Number.isSafeInteger(childPid) && parentPid === pid
-						? [childPid]
-						: []
-				})
-		}
+		const { stdout } = await execHost(command[0], command[1], signal)
 		return stdout.split('\n').map((value) => Number.parseInt(value.trim(), 10))
 			.filter((value) => Number.isSafeInteger(value) && value > 0)
 	} catch {
@@ -147,15 +166,34 @@ async function childProcessIds(pid: number, signal?: AbortSignal): Promise<numbe
 async function resolveProcessCwd(pid: number, signal?: AbortSignal): Promise<string | null> {
 	try {
 		if (process.platform === 'linux') {
-			const { stdout } = await execFileAsync('readlink', [`/proc/${pid}/cwd`], { signal })
+			const { stdout } = await execHost('readlink', [`/proc/${pid}/cwd`], signal)
 			return stdout.trim() || null
 		}
 		if (process.platform === 'darwin') {
-			const { stdout } = await execFileAsync('/usr/sbin/lsof', ['-a', '-d', 'cwd', '-Fn', '-p', String(pid)], { signal })
+			const { stdout } = await execHost('/usr/sbin/lsof', ['-a', '-d', 'cwd', '-Fn', '-p', String(pid)], signal)
 			return stdout.split('\n').find((line) => line.startsWith('n'))?.slice(1).trim() || null
 		}
 	} catch {
 		return null
 	}
 	return null
+}
+
+function commandName(value: string | undefined): string | null {
+	const command = value?.trim().split(/[\\/]/u).pop()?.trim()
+	return command ? command : null
+}
+
+async function execHost(
+	command: string,
+	args: readonly string[],
+	signal?: AbortSignal,
+): Promise<{ stdout: string }> {
+	try {
+		return await execFileAsync(command, [...args], signal === undefined ? {} : { signal })
+	} catch (error) {
+		if (signal?.aborted) throw error
+		if (signal !== undefined) return await execFileAsync(command, [...args])
+		throw error
+	}
 }

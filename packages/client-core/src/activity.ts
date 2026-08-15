@@ -9,11 +9,13 @@
 
 export type ActivityStatus = "working" | "idle";
 export type ActivityAuthority = "none" | "raw" | "structured" | "provider";
+export type ForegroundObservationState = "available" | "limited";
 
 export interface ActivitySessionSnapshot {
   readonly sessionId: string;
   readonly projectId?: string;
   readonly foregroundBusy: boolean;
+  readonly foregroundObservation: ForegroundObservationState;
   readonly status: ActivityStatus;
   readonly attention: boolean;
   readonly acknowledged: boolean;
@@ -45,6 +47,19 @@ export interface ActivityReplay {
   readonly kind: "events" | "resync";
   readonly events: readonly ActivityEvent[];
   readonly snapshot?: ActivitySnapshot;
+}
+
+export interface ActivityClosePreflightSession {
+  readonly sessionId: string;
+  readonly projectId: string;
+  readonly observation: ForegroundObservationState;
+  readonly foregroundBusy: boolean;
+}
+
+export interface ActivityClosePreflight {
+  readonly observation: ForegroundObservationState;
+  readonly runningSessionIds: readonly string[];
+  readonly sessions: readonly ActivityClosePreflightSession[];
 }
 
 export type ActivityApplyResult =
@@ -177,8 +192,12 @@ export class ActivitySnapshotStore {
   }
 
   private normalizeSession(value: ActivitySessionSnapshot): ActivitySessionSnapshot {
-    if (!value || typeof value !== "object" || !ID_PATTERN.test(value.sessionId) || (value.projectId !== undefined && !ID_PATTERN.test(value.projectId)) || (value.foregroundBusy !== undefined && typeof value.foregroundBusy !== "boolean") || (value.status !== "working" && value.status !== "idle") || typeof value.attention !== "boolean" || typeof value.acknowledged !== "boolean" || typeof value.claimed !== "boolean" || !["none", "raw", "structured", "provider"].includes(value.authority) || typeof value.source !== "string" || value.source.length > SOURCE_MAX_LENGTH || !Number.isFinite(value.updatedAt)) throw new TypeError("activity session snapshot is invalid");
-    return Object.freeze({ ...value, foregroundBusy: value.foregroundBusy ?? false });
+    if (!value || typeof value !== "object" || !ID_PATTERN.test(value.sessionId) || (value.projectId !== undefined && !ID_PATTERN.test(value.projectId)) || (value.foregroundBusy !== undefined && typeof value.foregroundBusy !== "boolean") || (value.foregroundObservation !== undefined && value.foregroundObservation !== "available" && value.foregroundObservation !== "limited") || (value.status !== "working" && value.status !== "idle") || typeof value.attention !== "boolean" || typeof value.acknowledged !== "boolean" || typeof value.claimed !== "boolean" || !["none", "raw", "structured", "provider"].includes(value.authority) || typeof value.source !== "string" || value.source.length > SOURCE_MAX_LENGTH || !Number.isFinite(value.updatedAt)) throw new TypeError("activity session snapshot is invalid");
+    return Object.freeze({
+      ...value,
+      foregroundBusy: value.foregroundBusy ?? false,
+      foregroundObservation: value.foregroundObservation === "limited" ? "limited" : "available",
+    });
   }
 
   private publish(result: ActivityApplyResult): void {
