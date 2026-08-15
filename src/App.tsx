@@ -5682,6 +5682,9 @@ function App({
 			if (command === 'open-macros') {
 				return auxiliaryRouteController.openMacros();
 			}
+			if (command === 'open-remote-control') {
+				return auxiliaryRouteController.openRemoteControl();
+			}
 			return (
 				workspaceRefs.current.get(activeProjectId)?.executeCommand(command) ??
 				Promise.resolve()

@@ -127,3 +127,12 @@ export async function openMacrosWindow(
     presentNativeRoute(page, '/?auxiliary=macros', 'macros'),
   )
 }
+
+export async function openRemoteControlWindow(
+  electronApp: ElectronApplication,
+  page: Page,
+): Promise<Page> {
+  return openChildWindow(electronApp, () =>
+    presentNativeRoute(page, '/?auxiliary=remote-control', 'remote-control'),
+  )
+}
