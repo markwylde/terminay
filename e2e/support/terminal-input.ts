@@ -17,13 +17,21 @@ export async function typeInVisibleTerminal(
 	// the client boundary, which makes command-driven tests race the real UI.
 	// Wait for the same ready state that a user sees before interacting.
 	await expect(panel.locator('.terminal-panel-loading')).toHaveCount(0);
+	// The loading surface is removed after the initial stream has rendered, but
+	// the presentation lease can still settle in the following renderer turn.
+	// A read-only lease discards queued xterm input by design, so do not begin a
+	// synthetic command until this panel is the interactive presentation.
+	await expect(panel.locator('.terminal-presentation-control')).toHaveCount(0);
 	const input = panel.locator('.xterm-helper-textarea');
 	await input.focus();
+	await expect(input).toBeFocused();
 
 	const command = data.replace(/[\r\n]+$/u, '');
 	// xterm receives terminal bytes from keyboard events.  `insertText` only
 	// dispatches a DOM text-input event, which can leave punctuation-heavy shell
-	// commands half-rendered but never delivered to the PTY.
-	if (command.length > 0) await input.pressSequentially(command);
+	// commands half-rendered but never delivered to the PTY. Pace synthetic
+	// keystrokes so xterm's event handler and the asynchronous server-input queue
+	// observe each byte before the next one (and, crucially, before Enter).
+	if (command.length > 0) await input.pressSequentially(command, { delay: 2 });
 	if (command.length !== data.length) await input.press('Enter');
 }
