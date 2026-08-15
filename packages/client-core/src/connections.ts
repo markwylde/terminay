@@ -306,7 +306,7 @@ const STATUSES: ReadonlySet<string> = new Set<ConnectionStatus>([
 ]);
 
 const FORBIDDEN_PROFILE_KEYS: ReadonlySet<string> = new Set([
-  "pairingurl", "pairingfragment", "pin", "devicekey", "privatekey", "reconnectgrant", "proofkey", "signalingkey", "ticket", "token", "secret", "password",
+  "pairingurl", "pairingfragment", "pin", "devicekey", "privatekey", "proofkey", "signalingkey", "ticket", "token", "secret", "password",
 ]);
 
 /** The exact persisted host-local DTO.  Server trust, credentials, workspace

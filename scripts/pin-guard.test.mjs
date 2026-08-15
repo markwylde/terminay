@@ -66,13 +66,8 @@ test('PIN guard supports custom failure limits per context', () => {
 
 function createSettings(pairingPinHash, pinFailureLimit = 3) {
   return {
-    bindAddress: '0.0.0.0',
-    origin: 'https://localhost:9443',
-    pairingMode: 'webrtc',
     pinFailureLimit,
     pairingPinHash,
-    tlsCertPath: '',
-    tlsKeyPath: '',
     webRtcHostedDomain: 'terminay.com',
     webRtcIceServers: 'stun:stun.l.google.com:19302',
   }

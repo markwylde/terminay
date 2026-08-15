@@ -1,6 +1,6 @@
 import type { ProtocolId } from "@terminay/protocol";
 
-export type ConnectionCredentialKind = "device-key" | "reconnect-grant";
+export type ConnectionCredentialKind = "device-key";
 
 export interface ConnectionCredentialIdentity {
   readonly profileId: string;
@@ -69,7 +69,7 @@ function normalizeIdentity(value: unknown): ConnectionCredentialIdentity {
   assertId(input.profileId, "credential profile id");
   assertId(input.serverId, "credential server id");
   const origin = normalizeOrigin(input.origin);
-  if (input.kind !== "device-key" && input.kind !== "reconnect-grant") throw new TypeError("credential kind is invalid");
+  if (input.kind !== "device-key") throw new TypeError("credential kind is invalid");
   return Object.freeze({ profileId: input.profileId, serverId: input.serverId, origin, kind: input.kind });
 }
 

@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import {
 	mkdirSync,
 	readFileSync,
@@ -51,7 +51,7 @@ import {
 	RecordingService,
 	RemoteMcpBridgeAuthority,
 	RemoteMcpEnvironmentCoordinator,
-	type RemoteReconnectGrantRecord,
+	type RemoteRegisteredDevice,
 	type ServerCoreComposition,
 	ServerFileAdapter,
 	ServerFileCatalogAdapter,
@@ -128,13 +128,16 @@ else if (options.command === 'mcp') {
 		});
 	}
 } else {
-	const reconnectPersistence = createReconnectGrantPersistence(
+	const remotePairingPin = requiresRemotePairingPin(options)
+		? requiredRemotePairingPin(options)
+		: undefined;
+	const devicePersistence = createRemoteDevicePersistence(
 		options.dataRoot,
 	);
 	const remote = createRemoteExposure(
 		options.serverId,
 		options.remoteOrigin,
-		reconnectPersistence.load(),
+		devicePersistence.load(),
 	);
 	let protocolReady = false;
 	if (options.command === 'status') {
@@ -149,10 +152,7 @@ else if (options.command === 'mcp') {
 		// Pairing material is the sole local HTTP credential. It is delivered in
 		// the URL fragment and never copied into a second readiness field.
 		const handoff = remote.start();
-		const credentials = createProtocolCredentials(
-			handoff.pairingToken,
-			handoff.expiresAt,
-		);
+		const credentials = createProtocolCredentials(remote);
 		const serverComposition = await createServerComposition(options, () => {
 			if (runtime === undefined)
 				throw new Error('server runtime is not composed');
@@ -165,12 +165,13 @@ else if (options.command === 'mcp') {
 				? undefined
 				: createProtocolServer(
 						options,
+						remotePairingPin!,
 						handoff.pairingToken,
 						handoff.expiresAt,
 						composition,
 						remote,
 						credentials,
-						reconnectPersistence.save,
+						devicePersistence.save,
 					);
 		runtime = createRuntime(options, remote, uiServer, {
 			vault: serverComposition.vault.vault,
@@ -284,13 +285,14 @@ function createRuntime(
 function createRemoteExposure(
 	serverId: string,
 	sessionOrigin: string,
-	initialReconnectRecords: readonly RemoteReconnectGrantRecord[],
+	initialDevices: readonly RemoteRegisteredDevice[],
 ): ServerRemoteExposure {
-	return createServerRemoteExposure({
+	const exposure = createServerRemoteExposure({
 		serverId,
 		sessionOrigin,
-		reconnect: { initialRecords: initialReconnectRecords },
 	});
+	exposure.devices.restore(initialDevices);
+	return exposure;
 }
 
 async function createServerComposition(
@@ -1099,13 +1101,14 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
 
 function createProtocolServer(
 	options: ServerCliOptions,
+	expectedPairingPin: string,
 	authToken: string,
 	handoffExpiresAt: number,
 	composition: ServerCoreComposition,
 	remote: ServerRemoteExposure,
 	credentials: ProtocolCredentials,
-	persistReconnectRecords: (
-		records: readonly RemoteReconnectGrantRecord[],
+	persistDevices: (
+		records: readonly RemoteRegisteredDevice[],
 	) => void,
 ): LocalUiServer {
 	return createLocalUiServer({
@@ -1128,42 +1131,30 @@ function createProtocolServer(
 				'extensions:manage',
 			],
 		}),
-		reconnect: {
-			enroll: ({ clientId }) => {
-				const issued = remote.issueReconnectGrant({
-					deviceId: clientId,
-					lifetime: 'until-revoked',
+		deviceAuthentication: {
+			enroll: ({ pairingSessionId, pairingToken, pairingExpiresAt, pairingPin, deviceName, publicKeyPem }) => {
+				if (!validPairingExpiry(pairingExpiresAt) || !matchesPairingPin(pairingPin, expectedPairingPin))
+					throw new Error('pairing authority is invalid');
+				const device = remote.enrollDevice({
+					pairingSessionId,
+					pairingToken,
+					deviceName,
+					publicKeyPem,
 				});
-				persistReconnectRecords(remote.reconnect.list());
-				return {
-					handle: issued.handle,
-					grant: issued.grant,
-					signingOrigin: issued.sessionOrigin,
-				};
+				persistDevices(remote.devices.list());
+				return { deviceId: device.deviceId };
 			},
-			challenge: ({ handle, clientNonce }) => {
-				const pending = remote.createReconnectChallenge({
-					handle,
-					origin: options.remoteOrigin,
-					clientNonce,
-				});
-				return {
-					attemptId: pending.challenge.attemptId,
-					handle: pending.challenge.handle,
-					clientNonce: pending.challenge.clientNonce,
-					signingInput: pending.signingInput,
-				};
+			challenge: ({ deviceId }) => {
+				const pending = remote.createDeviceChallenge(deviceId);
+				return { ...pending.challenge, signingInput: pending.signingInput };
 			},
-			complete: ({ attemptId, handle, clientNonce, proof }) => {
-				const authenticated = remote.verifyReconnectProof({
-					attemptId,
-					handle,
-					origin: options.remoteOrigin,
-					clientNonce,
-					proof,
+			verify: ({ deviceId, challengeId, deviceSignature }) => {
+				const ticket = remote.verifyDeviceSignature({
+					deviceId,
+					challengeId,
+					deviceSignature,
 				});
-				persistReconnectRecords(remote.reconnect.list());
-				return credentials.issue(authenticated.deviceId);
+				return { ticket: ticket.ticket, expiresAt: ticket.expiresAt };
 			},
 		},
 		...(options.httpHost === undefined ? {} : { host: options.httpHost }),
@@ -1180,66 +1171,48 @@ function createProtocolServer(
 interface ProtocolCredentials {
 	readonly accept: (token: string) => boolean;
 	readonly clientId: (token: string) => string | undefined;
-	readonly issue: (clientId: string) => {
-		readonly ticket: string;
-		readonly expiresAt: number;
-	};
 }
 
-/** Short-lived application tickets are intentionally separate from the
- * one-time pairing credential and the durable reconnect grant. The map is
- * process-local: a server restart requires the normal reconnect authority to
- * mint a fresh ticket, never reuse an old bearer. */
+/** The device authority mints one-use application tickets. This small cache
+ * only carries the authenticated device id across LocalUiServer's credential
+ * callbacks; it never stores a credential or survives process shutdown. */
 function createProtocolCredentials(
-	_bootstrapToken: string,
-	_bootstrapExpiresAt: number,
+	remote: ServerRemoteExposure,
 ): ProtocolCredentials {
-	const lifetimeMs = 15 * 60 * 1000;
-	const tickets = new Map<
-		string,
-		Readonly<{ expiresAt: number; clientId: string }>
-	>();
-	const prune = (now: number): void => {
-		for (const [ticket, value] of tickets)
-			if (value.expiresAt <= now) tickets.delete(ticket);
-	};
+	const accepted = new Map<string, string>();
 	return {
 		accept: (ticket) => {
-			const now = Date.now();
-			prune(now);
-			const value = tickets.get(ticket);
-			return value !== undefined && value.expiresAt > now;
+			try {
+				const result = remote.consumeConnectionTicket(ticket);
+				accepted.set(ticket, result.deviceId);
+				return true;
+			} catch {
+				return false;
+			}
 		},
-		clientId: (ticket) => tickets.get(ticket)?.clientId,
-		issue: (clientId) => {
-			const now = Date.now();
-			prune(now);
-			const ticket = randomBytes(32).toString('base64url');
-			const expiresAt = now + lifetimeMs;
-			tickets.set(ticket, { expiresAt, clientId });
-			return { ticket, expiresAt };
-		},
+		clientId: (ticket) => accepted.get(ticket),
 	};
 }
 
-interface ReconnectGrantPersistence {
-	readonly load: () => readonly RemoteReconnectGrantRecord[];
-	readonly save: (records: readonly RemoteReconnectGrantRecord[]) => void;
+interface RemoteDevicePersistence {
+	readonly load: () => readonly RemoteRegisteredDevice[];
+	readonly save: (records: readonly RemoteRegisteredDevice[]) => void;
 }
 
-/** Only grant hashes and proof verifiers are persisted. A pairing URL,
- * reconnect grant, or short-lived HTTP ticket is never serialized here. */
-function createReconnectGrantPersistence(
+/** Device public keys and non-secret metadata are the complete durable remote
+ * credential record. Pairing fragments, signatures, and tickets are never
+ * serialized. Unknown schemas start clean; this is intentionally a cutover. */
+function createRemoteDevicePersistence(
 	dataRoot: string,
-): ReconnectGrantPersistence {
-	const file = join(dataRoot, 'reconnect-grants.v1.json');
+): RemoteDevicePersistence {
+	const file = join(dataRoot, 'remote-devices.v1.json');
 	return {
 		load: () => {
 			try {
 				const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
 				if (!Array.isArray(parsed))
-					throw new TypeError('reconnect grant state is invalid');
-				return parsed as readonly RemoteReconnectGrantRecord[];
+					return [];
+				return parsed as readonly RemoteRegisteredDevice[];
 			} catch (error) {
 				if (isMissingFile(error)) return [];
 				throw error;
@@ -1263,6 +1236,30 @@ function isMissingFile(error: unknown): boolean {
 		error !== null &&
 		(error as { code?: unknown }).code === 'ENOENT'
 	);
+}
+
+function validPairingExpiry(value: string): boolean {
+	const parsed = Date.parse(value);
+	return Number.isSafeInteger(parsed) && parsed > Date.now() - 60_000;
+}
+
+function requiresRemotePairingPin(options: ServerCliOptions): boolean {
+	return options.command === 'start' || options.command === 'pairing';
+}
+
+function requiredRemotePairingPin(options: ServerCliOptions): string {
+	const pin = options.remotePairingPin;
+	if (!/^\d{6}$/u.test(pin ?? '')) {
+		throw new Error(
+			'TERMINAY_REMOTE_PAIRING_PIN must be configured as exactly six digits before remote pairing is available.',
+		);
+	}
+	return pin!;
+}
+
+function matchesPairingPin(received: string, expected: string): boolean {
+	if (!/^\d{6}$/u.test(received) || !/^\d{6}$/u.test(expected)) return false;
+	return timingSafeEqual(Buffer.from(received), Buffer.from(expected));
 }
 
 async function ensureDefaultTerminalSession(

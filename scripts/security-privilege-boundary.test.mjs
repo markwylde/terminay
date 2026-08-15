@@ -140,7 +140,6 @@ test("remote admission binds server identity and revocation to exact devices", (
 
 test("server UI host keeps privileged navigation and browser permissions denied", async () => {
   const host = await readFile(new URL("../electron/serverUiHost.ts", import.meta.url), "utf8");
-  const remote = await readFile(new URL("../electron/remote/service.ts", import.meta.url), "utf8");
   assert.match(host, /contextIsolation:\s*true/);
   assert.match(host, /nodeIntegration:\s*false/);
   assert.match(host, /sandbox:\s*true/);
@@ -176,12 +175,4 @@ test("server UI host keeps privileged navigation and browser permissions denied"
   assert.match(host, /item\.cancel\(\)/);
   assert.match(host, /setPermissionCheckHandler\(\(\) => false\)/);
   assert.match(host, /callback\(false\)/);
-  assert.match(remote, /content-security-policy/);
-  assert.match(remote, /default-src 'self'/);
-  assert.match(remote, /script-src 'self'/);
-  assert.match(remote, /object-src 'none'/);
-  assert.match(remote, /frame-ancestors 'none'/);
-  assert.match(remote, /permissions-policy/);
-  assert.match(remote, /camera=\(\), microphone=\(\)/);
-  assert.match(remote, /referrer-policy/);
 });

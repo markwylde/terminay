@@ -55,8 +55,8 @@ test("node-datachannel peer rejects an invalid injected role before peer or rela
 	const signaling = {
 		send() {},
 		onMessage() { relaySubscribed = true; return () => {}; },
-		sign: (message) => message,
-		verify: (message) => message,
+		encode: (message) => message,
+		decode: (message) => message,
 	};
 
 	assert.throws(
@@ -72,40 +72,40 @@ test("node-datachannel peer opener verifies signaling, answers offers, and maps 
 	const signaling = {
 		send: (message) => outbound.push(message),
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: (message) => ({ ...message, signature: "valid" }),
-		verify: (message) => message?.signature === "valid" ? { type: message.type, ...(message.sdp === undefined ? { candidate: message.candidate, mid: message.mid } : { sdp: message.sdp }) } : null,
+		encode: (message) => ({ ...message }),
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({ signaling, timeoutMs: 1_000 });
 	const pending = openChannels({ PeerConnection: FakePeer }, context());
-	inbound[0]({ type: "offer", sdp: "offer-sdp", signature: "valid" });
-	inbound[0]({ type: "ice", candidate: "candidate", mid: "0", signature: "valid" });
+	inbound[0]({ type: "offer", sdp: "offer-sdp" });
+	inbound[0]({ type: "ice", candidate: "candidate", mid: "0" });
 	for (const label of ["control", "application", "terminal", "assets"]) FakePeer.instance.emitChannel(label);
 	const channels = await pending;
 	assert.deepEqual([...channels.keys()], ["control", "application", "terminal", "assets"]);
 	assert.deepEqual(FakePeer.instance.remoteDescription, { sdp: "offer-sdp", type: "offer" });
 	assert.deepEqual(FakePeer.instance.remoteCandidate, { candidate: "candidate", mid: "0" });
 	assert.deepEqual(outbound, [
-		{ type: "answer", sdp: "answer-sdp", signature: "valid" },
+		{ type: "answer", sdp: "answer-sdp" },
 	]);
 });
 
-test("node-datachannel peer fails closed when authenticated signaling verification stalls", async () => {
+test("node-datachannel peer fails closed when authenticated signaling decoding stalls", async () => {
 	const inbound = [];
 	const signaling = {
 		send() {},
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: (message) => message,
-		verify: () => new Promise(() => {}),
+		encode: (message) => message,
+		decode: () => new Promise(() => {}),
 	};
 	const openChannels = createNodeDataChannelOpenChannels({
 		signaling,
 		timeoutMs: 1_000,
-		signalVerificationTimeoutMs: 20,
+		signalDecodingTimeoutMs: 20,
 	});
 	const pending = openChannels({ PeerConnection: FakePeer }, context());
 	inbound[0]({ type: "offer", sdp: "offer-sdp" });
 
-	await assert.rejects(pending, /signaling verification timed out/);
+	await assert.rejects(pending, /signaling decoding timed out/);
 	assert.equal(FakePeer.instance.closed, true);
 	assert.equal(inbound.length, 0, "a stalled verifier must release the signaling subscription");
 });
@@ -115,8 +115,8 @@ test("node-datachannel peer fails closed when the native binding reports an unkn
 	const signaling = {
 		send() {},
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: (message) => message,
-		verify: (message) => message,
+		encode: (message) => message,
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({ signaling, timeoutMs: 1_000 });
 	const pending = openChannels({ PeerConnection: FakePeer }, context());
@@ -136,8 +136,8 @@ test("node-datachannel peer rejects an invalid relay unsubscribe handle before n
 			listener = candidate;
 			return undefined;
 		},
-		sign: (message) => message,
-		verify: (message) => message,
+		encode: (message) => message,
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({ signaling, timeoutMs: 1_000 });
 
@@ -166,8 +166,8 @@ test("node-datachannel peer stops native listener registration after a synchrono
 	const signaling = {
 		send() {},
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: (message) => message,
-		verify: (message) => message,
+		encode: (message) => message,
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({ signaling, timeoutMs: 1_000 });
 
@@ -182,15 +182,15 @@ test("node-datachannel peer stops native listener registration after a synchrono
 	assert.equal(inbound.length, 0, "the authenticated signaling subscription must be released");
 });
 
-test("node-datachannel peer rejects oversized native local signaling before signing or relay send", async () => {
+test("node-datachannel peer rejects oversized native local signaling before encoding or relay send", async () => {
 	const inbound = [];
 	const outbound = [];
-	let signCalls = 0;
+	let encodeCalls = 0;
 	const signaling = {
 		send: (message) => outbound.push(message),
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: (message) => { signCalls += 1; return message; },
-		verify: (message) => message,
+		encode: (message) => { encodeCalls += 1; return message; },
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({
 		signaling,
@@ -202,21 +202,21 @@ test("node-datachannel peer rejects oversized native local signaling before sign
 	FakePeer.instance.description("x".repeat(9), "answer");
 	await assert.rejects(pending, /description is invalid or too large/);
 
-	assert.equal(signCalls, 0, "invalid native SDP must not reach the signing boundary");
+	assert.equal(encodeCalls, 0, "invalid native SDP must not reach the encoding boundary");
 	assert.deepEqual(outbound, [], "invalid native SDP must not reach the relay");
 	assert.equal(FakePeer.instance.closed, true);
 	assert.equal(inbound.length, 0, "failure must release the signaling subscription");
 });
 
-test("node-datachannel peer rejects blank native local SDP before signing or relay send", async () => {
+test("node-datachannel peer rejects blank native local SDP before encoding or relay send", async () => {
 	const inbound = [];
 	const outbound = [];
-	let signCalls = 0;
+	let encodeCalls = 0;
 	const signaling = {
 		send: (message) => outbound.push(message),
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: (message) => { signCalls += 1; return message; },
-		verify: (message) => message,
+		encode: (message) => { encodeCalls += 1; return message; },
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({ signaling, timeoutMs: 1_000 });
 	const pending = openChannels({ PeerConnection: FakePeer }, context());
@@ -224,21 +224,21 @@ test("node-datachannel peer rejects blank native local SDP before signing or rel
 	FakePeer.instance.description(" \t\r\n", "answer");
 	await assert.rejects(pending, /description is invalid or too large/);
 
-	assert.equal(signCalls, 0, "blank native SDP must not reach the signing boundary");
+	assert.equal(encodeCalls, 0, "blank native SDP must not reach the encoding boundary");
 	assert.deepEqual(outbound, [], "blank native SDP must not reach the relay");
 	assert.equal(FakePeer.instance.closed, true);
 	assert.equal(inbound.length, 0, "failure must release the signaling subscription");
 });
 
-test("node-datachannel peer rejects malformed native local ICE before signing or relay send", async () => {
+test("node-datachannel peer rejects malformed native local ICE before encoding or relay send", async () => {
 	const inbound = [];
 	const outbound = [];
-	let signCalls = 0;
+	let encodeCalls = 0;
 	const signaling = {
 		send: (message) => outbound.push(message),
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: (message) => { signCalls += 1; return message; },
-		verify: (message) => message,
+		encode: (message) => { encodeCalls += 1; return message; },
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({
 		signaling,
@@ -250,7 +250,7 @@ test("node-datachannel peer rejects malformed native local ICE before signing or
 	FakePeer.instance.candidate("candidate", "0");
 	await assert.rejects(pending, /candidate is invalid or too large/);
 
-	assert.equal(signCalls, 0, "invalid native ICE must not reach the signing boundary");
+	assert.equal(encodeCalls, 0, "invalid native ICE must not reach the encoding boundary");
 	assert.deepEqual(outbound, [], "invalid native ICE must not reach the relay");
 	assert.equal(FakePeer.instance.closed, true);
 	assert.equal(inbound.length, 0, "failure must release the signaling subscription");
@@ -259,19 +259,19 @@ test("node-datachannel peer rejects malformed native local ICE before signing or
 test("node-datachannel peer rejects blank ICE at native and authenticated signaling boundaries", async () => {
 	const inbound = [];
 	const outbound = [];
-	let signCalls = 0;
+	let encodeCalls = 0;
 	const signaling = {
 		send: (message) => outbound.push(message),
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: (message) => { signCalls += 1; return message; },
-		verify: (message) => message,
+		encode: (message) => { encodeCalls += 1; return message; },
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({ signaling, timeoutMs: 1_000 });
 	const nativePending = openChannels({ PeerConnection: FakePeer }, context());
 
 	FakePeer.instance.candidate(" \t\r\n", "0");
 	await assert.rejects(nativePending, /candidate is invalid or too large/);
-	assert.equal(signCalls, 0, "blank native ICE must not reach the signing boundary");
+	assert.equal(encodeCalls, 0, "blank native ICE must not reach the encoding boundary");
 	assert.deepEqual(outbound, [], "blank native ICE must not reach the relay");
 	assert.equal(FakePeer.instance.closed, true);
 	assert.equal(inbound.length, 0, "native failure must release the signaling subscription");
@@ -283,8 +283,8 @@ test("node-datachannel peer rejects blank ICE at native and authenticated signal
 			authenticatedInbound.push(listener);
 			return () => authenticatedInbound.splice(authenticatedInbound.indexOf(listener), 1);
 		},
-		sign: (message) => message,
-		verify: (message) => message,
+		encode: (message) => message,
+		decode: (message) => message,
 	};
 	const authenticatedPending = createNodeDataChannelOpenChannels({
 		signaling: authenticatedSignaling,
@@ -299,12 +299,12 @@ test("node-datachannel peer rejects blank ICE at native and authenticated signal
 test("node-datachannel peer fails closed when the native binding emits SDP for the wrong negotiated role", async () => {
 	const inbound = [];
 	const outbound = [];
-	let signCalls = 0;
+	let encodeCalls = 0;
 	const signaling = {
 		send: (message) => outbound.push(message),
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: (message) => { signCalls += 1; return message; },
-		verify: (message) => message,
+		encode: (message) => { encodeCalls += 1; return message; },
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({ signaling, timeoutMs: 1_000 });
 	const pending = openChannels({ PeerConnection: FakePeer }, context());
@@ -312,26 +312,26 @@ test("node-datachannel peer fails closed when the native binding emits SDP for t
 	FakePeer.instance.description("unexpected-offer", "offer");
 	await assert.rejects(pending, /SDP type inconsistent with its role/);
 
-	assert.equal(signCalls, 0, "wrong-role native SDP must not reach the signing boundary");
+	assert.equal(encodeCalls, 0, "wrong-role native SDP must not reach the encoding boundary");
 	assert.deepEqual(outbound, [], "wrong-role native SDP must not reach the relay");
 	assert.equal(FakePeer.instance.closed, true);
 	assert.equal(inbound.length, 0, "failure must release the signaling subscription");
 });
 
-test("node-datachannel peer bounds native outbound signaling before asynchronous signing", async () => {
+test("node-datachannel peer bounds native outbound signaling before asynchronous encoding", async () => {
 	const inbound = [];
 	let releaseFirstSign;
-	let signCalls = 0;
+	let encodeCalls = 0;
 	const firstSign = new Promise((resolve) => { releaseFirstSign = resolve; });
 	const signaling = {
 		send() {},
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: async (message) => {
-			signCalls += 1;
+		encode: async (message) => {
+			encodeCalls += 1;
 			await firstSign;
 			return message;
 		},
-		verify: (message) => message,
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({
 		signaling,
@@ -342,7 +342,7 @@ test("node-datachannel peer bounds native outbound signaling before asynchronous
 
 	FakePeer.instance.candidate("candidate-one", "0");
 	await new Promise((resolve) => setImmediate(resolve));
-	assert.equal(signCalls, 1, "only the first native callback may reach the asynchronous signer");
+	assert.equal(encodeCalls, 1, "only the first native callback may reach the asynchronous encoder");
 	FakePeer.instance.candidate("candidate-two", "1");
 	await assert.rejects(pending, /outbound signaling queue limit reached/);
 
@@ -352,13 +352,13 @@ test("node-datachannel peer bounds native outbound signaling before asynchronous
 	await new Promise((resolve) => setImmediate(resolve));
 });
 
-test("node-datachannel peer fails closed when a post-setup native signer stalls", async () => {
+test("node-datachannel peer fails closed when a post-setup native encoder stalls", async () => {
 	const inbound = [];
 	const signaling = {
 		send() {},
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: (message) => message.type === "ice" ? new Promise(() => {}) : message,
-		verify: (message) => message,
+		encode: (message) => message.type === "ice" ? new Promise(() => {}) : message,
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({
 		signaling,
@@ -374,7 +374,7 @@ test("node-datachannel peer fails closed when a post-setup native signer stalls"
 	await new Promise((resolve) => setTimeout(resolve, 40));
 
 	assert.equal(FakePeer.instance.closed, true);
-	assert.equal(inbound.length, 0, "a stalled signer must release the signaling subscription after setup");
+	assert.equal(inbound.length, 0, "a stalled encoder must release the signaling subscription after setup");
 });
 
 test("node-datachannel peer fails closed when a post-setup relay send stalls", async () => {
@@ -382,8 +382,8 @@ test("node-datachannel peer fails closed when a post-setup relay send stalls", a
 	const signaling = {
 		send: (message) => message.type === "ice" ? new Promise(() => {}) : undefined,
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: (message) => message,
-		verify: (message) => message,
+		encode: (message) => message,
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({
 		signaling,
@@ -413,8 +413,8 @@ test("node-datachannel peer opener rejects unexpected channels", async () => {
 	const signaling = {
 		send() {},
 		onMessage(listener) { inbound.push(listener); return () => undefined; },
-		sign: (message) => message,
-		verify: (message) => message,
+		encode: (message) => message,
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({ signaling, timeoutMs: 100 });
 	const pending = openChannels({ PeerConnection: ReusedPeer }, context());
@@ -428,8 +428,8 @@ test("node-datachannel peer contains native callback listener failures and close
 	const signaling = {
 		send() {},
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: (message) => message,
-		verify: (message) => message,
+		encode: (message) => message,
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({ signaling, timeoutMs: 1_000 });
 	const pending = openChannels({ PeerConnection: FakePeer }, context());
@@ -449,8 +449,8 @@ test("node-datachannel peer fails closed when native channel state inspection th
 	const signaling = {
 		send() {},
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: (message) => message,
-		verify: (message) => message,
+		encode: (message) => message,
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({ signaling, timeoutMs: 1_000 });
 	const pending = openChannels({ PeerConnection: FakePeer }, context());
@@ -472,8 +472,8 @@ test("node-datachannel peer opener rejects authenticated replayed descriptions",
 	const signaling = {
 		send() {},
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: (message) => message,
-		verify: (message) => message,
+		encode: (message) => message,
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({ signaling, timeoutMs: 1_000 });
 	const pending = openChannels({ PeerConnection: FakePeer }, context());
@@ -489,8 +489,8 @@ test("node-datachannel peer defers authenticated ICE until its remote SDP and bo
 	const signaling = {
 		send() {},
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: (message) => message,
-		verify: (message) => message,
+		encode: (message) => message,
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({
 		signaling,
@@ -524,8 +524,8 @@ test("node-datachannel peer opener fails closed on an authenticated replayed ICE
 	const signaling = {
 		send() {},
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: (message) => message,
-		verify: (message) => message,
+		encode: (message) => message,
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({ signaling, timeoutMs: 1_000 });
 	const pending = openChannels({ PeerConnection: FakePeer }, context());
@@ -544,8 +544,8 @@ test("node-datachannel peer opener bounds distinct authenticated ICE after SDP a
 	const signaling = {
 		send() {},
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: (message) => message,
-		verify: (message) => message,
+		encode: (message) => message,
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({
 		signaling,
@@ -563,13 +563,13 @@ test("node-datachannel peer opener bounds distinct authenticated ICE after SDP a
 	assert.equal(inbound.length, 0, "the signaling subscription must be released");
 });
 
-test("node-datachannel peer opener fails closed when verified signaling exceeds its byte limit", async () => {
+test("node-datachannel peer opener fails closed when decoded signaling exceeds its byte limit", async () => {
 	const inbound = [];
 	const signaling = {
 		send() {},
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: (message) => message,
-		verify: (message) => message,
+		encode: (message) => message,
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({
 		signaling,
@@ -589,8 +589,8 @@ test("node-datachannel peer opener rejects blank authenticated SDP before native
 	const signaling = {
 		send() {},
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: (message) => message,
-		verify: (message) => message,
+		encode: (message) => message,
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({ signaling, timeoutMs: 1_000 });
 	const pending = openChannels({ PeerConnection: FakePeer }, context());
@@ -602,16 +602,16 @@ test("node-datachannel peer opener rejects blank authenticated SDP before native
 	assert.equal(inbound.length, 0, "failure must release the signaling subscription");
 });
 
-test("node-datachannel peer opener bounds asynchronous signaling verification", async () => {
+test("node-datachannel peer opener bounds asynchronous signaling decoding", async () => {
 	const inbound = [];
 	let release;
-	const verification = new Promise((resolve) => { release = resolve; });
+	const decoding = new Promise((resolve) => { release = resolve; });
 	const signaling = {
 		send() {},
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: (message) => message,
-		verify: async (message) => {
-			await verification;
+		encode: (message) => message,
+		decode: async (message) => {
+			await decoding;
 			return message;
 		},
 	};
@@ -643,8 +643,8 @@ test("node-datachannel offerer closes an untracked native channel when its label
 	const signaling = {
 		send() {},
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: (message) => message,
-		verify: (message) => message,
+		encode: (message) => message,
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({ signaling, role: "offerer", timeoutMs: 1_000 });
 	await assert.rejects(
@@ -679,8 +679,8 @@ test("node-datachannel offerer stops allocating lanes after a synchronous native
 	const signaling = {
 		send() {},
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: (message) => message,
-		verify: (message) => message,
+		encode: (message) => message,
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({ signaling, role: "offerer", timeoutMs: 1_000 });
 
@@ -700,8 +700,8 @@ test("node-datachannel peer failure after setup closes channels and releases sig
 	const signaling = {
 		send() {},
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: (message) => message,
-		verify: (message) => message,
+		encode: (message) => message,
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({ signaling, timeoutMs: 1_000 });
 	const pending = openChannels({ PeerConnection: FakePeer }, context());
@@ -721,8 +721,8 @@ test("node-datachannel peer fails closed when any required traffic lane closes a
 	const signaling = {
 		send() {},
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: (message) => message,
-		verify: (message) => message,
+		encode: (message) => message,
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({ signaling, timeoutMs: 1_000 });
 	const pending = openChannels({ PeerConnection: FakePeer }, context());
@@ -750,8 +750,8 @@ test("a throwing signaling unsubscribe cannot escape a native failure callback o
 				throw new Error("signaling unsubscribe failed");
 			};
 		},
-		sign: (message) => message,
-		verify: (message) => message,
+		encode: (message) => message,
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({ signaling, timeoutMs: 1_000 });
 	const pending = openChannels({ PeerConnection: FakePeer }, context());
@@ -771,15 +771,15 @@ test("node-datachannel peer never publishes an asynchronously signed answer afte
 	const inbound = [];
 	const outbound = [];
 	let releaseSign;
-	const signing = new Promise((resolve) => { releaseSign = resolve; });
+	const encoding = new Promise((resolve) => { releaseSign = resolve; });
 	const signaling = {
 		send: (message) => outbound.push(message),
 		onMessage(listener) { inbound.push(listener); return () => inbound.splice(inbound.indexOf(listener), 1); },
-		sign: async (message) => {
-			await signing;
+		encode: async (message) => {
+			await encoding;
 			return message;
 		},
-		verify: (message) => message,
+		decode: (message) => message,
 	};
 	const openChannels = createNodeDataChannelOpenChannels({ signaling, timeoutMs: 1_000 });
 	const pending = openChannels({ PeerConnection: FakePeer }, context());

@@ -46,7 +46,6 @@ import {
 import { SharedFolderRouteBody } from '../shared/SharedFolderRouteBody';
 import { SharedGitRouteBody } from '../shared/SharedGitRouteBody';
 import { SharedTerminalRouteBody } from '../shared/SharedTerminalRouteBody';
-import { defaultTerminalSettings } from '../terminalSettings';
 import type { RemoteAccessStatus } from '../types/terminay';
 import { createBrowserMacroSettingsClient } from './browserRendererHostAdapters';
 import './connectedRendererWorkspace.css';
@@ -953,23 +952,12 @@ function createUnavailableRemoteAccessClient(): RemoteAccessStatusClient {
 		pendingWebRtcConnectionCount: 0,
 		auditEvents: [],
 		connections: [],
-		availableAddresses: [],
 		configurationIssue: 'Remote Access is managed by Terminay Desktop.',
 		configurationPath: '',
 		errorMessage: 'Remote Access is unavailable in the browser host.',
 		isRunning: false,
-		lanPairingExpiresAt: null,
-		lanPairingQrCodeDataUrl: null,
-		lanPairingQrCodePath: null,
-		lanPairingUrl: null,
-		origin: null,
 		pairedDeviceCount: 0,
 		pairedDevices: [],
-		pairingMode: defaultTerminalSettings.remoteAccess.pairingMode,
-		pairingExpiresAt: null,
-		pairingQrCodeDataUrl: null,
-		pairingQrCodePath: null,
-		pairingUrl: null,
 		webRtcPairingExpiresAt: null,
 		webRtcPairingQrCodeDataUrl: null,
 		webRtcPairingUrl: null,
@@ -982,9 +970,7 @@ function createUnavailableRemoteAccessClient(): RemoteAccessStatusClient {
 		closeConnection: getStatus,
 		getStatus,
 		revokeDevice: getStatus,
-		setPairingAddress: getStatus,
 		subscribe: () => () => undefined,
 		toggleServer: getStatus,
-		toggleDirectListener: getStatus,
 	});
 }

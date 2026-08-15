@@ -22,7 +22,6 @@ export interface MigrationStoreInventory {
     | "macros"
     | "safeStorageSecrets"
     | "remoteDevices"
-    | "reconnectGrants"
     | "auditRecords"
     | "tlsPaths"
     | "connectionProfiles"
@@ -87,7 +86,6 @@ const STORE_KEYS = [
   ["macros", ["macros", "macroDefinitions", "quickCommands"]],
   ["safeStorageSecrets", ["safeStorage", "safeStorageSecrets", "secrets"]],
   ["remoteDevices", ["remoteDevices", "devices", "deviceGrants", "deviceKeys"]],
-  ["reconnectGrants", ["reconnectGrants", "grants", "reconnect"]],
   ["auditRecords", ["auditRecords", "audit", "auditLog"]],
   ["tlsPaths", ["tlsPaths", "tls", "tlsConfig"]],
   ["connectionProfiles", ["connectionProfiles", "profiles", "connections"]],
