@@ -8,9 +8,12 @@ test('Electron exposes the connection manager for canonical remote profiles', as
 	await mainWindow.getByRole('button', { name: 'Add connection…' }).click();
 
 	const manager = mainWindow.getByRole('dialog', {
-		name: 'Browser connections',
+		name: 'Connections',
 	});
 	await expect(manager).toBeVisible();
+	await expect(
+		manager.getByRole('heading', { name: 'Connections' }),
+	).toHaveCount(1);
 	await expect(
 		manager.getByRole('listbox', { name: 'Saved Terminay servers' }),
 	).toHaveCount(1);
