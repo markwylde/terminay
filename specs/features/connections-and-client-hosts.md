@@ -81,6 +81,15 @@ Git surfaces. Browser hosts keep every route in-page; Desktop may present
 eligible secondary routes in native auxiliary windows only when its
 `nativeWindows` capability is declared.
 
+The connections management surface is that shared route body. The in-page
+route uses one page heading. Hosts that open it as a dialog use a single
+dialog title, a short description, and a close control; they do not repeat
+the page heading inside the dialog. The dialog and form use the same quiet
+surface, slate controls, and blue primary actions as the Edit Tab modal. An
+empty saved-server list keeps its heading and pairing instructions on
+separate lines and hides that empty copy while the pairing form is open.
+Pairing URL and PIN fields stack at full width above continue/cancel actions.
+
 Desktop development, packaged Desktop, and auxiliary routes execute the same
 server-bundled route bodies against the authenticated selected-server client.
 That selected-server bundle is the sole workspace renderer for connections,
@@ -482,6 +491,9 @@ WebRTC generation replacement and terminal resynchronization follow
   without crossing server, project, or credential state.
 - The web host offers the same add/manage/switch journey without showing a
   Local option.
+- The connections dialog uses one title and does not repeat the in-page
+  heading; it matches the Edit Tab modal surface and stacks pairing fields
+  above their actions.
 - The installed PWA can open its manager and saved profile list offline without
   claiming that an unreachable session origin is connected.
 - Opening a pairing link directly enrolls the browser and later opening the
