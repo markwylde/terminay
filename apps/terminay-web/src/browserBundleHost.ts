@@ -170,9 +170,10 @@ function contentType(path: string): string {
 }
 function exactSessionOrigin(value: string): string {
 	const parsed = new URL(value);
-	const loopback = parsed.protocol === 'http:' && (parsed.hostname === 'localhost' || parsed.hostname.endsWith('.localhost'));
+	const loopback = parsed.protocol === 'http:' && isLoopbackHostname(parsed.hostname);
 	if ((!loopback && parsed.protocol !== 'https:') || parsed.origin !== value || parsed.username || parsed.password) throw new TypeError('browser session origin must be an exact HTTPS or loopback origin');
 	return parsed.origin;
 }
+function isLoopbackHostname(hostname: string): boolean { return hostname === 'localhost' || hostname.endsWith('.localhost') || hostname === '127.0.0.1' || hostname === '[::1]'; }
 function readonlyAssets(assets: Map<string, Uint8Array>): ReadonlyMap<string, Uint8Array> { return new Map([...assets].map(([path, bytes]) => [path, Uint8Array.from(bytes)])); }
 function record(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }

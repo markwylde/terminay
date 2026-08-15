@@ -99,6 +99,15 @@ test('the generic manager and direct hosts never gate on browser brand or genera
 	}
 });
 
+test('direct browser archives accept exact IPv4 and IPv6 loopback session origins', async () => {
+	const selected = fixture('loopback-origin');
+	for (const origin of ['http://127.0.0.1:4317', 'http://[::1]:4317']) {
+		const host = createDirectBrowserBundleHost(new MemoryCacheStorage());
+		const launch = await host.installAndPrepare({ expectedServerId: 'server-prod', sessionOrigin: origin, context: context(selected.bundleId), endpoint: endpoint(), compressedArchive: selected.archive });
+		assert.equal(launch.entryUrl, `${origin}/remote-app/${selected.bundleId}/generated/workspace.html`);
+	}
+});
+
 test('tar extraction rejects traversal, links, duplicates, metadata drift, and every configured resource limit', () => {
 	const bundleId = 'archive_security_0001';
 	const metadata = JSON.stringify({ archiveFormatVersion: 1, bundleId, entryPath: 'index.html', applicationProtocolVersion: '1' });
