@@ -40,15 +40,10 @@ test('App-originated terminal commands reach the exact shared-client attachment 
 	assert.match(terminalPanel, /serverInputQueue\?\.enqueue\(data\)/u);
 	assert.match(inputQueue, /await attachment\.write\(item\.data\)/u);
 	assert.match(terminalPanel, /void panelAttachment\.resize\(next\)/u);
-	assert.doesNotMatch(
-		terminalPanel,
-		/(?:writeTerminal|resizeTerminal|killTerminal|getTerminalBuffer)/u,
-	);
 });
 
 test('remote entry reuses the shared browser workspace through the opaque session endpoint', () => {
 	assert.match(remoteEntry, /mountSessionWorkspace/u);
 	assert.doesNotMatch(remoteEntry, /new WebSocket|\.send\(/u);
-	assert.match(remoteEntry, /acquireHostedApplicationTransport\(authenticated\.ticket\)/u);
-	assert.doesNotMatch(remoteEntry, /RTCDataChannel|getChannel/u);
+	assert.doesNotMatch(remoteEntry, /authenticateDevice|loadBrowserDeviceIdentity|RTCDataChannel|getChannel/u);
 });

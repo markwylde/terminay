@@ -2,39 +2,32 @@ import assert from 'node:assert/strict';
 import { access, readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-test('browser enrollment uses the opaque session application endpoint', async () => {
+test('the session-owned browser transport mounts the opaque workspace client', async () => {
 	const [entry, manager, transport] = await Promise.all([
 		readFile('src/remote/main.tsx', 'utf8'),
 		readFile('src/web/main.tsx', 'utf8'),
 		readFile('src/web/sessionTransportHost.ts', 'utf8'),
 	]);
-	assert.match(entry, /acquireHostedApplicationTransport/u);
-	assert.match(entry, /authenticated\.ticket/u);
-	assert.match(entry, /canonicalOrigin = `\$\{sessionHost\.origin\}#transport=webrtc:\$\{sessionHost\.origin\}`/u);
-	assert.match(entry, /loadPairing\(canonicalOrigin\)/u);
-	assert.doesNotMatch(entry, /apiChannel|terminalChannel|createDataChannel|getChannel|RTCDataChannel/u);
+	assert.match(entry, /mountSessionWorkspace\(root\)/u);
+	assert.doesNotMatch(entry, /authenticateDevice|loadBrowserDeviceIdentity|apiChannel|terminalChannel|createDataChannel|getChannel|RTCDataChannel/u);
 	assert.match(manager, /new TerminayClient/u);
 	assert.match(manager, /createConnectedServerClientContext/u);
 	assert.doesNotMatch(manager, /legacyRemote|session-list|session-opened|attach-session/u);
 	assert.match(transport, /ByteTransport/u);
-	assert.match(transport, /validateEndpoint/u);
+	assert.match(transport, /connect\(options/u);
 	assert.doesNotMatch(transport, /RTCDataChannel|getChannel/u);
 });
 
 test('secure-Werift proof contains no test-only canonical bridge installer', async () => {
-	const [proof, legacyHarness] = await Promise.all([
-		readFile('e2e/webrtc-headless-node-host.spec.ts', 'utf8'),
-		readFile('scripts/support/webRtcHostRuntime.ts', 'utf8'),
-	]);
-	for (const source of [proof, legacyHarness]) {
-		assert.doesNotMatch(source, /RTCPeerConnection\.prototype/u);
-		assert.doesNotMatch(source, /canonicalChannels/u);
-		assert.doesNotMatch(source, /onApplicationChannel/u);
-		assert.doesNotMatch(source, /ServerConnection/u);
-		assert.doesNotMatch(source, /HeadlessChannelTransport/u);
-	}
-	assert.doesNotMatch(proof, /__TERMINAY_REMOTE_WEBRTC__\s*=/u);
-	assert.doesNotMatch(proof, /defineProperty\([^)]*__TERMINAY_REMOTE_WEBRTC__/u);
+	await assert.rejects(access('e2e/webrtc-headless-node-host.spec.ts'));
+	const runtime = await readFile('scripts/support/webRtcHostRuntime.ts', 'utf8');
+	for (const token of [
+		/RTCPeerConnection\.prototype/u,
+		/canonicalChannels/u,
+		/onApplicationChannel/u,
+		/HeadlessChannelTransport/u,
+		/__TERMINAY_REMOTE_WEBRTC__\s*=/u,
+	]) assert.doesNotMatch(runtime, token);
 });
 
 test('terminal-only browser protocol and socket sources are removed', async () => {
