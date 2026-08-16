@@ -85,9 +85,12 @@ Providers advertise other capabilities independently:
 - Git command and worktree execution;
 - current-directory and foreground-process observation;
 - authoritative agent-journal observation;
-- remote MCP/control bridging;
 - infrastructure inventory and lifecycle actions; and
 - environment-specific shell discovery.
+
+Persisted capability lists keep only current capabilities. Unknown tokens are
+dropped when the registry is loaded so a retired capability cannot prevent
+This server from starting.
 
 Unavailable optional capabilities render a clear limited/unavailable state.
 They never run against the Terminay Server host merely because the same path or

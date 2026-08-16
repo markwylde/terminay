@@ -1,6 +1,6 @@
 import type { ProjectEnvironmentState } from './types.js';
 import { createInitialProjectEnvironmentState, PROJECT_ENVIRONMENT_SCHEMA_VERSION } from './types.js';
-import { canonicalizeProjectEnvironmentState } from './validation.js';
+import { canonicalizeProjectEnvironmentState, projectEnvironmentRegistryHasUnknownCapabilities } from './validation.js';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -23,7 +23,7 @@ export class ProjectEnvironmentRepository {
 		if (this.current !== undefined) return structuredClone(this.current);
 		const raw = await this.backend.load();
 		const state = raw === undefined ? createInitialProjectEnvironmentState(this.serverId) : migrateProjectEnvironmentState(raw, this.serverId);
-		if (raw === undefined || (raw as { schemaVersion?: unknown }).schemaVersion !== PROJECT_ENVIRONMENT_SCHEMA_VERSION) await this.backend.commit(state);
+		if (raw === undefined || (raw as { schemaVersion?: unknown }).schemaVersion !== PROJECT_ENVIRONMENT_SCHEMA_VERSION || projectEnvironmentRegistryHasUnknownCapabilities(raw)) await this.backend.commit(state);
 		this.current = state;
 		return structuredClone(state);
 	}
