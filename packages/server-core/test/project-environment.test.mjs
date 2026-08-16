@@ -23,6 +23,31 @@ test('fresh registry persists one undeletable built-in This server environment',
   assert.equal(commits.length, 1);
 });
 
+test('persisted This server registries drop retired mcp-bridge capabilities instead of failing load', async () => {
+  const persisted = createInitialProjectEnvironmentState('desktop-local');
+  persisted.environments['terminay:this-server'] = {
+    ...persisted.environments['terminay:this-server'],
+    declaredCapabilities: [...persisted.environments['terminay:this-server'].declaredCapabilities, 'mcp-bridge'],
+    availableCapabilities: [...persisted.environments['terminay:this-server'].availableCapabilities, 'mcp-bridge'],
+  };
+  persisted.revision = 1;
+  persisted.cursor = '1';
+  const commits = [];
+  const repository = new ProjectEnvironmentRepository({
+    async load() { return structuredClone(persisted); },
+    async commit(state) { commits.push(structuredClone(state)); },
+  }, 'desktop-local');
+  const state = await repository.load();
+  assert.equal(state.environments['terminay:this-server'].declaredCapabilities.includes('mcp-bridge'), false);
+  assert.equal(state.environments['terminay:this-server'].availableCapabilities.includes('mcp-bridge'), false);
+  assert.deepEqual(
+    state.environments['terminay:this-server'].declaredCapabilities,
+    createInitialProjectEnvironmentState('desktop-local').environments['terminay:this-server'].declaredCapabilities,
+  );
+  assert.equal(commits.length, 1);
+  assert.equal(commits[0].environments['terminay:this-server'].declaredCapabilities.includes('mcp-bridge'), false);
+});
+
 test('v1 environment registries migrate provider state and operation storage idempotently', () => {
   const current=createInitialProjectEnvironmentState('server-a');
   const legacy={...current,schemaVersion:1,environments:Object.fromEntries(Object.entries(current.environments).map(([id,{providerState,providerRevision,...environment}])=>[id,environment]))};
