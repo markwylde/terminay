@@ -50,9 +50,16 @@ test('development watches the same generated server workspace used by releases',
 	assert.match(packageJson.scripts['build:app'], /remote\.html/u);
 	assert.match(runner, /vite\.server-ui\.config\.ts/u);
 	assert.match(runner, /build.*--watch/su);
-	assert.match(serverUiConfig, /writeBundle\(\)/u);
+	assert.match(serverUiConfig, /writeBundle\(/u);
 	assert.match(serverUiConfig, /buildUiBundleManifest/u);
 	assert.match(serverUiConfig, /manifestPublication\.then/u);
+	assert.match(
+		serverUiConfig,
+		/emptyOutDir:\s*!watching/u,
+		'production server UI builds must empty dist-web; watch rebuilds must not wipe a bundle Electron is verifying',
+	);
+	assert.match(serverUiConfig, /includeRelativePaths/u);
+	assert.match(manifestBuilder, /UI_BUNDLE_MAX_TOTAL_BYTES/u);
 	assert.match(
 		manifestBuilder,
 		/rename\(temporaryManifestPath, manifestPath\)/u,
