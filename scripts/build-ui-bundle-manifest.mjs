@@ -7,6 +7,9 @@ import { pathToFileURL } from "node:url";
 export const UI_BUNDLE_CSP =
   "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' wss:; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
+/** Must match `DEFAULT_LIMITS.maxTotalBytes` in packages/ui-bundle. */
+export const UI_BUNDLE_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
+
 export const UI_BUNDLE_HOST_COMPATIBILITY = Object.freeze({
   bootstrap: Object.freeze({ minimum: 1, maximum: 1 }),
   bundleFormat: Object.freeze({ minimum: 1, maximum: 1 }),
@@ -24,18 +27,45 @@ export const UI_BUNDLE_HOST_COMPATIBILITY = Object.freeze({
   }),
 });
 
+export async function listRegularRelativeFiles(rootDirectory) {
+  return walkRegularFiles(resolve(rootDirectory));
+}
+
 export async function buildUiBundleManifest({
   rootDirectory,
   serverVersion,
   protocolVersion = "1",
   entryFile = "index.html",
   hostCompatibility = UI_BUNDLE_HOST_COMPATIBILITY,
+  maxTotalBytes = UI_BUNDLE_MAX_TOTAL_BYTES,
+  includeRelativePaths,
 }) {
   const root = resolve(rootDirectory);
   const files = await walkRegularFiles(root);
   const manifestRelativePath = "manifest.json";
+  const allowed =
+    includeRelativePaths === undefined
+      ? undefined
+      : new Set(
+          includeRelativePaths.map((path) => String(path).split(sep).join("/")),
+        );
+  if (allowed !== undefined) {
+    for (const path of allowed) {
+      if (
+        path === manifestRelativePath ||
+        path.length === 0 ||
+        path.split("/").some((part) => part === "" || part === "." || part === "..")
+      ) {
+        throw new Error(`UI bundle include path is invalid: ${path}`);
+      }
+      if (!files.includes(path))
+        throw new Error(`UI bundle asset is missing: ${path}`);
+    }
+  }
   const applicationFiles = files.filter(
-    (path) => path !== manifestRelativePath,
+    (path) =>
+      path !== manifestRelativePath &&
+      (allowed === undefined || allowed.has(path)),
   );
   if (!applicationFiles.includes(entryFile))
     throw new Error(`UI bundle entry is missing: ${entryFile}`);
@@ -70,6 +100,19 @@ export async function buildUiBundleManifest({
     .update(canonical)
     .digest("base64url")
     .slice(0, 32);
+  const totalBytes = provisionalAssets.reduce(
+    (sum, asset) => sum + asset.size,
+    0,
+  );
+  if (
+    !Number.isSafeInteger(maxTotalBytes) ||
+    maxTotalBytes <= 0 ||
+    totalBytes > maxTotalBytes
+  ) {
+    throw new Error(
+      `UI bundle exceeds the total byte limit (${totalBytes} > ${maxTotalBytes})`,
+    );
+  }
   const assets = provisionalAssets.map((asset) => ({
     ...asset,
     path: asset.path.replace(
