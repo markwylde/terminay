@@ -68,11 +68,14 @@ function profile(id: string, input: unknown): EnvironmentProfile {
 }
 
 function environment(id: string, input: unknown, profiles: Readonly<Record<string, EnvironmentProfile>>): ProjectEnvironmentRecord {
-	if (!record(input) || input.id !== id || !identifier(id) || !providerIdentifier(input.providerId) || !positiveRevision(input.pinnedRevision) || !text(input.name, 256) || !text(input.endpointSummary, 512) || !capabilities(input.declaredCapabilities) || !capabilities(input.availableCapabilities) || input.availableCapabilities.some((value) => !input.declaredCapabilities.includes(value)) || !PROJECT_ENVIRONMENT_STATUSES.includes(input.status as never) || !stringList(input.operationReferences, 128) || !revision(input.projectReferenceCount) || typeof input.archived !== 'boolean' || typeof input.builtIn !== 'boolean' || !json(input.providerState) || !positiveRevision(input.providerRevision)) throw new TypeError(`invalid project environment ${id}`);
+	if (!record(input)) throw new TypeError(`invalid project environment ${id}`);
+	const declaredCapabilities = liveCapabilities(input.declaredCapabilities);
+	const availableCapabilities = liveCapabilities(input.availableCapabilities);
+	if (input.id !== id || !identifier(id) || !providerIdentifier(input.providerId) || !positiveRevision(input.pinnedRevision) || !text(input.name, 256) || !text(input.endpointSummary, 512) || declaredCapabilities === undefined || availableCapabilities === undefined || availableCapabilities.some((value) => !declaredCapabilities.includes(value)) || !PROJECT_ENVIRONMENT_STATUSES.includes(input.status as never) || !stringList(input.operationReferences, 128) || !revision(input.projectReferenceCount) || typeof input.archived !== 'boolean' || typeof input.builtIn !== 'boolean' || !json(input.providerState) || !positiveRevision(input.providerRevision)) throw new TypeError(`invalid project environment ${id}`);
 	if (input.profileId !== undefined && (!identifier(input.profileId) || profiles[input.profileId] === undefined || profiles[input.profileId]?.providerId !== input.providerId)) throw new TypeError(`environment ${id} has invalid profile ownership`);
 	if (input.failure !== undefined && (!record(input.failure) || !PROJECT_ENVIRONMENT_STATUSES.includes(input.failure.classification as never) || !text(input.failure.message, 512) || typeof input.failure.retryable !== 'boolean')) throw new TypeError(`invalid project environment failure ${id}`);
 	if (input.lastSuccessfulCheck !== undefined && !timestamp(input.lastSuccessfulCheck)) throw new TypeError(`invalid project environment check time ${id}`);
-	return structuredClone({ ...input, ...(input.defaultRoot === undefined ? {} : { defaultRoot: path(input.defaultRoot) }) }) as unknown as ProjectEnvironmentRecord;
+	return structuredClone({ ...input, declaredCapabilities, availableCapabilities, ...(input.defaultRoot === undefined ? {} : { defaultRoot: path(input.defaultRoot) }) }) as unknown as ProjectEnvironmentRecord;
 }
 
 function operation(id: string, input: unknown, environments: Readonly<Record<string, ProjectEnvironmentRecord>>): import('./types.js').ProjectEnvironmentOperationRecord {
@@ -92,7 +95,26 @@ function timestamp(value: unknown): value is number { return revision(value); }
 function text(value: unknown, max: number): value is string { return typeof value === 'string' && value.length > 0 && value.length <= max && !value.includes('\0'); }
 function path(value: unknown): string { if (!text(value, 4096)) throw new TypeError('invalid environment path'); return value; }
 function stringList(value: unknown, maxLength: number): value is string[] { return Array.isArray(value) && value.length <= maxLength && new Set(value).size === value.length && value.every((entry) => text(entry, 512)); }
-function capabilities(value: unknown): value is ProjectEnvironmentRecord['declaredCapabilities'] { return Array.isArray(value) && new Set(value).size === value.length && value.every((entry) => PROJECT_ENVIRONMENT_CAPABILITIES.includes(entry)); }
+function liveCapabilities(value: unknown): ProjectEnvironmentRecord['declaredCapabilities'] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const live = value.filter((entry): entry is ProjectEnvironmentRecord['declaredCapabilities'][number] =>
+		typeof entry === 'string' && (PROJECT_ENVIRONMENT_CAPABILITIES as readonly string[]).includes(entry),
+	);
+	if (new Set(live).size !== live.length) return undefined;
+	return live;
+}
+
+export function projectEnvironmentRegistryHasUnknownCapabilities(input: unknown): boolean {
+	if (!record(input) || !record(input.environments)) return false;
+	return Object.values(input.environments).some((environment) => {
+		if (!record(environment)) return false;
+		return hasUnknownCapability(environment.declaredCapabilities) || hasUnknownCapability(environment.availableCapabilities);
+	});
+}
+
+function hasUnknownCapability(value: unknown): boolean {
+	return Array.isArray(value) && value.some((entry) => !(PROJECT_ENVIRONMENT_CAPABILITIES as readonly string[]).includes(entry));
+}
 function json(value: unknown): boolean {
 	if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
 	if (typeof value === 'number') return Number.isFinite(value);
