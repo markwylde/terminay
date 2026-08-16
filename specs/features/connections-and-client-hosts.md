@@ -405,7 +405,10 @@ pairing fragment or private key.
   recordings, agents, and connection state.
 - Development and packaged Desktop launch that same server-bundled workspace;
   development changes asset delivery and rebuild cadence, not renderer entry,
-  preload, state hydration, authority, or host-capability behaviour.
+  preload, state hydration, authority, or host-capability behaviour. The
+  launched server-UI inventory contains only the current build's assets, so
+  leftover hashed files from a previous watch rebuild cannot be published or
+  launched.
 - Wide layouts resemble the Electron workspace.
 - Narrow layouts replace wide tab strips and sidebars with accessible
   selectors, drawers, stacked surfaces, and touch controls while retaining the

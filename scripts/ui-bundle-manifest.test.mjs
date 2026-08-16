@@ -14,6 +14,7 @@ import {
   buildUiBundleManifest,
   UI_BUNDLE_CSP,
   UI_BUNDLE_HOST_COMPATIBILITY,
+  UI_BUNDLE_MAX_TOTAL_BYTES,
 } from "./build-ui-bundle-manifest.mjs";
 
 test("production UI manifest deterministically includes every emitted application asset and compatibility field", async () => {
@@ -92,6 +93,53 @@ test("production UI manifest deterministically includes every emitted applicatio
       protocolVersion: "1",
     });
     assert.notEqual(changed.bundleId, originalId);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("production UI manifest generation rejects inventories over the launch byte limit", async () => {
+  const validator = await readFile(
+    new URL("../packages/ui-bundle/src/manifest.ts", import.meta.url),
+    "utf8",
+  );
+  assert.equal(UI_BUNDLE_MAX_TOTAL_BYTES, 64 * 1024 * 1024);
+  assert.match(validator, /maxTotalBytes:\s*64 \* 1024 \* 1024/u);
+  const root = await mkdtemp(join(tmpdir(), "terminay-generated-ui-limit-"));
+  try {
+    await writeFile(join(root, "index.html"), "<!doctype html>");
+    await writeFile(join(root, "stale.js"), "leftover hashed chunk");
+    await assert.rejects(
+      buildUiBundleManifest({
+        rootDirectory: root,
+        serverVersion: "3.2.1",
+        maxTotalBytes: 1,
+      }),
+      /exceeds the total byte limit/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("production UI manifest generation can omit leftover hashed files from a watch rebuild", async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminay-generated-ui-include-"));
+  try {
+    await mkdir(join(root, "assets"));
+    await writeFile(join(root, "index.html"), "<!doctype html>");
+    await writeFile(join(root, "assets", "app-current.js"), "export const ready = true;");
+    await writeFile(join(root, "assets", "app-stale.js"), "export const leftover = true;");
+    const manifest = await buildUiBundleManifest({
+      rootDirectory: root,
+      serverVersion: "3.2.1",
+      includeRelativePaths: ["index.html", "assets/app-current.js"],
+    });
+    assert.deepEqual(
+      manifest.assets.map((asset) =>
+        asset.path.slice(`/remote-app/${manifest.bundleId}/`.length),
+      ),
+      ["assets/app-current.js", "index.html"],
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
