@@ -67,3 +67,11 @@ test('revocation invalidates outstanding challenges and tickets without affectin
   assert.throws(() => authority.verify({ deviceId: 'device-a', challengeId: a.challenge.challengeId, deviceSignature: signature(first.privateKey, a.signingInput) }), /unavailable|revoked/);
   assert.equal(authority.verify({ deviceId: 'device-b', challengeId: b.challenge.challengeId, deviceSignature: signature(second.privateKey, b.signingInput) }).deviceId, 'device-b');
 });
+
+test('pairing enrollment can mint a connection ticket without a challenge', () => {
+  const authority = new RemoteDeviceAuthentication({ serverId: SERVER_ID, sessionOrigin: ORIGIN });
+  const key = keys();
+  const device = authority.enroll({ deviceName: 'Browser', publicKeyPem: key.publicKey });
+  const ticket = authority.issueConnectionTicket(device.deviceId);
+  assert.equal(authority.consumeTicket(ticket.ticket).deviceId, device.deviceId);
+});

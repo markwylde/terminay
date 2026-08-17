@@ -19,7 +19,7 @@ import {
 	writeFile,
 } from 'node:fs/promises';
 import { createConnection } from 'node:net';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import type { JsonValue } from '@terminay/protocol';
 import {
 	AgentStatusService,
@@ -83,6 +83,8 @@ import {
 	type ServerRemoteExposure,
 } from './index.js';
 import { resolveTerminalProcessCwd } from './processCwd.js';
+import { startHostedPairingHost } from './remote/hostedPairingHost.js';
+import { loadOrCreateHostedHostKey } from './remote/hostedHostKey.js';
 import { assertStandaloneReleaseIntegrity } from './releaseIntegrity.js';
 
 declare const process: {
@@ -139,6 +141,7 @@ else {
 		});
 		const composition = serverComposition.core;
 		let runtime: StandaloneRuntime | undefined;
+		let hostedPairingHost: { close(): Promise<void> } | undefined;
 		const uiServer =
 			options.endpoint === 'disabled'
 				? undefined
@@ -181,6 +184,23 @@ else {
 				if (serverComposition.workspaceWasCreated)
 					await ensureDefaultTerminalSession(composition);
 				await waitForProtocolEndpoint(uiServer);
+				if (pairingUrlFormatForOrigin(options.remoteOrigin) === 'hosted-compact') {
+					if (remotePairingPin === undefined) {
+						throw new Error('TERMINAY_REMOTE_PAIRING_PIN is required for hosted pairing.');
+					}
+					hostedPairingHost = await startHostedPairingHost({
+						handoff,
+						hostKey: loadOrCreateHostedHostKey(
+							join(options.dataRoot, 'remote-host-key.v1.json'),
+						),
+						persistDevices: devicePersistence.save,
+						pin: remotePairingPin,
+						remote,
+						serverId: options.serverId,
+						signal: hostedSignalOptions(process.env),
+						webrtcRuntimeRoot: resolveWebRtcRuntimeRoot(process.cwd(), process.env),
+					});
+				}
 				protocolReady = true;
 				process.stdout.write(
 					`${JSON.stringify({
@@ -200,6 +220,7 @@ else {
 				);
 			} catch (error) {
 				clearInterval(foregroundLease);
+				await hostedPairingHost?.close().catch(() => undefined);
 				await runtime!.stop().catch(() => undefined);
 				await composition.shutdown().catch(() => undefined);
 				await healthServer?.stop().catch(() => undefined);
@@ -220,6 +241,7 @@ else {
 				// Runtime owns the listeners/remote exposure; composition owns the
 				// terminal and hook authority. They must be stopped in this order,
 				// never concurrently, to avoid double-stopping a PTY or hook server.
+				await hostedPairingHost?.close().catch(() => undefined);
 				await runtime!.stop();
 				await composition.shutdown();
 				await healthServer?.stop();
@@ -269,6 +291,7 @@ function createRemoteExposure(
 	const exposure = createServerRemoteExposure({
 		serverId,
 		sessionOrigin,
+		pairingUrlFormat: pairingUrlFormatForOrigin(sessionOrigin),
 	});
 	exposure.devices.restore(initialDevices);
 	return exposure;
@@ -1287,7 +1310,39 @@ function pairingUrlForEndpoint(
 	handoff: ServerPairingHandoff,
 	protocolEndpoint: string,
 ): string {
+	const advertised = new URL(handoff.pairingUrl);
 	const endpoint = new URL(protocolEndpoint);
-	endpoint.hash = new URL(handoff.pairingUrl).hash;
-	return endpoint.toString();
+	advertised.protocol = endpoint.protocol;
+	advertised.host = endpoint.host;
+	return advertised.toString();
+}
+
+function pairingUrlFormatForOrigin(sessionOrigin: string): 'standalone' | 'hosted-compact' {
+	try {
+		const host = new URL(sessionOrigin).hostname.toLowerCase();
+		if (host.endsWith('.terminay.com') && host !== 'app.terminay.com') return 'hosted-compact';
+	} catch {
+		// Fall through to the standalone local-HTTP pairing fragment.
+	}
+	return 'standalone';
+}
+
+function resolveWebRtcRuntimeRoot(
+	cwd: string,
+	env: Readonly<Record<string, string | undefined>>,
+): string {
+	const configured = env.TERMINAY_WEBRTC_RUNTIME_ROOT?.trim();
+	if (configured) return resolve(configured);
+	return resolve(cwd, '../../build/webrtc-runtime');
+}
+
+function hostedSignalOptions(env: Readonly<Record<string, string | undefined>>): {
+	connectHost?: string;
+	insecureTls?: boolean;
+} {
+	const connectHost = env.TERMINAY_SIGNAL_CONNECT_HOST?.trim();
+	return {
+		...(connectHost ? { connectHost } : {}),
+		...(env.TERMINAY_SIGNAL_INSECURE_TLS === '1' ? { insecureTls: true } : {}),
+	};
 }

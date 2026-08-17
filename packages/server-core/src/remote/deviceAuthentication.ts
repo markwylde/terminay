@@ -234,6 +234,13 @@ export class RemoteDeviceAuthentication {
 		);
 		if (!valid) throw new Error('remote device signature is invalid');
 		this.challenges.delete(input.challengeId);
+		return this.issueConnectionTicket(device.deviceId);
+	}
+
+	/** Mint a one-use application ticket after pairing enrollment or a signed challenge. */
+	issueConnectionTicket(deviceId: ProtocolId): RemoteDeviceConnectionTicket {
+		this.cleanup();
+		const device = this.requireActiveDevice(deviceId);
 		const expiresAt = this.currentTime() + this.ticketTtlMs;
 		const ticket: RemoteDeviceConnectionTicket = Object.freeze({
 			ticket: this.token(32),
@@ -244,8 +251,10 @@ export class RemoteDeviceAuthentication {
 			expiresAt,
 		});
 		this.tickets.set(ticket.ticket, { ticket, used: false });
-		const seen = { ...device, lastSeenAt: this.currentTime() };
-		this.devices.set(device.deviceId, seen);
+		this.devices.set(device.deviceId, {
+			...device,
+			lastSeenAt: this.currentTime(),
+		});
 		return ticket;
 	}
 
