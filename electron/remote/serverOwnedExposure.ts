@@ -1,90 +1,103 @@
-import { createSecureWeriftHeadlessHost } from '../../apps/terminay-server/src/remote/secureWeriftHost';
-import { verifySelectedSecureWeriftRuntime } from '../../apps/terminay-server/src/remote/secureWeriftRuntime';
+import type { ByteTransport } from '@terminay/protocol';
+import type {
+	AuthenticatedClient,
+	ServerConnectionLike,
+} from '../../packages/server-core/src/types';
+import {
+	startHostedPairingHost,
+	type HostedPairingHost,
+	type MinimalArchive,
+} from '../../apps/terminay-server/src/remote/hostedPairingHost';
+import type { HostedHostKey } from '../../apps/terminay-server/src/remote/hostedHostKey';
 import {
 	createServerRemoteExposure,
 	type ServerRemoteExposure,
 } from '../../apps/terminay-server/src/remote/serverExposure';
 import type { RemoteAccessStatus } from '../../src/types/terminay';
-import type {
-	AuthenticatedHostedSignalingRoomRegistrar,
-	HostedPairingHandoff,
-	HostedSignalingRoomRegistrar,
-	HostedSignalingRoomRegistration,
-} from './hostedSignalingRegistration';
 
 export interface DesktopServerOwnedExposureOptions {
-	readonly serverId: string;
-	readonly resolveSessionOrigin: () => string;
-	readonly signalingRegistrar?: HostedSignalingRoomRegistrar;
-	readonly ensureWebRtcRuntimeAvailable?: () => void | Promise<void>;
-	readonly webRtcUnavailableReason?: string;
-	readonly secureWerift?: Readonly<{
-		readonly runtimeRoot: string;
-		readonly signalingRegistrar: AuthenticatedHostedSignalingRoomRegistrar;
-	}>;
+	readonly acceptApplication?: (
+		transport: ByteTransport,
+		client: AuthenticatedClient,
+	) => ServerConnectionLike;
 	readonly createExposure?: (sessionOrigin: string) => ServerRemoteExposure;
+	readonly ensureWebRtcRuntimeAvailable?: () => void | Promise<void>;
+	readonly getUiArchive?: () => Promise<MinimalArchive> | MinimalArchive;
+	readonly hostKey?: HostedHostKey;
+	readonly initialDevices?: ReturnType<ServerRemoteExposure['devices']['list']>;
+	readonly persistDevices?: (
+		devices: ReturnType<ServerRemoteExposure['devices']['list']>,
+	) => void;
+	readonly requirePairingPin?: () => void;
+	readonly resolveSessionOrigin: () => string;
+	readonly serverId: string;
+	readonly signal?: Readonly<{
+		readonly connectHost?: string;
+		readonly insecureTls?: boolean;
+	}>;
+	readonly verifyPairingPin?: (pin: string) => boolean;
+	readonly webRtcUnavailableReason?: string;
+	readonly webrtcRuntimeRoot?: string;
 }
 
-/** Desktop projection over the server-owned WebRTC exposure authority. */
+/** Desktop projection over the server-owned hosted pairing host. */
 export class DesktopServerOwnedExposure {
-	private readonly serverId: string;
+	private readonly acceptApplication:
+		| DesktopServerOwnedExposureOptions['acceptApplication']
+		| undefined;
 	private readonly factory: (sessionOrigin: string) => ServerRemoteExposure;
+	private readonly getUiArchive:
+		| DesktopServerOwnedExposureOptions['getUiArchive']
+		| undefined;
+	private readonly hostKey: HostedHostKey | undefined;
+	private readonly persistDevices:
+		| DesktopServerOwnedExposureOptions['persistDevices']
+		| undefined;
+	private readonly requirePairingPin:
+		| DesktopServerOwnedExposureOptions['requirePairingPin']
+		| undefined;
 	private readonly resolveSessionOrigin: () => string;
-	private readonly signalingRegistrar: HostedSignalingRoomRegistrar | undefined;
+	private readonly serverId: string;
+	private readonly signal: DesktopServerOwnedExposureOptions['signal'];
+	private readonly verifyPairingPin:
+		| DesktopServerOwnedExposureOptions['verifyPairingPin']
+		| undefined;
+	private readonly webrtcRuntimeRoot: string | undefined;
 	private readonly ensureWebRtcRuntimeAvailable:
 		| (() => void | Promise<void>)
 		| undefined;
 	private readonly webRtcUnavailableReason: string | undefined;
 	private exposure: ServerRemoteExposure | undefined;
-	private registration: HostedSignalingRoomRegistration | undefined;
+	private hosted: HostedPairingHost | undefined;
 	private runtimeError: string | undefined;
 	private sessionOrigin: string | undefined;
 
 	constructor(options: DesktopServerOwnedExposureOptions) {
-		if (
-			options.secureWerift !== undefined &&
-			options.signalingRegistrar !== undefined &&
-			options.signalingRegistrar !== options.secureWerift.signalingRegistrar
-		) {
-			throw new TypeError(
-				'Desktop WebRTC runtime and hosted signaling registrar must share one authority.',
-			);
-		}
 		this.serverId = options.serverId;
 		this.resolveSessionOrigin = options.resolveSessionOrigin;
-		this.signalingRegistrar =
-			options.secureWerift?.signalingRegistrar ?? options.signalingRegistrar;
-		this.ensureWebRtcRuntimeAvailable =
-			options.ensureWebRtcRuntimeAvailable ??
-			(options.secureWerift === undefined
-				? undefined
-				: async () => {
-						await verifySelectedSecureWeriftRuntime(
-							options.secureWerift!.runtimeRoot,
-						);
-					});
+		this.acceptApplication = options.acceptApplication;
+		this.getUiArchive = options.getUiArchive;
+		this.hostKey = options.hostKey;
+		this.persistDevices = options.persistDevices;
+		this.requirePairingPin = options.requirePairingPin;
+		this.signal = options.signal;
+		this.verifyPairingPin = options.verifyPairingPin;
+		this.webrtcRuntimeRoot = options.webrtcRuntimeRoot;
+		this.ensureWebRtcRuntimeAvailable = options.ensureWebRtcRuntimeAvailable;
 		this.webRtcUnavailableReason = options.webRtcUnavailableReason;
 		this.runtimeError = options.webRtcUnavailableReason;
 		this.factory =
 			options.createExposure ??
-			((sessionOrigin) =>
-				createServerRemoteExposure({
+			((sessionOrigin) => {
+				const exposure = createServerRemoteExposure({
+					pairingUrlFormat: 'hosted-compact',
 					serverId: this.serverId,
 					sessionOrigin,
-					pairingUrlFormat: 'hosted-compact',
-					...(options.secureWerift === undefined
-						? {}
-						: {
-								createHeadlessHost: (manager, onEvent) =>
-									createSecureWeriftHeadlessHost({
-										manager,
-										onEvent,
-										runtimeRoot: options.secureWerift!.runtimeRoot,
-										createSignaling:
-											options.secureWerift!.signalingRegistrar.createSignaling,
-									}),
-							}),
-				}));
+				});
+				if (options.initialDevices !== undefined)
+					exposure.devices.restore(options.initialDevices);
+				return exposure;
+			});
 	}
 
 	getStatus(): RemoteAccessStatus {
@@ -104,16 +117,16 @@ export class DesktopServerOwnedExposure {
 
 	async toggle(): Promise<RemoteAccessStatus> {
 		if (this.exposure?.status.exposure.state === 'exposed') {
-			await this.registration?.close();
-			this.registration = undefined;
+			await this.hosted?.close();
+			this.hosted = undefined;
 			this.exposure.stopExposure();
 			return this.getStatus();
 		}
 		this.runtimeError = this.webRtcUnavailableReason;
 		const origin = normalizeSessionOrigin(this.resolveSessionOrigin());
 		if (origin !== this.sessionOrigin) {
-			await this.registration?.close();
-			this.registration = undefined;
+			await this.hosted?.close();
+			this.hosted = undefined;
 			await this.exposure?.shutdown();
 			this.sessionOrigin = origin;
 			this.exposure = this.factory(origin);
@@ -122,6 +135,7 @@ export class DesktopServerOwnedExposure {
 		try {
 			if (this.webRtcUnavailableReason !== undefined)
 				throw new Error(this.webRtcUnavailableReason);
+			this.requirePairingPin?.();
 			await this.ensureWebRtcRuntimeAvailable?.();
 		} catch (error) {
 			this.runtimeError =
@@ -132,7 +146,8 @@ export class DesktopServerOwnedExposure {
 		}
 		exposure.start();
 		try {
-			this.registration = await this.register(exposure);
+			this.hosted = await this.register(exposure);
+			this.runtimeError = undefined;
 		} catch (error) {
 			exposure.stopExposure();
 			throw error;
@@ -146,28 +161,30 @@ export class DesktopServerOwnedExposure {
 			throw new Error('Remote Access is not exposed.');
 		if (this.webRtcUnavailableReason !== undefined)
 			throw new Error(this.webRtcUnavailableReason);
+		this.requirePairingPin?.();
 		await this.ensureWebRtcRuntimeAvailable?.();
 		const origin = this.sessionOrigin;
 		if (origin === undefined)
 			throw new Error('Remote Access session origin is unavailable.');
 		const candidate = this.factory(origin);
 		candidate.start();
-		let registration: HostedSignalingRoomRegistration | undefined;
+		let hosted: HostedPairingHost | undefined;
 		try {
-			registration = await this.register(candidate);
+			hosted = await this.register(candidate);
 		} catch (error) {
 			await candidate.shutdown();
 			throw error;
 		}
-		await this.registration?.close();
+		await this.hosted?.close();
 		await current.shutdown();
 		this.exposure = candidate;
-		this.registration = registration;
+		this.hosted = hosted;
 		return this.getStatus();
 	}
 
 	async revokeDevice(deviceId: string): Promise<RemoteAccessStatus> {
 		await this.requireExposure().revokeDevice(deviceId);
+		this.persistDevices?.(this.requireExposure().devices.list());
 		return this.getStatus();
 	}
 
@@ -177,19 +194,34 @@ export class DesktopServerOwnedExposure {
 	}
 
 	async shutdown(): Promise<void> {
-		await this.registration?.close();
-		this.registration = undefined;
+		await this.hosted?.close();
+		this.hosted = undefined;
 		await this.exposure?.shutdown();
 	}
 
 	private async register(exposure: ServerRemoteExposure) {
-		if (this.signalingRegistrar === undefined) return undefined;
 		const handoff = exposure.pairingHandoff;
 		if (handoff === undefined)
 			throw new Error('Server exposure did not create a pairing handoff.');
-		return this.signalingRegistrar.register(
-			handoff as unknown as HostedPairingHandoff,
-		);
+		if (this.hostKey === undefined || this.webrtcRuntimeRoot === undefined) {
+			throw new Error('Desktop hosted signaling host is not configured.');
+		}
+		return startHostedPairingHost({
+			handoff,
+			hostKey: this.hostKey,
+			persistDevices: this.persistDevices ?? (() => undefined),
+			remote: exposure,
+			serverId: this.serverId,
+			webrtcRuntimeRoot: this.webrtcRuntimeRoot,
+			...(this.acceptApplication === undefined
+				? {}
+				: { acceptApplication: this.acceptApplication }),
+			...(this.getUiArchive === undefined ? {} : { getUiArchive: this.getUiArchive }),
+			...(this.signal === undefined ? {} : { signal: this.signal }),
+			...(this.verifyPairingPin === undefined
+				? {}
+				: { verifyPairingPin: this.verifyPairingPin }),
+		});
 	}
 
 	private requireExposure(): ServerRemoteExposure {
@@ -230,12 +262,7 @@ function projectStatus(
 ): RemoteAccessStatus {
 	const status = exposure?.status;
 	const pairing = status?.pairing;
-	const handoffUrl =
-		pairing === undefined
-			? null
-			: ((exposure?.pairingHandoff as unknown as
-					| HostedPairingHandoff
-					| undefined)?.pairingUrl ?? null);
+	const handoffUrl = exposure?.pairingHandoff?.pairingUrl ?? null;
 	const peers = (status?.peers ?? []) as readonly Readonly<{
 		state: string;
 		peerId: string;
