@@ -83,9 +83,9 @@ blocks pairing and reconnect while leaving Local Desktop use and server-owned
 work running.
 
 The same exposure model applies to an embedded Local server and standalone
-`terminay-server`. Hosted compact pairing URLs are advertised only after the
-server has registered the derived pairing room with signaling. The standalone
-CLI prints the pairing URL after exposure is ready.
+`terminay-server`. Desktop and the CLI both start the server-owned hosted
+pairing host: it registers the fragment-derived pairing room and the signed
+reconnect host (`device-host-ready`) before a pairing URL is advertised.
 
 ## Browser journey A: direct pairing link
 

@@ -1,5 +1,12 @@
 import { gzipSync } from 'node:zlib';
+import { timingSafeEqual } from 'node:crypto';
 import { WebSocket } from 'ws';
+import type { ByteTransport } from '@terminay/protocol';
+import type {
+	AuthenticatedClient,
+	ServerConnectionLike,
+} from '@terminay/server-core';
+import { HeadlessChannelTransport, type HeadlessDataChannel } from '@terminay/server-core/remote';
 import { loadSelectedSecureWeriftRuntime } from './secureWeriftRuntime.js';
 import {
 	createDeviceHostReadyMessage,
@@ -35,23 +42,34 @@ type WeriftPeer = {
 	setRemoteDescription(description: Readonly<{ sdp: string; type: string }>): Promise<void>;
 };
 type WeriftDataChannel = {
+	readonly bufferedAmount?: number;
+	readonly label?: string;
 	readonly readyState: string;
 	addEventListener(type: string, listener: (event: Record<string, unknown>) => void): void;
+	close?(): void;
 	removeEventListener(type: string, listener: (event: Record<string, unknown>) => void): void;
 	send(data: string | Uint8Array): void;
 };
 
+export type MinimalArchive = Readonly<{ bundleId: string; bytes: Uint8Array }>;
+
 export interface HostedPairingHostOptions {
+	readonly acceptApplication?: (
+		transport: ByteTransport,
+		client: AuthenticatedClient,
+	) => ServerConnectionLike;
+	readonly getUiArchive?: () => Promise<MinimalArchive> | MinimalArchive;
 	readonly handoff: ServerPairingHandoff;
 	readonly hostKey: HostedHostKey;
 	readonly persistDevices: (devices: ReturnType<ServerRemoteExposure['devices']['list']>) => void;
-	readonly pin: string;
+	readonly pin?: string;
 	readonly remote: ServerRemoteExposure;
 	readonly serverId: string;
 	readonly signal?: Readonly<{
 		readonly connectHost?: string;
 		readonly insecureTls?: boolean;
 	}>;
+	readonly verifyPairingPin?: (pin: string) => boolean;
 	readonly webrtcRuntimeRoot: string;
 }
 
@@ -70,7 +88,9 @@ export async function startHostedPairingHost(
 	const Peer = runtime.RTCPeerConnection as unknown as new (
 		configuration?: Record<string, unknown>,
 	) => WeriftPeer;
-	const archive = createMinimalUiArchive();
+	const archive = options.getUiArchive
+		? await options.getUiArchive()
+		: createMinimalUiArchive();
 	const pairingSocket = openSignalSocket(
 		signalingUrl,
 		options.handoff.sessionOrigin,
@@ -82,8 +102,8 @@ export async function startHostedPairingHost(
 		options.signal,
 	);
 	let peer: WeriftPeer | undefined;
+	let applicationConnection: ServerConnectionLike | undefined;
 	let closed = false;
-	const tickets = new Set<string>();
 	const pairingRegistered = waitForSignalType(pairingSocket, 'host-registered');
 	const deviceRegistered = waitForSignalType(deviceSocket, 'device-host-registered');
 	let registrationTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -92,11 +112,12 @@ export async function startHostedPairingHost(
 		if (closed) return;
 		closed = true;
 		peer?.close();
+		void applicationConnection?.close();
 		closeSocket(pairingSocket);
 		closeSocket(deviceSocket);
 	};
 
-	const context = { archive, options, tickets };
+	const context = { archive, options };
 	pairingSocket.on('message', (raw) => {
 		void handlePairingSignal(parseSignal(raw)).catch(logHostError);
 	});
@@ -112,7 +133,11 @@ export async function startHostedPairingHost(
 
 	async function replacePeer(socket: WebSocket, scope: SignalScope): Promise<void> {
 		peer?.close();
-		peer = await startPeer(Peer, socket, scope, context);
+		void applicationConnection?.close();
+		applicationConnection = undefined;
+		peer = await startPeer(Peer, socket, scope, context, (connection) => {
+			applicationConnection = connection;
+		});
 	}
 
 	async function handlePairingSignal(message: Record<string, unknown> | undefined): Promise<void> {
@@ -284,8 +309,8 @@ async function startPeer(
 	context: Readonly<{
 		archive: MinimalArchive;
 		options: HostedPairingHostOptions;
-		tickets: Set<string>;
 	}>,
+	onApplication: (connection: ServerConnectionLike) => void,
 ): Promise<WeriftPeer> {
 	const native = new Peer({ iceServers: [], maxMessageSize: 1024 * 1024 });
 	const peer = wrapPeer(native);
@@ -299,7 +324,7 @@ async function startPeer(
 		socket.send(JSON.stringify(signalMessage(scope, 'ice', { candidate })));
 	});
 	bindApi(channels.api!, context);
-	bindControl(channels.control!, context.tickets);
+	bindControl(channels.control!, channels.application!, context, onApplication);
 	bindAsset(channels.asset!, context.archive);
 
 	const offer = await peer.createOffer();
@@ -397,7 +422,6 @@ function bindApi(
 	context: Readonly<{
 		archive: MinimalArchive;
 		options: HostedPairingHostOptions;
-		tickets: Set<string>;
 	}>,
 ): void {
 	channel.addEventListener('message', (event) => {
@@ -432,7 +456,6 @@ async function handleApi(
 	context: Readonly<{
 		archive: MinimalArchive;
 		options: HostedPairingHostOptions;
-		tickets: Set<string>;
 	}>,
 ): Promise<unknown> {
 	const request = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
@@ -455,7 +478,7 @@ async function handleApi(
 		};
 	}
 	if (pathname === '/api/devices/enroll') {
-		if (String(request.pairingPin ?? '') !== context.options.pin) {
+		if (!pairingPinMatches(String(request.pairingPin ?? ''), context.options)) {
 			throw new Error('pairing authority is invalid');
 		}
 		const device = context.options.remote.enrollDevice({
@@ -466,7 +489,6 @@ async function handleApi(
 		});
 		context.options.persistDevices(context.options.remote.devices.list());
 		const ticket = context.options.remote.issueConnectionTicket(device.deviceId);
-		context.tickets.add(ticket.ticket);
 		return { deviceId: device.deviceId, deviceName: device.deviceName, ticket: ticket.ticket };
 	}
 	if (pathname === '/api/devices/challenge') {
@@ -489,13 +511,17 @@ async function handleApi(
 			deviceId: String(request.deviceId ?? ''),
 			deviceSignature: String(request.deviceSignature ?? ''),
 		});
-		context.tickets.add(ticket.ticket);
 		return { ticket: ticket.ticket };
 	}
 	throw new Error('Not found');
 }
 
-function bindControl(channel: WeriftDataChannel, tickets: Set<string>): void {
+function bindControl(
+	channel: WeriftDataChannel,
+	application: WeriftDataChannel,
+	context: Readonly<{ options: HostedPairingHostOptions }>,
+	onApplication: (connection: ServerConnectionLike) => void,
+): void {
 	channel.addEventListener('message', (event) => {
 		let request: Record<string, unknown>;
 		try {
@@ -504,7 +530,13 @@ function bindControl(channel: WeriftDataChannel, tickets: Set<string>): void {
 			return;
 		}
 		if (request.type !== 'application-auth' || typeof request.id !== 'string') return;
-		const ok = typeof request.ticket === 'string' && tickets.has(request.ticket);
+		let ticket: ReturnType<ServerRemoteExposure['consumeConnectionTicket']> | undefined;
+		try {
+			ticket = context.options.remote.consumeConnectionTicket(String(request.ticket ?? ''));
+		} catch {
+			ticket = undefined;
+		}
+		const ok = ticket !== undefined;
 		channel.send(
 			JSON.stringify({
 				error: ok ? undefined : 'Terminay rejected the workspace.',
@@ -513,6 +545,26 @@ function bindControl(channel: WeriftDataChannel, tickets: Set<string>): void {
 				type: 'application-authenticated',
 			}),
 		);
+		if (!ok || !ticket || context.options.acceptApplication === undefined) return;
+		const connection = context.options.acceptApplication(
+			new HeadlessChannelTransport(asHeadlessChannel(application)),
+			{
+				authScope: 'admin',
+				clientId: ticket.deviceId,
+				permissions: [
+					'environments:read',
+					'environments:manage',
+					'workspace:write',
+					'extensions:read',
+					'extensions:manage',
+				],
+			},
+		);
+		onApplication(connection);
+		void connection.start().catch((error) => {
+			console.error(error instanceof Error ? error.message : error);
+			void connection.close();
+		});
 	});
 }
 
@@ -582,7 +634,67 @@ function archiveFrame(index: number, bytes: Uint8Array): Uint8Array {
 	return frame;
 }
 
-type MinimalArchive = Readonly<{ bundleId: string; bytes: Uint8Array }>;
+function pairingPinMatches(received: string, options: HostedPairingHostOptions): boolean {
+	if (options.verifyPairingPin) return options.verifyPairingPin(received);
+	const expected = options.pin ?? '';
+	if (!/^\d{6}$/u.test(received) || !/^\d{6}$/u.test(expected)) return false;
+	return timingSafeEqual(Buffer.from(received), Buffer.from(expected));
+}
+
+function asHeadlessChannel(channel: WeriftDataChannel): HeadlessDataChannel {
+	const listeners = new Set<(state: HeadlessDataChannel['readyState']) => void>();
+	const emit = () => {
+		const state = mapChannelState(channel.readyState);
+		for (const listener of listeners) listener(state);
+	};
+	channel.addEventListener('open', emit);
+	channel.addEventListener('close', emit);
+	channel.addEventListener('error', emit);
+	return {
+		get label() {
+			return channel.label ?? 'application';
+		},
+		get readyState() {
+			return mapChannelState(channel.readyState);
+		},
+		get bufferedAmount() {
+			return typeof channel.bufferedAmount === 'number' ? channel.bufferedAmount : 0;
+		},
+		send(frame) {
+			channel.send(frame);
+		},
+		close() {
+			channel.close?.();
+		},
+		onMessage(listener) {
+			const handler = (event: Record<string, unknown>) => {
+				const value = event.data;
+				const frame =
+					value instanceof ArrayBuffer
+						? new Uint8Array(value)
+						: ArrayBuffer.isView(value)
+							? new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+							: value instanceof Uint8Array
+								? value
+								: undefined;
+				if (frame) listener(frame);
+			};
+			channel.addEventListener('message', handler);
+			return () => channel.removeEventListener('message', handler);
+		},
+		onStateChange(listener) {
+			listeners.add(listener);
+			return () => listeners.delete(listener);
+		},
+	};
+}
+
+function mapChannelState(state: string): HeadlessDataChannel['readyState'] {
+	if (state === 'open') return 'open';
+	if (state === 'connecting') return 'connecting';
+	if (state === 'closing') return 'closing';
+	return 'closed';
+}
 
 function createMinimalUiArchive(): MinimalArchive {
 	const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Terminay</title></head><body><main id="terminay-workspace">Terminay workspace is connected.</main></body></html>`;
