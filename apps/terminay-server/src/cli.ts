@@ -84,6 +84,7 @@ import {
 } from './index.js';
 import { resolveTerminalProcessCwd } from './processCwd.js';
 import { startHostedPairingHost } from './remote/hostedPairingHost.js';
+import { loadOrCreateHostedHostKey } from './remote/hostedHostKey.js';
 import { assertStandaloneReleaseIntegrity } from './releaseIntegrity.js';
 
 declare const process: {
@@ -189,6 +190,9 @@ else {
 					}
 					hostedPairingHost = await startHostedPairingHost({
 						handoff,
+						hostKey: loadOrCreateHostedHostKey(
+							join(options.dataRoot, 'remote-host-key.v1.json'),
+						),
 						persistDevices: devicePersistence.save,
 						pin: remotePairingPin,
 						remote,

@@ -18,7 +18,7 @@ This feature works with
 
 ## Model
 
-Remote browser access uses four concepts:
+Remote browser access uses five concepts:
 
 - A **stable session origin** is the permanent HTTPS origin for one Terminay
   Server, such as `https://<server-id>.terminay.com`.
@@ -30,19 +30,27 @@ Remote browser access uses four concepts:
 - A **manager profile** is a non-secret bookmark stored by
   `app.terminay.com`. It contains a label, stable session origin, and local
   timestamps.
+- A **server host key** is a long-lived key pair owned by Terminay Server for
+  its stable session origin. Signaling stores the public key. The private key
+  never leaves the server. This proves the WebRTC host is that server. It is
+  not a browser device key.
 
 The pairing secret enrolls a browser device once. It is not a reconnect
-credential. Future connections prove possession of the browser device key.
+credential. Future connections prove possession of the browser device key. The
+server host key is how signaling knows the reconnect host is the same server.
 
 ## Ownership
 
 - Terminay Server owns pairing policy, device registration, public device keys,
-  revocation, application authorization, workspace state, and audit history.
+  revocation, application authorization, workspace state, audit history, and
+  the private host key for its session origin.
 - The stable session origin owns browser pairing, its non-extractable private
   device key, WebRTC lifecycle, server-bundle installation, and reconnect.
 - `app.terminay.com` owns only the browser's list of manager profiles.
 - The signaling service routes authenticated WebRTC offers, answers, and ICE
-  candidates for one server session.
+  candidates for one server session. It admits a pairing client only with the
+  fragment-derived join credential. It admits a reconnect host only when that
+  host proves the registered server host key.
 - TURN may relay encrypted WebRTC packets and does not terminate the Terminay
   application protocol.
 
@@ -58,7 +66,10 @@ Exposure:
 
 - connects the server to Terminay's authenticated WebRTC signaling service
   before advertising a pairing URL. Standalone `terminay-server` registers the
-  fragment-derived pairing room (`host-ready`) the same way Desktop does;
+  fragment-derived pairing room (`host-ready`) the same way Desktop does, and
+  registers its server host key before it is reachable for pairing or
+  reconnect. A later host claim for the same session must prove the same
+  private key. A different key does not replace a live registration;
 - applies the configured six-digit PIN or explicit approval policy;
 - generates a short-lived pairing URL and QR code;
 - displays exposure expiry, signaling and relay health, paired devices, and
@@ -138,9 +149,17 @@ privileged connection host.
 
 Standalone `terminay-server` keeps a device-authentication signaling session
 (`device-host-ready`) for the stable session origin while the process is
-exposed. Opening that origin later joins it with `device-join` and then proves
-the browser device key. Pairing rooms stay one-time and are not reused for
-reconnect.
+exposed. Signaling accepts that registration only when the host proves
+possession of the same server host key that was registered for that origin.
+Opening that origin later joins it with `device-join` and then proves the
+browser device key to that server. Pairing rooms stay one-time and are not
+reused for reconnect.
+
+The pairing fragment authenticates a one-time pairing client. After it is
+consumed, reconnect cannot reuse it. The server host key is the durable proof
+that this process is still the WebRTC host for that origin. Knowing the public
+session hostname is not enough to become that host. The browser device key
+still answers a different question: whether this is the same paired device.
 
 The device private key is the only durable browser authentication secret.
 Connection tickets exist only for individual connection attempts.
@@ -206,19 +225,26 @@ The server may store:
 
 - device id and name;
 - public device key;
+- the private host key for its session origin;
 - creation, last-seen, and revocation metadata; and
 - security audit events.
 
+The signaling service may store the public host key or fingerprint for a
+session. It never stores the private host key.
+
 The manager origin, signaling service, TURN service, logs, analytics, URLs, and
-host messages never contain private device keys, pairing fragments, PINs,
-connection tickets, terminal output, project names, paths, filenames, command
-history, recordings, settings, or secrets.
+host messages never contain private device keys, private host keys, pairing
+fragments, PINs, connection tickets, terminal output, project names, paths,
+filenames, command history, recordings, settings, or secrets.
 
 ## Failure behaviour
 
 - An expired or consumed pairing URL asks the user to generate another one.
 - A missing browser device key asks for a fresh pairing URL.
 - A revoked device cannot reconnect until enrolled as a new device.
+- A host that cannot prove the registered server host key cannot take over
+  that session's signaling registration. Exposure fails closed if a different
+  key is already registered.
 - Offline server, signaling failure, relay failure, invalid server identity,
   invalid bundle, and revoked device are distinct visible errors.
 - Failed pairing leaves any PWA manager profile available for retry or forget.
@@ -232,6 +258,9 @@ history, recordings, settings, or secrets.
 - The fragment is consumed in memory and is never sent in an HTTP request.
 - Pairing requires the fragment plus PIN or explicit approval.
 - A public session origin, server id, device id, or PIN alone grants no access.
+- Signaling admits a reconnect host only with proof of the registered server
+  host key. A public session origin or server id cannot become the WebRTC host
+  for that session.
 - Browser private keys are non-extractable and origin-bound.
 - Device revocation affects live and future connections.
 - Hosted services remain data-blind for Terminay application content.
@@ -251,6 +280,8 @@ history, recordings, settings, or secrets.
 
 - Opening a pairing URL directly enrolls the browser and opens the workspace.
 - Opening that stable session origin later reconnects without the pairing URL.
+- A second host that knows only the session origin cannot replace the
+  registered reconnect host.
 - Adding a pairing URL in the PWA immediately saves its stable-origin profile
   and performs the same session-origin enrollment.
 - Returning to the PWA lists the saved profile, and selecting it reconnects

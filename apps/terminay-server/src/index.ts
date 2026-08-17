@@ -17,6 +17,7 @@ export * from "./remote/serverExposure.js";
 export * from "./remote/signalingHostBoundary.js";
 export * from "./remote/hostedSignalingRegistrar.js";
 export * from "./remote/hostedPairingSecrets.js";
+export * from "./remote/hostedHostKey.js";
 export * from "./remote/hostedPairingHost.js";
 
 export const serverApplicationBoundary = "@terminay/server";
