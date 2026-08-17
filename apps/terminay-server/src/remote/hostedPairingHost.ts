@@ -2,6 +2,10 @@ import { gzipSync } from 'node:zlib';
 import { WebSocket } from 'ws';
 import { loadSelectedSecureWeriftRuntime } from './secureWeriftRuntime.js';
 import {
+	createDeviceHostReadyMessage,
+	type HostedHostKey,
+} from './hostedHostKey.js';
+import {
 	deriveHostedPairingSecrets,
 	hostedSessionId,
 	hostedSignalingUrl,
@@ -39,6 +43,7 @@ type WeriftDataChannel = {
 
 export interface HostedPairingHostOptions {
 	readonly handoff: ServerPairingHandoff;
+	readonly hostKey: HostedHostKey;
 	readonly persistDevices: (devices: ReturnType<ServerRemoteExposure['devices']['list']>) => void;
 	readonly pin: string;
 	readonly remote: ServerRemoteExposure;
@@ -155,11 +160,13 @@ export async function startHostedPairingHost(
 	);
 	await waitForOpen(deviceSocket);
 	deviceSocket.send(
-		JSON.stringify({
-			expiresAt: new Date(Date.now() + 25 * 60 * 1000).toISOString(),
-			sessionId,
-			type: 'device-host-ready',
-		}),
+		JSON.stringify(
+			createDeviceHostReadyMessage({
+				expiresAt: new Date(Date.now() + 25 * 60 * 1000).toISOString(),
+				hostKey: options.hostKey,
+				sessionId,
+			}),
+		),
 	);
 	await Promise.race([
 		Promise.all([pairingRegistered.promise, deviceRegistered.promise]).finally(() => {
