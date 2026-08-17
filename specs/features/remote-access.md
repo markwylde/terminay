@@ -204,6 +204,16 @@ the device, obtains the selected server bundle through the WebRTC asset lane,
 validates its declared contract and resource bounds, and launches it under that
 same origin.
 
+WebRTC DataChannel payloads stay within the negotiated SCTP maximum message
+size. The UI archive is transferred as acknowledged binary chunks of at most
+64 KiB on the `asset` and `assets` lanes, with at most four unacknowledged
+chunks in flight. Archive transfer failures send typed JSON
+`asset:bundle-error` (`cancelled`, `timeout`, `unavailable`, `invalid-request`,
+or `internal`) and do not take down the host process. The application protocol
+frame budget is separate from this SCTP limit; a send that would exceed the
+negotiated SCTP maximum fails that channel with a visible error instead of
+aborting Electron.
+
 `app.terminay.com` contains the connection manager only. Desktop and browser
 hosts do not supply another workspace implementation or interpret feature-level
 application messages.
@@ -255,7 +265,8 @@ filenames, command history, recordings, settings, or secrets.
   that session's signaling registration. Exposure fails closed if a different
   key is already registered.
 - Offline server, signaling failure, relay failure, invalid server identity,
-  invalid bundle, and revoked device are distinct visible errors.
+  invalid bundle, archive transfer failure, and revoked device are distinct
+  visible errors.
 - Failed pairing leaves any PWA manager profile available for retry or forget.
 - Failed reconnect keeps the mounted workspace read-only until recovery or
   explicit disconnect.
