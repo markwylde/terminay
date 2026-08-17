@@ -37,7 +37,10 @@ jobs:
 
       - name: Install dependencies
         run: |
-          npm install --global npm@12.0.2
+          mkdir -p "$HOME/.local"
+          npm install --global --prefix "$HOME/.local" npm@12.0.2
+          export PATH="$HOME/.local/bin:$PATH"
+          hash -r
           npm ci
 
       - name: Build unsigned packaged application
