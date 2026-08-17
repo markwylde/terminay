@@ -18,9 +18,9 @@ import {
 	hostedSignalingUrl,
 } from './hostedPairingSecrets.js';
 import type { ServerPairingHandoff, ServerRemoteExposure } from './serverExposure.js';
+import { bindUiArchiveChannels, safeChannelSend } from './uiArchiveTransfer.js';
 
 const CHANNELS = ['api', 'asset', 'control', 'application', 'terminal', 'assets'] as const;
-const ARCHIVE_MAGIC = [0x54, 0x42, 0x01, 0x01];
 
 type WeriftIceCandidate = Readonly<{
 	candidate?: string;
@@ -325,7 +325,7 @@ async function startPeer(
 	});
 	bindApi(channels.api!, context);
 	bindControl(channels.control!, channels.application!, context, onApplication);
-	bindAsset(channels.asset!, context.archive);
+	bindUiArchiveChannels([channels.asset!, channels.assets!], context.archive);
 
 	const offer = await peer.createOffer();
 	await peer.setLocalDescription(offer);
@@ -435,9 +435,10 @@ function bindApi(
 			if (request.type !== 'api-request' || typeof request.id !== 'string') return;
 			try {
 				const body = await handleApi(request.pathname, request.body, context);
-				channel.send(JSON.stringify({ body, id: request.id, ok: true, type: 'api-response' }));
+				safeChannelSend(channel, JSON.stringify({ body, id: request.id, ok: true, type: 'api-response' }));
 			} catch (error) {
-				channel.send(
+				safeChannelSend(
+					channel,
 					JSON.stringify({
 						error: error instanceof Error ? error.message : 'Terminay rejected the bootstrap request.',
 						id: request.id,
@@ -446,7 +447,9 @@ function bindApi(
 					}),
 				);
 			}
-		})();
+		})().catch((error) => {
+			console.error(error instanceof Error ? error.message : error);
+		});
 	});
 }
 
@@ -537,101 +540,45 @@ function bindControl(
 			ticket = undefined;
 		}
 		const ok = ticket !== undefined;
-		channel.send(
-			JSON.stringify({
-				error: ok ? undefined : 'Terminay rejected the workspace.',
-				id: request.id,
-				ok,
-				type: 'application-authenticated',
-			}),
-		);
-		if (!ok || !ticket || context.options.acceptApplication === undefined) return;
-		const connection = context.options.acceptApplication(
-			new HeadlessChannelTransport(asHeadlessChannel(application)),
-			{
-				authScope: 'admin',
-				clientId: ticket.deviceId,
-				permissions: [
-					'environments:read',
-					'environments:manage',
-					'workspace:write',
-					'extensions:read',
-					'extensions:manage',
-				],
-			},
-		);
-		onApplication(connection);
-		void connection.start().catch((error) => {
+		try {
+			safeChannelSend(
+				channel,
+				JSON.stringify({
+					error: ok ? undefined : 'Terminay rejected the workspace.',
+					id: request.id,
+					ok,
+					type: 'application-authenticated',
+				}),
+			);
+		} catch (error) {
 			console.error(error instanceof Error ? error.message : error);
-			void connection.close();
-		});
-	});
-}
-
-function bindAsset(channel: WeriftDataChannel, archive: MinimalArchive): void {
-	channel.addEventListener('message', (event) => {
-		let request: Record<string, unknown>;
-		try {
-			request = JSON.parse(String(event.data ?? '')) as Record<string, unknown>;
-		} catch {
 			return;
 		}
-		if (request.type === 'asset:get-bundle' && typeof request.id === 'string') {
-			void sendArchive(channel, archive, request.id);
+		if (!ok || !ticket || context.options.acceptApplication === undefined) return;
+		try {
+			const connection = context.options.acceptApplication(
+				new HeadlessChannelTransport(asHeadlessChannel(application)),
+				{
+					authScope: 'admin',
+					clientId: ticket.deviceId,
+					permissions: [
+						'environments:read',
+						'environments:manage',
+						'workspace:write',
+						'extensions:read',
+						'extensions:manage',
+					],
+				},
+			);
+			onApplication(connection);
+			void connection.start().catch((error) => {
+				console.error(error instanceof Error ? error.message : error);
+				void connection.close();
+			});
+		} catch (error) {
+			console.error(error instanceof Error ? error.message : error);
 		}
 	});
-}
-
-async function sendArchive(
-	channel: WeriftDataChannel,
-	archive: MinimalArchive,
-	id: string,
-): Promise<void> {
-	const waiters = new Map<number, () => void>();
-	const onMessage = (event: Record<string, unknown>) => {
-		let message: Record<string, unknown>;
-		try {
-			message = JSON.parse(String(event.data ?? '')) as Record<string, unknown>;
-		} catch {
-			return;
-		}
-		if (message.type === 'asset:bundle-ack' && message.id === id) {
-			waiters.get(Number(message.index))?.();
-		}
-	};
-	channel.addEventListener('message', onMessage);
-	try {
-		channel.send(
-			JSON.stringify({
-				archiveFormatVersion: 1,
-				bundleId: archive.bundleId,
-				chunkBytes: archive.bytes.byteLength,
-				chunks: 1,
-				compressedBytes: archive.bytes.byteLength,
-				id,
-				type: 'asset:bundle-start',
-			}),
-		);
-		const acked = new Promise<void>((resolve) => waiters.set(0, resolve));
-		channel.send(archiveFrame(0, archive.bytes));
-		await Promise.race([
-			acked,
-			delay(15_000).then(() => {
-				throw new Error('Archive acknowledgement timed out.');
-			}),
-		]);
-		channel.send(JSON.stringify({ id, type: 'asset:bundle-complete' }));
-	} finally {
-		channel.removeEventListener('message', onMessage);
-	}
-}
-
-function archiveFrame(index: number, bytes: Uint8Array): Uint8Array {
-	const frame = new Uint8Array(8 + bytes.byteLength);
-	frame.set(ARCHIVE_MAGIC, 0);
-	new DataView(frame.buffer).setUint32(4, index, false);
-	frame.set(bytes, 8);
-	return frame;
 }
 
 function pairingPinMatches(received: string, options: HostedPairingHostOptions): boolean {
@@ -661,7 +608,7 @@ function asHeadlessChannel(channel: WeriftDataChannel): HeadlessDataChannel {
 			return typeof channel.bufferedAmount === 'number' ? channel.bufferedAmount : 0;
 		},
 		send(frame) {
-			channel.send(frame);
+			safeChannelSend(channel, frame);
 		},
 		close() {
 			channel.close?.();
@@ -743,8 +690,4 @@ function makeTar(entries: ReadonlyArray<readonly [string, string]>): Uint8Array 
 
 function writeTarString(target: Uint8Array, offset: number, length: number, value: string): void {
 	target.set(new TextEncoder().encode(String(value)).slice(0, length), offset);
-}
-
-function delay(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
 }
