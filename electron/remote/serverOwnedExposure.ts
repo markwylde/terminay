@@ -286,8 +286,9 @@ function projectStatus(
 			deviceId: peer.deviceId,
 			deviceName: peer.deviceId,
 		})),
-		configurationIssue:
-			sessionOrigin === undefined ? 'Remote Access session origin is unavailable.' : null,
+		// Idle (not yet exposed) is not a settings problem. The renderer treats
+		// configurationIssue as "open settings and abort" instead of exposing.
+		configurationIssue: null,
 		configurationPath: 'Terminay Server',
 		errorMessage: null,
 		isRunning: status?.exposure.state === 'exposed',
