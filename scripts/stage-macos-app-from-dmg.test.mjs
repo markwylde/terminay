@@ -13,6 +13,8 @@ test('the DMG staging helper is a macOS-only ditto copy off a read-only volume',
   assert.match(source, /hdiutil attach/u)
   assert.match(source, /-readonly/u)
   assert.doesNotMatch(source, /mapfile/u)
+  assert.doesNotMatch(source, /codesign --verify/u,
+    'unsigned electron-builder apps fail codesign --verify; release verifies signed bytes separately')
 })
 
 test('the DMG staging helper rejects missing arguments', async () => {
