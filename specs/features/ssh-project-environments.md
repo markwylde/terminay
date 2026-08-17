@@ -145,9 +145,11 @@ it does not apply local server shell profiles or accept a renderer-generated
 command string. Additional remote shell discovery is future work.
 
 Remote current-cwd, foreground-process, native PID, and journal observation may
-be unavailable. Cwd presentation may retain the spawn root, close protection
-reports its limited capability, and authoritative agent integration remains
-unavailable rather than inspecting the local SSH client process.
+be unavailable. Cwd presentation may retain the spawn root. Close protection
+warns only when a non-shell foreground process is known to be running; missing
+remote observation does not inspect the local SSH client process or invent a
+running job. Authoritative agent integration remains unavailable rather than
+inspecting the local SSH client process.
 
 Server-local launch environment is filtered at the provider boundary. Provider
 homes, credentials, and host-only variables are never copied into the remote

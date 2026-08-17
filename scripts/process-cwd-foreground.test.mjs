@@ -5,7 +5,11 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { build } from 'esbuild';
 
-const { parseHostProcessTable } = await importProcessCwd();
+const {
+	parseHostProcessTable,
+	selectForegroundProcessFromTable,
+	resolveTerminalForegroundProcess,
+} = await importProcessCwd();
 
 test('host process table parsing keeps a single snapshot walk session-scoped', () => {
 	const table = parseHostProcessTable(`
@@ -25,6 +29,69 @@ test('host process table parsing keeps a single snapshot walk session-scoped', (
 	assert.equal(table.get(532)?.command, 'fseventsd');
 });
 
+test('login-shell argv0 is the configured shell, not a running job', () => {
+	const table = parseHostProcessTable(`
+  300   1 Ss   -zsh
+  301 300 S+   sleep
+`);
+	assert.equal(table.get(300)?.command, 'zsh');
+	assert.deepEqual(
+		selectForegroundProcessFromTable(300, table, 'zsh'),
+		{ command: 'sleep', consultProcessGroup: false },
+	);
+});
+
+test('an idle shell has no non-shell foreground process', () => {
+	const table = parseHostProcessTable(`
+  400   1 Ss   zsh
+`);
+	assert.deepEqual(
+		selectForegroundProcessFromTable(400, table, 'zsh'),
+		{ command: 'zsh', consultProcessGroup: false },
+	);
+});
+
+test('a session whose root pid is the running command does not consult TPGID', () => {
+	const table = parseHostProcessTable(`
+  700   1 S+   sleep
+`);
+	assert.deepEqual(
+		selectForegroundProcessFromTable(700, table, 'sleep'),
+		{ command: 'sleep', consultProcessGroup: false },
+	);
+});
+
+test('a unique foreground child is the running process', () => {
+	const table = parseHostProcessTable(`
+  500   1 Ss   zsh
+  501 500 S+   python3
+`);
+	assert.deepEqual(
+		selectForegroundProcessFromTable(500, table, 'zsh'),
+		{ command: 'python3', consultProcessGroup: false },
+	);
+});
+
+test('a login wrapper around the shell is not a running job', () => {
+	const table = parseHostProcessTable(`
+  600   1 Ss   login
+  601 600 Ss   zsh
+`);
+	assert.deepEqual(
+		selectForegroundProcessFromTable(600, table, 'login'),
+		{ command: 'zsh', consultProcessGroup: false },
+	);
+});
+
+test('an already-aborted close observation fails closed without a host-wide scan', async () => {
+	const controller = new AbortController();
+	controller.abort(new Error('foreground observation aborted'));
+	await assert.rejects(
+		resolveTerminalForegroundProcess(process.pid, controller.signal),
+		/aborted/u,
+	);
+});
+
 async function importProcessCwd() {
 	const directory = await mkdtemp(join(tmpdir(), 'terminay-process-cwd-'));
 	const outputPath = join(directory, 'process-cwd.mjs');
@@ -35,7 +102,7 @@ async function importProcessCwd() {
 			outfile: outputPath,
 			platform: 'node',
 			stdin: {
-				contents: `export { parseHostProcessTable } from ${JSON.stringify(new URL('../electron/processCwd.ts', import.meta.url).pathname)}`,
+				contents: `export { parseHostProcessTable, selectForegroundProcessFromTable, resolveTerminalForegroundProcess } from ${JSON.stringify(new URL('../electron/processCwd.ts', import.meta.url).pathname)}`,
 				loader: 'ts',
 				resolveDir: process.cwd(),
 			},
