@@ -47,10 +47,14 @@ jobs:
         run: |
           SOURCE_APP="release/0.0.0/mac-arm64/Terminay.app"
           test -d "$SOURCE_APP"
+          DMG_ROOT="$RUNNER_TEMP/terminay-pr-dmg-root"
+          rm -rf "$DMG_ROOT"
+          mkdir -p "$DMG_ROOT"
+          ditto "$SOURCE_APP" "$DMG_ROOT/Terminay.app"
           UNSIGNED_DMG="$RUNNER_TEMP/terminay-pr-unsigned.dmg"
           hdiutil create \
             -volname Terminay \
-            -srcfolder "$SOURCE_APP" \
+            -srcfolder "$DMG_ROOT" \
             -ov \
             -format UDZO \
             "$UNSIGNED_DMG"
