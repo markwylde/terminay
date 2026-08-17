@@ -221,6 +221,30 @@ test("node-pty foreground observer tears down on PTY exit and never enters outpu
   assert.equal(output.length, 0);
 });
 
+test("node-pty treats a login shell argv0 as the configured shell", () => {
+  const scheduler = createScheduler();
+  const child = createChild();
+  child.process = "-zsh";
+  const factory = createNodePtyFactory({ spawn: () => child }, { foregroundPolling: scheduler });
+  const process = factory.spawn({ shellPath: "/bin/zsh", shell: "/bin/zsh", args: [], cwd: "/tmp", cols: 80, rows: 24 });
+  const events = [];
+  process.onForegroundProcess((event) => events.push(event));
+  scheduler.tick();
+  assert.deepEqual(events, [{ processName: "-zsh", shellForeground: true, observation: "available" }]);
+});
+
+test("node-pty treats login as a trivial wrapper around the configured shell", () => {
+  const scheduler = createScheduler();
+  const child = createChild();
+  child.process = "login";
+  const factory = createNodePtyFactory({ spawn: () => child }, { foregroundPolling: scheduler });
+  const process = factory.spawn({ shellPath: "/bin/zsh", shell: "/bin/zsh", args: [], cwd: "/tmp", cols: 80, rows: 24 });
+  const events = [];
+  process.onForegroundProcess((event) => events.push(event));
+  scheduler.tick();
+  assert.deepEqual(events, [{ processName: "login", shellForeground: true, observation: "available" }]);
+});
+
 test("node-pty treats Debian dash as the configured POSIX sh shell", () => {
   const scheduler = createScheduler();
   const child = createChild();
