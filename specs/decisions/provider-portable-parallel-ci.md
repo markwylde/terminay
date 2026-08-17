@@ -16,15 +16,15 @@ E2E-image build, and five Electron Playwright shards:
 3. Five `ubuntu-latest` jobs split the Electron Playwright suite with
    `--shard=N/5`.
 
-The fast gate is independent. GitHub runs the real macOS smoke: it packages
-an unsigned `.app`, wraps that bundle in a read-only DMG, copies it with
-`ditto` onto a writable directory, then boots the copy. That is the same
-launch path as the notarized release installer, minus Apple signing.
+The fast gate is independent. Gitea pull-request CI is the merge gate. It
+runs the packaged macOS smoke on the `xcode-16` Lume runner (darwin arm64):
+it packages an unsigned `.app`, wraps that bundle in a read-only DMG, copies
+it with `ditto` onto a writable directory, then boots the copy. That is the
+same launch path as the notarized release installer, minus Apple signing.
 Unsigned electron-builder apps fail `codesign --verify --deep --strict`,
 so pull-request smoke must not use that check; Developer ID verification
-stays on the release DMG. Gitea has no macOS runners, so it records an
-explicit unavailable-runner fallback on Ubuntu instead of pretending the
-smoke ran. GitHub-only
+stays on the release DMG. GitHub still runs the same smoke on `macos-latest`
+for `main` pushes. GitHub-only
 workflows live in `.github/workflows/`; Gitea-only workflows live in
 `.gitea/workflows/`. Gitea gives its own directory precedence and otherwise
 falls back to `.github/workflows/`, so both directories must exist and remain
