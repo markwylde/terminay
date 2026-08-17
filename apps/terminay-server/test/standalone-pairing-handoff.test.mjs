@@ -34,6 +34,38 @@ test('standalone pairing handoff uses the remote client bootstrap contract', () 
 	return exposure.shutdown();
 });
 
+test('hosted compact pairing URL keeps the QR secret in the fragment', async () => {
+	const { deriveHostedPairingSecrets } = await import('../dist/remote/hostedPairingSecrets.js');
+	const exposure = createServerRemoteExposure({
+		serverId: 'hosted-server',
+		sessionOrigin: 'https://abc12345.terminay.com',
+		pairingUrlFormat: 'hosted-compact',
+		cleanupIntervalMs: 0,
+	});
+
+	const handoff = exposure.start(Date.now() + 60_000);
+	const url = new URL(handoff.pairingUrl);
+	const qrSecret = url.hash.slice(1);
+	const derived = deriveHostedPairingSecrets(qrSecret);
+
+	assert.equal(url.protocol, 'https:');
+	assert.equal(url.pathname, '/v1/');
+	assert.equal(url.search, '');
+	assert.equal(handoff.pairingSessionId, derived.pairingRoomId);
+	assert.equal(handoff.pairingToken, derived.pairingToken);
+	assert.notEqual(qrSecret, handoff.pairingToken);
+	assert.equal(exposure.pairing.metadata(derived.pairingRoomId)?.state, 'active');
+
+	return exposure.shutdown();
+});
+
+test('hosted session ids come from the stable session hostname', async () => {
+	const { hostedSessionId } = await import('../dist/remote/hostedPairingSecrets.js');
+	assert.equal(hostedSessionId('https://abc12345.terminay.com'), 'abc12345');
+	assert.equal(hostedSessionId('https://abc12345.terminay.com:8443'), 'abc12345');
+	assert.throws(() => hostedSessionId('https://app.terminay.com'), /invalid/);
+});
+
 test('compiled standalone pairing CLI emits a fragment-only handoff and does not start server state', async () => {
 	const dataRoot = await mkdtemp(join(tmpdir(), 'terminay-pairing-cli-'));
 	const remoteOrigin = 'https://pairing.example.test';
