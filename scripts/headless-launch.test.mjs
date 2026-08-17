@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { build } from 'esbuild';
 
 const {
+	HEADLESS_CHROMIUM_SWITCHES,
 	applyHeadlessChromiumSwitches,
 	darwinHasAquaSession,
+	headlessChromiumArgv,
 	shouldUseHeadlessChromium,
 } = await importHeadlessLaunch();
 
@@ -17,21 +19,33 @@ test('headless Chromium is only for macOS without an Aqua session', () => {
 	assert.equal(shouldUseHeadlessChromium('linux', false), false);
 });
 
-test('Aqua probe treats launchctl failure as no console GUI session', () => {
+test('TERMINAY_ELECTRON_HEADLESS overrides the Aqua session probe', () => {
 	assert.equal(
-		darwinHasAquaSession(501, () => {
-			throw new Error('gui domain missing');
+		shouldUseHeadlessChromium('darwin', true, {
+			TERMINAY_ELECTRON_HEADLESS: '1',
+		}),
+		true,
+	);
+	assert.equal(
+		shouldUseHeadlessChromium('darwin', false, {
+			TERMINAY_ELECTRON_HEADLESS: '0',
 		}),
 		false,
 	);
-	assert.equal(
-		darwinHasAquaSession(501, () => undefined),
-		true,
-	);
-	assert.equal(darwinHasAquaSession(Number.NaN, () => undefined), false);
 });
 
-test('headless switches disable GPU before Chromium starts', () => {
+test('Aqua probe requires launchctl managername Aqua', () => {
+	assert.equal(
+		darwinHasAquaSession(() => {
+			throw new Error('launchctl missing');
+		}),
+		false,
+	);
+	assert.equal(darwinHasAquaSession(() => 'Aqua\n'), true);
+	assert.equal(darwinHasAquaSession(() => 'Background\n'), false);
+});
+
+test('headless switches disable GPU and mock the keychain before Chromium starts', () => {
 	const switches = [];
 	let disabledGpu = false;
 	applyHeadlessChromiumSwitches({
@@ -45,7 +59,35 @@ test('headless switches disable GPU before Chromium starts', () => {
 		},
 	});
 	assert.equal(disabledGpu, true);
-	assert.deepEqual(switches, ['headless', 'disable-gpu']);
+	assert.deepEqual([...HEADLESS_CHROMIUM_SWITCHES], [
+		'headless',
+		'disable-gpu',
+		'use-mock-keychain',
+	]);
+	assert.deepEqual(switches, [...HEADLESS_CHROMIUM_SWITCHES]);
+	assert.deepEqual(
+		headlessChromiumArgv(),
+		HEADLESS_CHROMIUM_SWITCHES.map((name) => `--${name}`),
+	);
+});
+
+test('Electron main applies headless Chromium switches before other Electron imports', async () => {
+	const main = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8');
+	assert.match(main, /^import '\.\/headlessBootstrap';/u);
+	assert.ok(
+		main.indexOf("import './headlessBootstrap'") < main.indexOf("from 'electron'"),
+	);
+});
+
+test('packaged smoke launches Chromium with the same headless argv', async () => {
+	const smoke = await readFile(
+		new URL('./packaged-desktop-startup-smoke.test.mjs', import.meta.url),
+		'utf8',
+	);
+	for (const argument of headlessChromiumArgv()) {
+		assert.ok(smoke.includes(argument), `packaged smoke must pass ${argument}`);
+	}
+	assert.match(smoke, /launchctl',\s*\['managername'\]/u);
 });
 
 async function importHeadlessLaunch() {
@@ -58,7 +100,7 @@ async function importHeadlessLaunch() {
 			outfile: outputPath,
 			platform: 'node',
 			stdin: {
-				contents: `export { applyHeadlessChromiumSwitches, darwinHasAquaSession, shouldUseHeadlessChromium } from ${JSON.stringify(new URL('../electron/headlessLaunch.ts', import.meta.url).pathname)}`,
+				contents: `export { HEADLESS_CHROMIUM_SWITCHES, applyHeadlessChromiumSwitches, darwinHasAquaSession, headlessChromiumArgv, shouldUseHeadlessChromium } from ${JSON.stringify(new URL('../electron/headlessLaunch.ts', import.meta.url).pathname)}`,
 				loader: 'ts',
 				resolveDir: process.cwd(),
 			},

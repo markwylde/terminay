@@ -20,8 +20,11 @@ The fast gate is independent. Gitea pull-request CI is the merge gate. It
 runs the packaged macOS smoke on the `xcode-16` Lume runner (darwin arm64):
 it packages an unsigned `.app`, wraps that bundle in a read-only DMG, copies
 it with `ditto` onto a writable directory, then boots the copy. Lume workers
-have no console GUI session, so the packaged app uses Chromium headless when
-Aqua is unavailable. That is the
+have no console GUI session for SSH jobs, so the smoke re-enters `gui/$UID`
+when that domain exists and otherwise starts Chromium with `--headless`,
+`--disable-gpu`, and `--use-mock-keychain`. Aqua is detected from
+`launchctl managername` for the current process, not from whether the GUI
+domain exists. That is the
 same launch path as the notarized release installer, minus Apple signing.
 Unsigned electron-builder apps fail `codesign --verify --deep --strict`,
 so pull-request smoke must not use that check; Developer ID verification
