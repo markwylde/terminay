@@ -1,13 +1,16 @@
 import { execFileSync } from 'node:child_process';
 
+export const HEADLESS_CHROMIUM_SWITCHES = [
+	'headless',
+	'disable-gpu',
+	'use-mock-keychain',
+] as const;
+
 export function darwinHasAquaSession(
-	uid = typeof process.getuid === 'function' ? process.getuid() : undefined,
-	probe: (uid: number) => void = printGuiDomain,
+	probe: () => string = printManagerName,
 ): boolean {
-	if (uid === undefined || !Number.isInteger(uid) || uid < 0) return false;
 	try {
-		probe(uid);
-		return true;
+		return probe().trim() === 'Aqua';
 	} catch {
 		return false;
 	}
@@ -16,8 +19,12 @@ export function darwinHasAquaSession(
 export function shouldUseHeadlessChromium(
 	platform: NodeJS.Platform,
 	aquaSessionAvailable: boolean,
+	env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-	return platform === 'darwin' && !aquaSessionAvailable;
+	if (platform !== 'darwin') return false;
+	if (env.TERMINAY_ELECTRON_HEADLESS === '1') return true;
+	if (env.TERMINAY_ELECTRON_HEADLESS === '0') return false;
+	return !aquaSessionAvailable;
 }
 
 export function applyHeadlessChromiumSwitches(app: {
@@ -25,13 +32,18 @@ export function applyHeadlessChromiumSwitches(app: {
 	commandLine: { appendSwitch(name: string): void };
 }): void {
 	app.disableHardwareAcceleration();
-	app.commandLine.appendSwitch('headless');
-	app.commandLine.appendSwitch('disable-gpu');
+	for (const name of HEADLESS_CHROMIUM_SWITCHES) {
+		app.commandLine.appendSwitch(name);
+	}
 }
 
-function printGuiDomain(uid: number): void {
-	execFileSync('/bin/launchctl', ['print', `gui/${uid}`], {
-		stdio: 'ignore',
+export function headlessChromiumArgv(): string[] {
+	return HEADLESS_CHROMIUM_SWITCHES.map((name) => `--${name}`);
+}
+
+function printManagerName(): string {
+	return execFileSync('/bin/launchctl', ['managername'], {
+		encoding: 'utf8',
 		timeout: 2_000,
 	});
 }

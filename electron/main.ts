@@ -1,3 +1,4 @@
+import './headlessBootstrap';
 import { createHash, randomUUID } from 'node:crypto';
 import {
 	chmodSync,
@@ -32,11 +33,6 @@ import {
 	webContents,
 } from 'electron';
 import { LocalServerUiSession } from '../apps/terminay-desktop/src/main/localServerUiSession';
-import {
-	applyHeadlessChromiumSwitches,
-	darwinHasAquaSession,
-	shouldUseHeadlessChromium,
-} from './headlessLaunch';
 import {
 	type DesktopAuthenticatedAssetLane,
 	type DesktopBundleLaunch,
@@ -179,9 +175,6 @@ app.commandLine.appendSwitch(
 	'enable-features',
 	'DocumentPolicyIncludeJSCallStacksInCrashReports',
 );
-if (shouldUseHeadlessChromium(process.platform, darwinHasAquaSession())) {
-	applyHeadlessChromiumSwitches(app);
-}
 const desktopDiagnostics = await initializeDesktopDiagnostics({
 	app,
 	crashReporter,
@@ -1089,7 +1082,9 @@ const embeddedVault = createServerVaultComposition(embeddedVaultAdapter);
 const embeddedRuntimeReady = prepareEmbeddedRuntime();
 
 async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
+	process.stderr.write('[Terminay] waiting for app.whenReady()\n');
 	await app.whenReady();
+	process.stderr.write('[Terminay] app.whenReady resolved\n');
 	const embeddedStartupWindow = createWindow({ deferCanonicalLaunch: true });
 	if (embeddedStartupWindow === null)
 		throw new Error('The embedded workspace window could not be created.');

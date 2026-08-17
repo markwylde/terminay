@@ -39,5 +39,7 @@ test('the unsigned PR smoke copies the app off a DMG before boot', async () => {
   assert.match(source, /hdiutil create/u)
   assert.match(source, /stage-macos-app-from-dmg\.sh/u)
   assert.match(source, /test:packaged-startup-macos/u)
+  assert.match(source, /launchctl managername/u)
+  assert.match(source, /TERMINAY_ELECTRON_HEADLESS=1/u)
   assert.doesNotMatch(source, /codesign --verify/u)
 })
