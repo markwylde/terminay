@@ -1,11 +1,17 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { cp, mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import test from 'node:test';
 import { _electron as electron } from '@playwright/test';
+
+const HEADLESS_CHROMIUM_ARGS = [
+	'--headless',
+	'--disable-gpu',
+	'--use-mock-keychain',
+];
 
 const appPath = resolve(
 	process.env.TERMINAY_PACKAGED_APP ?? 'release/0.0.0/mac-arm64/Terminay.app',
@@ -109,10 +115,12 @@ async function exerciseLaunch({ expected, mode, userData }) {
 		basename(appPath, '.app'),
 	);
 	const failures = [];
+	const mainStderr = { text: '' };
 	let electronApp;
 	try {
 		electronApp = await electron.launch({
 			executablePath,
+			args: packagedChromiumLaunchArgs(),
 			env: {
 				...process.env,
 				CI: '1',
@@ -122,7 +130,8 @@ async function exerciseLaunch({ expected, mode, userData }) {
 				VITE_DEV_SERVER_URL: '',
 			},
 		});
-		captureMainProcessFailures(electronApp.process(), failures);
+		const mainStderr = { text: '' };
+		captureMainProcessFailures(electronApp.process(), failures, mainStderr);
 		const window = await electronApp.firstWindow({ timeout: 20_000 });
 		captureRendererFailures(window, failures);
 
@@ -154,6 +163,7 @@ async function exerciseLaunch({ expected, mode, userData }) {
 		throw new Error(
 			`${mode} packaged-artifact journey failed: ${error instanceof Error ? error.message : String(error)}\n` +
 				`Process/renderer failures:\n${failures.join('\n') || '(none)'}\n` +
+				`Main stderr:\n${mainStderr.text || '(none)'}\n` +
 				`Diagnostics:\n${diagnostics || '(none)'}`,
 			{ cause: error },
 		);
@@ -278,10 +288,26 @@ function captureRendererFailures(window, failures) {
 	window.on('crash', () => failures.push('renderer crash'));
 }
 
-function captureMainProcessFailures(process, failures) {
+function packagedChromiumLaunchArgs() {
+	if (process.platform !== 'darwin') return [];
+	if (process.env.TERMINAY_ELECTRON_HEADLESS === '0') return [];
+	if (process.env.TERMINAY_ELECTRON_HEADLESS === '1') return HEADLESS_CHROMIUM_ARGS;
+	try {
+		const session = execFileSync('/bin/launchctl', ['managername'], {
+			encoding: 'utf8',
+			timeout: 2_000,
+		}).trim();
+		return session === 'Aqua' ? [] : HEADLESS_CHROMIUM_ARGS;
+	} catch {
+		return HEADLESS_CHROMIUM_ARGS;
+	}
+}
+
+function captureMainProcessFailures(process, failures, mainStderr) {
 	let stderr = '';
 	process.stderr?.on('data', (chunk) => {
 		stderr = `${stderr}${String(chunk)}`.slice(-32_000);
+		if (mainStderr) mainStderr.text = stderr;
 		for (const pattern of [
 			/Object has been destroyed/iu,
 			/uncaught exception/iu,

@@ -44,19 +44,7 @@ jobs:
       - name: Boot packaged application from a read-only DMG copy
         env:
           TERMINAY_RELEASE_DIAGNOSTICS_DIR: ${{ runner.temp }}/terminay-packaged-smoke
-        run: |
-          SOURCE_APP="release/0.0.0/mac-arm64/Terminay.app"
-          test -d "$SOURCE_APP"
-          UNSIGNED_DMG="$RUNNER_TEMP/terminay-pr-unsigned.dmg"
-          hdiutil create \
-            -volname Terminay \
-            -srcfolder "$SOURCE_APP" \
-            -ov \
-            -format UDZO \
-            "$UNSIGNED_DMG"
-          STAGED_APP="$(bash scripts/stage-macos-app-from-dmg.sh "$UNSIGNED_DMG" "$RUNNER_TEMP/terminay-pr-staged")"
-          test -d "$STAGED_APP"
-          TERMINAY_PACKAGED_APP="$STAGED_APP" npm run test:packaged-startup-macos
+        run: bash scripts/packaged-macos-pr-smoke.sh
 
   build-and-test:
     name: Build, lint, and unit tests
