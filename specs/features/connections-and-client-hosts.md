@@ -223,8 +223,9 @@ and remote startup; no second workspace-window owner exists.
 
 - `app.terminay.com` has no Local server option and never claims browser
   filesystem/PTY authority.
-- Its disconnected state is a connection picker with **Add connection…**,
-  remembered profiles, rename, open, and forget actions.
+- Its disconnected state is a connection picker: a saved-profile list with
+  **Add new connection**, which opens a dedicated page to scan a pairing QR or
+  paste a pairing URL, plus rename, open, and forget actions.
 - Selecting a profile opens it in the current browser view; an explicit action
   can open another browser tab.
 - The PWA contains connection-profile management and navigation only.
@@ -340,7 +341,8 @@ pairing, credential, server-bundle, and reconnect contracts.
 ### `app.terminay.com` PWA
 
 1. The user opens `https://app.terminay.com` and sees the connection manager.
-2. The user chooses **Add connection…** and pastes the generated pairing URL.
+2. The user chooses **Add new connection**, then **Scan QR code** or **Paste
+   pairing URL**.
 3. The manager validates the URL, extracts its stable HTTPS origin, immediately
    saves or updates a profile containing only that origin, a label, and local
    timestamps, then navigates to the complete pairing URL without storing it.
@@ -463,7 +465,11 @@ roots, panel/terminal state, server settings, and feature capability
 projections are forbidden in the host store. Unclassified fields fail closed.
 
 The PWA profile is narrower than the Desktop profile: it contains only label,
-stable session origin, created time, and last-opened time.
+stable session origin, created time, and last-opened time. The default label
+comes from the pairing URL's non-secret `hostName` (the exposing server's
+machine hostname). The session id in the origin remains the stable identifier.
+The user can rename that local label. Pairing URL paths and fragments are
+discarded when the manager derives that profile.
 
 ## Failure behaviour
 
@@ -511,8 +517,8 @@ WebRTC generation replacement and terminal resynchronization follow
   claiming that an unreachable session origin is connected.
 - Opening a pairing link directly enrolls the browser and later opening the
   stable session origin reconnects without the one-time link.
-- Adding a pairing URL in `app.terminay.com` saves its stable-origin profile
-  before navigating to session-origin pairing.
+- Scanning or adding a pairing URL in `app.terminay.com` saves its
+  stable-origin profile before navigating to session-origin pairing.
 - Returning to `app.terminay.com` lists the saved connection, and selecting it
   reconnects through the stable session origin without reusing pairing
   material.
