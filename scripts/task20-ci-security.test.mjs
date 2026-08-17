@@ -614,6 +614,12 @@ test("macOS release DMGs are verified for signing, team identity, Gatekeeper, an
     "Gatekeeper must assess the embedded app");
   assert.match(verificationStep, /xcrun stapler validate "\$DMG"/u,
     "the upload candidate DMG must carry a valid notarization staple");
+  assert.match(verificationStep, /stage-macos-app-from-dmg\.sh "\$DMG"/u,
+    "the signed app must be copied off the read-only DMG before it is booted");
+  assert.match(verificationStep, /TERMINAY_PACKAGED_APP="\$STAGED_APP"/u,
+    "startup smoke must boot the writable staged copy, not the mounted installer");
+  assert.doesNotMatch(verificationStep, /TERMINAY_PACKAGED_APP="\$APP_BUNDLE"/u,
+    "startup smoke must not launch Chromium from the read-only DMG");
 });
 
 test("macOS packaging proves microphone capability and a non-empty user disclosure before release verification", () => {
