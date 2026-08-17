@@ -164,8 +164,9 @@ endpoint.
   traffic or another attachment indefinitely.
 - A continuously outputting or slow-to-observe terminal cannot delay closing an
   unrelated idle terminal. The target close either observes its own foreground
-  state within a bounded deadline or presents an explicit safe limited-state
-  confirmation.
+  state within a bounded deadline or continues with that session's latest
+  committed busy/idle evidence; missing observation does not prompt and does
+  not wait on another terminal.
 - Congestion across UTF-8, CSI, OSC, DCS, alternate-screen, resize, and
   synchronized-output boundaries restores a presentation equivalent to the
   canonical checkpoint and later live stream.
