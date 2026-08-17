@@ -19,7 +19,9 @@ E2E-image build, and five Electron Playwright shards:
 The fast gate is independent. Gitea pull-request CI is the merge gate. It
 runs the packaged macOS smoke on the `xcode-16` Lume runner (darwin arm64):
 it packages an unsigned `.app`, wraps that bundle in a read-only DMG, copies
-it with `ditto` onto a writable directory, then boots the copy. That is the
+it with `ditto` onto a writable directory, then boots the copy. Lume workers
+have no console GUI session, so the packaged app uses Chromium headless when
+Aqua is unavailable. That is the
 same launch path as the notarized release installer, minus Apple signing.
 Unsigned electron-builder apps fail `codesign --verify --deep --strict`,
 so pull-request smoke must not use that check; Developer ID verification
