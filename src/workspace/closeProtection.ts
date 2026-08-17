@@ -66,7 +66,8 @@ function limitedClosePreflight(
 }
 
 /** Destructive close decisions use a bounded exact-session or project
- * preflight. Missing authority is a limited observation, never proof of idle. */
+ * preflight. Missing authority is a limited observation, not proof that a
+ * process is running. */
 export async function observeTerminalClosePreflight(
 	client: ActivityClient | undefined,
 	scope: { readonly projectId: string; readonly sessionId?: string },
@@ -86,9 +87,6 @@ export async function confirmTerminalClose(
 	if (preflight.runningSessionIds.length > 0) {
 		return confirmRunningTerminalClose(kind, preflight.runningSessionIds.length);
 	}
-	if (preflight.observation === 'limited') {
-		return confirmLimitedTerminalClose(kind);
-	}
 	return true;
 }
 
@@ -99,13 +97,4 @@ export async function confirmRunningTerminalClose(
 	if (runningTerminalCount === 0) return true;
 	const noun = kind === 'terminal' ? 'this terminal' : 'this project';
 	return window.confirm(`A process is still running in ${noun}. Close anyway?`);
-}
-
-export async function confirmLimitedTerminalClose(
-	kind: TerminalCloseKind,
-): Promise<boolean> {
-	const noun = kind === 'terminal' ? 'this terminal' : 'this project';
-	return window.confirm(
-		`Terminay could not confirm whether a process is still running in ${noun}. Close anyway?`,
-	);
 }
