@@ -16,7 +16,7 @@ await build({
 	bundle: true,
 	stdin: {
 		contents:
-			"export { createRtcDataChannelTransport, superviseApplicationConnection } from './electron/remote/privilegedWebRtcExposure.ts'",
+			"export { createRtcDataChannelTransport, superviseApplicationConnection } from './electron/remote/rtcDataChannelTransport.ts'",
 		loader: 'ts',
 		resolveDir: process.cwd(),
 	},
