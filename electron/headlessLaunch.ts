@@ -4,7 +4,7 @@ export function darwinHasAquaSession(
 	uid = typeof process.getuid === 'function' ? process.getuid() : undefined,
 	probe: (uid: number) => void = printGuiDomain,
 ): boolean {
-	if (!Number.isInteger(uid) || uid < 0) return false;
+	if (uid === undefined || !Number.isInteger(uid) || uid < 0) return false;
 	try {
 		probe(uid);
 		return true;
