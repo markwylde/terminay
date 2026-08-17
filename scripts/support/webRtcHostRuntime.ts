@@ -206,7 +206,11 @@ function sendUiArchiveError(
 	message: string,
 ): void {
 	if (channel.readyState !== 'open') return
-	channel.send(JSON.stringify({ code, id, message, type: 'asset:bundle-error' }))
+	try {
+		channel.send(JSON.stringify({ code, id, message, type: 'asset:bundle-error' }))
+	} catch {
+		/* Best-effort: a closed DataChannel must not take down the host. */
+	}
 }
 
 function asUiArchive(value: unknown): Readonly<{
@@ -390,7 +394,12 @@ export async function runHost(
       } finally {
         activeUiArchiveRequestIds.delete(request.id)
       }
-    })()
+    })().catch((error) => {
+			const request = parseJson(event.data)
+			if (!request || typeof request.id !== 'string') return
+			const message = error instanceof Error ? error.message : 'UI archive transfer failed.'
+			sendUiArchiveError(channel, request.id, 'internal', message)
+    })
   })
 	// Both named application lanes use the same bounded archive protocol.
 	bindUiArchiveProtocol(channels.assets)
