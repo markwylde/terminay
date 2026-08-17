@@ -30,3 +30,14 @@ test('the DMG staging helper rejects missing arguments', async () => {
   assert.equal(result.code, 1)
   assert.match(result.stderr, /usage: stage-macos-app-from-dmg\.sh/u)
 })
+
+test('the unsigned PR smoke copies the app off a DMG before boot', async () => {
+  const smoke = new URL('./packaged-macos-pr-smoke.sh', import.meta.url)
+  const source = await readFile(smoke, 'utf8')
+  const mode = (await stat(smoke)).mode
+  assert.equal(Boolean(mode & 0o111), true, 'PR smoke helper must be executable')
+  assert.match(source, /hdiutil create/u)
+  assert.match(source, /stage-macos-app-from-dmg\.sh/u)
+  assert.match(source, /test:packaged-startup-macos/u)
+  assert.doesNotMatch(source, /codesign --verify/u)
+})
