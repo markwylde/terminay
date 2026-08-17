@@ -146,6 +146,45 @@ export class RemotePairingStore {
 		});
 	}
 
+	/** Create a room whose id and secret are already derived (hosted compact QR). */
+	createIdentified(input: {
+		readonly roomId: ProtocolId;
+		readonly secret: string;
+		readonly expiresAt?: number;
+	}): RemotePairingRoom {
+		const expiresAt = input.expiresAt ?? this.now() + this.defaultLifetimeMs;
+		this.validateExpiry(expiresAt);
+		this.pruneTerminalRooms();
+		if (this.rooms.size >= this.maxRooms)
+			throw new Error('pairing room limit reached');
+		if (!validId(input.roomId)) throw new TypeError('pairing room id is invalid');
+		if (
+			typeof input.secret !== 'string' ||
+			input.secret.length < 16 ||
+			input.secret.length > 256
+		) {
+			throw new TypeError('pairing secret is invalid');
+		}
+		if (this.rooms.has(input.roomId)) throw new Error('pairing room already exists');
+		const state: PairingRoomState = {
+			roomId: input.roomId,
+			serverId: this.options.serverId,
+			sessionOrigin: this.options.sessionOrigin,
+			expiresAt,
+			secretDigest: digest(input.secret),
+			state: 'active',
+			failedAttempts: 0,
+		};
+		this.rooms.set(input.roomId, state);
+		return Object.freeze({
+			roomId: input.roomId,
+			serverId: state.serverId,
+			sessionOrigin: state.sessionOrigin,
+			expiresAt,
+			secret: input.secret,
+		});
+	}
+
 	/** Rotate pairing material without changing server identity or peers. */
 	rotate(expiresAt = this.now() + this.defaultLifetimeMs): RemotePairingRoom {
 		this.validateExpiry(expiresAt);
