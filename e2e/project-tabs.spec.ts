@@ -61,6 +61,16 @@ async function waitForWorkspacePopout(
 	return popout;
 }
 
+async function closeNativePageWindow(
+	electronApp: ElectronApplication,
+	page: Page,
+): Promise<void> {
+	const nativeWindow = await electronApp.browserWindow(page);
+	await nativeWindow.evaluate((window) => {
+		window.close();
+	});
+}
+
 test.describe('project tabs', () => {
 	test('dragging a project into a new window preserves its canonical project and terminal', async ({
 		electronApp,
@@ -181,17 +191,22 @@ test.describe('project tabs', () => {
 				return { checkboxChecked: false, response: 0 };
 			};
 		});
+		// Run the marker inside a child shell that `exec`s sleep so the login
+		// shell never returns to the foreground. A builtin `printf` after
+		// `sleep` would otherwise let output-triggered PTY polling observe an
+		// idle shell and skip the native close warning.
 		await typeInVisibleTerminal(
 			popoutWindow,
-			`sleep 2.1; printf '${foregroundStarted}\\n'; sleep 30\n`,
+			`sh -c "sleep 2.1; printf '${foregroundStarted}\\n'; exec sleep 30"\n`,
 			sessionId,
 		);
 		await expect(
 			popoutWindow.locator('.terminal-panel:visible .xterm-rows'),
 		).toContainText(foregroundStarted);
-		await electronApp.evaluate(({ BrowserWindow }) =>
-			BrowserWindow.getFocusedWindow()?.close(),
-		);
+		// Close this torn-off window by identity. Linux/Xvfb does not reliably
+		// move native focus after a drag-created BrowserWindow, so
+		// getFocusedWindow() can no-op or close the idle sibling instead.
+		await closeNativePageWindow(electronApp, popoutWindow);
 		await expect
 			.poll(() =>
 				electronApp.evaluate(
