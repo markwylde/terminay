@@ -13,6 +13,7 @@ untrusted provider binaries become safe by themselves.
 | Server ↔ provider hooks | provider lifecycle state and hook token | loopback-only, exact session binding, bounded canonical fields, replay/order fences, no provider secret in snapshots |
 | Server filesystem/Git services → project root | project files, drafts, recordings, Git credentials | canonical paths and opaque ids are revalidated at mutation time; traversal, symlink escape, dirty/main deletion, and stale revisions fail closed |
 | Server ↔ remote device/WebRTC | device keys, PIN/approval, reconnect grants, application data | admission follows proof and origin checks; channels are bounded and revoked peers are closed; application data never enters manager storage |
+| Server ↔ hosted signaling | session host registration, server host key | a reconnect host is admitted only with proof of the registered host key; a public session hostname alone cannot own that device session |
 | server UI bundle → client host | executable UI archive and protocol compatibility | the server is authenticated before transfer; archive paths remain within its exact session-origin bundle namespace and bounded extraction limits apply; host bridge checks origin/source/target/gesture |
 | vault/migration/logging → operators | provider secrets, safe-storage material, migration backups, diagnostics | only metadata crosses transport; secret bytes are scoped to privileged callbacks, zeroized, redacted, and never logged |
 | authenticated client → extension/environment management | server-account code, profiles, host trust, infrastructure | actor/scope come from the authenticated transport; explicit permissions, revisions, confirmations, and audit gate every privileged action |
@@ -39,6 +40,10 @@ untrusted provider binaries become safe by themselves.
 - A remote peer cannot use a manager origin or an expired/revoked proof to
   reach application channels. Device/PIN/approval verification precedes
   admission, channel identity is exact, and revocation closes active sessions.
+- A stranger who knows a public session hostname cannot become the WebRTC
+  host. Signaling admits device-host registration only with proof of the
+  registered server host key. A different key does not overwrite a live
+  registration.
 - A hostile bundle or host page cannot escape its route. Bundle paths are
   namespace-bound and hash-verified; browser messages require exact origin,
   source, target window, validated payload, and user gesture where applicable.
