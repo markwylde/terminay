@@ -17,7 +17,7 @@ jobs:
   packaged-macos-smoke:
     name: Packaged macOS startup smoke
     runs-on: macos-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
 
     steps:
       - name: Check out code
@@ -41,10 +41,22 @@ jobs:
           npm run build:app
           CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --dir --mac --arm64 --publish never
 
-      - name: Boot packaged application and require workspace readiness
+      - name: Boot packaged application from a read-only DMG copy
         env:
           TERMINAY_RELEASE_DIAGNOSTICS_DIR: ${{ runner.temp }}/terminay-packaged-smoke
-        run: npm run test:packaged-startup-macos
+        run: |
+          SOURCE_APP="release/0.0.0/mac-arm64/Terminay.app"
+          test -d "$SOURCE_APP"
+          UNSIGNED_DMG="$RUNNER_TEMP/terminay-pr-unsigned.dmg"
+          hdiutil create \
+            -volname Terminay \
+            -srcfolder "$SOURCE_APP" \
+            -ov \
+            -format UDZO \
+            "$UNSIGNED_DMG"
+          STAGED_APP="$(bash scripts/stage-macos-app-from-dmg.sh "$UNSIGNED_DMG" "$RUNNER_TEMP/terminay-pr-staged")"
+          test -d "$STAGED_APP"
+          TERMINAY_PACKAGED_APP="$STAGED_APP" npm run test:packaged-startup-macos
 
   build-and-test:
     name: Build, lint, and unit tests
