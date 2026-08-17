@@ -4,6 +4,7 @@ import { promisify } from 'node:util'
 const execFileAsync = promisify(execFile)
 const PROCESS_TABLE_LINE =
 	/^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S.*?)\s*$/u
+const SESSION_PROCESS_LIMIT = 64
 
 export async function resolveTerminalProcessCwd(rootPid: number, signal?: AbortSignal): Promise<string | null> {
 	if (!Number.isSafeInteger(rootPid) || rootPid <= 0) return null
@@ -14,46 +15,21 @@ export async function resolveTerminalProcessCwd(rootPid: number, signal?: AbortS
 
 /** Resolve the process group currently owning the PTY. node-pty's `process`
  * getter is only a best-effort title and is not reliable in packaged Electron
- * on every Unix host; TPGID is the kernel-owned foreground authority. */
+ * on every Unix host; TPGID is the kernel-owned foreground authority.
+ *
+ * Inspection stays inside the session process tree. A host-wide `ps -ax` dump
+ * can miss the close-observation deadline and make an idle shell look unknown. */
 export async function resolveTerminalForegroundProcess(rootPid: number, signal?: AbortSignal): Promise<string | null> {
 	if (!Number.isSafeInteger(rootPid) || rootPid <= 0 || process.platform === 'win32') return null
-	const table = await readHostProcessTable(signal)
+	throwIfAborted(signal)
+	const table = await readSessionProcessTable(rootPid, signal)
 	const rootCommand = commandName(table.get(rootPid)?.command) ?? await resolveProcessCommand(rootPid, signal)
-	const descendants = resolveTerminalLeafProcesses(rootPid, table)
-	// A '+' in ps STAT is the kernel's foreground process-group marker. It
-	// remains reliable when a non-job-control shell shares its process group
-	// with the current command, where TPGID alone points back to the shell.
-	const foregroundDescendants = descendants.filter(
-		(entry) => entry.foreground && entry.command !== rootCommand,
-	)
-	if (foregroundDescendants.length === 1) {
-		return foregroundDescendants[0].command
-	}
-	const nonShellDescendants = descendants.filter(
-		(entry) => entry.command !== rootCommand,
-	)
-	if (nonShellDescendants.length === 1) {
-		return nonShellDescendants[0].command
-	}
-	// node-pty can expose the current foreground child as its pid instead of
-	// the long-lived shell on Linux. In that shape the root itself is the
-	// authoritative observation; consulting its terminal process group next
-	// can incorrectly replace `sleep` with the shell group leader.
-	if (descendants.length === 0 && rootCommand !== null) {
-		return rootCommand
-	}
-	try {
-		const { stdout: groupOutput } = await execHost('ps', ['-o', 'tpgid=', '-p', String(rootPid)], signal)
-		const groupPid = Number.parseInt(groupOutput.trim(), 10)
-		const groupCommand = Number.isSafeInteger(groupPid) && groupPid > 0
-			? commandName(table.get(groupPid)?.command) ?? await resolveProcessCommand(groupPid, signal)
-			: null
-		return groupCommand ?? rootCommand
-	} catch {
-		// TPGID is an enhancement, not a prerequisite: constrained hosts can
-		// deny this one ps query while still allowing direct child observation.
-		return rootCommand
-	}
+	const selected = selectForegroundProcessFromTable(rootPid, table, rootCommand)
+	if (selected.command !== rootCommand) return selected.command
+	if (!selected.consultProcessGroup) return rootCommand
+	const groupCommand = await resolveTerminalProcessGroupCommand(rootPid, table, signal)
+	if (groupCommand !== null && groupCommand !== rootCommand) return groupCommand
+	return rootCommand
 }
 
 export function parseHostProcessTable(stdout: string): ReadonlyMap<number, HostProcessRow> {
@@ -75,7 +51,34 @@ export function parseHostProcessTable(stdout: string): ReadonlyMap<number, HostP
 	return table
 }
 
-interface HostProcessRow {
+/** Choose the foreground command from an already-scoped process table.
+ * A unique non-shell leaf wins; otherwise the caller may consult TPGID when
+ * the session tree has descendants. */
+export function selectForegroundProcessFromTable(
+	rootPid: number,
+	table: ReadonlyMap<number, HostProcessRow>,
+	rootCommand: string | null,
+): { readonly command: string | null; readonly consultProcessGroup: boolean } {
+	const descendants = resolveTerminalLeafProcesses(rootPid, table)
+	const foregroundDescendants = descendants.filter(
+		(entry) => entry.foreground && entry.command !== rootCommand,
+	)
+	if (foregroundDescendants.length === 1) {
+		return { command: foregroundDescendants[0].command, consultProcessGroup: false }
+	}
+	const nonShellDescendants = descendants.filter(
+		(entry) => entry.command !== rootCommand,
+	)
+	if (nonShellDescendants.length === 1) {
+		return { command: nonShellDescendants[0].command, consultProcessGroup: false }
+	}
+	return {
+		command: rootCommand,
+		consultProcessGroup: descendants.length > 0,
+	}
+}
+
+export interface HostProcessRow {
 	readonly pid: number
 	readonly ppid: number
 	readonly stat: string
@@ -95,7 +98,7 @@ function resolveTerminalLeafProcesses(
 	const pending = [rootPid]
 	const visited = new Set<number>([rootPid])
 	const leaves: number[] = []
-	while (pending.length > 0 && visited.size <= 64) {
+	while (pending.length > 0 && visited.size <= SESSION_PROCESS_LIMIT) {
 		const parent = pending.shift()!
 		const next = (children.get(parent) ?? []).filter((pid) => !visited.has(pid))
 		if (next.length === 0) {
@@ -113,18 +116,51 @@ function resolveTerminalLeafProcesses(
 	})
 }
 
-async function readHostProcessTable(signal?: AbortSignal): Promise<ReadonlyMap<number, HostProcessRow>> {
+async function readSessionProcessTable(rootPid: number, signal?: AbortSignal): Promise<ReadonlyMap<number, HostProcessRow>> {
+	const pids = await collectSessionPids(rootPid, signal)
+	if (pids.length === 0) return new Map()
 	try {
-		const command = process.platform === 'linux'
-			? ['ps', ['-eo', 'pid=,ppid=,stat=,comm=']] as const
-			: process.platform === 'darwin'
-				? ['ps', ['-axo', 'pid=,ppid=,stat=,comm=']] as const
-				: null
-		if (command === null) return new Map()
-		const { stdout } = await execHost(command[0], command[1], signal)
+		const { stdout } = await execHost('ps', ['-o', 'pid=,ppid=,stat=,comm=', '-p', pids.join(',')], signal)
 		return parseHostProcessTable(stdout)
-	} catch {
+	} catch (error) {
+		throwIfAborted(signal, error)
 		return new Map()
+	}
+}
+
+async function collectSessionPids(rootPid: number, signal?: AbortSignal): Promise<number[]> {
+	const pids = [rootPid]
+	const pending = [rootPid]
+	const visited = new Set<number>([rootPid])
+	while (pending.length > 0 && visited.size <= SESSION_PROCESS_LIMIT) {
+		throwIfAborted(signal)
+		const parent = pending.shift()!
+		const children = await childProcessIds(parent, signal)
+		for (const child of children) {
+			if (visited.has(child)) continue
+			visited.add(child)
+			pids.push(child)
+			pending.push(child)
+		}
+	}
+	return pids
+}
+
+async function resolveTerminalProcessGroupCommand(
+	rootPid: number,
+	table: ReadonlyMap<number, HostProcessRow>,
+	signal?: AbortSignal,
+): Promise<string | null> {
+	try {
+		const { stdout: groupOutput } = await execHost('ps', ['-o', 'tpgid=', '-p', String(rootPid)], signal)
+		const groupPid = Number.parseInt(groupOutput.trim(), 10)
+		if (!Number.isSafeInteger(groupPid) || groupPid <= 0 || groupPid === rootPid) return null
+		return commandName(table.get(groupPid)?.command) ?? await resolveProcessCommand(groupPid, signal)
+	} catch (error) {
+		throwIfAborted(signal, error)
+		// TPGID is an enhancement, not a prerequisite: constrained hosts can
+		// deny this one ps query while still allowing direct child observation.
+		return null
 	}
 }
 
@@ -132,7 +168,8 @@ async function resolveProcessCommand(pid: number, signal?: AbortSignal): Promise
 	try {
 		const { stdout } = await execHost('ps', ['-o', 'comm=', '-p', String(pid)], signal)
 		return commandName(stdout)
-	} catch {
+	} catch (error) {
+		throwIfAborted(signal, error)
 		return null
 	}
 }
@@ -158,7 +195,8 @@ async function childProcessIds(pid: number, signal?: AbortSignal): Promise<numbe
 		const { stdout } = await execHost(command[0], command[1], signal)
 		return stdout.split('\n').map((value) => Number.parseInt(value.trim(), 10))
 			.filter((value) => Number.isSafeInteger(value) && value > 0)
-	} catch {
+	} catch (error) {
+		throwIfAborted(signal, error)
 		return []
 	}
 }
@@ -173,7 +211,8 @@ async function resolveProcessCwd(pid: number, signal?: AbortSignal): Promise<str
 			const { stdout } = await execHost('/usr/sbin/lsof', ['-a', '-d', 'cwd', '-Fn', '-p', String(pid)], signal)
 			return stdout.split('\n').find((line) => line.startsWith('n'))?.slice(1).trim() || null
 		}
-	} catch {
+	} catch (error) {
+		throwIfAborted(signal, error)
 		return null
 	}
 	return null
@@ -181,7 +220,8 @@ async function resolveProcessCwd(pid: number, signal?: AbortSignal): Promise<str
 
 function commandName(value: string | undefined): string | null {
 	const command = value?.trim().split(/[\\/]/u).pop()?.trim()
-	return command ? command : null
+	if (!command) return null
+	return command.startsWith('-') ? command.slice(1) || command : command
 }
 
 async function execHost(
@@ -189,11 +229,22 @@ async function execHost(
 	args: readonly string[],
 	signal?: AbortSignal,
 ): Promise<{ stdout: string }> {
+	throwIfAborted(signal)
 	try {
 		return await execFileAsync(command, [...args], signal === undefined ? {} : { signal })
 	} catch (error) {
-		if (signal?.aborted) throw error
-		if (signal !== undefined) return await execFileAsync(command, [...args])
+		throwIfAborted(signal, error)
 		throw error
 	}
+}
+
+function throwIfAborted(signal?: AbortSignal, error?: unknown): void {
+	if (signal?.aborted) throw error ?? signal.reason ?? new Error('foreground observation aborted')
+	if (error !== undefined && isAbortError(error)) throw error
+}
+
+function isAbortError(error: unknown): boolean {
+	if (typeof error !== 'object' || error === null) return false
+	const value = error as { name?: unknown; code?: unknown }
+	return value.name === 'AbortError' || value.code === 'ABORT_ERR'
 }
