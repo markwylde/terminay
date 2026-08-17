@@ -11,6 +11,7 @@ const { WebRtcPairingManager } = await importWebRtcPairingManager()
 test('WebRtcPairingManager creates compact v1 session-subdomain QR payloads with one-time rooms', () => {
   const payload = new WebRtcPairingManager().create({
     hostedDomain: 'terminay.com',
+    hostName: 'Studio-Mac.local',
   })
   const url = new URL(payload.pairingUrl)
 
@@ -21,7 +22,8 @@ test('WebRtcPairingManager creates compact v1 session-subdomain QR payloads with
   assert.equal(payload.pairing.sessionId, payload.roomId)
   assert.equal(url.hostname, `${payload.sessionId}.terminay.com`)
   assert.equal(url.pathname, '/v1/')
-  assert.equal(url.search, '')
+  assert.equal(url.searchParams.get('hostName'), 'Studio-Mac')
+  assert.deepEqual([...url.searchParams.keys()], ['hostName'])
   assert.equal(url.searchParams.has('relayJoinToken'), false)
   assert.equal(url.searchParams.has('pairingToken'), false)
   assert.equal(payload.signalingUrl, `wss://${payload.sessionId}.terminay.com/signal`)
@@ -29,6 +31,16 @@ test('WebRtcPairingManager creates compact v1 session-subdomain QR payloads with
   const qrSecret = url.hash.slice(1)
   assert.equal(qrSecret, payload.qrSecret)
   assert.equal(base64UrlToBytes(qrSecret).byteLength, 32)
+})
+
+test('WebRtcPairingManager omits hostName from the QR when it sanitizes empty', () => {
+  const payload = new WebRtcPairingManager().create({
+    hostedDomain: 'terminay.com',
+    hostName: '   ',
+  })
+  const url = new URL(payload.pairingUrl)
+  assert.equal(url.search, '')
+  assert.equal(url.hash.slice(1), payload.qrSecret)
 })
 
 test('WebRtcPairingManager v1 secrets match HKDF-SHA256 labels', () => {
