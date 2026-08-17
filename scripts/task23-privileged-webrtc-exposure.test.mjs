@@ -16,6 +16,10 @@ test('Desktop WebRTC exposure uses the server-owned hosted pairing host', async 
 	assert.match(main, /new DesktopServerOwnedExposure/u);
 	assert.match(main, /startHostedPairingHost|DesktopServerOwnedExposure/u);
 	assert.match(main, /remote-host-key\.v1\.json/u);
+	assert.doesNotMatch(
+		exposure,
+		/sessionOrigin === undefined \? 'Remote Access session origin is unavailable.'/u,
+	);
 	assert.doesNotMatch(main, /PrivilegedWebRtcExposure/u);
 	assert.doesNotMatch(main, /createHostedSignalingRoomRegistrar/u);
 	assert.doesNotMatch(exposure, /createHostedSignalingRoomRegistrar/u);
