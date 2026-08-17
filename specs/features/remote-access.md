@@ -106,7 +106,8 @@ origin later uses the registered browser device identity.
 
 1. The user opens `https://app.terminay.com`.
 2. The PWA lists manager profiles stored in that browser.
-3. The user chooses **Add connection…** and pastes a pairing URL.
+3. The user adds a connection by scanning the pairing QR with the device
+   camera, choosing a photo of that QR, or pasting a pairing URL.
 4. The PWA validates the URL, extracts its stable HTTPS origin, and immediately
    saves or updates a manager profile for that origin.
 5. The PWA navigates the current browser view to the complete pairing URL
@@ -167,12 +168,15 @@ Connection tickets exist only for individual connection attempts.
 ## PWA connection manager
 
 `app.terminay.com` is installable as a PWA and works as a local connection
-manager. It provides:
+manager. It uses the same dark workspace chrome, mark, and compact controls as
+the connected Terminay workspace. It provides:
 
-- **Add connection…** using a pairing URL;
+- **Scan pairing QR** from a phone, tablet, or desktop camera, with a photo
+  fallback, plus paste of a pairing URL;
 - a list of saved manager profiles;
-- rename, open, and forget actions; and
-- same-tab navigation by default, with an explicit open-in-new-tab action.
+- **Open** as the primary row action, with **Open in new tab**, rename, and
+  forget in an overflow menu; and
+- same-tab navigation by default, with that explicit open-in-new-tab action.
 
 Its application shell and saved profile list remain available offline. Opening
 a profile still requires that profile's stable session origin to be reachable.
