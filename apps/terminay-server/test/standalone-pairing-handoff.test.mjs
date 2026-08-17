@@ -40,6 +40,7 @@ test('hosted compact pairing URL keeps the QR secret in the fragment', async () 
 		serverId: 'hosted-server',
 		sessionOrigin: 'https://abc12345.terminay.com',
 		pairingUrlFormat: 'hosted-compact',
+		hostName: 'Studio-Mac.local',
 		cleanupIntervalMs: 0,
 	});
 
@@ -50,7 +51,8 @@ test('hosted compact pairing URL keeps the QR secret in the fragment', async () 
 
 	assert.equal(url.protocol, 'https:');
 	assert.equal(url.pathname, '/v1/');
-	assert.equal(url.search, '');
+	assert.equal(url.searchParams.get('hostName'), 'Studio-Mac');
+	assert.deepEqual([...url.searchParams.keys()], ['hostName']);
 	assert.equal(handoff.pairingSessionId, derived.pairingRoomId);
 	assert.equal(handoff.pairingToken, derived.pairingToken);
 	assert.notEqual(qrSecret, handoff.pairingToken);

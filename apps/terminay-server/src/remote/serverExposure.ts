@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { hostname as osHostname } from 'node:os';
 import type {
 	RemoteAuditLog,
 	RemoteAuditLogOptions,
@@ -66,6 +67,8 @@ export interface ServerRemoteExposureOptions {
 		| 'standalone'
 		| 'direct-device'
 		| 'hosted-compact';
+	/** Non-secret machine name shown as the default browser connection label. */
+	readonly hostName?: string;
 }
 
 export interface ServerRemoteCleanupReport extends RemoteCleanupReport {
@@ -107,10 +110,12 @@ export class ServerRemoteExposure {
 		| 'standalone'
 		| 'direct-device'
 		| 'hosted-compact';
+	private readonly hostName: string;
 
 	constructor(options: ServerRemoteExposureOptions) {
 		const now = options.now ?? (() => Date.now());
 		this.pairingUrlFormat = options.pairingUrlFormat ?? 'standalone';
+		this.hostName = sanitizePairingHostName(options.hostName ?? osHostname());
 		this.manager = new RemoteConnectionManager({
 			...options.manager,
 			serverId: options.serverId,
@@ -357,7 +362,11 @@ export class ServerRemoteExposure {
 	private rememberHandoff(
 		handoff: RemotePairingHandoff & { readonly compactQrSecret?: string },
 	): ServerPairingHandoff {
-		const projected = toServerPairingHandoff(handoff, this.pairingUrlFormat);
+		const projected = toServerPairingHandoff(
+			handoff,
+			this.pairingUrlFormat,
+			this.hostName,
+		);
 		this.activePairingHandoff = projected;
 		return projected;
 	}
@@ -372,6 +381,7 @@ export function createServerRemoteExposure(
 function toServerPairingHandoff(
 	handoff: RemotePairingHandoff & { readonly compactQrSecret?: string },
 	format: 'standalone' | 'direct-device' | 'hosted-compact',
+	hostName: string,
 ): ServerPairingHandoff {
 	const pairingExpiresAt = new Date(handoff.expiresAt).toISOString();
 	const pairingSessionId = handoff.roomId;
@@ -380,6 +390,7 @@ function toServerPairingHandoff(
 	if (format === 'hosted-compact') {
 		url.pathname = '/v1/';
 		url.hash = handoff.compactQrSecret ?? handoff.secret;
+		if (hostName) url.searchParams.set('hostName', hostName);
 	} else {
 		url.pathname = '/';
 		url.hash = new URLSearchParams({
@@ -387,6 +398,7 @@ function toServerPairingHandoff(
 			pairingExpiresAt,
 			pairingSessionId,
 			pairingToken,
+			...(hostName ? { hostName } : {}),
 		}).toString();
 	}
 	return Object.freeze({
@@ -396,6 +408,22 @@ function toServerPairingHandoff(
 		pairingToken,
 		pairingUrl: url.toString(),
 	});
+}
+
+function sanitizePairingHostName(value: string): string {
+	let name = value.trim();
+	if (name.toLowerCase().endsWith('.local')) name = name.slice(0, -'.local'.length);
+	name = name.replaceAll('_', '-').slice(0, 80);
+	if (
+		name.length === 0 ||
+		[...name].some((character) => {
+			const code = character.codePointAt(0) ?? 0;
+			return code < 0x20 || code === 0x7f;
+		})
+	) {
+		return '';
+	}
+	return name;
 }
 
 /** HKDF room ids are base64url; pairing ProtocolIds cannot start with `_` or `-`. */
