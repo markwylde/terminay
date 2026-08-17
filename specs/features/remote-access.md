@@ -71,7 +71,10 @@ Exposure:
   reconnect. A later host claim for the same session must prove the same
   private key. A different key does not replace a live registration;
 - applies the configured six-digit PIN or explicit approval policy;
-- generates a short-lived pairing URL and QR code;
+- generates a short-lived pairing URL and QR code. Compact hosted links include
+  a non-secret `hostName` query from the exposing machine so the connection
+  manager can show a friendly label while the session id stays the stable
+  identifier;
 - displays exposure expiry, signaling and relay health, paired devices, and
   live connections; and
 - allows the administrator to generate another pairing URL, revoke a device,
@@ -106,8 +109,8 @@ origin later uses the registered browser device identity.
 
 1. The user opens `https://app.terminay.com`.
 2. The PWA lists manager profiles stored in that browser.
-3. The user adds a connection by scanning the pairing QR with the device
-   camera, choosing a photo of that QR, or pasting a pairing URL.
+3. The user chooses **Add new connection**, then scans the pairing QR with the
+   device camera, chooses a photo of that QR, or pastes a pairing URL.
 4. The PWA validates the URL, extracts its stable HTTPS origin, and immediately
    saves or updates a manager profile for that origin.
 5. The PWA navigates the current browser view to the complete pairing URL
@@ -171,8 +174,8 @@ Connection tickets exist only for individual connection attempts.
 manager. It uses the same dark workspace chrome, mark, and compact controls as
 the connected Terminay workspace. It provides:
 
-- **Scan pairing QR** from a phone, tablet, or desktop camera, with a photo
-  fallback, plus paste of a pairing URL;
+- **Add new connection**, which opens a dedicated page to **Scan QR code**
+  (camera or photo) or **Paste pairing URL**;
 - a list of saved manager profiles;
 - **Open** as the primary row action, with **Open in new tab**, rename, and
   forget in an overflow menu; and
@@ -188,8 +191,10 @@ The manager profile store contains only:
 - created and last-opened timestamps.
 
 The manager accepts the pairing URL path needed for enrollment but stores only
-its stable origin. It rejects queries, URL credentials, and unsupported schemes
-and never stores the pairing fragment or complete pairing URL.
+its stable origin. A non-secret `hostName` query may supply the default local
+label from the exposing server's machine hostname. The user can rename that
+label. The manager rejects URL credentials, unsupported schemes, and any other
+query, and never stores the pairing fragment or complete pairing URL.
 
 ## Server-bundled workspace
 
