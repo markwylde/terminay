@@ -147,8 +147,9 @@ workspace mutations, or close protection for another session. Activity
 snapshots return the latest committed projection and do not wait for live host
 observation. Destructive close protection obtains a bounded fresh observation
 only for its addressed session. If that sample cannot complete, it reports the
-limited state and uses the close flow's explicit safe confirmation rather than
-silently treating output or stale absence as proof that the shell is idle.
+limited state. Close protection warns only when a non-shell foreground process
+is known to be running; limited observation without that evidence does not
+prompt and does not wait.
 
 ## Fallback interpretation
 
