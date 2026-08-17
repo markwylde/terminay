@@ -343,7 +343,9 @@ inspect the application protocol.
   ranges. Optional native capabilities never become requirements merely because
   the bundle is running inside Desktop.
 - The privileged server prepares the WebRTC archive as a bounded immutable
-  snapshot and transfers its binary bytes as one backpressured operation. Archive
+  snapshot and transfers it as acknowledged binary DataChannel chunks that stay
+  within the negotiated SCTP maximum message size. Transfer failures send typed
+  JSON `asset:bundle-error` and do not take down the host process. Archive
   creation rejects traversal, links, duplicate normalized paths, malformed
   metadata, and oversized bundles. The immutable snapshot prevents source-file
   replacement from changing UI code during or after transfer.
