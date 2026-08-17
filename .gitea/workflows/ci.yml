@@ -15,15 +15,36 @@ concurrency:
 
 jobs:
   packaged-macos-smoke:
-    name: Packaged macOS startup smoke (unavailable here)
-    runs-on: ubuntu-latest
-    timeout-minutes: 12
+    name: Packaged macOS startup smoke
+    runs-on: xcode-16
+    timeout-minutes: 25
 
     steps:
-      - name: Record unavailable macOS runner
+      - name: Check out code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+          cache: npm
+
+      - name: Install dependencies
         run: |
-          echo 'Gitea has no macOS runners.'
-          echo 'GitHub pull-request CI boots the packaged app from a read-only DMG copy.'
+          npm install --global npm@12.0.2
+          npm ci
+
+      - name: Build unsigned packaged application
+        run: |
+          npm run build:app
+          CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --dir --mac --arm64 --publish never
+
+      - name: Boot packaged application from a read-only DMG copy
+        env:
+          TERMINAY_RELEASE_DIAGNOSTICS_DIR: ${{ runner.temp }}/terminay-packaged-smoke
+        run: bash scripts/packaged-macos-pr-smoke.sh
 
   build-and-test:
     name: Build, lint, and unit tests
