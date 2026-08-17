@@ -121,14 +121,14 @@ import { createDesktopReconnectTransport } from './remote/desktopReconnect';
 import { establishDesktopDevicePairing } from './remote/desktopPairing';
 import { createDesktopBootstrappedWebRtcConnection } from './remote/desktopWebRtcBootstrap';
 import { resolveDesktopWebRtcRuntimeRoot } from './remote/desktopWebRtcRuntimeRoot';
+import { loadOrCreateHostedHostKey } from '../apps/terminay-server/src/remote/hostedHostKey';
 import {
 	createEphemeralTestProtectedValueCodec,
 	DesktopDeviceCredentialStore,
 } from './remote/deviceCredentialStore';
-import { createHostedSignalingRoomRegistrar } from './remote/hostedSignalingRegistration';
-import { createPairingPinHash } from './remote/pin';
-import { PrivilegedWebRtcExposure } from './remote/privilegedWebRtcExposure';
+import { createPairingPinHash, verifyPairingPin } from './remote/pin';
 import { DesktopServerOwnedExposure } from './remote/serverOwnedExposure';
+import { buildServerUiArchive } from './remote/serverUiArchive';
 import {
 	ServerTerminalAuthority,
 	writePortDiagnostic,
@@ -504,9 +504,7 @@ function resetZoom(): void {
 // that lifecycle state explicit so its reference callback cannot mistake an
 // uninitialised binding for a published workspace authority.
 let serverTerminalAuthority: ServerTerminalAuthority | null = null;
-let privilegedWebRtcExposure: PrivilegedWebRtcExposure | null = null;
 let desktopRemoteExposure: DesktopServerOwnedExposure;
-const privilegedWebRtcSessions = new Set<string>();
 let appliedAgentIntegrationSetting: boolean | null = null;
 let applyAgentIntegrationPromise = Promise.resolve();
 
@@ -802,11 +800,6 @@ const recordingService = new TerminalRecordingService({
 function handleServerTerminalEvent(event: TerminalEvent): void {
 	if (event.type === 'output') {
 		const data = new TextDecoder().decode(event.bytes);
-		if (!privilegedWebRtcSessions.has(event.sessionId)) {
-			privilegedWebRtcSessions.add(event.sessionId);
-			privilegedWebRtcExposure?.service.ensureSession(event.sessionId);
-		}
-		privilegedWebRtcExposure?.service.appendSessionData(event.sessionId, data);
 		try {
 			recordingService.appendOutput(event.sessionId, data);
 		} catch {
@@ -816,12 +809,6 @@ function handleServerTerminalEvent(event: TerminalEvent): void {
 	}
 
 	if (event.type === 'exit') {
-		privilegedWebRtcSessions.delete(event.sessionId);
-		privilegedWebRtcExposure?.service.markSessionExit(
-			event.sessionId,
-			event.exitCode,
-			event.signal,
-		);
 		recordingService.finalize(event.sessionId, event.exitCode, event.signal);
 	}
 }
@@ -910,6 +897,85 @@ function readEmbeddedRemoteAccessSettings(): TerminalSettings['remoteAccess'] {
 		}).remoteAccess,
 		pairingPinHash: readRemotePairingPinVerifier(),
 	};
+}
+
+function loadEmbeddedRemoteDevices(dataRoot: string) {
+	const file = path.join(dataRoot, 'remote-devices.v1.json');
+	try {
+		const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+		return Array.isArray(parsed) ? parsed : [];
+	} catch (error) {
+		if (
+			typeof error === 'object' &&
+			error !== null &&
+			(error as { code?: unknown }).code === 'ENOENT'
+		) {
+			return [];
+		}
+		throw error;
+	}
+}
+
+function saveEmbeddedRemoteDevices(dataRoot: string, records: unknown): void {
+	const file = path.join(dataRoot, 'remote-devices.v1.json');
+	mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+	const temporary = `${file}.tmp`;
+	writeFileSync(temporary, JSON.stringify(records), {
+		encoding: 'utf8',
+		mode: 0o600,
+	});
+	renameSync(temporary, file);
+}
+
+function loadOrCreateEmbeddedSessionOrigin(dataRoot: string): string {
+	const settings = readEmbeddedRemoteAccessSettings();
+	const configured = settings.webRtcHostedDomain.includes('://')
+		? settings.webRtcHostedDomain
+		: `https://${settings.webRtcHostedDomain}`;
+	const hosted = new URL(configured);
+	const loopbackHostedDomain =
+		hosted.hostname === 'localhost' ||
+		hosted.hostname.endsWith('.localhost') ||
+		hosted.hostname === '127.0.0.1' ||
+		hosted.hostname === '[::1]';
+	hosted.protocol = loopbackHostedDomain ? 'http:' : 'https:';
+	hosted.pathname = '/';
+	hosted.search = '';
+	hosted.hash = '';
+	const file = path.join(dataRoot, 'remote-session-origin.v1.json');
+	try {
+		const parsed = JSON.parse(readFileSync(file, 'utf8')) as {
+			origin?: unknown;
+			schemaVersion?: unknown;
+		};
+		if (parsed.schemaVersion === 1 && typeof parsed.origin === 'string') {
+			const origin = new URL(parsed.origin);
+			if (
+				origin.hostname === hosted.hostname ||
+				origin.hostname.endsWith(`.${hosted.hostname}`)
+			) {
+				return origin.origin;
+			}
+		}
+	} catch (error) {
+		if (
+			typeof error !== 'object' ||
+			error === null ||
+			(error as { code?: unknown }).code !== 'ENOENT'
+		) {
+			throw error;
+		}
+	}
+	hosted.hostname = `${randomUUID().replace(/-/g, '')}.${hosted.hostname}`;
+	mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+	const temporary = `${file}.tmp`;
+	writeFileSync(
+		temporary,
+		`${JSON.stringify({ origin: hosted.origin, schemaVersion: 1 })}\n`,
+		{ encoding: 'utf8', mode: 0o600 },
+	);
+	renameSync(temporary, file);
+	return hosted.origin;
 }
 
 const embeddedShellProfiles = new ShellProfileCatalogueService({
@@ -1185,91 +1251,64 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 			updater: 1,
 		},
 	});
-	desktopRemoteExposure = new DesktopServerOwnedExposure({
-		serverId: authority.service.serverId,
-		...(process.env.TERMINAY_TEST === '1' &&
-		process.env.TERMINAY_TEST_ALLOW_UNAVAILABLE_WEBRTC_UI === '1'
-			? {}
-			: {
-					webRtcUnavailableReason:
-						'Desktop WebRTC Relay is unavailable in this build because its authenticated hosted signaling runtime is not installed.',
-					signalingRegistrar: createHostedSignalingRoomRegistrar(),
-					ensureWebRtcRuntimeAvailable: () => {
-						throw new Error(
-							'Desktop WebRTC runtime is unavailable in this build. Install a build with an approved production WebRTC runtime before enabling WebRTC Remote Access.',
-						);
-					},
-				}),
-		resolveSessionOrigin: () => {
-			const settings = readEmbeddedRemoteAccessSettings();
-			const configured = settings.webRtcHostedDomain.includes('://')
-				? settings.webRtcHostedDomain
-				: `https://${settings.webRtcHostedDomain}`;
-			const hosted = new URL(configured);
-			const loopbackHostedDomain =
-				hosted.hostname === 'localhost' ||
-				hosted.hostname.endsWith('.localhost') ||
-				hosted.hostname === '127.0.0.1' ||
-				hosted.hostname === '[::1]';
-			// Loopback development hosts are the sole HTTP exception. Normalized
-			// settings intentionally store only the hosted authority, so derive the
-			// transport from the parsed hostname rather than from a stripped scheme.
-			hosted.protocol = loopbackHostedDomain ? 'http:' : 'https:';
-			hosted.hostname = `${randomUUID().replace(/-/g, '')}.${hosted.hostname}`;
-			hosted.pathname = '/';
-			hosted.search = '';
-			hosted.hash = '';
-			return hosted.toString();
-		},
-	});
-
 	const desktopWebRtcRuntimeRoot = resolveDesktopWebRtcRuntimeRoot({
 		isPackaged: app.isPackaged,
 		resourcesPath: process.resourcesPath,
 		environment: process.env,
 	});
-	if (desktopWebRtcRuntimeRoot !== undefined) {
-		privilegedWebRtcExposure = new PrivilegedWebRtcExposure(
-			desktopWebRtcRuntimeRoot,
-			{
-				serverId: authority.service.serverId,
-				serverVersion: app.getVersion(),
-				acceptApplicationTransport: (transport, authenticatedClient) => {
-					if (serverTerminalAuthority === null) {
-						throw new Error('The embedded server is unavailable.');
-					}
-					return serverTerminalAuthority.composition.core.accept(transport, {
-						authenticatedClient,
-					});
-				},
-				getControllableSession: (sessionId) => {
-					const authority = serverTerminalAuthority;
-					const session = authority?.get(sessionId);
-					if (
-						authority === null ||
-						authority === undefined ||
-						session === undefined
-					)
-						return null;
-					return {
-						close: () => authority.kill(sessionId),
-						resize: (cols, rows) => authority.resize(sessionId, { cols, rows }),
-						write: (data) => authority.write(sessionId, data),
-					};
-				},
-				getRemoteAccessSettings: readEmbeddedRemoteAccessSettings,
-				notifyTerminalRemoteSizeOverride: () => undefined,
-				onStatusChanged: () =>
-					serverTerminalAuthority?.notifyRemoteAccessChanged(),
-				// Direct-browser/WebRTC exposure serves the identical generated server
-				// workspace artifact used by Local Desktop.  `dist` only contains the
-				// host shell and must never become a second workspace release line.
-				publicDir: SERVER_UI_DIST,
-				rendererDistDir: SERVER_UI_DIST,
-				userDataPath: app.getPath('userData'),
-			},
-		);
-	}
+	const dataRoot = app.getPath('userData');
+	desktopRemoteExposure = new DesktopServerOwnedExposure({
+		serverId: authority.service.serverId,
+		hostKey: loadOrCreateHostedHostKey(
+			path.join(dataRoot, 'remote-host-key.v1.json'),
+		),
+		initialDevices: loadEmbeddedRemoteDevices(dataRoot),
+		persistDevices: (devices) => saveEmbeddedRemoteDevices(dataRoot, devices),
+		requirePairingPin: () => {
+			if (!readEmbeddedRemoteAccessSettings().pairingPinHash.trim()) {
+				throw new Error(
+					'Set a Remote Access PIN before generating a WebRTC QR code.',
+				);
+			}
+		},
+		verifyPairingPin: (pin) =>
+			verifyPairingPin(readEmbeddedRemoteAccessSettings().pairingPinHash, pin),
+		acceptApplication: (transport, authenticatedClient) => {
+			if (serverTerminalAuthority === null) {
+				throw new Error('The embedded server is unavailable.');
+			}
+			return serverTerminalAuthority.composition.core.accept(transport, {
+				authenticatedClient,
+			});
+		},
+		getUiArchive: async () => {
+			const archive = await buildServerUiArchive({
+				entryPath: 'server.html',
+				protocolVersion: '1',
+				publicDirectory: SERVER_UI_DIST,
+				rendererDirectory: SERVER_UI_DIST,
+			});
+			return { bundleId: archive.bundleId, bytes: archive.bytes };
+		},
+		resolveSessionOrigin: () => loadOrCreateEmbeddedSessionOrigin(dataRoot),
+		...(desktopWebRtcRuntimeRoot === undefined &&
+		!(
+			process.env.TERMINAY_TEST === '1' &&
+			process.env.TERMINAY_TEST_ALLOW_UNAVAILABLE_WEBRTC_UI === '1'
+		)
+			? {
+					webRtcUnavailableReason:
+						'Desktop WebRTC Relay is unavailable in this build because its authenticated hosted signaling runtime is not installed.',
+					ensureWebRtcRuntimeAvailable: () => {
+						throw new Error(
+							'Desktop WebRTC runtime is unavailable in this build. Install a build with an approved production WebRTC runtime before enabling WebRTC Remote Access.',
+						);
+					},
+				}
+			: desktopWebRtcRuntimeRoot === undefined
+				? {}
+				: { webrtcRuntimeRoot: desktopWebRtcRuntimeRoot }),
+	});
 	return embeddedStartupWindow;
 }
 
@@ -3295,56 +3334,24 @@ function endCanonicalProjectDrag():
 	return { action: 'popout', x: point.x, y: point.y };
 }
 
-function usesPrivilegedWebRtcExposure(): boolean {
-	return privilegedWebRtcExposure !== null;
-}
-
 function currentRemoteAccessStatus(): RemoteAccessStatus {
-	return usesPrivilegedWebRtcExposure()
-		? privilegedWebRtcExposure!.service.getStatus()
-		: desktopRemoteExposure.getStatus();
+	return desktopRemoteExposure.getStatus();
 }
 
 async function toggleRemoteServer(): Promise<RemoteAccessStatus> {
-	let status: RemoteAccessStatus;
-	if (usesPrivilegedWebRtcExposure()) {
-		for (const session of serverTerminalAuthority?.list() ?? []) {
-			if (!privilegedWebRtcSessions.has(session.id)) {
-				privilegedWebRtcSessions.add(session.id);
-				privilegedWebRtcExposure!.service.ensureSession(session.id);
-			}
-			const dimensions = serverTerminalAuthority?.service.getSession(
-				session.id,
-			)?.dimensions;
-			if (dimensions !== undefined) {
-				privilegedWebRtcExposure!.service.updateSessionSize(
-					session.id,
-					dimensions.cols,
-					dimensions.rows,
-				);
-			}
-		}
-		status = await privilegedWebRtcExposure!.toggle();
-	} else {
-		status = await desktopRemoteExposure.toggle();
-	}
-	return status;
+	return desktopRemoteExposure.toggle();
 }
 
 async function revokeRemoteDevice(
 	deviceId: string,
 ): Promise<RemoteAccessStatus> {
-	return usesPrivilegedWebRtcExposure()
-		? privilegedWebRtcExposure!.service.revokeDevice(deviceId)
-		: desktopRemoteExposure.revokeDevice(deviceId);
+	return desktopRemoteExposure.revokeDevice(deviceId);
 }
 
 async function closeRemoteConnection(
 	connectionId: string,
 ): Promise<RemoteAccessStatus> {
-	return usesPrivilegedWebRtcExposure()
-		? privilegedWebRtcExposure!.service.closeConnection(connectionId)
-		: desktopRemoteExposure.closeConnection(connectionId);
+	return desktopRemoteExposure.closeConnection(connectionId);
 }
 
 function setRemotePairingPin(pin: string): TerminalSettings {
@@ -3355,7 +3362,6 @@ function setRemotePairingPin(pin: string): TerminalSettings {
 		...currentSettings,
 		remoteAccess: { ...currentSettings.remoteAccess, pairingPinHash },
 	});
-	privilegedWebRtcExposure?.service.notifyStatusChanged();
 	createAppMenu(settings);
 	return settings;
 }
@@ -3730,7 +3736,6 @@ const handleBeforeQuit = createGracefulQuitHandler({
 				{ channel: 'lifecycle' },
 			);
 			await Promise.all([
-				privilegedWebRtcExposure?.shutdown(),
 				desktopRemoteExposure.shutdown(),
 				serverTerminalAuthority?.shutdown(),
 			]);

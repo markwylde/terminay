@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type {
 	RemoteAuditLog,
 	RemoteAuditLogOptions,
@@ -25,6 +26,7 @@ import {
 	type NodeDataChannelHeadlessHostOptions,
 	type NodeDataChannelHostEvent,
 } from './nodeDataChannelHost.js';
+import { deriveHostedPairingSecrets } from './hostedPairingSecrets.js';
 
 export interface ServerRemoteExposureOptions {
 	readonly serverId: string;
@@ -203,7 +205,32 @@ export class ServerRemoteExposure {
 	}
 
 	start(expiresAt?: number): ServerPairingHandoff {
-		return this.rememberHandoff(this.controller.start(expiresAt));
+		if (this.pairingUrlFormat !== 'hosted-compact') {
+			return this.rememberHandoff(this.controller.start(expiresAt));
+		}
+		if (this.manager.exposure.state === 'exposed') {
+			throw new Error('remote exposure is already active');
+		}
+		const qrSecret = mintHostedQrSecret();
+		const derived = deriveHostedPairingSecrets(qrSecret);
+		const expiry = expiresAt ?? Date.now() + 5 * 60 * 1000;
+		this.manager.expose(expiry);
+		try {
+			const room = this.pairing.createIdentified({
+				expiresAt: expiry,
+				roomId: derived.pairingRoomId,
+				secret: derived.pairingToken,
+			});
+			this.audit.record({ action: 'exposure-started', roomId: room.roomId });
+			return this.rememberHandoff({
+				...room,
+				compactQrSecret: qrSecret,
+				pairingUrl: room.sessionOrigin,
+			});
+		} catch (error) {
+			this.manager.stopExposure();
+			throw error;
+		}
 	}
 
 	rotate(expiresAt?: number): ServerPairingHandoff {
@@ -257,6 +284,10 @@ export class ServerRemoteExposure {
 		this.pairing.consume(pairingAttempt);
 		this.audit.record({ action: 'device-registered', deviceId: device.deviceId });
 		return device;
+	}
+
+	issueConnectionTicket(deviceId: string) {
+		return this.devices.issueConnectionTicket(deviceId);
 	}
 
 	createDeviceChallenge(deviceId: string) {
@@ -323,7 +354,9 @@ export class ServerRemoteExposure {
 		}
 	}
 
-	private rememberHandoff(handoff: RemotePairingHandoff): ServerPairingHandoff {
+	private rememberHandoff(
+		handoff: RemotePairingHandoff & { readonly compactQrSecret?: string },
+	): ServerPairingHandoff {
 		const projected = toServerPairingHandoff(handoff, this.pairingUrlFormat);
 		this.activePairingHandoff = projected;
 		return projected;
@@ -337,7 +370,7 @@ export function createServerRemoteExposure(
 }
 
 function toServerPairingHandoff(
-	handoff: RemotePairingHandoff,
+	handoff: RemotePairingHandoff & { readonly compactQrSecret?: string },
 	format: 'standalone' | 'direct-device' | 'hosted-compact',
 ): ServerPairingHandoff {
 	const pairingExpiresAt = new Date(handoff.expiresAt).toISOString();
@@ -346,9 +379,7 @@ function toServerPairingHandoff(
 	const url = new URL(handoff.sessionOrigin);
 	if (format === 'hosted-compact') {
 		url.pathname = '/v1/';
-		// The hosted `/v1/` client derives its room, signaling, pairing, and asset
-		// secrets from this compact QR secret.
-		url.hash = handoff.secret;
+		url.hash = handoff.compactQrSecret ?? handoff.secret;
 	} else {
 		url.pathname = '/';
 		url.hash = new URLSearchParams({
@@ -365,4 +396,14 @@ function toServerPairingHandoff(
 		pairingToken,
 		pairingUrl: url.toString(),
 	});
+}
+
+/** HKDF room ids are base64url; pairing ProtocolIds cannot start with `_` or `-`. */
+function mintHostedQrSecret(): string {
+	for (let attempt = 0; attempt < 8; attempt += 1) {
+		const qrSecret = Buffer.from(randomBytes(32)).toString('base64url');
+		const roomId = deriveHostedPairingSecrets(qrSecret).pairingRoomId;
+		if (/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(roomId)) return qrSecret;
+	}
+	throw new Error('hosted pairing room identity could not be derived');
 }
