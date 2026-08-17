@@ -31,7 +31,12 @@ test("GitHub and Gitea discover separate provider-specific CI workflows", () => 
     ["packaged-macos-smoke", "build-and-test", "e2e-image", "e2e-test"],
   );
   assert.match(job(githubCi, "packaged-macos-smoke"), /^    runs-on: macos-latest$/mu);
+  assert.match(job(githubCi, "packaged-macos-smoke"), /stage-macos-app-from-dmg\.sh/u);
+  assert.match(job(githubCi, "packaged-macos-smoke"), /hdiutil create/u);
   assert.match(job(giteaCi, "packaged-macos-smoke"), /Record unavailable macOS runner/u);
+  assert.match(job(giteaCi, "packaged-macos-smoke"), /Gitea has no macOS runners/u);
+  assert.match(triggerRelease, /stage-macos-app-from-dmg\.sh/u);
+  assert.doesNotMatch(triggerRelease, /TERMINAY_PACKAGED_APP="\$APP_BUNDLE"/u);
   assert.doesNotMatch(githubCi, /github\.server_url|gitea-e2e|ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5|9bc31d5ccc31df68ecc42ccf4149144866c47d8a/u);
   assert.doesNotMatch(giteaCi, /github\.server_url|github-e2e|ea165f8d65b6e75b540449e92b4886f43607fa02|d3f86a106a0bac45b974a628896c90dbdf5c8093/u);
 });

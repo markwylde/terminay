@@ -16,8 +16,12 @@ E2E-image build, and five Electron Playwright shards:
 3. Five `ubuntu-latest` jobs split the Electron Playwright suite with
    `--shard=N/5`.
 
-The fast gate is independent. GitHub runs the real macOS smoke and Gitea
-schedules its explicit unavailable-runner fallback on Ubuntu. GitHub-only
+The fast gate is independent. GitHub runs the real macOS smoke: it packages
+an unsigned `.app`, wraps that bundle in a read-only DMG, copies it with
+`ditto` onto a writable directory, then boots the copy. That is the same
+launch path as the notarized release installer, minus Apple signing.
+Gitea has no macOS runners, so it records an explicit unavailable-runner
+fallback on Ubuntu instead of pretending the smoke ran. GitHub-only
 workflows live in `.github/workflows/`; Gitea-only workflows live in
 `.gitea/workflows/`. Gitea gives its own directory precedence and otherwise
 falls back to `.github/workflows/`, so both directories must exist and remain
