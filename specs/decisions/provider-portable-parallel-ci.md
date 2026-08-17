@@ -20,8 +20,11 @@ The fast gate is independent. GitHub runs the real macOS smoke: it packages
 an unsigned `.app`, wraps that bundle in a read-only DMG, copies it with
 `ditto` onto a writable directory, then boots the copy. That is the same
 launch path as the notarized release installer, minus Apple signing.
-Gitea has no macOS runners, so it records an explicit unavailable-runner
-fallback on Ubuntu instead of pretending the smoke ran. GitHub-only
+Unsigned electron-builder apps fail `codesign --verify --deep --strict`,
+so pull-request smoke must not use that check; Developer ID verification
+stays on the release DMG. Gitea has no macOS runners, so it records an
+explicit unavailable-runner fallback on Ubuntu instead of pretending the
+smoke ran. GitHub-only
 workflows live in `.github/workflows/`; Gitea-only workflows live in
 `.gitea/workflows/`. Gitea gives its own directory precedence and otherwise
 falls back to `.github/workflows/`, so both directories must exist and remain
