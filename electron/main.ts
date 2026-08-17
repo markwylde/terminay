@@ -33,6 +33,11 @@ import {
 } from 'electron';
 import { LocalServerUiSession } from '../apps/terminay-desktop/src/main/localServerUiSession';
 import {
+	applyHeadlessChromiumSwitches,
+	darwinHasAquaSession,
+	shouldUseHeadlessChromium,
+} from './headlessLaunch';
+import {
 	type DesktopAuthenticatedAssetLane,
 	type DesktopBundleLaunch,
 	DesktopServerBundleHost,
@@ -174,6 +179,9 @@ app.commandLine.appendSwitch(
 	'enable-features',
 	'DocumentPolicyIncludeJSCallStacksInCrashReports',
 );
+if (shouldUseHeadlessChromium(process.platform, darwinHasAquaSession())) {
+	applyHeadlessChromiumSwitches(app);
+}
 const desktopDiagnostics = await initializeDesktopDiagnostics({
 	app,
 	crashReporter,
