@@ -56,7 +56,9 @@ this server…**.
 
 Exposure:
 
-- connects the server to Terminay's authenticated WebRTC signaling service;
+- connects the server to Terminay's authenticated WebRTC signaling service
+  before advertising a pairing URL. Standalone `terminay-server` registers the
+  fragment-derived pairing room (`host-ready`) the same way Desktop does;
 - applies the configured six-digit PIN or explicit approval policy;
 - generates a short-lived pairing URL and QR code;
 - displays exposure expiry, signaling and relay health, paired devices, and
@@ -70,8 +72,9 @@ blocks pairing and reconnect while leaving Local Desktop use and server-owned
 work running.
 
 The same exposure model applies to an embedded Local server and standalone
-`terminay-server`. The standalone CLI prints the pairing URL after exposure is
-ready.
+`terminay-server`. Hosted compact pairing URLs are advertised only after the
+server has registered the derived pairing room with signaling. The standalone
+CLI prints the pairing URL after exposure is ready.
 
 ## Browser journey A: direct pairing link
 
@@ -132,6 +135,12 @@ privileged connection host.
    authenticated device and WebRTC peer.
 6. The client opens the application transport and resumes workspace and
    terminal subscriptions from confirmed revisions and sequence positions.
+
+Standalone `terminay-server` keeps a device-authentication signaling session
+(`device-host-ready`) for the stable session origin while the process is
+exposed. Opening that origin later joins it with `device-join` and then proves
+the browser device key. Pairing rooms stay one-time and are not reused for
+reconnect.
 
 The device private key is the only durable browser authentication secret.
 Connection tickets exist only for individual connection attempts.
