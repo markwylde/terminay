@@ -1,3 +1,4 @@
+import './headlessBootstrap';
 import { createHash, randomUUID } from 'node:crypto';
 import {
 	chmodSync,
@@ -1075,7 +1076,9 @@ const embeddedVault = createServerVaultComposition(embeddedVaultAdapter);
 const embeddedRuntimeReady = prepareEmbeddedRuntime();
 
 async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
+	process.stderr.write('[Terminay] waiting for app.whenReady()\n');
 	await app.whenReady();
+	process.stderr.write('[Terminay] app.whenReady resolved\n');
 	const embeddedStartupWindow = createWindow({ deferCanonicalLaunch: true });
 	if (embeddedStartupWindow === null)
 		throw new Error('The embedded workspace window could not be created.');
