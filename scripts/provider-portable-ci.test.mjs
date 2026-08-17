@@ -35,6 +35,7 @@ test("GitHub and Gitea discover separate provider-specific CI workflows", () => 
   assert.doesNotMatch(job(githubCi, "packaged-macos-smoke"), /codesign --verify/u);
   assert.match(job(giteaCi, "packaged-macos-smoke"), /^    runs-on: xcode-16$/mu);
   assert.match(job(giteaCi, "packaged-macos-smoke"), /packaged-macos-pr-smoke\.sh/u);
+  assert.doesNotMatch(job(giteaCi, "packaged-macos-smoke"), /setup-node/u);
   assert.doesNotMatch(job(giteaCi, "packaged-macos-smoke"), /unavailable macOS runner|Gitea has no macOS runners/u);
   assert.match(triggerRelease, /stage-macos-app-from-dmg\.sh/u);
   assert.doesNotMatch(triggerRelease, /TERMINAY_PACKAGED_APP="\$APP_BUNDLE"/u);

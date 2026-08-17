@@ -25,11 +25,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node.js
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: 24.15.0
-          cache: npm
+      - name: Install Node.js on the macOS image
+        run: |
+          set -euo pipefail
+          if ! command -v node >/dev/null 2>&1; then
+            brew install node@24
+            brew link --overwrite --force node@24
+          fi
+          node --version
+          npm --version
 
       - name: Install dependencies
         run: |
