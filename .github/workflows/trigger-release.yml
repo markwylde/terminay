@@ -321,7 +321,7 @@ jobs:
           mkdir -p "$MOUNT_POINT"
           hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MOUNT_POINT"
           cleanup() {
-            hdiutil detach "$MOUNT_POINT" || true
+            hdiutil detach "$MOUNT_POINT" -force || true
           }
           trap cleanup EXIT
 
@@ -339,11 +339,17 @@ jobs:
           codesign -dvv "$APP_BUNDLE" 2>&1 | grep -F "TeamIdentifier=$APPLE_TEAM_ID"
           spctl --assess --type execute --verbose=4 "$APP_BUNDLE"
           xcrun stapler validate "$DMG"
+          cleanup
+          trap - EXIT
 
-          # Boot the exact signed application from the read-only DMG and require
-          # the real server workspace. This catches preload-format and file-URL
-          # asset failures that build, signature, and notarization checks cannot.
-          TERMINAY_PACKAGED_APP="$APP_BUNDLE" \
+          # Chromium aborts on quit when the bundle stays on the read-only DMG.
+          # Stage a writable copy of those exact signed bytes, then boot that.
+          STAGED_APP="$(bash scripts/stage-macos-app-from-dmg.sh "$DMG" "$RUNNER_TEMP/terminay-release-staged")"
+          codesign --verify --deep --strict --verbose=2 "$STAGED_APP"
+          codesign -dvv "$STAGED_APP" 2>&1 | grep -F "TeamIdentifier=$APPLE_TEAM_ID"
+          spctl --assess --type execute --verbose=4 "$STAGED_APP"
+
+          TERMINAY_PACKAGED_APP="$STAGED_APP" \
             TERMINAY_RELEASE_DIAGNOSTICS_DIR="$RUNNER_TEMP/terminay-packaged-smoke" \
             npm run test:packaged-startup-macos
 

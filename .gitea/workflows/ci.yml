@@ -15,13 +15,15 @@ concurrency:
 
 jobs:
   packaged-macos-smoke:
-    name: Packaged macOS startup smoke
+    name: Packaged macOS startup smoke (unavailable here)
     runs-on: ubuntu-latest
     timeout-minutes: 12
 
     steps:
       - name: Record unavailable macOS runner
-        run: echo 'The exact signed-app smoke runs on the GitHub macOS release fleet.'
+        run: |
+          echo 'Gitea has no macOS runners.'
+          echo 'GitHub pull-request CI boots the packaged app from a read-only DMG copy.'
 
   build-and-test:
     name: Build, lint, and unit tests
