@@ -6,7 +6,6 @@ import test from 'node:test';
 import { build } from 'esbuild';
 
 const {
-	confirmLimitedTerminalClose,
 	confirmTerminalClose,
 	getRunningTerminalSessionIds,
 	observeTerminalClosePreflight,
@@ -97,13 +96,14 @@ test('destructive close uses an exact-session preflight rather than a global ref
 	assert.deepEqual(queries, [{ projectId: 'project-a', sessionId: 'busyA' }]);
 });
 
-test("missing close authority is a limited observation, never proof of idle", async () => {
+test("missing close authority is a limited observation, not a running process", async () => {
 	const preflight = await observeTerminalClosePreflight(undefined, {
 		projectId: 'project-a',
 		sessionId: 'session-a',
 	});
 	assert.equal(preflight.observation, 'limited');
 	assert.deepEqual(preflight.runningSessionIds, []);
+	assert.equal(await confirmTerminalClose('terminal', preflight), true);
 });
 
 test('a failed close preflight query is limited, never an invisible hang', async () => {
@@ -129,7 +129,34 @@ test('a failed close preflight query is limited, never an invisible hang', async
 	assert.equal(preflight.sessions[0].foregroundBusy, true);
 });
 
-test('limited-state close confirmation names the unavailable observation', async () => {
+test('limited observation without a known running process closes immediately', async () => {
+	let prompted = false;
+	const originalConfirm = globalThis.window?.confirm;
+	globalThis.window = {
+		confirm() {
+			prompted = true;
+			return false;
+		},
+	};
+	try {
+		assert.equal(await confirmTerminalClose('terminal', {
+			observation: 'limited',
+			runningSessionIds: [],
+			sessions: [],
+		}), true);
+		assert.equal(await confirmTerminalClose('project', {
+			observation: 'limited',
+			runningSessionIds: [],
+			sessions: [],
+		}), true);
+		assert.equal(prompted, false);
+	} finally {
+		if (originalConfirm === undefined) delete globalThis.window;
+		else globalThis.window.confirm = originalConfirm;
+	}
+});
+
+test('a known running process still prompts when observation is limited', async () => {
 	const messages = [];
 	const originalConfirm = globalThis.window?.confirm;
 	globalThis.window = {
@@ -139,17 +166,17 @@ test('limited-state close confirmation names the unavailable observation', async
 		},
 	};
 	try {
-		assert.equal(
-			await confirmLimitedTerminalClose('terminal'),
-			false,
-		);
-		assert.equal(await confirmTerminalClose('project', {
+		assert.equal(await confirmTerminalClose('terminal', {
 			observation: 'limited',
-			runningSessionIds: [],
-			sessions: [],
+			runningSessionIds: ['session-a'],
+			sessions: [{
+				sessionId: 'session-a',
+				projectId: 'project-a',
+				observation: 'limited',
+				foregroundBusy: true,
+			}],
 		}), false);
-		assert.match(messages[0], /could not confirm whether a process is still running in this terminal/u);
-		assert.match(messages[1], /could not confirm whether a process is still running in this project/u);
+		assert.match(messages[0], /A process is still running in this terminal/u);
 	} finally {
 		if (originalConfirm === undefined) delete globalThis.window;
 		else globalThis.window.confirm = originalConfirm;
@@ -166,7 +193,7 @@ async function importCloseProtection() {
 			outfile: outputPath,
 			platform: 'node',
 			stdin: {
-				contents: `export { confirmLimitedTerminalClose, confirmTerminalClose, getRunningTerminalSessionIds, observeTerminalClosePreflight } from ${JSON.stringify(new URL('../src/workspace/closeProtection.ts', import.meta.url).pathname)}`,
+				contents: `export { confirmTerminalClose, getRunningTerminalSessionIds, observeTerminalClosePreflight } from ${JSON.stringify(new URL('../src/workspace/closeProtection.ts', import.meta.url).pathname)}`,
 				loader: 'ts',
 				resolveDir: process.cwd(),
 			},

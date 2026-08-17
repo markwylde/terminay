@@ -738,10 +738,7 @@ function getRunningTerminalCount(): number {
 				projectId: session.projectId,
 				sessionId: session.id,
 			});
-			return (
-				activity?.foregroundBusy === true ||
-				activity?.foregroundObservation === 'limited'
-			);
+			return activity?.foregroundBusy === true;
 		},
 	).length;
 }
@@ -764,10 +761,7 @@ function getRunningTerminalCountForWindow(webContentsId: number): number {
 			projectId: session.projectId,
 			sessionId: session.id,
 		});
-		return (
-			activity?.foregroundBusy === true ||
-			activity?.foregroundObservation === 'limited'
-		);
+		return activity?.foregroundBusy === true;
 	}).length;
 }
 

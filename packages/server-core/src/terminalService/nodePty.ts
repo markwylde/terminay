@@ -412,6 +412,7 @@ function shellName(path: string): string {
 }
 
 function isConfiguredShellProcess(processName: string, configuredShell: string): boolean {
-  if (processName === configuredShell) return true;
-  return configuredShell === "sh" && processName === "dash";
+  const normalized = processName.startsWith("-") ? processName.slice(1) : processName;
+  if (normalized === configuredShell || normalized === "login") return true;
+  return configuredShell === "sh" && normalized === "dash";
 }
