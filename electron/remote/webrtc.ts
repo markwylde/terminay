@@ -1,4 +1,5 @@
 import { createHash, hkdfSync, randomBytes } from 'node:crypto';
+import { hostname as osHostname } from 'node:os';
 
 export type WebRtcPairingPayload = {
 	appOrigin: string;
@@ -27,6 +28,8 @@ const PROTOCOL_VERSION = 'v1';
 
 type WebRtcPairingCreateOptions = {
 	hostedDomain?: string;
+	/** Non-secret machine name shown as the default browser connection label. */
+	hostName?: string;
 	sessionId?: string;
 };
 
@@ -123,6 +126,22 @@ function derivePairingRoomId(qrSecret: Buffer): string {
 	return deriveProtocolSecret(qrSecret, 'pairing room');
 }
 
+function sanitizePairingHostName(value: string): string {
+	let name = value.trim();
+	if (name.toLowerCase().endsWith('.local')) name = name.slice(0, -'.local'.length);
+	name = name.replaceAll('_', '-').slice(0, 80);
+	if (
+		name.length === 0 ||
+		[...name].some((character) => {
+			const code = character.codePointAt(0) ?? 0;
+			return code < 0x20 || code === 0x7f;
+		})
+	) {
+		return '';
+	}
+	return name;
+}
+
 export class WebRtcPairingManager {
 	create(options: WebRtcPairingCreateOptions = {}): WebRtcPairingPayload {
 		const sessionId = options.sessionId
@@ -145,6 +164,8 @@ export class WebRtcPairingManager {
 		const url = createChannelUrl(sessionId, options.hostedDomain);
 		const appOrigin = url.origin;
 		const signalingUrl = createSignalingUrl(appOrigin);
+		const hostName = sanitizePairingHostName(options.hostName ?? osHostname());
+		if (hostName) url.searchParams.set('hostName', hostName);
 
 		url.hash = qrSecret;
 
