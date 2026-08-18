@@ -9,12 +9,15 @@ Local Desktop connection.
 
 Remote access has one transport, one device-enrollment model, and one durable
 browser credential model. `app.terminay.com` is a PWA connection manager: it
-stores bookmarks to stable server origins and does not participate in device
-authentication.
+stores bookmarks to stable server origins, frames those origins so an installed
+iOS app stays chrome-less, and holds framed-session device credentials. It does
+not enter PINs, run WebRTC, or render the workspace.
 
 This feature works with
-[connections and client hosts](./connections-and-client-hosts.md) and
-[server runtime and application protocol](./server-runtime-and-protocol.md).
+[connections and client hosts](./connections-and-client-hosts.md),
+[server runtime and application protocol](./server-runtime-and-protocol.md),
+and the [PWA framed session host](../decisions/pwa-framed-session-host.md)
+decision.
 
 ## Model
 
@@ -24,12 +27,15 @@ Remote browser access uses five concepts:
   Server, such as `https://<server-id>.terminay.com`.
 - A **pairing URL** is that stable origin plus a short-lived, single-use secret
   in the URL fragment.
-- A **browser device identity** is one non-extractable private key stored by the
-  browser at the stable session origin. The server stores the corresponding
-  public key, device id, name, and revocation state.
+- A **browser device identity** is one non-extractable private key. A
+  first-party session document stores it at the stable session origin. A PWA
+  framed session stores it in the manager vault slot for that origin. The
+  server stores the corresponding public key, device id, name, and revocation
+  state.
 - A **manager profile** is a non-secret bookmark stored by
   `app.terminay.com`. It contains a label, stable session origin, and local
-  timestamps.
+  timestamps. When the PWA frames a session, the manager also holds that
+  origin's device credential in a separate origin-keyed vault.
 - A **server host key** is a long-lived key pair owned by Terminay Server for
   its stable session origin. Signaling stores the public key. The private key
   never leaves the server. This proves the WebRTC host is that server. It is
@@ -44,9 +50,14 @@ server host key is how signaling knows the reconnect host is the same server.
 - Terminay Server owns pairing policy, device registration, public device keys,
   revocation, application authorization, workspace state, audit history, and
   the private host key for its session origin.
-- The stable session origin owns browser pairing, its non-extractable private
-  device key, WebRTC lifecycle, server-bundle installation, and reconnect.
-- `app.terminay.com` owns only the browser's list of manager profiles.
+- The stable session origin owns browser pairing, WebRTC lifecycle,
+  server-bundle installation, reconnect, and challenge signing. A first-party
+  session document stores the device key at that origin. A PWA-framed session
+  loads and saves that key through the manager vault.
+- `app.terminay.com` owns the browser's list of manager profiles, the framed
+  session iframe, and the origin-keyed device-credential vault used while a
+  session is framed. It does not own pairing PIN entry, WebRTC, or the
+  workspace.
 - The signaling service routes authenticated WebRTC offers, answers, and ICE
   candidates for one server session. It admits a pairing client only with the
   fragment-derived join credential. It admits a reconnect host only when that
@@ -113,18 +124,49 @@ origin later uses the registered browser device identity.
    device camera, chooses a photo of that QR, or pastes a pairing URL.
 4. The PWA validates the URL, extracts its stable HTTPS origin, and immediately
    saves or updates a manager profile for that origin.
-5. The PWA navigates the current browser view to the complete pairing URL
-   without storing its fragment.
-6. The stable session origin performs the direct pairing journey.
-7. When the user returns to `app.terminay.com`, the saved profile remains in the
-   connection list.
-8. Selecting the profile navigates to the stable session origin, which
-   authenticates with its browser device key and reconnects.
+5. The PWA keeps `https://app.terminay.com` as the top-level document and
+   loads the complete pairing URL in a fullscreen iframe without storing the
+   fragment.
+6. The framed session origin performs the direct pairing journey. It asks the
+   manager for any stored device credential for its own origin and, after
+   enrollment, saves the new non-extractable key in the manager vault.
+7. **Back to connections** returns to the manager list without navigating
+   `window.top`.
+8. Selecting a saved profile loads that stable session origin in the same
+   fullscreen iframe. The session authenticates with the vaulted device key
+   and reconnects.
 
-The PWA completes this flow with ordinary top-level navigation. It never knows
-whether a browser device key exists. If the session origin has no valid device
-identity, that session page asks for a fresh pairing URL. The manager profile
-remains until the user chooses **Forget**.
+If the framed session has no valid device identity, that session page asks
+for a fresh pairing URL. The manager profile remains until the user chooses
+**Forget**, which also deletes that origin's vault slot.
+
+**Open in new tab** and a pairing URL opened outside the PWA use a first-party
+session document. That document stores its device key in session-origin
+IndexedDB and does not share the manager vault. Direct and framed credentials
+for the same origin are separate.
+
+The framed host uses one closed, origin-checked `postMessage` schema for
+device credentials, clipboard, microphone, notifications, and shell control.
+It does not proxy WebRTC, workspace frames, or generic storage. The manager
+keys vault entries only by `event.origin` and clones a credential only into
+the iframe that matches that origin. Structured clone keeps the key
+non-extractable. The manager never signs.
+
+The PWA shows at most one framed session. Opening another connection replaces
+that iframe. The session speaks to `parent` only when `parent.origin` is
+`https://app.terminay.com`; it ignores any other embedder. Clipboard and
+microphone messages require a user gesture in the manager or in the iframe
+surface that requested them. The iframe `allow` list may include clipboard and
+microphone and does not include camera. Camera stays on the manager for QR
+scan.
+
+The manager sizes the iframe to the visual viewport, including when the iOS
+keyboard is visible. Session and workspace script never assign `window.top`
+or use `target="_top"`. `target="_blank"` may open a first-party tab.
+
+An iOS Home Screen PWA has storage isolated from Safari. Pairing in Safari
+does not populate the PWA vault, and pairing in the PWA does not populate
+Safari.
 
 ## Desktop journey
 
@@ -177,9 +219,11 @@ the connected Terminay workspace. It provides:
 - **Add new connection**, which opens a dedicated page to **Scan QR code**
   (camera or photo) or **Paste pairing URL**;
 - a list of saved manager profiles;
-- **Open** as the primary row action, with **Open in new tab**, rename, and
-  forget in an overflow menu; and
-- same-tab navigation by default, with that explicit open-in-new-tab action.
+- **Open** as the primary row action, which frames the session origin in the
+  current PWA view, with **Open in new tab**, rename, and forget in an
+  overflow menu; and
+- same-document PWA chrome by default, with that explicit first-party
+  open-in-new-tab action.
 
 Its application shell and saved profile list remain available offline. Opening
 a profile still requires that profile's stable session origin to be reachable.
@@ -191,10 +235,18 @@ The manager profile store contains only:
 - created and last-opened timestamps.
 
 The manager accepts the pairing URL path needed for enrollment but stores only
-its stable origin. A non-secret `hostName` query may supply the default local
-label from the exposing server's machine hostname. The user can rename that
-label. The manager rejects URL credentials, unsupported schemes, and any other
-query, and never stores the pairing fragment or complete pairing URL.
+its stable origin as the bookmark. A non-secret `hostName` query may supply the
+default local label from the exposing server's machine hostname. The user can
+rename that label. The manager rejects URL credentials, unsupported schemes,
+and any other query, and never stores the pairing fragment or complete pairing
+URL.
+
+The framed-session vault is separate from the bookmark list. It stores only
+that origin's non-extractable device private key plus the non-secret device
+id/name needed to reconnect. It lives in manager-origin IndexedDB, not
+`localStorage`. The manager never signs with those keys; the session iframe
+does. Pairing fragments, PINs, tickets, terminal data, and workspace data
+never enter the vault.
 
 ## Server-bundled workspace
 
@@ -234,11 +286,19 @@ Detailed ordering, congestion, and terminal resynchronization are governed by
 
 ## Persistence and privacy
 
-The stable session origin may store:
+The stable session origin may store, when it is a first-party document:
 
 - device id and name;
 - the non-extractable browser private key; and
 - non-secret server identity metadata.
+
+When the session is framed by the PWA, that credential lives in the manager
+vault.
+
+The manager origin may store:
+
+- manager profiles (label, origin, timestamps); and
+- per-origin framed-session device credentials in IndexedDB.
 
 The server may store:
 
@@ -251,10 +311,13 @@ The server may store:
 The signaling service may store the public host key or fingerprint for a
 session. It never stores the private host key.
 
-The manager origin, signaling service, TURN service, logs, analytics, URLs, and
-host messages never contain private device keys, private host keys, pairing
-fragments, PINs, connection tickets, terminal output, project names, paths,
-filenames, command history, recordings, settings, or secrets.
+The signaling service, TURN service, logs, analytics, and URLs never contain
+private device keys, private host keys, pairing fragments, PINs, connection
+tickets, terminal output, project names, paths, filenames, command history,
+recordings, settings, or secrets. Host `postMessage` carries only the closed
+framed-host schema. The manager vault may hold per-origin device credentials
+for framed sessions and may clone a credential only to the matching session
+origin.
 
 ## Failure behaviour
 
@@ -281,7 +344,12 @@ filenames, command history, recordings, settings, or secrets.
 - Signaling admits a reconnect host only with proof of the registered server
   host key. A public session origin or server id cannot become the WebRTC host
   for that session.
-- Browser private keys are non-extractable and origin-bound.
+- Browser private keys are non-extractable. A first-party session document
+  binds them to that session origin. A framed PWA session binds them to the
+  manager vault slot for that exact origin.
+- The manager clones a vaulted key only to `event.origin` of the requesting
+  session iframe. An iframe cannot name another origin's slot.
+- The session posts to `parent` only when that parent is `app.terminay.com`.
 - Device revocation affects live and future connections.
 - Hosted services remain data-blind for Terminay application content.
 - Remote server code inside Desktop has no Node integration or generic preload
@@ -295,6 +363,9 @@ filenames, command history, recordings, settings, or secrets.
 - No browser-owned Local server.
 - No reusable pairing link.
 - No independent workspace application at `app.terminay.com`.
+- No generic storage, IndexedDB, or cookie proxy between manager and session.
+- No merging of PWA vault credentials with first-party session-origin
+  IndexedDB or with Safari's copy of the same origin.
 
 ## Acceptance outcomes
 
@@ -303,13 +374,16 @@ filenames, command history, recordings, settings, or secrets.
 - A second host that knows only the session origin cannot replace the
   registered reconnect host.
 - Adding a pairing URL in the PWA immediately saves its stable-origin profile
-  and performs the same session-origin enrollment.
-- Returning to the PWA lists the saved profile, and selecting it reconnects
-  through the stable session origin.
+  and frames the session-origin enrollment without leaving `app.terminay.com`.
+- Returning to the PWA list unloads the iframe; selecting the profile frames
+  the stable session origin and reconnects from the manager vault.
+- **Open in new tab** and a direct pairing URL enroll at the first-party
+  session origin.
 - The pairing fragment never appears in manager storage, session URLs after
   consumption, requests, logs, or analytics.
-- The browser stores one durable private device key; the server stores its
-  public key and revocation state.
+- The browser stores one durable private device key per session origin
+  (first-party document) or per manager-vault slot (framed PWA); the server
+  stores its public key and revocation state.
 - Revoking one device closes it without affecting other devices, Local Desktop,
   or server-owned PTYs.
 - Local Desktop, remote Desktop, and browser clients connected to one server

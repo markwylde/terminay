@@ -17,7 +17,10 @@ and terminal insertion are server-authorized.
 - Dictation is available only when a live terminal is active and the selected
   client has microphone capability.
 - Browsers and Desktop clients request microphone permission through their
-  platform.
+  platform. A first-party hosted session page captures on the session origin
+  after a user gesture. A PWA-framed session captures in the manager after a
+  user gesture; the manager delivers audio to that session over the closed
+  host channel.
 - A denied or unavailable microphone produces a clear local error without
   contacting the provider.
 - Dictation remains opt-in and disabled until a provider and credential are
