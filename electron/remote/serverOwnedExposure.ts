@@ -5,6 +5,7 @@ import type {
 } from '../../packages/server-core/src/types';
 import {
 	startHostedPairingHost,
+	type HostedPairingDiagnostic,
 	type HostedPairingHost,
 	type MinimalArchive,
 } from '../../apps/terminay-server/src/remote/hostedPairingHost';
@@ -38,6 +39,8 @@ export interface DesktopServerOwnedExposureOptions {
 	readonly verifyPairingPin?: (pin: string) => boolean;
 	readonly webRtcUnavailableReason?: string;
 	readonly webrtcRuntimeRoot?: string;
+	readonly onStatusChanged?: () => void;
+	readonly onDiagnostic?: (event: HostedPairingDiagnostic) => void;
 }
 
 /** Desktop projection over the server-owned hosted pairing host. */
@@ -67,6 +70,10 @@ export class DesktopServerOwnedExposure {
 		| (() => void | Promise<void>)
 		| undefined;
 	private readonly webRtcUnavailableReason: string | undefined;
+	private readonly onStatusChanged: (() => void) | undefined;
+	private readonly onDiagnostic:
+		| ((event: HostedPairingDiagnostic) => void)
+		| undefined;
 	private exposure: ServerRemoteExposure | undefined;
 	private hosted: HostedPairingHost | undefined;
 	private runtimeError: string | undefined;
@@ -85,6 +92,8 @@ export class DesktopServerOwnedExposure {
 		this.webrtcRuntimeRoot = options.webrtcRuntimeRoot;
 		this.ensureWebRtcRuntimeAvailable = options.ensureWebRtcRuntimeAvailable;
 		this.webRtcUnavailableReason = options.webRtcUnavailableReason;
+		this.onStatusChanged = options.onStatusChanged;
+		this.onDiagnostic = options.onDiagnostic;
 		this.runtimeError = options.webRtcUnavailableReason;
 		this.factory =
 			options.createExposure ??
@@ -213,6 +222,10 @@ export class DesktopServerOwnedExposure {
 			remote: exposure,
 			serverId: this.serverId,
 			webrtcRuntimeRoot: this.webrtcRuntimeRoot,
+			rotateHandoff: () => exposure.rotateHostedPairing(),
+			onHandoff: () => this.onStatusChanged?.(),
+			onPeerConnected: () => this.onStatusChanged?.(),
+			...(this.onDiagnostic === undefined ? {} : { onDiagnostic: this.onDiagnostic }),
 			...(this.acceptApplication === undefined
 				? {}
 				: { acceptApplication: this.acceptApplication }),
