@@ -128,6 +128,7 @@ import {
 	DesktopDeviceCredentialStore,
 } from './remote/deviceCredentialStore';
 import { createPairingPinHash, verifyPairingPin } from './remote/pin';
+import { hostedPairingDiagnosticEvent } from './remote/hostedPairingDiagnostics';
 import { DesktopServerOwnedExposure } from './remote/serverOwnedExposure';
 import { buildServerUiArchive } from './remote/serverUiArchive';
 import {
@@ -1276,6 +1277,14 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		},
 		verifyPairingPin: (pin) =>
 			verifyPairingPin(readEmbeddedRemoteAccessSettings().pairingPinHash, pin),
+		onStatusChanged: () => {
+			authority.notifyRemoteAccessChanged();
+		},
+		onDiagnostic: (event) => {
+			void desktopDiagnostics.record(hostedPairingDiagnosticEvent(event), {
+				channel: 'lifecycle',
+			});
+		},
 		acceptApplication: (transport, authenticatedClient) => {
 			if (serverTerminalAuthority === null) {
 				throw new Error('The embedded server is unavailable.');

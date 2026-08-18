@@ -71,19 +71,46 @@ export interface HostedPairingHostOptions {
 	}>;
 	readonly verifyPairingPin?: (pin: string) => boolean;
 	readonly webrtcRuntimeRoot: string;
+	readonly rotateHandoff?: () => ServerPairingHandoff;
+	readonly onHandoff?: (handoff: ServerPairingHandoff) => void;
+	readonly onPeerConnected?: () => void;
+	readonly onDiagnostic?: (event: HostedPairingDiagnostic) => void;
 }
+
+export type HostedPairingDiagnostic = Readonly<{
+	readonly type:
+		| 'advertised'
+		| 'registered'
+		| 'signaling-closed'
+		| 'rotated'
+		| 'reregistered'
+		| 'client-join'
+		| 'failed';
+	readonly scope?: 'pairing' | 'device';
+	readonly advertisedUrlClass?: 'manager' | 'session' | 'loopback' | 'other';
+	readonly signalingHostClass?: 'terminay-session' | 'loopback' | 'other';
+	readonly closeCode?: number;
+	readonly closeReasonClass?: string;
+	readonly remainingMs?: number;
+	readonly cause?: string;
+}>;
 
 export interface HostedPairingHost {
 	readonly close: () => Promise<void>;
 }
 
+const DEVICE_HOST_AVAILABILITY_MS = 25 * 60 * 1000;
+const DEVICE_REFRESH_LEAD_MS = 5 * 60 * 1000;
+const PAIRING_REFRESH_LEAD_MS = 15_000;
+const REFRESH_RETRY_MS = 2_000;
+const INITIAL_REGISTER_TIMEOUT_MS = 10_000;
+
 export async function startHostedPairingHost(
 	options: HostedPairingHostOptions,
 ): Promise<HostedPairingHost> {
-	const qrSecret = new URL(options.handoff.pairingUrl).hash.slice(1);
-	const derived = deriveHostedPairingSecrets(qrSecret);
 	const sessionId = hostedSessionId(options.handoff.sessionOrigin);
 	const signalingUrl = hostedSignalingUrl(options.handoff.sessionOrigin);
+	const signalingHostClass = classifySignalingHost(options.handoff.sessionOrigin);
 	const runtime = await loadSelectedSecureWeriftRuntime(options.webrtcRuntimeRoot);
 	const Peer = runtime.RTCPeerConnection as unknown as new (
 		configuration?: Record<string, unknown>,
@@ -91,116 +118,283 @@ export async function startHostedPairingHost(
 	const archive = options.getUiArchive
 		? await options.getUiArchive()
 		: createMinimalUiArchive();
-	const pairingSocket = openSignalSocket(
-		signalingUrl,
-		options.handoff.sessionOrigin,
-		options.signal,
-	);
-	const deviceSocket = openSignalSocket(
-		signalingUrl,
-		options.handoff.sessionOrigin,
-		options.signal,
-	);
-	let peer: WeriftPeer | undefined;
-	let applicationConnection: ServerConnectionLike | undefined;
+	const context = { archive, options };
+	const connectedPeers: WeriftPeer[] = [];
+	const connectedConnections: ServerConnectionLike[] = [];
+	let handshakePeer: WeriftPeer | undefined;
+	let pairingSocket: WebSocket | undefined;
+	let deviceSocket: WebSocket | undefined;
+	let pairingGeneration = 0;
+	let deviceGeneration = 0;
+	let pairingRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+	let deviceRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+	let pairingReady = false;
+	let deviceReady = false;
+	let currentHandoff = options.handoff;
 	let closed = false;
-	const pairingRegistered = waitForSignalType(pairingSocket, 'host-registered');
-	const deviceRegistered = waitForSignalType(deviceSocket, 'device-host-registered');
-	let registrationTimeout: ReturnType<typeof setTimeout> | undefined;
+	let deviceExpiresAt = Date.now() + DEVICE_HOST_AVAILABILITY_MS;
+
+	const diagnose = (event: HostedPairingDiagnostic) => {
+		options.onDiagnostic?.(event);
+	};
 
 	const close = async () => {
 		if (closed) return;
 		closed = true;
-		peer?.close();
-		void applicationConnection?.close();
+		clearTimeout(pairingRefreshTimer);
+		clearTimeout(deviceRefreshTimer);
+		handshakePeer?.close();
+		for (const peer of connectedPeers) peer.close();
+		for (const connection of connectedConnections) void connection.close();
+		pairingGeneration += 1;
+		deviceGeneration += 1;
 		closeSocket(pairingSocket);
 		closeSocket(deviceSocket);
 	};
 
-	const context = { archive, options };
-	pairingSocket.on('message', (raw) => {
-		void handlePairingSignal(parseSignal(raw)).catch(logHostError);
-	});
-	deviceSocket.on('message', (raw) => {
-		void handleDeviceSignal(parseSignal(raw)).catch(logHostError);
-	});
-	pairingSocket.once('close', () => {
-		if (!closed) void close();
-	});
-	deviceSocket.once('close', () => {
-		if (!closed) void close();
-	});
-
-	async function replacePeer(socket: WebSocket, scope: SignalScope): Promise<void> {
-		peer?.close();
-		void applicationConnection?.close();
-		applicationConnection = undefined;
-		peer = await startPeer(Peer, socket, scope, context, (connection) => {
-			applicationConnection = connection;
+	async function addHandshakePeer(socket: WebSocket, scope: SignalScope): Promise<void> {
+		if (handshakePeer && !connectedPeers.includes(handshakePeer)) {
+			handshakePeer.close();
+		}
+		const next = await startPeer(Peer, socket, scope, context, (connection) => {
+			connectedConnections.push(connection);
+			if (handshakePeer === next) {
+				connectedPeers.push(next);
+				handshakePeer = undefined;
+			}
+			options.onPeerConnected?.();
 		});
+		handshakePeer = next;
 	}
 
-	async function handlePairingSignal(message: Record<string, unknown> | undefined): Promise<void> {
-		if (!message || pairingRegistered.handle(message)) return;
+	async function handlePairingSignal(
+		message: Record<string, unknown> | undefined,
+		derived: ReturnType<typeof deriveHostedPairingSecrets>,
+		socket: WebSocket,
+		registered: ReturnType<typeof waitForSignalType>,
+	): Promise<void> {
+		if (!message || registered.handle(message)) return;
 		if (message.type === 'client-join') {
-			await replacePeer(pairingSocket, { kind: 'pairing', roomId: derived.pairingRoomId });
+			diagnose({ type: 'client-join', scope: 'pairing' });
+			await addHandshakePeer(socket, { kind: 'pairing', roomId: derived.pairingRoomId });
 			return;
 		}
-		if (message.type === 'answer' && peer) {
+		if (message.type === 'answer' && handshakePeer) {
 			const description = asSessionDescription(message.sdp);
-			if (description) await peer.setRemoteDescription(description);
+			if (description) await handshakePeer.setRemoteDescription(description);
 			return;
 		}
-		if (message.type === 'ice' && peer) {
+		if (message.type === 'ice' && handshakePeer) {
 			const candidate = asIceCandidate(message.candidate);
-			if (candidate) await peer.addIceCandidate(candidate);
+			if (candidate) await handshakePeer.addIceCandidate(candidate);
 		}
 	}
 
-	async function handleDeviceSignal(message: Record<string, unknown> | undefined): Promise<void> {
-		if (!message || deviceRegistered.handle(message)) return;
+	async function handleDeviceSignal(
+		message: Record<string, unknown> | undefined,
+		socket: WebSocket,
+		registered: ReturnType<typeof waitForSignalType>,
+	): Promise<void> {
+		if (!message || registered.handle(message)) return;
 		if (message.type === 'device-join') {
-			await replacePeer(deviceSocket, { kind: 'device', sessionId });
+			diagnose({ type: 'client-join', scope: 'device' });
+			await addHandshakePeer(socket, { kind: 'device', sessionId });
 			return;
 		}
-		if (message.type === 'device-answer' && peer) {
+		if (message.type === 'device-answer' && handshakePeer) {
 			const description = asSessionDescription(message.sdp);
-			if (description) await peer.setRemoteDescription(description);
+			if (description) await handshakePeer.setRemoteDescription(description);
 			return;
 		}
-		if (message.type === 'device-ice' && peer) {
+		if (message.type === 'device-ice' && handshakePeer) {
 			const candidate = asIceCandidate(message.candidate);
-			if (candidate) await peer.addIceCandidate(candidate);
+			if (candidate) await handshakePeer.addIceCandidate(candidate);
 		}
 	}
 
-	await waitForOpen(pairingSocket);
-	pairingSocket.send(
-		JSON.stringify({
-			expiresAt: options.handoff.pairingExpiresAt,
-			relayJoinTokenHash: derived.relayJoinTokenHash,
-			roomId: derived.pairingRoomId,
-			type: 'host-ready',
-		}),
-	);
-	await waitForOpen(deviceSocket);
-	deviceSocket.send(
-		JSON.stringify(
-			createDeviceHostReadyMessage({
-				expiresAt: new Date(Date.now() + 25 * 60 * 1000).toISOString(),
-				hostKey: options.hostKey,
-				sessionId,
+	async function registerPairing(handoff: ServerPairingHandoff): Promise<void> {
+		const generation = ++pairingGeneration;
+		pairingReady = false;
+		const derived = deriveHostedPairingSecrets(new URL(handoff.pairingUrl).hash.slice(1));
+		const socket = openSignalSocket(signalingUrl, handoff.sessionOrigin, options.signal);
+		pairingSocket = socket;
+		const registered = waitForSignalType(socket, 'host-registered');
+		socket.on('message', (raw) => {
+			if (generation !== pairingGeneration) return;
+			void handlePairingSignal(parseSignal(raw), derived, socket, registered).catch(logHostError);
+		});
+		socket.once('close', (code, reason) => {
+			if (closed || generation !== pairingGeneration || !pairingReady) return;
+			diagnose({
+				type: 'signaling-closed',
+				scope: 'pairing',
+				closeReasonClass: closeReasonClass(reason),
+				signalingHostClass,
+				...(typeof code === 'number' ? { closeCode: code } : {}),
+			});
+			void refreshPairing('socket-closed');
+		});
+		await waitForOpen(socket);
+		if (closed || generation !== pairingGeneration) return;
+		socket.send(
+			JSON.stringify({
+				expiresAt: handoff.pairingExpiresAt,
+				relayJoinTokenHash: derived.relayJoinTokenHash,
+				roomId: derived.pairingRoomId,
+				type: 'host-ready',
 			}),
-		),
-	);
+		);
+		await registered.promise;
+		if (closed || generation !== pairingGeneration) return;
+		pairingReady = true;
+		diagnose({
+			type: 'registered',
+			scope: 'pairing',
+			advertisedUrlClass: advertisedUrlClass(handoff.pairingUrl),
+			signalingHostClass,
+		});
+		schedulePairingRefresh(handoff);
+	}
+
+	async function registerDevice(): Promise<void> {
+		const generation = ++deviceGeneration;
+		deviceReady = false;
+		const socket = openSignalSocket(
+			signalingUrl,
+			options.handoff.sessionOrigin,
+			options.signal,
+		);
+		deviceSocket = socket;
+		const registered = waitForSignalType(socket, 'device-host-registered');
+		socket.on('message', (raw) => {
+			if (generation !== deviceGeneration) return;
+			void handleDeviceSignal(parseSignal(raw), socket, registered).catch(logHostError);
+		});
+		socket.once('close', (code, reason) => {
+			if (closed || generation !== deviceGeneration || !deviceReady) return;
+			diagnose({
+				type: 'signaling-closed',
+				scope: 'device',
+				closeReasonClass: closeReasonClass(reason),
+				signalingHostClass,
+				...(typeof code === 'number' ? { closeCode: code } : {}),
+			});
+			void refreshDevice('socket-closed');
+		});
+		await waitForOpen(socket);
+		if (closed || generation !== deviceGeneration) return;
+		deviceExpiresAt = Date.now() + DEVICE_HOST_AVAILABILITY_MS;
+		socket.send(
+			JSON.stringify(
+				createDeviceHostReadyMessage({
+					expiresAt: new Date(deviceExpiresAt).toISOString(),
+					hostKey: options.hostKey,
+					sessionId,
+				}),
+			),
+		);
+		await registered.promise;
+		if (closed || generation !== deviceGeneration) return;
+		deviceReady = true;
+		diagnose({ type: 'registered', scope: 'device', signalingHostClass });
+		scheduleDeviceRefresh();
+	}
+
+	async function refreshPairing(cause: string): Promise<void> {
+		if (closed) return;
+		const remaining = Date.parse(currentHandoff.pairingExpiresAt) - Date.now();
+		const shouldRotate =
+			Boolean(options.rotateHandoff) && !(remaining > PAIRING_REFRESH_LEAD_MS);
+		try {
+			if (shouldRotate && options.rotateHandoff) {
+				currentHandoff = options.rotateHandoff();
+				options.onHandoff?.(currentHandoff);
+				diagnose({
+					type: 'rotated',
+					cause,
+					advertisedUrlClass: advertisedUrlClass(currentHandoff.pairingUrl),
+					remainingMs: Date.parse(currentHandoff.pairingExpiresAt) - Date.now(),
+				});
+			} else {
+				diagnose({ type: 'reregistered', scope: 'pairing', cause, remainingMs: remaining });
+			}
+			const previous = pairingSocket;
+			pairingGeneration += 1;
+			closeSocket(previous);
+			await registerPairing(currentHandoff);
+		} catch (error) {
+			diagnose({
+				type: 'failed',
+				scope: 'pairing',
+				cause,
+			});
+			logHostError(error);
+			if (!closed) {
+				pairingRefreshTimer = setTimeout(() => {
+					void refreshPairing('retry');
+				}, REFRESH_RETRY_MS);
+				pairingRefreshTimer.unref?.();
+			}
+		}
+	}
+
+	async function refreshDevice(cause: string): Promise<void> {
+		if (closed) return;
+		try {
+			diagnose({ type: 'reregistered', scope: 'device', cause });
+			const previous = deviceSocket;
+			deviceGeneration += 1;
+			closeSocket(previous);
+			await registerDevice();
+		} catch (error) {
+			diagnose({ type: 'failed', scope: 'device', cause });
+			logHostError(error);
+			if (!closed) {
+				deviceRefreshTimer = setTimeout(() => {
+					void refreshDevice('retry');
+				}, REFRESH_RETRY_MS);
+				deviceRefreshTimer.unref?.();
+			}
+		}
+	}
+
+	function schedulePairingRefresh(handoff: ServerPairingHandoff): void {
+		clearTimeout(pairingRefreshTimer);
+		const delay = Math.max(
+			1_000,
+			Date.parse(handoff.pairingExpiresAt) - Date.now() - PAIRING_REFRESH_LEAD_MS,
+		);
+		pairingRefreshTimer = setTimeout(() => {
+			void refreshPairing('expiry');
+		}, delay);
+		pairingRefreshTimer.unref?.();
+	}
+
+	function scheduleDeviceRefresh(): void {
+		clearTimeout(deviceRefreshTimer);
+		const delay = Math.max(1_000, deviceExpiresAt - Date.now() - DEVICE_REFRESH_LEAD_MS);
+		deviceRefreshTimer = setTimeout(() => {
+			void refreshDevice('expiry');
+		}, delay);
+		deviceRefreshTimer.unref?.();
+	}
+
+	diagnose({
+		type: 'advertised',
+		advertisedUrlClass: advertisedUrlClass(currentHandoff.pairingUrl),
+		signalingHostClass,
+		remainingMs: Date.parse(currentHandoff.pairingExpiresAt) - Date.now(),
+	});
+
+	let registrationTimeout: ReturnType<typeof setTimeout> | undefined;
 	await Promise.race([
-		Promise.all([pairingRegistered.promise, deviceRegistered.promise]).finally(() => {
+		Promise.all([registerPairing(currentHandoff), registerDevice()]).finally(() => {
 			clearTimeout(registrationTimeout);
 		}),
 		new Promise<never>((_, reject) => {
 			registrationTimeout = setTimeout(() => {
 				reject(new Error('Hosted signaling room registration timed out.'));
-			}, 10_000);
+			}, INITIAL_REGISTER_TIMEOUT_MS);
 		}),
 	]);
 
@@ -229,7 +423,8 @@ function openSignalSocket(
 	return new WebSocket(connectUrl, socketOptions);
 }
 
-function closeSocket(socket: WebSocket): void {
+function closeSocket(socket: WebSocket | undefined): void {
+	if (!socket) return;
 	if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
 		socket.close(1000, 'Terminay pairing host stopped');
 	}
@@ -317,6 +512,46 @@ function waitForOpen(socket: WebSocket): Promise<void> {
 		socket.once('open', () => resolve());
 		socket.once('error', () => reject(new Error('Hosted signaling could not connect.')));
 	});
+}
+
+function advertisedUrlClass(pairingUrl: string): 'manager' | 'session' | 'loopback' | 'other' {
+	try {
+		const host = new URL(pairingUrl).hostname.toLowerCase();
+		if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]') return 'loopback';
+		if (host === 'app.terminay.com') return 'manager';
+		if (host.endsWith('.terminay.com')) return 'session';
+		return 'other';
+	} catch {
+		return 'other';
+	}
+}
+
+function classifySignalingHost(sessionOrigin: string): 'terminay-session' | 'loopback' | 'other' {
+	try {
+		const host = new URL(sessionOrigin).hostname.toLowerCase();
+		if (host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost')) {
+			return 'loopback';
+		}
+		if (host.endsWith('.terminay.com') && host !== 'app.terminay.com') return 'terminay-session';
+		return 'other';
+	} catch {
+		return 'other';
+	}
+}
+
+function closeReasonClass(reason: unknown): string {
+	const text = (
+		typeof reason === 'string'
+			? reason
+			: Buffer.isBuffer(reason)
+				? reason.toString('utf8')
+				: String(reason ?? '')
+	).toLowerCase();
+	if (text.includes('expired')) return 'expired';
+	if (text.includes('complete')) return 'complete';
+	if (text.includes('stopped')) return 'host-stopped';
+	if (!text.trim()) return 'empty';
+	return 'other';
 }
 
 async function startPeer(
