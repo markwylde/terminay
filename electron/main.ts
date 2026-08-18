@@ -744,7 +744,9 @@ function getRunningTerminalCount(): number {
 	).length;
 }
 
-function getRunningTerminalCountForWindow(webContentsId: number): number {
+async function getRunningTerminalCountForWindow(
+	webContentsId: number,
+): Promise<number> {
 	const authority = serverTerminalAuthority;
 	if (authority === null) return 0;
 	// A torn-off window owns a logical workspace view.  Its terminal stream can
@@ -754,16 +756,20 @@ function getRunningTerminalCountForWindow(webContentsId: number): number {
 	const viewId = workspaceViewByWebContents.get(webContentsId);
 	const projectIds = authority.workspace.state.views[viewId ?? '']?.projectIds;
 	if (projectIds === undefined) return 0;
-	const ownedProjects = new Set(projectIds);
-	return authority.list().filter((session) => {
-		if (!ownedProjects.has(session.projectId)) return false;
-		const activity = authority.activity.get({
-			serverId: session.serverId,
-			projectId: session.projectId,
-			sessionId: session.id,
-		});
-		return activity?.foregroundBusy === true;
-	}).length;
+	const observations = await Promise.all(
+		[...new Set(projectIds)].map(async (projectId) => {
+			try {
+				return await authority.service.observeProjectForegroundProcesses(
+					projectId,
+				);
+			} catch {
+				// Missing observation is not a running process.
+				return [];
+			}
+		}),
+	);
+	return observations.flat().filter((observation) => observation.foregroundBusy)
+		.length;
 }
 
 function getOpenProjectWindowCount(): number {
