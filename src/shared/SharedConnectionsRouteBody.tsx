@@ -438,6 +438,7 @@ export function SharedConnectionsRouteBody({
 						<label>
 							Pairing PIN
 							<input
+								type="password"
 								inputMode="numeric"
 								maxLength={6}
 								value={pairingPin}
