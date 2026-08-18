@@ -50,24 +50,41 @@ export function useRemoteAccessController(
 	}, [statusClient]);
 
 	const previousConnectionCountRef = useRef<number | null>(null);
+	const previousPairedDeviceCountRef = useRef<number | null>(null);
+	const [heldQrCodeDataUrl, setHeldQrCodeDataUrl] = useState<string | null>(
+		null,
+	);
+	const freezeHeldQrRef = useRef(false);
+	const closePairingModal = useCallback(() => {
+		setIsPairingModalOpen(false);
+		setPairingOutcome('idle');
+		setHeldQrCodeDataUrl(null);
+		freezeHeldQrRef.current = false;
+	}, []);
 	useEffect(() => {
 		const current = status?.activeConnectionCount ?? null;
 		const previous = previousConnectionCountRef.current;
 		previousConnectionCountRef.current = current;
-		if (
-			previous !== null &&
-			current !== null &&
-			current > previous &&
-			isPairingModalOpen
-		) {
+		const paired = status?.pairedDeviceCount ?? null;
+		const previousPaired = previousPairedDeviceCountRef.current;
+		previousPairedDeviceCountRef.current = paired;
+		const pairedGrew =
+			previousPaired !== null && paired !== null && paired > previousPaired;
+		const connectionsGrew =
+			previous !== null && current !== null && current > previous;
+		if (isPairingModalOpen && (connectionsGrew || pairedGrew)) {
 			setPairingOutcome('success');
 			const timer = window.setTimeout(() => {
-				setIsPairingModalOpen(false);
-				setPairingOutcome('idle');
+				closePairingModal();
 			}, 1400);
 			return () => window.clearTimeout(timer);
 		}
-	}, [status?.activeConnectionCount, isPairingModalOpen]);
+	}, [
+		closePairingModal,
+		isPairingModalOpen,
+		status?.activeConnectionCount,
+		status?.pairedDeviceCount,
+	]);
 
 	const closePinModal = useCallback((configured: boolean) => {
 		pinRequestRef.current?.(configured);
@@ -240,6 +257,32 @@ export function useRemoteAccessController(
 	}, [pairingQrCodeDataUrl, pairingUrl]);
 
 	useEffect(() => {
+		if (!isPairingModalOpen) {
+			freezeHeldQrRef.current = false;
+			setHeldQrCodeDataUrl(null);
+			return;
+		}
+		if (pairingOutcome === 'success') freezeHeldQrRef.current = true;
+		if (
+			heldQrCodeDataUrl &&
+			status?.webRtcStatus !== undefined &&
+			status.webRtcStatus !== 'pairing-ready'
+		) {
+			freezeHeldQrRef.current = true;
+		}
+		if (freezeHeldQrRef.current) return;
+		const next = pairingQrCodeDataUrl ?? generatedQrCodeDataUrl;
+		if (next) setHeldQrCodeDataUrl(next);
+	}, [
+		generatedQrCodeDataUrl,
+		heldQrCodeDataUrl,
+		isPairingModalOpen,
+		pairingOutcome,
+		pairingQrCodeDataUrl,
+		status?.webRtcStatus,
+	]);
+
+	useEffect(() => {
 		if (!isMenuOpen) return;
 		const onPointerDown = (event: globalThis.MouseEvent) => {
 			if (!menuRef.current?.contains(event.target as Node))
@@ -256,9 +299,17 @@ export function useRemoteAccessController(
 		};
 	}, [isMenuOpen]);
 
+	const liveQrCodeDataUrl = pairingQrCodeDataUrl ?? generatedQrCodeDataUrl;
+	const visibleQrCodeDataUrl = isPairingModalOpen
+		? (heldQrCodeDataUrl ?? liveQrCodeDataUrl)
+		: status?.webRtcStatus === 'pairing-ready'
+			? liveQrCodeDataUrl
+			: null;
+
 	return {
 		actionError,
 		closeMenu,
+		closePairingModal,
 		closePinModal,
 		isLinkCopied,
 		isMenuOpen,
@@ -292,10 +343,7 @@ export function useRemoteAccessController(
 			: status?.configurationIssue || status?.errorMessage || actionError
 				? 'remote-access-button--warning'
 				: '',
-		visibleQrCodeDataUrl:
-			status?.webRtcStatus === 'pairing-ready'
-				? (pairingQrCodeDataUrl ?? generatedQrCodeDataUrl)
-				: null,
+		visibleQrCodeDataUrl,
 	};
 }
 
