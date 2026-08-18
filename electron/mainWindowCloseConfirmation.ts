@@ -55,7 +55,7 @@ export function createCloseConfirmationDialog(
 export function bindMainWindowCloseConfirmation(options: {
 	window: ConfirmableMainWindow;
 	isQuitting: () => boolean;
-	getRunningTerminalCount: () => number;
+	getRunningTerminalCount: () => number | Promise<number>;
 	isLastWindow: () => boolean;
 	consumeConfirmedClose?: () => boolean;
 	showConfirmation: (
@@ -76,29 +76,37 @@ export function bindMainWindowCloseConfirmation(options: {
 			return;
 		}
 		if (options.consumeConfirmedClose?.() === true) return;
-		const runningTerminalCount = options.getRunningTerminalCount();
-		if (runningTerminalCount === 0) return;
 
 		event.preventDefault();
 		if (confirmationPending) return;
 		confirmationPending = true;
 
-		void options
-			.showConfirmation(
-				options.window,
-				createCloseConfirmationDialog(
-					options.isLastWindow() ? 'app' : 'window',
-					runningTerminalCount,
-				),
-			)
-			.then(({ response }) => {
-				if (response === 0 && !options.window.isDestroyed()) {
-					if (options.isLastWindow()) options.requestQuit();
-					else {
-						confirmationAccepted = true;
-						options.requestClose();
-					}
+		void Promise.resolve()
+			.then(() => options.getRunningTerminalCount())
+			.then((runningTerminalCount) => {
+				if (options.window.isDestroyed()) return;
+				if (runningTerminalCount === 0) {
+					confirmationAccepted = true;
+					options.requestClose();
+					return;
 				}
+				return options
+					.showConfirmation(
+						options.window,
+						createCloseConfirmationDialog(
+							options.isLastWindow() ? 'app' : 'window',
+							runningTerminalCount,
+						),
+					)
+					.then(({ response }) => {
+						if (response === 0 && !options.window.isDestroyed()) {
+							if (options.isLastWindow()) options.requestQuit();
+							else {
+								confirmationAccepted = true;
+								options.requestClose();
+							}
+						}
+					});
 			})
 			.catch((error) => options.onError?.(error))
 			.finally(() => {
