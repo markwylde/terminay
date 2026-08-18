@@ -21,8 +21,10 @@ server-bundled UI. The workspace does not move onto `app.terminay.com`.
 
 When the installable PWA opens a connection, it keeps `https://app.terminay.com`
 as the top-level document and loads the exact session origin in a fullscreen
-iframe. Direct pairing URLs and **Open in new tab** still use a first-party
-session document.
+iframe. The advertised hosted pairing URL is also on `app.terminay.com`
+(`?s=<session-id>#<secret>`). Opening it stays on the manager, asks **Save
+and connect**, then frames the session origin. Legacy `/v1/` session URLs and
+**Open in new tab** still use a first-party session document.
 
 Safari-lowest-common-denominator host messages, origin-checked:
 
