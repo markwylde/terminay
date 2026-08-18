@@ -78,6 +78,7 @@ export class DesktopServerOwnedExposure {
 	private hosted: HostedPairingHost | undefined;
 	private runtimeError: string | undefined;
 	private sessionOrigin: string | undefined;
+	private hostedConnectedPeerCount = 0;
 
 	constructor(options: DesktopServerOwnedExposureOptions) {
 		this.serverId = options.serverId;
@@ -110,7 +111,11 @@ export class DesktopServerOwnedExposure {
 	}
 
 	getStatus(): RemoteAccessStatus {
-		const status = projectStatus(this.exposure, this.sessionOrigin);
+		const status = projectStatus(
+			this.exposure,
+			this.sessionOrigin,
+			this.hostedConnectedPeerCount,
+		);
 		if (this.runtimeError === undefined) return status;
 		return {
 			...status,
@@ -128,6 +133,7 @@ export class DesktopServerOwnedExposure {
 		if (this.exposure?.status.exposure.state === 'exposed') {
 			await this.hosted?.close();
 			this.hosted = undefined;
+			this.hostedConnectedPeerCount = 0;
 			this.exposure.stopExposure();
 			return this.getStatus();
 		}
@@ -136,6 +142,7 @@ export class DesktopServerOwnedExposure {
 		if (origin !== this.sessionOrigin) {
 			await this.hosted?.close();
 			this.hosted = undefined;
+			this.hostedConnectedPeerCount = 0;
 			await this.exposure?.shutdown();
 			this.sessionOrigin = origin;
 			this.exposure = this.factory(origin);
@@ -151,15 +158,20 @@ export class DesktopServerOwnedExposure {
 				error instanceof Error
 					? error.message
 					: 'Desktop WebRTC runtime is unavailable.';
-			throw error;
+			return this.getStatus();
 		}
 		exposure.start();
 		try {
 			this.hosted = await this.register(exposure);
 			this.runtimeError = undefined;
 		} catch (error) {
+			this.hosted = undefined;
 			exposure.stopExposure();
-			throw error;
+			this.runtimeError =
+				error instanceof Error
+					? error.message
+					: 'Hosted signaling could not connect.';
+			return this.getStatus();
 		}
 		return this.getStatus();
 	}
@@ -205,6 +217,7 @@ export class DesktopServerOwnedExposure {
 	async shutdown(): Promise<void> {
 		await this.hosted?.close();
 		this.hosted = undefined;
+		this.hostedConnectedPeerCount = 0;
 		await this.exposure?.shutdown();
 	}
 
@@ -218,13 +231,19 @@ export class DesktopServerOwnedExposure {
 		return startHostedPairingHost({
 			handoff,
 			hostKey: this.hostKey,
-			persistDevices: this.persistDevices ?? (() => undefined),
+			persistDevices: (devices) => {
+				this.persistDevices?.(devices);
+				this.onStatusChanged?.();
+			},
 			remote: exposure,
 			serverId: this.serverId,
 			webrtcRuntimeRoot: this.webrtcRuntimeRoot,
 			rotateHandoff: () => exposure.rotateHostedPairing(),
 			onHandoff: () => this.onStatusChanged?.(),
-			onPeerConnected: () => this.onStatusChanged?.(),
+			onPeerConnected: () => {
+				this.hostedConnectedPeerCount += 1;
+				this.onStatusChanged?.();
+			},
 			...(this.onDiagnostic === undefined ? {} : { onDiagnostic: this.onDiagnostic }),
 			...(this.acceptApplication === undefined
 				? {}
@@ -272,6 +291,7 @@ function normalizeSessionOrigin(address: string): string {
 function projectStatus(
 	exposure: ServerRemoteExposure | undefined,
 	sessionOrigin: string | undefined,
+	hostedConnectedPeerCount = 0,
 ): RemoteAccessStatus {
 	const status = exposure?.status;
 	const pairing = status?.pairing;
@@ -289,8 +309,9 @@ function projectStatus(
 		revokedAt: number | null;
 	}>[];
 	return {
-		activeConnectionCount: peers.filter((peer) => peer.state === 'connected')
-			.length,
+		activeConnectionCount:
+			peers.filter((peer) => peer.state === 'connected').length +
+			hostedConnectedPeerCount,
 		pendingWebRtcConnectionCount: 0,
 		auditEvents: [],
 		connections: peers.map((peer) => ({
