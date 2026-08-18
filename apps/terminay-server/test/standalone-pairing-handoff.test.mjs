@@ -50,9 +50,11 @@ test('hosted compact pairing URL keeps the QR secret in the fragment', async () 
 	const derived = deriveHostedPairingSecrets(qrSecret);
 
 	assert.equal(url.protocol, 'https:');
-	assert.equal(url.pathname, '/v1/');
+	assert.equal(url.hostname, 'app.terminay.com');
+	assert.equal(url.pathname, '/');
+	assert.equal(url.searchParams.get('s'), 'abc12345');
 	assert.equal(url.searchParams.get('hostName'), 'Studio-Mac');
-	assert.deepEqual([...url.searchParams.keys()], ['hostName']);
+	assert.deepEqual([...url.searchParams.keys()].sort(), ['hostName', 'pairingExpiresAt', 's']);
 	assert.equal(handoff.pairingSessionId, derived.pairingRoomId);
 	assert.equal(handoff.pairingToken, derived.pairingToken);
 	assert.notEqual(qrSecret, handoff.pairingToken);

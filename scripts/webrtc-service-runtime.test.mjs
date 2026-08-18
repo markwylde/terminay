@@ -57,8 +57,10 @@ test('RemoteAccessService creates and rotates WebRTC pairing rooms without a loc
   const firstConfig = hostWindows[0].configs[0]
   assert.equal(first.isRunning, true)
   assert.equal(first.webRtcStatus, 'registering')
-  assert.equal(new URL(first.webRtcPairingUrl).pathname, '/v1/')
-  assert.equal(firstConfig.appOrigin, new URL(first.webRtcPairingUrl).origin)
+  assert.equal(new URL(first.webRtcPairingUrl).pathname, '/')
+  assert.match(new URL(first.webRtcPairingUrl).hostname, /^app\./)
+  assert.equal(new URL(first.webRtcPairingUrl).searchParams.get('s'), firstConfig.sessionId)
+  assert.notEqual(firstConfig.appOrigin, new URL(first.webRtcPairingUrl).origin)
   assert.deepEqual(Object.keys(firstConfig).sort(), [
     'appOrigin', 'expiresAt', 'iceServers', 'relayJoinTokenHash', 'roomId',
     'sessionId', 'signalingUrl',

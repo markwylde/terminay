@@ -25,8 +25,11 @@ Remote browser access uses five concepts:
 
 - A **stable session origin** is the permanent HTTPS origin for one Terminay
   Server, such as `https://<server-id>.terminay.com`.
-- A **pairing URL** is that stable origin plus a short-lived, single-use secret
-  in the URL fragment.
+- A **pairing URL** is the advertised one-time enrollment link. Hosted servers
+  advertise it on `https://app.terminay.com` so paste-into-browser lands on the
+  PWA. The fragment is the one-time secret. A non-secret `s` query identifies
+  the stable session origin. Direct `/v1/` session URLs still enroll a
+  first-party session document, but they are not the copyable hosted link.
 - A **browser device identity** is one non-extractable private key. A
   first-party session document stores it at the stable session origin. A PWA
   framed session stores it in the manager vault slot for that origin. The
@@ -82,10 +85,10 @@ Exposure:
   reconnect. A later host claim for the same session must prove the same
   private key. A different key does not replace a live registration;
 - applies the configured six-digit PIN or explicit approval policy;
-- generates a short-lived pairing URL and QR code. Compact hosted links include
-  a non-secret `hostName` query from the exposing machine so the connection
-  manager can show a friendly label while the session id stays the stable
-  identifier;
+- generates a short-lived pairing URL and QR code. Hosted links are
+  `https://app.terminay.com/?s=<session-id>&hostName=<optional>#<secret>`.
+  The session subdomain stays the WebRTC peer. `hostName` is a non-secret
+  default label from the exposing machine;
 - displays exposure expiry, signaling and relay health, paired devices, and
   live connections; and
 - allows the administrator to generate another pairing URL, revoke a device,
@@ -101,38 +104,44 @@ The same exposure model applies to an embedded Local server and standalone
 pairing host: it registers the fragment-derived pairing room and the signed
 reconnect host (`device-host-ready`) before a pairing URL is advertised.
 
-## Browser journey A: direct pairing link
+## Browser journey A: open the pairing link
 
-1. The user opens the pairing URL directly.
-2. The stable session origin reads the fragment into memory and immediately
-   removes it from the visible URL and browser history.
-3. The browser establishes WebRTC and verifies the server identity.
-4. The user enters the server PIN or receives explicit server approval.
-5. The browser creates one non-extractable signing key.
-6. The server verifies the pairing secret and PIN/approval, registers the
-   public device key, and marks the pairing secret consumed.
-7. The authenticated session installs and opens the server's workspace bundle.
+1. The user copies the pairing URL from Terminay and pastes it into a browser,
+   or opens the QR. The advertised hosted URL is on `app.terminay.com`.
+2. The manager consumes the fragment in memory and strips query and hash from
+   the visible URL and history.
+3. The manager asks whether to **Save and connect**, with an optional title
+   prefilled from `hostName` or the session id.
+4. Cancel discards the pairing material and does not save a profile.
+5. Confirm saves or updates the manager profile with that title, keeps
+   `https://app.terminay.com` as the top-level document, and loads the
+   reconstructed session pairing URL (`https://<session-id>.terminay.com/v1/#…`)
+   in a fullscreen iframe without storing the fragment.
+6. The framed session origin performs enrollment: WebRTC, PIN or approval,
+   device key, and workspace install. It loads or saves that origin's device
+   credential through the manager vault.
 
-The complete pairing URL cannot be used again. Opening the stable session
-origin later uses the registered browser device identity.
+A legacy first-party visit to `https://<session-id>.terminay.com/v1/#…` still
+enrolls at the session origin with session-origin IndexedDB and does not use
+the manager vault.
 
-## Browser journey B: `app.terminay.com` PWA
+The complete pairing URL cannot be used again. Opening the saved profile or
+the stable session origin later uses the registered browser device identity.
+
+## Browser journey B: `app.terminay.com` PWA add flow
 
 1. The user opens `https://app.terminay.com`.
 2. The PWA lists manager profiles stored in that browser.
 3. The user chooses **Add new connection**, then scans the pairing QR with the
    device camera, chooses a photo of that QR, or pastes a pairing URL.
-4. The PWA validates the URL, extracts its stable HTTPS origin, and immediately
-   saves or updates a manager profile for that origin.
-5. The PWA keeps `https://app.terminay.com` as the top-level document and
-   loads the complete pairing URL in a fullscreen iframe without storing the
-   fragment.
-6. The framed session origin performs the direct pairing journey. It asks the
-   manager for any stored device credential for its own origin and, after
-   enrollment, saves the new non-extractable key in the manager vault.
-7. **Back to connections** returns to the manager list without navigating
+4. The PWA validates the URL, including manager-origin hosted links and legacy
+   session-origin `/v1/` links, then uses the same **Save and connect** prompt
+   as opening the link in a browser.
+5. Confirm frames the reconstructed session pairing URL without leaving
+   `app.terminay.com`.
+6. **Back to connections** returns to the manager list without navigating
    `window.top`.
-8. Selecting a saved profile loads that stable session origin in the same
+7. Selecting a saved profile loads that stable session origin in the same
    fullscreen iframe. The session authenticates with the vaulted device key
    and reconnects.
 
@@ -140,10 +149,9 @@ If the framed session has no valid device identity, that session page asks
 for a fresh pairing URL. The manager profile remains until the user chooses
 **Forget**, which also deletes that origin's vault slot.
 
-**Open in new tab** and a pairing URL opened outside the PWA use a first-party
-session document. That document stores its device key in session-origin
-IndexedDB and does not share the manager vault. Direct and framed credentials
-for the same origin are separate.
+**Open in new tab** uses a first-party session document. That document stores
+its device key in session-origin IndexedDB and does not share the manager
+vault. Direct and framed credentials for the same origin are separate.
 
 The framed host uses one closed, origin-checked `postMessage` schema for
 device credentials, clipboard, microphone, notifications, and shell control.
@@ -170,10 +178,16 @@ Safari.
 
 ## Desktop journey
 
-Terminay Desktop accepts the same pairing URL. Its privileged connection host
-consumes the fragment, creates a device key in OS-protected storage, enrolls
-the device, saves the stable origin as a remote profile, and opens the selected
-server's verified workspace bundle in a sandboxed window.
+Terminay Desktop **Add connection** accepts the same pairing URL as the
+browser, including hosted `https://app.terminay.com/?s=…#…` links. The
+privileged connection host never treats `app.terminay.com` as the server. It
+reads the session id from `s`, the one-time secret from the fragment, and
+the default profile label from `hostName` when present.
+
+It then pairs against the stable session origin using the existing device-enroll
+exchange on that origin. The device key stays in OS-protected storage. The
+saved remote profile is the session origin plus that label. The selected
+server's verified workspace bundle opens in a sandboxed window.
 
 Desktop renderers receive an opaque authenticated byte endpoint and non-secret
 profile identity. Pairing secrets and private device keys remain in the
@@ -234,12 +248,14 @@ The manager profile store contains only:
 - canonical stable session origin; and
 - created and last-opened timestamps.
 
-The manager accepts the pairing URL path needed for enrollment but stores only
-its stable origin as the bookmark. A non-secret `hostName` query may supply the
-default local label from the exposing server's machine hostname. The user can
-rename that label. The manager rejects URL credentials, unsupported schemes,
-and any other query, and never stores the pairing fragment or complete pairing
-URL.
+The manager accepts hosted pairing URLs on `app.terminay.com` and legacy
+session-origin `/v1/` URLs. It stores only the reconstructed stable session
+origin as the bookmark. A non-secret `hostName` query may supply the default
+local label. Opening or pasting a pairing URL asks **Save and connect** before
+that bookmark is written; the user may set a title there. The manager rejects
+URL credentials, unsupported schemes, and any query other than `s`,
+`hostName`, and `pairingExpiresAt`. It never stores the pairing fragment or
+complete pairing URL.
 
 The framed-session vault is separate from the bookmark list. It stores only
 that origin's non-extractable device private key plus the non-secret device
@@ -369,16 +385,23 @@ origin.
 
 ## Acceptance outcomes
 
-- Opening a pairing URL directly enrolls the browser and opens the workspace.
-- Opening that stable session origin later reconnects without the pairing URL.
+- Opening a hosted pairing URL lands on `app.terminay.com`, asks **Save and
+  connect** with an optional title, and frames session-origin enrollment
+  without leaving the manager.
+- Cancel on that prompt does not save a profile or consume the pairing as a
+  stored bookmark.
+- Opening that stable session origin later, or selecting the saved profile,
+  reconnects without the pairing URL.
 - A second host that knows only the session origin cannot replace the
   registered reconnect host.
-- Adding a pairing URL in the PWA immediately saves its stable-origin profile
-  and frames the session-origin enrollment without leaving `app.terminay.com`.
+- Scanning or pasting the same pairing URL in the PWA uses the same save
+  prompt and frames enrollment without leaving `app.terminay.com`.
 - Returning to the PWA list unloads the iframe; selecting the profile frames
   the stable session origin and reconnects from the manager vault.
-- **Open in new tab** and a direct pairing URL enroll at the first-party
-  session origin.
+- **Open in new tab** and a legacy first-party `/v1/` pairing URL enroll at
+  the session origin with session-origin IndexedDB.
+- Desktop **Add connection** accepts the same hosted pairing URL, pairs
+  against the session origin, and never enrolls against `app.terminay.com`.
 - The pairing fragment never appears in manager storage, session URLs after
   consumption, requests, logs, or analytics.
 - The browser stores one durable private device key per session origin
