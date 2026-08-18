@@ -33,6 +33,9 @@ import {
 } from '@terminay/protocol';
 import { deriveHostedPairingSecrets, hostedSessionId } from './hostedPairingSecrets.js';
 
+const HOSTED_PAIRING_LIFETIME_MS = 5 * 60 * 1000;
+const HOSTED_RECONNECT_AVAILABILITY_MS = 25 * 60 * 1000;
+
 export interface ServerRemoteExposureOptions {
 	readonly serverId: string;
 	readonly sessionOrigin: string;
@@ -115,9 +118,16 @@ export class ServerRemoteExposure {
 		| 'direct-device'
 		| 'hosted-compact';
 	private readonly hostName: string;
+	private readonly now: () => number;
+	private readonly pairingLifetimeMs: number;
 
 	constructor(options: ServerRemoteExposureOptions) {
 		const now = options.now ?? (() => Date.now());
+		this.now = now;
+		this.pairingLifetimeMs =
+			options.defaultLifetimeMs ??
+			options.pairing?.defaultLifetimeMs ??
+			HOSTED_PAIRING_LIFETIME_MS;
 		this.pairingUrlFormat = options.pairingUrlFormat ?? 'standalone';
 		this.hostName = sanitizePairingHostName(options.hostName ?? osHostname());
 		this.manager = new RemoteConnectionManager({
@@ -222,11 +232,11 @@ export class ServerRemoteExposure {
 		}
 		const qrSecret = mintHostedQrSecret();
 		const derived = deriveHostedPairingSecrets(qrSecret);
-		const expiry = expiresAt ?? Date.now() + 5 * 60 * 1000;
-		this.manager.expose(expiry);
+		const pairingExpiresAt = expiresAt ?? this.now() + this.pairingLifetimeMs;
+		this.ensureExposureCovers(pairingExpiresAt);
 		try {
 			const room = this.pairing.createIdentified({
-				expiresAt: expiry,
+				expiresAt: pairingExpiresAt,
 				roomId: derived.pairingRoomId,
 				secret: derived.pairingToken,
 			});
@@ -243,7 +253,35 @@ export class ServerRemoteExposure {
 	}
 
 	rotate(expiresAt?: number): ServerPairingHandoff {
+		if (this.pairingUrlFormat === 'hosted-compact') {
+			return this.rotateHostedPairing(expiresAt);
+		}
 		return this.rememberHandoff(this.controller.rotate(expiresAt));
+	}
+
+	/** Mint a replacement hosted pairing room without dropping reconnect availability. */
+	rotateHostedPairing(expiresAt?: number): ServerPairingHandoff {
+		if (this.pairingUrlFormat !== 'hosted-compact') {
+			return this.rotate(expiresAt);
+		}
+		if (this.manager.exposure.state !== 'exposed') {
+			throw new Error('remote exposure is not active');
+		}
+		const qrSecret = mintHostedQrSecret();
+		const derived = deriveHostedPairingSecrets(qrSecret);
+		const pairingExpiresAt = expiresAt ?? this.now() + this.pairingLifetimeMs;
+		this.ensureExposureCovers(pairingExpiresAt);
+		const room = this.pairing.rotateIdentified({
+			expiresAt: pairingExpiresAt,
+			roomId: derived.pairingRoomId,
+			secret: derived.pairingToken,
+		});
+		this.audit.record({ action: 'exposure-rotated', roomId: room.roomId });
+		return this.rememberHandoff({
+			...room,
+			compactQrSecret: qrSecret,
+			pairingUrl: room.sessionOrigin,
+		});
 	}
 
 	createPairing(expiresAt?: number): ServerPairingHandoff {
@@ -373,6 +411,20 @@ export class ServerRemoteExposure {
 		);
 		this.activePairingHandoff = projected;
 		return projected;
+	}
+
+	private ensureExposureCovers(pairingExpiresAt: number): void {
+		const minExpiry = Math.max(
+			pairingExpiresAt,
+			this.now() + HOSTED_RECONNECT_AVAILABILITY_MS,
+		);
+		const exposedUntil = this.manager.exposure.expiresAt ?? 0;
+		if (
+			this.manager.exposure.state !== 'exposed' ||
+			exposedUntil < pairingExpiresAt
+		) {
+			this.manager.expose(minExpiry);
+		}
 	}
 }
 

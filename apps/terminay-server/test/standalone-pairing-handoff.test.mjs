@@ -63,6 +63,36 @@ test('hosted compact pairing URL keeps the QR secret in the fragment', async () 
 	return exposure.shutdown();
 });
 
+test('hosted pairing rotation keeps exposure and reconnect availability longer than the QR', async () => {
+	const { deriveHostedPairingSecrets } = await import('../dist/remote/hostedPairingSecrets.js');
+	const now = Date.now();
+	const exposure = createServerRemoteExposure({
+		serverId: 'hosted-server',
+		sessionOrigin: 'https://abc12345.terminay.com',
+		pairingUrlFormat: 'hosted-compact',
+		cleanupIntervalMs: 0,
+	});
+
+	const first = exposure.start(now + 60_000);
+	const rotated = exposure.rotateHostedPairing(now + 120_000);
+	assert.notEqual(rotated.pairingUrl, first.pairingUrl);
+	assert.notEqual(rotated.pairingSessionId, first.pairingSessionId);
+	assert.equal(new URL(rotated.pairingUrl).hostname, 'app.terminay.com');
+	assert.equal(new URL(rotated.pairingUrl).searchParams.get('s'), 'abc12345');
+	assert.equal(
+		exposure.pairing.metadata(deriveHostedPairingSecrets(new URL(first.pairingUrl).hash.slice(1)).pairingRoomId),
+		undefined,
+	);
+	assert.equal(
+		exposure.pairing.metadata(deriveHostedPairingSecrets(new URL(rotated.pairingUrl).hash.slice(1)).pairingRoomId)?.state,
+		'active',
+	);
+	assert.equal(exposure.status.exposure.state, 'exposed');
+	assert.ok((exposure.status.exposure.expiresAt ?? 0) >= now + 120_000);
+
+	return exposure.shutdown();
+});
+
 test('hosted session ids come from the stable session hostname', async () => {
 	const { hostedSessionId } = await import('../dist/remote/hostedPairingSecrets.js');
 	assert.equal(hostedSessionId('https://abc12345.terminay.com'), 'abc12345');

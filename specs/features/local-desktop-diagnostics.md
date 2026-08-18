@@ -107,7 +107,13 @@ The normal diagnostic level records:
   shutdown, and startup/runtime/shutdown failure;
 - embedded Local server protocol-stream failures, including a client
   disconnect racing an event delivery, as a stable bounded error without
-  protocol frames, terminal content, credentials, or remote addresses; and
+  protocol frames, terminal content, credentials, or remote addresses;
+- hosted remote pairing signaling lifecycle: advertisement, host-registered,
+  pairing or device-host socket close, automatic QR rotation, client-join,
+  and registration failure, using only origin class (`manager`, `session`,
+  `loopback`, `other`), close-code, close-reason class, and remaining TTL;
+  diagnostics never record pairing URLs, fragments, PINs, room ids, session
+  ids, or hostnames; and
 - embedded Local terminal presentation congestion plus renderer recovery
   starts, retries, checkpoint commits, timeouts, and terminal failures, using
   only bounded attempt counts, durations, byte positions, queue measurements,

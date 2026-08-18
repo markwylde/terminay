@@ -2759,7 +2759,7 @@ export function SettingsWindow({
 					<span>Pairing PIN</span>
 					<input
 						className="settings-input-text"
-						type="text"
+						type="password"
 						value={pairingPinInput}
 						onChange={(event) => {
 							setPairingPinInput(

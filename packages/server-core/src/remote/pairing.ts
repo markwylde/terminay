@@ -194,6 +194,18 @@ export class RemotePairingStore {
 		return this.create(expiresAt);
 	}
 
+	/** Rotate to a caller-supplied hosted room id/secret without disconnecting peers. */
+	rotateIdentified(input: {
+		readonly roomId: ProtocolId;
+		readonly secret: string;
+		readonly expiresAt?: number;
+	}): RemotePairingRoom {
+		this.expireRooms();
+		for (const room of this.rooms.values())
+			if (room.state === 'active') room.state = 'rotated';
+		return this.createIdentified(input);
+	}
+
 	consume(attempt: RemotePairingAttempt): RemotePairingAdmission {
 		this.expireRooms();
 		if (

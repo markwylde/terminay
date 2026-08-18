@@ -1,5 +1,6 @@
 import type { FormEvent, RefObject } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { parseHostedPairingUrl } from '@terminay/protocol';
 import {
 	isRemoteAccessPairingPinConfigured,
 	PAIRING_PIN_PATTERN,
@@ -18,6 +19,9 @@ export function useRemoteAccessController(
 	const [actionError, setActionError] = useState<string | null>(null);
 	const [isToggling, setIsToggling] = useState(false);
 	const [isPairingModalOpen, setIsPairingModalOpen] = useState(false);
+	const [pairingOutcome, setPairingOutcome] = useState<'idle' | 'success'>(
+		'idle',
+	);
 	const [isPinModalOpen, setIsPinModalOpen] = useState(false);
 	const [pinInput, setPinInput] = useState('');
 	const [pinError, setPinError] = useState<string | null>(null);
@@ -49,15 +53,20 @@ export function useRemoteAccessController(
 	useEffect(() => {
 		const current = status?.activeConnectionCount ?? null;
 		const previous = previousConnectionCountRef.current;
+		previousConnectionCountRef.current = current;
 		if (
 			previous !== null &&
 			current !== null &&
 			current > previous &&
 			isPairingModalOpen
 		) {
-			setIsPairingModalOpen(false);
+			setPairingOutcome('success');
+			const timer = window.setTimeout(() => {
+				setIsPairingModalOpen(false);
+				setPairingOutcome('idle');
+			}, 1400);
+			return () => window.clearTimeout(timer);
 		}
-		previousConnectionCountRef.current = current;
 	}, [status?.activeConnectionCount, isPairingModalOpen]);
 
 	const closePinModal = useCallback((configured: boolean) => {
@@ -188,6 +197,7 @@ export function useRemoteAccessController(
 				}
 			}
 			if (next?.webRtcPairingUrl || next?.webRtcPairingQrCodeDataUrl) {
+				setPairingOutcome('idle');
 				setIsPairingModalOpen(true);
 			}
 		} catch (error) {
@@ -259,6 +269,8 @@ export function useRemoteAccessController(
 		menuRef: menuRef as RefObject<HTMLDivElement>,
 		openPairingQr,
 		pairingExpiresAt,
+		pairingOutcome,
+		pairingSessionOrigin: sessionOriginFromPairingUrl(pairingUrl),
 		pairingUrl,
 		pinError,
 		pinInput,
@@ -285,4 +297,19 @@ export function useRemoteAccessController(
 				? (pairingQrCodeDataUrl ?? generatedQrCodeDataUrl)
 				: null,
 	};
+}
+
+function sessionOriginFromPairingUrl(
+	pairingUrl: string | null | undefined,
+): string | null {
+	if (!pairingUrl) return null;
+	try {
+		return parseHostedPairingUrl(pairingUrl).origin;
+	} catch {
+		try {
+			return new URL(pairingUrl).origin;
+		} catch {
+			return null;
+		}
+	}
 }

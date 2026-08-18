@@ -5199,6 +5199,8 @@ function App({
 		menuRef: remoteMenuRef,
 		openPairingQr,
 		pairingExpiresAt: selectedPairingExpiresAt,
+		pairingOutcome,
+		pairingSessionOrigin: selectedPairingSessionOrigin,
 		pairingUrl: selectedPairingUrl,
 		pinError: pairingPinError,
 		pinInput: pairingPinInput,
@@ -6045,7 +6047,7 @@ function App({
 						<label>
 							<span>Pairing PIN</span>
 							<input
-								type="text"
+								type="password"
 								value={pairingPinInput}
 								onChange={(event) => {
 									setPairingPinInput(
@@ -6103,74 +6105,93 @@ function App({
 						/>
 
 						<div className="remote-pairing-modal__container">
-							<p className="remote-pairing-modal__copy">
-								Use this one-time link to pair a new browser or Desktop device.
-								That device can reconnect later from this server’s stable
-								origin.
-							</p>
-
-							{visiblePairingQrCodeDataUrl ? (
-								<div className="remote-pairing-modal__content">
-									<div className="remote-pairing-modal__qr-card">
-										<img
-											className="remote-pairing-modal__qr"
-											src={visiblePairingQrCodeDataUrl}
-											alt="Remote pairing QR code"
-										/>
+							{pairingOutcome === 'success' ? (
+								<div
+									className="remote-pairing-modal__success"
+									role="status"
+									aria-live="polite"
+								>
+									<div className="remote-pairing-modal__success-mark" aria-hidden="true">
+										✓
 									</div>
-									<div className="remote-pairing-modal__address-section">
-										<div className="remote-pairing-modal__address-label">
-											Session origin
-										</div>
-										<div className="remote-pairing-modal__address-text">
-											{selectedPairingUrl
-												? new URL(selectedPairingUrl).origin
-												: 'Not available'}
-										</div>
-										<div className="remote-pairing-modal__address-label">
-											One-time pairing link
-										</div>
-										<div className="remote-pairing-modal__address-box">
-											<div className="remote-pairing-modal__address-text">
-												{selectedPairingUrl || 'No pairing link available yet.'}
-											</div>
-											{selectedPairingUrl ? (
-												<button
-													type="button"
-													className="remote-pairing-modal__copy-btn"
-													onClick={() => {
-														void (
-															writeClipboardText(selectedPairingUrl) ??
-															navigator.clipboard.writeText(selectedPairingUrl)
-														)
-															.then(() => {
-																setIsLinkCopied(true);
-																setTimeout(() => setIsLinkCopied(false), 2000);
-															})
-															.catch(() => setIsLinkCopied(false));
-													}}
-												>
-													{isLinkCopied ? 'Copied' : 'Copy pairing link'}
-												</button>
-											) : null}
-										</div>
-										{selectedPairingExpiresAt ? (
-											<p className="remote-pairing-modal__expires-text">
-												Expires{' '}
-												{new Date(selectedPairingExpiresAt).toLocaleString()}.
-											</p>
-										) : null}
-									</div>
+									<p className="remote-pairing-modal__success-title">Connected</p>
+									<p className="remote-pairing-modal__copy">
+										That browser is paired. It can reconnect from this server’s
+										stable origin.
+									</p>
 								</div>
-							) : selectedPairingUrl ? (
-								<p className="remote-pairing-modal__copy">
-									{remoteStatus?.webRtcStatusMessage ??
-										'Preparing the secure WebRTC session…'}
-								</p>
 							) : (
-								<p className="remote-pairing-modal__copy">
-									Expose this server to generate a pairing link.
-								</p>
+								<>
+									<p className="remote-pairing-modal__copy">
+										Use this one-time link to pair a new browser or Desktop device.
+										That device can reconnect later from this server’s stable
+										origin.
+									</p>
+
+									{visiblePairingQrCodeDataUrl ? (
+										<div className="remote-pairing-modal__content">
+											<div className="remote-pairing-modal__qr-card">
+												<img
+													key={visiblePairingQrCodeDataUrl}
+													className="remote-pairing-modal__qr"
+													src={visiblePairingQrCodeDataUrl}
+													alt="Remote pairing QR code"
+												/>
+											</div>
+											<div className="remote-pairing-modal__address-section">
+												<div className="remote-pairing-modal__address-label">
+													Session origin
+												</div>
+												<div className="remote-pairing-modal__address-text">
+													{selectedPairingSessionOrigin || 'Not available'}
+												</div>
+												<div className="remote-pairing-modal__address-label">
+													One-time pairing link
+												</div>
+												<div className="remote-pairing-modal__address-box">
+													<div className="remote-pairing-modal__address-text">
+														{selectedPairingUrl || 'No pairing link available yet.'}
+													</div>
+													{selectedPairingUrl ? (
+														<button
+															type="button"
+															className="remote-pairing-modal__copy-btn"
+															onClick={() => {
+																void (
+																	writeClipboardText(selectedPairingUrl) ??
+																	navigator.clipboard.writeText(selectedPairingUrl)
+																)
+																	.then(() => {
+																		setIsLinkCopied(true);
+																		setTimeout(() => setIsLinkCopied(false), 2000);
+																	})
+																	.catch(() => setIsLinkCopied(false));
+															}}
+														>
+															{isLinkCopied ? 'Copied' : 'Copy pairing link'}
+														</button>
+													) : null}
+												</div>
+												{selectedPairingExpiresAt ? (
+													<p className="remote-pairing-modal__expires-text">
+														Expires{' '}
+														{new Date(selectedPairingExpiresAt).toLocaleString()}.
+														A replacement QR appears automatically before then.
+													</p>
+												) : null}
+											</div>
+										</div>
+									) : selectedPairingUrl ? (
+										<p className="remote-pairing-modal__copy">
+											{remoteStatus?.webRtcStatusMessage ??
+												'Preparing the secure WebRTC session…'}
+										</p>
+									) : (
+										<p className="remote-pairing-modal__copy">
+											Expose this server to generate a pairing link.
+										</p>
+									)}
+								</>
 							)}
 						</div>
 					</div>

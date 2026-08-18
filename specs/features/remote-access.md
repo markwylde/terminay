@@ -89,15 +89,25 @@ Exposure:
   `https://app.terminay.com/?s=<session-id>&hostName=<optional>#<secret>`.
   The session subdomain stays the WebRTC peer. `hostName` is a non-secret
   default label from the exposing machine;
+- keeps the advertised QR current: when a pairing room is within seconds of
+  expiry, Desktop mints a replacement room and the QR card visibly refreshes
+  without disconnecting live clients or dropping reconnect availability;
 - displays exposure expiry, signaling and relay health, paired devices, and
   live connections; and
 - allows the administrator to generate another pairing URL, revoke a device,
   or stop exposure.
 
+A pairing room is one-time and short-lived. Exposure and the signed reconnect
+host (`device-host-ready`) stay up until the administrator stops exposure.
+Pairing-room expiry, pairing-socket close, or minting a replacement QR must
+not close live WebRTC peers or unregister the reconnect host. Desktop
+refreshes `device-host-ready` before that registration expires.
+
 Generating another pairing URL keeps the stable session origin, registered
-devices, live connections, and server-owned PTYs unchanged. Stopping exposure
-blocks pairing and reconnect while leaving Local Desktop use and server-owned
-work running.
+devices, live connections, and server-owned PTYs unchanged. After a browser
+pairs, the QR modal shows a brief success state and then closes. Stopping
+exposure blocks pairing and reconnect while leaving Local Desktop use and
+server-owned work running.
 
 The same exposure model applies to an embedded Local server and standalone
 `terminay-server`. Desktop and the CLI both start the server-owned hosted
@@ -338,6 +348,8 @@ origin.
 ## Failure behaviour
 
 - An expired or consumed pairing URL asks the user to generate another one.
+  The exposing Desktop host auto-rotates its advertised QR before that
+  happens, so a QR left on screen remains a live room.
 - A missing browser device key asks for a fresh pairing URL.
 - A revoked device cannot reconnect until enrolled as a new device.
 - A host that cannot prove the registered server host key cannot take over
@@ -355,7 +367,8 @@ origin.
 
 - Pairing URLs are short-lived and single-use.
 - The fragment is consumed in memory and is never sent in an HTTP request.
-- Pairing requires the fragment plus PIN or explicit approval.
+- Pairing requires the fragment plus PIN or explicit approval. Pairing PIN
+  fields use a password input so the six-digit code is not shown in the clear.
 - A public session origin, server id, device id, or PIN alone grants no access.
 - Signaling admits a reconnect host only with proof of the registered server
   host key. A public session origin or server id cannot become the WebRTC host
