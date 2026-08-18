@@ -234,17 +234,25 @@ export async function startHostedPairingHost(
 			});
 			void refreshPairing('socket-closed');
 		});
-		await waitForOpen(socket);
-		if (closed || generation !== pairingGeneration) return;
-		socket.send(
-			JSON.stringify({
-				expiresAt: handoff.pairingExpiresAt,
-				relayJoinTokenHash: derived.relayJoinTokenHash,
-				roomId: derived.pairingRoomId,
-				type: 'host-ready',
-			}),
-		);
-		await registered.promise;
+		try {
+			await waitForOpen(socket);
+			if (closed || generation !== pairingGeneration) {
+				void registered.promise.catch(() => undefined);
+				return;
+			}
+			socket.send(
+				JSON.stringify({
+					expiresAt: handoff.pairingExpiresAt,
+					relayJoinTokenHash: derived.relayJoinTokenHash,
+					roomId: derived.pairingRoomId,
+					type: 'host-ready',
+				}),
+			);
+			await registered.promise;
+		} catch (error) {
+			void registered.promise.catch(() => undefined);
+			throw error;
+		}
 		if (closed || generation !== pairingGeneration) return;
 		pairingReady = true;
 		diagnose({
@@ -281,19 +289,27 @@ export async function startHostedPairingHost(
 			});
 			void refreshDevice('socket-closed');
 		});
-		await waitForOpen(socket);
-		if (closed || generation !== deviceGeneration) return;
-		deviceExpiresAt = Date.now() + DEVICE_HOST_AVAILABILITY_MS;
-		socket.send(
-			JSON.stringify(
-				createDeviceHostReadyMessage({
-					expiresAt: new Date(deviceExpiresAt).toISOString(),
-					hostKey: options.hostKey,
-					sessionId,
-				}),
-			),
-		);
-		await registered.promise;
+		try {
+			await waitForOpen(socket);
+			if (closed || generation !== deviceGeneration) {
+				void registered.promise.catch(() => undefined);
+				return;
+			}
+			deviceExpiresAt = Date.now() + DEVICE_HOST_AVAILABILITY_MS;
+			socket.send(
+				JSON.stringify(
+					createDeviceHostReadyMessage({
+						expiresAt: new Date(deviceExpiresAt).toISOString(),
+						hostKey: options.hostKey,
+						sessionId,
+					}),
+				),
+			);
+			await registered.promise;
+		} catch (error) {
+			void registered.promise.catch(() => undefined);
+			throw error;
+		}
 		if (closed || generation !== deviceGeneration) return;
 		deviceReady = true;
 		diagnose({ type: 'registered', scope: 'device', signalingHostClass });
@@ -387,16 +403,26 @@ export async function startHostedPairingHost(
 	});
 
 	let registrationTimeout: ReturnType<typeof setTimeout> | undefined;
-	await Promise.race([
-		Promise.all([registerPairing(currentHandoff), registerDevice()]).finally(() => {
-			clearTimeout(registrationTimeout);
-		}),
-		new Promise<never>((_, reject) => {
-			registrationTimeout = setTimeout(() => {
-				reject(new Error('Hosted signaling room registration timed out.'));
-			}, INITIAL_REGISTER_TIMEOUT_MS);
-		}),
-	]);
+	try {
+		await Promise.race([
+			Promise.all([registerPairing(currentHandoff), registerDevice()]).finally(() => {
+				clearTimeout(registrationTimeout);
+			}),
+			new Promise<never>((_, reject) => {
+				registrationTimeout = setTimeout(() => {
+					reject(new Error('Hosted signaling room registration timed out.'));
+				}, INITIAL_REGISTER_TIMEOUT_MS);
+			}),
+		]);
+	} catch (error) {
+		diagnose({
+			type: 'failed',
+			signalingHostClass,
+			cause: error instanceof Error ? error.message : 'unknown',
+		});
+		await close();
+		throw error;
+	}
 
 	return { close };
 
@@ -420,7 +446,9 @@ function openSignalSocket(
 		servername: url.hostname,
 	};
 	if (signal?.insecureTls === true) socketOptions.rejectUnauthorized = false;
-	return new WebSocket(connectUrl, socketOptions);
+	const socket = new WebSocket(connectUrl, socketOptions);
+	socket.on('error', () => undefined);
+	return socket;
 }
 
 function closeSocket(socket: WebSocket | undefined): void {
@@ -458,6 +486,9 @@ function waitForSignalType(
 		reject?.(error);
 	};
 	socket.once('error', () => fail(new Error('Hosted signaling room registration failed.')));
+	socket.once('close', () =>
+		fail(new Error('Hosted signaling closed before the room registered.')),
+	);
 	return {
 		promise,
 		handle(message) {
@@ -508,9 +539,25 @@ function formatConnectHost(host: string, port: string): string {
 
 function waitForOpen(socket: WebSocket): Promise<void> {
 	if (socket.readyState === WebSocket.OPEN) return Promise.resolve();
+	if (socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED) {
+		return Promise.reject(new Error('Hosted signaling could not connect.'));
+	}
 	return new Promise((resolve, reject) => {
-		socket.once('open', () => resolve());
-		socket.once('error', () => reject(new Error('Hosted signaling could not connect.')));
+		let settled = false;
+		const finish = (error?: Error) => {
+			if (settled) return;
+			settled = true;
+			socket.off('open', onOpen);
+			socket.off('error', onFail);
+			socket.off('close', onFail);
+			if (error) reject(error);
+			else resolve();
+		};
+		const onOpen = () => finish();
+		const onFail = () => finish(new Error('Hosted signaling could not connect.'));
+		socket.once('open', onOpen);
+		socket.once('error', onFail);
+		socket.once('close', onFail);
 	});
 }
 
