@@ -86,6 +86,15 @@ terminal title into an identity boundary.
   processes, Terminay reports the affected terminal count and asks whether to
   **Close Project** or **Keep Running**. Moving a project or terminal between
   views is not a close and never triggers this warning.
+- Closing a native project-host window uses the same bounded fresh
+  foreground-process observation for terminals in that window's workspace view.
+  Activity snapshots are not sufficient: a command that has already started may
+  not yet be committed as `foregroundBusy`. If one or more of those terminals
+  have a non-shell foreground process, Terminay asks whether to **Close Window**
+  or **Keep Running**. The final project-host window uses **Quit Terminay**
+  instead. If the sample cannot complete, the window closes immediately unless a
+  committed or partial sample already identified a non-shell foreground
+  process.
 
 ## Boundaries and persistence
 
