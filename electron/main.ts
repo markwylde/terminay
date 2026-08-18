@@ -2946,24 +2946,23 @@ async function enrollPairedDesktopRemoteProfile(
 	pairingUrl: string,
 	pairingPin: string,
 ): Promise<RememberedRemoteConnection> {
-	const origin = new URL(pairingUrl).origin;
-	loadRememberedRemoteConnections();
-	const existing = [...rememberedRemoteConnections.values()].find(
-		(candidate) => candidate.origin === origin,
-	);
-	const profile: RememberedRemoteConnection = Object.freeze({
-		id: existing?.id ?? `remote:${randomUUID()}`,
-		kind: 'standalone',
-		label: existing?.label ?? new URL(origin).host,
-		origin,
-	});
-	await establishDesktopDevicePairing({
+	const enrolled = await establishDesktopDevicePairing({
 		deviceName: 'Terminay Desktop',
 		pairingPin,
 		pairingUrl,
 		store: createDesktopDeviceCredentialStore(),
 	});
-	return profile;
+	const origin = enrolled.origin;
+	loadRememberedRemoteConnections();
+	const existing = [...rememberedRemoteConnections.values()].find(
+		(candidate) => candidate.origin === origin,
+	);
+	return Object.freeze({
+		id: existing?.id ?? `remote:${randomUUID()}`,
+		kind: 'standalone',
+		label: existing?.label ?? enrolled.label ?? new URL(origin).host,
+		origin,
+	});
 }
 
 /** Prepare one authenticated remote lane and its verified server bundle for a

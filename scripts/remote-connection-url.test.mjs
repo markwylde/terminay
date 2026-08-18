@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 
 const directory = await mkdtemp(
@@ -10,6 +11,11 @@ const directory = await mkdtemp(
 );
 const output = join(directory, 'connectionUrl.mjs');
 await build({
+	alias: {
+		'@terminay/protocol': fileURLToPath(
+			new URL('../packages/protocol/src/index.ts', import.meta.url),
+		),
+	},
 	bundle: true,
 	entryPoints: ['electron/remote/connectionUrl.ts'],
 	format: 'esm',
@@ -53,6 +59,17 @@ test('accepts the explicit device-pairing fragment and rejects query credentials
 test('distinguishes standalone protocol URLs from Remote Access device pairing URLs', () => {
 	const standalone = `https://terminay.example.test/#${'a'.repeat(43)}`;
 	assert.equal(policy.isRemoteAccessPairingUrl(policy.normalizeRemoteConnectionUrl(standalone)), false);
+});
+
+test('accepts hosted manager pairing URLs without treating app.terminay.com as the server', () => {
+	const sessionId = 'abc12345def67890abc12345def67890';
+	const secret = `${'A'.repeat(43)}`;
+	const hosted = `https://app.terminay.com/?s=${sessionId}&hostName=Studio-Mac#${secret}`;
+	const normalized = policy.normalizeRemoteConnectionUrl(hosted);
+	assert.equal(policy.isRemoteAccessPairingUrl(normalized), true);
+	assert.match(normalized, /^https:\/\/app\.terminay\.com\/\?/);
+	assert.doesNotMatch(normalized, /pairingToken=/);
+	assert.equal(new URL(normalized).searchParams.get('s'), sessionId);
 });
 
 test('rejects unsafe or ambiguous remote pairing URLs with clear messages', () => {

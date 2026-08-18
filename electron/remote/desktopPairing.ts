@@ -1,3 +1,5 @@
+import { parseHostedPairingUrl } from '@terminay/protocol'
+import { deriveHostedPairingSecrets } from '../../apps/terminay-server/src/remote/hostedPairingSecrets'
 import { establishDevicePairing } from '../../src/remote/services/devicePairingFlow'
 import { parsePairingBootstrap } from '../../src/remote/services/pairing'
 import type { DesktopDeviceCredentialStore } from './deviceCredentialStore'
@@ -25,14 +27,41 @@ const DEFAULT_PAIRING_REQUEST_TIMEOUT_MS = 15_000
  * Desktop receives pairing URLs from an untrusted clipboard/renderer input.
  * Do this validation before the pairing flow can issue either network request:
  * a pairing bootstrap identifies a server origin, not an arbitrary endpoint.
+ * Hosted links are advertised on app.terminay.com; the session subdomain is
+ * the peer.
  */
-function resolveDesktopPairingOrigin(pairingUrl: string): string {
+function resolveDesktopPairingTarget(pairingUrl: string): Readonly<{
+  bootstrap: ReturnType<typeof parsePairingBootstrap>
+  label: string
+  origin: string
+}> {
+  try {
+    const hosted = parseHostedPairingUrl(pairingUrl)
+    const derived = deriveHostedPairingSecrets(hosted.fragment)
+    const pairingExpiresAt = hosted.pairingExpiresAt || new Date(Date.now() + 10 * 60 * 1000).toISOString()
+    return Object.freeze({
+      bootstrap: Object.freeze({
+        pairingExpiresAt,
+        pairingSessionId: derived.pairingRoomId,
+        pairingToken: derived.pairingToken,
+      }),
+      label: hosted.label,
+      origin: hosted.origin,
+    })
+  } catch (hostedError) {
+    if (!(hostedError instanceof TypeError)) throw hostedError
+  }
   const url = new URL(pairingUrl)
   const isLoopbackHttp = url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
   if ((url.protocol !== 'https:' && !isLoopbackHttp) || url.username || url.password || url.pathname !== '/' || url.search) {
     throw new TypeError('Desktop pairing URL must be an exact HTTPS or loopback HTTP origin with a fragment.')
   }
-  return url.origin
+  const bootstrap = parsePairingBootstrap(pairingUrl)
+  return Object.freeze({
+    bootstrap,
+    label: url.host,
+    origin: url.origin,
+  })
 }
 
 function assertUsableDesktopPairingBootstrap(bootstrap: Readonly<{ pairingExpiresAt: string }>): void {
@@ -86,16 +115,17 @@ export async function establishDesktopDevicePairing(options: Readonly<{
    * Desktop connection dialog in an indeterminate Connecting state. */
   pairingRequestTimeoutMs?: number
   store: DesktopDeviceCredentialStore
-}>): Promise<Readonly<{ deviceId: string; deviceName: string; origin: string }>> {
-  const origin = resolveDesktopPairingOrigin(options.pairingUrl)
-  const bootstrap = parsePairingBootstrap(options.pairingUrl)
-  assertUsableDesktopPairingBootstrap(bootstrap)
+}>): Promise<Readonly<{ deviceId: string; deviceName: string; label: string; origin: string }>> {
+  const target = resolveDesktopPairingTarget(options.pairingUrl)
+  assertUsableDesktopPairingBootstrap(target.bootstrap)
   const fetchImplementation = options.fetch ?? (globalThis.fetch as unknown as DesktopPairingFetch)
   if (typeof fetchImplementation !== 'function') throw new Error('Desktop pairing requires a network fetch implementation.')
   const pairingRequestTimeoutMs = options.pairingRequestTimeoutMs ?? DEFAULT_PAIRING_REQUEST_TIMEOUT_MS
   if (!Number.isInteger(pairingRequestTimeoutMs) || pairingRequestTimeoutMs < 1_000 || pairingRequestTimeoutMs > 30_000) {
     throw new RangeError('Desktop pairing request timeout must be between 1 and 30 seconds.')
   }
+  const origin = target.origin
+  const bootstrap = target.bootstrap
 
   const result = await establishDevicePairing({
     api: {
@@ -128,5 +158,5 @@ export async function establishDesktopDevicePairing(options: Readonly<{
     origin,
     pairingPin: options.pairingPin,
   })
-  return Object.freeze({ deviceId: result.deviceId, deviceName: result.deviceName, origin })
+  return Object.freeze({ deviceId: result.deviceId, deviceName: result.deviceName, label: target.label, origin })
 }

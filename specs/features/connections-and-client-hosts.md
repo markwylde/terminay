@@ -329,32 +329,37 @@ mutate a logical view without a typed server command.
 Terminay supports two browser entry journeys. Both use the same session-origin
 pairing, credential, server-bundle, and reconnect contracts.
 
-### Direct pairing link
+### Open the hosted pairing link
 
-1. The user opens the generated pairing URL directly, including its one-time
+1. The user copies the pairing URL shown in Terminay. Hosted servers advertise
+   `https://app.terminay.com/?s=<session-id>&hostName=<optional>#<secret>`.
+2. Pasting that URL into a browser, or opening the QR, lands on the manager.
+   The manager consumes the fragment in memory and strips query and hash from
+   the visible URL.
+3. The manager asks **Save and connect**, with an optional title prefilled from
+   `hostName` or the session id. Cancel discards the material. Confirm writes
+   the bookmark and frames
+   `https://<session-id>.terminay.com/v1/#<secret>` without storing the
    fragment.
-2. The exact server session origin consumes the fragment in memory and removes
-   it from the visible URL and browser history before loading other resources.
-3. The session origin establishes WebRTC, verifies and launches the selected
-   server bundle, obtains the user's PIN or approval, creates the browser device
-   key, and completes server enrollment.
-4. The session origin stores its non-extractable device private key in its own
-   IndexedDB/WebCrypto compartment. The one-time fragment is discarded.
-5. The connected workspace opens in that browser view.
-6. A later visit to the stable session origin reconnects the enrolled browser
-   with its stored credential and a fresh short-lived application ticket. It
-   does not require or accept reuse of the pairing URL.
+4. The framed session origin establishes WebRTC, verifies and launches the
+   selected server bundle, obtains the PIN or approval, creates the device key,
+   and completes enrollment. When framed, that key is stored in the manager
+   vault for `event.origin`.
+5. A later visit to the saved profile or the stable session origin reconnects
+   without reuse of the pairing URL.
+
+A legacy first-party visit to `https://<session-id>.terminay.com/v1/#<secret>`
+still enrolls at the session origin with session-origin IndexedDB.
 
 ### `app.terminay.com` PWA
 
 1. The user opens `https://app.terminay.com` and sees the connection manager.
 2. The user chooses **Add new connection**, then **Scan QR code** or **Paste
-   pairing URL**.
-3. The manager validates the URL, extracts its stable HTTPS origin, immediately
-   saves or updates a profile containing only that origin, a label, and local
-   timestamps, then frames the complete pairing URL without storing it.
-4. The session origin performs the direct-link pairing journey. When framed, it
-   persists the device key in the manager vault for its own origin.
+   pairing URL**, or opens a hosted pairing URL in this origin.
+3. The manager validates the URL (manager-origin hosted links and legacy
+   session-origin `/v1/` links), then uses the same **Save and connect** prompt.
+4. Confirm frames the reconstructed session pairing URL. When framed, the
+   session origin persists the device key in the manager vault.
 5. Returning to the manager unloads the iframe and restores the saved profile
    from local browser storage.
 6. Selecting the saved connection frames its stable session origin. That origin
@@ -374,16 +379,18 @@ fully inset from the viewport at narrow sizes. Starting a fresh pairing flow
 does not show a missing-saved-credential warning; enrollment errors appear only
 after an enrollment attempt fails.
 
-Desktop may accept the pairing URL in its connection menu even when the URL
-would otherwise open a browser. Browser and Desktop flows must produce the same
-server-side device and audit semantics.
+Desktop **Add connection** accepts the same pairing URL, including hosted
+`app.terminay.com` links, even when that URL would otherwise open a browser.
+It never pairs against the manager origin. Browser and Desktop flows must
+produce the same server-side device and audit semantics.
 
-The Desktop connection host consumes a pasted/deep-link pairing URL's
-one-time HTTPS fragment in memory, rejects credentials and query data, and
-persists only the exact session origin plus sanitized profile metadata. The
-fragment and any pairing URL path are never returned by the host profile API or
-serialized into the connection menu store; protocol pairing completes as a
-separate operation against that origin.
+The Desktop connection host consumes the pairing fragment in memory. Hosted
+links may carry non-secret `s`, `hostName`, and `pairingExpiresAt` query
+fields; pairing secrets stay in the fragment. It persists only the exact
+session origin plus sanitized profile metadata (default label from `hostName`).
+The fragment and complete pairing URL are never returned by the host profile
+API or serialized into the connection menu store. Enrollment runs against the
+reconstructed session origin, not `app.terminay.com`.
 
 On Desktop that operation is a closed host action: Electron performs device
 enrollment, stores the device private key in its credential compartment, verifies
@@ -531,11 +538,15 @@ WebRTC generation replacement and terminal resynchronization follow
   claiming that an unreachable session origin is connected.
 - Opening a pairing link directly enrolls the browser and later opening the
   stable session origin reconnects without the one-time link.
-- Scanning or adding a pairing URL in `app.terminay.com` saves its
-  stable-origin profile before framing session-origin pairing.
+- The advertised hosted pairing URL is on `app.terminay.com`. Opening it asks
+  **Save and connect** with an optional title, then frames session-origin
+  enrollment. Scanning or pasting that URL in `app.terminay.com` uses the same
+  prompt. The manager stores only the stable-origin profile, not the fragment.
 - Returning to `app.terminay.com` lists the saved connection, and selecting it
   frames the stable session origin and reconnects from the manager vault
   without reusing pairing material.
+- Desktop **Add connection** accepts the same hosted pairing URL and enrolls
+  against the session origin, not `app.terminay.com`.
 - Stable session origins run the server's exact bundled responsive UI.
 - Local Desktop, remote Desktop, and browser sessions launched against one
   server report the same verified bundle id; only their transport and declared
