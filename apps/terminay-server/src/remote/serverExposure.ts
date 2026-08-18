@@ -27,7 +27,11 @@ import {
 	type NodeDataChannelHeadlessHostOptions,
 	type NodeDataChannelHostEvent,
 } from './nodeDataChannelHost.js';
-import { deriveHostedPairingSecrets } from './hostedPairingSecrets.js';
+import {
+	formatHostedPairingUrl,
+	managerOriginFromSessionOrigin,
+} from '@terminay/protocol';
+import { deriveHostedPairingSecrets, hostedSessionId } from './hostedPairingSecrets.js';
 
 export interface ServerRemoteExposureOptions {
 	readonly serverId: string;
@@ -62,7 +66,7 @@ export interface ServerRemoteExposureOptions {
 		onEvent: (event: NodeDataChannelHostEvent) => void,
 	) => NodeDataChannelHeadlessHost;
 	readonly cleanupIntervalMs?: number;
-	/** Hosted `/v1/` QR links use one raw derivation secret; Local HTTP uses named fields. */
+	/** Hosted QR links are advertised on the manager origin; Local HTTP uses named fragment fields. */
 	readonly pairingUrlFormat?:
 		| 'standalone'
 		| 'direct-device'
@@ -388,19 +392,28 @@ function toServerPairingHandoff(
 	const pairingToken = handoff.secret;
 	const url = new URL(handoff.sessionOrigin);
 	if (format === 'hosted-compact') {
-		url.pathname = '/v1/';
-		url.hash = handoff.compactQrSecret ?? handoff.secret;
-		if (hostName) url.searchParams.set('hostName', hostName);
-	} else {
-		url.pathname = '/';
-		url.hash = new URLSearchParams({
-			...(format === 'direct-device' ? { pairingFlow: 'device' } : {}),
+		return Object.freeze({
+			...handoff,
 			pairingExpiresAt,
 			pairingSessionId,
 			pairingToken,
-			...(hostName ? { hostName } : {}),
-		}).toString();
+			pairingUrl: formatHostedPairingUrl({
+				fragment: handoff.compactQrSecret ?? handoff.secret,
+				hostName,
+				managerOrigin: managerOriginFromSessionOrigin(handoff.sessionOrigin),
+				pairingExpiresAt,
+				sessionId: hostedSessionId(handoff.sessionOrigin),
+			}),
+		});
 	}
+	url.pathname = '/';
+	url.hash = new URLSearchParams({
+		...(format === 'direct-device' ? { pairingFlow: 'device' } : {}),
+		pairingExpiresAt,
+		pairingSessionId,
+		pairingToken,
+		...(hostName ? { hostName } : {}),
+	}).toString();
 	return Object.freeze({
 		...handoff,
 		pairingExpiresAt,
