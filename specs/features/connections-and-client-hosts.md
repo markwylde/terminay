@@ -226,36 +226,41 @@ and remote startup; no second workspace-window owner exists.
 - Its disconnected state is a connection picker: a saved-profile list with
   **Add new connection**, which opens a dedicated page to scan a pairing QR or
   paste a pairing URL, plus rename, open, and forget actions.
-- Selecting a profile opens it in the current browser view; an explicit action
-  can open another browser tab.
-- The PWA contains connection-profile management and navigation only.
+- Selecting a profile frames it in the current PWA view; an explicit action
+  can open a first-party session tab.
+- The PWA contains connection-profile management, the framed session host, and
+  the origin-keyed credential vault. It does not run the workspace. It shows
+  at most one framed session at a time.
 - Its installable application shell and saved profile list remain available
   offline; opening a profile requires the selected session origin to be
   reachable.
 - The exact session-origin shell owns one replaceable transport generation for
   its mounted workspace, device authentication, WebRTC/signaling, bundle
   installation, and connection errors.
-- The host stores only non-secret connection metadata in localStorage or an
-  equivalent browser store.
-- The non-extractable browser device key remains in IndexedDB/WebCrypto storage
-  on the exact server session origin.
-- The connection host cannot read terminal output, project names, paths, device
-  keys, PINs, or session-origin storage.
+- The host stores bookmark metadata in localStorage or an equivalent browser
+  store, and framed-session device credentials in manager-origin IndexedDB.
+- The non-extractable browser device key for a framed PWA session lives in that
+  manager vault. A first-party session document stores its key in
+  IndexedDB/WebCrypto on the exact server session origin.
+- The connection host cannot read terminal output, project names, paths, PINs,
+  or workspace data. It may clone a vaulted device key only into the session
+  iframe whose origin matches the vault slot.
 
 The PWA uses a Local-disabled `ConnectionProfileStore` and a versioned
 `terminay.web.connection-profiles.v1` metadata record. It restores malformed
-records defensively and requires explicit confirmation for forget. Opening a
-profile navigates to that exact HTTPS origin; an explicit new-tab action is
-host-controlled. Pairing fragments are handed to the stable session origin
-without being persisted or copied into the saved profile. Live connection,
-pairing, offline, and revocation states are presented by the session origin,
-not inferred by the manager.
+records defensively and requires explicit confirmation for forget. Opening a profile frames that exact HTTPS origin in the current PWA view; an
+explicit new-tab action is host-controlled and opens a first-party session
+document. Pairing fragments are handed to the stable session origin without
+being persisted or copied into the saved profile. Live connection, pairing,
+offline, and revocation states are presented by the session origin, not
+inferred by the manager.
 
 The manager accepts only sanitized profile metadata. A profile retains only a
 label, canonical origin, and local created/last-opened timestamps. Pairing URL
 paths and fragments are discarded when the manager derives that profile.
-Queries, origin userinfo, pairing material, device keys, and other credentials
-never become manager state.
+Queries, origin userinfo, pairing material, and other credentials never become
+bookmark state. Framed-session device credentials are vault state, not profile
+metadata.
 
 `app.terminay.com` is the stable connection manager. The selected server's
 verified bundle renders the workspace at its stable session origin.
@@ -263,7 +268,9 @@ verified bundle renders the workspace at its stable session origin.
 The stable session origin installs the selected server's bounded workspace
 bundle after authentication. Bundle transfer and validation follow
 [server runtime and application protocol](./server-runtime-and-protocol.md).
-Bundle bytes, credentials, and feature frames never enter the manager origin.
+Bundle bytes, feature frames, pairing fragments, PINs, and connection tickets
+never enter the manager origin. Framed-session device credentials enter only
+the origin-keyed vault.
 
 ## Server-bundled workspace and host shell
 
@@ -345,17 +352,19 @@ pairing, credential, server-bundle, and reconnect contracts.
    pairing URL**.
 3. The manager validates the URL, extracts its stable HTTPS origin, immediately
    saves or updates a profile containing only that origin, a label, and local
-   timestamps, then navigates to the complete pairing URL without storing it.
-4. The session origin performs the direct-link pairing journey.
-5. Returning to the manager restores the saved profile from local browser
-   storage.
-6. Selecting the saved connection opens its stable session origin. That origin
-   reads its own device credential and reconnects without a pairing URL.
+   timestamps, then frames the complete pairing URL without storing it.
+4. The session origin performs the direct-link pairing journey. When framed, it
+   persists the device key in the manager vault for its own origin.
+5. Returning to the manager unloads the iframe and restores the saved profile
+   from local browser storage.
+6. Selecting the saved connection frames its stable session origin. That origin
+   receives its device credential from the manager vault and reconnects without
+   a pairing URL.
 
-The manager does not participate in pairing and never receives the device key,
-PIN, connection ticket, terminal data, or workspace data. A missing or revoked
-session-origin device identity requests a newly generated pairing URL. The
-saved manager profile remains until the user chooses **Forget**.
+The manager does not participate in PIN entry and never receives the connection
+ticket, terminal data, or workspace data. A missing or revoked device identity
+requests a newly generated pairing URL. The saved manager profile remains until
+the user chooses **Forget**.
 
 Browser connection and device-enrollment prompts use the same centered,
 responsive modal surface and form controls as the rest of the disconnected
@@ -450,12 +459,16 @@ Allowed host-local profile data:
 - local window/view mapping and non-secret UI preferences;
 - known/offline/expired/revoked/archived/unreachable state.
 
-Forbidden in connection-manager localStorage, URLs, host messages, and logs:
+Forbidden in connection-manager localStorage, URLs, logs, and bookmark
+records:
 
 - pairing URL fragments and full unconsumed pairing URLs;
-- PINs, device private keys,
-  terminal tickets, or server secrets;
+- PINs, terminal tickets, or server secrets;
 - terminal output, command history, project roots, filenames, or recordings.
+
+Device private keys never enter bookmark storage, `localStorage`, URLs, or
+logs. In the framed PWA they live only in the origin-keyed manager IndexedDB
+vault and in closed `postMessage` clones to the matching session iframe.
 
 Desktop persistence is a closed allowlist: sanitized profiles, protected
 credential references, native geometry and exact profile/view bindings,
@@ -469,7 +482,8 @@ stable session origin, created time, and last-opened time. The default label
 comes from the pairing URL's non-secret `hostName` (the exposing server's
 machine hostname). The session id in the origin remains the stable identifier.
 The user can rename that local label. Pairing URL paths and fragments are
-discarded when the manager derives that profile.
+discarded when the manager derives that profile. Framed-session device
+credentials are a separate IndexedDB vault, not profile fields.
 
 ## Failure behaviour
 
@@ -518,10 +532,10 @@ WebRTC generation replacement and terminal resynchronization follow
 - Opening a pairing link directly enrolls the browser and later opening the
   stable session origin reconnects without the one-time link.
 - Scanning or adding a pairing URL in `app.terminay.com` saves its
-  stable-origin profile before navigating to session-origin pairing.
+  stable-origin profile before framing session-origin pairing.
 - Returning to `app.terminay.com` lists the saved connection, and selecting it
-  reconnects through the stable session origin without reusing pairing
-  material.
+  frames the stable session origin and reconnects from the manager vault
+  without reusing pairing material.
 - Stable session origins run the server's exact bundled responsive UI.
 - Local Desktop, remote Desktop, and browser sessions launched against one
   server report the same verified bundle id; only their transport and declared

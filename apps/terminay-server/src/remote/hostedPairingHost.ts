@@ -290,6 +290,23 @@ type SignalScope =
 	| { readonly kind: 'pairing'; readonly roomId: string }
 	| { readonly kind: 'device'; readonly sessionId: string };
 
+function hostedPeerConfiguration(connectHost: string | undefined): Record<string, unknown> {
+	const loopback =
+		connectHost === '127.0.0.1' || connectHost === 'localhost' || connectHost === '::1';
+	return {
+		iceServers: [],
+		maxMessageSize: 1024 * 1024,
+		...(loopback
+			? {
+					iceAdditionalHostAddresses: ['127.0.0.1'],
+					iceInterfaceAddresses: { udp4: '127.0.0.1' },
+					iceUseIpv4: false,
+					iceUseIpv6: false,
+				}
+			: {}),
+	};
+}
+
 function formatConnectHost(host: string, port: string): string {
 	return port ? `${host}:${port}` : host;
 }
@@ -312,7 +329,7 @@ async function startPeer(
 	}>,
 	onApplication: (connection: ServerConnectionLike) => void,
 ): Promise<WeriftPeer> {
-	const native = new Peer({ iceServers: [], maxMessageSize: 1024 * 1024 });
+	const native = new Peer(hostedPeerConfiguration(context.options.signal?.connectHost));
 	const peer = wrapPeer(native);
 	const channels = Object.fromEntries(
 		CHANNELS.map((label) => [label, peer.createDataChannel(label, { ordered: true })]),
