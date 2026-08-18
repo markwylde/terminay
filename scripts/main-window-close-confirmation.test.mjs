@@ -139,9 +139,10 @@ test('explicit application quit bypasses close confirmation', () => {
 	assert.equal(dialogCalls, 0);
 });
 
-test('an app containing only idle shells closes without a dialog', () => {
+test('an app containing only idle shells closes without a dialog', async () => {
 	const window = createWindow();
 	let dialogCalls = 0;
+	let closeCalls = 0;
 	bindMainWindowCloseConfirmation({
 		window,
 		isQuitting: () => false,
@@ -151,12 +152,50 @@ test('an app containing only idle shells closes without a dialog', () => {
 			dialogCalls += 1;
 			return { response: 1 };
 		},
-		requestQuit: () => assert.fail('idle close should use the native path'),
-		requestClose: () => assert.fail('idle close should use the native path'),
+		requestQuit: () => assert.fail('idle close should not quit'),
+		requestClose: () => {
+			closeCalls += 1;
+			window.emitClose();
+		},
 	});
 	const event = window.emitClose();
-	assert.equal(event.prevented(), 0);
+	assert.equal(event.prevented(), 1);
+	await settle();
 	assert.equal(dialogCalls, 0);
+	assert.equal(closeCalls, 1);
+});
+
+test('a delayed busy observation still warns before closing', async () => {
+	const window = createWindow();
+	let dialogCalls = 0;
+	let closeCalls = 0;
+	let receivedOptions;
+	bindMainWindowCloseConfirmation({
+		window,
+		isQuitting: () => false,
+		getRunningTerminalCount: async () => {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			return 1;
+		},
+		isLastWindow: () => false,
+		showConfirmation: async (_window, options) => {
+			dialogCalls += 1;
+			receivedOptions = options;
+			return { response: 1 };
+		},
+		requestQuit: () => assert.fail('Keep Running must not quit'),
+		requestClose: () => {
+			closeCalls += 1;
+		},
+	});
+
+	const event = window.emitClose();
+	assert.equal(event.prevented(), 1);
+	assert.equal(dialogCalls, 0);
+	await new Promise((resolve) => setTimeout(resolve, 50));
+	assert.equal(dialogCalls, 1);
+	assert.equal(closeCalls, 0);
+	assert.deepEqual(receivedOptions.buttons, ['Close Window', 'Keep Running']);
 });
 
 test('repeat close attempts share one pending confirmation', async () => {
@@ -183,6 +222,11 @@ test('repeat close attempts share one pending confirmation', async () => {
 	const second = window.emitClose();
 	assert.equal(first.prevented(), 1);
 	assert.equal(second.prevented(), 1);
+	assert.equal(dialogCalls, 0);
+	await settle();
+	assert.equal(dialogCalls, 1);
+	const third = window.emitClose();
+	assert.equal(third.prevented(), 1);
 	assert.equal(dialogCalls, 1);
 	resolveDialog({ response: 1 });
 	await settle();
