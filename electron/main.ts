@@ -9,6 +9,7 @@ import {
 	writeFileSync,
 } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
@@ -1692,12 +1693,22 @@ function writeSecrets(secrets: SecretRecord[]): void {
 	writeFileSync(getSecretsPath(), JSON.stringify(secrets, null, 2));
 }
 
+function resolveNodePtyRoot(): string {
+	try {
+		return path.dirname(
+			createRequire(import.meta.url).resolve('node-pty/package.json'),
+		);
+	} catch {
+		return path.join(process.cwd(), 'node_modules', 'node-pty');
+	}
+}
+
 function ensureNodePtySpawnHelperIsExecutable(): void {
 	if (process.platform === 'win32') {
 		return;
 	}
 
-	const nodePtyRoot = path.join(process.cwd(), 'node_modules', 'node-pty');
+	const nodePtyRoot = resolveNodePtyRoot();
 	const helperPaths = [
 		path.join(nodePtyRoot, 'build', 'Release', 'spawn-helper'),
 		path.join(nodePtyRoot, 'build', 'Debug', 'spawn-helper'),
