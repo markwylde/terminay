@@ -100,6 +100,22 @@ async function expectRenderedTerminalSelection(
 }
 
 test.describe('terminal behavior', () => {
+	test('creating a terminal from the tab bar focuses xterm', async ({
+		mainWindow,
+	}) => {
+		await expect(
+			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
+		).toHaveCount(1);
+		await mainWindow
+			.locator('.terminay-add-tab-button:not(.terminay-add-profile-tab-button)')
+			.first()
+			.click();
+		await expect(
+			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
+		).toHaveCount(2);
+		await expectTerminalInputFocused(mainWindow);
+	});
+
 	test('reorders terminal tabs when one is dragged and dropped', async ({
 		mainWindow,
 	}) => {
