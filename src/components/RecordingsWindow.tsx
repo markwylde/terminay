@@ -1,5 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
+import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal } from '@xterm/xterm'
 import {
   Check,
@@ -25,6 +26,7 @@ import {
 import { SharedRecordingsLibraryPane } from '../shared/SharedRecordingsLibraryPane'
 import { SharedRecordingsRouteBody } from '../shared/SharedRecordingsRouteBody'
 import type { RecordingListItem, RecordingsClient } from '@terminay/client-core'
+import { attachTerminalWebglRenderer } from './terminalWebglRenderer'
 import '../settings.css'
 import '../recordings.css'
 
@@ -663,6 +665,7 @@ export function RecordingsWindow({ client }: { readonly client: RecordingsClient
     terminal.loadAddon(new Unicode11Addon())
     terminal.unicode.activeVersion = '11'
     terminal.open(root)
+    const webglRenderer = attachTerminalWebglRenderer(terminal, () => new WebglAddon())
     const restoreMouseCoordinates = patchReplayTerminalMouseCoordinates(terminal, () => displayScaleRef.current)
     terminal.attachCustomKeyEventHandler(() => false)
     terminal.focus()
@@ -691,6 +694,7 @@ export function RecordingsWindow({ client }: { readonly client: RecordingsClient
       seekAbortRef.current?.abort()
       playbackAbortRef.current?.abort()
       restoreMouseCoordinates()
+      webglRenderer.dispose()
       terminal.dispose()
       terminalRef.current = null
     }
