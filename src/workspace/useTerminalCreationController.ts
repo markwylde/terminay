@@ -1,5 +1,6 @@
 import type { Direction, DockviewApi, DockviewGroupPanel } from 'dockview';
 import { type MutableRefObject, useCallback } from 'react';
+import { releaseCreatedTerminalChromeFocus } from '../components/terminalFocusInteraction';
 import { recordBootstrapDiagnostic } from '../shared/rendererDiagnostics';
 
 type SplitDirection = Extract<Direction, 'below' | 'right'>;
@@ -24,6 +25,27 @@ export function formatTerminalInitialInput(text: string): string {
 		return text;
 	}
 	return `\x1b[200~${text.replace(/\r\n?/g, '\n')}\x1b[201~`;
+}
+
+export function scheduleCreatedTerminalFocus(sessionId: string): void {
+	const announce = () => {
+		releaseCreatedTerminalChromeFocus(
+			document.activeElement instanceof HTMLElement
+				? document.activeElement
+				: null,
+		);
+		window.dispatchEvent(
+			new CustomEvent('terminay-focus-terminal', {
+				detail: { sessionId },
+			}),
+		);
+	};
+	announce();
+	window.requestAnimationFrame(() => {
+		announce();
+		window.requestAnimationFrame(announce);
+	});
+	window.setTimeout(announce, 50);
 }
 
 type UseTerminalCreationControllerOptions = {
@@ -59,40 +81,44 @@ async function activateCreatedTerminalPresentation(
 		referenceGroup: DockviewGroupPanel;
 	},
 ): Promise<{ panelId: string; title: string } | null> {
-	return await new Promise<{ panelId: string; title: string } | null>((resolve) => {
-		const startedAt = performance.now();
-		const inspect = () => {
-			const panel = apiRef.current?.panels.find(
-				(candidate) => candidate.params?.sessionId === sessionId,
-			);
-			if (panel) {
-				if (placement !== undefined) {
-					panel.api.moveTo({
-						group: placement.referenceGroup,
-						position:
-							placement.direction === 'below' ? 'bottom' : 'right',
-					});
-				}
-				panel.api.setActive();
-				// Dockview publishes its active-panel CSS/visibility state on the
-				// following render frame. Resolve only after that contract is in the
-				// DOM so callers cannot select the formerly active panel.
+	return await new Promise<{ panelId: string; title: string } | null>(
+		(resolve) => {
+			const startedAt = performance.now();
+			const inspect = () => {
+				const panel = apiRef.current?.panels.find(
+					(candidate) => candidate.params?.sessionId === sessionId,
+				);
+				if (panel) {
+					if (placement !== undefined) {
+						panel.api.moveTo({
+							group: placement.referenceGroup,
+							position: placement.direction === 'below' ? 'bottom' : 'right',
+						});
+					}
+					panel.api.setActive();
+					// Dockview publishes its active-panel CSS/visibility state on the
+					// following render frame. Focus only after that contract is in the
+					// DOM so xterm can actually take the caret from the creating control.
 					window.requestAnimationFrame(() => {
-						window.requestAnimationFrame(() => resolve({
-							panelId: panel.id,
-							title: panel.title ?? 'Terminal',
-						}));
+						window.requestAnimationFrame(() => {
+							scheduleCreatedTerminalFocus(sessionId);
+							resolve({
+								panelId: panel.id,
+								title: panel.title ?? 'Terminal',
+							});
+						});
 					});
-				return;
-			}
-			if (performance.now() - startedAt >= 1_000) {
-				resolve(null);
-				return;
-			}
-			window.requestAnimationFrame(inspect);
-		};
-		inspect();
-	});
+					return;
+				}
+				if (performance.now() - startedAt >= 1_000) {
+					resolve(null);
+					return;
+				}
+				window.requestAnimationFrame(inspect);
+			};
+			inspect();
+		},
+	);
 }
 
 export function useTerminalCreationController({
@@ -119,8 +145,7 @@ export function useTerminalCreationController({
 					? undefined
 					: {
 							direction: options.direction,
-							referenceGroup:
-								apiRef.current.activePanel.group,
+							referenceGroup: apiRef.current.activePanel.group,
 						};
 			if (!apiRef.current) {
 				return null;
@@ -133,16 +158,18 @@ export function useTerminalCreationController({
 
 				const { sessionId } = await createSession({
 					projectId,
-					...(activePanel === undefined ? {} : { activePanelId: activePanel.id }),
+					...(activePanel === undefined
+						? {}
+						: { activePanelId: activePanel.id }),
 					...(typeof options?.cwd === 'string' && options.cwd.length > 0
 						? { cwd: options.cwd }
 						: {}),
-					...(options?.profileId === undefined ? {} : { profileId: options.profileId }),
+					...(options?.profileId === undefined
+						? {}
+						: { profileId: options.profileId }),
 				});
 				suppressInitialActivity(sessionId);
-				recordBootstrapDiagnostic(
-					'app.workspace.create.await-delta',
-				);
+				recordBootstrapDiagnostic('app.workspace.create.await-delta');
 				if (options?.initialInput) {
 					const initialInput = options.initialInput;
 					window.setTimeout(() => {
@@ -161,13 +188,16 @@ export function useTerminalCreationController({
 				// result of a completed "new terminal" command.
 				const didSynchronize = await waitForCreatedTerminal?.(sessionId);
 				if (didSynchronize === false) {
-					throw new Error('Server did not publish a terminal panel for the created session.');
+					throw new Error(
+						'Server did not publish a terminal panel for the created session.',
+					);
 				}
 				if (options?.direction !== undefined && splitPanel !== undefined) {
 					await splitPanel({
 						projectId,
 						panelId: `p:${sessionId}`.slice(0, 128),
-						direction: options.direction === 'below' ? 'vertical' : 'horizontal',
+						direction:
+							options.direction === 'below' ? 'vertical' : 'horizontal',
 					});
 				}
 				const presented = await activateCreatedTerminalPresentation(
@@ -176,7 +206,9 @@ export function useTerminalCreationController({
 					splitPlacement,
 				);
 				if (!presented) {
-					throw new Error('Server did not publish a terminal panel for the created session.');
+					throw new Error(
+						'Server did not publish a terminal panel for the created session.',
+					);
 				}
 				onError(null);
 				// workspace.changed is the sole owner of Dockview presentation.
@@ -198,8 +230,8 @@ export function useTerminalCreationController({
 			projectId,
 			recordNewTerminals,
 			sendInput,
-		startRecording,
-		splitPanel,
+			startRecording,
+			splitPanel,
 			suppressInitialActivity,
 			waitForCreatedTerminal,
 		],
