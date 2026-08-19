@@ -76,11 +76,13 @@ terminal title into an identity boundary.
   foreground-process state only for that terminal's exact session; activity,
   output, agent work, or process observation in another terminal cannot delay
   it. Closing a terminal whose PTY has a non-shell foreground process asks
-  whether to **Close Terminal** or **Keep Running** before terminating it. Close
-  protection obtains a bounded fresh observation for that session. If the
-  sample cannot complete, Terminay still closes immediately unless a committed
-  or partial sample already identified a non-shell foreground process; missing
-  observation is not treated as a running process.
+  whether to **Close Terminal** or **Keep Running** before terminating it. A
+  silent interactive process remains busy even when it has helper children; a
+  unique running command is not required. Close protection obtains a bounded
+  fresh observation for that session. If the sample cannot complete, Terminay
+  still closes immediately unless a committed or partial sample already
+  identified a non-shell foreground process; missing observation is not treated
+  as a running process.
 - Closing a project proceeds immediately when all of its terminals are at their
   shell prompts. If one or more project terminals have non-shell foreground
   processes, Terminay reports the affected terminal count and asks whether to
@@ -130,6 +132,7 @@ client focus.
   hydrate the same panels and terminal sessions.
 - Terminal and project close warnings depend on canonical PTY foreground-process
   state, not recent output, agent status, tab attention, or display settings.
+  A silent non-shell foreground process still warns when it has helper children.
 - Sustained output or slow foreground-process observation in one terminal never
   delays an unrelated terminal close, workspace command, or project-view
   interaction. A terminal close remains scoped to its exact session; a project
