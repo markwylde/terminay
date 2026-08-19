@@ -116,7 +116,7 @@ test('reviewed native host actions are semantic and capability-gated', async () 
 		'menu.invoke',
 	]) assert.match(main, new RegExp(`case '${action.replace('.', '\\.')}':`, 'u'));
 	assert.match(main, /openInBrowser\(action\.url\)/u);
-	assert.match(main, /normalizeExternalHttpsUrl/u);
+	assert.match(main, /normalizeExternalUrl/u);
 	assert.doesNotMatch(main, /external\.open|DesktopHostBridgeRouter/u);
 });
 
