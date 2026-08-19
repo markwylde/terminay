@@ -2,12 +2,19 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#090b0e" />
     <meta name="referrer" content="no-referrer" />
     <link rel="icon" type="image/svg+xml" href="./terminay.svg" />
     <link rel="apple-touch-icon" href="./terminay.svg" />
     <title>Terminay</title>
+    <script>
+      try {
+        if (globalThis.parent !== globalThis) document.documentElement.classList.add('is-framed')
+      } catch {
+        document.documentElement.classList.add('is-framed')
+      }
+    </script>
   </head>
   <body>
     <div id="web-root"></div>

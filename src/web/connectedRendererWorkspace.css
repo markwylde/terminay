@@ -1,7 +1,7 @@
 .connected-web-renderer-workspace {
 	display: flex;
 	flex-direction: column;
-	height: 100dvh;
+	height: 100%;
 	width: 100%;
 }
 
@@ -23,6 +23,22 @@
 	color: #dce2f0;
 	padding-top: env(safe-area-inset-top, 0px);
 	user-select: none;
+}
+
+/* Safari copies the parent safe-area into iframe documents; Chromium reports
+   0. The manager already reserved the status bar and titlebar, so a framed
+   workspace must not add that inset or size itself with 100dvh. */
+html.is-framed .connected-web-menubar {
+	min-height: 30px;
+	padding-top: 0;
+}
+
+html.is-framed .connected-web-renderer-workspace,
+html.is-framed .workspace-shell,
+html.is-framed .responsive-workspace-shell {
+	min-height: 0;
+	height: 100%;
+	max-height: 100%;
 }
 
 .connected-web-menubar__menus {
