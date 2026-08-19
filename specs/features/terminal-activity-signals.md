@@ -149,7 +149,8 @@ observation. Destructive close protection obtains a bounded fresh observation
 only for its addressed session. If that sample cannot complete, it reports the
 limited state. Close protection warns only when a non-shell foreground process
 is known to be running; limited observation without that evidence does not
-prompt and does not wait.
+prompt and does not wait. Helper children of a non-shell foreground process
+do not make the session look idle.
 
 ## Fallback interpretation
 
