@@ -140,3 +140,74 @@ test('the workspace labels its connection from the session hostname, not the opa
 	assert.doesNotMatch(source, /label = new URL\(origin\)\.host/u);
 	assert.match(source, /serverId: hello\.serverId/u);
 });
+
+test('browser disconnect returns to the manager list instead of closing into a retry shell', async () => {
+	const source = await readFile('src/web/main.tsx', 'utf8');
+	assert.match(source, /leaveManagerSession\(\)/u);
+	assert.match(source, /if \(leaveManagerSession\(\)\) return;/u);
+});
+
+test('leaveManagerSession posts shell.back when framed and assigns the manager URL otherwise', () => {
+	const posted = [];
+	const assigned = [];
+	const parent = {
+		postMessage(message, origin) {
+			posted.push({ message, origin });
+		},
+	};
+	const framed = {
+		parent,
+		location: {
+			assign(url) {
+				assigned.push(url);
+			},
+		},
+	};
+	assert.equal(
+		contract.leaveManagerSession(
+			{ managerUrl: 'https://app.terminay.com/' },
+			framed,
+		),
+		true,
+	);
+	assert.deepEqual(posted, [
+		{
+			message: { type: 'shell.back', v: 1 },
+			origin: 'https://app.terminay.com',
+		},
+	]);
+	assert.deepEqual(assigned, []);
+
+	const top = {
+		location: {
+			assign(url) {
+				assigned.push(url);
+			},
+		},
+	};
+	top.parent = top;
+	assert.equal(
+		contract.leaveManagerSession(
+			{ managerUrl: 'https://app.terminay.com/' },
+			top,
+		),
+		true,
+	);
+	assert.deepEqual(assigned, ['https://app.terminay.com/']);
+
+	let called = 0;
+	assert.equal(
+		contract.leaveManagerSession(
+			{
+				leaveManager() {
+					called += 1;
+				},
+				managerUrl: 'https://app.terminay.com/',
+			},
+			framed,
+		),
+		true,
+	);
+	assert.equal(called, 1);
+	assert.equal(posted.length, 1);
+});
