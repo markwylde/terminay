@@ -185,6 +185,44 @@ export function useRemoteAccessController(
 		statusClient,
 	]);
 
+	const revokeDevice = useCallback(
+		async (deviceId: string) => {
+			if (statusClient === undefined) {
+				recordFailure(
+					new Error('Remote access controls are unavailable in this host.'),
+				);
+				return;
+			}
+			try {
+				const next = await statusClient.revokeDevice(deviceId);
+				setStatus(next);
+				setActionError(next.errorMessage);
+			} catch (error) {
+				recordFailure(error);
+			}
+		},
+		[recordFailure, statusClient],
+	);
+
+	const closeConnection = useCallback(
+		async (connectionId: string) => {
+			if (statusClient === undefined) {
+				recordFailure(
+					new Error('Remote access controls are unavailable in this host.'),
+				);
+				return;
+			}
+			try {
+				const next = await statusClient.closeConnection(connectionId);
+				setStatus(next);
+				setActionError(next.errorMessage);
+			} catch (error) {
+				recordFailure(error);
+			}
+		},
+		[recordFailure, statusClient],
+	);
+
 	const openPairingQr = useCallback(async () => {
 		setActionError(null);
 		try {
@@ -207,6 +245,15 @@ export function useRemoteAccessController(
 				setIsToggling(true);
 				try {
 					next = await statusClient.toggleServer();
+					setStatus(next);
+					setActionError(next.errorMessage);
+				} finally {
+					setIsToggling(false);
+				}
+			} else {
+				setIsToggling(true);
+				try {
+					next = await statusClient.createPairingLink();
 					setStatus(next);
 					setActionError(next.errorMessage);
 				} finally {
@@ -311,6 +358,7 @@ export function useRemoteAccessController(
 		closeMenu,
 		closePairingModal,
 		closePinModal,
+		closeConnection,
 		isLinkCopied,
 		isMenuOpen,
 		isPairingModalOpen,
@@ -325,6 +373,7 @@ export function useRemoteAccessController(
 		pairingUrl,
 		pinError,
 		pinInput,
+		revokeDevice,
 		setIsLinkCopied,
 		setIsMenuOpen,
 		setIsPairingModalOpen,

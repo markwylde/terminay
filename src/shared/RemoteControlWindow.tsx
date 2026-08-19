@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { SharedConnectionsRouteBodyProps } from './SharedConnectionsRouteBody';
 import { SharedConnectionsRouteBody } from './SharedConnectionsRouteBody';
 import '../settings.css';
@@ -8,7 +9,8 @@ export function RemoteControlWindow(
 	props: Omit<
 		SharedConnectionsRouteBodyProps,
 		'state' | 'embedded' | 'presentation'
-	>,
+	> &
+		Readonly<{ exposurePanel?: ReactNode }>,
 ) {
 	return (
 		<SharedConnectionsRouteBody

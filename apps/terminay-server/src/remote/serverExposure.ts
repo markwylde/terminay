@@ -223,6 +223,10 @@ export class ServerRemoteExposure {
 		return this.activePairingHandoff;
 	}
 
+	get advertisedHostName(): string {
+		return this.hostName;
+	}
+
 	start(expiresAt?: number): ServerPairingHandoff {
 		if (this.pairingUrlFormat !== 'hosted-compact') {
 			return this.rememberHandoff(this.controller.start(expiresAt));

@@ -53,6 +53,12 @@ type WeriftDataChannel = {
 
 export type MinimalArchive = Readonly<{ bundleId: string; bytes: Uint8Array }>;
 
+export type HostedConnectedPeer = Readonly<{
+	connectionId: string;
+	deviceId: string;
+	deviceName: string;
+}>;
+
 export interface HostedPairingHostOptions {
 	readonly acceptApplication?: (
 		transport: ByteTransport,
@@ -73,7 +79,8 @@ export interface HostedPairingHostOptions {
 	readonly webrtcRuntimeRoot: string;
 	readonly rotateHandoff?: () => ServerPairingHandoff;
 	readonly onHandoff?: (handoff: ServerPairingHandoff) => void;
-	readonly onPeerConnected?: () => void;
+	readonly onPeerConnected?: (peer: HostedConnectedPeer) => void;
+	readonly onPeerDisconnected?: (connectionId: string) => void;
 	readonly onDiagnostic?: (event: HostedPairingDiagnostic) => void;
 }
 
@@ -97,11 +104,14 @@ export type HostedPairingDiagnostic = Readonly<{
 
 export interface HostedPairingHost {
 	readonly close: () => Promise<void>;
+	/** Mint and advertise a replacement one-time pairing room. Live peers stay up. */
+	readonly mintPairing: () => Promise<void>;
 }
 
 const DEVICE_HOST_AVAILABILITY_MS = 25 * 60 * 1000;
 const DEVICE_REFRESH_LEAD_MS = 5 * 60 * 1000;
 const PAIRING_REFRESH_LEAD_MS = 15_000;
+const PAIRING_CONSUMED_ROTATE_MS = 3_000;
 const REFRESH_RETRY_MS = 2_000;
 const INITIAL_REGISTER_TIMEOUT_MS = 10_000;
 
@@ -133,6 +143,7 @@ export async function startHostedPairingHost(
 	let currentHandoff = options.handoff;
 	let closed = false;
 	let deviceExpiresAt = Date.now() + DEVICE_HOST_AVAILABILITY_MS;
+	let pairingRefreshChain = Promise.resolve();
 
 	const diagnose = (event: HostedPairingDiagnostic) => {
 		options.onDiagnostic?.(event);
@@ -156,13 +167,20 @@ export async function startHostedPairingHost(
 		if (handshakePeer && !connectedPeers.includes(handshakePeer)) {
 			handshakePeer.close();
 		}
-		const next = await startPeer(Peer, socket, scope, context, (connection) => {
+		const next = await startPeer(Peer, socket, scope, context, (connection, peer) => {
 			connectedConnections.push(connection);
 			if (handshakePeer === next) {
 				connectedPeers.push(next);
 				handshakePeer = undefined;
 			}
-			options.onPeerConnected?.();
+			options.onPeerConnected?.(peer);
+			if (scope.kind === 'pairing') {
+				clearTimeout(pairingRefreshTimer);
+				pairingRefreshTimer = setTimeout(() => {
+					void refreshPairing('consumed');
+				}, PAIRING_CONSUMED_ROTATE_MS);
+				pairingRefreshTimer.unref?.();
+			}
 		});
 		handshakePeer = next;
 	}
@@ -316,11 +334,21 @@ export async function startHostedPairingHost(
 		scheduleDeviceRefresh();
 	}
 
-	async function refreshPairing(cause: string): Promise<void> {
+	function refreshPairing(cause: string): Promise<void> {
+		pairingRefreshChain = pairingRefreshChain.then(
+			() => refreshPairingNow(cause),
+			() => refreshPairingNow(cause),
+		);
+		return pairingRefreshChain;
+	}
+
+	async function refreshPairingNow(cause: string): Promise<void> {
 		if (closed) return;
 		const remaining = Date.parse(currentHandoff.pairingExpiresAt) - Date.now();
+		const forceRotate = cause === 'consumed' || cause === 'mint';
 		const shouldRotate =
-			Boolean(options.rotateHandoff) && !(remaining > PAIRING_REFRESH_LEAD_MS);
+			Boolean(options.rotateHandoff) &&
+			(forceRotate || !(remaining > PAIRING_REFRESH_LEAD_MS));
 		try {
 			if (shouldRotate && options.rotateHandoff) {
 				currentHandoff = options.rotateHandoff();
@@ -424,7 +452,10 @@ export async function startHostedPairingHost(
 		throw error;
 	}
 
-	return { close };
+	return {
+		close,
+		mintPairing: () => refreshPairing('mint'),
+	};
 
 	function logHostError(error: unknown): void {
 		if (!closed) console.error(error instanceof Error ? error.message : error);
@@ -609,7 +640,7 @@ async function startPeer(
 		archive: MinimalArchive;
 		options: HostedPairingHostOptions;
 	}>,
-	onApplication: (connection: ServerConnectionLike) => void,
+	onApplication: (connection: ServerConnectionLike, peer: HostedConnectedPeer) => void,
 ): Promise<WeriftPeer> {
 	const native = new Peer(hostedPeerConfiguration(context.options.signal?.connectHost));
 	const peer = wrapPeer(native);
@@ -822,7 +853,7 @@ function bindControl(
 	channel: WeriftDataChannel,
 	application: WeriftDataChannel,
 	context: Readonly<{ options: HostedPairingHostOptions }>,
-	onApplication: (connection: ServerConnectionLike) => void,
+	onApplication: (connection: ServerConnectionLike, peer: HostedConnectedPeer) => void,
 ): void {
 	channel.addEventListener('message', (event) => {
 		let request: Record<string, unknown>;
@@ -869,7 +900,18 @@ function bindControl(
 					],
 				},
 			);
-			onApplication(connection);
+			const device = context.options.remote.devices
+				.list()
+				.find((entry) => entry.deviceId === ticket.deviceId);
+			const peer = Object.freeze({
+				connectionId: connection.connectionId,
+				deviceId: ticket.deviceId,
+				deviceName: device?.deviceName?.trim() || 'Browser',
+			});
+			onApplication(connection, peer);
+			application.addEventListener('close', () => {
+				context.options.onPeerDisconnected?.(peer.connectionId);
+			});
 			void connection.start().catch((error) => {
 				console.error(error instanceof Error ? error.message : error);
 				void connection.close();

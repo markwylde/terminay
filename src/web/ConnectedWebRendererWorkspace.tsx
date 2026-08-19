@@ -43,6 +43,7 @@ import {
 import { SharedFolderRouteBody } from '../shared/SharedFolderRouteBody';
 import { SharedGitRouteBody } from '../shared/SharedGitRouteBody';
 import { RemoteControlWindow } from '../shared/RemoteControlWindow';
+import { RemoteExposurePanel } from '../shared/RemoteExposurePanel';
 import { SharedTerminalRouteBody } from '../shared/SharedTerminalRouteBody';
 import type { RemoteAccessStatus } from '../types/terminay';
 import { createBrowserMacroSettingsClient } from './browserRendererHostAdapters';
@@ -304,6 +305,23 @@ export function ConnectedWebRendererWorkspace({
 			}),
 		[handleAuxiliaryRouteRequest, hasNativeWindowControls, hostContext],
 	);
+	const remoteControlProps = useMemo(
+		() => ({
+			...connectionRoute,
+			...(remoteAccessClients === undefined
+				? {}
+				: {
+						exposurePanel: (
+							<RemoteExposurePanel
+								openSettings={auxiliaryRoutes.openSettings}
+								pairingPinClient={remoteAccessClients.pairingPin}
+								statusClient={remoteAccessClients.status}
+							/>
+						),
+					}),
+		}),
+		[auxiliaryRoutes.openSettings, connectionRoute, remoteAccessClients],
+	);
 	const restoreAuxiliaryFocus = useCallback(() => {
 		const target = auxiliaryFocusReturnRef.current;
 		auxiliaryFocusReturnRef.current = null;
@@ -381,6 +399,9 @@ export function ConnectedWebRendererWorkspace({
 						applicationClient={applicationClient}
 						aiTabMetadataClient={aiMetadataClient}
 						initialSectionId={route.sectionId}
+						onOpenRemoteControl={() =>
+							void auxiliaryRoutes.openRemoteControl()
+						}
 						remoteAccessStatusClient={remoteAccessStatusClient}
 						remotePairingPinClient={remoteAccessClients!.pairingPin}
 						settingsClient={serverSettingsClient}
@@ -393,7 +414,7 @@ export function ConnectedWebRendererWorkspace({
 				) : route.kind === 'macros' ? (
 					<MacrosWindow macroSettingsClient={macroSettingsClient} />
 				) : route.kind === 'remote-control' ? (
-					<RemoteControlWindow {...connectionRoute} />
+					<RemoteControlWindow {...remoteControlProps} />
 				) : (
 					<RecordingsWindow client={recordingsClient} />
 				)}
@@ -409,7 +430,7 @@ export function ConnectedWebRendererWorkspace({
 	const sharedRouteContent = (() => {
 		switch (requestedView) {
 			case 'connections':
-				return <RemoteControlWindow {...connectionRoute} />;
+				return <RemoteControlWindow {...remoteControlProps} />;
 			case 'git':
 				return (
 					<SharedGitRouteBody
@@ -940,6 +961,7 @@ function createUnavailableRemoteAccessClient(): RemoteAccessStatusClient {
 	const getStatus = async () => status;
 	return Object.freeze({
 		closeConnection: getStatus,
+		createPairingLink: getStatus,
 		getStatus,
 		revokeDevice: getStatus,
 		subscribe: () => () => undefined,

@@ -359,13 +359,16 @@ test('the remote access controller owns exposure and pairing lifecycle', () => {
 	assert.doesNotMatch(app, /isRemoteAccessPairingPinConfigured\(/);
 	assert.doesNotMatch(app, /saveRemoteAccessPairingPin\(/);
 	assert.doesNotMatch(app, /import\('qrcode'\)/);
-	assert.match(remoteAccessController, /settingsClient\.(?:get|update)</);
+	assert.match(remoteAccessController, /pairingPinClient/);
 	assert.doesNotMatch(
 		remoteAccessController,
 		/terminayTerminalSettingsCompatibilityHost/,
 	);
 	assert.match(remoteAccessController, /statusClient\.subscribe\(/);
 	assert.match(remoteAccessController, /statusClient\.toggleServer\(/);
+	assert.match(remoteAccessController, /statusClient\.createPairingLink\(/);
+	assert.match(remoteAccessController, /statusClient\.revokeDevice\(/);
+	assert.match(app, /<RemotePairingModal\b/);
 	assert.doesNotMatch(
 		remoteAccessController,
 		/window\.terminayRemoteAccessStatusHost/,
@@ -373,6 +376,18 @@ test('the remote access controller owns exposure and pairing lifecycle', () => {
 	assert.match(remoteAccessController, /isRemoteAccessPairingPinConfigured\(/);
 	assert.match(remoteAccessController, /saveRemoteAccessPairingPin\(/);
 	assert.match(remoteAccessController, /import\('qrcode'\)/);
+});
+
+test('Create pairing link uses one Pair Device dialog', async () => {
+	const [panel, settings] = await Promise.all([
+		readFile('src/shared/RemoteExposurePanel.tsx', 'utf8'),
+		readFile('src/components/SettingsWindow.tsx', 'utf8'),
+	]);
+	assert.match(app, /<RemotePairingModal\b/);
+	assert.match(panel, /<RemotePairingModal\b/);
+	assert.match(settings, /<RemotePairingModal\b/);
+	assert.doesNotMatch(panel, />\s*Pairing link\s*</u);
+	assert.doesNotMatch(settings, /RemotePairingQrImage/u);
 });
 
 test('connection management is delegated to the canonical host route', () => {

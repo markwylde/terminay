@@ -15,6 +15,7 @@ export function createServerRemoteAccessClients(client: TerminayClient): {
 	const status = {
 		getStatus: () => transport.query('remote-access.status') as Promise<RemoteAccessStatus>,
 		toggleServer: () => transport.command('remote-access.toggle-server') as Promise<RemoteAccessStatus>,
+		createPairingLink: () => transport.command('remote-access.create-pairing-link') as Promise<RemoteAccessStatus>,
 		revokeDevice: (deviceId: string) => transport.command('remote-access.revoke-device', { deviceId }) as Promise<RemoteAccessStatus>,
 		closeConnection: (connectionId: string) => transport.command('remote-access.close-connection', { connectionId }) as Promise<RemoteAccessStatus>,
 		subscribe(listener: (value: RemoteAccessStatus) => void) {
