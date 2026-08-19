@@ -176,7 +176,7 @@ test('replacing a renderer port for the same window closes the previous connecti
   }
 })
 
-test('Local reopening drops every stale terminal tab and restores one fresh terminal in the active project', async () => {
+test('Local reopening drops every stale terminal tab and seeds one fresh terminal in every restored project', async () => {
   const pty = createPtyFactory()
   const workspace = new WorkspaceStore(createInitialWorkspace('desktop-local-reopen'))
   const viewId = workspace.state.viewOrder[0]
@@ -192,26 +192,42 @@ test('Local reopening drops every stale terminal tab and restores one fresh term
     type: 'terminal.createPanel', projectId: 'default', sessionId: 'stale-default',
     panelId: 'stale-default-panel', title: 'Terminal 1', cwd: tmpdir(), createdAt: 1,
   })
+  apply('seed-default-file', {
+    type: 'panel.create',
+    panel: { id: 'default-file', projectId: 'default', type: 'file', path: 'README.md', createdAt: 1 },
+  })
+  apply('seed-idle-project', {
+    type: 'project.create', projectId: 'idle-project', viewId, root: tmpdir(), name: 'Idle',
+  })
+  apply('seed-idle-terminal-1', {
+    type: 'terminal.createPanel', projectId: 'idle-project', sessionId: 'stale-idle-1',
+    panelId: 'stale-idle-panel-1', title: 'Terminal 1', cwd: tmpdir(), createdAt: 2,
+  })
+  apply('seed-idle-terminal-2', {
+    type: 'terminal.createPanel', projectId: 'idle-project', sessionId: 'stale-idle-2',
+    panelId: 'stale-idle-panel-2', title: 'Terminal 2', cwd: tmpdir(), createdAt: 3,
+  })
   apply('seed-active-project', {
     type: 'project.create', projectId: 'active-project', viewId, root: tmpdir(), name: 'Active',
   })
   apply('seed-active-terminal', {
     type: 'terminal.createPanel', projectId: 'active-project', sessionId: 'stale-active',
-    panelId: 'stale-active-panel', title: 'Terminal 1', cwd: tmpdir(), createdAt: 2,
+    panelId: 'stale-active-panel', title: 'Terminal 1', cwd: tmpdir(), createdAt: 4,
   })
   // A process can fail between creating a persisted session and its panel.
   // Restart recovery must not retain that unpresented Local session either.
   apply('seed-orphaned-terminal', {
-    type: 'terminal.create', projectId: 'active-project', sessionId: 'stale-orphan', createdAt: 3,
+    type: 'terminal.create', projectId: 'active-project', sessionId: 'stale-orphan', createdAt: 5,
   })
   apply('restore-active-project', { type: 'project.activate', projectId: 'active-project' })
 
+  let nextSession = 0
   const authority = new ServerTerminalAuthority({
     serverId: 'desktop-local-reopen',
     terminalService: new TerminalService({
       serverId: 'desktop-local-reopen',
       ptyFactory: pty,
-      generateSessionId: () => 'fresh-after-reopen',
+      generateSessionId: () => `fresh-after-reopen-${++nextSession}`,
     }),
     shellProfiles: systemShellProfiles('/bin/sh'),
     // The production host supplies this already-open durable repository. The
@@ -219,24 +235,53 @@ test('Local reopening drops every stale terminal tab and restores one fresh term
     workspaceRepository: { wasCreated: false, workspace },
   })
 
+  const terminalPanelsFor = (projectId) => Object.values(workspace.state.panels)
+    .filter((panel) => panel.projectId === projectId && panel.type === 'terminal')
+
   try {
     await authority.initializeWorkspace()
     const terminalPanels = Object.values(workspace.state.panels)
       .filter((panel) => panel.type === 'terminal')
     const sessions = Object.values(workspace.state.terminalSessions)
-    assert.equal(pty.processes.length, 1, 'Local reopening must spawn one replacement PTY')
-    assert.equal(terminalPanels.length, 1)
-    assert.equal(sessions.length, 1)
-    assert.equal(terminalPanels[0]?.sessionId, 'fresh-after-reopen')
-    assert.equal(sessions[0]?.id, 'fresh-after-reopen')
-    assert.equal(sessions[0]?.projectId, 'active-project')
+    const projectIds = ['active-project', 'default', 'idle-project']
+    assert.equal(
+      pty.processes.length,
+      3,
+      'Local reopening must spawn one replacement PTY per restored project',
+    )
+    assert.equal(terminalPanels.length, 3)
+    assert.equal(sessions.length, 3)
+    assert.deepEqual(
+      sessions.map((session) => session.projectId).toSorted(),
+      projectIds.toSorted(),
+    )
+    for (const projectId of projectIds) {
+      const panels = terminalPanelsFor(projectId)
+      assert.equal(
+        panels.length,
+        1,
+        `${projectId} must have exactly one fresh terminal after Local reopen`,
+      )
+      assert.match(panels[0]?.sessionId ?? '', /^fresh-after-reopen-\d+$/u)
+    }
+    assert.equal(workspace.state.panels['default-file']?.type, 'file')
+    assert.deepEqual(workspace.state.projects.default?.panelIds.toSorted(), [
+      terminalPanelsFor('default')[0]?.id,
+      'default-file',
+    ].toSorted())
     assert.equal(workspace.state.terminalSessions['stale-orphan'], undefined)
-    assert.equal(workspace.state.projects.default?.panelIds.length, 0)
-    assert.equal(workspace.state.projects['active-project']?.panelIds.length, 1)
+    assert.equal(workspace.state.terminalSessions['stale-default'], undefined)
+    assert.equal(workspace.state.terminalSessions['stale-idle-1'], undefined)
+    assert.equal(workspace.state.terminalSessions['stale-idle-2'], undefined)
+    assert.equal(
+      terminalPanelsFor('active-project')[0]?.sessionId,
+      'fresh-after-reopen-1',
+      'the restored active project is seeded first so its tab is ready immediately',
+    )
 
     await authority.initializeWorkspace()
-    assert.equal(pty.processes.length, 1, 'recovery is idempotent once the fresh PTY exists')
-    assert.equal(Object.keys(workspace.state.terminalSessions).length, 1)
+    assert.equal(pty.processes.length, 3, 'recovery is idempotent once each project has a fresh PTY')
+    assert.equal(Object.keys(workspace.state.terminalSessions).length, 3)
   } finally {
     await authority.shutdown()
   }
