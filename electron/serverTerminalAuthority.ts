@@ -748,6 +748,8 @@ export class ServerTerminalAuthority {
 						: {
 								'remote-access.toggle-server': (request: CommandRequest) =>
 									remoteCommand(request, 'toggle-server'),
+								'remote-access.create-pairing-link': (request: CommandRequest) =>
+									remoteCommand(request, 'create-pairing-link'),
 								'remote-access.revoke-device': (request: CommandRequest) =>
 									remoteCommand(request, 'revoke-device', 'deviceId'),
 								'remote-access.close-connection': (request: CommandRequest) =>

@@ -1119,6 +1119,8 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 							);
 						case 'toggle-server':
 							return toggleRemoteServer();
+						case 'create-pairing-link':
+							return createRemotePairingLink();
 						case 'revoke-device':
 							return revokeRemoteDevice(value ?? '');
 						case 'close-connection':
@@ -3351,6 +3353,10 @@ function currentRemoteAccessStatus(): RemoteAccessStatus {
 
 async function toggleRemoteServer(): Promise<RemoteAccessStatus> {
 	return desktopRemoteExposure.toggle();
+}
+
+async function createRemotePairingLink(): Promise<RemoteAccessStatus> {
+	return desktopRemoteExposure.createPairingLink();
 }
 
 async function revokeRemoteDevice(

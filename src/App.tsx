@@ -96,7 +96,6 @@ import {
 import {
 	checkForAppUpdate,
 	openExternalUrl,
-	writeClipboardText,
 } from './host/nativeActions';
 import {
 	findCommandForKeyboardEvent,
@@ -167,6 +166,7 @@ import {
 	type ConnectionSwitcherEntry,
 	RemoteAccessConnectionMenu,
 } from './workspace/RemoteAccessConnectionMenu';
+import { RemotePairingModal } from './shared/RemotePairingModal';
 import {
 	buildTerminalActivityOverview,
 	TerminalActivityOverview,
@@ -5048,7 +5048,6 @@ function describeConnectionHostError(cause: unknown): string {
 function App({
 	auxiliaryRoutes,
 	hostPresentation,
-	onDisconnect,
 	onOpenConnectionManager,
 	subscribeAppCommands,
 	terminalClientContext,
@@ -5191,7 +5190,6 @@ function App({
 	const {
 		closePinModal: closePairingPinModal,
 		closePairingModal,
-		isLinkCopied,
 		isMenuOpen: isRemoteMenuOpen,
 		isPairingModalOpen,
 		isPinModalOpen: isPairingPinModalOpen,
@@ -5205,12 +5203,10 @@ function App({
 		pairingUrl: selectedPairingUrl,
 		pinError: pairingPinError,
 		pinInput: pairingPinInput,
-		setIsLinkCopied,
 		setIsMenuOpen: setIsRemoteMenuOpen,
 		setPinError: setPairingPinError,
 		setPinInput: setPairingPinInput,
 		status: remoteStatus,
-		statusMessage: remoteStatusMessage,
 		submitPin: submitPairingPin,
 		toggleExposure: toggleRemoteAccess,
 		tone: remoteButtonTone,
@@ -5924,13 +5920,11 @@ function App({
 					/>
 					<RemoteAccessConnectionMenu
 						connectionSwitcherEntries={connectionSwitcherEntries}
-						currentServerId={currentServerId}
 						currentServerLabel={currentServerLabel}
 						errorMessage={connectionSwitcherError}
 						isOpen={isRemoteMenuOpen}
 						isToggling={isTogglingRemoteAccess}
 						menuRef={remoteMenuRef}
-						onDisconnect={onDisconnect}
 						onOpenConnection={
 							onOpenConnectionManager ??
 							(() =>
@@ -5939,9 +5933,6 @@ function App({
 								))
 						}
 						onOpenPairingQr={() => void openPairingQr()}
-						onOpenSettings={() =>
-							void auxiliaryRouteController.openSettings('remote-access-host')
-						}
 						onSelectConnection={selectConnectionProfile}
 						onToggleExposure={() => void toggleRemoteAccess()}
 						onToggleMenu={() => {
@@ -5951,7 +5942,6 @@ function App({
 							setIsRemoteMenuOpen((current) => !current);
 						}}
 						status={remoteStatus}
-						statusMessage={remoteStatusMessage ?? null}
 						tone={remoteButtonTone}
 					/>
 				</div>
@@ -6085,121 +6075,20 @@ function App({
 			) : null}
 
 			{isPairingModalOpen ? (
-				<ModalBackdrop onClose={closePairingModal}>
-					<div
-						className="project-edit-modal project-edit-modal--wide remote-pairing-modal"
-						ref={(element) => {
-							pairingModal.modalRef.current = element;
-						}}
-						style={pairingModal.modalStyle}
-						onClick={(event) => event.stopPropagation()}
-						role="dialog"
-						aria-modal="true"
-						aria-labelledby="pair-device-modal-title"
-					>
-						<ModalTitlebar
-							title="Pair Device"
-							titleId="pair-device-modal-title"
-							onClose={closePairingModal}
-							onMouseDown={pairingModal.handleTitlebarPointerDown}
-						/>
-
-						<div className="remote-pairing-modal__container">
-							<p className="remote-pairing-modal__copy">
-								{pairingOutcome === 'success'
-									? 'That browser is paired. It can reconnect from this server’s stable origin.'
-									: 'Use this one-time link to pair a new browser or Desktop device. That device can reconnect later from this server’s stable origin.'}
-							</p>
-
-							{visiblePairingQrCodeDataUrl ? (
-								<div className="remote-pairing-modal__content">
-									<div
-										className={
-											pairingOutcome === 'success'
-												? 'remote-pairing-modal__qr-card remote-pairing-modal__qr-card--success'
-												: 'remote-pairing-modal__qr-card'
-										}
-									>
-										<img
-											key={visiblePairingQrCodeDataUrl}
-											className="remote-pairing-modal__qr"
-											src={visiblePairingQrCodeDataUrl}
-											alt="Remote pairing QR code"
-										/>
-										{pairingOutcome === 'success' ? (
-											<div
-												className="remote-pairing-modal__qr-success"
-												role="status"
-												aria-live="polite"
-											>
-												<div
-													className="remote-pairing-modal__success-mark"
-													aria-hidden="true"
-												>
-													✓
-												</div>
-												<p className="remote-pairing-modal__success-title">
-													Connected
-												</p>
-											</div>
-										) : null}
-									</div>
-									<div className="remote-pairing-modal__address-section">
-										<div className="remote-pairing-modal__address-label">
-											Session origin
-										</div>
-										<div className="remote-pairing-modal__address-text">
-											{selectedPairingSessionOrigin || 'Not available'}
-										</div>
-										<div className="remote-pairing-modal__address-label">
-											One-time pairing link
-										</div>
-										<div className="remote-pairing-modal__address-box">
-											<div className="remote-pairing-modal__address-text">
-												{selectedPairingUrl || 'No pairing link available yet.'}
-											</div>
-											{selectedPairingUrl ? (
-												<button
-													type="button"
-													className="remote-pairing-modal__copy-btn"
-													onClick={() => {
-														void (
-															writeClipboardText(selectedPairingUrl) ??
-															navigator.clipboard.writeText(selectedPairingUrl)
-														)
-															.then(() => {
-																setIsLinkCopied(true);
-																setTimeout(() => setIsLinkCopied(false), 2000);
-															})
-															.catch(() => setIsLinkCopied(false));
-													}}
-												>
-													{isLinkCopied ? 'Copied' : 'Copy pairing link'}
-												</button>
-											) : null}
-										</div>
-										{selectedPairingExpiresAt ? (
-											<p className="remote-pairing-modal__expires-text">
-												Expires{' '}
-												{new Date(selectedPairingExpiresAt).toLocaleString()}.
-												A replacement QR appears automatically before then.
-											</p>
-										) : null}
-									</div>
-								</div>
-							) : selectedPairingUrl ? (
-								<p className="remote-pairing-modal__copy">
-									{remoteStatus?.webRtcStatusMessage ??
-										'Preparing the secure WebRTC session…'}
-								</p>
-							) : (
-								<p className="remote-pairing-modal__copy">
-									Expose this server to generate a pairing link.
-								</p>
-							)}
-						</div>
-					</div>
-				</ModalBackdrop>
+				<RemotePairingModal
+					dialogRef={(element) => {
+						pairingModal.modalRef.current = element;
+					}}
+					dialogStyle={pairingModal.modalStyle}
+					expiresAt={selectedPairingExpiresAt}
+					onClose={closePairingModal}
+					onTitleMouseDown={pairingModal.handleTitlebarPointerDown}
+					pairingUrl={selectedPairingUrl}
+					qrCodeDataUrl={visiblePairingQrCodeDataUrl}
+					sessionOrigin={selectedPairingSessionOrigin}
+					statusMessage={remoteStatus?.webRtcStatusMessage}
+					success={pairingOutcome === 'success'}
+				/>
 			) : null}
 		</div>
 	);
