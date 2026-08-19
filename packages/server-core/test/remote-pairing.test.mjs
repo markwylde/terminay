@@ -104,6 +104,32 @@ test("pairing entropy collisions never overwrite an active room and fail closed 
   assert.equal(persistentCollision.consume({ ...active }).roomId, active.roomId);
 });
 
+test('identified rotation replaces the advertised room without consuming the previous secret first', () => {
+  const { store } = fixture();
+  const oldRoom = store.createIdentified({
+    expiresAt: 300,
+    roomId: 'oldidentifiedroomid1234567890abcd',
+    secret: 'oldderivedpairingtokenvalue12',
+  });
+  const nextRoom = store.rotateIdentified({
+    expiresAt: 400,
+    roomId: 'newidentifiedroomid1234567890abcd',
+    secret: 'newderivedpairingtokenvalue12',
+  });
+  assert.equal(store.metadata(oldRoom.roomId), undefined);
+  assert.equal(nextRoom.roomId, 'newidentifiedroomid1234567890abcd');
+  assert.throws(() => store.consume({ ...oldRoom }), /unavailable/);
+  assert.equal(
+    store.consume({
+      roomId: nextRoom.roomId,
+      secret: 'newderivedpairingtokenvalue12',
+      serverId: 'srv',
+      sessionOrigin: 'https://session.example.test',
+    }).roomId,
+    nextRoom.roomId,
+  );
+});
+
 test('identified pairing rooms keep the caller-supplied room id and secret', () => {
   const { store } = fixture();
   const room = store.createIdentified({
