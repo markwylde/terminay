@@ -16,11 +16,16 @@ import { subscribeWorkspaceDragState } from '../host/nativeEvents';
 import type { ProjectTabDragPreview } from '../types/terminay';
 import type { ProjectTab } from './projectTabModel';
 
+/** Stay in-bar until the pointer leaves the strip; native tear-off is 100px. */
+const PROJECT_TAB_NATIVE_DRAG_OFFSET_Y = 40;
+
 export function useProjectTabTransfer({
+	draggingProjectIdRef,
 	projectsRef,
 	workspaceSnapshotStore,
 	workspaceViewId,
 }: {
+	draggingProjectIdRef: MutableRefObject<string | null>;
 	projectsRef: MutableRefObject<ProjectTab[]>;
 	workspaceSnapshotStore?: WorkspaceSnapshotStore;
 	workspaceViewId: string | null;
@@ -28,14 +33,27 @@ export function useProjectTabTransfer({
 	const [draggingProjectId, setDraggingProjectId] = useState<string | null>(
 		null,
 	);
+	const nativeDragStartedRef = useRef(false);
 	const [isDraggingTabTornOff, setDraggingTabTornOff] = useState(false);
 	const projectTabBarRef = useRef<HTMLDivElement | null>(null);
 	useEffect(() => subscribeWorkspaceDragState(setDraggingTabTornOff), []);
 
-	const handleProjectTabDragStart = useCallback(
-		(projectId: string) => {
-			setDraggingProjectId(projectId);
-			if (workspaceViewId === null) return;
+	const handleProjectTabDragStart = useCallback((projectId: string) => {
+		setDraggingProjectId(projectId);
+		draggingProjectIdRef.current = projectId;
+		nativeDragStartedRef.current = false;
+	}, [draggingProjectIdRef]);
+
+	const handleProjectTabDragMove = useCallback(
+		(projectId: string, offsetY: number) => {
+			if (
+				nativeDragStartedRef.current ||
+				workspaceViewId === null ||
+				Math.abs(offsetY) <= PROJECT_TAB_NATIVE_DRAG_OFFSET_Y
+			) {
+				return;
+			}
+			nativeDragStartedRef.current = true;
 			const project = projectsRef.current.find((item) => item.id === projectId);
 			const tab = projectTabBarRef.current?.querySelector<HTMLElement>(
 				`[data-project-id="${projectId}"]`,
@@ -55,15 +73,44 @@ export function useProjectTabTransfer({
 
 	const handleProjectTabDragEnd = useCallback(
 		async (projectId: string) => {
+			const nextIds = projectsRef.current.map((item) => item.id);
+			const nextIndex = nextIds.indexOf(projectId);
+			const startedNative = nativeDragStartedRef.current;
+			nativeDragStartedRef.current = false;
 			setDraggingProjectId(null);
+			draggingProjectIdRef.current = null;
 			if (workspaceSnapshotStore === undefined || workspaceViewId === null)
 				return;
 			const project = projectsRef.current.find((item) => item.id === projectId);
 			if (project === undefined) return;
+			const persistReorder = async () => {
+				if (nextIndex < 0) return;
+				const current =
+					workspaceSnapshotStore.snapshot?.views[workspaceViewId]
+						?.projectIds ?? [];
+				if (
+					current.length === nextIds.length &&
+					current.every((id, position) => id === nextIds[position])
+				) {
+					return;
+				}
+				await workspaceSnapshotStore.moveProject({
+					index: nextIndex,
+					projectId,
+					targetViewId: workspaceViewId,
+				});
+			};
+			if (!startedNative) {
+				await persistReorder();
+				return;
+			}
 			const decision = await endWorkspaceDrag().catch(() => ({
 				action: 'reorder' as const,
 			}));
-			if (decision.action === 'reorder') return;
+			if (decision.action === 'reorder') {
+				await persistReorder();
+				return;
+			}
 			const targetViewId =
 				decision.action === 'merge'
 					? decision.targetViewId
@@ -99,7 +146,12 @@ export function useProjectTabTransfer({
 				}
 			}
 		},
-		[projectsRef, workspaceSnapshotStore, workspaceViewId],
+		[
+			draggingProjectIdRef,
+			projectsRef,
+			workspaceSnapshotStore,
+			workspaceViewId,
+		],
 	);
 
 	/** A native popout is a second presentation of a server-owned workspace
@@ -150,6 +202,7 @@ export function useProjectTabTransfer({
 			preview: ProjectTabDragPreview;
 		} | null,
 		handleProjectTabDragEnd,
+		handleProjectTabDragMove,
 		handleProjectTabDragStart,
 		isDraggingTabTornOff,
 		isProjectDropTarget: false,
