@@ -379,21 +379,33 @@ test('the remote access controller owns exposure and pairing lifecycle', () => {
 });
 
 test('Create pairing link uses one Pair Device dialog', async () => {
-	const [panel, settings] = await Promise.all([
+	const [panel, settings, pairingModal, pairingModalCss] = await Promise.all([
 		readFile('src/shared/RemoteExposurePanel.tsx', 'utf8'),
 		readFile('src/components/SettingsWindow.tsx', 'utf8'),
+		readFile('src/shared/RemotePairingModal.tsx', 'utf8'),
+		readFile('src/shared/RemotePairingModal.css', 'utf8'),
 	]);
 	assert.match(app, /<RemotePairingModal\b/);
 	assert.match(panel, /<RemotePairingModal\b/);
 	assert.match(settings, /<RemotePairingModal\b/);
+	assert.match(panel, /Create pairing link/);
+	assert.match(panel, /settings-remote-panel-header-actions/);
 	assert.doesNotMatch(panel, />\s*Pairing link\s*</u);
 	assert.doesNotMatch(settings, /RemotePairingQrImage/u);
+	assert.doesNotMatch(pairingModal, /Session origin/u);
+	assert.doesNotMatch(pairingModal, /sessionOrigin/u);
+	assert.match(pairingModal, /One-time pairing link/);
+	assert.match(pairingModal, /remote-pairing-modal__success-check/);
+	assert.match(pairingModalCss, /stroke-dasharray:\s*48/);
+	assert.match(pairingModalCss, /remote-pairing-draw-tick/);
 });
 
 test('connection management is delegated to the canonical host route', () => {
 	assert.doesNotMatch(app, /terminayConnectionHost/);
 	assert.doesNotMatch(app, /<RemoteConnectionModal\b/);
 	assert.match(app, /onOpenConnectionManager/);
+	assert.match(app, /onSwitchConnections/);
+	assert.match(remoteAccessMenu, /Switch connections/);
 });
 
 test('the project editor hook owns canonical root conflict reconciliation', () => {

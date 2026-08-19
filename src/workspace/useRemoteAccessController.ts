@@ -1,6 +1,5 @@
 import type { FormEvent, RefObject } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { parseHostedPairingUrl } from '@terminay/protocol';
 import {
 	isRemoteAccessPairingPinConfigured,
 	PAIRING_PIN_PATTERN,
@@ -74,9 +73,15 @@ export function useRemoteAccessController(
 			previous !== null && current !== null && current > previous;
 		if (isPairingModalOpen && (connectionsGrew || pairedGrew)) {
 			setPairingOutcome('success');
-			const timer = window.setTimeout(() => {
-				closePairingModal();
-			}, 1400);
+			const reduceMotion = window.matchMedia(
+				'(prefers-reduced-motion: reduce)',
+			).matches;
+			const timer = window.setTimeout(
+				() => {
+					closePairingModal();
+				},
+				reduceMotion ? 600 : 1700,
+			);
 			return () => window.clearTimeout(timer);
 		}
 	}, [
@@ -369,7 +374,6 @@ export function useRemoteAccessController(
 		openPairingQr,
 		pairingExpiresAt,
 		pairingOutcome,
-		pairingSessionOrigin: sessionOriginFromPairingUrl(pairingUrl),
 		pairingUrl,
 		pinError,
 		pinInput,
@@ -394,19 +398,4 @@ export function useRemoteAccessController(
 				: '',
 		visibleQrCodeDataUrl,
 	};
-}
-
-function sessionOriginFromPairingUrl(
-	pairingUrl: string | null | undefined,
-): string | null {
-	if (!pairingUrl) return null;
-	try {
-		return parseHostedPairingUrl(pairingUrl).origin;
-	} catch {
-		try {
-			return new URL(pairingUrl).origin;
-		} catch {
-			return null;
-		}
-	}
 }
