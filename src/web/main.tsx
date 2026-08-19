@@ -16,6 +16,10 @@ import {
 	getSessionTransportHost,
 	leaveManagerSession,
 } from './sessionTransportHost';
+import {
+	SessionConnectGate,
+	type SessionConnectAttempt,
+} from './sessionConnectAttempt';
 import { createWebClientId } from './webClientIdentity';
 import './index.css';
 
@@ -33,36 +37,30 @@ type ConnectedSession = Readonly<{
  */
 export default function SessionWorkspaceApp(): React.JSX.Element {
 	const clientRef = useRef<TerminayClient | undefined>(undefined);
+	const gateRef = useRef(new SessionConnectGate());
 	const connectRef = useRef<
-		(options?: Readonly<{ replaceDesktopEndpoint?: boolean }>) => Promise<void>
+		(
+			attempt: SessionConnectAttempt,
+			options?: Readonly<{ replaceDesktopEndpoint?: boolean }>,
+		) => Promise<void>
 	>(async () => undefined);
-	const recoveryInFlight = useRef(false);
+	const startAttemptRef = useRef<
+		(options?: Readonly<{ replaceDesktopEndpoint?: boolean }>) => void
+	>(() => undefined);
 	const [connection, setConnection] = useState<ConnectedSession>();
 	const [desktopContext, setDesktopContext] = useState<TerminayHostContext>();
 	const [error, setError] = useState<string>();
 	const [phase, setPhase] = useState<'connecting' | 'ready'>('connecting');
 
 	const recoverConnection = useCallback(() => {
-		if (recoveryInFlight.current) return;
-		recoveryInFlight.current = true;
-		setConnection(undefined);
-		setError(undefined);
-		setPhase('connecting');
-		void connectRef
-			.current({ replaceDesktopEndpoint: true })
-			.catch((cause) => {
-				setError(
-					cause instanceof Error ? cause.message : 'Unable to reconnect.',
-				);
-				setPhase('ready');
-			})
-			.finally(() => {
-				recoveryInFlight.current = false;
-			});
+		startAttemptRef.current({ replaceDesktopEndpoint: true });
 	}, []);
 
 	const connect = useCallback(
-		async (options: Readonly<{ replaceDesktopEndpoint?: boolean }> = {}) => {
+		async (
+			attempt: SessionConnectAttempt,
+			options: Readonly<{ replaceDesktopEndpoint?: boolean }> = {},
+		) => {
 			setError(undefined);
 			setPhase('connecting');
 			await clientRef.current?.close().catch(() => undefined);
@@ -78,7 +76,12 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 				transport = await sessionHost.connect({
 					origin,
 					onStateChange: (state) => {
-						if (state === 'closed') recoverConnection();
+						if (
+							state === 'closed' &&
+							gateRef.current.shouldRecoverFromClose(attempt)
+						) {
+							recoverConnection();
+						}
 					},
 				});
 			} else {
@@ -98,6 +101,11 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 				setDesktopContext(hostContext);
 			}
 
+			if (!gateRef.current.isCurrent(attempt)) return;
+			if (transport.state === 'closed' || transport.state === 'failed') {
+				throw new Error('Session transport closed during connect.');
+			}
+
 			const client = new TerminayClient({
 				transport,
 				clientId: createWebClientId('session'),
@@ -113,13 +121,28 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 			clientRef.current = client;
 			try {
 				const hello = await client.connect();
+				if (!gateRef.current.isCurrent(attempt)) {
+					await client.close().catch(() => undefined);
+					if (clientRef.current === client) clientRef.current = undefined;
+					return;
+				}
 				const context = await createConnectedServerClientContext(
 					client,
 					hello,
 					{
-						onTransportClosed: recoverConnection,
+						onTransportClosed: () => {
+							if (gateRef.current.shouldRecoverFromClose(attempt)) {
+								recoverConnection();
+							}
+						},
 					},
 				);
+				if (!gateRef.current.isCurrent(attempt)) {
+					await client.close().catch(() => undefined);
+					if (clientRef.current === client) clientRef.current = undefined;
+					return;
+				}
+				gateRef.current.finish(attempt);
 				setConnection(
 					Object.freeze({
 						context: Object.freeze({
@@ -143,16 +166,33 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 		[recoverConnection],
 	);
 	connectRef.current = connect;
+	startAttemptRef.current = (options) => {
+		const attempt = gateRef.current.begin();
+		if (attempt === undefined) return;
+		setConnection(undefined);
+		setError(undefined);
+		setPhase('connecting');
+		void gateRef.current
+			.withDeadline(attempt, connectRef.current(attempt, options))
+			.catch((cause) => {
+				if (!gateRef.current.isCurrent(attempt)) return;
+				setConnection(undefined);
+				setError(
+					cause instanceof Error ? cause.message : 'Unable to reconnect.',
+				);
+				setPhase('ready');
+			})
+			.finally(() => {
+				gateRef.current.finish(attempt);
+			});
+	};
 
 	useEffect(() => {
-		void connect().catch((cause) => {
-			setError(cause instanceof Error ? cause.message : 'Unable to connect.');
-			setPhase('ready');
-		});
+		startAttemptRef.current();
 		return () => {
 			void clientRef.current?.close().catch(() => undefined);
 		};
-	}, [connect]);
+	}, []);
 
 	const profiles = useMemo(() => {
 		if (connection?.origin === undefined) return undefined;

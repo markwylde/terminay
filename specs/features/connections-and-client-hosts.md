@@ -548,6 +548,10 @@ credentials are a separate IndexedDB vault, not profile fields.
 - Connection errors remain visible and terminal input remains disabled until
   the new client, subscriptions, workspace, and mounted terminal attachments
   have hydrated successfully.
+- A framed `app.terminay.com` session that has painted workspace chrome is
+  not treated as connected unless live application events still arrive. Resume
+  from background uses the session origin's reconnect operation, not a second
+  unmanaged signaling join.
 - Missing or revoked device identity requests a fresh pairing URL.
 - Forget and revoke require confirmation explaining their different scopes.
 - Closing/reloading the host preserves server-side sessions.
@@ -616,3 +620,5 @@ WebRTC generation replacement and terminal resynchronization follow
   or another session origin's credentials through the host bridge.
 - Browser recovery restores ordered terminal input without duplicate PTYs or
   workspace mutations.
+- Returning to a framed PWA session reconnects or fails visibly; it does not
+  remain on the session loading mark with no in-flight generation.
