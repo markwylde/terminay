@@ -32,13 +32,7 @@ body {
 	place-items: center;
 	padding: 32px;
 	overflow: hidden;
-	background:
-		radial-gradient(
-			circle at center,
-			rgba(255, 255, 255, 0.7),
-			rgba(246, 247, 249, 0) 42%
-		),
-		#f6f7f9;
+	background: #f6f7f9;
 	color: #17202c;
 	font-family:
 		"Open Sans", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -81,13 +75,7 @@ body {
 	}
 
 	.terminay-server-connecting {
-		background:
-			radial-gradient(
-				circle at center,
-				rgba(49, 68, 91, 0.32),
-				rgba(13, 16, 20, 0) 44%
-			),
-			#0d1014;
+		background: #0d1014;
 		color: #dce2f0;
 	}
 
