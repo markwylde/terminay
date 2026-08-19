@@ -408,6 +408,61 @@ test('git sidebar switches project root before opening a file from another workt
   await expect(mainWindow.locator('.file-panel--loading')).toHaveCount(0)
 })
 
+test('git sidebar switches project root before deleting a folder from another worktree', async ({
+  appHarness,
+  createWorkspace,
+  mainWindow,
+}) => {
+  const mainRepo = await createWorkspace({
+    name: 'git-pane-cross-worktree-delete-main',
+    seed: { files: { 'README.md': 'main worktree\n' } },
+  })
+  const linkedWorktree = await createWorkspace({ name: 'git-pane-cross-worktree-delete-linked' })
+  const dialogs = await appHarness.dialogs()
+
+  await rm(linkedWorktree.rootDir, { recursive: true, force: true })
+  await execFileAsync('git', ['init'], { cwd: mainRepo.rootDir })
+  await execFileAsync('git', ['config', 'user.name', 'Terminay E2E'], { cwd: mainRepo.rootDir })
+  await execFileAsync('git', ['config', 'user.email', 'terminay@example.com'], { cwd: mainRepo.rootDir })
+  await execFileAsync('git', ['add', '.'], { cwd: mainRepo.rootDir })
+  await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: mainRepo.rootDir })
+  await execFileAsync('git', ['worktree', 'add', '-b', 'cross-worktree-folder-delete', linkedWorktree.rootDir], {
+    cwd: mainRepo.rootDir,
+  })
+  await linkedWorktree.writeText('prototypes/overflow/index.html', '<p>untracked</p>\n')
+
+  await setProjectRoot(mainWindow, mainRepo.rootDir)
+  await openFileExplorer(mainWindow)
+
+  const gitPane = mainWindow
+    .locator('.sidebar-pane')
+    .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
+  const linked = gitPane
+    .locator('.worktrees-panel__worktree')
+    .filter({ hasText: 'git-pane-cross-worktree-delete-linked' })
+  await expect(linked).toBeVisible({ timeout: 6000 })
+  await linked.locator('.worktrees-panel__worktree-toggle').click()
+  const folder = linked.locator('.git-panel__folder').filter({ hasText: 'prototypes' })
+  await expect(folder).toBeVisible({ timeout: 6000 })
+
+  await dialogs.queueConfirm(true)
+  await folder.click({ button: 'right' })
+  await expect(contextMenuItem(mainWindow, 'Delete')).toBeVisible()
+  await contextMenuItem(mainWindow, 'Delete').click()
+
+  await expect(folder).toHaveCount(0, { timeout: 6000 })
+  await expect(mainWindow.locator('.error-banner')).toHaveCount(0)
+  await expect.poll(async () => {
+    try {
+      await linkedWorktree.readText('prototypes/overflow/index.html')
+      return 'exists'
+    } catch {
+      return 'missing'
+    }
+  }).toBe('missing')
+})
+
+
 test('deleting a sibling worktree does not request its parent through Explorer', async ({
   appHarness,
   createWorkspace,
