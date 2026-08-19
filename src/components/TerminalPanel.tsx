@@ -20,6 +20,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { WebglAddon } from '@xterm/addon-webgl';
 import type { ILinkHandler } from '@xterm/xterm';
 import { Terminal } from '@xterm/xterm';
 import type { IDockviewPanelProps } from 'dockview';
@@ -95,6 +96,7 @@ import { getTerminalScrollbackAction } from './terminalScrollbackInteraction';
 import { isTerminalSearchShortcut } from './terminalSearchInteraction';
 import { getTerminalSwitcherDirection } from './terminalSwitcherInteraction';
 import { bindTerminalTouchScroll } from './terminalTouchScrollInteraction';
+import { attachTerminalWebglRenderer } from './terminalWebglRenderer';
 import { resolveTerminalZoomedFontSize } from './terminalZoomInteraction';
 
 /**
@@ -647,6 +649,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		);
 		terminal.unicode.activeVersion = '11';
 		terminal.open(root);
+		const webglRenderer = attachTerminalWebglRenderer(
+			terminal,
+			() => new WebglAddon(),
+		);
 		const screenElement =
 			terminal.element?.querySelector<HTMLElement>('.xterm-screen');
 		const preventModifierLinkSelection = (event: MouseEvent) => {
@@ -1962,6 +1968,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			);
 			searchAddonRef.current = null;
 			fitAddonRef.current = null;
+			webglRenderer.dispose();
 			terminalRef.current = null;
 			renderedPositionRef.current = null;
 			hoveredLinkRef.current = null;
