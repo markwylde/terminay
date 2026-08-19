@@ -18,7 +18,9 @@ test("canonical bridge validates binding, capability, and user gesture", async (
 test("semantic actions require their canonical capability", async () => {
   const router = new DesktopHostBridgeRouter(); router.register({ sourceId: "source-a", context: context("source-a", {}), handlers: {} });
   await assert.rejects(router.request(request({ type: "menu.invoke", command: "new-terminal" })), /nativeMenus/);
-  assert.throws(() => validateDesktopHostAction({ type: "os.open-external", url: "http://evil.example" }), /HTTPS|invalid/);
+  assert.deepEqual(validateDesktopHostAction({ type: "os.open-external", url: "http://example.com/help" }), { type: "os.open-external", url: "http://example.com/help" });
+  assert.deepEqual(validateDesktopHostAction({ type: "os.open-external", url: "https://example.com/help" }), { type: "os.open-external", url: "https://example.com/help" });
+  assert.throws(() => validateDesktopHostAction({ type: "os.open-external", url: "javascript:alert(1)" }), /invalid/);
 });
 
 test("preload projects only canonical context and validated requests", async () => {

@@ -844,6 +844,55 @@ test.describe('terminal behavior', () => {
 		await expectNoRenderedTerminalSelection(mainWindow);
 	});
 
+	test('http terminal links open on modifier click', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		const sessionId = await getActiveSessionId(mainWindow);
+		const linkUrl = 'http://example.com/terminay-link-test';
+		const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+
+		await electronApp.evaluate(({ shell }) => {
+			const state = globalThis as typeof globalThis & {
+				__terminayOpenedExternalLinks?: string[];
+			};
+			state.__terminayOpenedExternalLinks = [];
+			shell.openExternal = async (url: string) => {
+				state.__terminayOpenedExternalLinks?.push(url);
+			};
+		});
+
+		await writeToTerminalSession(
+			mainWindow,
+			sessionId,
+			`printf '\\r\\n${linkUrl}\\r\\n'\r`,
+		);
+
+		const link = mainWindow
+			.locator('.xterm-rows')
+			.getByText(linkUrl, { exact: true });
+		await expect(link).toBeVisible();
+		const linkBox = await requireBoundingBox(link, 'Terminal HTTP link');
+		const linkCenter = {
+			x: linkBox.x + linkBox.width / 2,
+			y: linkBox.y + linkBox.height / 2,
+		};
+
+		await mainWindow.keyboard.down(modifier);
+		await mainWindow.mouse.click(linkCenter.x, linkCenter.y);
+		await mainWindow.keyboard.up(modifier);
+		await expect
+			.poll(async () =>
+				electronApp.evaluate(() => {
+					const state = globalThis as typeof globalThis & {
+						__terminayOpenedExternalLinks?: string[];
+					};
+					return state.__terminayOpenedExternalLinks ?? [];
+				}),
+			)
+			.toEqual([linkUrl]);
+	});
+
 	test('modifier-clicking OSC links does not leave terminal selection armed', async ({
 		electronApp,
 		mainWindow,

@@ -28,8 +28,8 @@ Evidence: `scripts/task20-desktop-security-audit.test.mjs`.
   non-secret path/length metadata to the profile layer.
 - Clipboard actions are capability- and user-gesture-gated and bounded to
   1 MiB. External URL actions are capability- and user-gesture-gated, limited
-  to canonical credential-free HTTPS URLs, and reject control characters.
+  to canonical credential-free HTTP and HTTPS URLs, and reject control characters.
 
-The external URL change also closes a concrete gap: HTTPS URLs containing
+The external URL change also closes a concrete gap: HTTP and HTTPS URLs containing
 `user:pass@host` are now rejected before they can reach the operating-system
 URL handler.
