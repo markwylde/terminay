@@ -160,7 +160,8 @@ the previous code is rejected as already used.
    `app.terminay.com`.
 6. **Back to connections** returns to the manager list without navigating
    `window.top`. From a connected workspace this is **Switch connections**
-   and **File → Disconnect**.
+   and **File → Disconnect**. Desktop omits **Switch connections** because
+   its connection menu lists every remembered profile.
 7. Selecting a saved profile loads that stable session origin in the same
    fullscreen iframe. The session authenticates with the vaulted device key
    and reconnects.
