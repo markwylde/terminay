@@ -45,12 +45,18 @@ environment extensions, make those outbound connections, or hold their secrets.
 
 ## Shared header journey
 
-The header displays the current server label, not the transport:
+The header displays the current server label, not the transport. Left of
+the label, an exposure control icon uses the same color as the label: a
+stop icon while the server is exposed, a play icon while it is not. Right
+of the label, a blue pill shows the number of active remote connections, or
+nothing when the count is zero:
 
 ```text
-[ Local ▼ ]
-[ Production VPS ▼ ]
-[ Home Mac · Offline ▼ ]
+[ ▶ Local ▼ ]
+[ ■ Local ▼ ]
+[ ■ Local  2 ▼ ]
+[ ▶ Production VPS ▼ ]
+[ ▶ Home Mac · Offline ▼ ]
 ```
 
 The menu contains:
