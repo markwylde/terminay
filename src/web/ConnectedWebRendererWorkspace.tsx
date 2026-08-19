@@ -49,6 +49,7 @@ import type { RemoteAccessStatus } from '../types/terminay';
 import { createBrowserMacroSettingsClient } from './browserRendererHostAdapters';
 import './connectedRendererWorkspace.css';
 import { isProjectEditCommitted } from './projectEditSettlement';
+import { canLeaveManagerSession } from './sessionTransportHost';
 
 export type ConnectedWebRendererWorkspaceProps = Readonly<{
 	terminalClientContext: Omit<TerminalPanelClientContextValue, 'projectId'>;
@@ -481,7 +482,10 @@ export function ConnectedWebRendererWorkspace({
 							onOpenConnectionManager: () => {
 								void auxiliaryRoutes.openRemoteControl();
 							},
-							onSwitchConnections: onBack,
+							onSwitchConnections:
+								hostContext === undefined && canLeaveManagerSession()
+									? onBack
+									: undefined,
 							presentation: Object.freeze({
 								nativeMenus: hasNativeMenus,
 								nativeWindowControls: hasNativeWindowControls,

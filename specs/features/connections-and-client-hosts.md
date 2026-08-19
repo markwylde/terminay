@@ -55,8 +55,12 @@ The header displays the current server label, not the transport:
 
 The menu contains:
 
-- remembered connections as a single-line list, with **Local** first on
-  Desktop;
+- on Desktop, every remembered connection as a single-line list with
+  **Local** first; selecting another profile focuses an existing window for
+  that connection or opens a new sandboxed window;
+- on a framed `app.terminay.com` session, only the current connection,
+  which is not a switcher list, because the manager owns the saved-profile
+  list outside the iframe;
 - a manage control on the Connections heading that opens the same
   **Remote Control** surface as File → Remote Control;
 - **Expose this server…** when the current device is allowed to manage
@@ -65,16 +69,21 @@ The menu contains:
 - live **Active Connections** for every connected browser or Desktop peer,
   with empty copy using the same inset as other menu rows;
 - retry and forget/revoke actions with distinct language inside Remote
-  Control; and
-- **Switch connections** on a framed `app.terminay.com` session, which
-  returns to the manager list without opening Remote Control; and
+  Control;
+- **Switch connections** only when the browser session can return to the
+  `app.terminay.com` manager (`shell.back` when framed). Desktop never shows
+  this action; and
 - diagnostics that distinguish server offline, relay unavailable, WebRTC
   route failure, missing device identity, revoked device, invalid contract, and
   failed switch actions. Failed switch actions keep the selector visible and
   show the host-provided failure reason instead of logging only to the native
   terminal.
 
-Switching to another remembered connection replaces the current transport.
+On Desktop, selecting another remembered connection focuses or opens that
+connection's window. On a framed browser session, **Switch connections**
+returns to the manager list; opening another saved profile replaces the
+framed session.
+
 Remote Control is the single management surface for pairing, trusted devices,
 and live connections. Settings keeps PIN limits and signaling configuration.
 
@@ -150,6 +159,8 @@ status must not be conflated with terminal or agent attention.
   remember any number of remote profiles.
 - A native window is bound to exactly one server at a time. Its title and
   security scope make the connection clear.
+- The header connection menu lists every remembered profile, with **Local**
+  first, and omits **Switch connections**.
 - Reloading a native window preserves that exact server binding. Desktop
   discards the document-scoped byte channel, reconnects the remembered remote
   profile with its OS-protected credential, and transfers a fresh channel to
@@ -255,6 +266,9 @@ and remote startup; no second workspace-window owner exists.
 - The PWA contains connection-profile management, the framed session host, and
   the origin-keyed credential vault. It does not run the workspace. It shows
   at most one framed session at a time.
+- The framed workspace connection menu shows only the current connection plus
+  **Switch connections**, which returns to the manager list. It does not list
+  other saved manager profiles.
 - Its installable application shell and saved profile list remain available
   offline; opening a profile requires the selected session origin to be
   reachable.
@@ -553,7 +567,11 @@ WebRTC generation replacement and terminal resynchronization follow
 ## Acceptance outcomes
 
 - Desktop opens to **Local**, and its connection menu can expose Local, add a
-  remote, and focus/open separate remote windows.
+  remote, and focus/open separate remote windows. That menu lists remembered
+  profiles and omits **Switch connections**.
+- A framed `app.terminay.com` workspace connection menu shows the current
+  connection and **Switch connections**, not the manager's other saved
+  profiles.
 - Four Electron windows can safely show one Local and three remote servers
   without crossing server, project, or credential state.
 - The web host offers the same add/manage/switch journey without showing a
