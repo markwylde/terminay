@@ -2506,9 +2506,7 @@
   display: grid;
   place-items: center;
   padding: 32px;
-  background:
-    radial-gradient(circle at center, color-mix(in srgb, var(--terminal-panel-surface, #111316) 70%, #ffffff 10%), transparent 46%),
-    var(--terminal-panel-surface, #111316);
+  background: var(--terminal-panel-surface, #111316);
   color: #9bb0c8;
   text-align: center;
 }
