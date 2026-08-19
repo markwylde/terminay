@@ -210,6 +210,20 @@ export function useTerminalAdoptionController({
 			terminalSessionStatus?: 'running' | 'exited' | 'interrupted',
 		) => {
 			if ([...panelSessionsRef.current.values()].includes(sessionId)) {
+				const existingPanelId = [...panelSessionsRef.current.entries()].find(
+					([, mappedSessionId]) => mappedSessionId === sessionId,
+				)?.[0];
+				const existingPanel =
+					existingPanelId === undefined
+						? undefined
+						: apiRef.current?.getPanel(existingPanelId);
+				if (
+					existingPanel !== undefined &&
+					terminalSessionStatus !== undefined &&
+					existingPanel.params?.terminalSessionStatus !== terminalSessionStatus
+				) {
+					existingPanel.api.updateParameters({ terminalSessionStatus });
+				}
 				return true;
 			}
 			return acceptMovedTerminal({

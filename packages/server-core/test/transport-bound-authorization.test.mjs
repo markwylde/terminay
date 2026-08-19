@@ -77,6 +77,7 @@ test("project claim covers panel objects, both panel-move projects, generic proj
       { type: "panel.move", panelId: "panel-b", targetProjectId: "project-a" },
       { type: "project.update", projectId: "project-b", name: "B", root: "/b" },
       { type: "terminal.markInterrupted", sessionId: "session-b" },
+      { type: "terminal.markExited", sessionId: "session-b", exitCode: 0 },
     ];
     for (const [index, command] of attempts.entries()) {
       await assert.rejects(

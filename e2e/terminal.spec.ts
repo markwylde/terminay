@@ -1171,4 +1171,56 @@ test.describe('terminal behavior', () => {
 
 		await expect(mainWindow.locator('.terminal-tab-content')).toHaveCount(1);
 	});
+
+	test('closes an exited terminal tab without breaking a sibling live terminal', async ({
+		mainWindow,
+	}) => {
+		const liveSessionId = await getActiveSessionId(mainWindow);
+		await sendAppCommand(mainWindow, 'new-terminal');
+		await expect(mainWindow.locator('.terminal-tab-content')).toHaveCount(2);
+		await expect
+			.poll(async () => getActiveSessionId(mainWindow))
+			.not.toBe(liveSessionId);
+
+		const exitedSessionId = await getActiveSessionId(mainWindow);
+		const exitedPanel = mainWindow.locator(
+			`.terminal-panel[data-terminay-terminal-session-id="${exitedSessionId}"]`,
+		);
+		await expect(exitedPanel.locator('.xterm-rows')).toContainText('$', {
+			timeout: 10_000,
+		});
+		await writeToTerminalSession(mainWindow, exitedSessionId, 'exit\r');
+		await expect(exitedPanel.locator('.xterm-rows')).toContainText(
+			'process exited',
+			{ timeout: 10_000 },
+		);
+		await expect(
+			mainWindow.getByRole('button', { name: 'Retry connection' }),
+		).toHaveCount(0);
+
+		await mainWindow
+			.locator('.dv-tab:visible')
+			.filter({ hasText: 'Terminal 2' })
+			.getByLabel('Close terminal')
+			.click();
+		await expect(mainWindow.locator('.terminal-tab-content')).toHaveCount(1, {
+			timeout: 8_000,
+		});
+		await expect(
+			mainWindow
+				.getByRole('alert')
+				.filter({ hasText: 'Workspace synchronization failed' }),
+		).toHaveCount(0);
+
+		const remaining = mainWindow.locator('.terminal-panel:visible');
+		await expect(remaining).toHaveAttribute(
+			'data-terminay-terminal-session-id',
+			liveSessionId,
+		);
+		const marker = `sibling-live-${Date.now()}`;
+		await writeToTerminal(mainWindow, `printf '${marker}\\n'\r`);
+		await expect(remaining.locator('.xterm-rows')).toContainText(marker, {
+			timeout: 8_000,
+		});
+	});
 });

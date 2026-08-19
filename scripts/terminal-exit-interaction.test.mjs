@@ -17,7 +17,7 @@ await build({
   platform: 'node',
 })
 
-const { formatTerminalExitNotice, shouldSuppressTerminalExitNotice } = await import(pathToFileURL(outputPath).href)
+const { formatTerminalExitNotice, isTerminalSessionEndedError, shouldSuppressTerminalExitNotice } = await import(pathToFileURL(outputPath).href)
 
 test.after(async () => {
   await rm(outputDirectory, { recursive: true, force: true })
@@ -45,4 +45,14 @@ test('malformed runtime exit metadata cannot render NaN or infinity into xterm',
     formatTerminalExitNotice({ autoCloseOnSuccessfulExit: false, exitCode: Number.NaN, signal: Number.POSITIVE_INFINITY }),
     '\r\n\x1b[31m[process exited with signal unknown (code unknown)]\x1b[0m\r\n',
   )
+})
+
+test('attach failures for an already-exited session are not connection retries', () => {
+  assert.equal(
+    isTerminalSessionEndedError(
+      new Error('terminal attachment open failed: terminal operation terminal.attach failed: terminal session has exited'),
+    ),
+    true,
+  )
+  assert.equal(isTerminalSessionEndedError(new Error('Desktop server transport is closed.')), false)
 })
