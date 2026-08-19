@@ -66,7 +66,7 @@ import {
 	shouldInterceptTerminalDrop,
 	uploadBrowserTerminalDrop,
 } from './terminalDropInteraction';
-import { formatTerminalExitNotice } from './terminalExitInteraction';
+import { formatTerminalExitNotice, isTerminalSessionEndedError } from './terminalExitInteraction';
 import { shouldRestoreTerminalFocusAfterWindowActivation } from './terminalFocusInteraction';
 import { createTerminalLinkInteraction } from './terminalLinkInteraction';
 import { shouldInsertTerminalMultilineNewline } from './terminalMultilineInteraction';
@@ -664,6 +664,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			panelClient !== undefined &&
 			panelIdentity !== undefined &&
 			panelClientId !== undefined;
+		// Exited/interrupted is a mount-time decision. A live panel that later
+		// marks exited must not remount: that wipes the exit notice and can
+		// drop in-flight input. Stream exit and attach errors own that path.
 		const terminalSessionUnavailable =
 			props.params.terminalSessionStatus !== undefined &&
 			props.params.terminalSessionStatus !== 'running';
@@ -1383,6 +1386,15 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 							window.clearTimeout(recoveryDeadlineTimer);
 						recoveryDeadlineTimer = null;
 						if (dataReplayDisposed || !bindingFence.isCurrent(binding)) return;
+						if (isTerminalSessionEndedError(error)) {
+							serverAttachmentFailed = true;
+							setIsTerminalHydrating(false);
+							setPresentationUnavailable(true);
+							setServerTerminalError(
+								'This terminal has exited. Open a new terminal to continue.',
+							);
+							return;
+						}
 						failServerTransport(
 							new Error(
 								`terminal attachment open failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -1438,16 +1450,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			// reconnects use the exact cursor xterm has already rendered.
 			retryServerAttachmentRef.current = () => {
 				if (dataReplayDisposed) return;
-				if (terminalPanelConnectionContext?.retryConnection !== undefined) {
-					serverInputQueue?.close();
-					if (activeBinding !== null) bindingFence.retire(activeBinding);
-					activeBinding = null;
-					if (presentationRenewTimer !== null)
-						window.clearTimeout(presentationRenewTimer);
-					presentationRenewTimer = null;
-					terminalPanelConnectionContext.retryConnection();
-					return;
-				}
+				// A single panel attach failure is not proof that the workspace
+				// connection is dead. Recovering the host transport remounts every
+				// terminal and can leave live shells unattached. Retry this panel.
 				serverAttachmentFailed = false;
 				resyncing = false;
 				recoveryAttempt = 0;
@@ -1961,7 +1966,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		props.api,
 		props.params.registerTerminalContextReader,
 		props.params.sessionId,
-		props.params.terminalSessionStatus,
 		props.params.terminalClientFromPosition,
 		props.params.terminalClientId,
 		props.params.terminalClientIdentity,
@@ -2332,10 +2336,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			{serverTerminalError ? (
 				<div className="terminal-panel-connection-error" role="alert">
 					<p>{serverTerminalError}</p>
-					{isTerminalRetryActionable(
-						presentationUnavailable,
-						terminalPanelConnectionContext?.canRetryConnection?.(),
-					) ? (
+					{isTerminalRetryActionable(presentationUnavailable) ? (
 						<button
 							type="button"
 							onClick={() => retryServerAttachmentRef.current()}

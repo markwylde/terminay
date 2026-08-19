@@ -479,10 +479,9 @@ test("TerminalService kill finalizes a session exactly once when the PTY reports
     signal: 9,
   }]);
 
-  await assert.rejects(
-    () => handle.kill(writeAuthorization()),
-    (error) => error instanceof TerminalServiceError && error.code === "session_exited",
-  );
+  await handle.kill(writeAuthorization());
+  assert.equal(handle.status, "exited");
+  assert.deepEqual(process.kills, [undefined]);
 });
 
 test("server PTY adapter has no window owner and detach/resume reuses one process", async () => {

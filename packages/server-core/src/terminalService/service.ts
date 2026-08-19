@@ -707,8 +707,15 @@ export class TerminalService {
   }
 
   async kill(session: string | TerminalIdentity, authorization?: TerminalAuthorization, signal?: number | string): Promise<void> {
-    const mutable = this.requireLiveSession(session);
+    let mutable: MutableSession;
+    try {
+      mutable = this.requireSession(session);
+    } catch (error) {
+      if (error instanceof TerminalServiceError && error.code === "session_not_found") return;
+      throw error;
+    }
     this.authorize(mutable, authorization, "write");
+    if (mutable.status !== "running") return;
     mutable.pendingExitReason = "killed";
     if (mutable.process === undefined) {
       this.finish(mutable, { exitCode: 0, signal: null }, "killed", this.now());
