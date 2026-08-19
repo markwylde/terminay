@@ -210,7 +210,10 @@ import {
 	recordTerminalControlExit,
 	useTerminalControlController,
 } from './workspace/useTerminalControlController';
-import { useTerminalCreationController } from './workspace/useTerminalCreationController';
+import {
+	scheduleCreatedTerminalFocus,
+	useTerminalCreationController,
+} from './workspace/useTerminalCreationController';
 import { useTerminalDockviewWindowController } from './workspace/useTerminalDockviewWindowController';
 import { useTerminalRecordingController } from './workspace/useTerminalRecordingController';
 import { useTerminalSwitcherController } from './workspace/useTerminalSwitcherController';
@@ -2197,6 +2200,7 @@ const ProjectWorkspace = forwardRef<
 							if (reconciledPanel !== null) {
 								reconciledPanel.api.setActive();
 								setFocusedSessionId(sessionId);
+								scheduleCreatedTerminalFocus(sessionId);
 								window.requestAnimationFrame(publishTerminalActivityOverview);
 								resolve();
 								return;
@@ -5143,6 +5147,7 @@ function App({
 	const workspaceRefs = useRef(
 		new Map<string, ProjectWorkspaceHandle | null>(),
 	);
+	const draggingProjectIdRef = useRef<string | null>(null);
 	const confirmProjectClose = useCallback(
 		async (projectId: string) => {
 			const preflight = await observeTerminalClosePreflight(
@@ -5177,6 +5182,7 @@ function App({
 			workspaceSnapshot?.projects[
 				workspaceSnapshot.views[boundWorkspaceViewId ?? '']?.projectIds[0] ?? ''
 			]?.root ?? '',
+		holdProjectOrderRef: draggingProjectIdRef,
 		isAdoptWindow: false,
 		isSettingsLoading: areTerminalSettingsLoading,
 		projectColorScope: currentServerId,
@@ -5188,12 +5194,14 @@ function App({
 		draggingProjectId,
 		dropPreview,
 		handleProjectTabDragEnd,
+		handleProjectTabDragMove,
 		handleProjectTabDragStart,
 		isDraggingTabTornOff,
 		isProjectDropTarget,
 		popoutProject,
 		projectTabBarRef,
 	} = useProjectTabTransfer({
+		draggingProjectIdRef,
 		projectsRef,
 		workspaceSnapshotStore: terminalClientContext?.workspaceSnapshotStore,
 		workspaceViewId: boundWorkspaceViewId,
@@ -5336,6 +5344,28 @@ function App({
 			if (snapshot === null) {
 				throw new Error('The server did not publish the new project terminal.');
 			}
+			const startedAt = performance.now();
+			await new Promise<void>((resolve) => {
+				const focusCreated = () => {
+					const host = workspaceRefs.current.get(projectId);
+					const textarea = document.querySelector(
+						`.project-workspace--active .terminal-panel[data-terminay-terminal-session-id="${CSS.escape(sessionId)}"] .xterm-helper-textarea`,
+					);
+					if (host) host.focusActiveTerminal();
+					if (host && textarea) {
+						scheduleCreatedTerminalFocus(sessionId);
+						resolve();
+						return;
+					}
+					if (performance.now() - startedAt >= 2_000) {
+						scheduleCreatedTerminalFocus(sessionId);
+						resolve();
+						return;
+					}
+					window.requestAnimationFrame(focusCreated);
+				};
+				focusCreated();
+			});
 		},
 		[
 			terminalClientContext?.client,
@@ -5584,8 +5614,34 @@ function App({
 	}, [terminalClientContext?.workspaceSnapshotStore]);
 
 	const onReorder = (newOrder: ProjectTab[]) => {
+		projectsRef.current = newOrder;
 		setProjects(newOrder);
 	};
+	const persistMovedProject = useCallback(
+		(movedId: string) => {
+			const store = terminalClientContext?.workspaceSnapshotStore;
+			if (store === undefined || boundWorkspaceViewId === null) return;
+			const index = projectsRef.current.findIndex(
+				(project) => project.id === movedId,
+			);
+			if (index < 0) return;
+			const current =
+				store.snapshot?.views[boundWorkspaceViewId]?.projectIds ?? [];
+			const next = projectsRef.current.map((project) => project.id);
+			if (
+				current.length === next.length &&
+				current.every((id, position) => id === next[position])
+			) {
+				return;
+			}
+			void store.moveProject({
+				index,
+				projectId: movedId,
+				targetViewId: boundWorkspaceViewId,
+			});
+		},
+		[boundWorkspaceViewId, projectsRef, terminalClientContext?.workspaceSnapshotStore],
+	);
 
 	const focusProjectTerminal = useCallback(
 		(projectId: string) =>
@@ -5841,9 +5897,17 @@ function App({
 					onActivate={activateProject}
 					onClose={closeProject}
 					onDragEnd={handleProjectTabDragEnd}
+					onDragMove={handleProjectTabDragMove}
 					onDragStart={handleProjectTabDragStart}
 					onEdit={openEditProjectWindow}
 					onReorder={onReorder}
+					onReorderCommit={persistMovedProject}
+					onSwitcherOpen={() => {
+						setIsRemoteMenuOpen(false);
+						setIsActivityMenuOpen(false);
+					}}
+					canCreateProject={canAddProject}
+					onCreateProject={() => void createThisServerProject()}
 					projects={projects}
 				/>
 				<div className="project-tab-add-box">
