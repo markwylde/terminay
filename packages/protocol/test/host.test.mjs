@@ -310,6 +310,34 @@ test('semantic host actions are closed and exact-binding/gesture checked', () =>
 	);
 });
 
+test('external URL actions accept credential-free HTTP and HTTPS only', () => {
+	assert.deepEqual(parseTerminayHostAction({
+		type: 'os.open-external',
+		url: 'http://127.0.0.1:8080/status',
+	}), { type: 'os.open-external', url: 'http://127.0.0.1:8080/status' });
+	assert.deepEqual(parseTerminayHostAction({
+		type: 'os.open-external',
+		url: 'https://example.com/docs',
+	}), { type: 'os.open-external', url: 'https://example.com/docs' });
+	assert.deepEqual(parseTerminayHostAction({
+		type: 'os.open-external',
+		url: 'HTTP://EXAMPLE.COM/docs',
+	}), { type: 'os.open-external', url: 'http://example.com/docs' });
+	for (const url of [
+		'javascript:alert(1)',
+		'file:///etc/passwd',
+		'ftp://example.com/file',
+		'mailto:user@example.com',
+		'http://user:pass@example.com/',
+		'https://user@example.com/',
+	]) {
+		assert.throws(
+			() => parseTerminayHostAction({ type: 'os.open-external', url }),
+			/external URL is invalid/u,
+		);
+	}
+});
+
 test('native menu accelerator updates are bounded and immutable', () => {
 	const action = parseTerminayHostAction({
 		type: 'menu.accelerators.update',

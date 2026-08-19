@@ -1218,7 +1218,12 @@ function safeExternalUrl(value: unknown): string {
 	} catch {
 		throw new TypeError('external URL is invalid');
 	}
-	if (parsed.protocol !== 'https:' || parsed.username || parsed.password)
+	if (
+		(parsed.protocol !== 'http:' && parsed.protocol !== 'https:') ||
+		parsed.username ||
+		parsed.password ||
+		parsed.hostname.length === 0
+	)
 		throw new TypeError('external URL is invalid');
 	return parsed.toString();
 }
