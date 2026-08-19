@@ -17,6 +17,8 @@ test('Desktop WebRTC exposure uses the server-owned hosted pairing host', async 
 	assert.match(exposure, /revokedAt === null/u);
 	assert.match(exposure, /loadOrCreateHostedHostKey|hostKey/u);
 	assert.match(main, /new DesktopServerOwnedExposure/u);
+	assert.match(main, /parseHostedIceServers/u);
+	assert.match(main, /webRtcIceServers/u);
 	assert.match(main, /startHostedPairingHost|DesktopServerOwnedExposure/u);
 	assert.match(main, /remote-host-key\.v1\.json/u);
 	assert.doesNotMatch(

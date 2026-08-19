@@ -19,6 +19,25 @@ import {
 } from './hostedPairingSecrets.js';
 import type { ServerPairingHandoff, ServerRemoteExposure } from './serverExposure.js';
 import { bindUiArchiveChannels, safeChannelSend } from './uiArchiveTransfer.js';
+import {
+	createHandshakeJoinQueue,
+	hostedPeerConfiguration,
+	HostedPeerLifecycle,
+	resolveIceRecoveryGraceMs,
+	type HostedIceServer,
+} from './hostedPeerLifecycle.js';
+
+export {
+	DEFAULT_HOSTED_ICE_SERVERS,
+	DEFAULT_ICE_RECOVERY_GRACE_MS,
+	HostedPeerLifecycle,
+	createHandshakeJoinQueue,
+	hostedPeerConfiguration,
+	parseHostedIceServers,
+	resolveHostedIceServers,
+	resolveIceRecoveryGraceMs,
+} from './hostedPeerLifecycle.js';
+export type { HostedIceServer } from './hostedPeerLifecycle.js';
 
 const CHANNELS = ['api', 'asset', 'control', 'application', 'terminal', 'assets'] as const;
 
@@ -29,6 +48,8 @@ type WeriftIceCandidate = Readonly<{
 	toJSON?: () => WeriftIceCandidate;
 }>;
 type WeriftPeer = {
+	readonly connectionState?: string;
+	readonly iceConnectionState?: string;
 	readonly localDescription: Readonly<{ sdp?: string; type?: string }> | null | undefined;
 	addEventListener(type: string, listener: (event: Record<string, unknown>) => void): void;
 	addIceCandidate(candidate: Readonly<{ candidate: string; sdpMid: string }>): Promise<void>;
@@ -77,6 +98,9 @@ export interface HostedPairingHostOptions {
 	}>;
 	readonly verifyPairingPin?: (pin: string) => boolean;
 	readonly webrtcRuntimeRoot: string;
+	readonly iceServers?: readonly HostedIceServer[];
+	readonly resolveIceServers?: () => readonly HostedIceServer[];
+	readonly iceRecoveryGraceMs?: number;
 	readonly rotateHandoff?: () => ServerPairingHandoff;
 	readonly onHandoff?: (handoff: ServerPairingHandoff) => void;
 	readonly onPeerConnected?: (peer: HostedConnectedPeer) => void;
@@ -131,7 +155,11 @@ export async function startHostedPairingHost(
 	const context = { archive, options };
 	const connectedPeers: WeriftPeer[] = [];
 	const connectedConnections: ServerConnectionLike[] = [];
-	let handshakePeer: WeriftPeer | undefined;
+	const joinQueue = createHandshakeJoinQueue();
+	let handshakeGeneration = 0;
+	let handshake:
+		| Readonly<{ generation: number; peer: WeriftPeer }>
+		| undefined;
 	let pairingSocket: WebSocket | undefined;
 	let deviceSocket: WebSocket | undefined;
 	let pairingGeneration = 0;
@@ -154,7 +182,7 @@ export async function startHostedPairingHost(
 		closed = true;
 		clearTimeout(pairingRefreshTimer);
 		clearTimeout(deviceRefreshTimer);
-		handshakePeer?.close();
+		handshake?.peer.close();
 		for (const peer of connectedPeers) peer.close();
 		for (const connection of connectedConnections) void connection.close();
 		pairingGeneration += 1;
@@ -164,14 +192,16 @@ export async function startHostedPairingHost(
 	};
 
 	async function addHandshakePeer(socket: WebSocket, scope: SignalScope): Promise<void> {
-		if (handshakePeer && !connectedPeers.includes(handshakePeer)) {
-			handshakePeer.close();
+		const generation = ++handshakeGeneration;
+		if (handshake && !connectedPeers.includes(handshake.peer)) {
+			handshake.peer.close();
 		}
+		handshake = undefined;
 		const next = await startPeer(Peer, socket, scope, context, (connection, peer) => {
 			connectedConnections.push(connection);
-			if (handshakePeer === next) {
+			if (handshake?.peer === next) {
 				connectedPeers.push(next);
-				handshakePeer = undefined;
+				handshake = undefined;
 			}
 			options.onPeerConnected?.(peer);
 			if (scope.kind === 'pairing') {
@@ -182,7 +212,11 @@ export async function startHostedPairingHost(
 				pairingRefreshTimer.unref?.();
 			}
 		});
-		handshakePeer = next;
+		if (closed || generation !== handshakeGeneration) {
+			next.close();
+			return;
+		}
+		handshake = { generation, peer: next };
 	}
 
 	async function handlePairingSignal(
@@ -194,17 +228,13 @@ export async function startHostedPairingHost(
 		if (!message || registered.handle(message)) return;
 		if (message.type === 'client-join') {
 			diagnose({ type: 'client-join', scope: 'pairing' });
-			await addHandshakePeer(socket, { kind: 'pairing', roomId: derived.pairingRoomId });
+			await joinQueue.enqueue(() =>
+				addHandshakePeer(socket, { kind: 'pairing', roomId: derived.pairingRoomId }),
+			);
 			return;
 		}
-		if (message.type === 'answer' && handshakePeer) {
-			const description = asSessionDescription(message.sdp);
-			if (description) await handshakePeer.setRemoteDescription(description);
-			return;
-		}
-		if (message.type === 'ice' && handshakePeer) {
-			const candidate = asIceCandidate(message.candidate);
-			if (candidate) await handshakePeer.addIceCandidate(candidate);
+		if (message.type === 'answer' || message.type === 'ice') {
+			await joinQueue.enqueue(() => applyHandshakeSignal(message));
 		}
 	}
 
@@ -216,17 +246,13 @@ export async function startHostedPairingHost(
 		if (!message || registered.handle(message)) return;
 		if (message.type === 'device-join') {
 			diagnose({ type: 'client-join', scope: 'device' });
-			await addHandshakePeer(socket, { kind: 'device', sessionId });
+			await joinQueue.enqueue(() =>
+				addHandshakePeer(socket, { kind: 'device', sessionId }),
+			);
 			return;
 		}
-		if (message.type === 'device-answer' && handshakePeer) {
-			const description = asSessionDescription(message.sdp);
-			if (description) await handshakePeer.setRemoteDescription(description);
-			return;
-		}
-		if (message.type === 'device-ice' && handshakePeer) {
-			const candidate = asIceCandidate(message.candidate);
-			if (candidate) await handshakePeer.addIceCandidate(candidate);
+		if (message.type === 'device-answer' || message.type === 'device-ice') {
+			await joinQueue.enqueue(() => applyHandshakeSignal(message));
 		}
 	}
 
@@ -457,6 +483,22 @@ export async function startHostedPairingHost(
 		mintPairing: () => refreshPairing('mint'),
 	};
 
+	async function applyHandshakeSignal(message: Record<string, unknown>): Promise<void> {
+		const current = handshake;
+		if (!current || current.generation !== handshakeGeneration) return;
+		try {
+			if (message.type === 'answer' || message.type === 'device-answer') {
+				const description = asSessionDescription(message.sdp);
+				if (description) await current.peer.setRemoteDescription(description);
+				return;
+			}
+			const candidate = asIceCandidate(message.candidate);
+			if (candidate) await current.peer.addIceCandidate(candidate);
+		} catch (error) {
+			logHostError(error);
+		}
+	}
+
 	function logHostError(error: unknown): void {
 		if (!closed) console.error(error instanceof Error ? error.message : error);
 	}
@@ -547,23 +589,6 @@ type SignalScope =
 	| { readonly kind: 'pairing'; readonly roomId: string }
 	| { readonly kind: 'device'; readonly sessionId: string };
 
-function hostedPeerConfiguration(connectHost: string | undefined): Record<string, unknown> {
-	const loopback =
-		connectHost === '127.0.0.1' || connectHost === 'localhost' || connectHost === '::1';
-	return {
-		iceServers: [],
-		maxMessageSize: 1024 * 1024,
-		...(loopback
-			? {
-					iceAdditionalHostAddresses: ['127.0.0.1'],
-					iceInterfaceAddresses: { udp4: '127.0.0.1' },
-					iceUseIpv4: false,
-					iceUseIpv6: false,
-				}
-			: {}),
-	};
-}
-
 function formatConnectHost(host: string, port: string): string {
 	return port ? `${host}:${port}` : host;
 }
@@ -642,11 +667,33 @@ async function startPeer(
 	}>,
 	onApplication: (connection: ServerConnectionLike, peer: HostedConnectedPeer) => void,
 ): Promise<WeriftPeer> {
-	const native = new Peer(hostedPeerConfiguration(context.options.signal?.connectHost));
-	const peer = wrapPeer(native);
+	const native = new Peer(
+		hostedPeerConfiguration(
+			context.options.signal?.connectHost,
+			context.options.resolveIceServers?.() ?? context.options.iceServers,
+		),
+	);
+	const session: { connection?: ServerConnectionLike; peer?: HostedConnectedPeer } = {};
+	const lifecycle = new HostedPeerLifecycle(
+		native,
+		resolveIceRecoveryGraceMs(context.options.iceRecoveryGraceMs),
+		() => {
+			const connectionId = session.peer?.connectionId;
+			void session.connection?.close();
+			try {
+				native.close();
+			} catch {
+				/* Best effort after ICE/peer failure. */
+			}
+			if (connectionId) context.options.onPeerDisconnected?.(connectionId);
+		},
+	);
+	const peer = wrapPeer(native, lifecycle);
 	const channels = Object.fromEntries(
 		CHANNELS.map((label) => [label, peer.createDataChannel(label, { ordered: true })]),
 	) as Record<(typeof CHANNELS)[number], WeriftDataChannel>;
+	native.addEventListener('connectionstatechange', () => lifecycle.observe('peer'));
+	native.addEventListener('iceconnectionstatechange', () => lifecycle.observe('ice'));
 
 	peer.addEventListener('icecandidate', (event) => {
 		const candidate = asIceCandidate(event.candidate);
@@ -654,7 +701,11 @@ async function startPeer(
 		socket.send(JSON.stringify(signalMessage(scope, 'ice', { candidate })));
 	});
 	bindApi(channels.api!, context);
-	bindControl(channels.control!, channels.application!, context, onApplication);
+	bindControl(channels.control!, channels.application!, context, (connection, connected) => {
+		session.connection = connection;
+		session.peer = connected;
+		onApplication(connection, connected);
+	});
 	bindUiArchiveChannels([channels.asset!, channels.assets!], context.archive);
 
 	const offer = await peer.createOffer();
@@ -688,7 +739,7 @@ function signalMessage(
 	};
 }
 
-function wrapPeer(peer: WeriftPeer): WeriftPeer {
+function wrapPeer(peer: WeriftPeer, lifecycle: HostedPeerLifecycle): WeriftPeer {
 	const queued: Array<() => void> = [];
 	let remoteSet = false;
 	return {
@@ -707,7 +758,10 @@ function wrapPeer(peer: WeriftPeer): WeriftPeer {
 			});
 		},
 		addIceCandidate: (candidate) => peer.addIceCandidate(candidate),
-		close: () => peer.close(),
+		close: () => {
+			lifecycle.stop();
+			peer.close();
+		},
 		createDataChannel: (label, options) => peer.createDataChannel(label, options),
 		createOffer: () => peer.createOffer(),
 		setLocalDescription: (description) => peer.setLocalDescription(description),
