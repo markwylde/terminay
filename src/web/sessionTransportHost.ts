@@ -179,6 +179,16 @@ function fail(field: string): never {
 	);
 }
 
+/** True when this browser session can return to the `app.terminay.com`
+ * manager. Desktop has no manager session, so the connection menu omits
+ * **Switch connections** there. */
+export function canLeaveManagerSession(
+	host = getSessionTransportHost(),
+): boolean {
+	if (typeof host?.leaveManager === 'function') return true;
+	return typeof host?.managerUrl === 'string' && host.managerUrl.length > 0;
+}
+
 /** Return to the PWA connection list. Framed sessions post `shell.back`;
  * first-party session tabs navigate to the manager origin. Electron has no
  * manager session, so this is a no-op there. */
