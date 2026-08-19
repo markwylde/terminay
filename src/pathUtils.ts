@@ -73,3 +73,22 @@ export function getPathRelativeToRoot(path: string, rootPath: string): string {
 	const downSegments = pathSegments.slice(commonLength);
 	return [...upSegments, ...downSegments].join('/') || '.';
 }
+
+/** Project-relative path that cannot traverse out of `rootPath`. Sibling
+ * worktree paths return null instead of manufacturing `../` selectors. */
+export function toContainedProjectRelativePath(
+	path: string,
+	rootPath: string,
+): string | null {
+	const relative = getPathRelativeToRoot(path, rootPath);
+	if (!relative) return relative;
+	if (relative === '.') return '.';
+	const normalized = normalizePathSeparators(relative);
+	if (
+		normalized.startsWith('/') ||
+		normalized.split('/').some((part) => part === '..' || part.length === 0)
+	) {
+		return null;
+	}
+	return relative;
+}

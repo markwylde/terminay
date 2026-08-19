@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 const source = await readFile('src/workspace/useFileExplorerController.ts', 'utf8')
+const gitFilesystemScopeSource = await readFile('src/workspace/gitFilesystemScope.ts', 'utf8')
 const worktreesPanelSource = await readFile('src/components/git-panel/WorktreesPanel.tsx', 'utf8')
 
 test('worktree presentation reserves clean for worktrees without committed or working changes', () => {
@@ -10,12 +11,24 @@ test('worktree presentation reserves clean for worktrees without committed or wo
   assert.match(worktreesPanelSource, />changed<\/span>/u)
 })
 
+test('Git tree filesystem mutations switch to the owning worktree before Explorer commands', () => {
+  assert.match(gitFilesystemScopeSource, /export function owningWorktreeForPath/u)
+  assert.match(gitFilesystemScopeSource, /export function gitFilesystemActionWorktreeRoot/u)
+  assert.match(source, /queueOwningWorktreeAction/u)
+  assert.match(source, /kind: 'delete'/u)
+  assert.match(source, /toContainedProjectRelativePath\(path, project\.rootFolder\)/u)
+  assert.match(
+    source,
+    /onUpdateProject\(project\.id, \{ rootFolder: worktreeRoot \}\)/u,
+  )
+})
+
 test('caught worktree removal failures reach bounded renderer diagnostics', () => {
   const handler = source.match(/const handleDeleteWorktree = useCallback\([\s\S]*?\n\t\);/u)?.[0] ?? ''
   assert.ok(handler.length > 0, 'expected the worktree deletion handler')
   assert.match(
     handler,
-    /catch \(error\) \{\s*console\.error\('\[terminay\] git\.worktree\.remove failed', error\);\s*onSetError\(`Failed to delete worktree:/u,
+    /catch \(error\) \{\s*console\.error\('\[terminay\] git\.worktree\.remove failed', error\);\s*onOperationError\('Git', error\);/u,
   )
   assert.doesNotMatch(
     handler,
