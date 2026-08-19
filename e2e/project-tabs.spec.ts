@@ -342,4 +342,241 @@ test.describe('project tabs', () => {
 		await addProjectButton.click();
 		await expect(projectTabs).toHaveCount(21);
 	});
+
+	test('the Local-matching project switcher keeps trailing chrome visible and activates overflowed projects', async ({
+		mainWindow,
+		electronApp,
+	}) => {
+		const addProjectButton = mainWindow.getByLabel(
+			'Create project on This server',
+		);
+		for (let index = 0; index < 11; index += 1) {
+			await addProjectButton.click();
+		}
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(12);
+
+		const nativeWindow = await electronApp.browserWindow(mainWindow);
+		await nativeWindow.evaluate((window) => {
+			window.setBounds({ x: 40, y: 40, width: 720, height: 700 });
+		});
+		await expect(mainWindow.locator('.project-switcher-button')).toBeVisible();
+		await expect(mainWindow.locator('.project-tabbar-projects')).toHaveClass(
+			/project-tabbar-projects--overflow/,
+		);
+		const strip = mainWindow.locator('.project-tabbar-projects');
+		const add = mainWindow.locator('.project-tab-add-box');
+		const stripBox = await strip.boundingBox();
+		const addBox = await add.boundingBox();
+		if (!stripBox || !addBox) {
+			throw new Error('Expected overflow strip geometry');
+		}
+		expect(addBox.x - (stripBox.x + stripBox.width)).toBeLessThan(8);
+		const lastVisible = mainWindow
+			.locator('.project-tab:not(.project-tab--overflowed)')
+			.last();
+		const lastBox = await lastVisible.boundingBox();
+		const switcherBox = await mainWindow
+			.locator('.project-switcher-button')
+			.boundingBox();
+		if (!lastBox || !switcherBox) {
+			throw new Error('Expected overflow switcher to meet the last tab');
+		}
+		expect(lastBox.x + lastBox.width).toBeGreaterThan(switcherBox.x + 24);
+		await nativeWindow.evaluate((window) => {
+			window.setBounds({ x: 40, y: 40, width: 1280, height: 700 });
+		});
+		await expect(mainWindow.locator('.project-switcher-button')).toBeVisible();
+		const wideStripBox = await strip.boundingBox();
+		const wideAddBox = await add.boundingBox();
+		if (!wideStripBox || !wideAddBox) {
+			throw new Error('Expected a filled overflow strip on a wide bar');
+		}
+		expect(wideAddBox.x - (wideStripBox.x + wideStripBox.width)).toBeLessThan(
+			8,
+		);
+		await expect(mainWindow.locator('.remote-access-button')).toBeVisible();
+		await expect
+			.poll(async () =>
+				Number(
+					await mainWindow
+						.locator('.project-tabbar-projects')
+						.getAttribute('data-project-tab-hidden-count'),
+				),
+			)
+			.toBeGreaterThan(0);
+
+		const overflowedTitle = (
+			await mainWindow
+				.locator('.project-tab--overflowed .project-tab-title')
+				.last()
+				.textContent()
+		)?.trim();
+		if (!overflowedTitle) throw new Error('Expected an overflowed project title');
+
+		await mainWindow.locator('.project-switcher-button').click();
+		await mainWindow.getByRole('menuitem', { name: overflowedTitle }).click();
+		await expect(
+			mainWindow.locator('.project-tab--active .project-tab-title'),
+		).toHaveText(overflowedTitle);
+
+		await nativeWindow.evaluate((window) => {
+			window.setBounds({ x: 40, y: 40, width: 390, height: 740 });
+		});
+		await expect(mainWindow.locator('.project-tabbar-projects')).toHaveAttribute(
+			'data-project-tab-layout',
+			'compact',
+		);
+		await expect(mainWindow.locator('.remote-access-button')).toBeVisible();
+		await expect(mainWindow.locator('.project-switcher-button')).toContainText(
+			overflowedTitle,
+		);
+		await mainWindow.locator('.project-switcher-button').click();
+		const compactMenu = mainWindow.locator('.project-switcher-menu');
+		await expect(compactMenu).toBeVisible();
+		const compactMenuBox = await compactMenu.boundingBox();
+		if (!compactMenuBox) {
+			throw new Error('Expected a compact project switcher menu');
+		}
+		expect(compactMenuBox.width).toBeGreaterThan(330);
+		await expect(
+			compactMenu.getByRole('menuitem', { name: overflowedTitle }),
+		).toBeVisible();
+		await expect(add).toBeHidden();
+		const compactCreate = compactMenu.getByRole('menuitem', {
+			name: 'Create project on This server',
+		});
+		await expect(compactCreate).toBeVisible();
+		const compactSwitcherBox = await mainWindow
+			.locator('.project-switcher-button')
+			.boundingBox();
+		const countBox = await mainWindow
+			.locator('.project-switcher-button__count')
+			.boundingBox();
+		if (!compactSwitcherBox || !countBox) {
+			throw new Error('Expected compact switcher trailing chrome');
+		}
+		expect(
+			compactSwitcherBox.x +
+				compactSwitcherBox.width -
+				(countBox.x + countBox.width),
+		).toBeLessThan(28);
+	});
+
+	test('reorders visible project tabs when one is dragged along the strip', async ({
+		mainWindow,
+	}) => {
+		await mainWindow.getByLabel('Create project on This server').click();
+		const tabs = mainWindow.locator(
+			'.project-tab:not(.project-tab--overflowed)',
+		);
+		await expect(tabs).toHaveCount(2);
+		await expect(mainWindow.locator('.project-tab-title')).toHaveText([
+			'Project',
+			'Project 2',
+		]);
+		const firstBox = await tabs.first().boundingBox();
+		const secondBox = await tabs.nth(1).boundingBox();
+		if (!firstBox || !secondBox) {
+			throw new Error('Project tab drag geometry is unavailable');
+		}
+		await mainWindow.mouse.move(
+			secondBox.x + secondBox.width / 2,
+			secondBox.y + secondBox.height / 2,
+		);
+		await mainWindow.mouse.down();
+		await mainWindow.mouse.move(
+			firstBox.x + 8,
+			firstBox.y + firstBox.height / 2,
+			{ steps: 10 },
+		);
+		await mainWindow.mouse.up();
+		await expect(
+			mainWindow.locator(
+				'.project-tab:not(.project-tab--overflowed) .project-tab-title',
+			),
+		).toHaveText(['Project 2', 'Project']);
+	});
+
+	test('creating a project focuses the new terminal', async ({
+		mainWindow,
+	}) => {
+		await mainWindow.getByLabel('Create project on This server').click();
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+		await expect(mainWindow.locator('.project-tab--active')).toContainText(
+			'Project 2',
+		);
+		await expectTerminalInputFocused(mainWindow);
+	});
+
+	test('the new-project control stays after the last project tab', async ({
+		mainWindow,
+	}) => {
+		const lastTab = mainWindow.locator('.project-tab:not(.project-tab--overflowed)').last();
+		const add = mainWindow.locator('.project-tab-add-box');
+		const local = mainWindow.locator('.remote-access-button');
+		await expect(lastTab).toBeVisible();
+		await expect(add).toBeVisible();
+		const tabBox = await lastTab.boundingBox();
+		const addBox = await add.boundingBox();
+		const localBox = await local.boundingBox();
+		if (!tabBox || !addBox || !localBox) {
+			throw new Error('Expected project bar geometry');
+		}
+		expect(addBox.x - (tabBox.x + tabBox.width)).toBeLessThan(20);
+		expect(localBox.x - (addBox.x + addBox.width)).toBeGreaterThan(40);
+	});
+
+	test('project switcher grips reorder projects', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		const addProjectButton = mainWindow.getByLabel(
+			'Create project on This server',
+		);
+		for (let index = 0; index < 5; index += 1) {
+			await addProjectButton.click();
+		}
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(6);
+		const nativeWindow = await electronApp.browserWindow(mainWindow);
+		await nativeWindow.evaluate((window) => {
+			window.setBounds({ x: 40, y: 40, width: 720, height: 700 });
+		});
+		await expect(mainWindow.locator('.project-switcher-button')).toBeVisible();
+		const titlesBefore = await mainWindow
+			.locator('.project-tab-title')
+			.allTextContents();
+
+		await mainWindow.locator('.project-switcher-button').click();
+		const menu = mainWindow.locator('.project-switcher-menu');
+		await expect(menu).toBeVisible();
+		const lastTitle = titlesBefore.at(-1)?.trim();
+		const firstTitle = titlesBefore[0]?.trim();
+		if (!lastTitle || !firstTitle) {
+			throw new Error('Expected project titles for switcher reorder');
+		}
+		const sourceGrip = menu.getByLabel(`Reorder ${lastTitle}`);
+		const targetRow = menu.locator('[data-project-switcher-row]').first();
+		const gripBox = await sourceGrip.boundingBox();
+		const targetBox = await targetRow.boundingBox();
+		if (!gripBox || !targetBox) {
+			throw new Error('Expected switcher grip geometry');
+		}
+
+		await mainWindow.mouse.move(
+			gripBox.x + gripBox.width / 2,
+			gripBox.y + gripBox.height / 2,
+		);
+		await mainWindow.mouse.down();
+		await mainWindow.mouse.move(
+			targetBox.x + targetBox.width / 2,
+			targetBox.y + 4,
+			{ steps: 8 },
+		);
+		await mainWindow.mouse.up();
+
+		await expect(mainWindow.locator('.project-tab-title').first()).toHaveText(
+			lastTitle,
+		);
+		await expect(menu).toBeVisible();
+	});
 });
