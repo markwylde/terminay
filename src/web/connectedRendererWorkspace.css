@@ -14,12 +14,14 @@
 	position: relative;
 	z-index: 3000;
 	flex: 0 0 auto;
-	height: 30px;
+	min-height: calc(30px + env(safe-area-inset-top, 0px));
+	height: auto;
 	display: flex;
 	align-items: stretch;
 	border-bottom: 1px solid #232b35;
 	background: #11161d;
 	color: #dce2f0;
+	padding-top: env(safe-area-inset-top, 0px);
 	user-select: none;
 }
 
