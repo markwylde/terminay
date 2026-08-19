@@ -78,9 +78,11 @@ byte position. A reconnect from a position older than the retained window
 receives an explicit resync/gap result rather than guessed or duplicate output.
 Queued output is bounded per subscriber; a slow consumer is detached without
 terminating the server-owned PTY. Exit metadata (code, signal, reason, and
-timestamp) is committed and published once. Server shutdown/restart marks live
-sessions interrupted once, while client disconnect, reload, and native-window
-close do not alter session lifetime.
+timestamp) is committed and published once, and the canonical workspace session
+record is marked exited so a later attach or renderer reload cannot treat that
+panel as a live PTY. Server shutdown/restart marks live sessions interrupted
+once, while client disconnect, reload, and native-window close do not alter
+session lifetime.
 
 Live terminal output uses the protocol frame's binary body. Its event envelope
 contains only attachment-scoped identity, byte positions, and output metadata;
@@ -291,7 +293,14 @@ query and injecting duplicate control responses.
   valid presentation boundary and then receive uninterrupted live output; they
   never start inside a partial ANSI/OSC sequence.
 - An exited terminal is clearly represented and cannot be accidentally reused as
-  a live session.
+  a live session. Closing it removes that panel without recovering the shared
+  application connection or reloading the renderer. Sibling live terminals stay
+  attached and interactive.
+- Reloading a renderer, including a cache-ignoring Force Reload, hydrates each
+  still-running session from its checkpoint and makes the restored surface the
+  interactive presentation owner. Input and live output resume immediately; a
+  stale attachment from the discarded document cannot leave the tab looking live
+  while silently discarding keystrokes.
 - Reconnect resumes from a known output position without duplicating the PTY or
   replaying acknowledged output.
 - Every terminal-creation route resolves the same profile and cwd for the same
