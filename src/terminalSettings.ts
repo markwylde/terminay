@@ -1467,7 +1467,7 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				key: 'customGlyphs',
 				label: 'Custom box drawing glyphs',
 				description:
-					'Use xterm.js custom rendering for line art and block glyphs.',
+					'Fill box-drawing and block glyphs to the cell edges. This uses the WebGL renderer when the host provides it.',
 				sectionId: 'rendering',
 				categoryId: 'appearance',
 				input: 'boolean',

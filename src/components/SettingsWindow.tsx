@@ -5,6 +5,7 @@ import type {
 import { TerminayAiClient, TerminayClientFacade } from '@terminay/client-core';
 import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
+import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
 import type { ReactNode } from 'react';
 import {
@@ -75,6 +76,7 @@ function toParakeetRuntimeStatus(status: {
 import '../settings.css';
 import { ExtensionSettingsSection } from './ExtensionSettingsSection';
 import { ShellProfilesSettings } from './ShellProfilesSettings';
+import { attachTerminalWebglRenderer } from './terminalWebglRenderer';
 
 type CategoryId =
 	| (typeof terminalSettingsCategories)[number]['id']
@@ -212,6 +214,10 @@ function TerminalPreview({ settings }: { settings: TerminalSettings }) {
 		terminal.loadAddon(unicode11Addon);
 		terminal.unicode.activeVersion = '11';
 		terminal.open(root);
+		const webglRenderer = attachTerminalWebglRenderer(
+			terminal,
+			() => new WebglAddon(),
+		);
 		fitAddon.fit();
 
 		terminal.writeln('\x1b[1;36mTerminay Settings Preview\x1b[0m');
@@ -232,6 +238,7 @@ function TerminalPreview({ settings }: { settings: TerminalSettings }) {
 
 		return () => {
 			resizeObserver.disconnect();
+			webglRenderer.dispose();
 			terminal.dispose();
 		};
 	}, [settings]);
