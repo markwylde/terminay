@@ -92,6 +92,7 @@ import type {
 } from '../packages/server-core/src/types';
 import {
 	createInitialWorkspace,
+	type WorkspaceProject,
 	WorkspaceStore,
 } from '../packages/server-core/src/workspace';
 import { resolveWorkspaceHydration } from '../packages/server-core/src/workspaceHydration';
@@ -834,18 +835,20 @@ export class ServerTerminalAuthority {
 			// Local Desktop owns these PTYs. They cannot survive this authority
 			// generation, so reopening their persisted panels would manufacture a
 			// row of unusable interrupted tabs. Keep projects and non-terminal
-			// panels, then start exactly one fresh terminal in the restored active
-			// project. Starting one per project turns a Local restart into an
-			// accidental terminal-tab factory.
-			if (this.sessions.size > 0) return;
-			const restartProject = this.localRestartProject();
-			this.workspace.discardStaleLocalTerminalState();
-			await this.create({
-				projectId: restartProject.id,
-				cwd: restartProject.root,
-				cols: 100,
-				rows: 30,
-			});
+			// panels, then start one fresh terminal in every restored project so
+			// none is shown empty. This does not restore the previous tab count.
+			if (this.sessions.size === 0) {
+				this.workspace.discardStaleLocalTerminalState();
+			}
+			for (const project of this.restoredLocalProjects()) {
+				if (this.projectHasTerminalPanel(project.id)) continue;
+				await this.create({
+					projectId: project.id,
+					cwd: project.root,
+					cols: 100,
+					rows: 30,
+				});
+			}
 			return;
 		}
 		// Focused authority tests may inject no durable repository. Production
@@ -874,20 +877,37 @@ export class ServerTerminalAuthority {
 		}
 	}
 
-	/** The restored view selection, rather than object iteration order, chooses
-	 * where the one Local-restart terminal belongs. This keeps logical-view and
-	 * active-project identity authoritative across document reconstruction. */
-	private localRestartProject() {
+	/** Restored projects in presentation order: the selected view's active
+	 * project first, then remaining view membership, then any unattached
+	 * project. The active project is seeded first so the first shown tab is
+	 * ready before sibling projects get their replacement terminals. */
+	private restoredLocalProjects() {
+		const seen = new Set<string>();
+		const projects: WorkspaceProject[] = [];
+		const remember = (projectId: string | undefined) => {
+			if (projectId === undefined || seen.has(projectId)) return;
+			const project = this.workspace.state.projects[projectId];
+			if (project === undefined) return;
+			seen.add(project.id);
+			projects.push(project);
+		};
 		for (const viewId of this.workspace.state.viewOrder) {
 			const view = this.workspace.state.views[viewId];
-			const projectId = view?.activeProjectId ?? view?.projectIds[0];
-			const project =
-				projectId === undefined
-					? undefined
-					: this.workspace.state.projects[projectId];
-			if (project !== undefined) return project;
+			remember(view?.activeProjectId);
+			for (const projectId of view?.projectIds ?? []) remember(projectId);
 		}
-		throw new Error('restored local workspace has no project for its fresh terminal');
+		for (const project of Object.values(this.workspace.state.projects)) {
+			remember(project.id);
+		}
+		return projects;
+	}
+
+	private projectHasTerminalPanel(projectId: string): boolean {
+		const project = this.workspace.state.projects[projectId];
+		if (project === undefined) return false;
+		return project.panelIds.some(
+			(panelId) => this.workspace.state.panels[panelId]?.type === 'terminal',
+		);
 	}
 
 	private async getFileDiff(

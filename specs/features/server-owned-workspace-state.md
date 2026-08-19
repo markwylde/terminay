@@ -259,8 +259,10 @@ and insertion into the intended terminal remain server-authorized operations.
 - A non-empty repository restores its projects and non-terminal panels. Local
   Desktop restart does not restore terminal tabs: its PTYs died with the local
   server, so the server removes their stale panels and sessions and creates one
-  fresh active terminal before the workspace is shown. A remote server that
-  remains alive retains its live terminal sessions across reconnect.
+  fresh terminal in each restored project before the workspace is shown. A
+  project is never presented without a terminal. Previous tab counts are not
+  restored. A remote server that remains alive retains its live terminal
+  sessions across reconnect.
 - A renderer never repairs an empty or malformed server snapshot by inventing
   project, panel, or session identity. Repository initialization or recovery
   either succeeds authoritatively or the client presents a bounded failure.
