@@ -1,4 +1,4 @@
-import { ChevronDown, Settings2 } from 'lucide-react';
+import { ChevronDown, Play, Settings2, Square } from 'lucide-react';
 import type { RefObject } from 'react';
 import type { RemoteAccessStatus } from '../types/terminay';
 
@@ -28,8 +28,15 @@ export function RemoteAccessConnectionMenu(props: {
 }) {
 	const { status } = props;
 	const switcherEntries = props.connectionSwitcherEntries ?? [];
+	const isExposed = Boolean(status?.isRunning);
+	const connectionCount = status?.connections.length ?? 0;
 	const webRtcUnavailable =
 		!status?.isRunning && status?.webRtcStatus === 'error';
+	const connectionSummary =
+		connectionCount > 0
+			? `, ${connectionCount} active connection${connectionCount === 1 ? '' : 's'}`
+			: '';
+	const buttonState = `Open connection menu, ${isExposed ? 'Exposed' : 'Offline'}${connectionSummary}`;
 	return (
 		<div
 			ref={props.menuRef}
@@ -39,19 +46,28 @@ export function RemoteAccessConnectionMenu(props: {
 				type="button"
 				className={`remote-access-button ${props.tone}`.trim()}
 				onClick={props.onToggleMenu}
-				title="Open connection menu"
-				aria-label="Open connection menu"
+				title={buttonState}
+				aria-label={buttonState}
 				aria-haspopup="menu"
 				aria-expanded={props.isOpen}
 			>
+				<span className="remote-access-button__exposure" aria-hidden="true">
+					{isExposed ? (
+						<Square size={10} fill="currentColor" strokeWidth={2} />
+					) : (
+						<Play size={11} fill="currentColor" strokeWidth={2} />
+					)}
+				</span>
 				<span className="remote-access-button__label">
 					{props.currentServerLabel}
 				</span>
-				{status?.isRunning ? (
+				{connectionCount > 0 ? (
 					<span
-						className="remote-access-button__badge remote-access-button__badge--live"
+						className="remote-access-button__connections"
 						aria-hidden="true"
-					/>
+					>
+						{connectionCount}
+					</span>
 				) : null}
 				{status?.configurationIssue || status?.errorMessage ? (
 					<span
