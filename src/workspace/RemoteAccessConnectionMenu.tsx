@@ -147,7 +147,7 @@ export function RemoteAccessConnectionMenu(props: {
 								{status?.isRunning
 									? 'Exposed'
 									: webRtcUnavailable
-										? 'Unavailable'
+										? 'Unavailable in this build'
 										: 'Ready'}
 							</span>
 						</button>

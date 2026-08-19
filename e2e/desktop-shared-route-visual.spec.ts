@@ -52,9 +52,17 @@ test('real Desktop renderer presents every production-mapped shared route withou
 					? 'native-auxiliary'
 					: 'in-page',
 			);
-			if (route.route === 'connections' || route.route === 'git') {
+			if (route.route === 'connections') {
 				await expect(
-					entry.locator(`[data-shared-route-body="${route.route}"]`),
+					entry.locator('[data-shared-route-body="connections"]'),
+				).toBeVisible();
+				await expect(
+					entry.getByRole('listbox', { name: 'Saved Terminay servers' }),
+				).toHaveCount(1);
+			}
+			if (route.route === 'git') {
+				await expect(
+					entry.locator('[data-shared-route-body="git"]'),
 				).toBeVisible();
 				await expect(
 					entry.locator(
