@@ -3519,10 +3519,17 @@ const ProjectWorkspace = forwardRef<
 					| undefined;
 				if (
 					typeof detail?.panelId !== 'string' ||
-					typeof detail.sessionId !== 'string' ||
-					panelSessionMapRef.current.get(detail.panelId) !== detail.sessionId
+					typeof detail.sessionId !== 'string'
 				)
 					return;
+				const api = dockviewApiRef.current;
+				const panel = api?.getPanel(detail.panelId);
+				const mappedSessionId = panelSessionMapRef.current.get(detail.panelId);
+				const liveSessionId =
+					typeof panel?.params?.sessionId === 'string'
+						? panel.params.sessionId
+						: mappedSessionId;
+				if (liveSessionId !== detail.sessionId) return;
 				void requestClosePanel(detail.panelId);
 			};
 			window.addEventListener('terminay-request-close-terminal', listener);
@@ -4040,12 +4047,14 @@ const ProjectWorkspace = forwardRef<
 					detail.exitCode,
 				);
 
+				const panel = getPanelForSession(detail.sessionId);
+				panel?.api.updateParameters({ terminalSessionStatus: 'exited' });
+
 				if (
 					detail.autoCloseOnSuccessfulExit === true &&
 					detail.exitCode === 0 &&
 					detail.signal == null
 				) {
-					const panel = getPanelForSession(detail.sessionId);
 					if (panel !== null && panel !== undefined) {
 						// The session has already exited, so this is not a destructive user
 						// close and must not wait for the activity/confirmation path.  Persist

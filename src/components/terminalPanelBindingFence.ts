@@ -28,7 +28,6 @@ export class TerminalPanelBindingFence {
 
 export function isTerminalRetryActionable(
 	presentationUnavailable: boolean,
-	canRetry: boolean | undefined,
 ): boolean {
-	return !presentationUnavailable && canRetry === true;
+	return !presentationUnavailable;
 }
