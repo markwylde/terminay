@@ -85,6 +85,7 @@ import {
 } from './index.js';
 import { resolveTerminalProcessCwd } from './processCwd.js';
 import { startHostedPairingHost } from './remote/hostedPairingHost.js';
+import { loadHostedUiArchive } from './remote/hostedUiArchive.js';
 import { loadOrCreateHostedHostKey } from './remote/hostedHostKey.js';
 import { assertStandaloneReleaseIntegrity } from './releaseIntegrity.js';
 
@@ -189,7 +190,10 @@ else {
 					if (remotePairingPin === undefined) {
 						throw new Error('TERMINAY_REMOTE_PAIRING_PIN is required for hosted pairing.');
 					}
+					const rendererDirectory = process.env.TERMINAY_UI_RENDERER_DIRECTORY;
 					hostedPairingHost = await startHostedPairingHost({
+						acceptApplication: (transport, authenticatedClient) =>
+							composition.core.accept(transport, { authenticatedClient }),
 						handoff,
 						hostKey: loadOrCreateHostedHostKey(
 							join(options.dataRoot, 'remote-host-key.v1.json'),
@@ -200,6 +204,12 @@ else {
 						serverId: options.serverId,
 						signal: hostedSignalOptions(process.env),
 						webrtcRuntimeRoot: resolveWebRtcRuntimeRoot(process.cwd(), process.env),
+						...(rendererDirectory
+							? {
+									getUiArchive: () =>
+										loadHostedUiArchive(rendererDirectory),
+								}
+							: {}),
 					});
 				}
 				protocolReady = true;
