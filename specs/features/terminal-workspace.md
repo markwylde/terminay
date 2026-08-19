@@ -23,9 +23,10 @@ forwards input, resize, and lifecycle commands through the application protocol.
   path. Clipboard images and their temporary paths are read and created only by
   Electron; browser clients retain their ordinary exact-origin text paste.
 - Live xterm surfaces use the WebGL renderer when the host provides WebGL2 so
-  box-drawing and block glyphs fill the cell. Missing WebGL or a lost GPU
-  context falls back to the DOM renderer without changing PTY behaviour.
-  Server-side headless xterm never loads a GPU renderer.
+  box-drawing and block glyphs fill the cell. Missing WebGL, a lost GPU
+  context, or an automated driver session falls back to the DOM renderer
+  without changing PTY behaviour. Server-side headless xterm never loads a
+  GPU renderer.
 - On touch devices, a vertical drag over the terminal canvas scrolls xterm's
   retained buffer without emitting terminal input. A tap remains available for
   focus and the custom scrollbar remains an equivalent scroll control.

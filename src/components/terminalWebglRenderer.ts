@@ -16,6 +16,37 @@ export type AttachTerminalWebglRendererResult = {
 	readonly dispose: () => void;
 };
 
+export type AttachTerminalWebglRendererOptions = {
+	readonly enabled?: boolean;
+};
+
+/**
+ * Playwright and other driver sessions observe cell text through xterm's DOM
+ * row layer. WebGL replaces that layer with a canvas, so automated sessions
+ * keep the DOM renderer. Interactive WebGL2 hosts still attach the GPU path.
+ */
+export function liveTerminalWebglRendererEnabled(
+	flags: {
+		readonly automatedSession?: boolean;
+		readonly webdriver?: boolean;
+	} = readLiveTerminalWebglFlags(),
+): boolean {
+	return flags.webdriver !== true && flags.automatedSession !== true;
+}
+
+function readLiveTerminalWebglFlags(): {
+	readonly automatedSession: boolean;
+	readonly webdriver: boolean;
+} {
+	return {
+		automatedSession:
+			typeof globalThis !== 'undefined' &&
+			'terminayLocalConnectionFaultTest' in globalThis,
+		webdriver:
+			typeof navigator !== 'undefined' && navigator.webdriver === true,
+	};
+}
+
 /**
  * Load the GPU renderer after xterm has opened. Construction and context-loss
  * failures dispose the addon so xterm keeps its default DOM renderer.
@@ -28,7 +59,12 @@ export function attachTerminalWebglRenderer(
 		}): void;
 	},
 	createAddon: () => TerminalWebglAddonLike,
+	options?: AttachTerminalWebglRendererOptions,
 ): AttachTerminalWebglRendererResult {
+	if (!(options?.enabled ?? liveTerminalWebglRendererEnabled())) {
+		return { attached: false, dispose: () => {} };
+	}
+
 	let addon: TerminalWebglAddonLike | undefined;
 	let contextLossSubscription: { dispose(): void } | undefined;
 	let disposed = false;
