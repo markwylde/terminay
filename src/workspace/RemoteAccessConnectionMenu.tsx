@@ -20,6 +20,7 @@ export function RemoteAccessConnectionMenu(props: {
 	onOpenConnection: () => void;
 	onOpenPairingQr: () => void;
 	onSelectConnection?: (profileId: string) => void;
+	onSwitchConnections?: () => void;
 	onToggleExposure: () => void;
 	onToggleMenu: () => void;
 	status: RemoteAccessStatus | null;
@@ -94,8 +95,7 @@ export function RemoteAccessConnectionMenu(props: {
 									type="button"
 									className={`remote-access-menu__connection remote-access-menu__connection--button remote-access-menu__connection--compact${entry.selected ? ' remote-access-menu__connection--selected' : ''}`}
 									disabled={
-										entry.selected ||
-										props.onSelectConnection === undefined
+										entry.selected || props.onSelectConnection === undefined
 									}
 									onClick={() => props.onSelectConnection?.(entry.id)}
 									role="menuitemradio"
@@ -113,6 +113,15 @@ export function RemoteAccessConnectionMenu(props: {
 								</span>
 							</div>
 						)}
+						{props.onSwitchConnections ? (
+							<button
+								type="button"
+								className="remote-access-menu__item"
+								onClick={props.onSwitchConnections}
+							>
+								<span>Switch connections</span>
+							</button>
+						) : null}
 					</div>
 					{props.errorMessage ? (
 						<div
@@ -156,9 +165,7 @@ export function RemoteAccessConnectionMenu(props: {
 							className="remote-access-menu__item"
 							onClick={props.onOpenPairingQr}
 							disabled={
-								props.isToggling ||
-								webRtcUnavailable ||
-								!status?.isRunning
+								props.isToggling || webRtcUnavailable || !status?.isRunning
 							}
 						>
 							<span>Create pairing link</span>

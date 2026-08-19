@@ -1,11 +1,10 @@
-import { parseHostedPairingUrl } from '@terminay/protocol';
 import {
-	useEffect,
-	useRef,
-	useState,
 	type CSSProperties,
 	type MouseEvent,
 	type ReactNode,
+	useEffect,
+	useRef,
+	useState,
 } from 'react';
 import { writeClipboardText } from '../host/nativeActions';
 import './RemotePairingModal.css';
@@ -18,7 +17,6 @@ export function RemotePairingModal({
 	onTitleMouseDown,
 	pairingUrl,
 	qrCodeDataUrl,
-	sessionOrigin,
 	statusMessage,
 	success = false,
 }: Readonly<{
@@ -29,14 +27,12 @@ export function RemotePairingModal({
 	onTitleMouseDown?: (event: MouseEvent<HTMLDivElement>) => void;
 	pairingUrl?: string | null;
 	qrCodeDataUrl?: string | null;
-	sessionOrigin?: string | null;
 	statusMessage?: string | null;
 	success?: boolean;
 }>) {
 	const [copied, setCopied] = useState(false);
 	const [generatedQr, setGeneratedQr] = useState<string | null>(null);
 	const pointerStartedOnBackdropRef = useRef(false);
-	const origin = sessionOrigin || originFromPairingUrl(pairingUrl);
 	useEffect(() => {
 		let active = true;
 		if (qrCodeDataUrl || !pairingUrl) {
@@ -87,25 +83,21 @@ export function RemotePairingModal({
 							role="status"
 							aria-live="polite"
 						>
-							<div
-								className="remote-pairing-modal__success-mark"
+							<svg
+								className="remote-pairing-modal__success-tick"
+								viewBox="0 0 52 52"
 								aria-hidden="true"
 							>
-								✓
-							</div>
-							<p className="remote-pairing-modal__success-title">
-								Connected
-							</p>
+								<path
+									className="remote-pairing-modal__success-check"
+									d="M14 27.2l7.2 7.2 16.8-16.8"
+								/>
+							</svg>
+							<p className="remote-pairing-modal__success-title">Connected</p>
 						</div>
 					) : null}
 				</div>
 				<div className="remote-pairing-modal__address-section">
-					<div className="remote-pairing-modal__address-label">
-						Session origin
-					</div>
-					<div className="remote-pairing-modal__address-text">
-						{origin || 'Not available'}
-					</div>
 					<div className="remote-pairing-modal__address-label">
 						One-time pairing link
 					</div>
@@ -132,8 +124,8 @@ export function RemotePairingModal({
 					</div>
 					{expiresAt ? (
 						<p className="remote-pairing-modal__expires-text">
-							Expires {new Date(expiresAt).toLocaleString()}. A
-							replacement QR appears automatically before then.
+							Expires {new Date(expiresAt).toLocaleString()}. A replacement QR
+							appears automatically before then.
 						</p>
 					) : null}
 				</div>
@@ -223,19 +215,4 @@ export function RemotePairingModal({
 			</div>
 		</div>
 	);
-}
-
-function originFromPairingUrl(
-	pairingUrl: string | null | undefined,
-): string | null {
-	if (!pairingUrl) return null;
-	try {
-		return parseHostedPairingUrl(pairingUrl).origin;
-	} catch {
-		try {
-			return new URL(pairingUrl).origin;
-		} catch {
-			return null;
-		}
-	}
 }

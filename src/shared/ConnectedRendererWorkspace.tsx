@@ -20,6 +20,7 @@ export type RendererHostAdapters = Readonly<{
 	) => () => void;
 	onDisconnect?: () => void;
 	onOpenConnectionManager?: () => void;
+	onSwitchConnections?: () => void;
 }>;
 
 export type ConnectedRendererWorkspaceProps = Readonly<{
@@ -46,6 +47,7 @@ export function ConnectedRendererWorkspace({
 			key={`${terminalClientContext.serverId}:${terminalClientContext.connectionGeneration ?? 'initial'}`}
 			onDisconnect={host.onDisconnect}
 			onOpenConnectionManager={host.onOpenConnectionManager}
+			onSwitchConnections={host.onSwitchConnections}
 			terminalClientContext={terminalClientContext}
 		/>
 	);

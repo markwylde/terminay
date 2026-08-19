@@ -1288,6 +1288,14 @@
   margin-bottom: 8px;
 }
 
+.settings-remote-panel-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .settings-remote-panel-header h4 {
   margin: 6px 0 10px;
   font-size: 20px;
@@ -1840,11 +1848,16 @@
   }
 
   .settings-remote-panel-header,
+  .settings-remote-panel-header-actions,
   .settings-remote-item,
   .settings-remote-device,
   .settings-remote-device-title-row {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .settings-remote-panel-header-actions {
+    width: 100%;
   }
 
   .settings-remote-card.settings-remote-card--exposure {

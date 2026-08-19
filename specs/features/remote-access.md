@@ -108,9 +108,9 @@ refreshes `device-host-ready` before that registration expires.
 
 Generating another pairing URL keeps the stable session origin, registered
 devices, live connections, and server-owned PTYs unchanged. After a browser
-pairs, the QR stays visible with a brief connected overlay (tick on the QR)
-and then the modal closes. The QR must not vanish or be replaced by a
-preparing message while that overlay runs. Stopping exposure blocks pairing
+pairs, the QR stays visible while a checkmark draws over it, then the modal
+closes. The QR must not vanish or be replaced by a preparing message while
+that overlay runs. Stopping exposure blocks pairing
 and reconnect while leaving Local Desktop use and server-owned work running.
 
 The same exposure model applies to an embedded Local server and standalone
@@ -156,7 +156,8 @@ the previous code is rejected as already used.
 5. Confirm frames the reconstructed session pairing URL without leaving
    `app.terminay.com`.
 6. **Back to connections** returns to the manager list without navigating
-   `window.top`.
+   `window.top`. From a connected workspace this is **Switch connections**
+   and **File → Disconnect**.
 7. Selecting a saved profile loads that stable session origin in the same
    fullscreen iframe. The session authenticates with the vaulted device key
    and reconnects.

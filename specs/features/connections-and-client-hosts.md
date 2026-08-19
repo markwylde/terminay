@@ -36,7 +36,10 @@ environment extensions, make those outbound connections, or hold their secrets.
 - **Expose this server** makes an authorized server available for remote
   pairing/reconnect. It does not change which server the current window renders.
 - **Disconnect** closes the client transport. It does not stop the server or
-  terminate its PTYs.
+  terminate its PTYs. On `app.terminay.com`, **File → Disconnect** and
+  **Switch connections** return to the manager connection list (`shell.back`
+  when framed). Desktop has no Disconnect item; its native File menu stays
+  Local/remote window management.
 - **Forget** removes host-local metadata/credentials after confirmation.
   **Revoke** changes server authorization and closes affected connections.
 
@@ -63,6 +66,8 @@ The menu contains:
   with empty copy using the same inset as other menu rows;
 - retry and forget/revoke actions with distinct language inside Remote
   Control; and
+- **Switch connections** on a framed `app.terminay.com` session, which
+  returns to the manager list without opening Remote Control; and
 - diagnostics that distinguish server offline, relay unavailable, WebRTC
   route failure, missing device identity, revoked device, invalid contract, and
   failed switch actions. Failed switch actions keep the selector visible and
@@ -105,7 +110,10 @@ shows only the selected sidebar item: Exposure uses the Settings remote-access
 cards (status header, WebRTC summary, trusted browsers, live connections);
 saved-server details and pairing live there when those items are selected.
 **Create pairing link** from the connection menu and from Remote Control opens
-the same Pair Device dialog.
+the same Pair Device dialog. Remote Control’s Exposure header shows that
+action next to **Stop exposure** while the server is exposed. The dialog
+shows the one-time pairing link and copy control; it does not show the
+session-origin hostname.
 Desktop opens or focuses a native auxiliary window; the browser host presents
 the same route in-page. The window is not an Edit Tab sheet. Pairing URL and
 PIN fields stack at full width above continue/cancel actions. An empty
