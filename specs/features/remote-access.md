@@ -116,7 +116,10 @@ and reconnect while leaving Local Desktop use and server-owned work running.
 The same exposure model applies to an embedded Local server and standalone
 `terminay-server`. Desktop and the CLI both start the server-owned hosted
 pairing host: it registers the fragment-derived pairing room and the signed
-reconnect host (`device-host-ready`) before a pairing URL is advertised.
+reconnect host (`device-host-ready`) before a pairing URL is advertised. The
+host accepts authenticated application transports on the `application` data
+channel. Desktop always serves the built server UI archive; the CLI serves
+that archive when `TERMINAY_UI_RENDERER_DIRECTORY` points at `dist-web`.
 
 ## Browser journey A: open the pairing link
 
@@ -186,7 +189,8 @@ microphone and does not include camera. Camera stays on the manager for QR
 scan.
 
 The manager sizes the iframe to the visual viewport, including when the iOS
-keyboard is visible. Session and workspace script never assign `window.top`
+keyboard is visible, and by the iOS safe area so File/Edit chrome stays below
+the status bar. Session and workspace script never assign `window.top`
 or use `target="_top"`. `target="_blank"` may open a first-party tab.
 
 An iOS Home Screen PWA has storage isolated from Safari. Pairing in Safari
