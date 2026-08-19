@@ -23,7 +23,11 @@ agent to propose and execute a reviewed commit, push, and pull-request flow.
   to collapse or expand the Git tree. Their context menus expose the same
   applicable create, rename, delete, copy-path, shell, and OS-reveal actions as
   Explorer entries. Folder-only actions are omitted for files, and every action
-  remains scoped to the worktree/project that owns the selected path.
+  remains scoped to the worktree/project that owns the selected path. Create,
+  rename, and delete from another listed worktree switch the project to that
+  worktree first and wait until the new root is authoritative; they never
+  relativize the selected path against the former project root into a traversal
+  request.
 - The Worktrees panel shows known worktrees and their state. Users can open a
   terminal at a worktree, switch the project root, copy/reveal its path, rename
   its presentation, remove a worktree, or pull a worktree from origin when
@@ -147,6 +151,9 @@ remain explicit parity work.
   root, even when an earlier Git status request is still pending.
 - Selecting a changed file in another listed worktree switches to that worktree
   and opens the file only after the project root change is authoritative.
+- Deleting, renaming, or creating a file or folder from another listed
+  worktree's Git tree switches to that worktree and mutates only after the
+  project root change is authoritative.
 - Double-clicking a Git tree folder opens one Folder panel without leaving the
   folder in an unintended disclosure state, and Git file/folder context menus
   offer the same applicable filesystem actions as Explorer entries.

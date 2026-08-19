@@ -6,7 +6,10 @@ import type {
 } from '@terminay/client-core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { writeClipboardText } from '../host/nativeActions';
-import { getPathRelativeToRoot } from '../pathUtils';
+import {
+	getPathRelativeToRoot,
+	toContainedProjectRelativePath,
+} from '../pathUtils';
 import { loadServerGitWorkspace } from '../services/git/serverGitWorkspaceAdapter';
 import type { FileViewerMode } from '../types/fileViewer';
 import type {
@@ -18,6 +21,10 @@ import type {
 } from '../types/terminay';
 import type { ProjectTab } from './projectTabModel';
 import { getOrCreateDirectoryLoad } from './directoryLoadCoordinator';
+import {
+	gitFilesystemActionWorktreeRoot,
+	sameFilesystemPath,
+} from './gitFilesystemScope';
 
 const WATCH_REFRESH_DELAY_MS = 120;
 const EMPTY_WORKTREE_PANEL_STATUS: WorktreePanelStatus = Object.freeze({
@@ -83,6 +90,37 @@ export function openTerminalAtWorktree(
 ): void {
 	void onOpenTerminalAt(worktree.path, true);
 }
+
+type PendingGitFilesystemAction =
+	| {
+			readonly kind: 'open-entry';
+			readonly entry: GitChangeEntry;
+			readonly worktreeRoot: string;
+	  }
+	| {
+			readonly kind: 'delete';
+			readonly path: string;
+			readonly worktreeRoot: string;
+	  }
+	| {
+			readonly kind: 'rename';
+			readonly oldPath: string;
+			readonly nextPath: string;
+			readonly parentPath: string;
+			readonly worktreeRoot: string;
+	  }
+	| {
+			readonly kind: 'create-file';
+			readonly path: string;
+			readonly dirPath: string;
+			readonly worktreeRoot: string;
+	  }
+	| {
+			readonly kind: 'create-folder';
+			readonly path: string;
+			readonly dirPath: string;
+			readonly worktreeRoot: string;
+	  };
 
 export function assertWorktreeRemoved(result: unknown): void {
 	if (
@@ -198,10 +236,8 @@ export function useFileExplorerController({
 		Set<string>
 	>(() => new Set());
 	const [loadingPaths, setLoadingPaths] = useState<Record<string, boolean>>({});
-	const [pendingGitEntryOpen, setPendingGitEntryOpen] = useState<{
-		entry: GitChangeEntry;
-		worktreeRoot: string;
-	} | null>(null);
+	const [pendingGitFilesystemAction, setPendingGitFilesystemAction] =
+		useState<PendingGitFilesystemAction | null>(null);
 	const [fileExplorerNameDialog, setFileExplorerNameDialog] =
 		useState<FileExplorerNameDialogState | null>(null);
 	const referencesRef = useRef<ReadonlyMap<string, GitWorktreeReference>>(
@@ -217,13 +253,34 @@ export function useFileExplorerController({
 	latestGitRootRef.current = project.rootFolder;
 
 	const clientPath = useCallback(
-		(path: string) =>
-			isServerFileViewer
-				? getPathRelativeToRoot(path, project.rootFolder)
-				: path,
+		(path: string) => {
+			if (!isServerFileViewer) return path;
+			const relative = toContainedProjectRelativePath(path, project.rootFolder);
+			if (relative === null) {
+				throw new TypeError('file path is outside the project root');
+			}
+			return relative;
+		},
 		[isServerFileViewer, project.rootFolder],
 	);
 	const clientProjectId = isServerFileViewer ? project.id : undefined;
+	const queueOwningWorktreeAction = useCallback(
+		(
+			path: string,
+			createAction: (worktreeRoot: string) => PendingGitFilesystemAction,
+		): boolean => {
+			const worktreeRoot = gitFilesystemActionWorktreeRoot(
+				path,
+				project.rootFolder,
+				worktreePanelStatus?.worktrees,
+			);
+			if (worktreeRoot === undefined) return false;
+			setPendingGitFilesystemAction(createAction(worktreeRoot));
+			onUpdateProject(project.id, { rootFolder: worktreeRoot });
+			return true;
+		},
+		[onUpdateProject, project.id, project.rootFolder, worktreePanelStatus],
+	);
 
 	const requestFileExplorerName = useCallback(
 		(options: FileExplorerNameDialogOptions) =>
@@ -445,21 +502,12 @@ export function useFileExplorerController({
 		[directoryChildren, loadDirectory],
 	);
 
-	const handleRename = useCallback(
-		async (oldPath: string) => {
-			const name = oldPath.split(/[/\\]/).pop() || '';
-			const next = await requestFileExplorerName({
-				initialValue: name,
-				label: 'Name',
-				submitLabel: 'Rename',
-				title: 'Rename',
-			});
-			if (!next || next === name) return;
-			const parent = oldPath.substring(0, oldPath.length - name.length);
+	const renameEntryAtPath = useCallback(
+		async (oldPath: string, nextPath: string, parent: string) => {
 			try {
 				await fileViewerClient.renameEntry(
 					clientPath(oldPath),
-					clientPath(`${parent}${next}`),
+					clientPath(nextPath),
 					clientProjectId,
 				);
 				void loadDirectory(parent || project.rootFolder);
@@ -472,17 +520,13 @@ export function useFileExplorerController({
 			clientProjectId,
 			fileViewerClient,
 			loadDirectory,
-			onSetError,
 			onOperationError,
 			project.rootFolder,
-			requestFileExplorerName,
 		],
 	);
-
-	const handleDelete = useCallback(
+	const deleteEntryAtPath = useCallback(
 		async (path: string) => {
 			const name = path.split(/[/\\]/).pop() || '';
-			if (!window.confirm(`Are you sure you want to delete "${name}"?`)) return;
 			try {
 				await fileViewerClient.deleteEntry(
 					clientPath(path),
@@ -502,21 +546,12 @@ export function useFileExplorerController({
 			clientProjectId,
 			fileViewerClient,
 			loadDirectory,
-			onSetError,
 			onOperationError,
 			project.rootFolder,
 		],
 	);
-
-	const handleNewFile = useCallback(
-		async (dirPath: string) => {
-			const name = await requestFileExplorerName({
-				label: 'File name',
-				submitLabel: 'Create File',
-				title: 'Create New File',
-			});
-			if (!name) return;
-			const path = joinPath(dirPath, name);
+	const createFileAtPath = useCallback(
+		async (path: string, dirPath: string) => {
 			try {
 				await fileViewerClient.createFile(
 					clientPath(path),
@@ -535,23 +570,14 @@ export function useFileExplorerController({
 			fileViewerClient,
 			loadDirectory,
 			onOpenFile,
-			onSetError,
 			onOperationError,
-			requestFileExplorerName,
 		],
 	);
-
-	const handleNewFolder = useCallback(
-		async (dirPath: string) => {
-			const name = await requestFileExplorerName({
-				label: 'Folder name',
-				submitLabel: 'Create Folder',
-				title: 'Create New Folder',
-			});
-			if (!name) return;
+	const createDirectoryAtPath = useCallback(
+		async (path: string, dirPath: string) => {
 			try {
 				await fileViewerClient.createDirectory(
-					clientPath(joinPath(dirPath, name)),
+					clientPath(path),
 					clientProjectId,
 				);
 				void loadDirectory(dirPath);
@@ -564,8 +590,104 @@ export function useFileExplorerController({
 			clientProjectId,
 			fileViewerClient,
 			loadDirectory,
-			onSetError,
 			onOperationError,
+		],
+	);
+
+	const handleRename = useCallback(
+		async (oldPath: string) => {
+			const name = oldPath.split(/[/\\]/).pop() || '';
+			const next = await requestFileExplorerName({
+				initialValue: name,
+				label: 'Name',
+				submitLabel: 'Rename',
+				title: 'Rename',
+			});
+			if (!next || next === name) return;
+			const parent = oldPath.substring(0, oldPath.length - name.length);
+			const nextPath = `${parent}${next}`;
+			if (
+				queueOwningWorktreeAction(oldPath, (worktreeRoot) => ({
+					kind: 'rename',
+					oldPath,
+					nextPath,
+					parentPath: parent,
+					worktreeRoot,
+				}))
+			) {
+				return;
+			}
+			await renameEntryAtPath(oldPath, nextPath, parent);
+		},
+		[queueOwningWorktreeAction, renameEntryAtPath, requestFileExplorerName],
+	);
+
+	const handleDelete = useCallback(
+		async (path: string) => {
+			const name = path.split(/[/\\]/).pop() || '';
+			if (!window.confirm(`Are you sure you want to delete "${name}"?`)) return;
+			if (
+				queueOwningWorktreeAction(path, (worktreeRoot) => ({
+					kind: 'delete',
+					path,
+					worktreeRoot,
+				}))
+			) {
+				return;
+			}
+			await deleteEntryAtPath(path);
+		},
+		[deleteEntryAtPath, queueOwningWorktreeAction],
+	);
+
+	const handleNewFile = useCallback(
+		async (dirPath: string) => {
+			const name = await requestFileExplorerName({
+				label: 'File name',
+				submitLabel: 'Create File',
+				title: 'Create New File',
+			});
+			if (!name) return;
+			const path = joinPath(dirPath, name);
+			if (
+				queueOwningWorktreeAction(dirPath, (worktreeRoot) => ({
+					kind: 'create-file',
+					path,
+					dirPath,
+					worktreeRoot,
+				}))
+			) {
+				return;
+			}
+			await createFileAtPath(path, dirPath);
+		},
+		[createFileAtPath, queueOwningWorktreeAction, requestFileExplorerName],
+	);
+
+	const handleNewFolder = useCallback(
+		async (dirPath: string) => {
+			const name = await requestFileExplorerName({
+				label: 'Folder name',
+				submitLabel: 'Create Folder',
+				title: 'Create New Folder',
+			});
+			if (!name) return;
+			const path = joinPath(dirPath, name);
+			if (
+				queueOwningWorktreeAction(dirPath, (worktreeRoot) => ({
+					kind: 'create-folder',
+					path,
+					dirPath,
+					worktreeRoot,
+				}))
+			) {
+				return;
+			}
+			await createDirectoryAtPath(path, dirPath);
+		},
+		[
+			createDirectoryAtPath,
+			queueOwningWorktreeAction,
 			requestFileExplorerName,
 		],
 	);
@@ -705,12 +827,13 @@ export function useFileExplorerController({
 	);
 	const handleOpenGitEntry = useCallback(
 		(entry: GitChangeEntry) => {
-			const owningWorktree = worktreePanelStatus?.worktrees.find((worktree) =>
-				worktree.entries.some((candidate) => candidate.path === entry.path),
-			);
-			if (owningWorktree && owningWorktree.path !== project.rootFolder) {
-				setPendingGitEntryOpen({ entry, worktreeRoot: owningWorktree.path });
-				onUpdateProject(project.id, { rootFolder: owningWorktree.path });
+			if (
+				queueOwningWorktreeAction(entry.path, (worktreeRoot) => ({
+					kind: 'open-entry',
+					entry,
+					worktreeRoot,
+				}))
+			) {
 				return;
 			}
 			void onOpenFile(
@@ -718,29 +841,56 @@ export function useFileExplorerController({
 				entry.state === 'untracked' ? undefined : { initialMode: 'diff' },
 			);
 		},
-		[
-			onOpenFile,
-			onUpdateProject,
-			project.id,
-			project.rootFolder,
-			worktreePanelStatus,
-		],
+		[onOpenFile, queueOwningWorktreeAction],
 	);
 
 	useEffect(() => {
 		if (
-			pendingGitEntryOpen === null ||
-			project.rootFolder !== pendingGitEntryOpen.worktreeRoot
+			pendingGitFilesystemAction === null ||
+			!sameFilesystemPath(
+				project.rootFolder,
+				pendingGitFilesystemAction.worktreeRoot,
+			)
 		) {
 			return;
 		}
-		const { entry } = pendingGitEntryOpen;
-		setPendingGitEntryOpen(null);
-		void onOpenFile(
-			entry.path,
-			entry.state === 'untracked' ? undefined : { initialMode: 'diff' },
-		);
-	}, [onOpenFile, pendingGitEntryOpen, project.rootFolder]);
+		const action = pendingGitFilesystemAction;
+		setPendingGitFilesystemAction(null);
+		if (action.kind === 'open-entry') {
+			void onOpenFile(
+				action.entry.path,
+				action.entry.state === 'untracked'
+					? undefined
+					: { initialMode: 'diff' },
+			);
+			return;
+		}
+		if (action.kind === 'delete') {
+			void deleteEntryAtPath(action.path);
+			return;
+		}
+		if (action.kind === 'rename') {
+			void renameEntryAtPath(
+				action.oldPath,
+				action.nextPath,
+				action.parentPath,
+			);
+			return;
+		}
+		if (action.kind === 'create-file') {
+			void createFileAtPath(action.path, action.dirPath);
+			return;
+		}
+		void createDirectoryAtPath(action.path, action.dirPath);
+	}, [
+		createDirectoryAtPath,
+		createFileAtPath,
+		deleteEntryAtPath,
+		onOpenFile,
+		pendingGitFilesystemAction,
+		project.rootFolder,
+		renameEntryAtPath,
+	]);
 
 	useEffect(
 		() => () => {
