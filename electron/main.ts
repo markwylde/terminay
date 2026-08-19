@@ -131,6 +131,7 @@ import {
 import { createPairingPinHash, verifyPairingPin } from './remote/pin';
 import { hostedPairingDiagnosticEvent } from './remote/hostedPairingDiagnostics';
 import { DesktopServerOwnedExposure } from './remote/serverOwnedExposure';
+import { parseHostedIceServers } from '../apps/terminay-server/src/remote/hostedPeerLifecycle';
 import { buildServerUiArchive } from './remote/serverUiArchive';
 import {
 	ServerTerminalAuthority,
@@ -1291,6 +1292,8 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		},
 		verifyPairingPin: (pin) =>
 			verifyPairingPin(readEmbeddedRemoteAccessSettings().pairingPinHash, pin),
+		resolveIceServers: () =>
+			parseHostedIceServers(readEmbeddedRemoteAccessSettings().webRtcIceServers),
 		onStatusChanged: () => {
 			authority.notifyRemoteAccessChanged();
 		},

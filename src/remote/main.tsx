@@ -32,22 +32,14 @@ export async function launchDirectBrowserWorkspace(
 		const workspacePreparation = await sessionHost.prepareWorkspace();
 
 		step = 'bundle-installation';
-		const preparedWorkspace = await sessionBrowserBundleHost.installAndPrepare({
+		await sessionBrowserBundleHost.installAndPrepare({
 			...workspacePreparation,
 			sessionOrigin: sessionHost.origin,
 		});
 
 		step = 'route-activation';
-		if (
-			window.location.pathname !== new URL(preparedWorkspace.entryUrl).pathname
-		) {
-			const entry = new URL(preparedWorkspace.entryUrl);
-			window.history.replaceState(
-				{},
-				'',
-				`${entry.pathname}${window.location.search}${window.location.hash}`,
-			);
-		}
+		// Keep document history on /v1/. /remote-app/ is a Cache Storage path;
+		// restoring that URL would skip the session host.
 
 		step = 'application-mount';
 		const root = mountRoot ?? document.getElementById('remote-root');

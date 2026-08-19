@@ -84,7 +84,7 @@ import {
 	type ServerRemoteExposure,
 } from './index.js';
 import { resolveTerminalProcessCwd } from './processCwd.js';
-import { startHostedPairingHost } from './remote/hostedPairingHost.js';
+import { parseHostedIceServers, startHostedPairingHost } from './remote/hostedPairingHost.js';
 import { loadHostedUiArchive } from './remote/hostedUiArchive.js';
 import { loadOrCreateHostedHostKey } from './remote/hostedHostKey.js';
 import { assertStandaloneReleaseIntegrity } from './releaseIntegrity.js';
@@ -203,6 +203,7 @@ else {
 						remote,
 						serverId: options.serverId,
 						signal: hostedSignalOptions(process.env),
+						iceServers: parseHostedIceServers(process.env.TERMINAY_WEBRTC_ICE_SERVERS),
 						webrtcRuntimeRoot: resolveWebRtcRuntimeRoot(process.cwd(), process.env),
 						...(rendererDirectory
 							? {

@@ -110,9 +110,16 @@ A real transport failure uses an explicit client state machine:
 For this state machine, application-protocol liveness is part of transport
 generation liveness. If the server protocol reader ends or fails, the mounted
 client is no longer usable even when its WebRTC peer and required data channels
-remain open. That signal retires the whole client/peer generation; it is not a
-terminal-panel error and cannot be repaired by renewing an attachment on the
-retired client.
+remain open. ICE `disconnected` while `connectionState` remains `connected`,
+or inbound application frames that cannot be decoded as bytes, are the same
+class of failure: the generation cannot deliver live events. That signal
+retires the whole client/peer generation; it is not a terminal-panel error and
+cannot be repaired by renewing an attachment on the retired client.
+
+A checkpoint or attach snapshot without later live PTY events is not a
+successful connection. Congestion recovery still applies when frames arrive
+and overwhelm a presentation lane. It does not apply when the transport has
+gone silent while reporting open.
 
 The renderer visibly marks mounted terminal panels as reconnecting and rejects
 unsafe mutations promptly while the old client is unusable. Desktop supplies a
@@ -181,6 +188,12 @@ endpoint.
   path. A real Chromium/native-WebRTC test proves the peer and lane are still
   open at injection, observes recovery rather than a permanently mounted
   `client is not connected` state, and proves post-recovery input exactly once.
+- ICE `disconnected` with channels still `open` either resumes delivery inside
+  the grace period or replaces the generation once. The mounted workspace does
+  not stay on a painted checkpoint with no later PTY bytes.
+- Application-lane `Blob` frames are decoded in order or fail that generation.
+  Chromium loopback happy-path evidence is not sufficient; tests inject ICE
+  disconnect and non-`ArrayBuffer` binary delivery.
 - Queue and recovery diagnostics identify the affected opaque lane and precise
   resource transition without including terminal content.
 - Sustained output that never becomes completely idle cannot pin a terminal on
