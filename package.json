@@ -103,7 +103,7 @@
 		"test:codex-driver-compat": "npm run build --workspace @terminay/server-core && node scripts/test-agent-driver-compatibility.mjs --provider=codex --version=0.2",
 		"test:agent-ui": "node --test scripts/agent-ui-components.test.mjs",
 		"test:macro-preview": "node --test scripts/macro-preview.test.mjs",
-		"test:connection-menu": "node --test scripts/native-menu-host-contract.test.mjs",
+		"test:connection-menu": "node --test scripts/native-menu-host-contract.test.mjs scripts/session-transport-host-contract.test.mjs",
 		"test:terminal-panel-context": "npm run build --workspace @terminay/client-core && node --test scripts/terminal-panel-binding-fence.test.mjs scripts/terminal-panel-context.test.mjs scripts/terminal-panel-input-queue.test.mjs",
 		"test:shared-responsive-entry": "node --test scripts/canonical-workspace-production-graph.test.mjs",
 		"acceptance:app-identity": "node --test scripts/canonical-workspace-production-graph.test.mjs",
