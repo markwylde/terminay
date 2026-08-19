@@ -320,12 +320,52 @@ workspace. Network loss keeps server-owned PTYs and work running. The browser
 shows reconnecting state, creates a fresh authenticated generation, restores
 subscriptions, and enables input only after hydration completes.
 
+A generation is live only while its peer, ICE, required data lanes, and
+application-protocol reader can still deliver. `RTCDataChannel.readyState`
+remaining `open` is not sufficient. Recoverable `disconnected` peer or ICE
+state starts one bounded grace period and cancels that timer if the complete
+generation becomes healthy again. Explicit `failed` or `closed` peer/ICE
+state, required-lane loss, application-protocol reader end, or grace expiry
+replaces the generation exactly once. ICE `disconnected` while
+`connectionState` stays `connected` is the same recoverable class as peer
+`disconnected`; it is not a healthy connection.
+
+The session host creates that generation once per connect attempt. Pairing or
+saved-device signaling, bundle install, and the workspace's application
+`connect` share it. The workspace does not start a second signaling join, peer,
+or ticket for the same attempt. A `closed` event from a retired generation
+cannot start a parallel connect. Automatic recovery, **Retry connection**,
+document resume, and the initial connect share one in-flight attempt.
+
+Live terminal output shares the binary application lane with command results.
+Attach snapshots and later PTY events are the same byte stream. A generation
+that hydrates a checkpoint but cannot decode or deliver later events is failed,
+not connected. Data-channel frames are `ArrayBuffer` bytes before the workspace
+reads them. A `Blob` is decoded in order or fails that generation visibly; it
+is never dropped.
+
+Framed PWA resume uses the same reconnect operation. Hiding, freezing, or
+restoring the session document does not leave a painted workspace whose
+inbound stream is dead. Returning to `app.terminay.com` with a saved framed
+session either restores a live generation or shows reconnecting/error with a
+deadline. The iframe's reload URL remains the session bootstrap (`/v1/`), not
+a cache-only `/remote-app/` entry that cannot authenticate. Vault
+`credential.get` completes or fails visibly inside the host timeout.
+
+The exposing host uses the same STUN/TURN configuration advertised to
+browsers. Signaling admits one handshake at a time for a pairing room or
+device session. A second `client-join` or `device-join` retires an incomplete
+handshake; it does not close an already-authenticated live peer or mix ICE
+across two offers.
+
 Automatic recovery and **Retry connection** use the same reconnect operation.
 Expired or revoked device identity stops recovery and requests pairing. Closing
 one browser tab or Desktop window affects only that client connection.
 
 Detailed ordering, congestion, and terminal resynchronization are governed by
 [terminal stream congestion and recovery](./terminal-stream-congestion-and-recovery.md).
+The hosted session-origin bootstrap and framed PWA host follow
+`terminay.com` `specs/remote.md`.
 
 ## Persistence and privacy
 
@@ -378,6 +418,11 @@ origin.
 - Failed pairing leaves any PWA manager profile available for retry or forget.
 - Failed reconnect keeps the mounted workspace read-only until recovery or
   explicit disconnect.
+- A workspace that has painted a terminal checkpoint but cannot stream later
+  PTY or workspace events is a recoverable transport failure. It is not left
+  mounted as connected.
+- Returning to a framed PWA session does not stay on the Terminay loading
+  surface without a reconnect attempt, timeout, or visible error.
 - Failure never selects another server or terminates server-owned PTYs.
 
 ## Security invariants
@@ -443,3 +488,13 @@ origin.
   observe the same workspace and terminal sessions.
 - Network interruption reconnects without duplicating PTYs or workspace
   mutations.
+- ICE `disconnected` while the peer still reports `connected` either recovers
+  inside the grace period on the same generation or replaces that generation
+  once and resumes live terminal output without a page reload.
+- A framed PWA session that hydrates a terminal still shows subsequent typed
+  PTY output on that same generation.
+- Backgrounding and returning to the installed PWA reconnects the framed
+  session, or shows a bounded retryable error, instead of an indefinite
+  loading mark.
+- Browser refresh and iOS iframe restore enter `/v1/` and run the session
+  host before the workspace.
