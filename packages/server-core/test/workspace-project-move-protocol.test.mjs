@@ -9,16 +9,24 @@ import {
 } from "../dist/index.js";
 
 function createPtyFactory() {
+  const processes = [];
   return {
+    processes,
     spawn() {
-      return {
-        pid: 30_000,
+      const exitListeners = new Set();
+      const process = {
+        pid: 30_000 + processes.length,
         write() {},
         resize() {},
         kill() {},
         onData() { return () => {}; },
-        onExit() { return () => {}; },
+        onExit(listener) { exitListeners.add(listener); return () => exitListeners.delete(listener); },
+        emitExit(exit = { exitCode: 0, signal: null }) {
+          for (const listener of exitListeners) listener(exit);
+        },
       };
+      processes.push(process);
+      return process;
     },
   };
 }
@@ -278,6 +286,39 @@ test("project-scoped workspace queries never disclose sibling project or termina
 	const rawDelta = await connected.client.query("workspace.delta", { revision: 0, cursor: "0" });
 	assert.equal(JSON.stringify(rawDelta.result.events).includes("project-b"), false);
 	assert.equal(JSON.stringify(rawDelta.result.events).includes("session-b"), false);
+  } finally {
+    await connected.client.close().catch(() => undefined);
+    await connected.serverTask.catch(() => undefined);
+    await composition.shutdown();
+  }
+});
+
+test("a PTY exit marks the workspace session exited without removing its panel", async () => {
+  const workspace = new WorkspaceStore(createInitialWorkspace("exit-workspace-server"));
+  const pty = createPtyFactory();
+  const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
+    serverId: "exit-workspace-server",
+    serverVersion: "test",
+    capabilities: ["workspace", "terminal"],
+    ptyFactory: pty,
+    workspace,
+    authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: "write" }),
+  });
+  const connected = await connect(composition, "exit-workspace-client");
+  try {
+    const created = await connected.client.command("terminal.create", {
+      projectId: "project-a",
+      cwd: "/repo/a",
+      cols: 80,
+      rows: 24,
+    }, { commandId: "create-exiting-terminal" });
+    assert.equal(workspace.state.terminalSessions[created.result.sessionId].status, "running");
+    pty.processes[0].emitExit({ exitCode: 0, signal: null });
+    assert.equal(workspace.state.terminalSessions[created.result.sessionId].status, "exited");
+    assert.equal(workspace.state.terminalSessions[created.result.sessionId].exitCode, 0);
+    const panel = Object.values(workspace.state.panels).find((candidate) => candidate.sessionId === created.result.sessionId);
+    assert.equal(panel?.type, "terminal");
   } finally {
     await connected.client.close().catch(() => undefined);
     await connected.serverTask.catch(() => undefined);

@@ -10,6 +10,7 @@ import {
 } from "@terminay/protocol";
 import { forbiddenError, scopeAllows, unknownOperationError, validateIdentity } from "./auth.js";
 import { FileServiceError } from "./fileService/types.js";
+import { TerminalServiceError } from "./terminalService/errors.js";
 import type {
   CommandHandler,
   CommandRequest,
@@ -175,9 +176,30 @@ function dispatchError(error: unknown, fallback: string): ProtocolError {
     ...(error.supportedMin === undefined ? {} : { supportedMin: error.supportedMin }),
     ...(error.supportedMax === undefined ? {} : { supportedMax: error.supportedMax }),
   };
+  if (error instanceof TerminalServiceError) return terminalServiceError(error);
   if (error instanceof FileServiceError) return fileServiceError(error);
   if (error instanceof Error) return { code: "internal", message: fallback, retryable: false };
   return { code: "internal", message: fallback, retryable: false };
+}
+
+function terminalServiceError(error: TerminalServiceError): ProtocolError {
+  switch (error.code) {
+    case "session_exited":
+    case "session_interrupted":
+    case "session_not_found":
+      return { code: "not_found", message: error.message, retryable: false };
+    case "forbidden":
+      return { code: "forbidden", message: error.message, retryable: false };
+    case "invalid_identity":
+    case "invalid_dimensions":
+    case "invalid_position":
+    case "invalid_bytes":
+    case "invalid_cwd":
+    case "invalid_environment":
+      return { code: "validation", message: error.message, retryable: false };
+    default:
+      return { code: "internal", message: error.message, retryable: false };
+  }
 }
 
 /** FileServiceError has deliberately richer domain codes than the transport.

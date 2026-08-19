@@ -83,9 +83,7 @@ test('retiring the mounted binding fences unmount completions until a new bindin
 	assert.equal(fence.isCurrent(replacement), true);
 });
 
-test('retry is actionable only when the owning controller explicitly permits it', () => {
-	assert.equal(isTerminalRetryActionable(false, true), true);
-	assert.equal(isTerminalRetryActionable(false, false), false);
-	assert.equal(isTerminalRetryActionable(false, undefined), false);
-	assert.equal(isTerminalRetryActionable(true, true), false);
+test('retry is actionable for a failed live attach, not an unavailable presentation', () => {
+	assert.equal(isTerminalRetryActionable(false), true);
+	assert.equal(isTerminalRetryActionable(true), false);
 });

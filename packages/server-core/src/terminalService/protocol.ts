@@ -485,11 +485,26 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     byClientSession.set(key, attachment.attachmentId);
     // The first write-authorized surface is the natural presentation owner.
     // `acquire` is deliberately non-stealing, so a later attachment remains an
-    // observer when another exact attachment already holds the lease.
+    // observer when another exact attachment already holds the lease. A holder
+    // whose attachment is already gone (discarded renderer document) is not a
+    // live controller and must not block the replacement surface.
     if (canWrite) {
       const state = presentations.state(identity);
+      const staleHolder =
+        state.holder !== undefined &&
+        !protocolAttachments.has(state.holder.attachmentId)
+          ? state.holder
+          : undefined;
+      if (staleHolder !== undefined) {
+        presentations.releaseAttachment({
+          ...identity,
+          clientId: staleHolder.clientId,
+          attachmentId: staleHolder.attachmentId,
+        });
+      }
+      const next = presentations.state(identity);
       const reservation = initialPresentationReservations.get(identityKey(identity));
-      if (state.holder === undefined && (reservation === undefined || reservation.clientId === clientId)) {
+      if (next.holder === undefined && (reservation === undefined || reservation.clientId === clientId)) {
         presentations.change("acquire", { ...identity, clientId, attachmentId: attachment.attachmentId });
         releaseInitialPresentationReservation(identity, false);
       }

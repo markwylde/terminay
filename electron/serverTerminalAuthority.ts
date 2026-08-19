@@ -88,6 +88,7 @@ import type {
 	CommandRequest,
 	ConnectionDeliveryDiagnostic,
 	QueryRequest,
+	ServerConnectionLike,
 } from '../packages/server-core/src/types';
 import {
 	createInitialWorkspace,
@@ -311,6 +312,10 @@ export class ServerTerminalAuthority {
 	private readonly consumers: DetachableTerminalConsumerRegistry;
 	private readonly buffers = new Map<string, Uint8Array>();
 	private readonly listeners = new Set<(event: TerminalEvent) => void>();
+	private readonly rendererConnectionsByOwner = new Map<
+		string,
+		ServerConnectionLike
+	>();
 	private readonly maxReplayBytes: number;
 	private readonly fileCatalogProjects = new Map<
 		string,
@@ -1143,13 +1148,23 @@ export class ServerTerminalAuthority {
 	}
 
 	/** Bind one private, fixed-server MessagePort to the server protocol. */
-	acceptRendererPort(port: ServerMessagePort): void {
+	acceptRendererPort(
+		port: ServerMessagePort,
+		options: { readonly ownerId?: string | number } = {},
+	): void {
 		mainServerPortDiagnostics.acceptedPorts += 1;
 		writePortDiagnostic({
 			phase: 'renderer-port-accepted',
 			acceptedPorts: mainServerPortDiagnostics.acceptedPorts,
 			serverId: this.service.serverId,
 		});
+		const ownerId =
+			options.ownerId === undefined ? 'default' : String(options.ownerId);
+		const previous = this.rendererConnectionsByOwner.get(ownerId);
+		if (previous !== undefined) {
+			this.rendererConnectionsByOwner.delete(ownerId);
+			void previous.close();
+		}
 		const scopedPort = new ServerScopedMessagePort(
 			adaptElectronMessagePort(port),
 			this.service.serverId,
@@ -1167,8 +1182,14 @@ export class ServerTerminalAuthority {
 					'extensions:manage',
 				],
 			},
+			onClosed: () => {
+				if (this.rendererConnectionsByOwner.get(ownerId) === connection) {
+					this.rendererConnectionsByOwner.delete(ownerId);
+				}
+			},
 			onDeliveryDiagnostic: this.options.onDeliveryDiagnostic,
 		});
+		this.rendererConnectionsByOwner.set(ownerId, connection);
 		void connection.start().catch((error) => {
 			mainServerPortDiagnostics.lastError =
 				error instanceof Error ? error.message : String(error);
