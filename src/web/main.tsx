@@ -74,7 +74,7 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 		let hostContext: TerminayHostContext | undefined;
 		if (sessionHost !== undefined) {
 			origin = sessionHost.origin;
-			label = new URL(origin).host;
+			label = sessionHost.hostName?.trim() || 'Remote';
 			transport = await sessionHost.connect({
 				origin,
 				onStateChange: (state) => {
