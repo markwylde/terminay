@@ -1,4 +1,5 @@
 import { expect, test } from './fixtures';
+import { openRemoteMenu } from './support/ui';
 
 test('Electron opens Remote Control as a full auxiliary window', async ({
 	appHarness,
@@ -43,4 +44,20 @@ test('the header connection menu opens the Remote Control window', async ({
 	expect(new URL(manager.url()).searchParams.get('auxiliary')).toBe(
 		'remote-control',
 	);
+});
+
+test('the header connection menu lists Local and omits Switch connections', async ({
+	mainWindow,
+}) => {
+	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
+	await openRemoteMenu(mainWindow);
+	const menu = mainWindow
+		.locator('[role="menu"][aria-label="Connection menu"]:visible')
+		.first();
+	await expect(
+		menu.getByRole('menuitemradio', { name: 'Local' }),
+	).toBeVisible();
+	await expect(
+		menu.getByRole('button', { name: 'Switch connections' }),
+	).toHaveCount(0);
 });
