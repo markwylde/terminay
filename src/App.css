@@ -345,7 +345,33 @@
   background: rgba(255, 231, 166, 0.12);
 }
 
+.remote-access-button__exposure {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
 .remote-access-button__label {
+  line-height: 1;
+  margin-right: auto;
+}
+
+.remote-access-button__connections {
+  min-width: 16px;
+  height: 15px;
+  padding: 0 5px;
+  border-radius: 999px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: #72d5ff;
+  box-shadow: 0 0 0 3px rgba(87, 183, 255, 0.14);
+  color: #101318;
+  font-size: 10px;
+  font-weight: 800;
   line-height: 1;
 }
 
@@ -366,18 +392,9 @@
   font-weight: 800;
 }
 
-.remote-access-button__badge--live {
-  width: 9px;
-  height: 9px;
-  border-radius: 999px;
-  background: #72d5ff;
-  box-shadow: 0 0 0 3px rgba(87, 183, 255, 0.14);
-}
-
 .remote-access-button__chevron {
   opacity: 0.6;
   flex-shrink: 0;
-  margin-left: auto;
 }
 
 .remote-access-status--open .remote-access-button {
