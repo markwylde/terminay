@@ -224,8 +224,9 @@ requires a user gesture for actions that can read or change native state.
 
 The bridge surface is limited to semantic window/view focus, route
 presentation and close, menu commands, clipboard write, approved file
-selection, HTTPS external links, server-owned reveal tokens, update status,
-notifications, and explicitly declared OS integration. A shared UI requests a
+selection, credential-free HTTP and HTTPS external links, server-owned
+reveal tokens, update status, notifications, and explicitly declared OS
+integration. A shared UI requests a
 route with a presentation disposition; Desktop may open/focus a native window,
 while a browser uses an in-page route or browser tab. The bridge never exposes
 `BrowserWindow`, arbitrary paths, raw transport handles, generic IPC, or server
