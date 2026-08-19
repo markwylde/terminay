@@ -1,5 +1,6 @@
 import type { FormEvent, RefObject } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { parseHostedPairingUrl } from '@terminay/protocol';
 import {
 	isRemoteAccessPairingPinConfigured,
 	PAIRING_PIN_PATTERN,
@@ -18,6 +19,9 @@ export function useRemoteAccessController(
 	const [actionError, setActionError] = useState<string | null>(null);
 	const [isToggling, setIsToggling] = useState(false);
 	const [isPairingModalOpen, setIsPairingModalOpen] = useState(false);
+	const [pairingOutcome, setPairingOutcome] = useState<'idle' | 'success'>(
+		'idle',
+	);
 	const [isPinModalOpen, setIsPinModalOpen] = useState(false);
 	const [pinInput, setPinInput] = useState('');
 	const [pinError, setPinError] = useState<string | null>(null);
@@ -46,19 +50,41 @@ export function useRemoteAccessController(
 	}, [statusClient]);
 
 	const previousConnectionCountRef = useRef<number | null>(null);
+	const previousPairedDeviceCountRef = useRef<number | null>(null);
+	const [heldQrCodeDataUrl, setHeldQrCodeDataUrl] = useState<string | null>(
+		null,
+	);
+	const freezeHeldQrRef = useRef(false);
+	const closePairingModal = useCallback(() => {
+		setIsPairingModalOpen(false);
+		setPairingOutcome('idle');
+		setHeldQrCodeDataUrl(null);
+		freezeHeldQrRef.current = false;
+	}, []);
 	useEffect(() => {
 		const current = status?.activeConnectionCount ?? null;
 		const previous = previousConnectionCountRef.current;
-		if (
-			previous !== null &&
-			current !== null &&
-			current > previous &&
-			isPairingModalOpen
-		) {
-			setIsPairingModalOpen(false);
-		}
 		previousConnectionCountRef.current = current;
-	}, [status?.activeConnectionCount, isPairingModalOpen]);
+		const paired = status?.pairedDeviceCount ?? null;
+		const previousPaired = previousPairedDeviceCountRef.current;
+		previousPairedDeviceCountRef.current = paired;
+		const pairedGrew =
+			previousPaired !== null && paired !== null && paired > previousPaired;
+		const connectionsGrew =
+			previous !== null && current !== null && current > previous;
+		if (isPairingModalOpen && (connectionsGrew || pairedGrew)) {
+			setPairingOutcome('success');
+			const timer = window.setTimeout(() => {
+				closePairingModal();
+			}, 1400);
+			return () => window.clearTimeout(timer);
+		}
+	}, [
+		closePairingModal,
+		isPairingModalOpen,
+		status?.activeConnectionCount,
+		status?.pairedDeviceCount,
+	]);
 
 	const closePinModal = useCallback((configured: boolean) => {
 		pinRequestRef.current?.(configured);
@@ -159,6 +185,44 @@ export function useRemoteAccessController(
 		statusClient,
 	]);
 
+	const revokeDevice = useCallback(
+		async (deviceId: string) => {
+			if (statusClient === undefined) {
+				recordFailure(
+					new Error('Remote access controls are unavailable in this host.'),
+				);
+				return;
+			}
+			try {
+				const next = await statusClient.revokeDevice(deviceId);
+				setStatus(next);
+				setActionError(next.errorMessage);
+			} catch (error) {
+				recordFailure(error);
+			}
+		},
+		[recordFailure, statusClient],
+	);
+
+	const closeConnection = useCallback(
+		async (connectionId: string) => {
+			if (statusClient === undefined) {
+				recordFailure(
+					new Error('Remote access controls are unavailable in this host.'),
+				);
+				return;
+			}
+			try {
+				const next = await statusClient.closeConnection(connectionId);
+				setStatus(next);
+				setActionError(next.errorMessage);
+			} catch (error) {
+				recordFailure(error);
+			}
+		},
+		[recordFailure, statusClient],
+	);
+
 	const openPairingQr = useCallback(async () => {
 		setActionError(null);
 		try {
@@ -186,8 +250,18 @@ export function useRemoteAccessController(
 				} finally {
 					setIsToggling(false);
 				}
+			} else {
+				setIsToggling(true);
+				try {
+					next = await statusClient.createPairingLink();
+					setStatus(next);
+					setActionError(next.errorMessage);
+				} finally {
+					setIsToggling(false);
+				}
 			}
 			if (next?.webRtcPairingUrl || next?.webRtcPairingQrCodeDataUrl) {
+				setPairingOutcome('idle');
 				setIsPairingModalOpen(true);
 			}
 		} catch (error) {
@@ -230,6 +304,32 @@ export function useRemoteAccessController(
 	}, [pairingQrCodeDataUrl, pairingUrl]);
 
 	useEffect(() => {
+		if (!isPairingModalOpen) {
+			freezeHeldQrRef.current = false;
+			setHeldQrCodeDataUrl(null);
+			return;
+		}
+		if (pairingOutcome === 'success') freezeHeldQrRef.current = true;
+		if (
+			heldQrCodeDataUrl &&
+			status?.webRtcStatus !== undefined &&
+			status.webRtcStatus !== 'pairing-ready'
+		) {
+			freezeHeldQrRef.current = true;
+		}
+		if (freezeHeldQrRef.current) return;
+		const next = pairingQrCodeDataUrl ?? generatedQrCodeDataUrl;
+		if (next) setHeldQrCodeDataUrl(next);
+	}, [
+		generatedQrCodeDataUrl,
+		heldQrCodeDataUrl,
+		isPairingModalOpen,
+		pairingOutcome,
+		pairingQrCodeDataUrl,
+		status?.webRtcStatus,
+	]);
+
+	useEffect(() => {
 		if (!isMenuOpen) return;
 		const onPointerDown = (event: globalThis.MouseEvent) => {
 			if (!menuRef.current?.contains(event.target as Node))
@@ -246,10 +346,19 @@ export function useRemoteAccessController(
 		};
 	}, [isMenuOpen]);
 
+	const liveQrCodeDataUrl = pairingQrCodeDataUrl ?? generatedQrCodeDataUrl;
+	const visibleQrCodeDataUrl = isPairingModalOpen
+		? (heldQrCodeDataUrl ?? liveQrCodeDataUrl)
+		: status?.webRtcStatus === 'pairing-ready'
+			? liveQrCodeDataUrl
+			: null;
+
 	return {
 		actionError,
 		closeMenu,
+		closePairingModal,
 		closePinModal,
+		closeConnection,
 		isLinkCopied,
 		isMenuOpen,
 		isPairingModalOpen,
@@ -259,9 +368,12 @@ export function useRemoteAccessController(
 		menuRef: menuRef as RefObject<HTMLDivElement>,
 		openPairingQr,
 		pairingExpiresAt,
+		pairingOutcome,
+		pairingSessionOrigin: sessionOriginFromPairingUrl(pairingUrl),
 		pairingUrl,
 		pinError,
 		pinInput,
+		revokeDevice,
 		setIsLinkCopied,
 		setIsMenuOpen,
 		setIsPairingModalOpen,
@@ -280,9 +392,21 @@ export function useRemoteAccessController(
 			: status?.configurationIssue || status?.errorMessage || actionError
 				? 'remote-access-button--warning'
 				: '',
-		visibleQrCodeDataUrl:
-			status?.webRtcStatus === 'pairing-ready'
-				? (pairingQrCodeDataUrl ?? generatedQrCodeDataUrl)
-				: null,
+		visibleQrCodeDataUrl,
 	};
+}
+
+function sessionOriginFromPairingUrl(
+	pairingUrl: string | null | undefined,
+): string | null {
+	if (!pairingUrl) return null;
+	try {
+		return parseHostedPairingUrl(pairingUrl).origin;
+	} catch {
+		try {
+			return new URL(pairingUrl).origin;
+		} catch {
+			return null;
+		}
+	}
 }

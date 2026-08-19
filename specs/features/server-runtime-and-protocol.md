@@ -369,8 +369,8 @@ inspect the application protocol.
   hash-invalid bundles.
 - A server UI remains usable when opened directly at its session origin.
 - `app.terminay.com` is the connection manager only. It stores stable-origin
-  bookmarks and navigates to them; it does not load, wrap, or run a server's
-  workspace bundle.
+  bookmarks and frames them. It does not execute a server's workspace bundle
+  as manager-origin script.
 - A Desktop remote connection downloads and commits the selected server's
   bundle before opening its sandboxed connection window. Desktop does not run
   its embedded server's UI against a different remote server version.

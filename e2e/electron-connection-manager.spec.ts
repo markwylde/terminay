@@ -37,7 +37,7 @@ test('the header connection menu opens the Remote Control window', async ({
 	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
 	const manager = await appHarness.openChildWindow(async () => {
 		await mainWindow.getByLabel('Open connection menu').click();
-		await mainWindow.getByRole('button', { name: 'Remote Control' }).click();
+		await mainWindow.getByRole('button', { name: 'Manage connections' }).click();
 	});
 	await expect(manager.locator('.remote-control-window')).toBeVisible();
 	expect(new URL(manager.url()).searchParams.get('auxiliary')).toBe(
