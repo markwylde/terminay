@@ -5,6 +5,7 @@ export type SessionTransportHost = Readonly<{
 	version: 1;
 	sessionId: string;
 	origin: string;
+	hostName?: string;
 	managerUrl?: string;
 	managerAction?: string;
 	prepareWorkspace(): Promise<Readonly<{
@@ -88,6 +89,12 @@ export function getSessionTransportHost(): SessionTransportHost | undefined {
 	for (const name of ['sessionId', 'origin'] as const) {
 		if (typeof value[name] !== 'string' || value[name].length === 0) fail(name);
 	}
+	if (
+		value.hostName !== undefined &&
+		(typeof value.hostName !== 'string' || value.hostName.length === 0)
+	) {
+		fail('hostName');
+	}
 	if (new URL(value.origin as string).origin !== window.location.origin) fail('origin binding');
 	for (const name of ['prepareWorkspace', 'connect'] as const) {
 		if (typeof value[name] !== 'function') fail(name);
@@ -105,6 +112,12 @@ function isHostedBrowserSessionAuthority(
 	if (!isRecord(value)) return false;
 	for (const name of ['sessionId', 'origin', 'serverId'] as const) {
 		if (typeof value[name] !== 'string' || value[name].length === 0) return false;
+	}
+	if (
+		value.hostName !== undefined &&
+		(typeof value.hostName !== 'string' || value.hostName.length === 0)
+	) {
+		return false;
 	}
 	const origin = value.origin;
 	if (typeof origin !== 'string') return false;
