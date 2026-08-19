@@ -56,10 +56,7 @@ export function RemoteExposurePanel({
 	};
 
 	return (
-		<section
-			className="settings-section"
-			aria-label="Server exposure"
-		>
+		<section className="settings-section" aria-label="Server exposure">
 			<header className="settings-remote-panel-header">
 				<div>
 					<p className="settings-remote-kicker">
@@ -68,18 +65,30 @@ export function RemoteExposurePanel({
 					<h4>{summary}</h4>
 					<p>{description}</p>
 				</div>
-				<button
-					type="button"
-					className="settings-primary-button"
-					onClick={() => void remote.toggleExposure()}
-					disabled={remote.isToggling || webRtcUnavailable}
-				>
-					{remote.isToggling
-						? 'Working…'
-						: status?.isRunning
-							? 'Stop exposure'
-							: 'Expose this server…'}
-				</button>
+				<div className="settings-remote-panel-header-actions">
+					{status?.isRunning ? (
+						<button
+							type="button"
+							className="settings-secondary-button"
+							onClick={() => void remote.openPairingQr()}
+							disabled={remote.isToggling || webRtcUnavailable}
+						>
+							Create pairing link
+						</button>
+					) : null}
+					<button
+						type="button"
+						className="settings-primary-button"
+						onClick={() => void remote.toggleExposure()}
+						disabled={remote.isToggling || webRtcUnavailable}
+					>
+						{remote.isToggling
+							? 'Working…'
+							: status?.isRunning
+								? 'Stop exposure'
+								: 'Expose this server…'}
+					</button>
+				</div>
 			</header>
 			{remote.statusMessage ? (
 				<p className="settings-section-desc" role="status">
@@ -89,13 +98,10 @@ export function RemoteExposurePanel({
 			<div className="settings-remote-stack">
 				<section className="settings-remote-card settings-remote-card--exposure">
 					<div>
-						<span className="settings-remote-card-label">
-							WebRTC exposure
-						</span>
+						<span className="settings-remote-card-label">WebRTC exposure</span>
 						<p className="settings-remote-card-subtitle">
-							Terminay uses an authenticated WebRTC connection. The
-							pairing link enrolls one device; later visits use that
-							device’s identity.
+							Terminay uses an authenticated WebRTC connection. The pairing link
+							enrolls one device; later visits use that device’s identity.
 						</p>
 					</div>
 					<div className="settings-remote-exposure-actions">
@@ -132,15 +138,10 @@ export function RemoteExposurePanel({
 					</header>
 					<div className="settings-remote-list">
 						{pairedDevices.length === 0 ? (
-							<p className="settings-remote-empty">
-								No trusted browsers yet.
-							</p>
+							<p className="settings-remote-empty">No trusted browsers yet.</p>
 						) : (
 							pairedDevices.map((device) => (
-								<div
-									key={device.deviceId}
-									className="settings-remote-device"
-								>
+								<div key={device.deviceId} className="settings-remote-device">
 									<div className="settings-remote-device-main">
 										<div className="settings-remote-device-title-row">
 											<strong>{device.name}</strong>
@@ -188,9 +189,7 @@ export function RemoteExposurePanel({
 									<button
 										type="button"
 										className="settings-secondary-button"
-										disabled={
-											busyConnectionId === connection.connectionId
-										}
+										disabled={busyConnectionId === connection.connectionId}
 										onClick={() =>
 											void closeConnection(connection.connectionId)
 										}
@@ -209,7 +208,6 @@ export function RemoteExposurePanel({
 					onClose={remote.closePairingModal}
 					pairingUrl={remote.pairingUrl}
 					qrCodeDataUrl={remote.visibleQrCodeDataUrl}
-					sessionOrigin={remote.pairingSessionOrigin}
 					statusMessage={remote.status?.webRtcStatusMessage}
 					success={remote.pairingOutcome === 'success'}
 				/>
@@ -238,8 +236,8 @@ export function RemoteExposurePanel({
 							</button>
 						</div>
 						<p>
-							Choose a 6-digit PIN. Your browser will use this after
-							scanning a pairing link.
+							Choose a 6-digit PIN. Your browser will use this after scanning a
+							pairing link.
 						</p>
 						<label className="settings-pin-modal-field">
 							<span>Pairing PIN</span>
