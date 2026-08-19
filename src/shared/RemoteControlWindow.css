@@ -7,8 +7,55 @@
 	font-family: var(--settings-font);
 }
 
+.remote-control-window .settings-sidebar-header {
+	padding: 42px 16px 12px;
+	gap: 12px;
+}
+
+.remote-control-window .settings-sidebar-lede {
+	margin: 6px 0 0;
+	color: var(--settings-text-muted);
+	font-size: 12px;
+	font-weight: 400;
+	line-height: 1.4;
+}
+
+.remote-control-window .settings-sidebar .settings-primary-button {
+	display: flex;
+	width: 100%;
+	align-items: center;
+	justify-content: center;
+}
+
+.remote-control-window .settings-nav {
+	padding: 4px 8px 16px;
+}
+
+.remote-control-window .settings-nav-group {
+	margin-bottom: 12px;
+}
+
+.remote-control-window .settings-nav-group:last-child {
+	margin-bottom: 0;
+}
+
+.remote-control-window .settings-nav-group-title {
+	padding: 8px 8px 6px;
+}
+
+.remote-control-window .settings-nav-item {
+	padding: 7px 8px;
+}
+
+.remote-control-window .settings-nav [role="listbox"] {
+	display: flex;
+	flex-direction: column;
+	gap: 0;
+}
+
 .remote-control-window .settings-sidebar .settings-empty-state {
-	padding: 8px 12px 16px;
+	margin: 0;
+	padding: 6px 8px 8px;
 	text-align: left;
 }
 
@@ -44,4 +91,12 @@
 .connected-web-auxiliary-dialog--remote-control {
 	width: min(1240px, 100%);
 	height: min(820px, calc(100dvh - 48px));
+}
+
+.remote-control-window .settings-section {
+	margin-bottom: 0;
+}
+
+.remote-control-window .settings-remote-panel-header {
+	margin-bottom: 20px;
 }

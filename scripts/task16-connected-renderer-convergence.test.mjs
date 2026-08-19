@@ -22,12 +22,9 @@ test('default project colors derive from stable server and project identity', as
 
 test('browser connection profile label reaches the shared renderer context', async () => {
 	const web = await read('src/web/main.tsx');
-
-	assert.equal(
-		[...web.matchAll(/connectionLabel:\s*profile\.label/g)].length,
-		3,
-		'each browser connection path must preserve profile presentation metadata',
-	);
+	assert.match(web, /connectionLabel:\s*label/);
+	assert.match(web, /label = desktop\.context\.profile\?\.label \?\? 'Local'/);
+	assert.match(web, /sessionHost\.hostName\?\.trim\(\) \|\| 'Remote'/);
 	assert.doesNotMatch(
 		web,
 		/connectionLabel:\s*(?:parsed|clientId|completion|token)/,
