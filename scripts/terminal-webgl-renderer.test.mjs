@@ -19,9 +19,8 @@ await build({
 	platform: 'node',
 });
 
-const { attachTerminalWebglRenderer } = await import(
-	pathToFileURL(outputPath).href
-);
+const { attachTerminalWebglRenderer, liveTerminalWebglRendererEnabled } =
+	await import(pathToFileURL(outputPath).href);
 const [
 	helperSource,
 	panelSource,
@@ -82,6 +81,29 @@ function createHarness({ failCreate = false, failLoad = false } = {}) {
 		},
 	};
 }
+
+test('automated driver sessions keep the DOM renderer', () => {
+	assert.equal(liveTerminalWebglRendererEnabled(), true);
+	assert.equal(
+		liveTerminalWebglRendererEnabled({ webdriver: true }),
+		false,
+	);
+	assert.equal(
+		liveTerminalWebglRendererEnabled({ automatedSession: true }),
+		false,
+	);
+
+	const skipped = createHarness();
+	assert.equal(
+		attachTerminalWebglRenderer(
+			skipped.terminal,
+			skipped.createAddon,
+			{ enabled: false },
+		).attached,
+		false,
+	);
+	assert.deepEqual(skipped.events, []);
+});
 
 test('WebGL attach loads the addon and falls back when construction or load fails', () => {
 	const attached = createHarness();
@@ -150,4 +172,10 @@ test('WebGL attach policy remains transport-neutral', () => {
 		helperSource,
 		/window\.terminay|TerminalPanelAttachment|\.write\(|\.resize\(/u,
 	);
+	assert.match(
+		helperSource,
+		/options\?\.enabled \?\? liveTerminalWebglRendererEnabled\(\)/u,
+	);
+	assert.match(helperSource, /navigator\.webdriver === true/u);
+	assert.match(helperSource, /terminayLocalConnectionFaultTest/u);
 });
