@@ -1116,7 +1116,12 @@ export class TerminayTerminalClient {
 			options,
 		);
 		if (isCommandEnvelope(response) && response.ok === false) {
-			throw new Error(`terminal operation ${operation} failed`);
+			const detail =
+				typeof response.error?.message === 'string' &&
+				response.error.message.length > 0
+					? `: ${response.error.message}`
+					: '';
+			throw new Error(`terminal operation ${operation} failed${detail}`);
 		}
 	}
 }

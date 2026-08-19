@@ -284,6 +284,17 @@ export function createServerCoreComposition(
         eventJournal,
         ...(options.shellProfiles === undefined ? {} : { shellProfileExists: (profileId: string) => options.shellProfiles?.isDurableProfile(profileId) ?? false }),
       });
+  terminal.onEvent((event) => {
+    if (event.type !== "exit") return;
+    workspaceOperations?.applyHostCommand(
+      `terminal-exit:${event.sessionId}`.slice(0, 128),
+      {
+        type: "terminal.markExited",
+        sessionId: event.sessionId,
+        exitCode: event.exitCode,
+      },
+    );
+  });
   const macroOperations = options.macros === undefined ? undefined : createMacroOperationRegistry({
     serverId: options.serverId,
     repository: options.macros.repository,

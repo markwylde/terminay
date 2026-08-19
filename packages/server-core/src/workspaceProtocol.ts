@@ -301,7 +301,8 @@ function commandProjectIds(state: WorkspaceState, command: WorkspaceCommand): re
       const panel = state.panels[command.panelId];
       return panel === undefined ? [] : [panel.projectId, command.targetProjectId];
     }
-    case "terminal.markInterrupted": {
+    case "terminal.markInterrupted":
+    case "terminal.markExited": {
       const session = state.terminalSessions[command.sessionId];
       return session === undefined ? [] : [session.projectId];
     }
@@ -374,6 +375,9 @@ function commandPayload(value: JsonValue): WorkspaceCommand {
   }
   if (command.type === "project.shellProfile.set" || command.type === "project.shellProfile.clear" || command.type === "project.shellProfile.replace") {
     throw protocolError("validation", "project shell profile defaults require the named operations");
+  }
+  if (command.type === "terminal.markExited") {
+    throw protocolError("forbidden", "terminal exit marks are host-owned");
   }
   return command as unknown as WorkspaceCommand;
 }

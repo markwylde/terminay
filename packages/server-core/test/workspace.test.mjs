@@ -72,6 +72,23 @@ test("terminal session identity survives panel creation and project moves", () =
   assert.deepEqual(store.state.terminalSessions["session-a"].launch, launch);
 });
 
+test("PTY exit marks the canonical workspace session exited", () => {
+  const store = new WorkspaceStore(createInitialWorkspace("server-a"));
+  const viewId = store.state.viewOrder[0];
+  assert.equal(store.apply({ commandId: "project", command: { type: "project.create", projectId: "project-a", viewId, root: "/tmp/a", name: "A" } }).ok, true);
+  assert.equal(store.apply({ commandId: "terminal", command: { type: "terminal.createPanel", sessionId: "session-a", projectId: "project-a", panelId: "panel-a", title: "Terminal 1", cwd: "/tmp/a", createdAt: 1 } }).ok, true);
+  const exited = store.apply({ commandId: "exit", command: { type: "terminal.markExited", sessionId: "session-a", exitCode: 0 } });
+  assert.equal(exited.ok, true);
+  assert.equal(store.state.terminalSessions["session-a"].status, "exited");
+  assert.equal(store.state.terminalSessions["session-a"].exitCode, 0);
+  assert.equal(store.state.panels["panel-a"].sessionId, "session-a");
+  const again = store.apply({ commandId: "exit-again", command: { type: "terminal.markExited", sessionId: "session-a", exitCode: 1 } });
+  assert.equal(again.ok, true);
+  assert.equal(store.state.terminalSessions["session-a"].exitCode, 0);
+  const missing = store.apply({ commandId: "exit-missing", command: { type: "terminal.markExited", sessionId: "session-missing" } });
+  assert.equal(missing.ok, true);
+});
+
 test("project close cascades panels and terminal session records", () => {
   const store = new WorkspaceStore(createInitialWorkspace("server-a"));
   const viewId = store.state.viewOrder[0];

@@ -36,11 +36,38 @@ test('Electron detaches authority consumers when a renderer is destroyed', async
     main,
     /function detachSessionsForWebContents\(webContentsId: number\): void \{[\s\S]*?serverTerminalAuthority\?\.detachRendererAll\(webContentsId\)/u,
   )
+  assert.match(
+    main,
+    /serverTerminalAuthority\?\.acceptRendererPort\([\s\S]*?ownerId:\s*windowWebContentsId/u,
+  )
   assert.doesNotMatch(
     main,
     /function detachSessionsForWebContents[\s\S]*?serverTerminalAuthority\?\.kill\(/u,
   )
 })
+
+function bindRendererChannel(channel) {
+  let serverMessage
+  let serverMessageError
+  let closed = 0
+  channel.port1.on('message', (data) => serverMessage?.({ data }))
+  channel.port1.on('messageerror', () => serverMessageError?.())
+  return {
+    closed: () => closed,
+    port: {
+      get onmessage() { return serverMessage },
+      set onmessage(listener) { serverMessage = listener },
+      get onmessageerror() { return serverMessageError },
+      set onmessageerror(listener) { serverMessageError = listener },
+      postMessage: (data) => channel.port1.postMessage(data),
+      start: () => channel.port1.start(),
+      close: () => {
+        closed += 1
+        channel.port1.close()
+      },
+    },
+  }
+}
 
 function createPtyFactory() {
   const processes = []
@@ -82,6 +109,72 @@ function systemShellProfiles(shellPath = '/bin/zsh', environment = {}) {
     async resolveProfile(_id, catalogue) { return { profile, definition, settingsRevision: catalogue.settingsRevision, target: { kind: 'executable', executable: shellPath } } },
   }
 }
+
+test('replacing a renderer port for the same window closes the previous connection', async () => {
+  const authority = new ServerTerminalAuthority({
+    serverId: 'reload-renderer-owner',
+    terminalService: new TerminalService({
+      serverId: 'reload-renderer-owner',
+      ptyFactory: createPtyFactory(),
+    }),
+  })
+  const firstChannel = new MessageChannel()
+  const secondChannel = new MessageChannel()
+  const first = bindRendererChannel(firstChannel)
+  const second = bindRendererChannel(secondChannel)
+  try {
+    authority.acceptRendererPort(first.port, { ownerId: 17 })
+    const firstClient = new TerminayClient({
+      clientId: 'first-renderer',
+      clientVersion: 'test',
+      capabilities: ['workspace'],
+      transport: new ServerPortTransport(
+        new ServerScopedMessagePort(firstChannel.port2, 'reload-renderer-owner'),
+      ),
+    })
+    await firstClient.connect()
+
+    authority.acceptRendererPort(second.port, { ownerId: 17 })
+    await Promise.race([
+      new Promise((resolve) => {
+        const poll = () => {
+          if (first.closed() >= 1) resolve(undefined)
+          else setTimeout(poll, 10)
+        }
+        poll()
+      }),
+      new Promise((_, reject) => {
+        setTimeout(
+          () => reject(new Error('the previous renderer connection was not closed')),
+          1_000,
+        )
+      }),
+    ])
+    assert.ok(first.closed() >= 1)
+
+    const secondClient = new TerminayClient({
+      clientId: 'second-renderer',
+      clientVersion: 'test',
+      capabilities: ['workspace'],
+      transport: new ServerPortTransport(
+        new ServerScopedMessagePort(secondChannel.port2, 'reload-renderer-owner'),
+      ),
+    })
+    await secondClient.connect()
+    const workspace = new WorkspaceClient(secondClient)
+    const snapshot = await workspace.snapshot()
+    assert.equal(typeof snapshot.revision, 'number')
+
+    await secondClient.close().catch(() => undefined)
+    await firstClient.close().catch(() => undefined)
+  } finally {
+    firstChannel.port1.close()
+    firstChannel.port2.close()
+    secondChannel.port1.close()
+    secondChannel.port2.close()
+    await authority.shutdown()
+  }
+})
 
 test('Local reopening drops every stale terminal tab and restores one fresh terminal in the active project', async () => {
   const pty = createPtyFactory()
@@ -753,10 +846,13 @@ test('ServerTerminalAuthority hands a renderer stream to one destination without
 })
 
 async function importAuthority() {
-  const directory = await mkdtemp(join(tmpdir(), 'terminay-server-terminal-authority-'))
+  const cacheRoot = join(process.cwd(), 'node_modules', '.cache')
+  await mkdir(cacheRoot, { recursive: true })
+  const directory = await mkdtemp(join(cacheRoot, 'terminay-server-terminal-authority-'))
   const outputPath = join(directory, 'authority.mjs')
   try {
     await build({
+      absWorkingDir: process.cwd(),
       bundle: true,
       format: 'esm',
       outfile: outputPath,

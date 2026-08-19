@@ -2804,6 +2804,7 @@ function createWindow(options?: {
 				acceptPort: (port) =>
 					serverTerminalAuthority?.acceptRendererPort(
 						port as unknown as ServerMessagePort,
+						{ ownerId: windowWebContentsId },
 					),
 				diagnostic: endpointDiagnostic,
 				handle: launch.byteEndpointHandle,

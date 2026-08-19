@@ -298,3 +298,46 @@ test('keeps a high-output local terminal interactive through sidebar, root, resi
 		),
 	).toHaveCount(0);
 });
+
+test('Force Reload resumes a live terminal for typing without a stalled presentation', async ({
+	electronApp,
+	mainWindow,
+}) => {
+	test.setTimeout(45_000);
+	const sessionId = await activeSessionId(mainWindow);
+	const panel = mainWindow.locator(
+		`.terminal-panel[data-terminay-terminal-session-id="${sessionId}"]`,
+	);
+	const beforeMarker = `force-reload-before-${sessionId}`;
+	const afterMarker = `force-reload-after-${sessionId}`;
+	await writeToActiveTerminal(
+		mainWindow,
+		`printf ${JSON.stringify(beforeMarker)}\\n\r`,
+	);
+	await expect(panel).toContainText(beforeMarker, { timeout: 10_000 });
+
+	await electronApp.evaluate(({ BrowserWindow }) => {
+		const window =
+			BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+		if (!window) throw new Error('The main BrowserWindow is unavailable');
+		window.webContents.reloadIgnoringCache();
+	});
+	await mainWindow.waitForLoadState('domcontentloaded');
+	await expect(panel).toHaveAttribute(
+		'data-terminay-terminal-session-id',
+		sessionId,
+		{ timeout: 30_000 },
+	);
+	await expect(panel).toContainText(beforeMarker, { timeout: 20_000 });
+	await expect(panel.locator('.terminal-panel-loading')).toHaveCount(0);
+	await expect(panel.locator('.terminal-presentation-control')).toHaveCount(0);
+	await expect(
+		mainWindow.getByRole('button', { name: 'Retry connection' }),
+	).toHaveCount(0);
+
+	await writeToActiveTerminal(
+		mainWindow,
+		`printf ${JSON.stringify(afterMarker)}\\n\r`,
+	);
+	await expect(panel).toContainText(afterMarker, { timeout: 10_000 });
+});
