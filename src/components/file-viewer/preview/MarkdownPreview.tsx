@@ -113,7 +113,7 @@ function handlePreviewClick(event: MouseEvent<HTMLElement>) {
     return
   }
 
-	if (/^https:/i.test(href)) {
+	if (/^https?:/i.test(href)) {
 		event.preventDefault()
 		void openExternalUrl(href)
     return

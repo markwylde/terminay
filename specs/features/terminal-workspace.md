@@ -44,10 +44,12 @@ forwards input, resize, and lifecycle commands through the application protocol.
 
 ## Safety and accessibility
 
-The terminal is untrusted text: link navigation is protocol-guarded, paste and
-external drop behaviour remain user initiated, and screen-reader/reduced-motion
-settings are honoured. Secrets typed in a terminal are not collected by default;
-recording has its own explicit policy.
+The terminal is untrusted text: modifier-clicking a detected or OSC-8 HTTP or
+HTTPS link opens that credential-free URL in the system browser; other schemes
+and URLs with credentials are rejected. Paste and external drop behaviour remain
+user initiated, and screen-reader/reduced-motion settings are honoured. Secrets
+typed in a terminal are not collected by default; recording has its own explicit
+policy.
 
 ## Ownership and transport
 
@@ -312,3 +314,5 @@ query and injecting duplicate control responses.
   with `TERM=xterm-256color` and `COLORTERM=truecolor`. Host launcher values
   such as `TERM=dumb` never cross into a terminal session, and profiles cannot
   weaken these protected emulator capabilities.
+- Modifier-clicking a detected `http://` or `https://` terminal link, including
+  OSC-8 hyperlinks, opens that credential-free URL in the system browser.

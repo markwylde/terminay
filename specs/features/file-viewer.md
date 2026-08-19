@@ -115,9 +115,10 @@ Preview supports:
 - PDF.
 
 Markdown links and relative assets resolve relative to the file's folder but
-remain within the server-authorized content path and normal external-link
-policy. Raw HTML and active content are sanitized. Images use bounded decoded
-dimensions and fit controls. PDF pages render lazily.
+remain within the server-authorized content path. Credential-free HTTP and
+HTTPS links open through the normal external-link policy. Raw HTML and active
+content are sanitized. Images use bounded decoded dimensions and fit controls.
+PDF pages render lazily.
 
 Content too large or unsafe for a full preview uses an incremental path or
 falls back explicitly.

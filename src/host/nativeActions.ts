@@ -104,7 +104,8 @@ export function resolveDesktopDroppedFilePath(file: unknown): string | undefined
 }
 
 /** External navigation is privileged in Desktop and ordinary browser
- * navigation elsewhere. Only HTTPS/mail/tel URLs pass the protocol parser. */
+ * navigation elsewhere. Only credential-free HTTP and HTTPS URLs pass the
+ * protocol parser. */
 export async function openExternalUrl(url: string): Promise<void> {
 	if ((await request({ type: 'os.open-external', url })).handled) return;
 	window.open(url, '_blank', 'noopener,noreferrer');
