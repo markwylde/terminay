@@ -5,6 +5,7 @@ import type {
 } from '../../packages/server-core/src/types';
 import {
 	startHostedPairingHost,
+	type HostedIceServer,
 	type HostedPairingDiagnostic,
 	type HostedPairingHost,
 	type MinimalArchive,
@@ -39,6 +40,9 @@ export interface DesktopServerOwnedExposureOptions {
 	readonly verifyPairingPin?: (pin: string) => boolean;
 	readonly webRtcUnavailableReason?: string;
 	readonly webrtcRuntimeRoot?: string;
+	readonly iceServers?: readonly HostedIceServer[];
+	readonly resolveIceServers?: () => readonly HostedIceServer[];
+	readonly iceRecoveryGraceMs?: number;
 	readonly onStatusChanged?: () => void;
 	readonly onDiagnostic?: (event: HostedPairingDiagnostic) => void;
 }
@@ -66,6 +70,9 @@ export class DesktopServerOwnedExposure {
 		| DesktopServerOwnedExposureOptions['verifyPairingPin']
 		| undefined;
 	private readonly webrtcRuntimeRoot: string | undefined;
+	private readonly iceServers: readonly HostedIceServer[] | undefined;
+	private readonly resolveIceServers: (() => readonly HostedIceServer[]) | undefined;
+	private readonly iceRecoveryGraceMs: number | undefined;
 	private readonly ensureWebRtcRuntimeAvailable:
 		| (() => void | Promise<void>)
 		| undefined;
@@ -96,6 +103,9 @@ export class DesktopServerOwnedExposure {
 		this.signal = options.signal;
 		this.verifyPairingPin = options.verifyPairingPin;
 		this.webrtcRuntimeRoot = options.webrtcRuntimeRoot;
+		this.iceServers = options.iceServers;
+		this.resolveIceServers = options.resolveIceServers;
+		this.iceRecoveryGraceMs = options.iceRecoveryGraceMs;
 		this.ensureWebRtcRuntimeAvailable = options.ensureWebRtcRuntimeAvailable;
 		this.webRtcUnavailableReason = options.webRtcUnavailableReason;
 		this.onStatusChanged = options.onStatusChanged;
@@ -286,6 +296,14 @@ export class DesktopServerOwnedExposure {
 			...(this.verifyPairingPin === undefined
 				? {}
 				: { verifyPairingPin: this.verifyPairingPin }),
+			...(this.resolveIceServers === undefined
+				? this.iceServers === undefined
+					? {}
+					: { iceServers: this.iceServers }
+				: { resolveIceServers: this.resolveIceServers }),
+			...(this.iceRecoveryGraceMs === undefined
+				? {}
+				: { iceRecoveryGraceMs: this.iceRecoveryGraceMs }),
 		});
 	}
 

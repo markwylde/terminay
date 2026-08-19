@@ -124,7 +124,8 @@ test('remote production entry consumes hosted authority before workspace prepara
 		/const root = document\.getElementById\('web-root'\);[\s\S]*bootstrapHostedBrowserSession\(\);[\s\S]*import\('\.\.\/remote\/main'\)/u,
 	);
 	assert.match(source, /const sessionHost = bootstrapHostedBrowserSession\(\);[\s\S]*sessionHost\.prepareWorkspace\(\)/u);
-	assert.match(source, /window\.history\.replaceState/u);
+	assert.match(source, /\/remote-app\/ is a Cache Storage path/u);
+	assert.doesNotMatch(source, /window\.history\.replaceState/u);
 	assert.doesNotMatch(source, /window\.location\.replace\(preparedWorkspace\.entryUrl\)/u);
 });
 

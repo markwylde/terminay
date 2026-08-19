@@ -1,0 +1,260 @@
+export type HostedIceServer = Readonly<{
+	credential?: string;
+	urls: string | readonly string[];
+	username?: string;
+}>;
+
+export const DEFAULT_HOSTED_ICE_SERVERS: readonly HostedIceServer[] = Object.freeze([
+	{ urls: 'stun:stun.l.google.com:19302' },
+]);
+
+export const DEFAULT_ICE_RECOVERY_GRACE_MS = 5_000;
+
+type PeerLike = Readonly<{
+	connectionState?: string;
+	iceConnectionState?: string;
+}>;
+
+export function resolveHostedIceServers(
+	value?: readonly HostedIceServer[] | null,
+): readonly HostedIceServer[] {
+	if (value && value.length > 0) return Object.freeze([...value]);
+	return DEFAULT_HOSTED_ICE_SERVERS;
+}
+
+/** Parse Desktop/CLI ICE server config. Empty input uses the default STUN server. */
+export function parseHostedIceServers(value?: string | null): readonly HostedIceServer[] {
+	const input = String(value ?? '').trim();
+	if (!input) return DEFAULT_HOSTED_ICE_SERVERS;
+	if (input.length > 32 * 1024) {
+		throw new Error('WebRTC ICE server configuration exceeds 32 KiB.');
+	}
+	if (input.startsWith('[')) {
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(input);
+		} catch {
+			throw new Error('WebRTC ICE server JSON is invalid.');
+		}
+		if (!Array.isArray(parsed) || parsed.length < 1 || parsed.length > 8) {
+			throw new Error('WebRTC ICE server JSON must contain between 1 and 8 entries.');
+		}
+		return Object.freeze(parsed.map((entry) => normalizeHostedIceServer(entry)));
+	}
+	const urls = input
+		.split(',')
+		.map((entry) => entry.trim())
+		.filter(Boolean);
+	if (urls.length < 1 || urls.length > 16) {
+		throw new Error('WebRTC ICE server URL list must contain between 1 and 16 entries.');
+	}
+	return Object.freeze(urls.map((url) => {
+		assertHostedIceServerUrl(url);
+		return { urls: url };
+	}));
+}
+
+function normalizeHostedIceServer(value: unknown): HostedIceServer {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) {
+		throw new Error('Each WebRTC ICE server entry must be an object.');
+	}
+	const entry = value as Record<string, unknown>;
+	const allowedKeys = new Set(['credential', 'urls', 'username']);
+	if (Object.keys(entry).some((key) => !allowedKeys.has(key))) {
+		throw new Error('WebRTC ICE server entries contain an unsupported field.');
+	}
+	const urls =
+		typeof entry.urls === 'string'
+			? [entry.urls]
+			: Array.isArray(entry.urls) && entry.urls.every((url) => typeof url === 'string')
+				? entry.urls
+				: null;
+	if (!urls || urls.length < 1 || urls.length > 4) {
+		throw new Error('Each WebRTC ICE server entry requires between 1 and 4 URLs.');
+	}
+	for (const url of urls) assertHostedIceServerUrl(url);
+	const hasUsername = Reflect.has(entry, 'username');
+	const hasCredential = Reflect.has(entry, 'credential');
+	if (hasUsername !== hasCredential) {
+		throw new Error('TURN username and credential must be supplied together.');
+	}
+	if (hasUsername) {
+		if (
+			typeof entry.username !== 'string' ||
+			entry.username.length < 1 ||
+			entry.username.length > 512 ||
+			typeof entry.credential !== 'string' ||
+			entry.credential.length < 1 ||
+			entry.credential.length > 2048
+		) {
+			throw new Error('TURN username or credential has an invalid length.');
+		}
+		if (urls.some((url) => !/^turns?:/i.test(url))) {
+			throw new Error('WebRTC ICE credentials apply only to TURN URLs.');
+		}
+	}
+	return Object.freeze({
+		...(hasCredential
+			? {
+					credential: entry.credential as string,
+					username: entry.username as string,
+				}
+			: {}),
+		urls: typeof entry.urls === 'string' ? urls[0]! : urls,
+	});
+}
+
+function assertHostedIceServerUrl(value: string): void {
+	if (
+		value.length < 1 ||
+		value.length > 2048 ||
+		!/^(stun|stuns|turn|turns):/i.test(value) ||
+		value.includes('@') ||
+		/\s/.test(value) ||
+		Array.from(value).some((character) => {
+			const codePoint = character.codePointAt(0) ?? 0;
+			return codePoint < 0x20 || codePoint === 0x7f;
+		})
+	) {
+		throw new Error('WebRTC ICE server configuration contains an invalid URL.');
+	}
+}
+
+export function resolveIceRecoveryGraceMs(value: number | undefined): number {
+	const resolved = value ?? DEFAULT_ICE_RECOVERY_GRACE_MS;
+	if (!Number.isSafeInteger(resolved) || resolved < 1 || resolved > 60_000) {
+		throw new RangeError(
+			'WebRTC ICE recovery grace period must be between 1ms and 60 seconds.',
+		);
+	}
+	return resolved;
+}
+
+export function isTerminalWebRtcState(
+	state: string | undefined,
+): state is 'closed' | 'failed' {
+	return state === 'closed' || state === 'failed';
+}
+
+export function isRecoverableDisconnectState(state: string | undefined): boolean {
+	return state === 'disconnected';
+}
+
+export function isHealthyIceState(state: string | undefined): boolean {
+	return state === 'connected' || state === 'completed';
+}
+
+/** One connection-scoped ICE/peer authority. Grace is shared across peer and ICE. */
+export class HostedPeerLifecycle {
+	private recoveryTimer: ReturnType<typeof setTimeout> | undefined;
+	private stopped = false;
+	private terminal = false;
+	private readonly peer: PeerLike;
+	private readonly recoveryGraceMs: number;
+	private readonly closeSession: (reason: string) => void;
+
+	constructor(
+		peer: PeerLike,
+		recoveryGraceMs: number,
+		closeSession: (reason: string) => void,
+	) {
+		this.peer = peer;
+		this.recoveryGraceMs = recoveryGraceMs;
+		this.closeSession = closeSession;
+	}
+
+	observe(source: 'peer' | 'ice'): void {
+		if (this.stopped || this.terminal) return;
+		const peerState = this.peer.connectionState;
+		const iceState = this.peer.iceConnectionState;
+		if (isTerminalWebRtcState(peerState) || isTerminalWebRtcState(iceState)) {
+			const reason =
+				source === 'peer' && isTerminalWebRtcState(peerState)
+					? `WebRTC peer connection ${peerState}.`
+					: source === 'ice' && isTerminalWebRtcState(iceState)
+						? `WebRTC ICE connection ${iceState}.`
+						: `WebRTC connection failed (peer: ${peerState}, ICE: ${iceState}).`;
+			this.fail(reason);
+			return;
+		}
+		if (
+			isRecoverableDisconnectState(peerState) ||
+			isRecoverableDisconnectState(iceState)
+		) {
+			this.recoveryTimer ??= setTimeout(() => {
+				this.recoveryTimer = undefined;
+				if (this.stopped || this.terminal) return;
+				const currentPeerState = this.peer.connectionState;
+				const currentIceState = this.peer.iceConnectionState;
+				if (
+					isRecoverableDisconnectState(currentPeerState) ||
+					isRecoverableDisconnectState(currentIceState)
+				) {
+					this.fail(
+						`WebRTC recovery grace period expired (peer: ${currentPeerState}, ICE: ${currentIceState}).`,
+					);
+				} else {
+					this.cancelRecovery();
+				}
+			}, this.recoveryGraceMs);
+			this.recoveryTimer.unref?.();
+			return;
+		}
+		this.cancelRecovery();
+	}
+
+	stop(): void {
+		if (this.stopped) return;
+		this.stopped = true;
+		this.cancelRecovery();
+	}
+
+	fail(reason: string): void {
+		if (this.terminal || this.stopped) return;
+		this.terminal = true;
+		this.cancelRecovery();
+		this.closeSession(reason);
+	}
+
+	private cancelRecovery(): void {
+		if (this.recoveryTimer === undefined) return;
+		clearTimeout(this.recoveryTimer);
+		this.recoveryTimer = undefined;
+	}
+}
+
+export function createHandshakeJoinQueue(): {
+	enqueue(start: () => Promise<void>): Promise<void>;
+} {
+	let chain = Promise.resolve();
+	return {
+		enqueue(start) {
+			const run = chain.then(start, start);
+			chain = run.then(
+				() => undefined,
+				() => undefined,
+			);
+			return run;
+		},
+	};
+}
+
+export function hostedPeerConfiguration(
+	connectHost: string | undefined,
+	iceServers?: readonly HostedIceServer[],
+): Record<string, unknown> {
+	const loopback =
+		connectHost === '127.0.0.1' || connectHost === 'localhost' || connectHost === '::1';
+	return {
+		iceServers: [...resolveHostedIceServers(iceServers)],
+		maxMessageSize: 1024 * 1024,
+		...(loopback
+			? {
+					iceAdditionalHostAddresses: ['127.0.0.1'],
+					iceInterfaceAddresses: { udp4: '127.0.0.1' },
+					iceUseIpv4: false,
+					iceUseIpv6: false,
+				}
+			: {}),
+	};
+}

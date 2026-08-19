@@ -58,3 +58,14 @@ Hosted session responses allow framing by `https://app.terminay.com` only.
 The manager document and Local Desktop UI remain unembeddable. Session pages
 never navigate `window.top`. The PWA uses at most one session iframe. The
 session talks to `parent` only when that parent is the manager origin.
+
+The iframe `src` and the session document's resume URL stay on the session
+bootstrap (`/v1/`). Installing the workspace into Cache Storage must not leave
+`history` or `iframe.src` on `/remote-app/…` as the document that iOS restores
+after freeze. The service worker may still serve `/remote-app/` assets. Relative
+workspace `src`/`href` values are rewritten onto that cached entry; a `<base>`
+tag is not used. A
+hidden, frozen, or restored framed session asks the session host to replace
+its WebRTC generation through the same reconnect path as Retry. Vault
+credential replies use the existing origin-checked schema and the existing
+timeout; a missed reply is a visible session error, not an infinite splash.
