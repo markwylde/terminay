@@ -4979,6 +4979,7 @@ export type AppProps = {
 	terminalClientContext?: Omit<TerminalPanelClientContextValue, 'projectId'>;
 	onDisconnect?: () => void;
 	onOpenConnectionManager?: () => void;
+	onSwitchConnections?: () => void;
 };
 
 export const TERMINAY_APP_COMPONENT_ID =
@@ -5049,6 +5050,7 @@ function App({
 	auxiliaryRoutes,
 	hostPresentation,
 	onOpenConnectionManager,
+	onSwitchConnections,
 	subscribeAppCommands,
 	terminalClientContext,
 }: AppProps) {
@@ -5199,7 +5201,6 @@ function App({
 		openPairingQr,
 		pairingExpiresAt: selectedPairingExpiresAt,
 		pairingOutcome,
-		pairingSessionOrigin: selectedPairingSessionOrigin,
 		pairingUrl: selectedPairingUrl,
 		pinError: pairingPinError,
 		pinInput: pairingPinInput,
@@ -5934,6 +5935,7 @@ function App({
 						}
 						onOpenPairingQr={() => void openPairingQr()}
 						onSelectConnection={selectConnectionProfile}
+						onSwitchConnections={onSwitchConnections}
 						onToggleExposure={() => void toggleRemoteAccess()}
 						onToggleMenu={() => {
 							setIsActivityMenuOpen(false);
@@ -6085,7 +6087,6 @@ function App({
 					onTitleMouseDown={pairingModal.handleTitlebarPointerDown}
 					pairingUrl={selectedPairingUrl}
 					qrCodeDataUrl={visiblePairingQrCodeDataUrl}
-					sessionOrigin={selectedPairingSessionOrigin}
 					statusMessage={remoteStatus?.webRtcStatusMessage}
 					success={pairingOutcome === 'success'}
 				/>
