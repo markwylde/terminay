@@ -1,5 +1,9 @@
 import { createHash, hkdfSync, randomBytes } from 'node:crypto';
 import { hostname as osHostname } from 'node:os';
+import {
+	formatHostedPairingUrl,
+	managerOriginFromSessionOrigin,
+} from '@terminay/protocol';
 
 export type WebRtcPairingPayload = {
 	appOrigin: string;
@@ -165,9 +169,13 @@ export class WebRtcPairingManager {
 		const appOrigin = url.origin;
 		const signalingUrl = createSignalingUrl(appOrigin);
 		const hostName = sanitizePairingHostName(options.hostName ?? osHostname());
-		if (hostName) url.searchParams.set('hostName', hostName);
-
-		url.hash = qrSecret;
+		const pairingUrl = formatHostedPairingUrl({
+			fragment: qrSecret,
+			hostName,
+			managerOrigin: managerOriginFromSessionOrigin(appOrigin),
+			pairingExpiresAt: expiresAt,
+			sessionId,
+		});
 
 		return {
 			appOrigin,
@@ -179,7 +187,7 @@ export class WebRtcPairingManager {
 				sessionId: roomId,
 				token: pairingToken,
 			},
-			pairingUrl: url.toString(),
+			pairingUrl,
 			protocolVersion: PROTOCOL_VERSION,
 			qrSecret,
 			relayJoinToken,

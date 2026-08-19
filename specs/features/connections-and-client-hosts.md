@@ -52,19 +52,26 @@ The header displays the current server label, not the transport:
 
 The menu contains:
 
-- current server identity and connection state;
-- remembered connections, grouped or ordered consistently;
-- focus/open/switch actions appropriate to the host;
-- **Remote Control**, which opens the same connection-management surface as
-  File → Remote Control;
+- remembered connections as a single-line list, with **Local** first on
+  Desktop;
+- a manage control on the Connections heading that opens the same
+  **Remote Control** surface as File → Remote Control;
 - **Expose this server…** when the current device is allowed to manage
   exposure;
-- retry, disconnect, forget, and revoke actions with distinct language; and
+- **Create pairing link** while the server is exposed;
+- live **Active Connections** for every connected browser or Desktop peer,
+  with empty copy using the same inset as other menu rows;
+- retry and forget/revoke actions with distinct language inside Remote
+  Control; and
 - diagnostics that distinguish server offline, relay unavailable, WebRTC
   route failure, missing device identity, revoked device, invalid contract, and
   failed switch actions. Failed switch actions keep the selector visible and
   show the host-provided failure reason instead of logging only to the native
   terminal.
+
+Switching to another remembered connection replaces the current transport.
+Remote Control is the single management surface for pairing, trusted devices,
+and live connections. Settings keeps PIN limits and signaling configuration.
 
 The primary exposure control represents server-owned WebRTC availability. An
 unavailable route remains visible for diagnosis and links to its configuration
@@ -92,12 +99,19 @@ File groups workspace creation separately from management surfaces:
 management window, the same presentation family as Settings, Macros,
 Recordings, and Project Environments. It uses that family's sidebar-and-content
 chrome: title, subtitle, and **Add connection…** live in the left sidebar with
-the saved-server list; empty copy, selected-server details, and pairing live
-in the main pane. Desktop opens or focuses a native auxiliary window; the
-browser host presents the same route in-page. The window is not an Edit Tab
-sheet. Pairing URL and PIN fields stack at full width above continue/cancel
-actions. An empty saved-server list keeps its heading and pairing instructions
-on separate lines and hides that empty copy while the pairing form is open.
+**This server → Exposure** first, then the saved-server list. Title, action,
+group labels, rows, and empty sidebar copy share one inset, matching Settings. The main pane
+shows only the selected sidebar item: Exposure uses the Settings remote-access
+cards (status header, WebRTC summary, trusted browsers, live connections);
+saved-server details and pairing live there when those items are selected.
+**Create pairing link** from the connection menu and from Remote Control opens
+the same Pair Device dialog.
+Desktop opens or focuses a native auxiliary window; the browser host presents
+the same route in-page. The window is not an Edit Tab sheet. Pairing URL and
+PIN fields stack at full width above continue/cancel actions. An empty
+saved-server list keeps a quiet sidebar note. With no saved servers, the window
+lands on Exposure instead of empty-server copy. Empty-server copy is also
+hidden while Exposure is selected or the pairing form is open.
 
 Desktop development, packaged Desktop, and auxiliary routes execute the same
 server-bundled route bodies against the authenticated selected-server client.
@@ -118,10 +132,12 @@ status must not be conflated with terminal or agent attention.
   packaged Local workspace renderer against a different remote server.
 - The initial native window is explicitly bound to immutable Local and the
   header reports the selected profile label/status (including Local failure or
-  offline state), never a transport name. Local uses the private authenticated
-  Desktop host transport and does not require a network listener, internet
-  access, hosted signaling, or WebRTC; remote profiles require their own
-  selected transport.
+  offline state), never a transport name and never the opaque session-id
+  hostname. Browser sessions use the saved connection title, falling back to
+  the pairing `hostName` (the exposing machine's hostname). Local uses the
+  private authenticated Desktop host transport and does not require a network
+  listener, internet access, hosted signaling, or WebRTC; remote profiles
+  require their own selected transport.
 - A Desktop installation has one embedded Local server identity and may
   remember any number of remote profiles.
 - A native window is bound to exactly one server at a time. Its title and
@@ -226,36 +242,41 @@ and remote startup; no second workspace-window owner exists.
 - Its disconnected state is a connection picker: a saved-profile list with
   **Add new connection**, which opens a dedicated page to scan a pairing QR or
   paste a pairing URL, plus rename, open, and forget actions.
-- Selecting a profile opens it in the current browser view; an explicit action
-  can open another browser tab.
-- The PWA contains connection-profile management and navigation only.
+- Selecting a profile frames it in the current PWA view; an explicit action
+  can open a first-party session tab.
+- The PWA contains connection-profile management, the framed session host, and
+  the origin-keyed credential vault. It does not run the workspace. It shows
+  at most one framed session at a time.
 - Its installable application shell and saved profile list remain available
   offline; opening a profile requires the selected session origin to be
   reachable.
 - The exact session-origin shell owns one replaceable transport generation for
   its mounted workspace, device authentication, WebRTC/signaling, bundle
   installation, and connection errors.
-- The host stores only non-secret connection metadata in localStorage or an
-  equivalent browser store.
-- The non-extractable browser device key remains in IndexedDB/WebCrypto storage
-  on the exact server session origin.
-- The connection host cannot read terminal output, project names, paths, device
-  keys, PINs, or session-origin storage.
+- The host stores bookmark metadata in localStorage or an equivalent browser
+  store, and framed-session device credentials in manager-origin IndexedDB.
+- The non-extractable browser device key for a framed PWA session lives in that
+  manager vault. A first-party session document stores its key in
+  IndexedDB/WebCrypto on the exact server session origin.
+- The connection host cannot read terminal output, project names, paths, PINs,
+  or workspace data. It may clone a vaulted device key only into the session
+  iframe whose origin matches the vault slot.
 
 The PWA uses a Local-disabled `ConnectionProfileStore` and a versioned
 `terminay.web.connection-profiles.v1` metadata record. It restores malformed
-records defensively and requires explicit confirmation for forget. Opening a
-profile navigates to that exact HTTPS origin; an explicit new-tab action is
-host-controlled. Pairing fragments are handed to the stable session origin
-without being persisted or copied into the saved profile. Live connection,
-pairing, offline, and revocation states are presented by the session origin,
-not inferred by the manager.
+records defensively and requires explicit confirmation for forget. Opening a profile frames that exact HTTPS origin in the current PWA view; an
+explicit new-tab action is host-controlled and opens a first-party session
+document. Pairing fragments are handed to the stable session origin without
+being persisted or copied into the saved profile. Live connection, pairing,
+offline, and revocation states are presented by the session origin, not
+inferred by the manager.
 
 The manager accepts only sanitized profile metadata. A profile retains only a
 label, canonical origin, and local created/last-opened timestamps. Pairing URL
 paths and fragments are discarded when the manager derives that profile.
-Queries, origin userinfo, pairing material, device keys, and other credentials
-never become manager state.
+Queries, origin userinfo, pairing material, and other credentials never become
+bookmark state. Framed-session device credentials are vault state, not profile
+metadata.
 
 `app.terminay.com` is the stable connection manager. The selected server's
 verified bundle renders the workspace at its stable session origin.
@@ -263,7 +284,9 @@ verified bundle renders the workspace at its stable session origin.
 The stable session origin installs the selected server's bounded workspace
 bundle after authentication. Bundle transfer and validation follow
 [server runtime and application protocol](./server-runtime-and-protocol.md).
-Bundle bytes, credentials, and feature frames never enter the manager origin.
+Bundle bytes, feature frames, pairing fragments, PINs, and connection tickets
+never enter the manager origin. Framed-session device credentials enter only
+the origin-keyed vault.
 
 ## Server-bundled workspace and host shell
 
@@ -322,40 +345,47 @@ mutate a logical view without a typed server command.
 Terminay supports two browser entry journeys. Both use the same session-origin
 pairing, credential, server-bundle, and reconnect contracts.
 
-### Direct pairing link
+### Open the hosted pairing link
 
-1. The user opens the generated pairing URL directly, including its one-time
+1. The user copies the pairing URL shown in Terminay. Hosted servers advertise
+   `https://app.terminay.com/?s=<session-id>&hostName=<optional>#<secret>`.
+2. Pasting that URL into a browser, or opening the QR, lands on the manager.
+   The manager consumes the fragment in memory and strips query and hash from
+   the visible URL.
+3. The manager asks **Save and connect**, with an optional title prefilled from
+   `hostName` or the session id. Cancel discards the material. Confirm writes
+   the bookmark and frames
+   `https://<session-id>.terminay.com/v1/#<secret>` without storing the
    fragment.
-2. The exact server session origin consumes the fragment in memory and removes
-   it from the visible URL and browser history before loading other resources.
-3. The session origin establishes WebRTC, verifies and launches the selected
-   server bundle, obtains the user's PIN or approval, creates the browser device
-   key, and completes server enrollment.
-4. The session origin stores its non-extractable device private key in its own
-   IndexedDB/WebCrypto compartment. The one-time fragment is discarded.
-5. The connected workspace opens in that browser view.
-6. A later visit to the stable session origin reconnects the enrolled browser
-   with its stored credential and a fresh short-lived application ticket. It
-   does not require or accept reuse of the pairing URL.
+4. The framed session origin establishes WebRTC, verifies and launches the
+   selected server bundle, obtains the PIN or approval, creates the device key,
+   and completes enrollment. When framed, that key is stored in the manager
+   vault for `event.origin`.
+5. A later visit to the saved profile or the stable session origin reconnects
+   without reuse of the pairing URL.
+
+A legacy first-party visit to `https://<session-id>.terminay.com/v1/#<secret>`
+still enrolls at the session origin with session-origin IndexedDB.
 
 ### `app.terminay.com` PWA
 
 1. The user opens `https://app.terminay.com` and sees the connection manager.
 2. The user chooses **Add new connection**, then **Scan QR code** or **Paste
-   pairing URL**.
-3. The manager validates the URL, extracts its stable HTTPS origin, immediately
-   saves or updates a profile containing only that origin, a label, and local
-   timestamps, then navigates to the complete pairing URL without storing it.
-4. The session origin performs the direct-link pairing journey.
-5. Returning to the manager restores the saved profile from local browser
-   storage.
-6. Selecting the saved connection opens its stable session origin. That origin
-   reads its own device credential and reconnects without a pairing URL.
+   pairing URL**, or opens a hosted pairing URL in this origin.
+3. The manager validates the URL (manager-origin hosted links and legacy
+   session-origin `/v1/` links), then uses the same **Save and connect** prompt.
+4. Confirm frames the reconstructed session pairing URL. When framed, the
+   session origin persists the device key in the manager vault.
+5. Returning to the manager unloads the iframe and restores the saved profile
+   from local browser storage.
+6. Selecting the saved connection frames its stable session origin. That origin
+   receives its device credential from the manager vault and reconnects without
+   a pairing URL.
 
-The manager does not participate in pairing and never receives the device key,
-PIN, connection ticket, terminal data, or workspace data. A missing or revoked
-session-origin device identity requests a newly generated pairing URL. The
-saved manager profile remains until the user chooses **Forget**.
+The manager does not participate in PIN entry and never receives the connection
+ticket, terminal data, or workspace data. A missing or revoked device identity
+requests a newly generated pairing URL. The saved manager profile remains until
+the user chooses **Forget**.
 
 Browser connection and device-enrollment prompts use the same centered,
 responsive modal surface and form controls as the rest of the disconnected
@@ -365,16 +395,18 @@ fully inset from the viewport at narrow sizes. Starting a fresh pairing flow
 does not show a missing-saved-credential warning; enrollment errors appear only
 after an enrollment attempt fails.
 
-Desktop may accept the pairing URL in its connection menu even when the URL
-would otherwise open a browser. Browser and Desktop flows must produce the same
-server-side device and audit semantics.
+Desktop **Add connection** accepts the same pairing URL, including hosted
+`app.terminay.com` links, even when that URL would otherwise open a browser.
+It never pairs against the manager origin. Browser and Desktop flows must
+produce the same server-side device and audit semantics.
 
-The Desktop connection host consumes a pasted/deep-link pairing URL's
-one-time HTTPS fragment in memory, rejects credentials and query data, and
-persists only the exact session origin plus sanitized profile metadata. The
-fragment and any pairing URL path are never returned by the host profile API or
-serialized into the connection menu store; protocol pairing completes as a
-separate operation against that origin.
+The Desktop connection host consumes the pairing fragment in memory. Hosted
+links may carry non-secret `s`, `hostName`, and `pairingExpiresAt` query
+fields; pairing secrets stay in the fragment. It persists only the exact
+session origin plus sanitized profile metadata (default label from `hostName`).
+The fragment and complete pairing URL are never returned by the host profile
+API or serialized into the connection menu store. Enrollment runs against the
+reconstructed session origin, not `app.terminay.com`.
 
 On Desktop that operation is a closed host action: Electron performs device
 enrollment, stores the device private key in its credential compartment, verifies
@@ -397,6 +429,9 @@ pairing fragment or private key.
   link** and the QR contain the complete short-lived fragment credential and
   expiry; the UI does not present the bare origin as a usable connection URL.
 - Generating a fresh pairing room does not disconnect existing clients.
+- **Revoke** on a trusted browser immediately removes that device from the
+  trusted-browser list and count. Revoked devices stay stored for reconnect
+  rejection and are not shown as trusted.
 - Stopping WebRTC exposure prevents new WebRTC reconnect/pairing but does not
   stop the Local server or its private local workspace.
 - Standalone server CLI and UI use the same exposure/trust model.
@@ -450,12 +485,16 @@ Allowed host-local profile data:
 - local window/view mapping and non-secret UI preferences;
 - known/offline/expired/revoked/archived/unreachable state.
 
-Forbidden in connection-manager localStorage, URLs, host messages, and logs:
+Forbidden in connection-manager localStorage, URLs, logs, and bookmark
+records:
 
 - pairing URL fragments and full unconsumed pairing URLs;
-- PINs, device private keys,
-  terminal tickets, or server secrets;
+- PINs, terminal tickets, or server secrets;
 - terminal output, command history, project roots, filenames, or recordings.
+
+Device private keys never enter bookmark storage, `localStorage`, URLs, or
+logs. In the framed PWA they live only in the origin-keyed manager IndexedDB
+vault and in closed `postMessage` clones to the matching session iframe.
 
 Desktop persistence is a closed allowlist: sanitized profiles, protected
 credential references, native geometry and exact profile/view bindings,
@@ -469,7 +508,8 @@ stable session origin, created time, and last-opened time. The default label
 comes from the pairing URL's non-secret `hostName` (the exposing server's
 machine hostname). The session id in the origin remains the stable identifier.
 The user can rename that local label. Pairing URL paths and fragments are
-discarded when the manager derives that profile.
+discarded when the manager derives that profile. Framed-session device
+credentials are a separate IndexedDB vault, not profile fields.
 
 ## Failure behaviour
 
@@ -510,18 +550,24 @@ WebRTC generation replacement and terminal resynchronization follow
   without crossing server, project, or credential state.
 - The web host offers the same add/manage/switch journey without showing a
   Local option.
-- File → Remote Control and the header connection menu open the same
-  Remote Control management window as Settings/Macros, including that family's
-  sidebar-and-content chrome, not an Edit Tab sheet.
+- File → Remote Control and the header connection-menu manage control open the
+  same Remote Control management window as Settings/Macros, including that
+  family's sidebar-and-content chrome, not an Edit Tab sheet. Remote Control
+  also manages this server's exposure, pairing links, trusted browsers, and
+  live connections.
 - The installed PWA can open its manager and saved profile list offline without
   claiming that an unreachable session origin is connected.
 - Opening a pairing link directly enrolls the browser and later opening the
   stable session origin reconnects without the one-time link.
-- Scanning or adding a pairing URL in `app.terminay.com` saves its
-  stable-origin profile before navigating to session-origin pairing.
+- The advertised hosted pairing URL is on `app.terminay.com`. Opening it asks
+  **Save and connect** with an optional title, then frames session-origin
+  enrollment. Scanning or pasting that URL in `app.terminay.com` uses the same
+  prompt. The manager stores only the stable-origin profile, not the fragment.
 - Returning to `app.terminay.com` lists the saved connection, and selecting it
-  reconnects through the stable session origin without reusing pairing
-  material.
+  frames the stable session origin and reconnects from the manager vault
+  without reusing pairing material.
+- Desktop **Add connection** accepts the same hosted pairing URL and enrolls
+  against the session origin, not `app.terminay.com`.
 - Stable session origins run the server's exact bundled responsive UI.
 - Local Desktop, remote Desktop, and browser sessions launched against one
   server report the same verified bundle id; only their transport and declared

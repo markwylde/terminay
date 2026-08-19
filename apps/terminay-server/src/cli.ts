@@ -21,6 +21,7 @@ import {
 import { createConnection } from 'node:net';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { JsonValue } from '@terminay/protocol';
+import { managerOriginFromSessionOrigin } from '@terminay/protocol';
 import {
 	AgentStatusService,
 	AiService,
@@ -1313,6 +1314,10 @@ function pairingUrlForEndpoint(
 	const advertised = new URL(handoff.pairingUrl);
 	const endpoint = new URL(protocolEndpoint);
 	advertised.protocol = endpoint.protocol;
+	if (advertised.searchParams.has('s')) {
+		advertised.host = new URL(managerOriginFromSessionOrigin(endpoint.origin)).host;
+		return advertised.toString();
+	}
 	advertised.host = endpoint.host;
 	return advertised.toString();
 }

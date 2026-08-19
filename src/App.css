@@ -390,8 +390,8 @@
   top: calc(100% + 8px);
   right: 0;
   width: 300px;
-  padding: 10px;
-  border-radius: 8px;
+  padding: 8px;
+  border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.09);
   background: rgba(15, 19, 24, 0.98);
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
@@ -403,17 +403,17 @@
   all: unset;
   box-sizing: border-box;
   width: 100%;
-  min-height: 38px;
-  padding: 0 12px;
-  border-radius: 10px;
+  min-height: 34px;
+  padding: 7px 8px;
+  border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   color: #dce2f0;
   cursor: pointer;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .remote-access-menu__item:hover:not(:disabled) {
@@ -421,20 +421,28 @@
 }
 
 .remote-access-menu__item:disabled {
-  opacity: 0.65;
-  cursor: progress;
+  opacity: 0.45;
+  cursor: default;
 }
 
 .remote-access-menu__meta {
-  color: rgba(220, 226, 240, 0.52);
+  color: rgba(220, 226, 240, 0.45);
   font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
+.remote-access-menu__meta--live {
+  color: rgba(114, 213, 255, 0.88);
 }
 
 .remote-access-menu__section {
-  margin-top: 8px;
-  padding: 8px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 6px;
+  padding-top: 6px;
   border-top: 1px solid rgba(255, 255, 255, 0.07);
 }
 
@@ -444,8 +452,41 @@
   border-top: 0;
 }
 
+.remote-access-menu__section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 28px;
+  margin: 0;
+  padding: 2px 2px 4px 8px;
+}
+
+.remote-access-menu__section-header .remote-access-menu__section-label {
+  padding: 0;
+}
+
+.remote-access-menu__manage {
+  all: unset;
+  box-sizing: border-box;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(220, 226, 240, 0.55);
+  cursor: pointer;
+}
+
+.remote-access-menu__manage:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #dce2f0;
+}
+
 .remote-access-menu__section-label {
-  margin: 0 4px 8px;
+  margin: 0;
+  padding: 4px 8px 6px;
   color: rgba(220, 226, 240, 0.5);
   font-size: 10px;
   font-weight: 700;
@@ -453,71 +494,40 @@
   letter-spacing: 0.1em;
 }
 
-.remote-access-menu__address-btn {
-  all: unset;
-  box-sizing: border-box;
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 120ms ease;
-  margin-bottom: 2px;
-}
-
-.remote-access-menu__address-btn:hover {
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.remote-access-menu__address-btn--active {
-  background: rgba(87, 183, 255, 0.08);
-  box-shadow: inset 0 0 0 1px rgba(87, 183, 255, 0.15);
-}
-
-.remote-access-menu__address-text {
-  color: rgba(220, 226, 240, 0.8);
-  font-size: 12px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1;
-}
-
-.remote-access-menu__address-btn--active .remote-access-menu__address-text {
-  color: #bfe7ff;
-  font-weight: 600;
-}
-
-.remote-access-menu__address-check {
-  color: #57b7ff;
-  font-size: 10px;
-  font-weight: 800;
-}
-
 .remote-access-menu__empty {
-  color: rgba(220, 226, 240, 0.62);
+  padding: 2px 8px 6px;
+  color: rgba(220, 226, 240, 0.5);
   font-size: 12px;
-  line-height: 1.45;
+  line-height: 1.4;
+}
+
+.remote-access-menu__diagnostic {
+  margin: 0;
+  padding: 4px 8px 6px;
+  color: rgba(220, 226, 240, 0.5);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .remote-access-menu__section--error {
-  padding: 10px;
+  padding: 8px;
   border: 1px solid rgba(255, 106, 106, 0.35);
-  border-radius: 8px;
+  border-radius: 10px;
   background: rgba(138, 31, 31, 0.24);
 }
 
+.remote-access-menu__section--error .remote-access-menu__section-label,
+.remote-access-menu__section--error .remote-access-menu__error {
+  padding-left: 0;
+  padding-right: 0;
+}
+
 .remote-access-menu__section--error .remote-access-menu__section-label {
-  margin-left: 0;
-  margin-right: 0;
   color: rgba(255, 205, 205, 0.72);
 }
 
 .remote-access-menu__error {
+  padding: 0 8px 4px;
   color: #ffd1d1;
   font-size: 12px;
   line-height: 1.45;
@@ -526,12 +536,13 @@
 .remote-access-menu__connection {
   all: unset;
   box-sizing: border-box;
-  display: block;
+  display: flex;
+  align-items: center;
   width: 100%;
-  padding: 8px 10px;
+  min-height: 32px;
+  padding: 6px 8px;
   border-radius: 8px;
-  margin-bottom: 4px;
-  background: rgba(255, 255, 255, 0.025);
+  background: transparent;
 }
 
 .remote-access-menu__connection--button {
@@ -543,12 +554,20 @@
 }
 
 .remote-access-menu__connection--selected {
-  background: rgba(87, 183, 255, 0.08);
-  box-shadow: inset 0 0 0 1px rgba(87, 183, 255, 0.16);
+  background: rgba(87, 183, 255, 0.1);
+  color: #bfe7ff;
+}
+
+.remote-access-menu__connection--selected .remote-access-menu__connection-device {
+  color: #bfe7ff;
 }
 
 .remote-access-menu__connection:disabled {
   cursor: default;
+}
+
+.remote-access-menu__connection--compact {
+  min-height: 32px;
 }
 
 .remote-access-menu__connection-main {
@@ -560,8 +579,8 @@
 
 .remote-access-menu__connection-device {
   color: #dce2f0;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
   min-width: 0;
 }
 
@@ -581,221 +600,6 @@
   text-overflow: ellipsis;
 }
 
-.project-edit-modal.remote-pairing-modal {
-  max-height: calc(100vh - 40px);
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 0;
-  background: #111418;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
-}
-
-.project-edit-modal.remote-pairing-modal > .project-edit-modal-titlebar {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: #111418;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  padding: 16px 20px;
-}
-
-.remote-pairing-modal__container {
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-  align-items: center;
-}
-
-.remote-pairing-modal__copy {
-  margin: 0;
-  color: rgba(214, 227, 240, 0.5);
-  font-size: 13px;
-  line-height: 1.5;
-  text-align: center;
-  max-width: 320px;
-}
-
-.remote-pairing-modal__toggle {
-  display: flex;
-  background: rgba(255, 255, 255, 0.04);
-  padding: 4px;
-  border-radius: 12px;
-  width: 100%;
-  max-width: 340px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.remote-pairing-modal__toggle-btn {
-  all: unset;
-  flex: 1;
-  text-align: center;
-  padding: 8px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  color: rgba(214, 227, 240, 0.4);
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 150ms ease;
-}
-
-.remote-pairing-modal__toggle-btn:hover {
-  color: rgba(214, 227, 240, 0.8);
-}
-
-.remote-pairing-modal__toggle-btn--active {
-  background: rgba(255, 255, 255, 0.1);
-  color: #ffffff;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-}
-
-.remote-pairing-modal__content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 24px;
-  width: 100%;
-}
-
-.remote-pairing-modal__qr-card {
-  width: min(240px, 50vh);
-  aspect-ratio: 1;
-  border-radius: 20px;
-  background: #ffffff;
-  padding: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
-  position: relative;
-  overflow: hidden;
-}
-
-.remote-pairing-modal__qr-card::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: 20px;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.05);
-  pointer-events: none;
-}
-
-.remote-pairing-modal__qr {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-
-.remote-pairing-modal__address-section {
-  width: 100%;
-  max-width: 400px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.remote-pairing-modal__address-label {
-  color: #8b93a1;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.remote-pairing-modal__address-box {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: rgba(87, 183, 255, 0.06);
-  border: 1px solid rgba(87, 183, 255, 0.15);
-  border-radius: 12px;
-  padding: 4px 4px 4px 16px;
-  transition: border-color 150ms ease;
-}
-
-.remote-pairing-modal__address-box:focus-within {
-  border-color: rgba(87, 183, 255, 0.4);
-}
-
-.remote-pairing-modal__address-text {
-  flex: 1;
-  min-width: 0;
-  color: #bfe7ff;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.remote-pairing-modal__copy-btn {
-  appearance: none;
-  background: #4db5ff;
-  border: none;
-  border-radius: 8px;
-  color: #0d1117;
-  padding: 8px 16px;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all 120ms ease;
-  white-space: nowrap;
-}
-
-.remote-pairing-modal__copy-btn:hover {
-  background: #70c4ff;
-  transform: translateY(-1px);
-}
-
-.remote-pairing-modal__copy-btn:active {
-  transform: translateY(0);
-}
-
-@keyframes remote-fade-in {
-  from { opacity: 0; transform: translateY(-4px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.remote-pairing-modal__address-label {
-  min-width: 0;
-  color: rgba(214, 227, 240, 0.5);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
-  text-align: left;
-  word-break: break-all;
-  flex: 1;
-}
-
-.remote-pairing-modal__footer {
-  margin-top: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  text-align: center;
-}
-
-.remote-pairing-modal__tip {
-  color: rgba(214, 227, 240, 0.4);
-  font-size: 12px;
-  line-height: 1.5;
-  max-width: 340px;
-  margin: 0 auto;
-}
-
-.remote-pairing-modal__expires-text {
-  margin: 0;
-  color: rgba(214, 227, 240, 0.2);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.project-edit-modal.remote-pairing-modal > .project-edit-actions {
-  display: none;
-}
 
 .project-tabbar-list {
   display: flex;

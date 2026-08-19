@@ -5,6 +5,7 @@ import type {
 } from '../../packages/server-core/src/types';
 import {
 	startHostedPairingHost,
+	type HostedPairingDiagnostic,
 	type HostedPairingHost,
 	type MinimalArchive,
 } from '../../apps/terminay-server/src/remote/hostedPairingHost';
@@ -38,6 +39,8 @@ export interface DesktopServerOwnedExposureOptions {
 	readonly verifyPairingPin?: (pin: string) => boolean;
 	readonly webRtcUnavailableReason?: string;
 	readonly webrtcRuntimeRoot?: string;
+	readonly onStatusChanged?: () => void;
+	readonly onDiagnostic?: (event: HostedPairingDiagnostic) => void;
 }
 
 /** Desktop projection over the server-owned hosted pairing host. */
@@ -67,10 +70,20 @@ export class DesktopServerOwnedExposure {
 		| (() => void | Promise<void>)
 		| undefined;
 	private readonly webRtcUnavailableReason: string | undefined;
+	private readonly onStatusChanged: (() => void) | undefined;
+	private readonly onDiagnostic:
+		| ((event: HostedPairingDiagnostic) => void)
+		| undefined;
 	private exposure: ServerRemoteExposure | undefined;
 	private hosted: HostedPairingHost | undefined;
 	private runtimeError: string | undefined;
 	private sessionOrigin: string | undefined;
+	private hostedConnections: Array<{
+		attachedSessionCount: number;
+		connectionId: string;
+		deviceId: string;
+		deviceName: string;
+	}> = [];
 
 	constructor(options: DesktopServerOwnedExposureOptions) {
 		this.serverId = options.serverId;
@@ -85,6 +98,8 @@ export class DesktopServerOwnedExposure {
 		this.webrtcRuntimeRoot = options.webrtcRuntimeRoot;
 		this.ensureWebRtcRuntimeAvailable = options.ensureWebRtcRuntimeAvailable;
 		this.webRtcUnavailableReason = options.webRtcUnavailableReason;
+		this.onStatusChanged = options.onStatusChanged;
+		this.onDiagnostic = options.onDiagnostic;
 		this.runtimeError = options.webRtcUnavailableReason;
 		this.factory =
 			options.createExposure ??
@@ -101,7 +116,11 @@ export class DesktopServerOwnedExposure {
 	}
 
 	getStatus(): RemoteAccessStatus {
-		const status = projectStatus(this.exposure, this.sessionOrigin);
+		const status = projectStatus(
+			this.exposure,
+			this.sessionOrigin,
+			this.hostedConnections,
+		);
 		if (this.runtimeError === undefined) return status;
 		return {
 			...status,
@@ -119,6 +138,7 @@ export class DesktopServerOwnedExposure {
 		if (this.exposure?.status.exposure.state === 'exposed') {
 			await this.hosted?.close();
 			this.hosted = undefined;
+			this.hostedConnections = [];
 			this.exposure.stopExposure();
 			return this.getStatus();
 		}
@@ -127,6 +147,7 @@ export class DesktopServerOwnedExposure {
 		if (origin !== this.sessionOrigin) {
 			await this.hosted?.close();
 			this.hosted = undefined;
+			this.hostedConnections = [];
 			await this.exposure?.shutdown();
 			this.sessionOrigin = origin;
 			this.exposure = this.factory(origin);
@@ -142,16 +163,31 @@ export class DesktopServerOwnedExposure {
 				error instanceof Error
 					? error.message
 					: 'Desktop WebRTC runtime is unavailable.';
-			throw error;
+			return this.getStatus();
 		}
 		exposure.start();
 		try {
 			this.hosted = await this.register(exposure);
 			this.runtimeError = undefined;
 		} catch (error) {
+			this.hosted = undefined;
 			exposure.stopExposure();
-			throw error;
+			this.runtimeError =
+				error instanceof Error
+					? error.message
+					: 'Hosted signaling could not connect.';
+			return this.getStatus();
 		}
+		return this.getStatus();
+	}
+
+	async createPairingLink(): Promise<RemoteAccessStatus> {
+		if (this.requireExposure().status.exposure.state !== 'exposed')
+			throw new Error('Remote Access is not exposed.');
+		const hosted = this.hosted;
+		if (hosted === undefined)
+			throw new Error('Hosted pairing is not available.');
+		await hosted.mintPairing();
 		return this.getStatus();
 	}
 
@@ -179,12 +215,14 @@ export class DesktopServerOwnedExposure {
 		await current.shutdown();
 		this.exposure = candidate;
 		this.hosted = hosted;
+		this.hostedConnections = [];
 		return this.getStatus();
 	}
 
 	async revokeDevice(deviceId: string): Promise<RemoteAccessStatus> {
 		await this.requireExposure().revokeDevice(deviceId);
 		this.persistDevices?.(this.requireExposure().devices.list());
+		this.onStatusChanged?.();
 		return this.getStatus();
 	}
 
@@ -196,6 +234,7 @@ export class DesktopServerOwnedExposure {
 	async shutdown(): Promise<void> {
 		await this.hosted?.close();
 		this.hosted = undefined;
+		this.hostedConnections = [];
 		await this.exposure?.shutdown();
 	}
 
@@ -209,10 +248,36 @@ export class DesktopServerOwnedExposure {
 		return startHostedPairingHost({
 			handoff,
 			hostKey: this.hostKey,
-			persistDevices: this.persistDevices ?? (() => undefined),
+			persistDevices: (devices) => {
+				this.persistDevices?.(devices);
+				this.onStatusChanged?.();
+			},
 			remote: exposure,
 			serverId: this.serverId,
 			webrtcRuntimeRoot: this.webrtcRuntimeRoot,
+			rotateHandoff: () => exposure.rotateHostedPairing(),
+			onHandoff: () => this.onStatusChanged?.(),
+			onPeerConnected: (peer) => {
+				this.hostedConnections = [
+					...this.hostedConnections.filter(
+						(connection) => connection.connectionId !== peer.connectionId,
+					),
+					{
+						attachedSessionCount: 1,
+						connectionId: peer.connectionId,
+						deviceId: peer.deviceId,
+						deviceName: peer.deviceName,
+					},
+				];
+				this.onStatusChanged?.();
+			},
+			onPeerDisconnected: (connectionId) => {
+				this.hostedConnections = this.hostedConnections.filter(
+					(connection) => connection.connectionId !== connectionId,
+				);
+				this.onStatusChanged?.();
+			},
+			...(this.onDiagnostic === undefined ? {} : { onDiagnostic: this.onDiagnostic }),
 			...(this.acceptApplication === undefined
 				? {}
 				: { acceptApplication: this.acceptApplication }),
@@ -259,6 +324,12 @@ function normalizeSessionOrigin(address: string): string {
 function projectStatus(
 	exposure: ServerRemoteExposure | undefined,
 	sessionOrigin: string | undefined,
+	hostedConnections: readonly Readonly<{
+		attachedSessionCount: number;
+		connectionId: string;
+		deviceId: string;
+		deviceName: string;
+	}>[] = [],
 ): RemoteAccessStatus {
 	const status = exposure?.status;
 	const pairing = status?.pairing;
@@ -268,32 +339,39 @@ function projectStatus(
 		peerId: string;
 		deviceId: string;
 	}>[];
-	const devices = (exposure?.devices.list() ?? []) as readonly Readonly<{
-		createdAt: number;
-		deviceId: string;
-		deviceName: string;
-		lastSeenAt: number | null;
-		revokedAt: number | null;
-	}>[];
-	return {
-		activeConnectionCount: peers.filter((peer) => peer.state === 'connected')
-			.length,
-		pendingWebRtcConnectionCount: 0,
-		auditEvents: [],
-		connections: peers.map((peer) => ({
+	const devices = (
+		(exposure?.devices.list() ?? []) as readonly Readonly<{
+			createdAt: number;
+			deviceId: string;
+			deviceName: string;
+			lastSeenAt: number | null;
+			revokedAt: number | null;
+		}>[]
+	).filter((device) => device.revokedAt === null);
+	const namedDevice = (deviceId: string) =>
+		devices.find((device) => device.deviceId === deviceId)?.deviceName ??
+		deviceId;
+	const managerConnections = peers
+		.filter((peer) => peer.state === 'connected')
+		.map((peer) => ({
 			attachedSessionCount: 0,
 			connectionId: peer.peerId,
 			deviceId: peer.deviceId,
-			deviceName: peer.deviceId,
-		})),
+			deviceName: namedDevice(peer.deviceId),
+		}));
+	const connections = [...managerConnections, ...hostedConnections];
+	return {
+		activeConnectionCount: connections.length,
+		pendingWebRtcConnectionCount: 0,
+		auditEvents: [],
+		connections,
 		// Idle (not yet exposed) is not a settings problem. The renderer treats
 		// configurationIssue as "open settings and abort" instead of exposing.
 		configurationIssue: null,
 		configurationPath: 'Terminay Server',
 		errorMessage: null,
 		isRunning: status?.exposure.state === 'exposed',
-		pairedDeviceCount: devices.filter((device) => device.revokedAt === null)
-			.length,
+		pairedDeviceCount: devices.length,
 		pairedDevices: devices.map((device) => ({
 			addedAt: new Date(device.createdAt).toISOString(),
 			deviceId: device.deviceId,

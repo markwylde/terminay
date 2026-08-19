@@ -46,6 +46,10 @@ test('host context is closed, immutable, and cannot select Electron mode', () =>
 		/fields are invalid/u,
 	);
 	assert.throws(
+		() => parseTerminayHostContext({ ...context, hostName: 'Studio-Mac' }),
+		/fields are invalid/u,
+	);
+	assert.throws(
 		() =>
 			parseTerminayHostContext({ ...context, capabilities: { rootShell: 1 } }),
 		/unknown capability/u,

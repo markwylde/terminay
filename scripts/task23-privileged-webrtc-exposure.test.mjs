@@ -12,6 +12,9 @@ test('Desktop WebRTC exposure uses the server-owned hosted pairing host', async 
 	assert.match(host, /device-host-registered/u);
 	assert.match(host, /acceptApplication/u);
 	assert.match(exposure, /startHostedPairingHost/u);
+	assert.match(exposure, /createPairingLink/u);
+	assert.match(exposure, /mintPairing/u);
+	assert.match(exposure, /revokedAt === null/u);
 	assert.match(exposure, /loadOrCreateHostedHostKey|hostKey/u);
 	assert.match(main, /new DesktopServerOwnedExposure/u);
 	assert.match(main, /startHostedPairingHost|DesktopServerOwnedExposure/u);

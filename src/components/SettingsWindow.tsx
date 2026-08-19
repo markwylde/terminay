@@ -32,9 +32,9 @@ import {
 } from '../remotePairingPin';
 import { type AiTabMetadataClient } from '../services/ai/aiTabMetadataClient';
 import type { RemoteAccessStatusClient } from '../services/remoteAccessStatusClient';
-import { writeClipboardText } from '../host/nativeActions';
 import { SettingsMutationCoordinator } from '../settingsMutationCoordinator';
 import { SharedSettingsRouteBody } from '../shared/SharedSettingsRouteBody';
+import { RemotePairingModal } from '../shared/RemotePairingModal';
 import type { SettingsFieldDefinition } from '../terminalSettings';
 import {
 	buildTabThemeHueValue,
@@ -85,49 +85,6 @@ const extensionSettingsCategory = Object.freeze({
 	label: 'Extensions',
 });
 
-function RemotePairingQrImage({
-	dataUrl,
-	pairingUrl,
-}: {
-	dataUrl?: string | null;
-	pairingUrl?: string | null;
-}) {
-	const [generated, setGenerated] = useState<string | null>(null);
-	useEffect(() => {
-		let active = true;
-		if (dataUrl || !pairingUrl) {
-			setGenerated(null);
-			return () => {
-				active = false;
-			};
-		}
-		void import('qrcode')
-			.then((module) =>
-				module.default.toDataURL(pairingUrl, {
-					errorCorrectionLevel: 'M',
-					margin: 2,
-					width: 320,
-				}),
-			)
-			.then((value) => {
-				if (active) setGenerated(value);
-			})
-			.catch(() => {
-				if (active) setGenerated(null);
-			});
-		return () => {
-			active = false;
-		};
-	}, [dataUrl, pairingUrl]);
-	const source = dataUrl ?? generated;
-	return source ? (
-		<img
-			className="settings-remote-qr"
-			src={source}
-			alt="Remote pairing QR code"
-		/>
-	) : null;
-}
 type AiModelOption = { id: string; label: string };
 type MicrophoneDeviceOption = { deviceId: string; label: string };
 
@@ -509,6 +466,7 @@ export function SettingsWindow({
 	settingsClient: settingsClientOverride,
 	shellProfilesClient,
 	serverIdentity = 'Connected server',
+	onOpenRemoteControl,
 }: Readonly<{
 	applicationClient?: TerminayClient;
 	aiTabMetadataClient?: AiTabMetadataClient;
@@ -518,6 +476,7 @@ export function SettingsWindow({
 	settingsClient?: TerminalSettingsClient;
 	shellProfilesClient?: ShellProfilesClient;
 	serverIdentity?: string;
+	onOpenRemoteControl?: () => void;
 }>) {
 	const serverAiClient = useMemo(
 		() =>
@@ -591,7 +550,6 @@ export function SettingsWindow({
 	const [pairingPinInput, setPairingPinInput] = useState('');
 	const [pairingPinError, setPairingPinError] = useState<string | null>(null);
 	const [isSavingPairingPin, setIsSavingPairingPin] = useState(false);
-	const [isLinkCopied, setIsLinkCopied] = useState(false);
 	const [isUpdatingRemoteDevices, setIsUpdatingRemoteDevices] = useState(false);
 	const [selectedDevicesToRevoke, setSelectedDevicesToRevoke] = useState<
 		Set<string>
@@ -2110,6 +2068,33 @@ export function SettingsWindow({
 			return null;
 		}
 
+		if (onOpenRemoteControl !== undefined) {
+			return (
+				<section
+					id="section-remote-access-management"
+					className="settings-section"
+				>
+					<header className="settings-remote-panel-header">
+						<div>
+							<p className="settings-remote-kicker">Remote access</p>
+							<h4>Manage exposure in Remote Control</h4>
+							<p>
+								Pairing links, trusted browsers, and live connections live in
+								Remote Control. PIN limits and signaling stay here.
+							</p>
+						</div>
+						<button
+							type="button"
+							className="settings-primary-button"
+							onClick={onOpenRemoteControl}
+						>
+							Open Remote Control
+						</button>
+					</header>
+				</section>
+			);
+		}
+
 		const remoteSummary = remoteStatus?.isRunning
 			? 'This server is ready for remote connections.'
 			: remoteActionError || remoteStatus?.errorMessage
@@ -2127,7 +2112,6 @@ export function SettingsWindow({
 				? null
 				: remoteStatus?.webRtcPairingQrCodeDataUrl;
 		const selectedPairingExpiresAt = remoteStatus?.webRtcPairingExpiresAt;
-		const selectedPairingLabel = 'Pair device';
 		const pairedDevices = remoteStatus?.pairedDevices ?? [];
 		const activeConnections = remoteStatus?.connections ?? [];
 		const auditEvents = remoteStatus?.auditEvents ?? [];
@@ -2223,7 +2207,14 @@ export function SettingsWindow({
 								<button
 									type="button"
 									className="settings-secondary-button"
-									onClick={() => setIsPairingQrModalOpen(true)}
+									onClick={() => {
+										void remoteAccessStatusClient
+											.createPairingLink()
+											.then((next) => {
+												setRemoteStatus(next);
+												setIsPairingQrModalOpen(true);
+											});
+									}}
 								>
 									Show pairing link
 								</button>
@@ -2585,83 +2576,13 @@ export function SettingsWindow({
 					</div>
 				</div>
 				{isPairingQrModalOpen ? (
-					<div
-						className="settings-modal-backdrop"
-						onMouseDown={() => setIsPairingQrModalOpen(false)}
-					>
-						<div
-							className="settings-pin-modal"
-							onMouseDown={(event) => event.stopPropagation()}
-							role="dialog"
-							aria-modal="true"
-							aria-labelledby="settings-qr-modal-title"
-						>
-							<div className="settings-pin-modal-header">
-								<h2 id="settings-qr-modal-title">{selectedPairingLabel}</h2>
-								<button
-									type="button"
-									onClick={() => setIsPairingQrModalOpen(false)}
-									aria-label="Close Remote Pairing QR"
-								>
-									x
-								</button>
-							</div>
-							{selectedPairingUrl || selectedPairingQrCodeDataUrl ? (
-								<>
-									<div className="settings-remote-qr-card">
-										<RemotePairingQrImage
-											dataUrl={selectedPairingQrCodeDataUrl}
-											pairingUrl={selectedPairingUrl}
-										/>
-									</div>
-									<p className="settings-remote-meta">
-										Expires{' '}
-										{selectedPairingExpiresAt
-											? new Date(selectedPairingExpiresAt).toLocaleString()
-											: 'soon'}
-									</p>
-									{selectedPairingUrl ? (
-										<>
-											<p
-												className="settings-remote-meta"
-												data-testid="remote-pairing-link"
-											>
-												{selectedPairingUrl}
-											</p>
-											<button
-												type="button"
-												className="settings-remote-copy-button"
-												onClick={() => {
-													void (
-														writeClipboardText(selectedPairingUrl) ??
-														navigator.clipboard.writeText(selectedPairingUrl)
-													)
-														.then(() => {
-															setIsLinkCopied(true);
-															setTimeout(() => setIsLinkCopied(false), 2000);
-														})
-														.catch(() => setIsLinkCopied(false));
-												}}
-											>
-												{isLinkCopied ? 'Copied' : 'Copy Link'}
-											</button>
-										</>
-									) : null}
-									{remoteStatus?.webRtcStatusMessage ? (
-										<p className="settings-remote-meta">
-											{remoteStatus.webRtcStatusMessage}
-										</p>
-									) : null}
-								</>
-							) : (
-								<p className="settings-remote-empty">
-									{remoteStatus?.webRtcStatusMessage
-										? remoteStatus.webRtcStatusMessage
-										: 'Start remote access to generate a fresh pairing QR code for browsers.'}
-								</p>
-							)}
-						</div>
-					</div>
+					<RemotePairingModal
+						expiresAt={selectedPairingExpiresAt}
+						onClose={() => setIsPairingQrModalOpen(false)}
+						pairingUrl={selectedPairingUrl}
+						qrCodeDataUrl={selectedPairingQrCodeDataUrl}
+						statusMessage={remoteStatus?.webRtcStatusMessage}
+					/>
 				) : null}
 			</section>
 		);
@@ -2759,7 +2680,7 @@ export function SettingsWindow({
 					<span>Pairing PIN</span>
 					<input
 						className="settings-input-text"
-						type="text"
+						type="password"
 						value={pairingPinInput}
 						onChange={(event) => {
 							setPairingPinInput(

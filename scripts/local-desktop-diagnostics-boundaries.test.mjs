@@ -102,6 +102,45 @@ test('Local server diagnostics are semantic and PTY data paths never call the si
 	assert.doesNotMatch(fileFailure, /projectId|projectRoot|path:/u);
 });
 
+test('hosted remote pairing diagnostics are named events without pairing URLs', async () => {
+	const diagnostics = await readFile(
+		new URL('../electron/diagnostics/core.ts', import.meta.url),
+		'utf8',
+	);
+	const mapper = await readFile(
+		new URL('../electron/remote/hostedPairingDiagnostics.ts', import.meta.url),
+		'utf8',
+	);
+	const host = await readFile(
+		new URL(
+			'../apps/terminay-server/src/remote/hostedPairingHost.ts',
+			import.meta.url,
+		),
+		'utf8',
+	);
+	for (const event of [
+		'local-server.remote-pairing.advertised',
+		'local-server.remote-pairing.registered',
+		'local-server.remote-pairing.signaling-closed',
+		'local-server.remote-pairing.rotated',
+		'local-server.remote-pairing.reregistered',
+		'local-server.remote-pairing.client-join',
+		'local-server.remote-pairing.failed',
+	]) {
+		assert.match(diagnostics, new RegExp(`'${event.replaceAll('.', '\\.')}'`, 'u'));
+		assert.match(mapper, new RegExp(`'${event.replaceAll('.', '\\.')}'`, 'u'));
+	}
+	assert.match(host, /rotateHandoff/u);
+	assert.match(host, /refreshPairing\('socket-closed'\)/u);
+	assert.match(host, /refreshPairing\('consumed'\)/u);
+	assert.match(host, /mintPairing/u);
+	assert.doesNotMatch(
+		host,
+		/pairingSocket\.once\('close', \(\) => \{\s*if \(!closed\) void close\(\);/u,
+	);
+	assert.doesNotMatch(mapper, /pairingUrl|qrSecret|relayJoinToken/u);
+});
+
 test('application logs do not persist microphone identity', () => {
 	for (const privateField of [
 		'requestedDeviceId:',

@@ -3,6 +3,7 @@ export * from "./frame.js";
 export * from "./host.js";
 export * from "./json.js";
 export * from "./limits.js";
+export * from "./hostedPairingUrl.js";
 export * from "./managerOrigins.js";
 export * from "./negotiation.js";
 export * from "./signalingBootstrap.js";

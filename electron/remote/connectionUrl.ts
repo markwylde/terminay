@@ -1,3 +1,5 @@
+import { parseHostedPairingUrl } from '@terminay/protocol'
+
 const PAIRING_QUERY_KEYS = ['pairingSessionId', 'pairingToken', 'pairingExpiresAt'] as const
 const PAIRING_FRAGMENT_KEYS = [...PAIRING_QUERY_KEYS, 'pairingFlow'] as const
 const MAX_PAIRING_FRAGMENT_LENGTH = 4096
@@ -29,7 +31,12 @@ export function normalizeRemoteConnectionUrl(rawUrl: unknown): string {
   }
 
   if (parsed.search.length > 0) {
-    throw new TypeError('Pairing credentials must be in the URL fragment.')
+    try {
+      const hosted = parseHostedPairingUrl(parsed.toString())
+      return hosted.managerHref
+    } catch {
+      throw new TypeError('Pairing credentials must be in the URL fragment.')
+    }
   }
 
   if (parsed.hash.length <= 1) {
@@ -78,9 +85,14 @@ export function normalizeRemoteConnectionUrl(rawUrl: unknown): string {
  * its one-time pairing token were a protocol bearer credential.
  */
 export function isRemoteAccessPairingUrl(normalizedUrl: string): boolean {
-  const parsed = new URL(normalizedUrl)
-  const fragment = new URLSearchParams(parsed.hash.startsWith('#') ? parsed.hash.slice(1) : parsed.hash)
-  return fragment.get('pairingFlow') === 'device' && PAIRING_QUERY_KEYS.every((key) => fragment.has(key))
+  try {
+    parseHostedPairingUrl(normalizedUrl)
+    return true
+  } catch {
+    const parsed = new URL(normalizedUrl)
+    const fragment = new URLSearchParams(parsed.hash.startsWith('#') ? parsed.hash.slice(1) : parsed.hash)
+    return fragment.get('pairingFlow') === 'device' && PAIRING_QUERY_KEYS.every((key) => fragment.has(key))
+  }
 }
 
 /** Convert Chromium navigation failures into an actionable user-facing error. */

@@ -27,7 +27,14 @@ import {
 	type NodeDataChannelHeadlessHostOptions,
 	type NodeDataChannelHostEvent,
 } from './nodeDataChannelHost.js';
-import { deriveHostedPairingSecrets } from './hostedPairingSecrets.js';
+import {
+	formatHostedPairingUrl,
+	managerOriginFromSessionOrigin,
+} from '@terminay/protocol';
+import { deriveHostedPairingSecrets, hostedSessionId } from './hostedPairingSecrets.js';
+
+const HOSTED_PAIRING_LIFETIME_MS = 5 * 60 * 1000;
+const HOSTED_RECONNECT_AVAILABILITY_MS = 25 * 60 * 1000;
 
 export interface ServerRemoteExposureOptions {
 	readonly serverId: string;
@@ -62,7 +69,7 @@ export interface ServerRemoteExposureOptions {
 		onEvent: (event: NodeDataChannelHostEvent) => void,
 	) => NodeDataChannelHeadlessHost;
 	readonly cleanupIntervalMs?: number;
-	/** Hosted `/v1/` QR links use one raw derivation secret; Local HTTP uses named fields. */
+	/** Hosted QR links are advertised on the manager origin; Local HTTP uses named fragment fields. */
 	readonly pairingUrlFormat?:
 		| 'standalone'
 		| 'direct-device'
@@ -111,9 +118,16 @@ export class ServerRemoteExposure {
 		| 'direct-device'
 		| 'hosted-compact';
 	private readonly hostName: string;
+	private readonly now: () => number;
+	private readonly pairingLifetimeMs: number;
 
 	constructor(options: ServerRemoteExposureOptions) {
 		const now = options.now ?? (() => Date.now());
+		this.now = now;
+		this.pairingLifetimeMs =
+			options.defaultLifetimeMs ??
+			options.pairing?.defaultLifetimeMs ??
+			HOSTED_PAIRING_LIFETIME_MS;
 		this.pairingUrlFormat = options.pairingUrlFormat ?? 'standalone';
 		this.hostName = sanitizePairingHostName(options.hostName ?? osHostname());
 		this.manager = new RemoteConnectionManager({
@@ -209,6 +223,10 @@ export class ServerRemoteExposure {
 		return this.activePairingHandoff;
 	}
 
+	get advertisedHostName(): string {
+		return this.hostName;
+	}
+
 	start(expiresAt?: number): ServerPairingHandoff {
 		if (this.pairingUrlFormat !== 'hosted-compact') {
 			return this.rememberHandoff(this.controller.start(expiresAt));
@@ -218,11 +236,11 @@ export class ServerRemoteExposure {
 		}
 		const qrSecret = mintHostedQrSecret();
 		const derived = deriveHostedPairingSecrets(qrSecret);
-		const expiry = expiresAt ?? Date.now() + 5 * 60 * 1000;
-		this.manager.expose(expiry);
+		const pairingExpiresAt = expiresAt ?? this.now() + this.pairingLifetimeMs;
+		this.ensureExposureCovers(pairingExpiresAt);
 		try {
 			const room = this.pairing.createIdentified({
-				expiresAt: expiry,
+				expiresAt: pairingExpiresAt,
 				roomId: derived.pairingRoomId,
 				secret: derived.pairingToken,
 			});
@@ -239,7 +257,35 @@ export class ServerRemoteExposure {
 	}
 
 	rotate(expiresAt?: number): ServerPairingHandoff {
+		if (this.pairingUrlFormat === 'hosted-compact') {
+			return this.rotateHostedPairing(expiresAt);
+		}
 		return this.rememberHandoff(this.controller.rotate(expiresAt));
+	}
+
+	/** Mint a replacement hosted pairing room without dropping reconnect availability. */
+	rotateHostedPairing(expiresAt?: number): ServerPairingHandoff {
+		if (this.pairingUrlFormat !== 'hosted-compact') {
+			return this.rotate(expiresAt);
+		}
+		if (this.manager.exposure.state !== 'exposed') {
+			throw new Error('remote exposure is not active');
+		}
+		const qrSecret = mintHostedQrSecret();
+		const derived = deriveHostedPairingSecrets(qrSecret);
+		const pairingExpiresAt = expiresAt ?? this.now() + this.pairingLifetimeMs;
+		this.ensureExposureCovers(pairingExpiresAt);
+		const room = this.pairing.rotateIdentified({
+			expiresAt: pairingExpiresAt,
+			roomId: derived.pairingRoomId,
+			secret: derived.pairingToken,
+		});
+		this.audit.record({ action: 'exposure-rotated', roomId: room.roomId });
+		return this.rememberHandoff({
+			...room,
+			compactQrSecret: qrSecret,
+			pairingUrl: room.sessionOrigin,
+		});
 	}
 
 	createPairing(expiresAt?: number): ServerPairingHandoff {
@@ -370,6 +416,20 @@ export class ServerRemoteExposure {
 		this.activePairingHandoff = projected;
 		return projected;
 	}
+
+	private ensureExposureCovers(pairingExpiresAt: number): void {
+		const minExpiry = Math.max(
+			pairingExpiresAt,
+			this.now() + HOSTED_RECONNECT_AVAILABILITY_MS,
+		);
+		const exposedUntil = this.manager.exposure.expiresAt ?? 0;
+		if (
+			this.manager.exposure.state !== 'exposed' ||
+			exposedUntil < pairingExpiresAt
+		) {
+			this.manager.expose(minExpiry);
+		}
+	}
 }
 
 export function createServerRemoteExposure(
@@ -388,19 +448,28 @@ function toServerPairingHandoff(
 	const pairingToken = handoff.secret;
 	const url = new URL(handoff.sessionOrigin);
 	if (format === 'hosted-compact') {
-		url.pathname = '/v1/';
-		url.hash = handoff.compactQrSecret ?? handoff.secret;
-		if (hostName) url.searchParams.set('hostName', hostName);
-	} else {
-		url.pathname = '/';
-		url.hash = new URLSearchParams({
-			...(format === 'direct-device' ? { pairingFlow: 'device' } : {}),
+		return Object.freeze({
+			...handoff,
 			pairingExpiresAt,
 			pairingSessionId,
 			pairingToken,
-			...(hostName ? { hostName } : {}),
-		}).toString();
+			pairingUrl: formatHostedPairingUrl({
+				fragment: handoff.compactQrSecret ?? handoff.secret,
+				hostName,
+				managerOrigin: managerOriginFromSessionOrigin(handoff.sessionOrigin),
+				pairingExpiresAt,
+				sessionId: hostedSessionId(handoff.sessionOrigin),
+			}),
+		});
 	}
+	url.pathname = '/';
+	url.hash = new URLSearchParams({
+		...(format === 'direct-device' ? { pairingFlow: 'device' } : {}),
+		pairingExpiresAt,
+		pairingSessionId,
+		pairingToken,
+		...(hostName ? { hostName } : {}),
+	}).toString();
 	return Object.freeze({
 		...handoff,
 		pairingExpiresAt,

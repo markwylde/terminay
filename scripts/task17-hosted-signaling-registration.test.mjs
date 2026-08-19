@@ -12,5 +12,6 @@ test('hosted reconnect registration is owned by the shared pairing host', async 
 	assert.match(host, /type: 'host-ready'/u);
 	assert.match(host, /createDeviceHostReadyMessage/u);
 	assert.match(desktop, /startHostedPairingHost/u);
+	assert.match(desktop, /createPairingLink/u);
 	assert.doesNotMatch(desktop, /createHostedSignalingRoomRegistrar/u);
 });

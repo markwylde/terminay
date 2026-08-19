@@ -90,9 +90,14 @@ transport. A separate, capability-negotiated host bridge provides optional
 native presentation without becoming a server or workspace API.
 
 The web host has no local server. `app.terminay.com` adds, remembers, opens, and
-manages non-secret bookmarks to remote servers. The selected stable session
-origin owns device authentication, WebRTC, and installation of that server's
-workspace bundle. The PWA does not ship a workspace build.
+manages bookmarks to remote servers. **Open** keeps the manager as the
+top-level document and loads the selected stable session origin in a fullscreen
+iframe so an installed iOS Home Screen app stays chrome-less. The session
+origin owns device authentication, WebRTC, and installation of that
+server's workspace bundle. When framed, the manager also stores that origin's
+non-extractable device credential and proxies clipboard, microphone, and
+notifications over origin-checked `postMessage`. The PWA does not ship a
+workspace build.
 
 Desktop and browser hosts never install or execute project-environment
 extensions, connect to SSH/Puzed targets, or hold their credentials. A remote

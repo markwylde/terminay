@@ -128,6 +128,7 @@ import {
 	DesktopDeviceCredentialStore,
 } from './remote/deviceCredentialStore';
 import { createPairingPinHash, verifyPairingPin } from './remote/pin';
+import { hostedPairingDiagnosticEvent } from './remote/hostedPairingDiagnostics';
 import { DesktopServerOwnedExposure } from './remote/serverOwnedExposure';
 import { buildServerUiArchive } from './remote/serverUiArchive';
 import {
@@ -1118,6 +1119,8 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 							);
 						case 'toggle-server':
 							return toggleRemoteServer();
+						case 'create-pairing-link':
+							return createRemotePairingLink();
 						case 'revoke-device':
 							return revokeRemoteDevice(value ?? '');
 						case 'close-connection':
@@ -1276,6 +1279,14 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		},
 		verifyPairingPin: (pin) =>
 			verifyPairingPin(readEmbeddedRemoteAccessSettings().pairingPinHash, pin),
+		onStatusChanged: () => {
+			authority.notifyRemoteAccessChanged();
+		},
+		onDiagnostic: (event) => {
+			void desktopDiagnostics.record(hostedPairingDiagnosticEvent(event), {
+				channel: 'lifecycle',
+			});
+		},
 		acceptApplication: (transport, authenticatedClient) => {
 			if (serverTerminalAuthority === null) {
 				throw new Error('The embedded server is unavailable.');
@@ -2946,24 +2957,23 @@ async function enrollPairedDesktopRemoteProfile(
 	pairingUrl: string,
 	pairingPin: string,
 ): Promise<RememberedRemoteConnection> {
-	const origin = new URL(pairingUrl).origin;
-	loadRememberedRemoteConnections();
-	const existing = [...rememberedRemoteConnections.values()].find(
-		(candidate) => candidate.origin === origin,
-	);
-	const profile: RememberedRemoteConnection = Object.freeze({
-		id: existing?.id ?? `remote:${randomUUID()}`,
-		kind: 'standalone',
-		label: existing?.label ?? new URL(origin).host,
-		origin,
-	});
-	await establishDesktopDevicePairing({
+	const enrolled = await establishDesktopDevicePairing({
 		deviceName: 'Terminay Desktop',
 		pairingPin,
 		pairingUrl,
 		store: createDesktopDeviceCredentialStore(),
 	});
-	return profile;
+	const origin = enrolled.origin;
+	loadRememberedRemoteConnections();
+	const existing = [...rememberedRemoteConnections.values()].find(
+		(candidate) => candidate.origin === origin,
+	);
+	return Object.freeze({
+		id: existing?.id ?? `remote:${randomUUID()}`,
+		kind: 'standalone',
+		label: existing?.label ?? enrolled.label ?? new URL(origin).host,
+		origin,
+	});
 }
 
 /** Prepare one authenticated remote lane and its verified server bundle for a
@@ -3343,6 +3353,10 @@ function currentRemoteAccessStatus(): RemoteAccessStatus {
 
 async function toggleRemoteServer(): Promise<RemoteAccessStatus> {
 	return desktopRemoteExposure.toggle();
+}
+
+async function createRemotePairingLink(): Promise<RemoteAccessStatus> {
+	return desktopRemoteExposure.createPairingLink();
 }
 
 async function revokeRemoteDevice(

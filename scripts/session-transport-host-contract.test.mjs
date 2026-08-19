@@ -66,10 +66,30 @@ test('production bootstrap installs one immutable host from the narrow hosted au
 	const host = contract.bootstrapHostedBrowserSession();
 	assert.equal(host, globalThis.window.__TERMINAY_SESSION_TRANSPORT__);
 	assert.equal(Object.isFrozen(host), true);
+	assert.equal(host.hostName, undefined);
 	const prepared = await host.prepareWorkspace();
 	assert.equal(prepared.expectedServerId, 'server-a');
 	assert.deepEqual([...prepared.compressedArchive], [1, 2, 3]);
 	assert.throws(() => { globalThis.window.__TERMINAY_SESSION_TRANSPORT__ = {}; }, /read only|assign/u);
+});
+
+test('production bootstrap copies a non-secret connection hostname onto the session host', async () => {
+	const byteEndpoint = { send: async () => {}, subscribe: () => () => {} };
+	globalThis.window = {
+		location: { origin: 'https://room.terminay.com' },
+		__TERMINAY_HOSTED_SESSION_AUTHORITY__: {
+			serverId: 'server-a',
+			hostName: 'Studio-Mac',
+			hostContext: { serverId: 'server-a' },
+			readBundle: async () => new Uint8Array([1, 2, 3]),
+			byteEndpoint,
+			sessionId: 'room',
+			origin: 'https://room.terminay.com',
+			connect: async () => endpoint(),
+		},
+	};
+	const host = contract.bootstrapHostedBrowserSession();
+	assert.equal(host.hostName, 'Studio-Mac');
 });
 
 test('rejects incompatible versions, origins, and missing capabilities', async () => {
@@ -114,8 +134,9 @@ test('the workspace never parses pairing credentials or performs browser enrollm
 	assert.doesNotMatch(source, /deviceEnrollment|loadBrowserDeviceIdentity|authenticateDevice/u);
 });
 
-test('the workspace labels its connection from the bound session origin', async () => {
+test('the workspace labels its connection from the session hostname, not the opaque origin', async () => {
 	const source = await readFile('src/web/main.tsx', 'utf8');
-	assert.match(source, /origin = sessionHost\.origin[\s\S]*label = new URL\(origin\)\.host/u);
+	assert.match(source, /label = sessionHost\.hostName\?\.trim\(\) \|\| 'Remote'/u);
+	assert.doesNotMatch(source, /label = new URL\(origin\)\.host/u);
 	assert.match(source, /serverId: hello\.serverId/u);
 });

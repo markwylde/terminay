@@ -6,8 +6,10 @@ export type RemoteAccessStatusClient = Pick<
 		revokeDevice(deviceId: string): Promise<import('../types/terminay').RemoteAccessStatus>;
 		subscribe(listener: (status: import('../types/terminay').RemoteAccessStatus) => void): () => void;
 		toggleServer(): Promise<import('../types/terminay').RemoteAccessStatus>;
+		createPairingLink(): Promise<import('../types/terminay').RemoteAccessStatus>;
 	},
 	| 'closeConnection'
+	| 'createPairingLink'
 	| 'getStatus'
 	| 'revokeDevice'
 	| 'subscribe'
