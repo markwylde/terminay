@@ -501,6 +501,14 @@
   line-height: 1.4;
 }
 
+.remote-access-menu__diagnostic {
+  margin: 0;
+  padding: 4px 8px 6px;
+  color: rgba(220, 226, 240, 0.5);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .remote-access-menu__section--error {
   padding: 8px;
   border: 1px solid rgba(255, 106, 106, 0.35);

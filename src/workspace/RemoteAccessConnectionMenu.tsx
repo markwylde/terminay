@@ -163,6 +163,12 @@ export function RemoteAccessConnectionMenu(props: {
 						>
 							<span>Create pairing link</span>
 						</button>
+						{status?.webRtcStatusMessage || webRtcUnavailable ? (
+							<p className="remote-access-menu__diagnostic">
+								{status?.webRtcStatusMessage ??
+									'The required WebRTC runtime or authenticated signaling registrar is missing.'}
+							</p>
+						) : null}
 					</div>
 					<div className="remote-access-menu__section">
 						<div className="remote-access-menu__section-label">
