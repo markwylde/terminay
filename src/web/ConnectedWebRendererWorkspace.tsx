@@ -481,6 +481,7 @@ export function ConnectedWebRendererWorkspace({
 							onOpenConnectionManager: () => {
 								void auxiliaryRoutes.openRemoteControl();
 							},
+							onSwitchConnections: onBack,
 							presentation: Object.freeze({
 								nativeMenus: hasNativeMenus,
 								nativeWindowControls: hasNativeWindowControls,

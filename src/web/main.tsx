@@ -1,13 +1,12 @@
 import { ConnectionProfileStore, TerminayClient } from '@terminay/client-core';
 import type { ByteTransport, TerminayHostContext } from '@terminay/protocol';
-import { createRoot } from 'react-dom/client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createRoot } from 'react-dom/client';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
+import { pairDesktopConnection } from '../host/nativeActions';
 import { createConnectedServerClientContext } from '../shared/rendererServerClient';
 import type { SharedConnectionsRouteBodyProps } from '../shared/SharedConnectionsRouteBody';
-import { pairDesktopConnection } from '../host/nativeActions';
 import type { AppCommand } from '../types/terminay';
-import { createWebClientId } from './webClientIdentity';
 import { ConnectedWebRendererWorkspace } from './ConnectedWebRendererWorkspace';
 import {
 	acquireDesktopServerBootstrap,
@@ -15,7 +14,9 @@ import {
 } from './desktopByteTransport';
 import {
 	getSessionTransportHost,
+	leaveManagerSession,
 } from './sessionTransportHost';
+import { createWebClientId } from './webClientIdentity';
 import './index.css';
 
 type ConnectedSession = Readonly<{
@@ -60,82 +61,87 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 			});
 	}, []);
 
-	const connect = useCallback(async (
-		options: Readonly<{ replaceDesktopEndpoint?: boolean }> = {},
-	) => {
-		setError(undefined);
-		setPhase('connecting');
-		await clientRef.current?.close().catch(() => undefined);
+	const connect = useCallback(
+		async (options: Readonly<{ replaceDesktopEndpoint?: boolean }> = {}) => {
+			setError(undefined);
+			setPhase('connecting');
+			await clientRef.current?.close().catch(() => undefined);
 
-		const sessionHost = getSessionTransportHost();
-		let transport: ByteTransport;
-		let origin: string | undefined;
-		let label: string;
-		let hostContext: TerminayHostContext | undefined;
-		if (sessionHost !== undefined) {
-			origin = sessionHost.origin;
-			label = sessionHost.hostName?.trim() || 'Remote';
-			transport = await sessionHost.connect({
-				origin,
-				onStateChange: (state) => {
-					if (state === 'closed') recoverConnection();
-				},
-			});
-		} else {
-			const desktop = await acquireDesktopServerBootstrap(
-				window.terminayHost as DesktopHostBridge | undefined,
-				window.terminayBytes,
-				{ replaceEndpoint: options.replaceDesktopEndpoint },
-			);
-			if (desktop === undefined)
-				throw new Error(
-					'This workspace must be opened from a Terminay session origin.',
+			const sessionHost = getSessionTransportHost();
+			let transport: ByteTransport;
+			let origin: string | undefined;
+			let label: string;
+			let hostContext: TerminayHostContext | undefined;
+			if (sessionHost !== undefined) {
+				origin = sessionHost.origin;
+				label = sessionHost.hostName?.trim() || 'Remote';
+				transport = await sessionHost.connect({
+					origin,
+					onStateChange: (state) => {
+						if (state === 'closed') recoverConnection();
+					},
+				});
+			} else {
+				const desktop = await acquireDesktopServerBootstrap(
+					window.terminayHost as DesktopHostBridge | undefined,
+					window.terminayBytes,
+					{ replaceEndpoint: options.replaceDesktopEndpoint },
 				);
-			transport = desktop.transport;
-			hostContext = desktop.context;
-			origin = undefined;
-			label = desktop.context.profile?.label ?? 'Local';
-			setDesktopContext(hostContext);
-		}
+				if (desktop === undefined)
+					throw new Error(
+						'This workspace must be opened from a Terminay session origin.',
+					);
+				transport = desktop.transport;
+				hostContext = desktop.context;
+				origin = undefined;
+				label = desktop.context.profile?.label ?? 'Local';
+				setDesktopContext(hostContext);
+			}
 
-		const client = new TerminayClient({
-			transport,
-			clientId: createWebClientId('session'),
-			clientVersion: '0.0.0',
-			capabilities: [
-				'server.health',
-				'terminal',
-				'workspace',
-				'files',
-				'agents',
-			],
-		});
-		clientRef.current = client;
-		try {
-			const hello = await client.connect();
-			const context = await createConnectedServerClientContext(client, hello, {
-				onTransportClosed: recoverConnection,
+			const client = new TerminayClient({
+				transport,
+				clientId: createWebClientId('session'),
+				clientVersion: '0.0.0',
+				capabilities: [
+					'server.health',
+					'terminal',
+					'workspace',
+					'files',
+					'agents',
+				],
 			});
-			setConnection(
-				Object.freeze({
-					context: Object.freeze({
-						...context,
-						connectionLabel: label,
-						retryConnection: () => recoverConnection(),
-						canRetryConnection: () => true,
+			clientRef.current = client;
+			try {
+				const hello = await client.connect();
+				const context = await createConnectedServerClientContext(
+					client,
+					hello,
+					{
+						onTransportClosed: recoverConnection,
+					},
+				);
+				setConnection(
+					Object.freeze({
+						context: Object.freeze({
+							...context,
+							connectionLabel: label,
+							retryConnection: () => recoverConnection(),
+							canRetryConnection: () => true,
+						}),
+						label,
+						...(origin === undefined ? {} : { origin }),
+						serverId: hello.serverId,
 					}),
-					label,
-					...(origin === undefined ? {} : { origin }),
-					serverId: hello.serverId,
-				}),
-			);
-			setPhase('ready');
-		} catch (cause) {
-			await client.close().catch(() => undefined);
-			if (clientRef.current === client) clientRef.current = undefined;
-			throw cause;
-		}
-	}, [recoverConnection]);
+				);
+				setPhase('ready');
+			} catch (cause) {
+				await client.close().catch(() => undefined);
+				if (clientRef.current === client) clientRef.current = undefined;
+				throw cause;
+			}
+		},
+		[recoverConnection],
+	);
 	connectRef.current = connect;
 
 	useEffect(() => {
@@ -182,6 +188,7 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 				connectionRoute={connectionRoute}
 				hostContext={desktopContext}
 				onBack={() => {
+					if (leaveManagerSession()) return;
 					void clientRef.current?.close().catch(() => undefined);
 				}}
 				subscribeAppCommands={
@@ -211,10 +218,7 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 				</h1>
 				{error !== undefined && <p role="alert">{error}</p>}
 				{phase === 'ready' && (
-					<button
-						type="button"
-						onClick={recoverConnection}
-					>
+					<button type="button" onClick={recoverConnection}>
 						Retry connection
 					</button>
 				)}
