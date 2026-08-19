@@ -773,6 +773,17 @@ async function getRunningTerminalCountForWindow(
 		.length;
 }
 
+if (process.env.TERMINAY_TEST === '1') {
+	Object.defineProperty(
+		globalThis,
+		'__terminayTestRunningTerminalCountForWindow',
+		{
+			configurable: true,
+			value: getRunningTerminalCountForWindow,
+		},
+	);
+}
+
 function getOpenProjectWindowCount(): number {
 	let count = 0;
 	for (const window of appWindows) {
