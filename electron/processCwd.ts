@@ -3,7 +3,7 @@ import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
 const PROCESS_TABLE_LINE =
-	/^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S.*?)\s*$/u
+	/^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\S.*?)\s*$/u
 const SESSION_PROCESS_LIMIT = 64
 
 export async function resolveTerminalProcessCwd(rootPid: number, signal?: AbortSignal): Promise<string | null> {
@@ -17,12 +17,13 @@ export async function resolveTerminalProcessCwd(rootPid: number, signal?: AbortS
  * getter is only a best-effort title and is not reliable in packaged Electron
  * on every Unix host; TPGID is the kernel-owned foreground authority.
  *
- * Inspection stays inside the session process tree. A host-wide `ps -ax` dump
- * can miss the close-observation deadline and make an idle shell look unknown. */
+ * Selection walks only the session process tree. The host process table is one
+ * snapshot so a bushy TUI cannot spend the close-observation deadline on
+ * per-pid process walks. */
 export async function resolveTerminalForegroundProcess(rootPid: number, signal?: AbortSignal): Promise<string | null> {
 	if (!Number.isSafeInteger(rootPid) || rootPid <= 0 || process.platform === 'win32') return null
 	throwIfAborted(signal)
-	const table = await readSessionProcessTable(rootPid, signal)
+	const table = await readHostProcessTable(signal)
 	const rootCommand = commandName(table.get(rootPid)?.command) ?? await resolveProcessCommand(rootPid, signal)
 	const selected = selectForegroundProcessFromTable(rootPid, table, rootCommand)
 	if (selected.command !== rootCommand) return selected.command
@@ -39,12 +40,14 @@ export function parseHostProcessTable(stdout: string): ReadonlyMap<number, HostP
 		if (match === null) continue
 		const pid = Number.parseInt(match[1], 10)
 		const ppid = Number.parseInt(match[2], 10)
-		const command = commandName(match[4])
+		const pgid = Number.parseInt(match[3], 10)
+		const command = commandName(match[5])
 		if (!Number.isSafeInteger(pid) || pid <= 0 || command === null) continue
 		table.set(pid, {
 			pid,
 			ppid: Number.isSafeInteger(ppid) && ppid >= 0 ? ppid : 0,
-			stat: match[3],
+			pgid: Number.isSafeInteger(pgid) && pgid > 0 ? pgid : pid,
+			stat: match[4],
 			command,
 		})
 	}
@@ -52,25 +55,40 @@ export function parseHostProcessTable(stdout: string): ReadonlyMap<number, HostP
 }
 
 /** Choose the foreground command from an already-scoped process table.
- * A unique non-shell leaf wins; otherwise the caller may consult TPGID when
- * the session tree has descendants. */
+ * A non-shell process that currently owns the TTY wins even when it has helper
+ * children. Job-control shells mark that group with `+`; non-job-control shells
+ * share their process group with the running command, so same-PGID descendants
+ * are still foreground work. */
 export function selectForegroundProcessFromTable(
 	rootPid: number,
 	table: ReadonlyMap<number, HostProcessRow>,
 	rootCommand: string | null,
 ): { readonly command: string | null; readonly consultProcessGroup: boolean } {
-	const descendants = resolveTerminalLeafProcesses(rootPid, table)
+	const descendants = resolveSessionDescendants(rootPid, table)
 	const foregroundDescendants = descendants.filter(
 		(entry) => entry.foreground && entry.command !== rootCommand,
 	)
 	if (foregroundDescendants.length === 1) {
 		return { command: foregroundDescendants[0].command, consultProcessGroup: false }
 	}
-	const nonShellDescendants = descendants.filter(
-		(entry) => entry.command !== rootCommand,
+	if (foregroundDescendants.length > 1) {
+		return {
+			command: nearestDescendant(foregroundDescendants).command,
+			consultProcessGroup: true,
+		}
+	}
+	const rootPgid = table.get(rootPid)?.pgid ?? rootPid
+	const groupedDescendants = descendants.filter(
+		(entry) => entry.command !== rootCommand && (entry.pgid === rootPgid || entry.pgid === rootPid),
 	)
-	if (nonShellDescendants.length === 1) {
-		return { command: nonShellDescendants[0].command, consultProcessGroup: false }
+	if (groupedDescendants.length === 1) {
+		return { command: groupedDescendants[0].command, consultProcessGroup: false }
+	}
+	if (groupedDescendants.length > 1) {
+		return {
+			command: nearestDescendant(groupedDescendants).command,
+			consultProcessGroup: true,
+		}
 	}
 	return {
 		command: rootCommand,
@@ -81,69 +99,61 @@ export function selectForegroundProcessFromTable(
 export interface HostProcessRow {
 	readonly pid: number
 	readonly ppid: number
+	readonly pgid: number
 	readonly stat: string
 	readonly command: string
 }
 
-function resolveTerminalLeafProcesses(
+function resolveSessionDescendants(
 	rootPid: number,
 	table: ReadonlyMap<number, HostProcessRow>,
-): ReadonlyArray<{ command: string; foreground: boolean }> {
+): ReadonlyArray<{ command: string; foreground: boolean; depth: number; pgid: number }> {
 	const children = new Map<number, number[]>()
 	for (const row of table.values()) {
 		const siblings = children.get(row.ppid)
 		if (siblings === undefined) children.set(row.ppid, [row.pid])
 		else siblings.push(row.pid)
 	}
-	const pending = [rootPid]
+	const pending: Array<{ pid: number; depth: number }> = [{ pid: rootPid, depth: 0 }]
 	const visited = new Set<number>([rootPid])
-	const leaves: number[] = []
+	const descendants: Array<{ command: string; foreground: boolean; depth: number; pgid: number }> = []
 	while (pending.length > 0 && visited.size <= SESSION_PROCESS_LIMIT) {
-		const parent = pending.shift()!
-		const next = (children.get(parent) ?? []).filter((pid) => !visited.has(pid))
-		if (next.length === 0) {
-			if (parent !== rootPid) leaves.push(parent)
-			continue
-		}
-		for (const child of next) {
-			visited.add(child)
-			pending.push(child)
+		const current = pending.shift()!
+		const next = (children.get(current.pid) ?? []).filter((pid) => !visited.has(pid))
+		for (const pid of next) {
+			visited.add(pid)
+			pending.push({ pid, depth: current.depth + 1 })
+			const row = table.get(pid)
+			if (row === undefined) continue
+			descendants.push({
+				command: row.command,
+				foreground: row.stat.includes('+'),
+				depth: current.depth + 1,
+				pgid: row.pgid,
+			})
 		}
 	}
-	return leaves.flatMap((pid) => {
-		const row = table.get(pid)
-		return row === undefined ? [] : [{ command: row.command, foreground: row.stat.includes('+') }]
-	})
+	return descendants
 }
 
-async function readSessionProcessTable(rootPid: number, signal?: AbortSignal): Promise<ReadonlyMap<number, HostProcessRow>> {
-	const pids = await collectSessionPids(rootPid, signal)
-	if (pids.length === 0) return new Map()
+function nearestDescendant<T extends { depth: number }>(entries: readonly T[]): T {
+	return entries.reduce((nearest, entry) => (entry.depth < nearest.depth ? entry : nearest))
+}
+
+async function readHostProcessTable(signal?: AbortSignal): Promise<ReadonlyMap<number, HostProcessRow>> {
 	try {
-		const { stdout } = await execHost('ps', ['-o', 'pid=,ppid=,stat=,comm=', '-p', pids.join(',')], signal)
+		const command = process.platform === 'linux'
+			? ['ps', ['-eo', 'pid=,ppid=,pgid=,stat=,comm=']] as const
+			: process.platform === 'darwin'
+				? ['ps', ['-axo', 'pid=,ppid=,pgid=,stat=,comm=']] as const
+				: null
+		if (command === null) return new Map()
+		const { stdout } = await execHost(command[0], command[1], signal)
 		return parseHostProcessTable(stdout)
 	} catch (error) {
 		throwIfAborted(signal, error)
 		return new Map()
 	}
-}
-
-async function collectSessionPids(rootPid: number, signal?: AbortSignal): Promise<number[]> {
-	const pids = [rootPid]
-	const pending = [rootPid]
-	const visited = new Set<number>([rootPid])
-	while (pending.length > 0 && visited.size <= SESSION_PROCESS_LIMIT) {
-		throwIfAborted(signal)
-		const parent = pending.shift()!
-		const children = await childProcessIds(parent, signal)
-		for (const child of children) {
-			if (visited.has(child)) continue
-			visited.add(child)
-			pids.push(child)
-			pending.push(child)
-		}
-	}
-	return pids
 }
 
 async function resolveTerminalProcessGroupCommand(
