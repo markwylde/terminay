@@ -2,19 +2,26 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const [webWorkspace, webWorkspaceCss, sharedEditTab, sharedWorkspace, app, projectEditor] = await Promise.all([
+const [webWorkspace, webWorkspaceCss, sharedEditTab, sharedWorkspace, app, projectEditor, serverHtml] = await Promise.all([
 	readFile('src/web/ConnectedWebRendererWorkspace.tsx', 'utf8'),
 	readFile('src/web/connectedRendererWorkspace.css', 'utf8'),
 	readFile('src/shared/SharedEditTabRouteBody.tsx', 'utf8'),
 	readFile('src/shared/ConnectedRendererWorkspace.tsx', 'utf8'),
 	readFile('src/App.tsx', 'utf8'),
 	readFile('src/workspace/useProjectEditor.ts', 'utf8'),
+	readFile('server.html', 'utf8'),
 ]);
 
 test('connected browser workspace owns an in-page auxiliary presenter and menu bar', () => {
 	assert.match(webWorkspace, /className="connected-web-menubar"/u);
 	assert.match(webWorkspace, /role="menubar"/u);
 	assert.match(webWorkspaceCss, /padding-top:\s*env\(safe-area-inset-top, 0px\)/u);
+	assert.match(webWorkspaceCss, /html\.is-framed \.connected-web-menubar \{\n\tmin-height: 30px;\n\tpadding-top: 0;/u);
+	assert.match(webWorkspaceCss, /html\.is-framed \.connected-web-renderer-workspace/u);
+	assert.match(webWorkspaceCss, /height: 100%;/u);
+	assert.doesNotMatch(webWorkspaceCss, /html\.is-framed[^{]*\{[^}]*safe-area-inset-top/u);
+	assert.match(serverHtml, /viewport-fit=cover/);
+	assert.match(serverHtml, /documentElement\.classList\.add\('is-framed'\)/);
 	for (const label of ['File', 'Edit', 'View', 'Help']) {
 		assert.match(webWorkspace, new RegExp(`${label}`, 'u'));
 	}
