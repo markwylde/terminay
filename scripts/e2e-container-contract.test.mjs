@@ -44,6 +44,25 @@ test("local Electron E2E defaults to an isolated Linux container", async () => {
   assert.doesNotMatch(runner, /--volume[^\n]*repo_dir/u);
 });
 
+test("busy torn-off window E2E waits for a non-shell process the container can run", async () => {
+  const [dockerfile, spec, main] = await Promise.all([
+    text("Dockerfile.e2e"),
+    text("e2e/project-tabs.spec.ts"),
+    text("electron/main.ts"),
+  ]);
+  assert.match(dockerfile, /apt-get install --yes --no-install-recommends .*python3/u);
+  assert.match(
+    spec,
+    /python3 -c "import time; print\('\$\{foregroundStarted\}', flush=True\); time\.sleep\(30\)"/u,
+  );
+  assert.doesNotMatch(spec, /sh -c "sleep 2\.1/u);
+  assert.match(spec, /waitUntilNativeWindowHasBusyTerminal/u);
+  assert.match(
+    main,
+    /process\.env\.TERMINAY_TEST === '1'[\s\S]{0,280}__terminayTestRunningTerminalCountForWindow/u,
+  );
+});
+
 test("CI shards Electron E2E through the same isolated Docker entrypoint", async () => {
   const [githubWorkflow, giteaWorkflow] = await Promise.all([
     text(".github/workflows/ci.yml"),
