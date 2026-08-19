@@ -14,6 +14,7 @@ const [webWorkspace, webWorkspaceCss, sharedEditTab, sharedWorkspace, app, proje
 test('connected browser workspace owns an in-page auxiliary presenter and menu bar', () => {
 	assert.match(webWorkspace, /className="connected-web-menubar"/u);
 	assert.match(webWorkspace, /role="menubar"/u);
+	assert.match(webWorkspaceCss, /padding-top:\s*env\(safe-area-inset-top, 0px\)/u);
 	for (const label of ['File', 'Edit', 'View', 'Help']) {
 		assert.match(webWorkspace, new RegExp(`${label}`, 'u'));
 	}
