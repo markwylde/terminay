@@ -107,7 +107,7 @@ import {
 	bindFatalProcessDiagnostics,
 	initializeDesktopDiagnostics,
 } from './diagnostics/service';
-import { normalizeExternalHttpsUrl } from './externalUrl';
+import { normalizeExternalUrl } from './externalUrl';
 import { FileBufferService } from './fileViewer/fileBufferService';
 import { FileWatchService } from './fileViewer/fileWatchService';
 import { GitDiffService } from './fileViewer/gitDiffService';
@@ -244,7 +244,7 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
 	: RENDERER_DIST;
 
 async function openInBrowser(url: unknown): Promise<void> {
-	await shell.openExternal(normalizeExternalHttpsUrl(url));
+	await shell.openExternal(normalizeExternalUrl(url));
 }
 
 function shellEscapePath(pathValue: string): string {
