@@ -211,3 +211,36 @@ test('leaveManagerSession posts shell.back when framed and assigns the manager U
 	assert.equal(called, 1);
 	assert.equal(posted.length, 1);
 });
+
+test('canLeaveManagerSession is true only when a manager return path exists', () => {
+	assert.equal(contract.canLeaveManagerSession({}), false);
+	assert.equal(contract.canLeaveManagerSession({ managerUrl: '' }), false);
+	assert.equal(
+		contract.canLeaveManagerSession({
+			managerUrl: 'https://app.terminay.com/',
+		}),
+		true,
+	);
+	assert.equal(
+		contract.canLeaveManagerSession({
+			leaveManager() {},
+		}),
+		true,
+	);
+
+	globalThis.window = { location: { origin: 'https://room.terminay.com' } };
+	assert.equal(contract.canLeaveManagerSession(), false);
+});
+
+test('Desktop composition withholds Switch connections unless a manager session exists', async () => {
+	const workspace = await readFile(
+		'src/web/ConnectedWebRendererWorkspace.tsx',
+		'utf8',
+	);
+	assert.match(workspace, /canLeaveManagerSession\(\)/u);
+	assert.match(
+		workspace,
+		/hostContext === undefined && canLeaveManagerSession\(\)/u,
+	);
+	assert.doesNotMatch(workspace, /onSwitchConnections:\s*onBack/u);
+});

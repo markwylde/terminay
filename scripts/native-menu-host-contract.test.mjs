@@ -97,3 +97,9 @@ test('browser menu omits Desktop-only update, window, and DevTools commands', as
 		assert.match(workspace, new RegExp(`'${label}'`));
 	}
 });
+
+test('Switch connections is gated on a manager return path, not Desktop host context', async () => {
+	const workspace = await read('src/web/ConnectedWebRendererWorkspace.tsx');
+	assert.match(workspace, /canLeaveManagerSession/u);
+	assert.doesNotMatch(workspace, /onSwitchConnections:\s*onBack/u);
+});
