@@ -30,6 +30,8 @@ test('disconnected web shell styles preserve an app-like workspace behind the mo
   assert.match(webStyleSource, /\.browser-host-empty-terminal/u)
   assert.match(webStyleSource, /\.connect-modal-backdrop/u)
   assert.match(webStyleSource, /\.connect-modal/u)
+  assert.match(webStyleSource, /background:\s*#0d1117/u)
+  assert.doesNotMatch(webStyleSource, /radial-gradient/u)
   assert.doesNotMatch(webStyleSource, /\.web-shell/u)
   assert.doesNotMatch(webStyleSource, /\.connection-card/u)
 })
