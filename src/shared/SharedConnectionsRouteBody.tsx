@@ -37,6 +37,7 @@ export interface SharedConnectionsRouteBodyProps {
 	readonly onForget?: (profile: ConnectionProfile) => Promise<void> | void;
 	readonly embedded?: boolean;
 	readonly presentation?: 'page' | 'management';
+	readonly exposurePanel?: ReactNode;
 }
 
 /** Host-neutral profile management; pairing credentials are handed off and never retained. */
@@ -58,6 +59,7 @@ export function SharedConnectionsRouteBody({
 	onForget,
 	embedded = false,
 	presentation = 'page',
+	exposurePanel,
 }: SharedConnectionsRouteBodyProps) {
 	const [, setRevision] = useState(0);
 	const [busy, setBusy] = useState<string>();
@@ -73,15 +75,22 @@ export function SharedConnectionsRouteBody({
 	const [pairingPin, setPairingPin] = useState('');
 	const [pairingUrl, setPairingUrl] = useState('');
 	const [inspectId, setInspectId] = useState<string>();
+	const exposureId = '__exposure__';
 	const snapshot = profileStore?.snapshot();
 	const profiles = snapshot?.profiles.filter(
 		(profile) => profile.archived !== true,
 	);
 	const visibleConnections = profiles ?? connections;
 	const currentId = snapshot?.currentProfileId ?? activeConnectionId;
-	const inspectedId =
-		inspectId !== undefined &&
-		visibleConnections.some((connection) => connection.id === inspectId)
+	const showingExposure =
+		exposurePanel !== undefined &&
+		!showPair &&
+		(inspectId === exposureId ||
+			(inspectId === undefined && visibleConnections.length === 0));
+	const inspectedId = showingExposure
+		? exposureId
+		: inspectId !== undefined &&
+			  visibleConnections.some((connection) => connection.id === inspectId)
 			? inspectId
 			: (currentId ?? visibleConnections[0]?.id);
 	const canShowPair =
@@ -280,15 +289,25 @@ export function SharedConnectionsRouteBody({
 
 	const emptyCopy =
 		visibleConnections.length === 0 && !showPair ? (
-			<div className="shared-connections__empty">
-				<p className="shared-connections__empty-title">
-					No saved servers yet
-				</p>
-				<p>
-					Add a server with its pairing link. You can return here to
-					open it whenever you need it.
-				</p>
-			</div>
+			presentation === 'management' ? (
+				<div className="settings-empty-hero">
+					<h2>No saved servers yet</h2>
+					<p>
+						Add a server with its pairing link. You can return here to
+						open it whenever you need it.
+					</p>
+				</div>
+			) : (
+				<div className="shared-connections__empty">
+					<p className="shared-connections__empty-title">
+						No saved servers yet
+					</p>
+					<p>
+						Add a server with its pairing link. You can return here to
+						open it whenever you need it.
+					</p>
+				</div>
+			)
 		) : null;
 
 	const statusBlocks = (
@@ -481,7 +500,7 @@ export function SharedConnectionsRouteBody({
 					<header className="settings-sidebar-header">
 						<div className="settings-brand">
 							<h1>Remote Control</h1>
-							<p className="settings-status">
+							<p className="settings-sidebar-lede">
 								Choose and manage the Terminay server for this
 								workspace.
 							</p>
@@ -496,45 +515,78 @@ export function SharedConnectionsRouteBody({
 							</button>
 						) : null}
 					</header>
-					<nav className="settings-nav">
-						<div className="settings-nav-group-title">Servers</div>
-						<div
-							role="listbox"
-							aria-label="Saved Terminay servers"
-						>
-							{visibleConnections.map((connection) => (
-								<button
-									key={connection.id}
-									type="button"
-									role="option"
-									aria-label={`${connection.label} ${connection.status}`}
-									aria-selected={
-										connection.id === inspectedId
-									}
-									className={`settings-nav-item${connection.id === inspectedId ? ' settings-nav-item--active' : ''}`}
-									onClick={() => {
-										setInspectId(connection.id);
-										setShowPair(false);
-									}}
+					<nav className="settings-nav" aria-label="Remote Control sections">
+						<div className="settings-nav-section">
+							{exposurePanel !== undefined ? (
+								<div className="settings-nav-group">
+									<div className="settings-nav-group-title">
+										This server
+									</div>
+									<button
+										type="button"
+										className={`settings-nav-item${showingExposure ? ' settings-nav-item--active' : ''}`}
+										aria-pressed={showingExposure}
+										onClick={() => {
+											setInspectId(exposureId);
+											setShowPair(false);
+										}}
+									>
+										<span className="settings-nav-item-inner">
+											Exposure
+										</span>
+									</button>
+								</div>
+							) : null}
+							<div className="settings-nav-group">
+								<div className="settings-nav-group-title">
+									Servers
+								</div>
+								<div
+									role="listbox"
+									aria-label="Saved Terminay servers"
 								>
-									{connection.label}
-								</button>
-							))}
+									{visibleConnections.map((connection) => (
+										<button
+											key={connection.id}
+											type="button"
+											role="option"
+											aria-label={`${connection.label} ${connection.status}`}
+											aria-selected={
+												connection.id === inspectedId
+											}
+											className={`settings-nav-item${connection.id === inspectedId ? ' settings-nav-item--active' : ''}`}
+											onClick={() => {
+												setInspectId(connection.id);
+												setShowPair(false);
+											}}
+										>
+											<span className="settings-nav-item-inner">
+												{connection.label}
+											</span>
+										</button>
+									))}
+								</div>
+								{visibleConnections.length === 0 ? (
+									<p className="settings-empty-state">
+										No saved servers yet.
+									</p>
+								) : null}
+							</div>
 						</div>
-						{visibleConnections.length === 0 ? (
-							<p className="settings-empty-state">
-								No saved servers yet.
-							</p>
-						) : null}
 					</nav>
 				</aside>
 				<main className="settings-main">
 					<div className="settings-content">
 						{statusBlocks}
-						{state === 'ready' && emptyCopy}
+						{state === 'ready' && !showingExposure && emptyCopy}
+						{state === 'ready' &&
+							showingExposure &&
+							!showPair &&
+							exposurePanel}
 						{state === 'ready' &&
 							inspected !== undefined &&
 							!showPair &&
+							!showingExposure &&
 							renderConnectionCard(inspected, false)}
 						{actionPanels}
 					</div>

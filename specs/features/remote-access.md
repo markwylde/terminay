@@ -90,12 +90,15 @@ Exposure:
   The session subdomain stays the WebRTC peer. `hostName` is a non-secret
   default label from the exposing machine;
 - keeps the advertised QR current: when a pairing room is within seconds of
-  expiry, Desktop mints a replacement room and the QR card visibly refreshes
-  without disconnecting live clients or dropping reconnect availability;
+  expiry, or after a pairing client has connected, Desktop mints a replacement
+  room and the QR card visibly refreshes without disconnecting live clients or
+  dropping reconnect availability;
 - displays exposure expiry, signaling and relay health, paired devices, and
   live connections; and
 - allows the administrator to generate another pairing URL, revoke a device,
-  or stop exposure.
+  or stop exposure. **Create pairing link** while the server is already
+  exposed mints a new one-time fragment and registers that room. It does not
+  re-show a pairing room a client has already joined.
 
 A pairing room is one-time and short-lived. Exposure and the signed reconnect
 host (`device-host-ready`) stay up until the administrator stops exposure.
@@ -138,6 +141,8 @@ the manager vault.
 
 The complete pairing URL cannot be used again. Opening the saved profile or
 the stable session origin later uses the registered browser device identity.
+A later **Create pairing link** advertises a new fragment; scanning or pasting
+the previous code is rejected as already used.
 
 ## Browser journey B: `app.terminay.com` PWA add flow
 
@@ -282,6 +287,10 @@ matching application-protocol client. The stable session origin authenticates
 the device, obtains the selected server bundle through the WebRTC asset lane,
 validates its declared contract and resource bounds, and launches it under that
 same origin.
+
+`/api/host-context` is a closed host-context schema. Display names travel on
+the pairing URL and session-host `hostName`, never as extra host-context
+fields.
 
 WebRTC DataChannel payloads stay within the negotiated SCTP maximum message
 size. The UI archive is transferred as acknowledged binary chunks of at most
