@@ -366,6 +366,7 @@ test('connected App plus paths do not synthesize project or terminal presentatio
   assert.match(creation, /panelId: presented\.panelId/u)
   assert.doesNotMatch(creation, /panelId: `pending:\$\{sessionId\}`/u)
   assert.match(creation, /workspace\.changed is the sole owner of Dockview presentation/u)
+  assert.match(creation, /terminay-focus-terminal/u)
   assert.doesNotMatch(creation, /apiRef\.current\?\.addPanel|apiRef\.current\.addPanel/u)
   assert.match(app, /terminalPanelClientContext\.client\.create\(request\)/u)
   const openTerminalAt = app.slice(

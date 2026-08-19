@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+	type MutableRefObject,
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+} from 'react';
 import type { WorkspaceSnapshotStore } from '../shared/WorkspaceSnapshotStore';
 import { closeHostPresentation } from '../host/nativeActions';
 import { normalizeSidebarPanelOrder } from '../terminalSettings';
@@ -13,6 +19,7 @@ export function useProjectCollection<TTerminal>({
 	isSettingsLoading,
 	projectColorScope,
 	confirmProjectClose,
+	holdProjectOrderRef,
 	sidebarSettings,
 	workspaceSnapshotStore,
 	workspaceViewId,
@@ -25,6 +32,7 @@ export function useProjectCollection<TTerminal>({
 	/** Stable server identity used only to synthesize unpersisted project colors. */
 	projectColorScope: string;
 	confirmProjectClose?: (projectId: string) => Promise<boolean>;
+	holdProjectOrderRef?: MutableRefObject<string | null>;
 	sidebarSettings: SidebarSettings;
 	workspaceSnapshotStore?: WorkspaceSnapshotStore;
 	workspaceViewId: string | null;
@@ -146,35 +154,48 @@ export function useProjectCollection<TTerminal>({
 					current.map((project) => [project.id, project]),
 				);
 				const usedColors: string[] = [];
-				const next = orderedServerProjects.map((serverProject, index) => {
-					const existing = currentById.get(serverProject.id);
-					const generated = createProjectTab(
-						index + 1,
-						serverProject.root,
-						usedColors,
-						sidebarDefaultsRef.current,
-						projectColorScope,
-					);
-					const base = existing ?? generated;
-					const color = serverProject.color ?? generated.color;
-					usedColors.push(color);
-					return {
-						...base,
-						id: serverProject.id,
-						projectEnvironmentId: serverProject.projectEnvironmentId,
-						environmentRevision: serverProject.environmentRevision,
-						environmentLabel:
-							serverProject.projectEnvironmentId === 'terminay:this-server'
-								? 'This server'
-								: 'Remote environment',
-						environmentStatus: 'ready',
-						title: serverProject.name,
-						rootFolder: serverProject.root,
-						color,
-						defaultShellProfileId: serverProject.defaultShellProfileId,
-						emoji: serverProject.icon ?? base.emoji,
-					};
-				});
+				const nextFromServer = orderedServerProjects.map(
+					(serverProject, index) => {
+						const existing = currentById.get(serverProject.id);
+						const generated = createProjectTab(
+							index + 1,
+							serverProject.root,
+							usedColors,
+							sidebarDefaultsRef.current,
+							projectColorScope,
+						);
+						const base = existing ?? generated;
+						const color = serverProject.color ?? generated.color;
+						usedColors.push(color);
+						return {
+							...base,
+							id: serverProject.id,
+							projectEnvironmentId: serverProject.projectEnvironmentId,
+							environmentRevision: serverProject.environmentRevision,
+							environmentLabel:
+								serverProject.projectEnvironmentId === 'terminay:this-server'
+									? 'This server'
+									: 'Remote environment',
+							environmentStatus: 'ready' as const,
+							title: serverProject.name,
+							rootFolder: serverProject.root,
+							color,
+							defaultShellProfileId: serverProject.defaultShellProfileId,
+							emoji: serverProject.icon ?? base.emoji,
+						};
+					},
+				);
+				const serverById = new Map(
+					nextFromServer.map((project) => [project.id, project]),
+				);
+				const sameMembership =
+					holdProjectOrderRef?.current !== null &&
+					holdProjectOrderRef?.current !== undefined &&
+					current.length === nextFromServer.length &&
+					current.every((project) => serverById.has(project.id));
+				const next = sameMembership
+					? current.map((project) => serverById.get(project.id) ?? project)
+					: nextFromServer;
 				projectsRef.current = next;
 				return next;
 			});

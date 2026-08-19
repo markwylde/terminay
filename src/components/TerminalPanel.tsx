@@ -66,8 +66,14 @@ import {
 	shouldInterceptTerminalDrop,
 	uploadBrowserTerminalDrop,
 } from './terminalDropInteraction';
-import { formatTerminalExitNotice, isTerminalSessionEndedError } from './terminalExitInteraction';
-import { shouldRestoreTerminalFocusAfterWindowActivation } from './terminalFocusInteraction';
+import {
+	formatTerminalExitNotice,
+	isTerminalSessionEndedError,
+} from './terminalExitInteraction';
+import {
+	shouldClaimCreatedTerminalFocus,
+	shouldRestoreTerminalFocusAfterWindowActivation,
+} from './terminalFocusInteraction';
 import { createTerminalLinkInteraction } from './terminalLinkInteraction';
 import { shouldInsertTerminalMultilineNewline } from './terminalMultilineInteraction';
 import { shouldReturnFocusToTerminalFromNote } from './terminalNoteInteraction';
@@ -1366,14 +1372,14 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 							// The initial focus call runs before the asynchronous attachment is ready.
 							// During browser connection setup Dockview/layout work can return focus to
 							// body, leaving xterm's hidden textarea unable to receive the first key.
-							// Restore it only when focus is still unclaimed (or already in this panel)
-							// so a user who deliberately selected another control is not interrupted.
+							// Restore it when focus is still unclaimed, already in this panel, or
+							// left on the project/terminal + control that created this session.
 							const activeElement = document.activeElement;
 							if (
 								props.api.isActive &&
-								(activeElement === null ||
-									activeElement === document.body ||
-									root.contains(activeElement))
+								(shouldClaimCreatedTerminalFocus(activeElement) ||
+									(activeElement instanceof Node &&
+										root.contains(activeElement)))
 							) {
 								terminal.focus();
 								announceTerminalFocus();

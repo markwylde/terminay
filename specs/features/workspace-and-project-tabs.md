@@ -12,6 +12,41 @@ terminal title into an identity boundary.
 ## User contract
 
 - Users can create, rename, reorder, close, and colour/icon project tabs.
+- The project tab bar never steals trailing chrome. Sidebar toggle, new-project
+  control, activity, and the Local connection pill stay fully visible. When
+  project tabs no longer fit, overflowed tabs leave the strip and remain
+  reachable from a Local-matching project switcher: colour swatch, label,
+  numeric badge, and chevron opening a shared menu of every project in the
+  view. On a compact bar (phone-width / ≤640px) the strip collapses to that
+  switcher showing the active project name, with the count badge and chevron
+  trailing at the right of the pill. Its All projects menu spans the window
+  so names stay readable, with compact rows matching the rest of the chrome,
+  and New project lives in that menu instead of as
+  header `+` chrome. On a wider bar the overflowing
+  strip fills the space before `+` and Local, the switcher stays pinned to
+  that right edge, and at least one extra tab continues behind it — the
+  pill covers about half of that last tab — rather than leaving a hole or
+  looking like a last tab-like button. The wide-bar switcher menu stays an
+  anchored dropdown. The active tab stays among
+  the real tabs. When every tab fits, `+` still sits immediately after the
+  last tab and Local stays trailing. The
+  strip is click-and-drag to reorder only for visible tabs; the shared menu
+  lists every project, can activate or close one, and can reorder via its
+  grips so portrait web clients are not stuck with a drag-to-reorder strip
+  they cannot scroll. Dragging along the visible strip reorders there; native
+  tear-off starts only after the pointer leaves the bar. A dropped
+  visible-tab or switcher-row order commits through `project.move` in the
+  current view so a later snapshot cannot snap the tab back. Menu grips
+  track the pointer (they are not HTML5 drag sources) so they work inside
+  the desktop title-bar drag region, and the menu stays open through the
+  drop. The new-project `+` and environment
+  chooser sit immediately after the last visible tab, or after the overflow
+  switcher when the strip is filling the bar. Activity and Local stay
+  trailing; opening the environment chooser must not grow or shift the tab
+  bar.
+- A user-created project or terminal receives keyboard focus in that xterm
+  so typing starts immediately. Creation chrome such as the project and
+  terminal `+` controls must not keep focus after the new session is ready.
 - The project-bar split button's primary `+` creates a project on **This
   server** immediately. Its arrow opens an accessible environment chooser with
   This server, recent SSH/Puzed targets, provider create/browse actions,
@@ -122,6 +157,14 @@ client focus.
   destination view's projects. A later workspace refresh preserves that split.
 - Keyboard and menu commands operate on the active project/panel and fail
   clearly when their required target is absent.
+- A crowded project bar keeps Local and the new-project control on-screen.
+  Overflowed projects stay available from the Local-matching switcher menu on
+  both desktop overflow and compact/mobile chrome. Compact chrome opens a
+  full-width All projects menu that also creates a project, and the compact
+  switcher keeps its count and chevron on the trailing edge of the pill. On
+  a wide overflowing bar the strip fills through to `+` and Local, the
+  switcher stays on that right edge, at least one extra tab continues
+  behind the pill, and the active project remains a real tab.
 - Reconnecting from a fresh client restores project and panel identity from
   server state without recreating live terminals.
 - Sequentially closing every canonical terminal while another local panel stays
