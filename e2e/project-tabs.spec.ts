@@ -71,6 +71,36 @@ async function closeNativePageWindow(
 	});
 }
 
+type BusyWindowTestMain = typeof globalThis & {
+	closeDialog?: Electron.MessageBoxOptions;
+	__terminayTestRunningTerminalCountForWindow?: (
+		webContentsId: number,
+	) => Promise<number>;
+};
+
+/** Wait until close-protection would treat this native window as busy. */
+async function waitUntilNativeWindowHasBusyTerminal(
+	electronApp: ElectronApplication,
+	page: Page,
+): Promise<void> {
+	const nativeWindow = await electronApp.browserWindow(page);
+	const webContentsId = await nativeWindow.evaluate(
+		(window) => window.webContents.id,
+	);
+	await expect
+		.poll(
+			() =>
+				electronApp.evaluate(async (_electron, id) => {
+					const count = await (
+						globalThis as BusyWindowTestMain
+					).__terminayTestRunningTerminalCountForWindow?.(id);
+					return count ?? 0;
+				}, webContentsId),
+			{ timeout: 15_000 },
+		)
+		.toBeGreaterThan(0);
+}
+
 test.describe('project tabs', () => {
 	test('dragging a project into a new window preserves its canonical project and terminal', async ({
 		electronApp,
@@ -183,26 +213,27 @@ test.describe('project tabs', () => {
 		const foregroundStarted = `foreground-started-${Date.now()}`;
 
 		await electronApp.evaluate(({ dialog }) => {
-			const state = globalThis as typeof globalThis & {
-				closeDialog?: Electron.MessageBoxOptions;
-			};
+			const state = globalThis as BusyWindowTestMain;
+			state.closeDialog = undefined;
 			dialog.showMessageBox = async (...args) => {
 				state.closeDialog = args.at(-1) as Electron.MessageBoxOptions;
 				return { checkboxChecked: false, response: 0 };
 			};
 		});
-		// Run the marker inside a child shell that `exec`s sleep so the login
-		// shell never returns to the foreground. A builtin `printf` after
-		// `sleep` would otherwise let output-triggered PTY polling observe an
-		// idle shell and skip the native close warning.
+		// Drive one non-shell process that prints the marker and stays in the
+		// foreground. `sh -c "…; printf; exec sleep"` prints while `sh`/`dash`
+		// is still foreground; Debian E2E treats those names as the idle login
+		// shell, so close-protection skips the warning. Playwright retries are
+		// a new worker, so that race fails all three attempts on a fast VM.
 		await typeInVisibleTerminal(
 			popoutWindow,
-			`sh -c "sleep 2.1; printf '${foregroundStarted}\\n'; exec sleep 30"\n`,
+			`python3 -c "import time; print('${foregroundStarted}', flush=True); time.sleep(30)"\n`,
 			sessionId,
 		);
 		await expect(
 			popoutWindow.locator('.terminal-panel:visible .xterm-rows'),
 		).toContainText(foregroundStarted);
+		await waitUntilNativeWindowHasBusyTerminal(electronApp, popoutWindow);
 		// Close this torn-off window by identity. Linux/Xvfb does not reliably
 		// move native focus after a drag-created BrowserWindow, so
 		// getFocusedWindow() can no-op or close the idle sibling instead.
@@ -211,11 +242,8 @@ test.describe('project tabs', () => {
 			.poll(() =>
 				electronApp.evaluate(
 					() =>
-						(
-							globalThis as typeof globalThis & {
-								closeDialog?: Electron.MessageBoxOptions;
-							}
-						).closeDialog?.buttons?.[0] ?? null,
+						(globalThis as BusyWindowTestMain).closeDialog?.buttons?.[0] ??
+						null,
 				),
 			)
 			.toBe('Close Window');
