@@ -59,7 +59,9 @@ terminal title into an identity boundary.
   environment. Target/root validation completes before a normal tab is
   committed. A successful user-created project receives one terminal through
   the selected server's normal terminal-launch resolver; this is an explicit
-  creation flow, never a renderer repair for an empty workspace.
+  creation flow, never a renderer repair for an empty workspace. After a Local
+  Desktop restart, each restored project likewise receives one fresh terminal
+  so a project is never shown empty.
 - Project creation commits its initial colour and icon atomically with the
   server-owned project so rapid creation cannot reuse an uncommitted colour.
 - A project root can be selected directly or derived from the active terminal's
