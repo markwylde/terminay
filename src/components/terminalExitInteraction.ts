@@ -35,3 +35,24 @@ export function formatTerminalExitNotice(exit: TerminalExitPresentation): string
 
   return `\r\n\x1b[31m[process exited with ${exitDescription}]\x1b[0m\r\n`
 }
+
+/** Attach/input failures that mean the PTY is gone, not that the workspace
+ * transport needs replacement. */
+export function isTerminalSessionEndedError(error: unknown): boolean {
+  const messages: string[] = []
+  let current: unknown = error
+  for (let depth = 0; depth < 4 && current !== undefined && current !== null; depth += 1) {
+    if (current instanceof Error) {
+      messages.push(current.message)
+      current = current.cause
+      continue
+    }
+    messages.push(String(current))
+    break
+  }
+  return messages.some((message) =>
+    /session has exited|session_exited|session was interrupted|session_interrupted|session_not_found|terminal session not found/iu.test(
+      message,
+    ),
+  )
+}

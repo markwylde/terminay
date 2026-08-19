@@ -473,6 +473,8 @@ test("protocol client close releases its resize lease without terminating the se
 
     const secondAttachment = await dispatcher.command(request("terminal.attach", { clientId: "client-b", identity, fromPosition: 0 }, "attach-replacement", "write", "client-b"));
     assert.equal(secondAttachment.ok, true);
+    assert.equal(secondAttachment.result.presentation.role, "controller");
+    assert.equal(secondAttachment.result.presentation.holder.clientId, "client-b");
     await dispatcher.command(request("terminal.presentation", { clientId: "client-b", identity, attachmentId: secondAttachment.result.attachmentId, mode: "acquire" }, "presentation-replacement", "write", "client-b"));
     const secondResize = await dispatcher.command(request("terminal.resize", {
       clientId: "client-b", identity, attachmentId: secondAttachment.result.attachmentId, cols: 40, rows: 16, viewport: "mobile",

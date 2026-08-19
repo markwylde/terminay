@@ -355,6 +355,12 @@ export type WorkspaceCommand =
 			readonly type: 'terminal.markInterrupted';
 			readonly sessionId: ProtocolId;
 			readonly at?: number;
+	  }
+	| {
+			readonly type: 'terminal.markExited';
+			readonly sessionId: ProtocolId;
+			readonly exitCode?: number;
+			readonly at?: number;
 	  };
 
 export interface WorkspaceCommandEnvelope {
@@ -1248,6 +1254,20 @@ export class WorkspaceStore {
 						...session,
 						status: 'interrupted',
 						interruptedAt: command.at ?? Date.now(),
+					};
+				changed.push(session.id);
+				break;
+			}
+			case 'terminal.markExited': {
+				const session = state.terminalSessions[command.sessionId];
+				if (session === undefined) break;
+				if (session.status === 'running')
+					state.terminalSessions[session.id] = {
+						...session,
+						status: 'exited',
+						...(command.exitCode === undefined
+							? {}
+							: { exitCode: command.exitCode }),
 					};
 				changed.push(session.id);
 				break;

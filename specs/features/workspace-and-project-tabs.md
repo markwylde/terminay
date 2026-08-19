@@ -127,9 +127,14 @@ client focus.
 - Sequentially closing every canonical terminal while another local panel stays
   visible removes each terminal exactly once and leaves workspace reconciliation
   current; the final removal cannot strand an exited terminal presentation.
+- Closing an already-exited terminal tab succeeds while another live terminal
+  remains. That close does not wait on killing a finished PTY, does not offer a
+  connection retry that replaces the workspace transport, and does not stall
+  sibling terminals.
 - Reloading or closing a renderer detaches its presentation and must not turn
   Dockview disposal into canonical panel-close commands; restored renderers
-  hydrate the same panels and terminal sessions.
+  hydrate the same panels and terminal sessions and can type into still-running
+  shells.
 - Terminal and project close warnings depend on canonical PTY foreground-process
   state, not recent output, agent status, tab attention, or display settings.
   A silent non-shell foreground process still warns when it has helper children.
