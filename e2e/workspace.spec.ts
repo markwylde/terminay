@@ -180,6 +180,37 @@ test.describe('workspace shell', () => {
 		).toHaveCount(0);
 	});
 
+	test('warns when closing a silent TUI with helper children', async ({
+		appHarness,
+		mainWindow,
+	}) => {
+		const dialogs = await appHarness.dialogs(mainWindow);
+		await dialogs.reset();
+		await appHarness.sendAppCommand('new-terminal');
+		const closeButtons = mainWindow.getByLabel('Close terminal');
+		await expect(closeButtons).toHaveCount(2);
+		await mainWindow.locator('.terminal-panel').last().click();
+
+		const marker = `agent-ready-${Date.now()}`;
+		await writeToActiveTerminal(
+			mainWindow,
+			`python3 -c "import subprocess, time; [subprocess.Popen(['sleep', '30']) for _ in range(4)]; print('${marker}', flush=True); time.sleep(30)"\n`,
+		);
+		await expect(
+			mainWindow.locator('.terminal-panel:visible .xterm-rows'),
+		).toContainText(marker);
+		await dialogs.queueConfirm(false);
+		await closeButtons.last().click();
+		await expect
+			.poll(async () => (await dialogs.getCalls()).at(-1))
+			.toMatchObject({
+				kind: 'confirm',
+				message: expect.stringContaining('A process is still running'),
+				response: false,
+			});
+		await expect(closeButtons).toHaveCount(2);
+	});
+
 	test('closes an idle terminal promptly while another terminal has a foreground process', async ({
 		appHarness,
 		mainWindow,
