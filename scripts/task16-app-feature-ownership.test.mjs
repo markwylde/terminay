@@ -6,6 +6,7 @@ const [
 	app,
 	projectTabList,
 	projectTabModel,
+	projectSwitcherMenu,
 	terminalActivityOverview,
 	dockviewLifecycle,
 	projectCollection,
@@ -35,6 +36,7 @@ const [
 	readFile('src/App.tsx', 'utf8'),
 	readFile('src/workspace/ProjectTabList.tsx', 'utf8'),
 	readFile('src/workspace/projectTabModel.ts', 'utf8'),
+	readFile('src/workspace/ProjectSwitcherMenu.tsx', 'utf8'),
 	readFile('src/workspace/TerminalActivityOverview.tsx', 'utf8'),
 	readFile('src/workspace/useDockviewPanelLifecycle.ts', 'utf8'),
 	readFile('src/workspace/useProjectCollection.ts', 'utf8'),
@@ -337,6 +339,14 @@ test('App delegates project tab rendering to the workspace feature', () => {
 	assert.match(projectTabList, /export function ProjectTabList/);
 	assert.match(projectTabList, /<Reorder\.Group\b/);
 	assert.match(projectTabList, /<Reorder\.Item\b/);
+	assert.match(projectTabList, /<ProjectSwitcherMenu\b/);
+	assert.doesNotMatch(app, /className="project-switcher-button"/);
+	assert.match(projectSwitcherMenu, /export function ProjectSwitcherMenu/);
+	assert.match(projectSwitcherMenu, /className="project-switcher-button"/);
+	assert.match(projectSwitcherMenu, /onPointerDown=\{\(event\) => beginReorder/u);
+	assert.match(projectSwitcherMenu, /setPointerCapture/u);
+	assert.match(projectSwitcherMenu, /moveItemByDrop/u);
+	assert.doesNotMatch(projectSwitcherMenu, /\bdraggable\b/u);
 });
 
 test('App delegates remote access menu rendering', () => {
