@@ -12,9 +12,7 @@ code { border-radius: 6px; background: #0b1119; color: #d5e1ee; padding: 2px 5px
   width: 100%;
   min-height: 100vh;
   overflow: hidden;
-  background:
-    radial-gradient(circle at top right, rgba(24, 44, 66, .78), transparent 34rem),
-    #090d12;
+  background: #0d1117;
 }
 
 .browser-host-titlebar {
