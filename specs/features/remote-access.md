@@ -188,9 +188,10 @@ surface that requested them. The iframe `allow` list may include clipboard and
 microphone and does not include camera. Camera stays on the manager for QR
 scan.
 
-The manager sizes the iframe to the visual viewport, including when the iOS
-keyboard is visible, and by the iOS safe area so File/Edit chrome stays below
-the status bar. Session and workspace script never assign `window.top`
+The manager pins the titlebar and session iframe to the visual viewport,
+including when the iOS keyboard is visible. The iframe sits below the
+titlebar; the workspace inside it does not add `env(safe-area-inset-top)`
+again. Session and workspace script never assign `window.top`
 or use `target="_top"`. `target="_blank"` may open a first-party tab.
 
 An iOS Home Screen PWA has storage isolated from Safari. Pairing in Safari
