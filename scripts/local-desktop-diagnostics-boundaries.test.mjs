@@ -132,6 +132,8 @@ test('hosted remote pairing diagnostics are named events without pairing URLs', 
 	}
 	assert.match(host, /rotateHandoff/u);
 	assert.match(host, /refreshPairing\('socket-closed'\)/u);
+	assert.match(host, /refreshPairing\('consumed'\)/u);
+	assert.match(host, /mintPairing/u);
 	assert.doesNotMatch(
 		host,
 		/pairingSocket\.once\('close', \(\) => \{\s*if \(!closed\) void close\(\);/u,

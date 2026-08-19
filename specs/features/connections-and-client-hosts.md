@@ -52,19 +52,26 @@ The header displays the current server label, not the transport:
 
 The menu contains:
 
-- current server identity and connection state;
-- remembered connections, grouped or ordered consistently;
-- focus/open/switch actions appropriate to the host;
-- **Remote Control**, which opens the same connection-management surface as
-  File → Remote Control;
+- remembered connections as a single-line list, with **Local** first on
+  Desktop;
+- a manage control on the Connections heading that opens the same
+  **Remote Control** surface as File → Remote Control;
 - **Expose this server…** when the current device is allowed to manage
   exposure;
-- retry, disconnect, forget, and revoke actions with distinct language; and
+- **Create pairing link** while the server is exposed;
+- live **Active Connections** for every connected browser or Desktop peer,
+  with empty copy using the same inset as other menu rows;
+- retry and forget/revoke actions with distinct language inside Remote
+  Control; and
 - diagnostics that distinguish server offline, relay unavailable, WebRTC
   route failure, missing device identity, revoked device, invalid contract, and
   failed switch actions. Failed switch actions keep the selector visible and
   show the host-provided failure reason instead of logging only to the native
   terminal.
+
+Switching to another remembered connection replaces the current transport.
+Remote Control is the single management surface for pairing, trusted devices,
+and live connections. Settings keeps PIN limits and signaling configuration.
 
 The primary exposure control represents server-owned WebRTC availability. An
 unavailable route remains visible for diagnosis and links to its configuration
@@ -92,12 +99,19 @@ File groups workspace creation separately from management surfaces:
 management window, the same presentation family as Settings, Macros,
 Recordings, and Project Environments. It uses that family's sidebar-and-content
 chrome: title, subtitle, and **Add connection…** live in the left sidebar with
-the saved-server list; empty copy, selected-server details, and pairing live
-in the main pane. Desktop opens or focuses a native auxiliary window; the
-browser host presents the same route in-page. The window is not an Edit Tab
-sheet. Pairing URL and PIN fields stack at full width above continue/cancel
-actions. An empty saved-server list keeps its heading and pairing instructions
-on separate lines and hides that empty copy while the pairing form is open.
+**This server → Exposure** first, then the saved-server list. Title, action,
+group labels, rows, and empty sidebar copy share one inset, matching Settings. The main pane
+shows only the selected sidebar item: Exposure uses the Settings remote-access
+cards (status header, WebRTC summary, trusted browsers, live connections);
+saved-server details and pairing live there when those items are selected.
+**Create pairing link** from the connection menu and from Remote Control opens
+the same Pair Device dialog.
+Desktop opens or focuses a native auxiliary window; the browser host presents
+the same route in-page. The window is not an Edit Tab sheet. Pairing URL and
+PIN fields stack at full width above continue/cancel actions. An empty
+saved-server list keeps a quiet sidebar note. With no saved servers, the window
+lands on Exposure instead of empty-server copy. Empty-server copy is also
+hidden while Exposure is selected or the pairing form is open.
 
 Desktop development, packaged Desktop, and auxiliary routes execute the same
 server-bundled route bodies against the authenticated selected-server client.
@@ -118,10 +132,12 @@ status must not be conflated with terminal or agent attention.
   packaged Local workspace renderer against a different remote server.
 - The initial native window is explicitly bound to immutable Local and the
   header reports the selected profile label/status (including Local failure or
-  offline state), never a transport name. Local uses the private authenticated
-  Desktop host transport and does not require a network listener, internet
-  access, hosted signaling, or WebRTC; remote profiles require their own
-  selected transport.
+  offline state), never a transport name and never the opaque session-id
+  hostname. Browser sessions use the saved connection title, falling back to
+  the pairing `hostName` (the exposing machine's hostname). Local uses the
+  private authenticated Desktop host transport and does not require a network
+  listener, internet access, hosted signaling, or WebRTC; remote profiles
+  require their own selected transport.
 - A Desktop installation has one embedded Local server identity and may
   remember any number of remote profiles.
 - A native window is bound to exactly one server at a time. Its title and
@@ -413,6 +429,9 @@ pairing fragment or private key.
   link** and the QR contain the complete short-lived fragment credential and
   expiry; the UI does not present the bare origin as a usable connection URL.
 - Generating a fresh pairing room does not disconnect existing clients.
+- **Revoke** on a trusted browser immediately removes that device from the
+  trusted-browser list and count. Revoked devices stay stored for reconnect
+  rejection and are not shown as trusted.
 - Stopping WebRTC exposure prevents new WebRTC reconnect/pairing but does not
   stop the Local server or its private local workspace.
 - Standalone server CLI and UI use the same exposure/trust model.
@@ -531,9 +550,11 @@ WebRTC generation replacement and terminal resynchronization follow
   without crossing server, project, or credential state.
 - The web host offers the same add/manage/switch journey without showing a
   Local option.
-- File → Remote Control and the header connection menu open the same
-  Remote Control management window as Settings/Macros, including that family's
-  sidebar-and-content chrome, not an Edit Tab sheet.
+- File → Remote Control and the header connection-menu manage control open the
+  same Remote Control management window as Settings/Macros, including that
+  family's sidebar-and-content chrome, not an Edit Tab sheet. Remote Control
+  also manages this server's exposure, pairing links, trusted browsers, and
+  live connections.
 - The installed PWA can open its manager and saved profile list offline without
   claiming that an unreachable session origin is connected.
 - Opening a pairing link directly enrolls the browser and later opening the
