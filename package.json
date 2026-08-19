@@ -67,7 +67,7 @@
 		"test:task18-web-host-readiness": "npm run build:shared && npm run build --workspace @terminay/web && node --test scripts/task18-web-host-readiness.test.mjs",
 		"test:hosted-deployment-order": "node --test scripts/hosted-deployment-order.test.mjs",
 		"test:security-fuzz": "node --test scripts/security-boundary-fuzz.test.mjs",
-		"test:security-boundaries": "node --test scripts/security-privilege-boundary.test.mjs",
+		"test:security-boundaries": "node --test scripts/security-privilege-boundary.test.mjs scripts/external-url.test.mjs",
 		"test:security-revocation": "npm run build --workspace @terminay/server && node --test apps/terminay-server/test/security-revocation-replay.test.mjs",
 		"test:shared-client-path": "node --test scripts/shared-client-path.test.mjs",
 		"release:readiness": "node scripts/release-readiness.mjs",
