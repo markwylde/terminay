@@ -110,11 +110,14 @@ A real transport failure uses an explicit client state machine:
 For this state machine, application-protocol liveness is part of transport
 generation liveness. If the server protocol reader ends or fails, the mounted
 client is no longer usable even when its WebRTC peer and required data channels
-remain open. ICE `disconnected` while `connectionState` remains `connected`,
-or inbound application frames that cannot be decoded as bytes, are the same
-class of failure: the generation cannot deliver live events. That signal
-retires the whole client/peer generation; it is not a terminal-panel error and
-cannot be repaired by renewing an attachment on the retired client.
+remain open. ICE `failed` or `closed`, or inbound application frames that
+cannot be decoded as bytes, are the same class of failure: the generation
+cannot deliver live events. ICE `disconnected` while `connectionState`
+remains `connected` is not that class; Safari and Firefox report it during
+consent checks while channels still deliver. That signal retires the whole
+client/peer generation only for true transport failure; it is not a
+terminal-panel error and cannot be repaired by renewing an attachment on the
+retired client.
 
 A checkpoint or attach snapshot without later live PTY events is not a
 successful connection. Congestion recovery still applies when frames arrive
@@ -188,9 +191,11 @@ endpoint.
   path. A real Chromium/native-WebRTC test proves the peer and lane are still
   open at injection, observes recovery rather than a permanently mounted
   `client is not connected` state, and proves post-recovery input exactly once.
-- ICE `disconnected` with channels still `open` either resumes delivery inside
-  the grace period or replaces the generation once. The mounted workspace does
-  not stay on a painted checkpoint with no later PTY bytes.
+- ICE `disconnected` while the peer stays `connected` does not replace the
+  generation. Peer `disconnected`, or ICE `disconnected` while the peer is
+  also not `connected`, either resumes delivery inside grace or replaces once.
+  The mounted workspace does not stay on a painted checkpoint with no later
+  PTY bytes when the application reader has actually ended.
 - Application-lane `Blob` frames are decoded in order or fail that generation.
   Chromium loopback happy-path evidence is not sufficient; tests inject ICE
   disconnect and non-`ArrayBuffer` binary delivery.
