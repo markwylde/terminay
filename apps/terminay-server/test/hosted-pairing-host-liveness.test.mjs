@@ -14,6 +14,7 @@ test('the production hosted pairing host owns ICE servers, grace, and one handsh
 		readFile(new URL('../src/cli.ts', import.meta.url), 'utf8'),
 	]);
 	assert.match(lifecycle, /iceConnectionState/u);
+	assert.match(lifecycle, /needsDisconnectGrace/u);
 	assert.match(lifecycle, /DEFAULT_HOSTED_ICE_SERVERS/u);
 	assert.match(lifecycle, /iceServers: \[\.\.\.resolveHostedIceServers/u);
 	assert.doesNotMatch(host, /iceServers: \[\]/u);
