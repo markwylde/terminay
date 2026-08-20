@@ -46,6 +46,7 @@ export const DEFAULT_SERVER_SETTINGS: SettingsObject = {
 		codexModel: '',
 		prompt: '',
 	},
+	terminayMcp: { enabled: true },
 	ignoreBracketedPasteMode: false,
 	macros: {
 		maxSteps: 256,

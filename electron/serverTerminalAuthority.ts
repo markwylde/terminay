@@ -106,6 +106,9 @@ import type {
 	AiTabMetadataGenerateRequest,
 	AiTabMetadataGenerateResult,
 	FileViewerSparseFileSaveRequest,
+	McpAgentId,
+	McpInstallActionResult,
+	McpInstallStatus,
 	RemoteAccessStatus,
 } from '../src/types/terminay';
 import {
@@ -250,6 +253,8 @@ export interface ServerTerminalAuthorityOptions {
 	/** Server-owned shell catalogue and target revalidation authority. */
 	readonly shellProfiles?: ShellProfileCatalogueService;
 	readonly defaultProjectRoot?: () => string;
+	/** Host-owned per-session environment added after profile resolution. */
+	readonly terminalLaunchEnvironmentFor?: ServerCoreCompositionOptions['terminalLaunchEnvironmentFor'];
 	readonly projectEnvironmentRepository?: ProjectEnvironmentRepository;
 	/** Already-loaded canonical repository. Production hosts must inject this;
 	 * the in-memory default remains available only to focused authority tests. */
@@ -271,6 +276,11 @@ export interface ServerTerminalAuthorityOptions {
 		request: FileViewerSparseFileSaveRequest,
 	) => Promise<unknown>;
 	readonly applicationFeatures?: {
+		readonly mcpInstall?: {
+			getStatus(): McpInstallStatus | Promise<McpInstallStatus>;
+			install(agent: McpAgentId): Promise<McpInstallActionResult>;
+			uninstall(agent: McpAgentId): Promise<McpInstallActionResult>;
+		};
 		readonly remoteAccess?: {
 			getStatus(): RemoteAccessStatus | Promise<RemoteAccessStatus>;
 			command(
@@ -384,6 +394,7 @@ export class ServerTerminalAuthority {
 		const eventJournal = new OrderedEventJournal();
 		this.eventJournal = eventJournal;
 		const remoteAccess = options.applicationFeatures?.remoteAccess;
+		const mcpInstall = options.applicationFeatures?.mcpInstall;
 		const payloadText = (
 			request: QueryRequest | CommandRequest,
 			key: string,
@@ -406,6 +417,12 @@ export class ServerTerminalAuthority {
 			);
 			this.notifyRemoteAccessChanged();
 			return result as unknown as JsonValue;
+		};
+		const mcpAgent = (request: CommandRequest): McpAgentId => {
+			const agent = (request.envelope.payload as Record<string, unknown>).agent;
+			if (agent !== 'codex' && agent !== 'claudeCode')
+				throw new TypeError('agent is invalid');
+			return agent;
 		};
 		const projectEnvironments =
 			options.projectEnvironmentRepository ??
@@ -716,6 +733,12 @@ export class ServerTerminalAuthority {
 							...process.env,
 							COLORTERM: 'truecolor',
 						},
+						...(options.terminalLaunchEnvironmentFor === undefined
+							? {}
+							: {
+									terminalLaunchEnvironmentFor:
+										options.terminalLaunchEnvironmentFor,
+								}),
 						terminalEnvironmentCaseInsensitive: process.platform === 'win32',
 						...(process.platform === 'darwin'
 							? { terminalSystemDefaultStartupMode: 'login' as const }
@@ -723,6 +746,12 @@ export class ServerTerminalAuthority {
 					}),
 			operations: {
 				queries: {
+					...(mcpInstall === undefined
+						? {}
+						: {
+								'mcp-install.status': async () =>
+									(await mcpInstall.getStatus()) as unknown as JsonValue,
+							}),
 					...(remoteAccess === undefined
 						? {}
 						: {
@@ -749,6 +778,14 @@ export class ServerTerminalAuthority {
 						this.getFileMutationRevision(request),
 				},
 				commands: {
+					...(mcpInstall === undefined
+						? {}
+						: {
+								'mcp-install.install': (request: CommandRequest) =>
+									mcpInstall.install(mcpAgent(request)) as unknown as Promise<JsonValue>,
+								'mcp-install.uninstall': (request: CommandRequest) =>
+									mcpInstall.uninstall(mcpAgent(request)) as unknown as Promise<JsonValue>,
+							}),
 					...(remoteAccess === undefined
 						? {}
 						: {
