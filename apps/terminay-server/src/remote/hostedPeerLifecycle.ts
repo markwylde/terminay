@@ -144,6 +144,15 @@ export function isHealthyIceState(state: string | undefined): boolean {
 	return state === 'connected' || state === 'completed';
 }
 
+/** ICE `disconnected` while the peer is still `connected` is a consent blip. */
+export function needsDisconnectGrace(
+	peerState: string | undefined,
+	iceState: string | undefined,
+): boolean {
+	if (isRecoverableDisconnectState(peerState)) return true;
+	return isRecoverableDisconnectState(iceState) && peerState !== 'connected';
+}
+
 /** One connection-scoped ICE/peer authority. Grace is shared across peer and ICE. */
 export class HostedPeerLifecycle {
 	private recoveryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -177,19 +186,13 @@ export class HostedPeerLifecycle {
 			this.fail(reason);
 			return;
 		}
-		if (
-			isRecoverableDisconnectState(peerState) ||
-			isRecoverableDisconnectState(iceState)
-		) {
+		if (needsDisconnectGrace(peerState, iceState)) {
 			this.recoveryTimer ??= setTimeout(() => {
 				this.recoveryTimer = undefined;
 				if (this.stopped || this.terminal) return;
 				const currentPeerState = this.peer.connectionState;
 				const currentIceState = this.peer.iceConnectionState;
-				if (
-					isRecoverableDisconnectState(currentPeerState) ||
-					isRecoverableDisconnectState(currentIceState)
-				) {
+				if (needsDisconnectGrace(currentPeerState, currentIceState)) {
 					this.fail(
 						`WebRTC recovery grace period expired (peer: ${currentPeerState}, ICE: ${currentIceState}).`,
 					);
