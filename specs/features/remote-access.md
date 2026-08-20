@@ -320,15 +320,16 @@ workspace. Network loss keeps server-owned PTYs and work running. The browser
 shows reconnecting state, creates a fresh authenticated generation, restores
 subscriptions, and enables input only after hydration completes.
 
-A generation is live only while its peer, ICE, required data lanes, and
+A generation is live only while its peer, required data lanes, and
 application-protocol reader can still deliver. `RTCDataChannel.readyState`
-remaining `open` is not sufficient. Recoverable `disconnected` peer or ICE
-state starts one bounded grace period and cancels that timer if the complete
-generation becomes healthy again. Explicit `failed` or `closed` peer/ICE
-state, required-lane loss, application-protocol reader end, or grace expiry
-replaces the generation exactly once. ICE `disconnected` while
-`connectionState` stays `connected` is the same recoverable class as peer
-`disconnected`; it is not a healthy connection.
+remaining `open` is not sufficient. Recoverable peer `disconnected` starts one
+bounded grace period and cancels that timer if the peer is `connected` again.
+Explicit `failed` or `closed` peer/ICE state, required-lane loss,
+application-protocol reader end, or grace expiry replaces the generation
+exactly once. ICE `disconnected` while `connectionState` stays `connected` is
+a consent-check blip on Safari and Firefox; it does not start grace or replace
+the generation. ICE `disconnected` starts grace only when the peer is also not
+`connected`.
 
 The session host creates that generation once per connect attempt. Pairing or
 saved-device signaling, bundle install, and the workspace's application
@@ -488,9 +489,10 @@ origin.
   observe the same workspace and terminal sessions.
 - Network interruption reconnects without duplicating PTYs or workspace
   mutations.
-- ICE `disconnected` while the peer still reports `connected` either recovers
-  inside the grace period on the same generation or replaces that generation
-  once and resumes live terminal output without a page reload.
+- ICE `disconnected` while the peer still reports `connected` keeps that
+  generation and continues live terminal output. Peer `disconnected`, or ICE
+  `disconnected` while the peer is also not `connected`, either recovers
+  inside grace or replaces that generation once without a page reload.
 - A framed PWA session that hydrates a terminal still shows subsequent typed
   PTY output on that same generation.
 - Backgrounding and returning to the installed PWA reconnects the framed

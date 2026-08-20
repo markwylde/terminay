@@ -27,13 +27,29 @@ test('host peer configuration uses the advertised ICE servers', () => {
 	);
 });
 
-test('ICE disconnected while the peer stays connected closes once after grace', () => {
+test('ICE disconnected while the peer stays connected does not close the session', () => {
 	mock.timers.enable({ apis: ['setTimeout'] });
 	try {
 		const peer = { connectionState: 'connected', iceConnectionState: 'connected' };
 		const reasons = [];
 		const lifecycle = new HostedPeerLifecycle(peer, 5_000, (reason) => reasons.push(reason));
 		peer.iceConnectionState = 'disconnected';
+		lifecycle.observe('ice');
+		mock.timers.tick(5_000);
+		assert.deepEqual(reasons, []);
+		lifecycle.observe('ice');
+		assert.deepEqual(reasons, []);
+	} finally {
+		mock.timers.reset();
+	}
+});
+
+test('ICE disconnected while the peer is also disconnected closes once after grace', () => {
+	mock.timers.enable({ apis: ['setTimeout'] });
+	try {
+		const peer = { connectionState: 'disconnected', iceConnectionState: 'disconnected' };
+		const reasons = [];
+		const lifecycle = new HostedPeerLifecycle(peer, 5_000, (reason) => reasons.push(reason));
 		lifecycle.observe('ice');
 		assert.deepEqual(reasons, []);
 		mock.timers.tick(4_999);
