@@ -145,31 +145,17 @@ export function createNodePtyFactory(module: NodePtyModuleLike, factoryOptions: 
         kill: async (signal) => {
           child.kill(signal);
           if (exited) return;
-          const exitedGracefully = await new Promise<boolean>((resolve) => {
+          await new Promise<void>((resolve) => {
             const timeout = setTimeout(() => {
               exitWaiters.delete(done);
-              resolve(false);
-            }, 1_000);
+              resolve();
+            }, 2_000);
             const done = () => {
               clearTimeout(timeout);
-              resolve(true);
+              resolve();
             };
             exitWaiters.add(done);
           });
-		  if (exitedGracefully || exited || signal === 'SIGKILL' || signal === 9) return;
-		  child.kill('SIGKILL');
-		  if (exited) return;
-		  await new Promise<void>((resolve) => {
-			const timeout = setTimeout(() => {
-			  exitWaiters.delete(done);
-			  resolve();
-			}, 4_000);
-			const done = () => {
-			  clearTimeout(timeout);
-			  resolve();
-			};
-			exitWaiters.add(done);
-		  });
         },
 				...(typeof child.pause === "function" ? { pause: () => child.pause?.() } : {}),
 				...(typeof child.resume === "function" ? { resume: () => child.resume?.() } : {}),
