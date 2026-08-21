@@ -2,7 +2,10 @@ import { cp, lstat, mkdir, readFile, realpath } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 
 function packagePath(root, packageName) {
-	if (typeof packageName !== 'string' || !/^(?:@[-a-z0-9._]+\/)?[-a-z0-9._]+$/iu.test(packageName)) {
+	if (
+		typeof packageName !== 'string' ||
+		!/^(?:@[-a-z0-9._]+\/)?[-a-z0-9._]+$/iu.test(packageName)
+	) {
 		throw new TypeError(`invalid package name: ${String(packageName)}`);
 	}
 	return join(root, ...packageName.split('/'));
@@ -12,7 +15,8 @@ async function regularDirectory(path, label) {
 	const resolved = await realpath(path).catch(() => undefined);
 	if (resolved === undefined) throw new Error(`${label} is missing: ${path}`);
 	const details = await lstat(resolved);
-	if (!details.isDirectory()) throw new Error(`${label} is not a directory: ${path}`);
+	if (!details.isDirectory())
+		throw new Error(`${label} is not a directory: ${path}`);
 	return resolved;
 }
 
@@ -21,14 +25,19 @@ async function regularDirectory(path, label) {
  * intentionally walks only node_modules ancestors, never the workspace root,
  * so a release payload cannot accidentally inherit a source package.
  */
-async function resolveInstalledDependency(fromDirectory, runtimeModules, packageName) {
+async function resolveInstalledDependency(
+	fromDirectory,
+	runtimeModules,
+	packageName,
+) {
 	const modulesRoot = await regularDirectory(runtimeModules, 'runtime modules');
 	const modulesParent = dirname(modulesRoot);
 	let cursor = await regularDirectory(fromDirectory, 'dependency parent');
 	for (;;) {
 		const candidate = packagePath(join(cursor, 'node_modules'), packageName);
 		const resolved = await realpath(candidate).catch(() => undefined);
-		if (resolved !== undefined) return regularDirectory(resolved, `dependency ${packageName}`);
+		if (resolved !== undefined)
+			return regularDirectory(resolved, `dependency ${packageName}`);
 		if (cursor === modulesParent) break;
 		const parent = dirname(cursor);
 		if (parent === cursor) break;
@@ -39,7 +48,9 @@ async function resolveInstalledDependency(fromDirectory, runtimeModules, package
 }
 
 async function packageManifest(directory) {
-	const manifest = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8'));
+	const manifest = JSON.parse(
+		await readFile(join(directory, 'package.json'), 'utf8'),
+	);
 	if (typeof manifest.name !== 'string' || manifest.name.length === 0) {
 		throw new Error(`dependency package has no name: ${directory}`);
 	}
@@ -67,28 +78,62 @@ export async function stageProductionDependencyClosure({
 	await mkdir(destination, { recursive: true });
 	const pending = [...new Set(rootPackages)]
 		.sort()
-		.map((name) => ({ name, fromDirectory: runtimeRoot }));
+		.map((name) => ({ name, fromDirectory: runtimeRoot, optional: false }));
 	const copied = new Set();
 	while (pending.length > 0) {
-		const { name: packageName, fromDirectory } = pending.shift();
+		const { name: packageName, fromDirectory, optional } = pending.shift();
 		if (copied.has(packageName)) continue;
 		const workspaceSource = workspacePackages[packageName];
-		const source = workspaceSource === undefined
-			? await resolveInstalledDependency(fromDirectory, runtimeRoot, packageName)
-			: await regularDirectory(workspaceSource, `workspace dependency ${packageName}`);
+		let source;
+		try {
+			source =
+				workspaceSource === undefined
+					? await resolveInstalledDependency(
+							fromDirectory,
+							runtimeRoot,
+							packageName,
+						)
+					: await regularDirectory(
+							workspaceSource,
+							`workspace dependency ${packageName}`,
+						);
+		} catch (error) {
+			// npm installs only the optional package matching the current platform
+			// (for example one @esbuild/* binary). A missing optional dependency is
+			// therefore absent from this artifact's production closure by design.
+			if (optional) continue;
+			throw error;
+		}
 		const manifest = await packageManifest(source);
 		if (manifest.name !== packageName) {
-			throw new Error(`dependency name mismatch: expected ${packageName}, received ${manifest.name}`);
+			throw new Error(
+				`dependency name mismatch: expected ${packageName}, received ${manifest.name}`,
+			);
 		}
 		const target = packagePath(destination, packageName);
-		await cp(source, target, { recursive: true, dereference: true, force: true });
+		await cp(source, target, {
+			recursive: true,
+			dereference: true,
+			force: true,
+		});
 		copied.add(packageName);
-		const dependencies = {
-			...(manifest.dependencies ?? {}),
-			...(manifest.optionalDependencies ?? {}),
-		};
-		for (const dependency of Object.keys(dependencies).sort()) {
-			if (!copied.has(dependency)) pending.push({ name: dependency, fromDirectory: source });
+		for (const dependency of Object.keys(manifest.dependencies ?? {}).sort()) {
+			if (!copied.has(dependency))
+				pending.push({
+					name: dependency,
+					fromDirectory: source,
+					optional: false,
+				});
+		}
+		for (const dependency of Object.keys(
+			manifest.optionalDependencies ?? {},
+		).sort()) {
+			if (!copied.has(dependency))
+				pending.push({
+					name: dependency,
+					fromDirectory: source,
+					optional: true,
+				});
 		}
 	}
 	return Object.freeze([...copied].sort());
@@ -97,7 +142,10 @@ export async function stageProductionDependencyClosure({
 export function assertStagedPathInside(destinationModules, path) {
 	const from = resolve(destinationModules);
 	const relativePath = relative(from, resolve(path));
-	if (relativePath === '..' || relativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)) {
+	if (
+		relativePath === '..' ||
+		relativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)
+	) {
 		throw new Error(`staged dependency escapes destination: ${path}`);
 	}
 }
