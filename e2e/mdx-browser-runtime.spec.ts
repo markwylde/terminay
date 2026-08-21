@@ -19,7 +19,9 @@ test('Documentation opens MDX through the isolated preview surface', async ({ cr
   const documentationPane = mainWindow.locator('.project-workspace--active .sidebar-pane').filter({
     has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Documentation' }),
   })
-  await documentationPane.locator('.sidebar-pane__header').click()
-  await mainWindow.getByRole('treeitem', { name: /MDX guide/i }).click()
+  if (await documentationPane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed'))) {
+    await documentationPane.locator('.sidebar-pane__header').click()
+  }
+  await mainWindow.getByRole('treeitem', { name: /^Guide$/i }).click()
   await expect(mainWindow.locator('iframe[title="MDX preview"]')).toBeVisible()
 })

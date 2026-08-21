@@ -17,7 +17,9 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
   const documentationPane = mainWindow.locator('.project-workspace--active .sidebar-pane').filter({
     has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Documentation' }),
   })
-  await documentationPane.locator('.sidebar-pane__header').click()
+  if (await documentationPane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed'))) {
+    await documentationPane.locator('.sidebar-pane__header').click()
+  }
   await expect(mainWindow.getByRole('tree')).toBeVisible()
   await mainWindow.getByRole('treeitem', { name: /docs/ }).click()
   await mainWindow.getByRole('treeitem', { name: /guides/ }).click()
