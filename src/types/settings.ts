@@ -112,6 +112,11 @@ export type GitPushAgentSettings = {
 	prompt: string;
 };
 
+/** Server-owned enablement for the local, project-scoped Terminay MCP bridge. */
+export type TerminayMcpSettings = {
+	enabled: boolean;
+};
+
 export type DictationTranscriptionModel =
 	| 'gpt-4o-transcribe'
 	| 'gpt-4o-mini-transcribe'
@@ -135,6 +140,7 @@ export type TerminalSettings = {
 	aiTabMetadata: AiTabMetadataSettings;
 	dictation: DictationSettings;
 	gitPushAgent: GitPushAgentSettings;
+	terminayMcp: TerminayMcpSettings;
 	allowTransparency: boolean;
 	altClickMovesCursor: boolean;
 	activityIndicators: TerminalActivityIndicatorSettings;
