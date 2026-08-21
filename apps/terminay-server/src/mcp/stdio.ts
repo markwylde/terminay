@@ -16,6 +16,17 @@ import {
 	type ControlResponse,
 	encodeControlMessage,
 } from './controlEndpoint.js';
+import {
+	DEFAULT_READ_MAX_BYTES,
+	DEFAULT_SEARCH_CONTEXT_LINES,
+	DEFAULT_SEARCH_MAX_BYTES,
+	DEFAULT_SEARCH_MAX_MATCHES,
+	MAX_READ_MAX_BYTES,
+	MAX_SEARCH_CONTEXT_LINES,
+	MAX_SEARCH_MAX_BYTES,
+	MAX_SEARCH_MAX_MATCHES,
+	MAX_SEARCH_QUERY_CHARS,
+} from './dispatcher.js';
 import { SERVER_MCP_ENTRY } from './ownership.js';
 
 export { SERVER_MCP_ENTRY } from './ownership.js';
@@ -152,6 +163,36 @@ function registerTools(
 	const name = boundedIdentifier(MAX_NAME_CHARS);
 	const cwd = boundedIdentifier(MAX_CWD_CHARS);
 	const direction = z.enum(['right', 'left', 'above', 'below']);
+	const searchQuery = boundedSearchQuery();
+	const readTerminal = z
+		.object({
+			terminal,
+			format: z.enum(['text', 'ansi', 'raw']).default('text'),
+			max_bytes: z
+				.number()
+				.int()
+				.positive()
+				.max(MAX_READ_MAX_BYTES)
+				.default(DEFAULT_READ_MAX_BYTES),
+			lines: z.number().int().positive().max(4096).optional(),
+			after: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+		})
+		.superRefine((value, context) => {
+			if (value.format !== 'text' && value.lines !== undefined) {
+				context.addIssue({
+					code: 'custom',
+					path: ['lines'],
+					message: 'lines is available only for text reads',
+				});
+			}
+			if (value.format !== 'raw' && value.after !== undefined) {
+				context.addIssue({
+					code: 'custom',
+					path: ['after'],
+					message: 'after is available only for raw reads',
+				});
+			}
+		});
 	const timeout = z
 		.number()
 		.finite()
@@ -159,9 +200,20 @@ function registerTools(
 		.max(MAX_WAIT_SECONDS)
 		.optional();
 	server.registerTool(
+		'get_mcp_capabilities',
+		{
+			description:
+				'Report adapter-global MCP tool availability before calling an optional operation. Availability applies to the bound host, not to an individual terminal.',
+			inputSchema: {},
+			annotations: READ_ONLY_TOOL_ANNOTATIONS,
+		},
+		async () => call('get_mcp_capabilities', {}),
+	);
+	server.registerTool(
 		'list_terminals',
 		{
-			description: 'List sibling terminals in the calling project.',
+			description:
+				'List sibling terminals in the calling project. A terminal cwd is its local launch directory and is not a remote filesystem path for an SSH session.',
 			inputSchema: {},
 			annotations: READ_ONLY_TOOL_ANNOTATIONS,
 		},
@@ -170,17 +222,65 @@ function registerTools(
 	server.registerTool(
 		'read_terminal',
 		{
-			description: 'Read bounded terminal output.',
+			description:
+				'Read bounded terminal output. format=text (the default) returns emulated visual rows as plain text without terminal control sequences. format=ansi returns an emulated ANSI presentation, including terminal control sequences needed to reproduce it. format=raw returns the retained PTY stream without emulation; only raw reads accept after, an exclusive raw output-byte cursor. lines applies only to text visual rows. max_bytes defaults to 16384 and is capped at 65536; reads truncate instead of failing for output size.',
+			annotations: READ_ONLY_TOOL_ANNOTATIONS,
+			inputSchema: readTerminal,
+		},
+		async ({ terminal: target, format, max_bytes: maxBytes, lines, after }) =>
+			call('read_terminal', {
+				terminal: target,
+				format,
+				max_bytes: maxBytes,
+				...(lines === undefined ? {} : { lines }),
+				...(after === undefined ? {} : { after }),
+		}),
+	);
+	server.registerTool(
+		'search_terminal',
+		{
+			description:
+				'Search the current emulated text presentation using a bounded literal Unicode query, never a regular expression or raw PTY bytes. Results are snapshot-scoped visual rows with bounded surrounding context; returned row indexes are not cursors.',
 			annotations: READ_ONLY_TOOL_ANNOTATIONS,
 			inputSchema: {
 				terminal,
-				lines: z.number().int().positive().max(4096).optional(),
+				query: searchQuery,
+				case_sensitive: z.boolean().default(true),
+				context_lines: z
+					.number()
+					.int()
+					.min(0)
+					.max(MAX_SEARCH_CONTEXT_LINES)
+					.default(DEFAULT_SEARCH_CONTEXT_LINES),
+				max_matches: z
+					.number()
+					.int()
+					.positive()
+					.max(MAX_SEARCH_MAX_MATCHES)
+					.default(DEFAULT_SEARCH_MAX_MATCHES),
+				max_bytes: z
+					.number()
+					.int()
+					.positive()
+					.max(MAX_SEARCH_MAX_BYTES)
+					.default(DEFAULT_SEARCH_MAX_BYTES),
 			},
 		},
-		async ({ terminal: target, lines }) =>
-			call('read_terminal', {
+		async ({
+			terminal: target,
+			query,
+			case_sensitive: caseSensitive,
+			context_lines: contextLines,
+			max_matches: maxMatches,
+			max_bytes: maxBytes,
+		}) =>
+			call('search_terminal', {
 				terminal: target,
-				...(lines === undefined ? {} : { lines }),
+				query,
+				case_sensitive: caseSensitive,
+				context_lines: contextLines,
+				max_matches: maxMatches,
+				max_bytes: maxBytes,
 			}),
 	);
 	server.registerTool(
@@ -216,7 +316,8 @@ function registerTools(
 	server.registerTool(
 		'run_command',
 		{
-			description: 'Submit one bounded command.',
+			description:
+				'Submit one bounded command. The result reports terminal, command_id, from, and submitted_bytes; from is the raw output cursor captured immediately before submission and submitted_bytes measures all UTF-8 bytes written to the PTY, including bracketed-paste framing and the submission carriage return, never output bytes. Typical workflow: run_command, optionally wait_for_command when get_mcp_capabilities says it is available, then read_terminal with format=raw and after=from. command_id identifies this MCP submission only; wait_for_command reports the next observed completion and does not attribute it to command_id.',
 			inputSchema: { terminal, command: text },
 		},
 		async (params) => call('run_command', params),
@@ -268,7 +369,8 @@ function registerTools(
 	server.registerTool(
 		'wait_for_command',
 		{
-			description: 'Wait for the next command completion.',
+			description:
+				'Wait for the next observed structured command completion. Check get_mcp_capabilities before use: some adapters cannot observe command completion. This tool does not correlate a completion with a run_command command_id.',
 			annotations: READ_ONLY_TOOL_ANNOTATIONS,
 			inputSchema: { terminal, timeout },
 		},
@@ -302,6 +404,18 @@ function boundedText(): z.ZodString {
 		.refine(
 			(value) => Buffer.byteLength(value, 'utf8') <= MAX_TEXT_BYTES,
 			'text exceeds the byte limit',
+		);
+}
+
+function boundedSearchQuery(): z.ZodString {
+	return z
+		.string()
+		.min(1)
+		.max(MAX_SEARCH_QUERY_CHARS)
+		.refine((value) => !value.includes('\0'), 'NUL is not allowed')
+		.refine(
+			(value) => Buffer.byteLength(value, 'utf8') <= MAX_TEXT_BYTES,
+			'query exceeds the byte limit',
 		);
 }
 
