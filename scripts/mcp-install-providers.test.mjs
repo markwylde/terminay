@@ -88,6 +88,7 @@ test('Codex and Claude Code registrations launch the same MCP command contract',
   assert.match(codexConfig, /\[mcp_servers\.terminay\]/)
   assert.match(codexConfig, new RegExp(`command = ${escapeRegex(JSON.stringify(server.command))}`))
   assert.match(codexConfig, new RegExp(`args = \\[${escapeRegex(JSON.stringify(server.args[0]))}\\]`))
+  assert.match(codexConfig, /env_vars = \["TERMINAY_CONTROL_SOCKET", "TERMINAY_CONTROL_TOKEN"\]/)
   assert.match(codexConfig, /env = \{ ELECTRON_RUN_AS_NODE = "1" \}/)
 
   const claudeConfig = JSON.parse(await readFile(join(testHome, '.claude.json'), 'utf8'))
