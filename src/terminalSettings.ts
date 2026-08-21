@@ -42,6 +42,7 @@ const SERVER_OWNED_TERMINAL_SETTING_KEYS = new Set<keyof TerminalSettings>([
 	'disableStdin',
 	'fileViewer',
 	'gitPushAgent',
+	'terminayMcp',
 	'ignoreBracketedPasteMode',
 	'recording',
 	'remoteAccess',
@@ -375,6 +376,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 		codexModel: '',
 		prompt: DEFAULT_GIT_PUSH_AGENT_PROMPT,
 	},
+	terminayMcp: { enabled: true },
 	allowTransparency: false,
 	altClickMovesCursor: true,
 	activityIndicators: {
@@ -685,6 +687,25 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				input: 'textarea',
 				placeholder: DEFAULT_GIT_PUSH_AGENT_PROMPT,
 				keywords: ['ai', 'git', 'push', 'prompt', 'template'],
+			}),
+		],
+	},
+	{
+		id: 'terminay-mcp',
+		categoryId: 'ai',
+		title: 'Terminay MCP',
+		description:
+			'Let AI agents running in a Terminay terminal control sibling terminals through the Model Context Protocol.',
+		fields: [
+			makeField({
+				key: 'terminayMcp.enabled',
+				label: 'Enable Terminay MCP server',
+				description:
+					'Issues project-scoped terminal-control capabilities. This does not install or use provider hooks.',
+				sectionId: 'terminay-mcp',
+				categoryId: 'ai',
+				input: 'boolean',
+				keywords: ['mcp', 'model context protocol', 'codex', 'claude', 'terminal', 'control'],
 			}),
 		],
 	},
@@ -2155,6 +2176,10 @@ export function normalizeTerminalSettings(
 		typeof input.dictation === 'object' && input.dictation !== null
 			? input.dictation
 			: defaultTerminalSettings.dictation;
+	const terminayMcpInput =
+		typeof input.terminayMcp === 'object' && input.terminayMcp !== null
+			? input.terminayMcp
+			: defaultTerminalSettings.terminayMcp;
 	const activityIndicatorsInput =
 		typeof input.activityIndicators === 'object' &&
 		input.activityIndicators !== null
@@ -2245,6 +2270,12 @@ export function normalizeTerminalSettings(
 				typeof gitPushAgentInput.prompt === 'string'
 					? gitPushAgentInput.prompt
 					: defaultTerminalSettings.gitPushAgent.prompt,
+		},
+		terminayMcp: {
+			enabled:
+				typeof terminayMcpInput.enabled === 'boolean'
+					? terminayMcpInput.enabled
+					: defaultTerminalSettings.terminayMcp.enabled,
 		},
 		dictation: {
 			enabled:

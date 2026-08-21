@@ -112,6 +112,9 @@ export interface ServerCoreCompositionOptions
   readonly shellProfiles?: ShellProfileCatalogueService;
   readonly terminalLaunchPathAuthority?: TerminalLaunchPathAuthority;
   readonly terminalLaunchEnvironment?: Readonly<Record<string, string | undefined>>;
+  /** Host-owned, per-session launch environment reserved for ephemeral
+   * authority material such as local control capabilities. */
+  readonly terminalLaunchEnvironmentFor?: import("./terminalService/launchResolver.js").TerminalLaunchResolverOptions["environmentFor"];
   readonly terminalEnvironmentCaseInsensitive?: boolean;
   readonly terminalSystemDefaultStartupMode?: ShellStartupMode;
 	/** @internal Explicit escape hatch for low-level composition tests only. */
@@ -255,6 +258,7 @@ export function createServerCoreComposition(
         },
         ...(options.terminalLaunchPathAuthority === undefined ? {} : { pathAuthority: options.terminalLaunchPathAuthority }),
         ...(options.terminalLaunchEnvironment === undefined ? {} : { defaultEnvironment: options.terminalLaunchEnvironment }),
+        ...(options.terminalLaunchEnvironmentFor === undefined ? {} : { environmentFor: options.terminalLaunchEnvironmentFor }),
         ...(options.terminalEnvironmentCaseInsensitive === undefined ? {} : { environmentCaseInsensitive: options.terminalEnvironmentCaseInsensitive }),
         ...(options.terminalSystemDefaultStartupMode === undefined ? {} : { systemDefaultStartupMode: options.terminalSystemDefaultStartupMode }),
       });

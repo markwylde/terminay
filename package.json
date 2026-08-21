@@ -84,6 +84,8 @@
 		"test:recording-replay": "node --test scripts/recording-replay.test.mjs",
 		"test:vault-reference": "node --test scripts/vault-reference.test.mjs",
 		"test:headless-vault": "npm run build --workspace @terminay/server-core && node --test packages/server-core/test/headless-vault.test.mjs",
+		"test:mcp-install": "node --test scripts/mcp-install-codex.test.mjs scripts/mcp-install-providers.test.mjs",
+		"test:mcp-stdio": "node --test scripts/mcp-stdio.test.mjs",
 		"test:signal-parser": "node --test scripts/terminal-signal-parser.test.mjs",
 		"test:signal-interpreters": "node --test scripts/signal-interpreters.test.mjs",
 		"test:safe-storage-import": "node --test scripts/safe-storage-import.test.mjs",
