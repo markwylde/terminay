@@ -108,6 +108,7 @@ export function createNodePtyFactory(module: NodePtyModuleLike, factoryOptions: 
       const pendingData: string[] = [];
       let pendingExit: { readonly exitCode: number; readonly signal?: number } | undefined;
       let exited = false;
+      let exitSubscriptionDisposed = false;
       const exitWaiters = new Set<() => void>();
       const childData = child.onData((data) => {
         // Output is an authoritative indication that the PTY advanced. Refresh
@@ -123,6 +124,11 @@ export function createNodePtyFactory(module: NodePtyModuleLike, factoryOptions: 
       });
       const childExit = child.onExit((event) => {
         exited = true;
+		queueMicrotask(() => {
+			if (exitSubscriptionDisposed) return;
+			exitSubscriptionDisposed = true;
+			childExit?.dispose();
+		});
         for (const resolve of exitWaiters) resolve();
         exitWaiters.clear();
         foreground.dispose();
@@ -190,7 +196,10 @@ export function createNodePtyFactory(module: NodePtyModuleLike, factoryOptions: 
           // the native exit callback's own stack. Releasing its TSFN from
           // inside that callback aborts macOS with an uncaught Napi::Error.
           // Once exit fired, node-pty owns completion of that subscription.
-          if (!exited) childExit?.dispose();
+          if (!exited && !exitSubscriptionDisposed) {
+			exitSubscriptionDisposed = true;
+			childExit?.dispose();
+		  }
           dataListeners.clear();
           exitListeners.clear();
           pendingData.splice(0);
