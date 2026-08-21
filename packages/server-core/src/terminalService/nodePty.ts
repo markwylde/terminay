@@ -107,8 +107,6 @@ export function createNodePtyFactory(module: NodePtyModuleLike, factoryOptions: 
       const exitListeners = new Set<(event: { readonly exitCode: number; readonly signal?: number }) => void>();
       const pendingData: string[] = [];
       let pendingExit: { readonly exitCode: number; readonly signal?: number } | undefined;
-      let exited = false;
-      const exitWaiters = new Set<() => void>();
       const childData = child.onData((data) => {
         // Output is an authoritative indication that the PTY advanced. Refresh
         // the foreground projection at the same host boundary so a delayed or
@@ -122,9 +120,6 @@ export function createNodePtyFactory(module: NodePtyModuleLike, factoryOptions: 
         for (const listener of [...dataListeners]) listener(data);
       });
       const childExit = child.onExit((event) => {
-        exited = true;
-        for (const resolve of exitWaiters) resolve();
-        exitWaiters.clear();
         foreground.dispose();
         if (exitListeners.size === 0) {
           pendingExit = event;
@@ -136,21 +131,7 @@ export function createNodePtyFactory(module: NodePtyModuleLike, factoryOptions: 
         ...(typeof child.pid === "number" ? { pid: child.pid } : {}),
         write: (bytes) => child.write(new TextDecoder().decode(bytes)),
         resize: (dimensions) => child.resize(dimensions.cols, dimensions.rows),
-        kill: async (signal) => {
-          child.kill(signal);
-          if (exited) return;
-          await new Promise<void>((resolve) => {
-            const timeout = setTimeout(() => {
-              exitWaiters.delete(done);
-              resolve();
-            }, 2_000);
-            const done = () => {
-              clearTimeout(timeout);
-              resolve();
-            };
-            exitWaiters.add(done);
-          });
-        },
+        kill: (signal) => child.kill(signal),
 				...(typeof child.pause === "function" ? { pause: () => child.pause?.() } : {}),
 				...(typeof child.resume === "function" ? { resume: () => child.resume?.() } : {}),
         onData: (listener: PtyDataListener) => {
@@ -191,8 +172,6 @@ export function createNodePtyFactory(module: NodePtyModuleLike, factoryOptions: 
           exitListeners.clear();
           pendingData.splice(0);
           pendingExit = undefined;
-          for (const resolve of exitWaiters) resolve();
-          exitWaiters.clear();
         },
       };
     },
