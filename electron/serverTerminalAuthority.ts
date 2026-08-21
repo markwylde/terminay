@@ -48,6 +48,8 @@ import {
 import {
 	CanonicalProjectPathResolver,
 	FileCatalog,
+	DocumentationCatalog,
+	type DocumentationProjectContext,
 	type FileCatalogOperationFailure,
 	type FileCatalogProjectContext,
 	type FileCatalogStorage,
@@ -57,8 +59,10 @@ import {
 	type FileSessionStorage,
 	ServerFileAdapter,
 	ServerFileCatalogAdapter,
+	ServerDocumentationCatalogAdapter,
 	ServerFileContentAdapter,
 } from '../packages/server-core/src/fileService/index';
+import { MdxRuntime, ServerMdxRuntimeAdapter, type MdxRuntimeProjectContext } from '../packages/server-core/src/mdxRuntime/index';
 import { ServerFileObservationAdapter } from '../packages/server-core/src/fileService/observationAdapter';
 import { ServerGitAdapter } from '../packages/server-core/src/gitService/adapter';
 import { GitService } from '../packages/server-core/src/gitService/service';
@@ -332,6 +336,8 @@ export class ServerTerminalAuthority {
 		string,
 		FileCatalogProjectContext
 	>();
+	private readonly documentationProjects = new Map<string, DocumentationProjectContext>();
+	private readonly mdxRuntimeProjects = new Map<string, MdxRuntimeProjectContext>();
 	private readonly fileContentProjects = new Map<
 		string,
 		FileContentProjectContext
@@ -383,6 +389,11 @@ export class ServerTerminalAuthority {
 			projects: this.fileCatalogProjects,
 			onOperationFailure: (failure) => options.onFileOperationFailure?.(failure),
 		});
+		const documentationCatalogAdapter = new ServerDocumentationCatalogAdapter({
+			serverId: options.serverId,
+			projects: this.documentationProjects,
+		});
+		const mdxRuntimeAdapter = new ServerMdxRuntimeAdapter({ serverId: options.serverId, projects: this.mdxRuntimeProjects });
 		const fileContentAdapter = new ServerFileContentAdapter({
 			serverId: options.serverId,
 			projects: this.fileContentProjects,
@@ -524,6 +535,8 @@ export class ServerTerminalAuthority {
 			},
 		});
 		const fileCatalogOperations = fileCatalogAdapter.operations();
+		const documentationCatalogOperations = documentationCatalogAdapter.operations();
+		const mdxRuntimeOperations = mdxRuntimeAdapter.operations();
 		const fileContentOperations = fileContentAdapter.operations();
 		const fileSessionOperations = fileSessionAdapter.operations();
 		this.maxReplayBytes = options.maxReplayBytes ?? 1024 * 1024;
@@ -771,6 +784,8 @@ export class ServerTerminalAuthority {
 							}),
 					...fileSessionOperations.queries,
 					...fileCatalogOperations.queries,
+					...documentationCatalogOperations.queries,
+					...mdxRuntimeOperations.queries,
 					...fileContentOperations.queries,
 					'file.get-git-diff': (request: QueryRequest) =>
 						this.getFileDiff(request),
@@ -803,6 +818,7 @@ export class ServerTerminalAuthority {
 					...dictationOperations?.commands,
 					...fileSessionOperations.commands,
 					...fileCatalogOperations.commands,
+					...mdxRuntimeOperations.commands,
 					...fileContentOperations.commands,
 					...(options.aiMetadata === undefined
 						? {}
@@ -1146,6 +1162,8 @@ export class ServerTerminalAuthority {
 			projectId,
 			catalog: new FileCatalog(resolver, nodeFileCatalogStorage),
 		});
+		this.documentationProjects.set(projectId, { projectId, catalog: new DocumentationCatalog(resolver, nodeFileCatalogStorage) });
+		this.mdxRuntimeProjects.set(projectId, { projectId, runtime: new MdxRuntime({ projectId, resolver, storage: nodeFileCatalogStorage }) });
 		this.fileSessionProjects.set(projectId, {
 			projectId,
 			resolver,
@@ -1178,6 +1196,8 @@ export class ServerTerminalAuthority {
 			projectId,
 			catalog: new FileCatalog(resolver, nodeFileCatalogStorage),
 		};
+		const documentationContext = { projectId, catalog: new DocumentationCatalog(resolver, nodeFileCatalogStorage) };
+		const mdxRuntimeContext = { projectId, runtime: new MdxRuntime({ projectId, resolver, storage: nodeFileCatalogStorage }) };
 		const contentContext = {
 			projectId,
 			content: new FileContentStreamService(resolver, nodeFileCatalogStorage),
@@ -1192,6 +1212,8 @@ export class ServerTerminalAuthority {
 			commit: async () => {
 				this.fileProjectRoots.set(projectId, canonicalRoot);
 				this.fileCatalogProjects.set(projectId, context);
+				this.documentationProjects.set(projectId, documentationContext);
+				this.mdxRuntimeProjects.set(projectId, mdxRuntimeContext);
 				this.fileContentProjects.set(projectId, contentContext);
 				this.fileSessionProjects.set(projectId, sessionContext);
 				await this.git.bindProject(projectId, canonicalRoot);

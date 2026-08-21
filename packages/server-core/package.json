@@ -4,17 +4,38 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js", "default": "./dist/index.js" },
-    "./remote": { "types": "./dist/remote/index.d.ts", "import": "./dist/remote/index.js", "default": "./dist/remote/index.js" },
-    "./ui-bundle": { "types": "./dist/uiBundle/index.d.ts", "import": "./dist/uiBundle/index.js", "default": "./dist/uiBundle/index.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./remote": {
+      "types": "./dist/remote/index.d.ts",
+      "import": "./dist/remote/index.js",
+      "default": "./dist/remote/index.js"
+    },
+    "./ui-bundle": {
+      "types": "./dist/uiBundle/index.d.ts",
+      "import": "./dist/uiBundle/index.js",
+      "default": "./dist/uiBundle/index.js"
+    }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "dependencies": {
+    "@mdx-js/mdx": "^3.1.1",
     "@terminay/extension-api": "1.0.0",
     "@terminay/protocol": "1.0.0",
     "@terminay/ui-bundle": "1.0.0",
     "@xterm/addon-serialize": "^0.14.0",
-    "@xterm/headless": "^6.0.0"
+    "@xterm/headless": "^6.0.0",
+    "esbuild": "^0.28.2",
+    "yaml": "^2.9.0"
   },
-  "scripts": { "build": "npm run build --workspace @terminay/protocol && npm run build --workspace @terminay/extension-api && npm run build --workspace @terminay/ui-bundle && tsc -p tsconfig.json", "typecheck": "npm run build --workspace @terminay/protocol && npm run build --workspace @terminay/extension-api && npm run build --workspace @terminay/ui-bundle && tsc -p tsconfig.json --noEmit", "test": "npm run build && node --test test/*.test.mjs" }
+  "scripts": {
+    "build": "npm run build --workspace @terminay/protocol && npm run build --workspace @terminay/extension-api && npm run build --workspace @terminay/ui-bundle && tsc -p tsconfig.json",
+    "typecheck": "npm run build --workspace @terminay/protocol && npm run build --workspace @terminay/extension-api && npm run build --workspace @terminay/ui-bundle && tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs"
+  }
 }

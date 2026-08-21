@@ -135,11 +135,14 @@
 		"preview": "vite preview"
 	},
 	"dependencies": {
-		"@terminay/client-core": "1.0.0",
-		"@terminay/responsive-ui": "1.0.0",
+		"@mdx-js/mdx": "^3.1.1",
+		"@mdx-js/react": "^3.1.1",
+		"@mdxeditor/editor": "^4.2.1",
 		"@modelcontextprotocol/sdk": "^1.29.0",
 		"@monaco-editor/react": "^4.7.0",
 		"@tabler/icons-react": "^3.44.0",
+		"@terminay/client-core": "1.0.0",
+		"@terminay/responsive-ui": "1.0.0",
 		"@xterm/addon-fit": "^0.11.0",
 		"@xterm/addon-search": "^0.16.0",
 		"@xterm/addon-serialize": "^0.14.0",

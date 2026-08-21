@@ -57,17 +57,19 @@ export type TerminalRecordingSettings = {
 export type GitPanelViewMode = 'list' | 'tree';
 
 export type SidebarPaneState = 'expanded' | 'collapsed';
-export const SIDEBAR_PANEL_IDS = ['explorer', 'agents', 'git'] as const;
+export const SIDEBAR_PANEL_IDS = ['explorer', 'agents', 'git', 'documentation'] as const;
 export type SidebarPanelId = (typeof SIDEBAR_PANEL_IDS)[number];
 
 export type SidebarSettings = {
 	gitPanelViewMode: GitPanelViewMode;
 	defaultExplorerState: SidebarPaneState;
 	defaultGitState: SidebarPaneState;
+	defaultDocumentationState: SidebarPaneState;
 	defaultWidth: number;
 	defaultExplorerPaneHeight: number;
 	defaultAgentsPaneHeight: number;
 	defaultGitPaneHeight: number;
+	defaultDocumentationPaneHeight: number;
 	panelOrder: SidebarPanelId[];
 };
 
