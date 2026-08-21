@@ -9,6 +9,7 @@ const outputDir = path.resolve(
 	process.env.TERMINAY_DOCS_SCREENSHOT_DIR ?? 'artifacts/docs-screenshots',
 );
 const size = { width: 1200, height: 800 };
+const screenshotDeviceScaleFactor = 2;
 const settleDelayMs = 3_000;
 const execFileAsync = promisify(execFile);
 
@@ -57,6 +58,13 @@ async function seedWorkspace() {
 async function setWindowSize(app, page) {
 	const window = await app.browserWindow(page);
 	await window.evaluate((nativeWindow, nextSize) => nativeWindow.setSize(nextSize.width, nextSize.height), size);
+	const cdpSession = await page.context().newCDPSession(page);
+	await cdpSession.send('Emulation.setDeviceMetricsOverride', {
+		width: size.width,
+		height: size.height,
+		deviceScaleFactor: screenshotDeviceScaleFactor,
+		mobile: false,
+	});
 }
 
 async function useDarkMode(page) {
@@ -127,12 +135,14 @@ async function installScreenshotWindowControls(page, placement = 'tabbar') {
 	}, placement);
 }
 
-async function capture(page, name) {
+async function capture(app, page, name) {
 	await page.waitForTimeout(settleDelayMs);
-	await page.screenshot({
-		path: path.join(outputDir, name),
-		scale: 'device',
+	const window = await app.browserWindow(page);
+	const dataUrl = await window.evaluate(async (nativeWindow) => {
+		const image = await nativeWindow.webContents.capturePage();
+		return image.toDataURL();
 	});
+	await writeFile(path.join(outputDir, name), Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64'));
 }
 
 async function editActiveProject(page, { title, hue, rootFolder }) {
@@ -302,8 +312,8 @@ async function run() {
 		await populateTerminalGrid(mainWindow, seededWorkspace.workspace);
 		const terminal = mainWindow.locator('.project-workspace--active .terminal-panel:visible .xterm-helper-textarea').first();
 		await mainWindow.locator('.project-workspace--active .xterm-rows').first().waitFor({ state: 'visible' });
-		await capture(mainWindow, 'terminay-hero-workspace.png');
-		await capture(mainWindow, 'terminay-workspace.png');
+		await capture(app, mainWindow, 'terminay-hero-workspace.png');
+		await capture(app, mainWindow, 'terminay-workspace.png');
 
 		// Keep the feature walkthroughs legible: the workspace image above intentionally
 		// demonstrates the 2x2 layout, while the Docs project is a clean one-pane canvas.
@@ -313,7 +323,7 @@ async function run() {
 		await readme.waitFor({ state: 'visible', timeout: 30_000 });
 		await readme.dblclick();
 		await mainWindow.locator('.file-preview-markdown').waitFor({ state: 'visible', timeout: 30_000 });
-		await capture(mainWindow, 'terminay-files.png');
+		await capture(app, mainWindow, 'terminay-files.png');
 
 		const docsFolder = explorerItem(mainWindow, 'docs');
 		await docsFolder.click();
@@ -322,28 +332,28 @@ async function run() {
 		await roadmap.dblclick();
 		await mainWindow.getByRole('tab', { name: 'Tasks', exact: true }).click();
 		await mainWindow.locator('.file-tasks').waitFor({ state: 'visible', timeout: 30_000 });
-		await capture(mainWindow, 'terminay-files-tasks.png');
+		await capture(app, mainWindow, 'terminay-files-tasks.png');
 
 		await docsFolder.dblclick();
 		await mainWindow.locator('.folder-viewer__title').waitFor({ state: 'visible', timeout: 30_000 });
-		await capture(mainWindow, 'terminay-folders.png');
+		await capture(app, mainWindow, 'terminay-folders.png');
 		await mainWindow.locator('.folder-viewer__view-button').filter({ hasText: 'List' }).first().click();
 		await mainWindow.locator('.folder-viewer__list').waitFor({ state: 'visible' });
-		await capture(mainWindow, 'terminay-folder-list.png');
+		await capture(app, mainWindow, 'terminay-folder-list.png');
 		await mainWindow.locator('.folder-viewer__view-button').filter({ hasText: 'Tasks' }).first().click();
 		await mainWindow.locator('.folder-tasks').waitFor({ state: 'visible', timeout: 30_000 });
-		await capture(mainWindow, 'terminay-folder-tasks.png');
+		await capture(app, mainWindow, 'terminay-folder-tasks.png');
 		await mainWindow.getByRole('tab', { name: 'Kanban', exact: true }).click();
 		await mainWindow.locator('.file-kanban__board').waitFor({ state: 'visible', timeout: 30_000 });
-		await capture(mainWindow, 'terminay-tasks-kanban.png');
+		await capture(app, mainWindow, 'terminay-tasks-kanban.png');
 
 		const gitPane = mainWindow.locator('.sidebar-pane').filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) });
 		await gitPane.locator('.worktrees-panel__worktree').first().waitFor({ state: 'visible', timeout: 30_000 });
 		await gitPane.scrollIntoViewIfNeeded();
-		await capture(mainWindow, 'terminay-worktrees.png');
+		await capture(app, mainWindow, 'terminay-worktrees.png');
 		await gitPane.locator('.worktrees-panel__push-button').first().click();
 		await mainWindow.locator('.context-menu').waitFor({ state: 'visible' });
-		await capture(mainWindow, 'terminay-quick-push.png');
+		await capture(app, mainWindow, 'terminay-quick-push.png');
 		await mainWindow.keyboard.press('Escape');
 
 		const recordingTab = mainWindow.locator('.project-workspace--active .terminal-tab-content').first();
@@ -373,31 +383,31 @@ async function run() {
 			});
 		});
 		await mainWindow.getByRole('dialog', { name: 'Command bar' }).waitFor({ state: 'visible' });
-		await capture(mainWindow, 'terminay-command-bar.png');
+		await capture(app, mainWindow, 'terminay-command-bar.png');
 		await mainWindow.keyboard.press('Escape');
 
 	const macros = await openRoute(app, mainWindow, '/?auxiliary=macros', 'macros', '[data-shared-route-body="macros"]');
 		await installScreenshotWindowControls(macros, 'floating');
-		await capture(macros, 'terminay-macros.png');
+		await capture(app, macros, 'terminay-macros.png');
 		await macros.close();
 
 	const recordings = await openRoute(app, mainWindow, '/?auxiliary=recordings', 'recordings', '[data-shared-route-body="recordings"]');
 		await installScreenshotWindowControls(recordings, 'floating');
-		await capture(recordings, 'terminay-recordings.png');
+		await capture(app, recordings, 'terminay-recordings.png');
 		await recordings.close();
 
 		const settings = await openRoute(app, mainWindow, '/?auxiliary=settings', 'settings', '[data-shared-route-body="settings"]');
 		await installScreenshotWindowControls(settings, 'floating');
-		await capture(settings, 'terminay-settings.png');
+		await capture(app, settings, 'terminay-settings.png');
 		const shortcuts = settings.locator('.settings-nav-item').filter({ hasText: 'Shortcuts' }).first();
 		await shortcuts.click();
 		await shortcuts.waitFor({ state: 'visible' });
-		await capture(settings, 'terminay-shortcuts.png');
+		await capture(app, settings, 'terminay-shortcuts.png');
 		await settings.close();
 
 	const remoteControl = await openRoute(app, mainWindow, '/?auxiliary=remote-control', 'remote-control', '[data-shared-route-body="connections"]');
 		await installScreenshotWindowControls(remoteControl, 'floating');
-		await capture(remoteControl, 'terminay-remote-access.png');
+		await capture(app, remoteControl, 'terminay-remote-access.png');
 		await remoteControl.close();
 	} finally {
 		if (app) await app.close();
