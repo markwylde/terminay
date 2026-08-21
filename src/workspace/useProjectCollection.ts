@@ -169,6 +169,10 @@ export function useProjectCollection<TTerminal>({
 						usedColors.push(color);
 						return {
 							...base,
+							hasResolvedDocumentationPaneDefault:
+								existing !== undefined && existing.rootFolder === serverProject.root
+									? existing.hasResolvedDocumentationPaneDefault
+									: false,
 							id: serverProject.id,
 							projectEnvironmentId: serverProject.projectEnvironmentId,
 							environmentRevision: serverProject.environmentRevision,
@@ -350,6 +354,8 @@ export function useProjectCollection<TTerminal>({
 				id,
 				isAgentsPaneCollapsed: project.isAgentsPaneCollapsed ?? false,
 				isDocumentationPaneCollapsed: project.isDocumentationPaneCollapsed ?? true,
+				hasResolvedDocumentationPaneDefault:
+					project.hasResolvedDocumentationPaneDefault ?? true,
 				expandedAgentEntryIds: Array.isArray(project.expandedAgentEntryIds)
 					? project.expandedAgentEntryIds.filter(
 							(entryId): entryId is string => typeof entryId === 'string',
@@ -389,6 +395,8 @@ export function useProjectCollection<TTerminal>({
 	const updateProject = useCallback(
 		(projectId: string, updates: Partial<ProjectTab>) => {
 			const { rootFolder, ...localUpdates } = updates;
+			if (rootFolder !== undefined)
+				localUpdates.hasResolvedDocumentationPaneDefault = false;
 			if (Object.keys(localUpdates).length > 0) {
 				setProjects((current) =>
 					current.map((project) =>
@@ -402,7 +410,13 @@ export function useProjectCollection<TTerminal>({
 			if (workspaceSnapshotStore === undefined) {
 				setProjects((current) =>
 					current.map((project) =>
-						project.id === projectId ? { ...project, rootFolder } : project,
+						project.id === projectId
+							? {
+									...project,
+									rootFolder,
+									hasResolvedDocumentationPaneDefault: false,
+								}
+							: project,
 					),
 				);
 				return;
