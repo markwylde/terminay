@@ -1296,7 +1296,24 @@ const ProjectWorkspace = forwardRef<
 			error: settingsError,
 		} = useTerminalSettings(serverSettingsClient);
 		const serverFileViewerClient = featureAuthority?.fileViewerClient;
-		const documentation = useDocumentationController({ enabled: !project.isDocumentationPaneCollapsed, client: featureAuthority?.documentationClient, observationClient: featureAuthority?.fileObservationClient, projectId: project.id, scopeKey: featureAuthority?.scope.projectRoot ?? project.rootFolder, expandedFolderIds: project.expandedDocumentationFolderIds, onExpandedFolderIdsChange: (expandedDocumentationFolderIds) => onUpdateProject(project.id, { expandedDocumentationFolderIds }) });
+		const documentation = useDocumentationController({
+			enabled: true,
+			watchEnabled: !project.isDocumentationPaneCollapsed,
+			client: featureAuthority?.documentationClient,
+			observationClient: featureAuthority?.fileObservationClient,
+			projectId: project.id,
+			scopeKey: featureAuthority?.scope.projectRoot ?? project.rootFolder,
+			expandedFolderIds: project.expandedDocumentationFolderIds,
+			onExpandedFolderIdsChange: (expandedDocumentationFolderIds) =>
+				onUpdateProject(project.id, { expandedDocumentationFolderIds }),
+			onCatalogLoaded: (hasDocuments) => {
+				if (project.hasResolvedDocumentationPaneDefault) return;
+				onUpdateProject(project.id, {
+					hasResolvedDocumentationPaneDefault: true,
+					isDocumentationPaneCollapsed: !hasDocuments,
+				});
+			},
+		});
 		const fileViewerClient = useMemo(
 			() =>
 				serverFileViewerClient ??
@@ -4511,7 +4528,10 @@ const ProjectWorkspace = forwardRef<
 				},
 					documentation: {
 					id: 'documentation', title: 'Documentation', height: project.sidebarDocumentationHeight, collapsed: project.isDocumentationPaneCollapsed,
-					onToggleCollapsed: () => onUpdateProject(project.id, { isDocumentationPaneCollapsed: !project.isDocumentationPaneCollapsed }),
+					onToggleCollapsed: () => onUpdateProject(project.id, {
+						hasResolvedDocumentationPaneDefault: true,
+						isDocumentationPaneCollapsed: !project.isDocumentationPaneCollapsed,
+					}),
 						actions: <button type="button" className="sidebar-pane__action-button" onClick={documentation.refresh} aria-label="Reload documentation" title="Reload documentation"><RefreshCw size={14} aria-hidden="true" /></button>,
 					count: documentation.catalog?.documents.length,
 					children: <DocumentationTree catalog={documentation.catalog} error={documentation.error} expandedFolders={documentation.expandedFolders} loading={documentation.loading} onToggleFolder={documentation.toggleFolder} onOpen={(path) => openFile(path, { presentation: 'documentation' })} />,

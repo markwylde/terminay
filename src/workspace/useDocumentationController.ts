@@ -13,21 +13,25 @@ const REFRESH_DELAY_MS = 150;
  * than expanding Explorer folders in the renderer. */
 export function useDocumentationController(options: {
 	readonly enabled: boolean;
+	readonly watchEnabled?: boolean;
 	readonly client?: DocumentationClient;
 	readonly observationClient?: FileObservationClient;
 	readonly projectId: string;
 	readonly scopeKey: string;
 	readonly expandedFolderIds: readonly string[];
 	readonly onExpandedFolderIdsChange: (ids: string[]) => void;
+	readonly onCatalogLoaded?: (hasDocuments: boolean) => void;
 }) {
 	const {
 		enabled,
+		watchEnabled = enabled,
 		client,
 		observationClient,
 		projectId,
 		scopeKey,
 		expandedFolderIds,
 		onExpandedFolderIdsChange,
+		onCatalogLoaded,
 	} = options;
 	const [catalog, setCatalog] = useState<DocumentationCatalog | undefined>(
 		undefined,
@@ -40,7 +44,9 @@ export function useDocumentationController(options: {
 	const requestRef = useRef(0);
 	const timerRef = useRef<number | undefined>(undefined);
 	const catalogRef = useRef<DocumentationCatalog | undefined>(undefined);
+	const onCatalogLoadedRef = useRef(onCatalogLoaded);
 	catalogRef.current = catalog;
+	onCatalogLoadedRef.current = onCatalogLoaded;
 	const refresh = useCallback(
 		(immediate = true) => {
 			if (!enabled || client === undefined) return;
@@ -52,6 +58,7 @@ export function useDocumentationController(options: {
 					.then((next) => {
 						if (request !== requestRef.current) return;
 						setCatalog(next);
+						onCatalogLoadedRef.current?.(next.documents.length > 0);
 						setError(undefined);
 					})
 					.catch((reason: unknown) => {
@@ -84,7 +91,7 @@ export function useDocumentationController(options: {
 		[expandedFolderIds],
 	);
 	useEffect(() => {
-		if (!enabled || observationClient === undefined || client === undefined)
+		if (!watchEnabled || observationClient === undefined || client === undefined)
 			return;
 		let disposed = false;
 		let handle: FileWatchHandle | undefined;
@@ -129,7 +136,7 @@ export function useDocumentationController(options: {
 			unsubscribe?.();
 			if (handle) void observationClient.stopWatch(handle.subscriptionId);
 		};
-	}, [client, enabled, observationClient, projectId, scopeKey, refresh]);
+	}, [client, observationClient, projectId, refresh, scopeKey, watchEnabled]);
 	const toggleFolder = useCallback(
 		(path: string) =>
 			setExpandedFolders((current) => {
