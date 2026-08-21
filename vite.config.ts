@@ -35,6 +35,9 @@ const appInput = {
 const electronInput = {
   main: path.join(__dirname, 'electron/main.ts'),
   extensionHostEntry: path.join(__dirname, 'packages/server-core/src/extensions/child.ts'),
+  // The Desktop MCP adapter is a renderer-free Node entry launched from the
+  // packaged application's unpacked resources.
+  serverMcpEntry: path.join(__dirname, 'apps/terminay-server/src/desktopMcpEntry.ts'),
 }
 
 export default defineConfig({
