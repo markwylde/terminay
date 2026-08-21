@@ -104,7 +104,7 @@ is available to agents launched from any Terminay project:
 | Client | Registration contract |
 | --- | --- |
 | Claude Code | The `terminay` entry in `mcpServers` in `~/.claude.json`. |
-| Codex | The `[mcp_servers.terminay]` table in `~/.codex/config.toml`. |
+| Codex | The `[mcp_servers.terminay]` table in `~/.codex/config.toml`, including an `env_vars` whitelist for the inherited `TERMINAY_CONTROL_SOCKET` and `TERMINAY_CONTROL_TOKEN` capability variables. |
 | Cursor CLI | The `terminay` entry in `mcpServers` in `~/.cursor/mcp.json`, shared with Cursor's user-level MCP configuration. |
 | Gemini CLI | The `terminay` entry in `mcpServers` in the user settings file `~/.gemini/settings.json`; the entry retains Gemini's normal per-tool confirmation policy. |
 | OpenCode | The `terminay` local server in `mcp` in the active stable user configuration under `~/.config/opencode/`, using a command array and no trust or permission override. |
