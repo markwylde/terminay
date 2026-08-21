@@ -24,10 +24,13 @@ The current run passed with:
 - 45 native/package-runtime records with resolved URL, integrity, version,
   and license metadata where the lockfile provides it; and
 - zero critical vulnerabilities and no unreviewed high vulnerabilities; and
-- two temporary high-severity exceptions confined to the bundled npm 12.0.2
-  process: `brace-expansion` and `ip-address`.
+- four temporary high-severity exceptions confined to the bundled npm 12.0.2
+  process: `brace-expansion`, `ip-address`, `npm`, and `tar`. The `npm` and
+  `tar` exceptions represent the same bundled-tar advisory and are limited to
+  npm's exact paths while npm has no patched 12.x release; they must be removed
+  when that upstream release is available.
 
-Those two exceptions cannot affect the Electron renderer or the Terminay
+Those four exceptions cannot affect the Electron renderer or the Terminay
 Server process directly. The npm installer runs as a bounded child process
 with a 120-second deadline, fixed public-registry origin, sterile environment,
 disabled lifecycle scripts, exact lock inspection, and no inherited proxy or
