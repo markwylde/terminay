@@ -22,6 +22,10 @@ import type {
   TerminalInactivityTimer,
   PtyForegroundProcess,
   TerminalOutputEvent,
+  TerminalPresentationRead,
+  TerminalPresentationReadOptions,
+  TerminalRetainedOutputRead,
+  TerminalRetainedOutputReadOptions,
   TerminalServiceLimits,
   TerminalSessionLifecycle,
   TerminalServiceOptions,
@@ -92,6 +96,7 @@ interface MutableSession {
 	checkpointPaused: boolean;
 	checkpointDraining: boolean;
 	readonly checkpointQueue: CheckpointOutputChunk[];
+	readonly checkpointDrainWaiters: Set<() => void>;
 }
 
 interface InactivityWaiter {
@@ -479,6 +484,7 @@ export class TerminalService {
 			checkpointPaused: false,
 			checkpointDraining: false,
 			checkpointQueue: [],
+			checkpointDrainWaiters: new Set(),
       status: "running",
       outputPosition: 0,
       replayFrom: 0,
@@ -549,6 +555,7 @@ export class TerminalService {
 			checkpointPaused: false,
 			checkpointDraining: false,
 			checkpointQueue: [],
+			checkpointDrainWaiters: new Set(),
       status: "running",
       outputPosition: 0,
       replayFrom: 0,
@@ -628,6 +635,52 @@ export class TerminalService {
   }
 
   attach(session: string | TerminalIdentity, options: TerminalSubscriptionOptions = {}): TerminalSubscription { return this.subscribe(session, options); }
+
+  /**
+   * Read an exact bounded slice of the server-owned replay ring. Unlike a
+   * subscription this deliberately permits a stale cursor: it reports the
+   * loss and resumes at replayFrom so cursor-based callers can recover in one
+   * round trip. Returned bytes are copied and are never decoded here.
+   */
+  readRetainedOutput(session: string | TerminalIdentity, options: TerminalRetainedOutputReadOptions): TerminalRetainedOutputRead {
+    const mutable = this.requireSession(session);
+    this.authorize(mutable, options.authorization, "read");
+    const maxBytes = boundedReadBytes(options.maxBytes, this.limits.maxReplayBytes);
+    const requestedFromPosition = options.fromPosition ?? mutable.replayFrom;
+    validatePosition(requestedFromPosition);
+    if (requestedFromPosition > mutable.outputPosition) {
+      throw new TerminalServiceError("invalid_position", "requested terminal output is ahead of the stream", {
+        expected: mutable.outputPosition,
+        actual: requestedFromPosition,
+      });
+    }
+    const historyLost = requestedFromPosition < mutable.replayFrom;
+    const fromPosition = historyLost ? mutable.replayFrom : requestedFromPosition;
+    const bytes = readReplayBytes(mutable.replay, fromPosition, maxBytes);
+    const nextPosition = checkedPositionAdd(fromPosition, bytes.byteLength);
+    return Object.freeze({
+      ...mutable.identity,
+      requestedFromPosition,
+      fromPosition,
+      nextPosition,
+      replayFrom: mutable.replayFrom,
+      outputPosition: mutable.outputPosition,
+      historyLost,
+      droppedBytes: historyLost ? mutable.replayFrom - requestedFromPosition : 0,
+      hasMore: nextPosition < mutable.outputPosition,
+      bytes,
+    });
+  }
+
+  /** Read a bounded text or ANSI snapshot from the canonical presentation emulator. */
+  readPresentation(session: string | TerminalIdentity, options: TerminalPresentationReadOptions): Promise<TerminalPresentationRead> {
+    const mutable = this.requireSession(session);
+    this.authorize(mutable, options.authorization, "read");
+    if (this.presentationCheckpoints === undefined) {
+      throw new TerminalServiceError("presentation_unavailable", "canonical terminal presentation is unavailable");
+    }
+    return this.waitForPresentationDrain(mutable).then(() => this.presentationCheckpoints!.readPresentation(mutable.identity, options));
+  }
 
   async input(session: string | TerminalIdentity, data: Uint8Array | string, authorization?: TerminalAuthorization): Promise<void> {
     const mutable = this.requireLiveSession(session);
@@ -873,7 +926,10 @@ export class TerminalService {
 	private drainPresentationOutput(mutable: MutableSession): void {
 		if (mutable.checkpointDraining || mutable.status !== "running") return;
 		const chunk = mutable.checkpointQueue.shift();
-		if (chunk === undefined) return;
+		if (chunk === undefined) {
+			this.resolvePresentationDrainWaiters(mutable);
+			return;
+		}
 		mutable.checkpointDraining = true;
 		let pending: Promise<void>;
 		try {
@@ -902,6 +958,17 @@ export class TerminalService {
 		});
   }
 
+	private waitForPresentationDrain(mutable: MutableSession): Promise<void> {
+		if (!mutable.checkpointDraining && mutable.checkpointQueue.length === 0) return Promise.resolve();
+		return new Promise((resolve) => mutable.checkpointDrainWaiters.add(resolve));
+	}
+
+	private resolvePresentationDrainWaiters(mutable: MutableSession): void {
+		if (mutable.checkpointDraining || mutable.checkpointQueue.length !== 0) return;
+		for (const resolve of mutable.checkpointDrainWaiters) resolve();
+		mutable.checkpointDrainWaiters.clear();
+	}
+
   private observePresentationResize(mutable: MutableSession, dimensions: TerminalDimensions): void {
     try {
       void this.presentationCheckpoints?.ingestResize(mutable.identity, dimensions).catch(() => undefined);
@@ -923,6 +990,8 @@ export class TerminalService {
     mutable.agentJournalUnsubscribe?.();
 		mutable.checkpointQueue.length = 0;
 		mutable.checkpointPendingBytes = 0;
+		for (const resolve of mutable.checkpointDrainWaiters) resolve();
+		mutable.checkpointDrainWaiters.clear();
     this.presentationCheckpoints?.closeSession(mutable.identity);
     try {
       const disposeResult = mutable.process?.dispose?.();
@@ -1105,6 +1174,35 @@ function toBytes(value: Uint8Array | string): Uint8Array {
 }
 
 function copyBytes(value: Uint8Array): Uint8Array { return new Uint8Array(value); }
+
+function boundedReadBytes(value: number, maximum: number): number {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > maximum) {
+    throw new TerminalServiceError("invalid_bytes", "terminal read byte limit is invalid", { max: maximum, actual: value });
+  }
+  return value;
+}
+
+function readReplayBytes(replay: readonly ReplayChunk[], fromPosition: number, maxBytes: number): Uint8Array {
+  const selected: Uint8Array[] = [];
+  let remaining = maxBytes;
+  for (const chunk of replay) {
+    if (remaining === 0) break;
+    if (chunk.nextPosition <= fromPosition) continue;
+    const offset = Math.max(0, fromPosition - chunk.position);
+    const value = chunk.bytes.slice(offset, offset + remaining);
+    if (value.byteLength === 0) continue;
+    selected.push(value);
+    remaining -= value.byteLength;
+  }
+  const size = maxBytes - remaining;
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const value of selected) {
+    bytes.set(value, offset);
+    offset += value.byteLength;
+  }
+  return bytes;
+}
 
 function normalizeExit(exit: PtyExit): { exitCode: number; signal: number | null } {
   const exitCode = typeof exit.exitCode === "number" && Number.isSafeInteger(exit.exitCode) ? exit.exitCode : 0;

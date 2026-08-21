@@ -1,4 +1,4 @@
-# Real MCP client compatibility in Docker
+# Docker-isolated real MCP client compatibility
 
 ## Goal
 
