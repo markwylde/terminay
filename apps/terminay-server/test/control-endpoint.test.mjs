@@ -31,12 +31,14 @@ async function withEndpoint(options, run) {
 
 test("server operation dispatch is explicit and normalizes handler outcomes", async () => {
   const dispatch = createControlOperationDispatcher({
+    get_mcp_capabilities: (_request, context) => ({ tools: [{ name: "wait_for_command", available: context.projectId === "project-a" }] }),
     read_terminal: (request, context) => {
       assert.equal(request.op, "read_terminal")
       assert.equal(context.projectId, "project-a")
       assert.equal("token" in request, false)
       return { output: "bounded" }
     },
+    search_terminal: (request) => ({ query: request.params.query, matches: [] }),
     rename_terminal: () => {
       throw new ControlEndpointError("terminal_not_found", "terminal is no longer live", ["candidate"])
     },
@@ -49,7 +51,11 @@ test("server operation dispatch is explicit and normalizes handler outcomes", as
     requestId: "read-1",
     signal: new AbortController().signal,
   }
+  assert.deepEqual(await dispatch({ id: "capabilities-1", version: CONTROL_PROTOCOL_VERSION, op: "get_mcp_capabilities", params: {} }, context), {
+    tools: [{ name: "wait_for_command", available: true }],
+  })
   assert.deepEqual(await dispatch({ id: "read-1", version: CONTROL_PROTOCOL_VERSION, op: "read_terminal", params: {} }, context), { output: "bounded" })
+  assert.deepEqual(await dispatch({ id: "search-1", version: CONTROL_PROTOCOL_VERSION, op: "search_terminal", params: { terminal: "sibling", query: "needle" } }, context), { query: "needle", matches: [] })
   assert.deepEqual(await dispatch({ id: "missing-1", version: CONTROL_PROTOCOL_VERSION, op: "list_terminals", params: {} }, context), {
     ok: false,
     error: { code: "unsupported_op", message: "The control operation is not available: list_terminals." },
