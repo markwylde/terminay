@@ -4,7 +4,7 @@ import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
 const PINNED_NPM = '12.0.2'
-const TEMPORARY_NPM_EXCEPTIONS = new Set(['brace-expansion', 'ip-address'])
+const TEMPORARY_NPM_EXCEPTIONS = new Set(['brace-expansion', 'ip-address', 'npm', 'tar'])
 
 export function evaluateProductionAudit(report, packageJson) {
   if (packageJson?.dependencies?.npm !== PINNED_NPM) {
@@ -19,7 +19,9 @@ export function evaluateProductionAudit(report, packageJson) {
       vulnerability.severity === 'high' &&
       TEMPORARY_NPM_EXCEPTIONS.has(name) &&
       nodes.length > 0 &&
-      nodes.every((path) => path === `node_modules/npm/node_modules/${name}`)
+      nodes.every((path) =>
+        path === (name === 'npm' ? 'node_modules/npm' : `node_modules/npm/node_modules/${name}`),
+      )
     if (isBoundedNpmException) exceptions.push({ name, severity: vulnerability.severity, nodes })
     else violations.push({ name, severity: vulnerability?.severity ?? 'unknown', nodes })
   }

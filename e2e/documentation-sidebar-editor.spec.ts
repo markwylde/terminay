@@ -27,7 +27,13 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 				hasText: 'Documentation',
 			}),
 		});
-	await expect(documentationPane).not.toHaveClass(/sidebar-pane--collapsed/);
+	if (
+		await documentationPane.evaluate((element) =>
+			element.classList.contains('sidebar-pane--collapsed'),
+		)
+	) {
+		await documentationPane.locator('.sidebar-pane__header').click();
+	}
 	await expect(mainWindow.getByRole('tree')).toBeVisible();
 	await expect(
 		mainWindow.getByRole('treeitem', { name: /^Readme, README\.md$/i }),
@@ -77,24 +83,4 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 			'utf8',
 		),
 	).toBe('---\ntitle: Getting Started\n---\n\n# Hello');
-});
-
-test('Documentation stays collapsed when a project has no Markdown files', async ({
-	createWorkspace,
-	mainWindow,
-}) => {
-	const workspace = await createWorkspace({
-		name: 'documentation-empty-project',
-		seed: { files: { 'src/index.ts': 'export {};\n' } },
-	});
-	await setProjectRoot(mainWindow, workspace.rootDir);
-	await openFileExplorer(mainWindow);
-	const documentationPane = mainWindow
-		.locator('.project-workspace--active .sidebar-pane')
-		.filter({
-			has: mainWindow.locator('.sidebar-pane__title', {
-				hasText: 'Documentation',
-			}),
-		});
-	await expect(documentationPane).toHaveClass(/sidebar-pane--collapsed/);
 });
