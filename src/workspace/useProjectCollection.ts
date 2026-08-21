@@ -349,15 +349,23 @@ export function useProjectCollection<TTerminal>({
 				...project,
 				id,
 				isAgentsPaneCollapsed: project.isAgentsPaneCollapsed ?? false,
+				isDocumentationPaneCollapsed: project.isDocumentationPaneCollapsed ?? true,
 				expandedAgentEntryIds: Array.isArray(project.expandedAgentEntryIds)
 					? project.expandedAgentEntryIds.filter(
 							(entryId): entryId is string => typeof entryId === 'string',
+						)
+						: [],
+				expandedDocumentationFolderIds: Array.isArray(project.expandedDocumentationFolderIds)
+					? project.expandedDocumentationFolderIds.filter(
+							(folder): folder is string => typeof folder === 'string' && folder.length > 0 && folder.length <= 4096 && !folder.startsWith('/') && !folder.includes('\\') && !folder.split('/').some((part) => !part || part === '.' || part === '..'),
 						)
 					: [],
 				sidebarAgentsHeight:
 					project.sidebarAgentsHeight ?? DEFAULT_AGENTS_PANE_HEIGHT,
 				sidebarGitHeight:
 					project.sidebarGitHeight ?? DEFAULT_AGENTS_PANE_HEIGHT,
+				sidebarDocumentationHeight:
+					project.sidebarDocumentationHeight ?? DEFAULT_AGENTS_PANE_HEIGHT,
 				sidebarPanelOrder: normalizeSidebarPanelOrder(
 					project.sidebarPanelOrder,
 				),

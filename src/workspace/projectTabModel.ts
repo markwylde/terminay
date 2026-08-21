@@ -18,10 +18,13 @@ export type ProjectTab = {
 	isExplorerPaneCollapsed: boolean;
 	isAgentsPaneCollapsed: boolean;
 	isGitPaneCollapsed: boolean;
+	isDocumentationPaneCollapsed: boolean;
 	expandedAgentEntryIds: string[];
+	expandedDocumentationFolderIds: string[];
 	sidebarAgentsHeight: number;
 	sidebarExplorerHeight: number;
 	sidebarGitHeight: number;
+	sidebarDocumentationHeight: number;
 	sidebarPanelOrder: SidebarPanelId[];
 	rootFolder: string;
 };
@@ -122,10 +125,13 @@ export function createProjectTab(
 			sidebarDefaults.defaultExplorerState === 'collapsed',
 		isAgentsPaneCollapsed: false,
 		isGitPaneCollapsed: sidebarDefaults.defaultGitState === 'collapsed',
+		isDocumentationPaneCollapsed: sidebarDefaults.defaultDocumentationState === 'collapsed',
 		expandedAgentEntryIds: [],
+		expandedDocumentationFolderIds: [],
 		sidebarAgentsHeight: sidebarDefaults.defaultAgentsPaneHeight,
 		sidebarExplorerHeight: sidebarDefaults.defaultExplorerPaneHeight,
 		sidebarGitHeight: sidebarDefaults.defaultGitPaneHeight,
+		sidebarDocumentationHeight: sidebarDefaults.defaultDocumentationPaneHeight,
 		sidebarPanelOrder: [...sidebarDefaults.panelOrder],
 		rootFolder: homePath,
 	};

@@ -448,10 +448,12 @@ export const defaultTerminalSettings: TerminalSettings = {
 		gitPanelViewMode: 'tree',
 		defaultExplorerState: 'expanded',
 		defaultGitState: 'expanded',
+		defaultDocumentationState: 'collapsed',
 		defaultWidth: 280,
 		defaultExplorerPaneHeight: 320,
 		defaultAgentsPaneHeight: 200,
 		defaultGitPaneHeight: 200,
+		defaultDocumentationPaneHeight: 240,
 		panelOrder: [...SIDEBAR_PANEL_IDS],
 	},
 	theme: {
@@ -1118,7 +1120,7 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 		categoryId: 'files',
 		title: 'Sidebar',
 		description:
-			'Default layout for the Explorer and Git panes in the project sidebar.',
+			'Default layout for the Explorer, Git, and Documentation panes in the project sidebar.',
 		fields: [
 			makeField({
 				key: 'sidebar.gitPanelViewMode',
@@ -1160,6 +1162,14 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 					{ label: 'Collapsed', value: 'collapsed' },
 				],
 				keywords: ['sidebar', 'git', 'collapse', 'expand', 'default'],
+			}),
+			makeField({
+				key: 'sidebar.defaultDocumentationState',
+				label: 'Default Documentation state',
+				description: 'Whether the Documentation pane starts expanded or collapsed in new projects.',
+				sectionId: 'sidebar', categoryId: 'files', input: 'select',
+				options: [{ label: 'Expanded', value: 'expanded' }, { label: 'Collapsed', value: 'collapsed' }],
+				keywords: ['sidebar', 'documentation', 'markdown', 'collapse', 'expand', 'default'],
 			}),
 			makeField({
 				key: 'sidebar.defaultWidth',
@@ -1233,6 +1243,13 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 					'divider',
 					'default',
 				],
+			}),
+			makeField({
+				key: 'sidebar.defaultDocumentationPaneHeight',
+				label: 'Default Documentation pane height',
+				description: 'Initial height in pixels of the Documentation pane in new projects.',
+				sectionId: 'sidebar', categoryId: 'files', input: 'number', min: 80, max: 1000, step: 10,
+				keywords: ['sidebar', 'documentation', 'markdown', 'height', 'splitter', 'divider', 'default'],
 			}),
 		],
 	},
@@ -2667,6 +2684,11 @@ export function normalizeTerminalSettings(
 				sidebarInput.defaultGitState === 'expanded'
 					? sidebarInput.defaultGitState
 					: defaultTerminalSettings.sidebar.defaultGitState,
+			defaultDocumentationState:
+				sidebarInput.defaultDocumentationState === 'collapsed' ||
+				sidebarInput.defaultDocumentationState === 'expanded'
+					? sidebarInput.defaultDocumentationState
+					: defaultTerminalSettings.sidebar.defaultDocumentationState,
 			defaultWidth: clampNumber(
 				Number(sidebarInput.defaultWidth),
 				defaultTerminalSettings.sidebar.defaultWidth,
@@ -2690,6 +2712,12 @@ export function normalizeTerminalSettings(
 				defaultTerminalSettings.sidebar.defaultGitPaneHeight,
 				80,
 				2000,
+			),
+			defaultDocumentationPaneHeight: clampNumber(
+				Number(sidebarInput.defaultDocumentationPaneHeight),
+				defaultTerminalSettings.sidebar.defaultDocumentationPaneHeight,
+				80,
+				1_000,
 			),
 			panelOrder: normalizeSidebarPanelOrder(sidebarInput.panelOrder),
 		},

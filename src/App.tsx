@@ -67,6 +67,8 @@ import {
 import type { FolderPanelInstanceParams } from './components/folder-viewer';
 import { FolderPanel, FolderTab } from './components/folder-viewer';
 import { WorktreesPanel } from './components/git-panel/WorktreesPanel';
+import { DocumentationTree } from './components/DocumentationTree';
+import { useDocumentationController } from './workspace/useDocumentationController';
 import { McpInstallModal } from './components/McpInstallModal';
 import {
 	SidebarPanelStack,
@@ -369,6 +371,7 @@ function buildGitPushAgentCommand(
 
 type OpenFileOptions = {
 	initialMode?: FileViewerMode;
+	presentation?: 'file-viewer' | 'documentation';
 };
 
 type MacroLauncherGroup = 'Terminal' | 'Workspace' | 'Macros';
@@ -1293,6 +1296,7 @@ const ProjectWorkspace = forwardRef<
 			error: settingsError,
 		} = useTerminalSettings(serverSettingsClient);
 		const serverFileViewerClient = featureAuthority?.fileViewerClient;
+		const documentation = useDocumentationController({ enabled: !project.isDocumentationPaneCollapsed, client: featureAuthority?.documentationClient, observationClient: featureAuthority?.fileObservationClient, projectId: project.id, scopeKey: featureAuthority?.scope.projectRoot ?? project.rootFolder, expandedFolderIds: project.expandedDocumentationFolderIds, onExpandedFolderIdsChange: (expandedDocumentationFolderIds) => onUpdateProject(project.id, { expandedDocumentationFolderIds }) });
 		const fileViewerClient = useMemo(
 			() =>
 				serverFileViewerClient ??
@@ -2095,6 +2099,18 @@ const ProjectWorkspace = forwardRef<
 				if (existingPanelId) {
 					const existingPanel = api.getPanel(existingPanelId);
 					if (existingPanel) {
+						if (
+							existingPanel.params?.presentation === 'documentation' &&
+							options?.presentation === 'file-viewer'
+						) {
+							const flush = filePanelSaveHandlersRef.current.get(existingPanel.id);
+							if (flush !== undefined) {
+								try { await flush(); } catch { return; }
+							}
+						}
+						if (options?.presentation && existingPanel.params?.presentation !== options.presentation) {
+							existingPanel.api.updateParameters({ ...(existingPanel.params ?? {}), presentation: options.presentation });
+						}
 						if (options?.initialMode) {
 							existingPanel.api.updateParameters({
 								...existingPanel.params,
@@ -2129,6 +2145,7 @@ const ProjectWorkspace = forwardRef<
 					params: {
 						color: project.color,
 						filePath,
+						presentation: options?.presentation ?? 'file-viewer',
 						initialMode: options?.initialMode,
 						inheritsProjectColor: true,
 						isFocused: false,
@@ -2152,6 +2169,15 @@ const ProjectWorkspace = forwardRef<
 			},
 			[project.color, project.rootFolder, syncPanelFocusState],
 		);
+		useEffect(() => {
+			const openDocumentationLink = (event: Event) => {
+				const path = (event as CustomEvent<{ path?: unknown }>).detail?.path;
+				if (typeof path !== 'string' || !path || path.startsWith('/') || path.includes('\\') || path.split('/').some((part) => !part || part === '.' || part === '..')) return;
+				void openFile(path, { presentation: 'documentation' });
+			};
+			window.addEventListener('terminay-documentation-open', openDocumentationLink);
+			return () => window.removeEventListener('terminay-documentation-open', openDocumentationLink);
+		}, [openFile]);
 
 		const handleOpenTerminalAt = useCallback(
 			async (path: string, isDirectory = false) => {
@@ -3494,6 +3520,15 @@ const ProjectWorkspace = forwardRef<
 				if (!api || !panel) return;
 				const workspaceStore = terminalClientContext?.workspaceSnapshotStore;
 				const canonicalPanel = workspaceStore?.snapshot?.panels[panelId];
+				if (panel.params?.presentation === 'documentation') {
+					const flush = filePanelSaveHandlersRef.current.get(panelId);
+					if (flush !== undefined) {
+						try { await flush(); } catch (error) {
+							setErrorText(error instanceof Error ? error.message : String(error));
+							return;
+						}
+					}
+				}
 				const sessionId = panelSessionMapRef.current.get(panelId);
 				if (sessionId !== undefined) {
 					const preflight = await observeTerminalClosePreflight(
@@ -3569,6 +3604,15 @@ const ProjectWorkspace = forwardRef<
 			window.addEventListener('terminay-request-close-terminal', listener);
 			return () =>
 				window.removeEventListener('terminay-request-close-terminal', listener);
+		}, [requestClosePanel]);
+
+		useEffect(() => {
+			const listener = (event: Event) => {
+				const panelId = (event as CustomEvent<{ panelId?: unknown }>).detail?.panelId;
+				if (typeof panelId === 'string') void requestClosePanel(panelId);
+			};
+			window.addEventListener('terminay-request-close-file', listener);
+			return () => window.removeEventListener('terminay-request-close-file', listener);
 		}, [requestClosePanel]);
 
 		const closeActivePanel = useCallback(async () => {
@@ -4465,6 +4509,13 @@ const ProjectWorkspace = forwardRef<
 							/>
 						),
 				},
+					documentation: {
+					id: 'documentation', title: 'Documentation', height: project.sidebarDocumentationHeight, collapsed: project.isDocumentationPaneCollapsed,
+					onToggleCollapsed: () => onUpdateProject(project.id, { isDocumentationPaneCollapsed: !project.isDocumentationPaneCollapsed }),
+						actions: <button type="button" className="sidebar-pane__action-button" onClick={documentation.refresh} aria-label="Reload documentation" title="Reload documentation"><RefreshCw size={14} aria-hidden="true" /></button>,
+					count: documentation.catalog?.documents.length,
+					children: <DocumentationTree catalog={documentation.catalog} error={documentation.error} expandedFolders={documentation.expandedFolders} loading={documentation.loading} onToggleFolder={documentation.toggleFolder} onOpen={(path) => openFile(path, { presentation: 'documentation' })} />,
+				},
 			};
 		const visibleSidebarPanelIds = project.sidebarPanelOrder.filter(
 			(id) => settings.agentIntegration.enabled || id !== 'agents',
@@ -4512,7 +4563,7 @@ const ProjectWorkspace = forwardRef<
 												? { sidebarExplorerHeight: height }
 												: id === 'agents'
 													? { sidebarAgentsHeight: height }
-													: { sidebarGitHeight: height }),
+													: id === 'git' ? { sidebarGitHeight: height } : { sidebarDocumentationHeight: height }),
 										});
 									}}
 									onHeightCommit={(id, height) => {
@@ -4521,7 +4572,7 @@ const ProjectWorkspace = forwardRef<
 												? { defaultExplorerPaneHeight: height }
 												: id === 'agents'
 													? { defaultAgentsPaneHeight: height }
-													: { defaultGitPaneHeight: height },
+													: id === 'git' ? { defaultGitPaneHeight: height } : { defaultDocumentationPaneHeight: height },
 										);
 									}}
 									onReorder={(orderedIds) => {
