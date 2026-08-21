@@ -23,8 +23,10 @@ export const CONTROL_SOCKET_ENV = "TERMINAY_CONTROL_SOCKET";
 export const CONTROL_TOKEN_ENV = "TERMINAY_CONTROL_TOKEN";
 
 export const CONTROL_OPERATIONS = [
+  "get_mcp_capabilities",
   "list_terminals",
   "read_terminal",
+  "search_terminal",
   "get_terminal_status",
   "open_terminal",
   "write_terminal",
@@ -194,8 +196,10 @@ const INVALID_CAPABILITY_ERROR: ControlError = Object.freeze({
 });
 
 const DEFAULT_OPERATION_SCOPES: Readonly<Partial<Record<ControlOperation, ControlScope>>> = Object.freeze({
+  get_mcp_capabilities: "read",
   list_terminals: "read",
   read_terminal: "read",
+  search_terminal: "read",
   get_terminal_status: "read",
   wait_for_idle: "read",
   wait_for_command: "read",
