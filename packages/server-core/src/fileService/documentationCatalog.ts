@@ -89,7 +89,7 @@ export class DocumentationCatalog {
 		};
 		await visit('', 0);
 		documents.sort(compareRecord);
-		const orderedFolders = [...folders].map((relativePath) => ({ kind: 'folder' as const, relativePath, title: relativePath.split('/').at(-1) ?? relativePath })).sort((a, b) => compareText(a.title, b.title) || a.relativePath.localeCompare(b.relativePath));
+		const orderedFolders = [...folders].map((relativePath) => ({ kind: 'folder' as const, relativePath, title: titleCase(relativePath.split('/').at(-1) ?? relativePath) })).sort((a, b) => compareText(a.title, b.title) || a.relativePath.localeCompare(b.relativePath));
 		const result: DocumentationCatalogResult = { revision: catalogRevision(scannedEntries, scannedFiles, documents), folders: orderedFolders, documents, scannedEntries, scannedFiles, partial: partialReason !== undefined, ...(partialReason === undefined ? {} : { partialReason }) };
 		const bytes = new TextEncoder().encode(JSON.stringify(result)).byteLength;
 		if (bytes > DOCUMENTATION_CATALOG_LIMITS.maxResultBytes) return { ...result, documents: documents.slice(0, Math.max(1, Math.floor(documents.length / 2))), partial: true, partialReason: 'result_limit' };

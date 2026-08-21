@@ -26,6 +26,7 @@ function fixture() {
 test('DocumentationCatalog recursively discovers MD/MDX, prunes ignored folders, and uses frontmatter titles', async () => {
 	const result = await fixture().catalog();
 	assert.deepEqual(result.folders.map((folder) => folder.relativePath), ['docs']);
+	assert.deepEqual(result.folders.map((folder) => folder.title), ['Docs']);
 	assert.deepEqual(result.documents.map((document) => [document.relativePath, document.title, document.titleSource]), [
 		['docs/APIReference.md', 'Api Reference', 'filename'],
 		['docs/guide.mdx', 'Getting Started', 'frontmatter'],
