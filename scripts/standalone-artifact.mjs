@@ -3,9 +3,13 @@ import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, sep } from 'node:path'
 
 const PACKAGE_NAME = '@terminay/server'
-const REQUIRED_FILES = ['package.json', 'dist/cli.js', 'dist/index.js', 'dist/bundled-npm-evidence.json']
+const REQUIRED_FILES = ['package.json', 'dist/cli.js', 'dist/index.js', 'dist/mcpEntry.js', 'dist/bundled-npm-evidence.json']
 const NODE_ENGINE = '24.15.0'
 const NPM_INSTALLER = '12.0.2'
+const REQUIRED_BINS = {
+  'terminay-server': 'dist/cli.js',
+  'terminay-mcp': 'dist/mcpEntry.js',
+}
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex')
@@ -49,8 +53,9 @@ export async function inspectStandaloneArtifact(root) {
   const npmEvidence = JSON.parse((await readRegularFile(root, 'dist/bundled-npm-evidence.json')).bytes.toString('utf8'))
   if (npmEvidence?.schemaVersion !== 1 || npmEvidence?.version !== NPM_INSTALLER || !Number.isSafeInteger(npmEvidence?.packageCount) || npmEvidence.packageCount < 50 || !Array.isArray(npmEvidence.packages) || npmEvidence.packages.length !== npmEvidence.packageCount || !/^[a-f0-9]{64}$/u.test(npmEvidence.closureSha256)) fail('bundled npm closure evidence is invalid')
   if (!Array.isArray(packageJson.files) || !packageJson.files.includes('dist')) fail('package files must include dist')
-  if (packageJson.bin?.['terminay-server'] !== 'dist/cli.js') fail('terminay-server bin must point to dist/cli.js')
-  if (Object.keys(packageJson.bin ?? {}).join(',') !== 'terminay-server') fail('standalone artifact must expose only the terminay-server bin')
+  if (!Object.entries(REQUIRED_BINS).every(([name, path]) => packageJson.bin?.[name] === path) || Object.keys(packageJson.bin ?? {}).length !== Object.keys(REQUIRED_BINS).length) {
+    fail('standalone artifact must expose exactly the terminay-server and terminay-mcp bins')
+  }
 
   const files = []
   for (const path of REQUIRED_FILES) {
@@ -60,7 +65,7 @@ export async function inspectStandaloneArtifact(root) {
     files.push({ path: normalizedPath, size: file.size, sha256: sha256(file.bytes) })
   }
 
-  for (const path of ['dist/cli.js', 'dist/index.js']) {
+  for (const path of ['dist/cli.js', 'dist/index.js', 'dist/mcpEntry.js']) {
     const source = (await readFile(join(root, path), 'utf8'))
     if (/['"]electron(?:\/|['"])/u.test(source)) fail(`${path} imports Electron`)
   }

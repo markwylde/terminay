@@ -473,12 +473,13 @@ no-referrer` so endpoint URLs cannot propagate credentials through browser
 history or referrers.
 
 Standalone packaging emits a deterministic `artifact-manifest.json` containing
-the package version, pinned Node engine, required entrypoint paths, SHA-256
-payload hashes, and provenance pointers. `scripts/standalone-artifact.mjs`
-re-hashes a candidate payload and fails on missing files, tampering, unsafe
-manifest paths, or Electron imports. This is a pre-release integrity check;
-signatures, notarization, and native release certification remain separate
-gates.
+the package version, pinned Node engine, the exact `terminay-server` and
+`terminay-mcp` entrypoint paths, SHA-256 payload hashes, and provenance
+pointers. `scripts/standalone-artifact.mjs` re-hashes a candidate payload and
+fails on missing files, changed or additional executable bins, tampering,
+unsafe manifest paths, or Electron imports. This is a pre-release integrity
+check; signatures, notarization, and native release certification remain
+separate gates.
 
 Native standalone release jobs establish a version-controlled checkout before
 building or probing the archive. Runner evidence is valid only when it binds
