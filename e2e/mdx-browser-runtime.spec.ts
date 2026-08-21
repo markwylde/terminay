@@ -24,9 +24,5 @@ test('Documentation opens MDX through the isolated preview surface', async ({ cr
   }
   await expect(mainWindow.getByRole('tree'), `Documentation pane: ${await documentationPane.innerText()}`).toBeVisible()
   await mainWindow.getByRole('treeitem', { name: /^Guide, guide\.mdx$/i }).click()
-  try {
-    await expect(mainWindow.locator('iframe[title="MDX preview"]')).toBeVisible({ timeout: 20_000 })
-  } catch (error) {
-    throw new Error(`Documentation editor: ${await mainWindow.locator('.documentation-editor').innerText()}`, { cause: error })
-  }
+  await expect(mainWindow.locator('iframe[title="MDX preview"]')).toBeVisible({ timeout: 20_000 })
 })

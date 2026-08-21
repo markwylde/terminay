@@ -186,11 +186,7 @@ export function createNodePtyFactory(module: NodePtyModuleLike, factoryOptions: 
         dispose: () => {
           foreground.dispose();
           childData?.dispose();
-          // node-pty may invoke this adapter and TerminalService disposal on
-          // the native exit callback's own stack. Releasing its TSFN from
-          // inside that callback aborts macOS with an uncaught Napi::Error.
-          // Once exit fired, node-pty owns completion of that subscription.
-          if (!exited) childExit?.dispose();
+          childExit?.dispose();
           dataListeners.clear();
           exitListeners.clear();
           pendingData.splice(0);
