@@ -583,7 +583,13 @@ export type EditWindowResult =
 			kind: 'terminal';
 	  };
 
-export type McpAgentId = 'claudeCode' | 'codex';
+/** A provider whose user-wide MCP registration Terminay can manage. */
+export type McpAgentId =
+	| 'claudeCode'
+	| 'codex'
+	| 'cursor'
+	| 'gemini'
+	| 'openCode';
 export type McpAgentRegistrationState =
 	| 'not-installed'
 	| 'installed'

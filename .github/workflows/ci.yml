@@ -71,6 +71,20 @@ jobs:
       - name: Build, lint, and run fast tests
         run: npm run test:ci
 
+  mcp-cli-compatibility:
+    name: Real MCP CLI compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Test latest MCP clients in Docker
+        run: npm run e2e:mcp-cli-real-tests
+
   e2e-image:
     name: Build E2E image
     runs-on: ubuntu-latest
