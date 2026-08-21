@@ -160,15 +160,13 @@ async function exerciseLaunch({ expected, mode, userData }) {
 		return { identity, mode };
 	} catch (error) {
 		const diagnostics = await readDiagnostics(userData);
-		const failure = new Error(
+		throw new Error(
 			`${mode} packaged-artifact journey failed: ${error instanceof Error ? error.message : String(error)}\n` +
 				`Process/renderer failures:\n${failures.join('\n') || '(none)'}\n` +
 				`Main stderr:\n${mainStderr.text || '(none)'}\n` +
 				`Diagnostics:\n${diagnostics || '(none)'}`,
 			{ cause: error },
 		);
-		process.stderr.write(`${failure.stack ?? failure.message}\n`);
-		throw failure;
 	} finally {
 		if (electronApp !== undefined) await emergencyClose(electronApp);
 	}
