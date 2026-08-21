@@ -14,4 +14,7 @@ export type FilePanelInstanceParams = {
   preferredEngine?: FileViewerEngine
   projectColor?: string
   projectRoot: string
+  /** One canonical panel/session may expose either ordinary file tools or the
+   * rich Documentation presentation. */
+  presentation?: 'file-viewer' | 'documentation'
 }

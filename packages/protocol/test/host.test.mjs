@@ -338,6 +338,25 @@ test('external URL actions accept credential-free HTTP and HTTPS only', () => {
 	}
 });
 
+test('preview downloads are bounded opaque host payloads', () => {
+	assert.deepEqual(parseTerminayHostAction({
+		type: 'preview.download',
+		filename: 'diagram.png',
+		mimeType: 'image/png',
+		bytesBase64: 'AAE=',
+	}), {
+		type: 'preview.download',
+		filename: 'diagram.png',
+		mimeType: 'image/png',
+		bytesBase64: 'AAE=',
+	});
+	for (const action of [
+		{ type: 'preview.download', filename: 'x', mimeType: 'text/plain; charset=utf-8', bytesBase64: 'AA==' },
+		{ type: 'preview.download', filename: 'x', mimeType: 'text/plain', bytesBase64: '' },
+		{ type: 'preview.download', filename: 'x', mimeType: 'text/plain', bytesBase64: 'not base64!' },
+	]) assert.throws(() => parseTerminayHostAction(action), /preview (MIME type|download payload) is invalid/u);
+});
+
 test('native menu accelerator updates are bounded and immutable', () => {
 	const action = parseTerminayHostAction({
 		type: 'menu.accelerators.update',

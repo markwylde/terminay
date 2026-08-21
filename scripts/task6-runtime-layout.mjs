@@ -129,6 +129,15 @@ export async function inspectRuntimeLayoutMetadata(root) {
 			'Desktop packaging must unpack dist-electron so the sandboxed preload is a regular file',
 		);
 	}
+	if (
+		!/"from"\s*:\s*"node_modules\/@esbuild"\s*,\s*"to"\s*:\s*"esbuild"/u.test(
+			builder,
+		)
+	) {
+		throw new Error(
+			'Desktop packaging must stage the platform esbuild executable as a regular resource',
+		);
+	}
 	return Object.freeze({
 		buildsServerWorkspace: true,
 		standaloneDist: true,

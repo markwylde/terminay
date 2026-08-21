@@ -3,8 +3,10 @@
 ## Summary
 
 Each project can expose its root folder in a resizable sidebar Explorer and open
-directories as dockable Folder tabs. The sidebar joins the Agents and Git panes
-in a persistent, reorderable vertical stack.
+directories as dockable Folder tabs. Explorer joins Documentation, Agents, and
+Git in a persistent, reorderable vertical stack. The focused Markdown/MDX tree
+and rich editor are governed by
+[Documentation sidebar and editor](./documentation-sidebar-and-editor.md).
 
 ## Explorer
 
@@ -37,8 +39,9 @@ in a persistent, reorderable vertical stack.
 - Markdown tasks are available both for one file and recursively for a folder.
   The task surfaces parse checkboxes, expose progress/filter/search/grouping
   views, and honour the configured ignored-directory patterns.
-- Sidebar pane ordering, collapse state, and dimensions persist as local user
-  preferences; they never alter project files.
+- Sidebar pane ordering, collapse state, and dimensions, including the
+  Documentation pane, persist as local user preferences; they never alter
+  project files.
 
 ## Ownership
 

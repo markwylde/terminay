@@ -111,6 +111,50 @@ export async function openExternalUrl(url: string): Promise<void> {
 	window.open(url, '_blank', 'noopener,noreferrer');
 }
 
+/** Preview content never receives a filesystem path. Desktop receives only a
+ * capped byte payload and asks the user for a destination; browser clients use
+ * the ordinary, user-visible Blob download flow. */
+export async function savePreviewDownload(input: {
+	readonly bytes: Uint8Array;
+	readonly filename: string;
+	readonly mimeType: string;
+}): Promise<void> {
+	if (input.bytes.byteLength === 0 || input.bytes.byteLength > 16 * 1024 * 1024)
+		throw new Error('Preview downloads are limited to 16 MiB.');
+	const response = await request({
+		type: 'preview.download',
+		filename: safeDownloadFilename(input.filename),
+		mimeType: input.mimeType,
+		bytesBase64: base64(input.bytes),
+	});
+	if (response.handled) return;
+	const copy = input.bytes.buffer.slice(input.bytes.byteOffset, input.bytes.byteOffset + input.bytes.byteLength) as ArrayBuffer;
+	const url = URL.createObjectURL(new Blob([copy], { type: input.mimeType }));
+	const anchor = document.createElement('a');
+	anchor.href = url;
+	anchor.download = safeDownloadFilename(input.filename);
+	anchor.rel = 'noopener noreferrer';
+	document.body.append(anchor);
+	anchor.click();
+	anchor.remove();
+	window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function safeDownloadFilename(value: string): string {
+	const result = [...value].map((character) => {
+		const code = character.codePointAt(0) ?? 0;
+		return code < 0x20 || /[\\/:*?"<>|]/u.test(character) ? '_' : character;
+	}).join('').trim().slice(0, 128);
+	return result.length > 0 ? result : 'download';
+}
+
+function base64(bytes: Uint8Array): string {
+	let output = '';
+	for (let offset = 0; offset < bytes.length; offset += 0x8000)
+		output += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
+	return window.btoa(output);
+}
+
 function parseUpdateStatus(value: unknown): AppUpdateStatus {
 	if (typeof value !== 'object' || value === null || Array.isArray(value))
 		throw new TypeError('native updater returned an invalid status');

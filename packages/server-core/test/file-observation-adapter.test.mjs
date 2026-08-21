@@ -35,6 +35,10 @@ test("file observations are project scoped, ordered, idempotent, and cancelled w
   assert.equal(duplicate.subscriptionId, handle.subscriptionId);
   assert.equal(watcher.resource, "");
 
+  const stop = adapter.operations.commands[FILE_OBSERVATION_OPERATIONS.watchStop];
+  await stop(command(FILE_OBSERVATION_OPERATIONS.watchStop, { subscriptionId: handle.subscriptionId }));
+  assert.equal(watcher.signal.aborted, false);
+
   watcher.publish({ resource: "docs/readme.md", kind: "changed" });
   const batch = await read(query(FILE_OBSERVATION_OPERATIONS.watchRead, { subscriptionId: handle.subscriptionId }));
   assert.equal(batch.events[0].resource, "docs/readme.md");

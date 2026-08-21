@@ -36,7 +36,7 @@ export interface FileObservationAdapterOptions {
   readonly maxFolderSizeJobs?: number;
 }
 
-interface WatchState { readonly projectId: string; readonly clientId: string; readonly controller: AbortController; }
+interface WatchState { readonly projectId: string; readonly clientId: string; readonly controller: AbortController; consumers: number; }
 interface SizeJob { readonly projectId: string; readonly clientId: string; readonly controller: AbortController; }
 
 /** Canonical project-scoped directory observation and cancellable folder-size
@@ -91,10 +91,11 @@ export class ServerFileObservationAdapter {
     const subscription = this.watches.subscribe({ clientId: request.context.clientId, projectId, resource });
     const existing = this.watchStates.get(subscription.subscriptionId);
     if (existing !== undefined) {
+      existing.consumers += 1;
       return { subscriptionId: subscription.subscriptionId, projectId, resource, cursor: this.watches.sequence };
     }
     const controller = new AbortController();
-    const state = { projectId, clientId: request.context.clientId, controller };
+    const state = { projectId, clientId: request.context.clientId, controller, consumers: 1 };
     this.watchStates.set(subscription.subscriptionId, state);
     void Promise.resolve(this.options.host.watch({
       projectId, resource, signal: controller.signal,
@@ -142,7 +143,8 @@ export class ServerFileObservationAdapter {
     const id = text(payload.subscriptionId, "subscriptionId", 128);
     const state = this.requireWatch(id, request.context.clientId);
     this.project(request, state.projectId);
-    this.closeWatch(id, state);
+    state.consumers -= 1;
+    if (state.consumers === 0) this.closeWatch(id, state);
     return null;
   }
 
