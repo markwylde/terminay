@@ -5,6 +5,10 @@ import {
   type TerminalAuthorization,
   type TerminalEvent,
   type TerminalLaunchResolver,
+  type TerminalPresentationRead,
+  type TerminalPresentationReadOptions,
+  type TerminalRetainedOutputRead,
+  type TerminalRetainedOutputReadOptions,
   TerminalService,
   type TerminalSessionSnapshot,
   type WorkspacePanel,
@@ -12,7 +16,7 @@ import {
   type WorkspaceRepository as WorkspaceRepositoryType,
 } from "@terminay/server-core";
 import { ControlEndpointError, type ControlRequestContext } from "./controlEndpoint.js";
-import type { OpenTerminalParams, ReadTerminalParams, RenameTerminalParams, RunCommandParams, SplitTerminalParams, TerminalControlAdapter, TerminalParams, WaitForIdleParams, WaitParams, WriteTerminalParams } from "./dispatcher.js";
+import type { OpenTerminalParams, ReadTerminalParams, RenameTerminalParams, RunCommandParams, SearchTerminalParams, SplitTerminalParams, TerminalControlAdapter, TerminalParams, WaitForIdleParams, WaitParams, WriteTerminalParams } from "./dispatcher.js";
 
 export interface ServerTerminalControlAdapterOptions {
   readonly terminal: TerminalService;
@@ -43,8 +47,10 @@ export function createServerTerminalControlAdapter(options: ServerTerminalContro
   const maxReadBytes = positive(options.maxReadBytes ?? DEFAULT_MAX_READ_BYTES, "maxReadBytes");
   const maxWaitSeconds = positive(options.maxWaitSeconds ?? DEFAULT_MAX_WAIT_SECONDS, "maxWaitSeconds");
   return {
+    getMcpCapabilities: () => getMcpCapabilities(options),
     listTerminals: (context) => listTerminals(options, context),
     readTerminal: (params, context) => readTerminal(options, params, context, maxReadBytes),
+    searchTerminal: (params, context) => searchTerminal(options, params, context, maxReadBytes),
     getTerminalStatus: (params, context) => terminalStatus(options, params, context),
     openTerminal: (params, context) => openTerminal(options, params, context),
     writeTerminal: (params, context) => writeTerminal(options, params, context),
@@ -68,6 +74,42 @@ export function createServerTerminalControlAdapter(options: ServerTerminalContro
   };
 }
 
+function getMcpCapabilities(options: ServerTerminalControlAdapterOptions): unknown {
+  const activityAvailable = options.activity !== undefined;
+  const workspaceAvailable = options.workspace !== undefined;
+  return {
+    tools: [
+      "get_mcp_capabilities",
+      "list_terminals",
+      "read_terminal",
+      "search_terminal",
+      "get_terminal_status",
+      "open_terminal",
+      "write_terminal",
+      "run_command",
+      "close_terminal",
+      "focus_terminal",
+      "rename_terminal",
+      "split_terminal",
+      "wait_for_idle",
+      "wait_for_command",
+      "wait_for_attention",
+    ].map((tool) => ({
+      tool,
+      available:
+        tool === "wait_for_idle" || tool === "wait_for_command" || tool === "wait_for_attention"
+          ? activityAvailable
+          : tool === "focus_terminal"
+            ? workspaceAvailable || options.focusTerminal !== undefined
+            : tool === "rename_terminal"
+              ? workspaceAvailable || options.renameTerminal !== undefined
+              : tool === "split_terminal"
+                ? workspaceAvailable || options.splitTerminal !== undefined
+                : true,
+    })),
+  };
+}
+
 function listTerminals(options: ServerTerminalControlAdapterOptions, context: ControlRequestContext): unknown {
   const terminals = options.terminal
     .listSessions()
@@ -76,10 +118,9 @@ function listTerminals(options: ServerTerminalControlAdapterOptions, context: Co
       const activity = activitySnapshot(options.activity, context, session.sessionId);
       return {
         terminal: session.sessionId,
-        projectId: session.projectId,
         status: session.status,
-        outputPosition: session.outputPosition,
-        replayFrom: session.replayFrom,
+        output_position: session.outputPosition,
+        replay_from: session.replayFrom,
         ...(activity === undefined ? {} : { activity }),
       };
     });
@@ -88,31 +129,151 @@ function listTerminals(options: ServerTerminalControlAdapterOptions, context: Co
 
 async function readTerminal(options: ServerTerminalControlAdapterOptions, params: ReadTerminalParams, context: ControlRequestContext, maxReadBytes: number): Promise<unknown> {
   const session = targetSession(options.terminal, context, params.terminal);
-  const subscription = options.terminal.subscribe(session, {
-    authorization: authorization(context, options.terminal.serverId, "read"),
-    fromPosition: session.replayFrom,
-    maxQueuedBytes: maxReadBytes,
-  });
-  try {
-    const events = subscription.drain();
-    if (subscription.closed && events.some((event) => event.type === "resync_required")) throw new ControlEndpointError("limit_exceeded", "terminal replay is no longer available");
-    const chunks = events.filter((event): event is Extract<TerminalEvent, { type: "output" }> => event.type === "output");
-    const bytes = chunks.reduce((sum, event) => sum + event.bytes.byteLength, 0);
-    const raw = new TextDecoder().decode(
-      concat(
-        chunks.map((event) => event.bytes),
-        bytes,
-      ),
-    );
-    const lines = params.lines === undefined ? raw : takeLastLines(raw, params.lines);
+  const terminal = outputReader(options.terminal);
+  const readAuthorization = authorization(context, options.terminal.serverId, "read");
+  const responseBudget = Math.min(params.maxBytes, maxReadBytes);
+  if (params.format === "raw") {
+    // Base64 expands every complete triple of PTY bytes into four response
+    // bytes. Never return a partial Base64 quantum just to use the final one
+    // to three requested bytes of budget.
+    const rawBudget = Math.floor(responseBudget / 4) * 3;
+    const retained = terminal.readRetainedOutput(session, {
+      authorization: readAuthorization,
+      ...(params.after === undefined ? {} : { fromPosition: params.after }),
+      maxBytes: Math.max(1, rawBudget),
+    });
+    const bytes = rawBudget === 0 ? new Uint8Array() : retained.bytes;
     return {
       terminal: session.sessionId,
-      output: lines,
-      truncated: lines !== raw,
+      format: "raw",
+      encoding: "base64",
+      output: Buffer.from(bytes).toString("base64"),
+      from: retained.fromPosition,
+      next: retained.fromPosition + bytes.byteLength,
+      replay_from: retained.replayFrom,
+      output_position: retained.outputPosition,
+      history_lost: retained.historyLost,
+      truncated_tail: retained.fromPosition + bytes.byteLength < retained.outputPosition,
     };
-  } finally {
-    subscription.close();
   }
+  const presentation = await terminal.readPresentation(session, {
+    authorization: readAuthorization,
+    format: params.format,
+    maxBytes: responseBudget,
+    ...(params.format === "text" && params.lines !== undefined ? { maxRows: params.lines } : {}),
+  });
+  return {
+    terminal: session.sessionId,
+    format: presentation.format,
+    output_position: presentation.outputPosition,
+    dimensions: presentation.dimensions,
+    presentation_truncated: presentation.truncated,
+    dropped_bytes: presentation.droppedBytes,
+    dropped_rows: presentation.droppedRows,
+    ...(presentation.format === "text"
+      ? { output: (presentation.rows ?? []).join("\n") }
+      : { output: presentation.ansi ?? "" }),
+  };
+}
+
+async function searchTerminal(options: ServerTerminalControlAdapterOptions, params: SearchTerminalParams, context: ControlRequestContext, maxReadBytes: number): Promise<unknown> {
+  const session = targetSession(options.terminal, context, params.terminal);
+  const terminal = outputReader(options.terminal);
+  // Search is snapshot-only. Obtain a bounded text presentation large enough
+  // to search useful scrollback, then independently bound the result object.
+  const presentation = await terminal.readPresentation(session, {
+    authorization: authorization(context, options.terminal.serverId, "read"),
+    format: "text",
+    maxBytes: Math.max(params.maxBytes, Math.min(maxReadBytes, 64 * 1024)),
+  });
+  const rows = presentation.rows ?? [];
+  const fold = params.caseSensitive
+    ? (value: string) => value
+    : (value: string) => value.toLocaleLowerCase("und");
+  const query = fold(params.query);
+  const matchingIndexes: number[] = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    if (fold(rows[index]!).includes(query)) matchingIndexes.push(index);
+  }
+
+  const matches: Array<Record<string, unknown>> = [];
+  let matchesTruncated = false;
+  for (let matchOffset = 0; matchOffset < matchingIndexes.length; matchOffset += 1) {
+    if (matches.length >= params.maxMatches) {
+      matchesTruncated = true;
+      break;
+    }
+    const index = matchingIndexes[matchOffset]!;
+    let accepted: Record<string, unknown> | undefined;
+    // Prefer the requested surrounding context, then progressively shorten it
+    // before omitting a later match. Row indexes identify this snapshot only.
+    for (let contextLines = params.contextLines; contextLines >= 0; contextLines -= 1) {
+      const candidate = {
+        row: index,
+        text: rows[index]!,
+        before: rows.slice(Math.max(0, index - contextLines), index),
+        after: rows.slice(index + 1, Math.min(rows.length, index + contextLines + 1)),
+      };
+      const result = searchResult(session.sessionId, presentation.dimensions, presentation.outputPosition, matches.concat(candidate), false, presentation.truncated);
+      if (Buffer.byteLength(JSON.stringify(result), "utf8") <= params.maxBytes) {
+        accepted = candidate;
+        break;
+      }
+    }
+    if (accepted === undefined) {
+      matchesTruncated = true;
+      break;
+    }
+    matches.push(accepted);
+  }
+  if (matches.length < matchingIndexes.length) matchesTruncated = true;
+  return searchResult(
+    session.sessionId,
+    presentation.dimensions,
+    presentation.outputPosition,
+    matches,
+    matchesTruncated,
+    presentation.truncated,
+  );
+}
+
+function searchResult(
+  terminal: string,
+  dimensions: { readonly cols: number; readonly rows: number },
+  outputPosition: number,
+  matches: readonly Record<string, unknown>[],
+  matchesTruncated: boolean,
+  presentationTruncated: boolean,
+): Record<string, unknown> {
+  return {
+    terminal,
+    output_position: outputPosition,
+    dimensions,
+    matches,
+    matches_truncated: matchesTruncated,
+    presentation_truncated: presentationTruncated,
+  };
+}
+
+/**
+ * The output-read APIs were added to TerminalService after the long-lived
+ * server adapter surface. Keep their small structural boundary explicit so
+ * an older generated declaration cannot accidentally make this host fall
+ * back to subscription/replay behaviour at runtime.
+ */
+function outputReader(service: TerminalService): TerminalOutputReader {
+  return service as TerminalOutputReader;
+}
+
+interface TerminalOutputReader {
+  readRetainedOutput(
+    session: string | TerminalSessionSnapshot,
+    options: TerminalRetainedOutputReadOptions,
+  ): TerminalRetainedOutputRead;
+  readPresentation(
+    session: string | TerminalSessionSnapshot,
+    options: TerminalPresentationReadOptions,
+  ): Promise<TerminalPresentationRead>;
 }
 
 function terminalStatus(options: ServerTerminalControlAdapterOptions, params: TerminalParams, context: ControlRequestContext): unknown {
@@ -121,8 +282,8 @@ function terminalStatus(options: ServerTerminalControlAdapterOptions, params: Te
   return {
     terminal: session.sessionId,
     status: session.status,
-    outputPosition: session.outputPosition,
-    replayFrom: session.replayFrom,
+    output_position: session.outputPosition,
+    replay_from: session.replayFrom,
     ...(session.exit === undefined ? {} : { exit: session.exit }),
     ...(activity === undefined ? {} : { activity }),
   };
@@ -192,11 +353,14 @@ async function writeTerminal(options: ServerTerminalControlAdapterOptions, param
 
 async function runCommand(options: ServerTerminalControlAdapterOptions, params: RunCommandParams, context: ControlRequestContext): Promise<unknown> {
   const session = targetSession(options.terminal, context, params.terminal);
+  const from = session.outputPosition;
   const text = `\u001b[200~${params.command}\u001b[201~\r`;
   await options.terminal.write(session, text, authorization(context, options.terminal.serverId, "write"));
   return {
     terminal: session.sessionId,
-    bytes: new TextEncoder().encode(text).byteLength,
+    command_id: context.requestId,
+    from,
+    submitted_bytes: new TextEncoder().encode(text).byteLength,
     submitted: true,
   };
 }
@@ -371,17 +535,4 @@ function positive(value: number, name: string): number {
 }
 function maxSafeWaitSeconds(options: ServerTerminalControlAdapterOptions): number {
   return options.maxWaitSeconds ?? DEFAULT_MAX_WAIT_SECONDS;
-}
-function concat(chunks: readonly Uint8Array[], size: number): Uint8Array {
-  const result = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return result;
-}
-function takeLastLines(value: string, lines: number): string {
-  const parts = value.split(/\r?\n/u);
-  return parts.slice(Math.max(0, parts.length - lines - (parts.at(-1) === "" ? 1 : 0))).join("\n");
 }

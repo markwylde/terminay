@@ -10,12 +10,14 @@ import { build } from 'esbuild'
 const EXPECTED_TOOLS = [
   'close_terminal',
   'focus_terminal',
+  'get_mcp_capabilities',
   'get_terminal_status',
   'list_terminals',
   'open_terminal',
   'read_terminal',
   'rename_terminal',
   'run_command',
+  'search_terminal',
   'split_terminal',
   'wait_for_attention',
   'wait_for_command',
@@ -176,7 +178,11 @@ test('MCP stdio adapter registers every tool and round-trips operations through 
           signal: seen[2].scope.signal,
         },
         op: 'read_terminal',
-        params: { terminal: 'project-b-secret' },
+        params: {
+          terminal: 'project-b-secret',
+          format: 'text',
+          max_bytes: 16384,
+        },
       },
     ])
   } finally {

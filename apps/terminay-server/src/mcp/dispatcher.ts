@@ -9,8 +9,10 @@ import type {
 } from "./controlEndpoint.js";
 
 export interface ServerControlHandlers {
+  readonly getMcpCapabilities?: (context: ControlRequestContext, signal: AbortSignal) => unknown | Promise<unknown>;
   readonly listTerminals?: (context: ControlRequestContext, signal: AbortSignal) => unknown | Promise<unknown>;
   readonly readTerminal?: (params: Record<string, unknown>, context: ControlRequestContext, signal: AbortSignal) => unknown | Promise<unknown>;
+  readonly searchTerminal?: (params: Record<string, unknown>, context: ControlRequestContext, signal: AbortSignal) => unknown | Promise<unknown>;
   readonly getTerminalStatus?: (params: Record<string, unknown>, context: ControlRequestContext, signal: AbortSignal) => unknown | Promise<unknown>;
   readonly openTerminal?: (params: Record<string, unknown>, context: ControlRequestContext, signal: AbortSignal) => unknown | Promise<unknown>;
   readonly writeTerminal?: (params: Record<string, unknown>, context: ControlRequestContext, signal: AbortSignal) => unknown | Promise<unknown>;
@@ -33,8 +35,30 @@ export interface ServerControlDispatcherOptions {
 /** Typed parameter contracts for the server-owned MCP operation boundary. */
 export type TerminalRef = string;
 export type SplitDirection = "right" | "left" | "above" | "below";
+export type TerminalReadFormat = "text" | "ansi" | "raw";
 
-export interface ReadTerminalParams { readonly terminal: TerminalRef; readonly lines?: number; }
+/**
+ * Read controls are deliberately expressed in output bytes/positions rather
+ * than JavaScript characters. `after` is meaningful only for raw PTY data:
+ * text and ANSI are terminal presentations whose visual rows cannot be
+ * safely addressed by a raw stream position.
+ */
+export interface ReadTerminalParams {
+  readonly terminal: TerminalRef;
+  readonly format: TerminalReadFormat;
+  readonly maxBytes: number;
+  readonly lines?: number;
+  readonly after?: number;
+}
+export interface SearchTerminalParams {
+  readonly terminal: TerminalRef;
+  /** Literal Unicode query; it is never evaluated as a regular expression. */
+  readonly query: string;
+  readonly caseSensitive: boolean;
+  readonly contextLines: number;
+  readonly maxMatches: number;
+  readonly maxBytes: number;
+}
 export interface TerminalParams { readonly terminal: TerminalRef; }
 export interface OpenTerminalParams { readonly name?: string; readonly cwd?: string; readonly split?: SplitDirection; }
 export interface WriteTerminalParams { readonly terminal: TerminalRef; readonly text: string; readonly submit?: boolean; }
@@ -51,8 +75,12 @@ export interface WaitParams { readonly terminal: TerminalRef; readonly timeout?:
  * capability context and abort signal from the local endpoint.
  */
 export interface TerminalControlAdapter {
+  /** Adapter-global operation availability; omitted adapters report unsupported. */
+  readonly getMcpCapabilities?: (context: ControlRequestContext, signal: AbortSignal) => unknown | Promise<unknown>;
   readonly listTerminals: (context: ControlRequestContext, signal: AbortSignal) => unknown | Promise<unknown>;
   readonly readTerminal: (params: ReadTerminalParams, context: ControlRequestContext, signal: AbortSignal) => unknown | Promise<unknown>;
+  /** Bounded literal search over the current text presentation; omitted adapters report unsupported. */
+  readonly searchTerminal?: (params: SearchTerminalParams, context: ControlRequestContext, signal: AbortSignal) => unknown | Promise<unknown>;
   readonly getTerminalStatus: (params: TerminalParams, context: ControlRequestContext, signal: AbortSignal) => unknown | Promise<unknown>;
   readonly openTerminal: (params: OpenTerminalParams, context: ControlRequestContext, signal: AbortSignal) => unknown | Promise<unknown>;
   readonly writeTerminal: (params: WriteTerminalParams, context: ControlRequestContext, signal: AbortSignal) => unknown | Promise<unknown>;
@@ -75,8 +103,10 @@ export interface TerminalControlAdapterOptions {
 }
 
 const DEFAULT_SCOPES: Readonly<Partial<Record<ControlOperation, ControlScope>>> = Object.freeze({
+  get_mcp_capabilities: "read",
   list_terminals: "read",
   read_terminal: "read",
+  search_terminal: "read",
   get_terminal_status: "read",
   wait_for_idle: "read",
   wait_for_command: "read",
@@ -91,8 +121,10 @@ const DEFAULT_SCOPES: Readonly<Partial<Record<ControlOperation, ControlScope>>> 
 });
 
 const HANDLER_BY_OPERATION: Readonly<Record<ControlOperation, keyof ServerControlHandlers>> = Object.freeze({
+  get_mcp_capabilities: "getMcpCapabilities",
   list_terminals: "listTerminals",
   read_terminal: "readTerminal",
+  search_terminal: "searchTerminal",
   get_terminal_status: "getTerminalStatus",
   open_terminal: "openTerminal",
   write_terminal: "writeTerminal",
@@ -133,7 +165,12 @@ export function createServerControlDispatcher(options: ServerControlDispatcherOp
     if (handler === undefined) {
       return { ok: false, error: { code: "unsupported_op", message: `control operation ${request.op} is unavailable` } };
     }
-    if (request.op === "list_terminals") {
+    if (request.op === "get_mcp_capabilities" || request.op === "list_terminals") {
+      if (request.op === "get_mcp_capabilities") {
+        const capabilitiesHandler = options.handlers.getMcpCapabilities;
+        if (capabilitiesHandler === undefined) return { ok: false, error: { code: "unsupported_op", message: "control operation get_mcp_capabilities is unavailable" } };
+        return capabilitiesHandler(context, context.signal);
+      }
       const listHandler = options.handlers.listTerminals;
       if (listHandler === undefined) return { ok: false, error: { code: "unsupported_op", message: "control operation list_terminals is unavailable" } };
       return listHandler(context, context.signal);
@@ -145,6 +182,15 @@ export function createServerControlDispatcher(options: ServerControlDispatcherOp
 
 const DEFAULT_MAX_TEXT_BYTES = 64 * 1024;
 const DEFAULT_MAX_WAIT_SECONDS = 15 * 60;
+export const DEFAULT_READ_MAX_BYTES = 16 * 1024;
+export const MAX_READ_MAX_BYTES = 64 * 1024;
+export const DEFAULT_SEARCH_CONTEXT_LINES = 2;
+export const MAX_SEARCH_CONTEXT_LINES = 20;
+export const DEFAULT_SEARCH_MAX_MATCHES = 20;
+export const MAX_SEARCH_MAX_MATCHES = 100;
+export const DEFAULT_SEARCH_MAX_BYTES = DEFAULT_READ_MAX_BYTES;
+export const MAX_SEARCH_MAX_BYTES = MAX_READ_MAX_BYTES;
+export const MAX_SEARCH_QUERY_CHARS = 4 * 1024;
 const MAX_PUBLIC_ERROR_BYTES = 4 * 1024;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const SPLIT_DIRECTIONS = new Set<SplitDirection>(["right", "left", "above", "below"]);
@@ -161,10 +207,19 @@ export function createTerminalControlAdapter(options: TerminalControlAdapterOpti
   const maxWaitSeconds = positive(options.maxWaitSeconds ?? DEFAULT_MAX_WAIT_SECONDS, "maxWaitSeconds");
   const invoke = <T>(signal: AbortSignal, work: () => T | Promise<T>): Promise<ControlDispatchResult> => invokeAdapter(signal, work);
   const handlers: ServerControlHandlers = {
+      ...(options.adapter.getMcpCapabilities === undefined ? {} : {
+        getMcpCapabilities: (context, signal) => invoke(signal, () => options.adapter.getMcpCapabilities!(context, signal)),
+      }),
       listTerminals: (context, signal) => invoke(signal, () => options.adapter.listTerminals(context, signal)),
       readTerminal: (params, context, signal) => invoke(signal, () => {
         const parsed = parseTerminalRead(params);
         return isControlFailure(parsed) ? parsed : options.adapter.readTerminal(parsed, context, signal);
+      }),
+      ...(options.adapter.searchTerminal === undefined ? {} : {
+        searchTerminal: (params, context, signal) => invoke(signal, () => {
+          const parsed = parseTerminalSearch(params);
+          return isControlFailure(parsed) ? parsed : options.adapter.searchTerminal!(parsed, context, signal);
+        }),
       }),
       getTerminalStatus: (params, context, signal) => invoke(signal, () => {
         const parsed = parseTerminalOnly(params);
@@ -312,9 +367,62 @@ function parseTerminalOnly(value: Record<string, unknown>): ParseResult<Terminal
 function parseTerminalRead(value: Record<string, unknown>): ParseResult<ReadTerminalParams> {
   const terminal = parseTerminalOnly(value);
   if (isControlFailure(terminal)) return terminal;
-  const lines = optionalPositive(value.lines, "lines", 4096);
+  const format = parseReadFormat(value.format);
+  if (isControlFailure(format)) return format;
+  const maxBytes = optionalPositiveSafeInteger(value.max_bytes, "max_bytes", MAX_READ_MAX_BYTES);
+  if (isControlFailure(maxBytes)) return maxBytes;
+  const lines = optionalPositiveSafeInteger(value.lines, "lines", 4096);
   if (isControlFailure(lines)) return lines;
-  return lines === undefined ? terminal : { ...terminal, lines };
+  const after = optionalOutputPosition(value.after);
+  if (isControlFailure(after)) return after;
+  if (format !== "text" && lines !== undefined) return badRequest("lines is available only for text reads");
+  if (format !== "raw" && after !== undefined) return badRequest("after is available only for raw reads");
+  return {
+    ...terminal,
+    format,
+    maxBytes: maxBytes ?? DEFAULT_READ_MAX_BYTES,
+    ...(lines === undefined ? {} : { lines }),
+    ...(after === undefined ? {} : { after }),
+  };
+}
+
+function parseTerminalSearch(value: Record<string, unknown>): ParseResult<SearchTerminalParams> {
+  const terminal = parseTerminalOnly(value);
+  if (isControlFailure(terminal)) return terminal;
+  const query = boundedString(value.query, "query", MAX_SEARCH_QUERY_CHARS);
+  if (isControlFailure(query)) return query;
+  if (Buffer.byteLength(query, "utf8") > DEFAULT_MAX_TEXT_BYTES)
+    return badRequest("query exceeds the configured limit");
+  const caseSensitive = optionalBoolean(value.case_sensitive, "case_sensitive");
+  if (isControlFailure(caseSensitive)) return caseSensitive;
+  const contextLines = optionalNonNegativeSafeInteger(value.context_lines, "context_lines", MAX_SEARCH_CONTEXT_LINES);
+  if (isControlFailure(contextLines)) return contextLines;
+  const maxMatches = optionalPositiveSafeInteger(value.max_matches, "max_matches", MAX_SEARCH_MAX_MATCHES);
+  if (isControlFailure(maxMatches)) return maxMatches;
+  const maxBytes = optionalPositiveSafeInteger(value.max_bytes, "max_bytes", MAX_SEARCH_MAX_BYTES);
+  if (isControlFailure(maxBytes)) return maxBytes;
+  return {
+    ...terminal,
+    query,
+    caseSensitive: caseSensitive ?? true,
+    contextLines: contextLines ?? DEFAULT_SEARCH_CONTEXT_LINES,
+    maxMatches: maxMatches ?? DEFAULT_SEARCH_MAX_MATCHES,
+    maxBytes: maxBytes ?? DEFAULT_SEARCH_MAX_BYTES,
+  };
+}
+
+function parseReadFormat(value: unknown): TerminalReadFormat | ControlFailure {
+  if (value === undefined) return "text";
+  return value === "text" || value === "ansi" || value === "raw"
+    ? value
+    : badRequest("format must be text, ansi, or raw");
+}
+
+function optionalOutputPosition(value: unknown): number | undefined | ControlFailure {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
+    return badRequest("after must be a non-negative safe integer output position");
+  return value;
 }
 
 function parseOpenTerminal(value: Record<string, unknown>): ParseResult<OpenTerminalParams> {
@@ -411,6 +519,25 @@ function requiredPositive(value: unknown, name: string, max: number): number | C
 function optionalPositive(value: unknown, name: string, max: number): number | undefined | ControlFailure {
   if (value === undefined) return undefined;
   return requiredPositive(value, name, max);
+}
+
+function optionalPositiveSafeInteger(value: unknown, name: string, max: number): number | undefined | ControlFailure {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0 || value > max)
+    return badRequest(`${name} must be a positive safe integer no greater than ${max}`);
+  return value;
+}
+
+function optionalNonNegativeSafeInteger(value: unknown, name: string, max: number): number | undefined | ControlFailure {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > max)
+    return badRequest(`${name} must be a non-negative safe integer no greater than ${max}`);
+  return value;
+}
+
+function optionalBoolean(value: unknown, name: string): boolean | undefined | ControlFailure {
+  if (value === undefined) return undefined;
+  return typeof value === "boolean" ? value : badRequest(`${name} must be a boolean`);
 }
 
 function badRequest(message: string): ControlFailure {
