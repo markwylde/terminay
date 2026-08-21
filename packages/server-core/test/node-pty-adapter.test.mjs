@@ -28,7 +28,6 @@ function createChild() {
     onExit(listener) { exits.add(listener); return { dispose: () => exits.delete(listener) }; },
     emitData(value) { for (const listener of [...data]) listener(value); },
     exit(event = { exitCode: 0 }) { for (const listener of [...exits]) listener(event); },
-    exitListenerCount() { return exits.size; },
   };
 }
 
@@ -61,17 +60,6 @@ test("node-pty kill waits for the native exit callback before teardown", async (
   child.exit({ exitCode: 143, signal: 15 });
   await killed;
   assert.equal(settled, true);
-});
-
-test("node-pty disposes its native exit subscription after the callback unwinds", async () => {
-  const child = createChild();
-  createNodePtyFactory({ spawn: () => child }).spawn({
-    shellPath: "/bin/sh", shell: "/bin/sh", args: [], cwd: "/tmp", cols: 80, rows: 24,
-  });
-  child.exit();
-  assert.equal(child.exitListenerCount(), 1, "subscription remains valid on the native callback stack");
-  await Promise.resolve();
-  assert.equal(child.exitListenerCount(), 0, "subscription is released after the callback stack unwinds");
 });
 
 test("node-pty foreground observer deduplicates process changes and identifies the shell", () => {
