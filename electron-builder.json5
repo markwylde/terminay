@@ -24,6 +24,10 @@
     {
       "from": "build/webrtc-runtime",
       "to": "webrtc-runtime"
+    },
+    {
+      "from": "node_modules/@esbuild",
+      "to": "esbuild"
     }
   ],
   "mac": {
