@@ -2,8 +2,9 @@
 
 ## Summary
 
-Terminay provides a local Model Context Protocol server for Codex and Claude
-Code processes running inside Terminay terminals. An installed agent can
+Terminay provides a local Model Context Protocol server for Claude Code, Codex,
+Cursor CLI, Gemini CLI, and OpenCode processes running inside Terminay
+terminals. An installed agent can
 inspect and control terminal tabs in its own project without learning about or
 controlling other projects, servers, workspace views, or clients.
 
@@ -21,8 +22,8 @@ capabilities:
 
 ## Product outcomes
 
-- A user can install or remove the Terminay MCP registration for Codex and
-  Claude Code independently.
+- A user can install or remove the Terminay MCP registration for Claude Code,
+  Codex, Cursor CLI, Gemini CLI, and OpenCode independently.
 - Once installed, an agent launched normally inside a Terminay terminal can use
   Terminay tools without copying a socket path or token.
 - The agent can list and control only terminals belonging to the calling
@@ -57,7 +58,8 @@ Terminay exposes an **Install Terminay MCP** action. Its management surface:
 - detects the registration state for each supported agent;
 - distinguishes not installed, installed, changed, unavailable, and error
   states;
-- installs and removes Codex and Claude Code independently; and
+- installs and removes Claude Code, Codex, Cursor CLI, Gemini CLI, and OpenCode
+  independently; and
 - identifies the provider-owned configuration scope being changed.
 
 Registration uses the provider's supported MCP configuration contract or CLI.
@@ -87,6 +89,32 @@ Provider configuration formats and commands can change independently of
 Terminay. Provider-specific registration adapters are versioned and tested
 against their current supported contracts rather than sharing parsing logic
 with agent-status journal drivers.
+
+CI runs a Docker-isolated compatibility test with the supported agent CLIs
+installed. The test gives Terminay a container-only home directory, registers
+the packaged stdio command through the same privileged adapters used by the
+application, and requires each real CLI to load and report the `terminay`
+registration. It needs no provider credentials, never uses the host home
+directory, and fails when a client stops accepting Terminay's configuration
+contract.
+
+Terminay registers each client in its supported user-wide scope so the adapter
+is available to agents launched from any Terminay project:
+
+| Client | Registration contract |
+| --- | --- |
+| Claude Code | The `terminay` entry in `mcpServers` in `~/.claude.json`. |
+| Codex | The `[mcp_servers.terminay]` table in `~/.codex/config.toml`. |
+| Cursor CLI | The `terminay` entry in `mcpServers` in `~/.cursor/mcp.json`, shared with Cursor's user-level MCP configuration. |
+| Gemini CLI | The `terminay` entry in `mcpServers` in the user settings file `~/.gemini/settings.json`; the entry retains Gemini's normal per-tool confirmation policy. |
+| OpenCode | The `terminay` local server in `mcp` in the active stable user configuration under `~/.config/opencode/`, using a command array and no trust or permission override. |
+
+When a provider supports multiple user configuration filenames, Terminay uses
+the existing supported file without creating a competing file. If more than
+one candidate exists and there is no unambiguous provider precedence contract,
+Terminay reports the registration unavailable for review. Unsupported syntax,
+including a configuration dialect Terminay cannot safely round-trip, is also
+reported as unavailable without rewriting the file.
 
 ## Enablement
 
@@ -371,8 +399,9 @@ host-extension shapes.
 
 ## Acceptance tests
 
-1. Codex and Claude Code registrations install and uninstall independently
-   while preserving unrelated provider configuration.
+1. Claude Code, Codex, Cursor CLI, Gemini CLI, and OpenCode registrations install
+   and uninstall independently while preserving unrelated provider
+   configuration.
 2. Install, uninstall, enable, disable, and repair operations create no provider
    hooks and do not mutate provider hook, trust, or agent-status configuration.
 3. MCP and agent-status settings operate independently in all four enabled and
@@ -396,6 +425,9 @@ host-extension shapes.
     output, cursor retention and pagination, complete serialized response
     bounds, invalid format/parameter combinations, global capability reporting,
     and required-common Desktop/standalone adapter conformance.
+13. Docker compatibility coverage installs every supported agent CLI, registers
+    Terminay in an isolated user scope, and proves that each CLI recognizes the
+    registration without provider credentials or host configuration access.
 
 ## Non-goals
 
