@@ -34,6 +34,8 @@ import {
 	createServerCoreComposition,
 	ExtensionProjectEnvironmentRuntime,
 	FileCatalog,
+	DocumentationCatalog,
+	MdxRuntime,
 	FileContentStreamService,
 	type FileObservationHost,
 	FileProjectEnvironmentStateBackend,
@@ -52,6 +54,8 @@ import {
 	type ServerCoreComposition,
 	ServerFileAdapter,
 	ServerFileCatalogAdapter,
+	ServerDocumentationCatalogAdapter,
+	ServerMdxRuntimeAdapter,
 	ServerFileContentAdapter,
 	ServerFileObservationAdapter,
 	ServerGitAdapter,
@@ -597,11 +601,14 @@ async function createServerComposition(
 				...files.session.operations().queries,
 				...files.content.operations().queries,
 				...files.catalog.operations().queries,
+				...files.documentation.operations().queries,
+				...files.mdxRuntime.operations().queries,
 				'server.health': () => health(),
 			},
 			commands: {
 				...files.session.operations().commands,
 				...files.catalog.operations().commands,
+				...files.mdxRuntime.operations().commands,
 			},
 		},
 	});
@@ -785,6 +792,8 @@ function createDefaultProjectFileServices(
 	readonly session: ServerFileAdapter;
 	readonly content: ServerFileContentAdapter;
 	readonly catalog: ServerFileCatalogAdapter;
+	readonly documentation: ServerDocumentationCatalogAdapter;
+	readonly mdxRuntime: ServerMdxRuntimeAdapter;
 	readonly observations: ServerFileObservationAdapter;
 	readonly prepareProjectRootUpdate: (
 		projectId: string,
@@ -881,6 +890,12 @@ function createDefaultProjectFileServices(
 	const catalogProjects = new Map([
 		['default', { projectId: 'default', catalog }],
 	]);
+	const documentationProjects = new Map([
+		['default', { projectId: 'default', catalog: new DocumentationCatalog(resolver, storage) }],
+	]);
+	const mdxRuntimeProjects = new Map([
+		['default', { projectId: 'default', runtime: new MdxRuntime({ projectId: 'default', resolver, storage }) }],
+	]);
 	const observationHost = createStandaloneFileObservationHost(
 		sessionProjects,
 		storage,
@@ -898,6 +913,8 @@ function createDefaultProjectFileServices(
 			serverId,
 			projects: catalogProjects,
 		}),
+		documentation: new ServerDocumentationCatalogAdapter({ serverId, projects: documentationProjects }),
+		mdxRuntime: new ServerMdxRuntimeAdapter({ serverId, projects: mdxRuntimeProjects }),
 		observations: new ServerFileObservationAdapter({
 			serverId,
 			host: observationHost,
@@ -909,6 +926,8 @@ function createDefaultProjectFileServices(
 			await gitService.bindProject(projectId, canonicalRoot);
 			const nextContent = new FileContentStreamService(nextResolver, storage);
 			const nextCatalog = new FileCatalog(nextResolver, storage);
+			const nextDocumentationCatalog = new DocumentationCatalog(nextResolver, storage);
+			const nextMdxRuntime = new MdxRuntime({ projectId, resolver: nextResolver, storage });
 			return Object.freeze({
 				canonicalRoot,
 				commit: () => {
@@ -919,6 +938,8 @@ function createDefaultProjectFileServices(
 					});
 					contentProjects.set(projectId, { projectId, content: nextContent });
 					catalogProjects.set(projectId, { projectId, catalog: nextCatalog });
+					documentationProjects.set(projectId, { projectId, catalog: nextDocumentationCatalog });
+					mdxRuntimeProjects.set(projectId, { projectId, runtime: nextMdxRuntime });
 				},
 			});
 		},

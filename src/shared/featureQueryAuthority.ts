@@ -14,6 +14,8 @@ export type ProjectFeatureAuthority = Readonly<{
 	applicationClient: NonNullable<TerminalPanelClientContextValue['applicationClient']>;
 	fileObservationClient: NonNullable<TerminalPanelClientContextValue['fileObservationClient']>;
 	fileViewerClient: NonNullable<TerminalPanelClientContextValue['fileViewerClient']>;
+	documentationClient?: TerminalPanelClientContextValue['documentationClient'];
+	mdxRuntimeClient?: TerminalPanelClientContextValue['mdxRuntimeClient'];
 	gitClient: NonNullable<TerminalPanelClientContextValue['gitClient']>;
 	recordingsClient: NonNullable<TerminalPanelClientContextValue['recordingsClient']>;
 	scope: FeatureQueryScope;
@@ -64,10 +66,12 @@ export function resolveProjectFeatureAuthority(
 	}
 	return {
 		state: 'available',
-		authority: {
+			authority: {
 			applicationClient: context.applicationClient!,
 			fileObservationClient: context.fileObservationClient!,
 			fileViewerClient: context.fileViewerClient!,
+			documentationClient: context.documentationClient,
+			mdxRuntimeClient: context.mdxRuntimeClient,
 			gitClient: context.gitClient!,
 			recordingsClient: context.recordingsClient!,
 			scope: scopeForProject(context.serverId, project),

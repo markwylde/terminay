@@ -12,6 +12,8 @@ export * from "./dictation.js";
 export * from "./ai.js";
 export * from "./fileViewer.js";
 export * from "./fileObservation.js";
+export * from "./documentation.js";
+export * from './mdxRuntime.js';
 export * from "./recordings.js";
 export * from "./activity.js";
 export * from "./activityClient.js";

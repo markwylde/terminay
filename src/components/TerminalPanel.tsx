@@ -120,6 +120,9 @@ export interface TerminalPanelClientContextValue {
 	readonly fileViewerClient?: FileViewerClient;
 	/** Server-owned project-scoped filesystem watch and folder-size events. */
 	readonly fileObservationClient?: FileObservationClient;
+	/** Server-owned project-scoped Documentation catalog. */
+	readonly documentationClient?: import('@terminay/client-core').DocumentationClient;
+	readonly mdxRuntimeClient?: import('@terminay/client-core').MdxRuntimeClient;
 	readonly recordingsClient?: RecordingsClient;
 	/** Server-owned Git/worktree and reviewed Quick Push commands. */
 	readonly gitClient?: TerminayGitClient;
