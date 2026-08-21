@@ -63,6 +63,7 @@ async function createFixture() {
 			dependencies: { npm: '12.0.2' },
 			bin: {
 				'terminay-server': 'dist/cli.js',
+				'terminay-mcp': 'dist/mcpEntry.js',
 			},
 		})}\n`,
 	);
@@ -73,6 +74,10 @@ async function createFixture() {
 	await writeFile(
 		join(root, 'dist/index.js'),
 		'export const serverApplicationBoundary = "@terminay/server"\n',
+	);
+	await writeFile(
+		join(root, 'dist/mcpEntry.js'),
+		'#!/usr/bin/env node\nconsole.log("mcp ready")\n',
 	);
 	await writeFile(join(root, 'dist/bundled-npm-evidence.json'), JSON.stringify({ schemaVersion: 1, version: '12.0.2', packageCount: 50, closureSha256: 'a'.repeat(64), packages: Array.from({ length: 50 }, (_, index) => ({ name: `p${index}` })) }));
 	return root;
@@ -94,7 +99,7 @@ test('standalone artifact manifest is deterministic and validates exact payload 
 			first.provenance.generatedBy,
 			'scripts/standalone-artifact.mjs',
 		);
-		assert.equal(first.files.length, 4);
+		assert.equal(first.files.length, 5);
 		assert.ok(first.files.every((file) => /^[a-f0-9]{64}$/u.test(file.sha256)));
 	} finally {
 		await rm(root, { recursive: true, force: true });
@@ -141,6 +146,36 @@ test('standalone artifact inspection rejects Electron imports and unpinned Node 
 		await assert.rejects(
 			() => inspectStandaloneArtifact(root),
 			/Node engine must be pinned/,
+		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test('standalone artifact inspection rejects missing, changed, and extra executable bins', async () => {
+	const root = await createFixture();
+	try {
+		const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+		delete packageJson.bin['terminay-mcp'];
+		await writeFile(join(root, 'package.json'), `${JSON.stringify(packageJson)}\n`);
+		await assert.rejects(
+			() => inspectStandaloneArtifact(root),
+			/expose exactly the terminay-server and terminay-mcp bins/,
+		);
+
+		packageJson.bin['terminay-mcp'] = 'dist/changed.js';
+		await writeFile(join(root, 'package.json'), `${JSON.stringify(packageJson)}\n`);
+		await assert.rejects(
+			() => inspectStandaloneArtifact(root),
+			/expose exactly the terminay-server and terminay-mcp bins/,
+		);
+
+		packageJson.bin['terminay-mcp'] = 'dist/mcpEntry.js';
+		packageJson.bin.unexpected = 'dist/unexpected.js';
+		await writeFile(join(root, 'package.json'), `${JSON.stringify(packageJson)}\n`);
+		await assert.rejects(
+			() => inspectStandaloneArtifact(root),
+			/expose exactly the terminay-server and terminay-mcp bins/,
 		);
 	} finally {
 		await rm(root, { recursive: true, force: true });
