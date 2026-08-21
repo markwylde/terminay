@@ -30,7 +30,7 @@
     "@terminay/ui-bundle": "1.0.0",
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/headless": "^6.0.0",
-    "esbuild": "0.28.1",
+    "esbuild": "0.28.2",
     "yaml": "^2.9.0"
   },
   "scripts": {
