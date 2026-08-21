@@ -390,7 +390,7 @@ async function run() {
 		const commandBar = mainWindow.getByRole('dialog', { name: 'Command bar' });
 		await commandBar.waitFor({ state: 'visible' });
 		await commandBar.getByLabel('Search commands').fill('Install Terminay MCP');
-		await commandBar.getByRole('button', { name: 'Install Terminay MCP', exact: true }).click();
+		await commandBar.locator('.macro-launcher-item').filter({ hasText: 'Install Terminay MCP' }).click();
 		await mainWindow.getByRole('heading', { name: 'Install Terminay MCP' }).waitFor({ state: 'visible' });
 		await capture(app, mainWindow, 'terminay-mcp-install.png');
 		await mainWindow.getByRole('button', { name: 'Close Install Terminay MCP' }).click();
