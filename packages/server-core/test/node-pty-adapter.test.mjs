@@ -74,6 +74,20 @@ test("node-pty disposes its native exit subscription after the callback unwinds"
   assert.equal(child.exitListenerCount(), 0, "subscription is released after the callback stack unwinds");
 });
 
+test("node-pty escalates a child that ignores graceful termination", async () => {
+  const child = createChild();
+  const signals = [];
+  child.kill = (signal) => {
+    signals.push(signal);
+    if (signal === "SIGKILL") child.exit({ exitCode: 137, signal: 9 });
+  };
+  const process = createNodePtyFactory({ spawn: () => child }).spawn({
+    shellPath: "/bin/sh", shell: "/bin/sh", args: [], cwd: "/tmp", cols: 80, rows: 24,
+  });
+  await process.kill("SIGTERM");
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+});
+
 test("node-pty foreground observer deduplicates process changes and identifies the shell", () => {
   const scheduler = createScheduler();
   const child = createChild();
