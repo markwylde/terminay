@@ -209,6 +209,8 @@ function fileServiceError(error: FileServiceError): ProtocolError {
   switch (error.code) {
     case "invalid_path":
     case "invalid_range":
+      if (error.message.startsWith("MDX compilation failed:"))
+        return { code: "validation", message: error.message.slice(0, 4096), retryable: false };
       return { code: "validation", message: "file request is invalid", retryable: false };
     case "path_escape":
       return { code: "forbidden", message: "file path is outside the authorized project", retryable: false };
