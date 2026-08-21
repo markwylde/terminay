@@ -10,6 +10,7 @@ export type TerminalServiceErrorCode =
   | "forbidden"
   | "input_too_large"
   | "output_too_large"
+  | "presentation_unavailable"
   | "replay_gap"
   | "subscriber_limit"
   | "queue_overflow"

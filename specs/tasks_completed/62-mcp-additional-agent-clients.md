@@ -1,4 +1,4 @@
-# MCP registration for Cursor CLI, Gemini CLI, and OpenCode
+# Additional MCP registration for Cursor CLI, Gemini CLI, and OpenCode
 
 ## Goal
 
