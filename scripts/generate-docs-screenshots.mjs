@@ -386,6 +386,15 @@ async function run() {
 		await capture(app, mainWindow, 'terminay-command-bar.png');
 		await mainWindow.keyboard.press('Escape');
 
+		await invokeMenuCommand(mainWindow, 'open-command-bar');
+		const commandBar = mainWindow.getByRole('dialog', { name: 'Command bar' });
+		await commandBar.waitFor({ state: 'visible' });
+		await commandBar.getByLabel('Search commands').fill('Install Terminay MCP');
+		await commandBar.getByRole('button', { name: 'Install Terminay MCP', exact: true }).click();
+		await mainWindow.getByRole('heading', { name: 'Install Terminay MCP' }).waitFor({ state: 'visible' });
+		await capture(app, mainWindow, 'terminay-mcp-install.png');
+		await mainWindow.getByRole('button', { name: 'Close Install Terminay MCP' }).click();
+
 	const macros = await openRoute(app, mainWindow, '/?auxiliary=macros', 'macros', '[data-shared-route-body="macros"]');
 		await installScreenshotWindowControls(macros, 'floating');
 		await capture(app, macros, 'terminay-macros.png');
