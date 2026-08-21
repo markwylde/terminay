@@ -90,7 +90,7 @@ export class DocumentationCatalog {
 		await visit('', 0);
 		documents.sort(compareRecord);
 		const orderedFolders = [...folders].map((relativePath) => ({ kind: 'folder' as const, relativePath, title: relativePath.split('/').at(-1) ?? relativePath })).sort((a, b) => compareText(a.title, b.title) || a.relativePath.localeCompare(b.relativePath));
-		const result: DocumentationCatalogResult = { revision: `${scannedEntries}:${scannedFiles}:${documents.map((item) => item.relativePath + item.title).join('|')}`, folders: orderedFolders, documents, scannedEntries, scannedFiles, partial: partialReason !== undefined, ...(partialReason === undefined ? {} : { partialReason }) };
+		const result: DocumentationCatalogResult = { revision: catalogRevision(scannedEntries, scannedFiles, documents), folders: orderedFolders, documents, scannedEntries, scannedFiles, partial: partialReason !== undefined, ...(partialReason === undefined ? {} : { partialReason }) };
 		const bytes = new TextEncoder().encode(JSON.stringify(result)).byteLength;
 		if (bytes > DOCUMENTATION_CATALOG_LIMITS.maxResultBytes) return { ...result, documents: documents.slice(0, Math.max(1, Math.floor(documents.length / 2))), partial: true, partialReason: 'result_limit' };
 		return result;
@@ -127,4 +127,6 @@ function validName(entry: FileDirectoryEntry): boolean { return typeof entry.nam
 function bounded(value: number | undefined, fallback: number): number { const result = value ?? fallback; if (!Number.isSafeInteger(result) || result < 1) throw new RangeError('documentation catalog limit must be a positive integer'); return result; }
 function compareText(a: string, b: string): number { return a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }); }
 function compareRecord(a: DocumentationDocument, b: DocumentationDocument): number { return compareText(a.title, b.title) || a.relativePath.localeCompare(b.relativePath); }
+/** Stable, bounded cache identity; unlike the catalog itself this cannot grow with the project. */
+function catalogRevision(scannedEntries: number, scannedFiles: number, documents: readonly DocumentationDocument[]): string { let hash = 0x811c9dc5; const update = (value: string): void => { for (let index = 0; index < value.length; index += 1) { hash ^= value.charCodeAt(index); hash = Math.imul(hash, 0x01000193); } }; for (const document of documents) { update(document.relativePath); update('\0'); update(document.title); update('\0'); update(document.titleSource); update('\0'); } return `${scannedEntries}:${scannedFiles}:${(hash >>> 0).toString(16).padStart(8, '0')}`; }
 function throwIfAborted(signal?: AbortSignal): void { if (signal?.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError'); }
