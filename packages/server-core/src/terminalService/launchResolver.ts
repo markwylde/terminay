@@ -44,6 +44,12 @@ export interface TerminalLaunchResolverOptions {
   readonly observeTerminalCwd?: (sessionId: ProtocolId) => Promise<string | null>;
   readonly pathAuthority?: TerminalLaunchPathAuthority;
   readonly defaultEnvironment?: Readonly<Record<string, string | undefined>>;
+  /** Host-owned, per-session environment added after shell-profile resolution.
+   * This is reserved for ephemeral capability material which must not be
+   * expressible or overridden by a user shell profile. */
+  readonly environmentFor?: (
+    intent: TerminalLaunchIntent,
+  ) => Readonly<Record<string, string | undefined>> | undefined;
   /** Windows environment names are case-insensitive. */
   readonly environmentCaseInsensitive?: boolean;
   /** Host policy for the reserved System default profile. Explicit profile
@@ -157,6 +163,27 @@ export class TerminalLaunchResolver {
       resolvedProfile.definition.environment,
       this.options.environmentCaseInsensitive === true,
     );
+    const hostEnvironment = this.options.environmentFor?.(intent);
+    if (hostEnvironment !== undefined) {
+      for (const [name, value] of Object.entries(hostEnvironment)) {
+        if (value === undefined) {
+          if (this.options.environmentCaseInsensitive === true) {
+            for (const candidate of Object.keys(env)) {
+              if (candidate.toUpperCase() === name.toUpperCase()) delete env[candidate];
+            }
+          } else {
+            delete env[name];
+          }
+          continue;
+        }
+        setCanonicalEnvironment(
+          env,
+          name,
+          value,
+          this.options.environmentCaseInsensitive === true,
+        );
+      }
+    }
     // The PTY is rendered by Terminay's xterm.js surface, not by the terminal
     // (if any) that launched the server process. Never inherit TERM=dumb from
     // Finder, a service manager, CI, or an automation shell.

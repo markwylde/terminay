@@ -2,7 +2,12 @@ import type { JsonValue } from '@terminay/protocol';
 import { TerminayClientFacade } from '@terminay/client-core';
 import type { TerminayClient } from '@terminay/client-core';
 import type { RemotePairingPinClient } from '../remotePairingPin';
-import type { RemoteAccessStatus } from '../types/terminay';
+import type {
+	McpAgentId,
+	McpInstallActionResult,
+	McpInstallStatus,
+	RemoteAccessStatus,
+} from '../types/terminay';
 import type { RemoteAccessStatusClient } from './remoteAccessStatusClient';
 
 const REMOTE_EVENT = 'remote-access.changed';
@@ -37,5 +42,30 @@ export function createServerRemoteAccessClients(client: TerminayClient): {
 			isRemoteAccessPairingPinConfigured: () => transport.query('remote-access.pairing-pin-status') as Promise<boolean>,
 			setRemoteAccessPairingPin: (pin: string) => transport.command('remote-access.set-pairing-pin', { pin }) as any,
 		},
+	};
+}
+
+export type McpInstallClient = Readonly<{
+	getStatus(): Promise<McpInstallStatus>;
+	install(agent: McpAgentId): Promise<McpInstallActionResult>;
+	uninstall(agent: McpAgentId): Promise<McpInstallActionResult>;
+}>;
+
+/** Server application-protocol facade for the provider-registration UI. */
+export function createServerMcpInstallClient(
+	client: TerminayClient,
+): McpInstallClient {
+	const transport = new TerminayClientFacade(client);
+	return {
+		getStatus: () =>
+			transport.query('mcp-install.status') as unknown as Promise<McpInstallStatus>,
+		install: (agent) =>
+			transport.command('mcp-install.install', {
+				agent,
+			}) as unknown as Promise<McpInstallActionResult>,
+		uninstall: (agent) =>
+			transport.command('mcp-install.uninstall', {
+				agent,
+			}) as unknown as Promise<McpInstallActionResult>,
 	};
 }

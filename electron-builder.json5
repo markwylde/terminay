@@ -3,8 +3,8 @@
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
   "appId": "com.terminay.app",
   "asar": true,
-  // Electron's sandboxed preload must resolve as a regular file. Unpack the
-  // built electron runtime so serverUiPreload.cjs is not trapped inside asar.
+  // Electron's sandboxed preload and the MCP stdio entry launched with
+  // ELECTRON_RUN_AS_NODE must resolve as regular files.
   "asarUnpack": [
     "dist-electron/**"
   ],

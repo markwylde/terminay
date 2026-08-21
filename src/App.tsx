@@ -24,6 +24,7 @@ import {
 	History,
 	Mic,
 	Play,
+	Plug,
 	RefreshCw,
 	Search,
 	Settings,
@@ -66,6 +67,7 @@ import {
 import type { FolderPanelInstanceParams } from './components/folder-viewer';
 import { FolderPanel, FolderTab } from './components/folder-viewer';
 import { WorktreesPanel } from './components/git-panel/WorktreesPanel';
+import { McpInstallModal } from './components/McpInstallModal';
 import {
 	SidebarPanelStack,
 	type SidebarPanelStackItem,
@@ -106,7 +108,10 @@ import { tryRenderMacroTemplate } from './macroSettings';
 import { getPathRelativeToRoot } from './pathUtils';
 import { ProjectEnvironmentSplitButton } from './projectEnvironments/ProjectEnvironmentSplitButton';
 import type { ProjectEnvironmentSummaryDto } from './projectEnvironments/uiModel';
-import { createServerRemoteAccessClients } from './services/serverApplicationFeatureClients';
+import {
+	createServerMcpInstallClient,
+	createServerRemoteAccessClients,
+} from './services/serverApplicationFeatureClients';
 import {
 	type AuxiliaryRouteController,
 	createAuxiliaryRouteController,
@@ -1261,6 +1266,15 @@ const ProjectWorkspace = forwardRef<
 						),
 			[terminalClientContext?.applicationClient],
 		);
+		const mcpInstallClient = useMemo(
+			() =>
+				terminalClientContext?.applicationClient === undefined
+					? undefined
+					: createServerMcpInstallClient(
+							terminalClientContext.applicationClient,
+						),
+			[terminalClientContext?.applicationClient],
+		);
 		const getServerTerminalCwd = useProjectTerminalCwd(
 			terminalPanelClientContext,
 		);
@@ -1316,6 +1330,7 @@ const ProjectWorkspace = forwardRef<
 		const terminalControlStateRef = useRef(createTerminalControlState());
 		const aiGenerationInFlightRef = useRef<Set<string>>(new Set());
 		const movingTerminalSessionIdsRef = useRef<Set<string>>(new Set());
+		const [isMcpInstallModalOpen, setIsMcpInstallModalOpen] = useState(false);
 		const terminalActivityStoreRef = useRef(new TerminalActivityStore());
 		const terminalActivityTimersRef = useRef<Map<string, number>>(new Map());
 		const evaluateTerminalActivityStateRef = useRef<
@@ -3221,6 +3236,21 @@ const ProjectWorkspace = forwardRef<
 				},
 				{
 					group: 'Workspace',
+					icon: <Plug size={18} strokeWidth={2.1} />,
+					id: 'install-terminay-mcp',
+					title: 'Install Terminay MCP',
+					description:
+						'Let Codex or Claude Code control sibling terminals in this project.',
+					searchText:
+						'install terminay mcp model context protocol codex claude terminal control',
+					onSelect: () => {
+						setIsMacroLauncherOpen(false);
+						setMacroQuery('');
+						setIsMcpInstallModalOpen(true);
+					},
+				},
+				{
+					group: 'Workspace',
 					icon: <FolderPlus size={18} strokeWidth={2.1} />,
 					id: 'create-project',
 					title: 'Create a new project',
@@ -4553,6 +4583,11 @@ const ProjectWorkspace = forwardRef<
 							</TerminalPanelClientContext.Provider>
 						</div>
 					}
+				/>
+				<McpInstallModal
+					client={mcpInstallClient}
+					open={isMcpInstallModalOpen}
+					onClose={() => setIsMcpInstallModalOpen(false)}
 				/>
 				{profileChooserEntries ? (
 					<div

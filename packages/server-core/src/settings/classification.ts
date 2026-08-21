@@ -12,6 +12,7 @@ export const SETTING_AUTHORITY: Readonly<Record<string, SettingAuthority>> = {
   disableStdin: "server",
   fileViewer: "server",
   gitPushAgent: "server",
+	terminayMcp: "server",
   ignoreBracketedPasteMode: "server",
   macros: "server",
   recording: "server",

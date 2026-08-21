@@ -70,7 +70,7 @@ function paths(available = ["/project", "/other", "/home", "/live", "/explicit",
   };
 }
 
-function resolver({ state = workspace(), entries = [profile("system")], catalogue = {}, observe, environmentCaseInsensitive = false, systemDefaultStartupMode, defaultEnvironment } = {}) {
+function resolver({ state = workspace(), entries = [profile("system")], catalogue = {}, observe, environmentCaseInsensitive = false, systemDefaultStartupMode, defaultEnvironment, environmentFor } = {}) {
   return new TerminalLaunchResolver({
     serverId: "server-a",
     profiles: profiles(entries, catalogue),
@@ -81,6 +81,7 @@ function resolver({ state = workspace(), entries = [profile("system")], catalogu
     now: () => 123,
     environmentCaseInsensitive,
     systemDefaultStartupMode,
+    environmentFor,
   });
 }
 
@@ -110,6 +111,21 @@ test("launch resolver preserves argv boundaries, translates login mode, and laye
   assert.equal(launch.shellPath, "/bin/zsh");
   assert.deepEqual(launch.args, ["-l", "--no-globalrcs", "two words"]);
   assert.deepEqual(launch.env, { BASE: "profile", TERMINAY_SERVER: "trusted", TERM: "xterm-256color", COLORTERM: "truecolor", ADDED: "$NOT_EXPANDED" });
+});
+
+test("host per-session environment overrides profile values without entering profile policy", async () => {
+  const selected = profile("zsh", {
+    environment: { HOST_EPHEMERAL_TOKEN: "profile-token", REMOVE: "profile" },
+  });
+  const launch = await resolver({
+    entries: [profile("system"), selected],
+    environmentFor: (received) => {
+      assert.equal(received.identity.sessionId, "session-a");
+      return { HOST_EPHEMERAL_TOKEN: "capability-token", REMOVE: undefined };
+    },
+  }).resolve(intent({ explicitProfileId: "zsh" }));
+  assert.equal(launch.env.HOST_EPHEMERAL_TOKEN, "capability-token");
+  assert.equal("REMOVE" in launch.env, false);
 });
 
 test("host policy launches only the reserved System default as a login shell", async () => {

@@ -225,6 +225,7 @@ test('the actual packed standalone artifact is byte-reproducible and its CLI sta
 			rootPackages: [
 				'@terminay/server-core',
 				'@terminay/protocol',
+				'@modelcontextprotocol/sdk',
 				'node-pty',
 				'ws',
 				'zod',

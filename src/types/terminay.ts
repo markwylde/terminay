@@ -583,6 +583,34 @@ export type EditWindowResult =
 			kind: 'terminal';
 	  };
 
+export type McpAgentId = 'claudeCode' | 'codex';
+export type McpAgentRegistrationState =
+	| 'not-installed'
+	| 'installed'
+	| 'changed'
+	| 'unavailable';
+
+export interface McpAgentInstallState {
+	id: McpAgentId;
+	label: string;
+	state: McpAgentRegistrationState;
+	installed: boolean;
+	/** Provider-owned registration location, for transparent review. */
+	configPath: string;
+	message?: string;
+}
+
+export interface McpInstallStatus {
+	agents: McpAgentInstallState[];
+}
+
+export interface McpInstallActionResult {
+	ok: boolean;
+	installed: boolean;
+	message?: string;
+	error?: string;
+}
+
 export interface TerminayTestApi {
 	/** Test-only renderer-side failure of the one exact active Local application transport. */
 	failActiveLocalServerConnection: () => Promise<{ connectionId: string }>;
