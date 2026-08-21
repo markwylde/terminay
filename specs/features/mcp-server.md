@@ -198,6 +198,9 @@ Terminay exposes the following project-implicit tools:
 Names are conveniences, not identities. An ambiguous name returns bounded
 candidates instead of choosing one. Tool results never expose capability
 tokens, filesystem secrets, other projects, or other server connections.
+`list_terminals` includes in-scope restored terminal records even when no live
+activity record exists for them; those records use the bounded idle/no-attention
+fallback instead of failing the complete listing.
 
 ## Reading, presentation, and searching
 

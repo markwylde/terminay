@@ -1892,17 +1892,14 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 		}),
 		listTerminals: (context) => {
 			const authority = requireMcpAuthority();
+			const activityBySession = authority.activity.snapshot().sessions;
 			return {
 				terminals: authority
 					.list()
 					.filter((entry) => entry.projectId === context.projectId)
 					.map((entry) => {
 						const panel = mcpPanelFor(entry.id, context.projectId);
-						const activity = authority.activity.get({
-							serverId: entry.serverId,
-							projectId: entry.projectId,
-							sessionId: entry.id,
-						});
+						const activity = activityBySession[entry.id];
 						const snapshot = authority.service.getSession(entry.id);
 						return {
 							terminal: entry.id,

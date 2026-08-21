@@ -85,3 +85,11 @@ test('MCP install command validation accepts every supported provider', () => {
 		);
 	}
 });
+
+test('Desktop MCP terminal listing tolerates restored sessions without live activity records', () => {
+	assert.match(
+		main,
+		/const activityBySession = authority\.activity\.snapshot\(\)\.sessions;/u,
+	);
+	assert.match(main, /const activity = activityBySession\[entry\.id\];/u);
+});
