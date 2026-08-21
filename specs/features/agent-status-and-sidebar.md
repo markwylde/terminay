@@ -186,6 +186,12 @@ approximate terminal is focused if the binding is unavailable.
 by default. It controls journal discovery and agent UI surfaces. It never
 installs, edits, trusts, or removes provider hooks or configuration.
 
+This setting and observation pipeline are independent from the
+[Terminay MCP server](./mcp-server.md). MCP may register terminal-control tools
+with Codex or Claude Code, but it does not supply agent lifecycle events. MCP
+installation and enablement never change journal discovery or sidebar status,
+and agent-status enablement never installs or configures MCP.
+
 Disabling stops watchers, clears live bindings and the reduced snapshot, and
 prevents discovery. Re-enabling discovers subsequently foregrounded providers
 and may rescan currently live ones; it does not revive stale entries.

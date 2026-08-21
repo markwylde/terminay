@@ -50,6 +50,17 @@ import {
 	ServerRecordingAdapter,
 } from '../packages/server-core/src/recordingService/index';
 import { ServerSettingsRepository } from '../packages/server-core/src/settings/repository';
+import {
+	CONTROL_SOCKET_ENV,
+	CONTROL_TOKEN_ENV,
+	ControlCapabilityStore,
+	ControlEndpointError,
+	createControlEndpoint,
+	createTerminalControlAdapter,
+	type ControlRequestContext,
+	type LocalControlEndpoint,
+	type TerminalControlAdapter,
+} from '../apps/terminay-server/src/index';
 import { createServerVaultComposition } from '../packages/server-core/src/settings/vaultComposition';
 import { openCanonicalWorkspace } from '../packages/server-core/src/workspaceHydration';
 import {
@@ -84,6 +95,12 @@ import {
 	AiTabMetadataService,
 	warmAiTabMetadataProviderEnv,
 } from './aiTabMetadata/service';
+import {
+	getMcpInstallStatus,
+	installMcpAgent,
+	type McpServerCommand,
+	uninstallMcpAgent,
+} from './mcpInstall';
 import {
 	bindLocalServerUiDocumentEndpoint,
 	bindRemoteServerUiDocumentEndpoint,
@@ -508,6 +525,14 @@ function resetZoom(): void {
 // that lifecycle state explicit so its reference callback cannot mistake an
 // uninitialised binding for a published workspace authority.
 let serverTerminalAuthority: ServerTerminalAuthority | null = null;
+// MCP authority is separate from agent-journal observation. The store retains
+// only token digests and resolves every request to immutable terminal/project
+// scope before it reaches terminal operations.
+const mcpCapabilities = new ControlCapabilityStore({
+	ttlMs: 24 * 60 * 60 * 1000,
+});
+let mcpControlEndpoint: LocalControlEndpoint | null = null;
+let removeMcpSettingsObserver: (() => void) | undefined;
 let desktopRemoteExposure: DesktopServerOwnedExposure;
 let appliedAgentIntegrationSetting: boolean | null = null;
 let applyAgentIntegrationPromise = Promise.resolve();
@@ -824,6 +849,7 @@ function handleServerTerminalEvent(event: TerminalEvent): void {
 	}
 
 	if (event.type === 'exit') {
+		mcpCapabilities.onTerminalExit(event.sessionId);
 		recordingService.finalize(event.sessionId, event.exitCode, event.signal);
 	}
 }
@@ -1115,12 +1141,26 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		defaultProjectRoot: () => app.getPath('home'),
 		projectEnvironmentRepository: embeddedProjectEnvironments,
 		shellProfiles: embeddedShellProfiles,
+		terminalLaunchEnvironmentFor: (intent) => {
+			if (!mcpCapabilities.isEnabled()) return undefined;
+			const capability = mcpCapabilities.mint(
+				intent.identity.sessionId,
+				intent.identity.projectId,
+			);
+			return getTerminalControlEnv(capability);
+		},
 		aiMetadata: aiTabMetadataService,
 		saveSparseFile: (request) => fileBufferService.saveSparseFile(request),
 		recordings: serverRecordingAdapter,
 		settings: embeddedServerSettings,
 		workspaceRepository: embeddedWorkspace,
 		applicationFeatures: {
+			mcpInstall: {
+				getStatus: () => getMcpInstallStatus(getMcpServerCommand()),
+				install: (agent) => installMcpAgent(agent, getMcpServerCommand()),
+				uninstall: (agent) =>
+					uninstallMcpAgent(agent, getMcpServerCommand()),
+			},
 			remoteAccess: {
 				getStatus: () => currentRemoteAccessStatus(),
 				command: async (operation, value) => {
@@ -1253,6 +1293,12 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		authority.initializeWorkspace(),
 	);
 	serverTerminalAuthority = authority;
+	applyMcpSetting(embeddedServerSettings.settings);
+	removeMcpSettingsObserver?.();
+	removeMcpSettingsObserver = embeddedServerSettings.onChange((state) =>
+		applyMcpSetting(state.settings),
+	);
+	await startMcpControlEndpoint();
 	localServerUiSession = new LocalServerUiSession({
 		bundleRoot: SERVER_UI_DIST,
 		cacheRoot: path.join(app.getPath('userData'), 'ui-bundles'),
@@ -1372,6 +1418,7 @@ async function createServerOwnedTerminalSession(
 		}
 		return session;
 	} catch (error) {
+		mcpCapabilities.revokeSession(id);
 		recordingService.finalize(id, null, null, 'failed');
 		throw error;
 	}
@@ -1736,7 +1783,9 @@ function ensureNodePtySpawnHelperIsExecutable(): void {
 	}
 }
 
-function getTerminalSpawnEnv(): Record<string, string | undefined> {
+function getTerminalSpawnEnv(capability?: {
+	readonly token: string;
+}): Record<string, string | undefined> {
 	// The canonical resolver already starts from the host environment and then
 	// applies the selected profile. Keep this overlay to server-protected,
 	// per-session values so it cannot accidentally overwrite profile variables.
@@ -1745,6 +1794,7 @@ function getTerminalSpawnEnv(): Record<string, string | undefined> {
 	// xterm.js renders true color, but many CLI tools only enable 24-bit output
 	// when COLORTERM explicitly advertises it.
 	env.COLORTERM = 'truecolor';
+	Object.assign(env, getTerminalControlEnv(capability));
 
 	if (process.platform !== 'darwin') {
 		return env;
@@ -1764,6 +1814,287 @@ function getTerminalSpawnEnv(): Record<string, string | undefined> {
 	env.LC_CTYPE = normalizedLocale;
 
 	return env;
+}
+
+function getTerminalControlEnv(capability?: {
+	readonly token: string;
+}): Record<string, string | undefined> {
+	if (capability === undefined) return {};
+	return {
+		[CONTROL_SOCKET_ENV]: getMcpControlSocketPath(),
+		[CONTROL_TOKEN_ENV]: capability.token,
+	};
+}
+
+function getMcpControlSocketPath(): string {
+	if (process.platform === 'win32') return '\\\\.\\pipe\\terminay-control';
+	return path.join(app.getPath('userData'), 'terminay-mcp-control.sock');
+}
+
+function getMcpEntryPath(): string {
+	const entry = path.join(MAIN_DIST, 'serverMcpEntry.js');
+	return entry.replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+}
+
+function getMcpServerCommand(): McpServerCommand {
+	return {
+		command: process.execPath,
+		args: [getMcpEntryPath()],
+		env: { ELECTRON_RUN_AS_NODE: '1' },
+	};
+}
+
+function applyMcpSetting(settings: Record<string, unknown>): void {
+	const candidate = settings.terminayMcp;
+	const enabled =
+		typeof candidate === 'object' &&
+		candidate !== null &&
+		typeof (candidate as { enabled?: unknown }).enabled === 'boolean'
+			? (candidate as { enabled: boolean }).enabled
+			: true;
+	mcpCapabilities.setEnabled(enabled);
+}
+
+async function startMcpControlEndpoint(): Promise<void> {
+	if (mcpControlEndpoint !== null) return;
+	const endpoint = createControlEndpoint({
+		socketPath: getMcpControlSocketPath(),
+		capabilities: mcpCapabilities,
+		dispatch: createTerminalControlAdapter({
+			adapter: createDesktopMcpTerminalAdapter(),
+		}),
+		onError: (error) => console.error('[mcp] control endpoint failed', error),
+	});
+	mcpControlEndpoint = endpoint;
+	try {
+		await endpoint.start();
+	} catch (error) {
+		if (mcpControlEndpoint === endpoint) mcpControlEndpoint = null;
+		throw error;
+	}
+}
+
+async function stopMcpControlEndpoint(): Promise<void> {
+	removeMcpSettingsObserver?.();
+	removeMcpSettingsObserver = undefined;
+	const endpoint = mcpControlEndpoint;
+	mcpControlEndpoint = null;
+	if (endpoint !== null) await endpoint.stop();
+	else mcpCapabilities.revokeAll();
+}
+
+function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
+	const terminal = (context: ControlRequestContext, reference: string) =>
+		resolveMcpTerminal(context, reference);
+	return {
+		listTerminals: (context) => {
+			const authority = requireMcpAuthority();
+			return {
+				terminals: authority
+					.list()
+					.filter((entry) => entry.projectId === context.projectId)
+					.map((entry) => {
+						const panel = mcpPanelFor(entry.id, context.projectId);
+						const activity = authority.activity.get({
+							serverId: entry.serverId,
+							projectId: entry.projectId,
+							sessionId: entry.id,
+						});
+						return {
+							terminal: entry.id,
+							name: panel?.title ?? entry.id,
+							status: entry.status,
+							active: panel?.id === authority.workspace.state.projects[context.projectId]?.activePanelId,
+							self: entry.id === context.terminalSessionId,
+							cwd: entry.cwd,
+							activity: activity?.status ?? 'idle',
+							attention: activity?.attention ?? false,
+						};
+					}),
+			};
+		},
+		readTerminal: (params, context) => {
+			const target = terminal(context, params.terminal);
+			const output = requireMcpAuthority().getBuffer(target.id) ?? '';
+			const lines =
+				params.lines === undefined
+					? output
+					: output.split(/\r?\n/u).slice(-params.lines).join('\n');
+			return { terminal: target.id, output: lines, truncated: lines !== output };
+		},
+		getTerminalStatus: (params, context) => {
+			const target = terminal(context, params.terminal);
+			const authority = requireMcpAuthority();
+			const activity = authority.activity.get({
+				serverId: target.serverId,
+				projectId: target.projectId,
+				sessionId: target.id,
+			});
+			return {
+				terminal: target.id,
+				status: target.status,
+				cwd: target.cwd,
+				activity: activity?.status ?? 'idle',
+				attention: activity?.attention ?? false,
+			};
+		},
+		openTerminal: async (params, context) => {
+			const callerPanelId = mcpPanelFor(
+				context.terminalSessionId,
+				context.projectId,
+			)?.id;
+			const opened = await createServerOwnedTerminalSession(
+				context.projectId,
+				params.cwd,
+				undefined,
+				callerPanelId,
+			);
+			const panel = mcpPanelFor(opened.id, context.projectId);
+			if (params.name !== undefined && panel !== undefined)
+				applyMcpWorkspaceCommand(context, {
+					type: 'panel.update',
+					panelId: panel.id,
+					patch: { title: params.name },
+				});
+			if (params.split !== undefined && panel !== undefined)
+				applyMcpWorkspaceCommand(context, {
+					type: 'panel.split',
+					projectId: context.projectId,
+					panelId: panel.id,
+					direction:
+						params.split === 'above' || params.split === 'below'
+							? 'vertical'
+							: 'horizontal',
+				});
+			return { terminal: opened.id, status: opened.status };
+		},
+		writeTerminal: async (params, context) => {
+			const target = terminal(context, params.terminal);
+			const data = params.submit === true ? `${params.text}\r` : params.text;
+			await requireMcpAuthority().write(target.id, data, mcpAuthorization(context));
+			return { terminal: target.id, bytes: new TextEncoder().encode(data).byteLength };
+		},
+		runCommand: async (params, context) => {
+			const target = terminal(context, params.terminal);
+			const data = `\u001b[200~${params.command}\u001b[201~\r`;
+			await requireMcpAuthority().write(target.id, data, mcpAuthorization(context));
+			return { terminal: target.id, bytes: new TextEncoder().encode(data).byteLength };
+		},
+		closeTerminal: async (params, context) => {
+			const target = terminal(context, params.terminal);
+			await requireMcpAuthority().kill(target.id, mcpAuthorization(context));
+			return { terminal: target.id, closed: true };
+		},
+		focusTerminal: (params, context) => {
+			const target = terminal(context, params.terminal);
+			const panel = mcpPanelFor(target.id, context.projectId);
+			if (panel === undefined) throw new ControlEndpointError('terminal_not_found', 'The requested terminal is unavailable.');
+			applyMcpWorkspaceCommand(context, {
+				type: 'panel.activate', projectId: context.projectId, panelId: panel.id,
+			});
+			return { terminal: target.id, focused: true };
+		},
+		renameTerminal: (params, context) => {
+			const target = terminal(context, params.terminal);
+			const panel = mcpPanelFor(target.id, context.projectId);
+			if (panel === undefined) throw new ControlEndpointError('terminal_not_found', 'The requested terminal is unavailable.');
+			applyMcpWorkspaceCommand(context, {
+				type: 'panel.update', panelId: panel.id, patch: { title: params.name },
+			});
+			return { terminal: target.id, name: params.name };
+		},
+		splitTerminal: async (params, context) => {
+			const target = terminal(context, params.terminal);
+			const opened = await createServerOwnedTerminalSession(
+				context.projectId,
+				undefined,
+				undefined,
+				mcpPanelFor(target.id, context.projectId)?.id,
+			);
+			const panel = mcpPanelFor(opened.id, context.projectId);
+			if (panel !== undefined)
+				applyMcpWorkspaceCommand(context, {
+					type: 'panel.split',
+					projectId: context.projectId,
+					panelId: panel.id,
+					direction:
+						params.direction === 'above' || params.direction === 'below'
+							? 'vertical'
+							: 'horizontal',
+				});
+			return { terminal: opened.id, split: params.direction };
+		},
+		waitForIdle: async (params, context, signal) => {
+			const target = terminal(context, params.terminal);
+			await requireMcpAuthority().service.waitForInactivity(
+				target.id,
+				params.seconds * 1000,
+				{ authorization: mcpAuthorization(context), signal },
+			);
+			return { terminal: target.id, idle: true };
+		},
+		waitForCommand: () => {
+			throw new ControlEndpointError('unsupported_op', 'Structured command-completion observation is unavailable.');
+		},
+		waitForAttention: () => {
+			throw new ControlEndpointError('unsupported_op', 'Attention waiting is unavailable.');
+		},
+	};
+}
+
+function requireMcpAuthority(): ServerTerminalAuthority {
+	if (serverTerminalAuthority === null)
+		throw new ControlEndpointError('not_in_terminay', 'The local Terminay server is unavailable.');
+	return serverTerminalAuthority;
+}
+
+function mcpPanelFor(sessionId: string, projectId: string) {
+	return Object.values(requireMcpAuthority().workspace.state.panels).find(
+		(panel) =>
+			panel.type === 'terminal' &&
+			panel.projectId === projectId &&
+			panel.sessionId === sessionId,
+	);
+}
+
+function resolveMcpTerminal(
+	context: ControlRequestContext,
+	reference: string,
+) {
+	const candidates = requireMcpAuthority()
+		.list()
+		.filter((entry) => entry.projectId === context.projectId)
+		.filter((entry) => entry.id === reference || mcpPanelFor(entry.id, context.projectId)?.title === reference);
+	if (candidates.length === 1) return candidates[0]!;
+	if (candidates.length > 1)
+		throw new ControlEndpointError(
+			'ambiguous_terminal',
+			'The terminal reference is ambiguous.',
+			candidates.map((entry) => entry.id),
+		);
+	throw new ControlEndpointError('terminal_not_found', 'The requested terminal is unavailable.');
+}
+
+function mcpAuthorization(context: ControlRequestContext) {
+	return {
+		serverId: requireMcpAuthority().service.serverId,
+		projectId: context.projectId,
+		scope: 'write' as const,
+	};
+}
+
+function applyMcpWorkspaceCommand(
+	context: ControlRequestContext,
+	command: Parameters<NonNullable<ServerTerminalAuthority['composition']['workspaceOperations']>['applyHostCommand']>[1],
+): void {
+	const authority = requireMcpAuthority();
+	const applied = authority.composition.workspaceOperations?.applyHostCommand(
+		`mcp:${context.requestId}:${Math.random().toString(36).slice(2)}`.slice(0, 128),
+		command,
+		authority.workspace.state.revision,
+	);
+	if (applied === undefined || !applied.ok)
+		throw new ControlEndpointError('internal', 'The workspace rejected the control operation.');
 }
 
 function detachSessionsForWebContents(webContentsId: number): void {
@@ -3779,6 +4110,7 @@ const handleBeforeQuit = createGracefulQuitHandler({
 				{ channel: 'lifecycle' },
 			);
 			await Promise.all([
+				stopMcpControlEndpoint(),
 				desktopRemoteExposure.shutdown(),
 				serverTerminalAuthority?.shutdown(),
 			]);

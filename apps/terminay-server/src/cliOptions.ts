@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 
 export interface ServerCliOptions {
-  readonly command: "start" | "status" | "pairing" | "help" | "version";
+  readonly command: "start" | "status" | "pairing" | "mcp" | "help" | "version";
   readonly serverId: string;
   readonly serverVersion: string;
   readonly dataRoot: string;
@@ -41,7 +41,7 @@ export function allowedWebOrigins(webOrigin: string): readonly string[] {
 }
 
 export function parseServerCliOptions(argv: readonly string[], env: Readonly<Record<string, string | undefined>>): ServerCliOptions {
-  const command = argv.includes("--help") ? "help" : argv.includes("--version") ? "version" : argv.includes("--status") ? "status" : argv.includes("--pairing") ? "pairing" : "start";
+  const command = argv.includes("--help") ? "help" : argv.includes("--version") ? "version" : argv.includes("--status") ? "status" : argv.includes("--pairing") ? "pairing" : argv[0] === "mcp" ? "mcp" : "start";
   const serverId = value(argv, "--server-id") ?? env.TERMINAY_SERVER_ID ?? "local-server";
   const remoteOrigin = value(argv, "--remote-origin") ?? env.TERMINAY_REMOTE_ORIGIN ?? defaultRemoteOrigin(serverId);
   const remotePairingPin = env.TERMINAY_REMOTE_PAIRING_PIN;
@@ -80,7 +80,7 @@ export function parseServerCliOptions(argv: readonly string[], env: Readonly<Rec
 
 export function formatServerHelp(): string {
   return `${[
-    "Usage: terminay-server [--status|--pairing|--version] [options]",
+    "Usage: terminay-server [mcp|--status|--pairing|--version] [options]",
     "Options:",
     "  --data-root PATH   server data directory (TERMINAY_DATA_ROOT)",
     "  --project-root PATH initial project root (TERMINAY_PROJECT_ROOT; defaults to cwd)",
@@ -102,6 +102,7 @@ export function formatServerHelp(): string {
     "  --pairing          print a short-lived pairing handoff record",
     "  --status           print redacted runtime configuration",
     "  --version          print the server version",
+    "  mcp                run the headless MCP stdio adapter (requires inherited control environment)",
   ].join("\n")}\n`;
 }
 

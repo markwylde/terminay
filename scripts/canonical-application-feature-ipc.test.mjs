@@ -10,6 +10,10 @@ const preload = await readFile(
 	new URL('../electron/serverUiPreload.ts', import.meta.url),
 	'utf8',
 );
+const terminalAuthority = await readFile(
+	new URL('../electron/serverTerminalAuthority.ts', import.meta.url),
+	'utf8',
+);
 
 test('application features have no renderer-owned Electron IPC backdoors', () => {
 	const obsoleteChannels = [
@@ -58,7 +62,10 @@ test('obsolete renderer-owned profile and broadcast helpers stay deleted', () =>
 
 test('canonical host routes retain server-owned application operations', () => {
 	assert.match(main, /applicationFeatures:\s*\{/u);
-	assert.doesNotMatch(main, /mcpInstall:\s*\{/u);
+	assert.match(main, /mcpInstall:\s*\{/u);
+	assert.match(terminalAuthority, /'mcp-install\.status':/u);
+	assert.match(terminalAuthority, /'mcp-install\.install':/u);
+	assert.match(terminalAuthority, /'mcp-install\.uninstall':/u);
 	assert.match(main, /remoteAccess:\s*\{/u);
 	assert.match(
 		main,
