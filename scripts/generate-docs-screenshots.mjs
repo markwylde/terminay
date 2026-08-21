@@ -326,8 +326,8 @@ async function run() {
 			await documentationPane.locator('.sidebar-pane__header').click();
 		}
 		await documentationPane.getByRole('tree').waitFor({ state: 'visible', timeout: 30_000 });
-		await documentationPane.getByRole('treeitem', { name: /^docs$/i }).click();
-		await documentationPane.getByRole('treeitem', { name: /^Readme, README\.md$/i }).click();
+		await documentationPane.getByRole('treeitem', { name: /^docs$/i }).evaluate((element) => element.click());
+		await documentationPane.getByRole('treeitem', { name: /^Readme, README\.md$/i }).evaluate((element) => element.click());
 		await mainWindow.locator('.documentation-editor').waitFor({ state: 'visible', timeout: 30_000 });
 		await mainWindow.getByRole('heading', { name: 'Terminay', exact: true }).waitFor({ state: 'visible', timeout: 30_000 });
 		await capture(app, mainWindow, 'terminay-documentation.png');
