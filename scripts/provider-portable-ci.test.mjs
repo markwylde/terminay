@@ -24,11 +24,11 @@ function job(workflow, name) {
 test("GitHub and Gitea discover separate provider-specific CI workflows", () => {
   assert.deepEqual(
     [...githubCi.slice(githubCi.indexOf("jobs:\n")).matchAll(/^ {2}([a-z][a-z0-9-]+):$/gmu)].map((match) => match[1]),
-    ["packaged-macos-smoke", "build-and-test", "e2e-image", "e2e-test"],
+    ["packaged-macos-smoke", "build-and-test", "mcp-cli-compatibility", "e2e-image", "e2e-test"],
   );
   assert.deepEqual(
     [...giteaCi.slice(giteaCi.indexOf("jobs:\n")).matchAll(/^ {2}([a-z][a-z0-9-]+):$/gmu)].map((match) => match[1]),
-    ["packaged-macos-smoke", "build-and-test", "e2e-image", "e2e-test"],
+    ["packaged-macos-smoke", "build-and-test", "mcp-cli-compatibility", "e2e-image", "e2e-test"],
   );
   assert.match(job(githubCi, "packaged-macos-smoke"), /^    runs-on: macos-latest$/mu);
   assert.match(job(githubCi, "packaged-macos-smoke"), /packaged-macos-pr-smoke\.sh/u);

@@ -75,3 +75,13 @@ test('canonical host routes retain server-owned application operations', () => {
 	assert.match(main, /prepareCanonicalHttpRemoteLaunch/u);
 	assert.match(main, /loadRememberedRemoteConnections\(\)/u);
 });
+
+test('MCP install command validation accepts every supported provider', () => {
+	for (const agent of ['claudeCode', 'codex', 'cursor', 'gemini', 'openCode']) {
+		assert.match(
+			terminalAuthority,
+			new RegExp(`agent !== '${agent}'`, 'u'),
+			agent,
+		);
+	}
+});

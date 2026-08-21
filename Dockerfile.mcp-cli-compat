@@ -1,0 +1,35 @@
+FROM node:24.15.0-bookworm-slim
+
+ENV CI=1 \
+    DISABLE_AUTOUPDATER=1 \
+    PATH=/home/node/.local/bin:/opt/mcp-cli-compat/bin:$PATH
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends ca-certificates curl git \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install --global npm@12.0.2
+
+# This layer deliberately resolves latest on every compatibility run. The
+# runner changes CLI_COMPAT_CACHE_BUST so Docker cannot reuse stale CLI builds.
+ARG CLI_COMPAT_CACHE_BUST=development
+RUN echo "Installing current MCP clients for ${CLI_COMPAT_CACHE_BUST}" \
+    && npm install --global --prefix /opt/mcp-cli-compat \
+        --allow-scripts=@anthropic-ai/claude-code,esbuild,opencode-ai,@github/keytar,node-pty \
+        esbuild@latest \
+        @anthropic-ai/claude-code@latest \
+        @openai/codex@latest \
+        @google/gemini-cli@latest \
+        opencode-ai@latest
+
+RUN mkdir -p /home/node/.local/bin /home/node/.local/share \
+    && chown -R node:node /home/node/.local
+
+USER node
+RUN curl https://cursor.com/install -fsS | bash
+
+WORKDIR /workspace
+COPY --chown=node:node electron/mcpInstall electron/mcpInstall
+COPY --chown=node:node src/types/terminay.ts src/types/terminay.ts
+COPY --chown=node:node scripts/mcp-cli-real-compat.test.mjs scripts/mcp-cli-real-compat.test.mjs
+
+ENTRYPOINT ["node", "scripts/mcp-cli-real-compat.test.mjs"]
