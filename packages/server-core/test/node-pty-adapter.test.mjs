@@ -48,6 +48,20 @@ test("node-pty retains output and exit emitted before TerminalService attaches",
   assert.deepEqual(exits, [{ exitCode: 7, signal: 9 }]);
 });
 
+test("node-pty kill waits for the native exit callback before teardown", async () => {
+  const child = createChild();
+  const process = createNodePtyFactory({ spawn: () => child }).spawn({
+    shellPath: "/bin/sh", shell: "/bin/sh", args: [], cwd: "/tmp", cols: 80, rows: 24,
+  });
+  let settled = false;
+  const killed = process.kill("SIGTERM").then(() => { settled = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(settled, false);
+  child.exit({ exitCode: 143, signal: 15 });
+  await killed;
+  assert.equal(settled, true);
+});
+
 test("node-pty foreground observer deduplicates process changes and identifies the shell", () => {
   const scheduler = createScheduler();
   const child = createChild();
