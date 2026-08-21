@@ -23,6 +23,7 @@ const nodeBuiltins = [
   'node:module',
   'node:process',
   'node-pty',
+  'esbuild',
   'qrcode',
   'selfsigned',
   'ws',
