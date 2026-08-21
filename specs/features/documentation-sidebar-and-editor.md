@@ -17,9 +17,11 @@ the isolated [MDX browser runtime](./mdx-browser-runtime.md).
 
 - Documentation joins Explorer, Agents, and Git in the persistent, reorderable,
   vertically resizable sidebar stack.
-- It appears for every project and is initially collapsed for a new project.
-  Its order, height, collapse state, and folder expansion state persist as
-  local user preferences without changing project files.
+- It appears for every project. On first discovery for a new project it starts
+  expanded when at least one document exists and collapsed when none exist.
+  After that discovery, an explicit user collapse or expansion wins. Its order,
+  height, collapse state, and folder expansion state persist as local user
+  preferences without changing project files.
 - The pane recursively lists `.md` and `.mdx` files beneath the exact project
   root. Extension matching follows the environment's filename case rules.
 - Only folders containing a matching document at some descendant depth appear.
@@ -177,8 +179,9 @@ resumption before editing or previewing.
 
 ## Acceptance outcomes
 
-- A new project shows a collapsed Documentation pane that can be reordered and
-  resized with the other sidebar panes.
+- A new project expands Documentation when Markdown or MDX files are found and
+  collapses it when none are found; the pane can be reordered and resized with
+  the other sidebar panes and retains later explicit collapse choices.
 - The tree contains only non-ignored folders leading to `.md` or `.mdx` files,
   updates after external changes, and retains unrelated expansion and selection.
 - Valid YAML `title` frontmatter controls tree and tab titles; malformed or
