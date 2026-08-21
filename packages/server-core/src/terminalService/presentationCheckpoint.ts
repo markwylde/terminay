@@ -1,5 +1,11 @@
 import { createRequire } from "node:module";
-import type { TerminalDimensions, TerminalIdentity } from "./types.js";
+import type {
+  TerminalDimensions,
+  TerminalIdentity,
+  TerminalPresentationFormat,
+  TerminalPresentationRead,
+  TerminalPresentationReadOptions,
+} from "./types.js";
 
 // Both xterm packages currently publish CommonJS runtime entries while their
 // declarations describe named exports.  `require` keeps Node ESM hosts from
@@ -156,6 +162,8 @@ interface MutableSession {
   readonly identity: TerminalIdentity;
   readonly terminal: HeadlessTerminal;
   readonly serializer: TerminalSerializeAddon;
+  /** Keeps UTF-8 code points intact when PTY callbacks split their bytes. */
+  readonly decoder: TextDecoder;
   readonly pins: Map<string, MutablePin>;
   dimensions: TerminalDimensions;
   outputPosition: number;
@@ -220,7 +228,7 @@ export class TerminalPresentationCheckpointAuthority {
     const initial = new TextEncoder().encode(serializer.serialize({ scrollback: this.limits.maxScrollback }));
     if (initial.byteLength > this.limits.maxSnapshotBytes) throw error("checkpoint_limit", "initial terminal checkpoint exceeds its serialized size limit");
     this.sessions.set(key, {
-      identity: Object.freeze({ ...identity }), terminal, serializer, pins: new Map(),
+      identity: Object.freeze({ ...identity }), terminal, serializer, decoder: new TextDecoder(), pins: new Map(),
       dimensions: Object.freeze({ ...dimensions }), outputPosition: 0, processedPosition: 0, checkpointPosition: 0,
       checkpointDimensions: Object.freeze({ ...dimensions }), checkpointState: initial, tail: [], tailBytes: 0,
       nextTailSequence: 0, processedTailSequence: 0, unretainedThroughSequence: 0, queuedBytes: 0, pinnedBytes: 0, unavailable: false, tailOverflowed: false,
@@ -245,7 +253,7 @@ export class TerminalPresentationCheckpointAuthority {
     return this.enqueue(session, async () => {
       try {
         session.safeScanner.ingest(copy);
-        await writeTerminal(session.terminal, copy);
+        await writeTerminal(session.terminal, session.decoder.decode(copy, { stream: true }));
         session.processedPosition = nextPosition;
         session.processedTailSequence = sequence;
         if (session.safeScanner.safe && this.shouldCheckpoint(session)) this.snapshot(session, sequence);
@@ -379,6 +387,59 @@ export class TerminalPresentationCheckpointAuthority {
     return Object.freeze({ ...session.identity, dimensions: Object.freeze({ ...session.dimensions }), outputPosition: session.outputPosition,
       checkpointPosition: session.checkpointPosition, queuedBytes: session.queuedBytes, tailBytes: session.tailBytes,
       pins: session.pins.size, pinnedBytes: session.pinnedBytes, unavailable: session.unavailable || session.tailOverflowed });
+  }
+
+  /**
+   * Return the current parser-safe emulator state without minting a display
+   * checkpoint or granting an input path. This is intentionally a snapshot of
+   * the canonical emulator, not a replay of a caller-selected raw cursor.
+   */
+  async readPresentation(identity: TerminalIdentity, options: TerminalPresentationReadOptions): Promise<TerminalPresentationRead> {
+    const session = this.requireSession(identity);
+    const maxBytes = positive(options.maxBytes, "maxBytes");
+    const maxRows = options.maxRows === undefined ? this.limits.maxScrollback + session.dimensions.rows : positive(options.maxRows, "maxRows");
+    const format: TerminalPresentationFormat = options.format ?? "text";
+    if (format !== "text" && format !== "ansi") throw error("checkpoint_invalid", "terminal presentation format is invalid");
+    // Queue failures are retained as unavailable state, so inspect that state
+    // after draining rather than leaking an internal parser exception.
+    await session.queue;
+    if (session.unavailable) throw error("checkpoint_unavailable", "terminal checkpoint state is unavailable");
+    if (format === "ansi") {
+      // SerializeAddon always includes the active screen. Retain only the
+      // newest requested scrollback above it, so ANSI reads preserve useful
+      // context without serializing the authority's entire retained history.
+      const retainedRows = Math.max(session.dimensions.rows, maxRows);
+      const serialized = session.serializer.serialize({ scrollback: retainedRows - session.dimensions.rows });
+      const bounded = truncateUtf8(serialized, maxBytes);
+      const availableRows = presentationRows(session.terminal).length;
+      return Object.freeze({
+        ...session.identity,
+        format,
+        dimensions: Object.freeze({ ...session.dimensions }),
+        position: session.processedPosition,
+        outputPosition: session.outputPosition,
+        truncated: bounded.droppedBytes > 0,
+        droppedBytes: bounded.droppedBytes,
+        droppedRows: Math.max(0, availableRows - retainedRows),
+        ansi: bounded.value,
+      });
+    }
+    const rows = presentationRows(session.terminal);
+    const fullText = rows.join("\n");
+    const permitted = rows.slice(Math.max(0, rows.length - maxRows));
+    const selected = boundedRows(permitted, maxBytes);
+    const returnedText = selected.rows.join("\n");
+    return Object.freeze({
+      ...session.identity,
+      format,
+      dimensions: Object.freeze({ ...session.dimensions }),
+      position: session.processedPosition,
+      outputPosition: session.outputPosition,
+      truncated: selected.truncated || permitted.length !== rows.length,
+      droppedBytes: Math.max(0, byteLength(fullText) - byteLength(returnedText)),
+      droppedRows: rows.length - permitted.length + selected.droppedRows,
+      rows: Object.freeze(selected.rows),
+    });
   }
 
   private appendTail(session: MutableSession, event: TerminalPresentationCheckpointTailEvent, bytes: number): number {
@@ -567,9 +628,58 @@ class SafeBoundaryScanner {
   }
 }
 
-function writeTerminal(terminal: HeadlessTerminal, bytes: Uint8Array): Promise<void> {
-  return new Promise((resolve, reject) => { try { terminal.write(bytes, resolve); } catch (cause) { reject(cause); } });
+function writeTerminal(terminal: HeadlessTerminal, data: string | Uint8Array): Promise<void> {
+  return new Promise((resolve, reject) => { try { terminal.write(data, resolve); } catch (cause) { reject(cause); } });
 }
+
+function presentationRows(terminal: HeadlessTerminal): string[] {
+  const buffer = terminal.buffer.active;
+  const rows: string[] = [];
+  // xterm stores every cell in the active scrollback buffer. trimRight avoids
+  // exposing its unused column padding as agent context while preserving empty
+  // visual rows and wrapping as individual rows.
+  for (let index = 0; index < buffer.length; index += 1) {
+    rows.push(buffer.getLine(index)?.translateToString(true) ?? "");
+  }
+  // The active buffer includes unused rows below the cursor. They carry no
+  // terminal output and would make a small newest-row read return blanks.
+  while (rows.at(-1) === "") rows.pop();
+  return rows;
+}
+
+function boundedRows(rows: readonly string[], maxBytes: number): { readonly rows: string[]; readonly droppedRows: number; readonly truncated: boolean } {
+  const selected: string[] = [];
+  let bytes = 0;
+  let truncated = false;
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const separatorBytes = selected.length === 0 ? 0 : 1;
+    const available = maxBytes - bytes - separatorBytes;
+    if (available < 0) { truncated = true; break; }
+    const bounded = truncateUtf8(rows[index]!, available);
+    if (bounded.value.length === 0 && rows[index]!.length > 0 && available === 0) { truncated = true; break; }
+    selected.unshift(bounded.value);
+    bytes += separatorBytes + byteLength(bounded.value);
+    if (bounded.droppedBytes > 0) { truncated = true; break; }
+  }
+  const droppedRows = rows.length - selected.length;
+  return { rows: selected, droppedRows, truncated: truncated || droppedRows > 0 };
+}
+
+function truncateUtf8(value: string, maxBytes: number): { readonly value: string; readonly droppedBytes: number } {
+  const total = byteLength(value);
+  if (total <= maxBytes) return { value, droppedBytes: 0 };
+  let bytes = 0;
+  let end = 0;
+  for (const character of value) {
+    const characterBytes = byteLength(character);
+    if (bytes + characterBytes > maxBytes) break;
+    bytes += characterBytes;
+    end += character.length;
+  }
+  return { value: value.slice(0, end), droppedBytes: total - bytes };
+}
+
+function byteLength(value: string): number { return new TextEncoder().encode(value).byteLength; }
 function preparedMetadata(pin: MutablePin): TerminalPresentationCheckpointPrepared {
   return Object.freeze({ checkpointId: pin.checkpointId, serverId: pin.serverId, projectId: pin.projectId, sessionId: pin.sessionId, clientId: pin.clientId,
     position: pin.position, headPosition: pin.headPosition, checkpointDimensions: Object.freeze({ ...pin.checkpointDimensions }), dimensions: Object.freeze({ ...pin.dimensions }), formatVersion: pin.formatVersion,
