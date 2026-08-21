@@ -17,7 +17,9 @@ async function seedWorkspace() {
 	const root = await mkdtemp(path.join(os.tmpdir(), 'terminay-docs-workspace-'));
 	const workspace = path.join(root, 'terminay');
 	const linkedWorktree = path.join(root, 'terminay-docs-refresh');
-	await mkdir(path.join(workspace, 'docs'), { recursive: true });
+	await mkdir(path.join(workspace, 'guides'), { recursive: true });
+	await mkdir(path.join(workspace, 'handbook'), { recursive: true });
+	await mkdir(path.join(workspace, 'reference'), { recursive: true });
 	await mkdir(path.join(workspace, 'src'), { recursive: true });
 	await writeFile(path.join(workspace, 'README.md'), [
 		'# Terminay',
@@ -30,20 +32,43 @@ async function seedWorkspace() {
 		'',
 	].join('\n'));
 	await writeFile(path.join(workspace, 'src', 'workspace.ts'), 'export const workspaceTitle = "Terminay";\n');
-	await writeFile(path.join(workspace, 'docs', 'ROADMAP.md'), [
-		'# Documentation roadmap',
+	await writeFile(path.join(workspace, 'guides', 'getting-started.md'), '# Getting started\n\nCreate a project, open a terminal, and make the workspace your own.\n');
+	await writeFile(path.join(workspace, 'guides', 'remote-workspaces.md'), '# Remote workspaces\n\nConnect securely to a Terminay Server from any browser.\n');
+	await writeFile(path.join(workspace, 'handbook', 'architecture.md'), '# Architecture\n\nTerminay keeps project state local and moves privileged work behind explicit server APIs.\n');
+	await writeFile(path.join(workspace, 'handbook', 'contributing.md'), '# Contributing\n\nKeep changes focused, tested, and documented.\n');
+	await writeFile(path.join(workspace, 'handbook', 'releases.md'), '# Release process\n\nShip signed desktop builds and the web client together.\n');
+	await writeFile(path.join(workspace, 'handbook', 'security.md'), '# Security model\n\nEvery filesystem operation remains scoped to its project.\n');
+	await writeFile(path.join(workspace, 'handbook', 'roadmap.md'), [
+		'---',
+		'title: Product roadmap',
+		'---',
 		'',
-		'## Capture',
-		'- [x] Refresh the workspace guide',
-		'- [ ] Capture the Files screen',
-		'- [ ] Review remote access copy',
+		'# Product roadmap',
 		'',
-		'## Publish',
-		'- [x] Verify dark mode screenshots',
-		'- [ ] Publish the documentation site',
+		'Terminay is becoming the calm, local-first workspace for serious terminal work. This roadmap keeps the experience fast while making projects easier to understand, share, and revisit.',
+		'',
+		'## Now — documentation that lives with the project',
+		'',
+		'- [x] Discover Markdown and MDX automatically',
+		'- [x] Edit with a focused rich-text surface',
+		'- [x] Keep drafts safe with autosave',
+		'- [ ] Add cross-document search',
+		'',
+		'## Next — connected workspaces',
+		'',
+		'Open the same project from desktop or browser, hand work to an agent, and keep every terminal, document, and change in context.',
+		'',
+		'### What success looks like',
+		'',
+		'1. A new contributor understands the project in minutes.',
+		'2. Remote sessions feel as responsive as local ones.',
+		'3. Every automated change remains visible and reversible.',
+		'',
+		'> The terminal is where the work happens. Documentation is how the work stays understandable.',
 		'',
 	].join('\n'));
-	await writeFile(path.join(workspace, 'docs', 'RELEASE.md'), '# Release checklist\n\n- [ ] Review release notes\n- [x] Run the docs build\n');
+	await writeFile(path.join(workspace, 'reference', 'commands.md'), '# Command reference\n\nSearch and run every workspace action from the command palette.\n');
+	await writeFile(path.join(workspace, 'reference', 'keyboard-shortcuts.md'), '# Keyboard shortcuts\n\nWork quickly without leaving the keyboard.\n');
 	await execFileAsync('git', ['init', '--initial-branch=main'], { cwd: workspace });
 	await execFileAsync('git', ['config', 'user.email', 'docs@terminay.local'], { cwd: workspace });
 	await execFileAsync('git', ['config', 'user.name', 'Terminay Docs'], { cwd: workspace });
@@ -51,7 +76,7 @@ async function seedWorkspace() {
 	await execFileAsync('git', ['commit', '-m', 'Seed documentation workspace'], { cwd: workspace });
 	await execFileAsync('git', ['worktree', 'add', '-b', 'docs-refresh', linkedWorktree], { cwd: workspace });
 	await writeFile(path.join(workspace, 'README.md'), '# Terminay\n\nA local-first terminal workspace for project work.\n\nDocs screenshots are being refreshed.\n');
-	await writeFile(path.join(linkedWorktree, 'docs', 'RELEASE.md'), '# Release checklist\n\n- [x] Review release notes\n- [x] Run the docs build\n- [ ] Publish the documentation site\n');
+	await writeFile(path.join(linkedWorktree, 'handbook', 'releases.md'), '# Release process\n\n- [x] Review release notes\n- [x] Run the docs build\n- [ ] Publish the documentation site\n');
 	return { root, workspace };
 }
 
@@ -218,9 +243,9 @@ async function createTerminalGrid(page) {
 async function populateTerminalGrid(page, workspace) {
 	const commands = [
 		'cat README.md',
-		'ls -la docs',
+		'ls -la handbook',
 		'git status --short && git branch --show-current',
-		'cat docs/ROADMAP.md',
+		'cat handbook/roadmap.md',
 	];
 	const terminals = page.locator('.project-workspace--active .terminal-panel:visible .xterm-helper-textarea');
 	await terminals.nth(3).waitFor({ state: 'visible', timeout: 30_000 });
@@ -281,8 +306,22 @@ async function openRoute(app, page, route, logicalViewId, selector) {
 	return window;
 }
 
+async function findWorkspaceWindow(app) {
+	const deadline = Date.now() + 60_000;
+	while (Date.now() < deadline) {
+		for (const window of app.windows()) {
+			if (await window.locator('[data-terminay-app-component]').count()) return window;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
+	throw new Error('Terminay workspace window did not become available.');
+}
+
 async function run() {
-	const userDataDir = await mkdtemp(path.join(os.tmpdir(), 'terminay-docs-user-data-'));
+	// macOS Unix-domain sockets have a short path limit. /var/folders plus a
+	// worktree path can push the MCP control socket beyond it before the UI opens.
+	const userDataRoot = process.platform === 'darwin' ? '/tmp' : os.tmpdir();
+	const userDataDir = await mkdtemp(path.join(userDataRoot, 'terminay-docs-user-data-'));
 	const seededWorkspace = await seedWorkspace();
 	let app;
 	try {
@@ -301,7 +340,8 @@ async function run() {
 		await app.evaluate(({ nativeTheme }) => {
 			nativeTheme.themeSource = 'dark';
 		});
-		const mainWindow = await app.firstWindow();
+		await app.firstWindow();
+		const mainWindow = await findWorkspaceWindow(app);
 		await mainWindow.waitForLoadState('domcontentloaded');
 		await useDarkMode(mainWindow);
 		await setWindowSize(app, mainWindow);
@@ -326,21 +366,36 @@ async function run() {
 			await documentationPane.locator('.sidebar-pane__header').click();
 		}
 		await documentationPane.getByRole('tree').waitFor({ state: 'visible', timeout: 30_000 });
-		await documentationPane.getByRole('treeitem', { name: /^docs$/i }).evaluate((element) => element.click());
-		await documentationPane.getByRole('treeitem', { name: /^Readme, README\.md$/i }).evaluate((element) => element.click());
+		await documentationPane.getByRole('treeitem', { name: /^handbook$/i }).evaluate((element) => element.click());
+		await documentationPane.getByRole('treeitem', { name: /^Product roadmap, handbook\/roadmap\.md$/i }).evaluate((element) => element.click());
 		await mainWindow.locator('.documentation-editor').waitFor({ state: 'visible', timeout: 30_000 });
-		await mainWindow.getByRole('heading', { name: 'Terminay', exact: true }).waitFor({ state: 'visible', timeout: 30_000 });
+		await mainWindow.getByRole('heading', { name: 'Product roadmap', exact: true }).waitFor({ state: 'visible', timeout: 30_000 });
+		for (const title of ['Explorer', 'Agents', 'Git']) {
+			const pane = mainWindow.locator('.project-workspace--active .sidebar-pane').filter({
+				has: mainWindow.locator('.sidebar-pane__title', { hasText: title }),
+			});
+			if (!(await pane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed')))) {
+				await pane.locator('.sidebar-pane__header').click();
+			}
+		}
+		await mainWindow.evaluate(() => {
+			if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+		});
 		await capture(app, mainWindow, 'terminay-documentation.png');
 
+		const explorerPane = mainWindow.locator('.project-workspace--active .sidebar-pane').filter({
+			has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Explorer' }),
+		});
+		await explorerPane.locator('.sidebar-pane__header').click();
 		const readme = explorerItem(mainWindow, 'README.md');
 		await readme.waitFor({ state: 'visible', timeout: 30_000 });
 		await readme.dblclick();
 		await mainWindow.locator('.file-preview-markdown').waitFor({ state: 'visible', timeout: 30_000 });
 		await capture(app, mainWindow, 'terminay-files.png');
 
-		const docsFolder = explorerItem(mainWindow, 'docs');
+		const docsFolder = explorerItem(mainWindow, 'handbook');
 		await docsFolder.click();
-		const roadmap = explorerItem(mainWindow, 'ROADMAP.md');
+		const roadmap = explorerItem(mainWindow, 'roadmap.md');
 		await roadmap.waitFor({ state: 'visible', timeout: 30_000 });
 		await roadmap.dblclick();
 		await mainWindow.getByRole('tab', { name: 'Tasks', exact: true }).click();
@@ -361,6 +416,9 @@ async function run() {
 		await capture(app, mainWindow, 'terminay-tasks-kanban.png');
 
 		const gitPane = mainWindow.locator('.sidebar-pane').filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) });
+		if (await gitPane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed'))) {
+			await gitPane.locator('.sidebar-pane__header').click();
+		}
 		await gitPane.locator('.worktrees-panel__worktree').first().waitFor({ state: 'visible', timeout: 30_000 });
 		await gitPane.scrollIntoViewIfNeeded();
 		await capture(app, mainWindow, 'terminay-worktrees.png');
