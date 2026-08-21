@@ -108,7 +108,7 @@ export class DocumentationCatalog {
 }
 
 export function titleCase(value: string): string {
-	return value.replace(/([A-Z]+)([A-Z][a-z])/gu, '$1 $2').replace(/([a-z\d])([A-Z])/gu, '$1 $2').replace(/[_\-.]+/gu, ' ').trim().split(/\s+/u).filter(Boolean).map((word) => word.length <= 4 && /^[A-Z\d]+$/u.test(word) ? word : word.slice(0, 1).toLocaleUpperCase() + word.slice(1)).join(' ');
+	return value.replace(/([A-Z]+)([A-Z][a-z])/gu, '$1 $2').replace(/([a-z\d])([A-Z])/gu, '$1 $2').replace(/[_\-.]+/gu, ' ').trim().split(/\s+/u).filter(Boolean).map((word) => word.slice(0, 1).toLocaleUpperCase() + word.slice(1).toLocaleLowerCase()).join(' ');
 }
 function frontmatterTitle(text: string, truncated: boolean): { title?: string; diagnostic?: string } {
 	if (!text.startsWith('---\n') && !text.startsWith('---\r\n')) return {};

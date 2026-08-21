@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { titleCase } from '../dist/fileService/documentationCatalog.js';
 import {
 	CanonicalProjectPathResolver,
 	DocumentationCatalog,
 } from '../dist/index.js';
+
+test('titleCase normalizes uppercase and separated filename fallbacks', () => {
+	assert.equal(titleCase('AGENTS'), 'Agents');
+	assert.equal(titleCase('API_reference-guide'), 'Api Reference Guide');
+});
 
 test('DocumentationCatalog keeps its revision bounded for large projects', async () => {
 	const text = new TextEncoder();
