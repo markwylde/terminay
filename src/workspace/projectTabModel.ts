@@ -19,7 +19,6 @@ export type ProjectTab = {
 	isAgentsPaneCollapsed: boolean;
 	isGitPaneCollapsed: boolean;
 	isDocumentationPaneCollapsed: boolean;
-	hasResolvedDocumentationPaneDefault: boolean;
 	expandedAgentEntryIds: string[];
 	expandedDocumentationFolderIds: string[];
 	sidebarAgentsHeight: number;
@@ -127,7 +126,6 @@ export function createProjectTab(
 		isAgentsPaneCollapsed: false,
 		isGitPaneCollapsed: sidebarDefaults.defaultGitState === 'collapsed',
 		isDocumentationPaneCollapsed: sidebarDefaults.defaultDocumentationState === 'collapsed',
-		hasResolvedDocumentationPaneDefault: false,
 		expandedAgentEntryIds: [],
 		expandedDocumentationFolderIds: [],
 		sidebarAgentsHeight: sidebarDefaults.defaultAgentsPaneHeight,
