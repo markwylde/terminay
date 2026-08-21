@@ -1296,7 +1296,7 @@ const ProjectWorkspace = forwardRef<
 			error: settingsError,
 		} = useTerminalSettings(serverSettingsClient);
 		const serverFileViewerClient = featureAuthority?.fileViewerClient;
-		const documentation = useDocumentationController({ client: featureAuthority?.documentationClient, observationClient: featureAuthority?.fileObservationClient, projectId: project.id, expandedFolderIds: project.expandedDocumentationFolderIds, onExpandedFolderIdsChange: (expandedDocumentationFolderIds) => onUpdateProject(project.id, { expandedDocumentationFolderIds }) });
+		const documentation = useDocumentationController({ client: featureAuthority?.documentationClient, observationClient: featureAuthority?.fileObservationClient, projectId: project.id, scopeKey: featureAuthority?.scope.projectRoot ?? project.rootFolder, expandedFolderIds: project.expandedDocumentationFolderIds, onExpandedFolderIdsChange: (expandedDocumentationFolderIds) => onUpdateProject(project.id, { expandedDocumentationFolderIds }) });
 		const fileViewerClient = useMemo(
 			() =>
 				serverFileViewerClient ??

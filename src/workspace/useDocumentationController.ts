@@ -10,10 +10,11 @@ export function useDocumentationController(options: {
 	readonly client?: DocumentationClient;
 	readonly observationClient?: FileObservationClient;
 	readonly projectId: string;
+	readonly scopeKey: string;
 	readonly expandedFolderIds: readonly string[];
 	readonly onExpandedFolderIdsChange: (ids: string[]) => void;
 }) {
-	const { client, observationClient, projectId, expandedFolderIds, onExpandedFolderIdsChange } = options;
+	const { client, observationClient, projectId, scopeKey, expandedFolderIds, onExpandedFolderIdsChange } = options;
 	const [catalog, setCatalog] = useState<DocumentationCatalog | undefined>(undefined);
 	const [error, setError] = useState<string | undefined>(undefined);
 	const [loading, setLoading] = useState(false);
@@ -39,8 +40,8 @@ export function useDocumentationController(options: {
 		if (immediate) { run(); return; }
 		if (timerRef.current !== undefined) window.clearTimeout(timerRef.current);
 		timerRef.current = window.setTimeout(() => { timerRef.current = undefined; run(); }, REFRESH_DELAY_MS);
-	}, [client, projectId]);
-	useEffect(() => { setCatalog(undefined); setError(undefined); refresh(); }, [projectId, refresh]);
+	}, [client, projectId, scopeKey]);
+	useEffect(() => { setCatalog(undefined); setError(undefined); refresh(); }, [projectId, scopeKey, refresh]);
 	useEffect(() => setExpandedFolders(new Set(expandedFolderIds)), [expandedFolderIds]);
 	useEffect(() => {
 		if (observationClient === undefined || client === undefined) return;
@@ -55,7 +56,7 @@ export function useDocumentationController(options: {
 			unsubscribe = await observationClient.subscribeWatch(next, () => { window.dispatchEvent(new CustomEvent('terminay-documentation-change', { detail: { projectId } })); refresh(false); }, () => { window.dispatchEvent(new CustomEvent('terminay-documentation-change', { detail: { projectId } })); refresh(false); });
 		}).catch((reason: unknown) => { if (!disposed) setError(reason instanceof Error ? reason.message : String(reason)); });
 		return () => { disposed = true; if (timerRef.current !== undefined) window.clearTimeout(timerRef.current); unsubscribe?.(); if (handle) void observationClient.stopWatch(handle.subscriptionId); };
-	}, [client, observationClient, projectId, refresh]);
+	}, [client, observationClient, projectId, scopeKey, refresh]);
 	const toggleFolder = useCallback((path: string) => setExpandedFolders((current) => { const next = new Set(current); next.has(path) ? next.delete(path) : next.add(path); onExpandedFolderIdsChange([...next].sort()); return next; }), [onExpandedFolderIdsChange]);
 	return { catalog, error, expandedFolders, loading, refresh: () => refresh(true), toggleFolder } as const;
 }
