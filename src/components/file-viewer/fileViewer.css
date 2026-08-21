@@ -73,8 +73,9 @@
 	border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.documentation-editor__surface {
+.documentation-editor .documentation-editor__surface {
 	min-width: 0;
+	height: 100%;
 	overflow: auto;
 	color: #dce2f0;
 	background: #0d1014;
@@ -82,9 +83,27 @@
 	--baseBase: #11151b;
 	--baseBgSubtle: #171c24;
 	--baseBg: #1d2430;
+	--baseBgHover: #252e3b;
+	--baseBgActive: #2d3848;
+	--baseLine: #293240;
 	--baseBorder: #303846;
+	--baseBorderHover: #465367;
+	--baseSolid: #68758a;
+	--baseSolidHover: #7b899f;
 	--baseText: #dce2f0;
 	--baseTextContrast: #f4f7fb;
+	--accentBase: #16101a;
+	--accentBgSubtle: #24152a;
+	--accentBg: #34203d;
+	--accentBgHover: #43284e;
+	--accentBgActive: #52305f;
+	--accentLine: #653b74;
+	--accentBorder: #784488;
+	--accentBorderHover: #9255a4;
+	--accentSolid: #9656a8;
+	--accentSolidHover: #a968ba;
+	--accentText: #dda9e8;
+	--accentTextContrast: #faedfc;
 }
 
 .documentation-editor--with-preview .documentation-editor__surface {
@@ -109,6 +128,69 @@
 	padding: 42px 56px 120px;
 	color: #dce2f0;
 	caret-color: #dce2f0;
+}
+
+.documentation-editor__surface .mdxeditor-root-contenteditable,
+.documentation-editor__surface .mdxeditor-contenteditable-wrapper,
+.documentation-editor__surface .mdxeditor-rich-text-editor {
+	min-height: 100%;
+}
+
+.documentation-editor .documentation-editor__surface .mdxeditor-source-editor,
+.documentation-editor .documentation-editor__surface .mdxeditor-diff-editor,
+.documentation-editor .documentation-editor__surface .cm-editor,
+.documentation-editor .documentation-editor__surface .cm-scroller,
+.documentation-editor .documentation-editor__surface .cm-mergeView,
+.documentation-editor .documentation-editor__surface .cm-mergeViewEditors,
+.documentation-editor .documentation-editor__surface .cm-mergeViewEditor {
+	background: #0d1014;
+	color: #dce2f0;
+}
+
+.documentation-editor .documentation-editor__surface .cm-gutters {
+	background: #11151b;
+	color: #7f8a9c;
+	border-right-color: #293240;
+}
+
+.documentation-editor .documentation-editor__surface .cm-activeLine,
+.documentation-editor .documentation-editor__surface .cm-activeLineGutter {
+	background: #171c24;
+}
+
+.documentation-editor .documentation-editor__surface .cm-selectionBackground,
+.documentation-editor .documentation-editor__surface .cm-content ::selection {
+	background: #52305f;
+}
+
+.documentation-editor .documentation-editor__surface .cm-cursor {
+	border-left-color: #f4f7fb;
+}
+
+.documentation-editor .documentation-editor__surface .cm-mergeViewEditor {
+	border-color: #293240;
+}
+
+.documentation-editor
+	.documentation-editor__surface
+	.cm-merge-a
+	.cm-changedLine,
+.documentation-editor .documentation-editor__surface .cm-deletedChunk {
+	background: rgba(191, 69, 83, 0.16);
+}
+
+.documentation-editor
+	.documentation-editor__surface
+	.cm-merge-b
+	.cm-changedLine,
+.documentation-editor .documentation-editor__surface .cm-inlineChangedLine {
+	background: rgba(64, 166, 101, 0.16);
+}
+
+.documentation-editor .documentation-editor__surface .cm-merge-revert {
+	background: #1d2430;
+	color: #dce2f0;
+	border-color: #303846;
 }
 
 .documentation-editor__preview {

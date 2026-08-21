@@ -27,8 +27,8 @@ test('DocumentationCatalog recursively discovers MD/MDX, prunes ignored folders,
 	const result = await fixture().catalog();
 	assert.deepEqual(result.folders.map((folder) => folder.relativePath), ['docs']);
 	assert.deepEqual(result.documents.map((document) => [document.relativePath, document.title, document.titleSource]), [
-		['docs/APIReference.md', 'API Reference', 'filename'],
+		['docs/APIReference.md', 'Api Reference', 'filename'],
 		['docs/guide.mdx', 'Getting Started', 'frontmatter'],
-		['README.md', 'README', 'filename'],
+		['README.md', 'Readme', 'filename'],
 	]);
 });

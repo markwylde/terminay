@@ -21,6 +21,7 @@ import {
 	linkPlugin,
 	listsPlugin,
 	MDXEditor,
+	type MDXEditorMethods,
 	markdownShortcutPlugin,
 	quotePlugin,
 	tablePlugin,
@@ -96,6 +97,7 @@ export function DocumentationEditor({
 	const [previewGeneration, setPreviewGeneration] = useState(0);
 	const [downloadInFlight, setDownloadInFlight] = useState(false);
 	const valueRef = useRef(markdown);
+	const editorRef = useRef<MDXEditorMethods>(null);
 	const flushRef = useRef(onFlush);
 	flushRef.current = onFlush;
 	const autosaveRef = useRef<DocumentationAutosaveController | undefined>(
@@ -126,6 +128,11 @@ export function DocumentationEditor({
 	const flush = useCallback(() => {
 		void autosaveRef.current?.flush();
 	}, []);
+	useEffect(() => {
+		if (markdown === valueRef.current) return;
+		valueRef.current = markdown;
+		editorRef.current?.setMarkdown(markdown);
+	}, [markdown]);
 	useEffect(
 		() => () => {
 			autosaveRef.current?.dispose();
@@ -315,9 +322,10 @@ export function DocumentationEditor({
 				</div>
 			) : null}
 			<MDXEditor
+				ref={editorRef}
 				markdown={markdown}
 				trim={false}
-				className="documentation-editor__surface"
+				className="documentation-editor__surface mdxeditor-full-height"
 				plugins={editorPlugins}
 				onChange={handleChange}
 				onError={(error) => setMessage(`Editor parser error: ${error.error}`)}
