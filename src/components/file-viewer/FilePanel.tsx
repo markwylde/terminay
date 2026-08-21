@@ -48,6 +48,7 @@ import { FileLargeFileChooser } from './FileLargeFileChooser';
 import { FileModeSwitcher } from './FileModeSwitcher';
 import { useFilePanelSaveRegistration } from './FilePanelSaveRegistry';
 import { FileStatusBar } from './FileStatusBar';
+import { DocumentationEditor } from './DocumentationEditor';
 import { DiffViewer } from './modes/DiffViewer';
 import { HexViewer } from './modes/HexViewer';
 import { PerformantTextViewer } from './modes/PerformantTextViewer';
@@ -143,10 +144,15 @@ function CanonicalFilePanel(
 	const {
 		filePath,
 		initialMode,
+		presentation = 'file-viewer',
 		preferredEngine = 'auto',
 		projectRoot,
 	} = props.params;
 	const baseParamsRef = useRef(props.params);
+	// Dockview keeps the panel instance while callers switch between File Viewer
+	// and Documentation.  Keep subsequent dirty/title metadata writes from
+	// restoring the presentation that was used when this component mounted.
+	baseParamsRef.current = props.params;
 	const panelApiRef = useRef(props.api);
 	const containerApiRef = useRef(props.containerApi);
 	const { settings, setSettings, settingsClient } = useTerminalSettings();
@@ -212,6 +218,7 @@ function CanonicalFilePanel(
 		path: string;
 		size: number;
 	} | null>(null);
+	const documentationSessionRef = useRef<{ sessionId: string; diskRevision: number; draftRevision: number } | undefined>(undefined);
 
 	const sessionStore = useMemo(
 		() =>
@@ -437,6 +444,14 @@ function CanonicalFilePanel(
 			window.removeEventListener('terminay-file-mode-request', onModeRequest);
 		};
 	}, [filePath]);
+	useEffect(() => {
+		if (presentation !== 'documentation' || !/\.mdx?$/iu.test(filePath)) return;
+		let cancelled = false;
+		void fileViewerClient.openFile(toProjectRelativePath(projectRoot, filePath), terminalClientContext.projectId).then((session) => {
+			if (!cancelled) documentationSessionRef.current = { sessionId: session.sessionId, diskRevision: session.metadata.diskRevision, draftRevision: session.metadata.draftRevision };
+		}).catch(() => { if (!cancelled) documentationSessionRef.current = undefined; });
+		return () => { cancelled = true; };
+	}, [filePath, fileViewerClient, presentation, projectRoot, terminalClientContext.projectId]);
 
 	const refreshDiff = useCallback(
 		async (targetPath: string, options?: { keepPrevious?: boolean }) => {
@@ -609,7 +624,31 @@ function CanonicalFilePanel(
 		return true;
 	}, [fileGateway, refreshDiff, saveSparseDraft]);
 
-	useFilePanelSaveRegistration(props.api.id, saveCurrentFile);
+	const saveDocumentationDraft = useCallback(async (): Promise<boolean> => {
+		const currentInfo = fileInfoRef.current;
+		if (!currentInfo) throw new Error('The document is no longer available.');
+		if (conflictRef.current) throw new Error('Choose Reload from disk or Keep local edits before saving.');
+		const relativePath = toProjectRelativePath(projectRoot, currentInfo.path);
+		let session = documentationSessionRef.current;
+		if (session === undefined) {
+			const opened = await fileViewerClient.openFile(relativePath, terminalClientContext.projectId);
+			session = { sessionId: opened.sessionId, diskRevision: opened.metadata.diskRevision, draftRevision: opened.metadata.draftRevision };
+			documentationSessionRef.current = session;
+		}
+		const text = draftBufferRef.current.getText();
+		const edited = mutationState(await fileViewerClient.editSession(session.sessionId, text, session.draftRevision));
+		if (!edited.ok) throw new Error(edited.message);
+		session.draftRevision = edited.draftRevision;
+		session.diskRevision = edited.diskRevision;
+		const saved = mutationState(await fileViewerClient.saveSession(session.sessionId, session.diskRevision, session.draftRevision));
+		if (!saved.ok) { conflictRef.current = true; setConflict(true); throw new Error(saved.message); }
+		session.draftRevision = saved.draftRevision;
+		session.diskRevision = saved.diskRevision;
+		setIsDirty(false); sessionStoreRef.current?.setDirty(false);
+		return true;
+	}, [fileViewerClient, projectRoot, terminalClientContext.projectId]);
+
+	useFilePanelSaveRegistration(props.api.id, presentation === 'documentation' ? saveDocumentationDraft : saveCurrentFile);
 
 	const handleSwitchToMonaco = useCallback(async () => {
 		const currentInfo = fileInfoRef.current;
@@ -986,6 +1025,16 @@ function CanonicalFilePanel(
 		setMode(nextMode);
 		sessionStoreRef.current?.setMode(nextMode);
 	}, []);
+	const handleDocumentationChange = useCallback((text: string) => {
+		setDraftText(text);
+		draftBufferRef.current.setText(text);
+		setIsDirty(true);
+		sessionStoreRef.current?.setDirty(true);
+	}, []);
+	useEffect(() => {
+		if (presentation !== 'documentation' || isDirty || !/\.mdx?$/iu.test(filePath)) return;
+		props.api.setTitle(documentDisplayTitle(draftText, filePath));
+	}, [draftText, filePath, isDirty, presentation, props.api]);
 
 	if (!fileInfo && loadError) {
 		return (
@@ -1020,7 +1069,8 @@ function CanonicalFilePanel(
 	const effectiveMode =
 		mode === 'diff' && !canDiff
 			? capabilities.fallbackMode
-			: resolveFileViewerMode(capabilities, mode);
+		: resolveFileViewerMode(capabilities, mode);
+	const isDocumentation = presentation === 'documentation';
 
 	return (
 		<div
@@ -1059,7 +1109,7 @@ function CanonicalFilePanel(
 				/>
 			) : null}
 
-			<div className="file-panel__toolbar">
+			{!isDocumentation ? <div className="file-panel__toolbar">
 				<FileModeSwitcher
 					activeMode={effectiveMode}
 					modes={availableModes}
@@ -1086,20 +1136,21 @@ function CanonicalFilePanel(
 						}}
 					/>
 				) : null}
-			</div>
+			</div> : null}
 
 			<div className="file-panel__body">
-				{effectiveMode === 'preview' ? (
+				{isDocumentation ? (!/\.mdx?$/iu.test(fileInfo.name) || fileInfo.isBinary || fileInfo.size > LARGE_FILE_THRESHOLD_BYTES ? <div className="file-preview-unsupported">Documentation mode requires a bounded UTF-8 Markdown or MDX document. Open this file in the normal File Viewer.</div> : <DocumentationEditor key={`${fileInfo.path}:${fileInfo.mtimeMs ?? 'unknown'}:${fileInfo.size}`} markdown={draftText} onChange={handleDocumentationChange} onFlush={async () => { await saveDocumentationDraft(); }} path={toProjectRelativePath(projectRoot, fileInfo.path)} projectId={terminalClientContext.projectId} serverId={terminalClientContext.serverId} runtimeClient={terminalClientContext.mdxRuntimeClient} />) : null}
+				{!isDocumentation && effectiveMode === 'preview' ? (
 					<PreviewViewer
 						file={fileInfo}
 						previewSourceUrl={previewSourceUrl}
 						text={draftText}
 					/>
 				) : null}
-				{effectiveMode === 'tasks' ? (
+				{!isDocumentation && effectiveMode === 'tasks' ? (
 					<TasksViewer text={draftText} diff={diff} />
 				) : null}
-				{engine === 'performant' &&
+				{!isDocumentation && engine === 'performant' &&
 				fileInfo.size > LARGE_FILE_THRESHOLD_BYTES ? (
 					<div className="file-panel__viewer" hidden={effectiveMode !== 'text'}>
 						<PerformantTextViewer
@@ -1115,7 +1166,7 @@ function CanonicalFilePanel(
 							sparseLineDeltas={sparseLineDeltas}
 						/>
 					</div>
-				) : effectiveMode === 'text' ? (
+				) : !isDocumentation && effectiveMode === 'text' ? (
 					!fileInfo.isDirectory ? (
 						<TextViewer
 							engine={engine}
@@ -1137,7 +1188,7 @@ function CanonicalFilePanel(
 						</div>
 					)
 				) : null}
-				{effectiveMode === 'hex' ? (
+				{!isDocumentation && effectiveMode === 'hex' ? (
 					<HexViewer
 						draftBase64={
 							fileInfo.size <= LARGE_FILE_THRESHOLD_BYTES
@@ -1172,7 +1223,7 @@ function CanonicalFilePanel(
 						}}
 					/>
 				) : null}
-				{effectiveMode === 'diff' ? (
+				{!isDocumentation && effectiveMode === 'diff' ? (
 					<DiffViewer
 						diff={diff}
 						error={diffError}
@@ -1204,4 +1255,21 @@ function CanonicalFilePanel(
 			/>
 		</div>
 	);
+}
+
+function documentDisplayTitle(markdown: string, filePath: string): string {
+	const match = /^(?:---\r?\n)[\s\S]{0,32768}?^title\s*:\s*['"]?([^\r\n'"]+)['"]?\s*$/mu.exec(markdown);
+	const title = match?.[1]?.trim();
+	if (title) return title;
+	const name = filePath.split(/[\\/]/u).at(-1)?.replace(/\.mdx?$/iu, '') ?? filePath;
+	return name.replace(/([A-Z]+)([A-Z][a-z])/gu, '$1 $2').replace(/([a-z\d])([A-Z])/gu, '$1 $2').replace(/[_\-.]+/gu, ' ').trim().split(/\s+/u).filter(Boolean).map((word) => word.slice(0, 1).toLocaleUpperCase() + word.slice(1).toLocaleLowerCase()).join(' ');
+}
+
+function mutationState(value: unknown): { readonly ok: true; readonly diskRevision: number; readonly draftRevision: number } | { readonly ok: false; readonly message: string } {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('The file session returned an invalid save result.');
+	const result = value as Record<string, unknown>;
+	if (result.ok === false) { const error = result.error; return { ok: false, message: typeof error === 'object' && error !== null && typeof (error as Record<string, unknown>).message === 'string' ? (error as Record<string, string>).message : 'The document save was rejected.' }; }
+	const state = result.value;
+	if (result.ok !== true || typeof state !== 'object' || state === null || !Number.isSafeInteger((state as Record<string, unknown>).diskRevision) || !Number.isSafeInteger((state as Record<string, unknown>).draftRevision)) throw new Error('The file session returned an invalid revision.');
+	return { ok: true, diskRevision: (state as Record<string, number>).diskRevision, draftRevision: (state as Record<string, number>).draftRevision };
 }

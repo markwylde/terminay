@@ -7,6 +7,11 @@ same workspace as terminal and folder panels. File panels support Preview,
 Text, HEX, and Diff modes and preserve one shared draft and conflict state
 across modes.
 
+Markdown and MDX files may also use the distinct rich
+[Documentation presentation](./documentation-sidebar-and-editor.md). It keeps
+the same canonical file panel/session and draft lifecycle while applying its
+specified MDXEditor, preview-runtime, and autosave behaviour.
+
 Terminay Server owns file identity, metadata, reads, saves, watches, preview
 sources, draft coordination, and Git diff generation. Clients render the
 appropriate responsive viewer through the application protocol.
@@ -24,6 +29,10 @@ explicitly rather than using the Terminay Server filesystem.
   collapses it.
 - Opening the same canonical path in the same project focuses the existing
   panel instead of creating a duplicate.
+- Opening a Markdown or MDX path from Documentation selects the Documentation
+  presentation on that canonical panel. Opening it from Explorer selects the
+  requested general File Viewer presentation; the two surfaces never create
+  competing file sessions or drafts.
 - File panels support close, focus, split, drag, reorder, and movement between
   server-owned workspace views.
 - Desktop presents view movement through native windows; web clients present it

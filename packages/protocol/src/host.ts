@@ -212,6 +212,13 @@ export type TerminayHostAction =
 	| Readonly<{ type: 'clipboard.write'; text: string }>
 	| Readonly<{ type: 'notification.show'; title: string; body?: string }>
 	| Readonly<{ type: 'updater.check' }>
+	| Readonly<{
+			/** A bounded preview payload. The host alone chooses its destination. */
+			type: 'preview.download';
+		filename: string;
+		mimeType: string;
+		bytesBase64: string;
+	  }>
 	| Readonly<{ type: 'os.open-external'; url: string }>
 	| Readonly<{ type: 'os.reveal'; token: string }>
 	| Readonly<{
@@ -841,6 +848,31 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 		case 'updater.check':
 			exactKeys(action, ['type'], 'updater action');
 			return Object.freeze({ type: 'updater.check' });
+		case 'preview.download': {
+			exactKeys(
+				action,
+				['type', 'filename', 'mimeType', 'bytesBase64'],
+				'preview download action',
+			);
+			const filename = boundedText(action.filename, 'preview filename', 128);
+			const mimeType = boundedText(action.mimeType, 'preview MIME type', 128);
+			if (!/^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*\/[A-Za-z0-9!#$&^_.+-]+$/u.test(mimeType))
+				throw new TypeError('preview MIME type is invalid');
+			if (
+				typeof action.bytesBase64 !== 'string' ||
+				action.bytesBase64.length === 0 ||
+				action.bytesBase64.length > 22_369_624 ||
+				action.bytesBase64.length % 4 !== 0 ||
+				!/^[A-Za-z0-9+/]*={0,2}$/u.test(action.bytesBase64)
+			)
+				throw new TypeError('preview download payload is invalid');
+			return Object.freeze({
+				type: 'preview.download',
+				filename,
+				mimeType,
+				bytesBase64: action.bytesBase64,
+			});
+		}
 		case 'os.open-external':
 			exactKeys(action, ['type', 'url'], 'external URL action');
 			return Object.freeze({
@@ -964,6 +996,8 @@ export function requiredTerminayHostCapability(
 			return 'notifications';
 		case 'updater.check':
 			return 'updater';
+		case 'preview.download':
+			return 'osIntegration';
 		case 'os.open-external':
 		case 'os.reveal':
 			return 'osIntegration';

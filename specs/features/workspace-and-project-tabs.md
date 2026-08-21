@@ -9,6 +9,11 @@ state, and a Dockview layout holding terminal, file, and folder panels. Projects
 and panels are movable where environment boundaries permit without turning a
 terminal title into an identity boundary.
 
+Markdown and MDX files can use the rich
+[Documentation presentation](./documentation-sidebar-and-editor.md) within a
+canonical file panel; changing presentation does not change panel or file
+identity.
+
 ## User contract
 
 - Users can create, rename, reorder, close, and colour/icon project tabs.

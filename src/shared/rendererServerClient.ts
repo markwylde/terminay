@@ -3,6 +3,8 @@ import {
 	AgentStatusClient,
 	FileObservationClient,
 	FileViewerClient,
+	DocumentationClient,
+	MdxRuntimeClient,
 	RecordingsClient,
 	TerminayClient,
 	TerminayClientFacade,
@@ -173,6 +175,8 @@ export async function createConnectedServerClientContext(
 		});
 		const fileViewerClient = new FileViewerClient(featureTransport);
 		const fileObservationClient = new FileObservationClient(featureTransport);
+		const documentationClient = new DocumentationClient(featureTransport);
+		const mdxRuntimeClient = new MdxRuntimeClient(featureTransport);
 		const recordingsClient = new RecordingsClient(featureTransport);
 		const gitClient = new TerminayGitClient(featureTransport);
 		const candidateAgentStatusClient = new AgentStatusClient([], {
@@ -304,6 +308,8 @@ export async function createConnectedServerClientContext(
 			workspaceSnapshotStore: store,
 			dispose,
 			fileObservationClient,
+			documentationClient,
+			mdxRuntimeClient,
 			fileViewerClient,
 			recordingsClient,
 			gitClient,
