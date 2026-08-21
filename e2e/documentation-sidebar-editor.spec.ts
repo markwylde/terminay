@@ -20,7 +20,7 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
   if (await documentationPane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed'))) {
     await documentationPane.locator('.sidebar-pane__header').click()
   }
-  await expect(mainWindow.getByRole('tree'), `Documentation pane: ${await documentationPane.innerText()}`).toBeVisible()
+  await expect(mainWindow.getByRole('tree')).toBeVisible()
   await mainWindow.getByRole('treeitem', { name: /docs/ }).click()
   await mainWindow.getByRole('treeitem', { name: /guides/ }).click()
   await mainWindow.getByRole('treeitem', { name: /Getting Started/ }).click()
