@@ -4512,7 +4512,7 @@ const ProjectWorkspace = forwardRef<
 					documentation: {
 					id: 'documentation', title: 'Documentation', height: project.sidebarDocumentationHeight, collapsed: project.isDocumentationPaneCollapsed,
 					onToggleCollapsed: () => onUpdateProject(project.id, { isDocumentationPaneCollapsed: !project.isDocumentationPaneCollapsed }),
-						actions: <button type="button" className="sidebar-pane__action-button" onClick={documentation.refresh} aria-label="Refresh documentation" title="Refresh documentation"><RefreshCw size={14} aria-hidden="true" /></button>,
+						actions: <button type="button" className="sidebar-pane__action-button" onClick={documentation.refresh} aria-label="Reload documentation" title="Reload documentation"><RefreshCw size={14} aria-hidden="true" /></button>,
 					count: documentation.catalog?.documents.length,
 					children: <DocumentationTree catalog={documentation.catalog} error={documentation.error} expandedFolders={documentation.expandedFolders} loading={documentation.loading} onToggleFolder={documentation.toggleFolder} onOpen={(path) => openFile(path, { presentation: 'documentation' })} />,
 				},
