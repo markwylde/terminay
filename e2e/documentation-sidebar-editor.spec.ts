@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures'
-import { setProjectRoot } from './support/ui'
+import { openFileExplorer, setProjectRoot } from './support/ui'
 
 test('Documentation groups Markdown by folder and opens the rich document surface', async ({ createWorkspace, mainWindow }) => {
   const workspace = await createWorkspace({
@@ -13,7 +13,11 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
     },
   })
   await setProjectRoot(mainWindow, workspace.rootDir)
-  await mainWindow.getByText('Documentation', { exact: true }).click()
+  await openFileExplorer(mainWindow)
+  const documentationPane = mainWindow.locator('.project-workspace--active .sidebar-pane').filter({
+    has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Documentation' }),
+  })
+  await documentationPane.locator('.sidebar-pane__header').click()
   await expect(mainWindow.getByRole('tree')).toBeVisible()
   await mainWindow.getByRole('treeitem', { name: /docs/ }).click()
   await mainWindow.getByRole('treeitem', { name: /guides/ }).click()
