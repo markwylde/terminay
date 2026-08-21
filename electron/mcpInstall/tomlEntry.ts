@@ -3,6 +3,12 @@ import type { McpServerCommand } from './index'
 /** The Codex TOML table name we register. */
 export const CODEX_TABLE = 'mcp_servers.terminay'
 
+/** Per-terminal capability variables Codex must forward to the stdio child. */
+export const CODEX_TERMINAY_ENV_VARS = [
+  'TERMINAY_CONTROL_SOCKET',
+  'TERMINAY_CONTROL_TOKEN',
+] as const
+
 /**
  * Matches the `[mcp_servers.terminay]` table header on its own line, allowing
  * optional surrounding whitespace. Used both to detect installation and to
@@ -38,6 +44,7 @@ export function renderCodexBlock(server: McpServerCommand): string {
     '[mcp_servers.terminay]',
     `command = "${escapeTomlString(server.command)}"`,
     `args = ${renderTomlStringArray(server.args)}`,
+    `env_vars = ${renderTomlStringArray([...CODEX_TERMINAY_ENV_VARS])}`,
   ]
   if (server.env !== undefined) {
     lines.push(`env = ${renderTomlInlineTable(server.env)}`)
