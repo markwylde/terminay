@@ -60,127 +60,80 @@ export class MdxCompiler {
 		// mistaking source compiled for the sandbox for server authority.
 		const guestImport = ['im', 'port'].join('');
 		const bootstrap = `${guestImport} React from 'react';\n${guestImport} { createRoot } from 'react-dom/client';\n${guestImport} Content from 'terminay:entry';\nconst root = document.getElementById('root');\nif (!root) throw new Error('MDX preview root is unavailable');\ncreateRoot(root).render(React.createElement(Content));`;
-		const result = await withTimeout(
-			build({
-				stdin: {
-					contents: bootstrap,
-					resolveDir: entry.slice(0, entry.lastIndexOf('/')),
-					sourcefile: 'terminay:bootstrap',
-					loader: 'js',
-				},
-				bundle: true,
-				format: 'iife',
-				platform: 'browser',
-				write: false,
-				logLevel: 'silent',
-				jsx: 'automatic',
-				plugins: [
-					{
-						name: 'terminay-mdx',
-						setup: (api) => {
-							api.onResolve({ filter: /^terminay:entry$/ }, () => ({
-								path: 'terminay:entry',
-								namespace: 'terminay-entry',
-							}));
-							api.onLoad(
-								{ filter: /^terminay:entry$/, namespace: 'terminay-entry' },
-								() => ({
-									contents: entryContents,
-									loader: loader(entryExtension),
-								}),
-							);
-							api.onResolve({ filter: /.*/ }, async (args) => {
-								if (signal?.aborted)
-									return {
-										errors: [{ text: 'MDX compilation was cancelled.' }],
-									};
-								if (isBlockedImport(args.path))
-									return {
-										errors: [
-											{
-												text: `Node/Electron imports are blocked: ${args.path}`,
-											},
-										],
-									};
-								try {
-									const base =
-										args.importer === '<stdin>' ||
-										args.importer === 'terminay:entry'
-											? entryDirectory
-											: args.importer.slice(
-													0,
-													args.importer.lastIndexOf('/') + 1,
-												);
-									const path = args.path.startsWith('.')
-										? await this.resolve(
-												normalizeRelativeImport(base, args.path),
-											)
-										: await this.resolvePackage(args.path);
-									const depth =
-										args.importer === '<stdin>'
-											? 1
-											: (depthByModule.get(args.importer) ?? 0) + 1;
-									if (depth > MDX_COMPILER_LIMITS.maxDepth)
+		let result: Awaited<ReturnType<typeof build>>;
+		try {
+			result = await withTimeout(
+				build({
+					stdin: {
+						contents: bootstrap,
+						resolveDir: entry.slice(0, entry.lastIndexOf('/')),
+						sourcefile: 'terminay:bootstrap',
+						loader: 'js',
+					},
+					bundle: true,
+					format: 'iife',
+					platform: 'browser',
+					write: false,
+					logLevel: 'silent',
+					jsx: 'automatic',
+					plugins: [
+						{
+							name: 'terminay-mdx',
+							setup: (api) => {
+								api.onResolve({ filter: /^terminay:entry$/ }, () => ({
+									path: 'terminay:entry',
+									namespace: 'terminay-entry',
+								}));
+								api.onLoad(
+									{ filter: /^terminay:entry$/, namespace: 'terminay-entry' },
+									() => ({
+										contents: entryContents,
+										loader: loader(entryExtension),
+									}),
+								);
+								api.onResolve({ filter: /.*/ }, async (args) => {
+									if (signal?.aborted)
+										return {
+											errors: [{ text: 'MDX compilation was cancelled.' }],
+										};
+									if (isBlockedImport(args.path))
 										return {
 											errors: [
-												{ text: 'MDX dependency depth limit exceeded.' },
+												{
+													text: `Node/Electron imports are blocked: ${args.path}`,
+												},
 											],
 										};
-									depthByModule.set(path, depth);
-									dependencies.add(path);
-									return dependencies.size > MDX_COMPILER_LIMITS.maxDependencies
-										? { errors: [{ text: 'MDX dependency limit exceeded.' }] }
-										: { path, namespace: 'terminay-project' };
-								} catch (error) {
-									return {
-										errors: [
-											{
-												text:
-													error instanceof Error
-														? error.message
-														: 'MDX import failed.',
-											},
-										],
-									};
-								}
-							});
-							api.onLoad(
-								{ filter: /.*/, namespace: 'terminay-project' },
-								async (args) => {
 									try {
-										const bytes = await this.read(args.path, signal);
-										const ext = args.path.split('.').at(-1)?.toLowerCase();
-										if (ext === 'md' || ext === 'mdx')
+										const base =
+											args.importer === '<stdin>' ||
+											args.importer === 'terminay:entry'
+												? entryDirectory
+												: args.importer.slice(
+														0,
+														args.importer.lastIndexOf('/') + 1,
+													);
+										const path = args.path.startsWith('.')
+											? await this.resolve(
+													normalizeRelativeImport(base, args.path),
+												)
+											: await this.resolvePackage(args.path);
+										const depth =
+											args.importer === '<stdin>'
+												? 1
+												: (depthByModule.get(args.importer) ?? 0) + 1;
+										if (depth > MDX_COMPILER_LIMITS.maxDepth)
 											return {
-												contents: String(
-													await compile(new TextDecoder().decode(bytes), {
-														jsx: true,
-														outputFormat: 'program',
-													}),
-												),
-												loader: 'jsx',
+												errors: [
+													{ text: 'MDX dependency depth limit exceeded.' },
+												],
 											};
-										if (ext === 'css')
-											return {
-												contents: cssModule(new TextDecoder().decode(bytes)),
-												loader: 'js',
-											};
-										if (assetExtension(ext)) {
-											const resourceId = `asset-${resources.size + 1}`;
-											resources.set(resourceId, {
-												resourceId,
-												mimeType: mimeType(ext),
-												bytes,
-											});
-											return {
-												contents: `export default "__terminay_resource_${resourceId}__";`,
-												loader: 'js',
-											};
-										}
-										return {
-											contents: new TextDecoder().decode(bytes),
-											loader: loader(ext),
-										};
+										depthByModule.set(path, depth);
+										dependencies.add(path);
+										return dependencies.size >
+											MDX_COMPILER_LIMITS.maxDependencies
+											? { errors: [{ text: 'MDX dependency limit exceeded.' }] }
+											: { path, namespace: 'terminay-project' };
 									} catch (error) {
 										return {
 											errors: [
@@ -188,20 +141,77 @@ export class MdxCompiler {
 													text:
 														error instanceof Error
 															? error.message
-															: 'MDX source failed.',
+															: 'MDX import failed.',
 												},
 											],
 										};
 									}
-								},
-							);
+								});
+								api.onLoad(
+									{ filter: /.*/, namespace: 'terminay-project' },
+									async (args) => {
+										try {
+											const bytes = await this.read(args.path, signal);
+											const ext = args.path.split('.').at(-1)?.toLowerCase();
+											if (ext === 'md' || ext === 'mdx')
+												return {
+													contents: String(
+														await compile(new TextDecoder().decode(bytes), {
+															jsx: true,
+															outputFormat: 'program',
+														}),
+													),
+													loader: 'jsx',
+												};
+											if (ext === 'css')
+												return {
+													contents: cssModule(new TextDecoder().decode(bytes)),
+													loader: 'js',
+												};
+											if (assetExtension(ext)) {
+												const resourceId = `asset-${resources.size + 1}`;
+												resources.set(resourceId, {
+													resourceId,
+													mimeType: mimeType(ext),
+													bytes,
+												});
+												return {
+													contents: `export default "__terminay_resource_${resourceId}__";`,
+													loader: 'js',
+												};
+											}
+											return {
+												contents: new TextDecoder().decode(bytes),
+												loader: loader(ext),
+											};
+										} catch (error) {
+											return {
+												errors: [
+													{
+														text:
+															error instanceof Error
+																? error.message
+																: 'MDX source failed.',
+													},
+												],
+											};
+										}
+									},
+								);
+							},
 						},
-					},
-				],
-			}),
-			signal,
-		);
-		const code = result.outputFiles.find(
+					],
+				}),
+				signal,
+			);
+		} catch (error) {
+			if (error instanceof FileServiceError) throw error;
+			throw new FileServiceError(
+				'invalid_path',
+				`MDX compilation failed: ${boundedCompilerError(error)}`,
+			);
+		}
+		const code = result.outputFiles?.find(
 			(file) => !file.path.endsWith('.css'),
 		)?.contents;
 		if (
@@ -304,6 +314,14 @@ export class MdxCompiler {
 			);
 		return bytes;
 	}
+}
+
+function boundedCompilerError(error: unknown): string {
+	const message = error instanceof Error ? error.message : String(error);
+	return (
+		message.replaceAll(/\s+/gu, ' ').trim().slice(0, 512) ||
+		'unknown compiler error'
+	);
 }
 
 function configurePackagedEsbuildBinary(): void {

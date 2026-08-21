@@ -4123,7 +4123,10 @@ app.on('web-contents-created', (_event, contents) => {
 });
 
 const handleBeforeQuit = createGracefulQuitHandler({
-	app,
+	// Cleanup has already stopped every privileged service and reaped native
+	// children. A second app.quit() can leave Electron waiting on stale native
+	// handles on macOS, so complete the already-approved quit deterministically.
+	app: { quit: () => app.exit(0) },
 	shutdown: async () => {
 		let clean = false;
 		try {
