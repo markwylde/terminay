@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { compile } from '@mdx-js/mdx';
 import { build } from 'esbuild';
 import type { FileCatalogStorage } from '../fileService/catalog.js';
@@ -34,6 +36,7 @@ export class MdxCompiler {
 		entryPath: string,
 		signal?: AbortSignal,
 	): Promise<MdxCompileResult> {
+		configurePackagedEsbuildBinary();
 		if (!validPath(entryPath))
 			throw new FileServiceError('invalid_path', 'MDX entry path is invalid.');
 		const dependencies = new Set<string>();
@@ -301,6 +304,46 @@ export class MdxCompiler {
 			);
 		return bytes;
 	}
+}
+
+function configurePackagedEsbuildBinary(): void {
+	if (process.env.ESBUILD_BINARY_PATH) return;
+	const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string })
+		.resourcesPath;
+	if (typeof resourcesPath !== 'string' || resourcesPath.length === 0) return;
+	const platformBinary = esbuildPlatformBinary();
+	if (platformBinary === undefined) return;
+	const candidate = join(
+		resourcesPath,
+		'esbuild',
+		platformBinary.packageName,
+		...platformBinary.relativePath,
+	);
+	if (existsSync(candidate)) process.env.ESBUILD_BINARY_PATH = candidate;
+}
+
+function esbuildPlatformBinary():
+	| { readonly packageName: string; readonly relativePath: readonly string[] }
+	| undefined {
+	const key = `${process.platform}-${process.arch}`;
+	const packageName = (
+		{
+			'darwin-arm64': 'darwin-arm64',
+			'darwin-x64': 'darwin-x64',
+			'linux-arm64': 'linux-arm64',
+			'linux-x64': 'linux-x64',
+			'win32-arm64': 'win32-arm64',
+			'win32-ia32': 'win32-ia32',
+			'win32-x64': 'win32-x64',
+		} as Readonly<Record<string, string>>
+	)[key];
+	return packageName === undefined
+		? undefined
+		: {
+				packageName,
+				relativePath:
+					process.platform === 'win32' ? ['esbuild.exe'] : ['bin', 'esbuild'],
+			};
 }
 function loader(
 	extension: string | undefined,
