@@ -319,6 +319,19 @@ async function run() {
 		// demonstrates the 2x2 layout, while the Docs project is a clean one-pane canvas.
 		await mainWindow.locator('.project-tab').filter({ hasText: 'Docs' }).first().click();
 		await openFileExplorer(mainWindow);
+		const documentationPane = mainWindow.locator('.project-workspace--active .sidebar-pane').filter({
+			has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Documentation' }),
+		});
+		if (await documentationPane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed'))) {
+			await documentationPane.locator('.sidebar-pane__header').click();
+		}
+		await documentationPane.getByRole('tree').waitFor({ state: 'visible', timeout: 30_000 });
+		await documentationPane.getByRole('treeitem', { name: 'Docs', exact: true }).click();
+		await documentationPane.getByRole('treeitem', { name: /^Readme, README\.md$/i }).click();
+		await mainWindow.locator('.documentation-editor').waitFor({ state: 'visible', timeout: 30_000 });
+		await mainWindow.getByRole('heading', { name: 'Terminay', exact: true }).waitFor({ state: 'visible', timeout: 30_000 });
+		await capture(app, mainWindow, 'terminay-documentation.png');
+
 		const readme = explorerItem(mainWindow, 'README.md');
 		await readme.waitFor({ state: 'visible', timeout: 30_000 });
 		await readme.dblclick();
