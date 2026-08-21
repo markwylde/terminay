@@ -1,6 +1,7 @@
 import type {
   McpAgentId,
   McpAgentInstallState,
+  McpAgentRegistrationState,
   McpInstallActionResult,
   McpInstallStatus,
 } from '../../src/types/terminay'
@@ -12,6 +13,28 @@ import {
   uninstallClaudeCode,
 } from './claudeCode'
 import { getCodexConfigPath, inspectCodexRegistration, installCodex, isCodexInstalled, uninstallCodex } from './codex'
+import {
+  getCursorConfigPath,
+  inspectCursorRegistration,
+  installCursor,
+  isCursorInstalled,
+  uninstallCursor,
+} from './cursor'
+import {
+  getGeminiConfigPath,
+  inspectGeminiRegistration,
+  installGemini,
+  isGeminiInstalled,
+  uninstallGemini,
+} from './gemini'
+import {
+  getOpenCodeConfigPath,
+  inspectOpenCodeRegistration,
+  installOpenCode,
+  isOpenCodeInstalled,
+  resolveOpenCodeConfigPath,
+  uninstallOpenCode,
+} from './openCode'
 
 /**
  * The launch command for the Terminay MCP server. The integrator (main.ts)
@@ -25,9 +48,91 @@ export interface McpServerCommand {
   env?: Record<string, string>
 }
 
-const AGENT_LABELS: Record<McpAgentId, string> = {
-  claudeCode: 'Claude Code',
-  codex: 'Codex',
+type McpRegistrationInspection = {
+  state: McpAgentRegistrationState
+  message?: string
+}
+
+type McpInstallProvider = Readonly<{
+  id: McpAgentId
+  label: string
+  getConfigPath(homeDirectory?: string): string | Promise<string>
+  inspect(server: McpServerCommand, homeDirectory?: string): Promise<McpRegistrationInspection>
+  isInstalled(homeDirectory?: string): Promise<boolean>
+  install(server: McpServerCommand, homeDirectory?: string): Promise<McpInstallActionResult>
+  uninstall(server: McpServerCommand | undefined, homeDirectory?: string): Promise<McpInstallActionResult>
+}>
+
+/**
+ * Provider-owned registration adapters. Keeping the supported clients in one
+ * ordered registry makes detection, actions, and UI rows use identical routing.
+ */
+export const MCP_INSTALL_PROVIDERS: readonly McpInstallProvider[] = [
+  {
+    id: 'claudeCode',
+    label: 'Claude Code',
+    getConfigPath: getClaudeCodeConfigPath,
+    inspect: inspectClaudeCodeRegistration,
+    isInstalled: isClaudeCodeInstalled,
+    install: installClaudeCode,
+    uninstall: uninstallClaudeCode,
+  },
+  {
+    id: 'codex',
+    label: 'Codex',
+    getConfigPath: getCodexConfigPath,
+    inspect: inspectCodexRegistration,
+    isInstalled: isCodexInstalled,
+    install: installCodex,
+    uninstall: uninstallCodex,
+  },
+  {
+    id: 'cursor',
+    label: 'Cursor CLI',
+    getConfigPath: getCursorConfigPath,
+    inspect: inspectCursorRegistration,
+    isInstalled: isCursorInstalled,
+    install: installCursor,
+    uninstall: uninstallCursor,
+  },
+  {
+    id: 'gemini',
+    label: 'Gemini CLI',
+    getConfigPath: getGeminiConfigPath,
+    inspect: inspectGeminiRegistration,
+    isInstalled: isGeminiInstalled,
+    install: installGemini,
+    uninstall: uninstallGemini,
+  },
+  {
+    id: 'openCode',
+    label: 'OpenCode',
+    getConfigPath: resolveOpenCodeConfigPath,
+    inspect: inspectOpenCodeRegistration,
+    isInstalled: isOpenCodeInstalled,
+    install: installOpenCode,
+    uninstall: uninstallOpenCode,
+  },
+]
+
+const PROVIDER_BY_ID: ReadonlyMap<McpAgentId, McpInstallProvider> = new Map(
+  MCP_INSTALL_PROVIDERS.map((provider) => [provider.id, provider]),
+)
+
+async function getProviderConfigPath(
+  provider: McpInstallProvider,
+  homeDirectory?: string,
+): Promise<string> {
+  try {
+    return await provider.getConfigPath(homeDirectory)
+  } catch {
+    // The inspection contains the provider-specific reason (such as ambiguous
+    // OpenCode configuration candidates). Keep the usual canonical path useful
+    // for review if resolving the active path itself fails.
+    return provider.id === 'openCode'
+      ? getOpenCodeConfigPath(homeDirectory)
+      : await provider.getConfigPath(homeDirectory)
+  }
 }
 
 export type McpInstallOptions = {
@@ -39,34 +144,25 @@ export async function getMcpInstallStatus(
   server?: McpServerCommand,
   options: McpInstallOptions = {},
 ): Promise<McpInstallStatus> {
-  const [claude, codex] = server === undefined
-    ? await Promise.all([
-      isClaudeCodeInstalled(options.homeDirectory).then((installed) => ({ state: installed ? 'installed' as const : 'not-installed' as const, message: undefined })),
-      isCodexInstalled(options.homeDirectory).then((installed) => ({ state: installed ? 'installed' as const : 'not-installed' as const, message: undefined })),
+  const agents = await Promise.all(MCP_INSTALL_PROVIDERS.map(async (provider) => {
+    const registrationPromise: Promise<McpRegistrationInspection> = server === undefined
+      ? provider.isInstalled(options.homeDirectory).then((installed) => ({
+        state: installed ? 'installed' as const : 'not-installed' as const,
+      }))
+      : provider.inspect(server, options.homeDirectory)
+    const [registration, configPath] = await Promise.all([
+      registrationPromise,
+      getProviderConfigPath(provider, options.homeDirectory),
     ])
-    : await Promise.all([
-      inspectClaudeCodeRegistration(server, options.homeDirectory),
-      inspectCodexRegistration(server, options.homeDirectory),
-    ])
-
-  const agents: McpAgentInstallState[] = [
-    {
-      id: 'claudeCode',
-      label: AGENT_LABELS.claudeCode,
-      state: claude.state,
-      installed: claude.state === 'installed' || claude.state === 'changed',
-      configPath: getClaudeCodeConfigPath(options.homeDirectory),
-      ...(claude.message === undefined ? {} : { message: claude.message }),
-    },
-    {
-      id: 'codex',
-      label: AGENT_LABELS.codex,
-      state: codex.state,
-      installed: codex.state === 'installed' || codex.state === 'changed',
-      configPath: getCodexConfigPath(options.homeDirectory),
-      ...(codex.message === undefined ? {} : { message: codex.message }),
-    },
-  ]
+    return {
+      id: provider.id,
+      label: provider.label,
+      state: registration.state,
+      installed: registration.state === 'installed' || registration.state === 'changed',
+      configPath,
+      ...(registration.message === undefined ? {} : { message: registration.message }),
+    } satisfies McpAgentInstallState
+  }))
 
   return { agents }
 }
@@ -77,14 +173,10 @@ export async function installMcpAgent(
   server: McpServerCommand,
   options: McpInstallOptions = {},
 ): Promise<McpInstallActionResult> {
-  switch (agent) {
-    case 'claudeCode':
-      return installClaudeCode(server, options.homeDirectory)
-    case 'codex':
-      return installCodex(server, options.homeDirectory)
-    default:
-      return unknownAgent(agent)
-  }
+  const provider = PROVIDER_BY_ID.get(agent)
+  return provider === undefined
+    ? unknownAgent(agent)
+    : provider.install(server, options.homeDirectory)
 }
 
 /** Unregister the `terminay` MCP server for the given agent. Never throws. */
@@ -93,16 +185,12 @@ export async function uninstallMcpAgent(
   server?: McpServerCommand,
   options: McpInstallOptions = {},
 ): Promise<McpInstallActionResult> {
-  switch (agent) {
-    case 'claudeCode':
-      return uninstallClaudeCode(server, options.homeDirectory)
-    case 'codex':
-      return uninstallCodex(server, options.homeDirectory)
-    default:
-      return unknownAgent(agent)
-  }
+  const provider = PROVIDER_BY_ID.get(agent)
+  return provider === undefined
+    ? unknownAgent(agent)
+    : provider.uninstall(server, options.homeDirectory)
 }
 
-function unknownAgent(agent: never): McpInstallActionResult {
+function unknownAgent(agent: unknown): McpInstallActionResult {
   return { ok: false, installed: false, error: `Unknown agent: ${String(agent)}` }
 }

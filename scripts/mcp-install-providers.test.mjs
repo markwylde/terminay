@@ -9,6 +9,7 @@ const testHome = await mkdtemp(join(tmpdir(), 'terminay-mcp-install-home-'))
 const installOptions = { homeDirectory: testHome }
 
 const {
+  MCP_INSTALL_PROVIDERS,
   getMcpInstallStatus,
   installMcpAgent,
   uninstallMcpAgent,
@@ -98,6 +99,9 @@ test('Codex and Claude Code registrations launch the same MCP command contract',
     [
       { id: 'claudeCode', installed: true },
       { id: 'codex', installed: true },
+      { id: 'cursor', installed: false },
+      { id: 'gemini', installed: false },
+      { id: 'openCode', installed: false },
     ],
   )
 
@@ -186,6 +190,9 @@ test('provider installs refuse to replace user-modified Terminay entries', async
     [
       { id: 'claudeCode', state: 'changed' },
       { id: 'codex', state: 'changed' },
+      { id: 'cursor', state: 'not-installed' },
+      { id: 'gemini', state: 'not-installed' },
+      { id: 'openCode', state: 'not-installed' },
     ],
   )
   for (const [agent, path, original] of [
@@ -199,6 +206,41 @@ test('provider installs refuse to replace user-modified Terminay entries', async
     assert.equal(await readFile(path, 'utf8'), original)
   }
 
+  await rm(home, { recursive: true, force: true })
+})
+
+test('provider registry detects and routes all supported registrations independently', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'terminay-mcp-install-registry-'))
+  const options = { homeDirectory: home }
+  const agentIds = ['claudeCode', 'codex', 'cursor', 'gemini', 'openCode']
+
+  assert.deepEqual(MCP_INSTALL_PROVIDERS.map(({ id }) => id), agentIds)
+  assert.deepEqual(
+    (await getMcpInstallStatus(server, options)).agents.map(({ id, state }) => ({ id, state })),
+    agentIds.map((id) => ({ id, state: 'not-installed' })),
+  )
+
+  for (const agent of agentIds) {
+    const result = await installMcpAgent(agent, server, options)
+    assert.equal(result.ok, true, agent)
+    assert.equal(result.installed, true, agent)
+  }
+
+  assert.deepEqual(
+    (await getMcpInstallStatus(server, options)).agents.map(({ id, state, installed }) => ({ id, state, installed })),
+    agentIds.map((id) => ({ id, state: 'installed', installed: true })),
+  )
+
+  for (const agent of agentIds) {
+    const result = await uninstallMcpAgent(agent, server, options)
+    assert.equal(result.ok, true, agent)
+    assert.equal(result.installed, false, agent)
+  }
+
+  assert.deepEqual(
+    (await getMcpInstallStatus(server, options)).agents.map(({ id, state, installed }) => ({ id, state, installed })),
+    agentIds.map((id) => ({ id, state: 'not-installed', installed: false })),
+  )
   await rm(home, { recursive: true, force: true })
 })
 

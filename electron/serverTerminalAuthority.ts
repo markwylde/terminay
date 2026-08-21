@@ -420,7 +420,13 @@ export class ServerTerminalAuthority {
 		};
 		const mcpAgent = (request: CommandRequest): McpAgentId => {
 			const agent = (request.envelope.payload as Record<string, unknown>).agent;
-			if (agent !== 'codex' && agent !== 'claudeCode')
+			if (
+				agent !== 'claudeCode' &&
+				agent !== 'codex' &&
+				agent !== 'cursor' &&
+				agent !== 'gemini' &&
+				agent !== 'openCode'
+			)
 				throw new TypeError('agent is invalid');
 			return agent;
 		};
