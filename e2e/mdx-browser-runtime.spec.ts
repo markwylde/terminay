@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures'
-import { setProjectRoot } from './support/ui'
+import { openFileExplorer, setProjectRoot } from './support/ui'
 
 test('Documentation opens MDX through the isolated preview surface', async ({ createWorkspace, mainWindow }) => {
   const workspace = await createWorkspace({
@@ -15,7 +15,11 @@ test('Documentation opens MDX through the isolated preview surface', async ({ cr
     },
   })
   await setProjectRoot(mainWindow, workspace.rootDir)
-  await mainWindow.getByText('Documentation', { exact: true }).click()
+  await openFileExplorer(mainWindow)
+  const documentationPane = mainWindow.locator('.project-workspace--active .sidebar-pane').filter({
+    has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Documentation' }),
+  })
+  await documentationPane.locator('.sidebar-pane__header').click()
   await mainWindow.getByRole('treeitem', { name: /MDX guide/i }).click()
   await expect(mainWindow.locator('iframe[title="MDX preview"]')).toBeVisible()
 })
