@@ -1262,7 +1262,7 @@ function documentDisplayTitle(markdown: string, filePath: string): string {
 	const title = match?.[1]?.trim();
 	if (title) return title;
 	const name = filePath.split(/[\\/]/u).at(-1)?.replace(/\.mdx?$/iu, '') ?? filePath;
-	return name.replace(/([A-Z]+)([A-Z][a-z])/gu, '$1 $2').replace(/([a-z\d])([A-Z])/gu, '$1 $2').replace(/[_\-.]+/gu, ' ').replace(/^./u, (value) => value.toLocaleUpperCase());
+	return name.replace(/([A-Z]+)([A-Z][a-z])/gu, '$1 $2').replace(/([a-z\d])([A-Z])/gu, '$1 $2').replace(/[_\-.]+/gu, ' ').trim().split(/\s+/u).filter(Boolean).map((word) => word.slice(0, 1).toLocaleUpperCase() + word.slice(1).toLocaleLowerCase()).join(' ');
 }
 
 function mutationState(value: unknown): { readonly ok: true; readonly diskRevision: number; readonly draftRevision: number } | { readonly ok: false; readonly message: string } {
