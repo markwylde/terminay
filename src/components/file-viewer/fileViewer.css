@@ -47,6 +47,47 @@
   display: flex;
 }
 
+.documentation-editor {
+  display: grid;
+  grid-template-columns: minmax(360px, 1fr) minmax(320px, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0;
+  width: 100%;
+  min-height: 0;
+}
+
+.documentation-editor__status {
+  grid-column: 1 / -1;
+  min-height: 28px;
+  padding: 6px 12px;
+  color: rgba(220, 226, 240, 0.7);
+  font-size: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.documentation-editor__surface {
+  min-width: 0;
+  overflow: auto;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.documentation-editor__preview {
+  min-width: 0;
+  overflow: auto;
+  background: #fff;
+}
+
+.documentation-editor__preview iframe {
+  width: 100%;
+  min-height: 100%;
+  border: 0;
+}
+
+@media (max-width: 900px) {
+  .documentation-editor { grid-template-columns: 1fr; grid-template-rows: auto minmax(360px, 1fr) minmax(280px, 1fr); }
+  .documentation-editor__surface { border-right: 0; border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+}
+
 .file-toolbar {
   display: flex;
   align-items: center;

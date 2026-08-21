@@ -683,6 +683,31 @@ function createDesktopDeviceCredentialStore(): DesktopDeviceCredentialStore {
 	});
 }
 
+/** The renderer supplies a bounded opaque payload only. The native host owns
+ * destination selection and writes through a same-directory temporary file so
+ * cancellation/failure cannot leave a partial requested destination. */
+async function savePreviewDownload(
+	window: BrowserWindow,
+	action: Extract<TerminayHostActionRequest['action'], { type: 'preview.download' }>,
+): Promise<{ canceled: boolean }> {
+	const result = await dialog.showSaveDialog(window, {
+		defaultPath: action.filename,
+		title: 'Save preview download',
+	});
+	if (result.canceled || result.filePath === undefined) return { canceled: true };
+	const bytes = Buffer.from(action.bytesBase64, 'base64');
+	if (bytes.byteLength === 0 || bytes.byteLength > 16 * 1024 * 1024)
+		throw new Error('Preview download payload is invalid.');
+	const temporary = path.join(path.dirname(result.filePath), `.${path.basename(result.filePath)}.${randomUUID()}.download`);
+	try {
+		await writeFile(temporary, bytes, { flag: 'wx', mode: 0o600 });
+		await rename(temporary, result.filePath);
+		return { canceled: false };
+	} finally {
+		await rm(temporary, { force: true }).catch(() => undefined);
+	}
+}
+
 function selectedSafeStorageBackend(): string | undefined {
 	const backend = (
 		safeStorage as typeof safeStorage & {
@@ -3047,6 +3072,8 @@ function createWindow(options?: {
 						return;
 					case 'updater.check':
 						return getAppUpdateStatus({ force: true });
+					case 'preview.download':
+						return savePreviewDownload(window, action);
 					case 'os.open-external':
 						await openInBrowser(action.url);
 						return;

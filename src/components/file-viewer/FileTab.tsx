@@ -18,7 +18,9 @@ export function FileTab(props: IDockviewPanelHeaderProps<FilePanelInstanceParams
   }, [color])
   const onClose = (event: MouseEvent) => {
     event.stopPropagation()
-    props.api.close()
+    window.dispatchEvent(new CustomEvent('terminay-request-close-file', {
+      detail: { panelId: props.api.id },
+    }))
   }
   const onDoubleClick = (event: MouseEvent<HTMLDivElement>) => {
     event.preventDefault()

@@ -32,6 +32,9 @@ export {
   FILE_CONTENT_OPERATIONS,
   ServerFileAdapter,
   ServerFileCatalogAdapter,
+  DocumentationCatalog,
+  ServerDocumentationCatalogAdapter,
+  DOCUMENTATION_OPERATIONS,
   FILE_OPERATIONS,
   FILE_CATALOG_OPERATIONS,
   FILE_OBSERVATION_OPERATIONS,
@@ -127,8 +130,15 @@ export type {
   FileCatalogRequest,
   FileObservationHost,
   FileObservationAdapterOptions,
+  DocumentationCatalogOptions,
+  DocumentationCatalogResult,
+  DocumentationDocument,
+  DocumentationFolder,
+  DocumentationProjectContext,
+  DocumentationCatalogAdapterOptions,
 } from "./fileService/index.js";
 export * from "./aiService/index.js";
+export * from './mdxRuntime/index.js';
 export * from "./terminalService/index.js";
 export * from "./recordingService/index.js";
 export * from "./gitService/index.js";

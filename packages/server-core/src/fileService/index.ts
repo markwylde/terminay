@@ -10,3 +10,5 @@ export * from "./contentAdapter.js";
 export * from "./textIndex.js";
 export * from "./adapter.js";
 export * from "./catalogAdapter.js";
+export * from "./documentationCatalog.js";
+export * from "./documentationCatalogAdapter.js";
