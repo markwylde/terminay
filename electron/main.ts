@@ -1887,6 +1887,9 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 	const terminal = (context: ControlRequestContext, reference: string) =>
 		resolveMcpTerminal(context, reference);
 	return {
+		getMcpCapabilities: () => ({
+			tools: desktopMcpToolAvailability(),
+		}),
 		listTerminals: (context) => {
 			const authority = requireMcpAuthority();
 			return {
@@ -1900,6 +1903,7 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 							projectId: entry.projectId,
 							sessionId: entry.id,
 						});
+						const snapshot = authority.service.getSession(entry.id);
 						return {
 							terminal: entry.id,
 							name: panel?.title ?? entry.id,
@@ -1909,18 +1913,64 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 							cwd: entry.cwd,
 							activity: activity?.status ?? 'idle',
 							attention: activity?.attention ?? false,
+							output_position: snapshot?.outputPosition ?? 0,
+							replay_from: snapshot?.replayFrom ?? 0,
 						};
 					}),
 			};
 		},
-		readTerminal: (params, context) => {
+		readTerminal: async (params, context) => {
 			const target = terminal(context, params.terminal);
-			const output = requireMcpAuthority().getBuffer(target.id) ?? '';
-			const lines =
-				params.lines === undefined
-					? output
-					: output.split(/\r?\n/u).slice(-params.lines).join('\n');
-			return { terminal: target.id, output: lines, truncated: lines !== output };
+			const authority = requireMcpAuthority();
+			const authorization = mcpAuthorization(context);
+			if (params.format === 'raw') {
+				const rawBytes = Math.floor(params.maxBytes / 4) * 3;
+				const read = authority.service.readRetainedOutput(target.id, {
+					authorization,
+					...(params.after === undefined ? {} : { fromPosition: params.after }),
+					maxBytes: Math.max(1, rawBytes),
+				});
+				const bytes = rawBytes === 0 ? read.bytes.subarray(0, 0) : read.bytes;
+				const next = read.fromPosition + bytes.byteLength;
+				return {
+					terminal: target.id,
+					format: 'raw',
+					encoding: 'base64',
+					output: Buffer.from(bytes).toString('base64'),
+					from: read.fromPosition,
+					next,
+					replay_from: read.replayFrom,
+					output_position: read.outputPosition,
+					history_lost: read.historyLost,
+					dropped_bytes: read.droppedBytes,
+					truncated_tail: next < read.outputPosition,
+				};
+			}
+			const presentation = await authority.service.readPresentation(target.id, {
+				authorization,
+				format: params.format,
+				maxBytes: params.maxBytes,
+				...(params.lines === undefined ? {} : { maxRows: params.lines }),
+			});
+			return {
+				terminal: target.id,
+				format: params.format,
+				output: params.format === 'text' ? (presentation.rows ?? []).join('\n') : (presentation.ansi ?? ''),
+				output_position: presentation.outputPosition,
+				dimensions: presentation.dimensions,
+				presentation_truncated: presentation.truncated,
+				dropped_bytes: presentation.droppedBytes,
+				dropped_rows: presentation.droppedRows,
+			};
+		},
+		searchTerminal: async (params, context) => {
+			const target = terminal(context, params.terminal);
+			const presentation = await requireMcpAuthority().service.readPresentation(target.id, {
+				authorization: mcpAuthorization(context),
+				format: 'text',
+				maxBytes: params.maxBytes,
+			});
+			return buildMcpTerminalSearchResult(target.id, presentation, params);
 		},
 		getTerminalStatus: (params, context) => {
 			const target = terminal(context, params.terminal);
@@ -1936,6 +1986,8 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 				cwd: target.cwd,
 				activity: activity?.status ?? 'idle',
 				attention: activity?.attention ?? false,
+				output_position: authority.service.getSession(target.id)?.outputPosition ?? 0,
+				replay_from: authority.service.getSession(target.id)?.replayFrom ?? 0,
 			};
 		},
 		openTerminal: async (params, context) => {
@@ -1976,9 +2028,16 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 		},
 		runCommand: async (params, context) => {
 			const target = terminal(context, params.terminal);
+			const from = requireMcpAuthority().service.getSession(target.id)?.outputPosition ?? 0;
 			const data = `\u001b[200~${params.command}\u001b[201~\r`;
 			await requireMcpAuthority().write(target.id, data, mcpAuthorization(context));
-			return { terminal: target.id, bytes: new TextEncoder().encode(data).byteLength };
+			return {
+				terminal: target.id,
+				command_id: context.requestId,
+				from,
+				submitted_bytes: new TextEncoder().encode(data).byteLength,
+				submitted: true,
+			};
 		},
 		closeTerminal: async (params, context) => {
 			const target = terminal(context, params.terminal);
@@ -2039,6 +2098,59 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 		waitForAttention: () => {
 			throw new ControlEndpointError('unsupported_op', 'Attention waiting is unavailable.');
 		},
+	};
+}
+
+function desktopMcpToolAvailability(): readonly { readonly tool: string; readonly available: boolean }[] {
+	const unavailable = new Set(['wait_for_command', 'wait_for_attention']);
+	return [
+		'get_mcp_capabilities', 'list_terminals', 'read_terminal', 'search_terminal',
+		'get_terminal_status', 'open_terminal', 'write_terminal', 'run_command',
+		'close_terminal', 'focus_terminal', 'rename_terminal', 'split_terminal',
+		'wait_for_idle', 'wait_for_command', 'wait_for_attention',
+	].map((tool) => ({ tool, available: !unavailable.has(tool) }));
+}
+
+function buildMcpTerminalSearchResult(
+	terminal: string,
+	presentation: Awaited<ReturnType<ServerTerminalAuthority['service']['readPresentation']>>,
+	params: Parameters<NonNullable<TerminalControlAdapter['searchTerminal']>>[0],
+) {
+	const rows = presentation.rows ?? [];
+	const query = params.caseSensitive ? params.query : params.query.toLocaleLowerCase();
+	const matches: Array<{ row: number; text: string; before: readonly string[]; after: readonly string[] }> = [];
+	let matchesTruncated = false;
+	for (let row = 0; row < rows.length; row += 1) {
+		const text = rows[row] ?? '';
+		const comparable = params.caseSensitive ? text : text.toLocaleLowerCase();
+		if (!comparable.includes(query)) continue;
+		if (matches.length >= params.maxMatches) { matchesTruncated = true; break; }
+		let context = params.contextLines;
+		let candidate: (typeof matches)[number];
+		do {
+			candidate = {
+				row,
+				text,
+				before: rows.slice(Math.max(0, row - context), row),
+				after: rows.slice(row + 1, row + 1 + context),
+			};
+			if (Buffer.byteLength(JSON.stringify([...matches, candidate]), 'utf8') <= params.maxBytes) break;
+			context -= 1;
+		} while (context >= 0);
+		if (Buffer.byteLength(JSON.stringify([...matches, candidate]), 'utf8') > params.maxBytes) {
+			matchesTruncated = true;
+			break;
+		}
+		matches.push(candidate);
+	}
+	return {
+		terminal,
+		query: params.query,
+		matches,
+		output_position: presentation.outputPosition,
+		dimensions: presentation.dimensions,
+		matches_truncated: matchesTruncated,
+		presentation_truncated: presentation.truncated,
 	};
 }
 

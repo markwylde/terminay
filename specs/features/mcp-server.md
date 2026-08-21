@@ -151,8 +151,10 @@ Terminay exposes the following project-implicit tools:
 
 | Tool | Behaviour |
 | --- | --- |
+| `get_mcp_capabilities` | Reports the globally available MCP operations for the bound host before an agent calls an optional operation. |
 | `list_terminals` | Lists terminal panels in scope with opaque handles, display names, state, and active status. |
-| `read_terminal` | Reads bounded recent output or a bounded range from one terminal. |
+| `read_terminal` | Reads either a bounded, lossless raw-output range or a bounded current terminal-presentation snapshot. |
+| `search_terminal` | Searches a bounded current text presentation snapshot and returns bounded matching visual-row context. |
 | `get_terminal_status` | Returns canonical activity, attention, cwd, and last-exit information. |
 | `write_terminal` | Writes exact validated text to one live terminal. |
 | `run_command` | Writes one command and submits it once, using bracketed paste for multiline input. |
@@ -169,12 +171,123 @@ Names are conveniences, not identities. An ambiguous name returns bounded
 candidates instead of choosing one. Tool results never expose capability
 tokens, filesystem secrets, other projects, or other server connections.
 
-## Reading, writing, and waiting
+## Reading, presentation, and searching
 
-Output reads use the server's bounded terminal replay state rather than a
-client xterm instance. Requests declare byte or line limits and return
-truncation metadata. Reading preserves terminal data as text and does not
-execute it.
+Terminal output has two deliberately different MCP representations. A raw
+stream position is a non-negative byte position in the PTY-output stream; it
+is not a screen-row, command, or presentation cursor. Presentation rows are
+stateful: cursor movement, erasure, wrapping, and resize can change an earlier
+row. Terminay therefore never represents a raw-stream range as an exact range
+of rendered rows.
+
+Every terminal exposes `replay_from`, the first retained raw byte position,
+and `output_position`, the exclusive position after the most recently accepted
+output byte. They are canonical server-owned positions, are scoped to one
+terminal session, and are invalid after that session is gone.
+
+### Raw output ranges
+
+`read_terminal` with `format: "raw"` is the lossless cursor and pagination
+operation. Its input is:
+
+```text
+{ terminal, format: "raw", after?: position, max_bytes?: integer }
+```
+
+`after` means the raw-stream position immediately after bytes the caller has
+already consumed. The returned range is `[from, next)`. Omitting `after`
+starts at `replay_from`; supplying the preceding response's `next` continues
+without resending retained bytes. `after` greater than `output_position` is an
+invalid request. If `after` precedes `replay_from`, the response begins at
+`replay_from` and sets `history_lost: true`; it never silently substitutes a
+tail while claiming that the requested history was available.
+
+The raw payload is exact PTY bytes encoded as Base64, never as a lossy decoded
+JavaScript string. Its response contains the required fields:
+
+```text
+{
+  terminal, format: "raw", encoding: "base64", output,
+  from, next, replay_from, output_position,
+  history_lost, truncated_tail
+}
+```
+
+`truncated_tail` means more retained raw output existed at the captured
+`output_position` than fits the requested response budget; `next` remains the
+exclusive position of the emitted bytes, so the caller can page forward. A
+response with no available bytes has `from === next`. `history_lost` is
+distinct from pagination and from a presentation that was shortened to fit.
+
+### Current presentation snapshots
+
+`read_terminal` with `format: "text"` or `format: "ansi"` reads the current
+canonical emulated terminal presentation, including its bounded retained
+scrollback, not a raw-output delta. These formats reject `after`.
+
+`text` returns plain visual rows from the current emulator. A visual row is a
+single xterm buffer row at the snapshot geometry, including a wrapped portion
+of a logical line; row strings contain no terminal control sequences. `lines`,
+when present, selects the most recent visual rows. `ansi` returns an ANSI
+serialization of the same emulated presentation, suitable for recreating that
+presentation; it is not a decoding of raw PTY bytes. Both responses report
+the captured `output_position` and `dimensions`, and state whether older
+presentation content was omitted to meet a row or payload budget.
+
+Presentation snapshots can contain rows already returned by an earlier
+snapshot. This is intentional: they describe a current screen state, not an
+append-only transcript. Agents use raw ranges when they require cursor-based,
+non-repeating delivery.
+
+### Response budgets
+
+All output operations take `max_bytes`, defaulting to 16 KiB. It bounds the
+UTF-8 byte length of the returned representation: Base64 characters for
+`raw`, text rows for `text`, and serialized ANSI text for `ansi`. The public
+maximum is 64 KiB, reserving space below the control endpoint's 256 KiB
+response limit for JSON, result fields, and MCP framing. The implementation
+also measures the complete serialized control and MCP result and reduces the
+payload if necessary; a valid output read never fails only because output is
+large.
+
+Raw pagination selects only complete emitted Base64 quanta and advances
+`next` by exactly the decoded raw bytes. Text and ANSI presentation reads omit
+whole oldest rows or a complete valid presentation fragment rather than
+splitting a UTF-8 character or terminal control sequence, and report
+`presentation_truncated: true`. Validation, authority, cancellation, and
+terminal-lifecycle failures remain errors; the no-size-failure rule applies
+only to a valid output payload.
+
+### Presentation search
+
+`search_terminal` is separate from `read_terminal`. It searches the current
+emulated text presentation, never raw bytes or ANSI source. Its input is:
+
+```text
+{
+  terminal, query,
+  case_sensitive?: boolean,
+  context_lines?: integer,
+  max_matches?: integer,
+  max_bytes?: integer
+}
+```
+
+`query` is a non-empty literal Unicode string, not a regular expression. The
+default is case-sensitive matching; when `case_sensitive: false`, matching
+uses Unicode simple case folding. `context_lines` defaults to 2 and is capped
+at 20. `max_matches` defaults to 20 and is capped at 100. Matches are ordered
+from the oldest retained visual row to the newest and each includes its row
+text and up to the requested preceding and following visual rows. Row indexes,
+when returned, identify this one snapshot only and are not cursors.
+
+Search uses the same 16 KiB default and 64 KiB maximum result budget as a
+read, scans only the terminal's bounded retained presentation, and reports
+the captured `output_position`, `dimensions`, `matches_truncated`, and
+`presentation_truncated`. It shortens context before omitting later matches,
+and never lets a large match set exceed the response budget.
+
+## Writing, command submission, and waiting
 
 Writes target an exact immutable terminal session, fail after exit or
 revocation, and pass through the same authorization, recording, activity,
@@ -182,10 +295,50 @@ input-ordering, and backpressure boundaries as other non-interactive terminal
 input. Multiline commands use the terminal's established paste and submission
 semantics.
 
+`run_command` returns:
+
+```text
+{ terminal, command_id, from, submitted_bytes, submitted: true }
+```
+
+`command_id` uniquely identifies this accepted MCP submission; it is not a
+shell command identity and does not identify an activity event or exit status.
+`from` is the terminal's raw `output_position` captured immediately before the
+write is accepted. It is a lower bound for observing output after submission,
+not proof that bytes in a later raw range were produced by that command:
+prompts, background jobs, and other writers can interleave. `submitted_bytes`
+is the exact number of PTY input bytes written, including the bracketed-paste
+wrapper and submission carriage return when used. It replaces the ambiguous
+`bytes` field.
+
 Wait tools observe canonical server-owned terminal activity. They return on
 their matching condition, terminal exit, timeout, cancellation, capability
 revocation, or server shutdown. A renderer reload or disconnected client does
 not interrupt a wait.
+
+`wait_for_command` observes the next host-supported structured command
+completion; it is not correlated to `run_command.command_id`. Hosts that lack
+structured command-completion or attention observation report that fact before
+the operation is called rather than implying an exit status is available.
+
+## Tool availability and response conformance
+
+`get_mcp_capabilities` is always available after capability validation. It
+returns an adapter-global list of tool names and `available` booleans for the
+bound host. Availability is not a property of an individual terminal row.
+An unavailable optional tool may remain in the MCP registration for a stable
+client surface, but a caller can discover it through this result and calls to
+it return `unsupported_op` without side effects.
+
+Desktop and standalone-server adapters share required response fields and
+their meanings. For terminal listings and status, the common contract includes
+the opaque `terminal`, canonical `status`, `output_position`, and
+`replay_from`; output and search responses additionally follow the format
+contracts above. A host may add documented presentation metadata such as a
+display name, local launch cwd, activity, attention, active state, or
+host-specific status detail. Conformance tests assert the required common
+contract and prohibit conflicting meanings, rather than requiring identical
+host-extension shapes.
 
 ## Security and privacy
 
@@ -239,6 +392,10 @@ not interrupt a wait.
 10. Packaged Desktop and standalone-server artifacts start the same bounded
     stdio MCP adapter using their supported runtime layout.
 11. Electron end-to-end coverage runs only through `npm run test:e2e`.
+12. Deterministic MCP coverage exercises parser edge cases, Unicode and binary
+    output, cursor retention and pagination, complete serialized response
+    bounds, invalid format/parameter combinations, global capability reporting,
+    and required-common Desktop/standalone adapter conformance.
 
 ## Non-goals
 

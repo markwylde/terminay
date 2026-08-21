@@ -261,6 +261,66 @@ export interface TerminalSubscriptionOptions {
   readonly maxQueuedBytes?: number;
 }
 
+/**
+ * A bounded, byte-exact read of retained PTY output. Positions are offsets in
+ * the terminal's immutable output stream, not character or display columns.
+ */
+export interface TerminalRetainedOutputReadOptions {
+  readonly authorization?: TerminalAuthorization;
+  /** First output byte requested. Omit to start at the retained replay head. */
+  readonly fromPosition?: number;
+  /** Hard cap for returned PTY bytes. A read may end in the middle of UTF-8 or a VT sequence. */
+  readonly maxBytes: number;
+}
+
+export interface TerminalRetainedOutputRead extends TerminalIdentity {
+  /** Caller-requested cursor, retained for an unambiguous history-loss signal. */
+  readonly requestedFromPosition: number;
+  /** First byte actually returned. This advances to replayFrom after history loss. */
+  readonly fromPosition: number;
+  /** Cursor for the next raw read. */
+  readonly nextPosition: number;
+  readonly replayFrom: number;
+  readonly outputPosition: number;
+  /** The requested cursor predates the retained ring; no exception is needed to resync. */
+  readonly historyLost: boolean;
+  /** Number of raw stream bytes unavailable before fromPosition. */
+  readonly droppedBytes: number;
+  /** More retained output is available after nextPosition. */
+  readonly hasMore: boolean;
+  readonly bytes: Uint8Array;
+}
+
+export type TerminalPresentationFormat = "text" | "ansi";
+
+/** A bounded view of the canonical server-side xterm emulator. */
+export interface TerminalPresentationReadOptions {
+  readonly authorization?: TerminalAuthorization;
+  readonly format?: TerminalPresentationFormat;
+  /** Hard cap for the returned text payload in UTF-8 bytes. */
+  readonly maxBytes: number;
+  /** Applies to text reads only and selects the newest visual rows. */
+  readonly maxRows?: number;
+}
+
+export interface TerminalPresentationRead extends TerminalIdentity {
+  readonly format: TerminalPresentationFormat;
+  /** Geometry of the canonical emulator that produced this presentation. */
+  readonly dimensions: TerminalDimensions;
+  /** Emulator position represented by this read after its parser queue drained. */
+  readonly position: number;
+  /** PTY stream head at the point the snapshot was taken. */
+  readonly outputPosition: number;
+  /** Returned payload was shortened to satisfy maxBytes or maxRows. */
+  readonly truncated: boolean;
+  /** Omitted UTF-8 payload bytes. */
+  readonly droppedBytes: number;
+  /** Omitted visual rows (text reads only). */
+  readonly droppedRows: number;
+  readonly rows?: readonly string[];
+  readonly ansi?: string;
+}
+
 export interface TerminalWriteResult {
   readonly sessionId: string;
   readonly bytes: number;

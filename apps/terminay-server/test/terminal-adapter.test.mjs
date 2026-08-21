@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { TerminalActivityService, TerminalService, WorkspaceRepository } from "@terminay/server-core";
+import {
+  TerminalActivityService,
+  TerminalPresentationCheckpointAuthority,
+  TerminalService,
+  WorkspaceRepository,
+} from "@terminay/server-core";
 import { createServerTerminalControlAdapter, createTerminalControlAdapter } from "../dist/index.js";
 
 function createPtyFactory() {
@@ -135,8 +140,20 @@ test("server terminal adapter wires bounded PTY operations to implicit project s
 
   const listed = await request("list", "list_terminals", {});
   assert.equal(listed.terminals.length, 2);
+  assert.deepEqual(Object.keys(listed.terminals[0]).filter((key) => ["terminal", "status", "output_position", "replay_from"].includes(key)).sort(), ["output_position", "replay_from", "status", "terminal"]);
   pty.processes[1].emitData("line one\nline two\n");
-  assert.deepEqual(await request("read", "read_terminal", { terminal: "sibling", lines: 1 }), { terminal: "sibling", output: "line two\n", truncated: true });
+  assert.deepEqual(await request("read", "read_terminal", { terminal: "sibling", format: "raw", max_bytes: 64 }), {
+    terminal: "sibling",
+    format: "raw",
+    encoding: "base64",
+    output: Buffer.from("line one\nline two\n").toString("base64"),
+    from: 0,
+    next: 18,
+    replay_from: 0,
+    output_position: 18,
+    history_lost: false,
+    truncated_tail: false,
+  });
 
   const written = await request("write", "write_terminal", {
     terminal: "sibling",
@@ -145,12 +162,21 @@ test("server terminal adapter wires bounded PTY operations to implicit project s
   });
   assert.equal(written.submitted, true);
   assert.equal(new TextDecoder().decode(pty.processes[1].writes[0]), "echo ok\r");
-  await request("run", "run_command", {
+  assert.deepEqual(await request("run", "run_command", {
     terminal: "sibling",
     command: "printf ok",
+  }), {
+    terminal: "sibling",
+    command_id: "run",
+    from: 18,
+    submitted_bytes: Buffer.byteLength("\u001b[200~printf ok\u001b[201~\r", "utf8"),
+    submitted: true,
   });
   assert.match(new TextDecoder().decode(pty.processes[1].writes[1]), /printf ok/);
-  assert.equal((await request("status", "get_terminal_status", { terminal: "sibling" })).status, "running");
+  const status = await request("status", "get_terminal_status", { terminal: "sibling" });
+  assert.equal(status.status, "running");
+  assert.equal(status.output_position, 18);
+  assert.equal(status.replay_from, 0);
   assert.deepEqual(await request("focus", "focus_terminal", { terminal: "sibling" }), { focused: "sibling" });
   assert.deepEqual(
     await request("rename", "rename_terminal", {
@@ -185,6 +211,181 @@ test("server terminal adapter wires bounded PTY operations to implicit project s
   const denied = await request("cross", "read_terminal", { terminal: "other" });
   assert.equal(denied.ok, false);
   assert.equal(denied.error.code, "terminal_not_found");
+});
+
+test("server terminal adapter returns lossless Base64 raw pages and truthful retention metadata", async () => {
+  const pty = createPtyFactory();
+  const terminal = new TerminalService({
+    serverId: "server-a",
+    ptyFactory: pty,
+    maxReplayBytes: 64,
+    generateSessionId: (() => {
+      const ids = ["caller", "sibling"];
+      return () => ids.shift();
+    })(),
+  });
+  await terminal.createSession({ projectId: "project-a", cols: 8, rows: 3 });
+  await terminal.createSession({ projectId: "project-a", cols: 8, rows: 3 });
+  const dispatch = createTerminalControlAdapter({
+    adapter: createServerTerminalControlAdapter({ terminal, launchResolver: createLaunchResolver(), maxReadBytes: 8 }),
+  });
+  const request = (id, params) => dispatch(
+    { id, version: 1, op: "read_terminal", params },
+    { ...context(), requestId: id },
+  );
+  const bytes = new Uint8Array([0, 255, 0x1b, 0x5b, 0x33, 0x31, 0x6d, 0xce, 0xb1]);
+  pty.processes[1].emitData(bytes);
+
+  const first = await request("raw-one", { terminal: "sibling", format: "raw", max_bytes: 8 });
+  assert.equal(first.encoding, "base64");
+  assert.deepEqual([...Buffer.from(first.output, "base64")], [...bytes.slice(0, 6)]);
+  assert.deepEqual(
+    { from: first.from, next: first.next, truncated: first.truncated_tail, lost: first.history_lost },
+    { from: 0, next: 6, truncated: true, lost: false },
+  );
+  const second = await request("raw-two", { terminal: "sibling", format: "raw", max_bytes: 8, after: first.next });
+  assert.deepEqual([...Buffer.from(second.output, "base64")], [...bytes.slice(6)]);
+  assert.deepEqual(
+    { from: second.from, next: second.next, truncated: second.truncated_tail },
+    { from: 6, next: bytes.byteLength, truncated: false },
+  );
+
+  // A one-byte representation budget cannot contain a complete Base64
+  // quantum. It remains a valid, empty, forward-pageable response.
+  const tooSmall = await request("raw-small", { terminal: "sibling", format: "raw", max_bytes: 1, after: 0 });
+  assert.deepEqual(
+    { output: tooSmall.output, from: tooSmall.from, next: tooSmall.next, truncated: tooSmall.truncated_tail },
+    { output: "", from: 0, next: 0, truncated: true },
+  );
+});
+
+test("server terminal adapter distinguishes raw history loss from tail pagination", async () => {
+  const pty = createPtyFactory();
+  const terminal = new TerminalService({
+    serverId: "server-a",
+    ptyFactory: pty,
+    maxReplayBytes: 6,
+    generateSessionId: () => "caller",
+  });
+  await terminal.createSession({ projectId: "project-a", sessionId: "caller", cols: 8, rows: 3 });
+  pty.processes[0].emitData("first");
+  pty.processes[0].emitData("second");
+  const dispatch = createTerminalControlAdapter({
+    adapter: createServerTerminalControlAdapter({ terminal, launchResolver: createLaunchResolver(), maxReadBytes: 8 }),
+  });
+  const result = await dispatch(
+    { id: "stale", version: 1, op: "read_terminal", params: { terminal: "caller", format: "raw", max_bytes: 64, after: 0 } },
+    context(),
+  );
+  assert.deepEqual(
+    {
+      output: Buffer.from(result.output, "base64").toString("utf8"),
+      from: result.from,
+      next: result.next,
+      replayFrom: result.replay_from,
+      lost: result.history_lost,
+      truncated: result.truncated_tail,
+    },
+    { output: "second", from: 5, next: 11, replayFrom: 5, lost: true, truncated: false },
+  );
+});
+
+test("server terminal adapter serves current emulated text and ANSI snapshots", async () => {
+  const pty = createPtyFactory();
+  const terminal = new TerminalService({
+    serverId: "server-a",
+    ptyFactory: pty,
+    presentationCheckpoints: new TerminalPresentationCheckpointAuthority({
+      maxScrollback: 32,
+      checkpointIntervalBytes: 1_000_000,
+      checkpointIntervalMs: 1_000_000,
+    }),
+    generateSessionId: () => "caller",
+  });
+  await terminal.createSession({ projectId: "project-a", sessionId: "caller", cols: 5, rows: 3 });
+  pty.processes[0].emitData("\x1b[31mabcde\x1b[0mfghij\rX  ");
+  const dispatch = createTerminalControlAdapter({
+    adapter: createServerTerminalControlAdapter({ terminal, launchResolver: createLaunchResolver() }),
+  });
+  const request = (id, params) => dispatch(
+    { id, version: 1, op: "read_terminal", params },
+    { ...context(), requestId: id },
+  );
+  const text = await request("text", { terminal: "caller", format: "text", lines: 2, max_bytes: 128 });
+  assert.equal(text.output, "abcde\nX  ij");
+  assert.equal(text.output.includes("\x1b"), false);
+  assert.deepEqual(text.dimensions, { cols: 5, rows: 3 });
+  assert.equal(text.presentation_truncated, false);
+
+  const ansi = await request("ansi", { terminal: "caller", format: "ansi", max_bytes: 128 });
+  assert.match(ansi.output, /abcde/u);
+  assert.ok(ansi.output.includes(`${String.fromCharCode(27)}[31m`));
+  assert.equal(ansi.format, "ansi");
+  assert.equal(ansi.output_position, text.output_position);
+});
+
+test("server terminal adapter reports adapter-global availability before optional waits", async () => {
+  const pty = createPtyFactory();
+  const terminal = new TerminalService({
+    serverId: "server-a",
+    ptyFactory: pty,
+    generateSessionId: () => "caller",
+  });
+  await terminal.createSession({ projectId: "project-a", sessionId: "caller", cols: 8, rows: 3 });
+  const dispatch = createTerminalControlAdapter({
+    adapter: createServerTerminalControlAdapter({ terminal, launchResolver: createLaunchResolver() }),
+  });
+  const capabilities = await dispatch(
+    { id: "capabilities", version: 1, op: "get_mcp_capabilities", params: {} },
+    context(),
+  );
+  const available = Object.fromEntries(capabilities.tools.map((entry) => [entry.tool, entry.available]));
+  assert.equal(available.read_terminal, true);
+  assert.equal(available.search_terminal, true);
+  assert.equal(available.wait_for_idle, false);
+  assert.equal(available.wait_for_command, false);
+  assert.equal(available.wait_for_attention, false);
+});
+
+test("server terminal adapter searches literal presentation rows with bounded ordered context", async () => {
+  const pty = createPtyFactory();
+  const terminal = new TerminalService({
+    serverId: "server-a",
+    ptyFactory: pty,
+    presentationCheckpoints: new TerminalPresentationCheckpointAuthority({
+      maxScrollback: 32,
+      checkpointIntervalBytes: 1_000_000,
+      checkpointIntervalMs: 1_000_000,
+    }),
+    generateSessionId: () => "caller",
+  });
+  await terminal.createSession({ projectId: "project-a", sessionId: "caller", cols: 20, rows: 4 });
+  pty.processes[0].emitData("first\r\na.b\r\nlast");
+  const dispatch = createTerminalControlAdapter({
+    adapter: createServerTerminalControlAdapter({ terminal, launchResolver: createLaunchResolver() }),
+  });
+  const result = await dispatch(
+    {
+      id: "search",
+      version: 1,
+      op: "search_terminal",
+      params: {
+        terminal: "caller",
+        query: ".",
+        case_sensitive: true,
+        context_lines: 1,
+        max_matches: 20,
+        max_bytes: 512,
+      },
+    },
+    context(),
+  );
+  assert.deepEqual(result.matches.map((match) => match.text), ["a.b"]);
+  assert.deepEqual(result.matches[0].before, ["first"]);
+  assert.deepEqual(result.matches[0].after, ["last"]);
+  assert.equal(result.matches_truncated, false);
+  assert.equal(result.presentation_truncated, false);
+  assert.equal(Buffer.byteLength(JSON.stringify(result), "utf8") <= 512, true);
 });
 
 test("open_terminal resolves a canonical launch before spawn and reconciles its panel", async () => {
