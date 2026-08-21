@@ -206,8 +206,8 @@ export function McpInstallModal({
 				</div>
 
 				<p className="mcp-install-description">
-					Let AI agents (Claude Code, Codex) running in a Terminay terminal control
-					the tabs in this window.
+					Let Claude Code, Codex, Cursor CLI, Gemini CLI, and OpenCode running in a
+					Terminay terminal control the tabs in this window.
 				</p>
 
 				{loadError ? (
