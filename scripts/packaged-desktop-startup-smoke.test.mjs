@@ -130,6 +130,7 @@ async function exerciseLaunch({ expected, mode, userData }) {
 				VITE_DEV_SERVER_URL: '',
 			},
 		});
+		const mainStderr = { text: '' };
 		captureMainProcessFailures(electronApp.process(), failures, mainStderr);
 		const window = await electronApp.firstWindow({ timeout: 20_000 });
 		captureRendererFailures(window, failures);
