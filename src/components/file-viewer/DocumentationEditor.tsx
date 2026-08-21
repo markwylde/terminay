@@ -98,6 +98,8 @@ export function DocumentationEditor({
 	const [downloadInFlight, setDownloadInFlight] = useState(false);
 	const valueRef = useRef(markdown);
 	const editorRef = useRef<MDXEditorMethods>(null);
+	const suppressModeChangeRef = useRef(false);
+	const suppressModeChangeTimerRef = useRef<number | undefined>(undefined);
 	const flushRef = useRef(onFlush);
 	flushRef.current = onFlush;
 	const autosaveRef = useRef<DocumentationAutosaveController | undefined>(
@@ -118,7 +120,8 @@ export function DocumentationEditor({
 		);
 	const handleChange = useCallback(
 		(next: string, initial: boolean) => {
-			if (initial || next === valueRef.current) return;
+			if (initial || suppressModeChangeRef.current || next === valueRef.current)
+				return;
 			valueRef.current = next;
 			onChange(next);
 			autosaveRef.current?.changed();
@@ -136,6 +139,8 @@ export function DocumentationEditor({
 	useEffect(
 		() => () => {
 			autosaveRef.current?.dispose();
+			if (suppressModeChangeTimerRef.current !== undefined)
+				window.clearTimeout(suppressModeChangeTimerRef.current);
 		},
 		[],
 	);
@@ -295,6 +300,20 @@ export function DocumentationEditor({
 		<div
 			className={`documentation-editor${preview ? ' documentation-editor--with-preview' : ''}${hasStatus ? ' documentation-editor--with-status' : ''}`}
 			onBlur={flush}
+			onPointerDownCapture={(event) => {
+				const label = (event.target as Element)
+					.closest('[aria-label]')
+					?.getAttribute('aria-label');
+				if (!['Rich text', 'Source mode', 'Diff mode'].includes(label ?? ''))
+					return;
+				suppressModeChangeRef.current = true;
+				if (suppressModeChangeTimerRef.current !== undefined)
+					window.clearTimeout(suppressModeChangeTimerRef.current);
+				suppressModeChangeTimerRef.current = window.setTimeout(() => {
+					suppressModeChangeRef.current = false;
+					suppressModeChangeTimerRef.current = undefined;
+				}, 250);
+			}}
 		>
 			{status || message ? (
 				<div className="documentation-editor__status" aria-live="polite">

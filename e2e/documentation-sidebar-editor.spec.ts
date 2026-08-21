@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import { expect, test } from './fixtures';
 import { openFileExplorer, setProjectRoot } from './support/ui';
 
@@ -74,4 +76,11 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 		.all()) {
 		await expect(pane).toHaveCSS('background-color', 'rgb(13, 16, 20)');
 	}
+	await mainWindow.waitForTimeout(1_200);
+	expect(
+		await readFile(
+			path.join(workspace.rootDir, 'docs/guides/getting-started.md'),
+			'utf8',
+		),
+	).toBe('---\ntitle: Getting Started\n---\n\n# Hello');
 });
