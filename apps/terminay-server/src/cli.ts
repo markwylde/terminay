@@ -79,6 +79,7 @@ import {
 	createServerHealthServer,
 	createServerRemoteExposure,
 	createStandaloneServer,
+	runServerMcpStdio,
 	type LocalUiServer,
 	type ServerPairingHandoff,
 	type ServerRemoteExposure,
@@ -110,6 +111,17 @@ const options = parseServerCliOptions(process.argv.slice(2), process.env);
 if (options.command === 'help') process.stdout.write(formatServerHelp());
 else if (options.command === 'version')
 	process.stdout.write(`${options.serverVersion}\n`);
+else if (options.command === 'mcp') {
+	runServerMcpStdio({
+		socketPath: process.env.TERMINAY_CONTROL_SOCKET ?? '',
+		token: process.env.TERMINAY_CONTROL_TOKEN ?? '',
+	}).catch((error: unknown) => {
+		process.stderr.write(
+			`terminay mcp failed: ${error instanceof Error ? error.message : String(error)}\n`,
+		);
+		process.exitCode = 1;
+	});
+}
 else {
 	const remotePairingPin = requiresRemotePairingPin(options)
 		? requiredRemotePairingPin(options)
