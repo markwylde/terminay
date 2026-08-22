@@ -221,3 +221,78 @@ test('Documentation autosave does not report its own root-file write as an exter
 	).toHaveCount(0);
 	await expect(editor.locator('.documentation-editor__status')).toHaveCount(0);
 });
+
+test('repeated AGENTS.md autosaves do not conflict with their own filesystem events', async ({
+	createWorkspace,
+	mainWindow,
+}) => {
+	const workspace = await createWorkspace({
+		name: 'documentation-repeated-autosave-self-watch',
+		seed: {
+			files: {
+				'AGENTS.md': [
+					'# AGENTS — Terminay',
+					'',
+					'Terminay is a local-first Electron terminal workspace.',
+					'',
+					':::info',
+					'**Amazing right?** Well it could be better',
+					':::',
+					'',
+				].join('\n'),
+			},
+		},
+	});
+	await setProjectRoot(mainWindow, workspace.rootDir);
+	await openFileExplorer(mainWindow);
+	const documentationPane = mainWindow
+		.locator('.project-workspace--active .sidebar-pane')
+		.filter({
+			has: mainWindow.locator('.sidebar-pane__title', {
+				hasText: 'Documentation',
+			}),
+		});
+	if (
+		await documentationPane.evaluate((element) =>
+			element.classList.contains('sidebar-pane--collapsed'),
+		)
+	) {
+		await documentationPane.locator('.sidebar-pane__header').click();
+	}
+	await mainWindow
+		.getByRole('treeitem', { name: /^Agents, AGENTS\.md$/i })
+		.click();
+
+	const editor = mainWindow.locator('.documentation-editor');
+	const paragraph = editor.getByText(
+		'Terminay is a local-first Electron terminal workspace.',
+		{ exact: true },
+	);
+	await paragraph.click();
+	await mainWindow.keyboard.press('End');
+
+	for (let revision = 1; revision <= 12; revision += 1) {
+		const marker = ` ${revision}`;
+		await mainWindow.keyboard.type(marker);
+		await expect(mainWindow.locator('.file-status-bar')).toContainText(
+			'Unsaved changes',
+		);
+		await expect
+			.poll(() => workspace.readText('AGENTS.md'))
+			.toContain(
+				`workspace.${Array.from({ length: revision }, (_, index) => ` ${index + 1}`).join('')}`,
+			);
+		await expect(mainWindow.locator('.file-status-bar')).toContainText(
+			'Synced',
+		);
+		await expect(
+			mainWindow.getByText(
+				'This file changed on disk while you had unsaved edits.',
+				{ exact: true },
+			),
+		).toHaveCount(0);
+		await expect(editor.locator('.documentation-editor__status')).toHaveCount(
+			0,
+		);
+	}
+});
