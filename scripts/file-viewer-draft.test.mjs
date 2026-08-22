@@ -77,7 +77,7 @@ test('preserves byte edits while converting through text mode', () => {
   assert.equal(draft.isDirty(), true)
 })
 
-test('reproduces a documentation autosave watch event being mistaken for an external conflict', () => {
+test('treats an unacknowledged watch event while dirty as an external conflict', () => {
   const disposition = resolveFileWatchDisposition({
     // Documentation autosave does not currently acknowledge the revision its
     // session save writes before the filesystem watcher reports it.
@@ -95,6 +95,28 @@ test('reproduces a documentation autosave watch event being mistaken for an exte
   })
 
   assert.equal(disposition, 'external-conflict')
+})
+
+test('a delayed watch event from the first documentation save must not conflict with the second edit', () => {
+  // Save 1 has returned "Synced" and retained the revision it wrote. The user
+  // begins edit 2 before macOS delivers save 1's filesystem event.
+  const disposition = resolveFileWatchDisposition({
+    acknowledgedRevision: {
+      mtimeMs: 1_777_000_000_001,
+      path: '/project/AGENTS.md',
+      size: 943,
+    },
+    event: {
+      exists: true,
+      mtimeMs: 1_777_000_000_001,
+      path: '/project/AGENTS.md',
+      size: 943,
+      type: 'updated',
+    },
+    isDirty: true,
+  })
+
+  assert.equal(disposition, 'acknowledged-write')
 })
 
 test('materializes a Performant sparse draft into Monaco without losing edits or dirty state', () => {
