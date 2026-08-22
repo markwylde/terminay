@@ -18,7 +18,8 @@
     "node": "24.15.0"
   },
   "scripts": {
-    "build": "npm run build --workspace @terminay/server-core && tsc -p tsconfig.json && node ../../scripts/bundled-npm-evidence.mjs dist/bundled-npm-evidence.json && node ./scripts/write-release-integrity-manifest.mjs",
+    "build": "node ../../scripts/build-workspace-graph.mjs --target @terminay/server && npm run build:postcompile",
+    "build:postcompile": "node ../../scripts/bundled-npm-evidence.mjs dist/bundled-npm-evidence.json && node ./scripts/write-release-integrity-manifest.mjs",
     "typecheck": "npm run build --workspace @terminay/server-core && tsc -p tsconfig.json --noEmit",
     "start": "node dist/cli.js",
     "test": "npm run build && npm run build --workspace @terminay/client-core && node --test test/*.test.mjs"

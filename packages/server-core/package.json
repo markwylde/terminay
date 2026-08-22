@@ -34,7 +34,7 @@
     "yaml": "^2.9.0"
   },
   "scripts": {
-    "build": "npm run build --workspace @terminay/protocol && npm run build --workspace @terminay/extension-api && npm run build --workspace @terminay/ui-bundle && tsc -p tsconfig.json",
+    "build": "node ../../scripts/build-workspace-graph.mjs --target @terminay/server-core",
     "typecheck": "npm run build --workspace @terminay/protocol && npm run build --workspace @terminay/extension-api && npm run build --workspace @terminay/ui-bundle && tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test test/*.test.mjs"
   }
