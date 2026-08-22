@@ -94,6 +94,14 @@ the isolated [MDX browser runtime](./mdx-browser-runtime.md).
   widths without producing edge-to-edge prose, then tightens its type and
   margins at narrower breakpoints. Editor controls and popup menus retain the
   same dark palette as the Documentation surface.
+- Rich table cells use the Documentation palette and readable row sizing.
+  Structural row, column, and add controls remain visually quiet until their
+  relevant edge is hovered or focused instead of filling an empty table with
+  persistent icons.
+- The Documentation status bar reports the file size and sync state without
+  labelling the rich editor as Monaco.
+- Inserting a fenced code block opens a registered dark CodeMirror editor and
+  never takes down the surrounding rich editor.
 - Source constructs that have no rich visual editor remain losslessly editable
   in source mode or an appropriate structured placeholder. Switching rich,
   source, diff, and preview presentations does not discard a draft.

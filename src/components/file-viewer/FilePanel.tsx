@@ -1252,6 +1252,7 @@ function CanonicalFilePanel(
 				engine={engine}
 				isDirty={isDirty}
 				isValid={effectiveMode !== 'hex' || isHexValid}
+				showEngine={!isDocumentation}
 			/>
 		</div>
 	);

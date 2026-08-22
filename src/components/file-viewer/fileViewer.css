@@ -340,23 +340,106 @@
 	border-top: 1px solid #303846;
 }
 
-.documentation-editor__content table {
+.documentation-editor__content table:not([class*="_tableEditor_"]) {
 	width: 100%;
 	margin: 1.4em 0;
 	border-collapse: collapse;
 }
 
-.documentation-editor__content th,
-.documentation-editor__content td {
+.documentation-editor__content table:not([class*="_tableEditor_"]) th,
+.documentation-editor__content table:not([class*="_tableEditor_"]) td {
 	padding: 0.65em 0.8em;
 	border: 1px solid #303846;
 	text-align: start;
 }
 
-.documentation-editor__content th {
+.documentation-editor__content table:not([class*="_tableEditor_"]) th {
 	background: #171c24;
 	color: #f4f7fb;
 	font-weight: 600;
+}
+
+.documentation-editor__content [class*="_tableEditor_"] {
+	height: auto;
+	margin: 1.5em 0;
+	border-collapse: separate;
+	border-spacing: 0;
+	color: #dce2f0;
+}
+
+.documentation-editor__content
+	[class*="_tableEditor_"]
+	> tbody
+	> tr
+	> :is(td, th):not([data-tool-cell="true"]):not([class*="_toolCell_"]) {
+	height: 42px;
+	padding: 8px 12px;
+	border-color: #303846;
+	background: #11151b;
+	text-align: start;
+	vertical-align: middle;
+}
+
+.documentation-editor__content
+	[class*="_tableEditor_"]
+	> tbody
+	> tr:first-child
+	> :is(td, th):not([data-tool-cell="true"]):not([class*="_toolCell_"]) {
+	background: #171c24;
+	color: #f4f7fb;
+	font-weight: 600;
+}
+
+.documentation-editor__content [class*="_tableEditor_"] [data-active="true"] {
+	outline: 2px solid #9255a4;
+	outline-offset: -2px;
+}
+
+.documentation-editor__content [class*="_tableEditor_"] [class*="_toolCell_"] {
+	width: 32px;
+	min-width: 32px;
+	height: 32px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+}
+
+.documentation-editor__content
+	[class*="_tableEditor_"]
+	:is(
+		[class*="_tableColumnEditorTrigger_"],
+		[class*="_tableRowEditorTrigger_"],
+		[class*="_addRowButton_"],
+		[class*="_addColumnButton_"],
+		[class*="_iconButton_"]
+	) {
+	opacity: 0;
+	color: #aeb8c8;
+	transition:
+		opacity 120ms ease,
+		background-color 120ms ease;
+}
+
+.documentation-editor__content
+	[class*="_tableEditor_"]
+	[class*="_toolCell_"]:is(:hover, :focus-within)
+	> :is(
+		[class*="_tableColumnEditorTrigger_"],
+		[class*="_tableRowEditorTrigger_"],
+		[class*="_iconButton_"]
+	),
+.documentation-editor__content
+	[class*="_tableEditor_"]:is(:hover, :focus-within)
+	:is([class*="_addRowButton_"], [class*="_addColumnButton_"]),
+.documentation-editor__content
+	[class*="_tableEditor_"]
+	:is(button, [role="button"]):focus-visible {
+	opacity: 1;
+}
+
+.documentation-editor__content [class*="_tableEditor_"] button:hover {
+	background: #252e3b;
+	color: #f4f7fb;
 }
 
 .mdxeditor-popup-container.documentation-editor__surface {
