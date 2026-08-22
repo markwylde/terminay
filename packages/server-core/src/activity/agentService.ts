@@ -1,6 +1,6 @@
 import { createAgentDriverRegistry, type AgentDriverRegistry } from "./agentDrivers.js";
 import { NodeAgentJournalSource, type AgentJournalSource } from "./agentJournal.js";
-import { AgentStatusStore, makeAgentStatusStreamId, selectAgentStatusEntry, selectAgentStatusesForTerminal } from "./agentStore.js";
+import { AgentStatusStore, makeAgentStatusEntryId, makeAgentStatusStreamId, selectAgentStatusEntry, selectAgentStatusesForTerminal } from "./agentStore.js";
 import type { AgentLifecycleEvent, AgentProvider, AgentStatusListener, AgentStatusSnapshot } from "./agentTypes.js";
 import type { ActivitySessionIdentity, TerminalActivityService } from "./service.js";
 import type { ProviderActivityState, ProviderActivityUpdate } from "./types.js";
@@ -26,7 +26,8 @@ const DEFAULT_FOREGROUND_EXIT_CONFIRMATION_MS = 500;
 
 function providerFromForegroundProcess(processName: string): AgentProvider | null {
   const executable = processName.trim().split(/[\\/]/u).pop()?.toLowerCase() ?? "";
-  return /^codex(?:[-_.]|$)/u.test(executable) ? "codex" : null;
+  if (/^codex(?:[-_.]|$)/u.test(executable)) return "codex";
+  return /^claude(?:[-_.]|$)/u.test(executable) ? "claude-code" : null;
 }
 
 /** Server-owned, zero-install agent journal authority. */
@@ -254,6 +255,10 @@ export class AgentStatusService {
       return event;
     }
     if (event.kind === "tool.finished") {
+      const child = selectAgentStatusEntry(this.store.getSnapshot(), makeAgentStatusEntryId(event.activationTerminalSessionId, event.sessionId, event.toolId));
+      if (child?.kind === "subagent" && child.active) {
+        return { ...event, kind: "agent.done", agentId: child.agentId, outcome: event.outcome };
+      }
       const pending = this.pendingSubagentLaunches.get(streamId);
       if (pending !== undefined) {
         const next = pending.filter((candidate) => candidate.toolId !== event.toolId);

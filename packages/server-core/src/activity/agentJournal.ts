@@ -39,9 +39,10 @@ interface WatchedTerminal {
   tail?: JournalTail;
 }
 
-interface JournalTail { path: string; offset: number; partial: string; timer: ReturnType<typeof setInterval>; busy: boolean }
+interface JournalTail { provider: AgentProvider; path: string; offset: number; partial: string; timer: ReturnType<typeof setInterval>; busy: boolean }
 
 export interface NodeAgentJournalSourceOptions {
+  readonly claudeHome?: string;
   readonly codexHome?: string;
   readonly discoveryAttemptLimit?: number;
   readonly platform?: NodeJS.Platform;
@@ -55,7 +56,8 @@ export interface NodeAgentJournalSourceOptions {
  */
 export class NodeAgentJournalSource implements AgentJournalSource {
   private readonly terminals = new Map<string, WatchedTerminal>();
-  private readonly root: string;
+  private readonly claudeRoot: string;
+  private readonly codexRoot: string;
   private readonly platform: NodeJS.Platform;
   private readonly pollMs: number;
   private readonly discoveryAttemptLimit: number;
@@ -63,7 +65,8 @@ export class NodeAgentJournalSource implements AgentJournalSource {
   private enabled = true;
 
   constructor(options: NodeAgentJournalSourceOptions = {}) {
-    this.root = resolve(options.codexHome ?? (process.env.CODEX_HOME?.trim() || join(homedir(), ".codex")));
+    this.claudeRoot = resolve(options.claudeHome ?? join(homedir(), ".claude"));
+    this.codexRoot = resolve(options.codexHome ?? (process.env.CODEX_HOME?.trim() || join(homedir(), ".codex")));
     this.platform = options.platform ?? process.platform;
     this.pollMs = Math.max(50, options.pollMs ?? POLL_MS);
     this.discoveryAttemptLimit = Math.max(1, Math.floor(options.discoveryAttemptLimit ?? 80));
@@ -95,7 +98,7 @@ export class NodeAgentJournalSource implements AgentJournalSource {
     const terminal = this.exactTerminal(identity);
     if (!terminal) return;
     terminal.provider = provider;
-    if (provider === "codex") this.startDiscovery(terminal, true);
+    if (provider !== null) this.startDiscovery(terminal, true);
     else if (shellForeground) this.stopWatching(terminal);
     else this.startDiscovery(terminal);
   }
@@ -129,20 +132,25 @@ export class NodeAgentJournalSource implements AgentJournalSource {
       terminal.discoveryBusy = true;
       try {
         terminal.discoveryAttempts = (terminal.discoveryAttempts ?? 0) + 1;
-        const path = await findProcessBoundCodexRollout(terminal.shellPid, join(this.root, "sessions"), this.platform).catch(() => undefined);
-        if (!path) {
+        const journal = await findProcessBoundAgentJournal(terminal.shellPid, {
+          claudeProjectsRoot: join(this.claudeRoot, "projects"),
+          codexSessionsRoot: join(this.codexRoot, "sessions"),
+          platform: this.platform,
+          provider: terminal.provider,
+        }).catch(() => undefined);
+        if (!journal) {
           if (!terminal.discoveryPersistent && (terminal.discoveryAttempts ?? 0) >= this.discoveryAttemptLimit && terminal.discovery !== undefined) {
             clearInterval(terminal.discovery); terminal.discovery = undefined;
           }
           return;
         }
-        if (terminal.tail?.path === path) return;
+        if (terminal.tail?.path === journal.path && terminal.tail.provider === journal.provider) return;
         this.stopTail(terminal);
         if (!terminal.discoveryPersistent) {
           if (terminal.discovery !== undefined) clearInterval(terminal.discovery);
           terminal.discovery = undefined;
         }
-        await this.startTail(terminal, path).catch(() => undefined);
+        await this.startTail(terminal, journal.provider, journal.path).catch(() => undefined);
       } finally {
         terminal.discoveryBusy = false;
       }
@@ -152,27 +160,28 @@ export class NodeAgentJournalSource implements AgentJournalSource {
     void discover();
   }
 
-  private async startTail(terminal: WatchedTerminal, path: string): Promise<void> {
-    const safePath = await safeJournalPath(path, join(this.root, "sessions"));
+  private async startTail(terminal: WatchedTerminal, provider: AgentProvider, path: string): Promise<void> {
+    const root = provider === "codex" ? join(this.codexRoot, "sessions") : join(this.claudeRoot, "projects");
+    const safePath = await safeJournalPath(path, root);
     if (!safePath || terminal.tail !== undefined) return;
     const metadata = await stat(safePath);
     if (!metadata.isFile()) return;
     const initialOffset = Math.max(0, metadata.size - MAX_INITIAL_BYTES);
-    const tail: JournalTail = { path: safePath, offset: initialOffset, partial: "", timer: undefined as never, busy: false };
+    const tail: JournalTail = { provider, path: safePath, offset: initialOffset, partial: "", timer: undefined as never, busy: false };
     terminal.tail = tail;
-    if (initialOffset > 0) await this.emitFirstRecord(terminal, safePath);
+    if (initialOffset > 0) await this.emitFirstRecord(terminal, tail, safePath);
     await this.readAvailable(terminal, tail, initialOffset > 0);
     tail.timer = setInterval(() => void this.readAvailable(terminal, tail, false), this.pollMs);
     tail.timer.unref?.();
   }
 
-  private async emitFirstRecord(terminal: WatchedTerminal, path: string): Promise<void> {
+  private async emitFirstRecord(terminal: WatchedTerminal, tail: JournalTail, path: string): Promise<void> {
     const handle = await open(path, "r");
     try {
       const bytes = Buffer.alloc(64 * 1024);
       const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
       const newline = bytes.subarray(0, bytesRead).indexOf(10);
-      if (newline >= 0) this.emitLine(terminal, bytes.subarray(0, newline).toString("utf8"));
+      if (newline >= 0) this.emitLine(terminal, tail.provider, bytes.subarray(0, newline).toString("utf8"));
     } finally { await handle.close(); }
   }
 
@@ -180,7 +189,8 @@ export class NodeAgentJournalSource implements AgentJournalSource {
     if (tail.busy || terminal.tail !== tail) return;
     tail.busy = true;
     try {
-      const stillSafe = await safeJournalPath(tail.path, join(this.root, "sessions"));
+      const root = tail.provider === "codex" ? join(this.codexRoot, "sessions") : join(this.claudeRoot, "projects");
+      const stillSafe = await safeJournalPath(tail.path, root);
       if (stillSafe !== tail.path) { this.stopTail(terminal); return; }
       const metadata = await stat(tail.path);
       if (metadata.size < tail.offset) { tail.offset = 0; tail.partial = ""; }
@@ -200,7 +210,7 @@ export class NodeAgentJournalSource implements AgentJournalSource {
         const lines = text.split(/\n/u);
         tail.partial = lines.pop() ?? "";
         if (Buffer.byteLength(tail.partial, "utf8") > MAX_RECORD_BYTES) tail.partial = "";
-        for (const line of lines) this.emitLine(terminal, line);
+        for (const line of lines) this.emitLine(terminal, tail.provider, line);
       } finally { await handle.close(); }
     } catch {
       // A disappearing or temporarily unreadable provider journal is not a
@@ -208,12 +218,12 @@ export class NodeAgentJournalSource implements AgentJournalSource {
     } finally { tail.busy = false; }
   }
 
-  private emitLine(terminal: WatchedTerminal, line: string): void {
+  private emitLine(terminal: WatchedTerminal, provider: AgentProvider, line: string): void {
     if (!line || Buffer.byteLength(line, "utf8") > MAX_RECORD_BYTES || !this.listener) return;
     try {
       const record = JSON.parse(line) as unknown;
       if (typeof record !== "object" || record === null || Array.isArray(record)) return;
-      void this.listener({ identity: terminal.identity, provider: "codex", record: record as Readonly<Record<string, unknown>> });
+      void this.listener({ identity: terminal.identity, provider, record: record as Readonly<Record<string, unknown>> });
     } catch { /* Ignore incomplete or invalid provider records. */ }
   }
 
@@ -240,19 +250,95 @@ async function safeJournalPath(path: string, sessionsRoot: string): Promise<stri
 }
 
 export async function findProcessBoundCodexRollout(shellPid: number, sessionsRoot: string, platform: NodeJS.Platform = process.platform): Promise<string | undefined> {
+  return (await findProcessBoundAgentJournal(shellPid, { codexSessionsRoot: sessionsRoot, platform, provider: "codex" }))?.path;
+}
+
+interface ProcessBoundAgentJournalOptions {
+  readonly claudeProjectsRoot?: string;
+  readonly codexSessionsRoot?: string;
+  readonly platform: NodeJS.Platform;
+  readonly provider: AgentProvider | null;
+}
+
+async function findProcessBoundAgentJournal(shellPid: number, options: ProcessBoundAgentJournalOptions): Promise<{ readonly provider: AgentProvider; readonly path: string } | undefined> {
+  const { platform } = options;
   if (platform !== "darwin" && platform !== "linux") return undefined;
   const descendants = platform === "linux" ? await linuxDescendants(shellPid) : await psDescendants(shellPid);
   if (descendants.length === 0) return undefined;
-  const paths = platform === "linux" ? await linuxWritableFiles(descendants) : await lsofWritableFiles(descendants);
-  const matches: Array<{ path: string; modified: number }> = [];
-  for (const path of paths) {
-    const safe = await safeJournalPath(path, sessionsRoot).catch(() => undefined);
-    if (!safe || !basename(safe).startsWith("rollout-")) continue;
-    if (!await isCodexRootRollout(safe)) continue;
-    const metadata = await stat(safe).catch(() => undefined);
-    if (metadata?.isFile()) matches.push({ path: safe, modified: metadata.mtimeMs });
+  if ((options.provider === null || options.provider === "claude-code") && options.claudeProjectsRoot) {
+    const claude = await findClaudeJournalFromProcess(descendants, options.claudeProjectsRoot, platform);
+    if (claude) return { provider: "claude-code", path: claude };
   }
-  return matches.sort((left, right) => right.modified - left.modified)[0]?.path;
+  const paths = platform === "linux" ? await linuxWritableFiles(descendants) : await lsofWritableFiles(descendants);
+  const matches: Array<{ provider: AgentProvider; path: string; modified: number }> = [];
+  for (const path of paths) {
+    if ((options.provider === null || options.provider === "codex") && options.codexSessionsRoot) {
+      const safe = await safeJournalPath(path, options.codexSessionsRoot).catch(() => undefined);
+      if (safe && basename(safe).startsWith("rollout-") && await isCodexRootRollout(safe)) {
+        const metadata = await stat(safe).catch(() => undefined);
+        if (metadata?.isFile()) matches.push({ provider: "codex", path: safe, modified: metadata.mtimeMs });
+      }
+    }
+    if ((options.provider === null || options.provider === "claude-code") && options.claudeProjectsRoot) {
+      const safe = await safeJournalPath(path, options.claudeProjectsRoot).catch(() => undefined);
+      if (safe && !relative(options.claudeProjectsRoot, safe).split(/[\\/]/u).includes("subagents") && await isClaudeRootJournal(safe)) {
+        const metadata = await stat(safe).catch(() => undefined);
+        if (metadata?.isFile()) matches.push({ provider: "claude-code", path: safe, modified: metadata.mtimeMs });
+      }
+    }
+  }
+  return matches.sort((left, right) => right.modified - left.modified)[0];
+}
+
+interface AgentProcessDetails { readonly command: string; readonly cwd?: string; readonly startedAt?: number }
+
+async function findClaudeJournalFromProcess(pids: readonly number[], projectsRoot: string, platform: NodeJS.Platform): Promise<string | undefined> {
+  const details = await Promise.all(pids.map(async (pid) => ({ pid, details: await processDetails(pid, platform) })));
+  const candidates = details.filter((entry): entry is { pid: number; details: AgentProcessDetails } => entry.details !== undefined)
+    .filter(({ details }) => /(?:^|[\\/])claude(?:\s|$)/u.test(details.command));
+  const matches = new Set<string>();
+  for (const { details: process } of candidates) {
+    const resumed = /(?:^|\s)(?:--resume|-r)\s+([0-9a-f-]{36})(?:\s|$)/u.exec(process.command)?.[1];
+    const projectDir = process.cwd ? join(projectsRoot, process.cwd.replace(/[/.]/gu, "-")) : undefined;
+    if (resumed && projectDir) {
+      const path = await safeJournalPath(join(projectDir, `${resumed}.jsonl`), projectsRoot).catch(() => undefined);
+      if (path && await isClaudeRootJournal(path)) matches.add(path);
+      continue;
+    }
+    if (!projectDir || process.startedAt === undefined) continue;
+    for (const entry of await readdir(projectDir).catch(() => [])) {
+      if (!/^[0-9a-f-]{36}\.jsonl$/u.test(entry)) continue;
+      const path = await safeJournalPath(join(projectDir, entry), projectsRoot).catch(() => undefined);
+      const metadata = path ? await stat(path).catch(() => undefined) : undefined;
+      const createdAt = metadata?.mtimeMs;
+      if (path && createdAt !== undefined && createdAt >= process.startedAt - 2_000 && await isClaudeRootJournal(path)) matches.add(path);
+    }
+  }
+  return matches.size === 1 ? [...matches][0] : undefined;
+}
+
+export async function findProcessBoundClaudeSession(shellPid: number, projectsRoot: string, platform: NodeJS.Platform = process.platform): Promise<string | undefined> {
+  if (platform !== "darwin" && platform !== "linux") return undefined;
+  const descendants = platform === "linux" ? await linuxDescendants(shellPid) : await psDescendants(shellPid);
+  return findClaudeJournalFromProcess(descendants, projectsRoot, platform);
+}
+
+async function processDetails(pid: number, platform: NodeJS.Platform): Promise<AgentProcessDetails | undefined> {
+  if (platform === "linux") {
+    const [command, cwd] = await Promise.all([
+      readFile(join("/proc", String(pid), "cmdline"), "utf8").then((value) => value.replaceAll("\0", " ").trim()).catch(() => ""),
+      realpath(join("/proc", String(pid), "cwd")).catch(() => undefined),
+    ]);
+    return command ? { command, ...(cwd ? { cwd } : {}) } : undefined;
+  }
+  const output = await execFileText("ps", ["-p", String(pid), "-o", "lstart=,command="], 64 * 1024, true);
+  const line = output.trim();
+  if (!line) return undefined;
+  const startedText = line.slice(0, 24); const command = line.slice(24).trim();
+  const cwdOutput = await execFileText("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"], 64 * 1024, true);
+  const cwd = cwdOutput.split(/\r?\n/u).find((value) => value.startsWith("n"))?.slice(1);
+  const startedAt = Date.parse(startedText);
+  return command ? { command, ...(cwd ? { cwd } : {}), ...(Number.isFinite(startedAt) ? { startedAt } : {}) } : undefined;
 }
 
 async function isCodexRootRollout(path: string): Promise<boolean> {
@@ -272,6 +358,28 @@ async function isCodexRootRollout(path: string): Promise<boolean> {
     const sessionId = typeof metadata.id === "string" ? metadata.id : metadata.session_id;
     return typeof sessionId === "string" && sessionId.length > 0 && sessionId.length <= 512
       && metadata.originator === "codex-tui" && metadata.source === "cli";
+  } catch {
+    return false;
+  } finally {
+    await handle.close();
+  }
+}
+
+async function isClaudeRootJournal(path: string): Promise<boolean> {
+  if (!/^[0-9a-f-]{36}\.jsonl$/u.test(basename(path))) return false;
+  const handle = await open(path, "r").catch(() => undefined);
+  if (handle === undefined) return false;
+  try {
+    const bytes = Buffer.alloc(MAX_SESSION_META_BYTES);
+    const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+    const expected = basename(path, ".jsonl");
+    for (const line of bytes.subarray(0, bytesRead).toString("utf8").split("\n").slice(0, -1)) {
+      const record = JSON.parse(line) as unknown;
+      if (typeof record !== "object" || record === null || Array.isArray(record)) continue;
+      const value = record as Record<string, unknown>;
+      if (value.sessionId === expected && value.isSidechain !== true) return true;
+    }
+    return false;
   } catch {
     return false;
   } finally {

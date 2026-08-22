@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { findProcessBoundCodexRollout, NodeAgentJournalSource } from "../dist/activity/agentJournal.js";
+import { findProcessBoundClaudeSession, findProcessBoundCodexRollout, NodeAgentJournalSource } from "../dist/activity/agentJournal.js";
 
 test("rollout discovery requires an open writer below the exact process tree", { skip: !["darwin", "linux"].includes(process.platform) }, async () => {
   const root = await mkdtemp(join(tmpdir(), "terminay-agent-journal-"));
@@ -163,6 +163,60 @@ test("persistent Codex discovery switches to a newly opened root rollout", { ski
   } finally {
     await source.stop(); child.kill();
     if (child.exitCode === null) await new Promise((resolve) => child.once("exit", resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Claude discovery binds only a root project session held by the exact process tree", { skip: !["darwin", "linux"].includes(process.platform) }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminay-claude-journal-"));
+  const project = join(root, "projects", "-workspace");
+  const sessionId = "5f2aff08-eab3-4852-96eb-48235fc7f471";
+  const path = join(project, `${sessionId}.jsonl`);
+  await mkdir(project, { recursive: true });
+  const record = JSON.stringify({ type: "permission-mode", mode: "default", sessionId, version: "2.1.201" });
+  const identity = Object.freeze({ serverId: "server-1", projectId: "project-1", sessionId: "terminal-1" });
+  const source = new NodeAgentJournalSource({ claudeHome: root, codexHome: join(root, "missing-codex"), pollMs: 50 });
+  const observations = [];
+  const child = spawn(process.execPath, ["-e", "const fs=require('fs');const fd=fs.openSync(process.argv[1],'a');fs.writeSync(fd,process.argv[2]+'\\n');setInterval(()=>{},1000)", path, record], { stdio: "ignore" });
+  try {
+    await source.start((observation) => observations.push(observation));
+    source.registerTerminal(identity); source.terminalStarted(identity, process.pid);
+    source.foregroundProcessChanged(identity, "claude-code", false);
+    for (let attempt = 0; attempt < 40 && observations.length === 0; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(observations[0]?.provider, "claude-code");
+    assert.equal(observations[0]?.record?.sessionId, sessionId);
+  } finally {
+    await source.stop(); child.kill();
+    if (child.exitCode === null) await new Promise((resolve) => child.once("exit", resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Claude resume binds its UUID journal without requiring an open file descriptor", { skip: !["darwin", "linux"].includes(process.platform) }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminay-claude-resume-"));
+  const workspacePath = join(root, "workspace.github.io"); const sessionId = "5f2aff08-eab3-4852-96eb-48235fc7f471";
+  await mkdir(workspacePath, { recursive: true }); const workspace = await realpath(workspacePath);
+  const project = join(root, "projects", workspace.replace(/[/.]/gu, "-"));
+  const path = join(project, `${sessionId}.jsonl`); const executable = join(root, "claude");
+  await mkdir(project, { recursive: true });
+  await writeFile(path, `${JSON.stringify({ type: "permission-mode", mode: "default", sessionId })}\n`);
+  await writeFile(executable, "#!/bin/sh\nwhile true; do sleep 1; done\n"); await chmod(executable, 0o755);
+  const identity = Object.freeze({ serverId: "server-1", projectId: "project-1", sessionId: "terminal-1" });
+  const source = new NodeAgentJournalSource({ claudeHome: root, codexHome: join(root, "missing-codex"), pollMs: 50 });
+  const observations = []; const child = spawn(executable, ["--resume", sessionId], { cwd: workspace, stdio: "ignore" });
+  try {
+    let found;
+    for (let attempt = 0; attempt < 40 && !found; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      found = await findProcessBoundClaudeSession(process.pid, join(root, "projects"));
+    }
+    assert.equal(found, await realpath(path));
+    await source.start((observation) => observations.push(observation)); source.registerTerminal(identity);
+    source.terminalStarted(identity, process.pid); source.foregroundProcessChanged(identity, "claude-code", false);
+    for (let attempt = 0; attempt < 60 && observations.length === 0; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(observations[0]?.provider, "claude-code"); assert.equal(observations[0]?.record?.sessionId, sessionId);
+  } finally {
+    await source.stop(); child.kill(); if (child.exitCode === null) await new Promise((resolve) => child.once("exit", resolve));
     await rm(root, { recursive: true, force: true });
   }
 });
