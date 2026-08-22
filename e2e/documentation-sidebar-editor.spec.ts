@@ -14,7 +14,7 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 			files: {
 				'README.md': '# Read me',
 				'docs/guides/getting-started.md':
-					'---\ntitle: Getting Started\n---\n\n# Hello\n\nA comfortable paragraph for checking documentation typography.\n\n- First item\n- Second item',
+					'---\ntitle: Getting Started\n---\n\n# Hello\n\nA comfortable paragraph for checking documentation typography.\n\n- First item\n- Second item\n\n- [ ] An incomplete task\n- [x] A completed task',
 			},
 		},
 	});
@@ -62,6 +62,31 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 	expect(typography.fontFamily).toContain('Open Sans');
 	expect(['16px', '17px']).toContain(typography.fontSize);
 	expect(Number.parseFloat(typography.lineHeight)).toBeGreaterThanOrEqual(27);
+	const taskListLayout = await richText
+		.locator("li[role='checkbox']")
+		.first()
+		.evaluate((element) => {
+			const before = getComputedStyle(element, '::before');
+			return {
+				markerWidth: Number.parseFloat(before.width),
+				markerTop: Number.parseFloat(before.top),
+				labelPadding: Number.parseFloat(
+					getComputedStyle(element).paddingInlineStart,
+				),
+			};
+		});
+	expect(taskListLayout.markerWidth).toBeGreaterThan(0);
+	expect(taskListLayout.markerTop).toBeGreaterThan(0);
+	expect(taskListLayout.labelPadding).toBeGreaterThan(
+		taskListLayout.markerWidth,
+	);
+	const trailingReadingSpace = await richText.evaluate((element) => ({
+		padding: Number.parseFloat(getComputedStyle(element).paddingBlockEnd),
+		tabHeight: element.closest('.documentation-editor')!.clientHeight,
+	}));
+	expect(trailingReadingSpace.padding).toBeGreaterThanOrEqual(
+		trailingReadingSpace.tabHeight * 0.75,
+	);
 	const widths = await richText.evaluate((element) => ({
 		content: element.clientWidth,
 		surface: element.closest('.documentation-editor__surface')!.clientWidth,

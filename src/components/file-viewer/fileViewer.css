@@ -54,6 +54,7 @@
 	gap: 0;
 	width: 100%;
 	min-height: 0;
+	container-type: size;
 }
 
 .documentation-editor--with-preview {
@@ -184,7 +185,7 @@
 	max-width: none;
 	min-height: calc(100% - 48px);
 	margin: 0 auto;
-	padding: 54px clamp(48px, 5vw, 64px) 128px;
+	padding: 28px clamp(48px, 5vw, 64px) max(128px, 80cqh);
 	color: #dce2f0;
 	caret-color: #dce2f0;
 	font-family: var(--font-body);
@@ -250,6 +251,23 @@
 .documentation-editor__content li {
 	margin: 0.36em 0;
 	padding-inline-start: 0.18em;
+}
+
+.documentation-editor__content li[role="checkbox"] {
+	/* MDXEditor's checklist marker is an absolutely positioned pseudo-element.
+	 * Keep its full label gutter instead of applying the compact normal-list
+	 * indentation above. */
+	padding-inline-start: 1.5em;
+}
+
+.documentation-editor__content li[role="checkbox"]::before {
+	/* Center the 1rem marker in the 1.68em Documentation reading line. */
+	top: calc(0.84em - 0.5rem);
+}
+
+.documentation-editor__content li[role="checkbox"]::after {
+	/* The checked tick is positioned separately by MDXEditor. */
+	top: calc(0.84em - 0.5rem + var(--spacing-0_5));
 }
 
 .documentation-editor__content li > p {
@@ -551,7 +569,7 @@
 	}
 
 	.documentation-editor__surface .documentation-editor__content {
-		padding: 40px 32px 96px;
+		padding: 24px 32px max(96px, 80cqh);
 		font-size: 16px;
 		line-height: 1.7;
 	}
@@ -559,7 +577,7 @@
 
 @media (max-width: 560px) {
 	.documentation-editor__surface .documentation-editor__content {
-		padding: 30px 22px 80px;
+		padding: 20px 22px max(80px, 80cqh);
 	}
 }
 
