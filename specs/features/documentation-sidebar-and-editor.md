@@ -88,6 +88,20 @@ the isolated [MDX browser runtime](./mdx-browser-runtime.md).
   keyboard operation, overflow behaviour, and a compact responsive layout.
 - Inserting an admonition from the toolbar, including `info`, creates an
   editable directive using the matching registered rich-editor descriptor.
+- Rich text uses the application's Open Sans reading face, a comfortable body
+  line height, and deliberate vertical rhythm for headings, paragraphs, lists,
+  quotes, code, and tables. Its reading canvas expands fluidly at desktop
+  widths without producing edge-to-edge prose, then tightens its type and
+  margins at narrower breakpoints. Editor controls and popup menus retain the
+  same dark palette as the Documentation surface.
+- Rich table cells use the Documentation palette and readable row sizing.
+  Structural row, column, and add controls remain visually quiet until their
+  relevant edge is hovered or focused instead of filling an empty table with
+  persistent icons.
+- The Documentation status bar reports the file size and sync state without
+  labelling the rich editor as Monaco.
+- Inserting a fenced code block opens a registered dark CodeMirror editor and
+  never takes down the surrounding rich editor.
 - Source constructs that have no rich visual editor remain losslessly editable
   in source mode or an appropriate structured placeholder. Switching rich,
   source, diff, and preview presentations does not discard a draft.
@@ -127,6 +141,8 @@ the isolated [MDX browser runtime](./mdx-browser-runtime.md).
   presentation changes; it does not turn general file editing into autosave.
 - Autosave failure uses bounded retry with visible status and user-triggered
   retry. It never runs an unbounded write loop or silently drops a draft.
+- Autosave metadata refreshes do not remount the rich editor: the active caret,
+  selection, composition, and keyboard focus remain in place after a save.
 
 ## Preview and browser behaviour
 
@@ -195,6 +211,8 @@ resumption before editing or previewing.
   revisions, and visibly preserve a draft after failure or conflict.
 - Each toolbar admonition type can be inserted and edited without disrupting
   another panel or terminal session.
+- Rich text remains comfortably readable at normal desktop widths, and opening
+  a toolbar dropdown never introduces a light-themed popup into the dark UI.
 - Normal File Viewer editing still requires its existing explicit Save command.
 - An MDX document imports and renders a project TSX component with normal
   browser networking and external assets, while navigation, popups,

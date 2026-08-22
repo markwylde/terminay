@@ -5,6 +5,7 @@ import {
 	CodeToggle,
 	CreateLink,
 	codeBlockPlugin,
+	codeMirrorPlugin,
 	DiffSourceToggleWrapper,
 	diffSourcePlugin,
 	directivesPlugin,
@@ -24,6 +25,7 @@ import {
 	MDXEditor,
 	type MDXEditorMethods,
 	markdownShortcutPlugin,
+	lexicalTheme as mdxEditorLexicalTheme,
 	quotePlugin,
 	tablePlugin,
 	thematicBreakPlugin,
@@ -44,7 +46,23 @@ import {
 import { openExternalUrl, savePreviewDownload } from '../../host/nativeActions';
 import { MdxPreview } from '../mdx-preview/MdxPreview';
 import { DocumentationAutosaveController } from './DocumentationAutosaveController';
+import '@fontsource/open-sans/latin-400.css';
+import '@fontsource/open-sans/latin-600.css';
+import '@fontsource/open-sans/latin-700.css';
 import '@mdxeditor/editor/style.css';
+
+const documentationLexicalTheme = {
+	...mdxEditorLexicalTheme,
+	admonition: {
+		caution:
+			'documentation-editor__admonition documentation-editor__admonition--caution',
+		danger:
+			'documentation-editor__admonition documentation-editor__admonition--danger',
+		info: 'documentation-editor__admonition documentation-editor__admonition--info',
+		note: 'documentation-editor__admonition documentation-editor__admonition--note',
+		tip: 'documentation-editor__admonition documentation-editor__admonition--tip',
+	},
+};
 
 const editorPlugins = [
 	headingsPlugin(),
@@ -55,6 +73,21 @@ const editorPlugins = [
 	imagePlugin(),
 	tablePlugin(),
 	codeBlockPlugin(),
+	codeMirrorPlugin({
+		codeBlockLanguages: {
+			'': 'Plain text',
+			bash: 'Shell',
+			css: 'CSS',
+			html: 'HTML',
+			javascript: 'JavaScript',
+			json: 'JSON',
+			jsx: 'JavaScript (React)',
+			markdown: 'Markdown',
+			tsx: 'TypeScript (React)',
+			typescript: 'TypeScript',
+			yaml: 'YAML',
+		},
+	}),
 	frontmatterPlugin(),
 	directivesPlugin({
 		directiveDescriptors: [AdmonitionDirectiveDescriptor],
@@ -395,6 +428,8 @@ function DocumentationEditorSurface({
 				markdown={markdown}
 				trim={false}
 				className="documentation-editor__surface mdxeditor-full-height"
+				contentEditableClassName="documentation-editor__content"
+				lexicalTheme={documentationLexicalTheme}
 				plugins={editorPlugins}
 				onChange={handleChange}
 				onError={(error) => setMessage(`Editor parser error: ${error.error}`)}

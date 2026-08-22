@@ -14,7 +14,7 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 			files: {
 				'README.md': '# Read me',
 				'docs/guides/getting-started.md':
-					'---\ntitle: Getting Started\n---\n\n# Hello',
+					'---\ntitle: Getting Started\n---\n\n# Hello\n\nA comfortable paragraph for checking documentation typography.\n\n- First item\n- Second item',
 			},
 		},
 	});
@@ -44,16 +44,51 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 	const editor = mainWindow.locator('.documentation-editor');
 	await expect(editor).toBeVisible();
 	await expect(editor.getByText('Hello', { exact: true })).toBeVisible();
-	const colors = await editor
-		.locator('[contenteditable="true"]')
-		.evaluate((element) => {
-			const style = getComputedStyle(element);
-			const root = getComputedStyle(
-				element.closest('.documentation-editor__surface')!,
-			);
-			return { foreground: style.color, background: root.backgroundColor };
-		});
-	expect(colors.foreground).not.toBe(colors.background);
+	const richText = editor.locator('.documentation-editor__content');
+	const typography = await richText.evaluate((element) => {
+		const style = getComputedStyle(element);
+		const root = getComputedStyle(
+			element.closest('.documentation-editor__surface')!,
+		);
+		return {
+			foreground: style.color,
+			background: root.backgroundColor,
+			fontFamily: style.fontFamily,
+			fontSize: style.fontSize,
+			lineHeight: style.lineHeight,
+		};
+	});
+	expect(typography.foreground).not.toBe(typography.background);
+	expect(typography.fontFamily).toContain('Open Sans');
+	expect(['16px', '17px']).toContain(typography.fontSize);
+	expect(Number.parseFloat(typography.lineHeight)).toBeGreaterThanOrEqual(27);
+	const widths = await richText.evaluate((element) => ({
+		content: element.clientWidth,
+		surface: element.closest('.documentation-editor__surface')!.clientWidth,
+	}));
+	expect(
+		Math.abs(widths.content - Math.min(widths.surface, 1080)),
+	).toBeLessThan(2);
+	await expect
+		.poll(() =>
+			mainWindow.evaluate(() => document.fonts.check('16px "Open Sans"')),
+		)
+		.toBe(true);
+	await richText.focus();
+	await mainWindow.keyboard.press('End');
+	await mainWindow.keyboard.type(' Focus stays here.');
+	await expect(richText).toBeFocused();
+	await mainWindow.waitForTimeout(1_200);
+	await expect(richText).toBeFocused();
+	await expect(mainWindow.locator('.file-status-bar')).not.toContainText(
+		'Monaco',
+	);
+
+	await editor.getByRole('combobox').first().click();
+	const blockTypeMenu = mainWindow.getByRole('listbox').last();
+	await expect(blockTypeMenu).toBeVisible();
+	await expect(blockTypeMenu).toHaveCSS('background-color', 'rgb(17, 21, 27)');
+	await mainWindow.keyboard.press('Escape');
 	const selectedToolbarButton = editor
 		.locator('.mdxeditor-toolbar button[data-state="on"]')
 		.first();
@@ -65,6 +100,22 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 	}
 	await editor.getByRole('combobox', { name: 'Insert Admonition' }).click();
 	await mainWindow.getByText('Info', { exact: true }).click();
+	const infoAdmonition = editor.locator(
+		'.documentation-editor__admonition--info',
+	);
+	await expect(infoAdmonition).toBeVisible();
+	await expect(infoAdmonition).toHaveCSS(
+		'background-color',
+		'rgba(59, 130, 246, 0.12)',
+	);
+	await expect(infoAdmonition).toHaveCSS(
+		'border-left-color',
+		'rgb(96, 165, 250)',
+	);
+	await expect(infoAdmonition.locator('[contenteditable="true"]')).toHaveCSS(
+		'background-color',
+		'rgba(0, 0, 0, 0)',
+	);
 	await expect(editor).toBeVisible();
 	await expect(mainWindow.locator('.project-workspace--active')).toBeVisible();
 	await mainWindow.waitForTimeout(1_200);
@@ -94,4 +145,22 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 			'utf8',
 		),
 	).toContain(':::info');
+
+	await editor.getByRole('radio', { name: 'Rich text', exact: true }).click();
+	await editor.getByRole('button', { name: 'Insert Table' }).click();
+	const richTable = editor.locator('table[class*="_tableEditor_"]');
+	await expect(richTable).toBeVisible();
+	await expect(
+		richTable
+			.locator('tbody tr')
+			.first()
+			.locator(
+				':is(td, th):not([data-tool-cell="true"]):not([class*="_toolCell_"])',
+			)
+			.first(),
+	).toHaveCSS('background-color', 'rgb(23, 28, 36)');
+
+	await editor.getByRole('button', { name: 'Insert Code Block' }).click();
+	await expect(editor.locator('.cm-editor')).toBeVisible();
+	await expect(editor.getByRole('alert')).toHaveCount(0);
 });
