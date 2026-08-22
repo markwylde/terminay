@@ -28,6 +28,7 @@ import type {
 	FileInfo,
 	FileViewerEngine,
 	FileViewerMode,
+	FileWatchEvent,
 	GitFileDiff,
 } from '../../types/fileViewer';
 import type {
@@ -219,6 +220,8 @@ function CanonicalFilePanel(
 		path: string;
 		size: number;
 	} | null>(null);
+	const documentationSaveInFlightRef = useRef(false);
+	const deferredDocumentationWatchEventRef = useRef<FileWatchEvent | null>(null);
 	const documentationSessionRef = useRef<{ sessionId: string; diskRevision: number; draftRevision: number } | undefined>(undefined);
 
 	const sessionStore = useMemo(
@@ -629,25 +632,68 @@ function CanonicalFilePanel(
 		const currentInfo = fileInfoRef.current;
 		if (!currentInfo) throw new Error('The document is no longer available.');
 		if (conflictRef.current) throw new Error('Choose Reload from disk or Keep local edits before saving.');
+		documentationSaveInFlightRef.current = true;
 		const relativePath = toProjectRelativePath(projectRoot, currentInfo.path);
-		let session = documentationSessionRef.current;
-		if (session === undefined) {
-			const opened = await fileViewerClient.openFile(relativePath, terminalClientContext.projectId);
-			session = { sessionId: opened.sessionId, diskRevision: opened.metadata.diskRevision, draftRevision: opened.metadata.draftRevision };
-			documentationSessionRef.current = session;
+		try {
+			let session = documentationSessionRef.current;
+			if (session === undefined) {
+				const opened = await fileViewerClient.openFile(relativePath, terminalClientContext.projectId);
+				session = { sessionId: opened.sessionId, diskRevision: opened.metadata.diskRevision, draftRevision: opened.metadata.draftRevision };
+				documentationSessionRef.current = session;
+			}
+			const text = draftBufferRef.current.getText();
+			const edited = mutationState(await fileViewerClient.editSession(session.sessionId, text, session.draftRevision));
+			if (!edited.ok) throw new Error(edited.message);
+			session.draftRevision = edited.draftRevision;
+			session.diskRevision = edited.diskRevision;
+			const saved = mutationState(await fileViewerClient.saveSession(session.sessionId, session.diskRevision, session.draftRevision));
+			if (!saved.ok) { conflictRef.current = true; setConflict(true); throw new Error(saved.message); }
+			session.draftRevision = saved.draftRevision;
+			session.diskRevision = saved.diskRevision;
+			const nextInfo = await fileGateway.getFileInfo(currentInfo.path);
+			acknowledgedWatchRevisionRef.current = {
+				mtimeMs: nextInfo.mtimeMs,
+				path: nextInfo.path,
+				size: nextInfo.size,
+			};
+			setFileInfo(nextInfo);
+			sessionStoreRef.current?.setFile(nextInfo);
+			documentationSaveInFlightRef.current = false;
+			const deferredEvent = deferredDocumentationWatchEventRef.current;
+			deferredDocumentationWatchEventRef.current = null;
+			if (deferredEvent !== null) {
+				const disposition = resolveFileWatchDisposition({
+					acknowledgedRevision: acknowledgedWatchRevisionRef.current,
+					event: deferredEvent,
+					isDirty: true,
+				});
+				if (disposition === 'acknowledged-write') {
+					acknowledgedWatchRevisionRef.current = null;
+				} else {
+					conflictRef.current = true;
+					setConflict(true);
+					sessionStoreRef.current?.setConflict({ diskMtimeMs: deferredEvent.mtimeMs ?? 0, kind: 'external-change' });
+					throw new Error('The file changed on disk while the document was saving.');
+				}
+			}
+			setIsDirty(false);
+			sessionStoreRef.current?.setDirty(false);
+			conflictRef.current = false;
+			setConflict(false);
+			sessionStoreRef.current?.setConflict({ kind: 'none' });
+			return true;
+		} catch (error) {
+			documentationSaveInFlightRef.current = false;
+			if (deferredDocumentationWatchEventRef.current !== null) {
+				const deferredEvent = deferredDocumentationWatchEventRef.current;
+				deferredDocumentationWatchEventRef.current = null;
+				conflictRef.current = true;
+				setConflict(true);
+				sessionStoreRef.current?.setConflict({ diskMtimeMs: deferredEvent.mtimeMs ?? 0, kind: 'external-change' });
+			}
+			throw error;
 		}
-		const text = draftBufferRef.current.getText();
-		const edited = mutationState(await fileViewerClient.editSession(session.sessionId, text, session.draftRevision));
-		if (!edited.ok) throw new Error(edited.message);
-		session.draftRevision = edited.draftRevision;
-		session.diskRevision = edited.diskRevision;
-		const saved = mutationState(await fileViewerClient.saveSession(session.sessionId, session.diskRevision, session.draftRevision));
-		if (!saved.ok) { conflictRef.current = true; setConflict(true); throw new Error(saved.message); }
-		session.draftRevision = saved.draftRevision;
-		session.diskRevision = saved.diskRevision;
-		setIsDirty(false); sessionStoreRef.current?.setDirty(false);
-		return true;
-	}, [fileViewerClient, projectRoot, terminalClientContext.projectId]);
+	}, [fileGateway, fileViewerClient, projectRoot, terminalClientContext.projectId]);
 
 	useFilePanelSaveRegistration(props.api.id, presentation === 'documentation' ? saveDocumentationDraft : saveCurrentFile);
 
@@ -946,6 +992,10 @@ function CanonicalFilePanel(
 		void fileGateway.watchFile(watchedPath);
 		const dispose = fileGateway.onFileWatchEvent(async (event) => {
 			if (event.path !== watchedPath) {
+				return;
+			}
+			if (documentationSaveInFlightRef.current) {
+				deferredDocumentationWatchEventRef.current = event;
 				return;
 			}
 			const disposition = resolveFileWatchDisposition({
