@@ -133,6 +133,8 @@ the isolated [MDX browser runtime](./mdx-browser-runtime.md).
   presentation changes; it does not turn general file editing into autosave.
 - Autosave failure uses bounded retry with visible status and user-triggered
   retry. It never runs an unbounded write loop or silently drops a draft.
+- Autosave metadata refreshes do not remount the rich editor: the active caret,
+  selection, composition, and keyboard focus remain in place after a save.
 
 ## Preview and browser behaviour
 
