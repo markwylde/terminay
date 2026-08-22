@@ -34,6 +34,17 @@ await build({
 })
 const { materializePerformantDraft } = require(transitionOutputPath)
 
+const watchDispositionOutputPath = path.join(bundleDirectory, 'file-watch-disposition.cjs')
+await build({
+  bundle: true,
+  entryPoints: ['src/components/file-viewer/fileWatchDisposition.ts'],
+  format: 'cjs',
+  logLevel: 'silent',
+  outfile: watchDispositionOutputPath,
+  platform: 'node',
+})
+const { resolveFileWatchDisposition } = require(watchDispositionOutputPath)
+
 test.after(async () => {
   await rm(bundleDirectory, { force: true, recursive: true })
 })
@@ -64,6 +75,26 @@ test('preserves byte edits while converting through text mode', () => {
   assert.equal(draft.getText(), 'Switch Me\n')
   assert.equal(draft.getPayload().kind, 'binary')
   assert.equal(draft.isDirty(), true)
+})
+
+test('reproduces a documentation autosave watch event being mistaken for an external conflict', () => {
+  const disposition = resolveFileWatchDisposition({
+    // Documentation autosave does not currently acknowledge the revision its
+    // session save writes before the filesystem watcher reports it.
+    acknowledgedRevision: null,
+    event: {
+      exists: true,
+      mtimeMs: 1_777_000_000_000,
+      path: '/project/AGENTS.md',
+      size: 28,
+      type: 'updated',
+    },
+    // On macOS the watcher can win the race with the save response that clears
+    // this flag. This is the ordering reported by the application screenshot.
+    isDirty: true,
+  })
+
+  assert.equal(disposition, 'external-conflict')
 })
 
 test('materializes a Performant sparse draft into Monaco without losing edits or dirty state', () => {
