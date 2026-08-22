@@ -80,6 +80,28 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 	await expect(richText).toBeFocused();
 	await mainWindow.waitForTimeout(1_200);
 	await expect(richText).toBeFocused();
+	await expect(mainWindow.locator('.file-status-bar')).not.toContainText(
+		'Monaco',
+	);
+
+	await editor.getByRole('button', { name: 'Insert Table' }).click();
+	const richTable = editor.locator('table[class*="_tableEditor_"]');
+	await expect(richTable).toBeVisible();
+	await expect(
+		richTable
+			.locator('tbody tr')
+			.first()
+			.locator(
+				':is(td, th):not([data-tool-cell="true"]):not([class*="_toolCell_"])',
+			)
+			.first(),
+	).toHaveCSS('background-color', 'rgb(23, 28, 36)');
+	await editor.getByRole('button', { name: 'Undo' }).click();
+
+	await editor.getByRole('button', { name: 'Insert Code Block' }).click();
+	await expect(editor.locator('.cm-editor')).toBeVisible();
+	await expect(editor.getByRole('alert')).toHaveCount(0);
+	await editor.getByRole('button', { name: 'Undo' }).click();
 
 	await editor.getByRole('combobox').first().click();
 	const blockTypeMenu = mainWindow.getByRole('listbox').last();
