@@ -140,6 +140,33 @@ test("current Codex item records replay all subagents into the root session", as
   await agents.stop();
 });
 
+test("Claude title, model, tools, and Agent subagents reduce from session records", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
+  const source = fakeJournalSource(); let now = 0;
+  const agents = new AgentStatusService({ activity, journalSource: source, now: () => ++now });
+  await agents.start(); agents.register(identity);
+  await agents.ingestJournalRecord(identity, "claude-code", { type: "permission-mode", mode: "default", sessionId: "claude-root", version: "2.1.201" });
+  await agents.ingestJournalRecord(identity, "claude-code", { type: "user", sessionId: "claude-root", promptId: "prompt-1", message: { role: "user", content: [{ type: "text", text: "private prompt" }] } });
+  await agents.ingestJournalRecord(identity, "claude-code", { type: "ai-title", sessionId: "claude-root", aiTitle: "Add white background to text" });
+  await agents.ingestJournalRecord(identity, "claude-code", { type: "assistant", sessionId: "claude-root", message: {
+    role: "assistant", model: "claude-opus-4-8", content: [{ type: "tool_use", id: "toolu-agent-1", name: "Agent", input: {
+      description: "Research parser", prompt: "Inspect the journal", subagent_type: "general-purpose",
+    } }],
+  } });
+  await agents.ingestJournalRecord(identity, "claude-code", { type: "user", sessionId: "claude-root", message: {
+    role: "user", content: [{ type: "tool_result", tool_use_id: "toolu-agent-1", is_error: false, content: "private result" }],
+  } });
+  const entries = Object.values(agents.getSnapshot().entries);
+  const root = entries.find((entry) => entry.kind === "root"); const child = entries.find((entry) => entry.kind === "subagent");
+  assert.deepEqual({ prompt: root?.promptText, model: root?.model?.id, state: root?.state }, {
+    prompt: "Add white background to text", model: "claude-opus-4-8", state: "working",
+  });
+  assert.deepEqual({ name: child?.displayName, prompt: child?.promptText, state: child?.state, outcome: child?.completionOutcome }, {
+    name: "Research parser", prompt: "Inspect the journal", state: "done", outcome: "success",
+  });
+  await agents.stop();
+});
+
 test("disabling stops observation and clears reduced state", async () => {
   const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
   const source = fakeJournalSource(); const agents = new AgentStatusService({ activity, journalSource: source });

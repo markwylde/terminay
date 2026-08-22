@@ -59,15 +59,15 @@ function model(payload: JsonObject): AgentModelMetadata | undefined {
   };
 }
 
-function base(context: AgentDriverContext, record: JsonObject, payload: JsonObject) {
+function base(context: AgentDriverContext, record: JsonObject, payload: JsonObject, provider: AgentProvider = "codex", useRecordTimestamp = true) {
   const sessionId = context.providerSessionId;
   if (!sessionId) return null;
   return {
-    provider: "codex" as const,
+    provider,
     sessionId,
     activationTerminalSessionId: context.activationTerminalSessionId,
     sequence: context.sequence,
-    occurredAt: timestamp(record, context.occurredAt ?? Date.now()),
+    occurredAt: useRecordTimestamp ? timestamp(record, context.occurredAt ?? Date.now()) : (context.occurredAt ?? Date.now()),
     ...(model(payload) === undefined ? {} : { model: model(payload) }),
   };
 }
@@ -289,6 +289,80 @@ export const codexV01Driver: AgentDriver = Object.freeze({
   },
 });
 
+function claudeContent(message: JsonObject): readonly JsonObject[] {
+  return Array.isArray(message.content) ? message.content.map(object).filter((item): item is JsonObject => item !== undefined) : [];
+}
+
+/** Claude Code project-session JSONL mapping v0.1. */
+export const claudeCodeV01Driver: AgentDriver = Object.freeze({
+  provider: "claude-code",
+  mappingVersion: "0.1",
+  displayName: "Claude Code",
+  inspectSession(record: unknown): AgentJournalSession | null {
+    const envelope = object(record);
+    if (!envelope || envelope.isSidechain === true) return null;
+    const providerSessionId = boundedString(512, envelope.sessionId);
+    if (!providerSessionId) return null;
+    return {
+      providerSessionId,
+      ...(boundedString(100, envelope.version) ? { providerVersion: boundedString(100, envelope.version) } : {}),
+    };
+  },
+  normalize(record: unknown, context: AgentDriverContext): AgentLifecycleEvent | readonly AgentLifecycleEvent[] | null {
+    const envelope = object(record);
+    if (!envelope || envelope.isSidechain === true) return null;
+    const message = object(envelope.message) ?? {};
+    const common = base(context, envelope, message, "claude-code", false);
+    if (!common) return null;
+
+    if (envelope.type === "permission-mode") return { ...common, kind: "session.started", displayName: "Claude Code" };
+    if (envelope.type === "ai-title") {
+      const promptText = boundedString(4_000, envelope.aiTitle);
+      return promptText ? { ...common, kind: "turn.started", promptText } : null;
+    }
+    if (envelope.type === "user" && message.role === "user" && envelope.isMeta !== true) {
+      const results = claudeContent(message).filter((item) => item.type === "tool_result");
+      if (results.length > 0) {
+        return results.flatMap((item) => {
+          const toolId = boundedString(512, item.tool_use_id);
+          return toolId ? [{ ...common, kind: "tool.finished" as const, toolId, outcome: item.is_error === true ? "error" as const : "success" as const }] : [];
+        });
+      }
+      const hasText = typeof message.content === "string"
+        ? message.content.length > 0 && !/^\s*<command-name>/u.test(message.content)
+        : claudeContent(message).some((item) => item.type === "text" && boundedString(4_000, item.text));
+      return hasText ? { ...common, kind: "turn.started", turnId: boundedString(512, envelope.promptId, envelope.uuid) } : null;
+    }
+    if (envelope.type === "assistant" && message.role === "assistant") {
+      const events: AgentLifecycleEvent[] = [{ ...common, kind: "turn.started" }];
+      for (const item of claudeContent(message).filter((candidate) => candidate.type === "tool_use")) {
+        const id = boundedString(512, item.id);
+        const name = boundedString(200, item.name);
+        if (!id || !name) continue;
+        const input = object(item.input) ?? {};
+        if (name === "Agent") {
+          events.push({
+            ...common,
+            kind: "subagent.started",
+            subagentId: id,
+            parentAgentId: context.providerSessionId,
+            displayName: boundedString(200, input.description, input.subagent_type),
+            promptText: boundedString(4_000, input.prompt),
+          });
+        } else if (name === "AskUserQuestion") {
+          events.push({ ...common, kind: "wait.started", state: "waiting", reason: "AskUserQuestion" });
+        } else {
+          events.push({ ...common, kind: "tool.started", tool: { id, name } });
+        }
+      }
+      if (message.stop_reason === "end_turn") events.push({ ...common, kind: "agent.done", outcome: "success" });
+      return events;
+    }
+    if (envelope.type === "system" && envelope.subtype === "turn_duration") return { ...common, kind: "agent.done", outcome: "success" };
+    return null;
+  },
+});
+
 function versionTuple(value: string | undefined): readonly number[] | undefined {
   if (value === undefined) return undefined;
   const match = /^(\d+)(?:\.(\d+))?/u.exec(value.trim().replace(/^v/u, ""));
@@ -301,7 +375,7 @@ function compareVersion(left: string, right: string): number {
   return (a[0] ?? 0) - (b[0] ?? 0) || (a[1] ?? 0) - (b[1] ?? 0);
 }
 
-export function createAgentDriverRegistry(drivers: readonly AgentDriver[] = [codexV01Driver]): AgentDriverRegistry {
+export function createAgentDriverRegistry(drivers: readonly AgentDriver[] = [codexV01Driver, claudeCodeV01Driver]): AgentDriverRegistry {
   const ordered = [...drivers].sort((left, right) => left.provider.localeCompare(right.provider) || compareVersion(left.mappingVersion, right.mappingVersion));
   const resolve = (provider: string, providerVersion?: string): ResolvedAgentDriver | undefined => {
     const candidates = ordered.filter((driver) => driver.provider === provider);

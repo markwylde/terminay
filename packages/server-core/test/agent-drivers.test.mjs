@@ -27,7 +27,7 @@ test("newer and older Codex releases resolve permissively to the closest mapping
   assert.equal(registry.resolve("codex", "0.2.0")?.mappingVersion, "0.1");
   assert.equal(registry.resolve("codex", "0.146.0")?.mappingVersion, "0.1");
   assert.equal(registry.resolve("codex", "0.0.5")?.mappingVersion, "0.1");
-  assert.equal(registry.resolve("claude-code", "1.0.0"), undefined);
+  assert.equal(registry.resolve("claude-code", "1.0.0")?.mappingVersion, "0.1");
 });
 
 test("the greatest compatible provider/version mapping wins", () => {
@@ -149,4 +149,34 @@ test("driver fans out current completed CollabAgentToolCall items", () => {
     { kind: "agent.done", agentId: "child-a", outcome: "success" },
     { kind: "agent.done", agentId: "child-b", outcome: "cancelled" },
   ]);
+});
+
+test("Claude driver reads explicit titles and Agent tool lifecycle without message injection", () => {
+  const registry = createAgentDriverRegistry();
+  const context = { activationTerminalSessionId: "terminal-1", providerSessionId: "claude-root", sequence: 1, occurredAt: 1 };
+  assert.equal(registry.inspectSession("claude-code", {
+    type: "permission-mode", mode: "default", sessionId: "claude-root", version: "2.1.201",
+  })?.session.providerSessionId, "claude-root");
+  assert.equal(registry.normalize("claude-code", "2.1.201", {
+    type: "ai-title", aiTitle: "Add white background to text", sessionId: "claude-root",
+  }, context)?.promptText, "Add white background to text");
+  assert.equal(registry.normalize("claude-code", "2.1.201", {
+    type: "user", sessionId: "claude-root", isMeta: true,
+    message: { role: "user", content: "<local-command-caveat>injected metadata</local-command-caveat>" },
+  }, context), null);
+
+  const started = registry.normalize("claude-code", "2.1.201", {
+    type: "assistant", sessionId: "claude-root", message: { role: "assistant", model: "claude-opus-4-8", content: [{
+      type: "tool_use", id: "toolu-agent-1", name: "Agent",
+      input: { description: "Research parser", prompt: "Inspect the journal", subagent_type: "general-purpose" },
+    }] },
+  }, context);
+  assert.deepEqual(started, [{
+    provider: "claude-code", sessionId: "claude-root", activationTerminalSessionId: "terminal-1",
+    sequence: 1, occurredAt: 1, model: { id: "claude-opus-4-8" }, kind: "turn.started",
+  }, {
+    provider: "claude-code", sessionId: "claude-root", activationTerminalSessionId: "terminal-1",
+    sequence: 1, occurredAt: 1, model: { id: "claude-opus-4-8" }, kind: "subagent.started",
+    subagentId: "toolu-agent-1", parentAgentId: "claude-root", displayName: "Research parser", promptText: "Inspect the journal",
+  }]);
 });
