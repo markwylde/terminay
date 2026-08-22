@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -215,6 +215,30 @@ test("Claude resume binds its UUID journal without requiring an open file descri
     source.terminalStarted(identity, process.pid); source.foregroundProcessChanged(identity, "claude-code", false);
     for (let attempt = 0; attempt < 60 && observations.length === 0; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25));
     assert.equal(observations[0]?.provider, "claude-code"); assert.equal(observations[0]?.record?.sessionId, sessionId);
+  } finally {
+    await source.stop(); child.kill(); if (child.exitCode === null) await new Promise((resolve) => child.once("exit", resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("persistent Claude discovery follows an in-process resume to the newly active journal", { skip: !["darwin", "linux"].includes(process.platform) }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminay-claude-switch-"));
+  const workspacePath = join(root, "workspace.github.io"); const firstId = "5f2aff08-eab3-4852-96eb-48235fc7f471"; const secondId = "bf0b34e1-4afc-4b93-8389-80caa0b589a4";
+  await mkdir(workspacePath, { recursive: true }); const workspace = await realpath(workspacePath);
+  const project = join(root, "projects", workspace.replace(/[/.]/gu, "-")); const executable = join(root, "claude");
+  const firstPath = join(project, `${firstId}.jsonl`); const secondPath = join(project, `${secondId}.jsonl`);
+  const record = (sessionId) => JSON.stringify({ type: "permission-mode", mode: "default", sessionId, version: "2.1.201" });
+  await mkdir(project, { recursive: true }); await writeFile(firstPath, `${record(firstId)}\n`); await writeFile(secondPath, `${record(secondId)}\n`);
+  await utimes(firstPath, 1, 1); await utimes(secondPath, 1, 1);
+  await writeFile(executable, "#!/bin/sh\nsleep 0.3\nprintf '%s\\n' \"$4\" >> \"$3\"\nwhile true; do sleep 1; done\n"); await chmod(executable, 0o755);
+  const identity = Object.freeze({ serverId: "server-1", projectId: "project-1", sessionId: "terminal-1" });
+  const source = new NodeAgentJournalSource({ claudeHome: root, codexHome: join(root, "missing-codex"), pollMs: 50 });
+  const observations = []; const child = spawn(executable, ["--resume", firstId, secondPath, record(secondId)], { cwd: workspace, stdio: "ignore" });
+  try {
+    await source.start((observation) => observations.push(observation)); source.registerTerminal(identity);
+    source.terminalStarted(identity, process.pid); source.foregroundProcessChanged(identity, "claude-code", false);
+    for (let attempt = 0; attempt < 80 && !observations.some(({ record: value }) => value.sessionId === secondId); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.deepEqual([...new Set(observations.filter(({ record: value }) => value.type === "permission-mode").map(({ record: value }) => value.sessionId))], [firstId, secondId]);
   } finally {
     await source.stop(); child.kill(); if (child.exitCode === null) await new Promise((resolve) => child.once("exit", resolve));
     await rm(root, { recursive: true, force: true });

@@ -296,25 +296,26 @@ async function findClaudeJournalFromProcess(pids: readonly number[], projectsRoo
   const details = await Promise.all(pids.map(async (pid) => ({ pid, details: await processDetails(pid, platform) })));
   const candidates = details.filter((entry): entry is { pid: number; details: AgentProcessDetails } => entry.details !== undefined)
     .filter(({ details }) => /(?:^|[\\/])claude(?:\s|$)/u.test(details.command));
-  const matches = new Set<string>();
+  const matches = new Map<string, number>();
   for (const { details: process } of candidates) {
     const resumed = /(?:^|\s)(?:--resume|-r)\s+([0-9a-f-]{36})(?:\s|$)/u.exec(process.command)?.[1];
     const projectDir = process.cwd ? join(projectsRoot, process.cwd.replace(/[/.]/gu, "-")) : undefined;
     if (resumed && projectDir) {
       const path = await safeJournalPath(join(projectDir, `${resumed}.jsonl`), projectsRoot).catch(() => undefined);
-      if (path && await isClaudeRootJournal(path)) matches.add(path);
-      continue;
+      const metadata = path ? await stat(path).catch(() => undefined) : undefined;
+      if (path && metadata?.isFile() && await isClaudeRootJournal(path)) matches.set(path, metadata.mtimeMs);
     }
     if (!projectDir || process.startedAt === undefined) continue;
     for (const entry of await readdir(projectDir).catch(() => [])) {
       if (!/^[0-9a-f-]{36}\.jsonl$/u.test(entry)) continue;
       const path = await safeJournalPath(join(projectDir, entry), projectsRoot).catch(() => undefined);
       const metadata = path ? await stat(path).catch(() => undefined) : undefined;
-      const createdAt = metadata?.mtimeMs;
-      if (path && createdAt !== undefined && createdAt >= process.startedAt - 2_000 && await isClaudeRootJournal(path)) matches.add(path);
+      const activityAt = metadata?.mtimeMs;
+      if (path && activityAt !== undefined && activityAt >= process.startedAt - 2_000 && await isClaudeRootJournal(path)) matches.set(path, activityAt);
     }
   }
-  return matches.size === 1 ? [...matches][0] : undefined;
+  const ordered = [...matches.entries()].sort((left, right) => right[1] - left[1]);
+  return ordered[0] && ordered[0][1] !== ordered[1]?.[1] ? ordered[0][0] : undefined;
 }
 
 export async function findProcessBoundClaudeSession(shellPid: number, projectsRoot: string, platform: NodeJS.Platform = process.platform): Promise<string | undefined> {
@@ -325,11 +326,13 @@ export async function findProcessBoundClaudeSession(shellPid: number, projectsRo
 
 async function processDetails(pid: number, platform: NodeJS.Platform): Promise<AgentProcessDetails | undefined> {
   if (platform === "linux") {
-    const [command, cwd] = await Promise.all([
+    const [command, cwd, startedText] = await Promise.all([
       readFile(join("/proc", String(pid), "cmdline"), "utf8").then((value) => value.replaceAll("\0", " ").trim()).catch(() => ""),
       realpath(join("/proc", String(pid), "cwd")).catch(() => undefined),
+      execFileText("ps", ["-p", String(pid), "-o", "lstart="], 64 * 1024, true).then((value) => value.trim()),
     ]);
-    return command ? { command, ...(cwd ? { cwd } : {}) } : undefined;
+    const startedAt = Date.parse(startedText);
+    return command ? { command, ...(cwd ? { cwd } : {}), ...(Number.isFinite(startedAt) ? { startedAt } : {}) } : undefined;
   }
   const output = await execFileText("ps", ["-p", String(pid), "-o", "lstart=,command="], 64 * 1024, true);
   const line = output.trim();
