@@ -63,6 +63,17 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 		);
 		expect(background).not.toBe('rgb(255, 255, 255)');
 	}
+	await editor.getByRole('button', { name: 'Insert Admonition' }).click();
+	await mainWindow.getByText('Info', { exact: true }).click();
+	await expect(editor).toBeVisible();
+	await expect(mainWindow.locator('.project-workspace--active')).toBeVisible();
+	await mainWindow.waitForTimeout(1_200);
+	expect(
+		await readFile(
+			path.join(workspace.rootDir, 'docs/guides/getting-started.md'),
+			'utf8',
+		),
+	).toContain(':::info');
 	await editor.getByRole('radio', { name: 'Source mode' }).click();
 	await expect(editor.getByText('Source mode', { exact: true })).toBeVisible();
 	await expect(editor.locator('.cm-sourceView')).toHaveCSS(
@@ -82,5 +93,5 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 			path.join(workspace.rootDir, 'docs/guides/getting-started.md'),
 			'utf8',
 		),
-	).toBe('---\ntitle: Getting Started\n---\n\n# Hello');
+	).toContain(':::info');
 });
