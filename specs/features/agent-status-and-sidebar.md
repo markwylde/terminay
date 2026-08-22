@@ -180,6 +180,17 @@ open by that exact process tree. Opening a different eligible root rollout
 switches the tail, retires the previous root, and replays the fresh or resumed
 session.
 
+Claude Code uses the same zero-injection boundary. Terminay binds an exact
+`claude --resume <uuid>` descendant to that UUID's root JSONL below the project
+directory in `~/.claude/projects`. For a new `claude` process it admits only one
+root journal created for the exact process working directory after that process
+started. An open writable root journal remains an eligible fallback;
+`subagents/` journals and unrelated history are not eligible roots. It uses
+explicit `ai-title` records for the root label, assistant model metadata,
+bounded tool lifecycle, and `Agent` tool use/result pairs for named child
+lifecycle. Meta/local-command user records, tool-result content, assistant
+text, and reasoning are never projected.
+
 ## Agents pane and activation
 
 The **Agents** pane is an ordinary collapsible project-sidebar section beside
