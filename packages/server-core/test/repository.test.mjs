@@ -31,7 +31,7 @@ test("workspace repository durably commits a v2 environment migration exactly on
   const backend = { async load() { return structuredClone(persisted); }, async commit(state) { commits += 1; persisted = structuredClone(state); } };
   const first = new WorkspaceRepository(backend, "server-a");
   const migrated = await first.load();
-  assert.equal(migrated.schemaVersion, 3);
+  assert.equal(migrated.schemaVersion, 4);
   assert.equal(migrated.projects["project-a"].projectEnvironmentId, THIS_SERVER_ENVIRONMENT_ID);
   assert.equal(commits, 1);
   const second = new WorkspaceRepository(backend, "server-a");

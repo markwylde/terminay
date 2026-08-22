@@ -29,6 +29,70 @@ export type ProjectTab = {
 	rootFolder: string;
 };
 
+export type ProjectSidebarState = Pick<
+	ProjectTab,
+	| 'fileExplorerWidth'
+	| 'isFileExplorerOpen'
+	| 'isExplorerPaneCollapsed'
+	| 'isAgentsPaneCollapsed'
+	| 'isGitPaneCollapsed'
+	| 'isDocumentationPaneCollapsed'
+	| 'expandedAgentEntryIds'
+	| 'expandedDocumentationFolderIds'
+	| 'sidebarAgentsHeight'
+	| 'sidebarExplorerHeight'
+	| 'sidebarGitHeight'
+	| 'sidebarDocumentationHeight'
+	| 'sidebarPanelOrder'
+>;
+
+type ProjectSidebarInput = Omit<
+	ProjectSidebarState,
+	'expandedAgentEntryIds' | 'expandedDocumentationFolderIds' | 'sidebarPanelOrder'
+> & {
+	readonly expandedAgentEntryIds: readonly string[];
+	readonly expandedDocumentationFolderIds: readonly string[];
+	readonly sidebarPanelOrder: readonly SidebarPanelId[];
+};
+
+const PROJECT_SIDEBAR_KEYS: readonly (keyof ProjectSidebarState)[] = [
+	'fileExplorerWidth',
+	'isFileExplorerOpen',
+	'isExplorerPaneCollapsed',
+	'isAgentsPaneCollapsed',
+	'isGitPaneCollapsed',
+	'isDocumentationPaneCollapsed',
+	'expandedAgentEntryIds',
+	'expandedDocumentationFolderIds',
+	'sidebarAgentsHeight',
+	'sidebarExplorerHeight',
+	'sidebarGitHeight',
+	'sidebarDocumentationHeight',
+	'sidebarPanelOrder',
+];
+
+export function projectSidebarState(project: ProjectSidebarInput): ProjectSidebarState {
+	return {
+		...project,
+		expandedAgentEntryIds: [...project.expandedAgentEntryIds],
+		expandedDocumentationFolderIds: [...project.expandedDocumentationFolderIds],
+		sidebarPanelOrder: [...project.sidebarPanelOrder],
+	};
+}
+
+export function projectSidebarPatch(
+	updates: Partial<ProjectTab>,
+): Partial<ProjectSidebarState> | null {
+	const patch: Partial<ProjectSidebarState> = {};
+	for (const key of PROJECT_SIDEBAR_KEYS) {
+		if (!(key in updates)) continue;
+		const value = updates[key];
+		if (value === undefined) continue;
+		Object.assign(patch, { [key]: Array.isArray(value) ? [...value] : value });
+	}
+	return Object.keys(patch).length === 0 ? null : patch;
+}
+
 function hueToProjectTabColor(hue: number): string {
 	const normalizedHue = (((hue % 360) + 360) % 360) / 360;
 	const saturation = 0.65;

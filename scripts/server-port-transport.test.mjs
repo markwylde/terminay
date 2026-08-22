@@ -315,7 +315,7 @@ function successfulRendererClient(overrides = {}) {
       if (operation === 'workspace.snapshot') {
         return {
           result: {
-            schemaVersion: 3,
+				schemaVersion: 4,
             serverId: 'desktop-local',
             revision: 0,
             cursor: '0',

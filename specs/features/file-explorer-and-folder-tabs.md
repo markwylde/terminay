@@ -39,9 +39,10 @@ and rich editor are governed by
 - Markdown tasks are available both for one file and recursively for a folder.
   The task surfaces parse checkboxes, expose progress/filter/search/grouping
   views, and honour the configured ignored-directory patterns.
-- Sidebar pane ordering, collapse state, and dimensions, including the
-  Documentation pane, persist as local user preferences; they never alter
-  project files.
+- Every project owns its sidebar visibility, width, pane ordering, collapse
+  state, dimensions, and supported pane navigation state. This presentation
+  state persists with the project in the server-owned workspace and never
+  alters project files or another project's sidebar.
 
 ## Ownership
 
