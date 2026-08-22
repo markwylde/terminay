@@ -24,6 +24,7 @@ import {
 	MDXEditor,
 	type MDXEditorMethods,
 	markdownShortcutPlugin,
+	lexicalTheme as mdxEditorLexicalTheme,
 	quotePlugin,
 	tablePlugin,
 	thematicBreakPlugin,
@@ -48,6 +49,19 @@ import '@fontsource/open-sans/latin-400.css';
 import '@fontsource/open-sans/latin-600.css';
 import '@fontsource/open-sans/latin-700.css';
 import '@mdxeditor/editor/style.css';
+
+const documentationLexicalTheme = {
+	...mdxEditorLexicalTheme,
+	admonition: {
+		caution:
+			'documentation-editor__admonition documentation-editor__admonition--caution',
+		danger:
+			'documentation-editor__admonition documentation-editor__admonition--danger',
+		info: 'documentation-editor__admonition documentation-editor__admonition--info',
+		note: 'documentation-editor__admonition documentation-editor__admonition--note',
+		tip: 'documentation-editor__admonition documentation-editor__admonition--tip',
+	},
+};
 
 const editorPlugins = [
 	headingsPlugin(),
@@ -399,6 +413,7 @@ function DocumentationEditorSurface({
 				trim={false}
 				className="documentation-editor__surface mdxeditor-full-height"
 				contentEditableClassName="documentation-editor__content"
+				lexicalTheme={documentationLexicalTheme}
 				plugins={editorPlugins}
 				onChange={handleChange}
 				onError={(error) => setMessage(`Editor parser error: ${error.error}`)}
