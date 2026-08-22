@@ -63,7 +63,7 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 		);
 		expect(background).not.toBe('rgb(255, 255, 255)');
 	}
-	await editor.getByRole('button', { name: 'Insert Admonition' }).click();
+	await editor.getByRole('combobox', { name: 'Insert Admonition' }).click();
 	await mainWindow.getByText('Info', { exact: true }).click();
 	await expect(editor).toBeVisible();
 	await expect(mainWindow.locator('.project-workspace--active')).toBeVisible();
