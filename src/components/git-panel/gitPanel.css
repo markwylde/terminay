@@ -360,7 +360,7 @@
 }
 
 .worktrees-panel__worktree-name {
-	flex: 0 0 auto;
+	flex: 1 1 auto;
 }
 
 .worktrees-panel__worktree-name {
