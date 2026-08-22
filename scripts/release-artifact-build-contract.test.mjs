@@ -9,9 +9,22 @@ test('narrow release builds materialize their workspace dependencies', async () 
 	const serverCorePackage = JSON.parse(
 		await readFile(resolve(root, 'packages/server-core/package.json'), 'utf8'),
 	);
+	const workspaceGraph = await readFile(
+		resolve(root, 'scripts/build-workspace-graph.mjs'),
+		'utf8',
+	);
 	assert.match(
 		serverCorePackage.scripts.build,
-		/npm run build --workspace @terminay\/extension-api/u,
+		/build-workspace-graph\.mjs --target @terminay\/server-core/u,
+	);
+	const serverCoreDefinition = workspaceGraph.slice(
+		workspaceGraph.indexOf("'@terminay/server-core':"),
+		workspaceGraph.indexOf("'@terminay/server':"),
+	);
+	assert.match(
+		serverCoreDefinition,
+		/dependencies:\s*\[\s*'@terminay\/protocol',\s*'@terminay\/extension-api',\s*'@terminay\/ui-bundle',\s*\]/u,
+		'building server-core must compile the workspace packages shipped alongside it',
 	);
 });
 
