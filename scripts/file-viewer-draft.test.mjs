@@ -119,6 +119,31 @@ test('a delayed watch event from the first documentation save must not conflict 
   assert.equal(disposition, 'acknowledged-write')
 })
 
+test('duplicate delayed observations from a checkbox autosave must not conflict with the next edit', () => {
+  const selfWrite = {
+    mtimeMs: 1_777_000_000_002,
+    path: '/project/AGENTS.md',
+    size: 950,
+  }
+  const event = {
+    exists: true,
+    ...selfWrite,
+    type: 'updated',
+  }
+
+  // The first observation is received while the editor is clean and consumes
+  // the acknowledgement. macOS can still deliver a second observation for the
+  // same atomic write after the user has started typing again.
+  let acknowledgedRevision = selfWrite
+  assert.equal(resolveFileWatchDisposition({ acknowledgedRevision, event, isDirty: false }), 'acknowledged-write')
+  acknowledgedRevision = null
+
+  assert.equal(
+    resolveFileWatchDisposition({ acknowledgedRevision, event, isDirty: true }),
+    'acknowledged-write',
+  )
+})
+
 test('materializes a Performant sparse draft into Monaco without losing edits or dirty state', () => {
   const result = materializePerformantDraft('alpha\n雪 beta\nomega\n', [{
     dataBase64: Buffer.from('changed 雪', 'utf8').toString('base64'),
