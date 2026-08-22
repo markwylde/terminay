@@ -1,6 +1,15 @@
 import { ConnectionProfileStore, TerminayClient } from '@terminay/client-core';
 import type { ByteTransport, TerminayHostContext } from '@terminay/protocol';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+	Component,
+	type ErrorInfo,
+	type ReactNode,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from 'react';
 import { createRoot } from 'react-dom/client';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
 import { pairDesktopConnection } from '../host/nativeActions';
@@ -13,13 +22,13 @@ import {
 	type DesktopHostBridge,
 } from './desktopByteTransport';
 import {
+	type SessionConnectAttempt,
+	SessionConnectGate,
+} from './sessionConnectAttempt';
+import {
 	getSessionTransportHost,
 	leaveManagerSession,
 } from './sessionTransportHost';
-import {
-	SessionConnectGate,
-	type SessionConnectAttempt,
-} from './sessionConnectAttempt';
 import { createWebClientId } from './webClientIdentity';
 import './index.css';
 
@@ -29,6 +38,42 @@ type ConnectedSession = Readonly<{
 	origin?: string;
 	serverId: string;
 }>;
+
+class WorkspaceErrorBoundary extends Component<
+	Readonly<{ children: ReactNode }>,
+	Readonly<{ failed: boolean }>
+> {
+	state = { failed: false };
+
+	static getDerivedStateFromError(): Readonly<{ failed: boolean }> {
+		return { failed: true };
+	}
+
+	componentDidCatch(error: Error, info: ErrorInfo): void {
+		console.error('Workspace renderer failed', error, info.componentStack);
+	}
+
+	render(): ReactNode {
+		if (!this.state.failed) return this.props.children;
+		return (
+			<main className="browser-host-shell">
+				<section className="browser-host-shell__panel" role="alert">
+					<h1>Workspace view unavailable</h1>
+					<p>
+						The server connection and terminal sessions are still running. Retry
+						the workspace view to reconnect its panels.
+					</p>
+					<button
+						type="button"
+						onClick={() => this.setState({ failed: false })}
+					>
+						Retry workspace view
+					</button>
+				</section>
+			</main>
+		);
+	}
+}
 
 /**
  * The server-bundled browser entry runs only at a selected session origin (or
@@ -224,27 +269,29 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 			profileStore: profiles,
 		};
 		return (
-			<ConnectedWebRendererWorkspace
-				connectionRoute={connectionRoute}
-				hostContext={desktopContext}
-				onBack={() => {
-					if (leaveManagerSession()) return;
-					void clientRef.current?.close().catch(() => undefined);
-				}}
-				subscribeAppCommands={
-					desktopContext === undefined || window.terminayHost === undefined
-						? undefined
-						: (listener: (command: AppCommand) => Promise<void> | void) =>
-								(
-									window.terminayHost as unknown as DesktopHostBridge
-								).subscribeEvent((event) => {
-									if (event.event.type === 'menu.command') {
-										return listener(event.event.command);
-									}
-								})
-				}
-				terminalClientContext={connection.context}
-			/>
+			<WorkspaceErrorBoundary>
+				<ConnectedWebRendererWorkspace
+					connectionRoute={connectionRoute}
+					hostContext={desktopContext}
+					onBack={() => {
+						if (leaveManagerSession()) return;
+						void clientRef.current?.close().catch(() => undefined);
+					}}
+					subscribeAppCommands={
+						desktopContext === undefined || window.terminayHost === undefined
+							? undefined
+							: (listener: (command: AppCommand) => Promise<void> | void) =>
+									(
+										window.terminayHost as unknown as DesktopHostBridge
+									).subscribeEvent((event) => {
+										if (event.event.type === 'menu.command') {
+											return listener(event.event.command);
+										}
+									})
+					}
+					terminalClientContext={connection.context}
+				/>
+			</WorkspaceErrorBoundary>
 		);
 	}
 

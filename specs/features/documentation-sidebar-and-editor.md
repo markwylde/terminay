@@ -86,6 +86,8 @@ the isolated [MDX browser runtime](./mdx-browser-runtime.md).
   execution fits the MDX browser-runtime boundary.
 - The toolbar exposes the supported rich editing actions with accessible names,
   keyboard operation, overflow behaviour, and a compact responsive layout.
+- Inserting an admonition from the toolbar, including `info`, creates an
+  editable directive using the matching registered rich-editor descriptor.
 - Source constructs that have no rich visual editor remain losslessly editable
   in source mode or an appropriate structured placeholder. Switching rich,
   source, diff, and preview presentations does not discard a draft.
@@ -165,6 +167,9 @@ resumption before editing or previewing.
   the existing File Viewer deletion/rename contract.
 - Failure in one document or preview does not collapse the tree, close another
   panel, or interrupt a terminal.
+- An unexpected rich-editor failure is contained to that Documentation panel.
+  The panel retains its server-owned draft and offers an editor retry; it never
+  replaces the application workspace with an empty renderer.
 
 ## Non-goals
 
@@ -188,6 +193,8 @@ resumption before editing or previewing.
   competing editors.
 - Rich edits autosave after one second of inactivity, serialize overlapping
   revisions, and visibly preserve a draft after failure or conflict.
+- Each toolbar admonition type can be inserted and edited without disrupting
+  another panel or terminal session.
 - Normal File Viewer editing still requires its existing explicit Save command.
 - An MDX document imports and renders a project TSX component with normal
   browser networking and external assets, while navigation, popups,
