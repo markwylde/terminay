@@ -139,10 +139,10 @@ the isolated [MDX browser runtime](./mdx-browser-runtime.md).
   close while retaining the server-owned draft.
 - A slow save serializes later editor revisions and saves the newest pending
   revision next. An older completion cannot mark newer unsaved content saved.
-- A successful autosave retains the exact written file revision until its
-  filesystem observation is consumed. A delayed self-write event from an
-  earlier save remains acknowledged after the user begins a later edit and
-  never enters the external-conflict flow.
+- A successful autosave retains a bounded history of exact written file
+  revisions while delayed filesystem observations settle. Duplicate delayed
+  self-write events from an earlier save remain acknowledged after the user
+  begins a later edit and never enter the external-conflict flow.
 - An external change to a clean document refreshes the editor. An external
   change while local changes are dirty or saving enters the existing explicit
   conflict flow and never overwrites either version automatically.
