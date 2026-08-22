@@ -142,8 +142,8 @@ identity.
 
 ## Boundaries and persistence
 
-Project identity, immutable environment binding, layout, panel membership, and
-logical workspace views are canonical server state under
+Project identity, immutable environment binding, layout, panel membership,
+project-local sidebar presentation, and logical workspace views are canonical server state under
 [server-owned workspace state](./server-owned-workspace-state.md). Desktop
 windows and browser views are presentations of that state. A project is a
 navigation and authorization boundary, while the immutable server terminal
@@ -154,7 +154,9 @@ client focus.
 ## Acceptance outcomes
 
 - Multi-project work remains independent when roots, tabs, layouts, or sidebar
-  settings change.
+  state changes. Reloading or reconnecting restores each project's own sidebar
+  visibility, pane order, dimensions, collapse choices, and supported pane
+  navigation state.
 - One view may contain This server, SSH, and Puzed projects without clients
   connecting directly to the target machines.
 - Moving or popping a project does not duplicate a terminal session or lose its

@@ -10,7 +10,8 @@ agent to propose and execute a reviewed commit, push, and pull-request flow.
 ## Git sidebar
 
 - Explorer, Agents, and Git are independently collapsible sidebar panes. Their
-  vertical order is user-configurable and persists across projects.
+  vertical order is user-configurable and persists for each project
+  independently.
 - Git reports the current repository/branch and working-tree changes, with list
   and tree presentations. Selecting a change opens the relevant file/diff using
   the file-viewer contract. When the change belongs to another listed worktree,

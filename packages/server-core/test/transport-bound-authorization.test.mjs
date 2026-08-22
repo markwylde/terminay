@@ -76,6 +76,7 @@ test("project claim covers panel objects, both panel-move projects, generic proj
       { type: "panel.close", panelId: "panel-b" },
       { type: "panel.move", panelId: "panel-b", targetProjectId: "project-a" },
       { type: "project.update", projectId: "project-b", name: "B", root: "/b" },
+      { type: "project.sidebar.update", projectId: "project-b", sidebar: { isFileExplorerOpen: true } },
       { type: "terminal.markInterrupted", sessionId: "session-b" },
       { type: "terminal.markExited", sessionId: "session-b", exitCode: 0 },
     ];

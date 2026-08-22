@@ -610,7 +610,7 @@ test('git sidebar pane renders a nested tree and offers a push menu', async ({
   await expect(pushMenu).toHaveCount(0)
 })
 
-test('collapsing a pane seeds new projects but leaves open projects untouched', async ({
+test('sidebar state persists independently for each project after renderer reload', async ({
   createWorkspace,
   mainWindow,
 }) => {
@@ -632,16 +632,13 @@ test('collapsing a pane seeds new projects but leaves open projects untouched', 
       .locator('.project-workspace--active .sidebar-pane')
       .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
 
-  // Collapse the Git pane in project 1.
+  // Collapse Git only in project 1.
   const gitPane1 = activeGitPane()
   await expect(gitPane1).toBeVisible()
   await expect(gitPane1).not.toHaveClass(/sidebar-pane--collapsed/)
   await gitPane1.locator('.sidebar-pane__header').click()
   await expect(gitPane1).toHaveClass(/sidebar-pane--collapsed/)
-  // Let the updated default-state setting persist/broadcast before creating a project.
-  await mainWindow.waitForTimeout(400)
-
-  // A newly created project inherits the collapsed-by-default Git pane.
+  // Project 2 starts with its own default state rather than inheriting project 1.
   await mainWindow.getByLabel('Create project on This server').click()
   await expect(mainWindow.locator('.project-tab')).toHaveCount(2)
   await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 2')
@@ -649,13 +646,15 @@ test('collapsing a pane seeds new projects but leaves open projects untouched', 
   await openFileExplorer(mainWindow)
   const gitPane2 = activeGitPane()
   await expect(gitPane2).toBeVisible()
-  await expect(gitPane2).toHaveClass(/sidebar-pane--collapsed/)
-
-  // Expanding Git in project 2 flips the default back to expanded...
-  await gitPane2.locator('.sidebar-pane__header').click()
   await expect(gitPane2).not.toHaveClass(/sidebar-pane--collapsed/)
 
-  // ...but project 1, already open, keeps its own collapsed Git pane.
+  // A renderer reload hydrates the canonical project-local state.
+  await mainWindow.reload()
+  await expect(mainWindow.locator('.project-tab')).toHaveCount(2)
+  await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 2')
+  await expect(activeGitPane()).not.toHaveClass(/sidebar-pane--collapsed/)
+
+  // Project 1 retains its own collapsed Git pane after that reload.
   await mainWindow.locator('.project-tab').first().click()
   await expect(activeGitPane()).toHaveClass(/sidebar-pane--collapsed/)
 })
