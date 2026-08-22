@@ -44,6 +44,9 @@ import {
 import { openExternalUrl, savePreviewDownload } from '../../host/nativeActions';
 import { MdxPreview } from '../mdx-preview/MdxPreview';
 import { DocumentationAutosaveController } from './DocumentationAutosaveController';
+import '@fontsource/open-sans/latin-400.css';
+import '@fontsource/open-sans/latin-600.css';
+import '@fontsource/open-sans/latin-700.css';
 import '@mdxeditor/editor/style.css';
 
 const editorPlugins = [
@@ -395,6 +398,7 @@ function DocumentationEditorSurface({
 				markdown={markdown}
 				trim={false}
 				className="documentation-editor__surface mdxeditor-full-height"
+				contentEditableClassName="documentation-editor__content"
 				plugins={editorPlugins}
 				onChange={handleChange}
 				onError={(error) => setMessage(`Editor parser error: ${error.error}`)}

@@ -14,7 +14,7 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 			files: {
 				'README.md': '# Read me',
 				'docs/guides/getting-started.md':
-					'---\ntitle: Getting Started\n---\n\n# Hello',
+					'---\ntitle: Getting Started\n---\n\n# Hello\n\nA comfortable paragraph for checking documentation typography.\n\n- First item\n- Second item',
 			},
 		},
 	});
@@ -44,16 +44,42 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 	const editor = mainWindow.locator('.documentation-editor');
 	await expect(editor).toBeVisible();
 	await expect(editor.getByText('Hello', { exact: true })).toBeVisible();
-	const colors = await editor
-		.locator('[contenteditable="true"]')
-		.evaluate((element) => {
-			const style = getComputedStyle(element);
-			const root = getComputedStyle(
-				element.closest('.documentation-editor__surface')!,
-			);
-			return { foreground: style.color, background: root.backgroundColor };
-		});
-	expect(colors.foreground).not.toBe(colors.background);
+	const richText = editor.locator('.documentation-editor__content');
+	const typography = await richText.evaluate((element) => {
+		const style = getComputedStyle(element);
+		const root = getComputedStyle(
+			element.closest('.documentation-editor__surface')!,
+		);
+		return {
+			foreground: style.color,
+			background: root.backgroundColor,
+			fontFamily: style.fontFamily,
+			fontSize: style.fontSize,
+			lineHeight: style.lineHeight,
+		};
+	});
+	expect(typography.foreground).not.toBe(typography.background);
+	expect(typography.fontFamily).toContain('Open Sans');
+	expect(['16px', '17px']).toContain(typography.fontSize);
+	expect(Number.parseFloat(typography.lineHeight)).toBeGreaterThanOrEqual(27);
+	const widths = await richText.evaluate((element) => ({
+		content: element.clientWidth,
+		surface: element.closest('.documentation-editor__surface')!.clientWidth,
+	}));
+	expect(
+		Math.abs(widths.content - Math.min(widths.surface, 1080)),
+	).toBeLessThan(2);
+	await expect
+		.poll(() =>
+			mainWindow.evaluate(() => document.fonts.check('16px "Open Sans"')),
+		)
+		.toBe(true);
+
+	await editor.getByRole('combobox').first().click();
+	const blockTypeMenu = mainWindow.getByRole('listbox').last();
+	await expect(blockTypeMenu).toBeVisible();
+	await expect(blockTypeMenu).toHaveCSS('background-color', 'rgb(17, 21, 27)');
+	await mainWindow.keyboard.press('Escape');
 	const selectedToolbarButton = editor
 		.locator('.mdxeditor-toolbar button[data-state="on"]')
 		.first();
