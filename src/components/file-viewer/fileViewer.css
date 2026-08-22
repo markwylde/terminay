@@ -73,6 +73,25 @@
 	border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.documentation-editor__failure {
+	align-self: center;
+	justify-self: center;
+	max-width: 440px;
+	padding: 24px;
+	color: #dce2f0;
+	text-align: center;
+}
+
+.documentation-editor__failure h2 {
+	margin: 0 0 8px;
+	font-size: 18px;
+}
+
+.documentation-editor__failure p {
+	margin: 0 0 16px;
+	color: rgba(220, 226, 240, 0.7);
+}
+
 .documentation-editor .documentation-editor__surface {
 	min-width: 0;
 	height: 100%;
