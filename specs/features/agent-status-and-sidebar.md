@@ -76,10 +76,14 @@ its descendants. A journal becomes authoritative only when its writer belongs
 to the exact PTY process tree. Environments without this capability use the
 documented terminal-activity fallback.
 
-The binding is immutable for one live provider-process incarnation. A resumed
-provider session may reopen the same journal in another terminal; the new
-writer creates a new binding incarnation and activation terminal without
-allowing stale events from the previous incarnation to mutate it.
+The terminal/process-tree boundary is immutable for one live provider-process
+incarnation, but its root-session binding is renewable. Provider-native
+`/resume` or session switching moves authority to the root journal receiving
+the newest current-session activity, retires the previous root, and replays the
+new root in the same activation terminal. A resumed provider session may also
+reopen the same journal in another terminal; that writer creates a new binding
+incarnation and activation terminal without allowing stale events from the
+previous incarnation to mutate it.
 
 The Codex launcher may expose a generic wrapper such as `node` as the PTY
 foreground process. Every transition away from the shell therefore starts a
@@ -90,8 +94,11 @@ agent. The journal is still admitted only after a writable handle is proven
 beneath the exact PTY process tree.
 
 CWD, filename timestamps, terminal title, active tab, and “closest match” logic
-must not establish an authoritative binding. A host that cannot prove the
-writer relationship uses terminal fallback instead.
+must not independently establish an authoritative binding. Claude Code is the
+exception where its exact descendant process CWD establishes the native project
+journal directory and post-process-start root writes select the active session,
+because Claude does not retain its JSONL file descriptor. A host that cannot
+establish either provider proof uses terminal fallback instead.
 
 ## Journal source contract
 
