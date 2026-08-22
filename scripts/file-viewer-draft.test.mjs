@@ -43,7 +43,11 @@ await build({
   outfile: watchDispositionOutputPath,
   platform: 'node',
 })
-const { resolveFileWatchDisposition } = require(watchDispositionOutputPath)
+const {
+  isDocumentationAcknowledgedWatchEvent,
+  retainDocumentationAcknowledgedRevision,
+  resolveFileWatchDisposition,
+} = require(watchDispositionOutputPath)
 
 test.after(async () => {
   await rm(bundleDirectory, { force: true, recursive: true })
@@ -117,6 +121,30 @@ test('a delayed watch event from the first documentation save must not conflict 
   })
 
   assert.equal(disposition, 'acknowledged-write')
+})
+
+test('duplicate delayed observations from a checkbox autosave must not conflict with the next edit', () => {
+  const selfWrite = {
+    mtimeMs: 1_777_000_000_002,
+    path: '/project/AGENTS.md',
+    size: 950,
+  }
+  const event = {
+    exists: true,
+    ...selfWrite,
+    type: 'updated',
+  }
+
+  // The first observation is received while the editor is clean. macOS can
+  // still deliver a second observation for the same atomic write after the
+  // user has started typing again, so documentation retains this bounded
+  // revision history instead of consuming the first match.
+  const acknowledgedRevisions = retainDocumentationAcknowledgedRevision([], selfWrite)
+  assert.equal(isDocumentationAcknowledgedWatchEvent(acknowledgedRevisions, event), true)
+  assert.equal(
+    isDocumentationAcknowledgedWatchEvent(acknowledgedRevisions, event),
+    true,
+  )
 })
 
 test('materializes a Performant sparse draft into Monaco without losing edits or dirty state', () => {
