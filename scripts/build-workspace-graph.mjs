@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
+import { existsSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 
@@ -9,22 +10,27 @@ const workspaces = {
 	'@terminay/protocol': {
 		dependencies: [],
 		tsconfig: 'packages/protocol/tsconfig.json',
+		outputDirectory: 'packages/protocol/dist',
 	},
 	'@terminay/client-core': {
 		dependencies: ['@terminay/protocol'],
 		tsconfig: 'packages/client-core/tsconfig.json',
+		outputDirectory: 'packages/client-core/dist',
 	},
 	'@terminay/responsive-ui': {
 		dependencies: ['@terminay/client-core', '@terminay/protocol'],
 		tsconfig: 'packages/responsive-ui/tsconfig.json',
+		outputDirectory: 'packages/responsive-ui/dist',
 	},
 	'@terminay/extension-api': {
 		dependencies: [],
 		tsconfig: 'packages/extension-api/tsconfig.json',
+		outputDirectory: 'packages/extension-api/dist',
 	},
 	'@terminay/ui-bundle': {
 		dependencies: ['@terminay/protocol'],
 		tsconfig: 'packages/ui-bundle/tsconfig.json',
+		outputDirectory: 'packages/ui-bundle/dist',
 	},
 	'@terminay/server-core': {
 		dependencies: [
@@ -33,10 +39,12 @@ const workspaces = {
 			'@terminay/ui-bundle',
 		],
 		tsconfig: 'packages/server-core/tsconfig.json',
+		outputDirectory: 'packages/server-core/dist',
 	},
 	'@terminay/server': {
 		dependencies: ['@terminay/server-core'],
 		tsconfig: 'apps/terminay-server/tsconfig.json',
+		outputDirectory: 'apps/terminay-server/dist',
 	},
 	'@terminay/web': {
 		dependencies: [
@@ -47,6 +55,7 @@ const workspaces = {
 			'@terminay/server-core',
 		],
 		tsconfig: 'apps/terminay-web/tsconfig.json',
+		outputDirectory: 'apps/terminay-web/dist',
 	},
 };
 
@@ -84,6 +93,15 @@ function collectRequired(targets) {
 function runTypeScript(workspace) {
 	const definition = workspaces[workspace];
 	const tsc = join(repositoryRoot, 'node_modules', 'typescript', 'bin', 'tsc');
+	const outputDirectory = join(repositoryRoot, definition.outputDirectory);
+	// Incremental TypeScript trusts its build-info file even if another task has
+	// removed dist/. Rebuild from source in that case so every graph target is
+	// independently materialized (notably deterministic-artifact validation).
+	if (!existsSync(outputDirectory)) {
+		rmSync(join(repositoryRoot, dirname(definition.tsconfig), 'tsconfig.tsbuildinfo'), {
+			force: true,
+		});
+	}
 	process.stdout.write(`[build] ${workspace}\n`);
 	return new Promise((resolvePromise, reject) => {
 		const child = spawn(process.execPath, [tsc, '-p', definition.tsconfig], {
