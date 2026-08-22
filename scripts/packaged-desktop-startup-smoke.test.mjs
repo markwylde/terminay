@@ -147,10 +147,16 @@ async function exerciseLaunch({ expected, mode, userData }) {
 
 		await window.reload({ waitUntil: 'domcontentloaded' });
 		const reloaded = await requireCanonicalReadiness(window);
+		const { revision: reloadedRevision, ...reloadedIdentity } = reloaded;
+		const { revision: initialRevision, ...initialIdentity } = identity;
 		assert.deepEqual(
-			reloaded,
-			identity,
+			reloadedIdentity,
+			initialIdentity,
 			'reload must preserve the selected server, project, panel, terminal, and bundle',
+		);
+		assert.ok(
+			reloadedRevision >= initialRevision,
+			'reload may commit a one-time workspace migration but must not regress its revision',
 		);
 		await requireSidebarQuery(window);
 

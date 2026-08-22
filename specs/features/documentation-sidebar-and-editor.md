@@ -18,8 +18,8 @@ the isolated [MDX browser runtime](./mdx-browser-runtime.md).
 - Documentation joins Explorer, Agents, and Git in the persistent, reorderable,
   vertically resizable sidebar stack.
 - It appears for every project. Its order, height, collapse state, and folder
-  expansion state persist as local user preferences without changing project
-  files.
+  expansion state persist with that project without changing project files or
+  another project's sidebar.
 - The pane recursively lists `.md` and `.mdx` files beneath the exact project
   root. Extension matching follows the environment's filename case rules.
 - Only folders containing a matching document at some descendant depth appear.

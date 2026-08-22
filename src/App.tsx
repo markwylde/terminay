@@ -150,8 +150,6 @@ import type { FileViewerMode } from './types/fileViewer';
 import type { MacroDefinition, MacroFieldValue } from './types/macros';
 import type {
 	SidebarPanelId,
-	SidebarSettings,
-	TerminalSettings,
 } from './types/settings';
 import type {
 	AiTabMetadataTarget,
@@ -1292,7 +1290,6 @@ const ProjectWorkspace = forwardRef<
 		}, [terminalClientContext?.applicationClient]);
 		const {
 			settings,
-			settingsClient,
 			error: settingsError,
 		} = useTerminalSettings(serverSettingsClient);
 		const serverFileViewerClient = featureAuthority?.fileViewerClient;
@@ -2314,17 +2311,6 @@ const ProjectWorkspace = forwardRef<
 			onUpdateProject,
 			project: explorerProject,
 		});
-		const updateSidebarSettings = useCallback(
-			(patch: Partial<SidebarSettings>) => {
-				const current = settingsRef.current;
-				void settingsClient.update<TerminalSettings>({
-					...current,
-					sidebar: { ...current.sidebar, ...patch },
-				} as unknown as import('@terminay/protocol').JsonValue);
-			},
-			[settingsClient],
-		);
-
 		const openFolder = useCallback(
 			(folderPath: string) => {
 				const api = dockviewApiRef.current;
@@ -4378,9 +4364,6 @@ const ProjectWorkspace = forwardRef<
 						onUpdateProject(project.id, {
 							isExplorerPaneCollapsed: next,
 						});
-						updateSidebarSettings({
-							defaultExplorerState: next ? 'collapsed' : 'expanded',
-						});
 					},
 					actions: (
 						<button
@@ -4473,9 +4456,6 @@ const ProjectWorkspace = forwardRef<
 						onUpdateProject(project.id, {
 							isGitPaneCollapsed: next,
 						});
-						updateSidebarSettings({
-							defaultGitState: next ? 'collapsed' : 'expanded',
-						});
 					},
 					count: worktreePanelStatus?.worktrees.length,
 					accessory: currentGitBranch ? (
@@ -4548,9 +4528,6 @@ const ProjectWorkspace = forwardRef<
 					onNavigationWidthChange={(width) =>
 						onUpdateProject(project.id, { fileExplorerWidth: width })
 					}
-					onNavigationWidthCommit={(width) =>
-						updateSidebarSettings({ defaultWidth: width })
-					}
 					navigation={
 						project.isFileExplorerOpen ? (
 							<div className="file-explorer-sidebar">
@@ -4565,15 +4542,6 @@ const ProjectWorkspace = forwardRef<
 													? { sidebarAgentsHeight: height }
 													: id === 'git' ? { sidebarGitHeight: height } : { sidebarDocumentationHeight: height }),
 										});
-									}}
-									onHeightCommit={(id, height) => {
-										updateSidebarSettings(
-											id === 'explorer'
-												? { defaultExplorerPaneHeight: height }
-												: id === 'agents'
-													? { defaultAgentsPaneHeight: height }
-													: id === 'git' ? { defaultGitPaneHeight: height } : { defaultDocumentationPaneHeight: height },
-										);
 									}}
 									onReorder={(orderedIds) => {
 										const reorderedVisibleIds = orderedIds.filter(
@@ -4594,7 +4562,6 @@ const ProjectWorkspace = forwardRef<
 										onUpdateProject(project.id, {
 											sidebarPanelOrder: nextOrder,
 										});
-										updateSidebarSettings({ panelOrder: nextOrder });
 									}}
 								/>
 
@@ -5213,7 +5180,6 @@ function App({
 	const {
 		settings,
 		error: terminalSettingsError,
-		isLoading: areTerminalSettingsLoading,
 	} = useTerminalSettings(serverSettingsClient);
 	const connectionFeatureError = useMemo(() => {
 		const failed =
@@ -5270,7 +5236,6 @@ function App({
 			]?.root ?? '',
 		holdProjectOrderRef: draggingProjectIdRef,
 		isAdoptWindow: false,
-		isSettingsLoading: areTerminalSettingsLoading,
 		projectColorScope: currentServerId,
 		sidebarSettings: settings.sidebar,
 		workspaceSnapshotStore: terminalClientContext?.workspaceSnapshotStore,
@@ -5769,17 +5734,14 @@ function App({
 	);
 
 	const toggleActiveProjectExplorer = useCallback(() => {
-		setProjects((current) =>
-			current.map((project) =>
-				project.id === activeProjectId
-					? {
-							...project,
-							isFileExplorerOpen: !project.isFileExplorerOpen,
-						}
-					: project,
-			),
+		const project = projectsRef.current.find(
+			(candidate) => candidate.id === activeProjectId,
 		);
-	}, [activeProjectId]);
+		if (project === undefined) return;
+		updateProject(project.id, {
+			isFileExplorerOpen: !project.isFileExplorerOpen,
+		});
+	}, [activeProjectId, projectsRef, updateProject]);
 
 	const executeCommandOnActiveProject = useCallback(
 		(command: AppCommand): Promise<void> => {
