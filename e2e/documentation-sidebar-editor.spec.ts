@@ -91,6 +91,22 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 	}
 	await editor.getByRole('combobox', { name: 'Insert Admonition' }).click();
 	await mainWindow.getByText('Info', { exact: true }).click();
+	const infoAdmonition = editor.locator(
+		'.documentation-editor__admonition--info',
+	);
+	await expect(infoAdmonition).toBeVisible();
+	await expect(infoAdmonition).toHaveCSS(
+		'background-color',
+		'rgba(59, 130, 246, 0.12)',
+	);
+	await expect(infoAdmonition).toHaveCSS(
+		'border-left-color',
+		'rgb(96, 165, 250)',
+	);
+	await expect(infoAdmonition.locator('[contenteditable="true"]')).toHaveCSS(
+		'background-color',
+		'rgba(0, 0, 0, 0)',
+	);
 	await expect(editor).toBeVisible();
 	await expect(mainWindow.locator('.project-workspace--active')).toBeVisible();
 	await mainWindow.waitForTimeout(1_200);
