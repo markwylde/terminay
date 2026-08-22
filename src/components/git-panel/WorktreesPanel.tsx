@@ -305,7 +305,10 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 										>
 											<WorktreeIcon size={14} aria-hidden />
 										</span>
-										<span className="worktrees-panel__worktree-name">
+										<span
+											className="worktrees-panel__worktree-name"
+											title={worktree.name}
+										>
 											{worktree.name}
 										</span>
 									</span>
