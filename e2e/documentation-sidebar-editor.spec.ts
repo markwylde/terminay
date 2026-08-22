@@ -166,3 +166,58 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 	await expect(editor.locator('.cm-editor')).toBeVisible();
 	await expect(editor.getByRole('alert')).toHaveCount(0);
 });
+
+test('Documentation autosave does not report its own root-file write as an external conflict', async ({
+	createWorkspace,
+	mainWindow,
+}) => {
+	const workspace = await createWorkspace({
+		name: 'documentation-autosave-self-watch',
+		seed: {
+			files: {
+				'AGENTS.md':
+					'# AGENTS\n\n## Editing instructions\n\nOriginal guidance.\n',
+			},
+		},
+	});
+	await setProjectRoot(mainWindow, workspace.rootDir);
+	await openFileExplorer(mainWindow);
+	const documentationPane = mainWindow
+		.locator('.project-workspace--active .sidebar-pane')
+		.filter({
+			has: mainWindow.locator('.sidebar-pane__title', {
+				hasText: 'Documentation',
+			}),
+		});
+	if (
+		await documentationPane.evaluate((element) =>
+			element.classList.contains('sidebar-pane--collapsed'),
+		)
+	) {
+		await documentationPane.locator('.sidebar-pane__header').click();
+	}
+	await mainWindow
+		.getByRole('treeitem', { name: /^Agents, AGENTS\.md$/i })
+		.click();
+
+	const editor = mainWindow.locator('.documentation-editor');
+	const heading = editor.getByText('Editing instructions', { exact: true });
+	await heading.click();
+	await mainWindow.keyboard.press('End');
+	await mainWindow.keyboard.type(' updated');
+	await expect(mainWindow.locator('.file-status-bar')).toContainText(
+		'Unsaved changes',
+	);
+	await expect
+		.poll(() => workspace.readText('AGENTS.md'))
+		.toContain('## Editing instructions updated');
+	await expect(mainWindow.locator('.file-status-bar')).toContainText('Synced');
+
+	await expect(
+		mainWindow.getByText(
+			'This file changed on disk while you had unsaved edits.',
+			{ exact: true },
+		),
+	).toHaveCount(0);
+	await expect(editor.locator('.documentation-editor__status')).toHaveCount(0);
+});
