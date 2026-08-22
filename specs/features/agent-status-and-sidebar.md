@@ -155,6 +155,9 @@ root is selected.
 | Codex record | Canonical result |
 | --- | --- |
 | root `session_meta` with `originator: codex-tui` and `source: cli` | root `session.started` / `idle` |
+| `event_msg/item_completed` carrying a `UserMessage`, or legacy `event_msg/user_message` | the first user-facing message becomes the stable root prompt label, matching Codex's own session-list derivation; raw `response_item` messages are ignored |
+| `event_msg/item_completed` carrying a `CollabAgentToolCall` | fan out its bounded receiver identities and state map into child lifecycle events |
+| model-context user item such as `<turn_aborted>` | ignored for naming |
 | `event_msg/task_started` | root `turn.started` / `working` |
 | tool/item begin or callable response item | corresponding root or child `working` |
 | execution/patch/permission approval request | corresponding entry `waiting` |
@@ -162,12 +165,20 @@ root is selected.
 | matching response/resolution or subsequent progress | finish the wait and resume `working` |
 | `event_msg/task_complete` | corresponding entry `done` |
 | error or aborted completion | `done` with error/cancelled outcome unless explicitly blocking |
-| collaboration/subagent start, activity, wait, resume, and close | create/update the matching child |
+| `collab_agent_spawn_end` | create the matching child from `new_thread_id`, bounded nickname/role/task, model, and sender parent identity |
+| collaboration interaction/resume and path activity | create or resume the matching child; prefer nickname, role, then the final path segment for its label |
+| collaboration completion, error, or interruption | mark only the matching child done with a success, error, or cancelled outcome and retain it for acknowledgement |
+| collaboration close or shutdown | retire only the matching child from the live tree |
 | `event_msg/shutdown_complete` or confirmed writer/process exit | root inactive |
 
 Sequence numbers come from accepted record order within one binding
 incarnation. Provider timestamps are used only when valid. Replayed initial
 windows and repeated records cannot rewind an entry.
+
+While Codex remains in the foreground, Terminay revalidates the rollout held
+open by that exact process tree. Opening a different eligible root rollout
+switches the tail, retires the previous root, and replays the fresh or resumed
+session.
 
 ## Agents pane and activation
 
@@ -243,6 +254,13 @@ render the accepted projection without applying a second revision fence.
 12. A reconnect/resync after a server revision restart replaces stale `done`
     state, resumes a working agent, and admits newly discovered concurrent agents.
 13. Electron end-to-end coverage runs only through `npm run test:e2e`.
+14. A current Codex completed `UserMessage` event supplies the bounded root
+    label; raw response items and non-text content are ignored.
+15. Current Codex collaboration fields create a named child beneath its exact
+    parent, while interaction, resume, interruption, and close update only that child.
+16. The first authoritative Codex user-message event becomes the stable root
+    label. Injected raw context, model-context `<turn_aborted>` markers, and
+    later user-message events cannot rename it.
 
 ## Non-goals
 

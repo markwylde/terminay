@@ -139,3 +139,30 @@ test("a generic foreground wrapper restarts discovery for Codex resume after the
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("persistent Codex discovery switches to a newly opened root rollout", { skip: !["darwin", "linux"].includes(process.platform) }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminay-agent-switch-"));
+  const sessions = join(root, "sessions", "2026", "08", "22");
+  const firstPath = join(sessions, "rollout-first.jsonl");
+  const secondPath = join(sessions, "rollout-second.jsonl");
+  await mkdir(sessions, { recursive: true });
+  const meta = (id) => JSON.stringify({ type: "session_meta", payload: { id, originator: "codex-tui", source: "cli" } });
+  const identity = Object.freeze({ serverId: "server-1", projectId: "project-1", sessionId: "terminal-1" });
+  const source = new NodeAgentJournalSource({ codexHome: root, pollMs: 50 });
+  const observations = [];
+  const child = spawn(process.execPath, ["-e", "const fs=require('fs');const [a,am,b,bm]=process.argv.slice(1);const fds=[];fds.push(fs.openSync(a,'a'));fs.writeSync(fds[0],am+'\\n');setTimeout(()=>{fds.push(fs.openSync(b,'a'));fs.writeSync(fds[1],bm+'\\n')},250);setInterval(()=>{},1000)", firstPath, meta("first-root"), secondPath, meta("second-root")], { stdio: "ignore" });
+  try {
+    await source.start((observation) => observations.push(observation));
+    source.registerTerminal(identity);
+    source.terminalStarted(identity, process.pid);
+    source.foregroundProcessChanged(identity, "codex", false);
+    for (let attempt = 0; attempt < 80 && !observations.some(({ record }) => record.payload?.id === "second-root"); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.deepEqual(observations.filter(({ record }) => record.type === "session_meta").map(({ record }) => record.payload.id), ["first-root", "second-root"]);
+  } finally {
+    await source.stop(); child.kill();
+    if (child.exitCode === null) await new Promise((resolve) => child.once("exit", resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});

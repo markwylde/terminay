@@ -165,6 +165,10 @@ export class AgentStatusService {
     if (inspected !== null) {
       const resolved = this.drivers.resolve(provider, inspected.session.providerVersion);
       if (!resolved) return false;
+      const previous = this.bindings.get(identity.sessionId);
+      if (previous && (previous.provider !== provider || previous.providerSessionId !== inspected.session.providerSessionId)) {
+        this.retireBinding(identity, previous);
+      }
       this.bindings.set(identity.sessionId, {
         provider, providerSessionId: inspected.session.providerSessionId,
         providerVersion: inspected.session.providerVersion, mappingVersion: resolved.mappingVersion,
@@ -173,16 +177,22 @@ export class AgentStatusService {
     const binding = this.bindings.get(identity.sessionId);
     if (!binding || binding.provider !== provider) return false;
     const sequence = this.nextSequence(provider, identity.sessionId);
-    const event = this.drivers.normalize(provider, binding.providerVersion, record, {
+    const normalized = this.drivers.normalize(provider, binding.providerVersion, record, {
       activationTerminalSessionId: identity.sessionId, sequence, occurredAt: this.now(), providerSessionId: binding.providerSessionId,
     });
-    if (event === null) return false;
-    validateLifecycleEvent(event, provider, identity.sessionId);
-    this.foregroundProviderBySession.set(identity.sessionId, event.provider);
+    if (normalized === null) return false;
+    const events = Array.isArray(normalized) ? normalized : [normalized];
+    if (events.length === 0) return false;
+    if (events.length > 1) this.advanceSequence(provider, identity.sessionId, events.length - 1);
+    this.foregroundProviderBySession.set(identity.sessionId, provider);
     this.cancelPendingForegroundExit(identity.sessionId);
-    const correlated = this.correlateSubagentLaunch(event);
-    this.store.dispatch(correlated);
-    this.activity.ingestProvider(identity, toProviderUpdate(correlated));
+    for (const [index, original] of events.entries()) {
+      const event = index === 0 ? original : { ...original, sequence: sequence + index };
+      validateLifecycleEvent(event, provider, identity.sessionId);
+      const correlated = this.correlateSubagentLaunch(event);
+      this.store.dispatch(correlated);
+      this.activity.ingestProvider(identity, toProviderUpdate(correlated));
+    }
     return true;
   }
 
@@ -212,6 +222,28 @@ export class AgentStatusService {
     const next = providerSequences.get(provider) ?? 1;
     providerSequences.set(provider, next + 1);
     return next;
+  }
+
+  private advanceSequence(provider: string, sessionId: string, count: number): void {
+    const providerSequences = this.sequences.get(sessionId);
+    if (providerSequences) providerSequences.set(provider, (providerSequences.get(provider) ?? 1) + count);
+  }
+
+  private retireBinding(identity: ActivitySessionIdentity, binding: ProviderBinding): void {
+    const root = selectAgentStatusesForTerminal(this.store.getSnapshot(), identity.sessionId)
+      .find((entry) => entry.kind === "root" && entry.provider === binding.provider && entry.sessionId === binding.providerSessionId && entry.active);
+    if (!root) return;
+    const event: AgentLifecycleEvent = {
+      kind: "session.stopped",
+      provider: binding.provider,
+      sessionId: binding.providerSessionId,
+      activationTerminalSessionId: identity.sessionId,
+      sequence: this.nextSequence(binding.provider, identity.sessionId),
+      occurredAt: Math.max(this.now(), root.updatedAt),
+      reason: "rollout-switched",
+    };
+    this.store.dispatch(event);
+    this.activity.ingestProvider(identity, toProviderUpdate(event));
   }
 
   private correlateSubagentLaunch(event: AgentLifecycleEvent): AgentLifecycleEvent {
