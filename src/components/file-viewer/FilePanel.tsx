@@ -42,13 +42,14 @@ import {
 	TerminalPanelClientContext,
 	type TerminalPanelClientContextValue,
 } from '../TerminalPanel';
+import { DocumentationEditor } from './DocumentationEditor';
 import { FileAuthorityUnavailableState } from './FileAuthorityUnavailableState';
 import { FileConflictBanner } from './FileConflictBanner';
 import { FileLargeFileChooser } from './FileLargeFileChooser';
 import { FileModeSwitcher } from './FileModeSwitcher';
 import { useFilePanelSaveRegistration } from './FilePanelSaveRegistry';
 import { FileStatusBar } from './FileStatusBar';
-import { DocumentationEditor } from './DocumentationEditor';
+import { resolveFileWatchDisposition } from './fileWatchDisposition';
 import { DiffViewer } from './modes/DiffViewer';
 import { HexViewer } from './modes/HexViewer';
 import { PerformantTextViewer } from './modes/PerformantTextViewer';
@@ -947,18 +948,17 @@ function CanonicalFilePanel(
 			if (event.path !== watchedPath) {
 				return;
 			}
-			const acknowledged = acknowledgedWatchRevisionRef.current;
-			if (
-				acknowledged &&
-				acknowledged.path === event.path &&
-				acknowledged.mtimeMs === event.mtimeMs &&
-				acknowledged.size === event.size
-			) {
+			const disposition = resolveFileWatchDisposition({
+				acknowledgedRevision: acknowledgedWatchRevisionRef.current,
+				event,
+				isDirty: isDirtyRef.current,
+			});
+			if (disposition === 'acknowledged-write') {
 				acknowledgedWatchRevisionRef.current = null;
 				return;
 			}
 
-			if (isDirtyRef.current) {
+			if (disposition === 'external-conflict') {
 				conflictRef.current = true;
 				setConflict(true);
 				sessionStoreRef.current?.setConflict({
