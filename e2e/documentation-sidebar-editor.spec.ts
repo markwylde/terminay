@@ -80,6 +80,8 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 	await expect(richText).toBeFocused();
 	await mainWindow.waitForTimeout(1_200);
 	await expect(richText).toBeFocused();
+	await expect(editor.locator('.documentation-editor__status')).toHaveCount(0);
+	await expect(mainWindow.locator('.file-status-bar')).toContainText('Synced');
 	await expect(mainWindow.locator('.file-status-bar')).not.toContainText(
 		'Monaco',
 	);
