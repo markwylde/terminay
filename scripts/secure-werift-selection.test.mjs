@@ -80,5 +80,11 @@ test(
 			selection.patches[0].sha256,
 			'34ea60bd991256adb2cd50bfe0ef9011cfc79054aff686b9ec35ef4703de4211',
 		);
+		const reused = await stageSelectedSecureWeriftRuntime(root, {
+			reuseValidated: true,
+		});
+		assert.equal(reused.reusedValidatedArtifact, true);
+		assert.equal(reused.archiveSha256, staged.archiveSha256);
+		assert.deepEqual(reused.fileHashes, staged.fileHashes);
 	},
 );

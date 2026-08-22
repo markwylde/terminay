@@ -39,17 +39,28 @@ test('development watches the same generated server workspace used by releases',
 	const packageJson = JSON.parse(await read('package.json'));
 	const runner = await read('scripts/run-canonical-development.mjs');
 	const serverUiConfig = await read('vite.server-ui.config.ts');
+	const preloadConfig = await read('vite.server-preload.config.ts');
+	const developmentAliases = await read('scripts/development-workspace-aliases.mjs');
 	const manifestBuilder = await read('scripts/build-ui-bundle-manifest.mjs');
 
-	assert.match(packageJson.scripts.dev, /run-canonical-development\.mjs/u);
+	assert.equal(packageJson.scripts.dev, 'node scripts/run-canonical-development.mjs');
 	assert.match(
+		runner,
+		/TERMINAY_DEVELOPMENT_SOURCE_WORKSPACES = '1'/u,
+		'development must have Vite transform and watch workspace source directly',
+	);
+	assert.match(runner, /stageSelectedSecureWeriftRuntime\(undefined, \{ reuseValidated: true \}\)/u);
+	assert.match(runner, /Promise\.all\(\[initialBundle, preloadBuild, runtimeStage\]\)/u);
+	assert.doesNotMatch(
 		packageJson.scripts.dev,
-		/^npm run build:app &&/u,
-		'development must start from the same current Electron main, narrow preload, and server bundle artifacts as a release build',
+		/build:application-graph|build:server-postcompile/u,
+		'development must not wait for release-only declarations or evidence before launching',
 	);
 	assert.match(packageJson.scripts['build:app'], /remote\.html/u);
-	assert.match(runner, /vite\.server-ui\.config\.ts/u);
-	assert.match(runner, /build.*--watch/su);
+	assert.match(runner, /configFile:\s*'vite\.server-ui\.config\.ts'/u);
+	assert.match(runner, /build:\s*\{\s*watch:\s*\{\}\s*\}/u);
+	assert.match(runner, /Promise\.all\(\[initialBundle, preloadBuild, runtimeStage\]\)/u);
+	assert.match(runner, /writeBundle\(\)/u);
 	assert.match(serverUiConfig, /writeBundle\(/u);
 	assert.match(serverUiConfig, /buildUiBundleManifest/u);
 	assert.match(serverUiConfig, /manifestPublication\.then/u);
@@ -59,6 +70,12 @@ test('development watches the same generated server workspace used by releases',
 		'production server UI builds must empty dist-web; watch rebuilds must not wipe a bundle Electron is verifying',
 	);
 	assert.match(serverUiConfig, /includeRelativePaths/u);
+	assert.match(serverUiConfig, /reportCompressedSize:\s*!watching/u);
+	assert.match(serverUiConfig, /logLevel:\s*watching \? 'warn' : 'info'/u);
+	assert.match(serverUiConfig, /developmentWorkspaceAliases/u);
+	assert.match(preloadConfig, /developmentWorkspaceAliases/u);
+	assert.match(developmentAliases, /@terminay\/server-core\/ui-bundle/u);
+	assert.match(developmentAliases, /@terminay\/ui-bundle\/archive/u);
 	assert.match(manifestBuilder, /UI_BUNDLE_MAX_TOTAL_BYTES/u);
 	assert.match(
 		manifestBuilder,
