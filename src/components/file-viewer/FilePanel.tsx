@@ -50,7 +50,11 @@ import { FileLargeFileChooser } from './FileLargeFileChooser';
 import { FileModeSwitcher } from './FileModeSwitcher';
 import { useFilePanelSaveRegistration } from './FilePanelSaveRegistry';
 import { FileStatusBar } from './FileStatusBar';
-import { resolveFileWatchDisposition } from './fileWatchDisposition';
+import {
+	isDocumentationAcknowledgedWatchEvent,
+	resolveFileWatchDisposition,
+	retainDocumentationAcknowledgedRevision,
+} from './fileWatchDisposition';
 import { DiffViewer } from './modes/DiffViewer';
 import { HexViewer } from './modes/HexViewer';
 import { PerformantTextViewer } from './modes/PerformantTextViewer';
@@ -220,6 +224,9 @@ function CanonicalFilePanel(
 		path: string;
 		size: number;
 	} | null>(null);
+	const documentationAcknowledgedWatchRevisionsRef = useRef<
+		readonly { mtimeMs: number | null; path: string; size: number }[]
+	>([]);
 	const documentationSaveInFlightRef = useRef(false);
 	const deferredDocumentationWatchEventRef = useRef<FileWatchEvent | null>(null);
 	const documentationSessionRef = useRef<{ sessionId: string; diskRevision: number; draftRevision: number } | undefined>(undefined);
@@ -651,25 +658,27 @@ function CanonicalFilePanel(
 			session.draftRevision = saved.draftRevision;
 			session.diskRevision = saved.diskRevision;
 			const nextInfo = await fileGateway.getFileInfo(currentInfo.path);
-			acknowledgedWatchRevisionRef.current = {
-				mtimeMs: nextInfo.mtimeMs,
-				path: nextInfo.path,
-				size: nextInfo.size,
-			};
+			documentationAcknowledgedWatchRevisionsRef.current =
+				retainDocumentationAcknowledgedRevision(
+					documentationAcknowledgedWatchRevisionsRef.current,
+					{
+						mtimeMs: nextInfo.mtimeMs,
+						path: nextInfo.path,
+						size: nextInfo.size,
+					},
+				);
 			setFileInfo(nextInfo);
 			sessionStoreRef.current?.setFile(nextInfo);
 			documentationSaveInFlightRef.current = false;
 			const deferredEvent = deferredDocumentationWatchEventRef.current;
 			deferredDocumentationWatchEventRef.current = null;
 			if (deferredEvent !== null) {
-				const disposition = resolveFileWatchDisposition({
-					acknowledgedRevision: acknowledgedWatchRevisionRef.current,
-					event: deferredEvent,
-					isDirty: true,
-				});
-				if (disposition === 'acknowledged-write') {
-					acknowledgedWatchRevisionRef.current = null;
-				} else {
+				if (
+					!isDocumentationAcknowledgedWatchEvent(
+						documentationAcknowledgedWatchRevisionsRef.current,
+						deferredEvent,
+					)
+				) {
 					conflictRef.current = true;
 					setConflict(true);
 					sessionStoreRef.current?.setConflict({ diskMtimeMs: deferredEvent.mtimeMs ?? 0, kind: 'external-change' });
@@ -996,6 +1005,14 @@ function CanonicalFilePanel(
 			}
 			if (documentationSaveInFlightRef.current) {
 				deferredDocumentationWatchEventRef.current = event;
+				return;
+			}
+			if (
+				isDocumentationAcknowledgedWatchEvent(
+					documentationAcknowledgedWatchRevisionsRef.current,
+					event,
+				)
+			) {
 				return;
 			}
 			const disposition = resolveFileWatchDisposition({
