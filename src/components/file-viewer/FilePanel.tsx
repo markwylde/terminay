@@ -1139,7 +1139,7 @@ function CanonicalFilePanel(
 			</div> : null}
 
 			<div className="file-panel__body">
-				{isDocumentation ? (!/\.mdx?$/iu.test(fileInfo.name) || fileInfo.isBinary || fileInfo.size > LARGE_FILE_THRESHOLD_BYTES ? <div className="file-preview-unsupported">Documentation mode requires a bounded UTF-8 Markdown or MDX document. Open this file in the normal File Viewer.</div> : <DocumentationEditor key={`${fileInfo.path}:${fileInfo.mtimeMs ?? 'unknown'}:${fileInfo.size}`} markdown={draftText} onChange={handleDocumentationChange} onFlush={async () => { await saveDocumentationDraft(); }} path={toProjectRelativePath(projectRoot, fileInfo.path)} projectId={terminalClientContext.projectId} serverId={terminalClientContext.serverId} runtimeClient={terminalClientContext.mdxRuntimeClient} />) : null}
+				{isDocumentation ? (!/\.mdx?$/iu.test(fileInfo.name) || fileInfo.isBinary || fileInfo.size > LARGE_FILE_THRESHOLD_BYTES ? <div className="file-preview-unsupported">Documentation mode requires a bounded UTF-8 Markdown or MDX document. Open this file in the normal File Viewer.</div> : <DocumentationEditor key={fileInfo.path} markdown={draftText} onChange={handleDocumentationChange} onFlush={async () => { await saveDocumentationDraft(); }} path={toProjectRelativePath(projectRoot, fileInfo.path)} projectId={terminalClientContext.projectId} serverId={terminalClientContext.serverId} runtimeClient={terminalClientContext.mdxRuntimeClient} />) : null}
 				{!isDocumentation && effectiveMode === 'preview' ? (
 					<PreviewViewer
 						file={fileInfo}

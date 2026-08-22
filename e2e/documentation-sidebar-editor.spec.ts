@@ -74,6 +74,12 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 			mainWindow.evaluate(() => document.fonts.check('16px "Open Sans"')),
 		)
 		.toBe(true);
+	await richText.focus();
+	await mainWindow.keyboard.press('End');
+	await mainWindow.keyboard.type(' Focus stays here.');
+	await expect(richText).toBeFocused();
+	await mainWindow.waitForTimeout(1_200);
+	await expect(richText).toBeFocused();
 
 	await editor.getByRole('combobox').first().click();
 	const blockTypeMenu = mainWindow.getByRole('listbox').last();
