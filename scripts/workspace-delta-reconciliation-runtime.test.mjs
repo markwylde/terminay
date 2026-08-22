@@ -15,16 +15,17 @@ const { WorkspaceSnapshotStore } = await import(pathToFileURL(join(outputDirecto
 test.after(async () => { await rm(outputDirectory, { recursive: true, force: true }) })
 
 function state(revision, panelIds = ['panel-a']) {
+	const sidebar = { fileExplorerWidth: 280, isFileExplorerOpen: false, isExplorerPaneCollapsed: false, isAgentsPaneCollapsed: false, isGitPaneCollapsed: false, isDocumentationPaneCollapsed: true, expandedAgentEntryIds: [], expandedDocumentationFolderIds: [], sidebarAgentsHeight: 200, sidebarExplorerHeight: 320, sidebarGitHeight: 240, sidebarDocumentationHeight: 220, sidebarPanelOrder: ['explorer', 'agents', 'git', 'documentation'] }
 	return {
-		schemaVersion: 3,
+		schemaVersion: 4,
 		serverId: 'server-a',
 		revision,
 		cursor: String(revision),
 		viewOrder: ['view-a'],
 		views: { 'view-a': { id: 'view-a', serverId: 'server-a', name: 'Workspace', projectIds: ['project-a'], activeProjectId: 'project-a' } },
-		projects: { 'project-a': { id: 'project-a', serverId: 'server-a', viewId: 'view-a', projectEnvironmentId: 'terminay:this-server', environmentRevision: 1, name: 'A', root: '/workspace/a', rootOrigin: 'explicit', panelIds, activePanelId: panelIds.at(-1) } },
+		projects: { 'project-a': { id: 'project-a', serverId: 'server-a', viewId: 'view-a', projectEnvironmentId: 'terminay:this-server', environmentRevision: 1, name: 'A', root: '/workspace/a', rootOrigin: 'explicit', sidebar, panelIds, activePanelId: panelIds.at(-1) } },
 		panels: Object.fromEntries(panelIds.map((id) => [id, { id, projectId: 'project-a', type: 'terminal', sessionId: `session-${id}` }])),
-		terminalSessions: Object.fromEntries(panelIds.map((id) => [`session-${id}`, { id: `session-${id}`, serverId: 'server-a', projectId: 'project-a', projectEnvironmentId: 'terminay:this-server', environmentRevision: 1 }])),
+		terminalSessions: Object.fromEntries(panelIds.map((id) => [`session-${id}`, { id: `session-${id}`, serverId: 'server-a', projectId: 'project-a', projectEnvironmentId: 'terminay:this-server', environmentRevision: 1, status: 'running' }])),
 	}
 }
 
