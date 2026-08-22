@@ -279,6 +279,7 @@ function commandProjectIds(state: WorkspaceState, command: WorkspaceCommand): re
     case "project.activate":
     case "project.rename":
     case "project.update":
+    case "project.sidebar.update":
     case "project.move":
     case "project.close":
     case "project.root.update":

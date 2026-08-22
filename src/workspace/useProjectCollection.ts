@@ -9,14 +9,13 @@ import type { WorkspaceSnapshotStore } from '../shared/WorkspaceSnapshotStore';
 import { closeHostPresentation } from '../host/nativeActions';
 import { normalizeSidebarPanelOrder } from '../terminalSettings';
 import type { SidebarSettings } from '../types/settings';
-import { createProjectTab, type ProjectTab } from './projectTabModel';
+import { createProjectTab, projectSidebarPatch, projectSidebarState, type ProjectTab } from './projectTabModel';
 
 const DEFAULT_AGENTS_PANE_HEIGHT = 200;
 
 export function useProjectCollection<TTerminal>({
 	defaultProjectRoot = '',
 	isAdoptWindow,
-	isSettingsLoading,
 	projectColorScope,
 	confirmProjectClose,
 	holdProjectOrderRef,
@@ -28,7 +27,6 @@ export function useProjectCollection<TTerminal>({
 	 * never discovers host filesystem paths on its own. */
 	defaultProjectRoot?: string;
 	isAdoptWindow: boolean;
-	isSettingsLoading: boolean;
 	/** Stable server identity used only to synthesize unpersisted project colors. */
 	projectColorScope: string;
 	confirmProjectClose?: (projectId: string) => Promise<boolean>;
@@ -38,7 +36,6 @@ export function useProjectCollection<TTerminal>({
 	workspaceViewId: string | null;
 }) {
 	const sidebarDefaultsRef = useRef(sidebarSettings);
-	const didApplyPersistedSidebarOrderRef = useRef(false);
 	const projectCounterRef = useRef(1);
 	const initialServerSnapshot = workspaceSnapshotStore?.snapshot;
 	const hasServerWorkspace = workspaceSnapshotStore !== undefined;
@@ -67,6 +64,7 @@ export function useProjectCollection<TTerminal>({
 				usedColors.push(color);
 				return {
 					...base,
+					...projectSidebarState(serverProject.sidebar),
 					id: serverProject.id,
 					projectEnvironmentId: serverProject.projectEnvironmentId,
 					environmentRevision: serverProject.environmentRevision,
@@ -122,17 +120,6 @@ export function useProjectCollection<TTerminal>({
 	}, [sidebarSettings]);
 
 	useEffect(() => {
-		if (isSettingsLoading || didApplyPersistedSidebarOrderRef.current) return;
-		didApplyPersistedSidebarOrderRef.current = true;
-		setProjects((current) =>
-			current.map((project) => ({
-				...project,
-				sidebarPanelOrder: [...sidebarSettings.panelOrder],
-			})),
-		);
-	}, [isSettingsLoading, sidebarSettings.panelOrder]);
-
-	useEffect(() => {
 		projectsRef.current = projects;
 	}, [projects]);
 
@@ -169,6 +156,7 @@ export function useProjectCollection<TTerminal>({
 						usedColors.push(color);
 						return {
 							...base,
+							...projectSidebarState(serverProject.sidebar),
 							id: serverProject.id,
 							projectEnvironmentId: serverProject.projectEnvironmentId,
 							environmentRevision: serverProject.environmentRevision,
@@ -248,6 +236,7 @@ export function useProjectCollection<TTerminal>({
 					name: `Project ${Object.keys(snapshot.projects).length + 1}`,
 					color: presentation.color,
 					icon: presentation.emoji,
+					sidebar: projectSidebarState(presentation),
 				})
 				.then(() => setProjectCreationError(null))
 				.catch((error) => {
@@ -389,6 +378,7 @@ export function useProjectCollection<TTerminal>({
 	const updateProject = useCallback(
 		(projectId: string, updates: Partial<ProjectTab>) => {
 			const { rootFolder, ...localUpdates } = updates;
+			const sidebar = projectSidebarPatch(localUpdates);
 			if (Object.keys(localUpdates).length > 0) {
 				setProjects((current) =>
 					current.map((project) =>
@@ -397,6 +387,13 @@ export function useProjectCollection<TTerminal>({
 							: project,
 					),
 				);
+			}
+			if (workspaceSnapshotStore !== undefined && sidebar !== null) {
+				void workspaceSnapshotStore
+					.updateProjectSidebar({ projectId, sidebar })
+					.catch(() => {
+						void workspaceSnapshotStore.refresh().catch(() => undefined);
+					});
 			}
 			if (rootFolder === undefined) return;
 			if (workspaceSnapshotStore === undefined) {

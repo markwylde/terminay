@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { assertJsonValue } from "@terminay/protocol";
-import { THIS_SERVER_ENVIRONMENT_ID, WorkspaceStore, canonicalizeWorkspaceState, createInitialWorkspace, migrateWorkspaceState, validateWorkspace } from "../dist/index.js";
+import { THIS_SERVER_ENVIRONMENT_ID, WORKSPACE_SCHEMA_VERSION, WorkspaceStore, canonicalizeWorkspaceState, createInitialWorkspace, defaultWorkspaceSidebarState, migrateWorkspaceState, validateWorkspace } from "../dist/index.js";
 
 test("workspace store creates, moves, and atomically commits canonical objects", () => {
   const store = new WorkspaceStore(createInitialWorkspace("server-a"));
@@ -37,6 +37,33 @@ test("workspace store rejects stale and cross-scope mutations, and replays dupli
   assert.equal(stale.ok, false);
   const invalid = store.apply({ commandId: "bad-panel", expectedRevision: 1, command: { type: "panel.reorder", projectId: "project-a", panelIds: ["other-project-panel"] } });
   assert.equal(invalid.ok, false);
+});
+
+test("project sidebar state is independently durable, bounded, and migrates with its project", () => {
+  const store = new WorkspaceStore(createInitialWorkspace("server-a"));
+  const viewId = store.state.viewOrder[0];
+  assert.equal(store.apply({ commandId: "project-a", command: { type: "project.create", projectId: "project-a", viewId, root: "/tmp/a", name: "A" } }).ok, true);
+  assert.equal(store.apply({ commandId: "project-b", command: { type: "project.create", projectId: "project-b", viewId, root: "/tmp/b", name: "B" } }).ok, true);
+  const updated = store.apply({ commandId: "sidebar-a", command: { type: "project.sidebar.update", projectId: "project-a", sidebar: {
+    isFileExplorerOpen: true,
+    isExplorerPaneCollapsed: true,
+    sidebarPanelOrder: ["git", "explorer", "agents", "documentation"],
+    expandedDocumentationFolderIds: ["specs/features"],
+  } } });
+  assert.equal(updated.ok, true);
+  assert.equal(store.state.projects["project-a"].sidebar.isFileExplorerOpen, true);
+  assert.equal(store.state.projects["project-a"].sidebar.isExplorerPaneCollapsed, true);
+  assert.deepEqual(store.state.projects["project-a"].sidebar.sidebarPanelOrder, ["git", "explorer", "agents", "documentation"]);
+  assert.deepEqual(store.state.projects["project-b"].sidebar, defaultWorkspaceSidebarState());
+  const beforeInvalid = store.state.revision;
+  assert.equal(store.apply({ commandId: "invalid-sidebar", command: { type: "project.sidebar.update", projectId: "project-a", sidebar: { sidebarPanelOrder: ["explorer"] } } }).ok, false);
+  assert.equal(store.state.revision, beforeInvalid);
+
+  const legacy = { ...store.state, schemaVersion: 3, projects: Object.fromEntries(Object.entries(store.state.projects).map(([id, { sidebar, ...project }]) => [id, project])) };
+  const migrated = migrateWorkspaceState(legacy, "server-a");
+  assert.equal(migrated.schemaVersion, WORKSPACE_SCHEMA_VERSION);
+  assert.equal(migrated.projects["project-a"].sidebar.isFileExplorerOpen, false);
+  assert.deepEqual(migrated.projects["project-a"].panelIds, store.state.projects["project-a"].panelIds);
 });
 
 test("restart recovery marks running sessions interrupted without changing identity", () => {
@@ -172,7 +199,7 @@ test("two client command streams get one ordered commit and one explicit stale c
 
 test("v0 workspace snapshots migrate idempotently without terminal content", () => {
   const migrated = migrateWorkspaceState({ schemaVersion: 0, serverId: "server-a", projects: { "project-a": { root: "/tmp/a", name: "A", output: "must-not-copy" } } }, "fallback");
-  assert.equal(migrated.schemaVersion, 3);
+  assert.equal(migrated.schemaVersion, WORKSPACE_SCHEMA_VERSION);
   assert.equal(migrated.projects["project-a"].root, "/tmp/a");
   assert.equal(migrated.projects["project-a"].projectEnvironmentId, THIS_SERVER_ENVIRONMENT_ID);
   assert.equal(Object.keys(migrated.terminalSessions).length, 0);

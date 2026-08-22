@@ -62,6 +62,26 @@ export interface ProjectCreateRequest {
 	readonly name: string;
 	readonly color?: string;
 	readonly icon?: string;
+	readonly sidebar?: ProjectSidebarState;
+}
+export interface ProjectSidebarState {
+	readonly fileExplorerWidth: number;
+	readonly isFileExplorerOpen: boolean;
+	readonly isExplorerPaneCollapsed: boolean;
+	readonly isAgentsPaneCollapsed: boolean;
+	readonly isGitPaneCollapsed: boolean;
+	readonly isDocumentationPaneCollapsed: boolean;
+	readonly expandedAgentEntryIds: readonly string[];
+	readonly expandedDocumentationFolderIds: readonly string[];
+	readonly sidebarAgentsHeight: number;
+	readonly sidebarExplorerHeight: number;
+	readonly sidebarGitHeight: number;
+	readonly sidebarDocumentationHeight: number;
+	readonly sidebarPanelOrder: readonly ('explorer' | 'agents' | 'git' | 'documentation')[];
+}
+export interface ProjectSidebarUpdateRequest {
+	readonly projectId: string;
+	readonly sidebar: Partial<ProjectSidebarState>;
 }
 export interface PanelCreateRequest {
 	readonly panel: Readonly<{
@@ -233,7 +253,20 @@ export class WorkspaceClient {
 			throw new TypeError('project create request is invalid');
 		await this.client.command(
 			'workspace.command',
-			{ command: { type: 'project.create', ...request } },
+			{ command: { type: 'project.create', ...request } } as unknown as JsonValue,
+			options,
+		);
+	}
+
+	async updateProjectSidebar(
+		request: ProjectSidebarUpdateRequest,
+		options: WorkspaceCommandOptions = {},
+	): Promise<void> {
+		if (!isBoundedId(request.projectId) || !isProjectSidebarPatch(request.sidebar))
+			throw new TypeError('project sidebar update request is invalid');
+		await this.client.command(
+			'workspace.command',
+			{ command: { type: 'project.sidebar.update', ...request } } as unknown as JsonValue,
 			options,
 		);
 	}
@@ -563,6 +596,34 @@ export class WorkspaceClient {
 
 function asSnapshot(value: JsonValue | undefined): WorkspaceSnapshotDto {
 	return parseWorkspaceSnapshotDto(value);
+}
+
+function isProjectSidebarPatch(value: unknown): value is Partial<ProjectSidebarState> {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+	const patch = value as Record<string, unknown>;
+	const allowed = new Set([
+		'fileExplorerWidth', 'isFileExplorerOpen', 'isExplorerPaneCollapsed',
+		'isAgentsPaneCollapsed', 'isGitPaneCollapsed', 'isDocumentationPaneCollapsed',
+		'expandedAgentEntryIds', 'expandedDocumentationFolderIds', 'sidebarAgentsHeight',
+		'sidebarExplorerHeight', 'sidebarGitHeight', 'sidebarDocumentationHeight',
+		'sidebarPanelOrder',
+	]);
+	if (Object.keys(patch).length === 0 || Object.keys(patch).some((key) => !allowed.has(key))) return false;
+	for (const key of ['isFileExplorerOpen', 'isExplorerPaneCollapsed', 'isAgentsPaneCollapsed', 'isGitPaneCollapsed', 'isDocumentationPaneCollapsed']) {
+		if (key in patch && typeof patch[key] !== 'boolean') return false;
+	}
+	for (const key of ['fileExplorerWidth', 'sidebarAgentsHeight', 'sidebarExplorerHeight', 'sidebarGitHeight', 'sidebarDocumentationHeight']) {
+		if (key in patch && (!Number.isSafeInteger(patch[key]) || (patch[key] as number) < 30 || (patch[key] as number) > 2_000)) return false;
+	}
+	for (const key of ['expandedAgentEntryIds', 'expandedDocumentationFolderIds']) {
+		if (key in patch && (!Array.isArray(patch[key]) || patch[key].length > 256 || patch[key].some((entry) => typeof entry !== 'string' || entry.length === 0 || entry.length > 4_096 || entry.includes('\0')))) return false;
+	}
+	if ('sidebarPanelOrder' in patch) {
+		const order = patch.sidebarPanelOrder;
+		const ids = ['explorer', 'agents', 'git', 'documentation'];
+		if (!Array.isArray(order) || order.length !== ids.length || new Set(order).size !== ids.length || ids.some((id) => !order.includes(id))) return false;
+	}
+	return true;
 }
 
 function readDeltaServerId(value: JsonValue | undefined): string {

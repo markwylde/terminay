@@ -1,6 +1,6 @@
 import type { JsonValue, ProtocolId } from '@terminay/protocol';
 
-export const WORKSPACE_SCHEMA_VERSION = 3;
+export const WORKSPACE_SCHEMA_VERSION = 4;
 /** Stable binding used by every workspace created before project environments
  * existed. It is deliberately not derived from a client or host label. */
 export const THIS_SERVER_ENVIRONMENT_ID = 'terminay:this-server';
@@ -60,6 +60,42 @@ export interface WorkspaceView {
 	readonly projectIds: readonly ProtocolId[];
 	readonly activeProjectId?: ProtocolId;
 }
+export type WorkspaceSidebarPanelId = 'explorer' | 'agents' | 'git' | 'documentation';
+export interface WorkspaceSidebarState {
+	readonly fileExplorerWidth: number;
+	readonly isFileExplorerOpen: boolean;
+	readonly isExplorerPaneCollapsed: boolean;
+	readonly isAgentsPaneCollapsed: boolean;
+	readonly isGitPaneCollapsed: boolean;
+	readonly isDocumentationPaneCollapsed: boolean;
+	readonly expandedAgentEntryIds: readonly string[];
+	readonly expandedDocumentationFolderIds: readonly string[];
+	readonly sidebarAgentsHeight: number;
+	readonly sidebarExplorerHeight: number;
+	readonly sidebarGitHeight: number;
+	readonly sidebarDocumentationHeight: number;
+	readonly sidebarPanelOrder: readonly WorkspaceSidebarPanelId[];
+}
+export type WorkspaceSidebarPatch = Partial<WorkspaceSidebarState>;
+const SIDEBAR_PANEL_IDS: readonly WorkspaceSidebarPanelId[] = ['explorer', 'agents', 'git', 'documentation'];
+
+export function defaultWorkspaceSidebarState(): WorkspaceSidebarState {
+	return {
+		fileExplorerWidth: 280,
+		isFileExplorerOpen: false,
+		isExplorerPaneCollapsed: false,
+		isAgentsPaneCollapsed: false,
+		isGitPaneCollapsed: false,
+		isDocumentationPaneCollapsed: true,
+		expandedAgentEntryIds: [],
+		expandedDocumentationFolderIds: [],
+		sidebarAgentsHeight: 200,
+		sidebarExplorerHeight: 320,
+		sidebarGitHeight: 240,
+		sidebarDocumentationHeight: 220,
+		sidebarPanelOrder: [...SIDEBAR_PANEL_IDS],
+	};
+}
 export interface WorkspaceProject {
 	readonly id: ProtocolId;
 	readonly serverId: ProtocolId;
@@ -72,6 +108,7 @@ export interface WorkspaceProject {
 	readonly color?: string;
 	readonly icon?: string;
 	readonly defaultShellProfileId?: ProtocolId;
+	readonly sidebar: WorkspaceSidebarState;
 	readonly panelIds: readonly ProtocolId[];
 	readonly activePanelId?: ProtocolId;
 	readonly layout: LayoutNode;
@@ -147,6 +184,7 @@ export function canonicalizeWorkspaceState(
 			...(project.color === undefined ? {} : { color: project.color }),
 			...(project.icon === undefined ? {} : { icon: project.icon }),
 			...(project.defaultShellProfileId === undefined ? {} : { defaultShellProfileId: project.defaultShellProfileId }),
+			sidebar: normalizeWorkspaceSidebarState(project.sidebar),
 			panelIds: [...project.panelIds],
 			...(project.activePanelId === undefined
 				? {}
@@ -274,7 +312,9 @@ export type WorkspaceCommand =
 			readonly name: string;
 			readonly color?: string;
 			readonly icon?: string;
+			readonly sidebar?: WorkspaceSidebarState;
 	  }
+	| { readonly type: 'project.sidebar.update'; readonly projectId: ProtocolId; readonly sidebar: WorkspaceSidebarPatch }
 	| {
 			readonly type: 'project.root.update';
 			readonly projectId: ProtocolId;
@@ -417,6 +457,86 @@ export function createInitialWorkspace(serverId: ProtocolId): WorkspaceState {
 	};
 }
 
+function normalizeWorkspaceSidebarState(value: unknown): WorkspaceSidebarState {
+	if (value === undefined) return defaultWorkspaceSidebarState();
+	validateWorkspaceSidebarState(value);
+	const sidebar = value as WorkspaceSidebarState;
+	return {
+		fileExplorerWidth: sidebar.fileExplorerWidth,
+		isFileExplorerOpen: sidebar.isFileExplorerOpen,
+		isExplorerPaneCollapsed: sidebar.isExplorerPaneCollapsed,
+		isAgentsPaneCollapsed: sidebar.isAgentsPaneCollapsed,
+		isGitPaneCollapsed: sidebar.isGitPaneCollapsed,
+		isDocumentationPaneCollapsed: sidebar.isDocumentationPaneCollapsed,
+		expandedAgentEntryIds: [...sidebar.expandedAgentEntryIds],
+		expandedDocumentationFolderIds: [...sidebar.expandedDocumentationFolderIds],
+		sidebarAgentsHeight: sidebar.sidebarAgentsHeight,
+		sidebarExplorerHeight: sidebar.sidebarExplorerHeight,
+		sidebarGitHeight: sidebar.sidebarGitHeight,
+		sidebarDocumentationHeight: sidebar.sidebarDocumentationHeight,
+		sidebarPanelOrder: [...sidebar.sidebarPanelOrder],
+	};
+}
+
+function patchWorkspaceSidebarState(
+	current: WorkspaceSidebarState,
+	patch: unknown,
+): WorkspaceSidebarState {
+	if (typeof patch !== 'object' || patch === null || Array.isArray(patch))
+		throw new TypeError('sidebar patch is invalid');
+	const input = patch as Record<string, unknown>;
+	const allowed = new Set<keyof WorkspaceSidebarState>([
+		'fileExplorerWidth',
+		'isFileExplorerOpen',
+		'isExplorerPaneCollapsed',
+		'isAgentsPaneCollapsed',
+		'isGitPaneCollapsed',
+		'isDocumentationPaneCollapsed',
+		'expandedAgentEntryIds',
+		'expandedDocumentationFolderIds',
+		'sidebarAgentsHeight',
+		'sidebarExplorerHeight',
+		'sidebarGitHeight',
+		'sidebarDocumentationHeight',
+		'sidebarPanelOrder',
+	]);
+	if (Object.keys(input).length === 0 || Object.keys(input).some((key) => !allowed.has(key as keyof WorkspaceSidebarState)))
+		throw new TypeError('sidebar patch is invalid');
+	return normalizeWorkspaceSidebarState({ ...current, ...input });
+}
+
+function validateWorkspaceSidebarState(value: unknown): asserts value is WorkspaceSidebarState {
+	if (typeof value !== 'object' || value === null || Array.isArray(value))
+		throw new TypeError('project sidebar is invalid');
+	const sidebar = value as Record<string, unknown>;
+	const booleans = [
+		'isFileExplorerOpen',
+		'isExplorerPaneCollapsed',
+		'isAgentsPaneCollapsed',
+		'isGitPaneCollapsed',
+		'isDocumentationPaneCollapsed',
+	];
+	if (booleans.some((key) => typeof sidebar[key] !== 'boolean'))
+		throw new TypeError('project sidebar is invalid');
+	const dimensions = [
+		'fileExplorerWidth',
+		'sidebarAgentsHeight',
+		'sidebarExplorerHeight',
+		'sidebarGitHeight',
+		'sidebarDocumentationHeight',
+	];
+	if (dimensions.some((key) => !Number.isSafeInteger(sidebar[key]) || (sidebar[key] as number) < 30 || (sidebar[key] as number) > 2_000))
+		throw new TypeError('project sidebar dimensions are invalid');
+	for (const key of ['expandedAgentEntryIds', 'expandedDocumentationFolderIds'] as const) {
+		const entries = sidebar[key];
+		if (!Array.isArray(entries) || entries.length > 256 || entries.some((entry) => typeof entry !== 'string' || entry.length === 0 || entry.length > 4_096 || entry.includes('\0')))
+			throw new TypeError('project sidebar navigation state is invalid');
+	}
+	const order = sidebar.sidebarPanelOrder;
+	if (!Array.isArray(order) || order.length !== SIDEBAR_PANEL_IDS.length || new Set(order).size !== SIDEBAR_PANEL_IDS.length || SIDEBAR_PANEL_IDS.some((id) => !order.includes(id)))
+		throw new TypeError('project sidebar panel order is invalid');
+}
+
 export function validateWorkspace(state: WorkspaceState): void {
 	assertId(state.serverId, 'serverId');
 	if (
@@ -462,6 +582,7 @@ export function validateWorkspace(state: WorkspaceState): void {
 		if (project.rootOrigin !== 'explicit' && project.rootOrigin !== 'server-default' && project.rootOrigin !== 'environment-default' && project.rootOrigin !== 'legacy-unverified')
 			throw new TypeError('project root origin is invalid');
 		if (project.defaultShellProfileId !== undefined) assertId(project.defaultShellProfileId, 'defaultShellProfileId');
+		validateWorkspaceSidebarState(project.sidebar);
 		if (
 			project.panelIds.some(
 				(panelId) => state.panels[panelId]?.projectId !== id,
@@ -515,17 +636,17 @@ export function migrateWorkspaceState(
 	if (value.schemaVersion === WORKSPACE_SCHEMA_VERSION) {
 		return canonicalizeWorkspaceState(value as unknown as WorkspaceState);
 	}
-	if (value.schemaVersion === 1 || value.schemaVersion === 2) {
+	const legacySchemaVersion = value.schemaVersion;
+	if (legacySchemaVersion === 1 || legacySchemaVersion === 2 || legacySchemaVersion === 3) {
 		const projects = Object.fromEntries(Object.entries((value.projects ?? {}) as Record<string, WorkspaceProject>).map(([id, project]) => [id, {
 			...project,
-			rootOrigin: value.schemaVersion === 1 ? 'legacy-unverified' as const : project.rootOrigin,
-			projectEnvironmentId: THIS_SERVER_ENVIRONMENT_ID,
-			environmentRevision: 1,
+			rootOrigin: legacySchemaVersion === 1 ? 'legacy-unverified' as const : project.rootOrigin,
+			...(legacySchemaVersion < 3 ? { projectEnvironmentId: THIS_SERVER_ENVIRONMENT_ID, environmentRevision: 1 } : {}),
+			sidebar: normalizeWorkspaceSidebarState((project as unknown as { sidebar?: unknown }).sidebar),
 		}]));
 		const terminalSessions = Object.fromEntries(Object.entries((value.terminalSessions ?? {}) as Record<string, TerminalSession>).map(([id, session]) => [id, {
 			...session,
-			projectEnvironmentId: THIS_SERVER_ENVIRONMENT_ID,
-			environmentRevision: 1,
+			...(legacySchemaVersion < 3 ? { projectEnvironmentId: THIS_SERVER_ENVIRONMENT_ID, environmentRevision: 1 } : {}),
 		}]));
 		return canonicalizeWorkspaceState({ ...(value as unknown as WorkspaceState), schemaVersion: WORKSPACE_SCHEMA_VERSION, projects, terminalSessions });
 	}
@@ -560,6 +681,7 @@ export function migrateWorkspaceState(
 			root: project.root,
 			rootOrigin: 'legacy-unverified',
 			name,
+			sidebar: defaultWorkspaceSidebarState(),
 			panelIds: [],
 			layout: stack([]),
 		};
@@ -905,6 +1027,7 @@ export class WorkspaceStore {
 					root: boundedPath(command.root),
 					rootOrigin: command.rootOrigin ?? 'explicit',
 					name: boundedName(command.name),
+					sidebar: normalizeWorkspaceSidebarState(command.sidebar),
 					panelIds: [],
 					layout: stack([]),
 					...(command.color === undefined
@@ -921,6 +1044,15 @@ export class WorkspaceStore {
 					activeProjectId: command.projectId,
 				};
 				changed.push(command.projectId, command.viewId);
+				break;
+			}
+			case 'project.sidebar.update': {
+				const project = requireProject(state, command.projectId);
+				state.projects[command.projectId] = {
+					...project,
+					sidebar: patchWorkspaceSidebarState(project.sidebar, command.sidebar),
+				};
+				changed.push(command.projectId);
 				break;
 			}
 			case 'project.root.update': {

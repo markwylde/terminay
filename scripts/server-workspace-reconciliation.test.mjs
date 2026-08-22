@@ -32,8 +32,15 @@ function snapshot({
 	panelIds = ['panel-a'],
 	activePanelId = 'panel-a',
 } = {}) {
+	const sidebar = () => ({
+		fileExplorerWidth: 280, isFileExplorerOpen: false, isExplorerPaneCollapsed: false,
+		isAgentsPaneCollapsed: false, isGitPaneCollapsed: false, isDocumentationPaneCollapsed: true,
+		expandedAgentEntryIds: [], expandedDocumentationFolderIds: [], sidebarAgentsHeight: 200,
+		sidebarExplorerHeight: 320, sidebarGitHeight: 240, sidebarDocumentationHeight: 220,
+		sidebarPanelOrder: ['explorer', 'agents', 'git', 'documentation'],
+	});
 	return {
-		schemaVersion: 3,
+		schemaVersion: 4,
 		serverId: 'server-a',
 		revision,
 		cursor: String(revision),
@@ -59,6 +66,7 @@ function snapshot({
 					name: id,
 					root: `/workspace/${id}`,
 					rootOrigin: 'explicit',
+					sidebar: sidebar(),
 					panelIds: id === 'project-a' ? panelIds : [],
 					...(id === 'project-a' && activePanelId !== undefined
 						? { activePanelId }
@@ -137,6 +145,13 @@ test('accepts a history-expired full delta and rejects stale or crossed ownershi
 
 test('project and panel identity survives project switches and detach-reattach snapshots', () => {
 	const workspace = (revision, activeProjectId, projectPanels) => {
+		const sidebar = () => ({
+			fileExplorerWidth: 280, isFileExplorerOpen: false, isExplorerPaneCollapsed: false,
+			isAgentsPaneCollapsed: false, isGitPaneCollapsed: false, isDocumentationPaneCollapsed: true,
+			expandedAgentEntryIds: [], expandedDocumentationFolderIds: [], sidebarAgentsHeight: 200,
+			sidebarExplorerHeight: 320, sidebarGitHeight: 240, sidebarDocumentationHeight: 220,
+			sidebarPanelOrder: ['explorer', 'agents', 'git', 'documentation'],
+		});
 		const projectIds = Object.keys(projectPanels);
 		const panels = Object.fromEntries(
 			projectIds.flatMap((projectId) =>
@@ -165,7 +180,7 @@ test('project and panel identity survives project switches and detach-reattach s
 			]),
 		);
 		return {
-			schemaVersion: 3,
+			schemaVersion: 4,
 			serverId: 'server-a',
 			revision,
 			cursor: String(revision),
@@ -191,6 +206,7 @@ test('project and panel identity survives project switches and detach-reattach s
 						name: projectId,
 						root: `/workspace/${projectId}`,
 						rootOrigin: 'explicit',
+						sidebar: sidebar(),
 						panelIds: projectPanels[projectId],
 						...(projectPanels[projectId][0] === undefined
 							? {}

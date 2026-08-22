@@ -26,6 +26,23 @@ export type ServerWorkspaceProject = Readonly<{
 	panelIds: readonly string[];
 	activePanelId?: string;
 	defaultShellProfileId?: string;
+	sidebar: ServerWorkspaceSidebarState;
+}>;
+
+export type ServerWorkspaceSidebarState = Readonly<{
+	fileExplorerWidth: number;
+	isFileExplorerOpen: boolean;
+	isExplorerPaneCollapsed: boolean;
+	isAgentsPaneCollapsed: boolean;
+	isGitPaneCollapsed: boolean;
+	isDocumentationPaneCollapsed: boolean;
+	expandedAgentEntryIds: readonly string[];
+	expandedDocumentationFolderIds: readonly string[];
+	sidebarAgentsHeight: number;
+	sidebarExplorerHeight: number;
+	sidebarGitHeight: number;
+	sidebarDocumentationHeight: number;
+	sidebarPanelOrder: readonly ('explorer' | 'agents' | 'git' | 'documentation')[];
 }>;
 
 export type ServerWorkspaceView = Readonly<{
@@ -125,7 +142,7 @@ export function parseServerWorkspaceSnapshot(
 		terminalSessions,
 	} = value;
 	if (
-		schemaVersion !== 3 ||
+		schemaVersion !== 4 ||
 		serverId !== expectedServerId ||
 		typeof revision !== 'number' ||
 		!Number.isSafeInteger(revision) ||
@@ -192,6 +209,7 @@ export function parseServerWorkspaceSnapshot(
 			(project.icon !== undefined && typeof project.icon !== 'string') ||
 			(project.defaultShellProfileId !== undefined &&
 				typeof project.defaultShellProfileId !== 'string') ||
+			!isWorkspaceSidebarState(project.sidebar) ||
 			snapshot.views[project.viewId]?.projectIds.includes(project.id) !==
 				true ||
 			!isStringArray(project.panelIds) ||
@@ -297,6 +315,20 @@ function isStringArray(value: unknown): value is readonly string[] {
 	return (
 		Array.isArray(value) && value.every((entry) => typeof entry === 'string')
 	);
+}
+function isWorkspaceSidebarState(value: unknown): value is ServerWorkspaceSidebarState {
+	if (!isRecord(value)) return false;
+	const booleans = ['isFileExplorerOpen', 'isExplorerPaneCollapsed', 'isAgentsPaneCollapsed', 'isGitPaneCollapsed', 'isDocumentationPaneCollapsed'];
+	if (booleans.some((key) => typeof value[key] !== 'boolean')) return false;
+	const dimensions = ['fileExplorerWidth', 'sidebarAgentsHeight', 'sidebarExplorerHeight', 'sidebarGitHeight', 'sidebarDocumentationHeight'];
+	if (dimensions.some((key) => !Number.isSafeInteger(value[key]) || (value[key] as number) < 30 || (value[key] as number) > 2_000)) return false;
+	for (const key of ['expandedAgentEntryIds', 'expandedDocumentationFolderIds']) {
+		const entries = value[key];
+		if (!isStringArray(entries) || entries.length > 256 || entries.some((entry) => entry.length === 0 || entry.length > 4_096 || entry.includes('\0'))) return false;
+	}
+	const order = value.sidebarPanelOrder;
+	const ids = ['explorer', 'agents', 'git', 'documentation'];
+	return isStringArray(order) && order.length === ids.length && new Set(order).size === ids.length && ids.every((id) => order.includes(id));
 }
 function isPositiveSafeInteger(value: unknown): value is number {
 	return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
