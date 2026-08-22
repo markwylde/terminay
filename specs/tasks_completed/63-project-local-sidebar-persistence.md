@@ -30,7 +30,7 @@ project's own sidebar without changing another project.
   defaults or another project's persisted sidebar state.
 - [x] Cover reducer migration/persistence, protocol authorization, renderer
   normalization, and restart/hydration independence between two projects.
-- [ ] Preserve the packaged-app smoke contract when a first renderer reload
+- [x] Preserve the packaged-app smoke contract when a first renderer reload
   durably commits the one-time v4 workspace migration.
 
 ## Acceptance checks
@@ -45,7 +45,7 @@ project's own sidebar without changing another project.
 - [x] Invalid sidebar patches and cross-project commands are rejected without
   changing the workspace revision.
 - [x] Focused tests pass, followed by `npm run test:e2e` in Docker.
-- [ ] The packaged macOS smoke and the full PR workflow pass.
+- [x] The packaged macOS smoke and the full PR workflow pass.
 
 ## Definition of done
 
