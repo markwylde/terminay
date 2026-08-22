@@ -1,4 +1,5 @@
 import {
+	AdmonitionDirectiveDescriptor,
 	BlockTypeSelect,
 	BoldItalicUnderlineToggles,
 	CodeToggle,
@@ -30,7 +31,16 @@ import {
 	UndoRedo,
 } from '@mdxeditor/editor';
 import type { MdxRuntimeClient } from '@terminay/client-core';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+	Component,
+	type ErrorInfo,
+	type ReactNode,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from 'react';
 import { openExternalUrl, savePreviewDownload } from '../../host/nativeActions';
 import { MdxPreview } from '../mdx-preview/MdxPreview';
 import { DocumentationAutosaveController } from './DocumentationAutosaveController';
@@ -46,7 +56,9 @@ const editorPlugins = [
 	tablePlugin(),
 	codeBlockPlugin(),
 	frontmatterPlugin(),
-	directivesPlugin(),
+	directivesPlugin({
+		directiveDescriptors: [AdmonitionDirectiveDescriptor],
+	}),
 	jsxPlugin(),
 	markdownShortcutPlugin(),
 	diffSourcePlugin({ viewMode: 'rich-text' }),
@@ -70,7 +82,53 @@ const editorPlugins = [
 	}),
 ];
 
-export function DocumentationEditor({
+type DocumentationEditorProps = Readonly<{
+	markdown: string;
+	onChange: (value: string) => void;
+	onFlush: () => Promise<void>;
+	path: string;
+	projectId: string;
+	serverId: string;
+	runtimeClient?: MdxRuntimeClient;
+}>;
+
+export function DocumentationEditor(props: DocumentationEditorProps) {
+	return (
+		<DocumentationEditorBoundary>
+			<DocumentationEditorSurface {...props} />
+		</DocumentationEditorBoundary>
+	);
+}
+
+class DocumentationEditorBoundary extends Component<
+	Readonly<{ children: ReactNode }>,
+	Readonly<{ failed: boolean }>
+> {
+	state = { failed: false };
+
+	static getDerivedStateFromError(): Readonly<{ failed: boolean }> {
+		return { failed: true };
+	}
+
+	componentDidCatch(error: Error, info: ErrorInfo): void {
+		console.error('Documentation editor failed', error, info.componentStack);
+	}
+
+	render(): ReactNode {
+		if (!this.state.failed) return this.props.children;
+		return (
+			<section className="documentation-editor__failure" role="alert">
+				<h2>Documentation editor unavailable</h2>
+				<p>Your draft is still retained. Retry the editor to continue.</p>
+				<button type="button" onClick={() => this.setState({ failed: false })}>
+					Retry editor
+				</button>
+			</section>
+		);
+	}
+}
+
+function DocumentationEditorSurface({
 	markdown,
 	onChange,
 	onFlush,
@@ -78,15 +136,7 @@ export function DocumentationEditor({
 	projectId,
 	serverId,
 	runtimeClient,
-}: {
-	readonly markdown: string;
-	readonly onChange: (value: string) => void;
-	readonly onFlush: () => Promise<void>;
-	readonly path: string;
-	readonly projectId: string;
-	readonly serverId: string;
-	readonly runtimeClient?: MdxRuntimeClient;
-}) {
+}: DocumentationEditorProps) {
 	const [state, setState] = useState<
 		'idle' | 'dirty' | 'saving' | 'saved' | 'conflict' | 'failed'
 	>('idle');
