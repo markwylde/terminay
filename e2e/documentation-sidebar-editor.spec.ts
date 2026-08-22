@@ -296,3 +296,59 @@ test('repeated AGENTS.md autosaves do not conflict with their own filesystem eve
 		);
 	}
 });
+
+test('a task checkbox autosave does not conflict with the next document edit', async ({
+	createWorkspace,
+	mainWindow,
+}) => {
+	const workspace = await createWorkspace({
+		name: 'documentation-checkbox-autosave-self-watch',
+		seed: {
+			files: {
+				'AGENTS.md': '# AGENTS\n\n- [ ] Item one\n\nWrite here.\n',
+			},
+		},
+	});
+	await setProjectRoot(mainWindow, workspace.rootDir);
+	await openFileExplorer(mainWindow);
+	const documentationPane = mainWindow
+		.locator('.project-workspace--active .sidebar-pane')
+		.filter({
+			has: mainWindow.locator('.sidebar-pane__title', {
+				hasText: 'Documentation',
+			}),
+		});
+	if (
+		await documentationPane.evaluate((element) =>
+			element.classList.contains('sidebar-pane--collapsed'),
+		)
+	) {
+		await documentationPane.locator('.sidebar-pane__header').click();
+	}
+	await mainWindow
+		.getByRole('treeitem', { name: /^Agents, AGENTS\.md$/i })
+		.click();
+	const editor = mainWindow.locator('.documentation-editor');
+	const taskCheckbox = editor.getByRole('checkbox').first();
+	await taskCheckbox.click({ position: { x: 8, y: 8 } });
+	await expect(taskCheckbox).toHaveAttribute('aria-checked', 'true');
+	await expect
+		.poll(() => workspace.readText('AGENTS.md'))
+		.toContain('* [x] Item one');
+	await expect(mainWindow.locator('.file-status-bar')).toContainText('Synced');
+
+	const paragraph = editor.getByText('Write here.', { exact: true });
+	await paragraph.click();
+	await mainWindow.keyboard.press('End');
+	await mainWindow.keyboard.type(' Again.');
+	await expect(mainWindow.locator('.file-status-bar')).toContainText(
+		'Unsaved changes',
+	);
+	await expect(
+		mainWindow.getByText(
+			'This file changed on disk while you had unsaved edits.',
+			{ exact: true },
+		),
+	).toHaveCount(0);
+	await expect(editor.locator('.documentation-editor__status')).toHaveCount(0);
+});
