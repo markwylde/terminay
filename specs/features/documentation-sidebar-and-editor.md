@@ -90,10 +90,14 @@ the isolated [MDX browser runtime](./mdx-browser-runtime.md).
   editable directive using the matching registered rich-editor descriptor.
 - Rich text uses the application's Open Sans reading face, a comfortable body
   line height, and deliberate vertical rhythm for headings, paragraphs, lists,
-  quotes, code, and tables. Its reading canvas expands fluidly at desktop
-  widths without producing edge-to-edge prose, then tightens its type and
-  margins at narrower breakpoints. Editor controls and popup menus retain the
-  same dark palette as the Documentation surface.
+  quotes, code, and tables. Task-list controls remain visually distinct to the
+  left of their labels with a consistent readable gutter. Its reading canvas
+  uses a compact leading inset and expands fluidly at desktop widths without
+  producing edge-to-edge prose, then tightens its type and
+  margins at narrower breakpoints. After the final block, the canvas retains
+  scrollable trailing space equal to 80% of the Documentation tab height.
+  Editor controls and popup menus retain the same dark palette as the
+  Documentation surface.
 - Rich table cells use the Documentation palette and readable row sizing.
   Structural row, column, and add controls remain visually quiet until their
   relevant edge is hovered or focused instead of filling an empty table with
@@ -219,6 +223,10 @@ resumption before editing or previewing.
   another panel or terminal session.
 - Rich text remains comfortably readable at normal desktop widths, and opening
   a toolbar dropdown never introduces a light-themed popup into the dark UI.
+- Markdown task lists show each checkbox to the left of, and clearly separated
+  from, its label.
+- The final document block can scroll to roughly the top fifth of the
+  Documentation tab, leaving 80% of the tab as trailing reading space.
 - Normal File Viewer editing still requires its existing explicit Save command.
 - An MDX document imports and renders a project TSX component with normal
   browser networking and external assets, while navigation, popups,
