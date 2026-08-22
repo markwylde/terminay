@@ -122,10 +122,10 @@ export class NodeAgentJournalSource implements AgentJournalSource {
 
   private startDiscovery(terminal: WatchedTerminal, persistent = false): void {
     if (persistent) terminal.discoveryPersistent = true;
-    if (!this.enabled || terminal.shellPid === undefined || terminal.tail !== undefined || terminal.discovery !== undefined) return;
+    if (!this.enabled || terminal.shellPid === undefined || terminal.discovery !== undefined) return;
     terminal.discoveryAttempts = 0;
     const discover = async () => {
-      if (terminal.tail !== undefined || terminal.shellPid === undefined || terminal.discoveryBusy) return;
+      if (terminal.shellPid === undefined || terminal.discoveryBusy) return;
       terminal.discoveryBusy = true;
       try {
         terminal.discoveryAttempts = (terminal.discoveryAttempts ?? 0) + 1;
@@ -136,8 +136,12 @@ export class NodeAgentJournalSource implements AgentJournalSource {
           }
           return;
         }
-        if (terminal.discovery !== undefined) clearInterval(terminal.discovery);
-        terminal.discovery = undefined;
+        if (terminal.tail?.path === path) return;
+        this.stopTail(terminal);
+        if (!terminal.discoveryPersistent) {
+          if (terminal.discovery !== undefined) clearInterval(terminal.discovery);
+          terminal.discovery = undefined;
+        }
         await this.startTail(terminal, path).catch(() => undefined);
       } finally {
         terminal.discoveryBusy = false;
@@ -177,7 +181,7 @@ export class NodeAgentJournalSource implements AgentJournalSource {
     tail.busy = true;
     try {
       const stillSafe = await safeJournalPath(tail.path, join(this.root, "sessions"));
-      if (stillSafe !== tail.path) { this.stopWatching(terminal); return; }
+      if (stillSafe !== tail.path) { this.stopTail(terminal); return; }
       const metadata = await stat(tail.path);
       if (metadata.size < tail.offset) { tail.offset = 0; tail.partial = ""; }
       if (metadata.size === tail.offset) return;
@@ -215,11 +219,15 @@ export class NodeAgentJournalSource implements AgentJournalSource {
 
   private stopWatching(terminal: WatchedTerminal): void {
     if (terminal.discovery !== undefined) clearInterval(terminal.discovery);
-    if (terminal.tail !== undefined) clearInterval(terminal.tail.timer);
+    this.stopTail(terminal);
     terminal.discovery = undefined;
     terminal.discoveryAttempts = undefined;
     terminal.discoveryBusy = undefined;
     terminal.discoveryPersistent = undefined;
+  }
+
+  private stopTail(terminal: WatchedTerminal): void {
+    if (terminal.tail !== undefined) clearInterval(terminal.tail.timer);
     terminal.tail = undefined;
   }
 }
