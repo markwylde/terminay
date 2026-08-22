@@ -46,3 +46,107 @@ test("driver ignores content-bearing rollout records", () => {
   }, { activationTerminalSessionId: "terminal-1", providerSessionId: "session-1", sequence: 1, occurredAt: 1 });
   assert.equal(event, null);
 });
+
+test("driver uses Codex's completed UserMessage event as the session label", () => {
+  const registry = createAgentDriverRegistry();
+  const context = { activationTerminalSessionId: "terminal-1", providerSessionId: "session-1", sequence: 1, occurredAt: 1 };
+  const event = registry.normalize("codex", "0.149.0", {
+    type: "event_msg",
+    payload: {
+      type: "item_completed",
+      item: {
+        type: "UserMessage",
+        content: [
+          { type: "image", image_url: "private-image" },
+          { type: "text", text: "hi" },
+        ],
+      },
+    },
+  }, context);
+  assert.equal(event?.kind, "turn.started");
+  assert.equal(event?.promptText, "hi");
+
+  assert.equal(registry.normalize("codex", "0.149.0", {
+    type: "response_item",
+    payload: {
+      type: "message", role: "user", content: [{ type: "input_text", text: "# AGENTS.md instructions\nInjected context" }],
+    },
+  }, context), null);
+  assert.equal(registry.normalize("codex", "0.149.0", {
+    type: "event_msg",
+    payload: {
+      type: "user_message",
+      message: "<turn_aborted>\nThe user interrupted the previous turn on purpose.\n</turn_aborted>",
+    },
+  }, context), null);
+});
+
+test("driver maps current Codex collaboration records to subagent lifecycle", () => {
+  const registry = createAgentDriverRegistry();
+  const normalize = (payload, sequence) => registry.normalize("codex", "0.149.0", {
+    type: "event_msg", payload,
+  }, { activationTerminalSessionId: "terminal-1", providerSessionId: "root-thread", sequence, occurredAt: sequence });
+
+  assert.deepEqual(normalize({
+    type: "collab_agent_spawn_end",
+    sender_thread_id: "root-thread",
+    new_thread_id: "child-thread",
+    new_agent_nickname: "Ada",
+    new_agent_role: "explorer",
+    prompt: "Inspect the parser",
+    model: "gpt-5.6-luna",
+    reasoning_effort: "high",
+    status: "running",
+  }, 1), {
+    provider: "codex", sessionId: "root-thread", activationTerminalSessionId: "terminal-1",
+    sequence: 1, occurredAt: 1, model: { id: "gpt-5.6-luna", reasoningEffort: "high" },
+    kind: "subagent.started", subagentId: "child-thread", parentAgentId: "root-thread",
+    displayName: "Ada", promptText: "Inspect the parser",
+  });
+  assert.equal(normalize({
+    type: "sub_agent_activity", agent_thread_id: "child-thread", agent_path: "/root/ada", kind: "interacted",
+  }, 2)?.kind, "subagent.started");
+  assert.deepEqual(normalize({
+    type: "collab_agent_interaction_end", receiver_thread_id: "child-thread", status: { completed: "private result" },
+  }, 3), {
+    provider: "codex", sessionId: "root-thread", activationTerminalSessionId: "terminal-1",
+    sequence: 3, occurredAt: 3, kind: "agent.done", agentId: "child-thread", outcome: "success",
+  });
+  assert.deepEqual(normalize({
+    type: "collab_close_end", receiver_thread_id: "child-thread", status: "shutdown",
+  }, 4), {
+    provider: "codex", sessionId: "root-thread", activationTerminalSessionId: "terminal-1",
+    sequence: 4, occurredAt: 4, kind: "subagent.stopped", subagentId: "child-thread", outcome: "success",
+  });
+});
+
+test("driver fans out current completed CollabAgentToolCall items", () => {
+  const registry = createAgentDriverRegistry();
+  const context = { activationTerminalSessionId: "terminal-1", providerSessionId: "root-thread", sequence: 10, occurredAt: 10 };
+  const spawn = registry.normalize("codex", "0.149.0", { type: "event_msg", payload: {
+    type: "item_completed", item: {
+      type: "CollabAgentToolCall", tool: "spawn_agent", sender_thread_id: "root-thread",
+      receiver_thread_ids: ["child-a", "child-b"],
+      receiver_agents: [
+        { thread_id: "child-a", agent_nickname: "Gauss" },
+        { thread_id: "child-b", agent_nickname: "Popper" },
+      ],
+      prompt: "Solve independently", model: "gpt-5.6-luna", reasoning_effort: "medium",
+    },
+  } }, context);
+  assert.deepEqual(spawn?.map(({ kind, subagentId, displayName, parentAgentId }) => ({ kind, subagentId, displayName, parentAgentId })), [
+    { kind: "subagent.started", subagentId: "child-a", displayName: "Gauss", parentAgentId: "root-thread" },
+    { kind: "subagent.started", subagentId: "child-b", displayName: "Popper", parentAgentId: "root-thread" },
+  ]);
+
+  const completed = registry.normalize("codex", "0.149.0", { type: "event_msg", payload: {
+    type: "item_completed", item: {
+      type: "CollabAgentToolCall", tool: "wait",
+      agents_states: { "child-a": { completed: "private result" }, "child-b": "interrupted" },
+    },
+  } }, context);
+  assert.deepEqual(completed?.map(({ kind, agentId, outcome }) => ({ kind, agentId, outcome })), [
+    { kind: "agent.done", agentId: "child-a", outcome: "success" },
+    { kind: "agent.done", agentId: "child-b", outcome: "cancelled" },
+  ]);
+});

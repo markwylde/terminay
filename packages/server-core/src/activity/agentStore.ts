@@ -98,7 +98,9 @@ function withState(entry: AgentStatusEntry, state: AgentState, event: AgentLifec
   return {
     ...entry,
     ...changes,
-    ...(event.promptText === undefined ? {} : { promptText: event.promptText }),
+    ...(event.promptText === undefined || (entry.kind === "root" && entry.promptText !== undefined)
+      ? {}
+      : { promptText: event.promptText }),
     ...(event.model === undefined ? {} : { model: event.model }),
     state,
     stateStartedAt: state === entry.state ? entry.stateStartedAt : event.occurredAt,

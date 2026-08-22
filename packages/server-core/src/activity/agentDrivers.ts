@@ -18,7 +18,7 @@ export interface AgentDriver {
   readonly mappingVersion: string;
   readonly displayName: string;
   inspectSession(record: unknown): AgentJournalSession | null;
-  normalize(record: unknown, context: AgentDriverContext): AgentLifecycleEvent | null;
+  normalize(record: unknown, context: AgentDriverContext): AgentLifecycleEvent | readonly AgentLifecycleEvent[] | null;
 }
 
 export interface ResolvedAgentDriver {
@@ -31,7 +31,7 @@ export interface AgentDriverRegistry {
   readonly drivers: readonly AgentDriver[];
   resolve(provider: string, providerVersion?: string): ResolvedAgentDriver | undefined;
   inspectSession(provider: string, record: unknown): { readonly driver: AgentDriver; readonly session: AgentJournalSession } | null;
-  normalize(provider: string, providerVersion: string | undefined, record: unknown, context: AgentDriverContext): AgentLifecycleEvent | null;
+  normalize(provider: string, providerVersion: string | undefined, record: unknown, context: AgentDriverContext): AgentLifecycleEvent | readonly AgentLifecycleEvent[] | null;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -86,6 +86,69 @@ function toolFields(payload: JsonObject, fallbackName?: string): { readonly id: 
   return id && name ? { id, name } : null;
 }
 
+function codexPromptText(value: unknown): string | undefined {
+  const text = boundedString(4_000, value);
+  // Codex persists this model-context marker through both historical user
+  // message shapes. It is lifecycle guidance, not text authored by the user.
+  return text === undefined || /^\s*<turn_aborted>[\s\S]*<\/turn_aborted>\s*$/u.test(text)
+    ? undefined
+    : text;
+}
+
+function codexCompletedUserMessage(payload: JsonObject): string | undefined {
+  const item = object(payload.item);
+  if (payload.type !== "item_completed" || item?.type !== "UserMessage" || !Array.isArray(item.content)) return undefined;
+  const text = item.content
+    .map(object)
+    .filter((item): item is JsonObject => item?.type === "text")
+    .map((item) => codexPromptText(item.text))
+    .filter((item): item is string => item !== undefined)
+    .join("")
+    .slice(0, 4_000);
+  return text || undefined;
+}
+
+function codexReceivers(item: JsonObject): readonly { readonly id: string; readonly displayName?: string }[] {
+  const named = Array.isArray(item.receiver_agents) ? item.receiver_agents.map(object).filter((value): value is JsonObject => value !== undefined) : [];
+  const byId = new Map<string, { readonly id: string; readonly displayName?: string }>();
+  for (const receiver of named) {
+    const id = boundedString(512, receiver.thread_id);
+    const displayName = boundedString(200, receiver.agent_nickname);
+    if (id) byId.set(id, { id, ...(displayName ? { displayName } : {}) });
+  }
+  if (Array.isArray(item.receiver_thread_ids)) {
+    for (const value of item.receiver_thread_ids) {
+      const id = boundedString(512, value);
+      if (id && !byId.has(id)) byId.set(id, { id });
+    }
+  }
+  return [...byId.values()];
+}
+
+function codexAgentDisplayName(payload: JsonObject): string | undefined {
+  const path = boundedString(1_000, payload.agent_path);
+  return boundedString(
+    200,
+    payload.new_agent_nickname,
+    payload.receiver_agent_nickname,
+    payload.agent_nickname,
+    payload.new_agent_role,
+    payload.receiver_agent_role,
+    payload.agent_role,
+    path?.split(/[\\/]/u).filter(Boolean).pop(),
+  );
+}
+
+function codexAgentOutcome(status: unknown): "success" | "error" | "cancelled" | undefined {
+  const name = typeof status === "string"
+    ? status.toLowerCase()
+    : Object.keys(object(status) ?? {})[0]?.toLowerCase();
+  if (name === "completed" || name === "shutdown") return "success";
+  if (name === "errored" || name === "not_found") return "error";
+  if (name === "interrupted") return "cancelled";
+  return undefined;
+}
+
 /**
  * Codex rollout JSONL mapping v0.1.
  *
@@ -108,7 +171,7 @@ export const codexV01Driver: AgentDriver = Object.freeze({
       ...(boundedString(100, payload.cli_version) === undefined ? {} : { providerVersion: boundedString(100, payload.cli_version) }),
     };
   },
-  normalize(record: unknown, context: AgentDriverContext): AgentLifecycleEvent | null {
+  normalize(record: unknown, context: AgentDriverContext): AgentLifecycleEvent | readonly AgentLifecycleEvent[] | null {
     const envelope = object(record);
     const payload = object(envelope?.payload);
     if (!envelope || !payload) return null;
@@ -125,7 +188,36 @@ export const codexV01Driver: AgentDriver = Object.freeze({
         return { ...common, kind: "turn.started", turnId: boundedString(512, payload.turn_id) };
       }
       if (eventType === "user_message") {
-        return { ...common, kind: "turn.started", promptText: boundedString(4_000, payload.message) };
+        const promptText = codexPromptText(payload.message);
+        const turnId = boundedString(512, payload.turn_id);
+        return promptText === undefined ? null : { ...common, kind: "turn.started", promptText, ...(turnId ? { turnId } : {}) };
+      }
+      if (eventType === "item_completed") {
+        const promptText = codexCompletedUserMessage(payload);
+        if (promptText !== undefined) return { ...common, kind: "turn.started", promptText };
+        const item = object(payload.item);
+        if (item?.type !== "CollabAgentToolCall") return null;
+        const tool = boundedString(100, item.tool);
+        if (tool === "spawn_agent") {
+          return codexReceivers(item).map((receiver) => ({
+            ...common,
+            ...(model(item) === undefined ? {} : { model: model(item) }),
+            kind: "subagent.started" as const,
+            subagentId: receiver.id,
+            parentAgentId: boundedString(512, item.sender_thread_id),
+            displayName: receiver.displayName,
+            promptText: boundedString(4_000, item.prompt),
+          }));
+        }
+        const states = object(item.agents_states);
+        if (tool === "wait" && states) {
+          return Object.entries(states).flatMap(([agentId, status]) => {
+            const subagentId = boundedString(512, agentId);
+            const agentOutcome = codexAgentOutcome(status);
+            return subagentId && agentOutcome ? [{ ...common, kind: "agent.done" as const, agentId: subagentId, outcome: agentOutcome }] : [];
+          });
+        }
+        return null;
       }
       if (eventType === "task_complete" || eventType === "turn_complete") {
         return { ...common, kind: "agent.done", outcome: outcome(payload) };
@@ -136,13 +228,27 @@ export const codexV01Driver: AgentDriver = Object.freeze({
       if (eventType === "exec_approval_request" || eventType === "apply_patch_approval_request" || eventType === "request_permissions" || eventType === "request_user_input" || eventType === "elicitation_request") {
         return { ...common, kind: "wait.started", state: "waiting", reason: eventType };
       }
-      if (eventType === "collab_agent_spawn_begin") {
-        const subagentId = boundedString(512, payload.agent_id, payload.thread_id, payload.receiver_thread_id);
-        return subagentId ? { ...common, kind: "subagent.started", subagentId, parentAgentId: boundedString(512, payload.parent_agent_id) } : null;
+      if (eventType === "collab_agent_spawn_end") {
+        const subagentId = boundedString(512, payload.new_thread_id, payload.agent_id, payload.thread_id, payload.receiver_thread_id);
+        return subagentId ? {
+          ...common, kind: "subagent.started", subagentId,
+          parentAgentId: boundedString(512, payload.sender_thread_id, payload.parent_agent_id),
+          displayName: codexAgentDisplayName(payload),
+          promptText: boundedString(4_000, payload.prompt),
+        } : null;
       }
-      if (eventType === "collab_agent_spawn_end" || eventType === "collab_agent_shutdown") {
-        const subagentId = boundedString(512, payload.agent_id, payload.thread_id, payload.receiver_thread_id);
-        return subagentId ? { ...common, kind: "subagent.stopped", subagentId, outcome: outcome(payload) } : null;
+      if (eventType === "collab_agent_interaction_end" || eventType === "collab_resume_end") {
+        const subagentId = boundedString(512, payload.receiver_thread_id, payload.agent_id, payload.thread_id);
+        const agentOutcome = codexAgentOutcome(payload.status);
+        return subagentId
+          ? agentOutcome === undefined
+            ? { ...common, kind: "subagent.started", subagentId, displayName: codexAgentDisplayName(payload), promptText: boundedString(4_000, payload.prompt) }
+            : { ...common, kind: "agent.done", agentId: subagentId, outcome: agentOutcome }
+          : null;
+      }
+      if (eventType === "collab_close_end" || eventType === "collab_agent_shutdown") {
+        const subagentId = boundedString(512, payload.receiver_thread_id, payload.agent_id, payload.thread_id);
+        return subagentId ? { ...common, kind: "subagent.stopped", subagentId, outcome: codexAgentOutcome(payload.status) ?? outcome(payload) } : null;
       }
       if (eventType === "sub_agent_activity") {
         const subagentId = boundedString(512, payload.agent_thread_id);
@@ -150,10 +256,12 @@ export const codexV01Driver: AgentDriver = Object.freeze({
         if (!subagentId || !activityKind) return null;
         const path = boundedString(1_000, payload.agent_path);
         const displayName = path?.split(/[\\/]/u).filter(Boolean).pop()?.slice(0, 200);
-        return activityKind === "started"
+        return activityKind === "started" || activityKind === "interacted"
           ? { ...common, kind: "subagent.started", subagentId, ...(displayName ? { displayName } : {}) }
-          : activityKind === "completed" || activityKind === "stopped" || activityKind === "shutdown"
-            ? { ...common, kind: "subagent.stopped", subagentId, outcome: outcome(payload) }
+          : activityKind === "interrupted" || activityKind === "completed"
+            ? { ...common, kind: "agent.done", agentId: subagentId, outcome: activityKind === "interrupted" ? "cancelled" : outcome(payload) }
+            : activityKind === "stopped" || activityKind === "shutdown"
+              ? { ...common, kind: "subagent.stopped", subagentId, outcome: outcome(payload) }
             : null;
       }
       if (eventType?.endsWith("_begin")) {
