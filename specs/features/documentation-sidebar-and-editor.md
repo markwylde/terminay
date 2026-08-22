@@ -124,9 +124,11 @@ the isolated [MDX browser runtime](./mdx-browser-runtime.md).
 - Autosave uses the shared server-owned file session and declares the expected
   disk and draft revisions. It preserves atomic-write, canonical-path, size,
   authorization, and environment guarantees from the File Viewer.
-- The panel reports `Saving`, `Saved`, `Conflict`, and `Save failed` states
-  without obscuring the editor. A successful save advances the base revision
-  and clears dirty state.
+- Routine autosave state is reported by the shared bottom status bar; the rich
+  editor does not add a second `Saving`, `Saved`, or `Unsaved changes` row above
+  its toolbar. Contextual notices remain available for conflicts, failures,
+  preview diagnostics, and cancellable work. A successful save advances the
+  base revision and clears dirty state.
 - Blur, presentation changes, and an attempted close request an immediate flush
   of a pending debounce. Closing waits for the bounded in-flight result; a
   failure or conflict keeps the draft and asks whether to keep the panel open or

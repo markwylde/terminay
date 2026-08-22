@@ -367,17 +367,7 @@ function DocumentationEditorSurface({
 		[compiled, projectId, serverId, startDownload],
 	);
 	const status =
-		state === 'saving'
-			? 'Saving…'
-			: state === 'saved'
-				? 'Saved'
-				: state === 'conflict'
-					? 'Conflict'
-					: state === 'failed'
-						? 'Save failed'
-						: state === 'dirty'
-							? 'Unsaved changes'
-							: '';
+		state === 'conflict' ? 'Conflict' : state === 'failed' ? 'Save failed' : '';
 	const hasStatus = Boolean(status || message);
 	return (
 		<div
