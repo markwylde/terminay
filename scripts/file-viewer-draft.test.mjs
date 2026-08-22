@@ -97,6 +97,25 @@ test('reproduces a documentation autosave watch event being mistaken for an exte
   assert.equal(disposition, 'external-conflict')
 })
 
+test('a delayed watch event from the first documentation save must not conflict with the second edit', () => {
+  // Save 1 has returned "Synced", but documentation autosave has not retained
+  // the revision it wrote. The user begins edit 2 before macOS delivers save
+  // 1's filesystem event.
+  const disposition = resolveFileWatchDisposition({
+    acknowledgedRevision: null,
+    event: {
+      exists: true,
+      mtimeMs: 1_777_000_000_001,
+      path: '/project/AGENTS.md',
+      size: 943,
+      type: 'updated',
+    },
+    isDirty: true,
+  })
+
+  assert.equal(disposition, 'acknowledged-write')
+})
+
 test('materializes a Performant sparse draft into Monaco without losing edits or dirty state', () => {
   const result = materializePerformantDraft('alpha\n雪 beta\nomega\n', [{
     dataBase64: Buffer.from('changed 雪', 'utf8').toString('base64'),
