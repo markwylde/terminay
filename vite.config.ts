@@ -2,6 +2,10 @@ import { defineConfig } from 'vite'
 import path from 'node:path'
 import electron from 'vite-plugin-electron/simple'
 import react from '@vitejs/plugin-react'
+import { developmentWorkspaceAliases } from './scripts/development-workspace-aliases.mjs'
+
+const useDevelopmentWorkspaceSources =
+  process.env.TERMINAY_DEVELOPMENT_SOURCE_WORKSPACES === '1'
 
 const nodeBuiltins = [
   'node:fs',
@@ -61,9 +65,15 @@ export default defineConfig({
         entry: 'electron/main.ts',
         vite: {
           resolve: {
-            alias: {
-              tslib: path.join(__dirname, 'node_modules/tslib/tslib.es6.mjs'),
-            },
+            alias: [
+              ...(useDevelopmentWorkspaceSources
+                ? developmentWorkspaceAliases(__dirname)
+                : []),
+              {
+                find: 'tslib',
+                replacement: path.join(__dirname, 'node_modules/tslib/tslib.es6.mjs'),
+              },
+            ],
           },
           build: {
             rolldownOptions: {
@@ -77,7 +87,10 @@ export default defineConfig({
           },
         },
       },
-      renderer: process.env.NODE_ENV === 'test' ? undefined : {},
+      // The only root renderer entry is remote.html, which is a browser-only
+      // host and imports no Electron renderer APIs. Avoid the expensive CJS
+      // shim plugin across its production and development dependency graphs.
+      renderer: undefined,
     }),
   ],
 })
