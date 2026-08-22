@@ -76,10 +76,14 @@ its descendants. A journal becomes authoritative only when its writer belongs
 to the exact PTY process tree. Environments without this capability use the
 documented terminal-activity fallback.
 
-The binding is immutable for one live provider-process incarnation. A resumed
-provider session may reopen the same journal in another terminal; the new
-writer creates a new binding incarnation and activation terminal without
-allowing stale events from the previous incarnation to mutate it.
+The terminal/process-tree boundary is immutable for one live provider-process
+incarnation, but its root-session binding is renewable. Provider-native
+`/resume` or session switching moves authority to the root journal receiving
+the newest current-session activity, retires the previous root, and replays the
+new root in the same activation terminal. A resumed provider session may also
+reopen the same journal in another terminal; that writer creates a new binding
+incarnation and activation terminal without allowing stale events from the
+previous incarnation to mutate it.
 
 The Codex launcher may expose a generic wrapper such as `node` as the PTY
 foreground process. Every transition away from the shell therefore starts a
@@ -90,8 +94,11 @@ agent. The journal is still admitted only after a writable handle is proven
 beneath the exact PTY process tree.
 
 CWD, filename timestamps, terminal title, active tab, and “closest match” logic
-must not establish an authoritative binding. A host that cannot prove the
-writer relationship uses terminal fallback instead.
+must not independently establish an authoritative binding. Claude Code is the
+exception where its exact descendant process CWD establishes the native project
+journal directory and post-process-start root writes select the active session,
+because Claude does not retain its JSONL file descriptor. A host that cannot
+establish either provider proof uses terminal fallback instead.
 
 ## Journal source contract
 
@@ -155,6 +162,9 @@ root is selected.
 | Codex record | Canonical result |
 | --- | --- |
 | root `session_meta` with `originator: codex-tui` and `source: cli` | root `session.started` / `idle` |
+| `event_msg/item_completed` carrying a `UserMessage`, or legacy `event_msg/user_message` | the first user-facing message becomes the stable root prompt label, matching Codex's own session-list derivation; raw `response_item` messages are ignored |
+| `event_msg/item_completed` carrying a `CollabAgentToolCall` | fan out its bounded receiver identities and state map into child lifecycle events |
+| model-context user item such as `<turn_aborted>` | ignored for naming |
 | `event_msg/task_started` | root `turn.started` / `working` |
 | tool/item begin or callable response item | corresponding root or child `working` |
 | execution/patch/permission approval request | corresponding entry `waiting` |
@@ -162,12 +172,31 @@ root is selected.
 | matching response/resolution or subsequent progress | finish the wait and resume `working` |
 | `event_msg/task_complete` | corresponding entry `done` |
 | error or aborted completion | `done` with error/cancelled outcome unless explicitly blocking |
-| collaboration/subagent start, activity, wait, resume, and close | create/update the matching child |
+| `collab_agent_spawn_end` | create the matching child from `new_thread_id`, bounded nickname/role/task, model, and sender parent identity |
+| collaboration interaction/resume and path activity | create or resume the matching child; prefer nickname, role, then the final path segment for its label |
+| collaboration completion, error, or interruption | mark only the matching child done with a success, error, or cancelled outcome and retain it for acknowledgement |
+| collaboration close or shutdown | retire only the matching child from the live tree |
 | `event_msg/shutdown_complete` or confirmed writer/process exit | root inactive |
 
 Sequence numbers come from accepted record order within one binding
 incarnation. Provider timestamps are used only when valid. Replayed initial
 windows and repeated records cannot rewind an entry.
+
+While Codex remains in the foreground, Terminay revalidates the rollout held
+open by that exact process tree. Opening a different eligible root rollout
+switches the tail, retires the previous root, and replays the fresh or resumed
+session.
+
+Claude Code uses the same zero-injection boundary. Terminay binds an exact
+`claude --resume <uuid>` descendant to that UUID's root JSONL below the project
+directory in `~/.claude/projects`. For a new `claude` process it admits only one
+root journal created for the exact process working directory after that process
+started. An open writable root journal remains an eligible fallback;
+`subagents/` journals and unrelated history are not eligible roots. It uses
+explicit `ai-title` records for the root label, assistant model metadata,
+bounded tool lifecycle, and `Agent` tool use/result pairs for named child
+lifecycle. Meta/local-command user records, tool-result content, assistant
+text, and reasoning are never projected.
 
 ## Agents pane and activation
 
@@ -243,6 +272,13 @@ render the accepted projection without applying a second revision fence.
 12. A reconnect/resync after a server revision restart replaces stale `done`
     state, resumes a working agent, and admits newly discovered concurrent agents.
 13. Electron end-to-end coverage runs only through `npm run test:e2e`.
+14. A current Codex completed `UserMessage` event supplies the bounded root
+    label; raw response items and non-text content are ignored.
+15. Current Codex collaboration fields create a named child beneath its exact
+    parent, while interaction, resume, interruption, and close update only that child.
+16. The first authoritative Codex user-message event becomes the stable root
+    label. Injected raw context, model-context `<turn_aborted>` markers, and
+    later user-message events cannot rename it.
 
 ## Non-goals
 
