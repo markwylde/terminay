@@ -16,7 +16,7 @@
   },
   "files": ["dist", "fixtures", "docs", "examples", "templates", "scripts", "README.md"],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node ../../scripts/build-workspace-graph.mjs --target @terminay/extension-api",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test test/*.test.mjs",
     "verify:release": "node scripts/verify-release.mjs"
