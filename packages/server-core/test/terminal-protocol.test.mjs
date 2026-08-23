@@ -8,6 +8,7 @@ import {
   OrderedEventJournal,
   createServerCore,
   ServerRuntime,
+  TerminalPresentationLeaseAuthority,
   TerminalService,
 } from "../dist/index.js";
 
@@ -307,6 +308,47 @@ test("only the explicit presentation holder can forward emulator replies", async
   assert.equal((await send(desktop, "desktop", "stale", "desktop-after-takeover")).ok, false);
   assert.equal((await send(browser, "browser", "first", "browser-first-after-takeover")).ok, true);
   assert.equal(new TextDecoder().decode(pty.processes[0].writes.at(-1)), "first");
+  await service.shutdown();
+});
+
+test("same-client congestion resume transfers presentation ownership without leaving the lease unowned", async () => {
+  const pty = createPtyFactory();
+  const service = new TerminalService({ serverId: "server-resync-lease", ptyFactory: pty, generateSessionId: () => "session-resync-lease" });
+  const actions = [];
+  const presentations = new TerminalPresentationLeaseAuthority({
+    onChanged: (state, action) => {
+      actions.push({
+        action,
+        holder: state.holder?.clientId ?? null,
+      });
+    },
+  });
+  const registry = createTerminalOperationRegistry({
+    service,
+    eventJournal: new OrderedEventJournal(),
+    presentations,
+    allowUnresolvedTestSessions: true,
+  });
+  const dispatcher = createOperationDispatcher(registry.operations);
+  const session = await service.createSession({ projectId: "project-resync-lease", cols: 80, rows: 24 });
+  const identity = { serverId: service.serverId, projectId: "project-resync-lease", sessionId: session.sessionId };
+
+  const first = (await dispatcher.command(request("terminal.attach", { clientId: "desktop", identity, fromPosition: 0 }, "attach-desktop", "write", "desktop"))).result;
+  assert.equal(first.presentation.role, "controller");
+  const observer = (await dispatcher.command(request("terminal.attach", { clientId: "browser", identity, fromPosition: 0 }, "attach-browser", "write", "browser"))).result;
+  assert.equal(observer.presentation.role, "read_only");
+
+  const resumed = (await dispatcher.command(request("terminal.attach", {
+    clientId: "desktop",
+    identity,
+    fromPosition: 0,
+    freshPresentation: true,
+  }, "resume-desktop", "write", "desktop"))).result;
+  assert.equal(resumed.presentation.role, "controller");
+  assert.equal(resumed.presentation.holder.clientId, "desktop");
+  assert.notEqual(resumed.attachmentId, first.attachmentId);
+  assert.equal(actions.some((entry) => entry.action === "release" && entry.holder === null), false);
+  assert.equal(actions.some((entry) => entry.action === "takeover" && entry.holder === "desktop"), true);
   await service.shutdown();
 });
 

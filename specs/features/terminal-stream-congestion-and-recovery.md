@@ -60,7 +60,12 @@ the same attachment-scoped recovery rather than widening memory limits or
 closing the application connection. Terminal input is disabled only while the
 controlling display lacks a valid current presentation; it is restored after
 hydration without creating another PTY or silently changing presentation
-ownership.
+ownership. Congestion resync does not detach the recovering attachment before
+its replacement attach. Same-client attachment replacement transfers an
+existing lease to the new attachment without leaving it unowned, so another
+client's renewal cannot steal control during recovery. A Take back control
+request made while recovery is in flight is applied to the replacement
+attachment instead of targeting a detached one or being discarded.
 
 Recovery never waits indefinitely for complete PTY silence. A continuously
 updating prompt, progress display, or agent remains recoverable: the client
