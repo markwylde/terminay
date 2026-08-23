@@ -26,10 +26,11 @@ forwards input, resize, and lifecycle commands through the application protocol.
   box-drawing and block glyphs fill the cell. Missing WebGL, a lost GPU
   context, or an automated driver session falls back to the DOM renderer
   without changing PTY behaviour. Server-side headless xterm never loads a
-  GPU renderer. Live surfaces pin the xterm 6.1 WebGL addon so split panes
-  that share a glyph atlas rebuild after atlas page merges instead of painting
-  stale glyphs. Custom box-drawing glyphs are a WebGL addon option, not a
-  core xterm option.
+  GPU renderer. Recording replay stays on the DOM renderer: it is not a live
+  split-pane atlas surface. Live surfaces pin the xterm 6.1 WebGL addon so
+  split panes that share a glyph atlas rebuild after atlas page merges instead
+  of painting stale glyphs. Custom box-drawing glyphs are a WebGL addon
+  option, not a core xterm option.
 - On touch devices, a vertical drag over the terminal canvas scrolls xterm's
   retained buffer without emitting terminal input. A tap remains available for
   focus and the custom scrollbar remains an equivalent scroll control.

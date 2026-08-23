@@ -154,13 +154,17 @@ test('a lost GPU context disposes the addon once so the DOM renderer can resume'
 });
 
 test('live xterm surfaces attach WebGL after open and headless xterm never does', () => {
-	for (const source of [panelSource, settingsSource, recordingsSource]) {
+	for (const source of [panelSource, settingsSource]) {
 		assert.match(
 			source,
 			/terminal\.open\(root\)[\s\S]*attachTerminalWebglRenderer\(\s*terminal,\s*\(\) =>[\s\S]*new WebglAddon\([\s\S]*createTerminalWebglAddonOptions\(/u,
 		);
 	}
 
+	assert.doesNotMatch(
+		recordingsSource,
+		/addon-webgl|WebglAddon|attachTerminalWebglRenderer/u,
+	);
 	assert.doesNotMatch(
 		checkpointSource,
 		/addon-webgl|WebglAddon|attachTerminalWebglRenderer/u,
