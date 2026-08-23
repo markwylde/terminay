@@ -1,9 +1,15 @@
 import { useEffect, useState } from 'react'
-import type { AgentClientSnapshot, AgentStatusClient } from '@terminay/client-core'
+import type { AgentClientEntry, AgentClientSnapshot, AgentStatusClient } from '@terminay/client-core'
 
 export interface SharedAgentRouteBodyProps {
   readonly client?: AgentStatusClient
   readonly loading?: boolean
+}
+
+const PROVIDER_LABELS: Record<AgentClientEntry['provider'], string> = {
+  codex: 'Codex',
+  'claude-code': 'Claude Code',
+  omp: 'omp',
 }
 
 /** Live, server-owned agent projection shared by Desktop and browser hosts. */
@@ -43,7 +49,7 @@ export function SharedAgentRouteBody({ client, loading = false }: SharedAgentRou
         <ul aria-label="Agent activity">
           {agents.map((agent) => (
             <li key={agent.entryId} className="shared-production-route__card">
-              <strong>{agent.provider === 'codex' ? 'Codex' : 'Claude Code'} {agent.kind === 'subagent' ? 'subagent' : 'agent'}</strong>
+              <strong>{PROVIDER_LABELS[agent.provider]} {agent.kind === 'subagent' ? 'subagent' : 'agent'}</strong>
               <span>{agentStateLabel(agent.state)}</span>
               {agent.unread && <span>Unread activity</span>}
             </li>

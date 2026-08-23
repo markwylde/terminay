@@ -5,6 +5,13 @@ export interface AgentDriverContext {
   readonly sequence: number;
   readonly occurredAt?: number;
   readonly providerSessionId?: string;
+  /**
+   * OMP child journals belong to the root journal's status stream. The journal
+   * source supplies their filename-derived identity; journal records themselves
+   * remain untrusted provider data.
+   */
+  readonly journalRole?: "root" | "child";
+  readonly childAgentId?: string;
 }
 
 export interface AgentJournalSession {
@@ -363,6 +370,136 @@ export const claudeCodeV01Driver: AgentDriver = Object.freeze({
   },
 });
 
+function ompPromptText(content: unknown): string | undefined {
+  if (typeof content === "string") return boundedString(4_000, content);
+  if (!Array.isArray(content)) return undefined;
+  const text = content
+    .map(object)
+    .filter((item): item is JsonObject => item?.type === "text")
+    .map((item) => boundedString(4_000, item.text))
+    .filter((item): item is string => item !== undefined)
+    .join("")
+    .slice(0, 4_000);
+  return text || undefined;
+}
+
+function ompAssistantOutcome(stopReason: unknown): "success" | "error" | "cancelled" | undefined {
+  switch (stopReason) {
+    case "stop":
+    case "length":
+      return "success";
+    case "error":
+      return "error";
+    case "aborted":
+      return "cancelled";
+    default:
+      return undefined;
+  }
+}
+
+function ompAssistantToolCalls(message: JsonObject): readonly { readonly id: string; readonly name: string }[] {
+  if (!Array.isArray(message.content)) return [];
+  return message.content.map(object).flatMap((item) => {
+    if (item?.type !== "toolCall") return [];
+    const id = boundedString(512, item.id);
+    const name = boundedString(200, item.name);
+    return id && name ? [{ id, name }] : [];
+  });
+}
+
+function ompExitOutcome(data: JsonObject): "success" | "error" | "cancelled" {
+  if (Array.isArray(data.pendingToolCalls) && data.pendingToolCalls.length > 0) return "cancelled";
+  if (data.kind === "fatal") return "error";
+  if (data.kind === "signal" || data.kind === "process_exit") return "cancelled";
+  return "success";
+}
+
+function ompTarget(context: AgentDriverContext): { readonly agentId?: string } {
+  return context.journalRole === "child" && boundedString(512, context.childAgentId)
+    ? { agentId: boundedString(512, context.childAgentId) }
+    : {};
+}
+
+/**
+ * oh-my-pi journal mapping v0.1.
+ *
+ * The first physical line is a mutable, fixed-width title slot. It is neither
+ * a session header nor a lifecycle record. This driver admits only the logical
+ * `session` header and projects no assistant text, tool arguments, or output.
+ */
+export const ompV01Driver: AgentDriver = Object.freeze({
+  provider: "omp",
+  mappingVersion: "0.1",
+  displayName: "omp",
+  inspectSession(record: unknown): AgentJournalSession | null {
+    const header = object(record);
+    if (header?.type !== "session") return null;
+    const providerSessionId = boundedString(512, header.id);
+    return providerSessionId ? { providerSessionId } : null;
+  },
+  normalize(record: unknown, context: AgentDriverContext): AgentLifecycleEvent | readonly AgentLifecycleEvent[] | null {
+    const envelope = object(record);
+    if (!envelope) return null;
+    const message = object(envelope.message) ?? {};
+    const common = base(context, envelope, message, "omp");
+    if (!common) return null;
+    const target = ompTarget(context);
+
+    if (envelope.type === "session") {
+      if (context.journalRole === "child") {
+        const subagentId = boundedString(512, context.childAgentId, envelope.id);
+        return subagentId
+          ? { ...common, kind: "subagent.started", subagentId, parentAgentId: context.providerSessionId }
+          : null;
+      }
+      return { ...common, kind: "session.started", displayName: "omp" };
+    }
+    if (envelope.type === "model_change") {
+      // Model selection is useful sidebar metadata, but must never look like
+      // a new turn or otherwise alter the provider's operational state.
+      const metadata = base(context, envelope, envelope, "omp");
+      return metadata?.model ? { ...metadata, ...target, kind: "agent.metadata" } : null;
+    }
+    if (envelope.type === "message") {
+      if (message.role === "user" && message.synthetic !== true) {
+        const promptText = ompPromptText(message.content);
+        return promptText ? { ...common, ...target, kind: "turn.started", promptText, turnId: boundedString(512, envelope.id) } : null;
+      }
+      if (message.role === "toolResult") {
+        const toolId = boundedString(512, message.toolCallId);
+        return toolId ? { ...common, ...target, kind: "tool.finished", toolId, outcome: message.isError === true ? "error" : "success" } : null;
+      }
+      if (message.role === "assistant") {
+        const events: AgentLifecycleEvent[] = ompAssistantToolCalls(message)
+          .map((tool) => ({ ...common, ...target, kind: "tool.started" as const, tool }));
+        const assistantOutcome = ompAssistantOutcome(message.stopReason);
+        // A persisted terminal stop reason is authoritative. A complete
+        // assistant tail without outstanding calls is also a completed turn.
+        if (assistantOutcome !== undefined) events.push({ ...common, ...target, kind: "agent.done", outcome: assistantOutcome });
+        return events.length === 0 ? null : events.length === 1 ? events[0]! : events;
+      }
+      return null;
+    }
+    if (envelope.type === "custom" && envelope.customType === "tool_execution_start") {
+      const data = object(envelope.data);
+      const id = boundedString(512, data?.toolCallId);
+      const name = boundedString(200, data?.toolName);
+      return id && name ? { ...common, ...target, kind: "tool.started", tool: { id, name } } : null;
+    }
+    if (envelope.type === "custom" && envelope.customType === "session_exit") {
+      const data = object(envelope.data);
+      if (!data) return null;
+      if (context.journalRole === "child") {
+        const subagentId = boundedString(512, context.childAgentId);
+        return subagentId ? { ...common, kind: "subagent.stopped", subagentId, outcome: ompExitOutcome(data) } : null;
+      }
+      const interrupted = Array.isArray(data.pendingToolCalls) && data.pendingToolCalls.length > 0;
+      return { ...common, kind: "session.stopped", reason: interrupted ? "interrupted" : "session_exit" };
+    }
+    return null;
+  },
+});
+
 function versionTuple(value: string | undefined): readonly number[] | undefined {
   if (value === undefined) return undefined;
   const match = /^(\d+)(?:\.(\d+))?/u.exec(value.trim().replace(/^v/u, ""));
@@ -375,7 +512,7 @@ function compareVersion(left: string, right: string): number {
   return (a[0] ?? 0) - (b[0] ?? 0) || (a[1] ?? 0) - (b[1] ?? 0);
 }
 
-export function createAgentDriverRegistry(drivers: readonly AgentDriver[] = [codexV01Driver, claudeCodeV01Driver]): AgentDriverRegistry {
+export function createAgentDriverRegistry(drivers: readonly AgentDriver[] = [codexV01Driver, claudeCodeV01Driver, ompV01Driver]): AgentDriverRegistry {
   const ordered = [...drivers].sort((left, right) => left.provider.localeCompare(right.provider) || compareVersion(left.mappingVersion, right.mappingVersion));
   const resolve = (provider: string, providerVersion?: string): ResolvedAgentDriver | undefined => {
     const candidates = ordered.filter((driver) => driver.provider === provider);

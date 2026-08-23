@@ -51,6 +51,7 @@ export function activateAgentFromSnapshot(
 const PROVIDER_LABELS: Record<AgentProvider, string> = {
 	codex: 'Codex',
 	'claude-code': 'Claude Code',
+	omp: 'omp',
 };
 
 function buildAgentTree(items: readonly AgentsSidebarItem[]): AgentTreeNode[] {

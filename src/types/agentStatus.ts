@@ -6,7 +6,7 @@
  * `sessionId` + `activationTerminalSessionId`).
  */
 
-export const AGENT_PROVIDERS = ['codex', 'claude-code'] as const;
+export const AGENT_PROVIDERS = ['codex', 'claude-code', 'omp'] as const;
 export type AgentProvider = (typeof AGENT_PROVIDERS)[number];
 
 export const AGENT_STATES = [
