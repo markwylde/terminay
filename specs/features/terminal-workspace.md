@@ -244,6 +244,10 @@ write-authorized observer shows takeover UI only while a different live
 attachment is the holder, as a full-width terminal bar reading “Another device
 is controlling this terminal.” with a “Take back control” action. A lease
 conflict is normal read-only presentation state, not a connection failure.
+Congestion recovery must not drop that action or apply it to a detached
+attachment: if the observer clicks during checkpoint resync, the replacement
+attach performs the requested acquire or takeover. Presentation events with an
+older revision must not overwrite a newer local presentation state.
 The control bar is an opaque, themed layout row above the terminal viewport;
 it reserves its own height and never covers terminal output, the cursor, or the
 emulator input surface. Its geometry and appearance are identical in desktop
