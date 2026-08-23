@@ -21,7 +21,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { buildTerminalOptions, defaultTerminalSettings, resolveTerminalTheme } from '../terminalSettings'
-import { useTerminalSettings } from '../hooks/useTerminalSettings'
+import { useOptionalTerminalSettings } from '../hooks/useTerminalSettings'
 import type { TerminalSettings, TerminalThemeSettings } from '../types/settings'
 import type { TerminalRecordingListItem } from '../types/terminay'
 import {
@@ -470,40 +470,127 @@ class RecordingsRouteErrorBoundary extends Component<
   render(): ReactNode {
     if (this.state.error === null) return this.props.children
     return (
-      <SharedRecordingsRouteBody
-        library={
-          <SharedRecordingsLibraryPane
-            groupedRecordings={[]}
-            isLoading={false}
-            onQueryChange={() => {}}
-            onRefresh={() => {}}
-            onSelect={() => {}}
-            query=""
-            recordings={[]}
-            selectedRecordingId={null}
-            titleFor={() => ''}
-            durationFor={() => ''}
-          />
-        }
-      >
-        <div className="recordings-error" role="alert">
-          {this.state.error.message}
-        </div>
-      </SharedRecordingsRouteBody>
+      <div className="recordings-error" role="alert">
+        {this.state.error.message}
+      </div>
     )
   }
 }
 
 export function RecordingsWindow({ client }: { readonly client: RecordingsClient }) {
-  return (
-    <RecordingsRouteErrorBoundary>
-      <RecordingsWindowContent client={client} />
-    </RecordingsRouteErrorBoundary>
-  )
+  return <RecordingsWindowContent client={client} />
 }
 
 function RecordingsWindowContent({ client }: { readonly client: RecordingsClient }) {
-  const { settings } = useTerminalSettings()
+  const [recordings, setRecordings] = useState<TerminalRecordingListItem[]>([])
+  const [selectedRecordingId, setSelectedRecordingId] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [isLoading, setIsLoading] = useState(true)
+  const [listErrorText, setListErrorText] = useState<string | null>(null)
+
+  const loadRecordings = useCallback(async () => {
+    setIsLoading(true)
+    setListErrorText(null)
+    try {
+      const nextRecordings = (await client.list()).items.map(toRecordingMetadata)
+      setRecordings(nextRecordings)
+      setSelectedRecordingId((current) =>
+        current && nextRecordings.some((recording) => recording.recordingId === current)
+          ? current
+          : nextRecordings[0]?.recordingId ?? null)
+    } catch (error) {
+      setListErrorText(error instanceof Error ? error.message : String(error))
+    } finally {
+      setIsLoading(false)
+    }
+  }, [client])
+
+  useEffect(() => {
+    void loadRecordings()
+  }, [loadRecordings])
+
+  const selectedRecording = recordings.find((recording) => recording.recordingId === selectedRecordingId) ?? null
+
+  const filteredRecordings = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase()
+    if (!normalizedQuery) {
+      return recordings
+    }
+
+    return recordings.filter((recording) =>
+      [
+        recording.title,
+        recording.projectTitle,
+        getRecordingDisplayTitle(recording),
+        recording.cwdLabel,
+        recording.shellName,
+        recording.startedAt,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(normalizedQuery),
+    )
+  }, [query, recordings])
+
+  const groupedRecordings = useMemo(() => {
+    const groups = new Map<string, TerminalRecordingListItem[]>()
+    for (const recording of filteredRecordings) {
+      const key = recording.startedAt?.slice(0, 10) || 'Unknown'
+      const items = groups.get(key) ?? []
+      items.push(recording)
+      groups.set(key, items)
+    }
+    return [...groups.entries()]
+  }, [filteredRecordings])
+
+  const onDelete = async () => {
+    if (!selectedRecordingId || !confirm('Delete this recording?')) {
+      return
+    }
+    if (!selectedRecording) {
+      return
+    }
+    await client.delete(selectedRecording.recordingId)
+    setSelectedRecordingId(null)
+    await loadRecordings()
+  }
+
+  return (
+    <SharedRecordingsRouteBody library={<SharedRecordingsLibraryPane
+        groupedRecordings={groupedRecordings}
+        isLoading={isLoading}
+        onQueryChange={setQuery}
+        onRefresh={() => void loadRecordings()}
+        onSelect={setSelectedRecordingId}
+        query={query}
+        recordings={recordings}
+        selectedRecordingId={selectedRecordingId}
+        titleFor={getRecordingDisplayTitle}
+        durationFor={formatDuration}
+      />}>
+        {listErrorText ? <div className="recordings-error" role="alert">{listErrorText}</div> : null}
+        <RecordingsRouteErrorBoundary key={selectedRecordingId ?? 'none'}>
+          <RecordingsReplayPane
+            client={client}
+            onDelete={onDelete}
+            selectedRecording={selectedRecording}
+          />
+        </RecordingsRouteErrorBoundary>
+    </SharedRecordingsRouteBody>
+  )
+}
+
+function RecordingsReplayPane({
+  client,
+  onDelete,
+  selectedRecording,
+}: {
+  readonly client: RecordingsClient
+  readonly onDelete: () => Promise<void>
+  readonly selectedRecording: TerminalRecordingListItem | null
+}) {
+  const { settings } = useOptionalTerminalSettings()
   const readRecordingChunk = useCallback(
     (request: { recordingId: string; start?: number; maxBytes?: number }) => client.replay(request.recordingId, request),
     [client],
@@ -522,11 +609,8 @@ function RecordingsWindowContent({ client }: { readonly client: RecordingsClient
   const playheadRef = useRef(0)
   const displayScaleRef = useRef(1)
   const measureFrameRef = useRef<number | null>(null)
-  const [recordings, setRecordings] = useState<TerminalRecordingListItem[]>([])
-  const [selectedRecordingId, setSelectedRecordingId] = useState<string | null>(null)
+  const selectedRecordingId = selectedRecording?.recordingId ?? null
   const [replayIndex, setReplayIndex] = useState<ReplayIndex | null>(null)
-  const [query, setQuery] = useState('')
-  const [isLoading, setIsLoading] = useState(true)
   const [isReplayLoading, setIsReplayLoading] = useState(false)
   const [errorText, setErrorText] = useState<string | null>(null)
   const [replayWarning, setReplayWarning] = useState<string | null>(null)
@@ -538,8 +622,6 @@ function RecordingsWindowContent({ client }: { readonly client: RecordingsClient
   const [customScale, setCustomScale] = useState(1)
   const [terminalSize, setTerminalSize] = useState<ElementSize>({ height: 1, width: 1 })
   const [viewportSize, setViewportSize] = useState<ElementSize>({ height: 1, width: 1 })
-  const selectedRecording = recordings.find((recording) => recording.recordingId === selectedRecordingId) ?? null
-
   useEffect(() => {
     playheadRef.current = playhead
   }, [playhead])
@@ -648,27 +730,6 @@ function RecordingsWindowContent({ client }: { readonly client: RecordingsClient
 
     return resolveTerminalTheme(settings ?? defaultTerminalSettings, getRecordingTabColor(selectedRecording))
   }, [recordedTheme, replayThemeMode, selectedRecording, settings])
-
-  const loadRecordings = useCallback(async () => {
-    setIsLoading(true)
-    setErrorText(null)
-    try {
-      const nextRecordings = (await client.list()).items.map(toRecordingMetadata)
-      setRecordings(nextRecordings)
-      setSelectedRecordingId((current) =>
-        current && nextRecordings.some((recording) => recording.recordingId === current)
-          ? current
-          : nextRecordings[0]?.recordingId ?? null)
-    } catch (error) {
-      setErrorText(error instanceof Error ? error.message : String(error))
-    } finally {
-      setIsLoading(false)
-    }
-  }, [client])
-
-  useEffect(() => {
-    void loadRecordings()
-  }, [loadRecordings])
 
   const seekToTime = useCallback(async (time: number) => {
     const terminal = terminalRef.current
@@ -915,39 +976,6 @@ function RecordingsWindowContent({ client }: { readonly client: RecordingsClient
     }
   }, [isPlaying, measureTerminal, readRecordingChunk, replayIndex, speed, stopAnimation])
 
-  const filteredRecordings = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase()
-    if (!normalizedQuery) {
-      return recordings
-    }
-
-    return recordings.filter((recording) =>
-      [
-        recording.title,
-        recording.projectTitle,
-        getRecordingDisplayTitle(recording),
-        recording.cwdLabel,
-        recording.shellName,
-        recording.startedAt,
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase()
-        .includes(normalizedQuery),
-    )
-  }, [query, recordings])
-
-  const groupedRecordings = useMemo(() => {
-    const groups = new Map<string, TerminalRecordingListItem[]>()
-    for (const recording of filteredRecordings) {
-      const key = recording.startedAt.slice(0, 10) || 'Unknown'
-      const items = groups.get(key) ?? []
-      items.push(recording)
-      groups.set(key, items)
-    }
-    return [...groups.entries()]
-  }, [filteredRecordings])
-
   const onTogglePlay = () => {
     if (!replayIndex || isReplayLoading) {
       return
@@ -1029,35 +1057,8 @@ function RecordingsWindowContent({ client }: { readonly client: RecordingsClient
     })
   }
 
-  const onDelete = async () => {
-    if (!selectedRecordingId || !confirm('Delete this recording?')) {
-      return
-    }
-
-    if (!selectedRecording) {
-      return
-    }
-    await client.delete(selectedRecording.recordingId)
-    setSelectedRecordingId(null)
-    setReplayIndex(null)
-    replayIndexRef.current = null
-    replayCursorRef.current = null
-    await loadRecordings()
-  }
-
   return (
-    <SharedRecordingsRouteBody library={<SharedRecordingsLibraryPane
-        groupedRecordings={groupedRecordings}
-        isLoading={isLoading}
-        onQueryChange={setQuery}
-        onRefresh={() => void loadRecordings()}
-        onSelect={setSelectedRecordingId}
-        query={query}
-        recordings={recordings}
-        selectedRecordingId={selectedRecordingId}
-        titleFor={getRecordingDisplayTitle}
-        durationFor={formatDuration}
-      />}>
+    <>
         {errorText ? <div className="recordings-error" role="alert">{errorText}</div> : null}
         {isReplayLoading ? <div className="recordings-empty" role="status">Preparing replay…</div> : null}
         {replayWarning ? <div className="recordings-warning" role="status">{replayWarning}</div> : null}
@@ -1198,6 +1199,6 @@ function RecordingsWindowContent({ client }: { readonly client: RecordingsClient
             </div>
           </div>
         </footer>
-    </SharedRecordingsRouteBody>
+    </>
   )
 }

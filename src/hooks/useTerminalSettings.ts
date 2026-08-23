@@ -224,19 +224,36 @@ function mergeSettings(
 	return normalizeTerminalSettings(merge(device, server));
 }
 
+export function useOptionalTerminalSettings(override?: TerminalSettingsClient) {
+	const injectedClient = useContext(TerminalSettingsClientContext);
+	return useTerminalSettingsState(override ?? injectedClient);
+}
+
 export function useTerminalSettings(override?: TerminalSettingsClient) {
 	const injectedClient = useContext(TerminalSettingsClientContext);
 	const settingsClient = override ?? injectedClient;
 	if (settingsClient === undefined) {
 		throw new Error('Terminal settings client is unavailable');
 	}
+	const state = useTerminalSettingsState(settingsClient);
+	return { ...state, settingsClient };
+}
+
+function useTerminalSettingsState(settingsClient: TerminalSettingsClient | undefined) {
 	const [settings, setSettings] = useState<TerminalSettings>(
 		defaultTerminalSettings,
 	);
-	const [isLoading, setIsLoading] = useState(true);
+	const [isLoading, setIsLoading] = useState(settingsClient !== undefined);
 	const [error, setError] = useState<Error | null>(null);
 
 	useEffect(() => {
+		if (settingsClient === undefined) {
+			setSettings(defaultTerminalSettings);
+			setError(null);
+			setIsLoading(false);
+			return;
+		}
+
 		let isMounted = true;
 
 		void settingsClient.get<TerminalSettings>().then((nextSettings) => {
