@@ -243,6 +243,8 @@ export function useFileExplorerController({
 	const referencesRef = useRef<ReadonlyMap<string, GitWorktreeReference>>(
 		new Map(),
 	);
+	const worktreeDeleteQueueRef = useRef(Promise.resolve());
+	const gitStatusRefreshTimerRef = useRef<number | undefined>(undefined);
 	const refreshTimersRef = useRef<Map<string, number>>(new Map());
 	const unavailableWatchFallbacksRef = useRef<Set<string>>(new Set());
 	const loadVersionsRef = useRef<Map<string, number>>(new Map());
@@ -759,6 +761,7 @@ export function useFileExplorerController({
 			setDeletingWorktreePaths((current) =>
 				new Set(current).add(worktree.path),
 			);
+			const run = async () => {
 			try {
 				const reference = referencesRef.current.get(worktree.path);
 				if (gitClient === undefined || reference === undefined) {
@@ -784,6 +787,10 @@ export function useFileExplorerController({
 					void refreshGitStatusesForRoot(project.rootFolder, true);
 				}
 			}
+			};
+			const queued = worktreeDeleteQueueRef.current.then(run, run);
+			worktreeDeleteQueueRef.current = queued.then(() => undefined, () => undefined);
+			await queued;
 		},
 		[
 			gitClient,
@@ -924,7 +931,13 @@ export function useFileExplorerController({
 				.subscribeStatusChanges(
 					(event) => {
 						if (disposed || event.projectId !== project.id) return;
-						void refreshGitStatusesForRoot(project.rootFolder, true);
+						if (gitStatusRefreshTimerRef.current !== undefined) {
+							window.clearTimeout(gitStatusRefreshTimerRef.current);
+						}
+						gitStatusRefreshTimerRef.current = window.setTimeout(() => {
+							gitStatusRefreshTimerRef.current = undefined;
+							if (!disposed) void refreshGitStatusesForRoot(project.rootFolder, true);
+						}, WATCH_REFRESH_DELAY_MS);
 					},
 					() => {
 						if (!disposed)
@@ -941,6 +954,10 @@ export function useFileExplorerController({
 			.catch(() => undefined);
 		return () => {
 			disposed = true;
+			if (gitStatusRefreshTimerRef.current !== undefined) {
+				window.clearTimeout(gitStatusRefreshTimerRef.current);
+				gitStatusRefreshTimerRef.current = undefined;
+			}
 			unsubscribe?.();
 		};
 	}, [gitClient, project.id, project.rootFolder, refreshGitStatusesForRoot]);

@@ -75,7 +75,8 @@ export class GitService {
   private readonly statusPollIntervalMs: number | false;
   private readonly bindings = new Map<string, GitProjectBinding>();
   private readonly listeners = new Set<GitServiceListener>();
-  private readonly worktreeMutations = new Set<string>();
+  private readonly mutatingWorktreeIds = new Set<string>();
+  private readonly repositoryMutationTails = new Map<string, Promise<unknown>>();
   private readonly events: GitServiceEvent[] = [];
   private readonly maxEvents: number;
   private readonly statusPollTimers = new Map<string, GitStatusPollTimer>();
@@ -272,7 +273,8 @@ export class GitService {
       let lineDeletions: number | null = null;
       let hasCommittedChanges: boolean | null = null;
       let discoveryState: GitDiscoveryState = "ready";
-      if (!record.isBare && !record.isPrunable) {
+      const mutating = this.mutatingWorktreeIds.has(id);
+      if (!record.isBare && !record.isPrunable && !mutating) {
         const statusResult = await this.runGit(["status", "--porcelain=v1", "-z", "--branch", "--untracked-files=all", "--ignored=no"], record.path, target.signal);
         if (statusResult.exitCode === 0 && !statusResult.truncated) {
           const parsed = parseStatus(statusResult.stdout, this.limits.maxStatusEntries);
@@ -312,19 +314,21 @@ export class GitService {
         ...(error === undefined ? {} : { error }),
       } satisfies GitWorktreeSummary;
       summaries.push(summary);
-      this.publishStatusChange({
-        projectId: target.projectId,
-        repositoryId: discovery.repositoryId,
-        repositoryRoot: discovery.repositoryRoot,
-        worktreeId: id,
-        worktreeRoot: canonicalPath,
-        state: discoveryState,
-        branch,
-        entries,
-        head: record.head,
-        bounded: statusBounded,
-        ...(error === undefined ? {} : { error }),
-      });
+      if (!mutating) {
+        this.publishStatusChange({
+          projectId: target.projectId,
+          repositoryId: discovery.repositoryId,
+          repositoryRoot: discovery.repositoryRoot,
+          worktreeId: id,
+          worktreeRoot: canonicalPath,
+          state: discoveryState,
+          branch,
+          entries,
+          head: record.head,
+          bounded: statusBounded,
+          ...(error === undefined ? {} : { error }),
+        });
+      }
     }
     return { ...empty, state: "ready", defaultBranch, worktrees: summaries, bounded };
   }
@@ -336,11 +340,8 @@ export class GitService {
   async moveWorktree(request: GitWorktreeMoveRequest): Promise<GitWorktreeMoveResult> {
     validateProjectId(request.projectId);
     const name = validateWorktreeDirectoryName(request.name);
-    const mutationKey = `${request.projectId}\0${request.repositoryId}\0${request.worktreeId}`;
-    if (this.worktreeMutations.has(mutationKey)) throw new GitServiceError("mutation-failed", "a worktree mutation is already in progress", { worktreeId: request.worktreeId });
-    this.worktreeMutations.add(mutationKey);
-    try {
-      const listing = await this.worktrees({ projectId: request.projectId, repositoryId: request.repositoryId, signal: request.signal });
+    return this.enqueueRepositoryMutation(request.repositoryId, request.worktreeId, async () => {
+      const listing = await this.listWorktreeIdentities({ projectId: request.projectId, repositoryId: request.repositoryId, signal: request.signal });
       const base = { operation: "move" as const, projectId: request.projectId, repositoryId: request.repositoryId, worktreeIdBefore: request.worktreeId };
       if (listing.state !== "ready" || listing.repositoryId !== request.repositoryId) return { ...base, worktreeId: request.worktreeId, applied: false, state: "command-error", headBefore: null, headAfter: null, path: null, error: listing.error ?? { code: "repository-mismatch", message: "worktree repository is no longer bound to this project", operation: "worktree.move" } };
       const selected = listing.worktrees.find((value) => value.id === request.worktreeId);
@@ -358,14 +359,12 @@ export class GitService {
       if (cwd === undefined) return { ...base, worktreeId: request.worktreeId, applied: false, state: "command-error", headBefore: selected.head, headAfter: selected.head, path: selected.path, error: { code: "invalid-project", message: "project is no longer bound to this server", operation: "worktree.move" } };
       const moved = await this.runGit(["worktree", "move", "--", selected.path, destination], cwd, request.signal);
       if (moved.exitCode !== 0 || moved.truncated) return { ...base, worktreeId: request.worktreeId, applied: false, state: "command-error", headBefore: selected.head, headAfter: selected.head, path: selected.path, error: commandError("worktree.move", moved, moved.truncated ? "Git worktree move exceeded the configured output limit." : "Git worktree move failed.") };
-      const after = await this.worktrees({ projectId: request.projectId, repositoryId: request.repositoryId, signal: request.signal });
+      const after = await this.listWorktreeIdentities({ projectId: request.projectId, repositoryId: request.repositoryId, signal: request.signal });
       const canonicalDestination = await this.canonicalWorktreePath(destination);
       const replacement = after.worktrees.find((value) => samePath(value.path, canonicalDestination));
       if (after.state !== "ready" || replacement === undefined || after.worktrees.some((value) => value.id === request.worktreeId)) return { ...base, worktreeId: request.worktreeId, applied: false, state: "command-error", headBefore: selected.head, headAfter: null, path: null, error: { code: "mutation-failed", message: "Git reported movement but canonical registration did not change", operation: "worktree.move" } };
       return { ...base, worktreeId: replacement.id, applied: true, state: "moved", headBefore: selected.head, headAfter: replacement.head, path: replacement.path };
-    } finally {
-      this.worktreeMutations.delete(mutationKey);
-    }
+    });
   }
 
   /**
@@ -376,13 +375,15 @@ export class GitService {
    */
   async removeWorktree(request: GitWorktreeRemoveRequest): Promise<GitWorktreeRemoveResult> {
     validateProjectId(request.projectId);
-    const target = normalizeTarget({
+    return this.enqueueRepositoryMutation(request.repositoryId, request.worktreeId, () => this.executeRemoveWorktree(request));
+  }
+
+  private async executeRemoveWorktree(request: GitWorktreeRemoveRequest): Promise<GitWorktreeRemoveResult> {
+    const listing = await this.listWorktreeIdentities({
       projectId: request.projectId,
       repositoryId: request.repositoryId,
-      worktreeId: request.worktreeId,
       ...(request.signal === undefined ? {} : { signal: request.signal }),
     });
-    const listing = await this.worktrees(target);
     const base = {
       operation: "remove" as const,
       projectId: request.projectId,
@@ -464,7 +465,7 @@ export class GitService {
 
     // Verify that the exact identity disappeared; a successful command that
     // leaves the worktree registered is reported as a deterministic failure.
-    const after = await this.worktrees({ projectId: request.projectId, repositoryId: request.repositoryId });
+    const after = await this.listWorktreeIdentities({ projectId: request.projectId, repositoryId: request.repositoryId });
     if (after.state !== "ready" || after.worktrees.some((worktree) => worktree.id === request.worktreeId)) {
       return {
         ...base,
@@ -482,8 +483,12 @@ export class GitService {
    * immediately before Git mutates it and status is verified afterwards. */
   async pullWorktree(request: GitWorktreePullRequest): Promise<GitWorktreePullResult> {
     validateProjectId(request.projectId);
+    return this.enqueueRepositoryMutation(request.repositoryId, request.worktreeId, () => this.executePullWorktree(request));
+  }
+
+  private async executePullWorktree(request: GitWorktreePullRequest): Promise<GitWorktreePullResult> {
     const base = { operation: "pull" as const, projectId: request.projectId, repositoryId: request.repositoryId, worktreeId: request.worktreeId };
-    const listing = await this.worktrees({ projectId: request.projectId, repositoryId: request.repositoryId, ...(request.signal === undefined ? {} : { signal: request.signal }) });
+    const listing = await this.listWorktreeIdentities({ projectId: request.projectId, repositoryId: request.repositoryId, ...(request.signal === undefined ? {} : { signal: request.signal }) });
     if (listing.state !== "ready" || listing.repositoryId !== request.repositoryId) {
       return { ...base, applied: false, state: "command-error", headBefore: null, headAfter: null, error: listing.error ?? { code: "repository-mismatch", message: "worktree repository is no longer bound to this project", operation: "worktree.pull" } };
     }
@@ -525,6 +530,69 @@ export class GitService {
     return this.readOnly(request);
   }
 
+  private enqueueRepositoryMutation<T>(repositoryId: string, worktreeId: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.repositoryMutationTails.get(repositoryId) ?? Promise.resolve();
+    const run = previous.catch(() => undefined).then(async () => {
+      this.mutatingWorktreeIds.add(worktreeId);
+      try {
+        return await work();
+      } finally {
+        this.mutatingWorktreeIds.delete(worktreeId);
+      }
+    });
+    this.repositoryMutationTails.set(repositoryId, run);
+    void run.finally(() => {
+      if (this.repositoryMutationTails.get(repositoryId) === run) this.repositoryMutationTails.delete(repositoryId);
+    }).then(() => undefined, () => undefined);
+    return run;
+  }
+
+  private async listWorktreeIdentities(target: GitTargetRequest): Promise<{
+    readonly projectId: string;
+    readonly repositoryId: GitRepositoryId | null;
+    readonly repositoryRoot: string | null;
+    readonly state: GitDiscoveryState;
+    readonly worktrees: readonly GitWorktreeIdentity[];
+    readonly error?: GitErrorInfo;
+  }> {
+    const discovery = await this.resolveDiscovery(target);
+    const empty = {
+      projectId: target.projectId,
+      repositoryId: discovery.repositoryId,
+      repositoryRoot: discovery.repositoryRoot,
+      state: discovery.state,
+      worktrees: [] as GitWorktreeIdentity[],
+      ...(discovery.error === undefined ? {} : { error: discovery.error }),
+    };
+    if (discovery.state !== "ready" || discovery.repositoryRoot === null || discovery.repositoryId === null) return empty;
+    const result = await this.runGit(["worktree", "list", "--porcelain"], discovery.repositoryRoot, target.signal);
+    if (result.exitCode !== 0 || result.truncated) {
+      return {
+        ...empty,
+        state: "command-error",
+        error: commandError("worktrees", result, result.truncated ? "Git worktree output exceeded the configured limit." : "Git worktree list failed."),
+      };
+    }
+    const records = parseWorktreeList(result.stdout);
+    const mainPath = records.find((record) => !record.isBare)?.path;
+    const worktrees: GitWorktreeIdentity[] = [];
+    for (const record of records.slice(0, this.limits.maxWorktrees)) {
+      const path = await this.canonicalWorktreePath(record.path);
+      worktrees.push({
+        id: worktreeId(discovery.repositoryId, path),
+        path,
+        branch: record.branch,
+        detached: record.detached,
+        head: record.head,
+        isMain: mainPath !== undefined && samePath(mainPath, record.path),
+        isBare: record.isBare,
+        isPrunable: record.isPrunable,
+        locked: record.locked,
+      });
+    }
+    return { ...empty, state: "ready", worktrees };
+  }
+
   private async resolveDiscovery(target: GitTargetRequest): Promise<Discovery> {
     const binding = this.bindings.get(target.projectId);
     if (binding === undefined) throw new GitServiceError("invalid-project", "project is not bound to this server", { projectId: target.projectId });
@@ -553,7 +621,7 @@ export class GitService {
 
   private async findWorktree(target: GitTargetRequest, discovery: Discovery): Promise<{ id: GitWorktreeId; path: string }> {
     if (discovery.state !== "ready" || discovery.repositoryRoot === null || discovery.repositoryId === null) throw new GitServiceError("worktree-not-found", "worktree is not available for this repository");
-    const result = await this.runGit(["worktree", "list", "--porcelain"], discovery.worktreeRoot ?? discovery.repositoryRoot, target.signal);
+    const result = await this.runGit(["worktree", "list", "--porcelain"], discovery.repositoryRoot, target.signal);
     if (result.exitCode !== 0 || result.truncated) throw new GitServiceError("worktree-not-found", "worktree list could not be read");
     for (const record of parseWorktreeList(result.stdout).slice(0, this.limits.maxWorktrees)) {
       const canonical = await this.canonicalWorktreePath(record.path);
@@ -884,7 +952,9 @@ function validObjectId(result: GitCommandResult): string | null {
   return /^[0-9a-f]{40,64}$/iu.test(value) ? value : null;
 }
 
-function assertRemovableWorktree(worktree: GitWorktreeSummary, expectedHead: string | null | undefined): void {
+type GitWorktreeIdentity = Pick<GitWorktreeSummary, "id" | "path" | "branch" | "detached" | "head" | "isMain" | "isBare" | "isPrunable" | "locked">;
+
+function assertRemovableWorktree(worktree: GitWorktreeIdentity, expectedHead: string | null | undefined): void {
   if (worktree.isMain) throw new GitServiceError("worktree-main", "refusing to remove the repository main worktree", { worktreeId: worktree.id });
   if (worktree.isBare) throw new GitServiceError("worktree-bare", "refusing to remove a bare worktree", { worktreeId: worktree.id });
   if (worktree.locked) throw new GitServiceError("worktree-locked", "refusing to remove a locked worktree", { worktreeId: worktree.id });

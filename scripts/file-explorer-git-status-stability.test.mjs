@@ -35,8 +35,12 @@ test('caught worktree removal failures reach bounded renderer diagnostics', () =
     /console\.error\([^\n]*(?:worktree\.path|worktree\.name|worktree\.head|reference)/u,
     'diagnostics must not log worktree identifiers or paths',
   )
+  assert.match(handler, /worktreeDeleteQueueRef/u)
+  assert.match(source, /worktreeDeleteQueueRef = useRef\(Promise\.resolve\(\)\)/u)
 })
 const gitServiceSource = await readFile('packages/server-core/src/gitService/service.ts', 'utf8')
+const gitAdapterSource = await readFile('packages/server-core/src/gitService/adapter.ts', 'utf8')
+const gitProtocolBoundSource = await readFile('packages/server-core/src/gitService/protocolBound.ts', 'utf8')
 const serverCompositionSource = await readFile('packages/server-core/src/composition.ts', 'utf8')
 const serverConnectionSource = await readFile('packages/server-core/src/connection.ts', 'utf8')
 const gitClientSource = await readFile('packages/client-core/src/gitClient.ts', 'utf8')
@@ -117,4 +121,14 @@ test('worktree panel ignores equivalent Git projection object churn', () => {
     /\}, \[status\]\);/u,
     'Worktree collapse bookkeeping must not reset on equivalent status object identity churn.',
   )
+})
+
+test('Git worktree deletes are queued and list refreshes stay within protocol headers', () => {
+  assert.match(source, /gitStatusRefreshTimerRef/u)
+  assert.match(source, /subscribeStatusChanges\([\s\S]*WATCH_REFRESH_DELAY_MS/u)
+  assert.match(gitServiceSource, /enqueueRepositoryMutation\(/u)
+  assert.match(gitServiceSource, /listWorktreeIdentities\(/u)
+  assert.match(gitServiceSource, /mutatingWorktreeIds/u)
+  assert.match(gitAdapterSource, /boundGitQueryResult\(/u)
+  assert.match(gitProtocolBoundSource, /export function boundGitQueryResult/u)
 })
