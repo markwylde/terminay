@@ -20,6 +20,12 @@ export type AttachTerminalWebglRendererOptions = {
 	readonly enabled?: boolean;
 };
 
+export function createTerminalWebglAddonOptions(customGlyphs: boolean): {
+	readonly customGlyphs: boolean;
+} {
+	return { customGlyphs };
+}
+
 /**
  * Playwright and other driver sessions observe cell text through xterm's DOM
  * row layer. WebGL replaces that layer with a canvas, so automated sessions

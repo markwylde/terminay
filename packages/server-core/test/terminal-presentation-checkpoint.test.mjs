@@ -50,6 +50,28 @@ function write(terminal, bytes) {
   return new Promise((resolve) => terminal.write(bytes, resolve));
 }
 
+/**
+ * xterm 6.1 serialize can encode equivalent default SGR as either `0` or
+ * `39;22;24` after OSC 8 cells. Presentation recovery is still correct when
+ * replaying both strings yields the same buffer text and cursor.
+ */
+async function screenSignature(serialized) {
+  const session = restore();
+  await write(session.terminal, serialized);
+  const buffer = session.terminal.buffer.active;
+  const lines = [];
+  for (let row = 0; row < session.terminal.rows; row += 1) {
+    lines.push(buffer.getLine(row)?.translateToString(true) ?? "");
+  }
+  const signature = {
+    cursorX: buffer.cursorX,
+    cursorY: buffer.cursorY,
+    lines,
+  };
+  session.terminal.dispose();
+  return signature;
+}
+
 test("checkpoints serialize alternate screen and terminal modes at a safe raw boundary", async () => {
   const value = authority();
   const text = "\x1b[?2004h\x1b[?1004h\x1b[?1049hALT";
@@ -102,6 +124,7 @@ test("checkpoint recovery is equivalent at every UTF-8 and VT byte boundary", as
   const canonical = restore();
   await write(canonical.terminal, bytes);
   const expected = canonical.serialize.serialize();
+  const expectedScreen = await screenSignature(expected);
   canonical.terminal.dispose();
 
   for (let boundary = 0; boundary <= bytes.byteLength; boundary += 1) {
@@ -116,7 +139,11 @@ test("checkpoint recovery is equivalent at every UTF-8 and VT byte boundary", as
       if (event.type === "output") await write(hydrated.terminal, event.bytes);
     }
     await write(hydrated.terminal, bytes.slice(prepared.headPosition));
-    assert.equal(hydrated.serialize.serialize(), expected, `checkpoint differs at byte ${boundary}`);
+    assert.deepEqual(
+      await screenSignature(hydrated.serialize.serialize()),
+      expectedScreen,
+      `checkpoint differs at byte ${boundary}`,
+    );
     hydrated.terminal.dispose();
     value.close();
   }
