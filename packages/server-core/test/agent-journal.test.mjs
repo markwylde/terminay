@@ -23,6 +23,28 @@ async function waitFor(predicate, attempts = 80) {
   return predicate();
 }
 
+/**
+ * Attach the exit listener before signalling a fixture process. Calling
+ * `kill()` first can race the `exit` event and leave a test promise pending
+ * after Node's event loop has otherwise drained.
+ */
+async function stopChild(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  await new Promise((resolve) => {
+    const complete = () => resolve();
+    child.once("exit", complete);
+    if (child.exitCode !== null || child.signalCode !== null) {
+      child.off("exit", complete);
+      resolve();
+      return;
+    }
+    if (!child.kill()) {
+      child.off("exit", complete);
+      resolve();
+    }
+  });
+}
+
 function breadcrumb(cwd, sessionFile, fresh = false) {
   return `${cwd}\n${sessionFile}\n${fresh ? "fresh\n" : ""}`;
 }
@@ -146,7 +168,7 @@ test("omp discovery requires the exact PTY tree writer and skips its title slot"
     assert.equal(found, await realpath(path));
     assert.equal(await findProcessBoundOmpSession(999_999_999, join(root, "agent", "sessions")), undefined);
   } finally {
-    child.kill(); if (child.exitCode === null) await new Promise((resolve) => child.once("exit", resolve));
+    await stopChild(child);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -170,7 +192,7 @@ test("omp root discovery rejects child journals and title-slot-only files", { sk
     }
     assert.equal(found, await realpath(path));
   } finally {
-    child.kill(); if (child.exitCode === null) await new Promise((resolve) => child.once("exit", resolve));
+    await stopChild(child);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -182,7 +204,7 @@ test("two omp PTY trees in the same cwd never share a root journal", { skip: !["
   const secondPath = join(sessions, "2026-08-23_second.jsonl");
   await mkdir(sessions, { recursive: true });
   const wrapper = (path, journal) => spawn(process.execPath, [
-    "-e", "const {spawn}=require('child_process');const child=spawn(process.execPath,['-e',\"const fs=require('fs');const fd=fs.openSync(process.argv[1],'a');fs.writeSync(fd,process.argv[2]);setInterval(()=>{},1000)\",process.argv[1],process.argv[2]],{stdio:'ignore'});setInterval(()=>{},1000)", path, journal,
+    "-e", "const {spawn}=require('child_process');const child=spawn(process.execPath,['-e',\"const fs=require('fs');const fd=fs.openSync(process.argv[1],'a');fs.writeSync(fd,process.argv[2]);setInterval(()=>{},1000)\",process.argv[1],process.argv[2]],{stdio:'ignore'});const stop=()=>{child.once('exit',()=>process.exit(0));child.kill()};process.once('SIGTERM',stop);process.once('SIGINT',stop);setInterval(()=>{},1000)", path, journal,
   ], { stdio: "ignore" });
   const first = wrapper(firstPath, ompJournal("first")); const second = wrapper(secondPath, ompJournal("second"));
   try {
@@ -195,9 +217,7 @@ test("two omp PTY trees in the same cwd never share a root journal", { skip: !["
     assert.equal(firstFound, await realpath(firstPath));
     assert.equal(secondFound, await realpath(secondPath));
   } finally {
-    first.kill(); second.kill();
-    if (first.exitCode === null) await new Promise((resolve) => first.once("exit", resolve));
-    if (second.exitCode === null) await new Promise((resolve) => second.once("exit", resolve));
+    await Promise.all([stopChild(first), stopChild(second)]);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -235,7 +255,7 @@ test("persistent omp discovery binds a lazy writer after the bounded startup sca
     for (let attempt = 0; attempt < 80 && !observations.some((item) => item.record.id === "omp-lazy"); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25));
     assert.equal(observations.some((item) => item.record.id === "omp-lazy" && item.journalRole === "root"), true);
   } finally {
-    await source.stop(); child?.kill(); if (child?.exitCode === null) await new Promise((resolve) => child.once("exit", resolve));
+    await source.stop(); await stopChild(child);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -262,7 +282,7 @@ test("omp child journals tail beneath their process-bound root only", { skip: ![
     assert.equal(observations.some((item) => item.record.id === "omp-root" && item.journalRole === "root"), true);
     assert.equal(observations.some((item) => item.record.id === "child-session" && item.journalRole === "child" && item.childAgentId === "child-a"), true);
   } finally {
-    await source.stop(); child.kill(); if (child.exitCode === null) await new Promise((resolve) => child.once("exit", resolve));
+    await source.stop(); await stopChild(child);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -477,7 +497,7 @@ test("Claude resume binds its UUID journal without requiring an open file descri
     for (let attempt = 0; attempt < 60 && observations.length === 0; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25));
     assert.equal(observations[0]?.provider, "claude-code"); assert.equal(observations[0]?.record?.sessionId, sessionId);
   } finally {
-    await source.stop(); child.kill(); if (child.exitCode === null) await new Promise((resolve) => child.once("exit", resolve));
+    await source.stop(); await stopChild(child);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -501,7 +521,7 @@ test("persistent Claude discovery follows an in-process resume to the newly acti
     for (let attempt = 0; attempt < 80 && !observations.some(({ record: value }) => value.sessionId === secondId); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25));
     assert.deepEqual([...new Set(observations.filter(({ record: value }) => value.type === "permission-mode").map(({ record: value }) => value.sessionId))], [firstId, secondId]);
   } finally {
-    await source.stop(); child.kill(); if (child.exitCode === null) await new Promise((resolve) => child.once("exit", resolve));
+    await source.stop(); await stopChild(child);
     await rm(root, { recursive: true, force: true });
   }
 });
