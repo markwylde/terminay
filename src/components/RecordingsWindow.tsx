@@ -1,4 +1,13 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Component,
+  type ErrorInfo,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { Terminal } from '@xterm/xterm'
 import {
@@ -444,7 +453,56 @@ function toRecordingMetadata(item: RecordingListItem): TerminalRecordingListItem
   }
 }
 
+class RecordingsRouteErrorBoundary extends Component<
+  { readonly children: ReactNode },
+  { readonly error: Error | null }
+> {
+  state: { readonly error: Error | null } = { error: null }
+
+  static getDerivedStateFromError(error: Error): { readonly error: Error } {
+    return { error }
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo): void {
+    console.error('Recordings window failed', error, info.componentStack)
+  }
+
+  render(): ReactNode {
+    if (this.state.error === null) return this.props.children
+    return (
+      <SharedRecordingsRouteBody
+        library={
+          <SharedRecordingsLibraryPane
+            groupedRecordings={[]}
+            isLoading={false}
+            onQueryChange={() => {}}
+            onRefresh={() => {}}
+            onSelect={() => {}}
+            query=""
+            recordings={[]}
+            selectedRecordingId={null}
+            titleFor={() => ''}
+            durationFor={() => ''}
+          />
+        }
+      >
+        <div className="recordings-error" role="alert">
+          {this.state.error.message}
+        </div>
+      </SharedRecordingsRouteBody>
+    )
+  }
+}
+
 export function RecordingsWindow({ client }: { readonly client: RecordingsClient }) {
+  return (
+    <RecordingsRouteErrorBoundary>
+      <RecordingsWindowContent client={client} />
+    </RecordingsRouteErrorBoundary>
+  )
+}
+
+function RecordingsWindowContent({ client }: { readonly client: RecordingsClient }) {
   const { settings } = useTerminalSettings()
   const readRecordingChunk = useCallback(
     (request: { recordingId: string; start?: number; maxBytes?: number }) => client.replay(request.recordingId, request),
@@ -651,8 +709,13 @@ export function RecordingsWindow({ client }: { readonly client: RecordingsClient
       return
     }
 
+    if (selectedRecordingId === null) {
+      root.replaceChildren()
+      return
+    }
+
     setIsPlaying(false)
-    root.innerHTML = ''
+    root.replaceChildren()
     let terminal: Terminal
     try {
       terminal = new Terminal({
@@ -660,7 +723,6 @@ export function RecordingsWindow({ client }: { readonly client: RecordingsClient
         allowProposedApi: true,
         cols: replayIndexRef.current?.cols ?? 80,
         disableStdin: false,
-        documentOverride: root.ownerDocument,
         rows: replayIndexRef.current?.rows ?? 24,
       })
       terminal.loadAddon(new Unicode11Addon())
@@ -703,7 +765,7 @@ export function RecordingsWindow({ client }: { readonly client: RecordingsClient
       terminal.dispose()
       terminalRef.current = null
     }
-  }, [measureTerminal, replayTheme, seekToTime, settings])
+  }, [measureTerminal, replayTheme, seekToTime, selectedRecordingId, settings])
 
   useEffect(() => {
     const terminal = terminalRef.current
