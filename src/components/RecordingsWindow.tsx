@@ -1,6 +1,14 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Component,
+  type ErrorInfo,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
-import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal } from '@xterm/xterm'
 import {
   Check,
@@ -13,7 +21,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { buildTerminalOptions, defaultTerminalSettings, resolveTerminalTheme } from '../terminalSettings'
-import { useTerminalSettings } from '../hooks/useTerminalSettings'
+import { useOptionalTerminalSettings } from '../hooks/useTerminalSettings'
 import type { TerminalSettings, TerminalThemeSettings } from '../types/settings'
 import type { TerminalRecordingListItem } from '../types/terminay'
 import {
@@ -26,7 +34,6 @@ import {
 import { SharedRecordingsLibraryPane } from '../shared/SharedRecordingsLibraryPane'
 import { SharedRecordingsRouteBody } from '../shared/SharedRecordingsRouteBody'
 import type { RecordingListItem, RecordingsClient } from '@terminay/client-core'
-import { attachTerminalWebglRenderer } from './terminalWebglRenderer'
 import '../settings.css'
 import '../recordings.css'
 
@@ -87,15 +94,19 @@ function formatDate(value: string | null): string {
     return 'Unknown'
   }
 
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
+  try {
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) {
+      return 'Unknown'
+    }
+
+    return new Intl.DateTimeFormat(undefined, {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    }).format(date)
+  } catch {
     return 'Unknown'
   }
-
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(date)
 }
 
 function formatDuration(ms: number | null): string {
@@ -130,7 +141,8 @@ function getRecordingTabColor(recording: TerminalRecordingListItem | null): stri
   if (!recording) {
     return undefined
   }
-  return recording.color ?? recording.projectColor ?? undefined
+  const color = recording.color ?? recording.projectColor
+  return typeof color === 'string' && color.length > 0 ? color : undefined
 }
 
 type SelectDropupOption = {
@@ -446,8 +458,142 @@ function toRecordingMetadata(item: RecordingListItem): TerminalRecordingListItem
   }
 }
 
+class RecordingsRouteErrorBoundary extends Component<
+  { readonly children: ReactNode },
+  { readonly error: Error | null }
+> {
+  state: { readonly error: Error | null } = { error: null }
+
+  static getDerivedStateFromError(error: Error): { readonly error: Error } {
+    return { error }
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo): void {
+    console.error('Recordings window failed', error, info.componentStack)
+  }
+
+  render(): ReactNode {
+    if (this.state.error === null) return this.props.children
+    return (
+      <div className="recordings-error" role="alert">
+        {this.state.error.message}
+      </div>
+    )
+  }
+}
+
 export function RecordingsWindow({ client }: { readonly client: RecordingsClient }) {
-  const { settings } = useTerminalSettings()
+  return <RecordingsWindowContent client={client} />
+}
+
+function RecordingsWindowContent({ client }: { readonly client: RecordingsClient }) {
+  const [recordings, setRecordings] = useState<TerminalRecordingListItem[]>([])
+  const [selectedRecordingId, setSelectedRecordingId] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [isLoading, setIsLoading] = useState(true)
+  const [listErrorText, setListErrorText] = useState<string | null>(null)
+
+  const loadRecordings = useCallback(async () => {
+    setIsLoading(true)
+    setListErrorText(null)
+    try {
+      const nextRecordings = (await client.list()).items.map(toRecordingMetadata)
+      setRecordings(nextRecordings)
+      setSelectedRecordingId((current) =>
+        current && nextRecordings.some((recording) => recording.recordingId === current)
+          ? current
+          : nextRecordings[0]?.recordingId ?? null)
+    } catch (error) {
+      setListErrorText(error instanceof Error ? error.message : String(error))
+    } finally {
+      setIsLoading(false)
+    }
+  }, [client])
+
+  useEffect(() => {
+    void loadRecordings()
+  }, [loadRecordings])
+
+  const selectedRecording = recordings.find((recording) => recording.recordingId === selectedRecordingId) ?? null
+
+  const filteredRecordings = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase()
+    if (!normalizedQuery) {
+      return recordings
+    }
+
+    return recordings.filter((recording) =>
+      [
+        recording.title,
+        recording.projectTitle,
+        getRecordingDisplayTitle(recording),
+        recording.cwdLabel,
+        recording.shellName,
+        recording.startedAt,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(normalizedQuery),
+    )
+  }, [query, recordings])
+
+  const groupedRecordings = useMemo(() => {
+    const groups = new Map<string, TerminalRecordingListItem[]>()
+    for (const recording of filteredRecordings) {
+      const key = recording.startedAt?.slice(0, 10) || 'Unknown'
+      const items = groups.get(key) ?? []
+      items.push(recording)
+      groups.set(key, items)
+    }
+    return [...groups.entries()]
+  }, [filteredRecordings])
+
+  const onDelete = async () => {
+    if (!selectedRecordingId || !confirm('Delete this recording?')) {
+      return
+    }
+    if (!selectedRecording) {
+      return
+    }
+    await client.delete(selectedRecording.recordingId)
+    setSelectedRecordingId(null)
+    await loadRecordings()
+  }
+
+  return (
+    <SharedRecordingsRouteBody library={<SharedRecordingsLibraryPane
+        groupedRecordings={groupedRecordings}
+        isLoading={isLoading}
+        onQueryChange={setQuery}
+        onRefresh={() => void loadRecordings()}
+        onSelect={setSelectedRecordingId}
+        query={query}
+        recordings={recordings}
+        selectedRecordingId={selectedRecordingId}
+        titleFor={getRecordingDisplayTitle}
+        durationFor={formatDuration}
+      />}>
+        {listErrorText ? <div className="recordings-error" role="alert">{listErrorText}</div> : null}
+        <RecordingsReplayPane
+          client={client}
+          onDelete={onDelete}
+          selectedRecording={selectedRecording}
+        />
+    </SharedRecordingsRouteBody>
+  )
+}
+
+function RecordingsReplayPane({
+  client,
+  onDelete,
+  selectedRecording,
+}: {
+  readonly client: RecordingsClient
+  readonly onDelete: () => Promise<void>
+  readonly selectedRecording: TerminalRecordingListItem | null
+}) {
+  const { settings } = useOptionalTerminalSettings()
   const readRecordingChunk = useCallback(
     (request: { recordingId: string; start?: number; maxBytes?: number }) => client.replay(request.recordingId, request),
     [client],
@@ -466,11 +612,8 @@ export function RecordingsWindow({ client }: { readonly client: RecordingsClient
   const playheadRef = useRef(0)
   const displayScaleRef = useRef(1)
   const measureFrameRef = useRef<number | null>(null)
-  const [recordings, setRecordings] = useState<TerminalRecordingListItem[]>([])
-  const [selectedRecordingId, setSelectedRecordingId] = useState<string | null>(null)
+  const selectedRecordingId = selectedRecording?.recordingId ?? null
   const [replayIndex, setReplayIndex] = useState<ReplayIndex | null>(null)
-  const [query, setQuery] = useState('')
-  const [isLoading, setIsLoading] = useState(true)
   const [isReplayLoading, setIsReplayLoading] = useState(false)
   const [errorText, setErrorText] = useState<string | null>(null)
   const [replayWarning, setReplayWarning] = useState<string | null>(null)
@@ -482,8 +625,6 @@ export function RecordingsWindow({ client }: { readonly client: RecordingsClient
   const [customScale, setCustomScale] = useState(1)
   const [terminalSize, setTerminalSize] = useState<ElementSize>({ height: 1, width: 1 })
   const [viewportSize, setViewportSize] = useState<ElementSize>({ height: 1, width: 1 })
-  const selectedRecording = recordings.find((recording) => recording.recordingId === selectedRecordingId) ?? null
-
   useEffect(() => {
     playheadRef.current = playhead
   }, [playhead])
@@ -586,33 +727,20 @@ export function RecordingsWindow({ client }: { readonly client: RecordingsClient
     [canUseRecordedTheme],
   )
   const replayTheme = useMemo(() => {
-    if (replayThemeMode === 'recorded' && recordedTheme) {
-      return recordedTheme
-    }
-
-    return resolveTerminalTheme(settings ?? defaultTerminalSettings, getRecordingTabColor(selectedRecording))
-  }, [recordedTheme, replayThemeMode, selectedRecording, settings])
-
-  const loadRecordings = useCallback(async () => {
-    setIsLoading(true)
-    setErrorText(null)
     try {
-      const nextRecordings = (await client.list()).items.map(toRecordingMetadata)
-      setRecordings(nextRecordings)
-      setSelectedRecordingId((current) =>
-        current && nextRecordings.some((recording) => recording.recordingId === current)
-          ? current
-          : nextRecordings[0]?.recordingId ?? null)
-    } catch (error) {
-      setErrorText(error instanceof Error ? error.message : String(error))
-    } finally {
-      setIsLoading(false)
-    }
-  }, [client])
+      if (replayThemeMode === 'recorded' && recordedTheme) {
+        return recordedTheme
+      }
 
-  useEffect(() => {
-    void loadRecordings()
-  }, [loadRecordings])
+      return resolveTerminalTheme(
+        settings?.theme ? settings : defaultTerminalSettings,
+        getRecordingTabColor(selectedRecording),
+      )
+    } catch (error) {
+      console.error('Failed to resolve the recordings replay theme', error)
+      return defaultTerminalSettings.theme
+    }
+  }, [recordedTheme, replayThemeMode, selectedRecording, settings])
 
   const seekToTime = useCallback(async (time: number) => {
     const terminal = terminalRef.current
@@ -653,23 +781,41 @@ export function RecordingsWindow({ client }: { readonly client: RecordingsClient
       return
     }
 
+    if (selectedRecordingId === null) {
+      root.replaceChildren()
+      return
+    }
+
     setIsPlaying(false)
-    root.innerHTML = ''
-    const terminal = new Terminal({
-      ...buildReplayTerminalOptions(settings ?? defaultTerminalSettings, replayTheme),
-      allowProposedApi: true,
-      cols: replayIndexRef.current?.cols ?? 80,
-      disableStdin: false,
-      rows: replayIndexRef.current?.rows ?? 24,
-    })
-    terminal.loadAddon(new Unicode11Addon())
-    terminal.unicode.activeVersion = '11'
-    terminal.open(root)
-    const webglRenderer = attachTerminalWebglRenderer(terminal, () => new WebglAddon())
-    const restoreMouseCoordinates = patchReplayTerminalMouseCoordinates(terminal, () => displayScaleRef.current)
-    terminal.attachCustomKeyEventHandler(() => false)
-    terminal.focus()
-    terminalRef.current = terminal
+    root.replaceChildren()
+    let terminal: Terminal | undefined
+    let restoreMouseCoordinates = () => {}
+    try {
+      terminal = new Terminal({
+        ...buildReplayTerminalOptions(settings ?? defaultTerminalSettings, replayTheme),
+        allowProposedApi: true,
+        cols: replayIndexRef.current?.cols ?? 80,
+        disableStdin: false,
+        rows: replayIndexRef.current?.rows ?? 24,
+      })
+      terminal.loadAddon(new Unicode11Addon())
+      terminal.unicode.activeVersion = '11'
+      terminal.open(root)
+      // Replay uses the DOM renderer. Live split panes keep WebGL; a scaled
+      // replay canvas in an auxiliary window is not a shared atlas surface.
+      restoreMouseCoordinates = patchReplayTerminalMouseCoordinates(terminal, () => displayScaleRef.current)
+      terminal.attachCustomKeyEventHandler(() => false)
+      terminal.focus()
+      terminalRef.current = terminal
+    } catch (error) {
+      console.error('Failed to open the recordings replay terminal', error)
+      terminal?.dispose()
+      terminalRef.current = null
+      return
+    }
+    if (!terminal) {
+      return
+    }
     const resizeObserver = new ResizeObserver(measureTerminal)
     resizeObserver.observe(root)
     if (terminal.element) {
@@ -694,11 +840,10 @@ export function RecordingsWindow({ client }: { readonly client: RecordingsClient
       seekAbortRef.current?.abort()
       playbackAbortRef.current?.abort()
       restoreMouseCoordinates()
-      webglRenderer.dispose()
       terminal.dispose()
       terminalRef.current = null
     }
-  }, [measureTerminal, replayTheme, seekToTime, settings])
+  }, [measureTerminal, replayTheme, seekToTime, selectedRecordingId, settings])
 
   useEffect(() => {
     const terminal = terminalRef.current
@@ -848,39 +993,6 @@ export function RecordingsWindow({ client }: { readonly client: RecordingsClient
     }
   }, [isPlaying, measureTerminal, readRecordingChunk, replayIndex, speed, stopAnimation])
 
-  const filteredRecordings = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase()
-    if (!normalizedQuery) {
-      return recordings
-    }
-
-    return recordings.filter((recording) =>
-      [
-        recording.title,
-        recording.projectTitle,
-        getRecordingDisplayTitle(recording),
-        recording.cwdLabel,
-        recording.shellName,
-        recording.startedAt,
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase()
-        .includes(normalizedQuery),
-    )
-  }, [query, recordings])
-
-  const groupedRecordings = useMemo(() => {
-    const groups = new Map<string, TerminalRecordingListItem[]>()
-    for (const recording of filteredRecordings) {
-      const key = recording.startedAt.slice(0, 10) || 'Unknown'
-      const items = groups.get(key) ?? []
-      items.push(recording)
-      groups.set(key, items)
-    }
-    return [...groups.entries()]
-  }, [filteredRecordings])
-
   const onTogglePlay = () => {
     if (!replayIndex || isReplayLoading) {
       return
@@ -962,35 +1074,8 @@ export function RecordingsWindow({ client }: { readonly client: RecordingsClient
     })
   }
 
-  const onDelete = async () => {
-    if (!selectedRecordingId || !confirm('Delete this recording?')) {
-      return
-    }
-
-    if (!selectedRecording) {
-      return
-    }
-    await client.delete(selectedRecording.recordingId)
-    setSelectedRecordingId(null)
-    setReplayIndex(null)
-    replayIndexRef.current = null
-    replayCursorRef.current = null
-    await loadRecordings()
-  }
-
   return (
-    <SharedRecordingsRouteBody library={<SharedRecordingsLibraryPane
-        groupedRecordings={groupedRecordings}
-        isLoading={isLoading}
-        onQueryChange={setQuery}
-        onRefresh={() => void loadRecordings()}
-        onSelect={setSelectedRecordingId}
-        query={query}
-        recordings={recordings}
-        selectedRecordingId={selectedRecordingId}
-        titleFor={getRecordingDisplayTitle}
-        durationFor={formatDuration}
-      />}>
+    <>
         {errorText ? <div className="recordings-error" role="alert">{errorText}</div> : null}
         {isReplayLoading ? <div className="recordings-empty" role="status">Preparing replay…</div> : null}
         {replayWarning ? <div className="recordings-warning" role="status">{replayWarning}</div> : null}
@@ -1023,6 +1108,7 @@ export function RecordingsWindow({ client }: { readonly client: RecordingsClient
             </div>
           ) : null}
         </header>
+        <RecordingsRouteErrorBoundary>
         <div
           className={`recordings-terminal-shell recordings-terminal-shell--${scaleMode}`}
           ref={terminalViewportRef}
@@ -1039,7 +1125,7 @@ export function RecordingsWindow({ client }: { readonly client: RecordingsClient
               className="recordings-terminal"
               ref={terminalRootRef}
               style={{
-                background: replayTheme.background,
+                background: typeof replayTheme.background === 'string' ? replayTheme.background : undefined,
                 height: terminalSize.height,
                 transform: `scale(${displayScale})`,
                 transformOrigin: 'top left',
@@ -1048,6 +1134,7 @@ export function RecordingsWindow({ client }: { readonly client: RecordingsClient
             />
           </div>
         </div>
+        </RecordingsRouteErrorBoundary>
         <footer className="recordings-controls-container">
           <div
             className="recordings-timeline"
@@ -1089,6 +1176,7 @@ export function RecordingsWindow({ client }: { readonly client: RecordingsClient
             </div>
 
             <div className="recordings-controls-right">
+              <RecordingsRouteErrorBoundary>
               <SelectDropup
                 allowManualInput
                 ariaLabel="Replay zoom"
@@ -1128,9 +1216,10 @@ export function RecordingsWindow({ client }: { readonly client: RecordingsClient
                 value={String(speed)}
                 displayValue={`${speed}x`}
               />
+              </RecordingsRouteErrorBoundary>
             </div>
           </div>
         </footer>
-    </SharedRecordingsRouteBody>
+    </>
   )
 }

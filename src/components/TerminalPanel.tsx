@@ -96,7 +96,11 @@ import { getTerminalScrollbackAction } from './terminalScrollbackInteraction';
 import { isTerminalSearchShortcut } from './terminalSearchInteraction';
 import { getTerminalSwitcherDirection } from './terminalSwitcherInteraction';
 import { bindTerminalTouchScroll } from './terminalTouchScrollInteraction';
-import { attachTerminalWebglRenderer } from './terminalWebglRenderer';
+import {
+	type AttachTerminalWebglRendererResult,
+	attachTerminalWebglRenderer,
+	createTerminalWebglAddonOptions,
+} from './terminalWebglRenderer';
 import { resolveTerminalZoomedFontSize } from './terminalZoomInteraction';
 
 /**
@@ -390,6 +394,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	const terminalRef = useRef<Terminal | null>(null);
 	const fitAddonRef = useRef<FitAddon | null>(null);
 	const searchAddonRef = useRef<SearchAddon | null>(null);
+	const webglRendererRef = useRef<AttachTerminalWebglRendererResult | null>(
+		null,
+	);
+	const webglCustomGlyphsRef = useRef<boolean | null>(null);
 	const hoveredLinkRef = useRef<string | null>(null);
 	const terminalPanelResizeRef = useRef<(cols: number, rows: number) => void>(
 		() => {},
@@ -665,8 +673,13 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		terminal.open(root);
 		const webglRenderer = attachTerminalWebglRenderer(
 			terminal,
-			() => new WebglAddon(),
+			() =>
+				new WebglAddon(
+					createTerminalWebglAddonOptions(settingsRef.current.customGlyphs),
+				),
 		);
+		webglRendererRef.current = webglRenderer;
+		webglCustomGlyphsRef.current = settingsRef.current.customGlyphs;
 		const screenElement =
 			terminal.element?.querySelector<HTMLElement>('.xterm-screen');
 		const preventModifierLinkSelection = (event: MouseEvent) => {
@@ -1982,7 +1995,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			);
 			searchAddonRef.current = null;
 			fitAddonRef.current = null;
-			webglRenderer.dispose();
+			webglRendererRef.current?.dispose();
+			webglRendererRef.current = null;
+			webglCustomGlyphsRef.current = null;
 			terminalRef.current = null;
 			renderedPositionRef.current = null;
 			hoveredLinkRef.current = null;
@@ -2048,6 +2063,18 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			props.params.color,
 			zoomLevelRef.current,
 		);
+		if (webglCustomGlyphsRef.current !== settings.customGlyphs) {
+			webglRendererRef.current?.dispose();
+			const nextRenderer = attachTerminalWebglRenderer(
+				terminal,
+				() =>
+					new WebglAddon(
+						createTerminalWebglAddonOptions(settings.customGlyphs),
+					),
+			);
+			webglRendererRef.current = nextRenderer;
+			webglCustomGlyphsRef.current = settings.customGlyphs;
+		}
 		const remoteSizeOverride = remoteSizeOverrideRef.current;
 		if (remoteSizeOverride) {
 			applyRemoteTerminalSize(
