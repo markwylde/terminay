@@ -358,9 +358,18 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       : requestedFromPosition;
     const key = sessionKey(clientId, identity);
     const priorId = byClientSession.get(key);
+    const prior = priorId !== undefined ? protocolAttachments.get(priorId) : undefined;
+    const currentHolder = presentations.state(identity).holder;
+    const priorHeldLease =
+      prior !== undefined &&
+      currentHolder !== undefined &&
+      currentHolder.clientId === clientId &&
+      currentHolder.attachmentId === prior.attachment.attachmentId;
     if (priorId !== undefined) {
-      const prior = protocolAttachments.get(priorId);
-      if (prior !== undefined) presentations.releaseAttachment({ ...prior.identity, clientId: prior.clientId, attachmentId: prior.attachment.attachmentId });
+      // Replacing this client's attachment must not drop a live lease. Release
+      // would leave the session unowned until acquire below, and another
+      // client's renewal could steal control during congestion recovery.
+      if (prior !== undefined && !priorHeldLease) presentations.releaseAttachment({ ...prior.identity, clientId: prior.clientId, attachmentId: prior.attachment.attachmentId });
       if (prior !== undefined) options.checkpoints?.releaseAttachment({ ...prior.identity, clientId: prior.clientId, attachmentId: prior.attachment.attachmentId });
 		if (prior !== undefined) prior.discardPendingOutput();
       attachments.detach(priorId);
@@ -489,24 +498,29 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     // whose attachment is already gone (discarded renderer document) is not a
     // live controller and must not block the replacement surface.
     if (canWrite) {
-      const state = presentations.state(identity);
-      const staleHolder =
-        state.holder !== undefined &&
-        !protocolAttachments.has(state.holder.attachmentId)
-          ? state.holder
-          : undefined;
-      if (staleHolder !== undefined) {
-        presentations.releaseAttachment({
-          ...identity,
-          clientId: staleHolder.clientId,
-          attachmentId: staleHolder.attachmentId,
-        });
-      }
-      const next = presentations.state(identity);
-      const reservation = initialPresentationReservations.get(identityKey(identity));
-      if (next.holder === undefined && (reservation === undefined || reservation.clientId === clientId)) {
-        presentations.change("acquire", { ...identity, clientId, attachmentId: attachment.attachmentId });
+      if (priorHeldLease) {
+        presentations.change("takeover", { ...identity, clientId, attachmentId: attachment.attachmentId });
         releaseInitialPresentationReservation(identity, false);
+      } else {
+        const state = presentations.state(identity);
+        const staleHolder =
+          state.holder !== undefined &&
+          !protocolAttachments.has(state.holder.attachmentId)
+            ? state.holder
+            : undefined;
+        if (staleHolder !== undefined) {
+          presentations.releaseAttachment({
+            ...identity,
+            clientId: staleHolder.clientId,
+            attachmentId: staleHolder.attachmentId,
+          });
+        }
+        const next = presentations.state(identity);
+        const reservation = initialPresentationReservations.get(identityKey(identity));
+        if (next.holder === undefined && (reservation === undefined || reservation.clientId === clientId)) {
+          presentations.change("acquire", { ...identity, clientId, attachmentId: attachment.attachmentId });
+          releaseInitialPresentationReservation(identity, false);
+        }
       }
     }
     return {
