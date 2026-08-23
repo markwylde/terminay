@@ -44,6 +44,20 @@ test('terminal retry reattaches this panel instead of replacing the workspace tr
   const attach = panel.slice(attachStart, attachEnd)
   assert.match(attach, /attachmentClient\.resume\(nextRequest\)/)
   assert.match(attach, /isTerminalSessionEndedError/)
+  assert.match(attach, /queuedPresentationAction !== null/)
+  assert.match(attach, /state\.revision < latestPresentation\.revision/)
+})
+
+test('congestion resync queues Take back control and does not detach first', () => {
+  const resyncStart = panel.indexOf('const beginTerminalResync')
+  const resyncEnd = panel.indexOf('retryServerAttachmentRef.current = () => {', resyncStart)
+  assert.notEqual(resyncStart, -1)
+  assert.notEqual(resyncEnd, -1)
+  const resync = panel.slice(resyncStart, resyncEnd)
+
+  assert.match(resync, /queuedPresentationAction =/)
+  assert.match(resync, /'takeover'/)
+  assert.doesNotMatch(resync, /\.detach\(/)
 })
 
 test('replacement context reports mounted attachment hydration only after rendering initial events', () => {

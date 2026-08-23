@@ -1136,6 +1136,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				maxInitialReplayBytes: MAX_INITIAL_SERVER_TERMINAL_REPLAY_BYTES,
 			};
 			let resyncing = false;
+			let queuedPresentationAction: 'acquire' | 'takeover' | null = null;
+			let latestPresentation: TerminalPresentationState | undefined;
 			const attachServerTerminal = ({
 				client,
 				clientId,
@@ -1196,6 +1198,12 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 						let currentPresentation = attachment.presentation;
 						const applyPresentation = (state: TerminalPresentationState) => {
 							if (!bindingFence.isCurrent(binding)) return;
+							if (
+								latestPresentation !== undefined &&
+								state.revision < latestPresentation.revision
+							)
+								return;
+							latestPresentation = state;
 							currentPresentation = state;
 							const becameController =
 								!terminalPresentationControllerRef.current &&
@@ -1259,6 +1267,30 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 							applyPresentation(state);
 							if (state.role === 'controller') fitAndResize(true);
 						};
+						if (
+							queuedPresentationAction !== null &&
+							attachment.presentation.role !== 'controller'
+						) {
+							const mode = queuedPresentationAction;
+							queuedPresentationAction = null;
+							void attachment
+								.changePresentation(mode)
+								.then((state) => {
+									if (!bindingFence.isCurrent(binding)) return;
+									applyPresentation(state);
+									if (state.role === 'controller') fitAndResize(true);
+								})
+								.catch((error: unknown) => {
+									if (!bindingFence.isCurrent(binding)) return;
+									setServerTerminalError(
+										error instanceof Error
+											? error.message
+											: 'Terminal control takeover failed.',
+									);
+								});
+						} else {
+							queuedPresentationAction = null;
+						}
 						// Xterm serializes writes, but resize is synchronous. Keep one
 						// explicit queue so a parser-safe snapshot is restored in its
 						// original geometry before a tail resize or any subsequent output
@@ -1456,12 +1488,19 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				setIsTerminalHydrating(true);
 				panelEventDisposer?.();
 				panelEventDisposer = null;
-				const staleAttachment = panelAttachment;
+				terminalPresentationActionRef.current = async () => {
+					queuedPresentationAction =
+						latestPresentation?.holder === undefined
+							? 'acquire'
+							: 'takeover';
+				};
 				panelAttachment = null;
 				if (activeBinding !== null) bindingFence.retire(activeBinding);
 				activeBinding = null;
 				serverInputQueue?.close();
-				void staleAttachment?.detach().catch(() => {});
+				// Leave the server attachment in place until resume replaces it.
+				// Detaching here drops a just-taken lease and makes Take back
+				// control target a dead attachment while the checkpoint loads.
 				if (recoveryAttempt === 0) recoveryStartedAt = Date.now();
 				recoveryAttempt += 1;
 				reportTerminalRecovery(recoveryAttempt === 1 ? 'started' : 'retrying', {
