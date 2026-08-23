@@ -1,0 +1,7 @@
+{"type":"title","v":1,"title":"Fixture OMP session","source":"auto","updatedAt":"2026-08-05T10:00:00.000Z","pad":"                                                                                                                                           "}
+{"type":"session","version":3,"id":"omp-root-v01","timestamp":"2026-08-05T10:00:00.000Z","cwd":"/workspace"}
+{"type":"message","id":"user-1","parentId":null,"timestamp":"2026-08-05T10:00:01.000Z","message":{"role":"user","content":"Add OMP journal support","timestamp":1785924001000}}
+{"type":"custom","id":"tool-start-1","parentId":"user-1","timestamp":"2026-08-05T10:00:02.000Z","customType":"tool_execution_start","data":{"toolCallId":"call-1","toolName":"read","args":{"path":"/private/path"},"startedAt":"2026-08-05T10:00:02.000Z"}}
+{"type":"message","id":"tool-result-1","parentId":"tool-start-1","timestamp":"2026-08-05T10:00:03.000Z","message":{"role":"toolResult","toolCallId":"call-1","toolName":"read","content":[{"type":"text","text":"private tool output"}],"isError":false,"timestamp":1785924003000}}
+{"type":"message","id":"assistant-1","parentId":"tool-result-1","timestamp":"2026-08-05T10:00:04.000Z","message":{"role":"assistant","content":[{"type":"text","text":"private assistant text"}],"model":"openai/gpt-5","stopReason":"stop","timestamp":1785924004000}}
+{"type":"custom","id":"exit-1","parentId":"assistant-1","timestamp":"2026-08-05T10:00:05.000Z","customType":"session_exit","data":{"reason":"dispose","kind":"normal","recordedAt":"2026-08-05T10:00:05.000Z"}}

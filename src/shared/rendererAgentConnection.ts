@@ -48,13 +48,13 @@ function adaptEntry(value: AgentClientEntry): AgentStatusEntry {
 	const provider = string('provider')
 	const kind = string('kind')
 	const state = string('state')
-	if ((provider !== 'codex' && provider !== 'claude-code') || (kind !== 'root' && kind !== 'subagent') || !['working', 'waiting', 'blocked', 'done', 'idle'].includes(state ?? '')) throw new TypeError('server agent identity is invalid')
+	if ((provider !== 'codex' && provider !== 'claude-code' && provider !== 'omp') || (kind !== 'root' && kind !== 'subagent') || !['working', 'waiting', 'blocked', 'done', 'idle'].includes(state ?? '')) throw new TypeError('server agent identity is invalid')
 	if (typeof record.active !== 'boolean' || typeof record.unread !== 'boolean') throw new TypeError('server agent flags are invalid')
 	const lastEventKind = string('lastEventKind') as AgentLifecycleEvent['kind']
 	if (!EVENT_KINDS.has(lastEventKind)) throw new TypeError('server agent event kind is invalid')
 	const activeTools = adaptTools(record.activeTools)
 	const base = {
-		entryId: string('entryId')!, kind, provider: provider as 'codex' | 'claude-code', agentId: string('agentId')!, sessionId: string('sessionId')!, activationTerminalSessionId: string('activationTerminalSessionId')!,
+		entryId: string('entryId')!, kind, provider: provider as 'codex' | 'claude-code' | 'omp', agentId: string('agentId')!, sessionId: string('sessionId')!, activationTerminalSessionId: string('activationTerminalSessionId')!,
 		...(optionalString(record, 'displayName')), ...(optionalString(record, 'promptText')), ...(optionalModel(record.model)),
 		state: state as AgentState, stateStartedAt: integer('stateStartedAt'), updatedAt: integer('updatedAt'), lastEventKind, lastEventSequence: integer('lastEventSequence'),
 		active: record.active, activeTools, ...(optionalString(record, 'currentTurnId')), ...(optionalString(record, 'waitingReason')),

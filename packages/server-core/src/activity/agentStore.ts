@@ -115,6 +115,10 @@ function applyEvent(entry: AgentStatusEntry, event: AgentLifecycleEvent): AgentS
   switch (event.kind) {
     case "session.started":
       return withState(entry, "idle", event, { active: true, activeTools: [], displayName: event.displayName ?? entry.displayName, waitingReason: undefined, completionOutcome: undefined, summary: undefined, exitCode: undefined, exitSignal: undefined });
+    case "agent.metadata":
+      // Provider model changes are observational. In particular, a model
+      // switch while a turn is working must not reset it to idle.
+      return withState(entry, entry.state, event);
     case "session.stopped":
       return withState(entry, "idle", event, { active: false, activeTools: [], waitingReason: undefined, summary: event.reason ?? entry.summary });
     case "turn.started":
