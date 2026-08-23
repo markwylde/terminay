@@ -90,6 +90,7 @@ import {
 } from './index.js';
 import { resolveTerminalProcessCwd } from './processCwd.js';
 import { parseHostedIceServers, startHostedPairingHost } from './remote/hostedPairingHost.js';
+import { createHostedDiagnosticLogger } from './remote/hostedDiagnosticLog.js';
 import { loadHostedUiArchive } from './remote/hostedUiArchive.js';
 import { loadOrCreateHostedHostKey } from './remote/hostedHostKey.js';
 import { assertStandaloneReleaseIntegrity } from './releaseIntegrity.js';
@@ -214,6 +215,7 @@ else {
 						hostKey: loadOrCreateHostedHostKey(
 							join(options.dataRoot, 'remote-host-key.v1.json'),
 						),
+						onDiagnostic: createHostedDiagnosticLogger(options.logSink),
 						persistDevices: devicePersistence.save,
 						pin: remotePairingPin,
 						remote,
