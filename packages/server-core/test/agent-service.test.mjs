@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AgentStatusService, TerminalActivityService } from "../dist/index.js";
+import { providerFromForegroundProcess } from "../dist/activity/agentService.js";
 
 function fakeJournalSource() {
   let listener;
@@ -20,6 +21,12 @@ function fakeJournalSource() {
 
 const identity = Object.freeze({ serverId: "server-1", projectId: "project-1", sessionId: "terminal-1" });
 
+test("omp foreground detection keeps a Bun wrapper armed without creating an unbound agent", () => {
+  assert.equal(providerFromForegroundProcess("omp"), "omp");
+  assert.equal(providerFromForegroundProcess("oh-my-pi"), "omp");
+  assert.equal(providerFromForegroundProcess("/opt/homebrew/bin/bun"), "omp");
+});
+
 test("journal records reduce to canonical agent and activity state", async () => {
   const activity = new TerminalActivityService({ serverId: identity.serverId });
   activity.register(identity);
@@ -37,6 +44,27 @@ test("journal records reduce to canonical agent and activity state", async () =>
   assert.equal(entry.state, "working");
   assert.equal(activity.snapshot().sessions[identity.sessionId].source, "journal:codex");
   assert(source.calls.some(([kind, , pid]) => kind === "started" && pid === 4321));
+  await agents.stop();
+});
+
+test("OMP model metadata preserves the current lifecycle state", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId });
+  activity.register(identity);
+  const source = fakeJournalSource();
+  const agents = new AgentStatusService({ activity, journalSource: source, now: () => 100 });
+  await agents.start(); agents.register(identity);
+  await agents.ingestJournalRecord(identity, "omp", { type: "session", id: "omp-session" });
+  await agents.ingestJournalRecord(identity, "omp", {
+    type: "message", id: "user-1", message: { role: "user", content: "A bounded prompt" },
+  });
+  await agents.ingestJournalRecord(identity, "omp", {
+    type: "model_change", model: "openai-codex/gpt-5.6-terra",
+  });
+  const root = Object.values(agents.getSnapshot().entries).find((entry) => entry.kind === "root");
+  assert.deepEqual({ state: root?.state, model: root?.model?.id }, {
+    state: "working", model: "openai-codex/gpt-5.6-terra",
+  });
+  assert.equal(activity.snapshot().sessions[identity.sessionId].providerState, "working");
   await agents.stop();
 });
 

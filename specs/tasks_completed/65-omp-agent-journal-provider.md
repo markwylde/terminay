@@ -67,55 +67,55 @@ omp journal facts to implement against (do not import oh-my-pi):
 
 ### 1. Provider identity and chrome
 
-- [ ] Add `"omp"` to `AGENT_PROVIDERS` and every mirrored client/UI union.
-- [ ] Display name is `omp`. Replace hardcoded Codex/Claude ternary labels
+- [x] Add `"omp"` to `AGENT_PROVIDERS` and every mirrored client/UI union.
+- [x] Display name is `omp`. Replace hardcoded Codex/Claude ternary labels
       with a provider map.
-- [ ] Keep MCP install clients unchanged.
+- [x] Keep MCP install clients unchanged.
 
 ### 2. Foreground and journal bind
 
-- [ ] Match foreground `omp` (and `oh-my-pi` if that argv appears).
-- [ ] Reuse the existing leave-shell discovery window so a `bun` wrapper can
+- [x] Match foreground `omp` (and `oh-my-pi` if that argv appears).
+- [x] Reuse the existing leave-shell discovery window so a `bun` wrapper can
       still bind, but only after a descendant holds a writable JSONL under
       the omp sessions root (same rule as Codex/`node`).
-- [ ] Resolve the sessions root from `~/.omp/agent/sessions` plus
+- [x] Resolve the sessions root from `~/.omp/agent/sessions` plus
       `PI_CODING_AGENT_DIR` / `OMP_PROFILE` / `PI_PROFILE` / XDG. Add an
       `ompHome` test override beside `claudeHome` / `codexHome`.
-- [ ] Skip the 256-byte title slot before inspect. Require
+- [x] Skip the 256-byte title slot before inspect. Require
       `type === "session"` and a stable `id`. A physical `type: "title"`
       line must not be treated as Codex `session_meta`.
-- [ ] Bind by open writer PID in the exact PTY tree. Never newest-mtime,
+- [x] Bind by open writer PID in the exact PTY tree. Never newest-mtime,
       never breadcrumb, never encoded-cwd alone.
-- [ ] Admit only encoded-cwd root `*.jsonl` files as roots. Nested
+- [x] Admit only encoded-cwd root `*.jsonl` files as roots. Nested
       `<parent-stem>/*.jsonl` files are children.
-- [ ] Tail the same JSONL through the existing 250ms poller, including
+- [x] Tail the same JSONL through the existing 250ms poller, including
       shrink/replace reset.
 
 ### 3. Driver `(omp, 0.1)`
 
-- [ ] `inspectSession` reads the logical session header, not the title slot.
-- [ ] Map session header → `session.started`.
-- [ ] Map first user-facing `message.role === "user"` → `turn.started` and
+- [x] `inspectSession` reads the logical session header, not the title slot.
+- [x] Map session header → `session.started`.
+- [x] Map first user-facing `message.role === "user"` → `turn.started` and
       the stable bounded root label.
-- [ ] Map `customType: "tool_execution_start"` → `tool.started`.
-- [ ] Map assistant tool results / matching tool calls → `tool.finished`.
-- [ ] Map completed assistant tail / terminal `stopReason` → `agent.done`.
-- [ ] Map `session_exit` → `session.stopped` (interrupted when pending tools
+- [x] Map `customType: "tool_execution_start"` → `tool.started`.
+- [x] Map assistant tool results / matching tool calls → `tool.finished`.
+- [x] Map completed assistant tail / terminal `stopReason` → `agent.done`.
+- [x] Map `session_exit` → `session.stopped` (interrupted when pending tools
       remain).
-- [ ] Map child JSONL → `subagent.started` / `subagent.stopped`.
-- [ ] Ignore unknown types. Project no tool args, assistant text, or tool
+- [x] Map child JSONL → `subagent.started` / `subagent.stopped`.
+- [x] Ignore unknown types. Project no tool args, assistant text, or tool
       output.
 
 ### 4. Fixtures and tests
 
-- [ ] Add `packages/server-core/test/fixtures/omp/v0.1/basic.jsonl` with
+- [x] Add `packages/server-core/test/fixtures/omp/v0.1/basic.jsonl` with
       title slot, session header, user message, tool start, tool result,
       assistant completion, and session_exit.
-- [ ] Add a child-journal fixture and a title-slot-only reject fixture.
-- [ ] Driver tests for the mapping above and unknown-record ignore.
-- [ ] Journal tests: process-bound bind, same-cwd isolation, title-slot
+- [x] Add a child-journal fixture and a title-slot-only reject fixture.
+- [x] Driver tests for the mapping above and unknown-record ignore.
+- [x] Journal tests: process-bound bind, same-cwd isolation, title-slot
       skip, child files are not roots, missing file stays unbound.
-- [ ] Existing Codex and Claude Code tests stay green.
+- [x] Existing Codex and Claude Code tests stay green.
 
 ## Acceptance checks
 
@@ -123,15 +123,15 @@ omp journal facts to implement against (do not import oh-my-pi):
       MCP.
 - [ ] After the first assistant persist, the sidebar shows an `omp` root
       bound to that exact terminal.
-- [ ] User message → working; unmatched `tool_execution_start` → working;
+- [x] User message → working; unmatched `tool_execution_start` → working;
       completed assistant with no pending tools → done/idle;
       `session_exit` with pending tools → interrupted, not still-live.
-- [ ] Two `omp` terminals in the same cwd do not share a row.
-- [ ] A `bun`-named process is shown only when its tree holds the omp
+- [x] Two `omp` terminals in the same cwd do not share a row.
+- [x] A `bun`-named process is shown only when its tree holds the omp
       JSONL FD.
-- [ ] Idle pre-file `omp` does not steal another session by mtime.
-- [ ] Disabling agent status does not touch `~/.omp`.
-- [ ] No oh-my-pi source changes.
+- [x] Idle pre-file `omp` does not steal another session by mtime.
+- [x] Disabling agent status does not touch `~/.omp`.
+- [x] No oh-my-pi source changes.
 
 ## Definition of done
 

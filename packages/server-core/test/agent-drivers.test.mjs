@@ -8,6 +8,11 @@ async function fixture(version) {
   return text.trim().split("\n").map((line) => JSON.parse(line));
 }
 
+async function ompFixture(name) {
+  const text = await readFile(new URL(`./fixtures/omp/v0.1/${name}.jsonl`, import.meta.url), "utf8");
+  return text.trim().split("\n").map((line) => JSON.parse(line));
+}
+
 test("Codex v0.1 rollout records normalize through the v0.1 mapping", async () => {
   const registry = createAgentDriverRegistry();
   const records = await fixture("v0.1");
@@ -28,6 +33,75 @@ test("newer and older Codex releases resolve permissively to the closest mapping
   assert.equal(registry.resolve("codex", "0.146.0")?.mappingVersion, "0.1");
   assert.equal(registry.resolve("codex", "0.0.5")?.mappingVersion, "0.1");
   assert.equal(registry.resolve("claude-code", "1.0.0")?.mappingVersion, "0.1");
+  assert.equal(registry.resolve("omp")?.mappingVersion, "0.1");
+});
+
+test("OMP v0.1 ignores the title slot and reduces only allowlisted lifecycle records", async () => {
+  const registry = createAgentDriverRegistry();
+  const records = await ompFixture("basic");
+  assert.equal(registry.inspectSession("omp", records[0]), null);
+  const inspected = registry.inspectSession("omp", records[1]);
+  assert.deepEqual(inspected?.session, { providerSessionId: "omp-root-v01" });
+  const events = records.map((record, index) => registry.normalize("omp", undefined, record, {
+    activationTerminalSessionId: "terminal-1", providerSessionId: inspected?.session.providerSessionId,
+    sequence: index + 1, occurredAt: index + 1,
+  })).filter(Boolean);
+  assert.deepEqual(events.map(({ kind }) => kind), ["session.started", "turn.started", "tool.started", "tool.finished", "agent.done", "session.stopped"]);
+  assert.deepEqual(events[2]?.tool, { id: "call-1", name: "read" });
+  assert.equal(events[3]?.toolId, "call-1");
+  assert.equal(events[4]?.outcome, "success");
+  assert.equal(events[5]?.reason, "session_exit");
+  assert.equal(JSON.stringify(events).includes("private"), false);
+});
+
+test("OMP model changes update bounded metadata without changing lifecycle state", () => {
+  const event = createAgentDriverRegistry().normalize("omp", undefined, {
+    type: "model_change", model: "openai-codex/gpt-5.6-terra",
+  }, { activationTerminalSessionId: "terminal-1", providerSessionId: "omp-root-v01", sequence: 1, occurredAt: 1 });
+  assert.deepEqual(event, {
+    provider: "omp", sessionId: "omp-root-v01", activationTerminalSessionId: "terminal-1", sequence: 1, occurredAt: 1,
+    model: { id: "openai-codex/gpt-5.6-terra" }, kind: "agent.metadata",
+  });
+});
+
+test("OMP child journals target their filename-derived subagent without rebinding the root", async () => {
+  const registry = createAgentDriverRegistry();
+  const records = await ompFixture("child");
+  const events = records.map((record, index) => registry.normalize("omp", undefined, record, {
+    activationTerminalSessionId: "terminal-1", providerSessionId: "omp-root-v01",
+    journalRole: "child", childAgentId: "omp-child-v01", sequence: index + 1, occurredAt: index + 1,
+  })).filter(Boolean);
+  assert.deepEqual(events.map(({ kind }) => kind), ["subagent.started", "turn.started", "subagent.stopped"]);
+  assert.deepEqual(events[0], {
+    provider: "omp", sessionId: "omp-root-v01", activationTerminalSessionId: "terminal-1",
+    sequence: 2, occurredAt: 1_785_924_000_000, kind: "subagent.started", subagentId: "omp-child-v01", parentAgentId: "omp-root-v01",
+  });
+  assert.equal(events[1]?.agentId, "omp-child-v01");
+  assert.equal(events[1]?.promptText, "Inspect the parser");
+  assert.equal(events[2]?.outcome, "cancelled");
+});
+
+test("OMP title slots and unknown records never establish a session", async () => {
+  const registry = createAgentDriverRegistry();
+  const [title] = await ompFixture("title-slot-only");
+  assert.equal(registry.inspectSession("omp", title), null);
+  assert.equal(registry.normalize("omp", undefined, title, {
+    activationTerminalSessionId: "terminal-1", providerSessionId: "omp-root-v01", sequence: 1, occurredAt: 1,
+  }), null);
+  assert.equal(registry.normalize("omp", undefined, { type: "custom", customType: "unknown", data: { secret: "nope" } }, {
+    activationTerminalSessionId: "terminal-1", providerSessionId: "omp-root-v01", sequence: 2, occurredAt: 2,
+  }), null);
+});
+
+test("OMP assistant tool calls start matching tools without exposing arguments", () => {
+  const event = createAgentDriverRegistry().normalize("omp", undefined, {
+    type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "call-2", name: "bash", arguments: { command: "private" } }] },
+  }, { activationTerminalSessionId: "terminal-1", providerSessionId: "omp-root-v01", sequence: 1, occurredAt: 1 });
+  assert.deepEqual(event, {
+    provider: "omp", sessionId: "omp-root-v01", activationTerminalSessionId: "terminal-1", sequence: 1, occurredAt: 1,
+    kind: "tool.started", tool: { id: "call-2", name: "bash" },
+  });
+  assert.equal(JSON.stringify(event).includes("private"), false);
 });
 
 test("the greatest compatible provider/version mapping wins", () => {

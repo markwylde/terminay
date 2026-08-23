@@ -11,7 +11,7 @@ export type AgentClientState = "working" | "waiting" | "blocked" | "done" | "idl
 export interface AgentClientEntry {
   readonly entryId: string;
   readonly kind: "root" | "subagent";
-  readonly provider: "codex" | "claude-code";
+  readonly provider: "codex" | "claude-code" | "omp";
   readonly agentId: string;
   readonly sessionId: string;
   readonly activationTerminalSessionId: string;

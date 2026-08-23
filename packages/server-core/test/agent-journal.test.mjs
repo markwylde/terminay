@@ -4,7 +4,152 @@ import { chmod, mkdir, mkdtemp, realpath, rm, utimes, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { findProcessBoundClaudeSession, findProcessBoundCodexRollout, NodeAgentJournalSource } from "../dist/activity/agentJournal.js";
+import { findProcessBoundClaudeSession, findProcessBoundCodexRollout, findProcessBoundOmpSession, NodeAgentJournalSource } from "../dist/activity/agentJournal.js";
+
+function ompTitleSlot(title = "Untitled") {
+  const text = JSON.stringify({ type: "title", title });
+  return `${text}${" ".repeat(Math.max(0, 255 - Buffer.byteLength(text)))}\n`;
+}
+
+function ompJournal(id) {
+  return `${ompTitleSlot()}${JSON.stringify({ type: "session", id, version: "0.1.0" })}\n`;
+}
+
+test("omp discovery requires the exact PTY tree writer and skips its title slot", { skip: !["darwin", "linux"].includes(process.platform) }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminay-omp-journal-"));
+  const sessions = join(root, "agent", "sessions", "-workspace");
+  const path = join(sessions, "2026-08-23_fixture.jsonl");
+  await mkdir(sessions, { recursive: true });
+  const child = spawn(process.execPath, ["-e", "const fs=require('fs');const fd=fs.openSync(process.argv[1],'a');fs.writeSync(fd,process.argv[2]);setInterval(()=>{},1000)", path, ompJournal("omp-root")], { stdio: "ignore" });
+  try {
+    let found;
+    for (let attempt = 0; attempt < 40 && !found; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      found = await findProcessBoundOmpSession(process.pid, join(root, "agent", "sessions"));
+    }
+    assert.equal(found, await realpath(path));
+    assert.equal(await findProcessBoundOmpSession(999_999_999, join(root, "agent", "sessions")), undefined);
+  } finally {
+    child.kill(); if (child.exitCode === null) await new Promise((resolve) => child.once("exit", resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("omp root discovery rejects child journals and title-slot-only files", { skip: !["darwin", "linux"].includes(process.platform) }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminay-omp-root-"));
+  const sessions = join(root, "agent", "sessions", "-workspace");
+  const path = join(sessions, "2026-08-23_root.jsonl");
+  const childPath = join(sessions, "2026-08-23_root", "child-a.jsonl");
+  const titleOnly = join(sessions, "2026-08-23_title-only.jsonl");
+  await mkdir(join(sessions, "2026-08-23_root"), { recursive: true });
+  const child = spawn(process.execPath, [
+    "-e", "const fs=require('fs');const [root,content,kid,kidContent,title,titleContent]=process.argv.slice(1);for(const [file,text] of [[root,content],[kid,kidContent],[title,titleContent]]){const fd=fs.openSync(file,'a');fs.writeSync(fd,text)}setInterval(()=>{},1000)",
+    path, ompJournal("omp-root"), childPath, ompJournal("child-session"), titleOnly, ompTitleSlot(),
+  ], { stdio: "ignore" });
+  try {
+    let found;
+    for (let attempt = 0; attempt < 40 && !found; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      found = await findProcessBoundOmpSession(process.pid, join(root, "agent", "sessions"));
+    }
+    assert.equal(found, await realpath(path));
+  } finally {
+    child.kill(); if (child.exitCode === null) await new Promise((resolve) => child.once("exit", resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("two omp PTY trees in the same cwd never share a root journal", { skip: !["darwin", "linux"].includes(process.platform) }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminay-omp-isolation-"));
+  const sessions = join(root, "agent", "sessions", "-same-cwd");
+  const firstPath = join(sessions, "2026-08-23_first.jsonl");
+  const secondPath = join(sessions, "2026-08-23_second.jsonl");
+  await mkdir(sessions, { recursive: true });
+  const wrapper = (path, journal) => spawn(process.execPath, [
+    "-e", "const {spawn}=require('child_process');const child=spawn(process.execPath,['-e',\"const fs=require('fs');const fd=fs.openSync(process.argv[1],'a');fs.writeSync(fd,process.argv[2]);setInterval(()=>{},1000)\",process.argv[1],process.argv[2]],{stdio:'ignore'});setInterval(()=>{},1000)", path, journal,
+  ], { stdio: "ignore" });
+  const first = wrapper(firstPath, ompJournal("first")); const second = wrapper(secondPath, ompJournal("second"));
+  try {
+    let firstFound; let secondFound;
+    for (let attempt = 0; attempt < 80 && (!firstFound || !secondFound); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      firstFound = await findProcessBoundOmpSession(first.pid, join(root, "agent", "sessions"));
+      secondFound = await findProcessBoundOmpSession(second.pid, join(root, "agent", "sessions"));
+    }
+    assert.equal(firstFound, await realpath(firstPath));
+    assert.equal(secondFound, await realpath(secondPath));
+  } finally {
+    first.kill(); second.kill();
+    if (first.exitCode === null) await new Promise((resolve) => first.once("exit", resolve));
+    if (second.exitCode === null) await new Promise((resolve) => second.once("exit", resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("pre-file omp stays on terminal fallback and does not bind another journal", { skip: !["darwin", "linux"].includes(process.platform) }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminay-omp-pre-file-"));
+  const identity = Object.freeze({ serverId: "server-1", projectId: "project-1", sessionId: "terminal-1" });
+  const source = new NodeAgentJournalSource({ ompHome: root, codexHome: join(root, "missing-codex"), claudeHome: join(root, "missing-claude"), discoveryAttemptLimit: 2, pollMs: 50 });
+  const observations = [];
+  try {
+    await source.start((observation) => observations.push(observation));
+    source.registerTerminal(identity); source.terminalStarted(identity, process.pid);
+    source.foregroundProcessChanged(identity, "omp", false);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.deepEqual(observations, []);
+  } finally {
+    await source.stop(); await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("persistent omp discovery binds a lazy writer after the bounded startup scan", { skip: !["darwin", "linux"].includes(process.platform) }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminay-omp-lazy-"));
+  const sessions = join(root, "agent", "sessions", "-workspace");
+  const path = join(sessions, "2026-08-23_lazy.jsonl");
+  const identity = Object.freeze({ serverId: "server-1", projectId: "project-1", sessionId: "terminal-1" });
+  await mkdir(sessions, { recursive: true });
+  const source = new NodeAgentJournalSource({ ompHome: root, codexHome: join(root, "missing-codex"), claudeHome: join(root, "missing-claude"), discoveryAttemptLimit: 2, pollMs: 50 });
+  const observations = [];
+  let child;
+  try {
+    await source.start((observation) => observations.push(observation));
+    source.registerTerminal(identity); source.terminalStarted(identity, process.pid); source.foregroundProcessChanged(identity, "omp", false);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    child = spawn(process.execPath, ["-e", "const fs=require('fs');const fd=fs.openSync(process.argv[1],'a');fs.writeSync(fd,process.argv[2]);setInterval(()=>{},1000)", path, ompJournal("omp-lazy")], { stdio: "ignore" });
+    for (let attempt = 0; attempt < 80 && !observations.some((item) => item.record.id === "omp-lazy"); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(observations.some((item) => item.record.id === "omp-lazy" && item.journalRole === "root"), true);
+  } finally {
+    await source.stop(); child?.kill(); if (child?.exitCode === null) await new Promise((resolve) => child.once("exit", resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("omp child journals tail beneath their process-bound root only", { skip: !["darwin", "linux"].includes(process.platform) }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminay-omp-child-"));
+  const sessions = join(root, "agent", "sessions", "-workspace");
+  const path = join(sessions, "2026-08-23_root.jsonl");
+  const childPath = join(sessions, "2026-08-23_root", "child-a.jsonl");
+  const identity = Object.freeze({ serverId: "server-1", projectId: "project-1", sessionId: "terminal-1" });
+  await mkdir(join(sessions, "2026-08-23_root"), { recursive: true });
+  const source = new NodeAgentJournalSource({ ompHome: root, codexHome: join(root, "missing-codex"), claudeHome: join(root, "missing-claude"), pollMs: 50 });
+  const observations = [];
+  const child = spawn(process.execPath, [
+    "-e", "const fs=require('fs');for(let i=1;i<process.argv.length;i+=2){const fd=fs.openSync(process.argv[i],'a');fs.writeSync(fd,process.argv[i+1])}setInterval(()=>{},1000)",
+    path, ompJournal("omp-root"), childPath, ompJournal("child-session"),
+  ], { stdio: "ignore" });
+  try {
+    await source.start((observation) => observations.push(observation));
+    source.registerTerminal(identity); source.terminalStarted(identity, process.pid); source.foregroundProcessChanged(identity, "omp", false);
+    for (let attempt = 0; attempt < 80 && !observations.some((item) => item.journalRole === "child" && item.record.id === "child-session"); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.equal(observations.some((item) => item.record.id === "omp-root" && item.journalRole === "root"), true);
+    assert.equal(observations.some((item) => item.record.id === "child-session" && item.journalRole === "child" && item.childAgentId === "child-a"), true);
+  } finally {
+    await source.stop(); child.kill(); if (child.exitCode === null) await new Promise((resolve) => child.once("exit", resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("rollout discovery requires an open writer below the exact process tree", { skip: !["darwin", "linux"].includes(process.platform) }, async () => {
   const root = await mkdtemp(join(tmpdir(), "terminay-agent-journal-"));

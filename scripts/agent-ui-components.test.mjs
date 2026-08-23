@@ -207,6 +207,39 @@ test('sidebar filters by project, nests subagents, and keeps unread separate fro
 	);
 });
 
+test('sidebar presents omp with its provider display name', () => {
+	const ompEntry = {
+		entryId: 'omp-root-entry',
+		kind: 'root',
+		provider: 'omp',
+		agentId: 'omp-root',
+		sessionId: 'omp-session',
+		activationTerminalSessionId: 'omp-terminal',
+		state: 'working',
+		stateStartedAt: 10,
+		updatedAt: 10,
+		lastEventKind: 'session.started',
+		lastEventSequence: 1,
+		active: true,
+		activeTools: [],
+		unread: false,
+		terminalSessionId: 'omp-terminal',
+		inProcess: false,
+	};
+
+	const markup = renderToStaticMarkup(
+		React.createElement(AgentsSidebar, {
+			projectId: 'project-a',
+			agents: [{ entry: ompEntry, projectId: 'project-a' }],
+			expandedEntryIds: [],
+			onToggleEntryExpanded: () => {},
+			onActivateTerminal: () => {},
+		}),
+	);
+
+	assert.match(markup, />omp</);
+});
+
 test('sidebar disables its row and disclosure animation when reduced motion is requested', async () => {
 	const stylesheet = await readFile('src/components/AgentsSidebar.css', 'utf8');
 	assert.match(
