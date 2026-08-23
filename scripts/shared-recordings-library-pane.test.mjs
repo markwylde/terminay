@@ -22,3 +22,15 @@ test('desktop recordings replay consumes the shared library without owning sideb
   assert.match(desktop, /<SharedRecordingsLibraryPane/u)
   assert.doesNotMatch(desktop, /<aside className="recordings-sidebar">/u)
 })
+
+test('desktop recordings keep the library outside the replay error boundary', () => {
+  assert.match(desktop, /function RecordingsReplayPane/u)
+  assert.match(
+    desktop,
+    /<SharedRecordingsLibraryPane[\s\S]*<RecordingsRouteErrorBoundary[\s\S]*<RecordingsReplayPane/u,
+  )
+  assert.doesNotMatch(
+    desktop,
+    /<RecordingsRouteErrorBoundary[\s\S]*<SharedRecordingsLibraryPane/u,
+  )
+})
