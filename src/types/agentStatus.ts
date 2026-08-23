@@ -67,6 +67,11 @@ export type AgentLifecycleEvent =
 			kind: 'session.started';
 			displayName?: string;
 	  })
+	| (AgentLifecycleEventBase &
+			TargetedAgentEvent & {
+				/** Metadata updates preserve the current lifecycle state. */
+				kind: 'agent.metadata';
+			})
 	| (AgentLifecycleEventBase & {
 			kind: 'session.stopped';
 			reason?: string;

@@ -215,6 +215,8 @@ function applyLifecycleEvent(
 				exitCode: undefined,
 				exitSignal: undefined,
 			});
+		case 'agent.metadata':
+			return withState(entry, entry.state, event);
 		case 'session.stopped':
 			return withState(entry, 'idle', event, {
 				active: false,

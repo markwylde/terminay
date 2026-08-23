@@ -2,10 +2,10 @@
 
 ## Goal
 
-Observe a user-started interactive `omp` process in a Terminay terminal the
-same way Codex is observed: bind the open JSONL writer under the omp sessions
-root to the exact PTY, then reduce durable records into the existing canonical
-agent model. Do not wrap `omp`, install MCP, spawn RPC/ACP, or change oh-my-pi.
+Observe a user-started interactive `omp` process in a Terminay terminal by
+using OMP's terminal-scoped breadcrumb to bind its exact JSONL session to the
+exact PTY, then reduce durable records into the existing canonical agent model.
+Do not wrap `omp`, install MCP, spawn RPC/ACP, or change oh-my-pi.
 
 ## Governing specifications
 
@@ -25,7 +25,6 @@ Terminay terminal therefore cannot appear in the Agents sidebar.
 - Wrapping `omp`, installing a plugin, or registering Terminay as an omp MCP
   server.
 - Spawning `omp --rpc` or `omp acp`.
-- Using `~/.omp/agent/terminal-sessions/` breadcrumbs as identity.
 - Claiming `waiting` / `blocked` for omp permission prompts (no journal
   record).
 - Windows journal binding (same darwin/linux `lsof`/procfs limit as Codex).
@@ -35,9 +34,8 @@ Terminay terminal therefore cannot appear in the Agents sidebar.
 - `packages/server-core/src/activity/agentTypes.ts` — `AGENT_PROVIDERS`.
 - `packages/server-core/src/activity/agentService.ts` —
   `providerFromForegroundProcess`.
-- `packages/server-core/src/activity/agentJournal.ts` — process-tree bind,
-  `lsof`/procfs open-handle discovery, first-record inspect, tailer roots,
-  `.jsonl` path guard.
+- `packages/server-core/src/activity/agentJournal.ts` — PTY-TTY breadcrumb
+  resolution, first-record inspect, tailer roots, and `.jsonl` path guard.
 - `packages/server-core/src/activity/agentDrivers.ts` — `(codex, 0.1)` and
   `(claude-code, 0.1)` plus `createAgentDriverRegistry`.
 - `packages/client-core/src/agentStatus.ts` and `src/types/agentStatus.ts` —
@@ -56,8 +54,10 @@ omp journal facts to implement against (do not import oh-my-pi):
   migrate).
 - Physical first line: 256-byte `type: "title"` slot. Skip it. Logical first
   record: `type: "session"` with `id`.
-- Writer keeps the FD open after lazy materialize (first assistant persist or
-  `ensureOnDisk()`). Until then, fallback to terminal activity.
+- Terminal breadcrumb: `terminal-sessions/<tty-derived-id>` stores the exact
+  cwd and session-file path, with an optional `fresh` marker before lazy JSONL
+  materialization. OMP v18 may atomically replace and close JSONL writers, so
+  open-FD sampling is only supplementary evidence.
 - Live tool start: `type: "custom"`, `customType: "tool_execution_start"`.
 - Exit: `customType: "session_exit"`.
 - Children: `<parent-stem>/<agentId>.jsonl`.
@@ -76,20 +76,22 @@ omp journal facts to implement against (do not import oh-my-pi):
 
 - [x] Match foreground `omp` (and `oh-my-pi` if that argv appears).
 - [x] Reuse the existing leave-shell discovery window so a `bun` wrapper can
-      still bind, but only after a descendant holds a writable JSONL under
-      the omp sessions root (same rule as Codex/`node`).
+      still begin OMP discovery.
 - [x] Resolve the sessions root from `~/.omp/agent/sessions` plus
       `PI_CODING_AGENT_DIR` / `OMP_PROFILE` / `PI_PROFILE` / XDG. Add an
       `ompHome` test override beside `claudeHome` / `codexHome`.
 - [x] Skip the 256-byte title slot before inspect. Require
       `type === "session"` and a stable `id`. A physical `type: "title"`
       line must not be treated as Codex `session_meta`.
-- [x] Bind by open writer PID in the exact PTY tree. Never newest-mtime,
-      never breadcrumb, never encoded-cwd alone.
+- [x] Derive OMP's terminal ID from the exact PTY TTY and resolve the matching
+      bounded terminal breadcrumb under the effective OMP root.
+- [x] Validate breadcrumb cwd/path/fresh fields; admit only a materialized
+      root JSONL below an allowed sessions root. Never use newest-mtime or
+      encoded-cwd alone.
 - [x] Admit only encoded-cwd root `*.jsonl` files as roots. Nested
       `<parent-stem>/*.jsonl` files are children.
-- [x] Tail the same JSONL through the existing 250ms poller, including
-      shrink/replace reset.
+- [x] Recheck the breadcrumb while OMP remains foreground, rebind on session
+      switch, and tail atomic JSONL replacements as well as shrink/reset.
 
 ### 3. Driver `(omp, 0.1)`
 
@@ -113,23 +115,25 @@ omp journal facts to implement against (do not import oh-my-pi):
       assistant completion, and session_exit.
 - [x] Add a child-journal fixture and a title-slot-only reject fixture.
 - [x] Driver tests for the mapping above and unknown-record ignore.
-- [x] Journal tests: process-bound bind, same-cwd isolation, title-slot
-      skip, child files are not roots, missing file stays unbound.
+- [x] Journal tests: same-cwd two-TTY breadcrumb isolation, title-slot skip,
+      fresh/missing and malformed breadcrumb rejection, session switch, atomic
+      replacement, and child files are not roots.
 - [x] Existing Codex and Claude Code tests stay green.
 
 ## Acceptance checks
 
-- [ ] Ordinary `omp` in a Terminay terminal needs no extra flags, hooks, or
+- [x] Ordinary `omp` in a Terminay terminal needs no extra flags, hooks, or
       MCP.
-- [ ] After the first assistant persist, the sidebar shows an `omp` root
+- [x] After the first assistant persist, the sidebar shows an `omp` root
       bound to that exact terminal.
 - [x] User message → working; unmatched `tool_execution_start` → working;
       completed assistant with no pending tools → done/idle;
       `session_exit` with pending tools → interrupted, not still-live.
 - [x] Two `omp` terminals in the same cwd do not share a row.
-- [x] A `bun`-named process is shown only when its tree holds the omp
-      JSONL FD.
-- [x] Idle pre-file `omp` does not steal another session by mtime.
+- [x] A `bun`-named process is shown only when its exact PTY TTY has a valid
+      OMP breadcrumb target.
+- [x] Fresh/pre-file `omp` does not steal another session and remains on
+      terminal-activity fallback until its breadcrumb target materializes.
 - [x] Disabling agent status does not touch `~/.omp`.
 - [x] No oh-my-pi source changes.
 
