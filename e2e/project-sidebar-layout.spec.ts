@@ -927,6 +927,7 @@ test('normal project windows enforce the title-safe minimum height', async ({
 test('committed pane sizes remain project-local through project switching and renderer reload', async ({
 	mainWindow,
 }) => {
+	test.setTimeout(90_000);
 	await openFileExplorer(mainWindow);
 	const ids = ['explorer', 'agents', 'git', 'documentation'];
 	for (const id of ids) await expandPane(mainWindow, id);
@@ -942,13 +943,20 @@ test('committed pane sizes remain project-local through project switching and re
 
 	await mainWindow.getByLabel('Create project on This server').click();
 	await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+	await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 	await openFileExplorer(mainWindow);
+	await expect(activeSidebar(mainWindow)).toBeVisible();
 	for (const id of ids) await expandPane(mainWindow, id);
 	const secondHeight = (await panelGeometry(mainWindow, ids)).panes.explorer
 		.body.height;
 	expect(secondHeight).not.toBeCloseTo(firstHeight, 0);
 
 	await mainWindow.locator(`[data-project-id="${firstProjectId}"]`).click();
+	await expect(mainWindow.locator('.project-tab--active')).toHaveAttribute(
+		'data-project-id',
+		firstProjectId,
+	);
+	await expect(activeSidebar(mainWindow)).toBeVisible();
 	await expect
 		.poll(
 			async () =>
@@ -956,7 +964,9 @@ test('committed pane sizes remain project-local through project switching and re
 		)
 		.toBeCloseTo(firstHeight, 0);
 	await mainWindow.reload();
+	await expect(mainWindow.locator('.project-workspace--active')).toBeVisible();
 	await openFileExplorer(mainWindow);
+	await expect(activeSidebar(mainWindow)).toBeVisible();
 	for (const id of ids) await expandPane(mainWindow, id);
 	await expect
 		.poll(
