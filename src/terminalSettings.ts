@@ -2060,7 +2060,6 @@ export function buildTerminalOptions(
 		cursorStyle: settings.cursorStyle,
 		cursorWidth: settings.cursorWidth,
 		cursorInactiveStyle: settings.cursorInactiveStyle,
-		customGlyphs: settings.customGlyphs,
 		disableStdin: settings.disableStdin,
 		drawBoldTextInBrightColors: settings.drawBoldTextInBrightColors,
 		fastScrollSensitivity: settings.fastScrollSensitivity,

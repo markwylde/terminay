@@ -26,7 +26,10 @@ import {
 import { SharedRecordingsLibraryPane } from '../shared/SharedRecordingsLibraryPane'
 import { SharedRecordingsRouteBody } from '../shared/SharedRecordingsRouteBody'
 import type { RecordingListItem, RecordingsClient } from '@terminay/client-core'
-import { attachTerminalWebglRenderer } from './terminalWebglRenderer'
+import {
+  attachTerminalWebglRenderer,
+  createTerminalWebglAddonOptions,
+} from './terminalWebglRenderer'
 import '../settings.css'
 import '../recordings.css'
 
@@ -665,7 +668,15 @@ export function RecordingsWindow({ client }: { readonly client: RecordingsClient
     terminal.loadAddon(new Unicode11Addon())
     terminal.unicode.activeVersion = '11'
     terminal.open(root)
-    const webglRenderer = attachTerminalWebglRenderer(terminal, () => new WebglAddon())
+    const webglRenderer = attachTerminalWebglRenderer(
+      terminal,
+      () =>
+        new WebglAddon(
+          createTerminalWebglAddonOptions(
+            (settings ?? defaultTerminalSettings).customGlyphs,
+          ),
+        ),
+    )
     const restoreMouseCoordinates = patchReplayTerminalMouseCoordinates(terminal, () => displayScaleRef.current)
     terminal.attachCustomKeyEventHandler(() => false)
     terminal.focus()

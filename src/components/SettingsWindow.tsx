@@ -76,7 +76,10 @@ function toParakeetRuntimeStatus(status: {
 import '../settings.css';
 import { ExtensionSettingsSection } from './ExtensionSettingsSection';
 import { ShellProfilesSettings } from './ShellProfilesSettings';
-import { attachTerminalWebglRenderer } from './terminalWebglRenderer';
+import {
+	attachTerminalWebglRenderer,
+	createTerminalWebglAddonOptions,
+} from './terminalWebglRenderer';
 
 type CategoryId =
 	| (typeof terminalSettingsCategories)[number]['id']
@@ -216,7 +219,8 @@ function TerminalPreview({ settings }: { settings: TerminalSettings }) {
 		terminal.open(root);
 		const webglRenderer = attachTerminalWebglRenderer(
 			terminal,
-			() => new WebglAddon(),
+			() =>
+				new WebglAddon(createTerminalWebglAddonOptions(settings.customGlyphs)),
 		);
 		fitAddon.fit();
 
