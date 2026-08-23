@@ -113,7 +113,17 @@ The normal diagnostic level records:
   and registration failure, using only origin class (`manager`, `session`,
   `loopback`, `other`), close-code, close-reason class, and remaining TTL;
   diagnostics never record pairing URLs, fragments, PINs, room ids, session
-  ids, or hostnames; and
+  ids, or hostnames;
+- hosted remote WebRTC liveness after a client has joined: peer and ICE
+  state changes, ICE disconnect grace start/clear/expiry, data-channel
+  open/close, and application-lane counters (inbound/outbound frame and byte
+  counts, last-activity age, buffered amount, inbound kind class, send
+  failure class). Events are state changes plus a bounded stall warning when
+  inbound frames continue while outbound frames stop, and a periodic summary
+  while a peer is live. Diagnostics never record PTY bytes, keystrokes,
+  protocol payloads, SDP, ICE candidate addresses, or channel labels beyond
+  the fixed set `control`, `application`, `terminal`, `assets`, `asset`, and
+  `api`; and
 - embedded Local terminal presentation congestion plus renderer recovery
   starts, retries, checkpoint commits, timeouts, and terminal failures, using
   only bounded attempt counts, durations, byte positions, queue measurements,
@@ -301,6 +311,10 @@ raw authority-bearing ids are not diagnostic correlation keys.
   the renderer's bounded recovery lifecycle through completion or a visible
   retryable failure, without persisting PTY bytes, session ids, project ids, or
   terminal titles.
+- A hosted remote session that accepts keystrokes but stops streaming PTY
+  records peer/ICE/channel state plus application-lane counters that show
+  inbound continuing while outbound stalls, without persisting terminal
+  content.
 - Console flooding and an oversized cyclic object cannot freeze Desktop,
   allocate unbounded memory, forge log lines, or exceed per-event and rotation
   bounds.

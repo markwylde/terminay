@@ -6,7 +6,7 @@
  * `sessionId` + `activationTerminalSessionId`).
  */
 
-export const AGENT_PROVIDERS = ['codex', 'claude-code'] as const;
+export const AGENT_PROVIDERS = ['codex', 'claude-code', 'omp'] as const;
 export type AgentProvider = (typeof AGENT_PROVIDERS)[number];
 
 export const AGENT_STATES = [
@@ -67,6 +67,11 @@ export type AgentLifecycleEvent =
 			kind: 'session.started';
 			displayName?: string;
 	  })
+	| (AgentLifecycleEventBase &
+			TargetedAgentEvent & {
+				/** Metadata updates preserve the current lifecycle state. */
+				kind: 'agent.metadata';
+			})
 	| (AgentLifecycleEventBase & {
 			kind: 'session.stopped';
 			reason?: string;

@@ -107,6 +107,40 @@ test('retiring a handshake stops grace from closing another session', () => {
 	}
 });
 
+test('ICE disconnected while the peer stays connected does not start grace', () => {
+	const phases = [];
+	const peer = { connectionState: 'connected', iceConnectionState: 'disconnected' };
+	const lifecycle = new HostedPeerLifecycle(peer, 5_000, () => {}, {
+		onGrace(phase) {
+			phases.push(phase);
+		},
+	});
+	lifecycle.observe('ice');
+	assert.deepEqual(phases, []);
+	lifecycle.stop();
+});
+
+test('peer and ICE disconnected starts grace', () => {
+	mock.timers.enable({ apis: ['setTimeout'] });
+	try {
+		const phases = [];
+		const peer = { connectionState: 'disconnected', iceConnectionState: 'disconnected' };
+		const lifecycle = new HostedPeerLifecycle(peer, 5_000, () => {}, {
+			onGrace(phase) {
+				phases.push(phase);
+			},
+		});
+		lifecycle.observe('ice');
+		assert.deepEqual(phases, ['started']);
+		peer.connectionState = 'connected';
+		peer.iceConnectionState = 'connected';
+		lifecycle.observe('peer');
+		assert.deepEqual(phases, ['started', 'cleared']);
+	} finally {
+		mock.timers.reset();
+	}
+});
+
 test('handshake joins run one at a time', async () => {
 	const queue = createHandshakeJoinQueue();
 	const order = [];
