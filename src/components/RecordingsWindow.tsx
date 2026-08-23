@@ -94,15 +94,19 @@ function formatDate(value: string | null): string {
     return 'Unknown'
   }
 
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
+  try {
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) {
+      return 'Unknown'
+    }
+
+    return new Intl.DateTimeFormat(undefined, {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    }).format(date)
+  } catch {
     return 'Unknown'
   }
-
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(date)
 }
 
 function formatDuration(ms: number | null): string {
@@ -137,7 +141,8 @@ function getRecordingTabColor(recording: TerminalRecordingListItem | null): stri
   if (!recording) {
     return undefined
   }
-  return recording.color ?? recording.projectColor ?? undefined
+  const color = recording.color ?? recording.projectColor
+  return typeof color === 'string' && color.length > 0 ? color : undefined
 }
 
 type SelectDropupOption = {
@@ -570,13 +575,11 @@ function RecordingsWindowContent({ client }: { readonly client: RecordingsClient
         durationFor={formatDuration}
       />}>
         {listErrorText ? <div className="recordings-error" role="alert">{listErrorText}</div> : null}
-        <RecordingsRouteErrorBoundary key={selectedRecordingId ?? 'none'}>
-          <RecordingsReplayPane
-            client={client}
-            onDelete={onDelete}
-            selectedRecording={selectedRecording}
-          />
-        </RecordingsRouteErrorBoundary>
+        <RecordingsReplayPane
+          client={client}
+          onDelete={onDelete}
+          selectedRecording={selectedRecording}
+        />
     </SharedRecordingsRouteBody>
   )
 }
@@ -724,11 +727,19 @@ function RecordingsReplayPane({
     [canUseRecordedTheme],
   )
   const replayTheme = useMemo(() => {
-    if (replayThemeMode === 'recorded' && recordedTheme) {
-      return recordedTheme
-    }
+    try {
+      if (replayThemeMode === 'recorded' && recordedTheme) {
+        return recordedTheme
+      }
 
-    return resolveTerminalTheme(settings ?? defaultTerminalSettings, getRecordingTabColor(selectedRecording))
+      return resolveTerminalTheme(
+        settings?.theme ? settings : defaultTerminalSettings,
+        getRecordingTabColor(selectedRecording),
+      )
+    } catch (error) {
+      console.error('Failed to resolve the recordings replay theme', error)
+      return defaultTerminalSettings.theme
+    }
   }, [recordedTheme, replayThemeMode, selectedRecording, settings])
 
   const seekToTime = useCallback(async (time: number) => {
@@ -777,7 +788,8 @@ function RecordingsReplayPane({
 
     setIsPlaying(false)
     root.replaceChildren()
-    let terminal: Terminal
+    let terminal: Terminal | undefined
+    let restoreMouseCoordinates = () => {}
     try {
       terminal = new Terminal({
         ...buildReplayTerminalOptions(settings ?? defaultTerminalSettings, replayTheme),
@@ -789,16 +801,21 @@ function RecordingsReplayPane({
       terminal.loadAddon(new Unicode11Addon())
       terminal.unicode.activeVersion = '11'
       terminal.open(root)
+      // Replay uses the DOM renderer. Live split panes keep WebGL; a scaled
+      // replay canvas in an auxiliary window is not a shared atlas surface.
+      restoreMouseCoordinates = patchReplayTerminalMouseCoordinates(terminal, () => displayScaleRef.current)
+      terminal.attachCustomKeyEventHandler(() => false)
+      terminal.focus()
+      terminalRef.current = terminal
     } catch (error) {
       console.error('Failed to open the recordings replay terminal', error)
+      terminal?.dispose()
+      terminalRef.current = null
       return
     }
-    // Replay uses the DOM renderer. Live split panes keep WebGL; a scaled
-    // replay canvas in an auxiliary window is not a shared atlas surface.
-    const restoreMouseCoordinates = patchReplayTerminalMouseCoordinates(terminal, () => displayScaleRef.current)
-    terminal.attachCustomKeyEventHandler(() => false)
-    terminal.focus()
-    terminalRef.current = terminal
+    if (!terminal) {
+      return
+    }
     const resizeObserver = new ResizeObserver(measureTerminal)
     resizeObserver.observe(root)
     if (terminal.element) {
@@ -1091,6 +1108,7 @@ function RecordingsReplayPane({
             </div>
           ) : null}
         </header>
+        <RecordingsRouteErrorBoundary>
         <div
           className={`recordings-terminal-shell recordings-terminal-shell--${scaleMode}`}
           ref={terminalViewportRef}
@@ -1107,7 +1125,7 @@ function RecordingsReplayPane({
               className="recordings-terminal"
               ref={terminalRootRef}
               style={{
-                background: replayTheme.background,
+                background: typeof replayTheme.background === 'string' ? replayTheme.background : undefined,
                 height: terminalSize.height,
                 transform: `scale(${displayScale})`,
                 transformOrigin: 'top left',
@@ -1116,6 +1134,7 @@ function RecordingsReplayPane({
             />
           </div>
         </div>
+        </RecordingsRouteErrorBoundary>
         <footer className="recordings-controls-container">
           <div
             className="recordings-timeline"
@@ -1157,6 +1176,7 @@ function RecordingsReplayPane({
             </div>
 
             <div className="recordings-controls-right">
+              <RecordingsRouteErrorBoundary>
               <SelectDropup
                 allowManualInput
                 ariaLabel="Replay zoom"
@@ -1196,6 +1216,7 @@ function RecordingsReplayPane({
                 value={String(speed)}
                 displayValue={`${speed}x`}
               />
+              </RecordingsRouteErrorBoundary>
             </div>
           </div>
         </footer>
