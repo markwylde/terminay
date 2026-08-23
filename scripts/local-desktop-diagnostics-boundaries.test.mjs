@@ -126,6 +126,11 @@ test('hosted remote pairing diagnostics are named events without pairing URLs', 
 		'local-server.remote-pairing.reregistered',
 		'local-server.remote-pairing.client-join',
 		'local-server.remote-pairing.failed',
+		'local-server.remote-webrtc.peer-state',
+		'local-server.remote-webrtc.ice-grace',
+		'local-server.remote-webrtc.channel-state',
+		'local-server.remote-webrtc.application-lane',
+		'local-server.remote-webrtc.peer-closed',
 	]) {
 		assert.match(diagnostics, new RegExp(`'${event.replaceAll('.', '\\.')}'`, 'u'));
 		assert.match(mapper, new RegExp(`'${event.replaceAll('.', '\\.')}'`, 'u'));
@@ -139,6 +144,9 @@ test('hosted remote pairing diagnostics are named events without pairing URLs', 
 		/pairingSocket\.once\('close', \(\) => \{\s*if \(!closed\) void close\(\);/u,
 	);
 	assert.doesNotMatch(mapper, /pairingUrl|qrSecret|relayJoinToken/u);
+	assert.match(host, /createHostedStreamDiagnostics/u);
+	assert.match(mapper, /stallClass: event\.stallClass/u);
+	assert.match(mapper, /source: stream \? 'remote-webrtc' : 'remote-pairing'/u);
 });
 
 test('application logs do not persist microphone identity', () => {

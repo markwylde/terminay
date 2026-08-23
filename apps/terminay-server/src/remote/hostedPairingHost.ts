@@ -26,6 +26,7 @@ import {
 	resolveIceRecoveryGraceMs,
 	type HostedIceServer,
 } from './hostedPeerLifecycle.js';
+import { createHostedStreamDiagnostics, frameByteLength } from './hostedStreamDiagnostics.js';
 
 export {
 	DEFAULT_HOSTED_ICE_SERVERS,
@@ -116,7 +117,12 @@ export type HostedPairingDiagnostic = Readonly<{
 		| 'rotated'
 		| 'reregistered'
 		| 'client-join'
-		| 'failed';
+		| 'failed'
+		| 'peer-state'
+		| 'ice-grace'
+		| 'channel-state'
+		| 'application-lane'
+		| 'peer-closed';
 	readonly scope?: 'pairing' | 'device';
 	readonly advertisedUrlClass?: 'manager' | 'session' | 'loopback' | 'other';
 	readonly signalingHostClass?: 'terminay-session' | 'loopback' | 'other';
@@ -124,6 +130,27 @@ export type HostedPairingDiagnostic = Readonly<{
 	readonly closeReasonClass?: string;
 	readonly remainingMs?: number;
 	readonly cause?: string;
+	readonly peerState?: string | undefined;
+	readonly iceState?: string | undefined;
+	readonly iceGracePhase?: 'started' | 'cleared' | 'expired';
+	readonly channel?: 'api' | 'asset' | 'assets' | 'application' | 'control' | 'terminal';
+	readonly channelState?: string | undefined;
+	readonly inboundFrames?: number;
+	readonly outboundFrames?: number;
+	readonly inboundBytes?: number;
+	readonly outboundBytes?: number;
+	readonly lastInboundAgeMs?: number | null;
+	readonly lastOutboundAgeMs?: number | null;
+	readonly inboundKind?: 'bytes' | 'blob' | 'string' | 'empty' | 'other' | undefined;
+	readonly droppedFrames?: number;
+	readonly droppedClass?: 'bytes' | 'blob' | 'string' | 'empty' | 'other';
+	readonly sendFailures?: number;
+	readonly sendFailure?: boolean;
+	readonly stallClass?: 'no-outbound' | 'outbound-stalled';
+	readonly first?: 'inbound' | 'outbound';
+	readonly summary?: boolean;
+	readonly reasonClass?: string;
+	readonly bufferedAmount?: number;
 }>;
 
 export interface HostedPairingHost {
@@ -674,10 +701,14 @@ async function startPeer(
 		),
 	);
 	const session: { connection?: ServerConnectionLike; peer?: HostedConnectedPeer } = {};
+	const stream = createHostedStreamDiagnostics({
+		emit: (event) => context.options.onDiagnostic?.(event),
+	});
 	const lifecycle = new HostedPeerLifecycle(
 		native,
 		resolveIceRecoveryGraceMs(context.options.iceRecoveryGraceMs),
-		() => {
+		(reason) => {
+			stream.peerClosed(reason);
 			const connectionId = session.peer?.connectionId;
 			void session.connection?.close();
 			try {
@@ -687,13 +718,31 @@ async function startPeer(
 			}
 			if (connectionId) context.options.onPeerDisconnected?.(connectionId);
 		},
+		{
+			onGrace(phase, peerState, iceState) {
+				stream.iceGrace(phase, peerState, iceState);
+			},
+		},
 	);
 	const peer = wrapPeer(native, lifecycle);
 	const channels = Object.fromEntries(
 		CHANNELS.map((label) => [label, peer.createDataChannel(label, { ordered: true })]),
 	) as Record<(typeof CHANNELS)[number], WeriftDataChannel>;
-	native.addEventListener('connectionstatechange', () => lifecycle.observe('peer'));
-	native.addEventListener('iceconnectionstatechange', () => lifecycle.observe('ice'));
+	native.addEventListener('connectionstatechange', () => {
+		lifecycle.observe('peer');
+		stream.peerState(native.connectionState, native.iceConnectionState);
+	});
+	native.addEventListener('iceconnectionstatechange', () => {
+		lifecycle.observe('ice');
+		stream.peerState(native.connectionState, native.iceConnectionState);
+	});
+	for (const label of CHANNELS) {
+		const channel = channels[label]!;
+		const emitState = () => stream.channelState(label, channel.readyState);
+		channel.addEventListener('open', emitState);
+		channel.addEventListener('close', emitState);
+		channel.addEventListener('error', emitState);
+	}
 
 	peer.addEventListener('icecandidate', (event) => {
 		const candidate = asIceCandidate(event.candidate);
@@ -701,7 +750,7 @@ async function startPeer(
 		socket.send(JSON.stringify(signalMessage(scope, 'ice', { candidate })));
 	});
 	bindApi(channels.api!, context);
-	bindControl(channels.control!, channels.application!, context, (connection, connected) => {
+	bindControl(channels.control!, channels.application!, context, stream, (connection, connected) => {
 		session.connection = connection;
 		session.peer = connected;
 		onApplication(connection, connected);
@@ -907,6 +956,7 @@ function bindControl(
 	channel: WeriftDataChannel,
 	application: WeriftDataChannel,
 	context: Readonly<{ options: HostedPairingHostOptions }>,
+	stream: ReturnType<typeof createHostedStreamDiagnostics>,
 	onApplication: (connection: ServerConnectionLike, peer: HostedConnectedPeer) => void,
 ): void {
 	channel.addEventListener('message', (event) => {
@@ -941,7 +991,7 @@ function bindControl(
 		if (!ok || !ticket || context.options.acceptApplication === undefined) return;
 		try {
 			const connection = context.options.acceptApplication(
-				new HeadlessChannelTransport(asHeadlessChannel(application)),
+				new HeadlessChannelTransport(asHeadlessChannel(application, stream)),
 				{
 					authScope: 'admin',
 					clientId: ticket.deviceId,
@@ -983,7 +1033,10 @@ function pairingPinMatches(received: string, options: HostedPairingHostOptions):
 	return timingSafeEqual(Buffer.from(received), Buffer.from(expected));
 }
 
-function asHeadlessChannel(channel: WeriftDataChannel): HeadlessDataChannel {
+function asHeadlessChannel(
+	channel: WeriftDataChannel,
+	stream?: ReturnType<typeof createHostedStreamDiagnostics>,
+): HeadlessDataChannel {
 	const listeners = new Set<(state: HeadlessDataChannel['readyState']) => void>();
 	const emit = () => {
 		const state = mapChannelState(channel.readyState);
@@ -1003,7 +1056,13 @@ function asHeadlessChannel(channel: WeriftDataChannel): HeadlessDataChannel {
 			return typeof channel.bufferedAmount === 'number' ? channel.bufferedAmount : 0;
 		},
 		send(frame) {
-			safeChannelSend(channel, frame);
+			try {
+				safeChannelSend(channel, frame);
+				stream?.noteOutbound(frameByteLength(frame));
+			} catch (error) {
+				stream?.noteOutbound(frameByteLength(frame), false);
+				throw error;
+			}
 		},
 		close() {
 			channel.close?.();
@@ -1011,6 +1070,7 @@ function asHeadlessChannel(channel: WeriftDataChannel): HeadlessDataChannel {
 		onMessage(listener) {
 			const handler = (event: Record<string, unknown>) => {
 				const value = event.data;
+				stream?.noteInbound(value);
 				const frame =
 					value instanceof ArrayBuffer
 						? new Uint8Array(value)

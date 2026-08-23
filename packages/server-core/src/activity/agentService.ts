@@ -24,10 +24,15 @@ interface ProviderBinding {
 
 const DEFAULT_FOREGROUND_EXIT_CONFIRMATION_MS = 500;
 
-function providerFromForegroundProcess(processName: string): AgentProvider | null {
+export function providerFromForegroundProcess(processName: string): AgentProvider | null {
   const executable = processName.trim().split(/[\\/]/u).pop()?.toLowerCase() ?? "";
   if (/^codex(?:[-_.]|$)/u.test(executable)) return "codex";
-  return /^claude(?:[-_.]|$)/u.test(executable) ? "claude-code" : null;
+  if (/^claude(?:[-_.]|$)/u.test(executable)) return "claude-code";
+  // A macOS shebang launch exposes Bun as the PTY foreground executable.
+  // This is only a journal-discovery hint: NodeAgentJournalSource still
+  // requires a materialized OMP root JSONL selected by the exact PTY's
+  // terminal-scoped breadcrumb before it emits an authoritative record.
+  return /^(?:omp|oh-my-pi|bun)(?:[-_.]|$)/u.test(executable) ? "omp" : null;
 }
 
 /** Server-owned, zero-install agent journal authority. */
@@ -77,7 +82,10 @@ export class AgentStatusService {
   async start(): Promise<void> {
     if (this.started) return;
     await this.journalSource.start((observation) => {
-      void this.ingestJournalRecord(observation.identity, observation.provider, observation.record).catch(() => undefined);
+      void this.ingestJournalRecord(observation.identity, observation.provider, observation.record, {
+        journalRole: observation.journalRole,
+        childAgentId: observation.childAgentId,
+      }).catch(() => undefined);
     });
     this.started = true;
   }
@@ -160,9 +168,16 @@ export class AgentStatusService {
   }
 
   /** Testable server-side boundary used by the journal source and fixtures. */
-  async ingestJournalRecord(identity: ActivitySessionIdentity, provider: AgentProvider, record: Readonly<Record<string, unknown>>): Promise<boolean> {
+  async ingestJournalRecord(
+    identity: ActivitySessionIdentity,
+    provider: AgentProvider,
+    record: Readonly<Record<string, unknown>>,
+    source: { readonly journalRole?: "root" | "child"; readonly childAgentId?: string } = {},
+  ): Promise<boolean> {
     this.assertActive(identity);
-    const inspected = this.drivers.inspectSession(provider, record);
+    // A child omp journal has its own session header, but that header belongs
+    // beneath the root binding and must never replace the PTY's root session.
+    const inspected = source.journalRole === "child" ? null : this.drivers.inspectSession(provider, record);
     if (inspected !== null) {
       const resolved = this.drivers.resolve(provider, inspected.session.providerVersion);
       if (!resolved) return false;
@@ -180,6 +195,7 @@ export class AgentStatusService {
     const sequence = this.nextSequence(provider, identity.sessionId);
     const normalized = this.drivers.normalize(provider, binding.providerVersion, record, {
       activationTerminalSessionId: identity.sessionId, sequence, occurredAt: this.now(), providerSessionId: binding.providerSessionId,
+      journalRole: source.journalRole ?? "root", childAgentId: source.childAgentId,
     });
     if (normalized === null) return false;
     const events = Array.isArray(normalized) ? normalized : [normalized];
@@ -192,7 +208,9 @@ export class AgentStatusService {
       validateLifecycleEvent(event, provider, identity.sessionId);
       const correlated = this.correlateSubagentLaunch(event);
       this.store.dispatch(correlated);
-      this.activity.ingestProvider(identity, toProviderUpdate(correlated));
+      // Metadata is authoritative for the Agents snapshot but deliberately
+      // leaves the terminal activity state untouched.
+      if (correlated.kind !== "agent.metadata") this.activity.ingestProvider(identity, toProviderUpdate(correlated));
     }
     return true;
   }

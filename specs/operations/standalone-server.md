@@ -189,8 +189,14 @@ For incident diagnostics, collect:
 1. `terminay-server --status` output;
 2. the service-manager phase/exit status and bounded recent logs;
 3. artifact version, target architecture, protocol version, and server
-   identity; and
-4. migration or integrity errors plus the path of the preserved failed root.
+   identity;
+4. migration or integrity errors plus the path of the preserved failed root;
+   and
+5. hosted remote WebRTC JSON lines from stderr and `--log-sink` (peer/ICE
+   state, channel readyState, application-lane counters). These lines must
+   not contain terminal content. Pair them with the Desktop Diagnostics
+   folder when the host is Terminay Desktop, and with the browser's
+   `[terminay-session]` console lines when the client is a framed PWA.
 
 Remove pairing URLs, PINs, device keys, browser credentials, vault material,
 provider credentials, terminal output, command history, project paths, and
