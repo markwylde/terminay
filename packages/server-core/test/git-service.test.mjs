@@ -342,6 +342,41 @@ test("GitService moves only a clean reviewed worktree to a safe sibling name", a
   }
 });
 
+test("GitService serializes concurrent worktree removals for one repository", async () => {
+  const { GitService } = await import("../dist/gitService/index.js");
+  const root = await mkdtemp(join(tmpdir(), "terminay-server-git-remove-concurrent-"));
+  const one = join(root, "one");
+  const two = join(root, "two");
+  try {
+    await git(["init", "-b", "main"], root);
+    await git(["config", "user.email", "test@example.invalid"], root);
+    await git(["config", "user.name", "Terminay Test"], root);
+    await writeFile(join(root, "file.txt"), "base\n");
+    await git(["add", "file.txt"], root);
+    await git(["commit", "-m", "initial"], root);
+    await git(["worktree", "add", one, "-b", "one"], root);
+    await git(["worktree", "add", two, "-b", "two"], root);
+    const service = new GitService();
+    const binding = await service.bindProject("project", root);
+    const listing = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId });
+    const first = listing.worktrees.find((worktree) => worktree.path.endsWith("/one"));
+    const second = listing.worktrees.find((worktree) => worktree.path.endsWith("/two"));
+    assert.ok(first);
+    assert.ok(second);
+    const [removedFirst, removedSecond] = await Promise.all([
+      service.removeWorktree({ projectId: "project", repositoryId: binding.repositoryId, worktreeId: first.id, expectedHead: first.head }),
+      service.removeWorktree({ projectId: "project", repositoryId: binding.repositoryId, worktreeId: second.id, expectedHead: second.head }),
+    ]);
+    assert.equal(removedFirst.applied, true);
+    assert.equal(removedSecond.applied, true);
+    const after = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId });
+    assert.equal(after.worktrees.some((worktree) => worktree.id === first.id), false);
+    assert.equal(after.worktrees.some((worktree) => worktree.id === second.id), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 async function git(args, cwd) {
   await execFileAsync("git", args, { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
 }

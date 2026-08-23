@@ -133,6 +133,10 @@ reported as stale rather than being removed. The removal confirmation explicitly
 warns that the worktree folder, including uncommitted, untracked, and unmerged
 changes, will be permanently deleted. Once the user confirms, the server uses
 Git's forced worktree removal so those visible changes do not block the action.
+Confirmed deletions for one repository run one at a time. List and status query
+results stay within protocol header limits: extra changed-file rows are omitted
+and `bounded` is true rather than failing Git. A successful deletion is not
+reported as Git unavailable because a later listing was large or racy.
 
 The production shared Git route consumes `TerminayGitClient` for its current
 server-owned project. It renders bounded worktree state and exposes Pull,
@@ -162,6 +166,11 @@ remain explicit parity work.
   accurately.
 - Confirming worktree deletion removes dirty and unmerged worktrees, including
   their uncommitted and untracked files.
+- Concurrent confirmed deletions for one repository complete one at a time and
+  do not report Git unavailable after a successful delete.
+- Worktree list and status query results stay within protocol header limits;
+  extra changed-file rows are omitted and `bounded` is true rather than failing
+  Git.
 - Deleting a prunable worktree whose folder is already absent removes its stale
   Git registration and does not report a worktree-list or status error.
 - Quick Push produces a reviewable plan before commits, pushes, or PR creation,

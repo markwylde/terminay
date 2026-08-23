@@ -33,8 +33,9 @@ can never establish ownership of a remote journal.
 
 ## Product outcomes
 
-- Running `codex` normally in an interactive Terminay terminal is discovered
-  without editing provider configuration or installing global integrations.
+- Running `codex`, `claude`, or `omp` normally in an interactive Terminay
+  terminal is discovered without editing provider configuration or installing
+  global integrations.
 - Agent state remains associated with the exact terminal the user can activate.
 - Provider file formats and versions stay out of client components and stores.
 - Newer compatible provider versions reuse the latest known mapping.
@@ -43,9 +44,10 @@ can never establish ownership of a remote journal.
 
 ## Canonical model
 
-The initial canonical provider is `codex`. The driver registry permits future
-providers such as `claude-code`, but Terminay does not claim Claude Code journal
-support until a driver and process-bound source are implemented and tested.
+The canonical providers are `codex`, `claude-code`, and `omp`. Each has a
+versioned driver and a process-bound journal source. Display names are Codex,
+Claude Code, and omp. A fourth CLI cannot appear until its driver and source
+are specified and implemented.
 
 | State | Meaning | Indicator |
 | --- | --- | --- |
@@ -86,12 +88,15 @@ incarnation and activation terminal without allowing stale events from the
 previous incarnation to mutate it.
 
 The Codex launcher may expose a generic wrapper such as `node` as the PTY
-foreground process. Every transition away from the shell therefore starts a
-new bounded journal-discovery window even when the foreground name is not a
-recognized provider. This lets a resumed session launched long after terminal
-startup bind its reopened journal without treating the wrapper itself as an
-agent. The journal is still admitted only after a writable handle is proven
-beneath the exact PTY process tree.
+foreground process. A shebang-run `omp` on macOS may likewise expose `bun`.
+Every transition away from the shell therefore starts a new bounded
+journal-discovery window even when the foreground name is not a recognized
+provider. This lets a resumed session launched long after terminal startup
+bind its reopened journal without treating the wrapper itself as an agent.
+The journal is still admitted only after a writable handle is proven beneath
+the exact PTY process tree. An `omp` binary that sets its process title still
+matches `omp` directly; a `bun` wrapper is admitted only through that proven
+open JSONL handle under the omp sessions root.
 
 CWD, filename timestamps, terminal title, active tab, and “closest match” logic
 must not independently establish an authoritative binding. Claude Code is the
@@ -198,6 +203,69 @@ bounded tool lifecycle, and `Agent` tool use/result pairs for named child
 lifecycle. Meta/local-command user records, tool-result content, assistant
 text, and reasoning are never projected.
 
+## omp journal mapping
+
+omp sessions live below the effective agent sessions root. When
+`PI_CODING_AGENT_DIR` is unset and no named `OMP_PROFILE` / `PI_PROFILE` is
+active, that root is `~/.omp/agent/sessions`. A named profile relocates the
+agent directory. Linux XDG data relocation after `omp config migrate` is
+honored. History SQLite, blob stores, debug logs, daemon sockets, RPC/ACP,
+and collab websockets are not lifecycle sources.
+
+The first supported mapping is `(omp, 0.1)`. It accepts later omp session
+versions until a divergent mapping is added. Physical JSONL files begin with a
+fixed 256-byte `type: "title"` slot. Terminay skips that slot before any
+session-identity check. The logical first record must be `type: "session"`
+with a stable `id`. A physical first line of `type: "title"` is never a
+session-identity record and never satisfies a Codex `session_meta` check.
+
+A root journal is a `*.jsonl` file whose parent directory is an encoded-cwd
+directory under the sessions root, not a nested artifacts directory of another
+session file. Child journals live beside the parent as
+`<parent-stem>/<agentId>.jsonl`. They are in-process children of that root and
+must not compete with root journals during process-bound discovery. When one
+writer holds multiple eligible root journals, the most recently modified
+eligible root is selected.
+
+The writer keeps the JSONL file descriptor open for the process lifetime, so
+discovery is the Codex-style open-handle proof under the sessions root, not
+Claude's cwd/`--resume` exception. CWD, filename timestamps, newest-file
+heuristics, and terminal breadcrumbs (`~/.omp/agent/terminal-sessions/`) never
+establish ownership. Breadcrumbs may exist before the JSONL is created; they
+are not a v1 identity source.
+
+A brand-new interactive session remains memory-only until the first assistant
+message is persisted or the process forces the file onto disk. Until that
+file exists, the terminal stays on terminal-activity fallback. That is omp's
+durability model, not a binding failure. Streaming tokens are not on disk
+until the completed message is appended, so the sidebar reports working or
+done from durable records and never reconstructs token-by-token text.
+
+omp has no Codex-style approval or elicitation journal record. `waiting` and
+`blocked` are used only when a supported record explicitly requests user
+input. Permission prompts therefore remain `working` while the process is
+alive. Title-only slot rewrites do not change file size and are not required
+for lifecycle.
+
+| omp record | Canonical result |
+| --- | --- |
+| logical `type: "session"` header after skipping the title slot | root `session.started` / `idle`; provider session ID is header `id` |
+| physical `type: "title"` slot | ignored for identity; bounded title text may seed the display name |
+| `type: "message"` with `message.role === "user"` | first user-facing text becomes the stable root prompt label and starts a turn / `working` |
+| `type: "custom"` with `customType: "tool_execution_start"` | corresponding `working` tool start using `data.toolCallId` and `data.toolName` |
+| assistant message tool call | corresponding `working` tool start when no start marker already exists for that call |
+| assistant message tool result | corresponding tool finish |
+| assistant completion with no unanswered tools, or a terminal `stopReason` | corresponding entry `done` |
+| `type: "custom"` with `customType: "session_exit"` | root inactive; interrupted when `pendingToolCalls` is present |
+| child `<parent-stem>/<agentId>.jsonl` | matching child start/stop under the parent root |
+| `type: "model_change"` | bounded model metadata only |
+| unknown `type` or `customType` values | ignored |
+
+Sequence numbers come from accepted record order within one binding
+incarnation. Provider timestamps are used only when valid. Replayed initial
+windows and repeated records cannot rewind an entry. Tool arguments, tool
+output, assistant text, and reasoning are never projected.
+
 ## Agents pane and activation
 
 The **Agents** pane is an ordinary collapsible project-sidebar section beside
@@ -217,9 +285,10 @@ installs, edits, trusts, or removes provider hooks or configuration.
 
 This setting and observation pipeline are independent from the
 [Terminay MCP server](./mcp-server.md). MCP may register terminal-control tools
-with Codex or Claude Code, but it does not supply agent lifecycle events. MCP
-installation and enablement never change journal discovery or sidebar status,
-and agent-status enablement never installs or configures MCP.
+with Codex or Claude Code, but it does not supply agent lifecycle events and it
+does not register omp. MCP installation and enablement never change journal
+discovery or sidebar status, and agent-status enablement never installs or
+configures MCP. Observing `omp` does not require, install, or invoke MCP.
 
 Disabling stops watchers, clears live bindings and the reduced snapshot, and
 prevents discovery. Re-enabling discovers subsequently foregrounded providers
@@ -229,63 +298,4 @@ Bound roots render the canonical RAG glyph on terminal tabs. The header
 aggregates unacknowledged meaningful entries: waiting/blocked receive priority,
 done remains until acknowledged, and working may be shown for navigation.
 
-## Persistence, errors, and fallback
-
-The server republishes its in-memory reduced snapshot after client reload.
-Entries do not survive a server restart as Terminay history. A live provider can
-be rebound and a bounded journal tail replayed to reconstruct current state.
-
-The transport-neutral agent projection is the renderer's sole revision
-authority. Ordinary live snapshots are monotonic within one server authority
-incarnation. An explicit reconnect or replay-gap resync is an authority
-boundary: its complete snapshot replaces the prior projection even when its
-revision is lower because the server restarted its revision sequence. Host
-adapters forward that resync boundary unchanged, and presentation components
-render the accepted projection without applying a second revision fence.
-
-- Unsupported, missing, inaccessible, ephemeral, unbound, oversized, or
-  malformed journals leave the terminal on terminal-activity fallback.
-- A bound journal is authoritative; terminal output, spinner frames, BEL, and
-  OSC notifications cannot overwrite it.
-- Observation failure retains the last state until process/terminal lifecycle
-  retires it; no quiet timer invents a transition.
-- Raw journal bytes never enter snapshots, telemetry, logs, renderer APIs, or
-  remote transports. A bounded user-message preview may populate the existing
-  agent label; model output, command arguments, and tool results are discarded.
-
-## Acceptance tests
-
-1. Starting ordinary interactive Codex creates no provider config files and
-   requires no global hook installation.
-2. `task_started` then `task_complete` map to `working` then `done`.
-3. A journal is accepted only when its writer belongs to the exact Terminay PTY tree.
-4. Concurrent Codex terminals with the same CWD never exchange events.
-5. Approval and user-input records produce `waiting`; later progress resumes working.
-6. Subagent records update only the matching child.
-7. `(codex, 0.1)` fixtures pass; a compatible `0.2` fixture passes the
-   compatibility script without adding a mapping.
-8. A newer unknown version selects the latest known mapping and ignores unknown records.
-9. Partial lines, truncation, replacement, oversized records, malformed JSON,
-   and inaccessible files fail safely without exposing contents.
-10. Disabling clears observation and state without touching `.codex`.
-11. Client reload/project switching preserve scope and create no duplicate watchers.
-12. A reconnect/resync after a server revision restart replaces stale `done`
-    state, resumes a working agent, and admits newly discovered concurrent agents.
-13. Electron end-to-end coverage runs only through `npm run test:e2e`.
-14. A current Codex completed `UserMessage` event supplies the bounded root
-    label; raw response items and non-text content are ignored.
-15. Current Codex collaboration fields create a named child beneath its exact
-    parent, while interaction, resume, interruption, and close update only that child.
-16. The first authoritative Codex user-message event becomes the stable root
-    label. Injected raw context, model-context `<turn_aborted>` markers, and
-    later user-message events cannot rename it.
-
-## Non-goals
-
-- Installing or reconciling provider hooks.
-- Modifying provider hook, config, or trust files.
-- Redirecting or mirroring the user's full `CODEX_HOME`.
-- Treating CWD, timestamps, titles, or active-tab state as ownership proof.
-- Exposing or indexing conversation contents beyond the bounded agent label.
-- Replacing the interactive provider TUI with an app-server frontend.
-- Claiming Claude Code support before its source and driver are implemented.
+[Showing lines 1-300 of 305. Use :301 to continue]
