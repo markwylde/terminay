@@ -85,12 +85,17 @@ export function selectDeviceTerminalSettings(
 // suffix (`tabThemeHue:40`, meaning 40% lightness).
 export function isTabThemeHueValue(value: string): boolean {
 	return (
-		value === TAB_THEME_HUE_COLOR_VALUE ||
-		value.startsWith(`${TAB_THEME_HUE_COLOR_VALUE}:`)
+		typeof value === 'string' &&
+		(value === TAB_THEME_HUE_COLOR_VALUE ||
+			value.startsWith(`${TAB_THEME_HUE_COLOR_VALUE}:`))
 	);
 }
 
 export function getTabThemeHueBrightness(value: string): number {
+	if (typeof value !== 'string') {
+		return TAB_THEME_HUE_DEFAULT_BRIGHTNESS;
+	}
+
 	const prefix = `${TAB_THEME_HUE_COLOR_VALUE}:`;
 	if (!value.startsWith(prefix)) {
 		return TAB_THEME_HUE_DEFAULT_BRIGHTNESS;
@@ -112,6 +117,10 @@ export function buildTabThemeHueValue(brightness: number): string {
 }
 
 function hexToRgb(hex: string): [number, number, number] | null {
+	if (typeof hex !== 'string') {
+		return null;
+	}
+
 	const normalized = hex.replace(/^#/, '');
 	if (normalized.length < 6) {
 		return null;
