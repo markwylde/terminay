@@ -1,6 +1,7 @@
 import type { AuthScope, JsonValue } from '@terminay/protocol';
 import { scopeAllows } from '../auth.js';
 import type { CommandRequest, QueryRequest } from '../types.js';
+import { boundGitQueryResult } from './protocolBound.js';
 import type { GitQuickPushService } from './quickPush.js';
 import { type GitService } from './service.js';
 import {
@@ -179,7 +180,7 @@ export class ServerGitAdapter {
 				? {}
 				: { repositoryId: request.repositoryId }),
 		});
-		return result as unknown as JsonValue;
+		return boundGitQueryResult(result as unknown as JsonValue);
 	}
 
 	async read(request: QueryRequest, operation: 'status' | 'branch' | 'diff'): Promise<JsonValue> {
@@ -192,7 +193,8 @@ export class ServerGitAdapter {
 		const path = payload.path === undefined ? undefined : boundedString(payload.path, 'path', 4096);
 		await this.ensureProjectBound(projectId);
 		const result = await this.git.readOnly({ operation, projectId, ...(repositoryId === undefined ? {} : { repositoryId }), ...(worktreeId === undefined ? {} : { worktreeId }), ...(path === undefined ? {} : { path }), signal: request.context.signal });
-		return result as unknown as JsonValue;
+		if (operation === 'diff') return result as unknown as JsonValue;
+		return boundGitQueryResult(result as unknown as JsonValue);
 	}
 
 	private async ensureProjectBound(projectId: string): Promise<void> {
