@@ -73,6 +73,7 @@ export function useProjectCollection<TTerminal>({
 	projectColorScope,
 	confirmProjectClose,
 	holdProjectOrderRef,
+	holdActiveProjectIdRef,
 	sidebarSettings,
 	workspaceSnapshotStore,
 	workspaceViewId,
@@ -85,6 +86,9 @@ export function useProjectCollection<TTerminal>({
 	projectColorScope: string;
 	confirmProjectClose?: (projectId: string) => Promise<boolean>;
 	holdProjectOrderRef?: MutableRefObject<string | null>;
+	/** While non-null, keep this renderer selection stable even if a background
+	 * project creation temporarily changes the server's canonical selection. */
+	holdActiveProjectIdRef?: MutableRefObject<string | null>;
 	sidebarSettings: SidebarSettings;
 	workspaceSnapshotStore?: WorkspaceSnapshotStore;
 	workspaceViewId: string | null;
@@ -258,15 +262,27 @@ export function useProjectCollection<TTerminal>({
 				projectsRef.current = next;
 				return next;
 			});
+			const heldActiveProjectId = holdActiveProjectIdRef?.current;
 			const nextActiveId =
-				view?.activeProjectId ??
-				view?.projectIds[0] ??
-				orderedServerProjects[0]?.id ??
-				'';
+				heldActiveProjectId !== null &&
+				heldActiveProjectId !== undefined &&
+				orderedServerProjects.some(
+					(project) => project.id === heldActiveProjectId,
+				)
+					? heldActiveProjectId
+					: (view?.activeProjectId ??
+						view?.projectIds[0] ??
+						orderedServerProjects[0]?.id ??
+						'');
 			activeProjectIdRef.current = nextActiveId;
 			setActiveProjectId(nextActiveId);
 		});
-	}, [projectColorScope, workspaceSnapshotStore, workspaceViewId]);
+	}, [
+		holdActiveProjectIdRef,
+		projectColorScope,
+		workspaceSnapshotStore,
+		workspaceViewId,
+	]);
 
 	const addProject = useCallback(() => {
 		if (workspaceSnapshotStore !== undefined) {
@@ -596,6 +612,12 @@ export function useProjectCollection<TTerminal>({
 
 	const activateProject = useCallback(
 		(projectId: string) => {
+			if (
+				holdActiveProjectIdRef !== undefined &&
+				holdActiveProjectIdRef.current !== null
+			) {
+				holdActiveProjectIdRef.current = projectId;
+			}
 			activeProjectIdRef.current = projectId;
 			setActiveProjectId(projectId);
 			if (workspaceSnapshotStore === undefined) return;
@@ -603,7 +625,7 @@ export function useProjectCollection<TTerminal>({
 				void workspaceSnapshotStore.refresh().catch(() => undefined);
 			});
 		},
-		[workspaceSnapshotStore],
+		[holdActiveProjectIdRef, workspaceSnapshotStore],
 	);
 
 	return {

@@ -295,6 +295,7 @@ export function ProjectSwitcherMenu({
 							<button
 								type="button"
 								className="project-switcher-menu__grip"
+								disabled={project.creationStatus !== undefined}
 								onPointerDown={(event) => beginReorder(event, project.id)}
 								aria-label={`Reorder ${project.title}`}
 								title="Drag to reorder"
@@ -307,15 +308,24 @@ export function ProjectSwitcherMenu({
 								data-project-switcher-item={project.id}
 								role="menuitem"
 								onClick={() => {
+									if (project.creationStatus === 'loading') return;
 									onActivate(project.id);
 									setOpen(false);
 								}}
 							>
-								<span
-									className="project-switcher-menu__swatch"
-									aria-hidden="true"
-								/>
-								{project.emoji ? (
+								{project.creationStatus === 'loading' ? (
+									<span
+										className="project-tab-creation-spinner"
+										role="img"
+										aria-label="Creating project"
+									/>
+								) : (
+									<span
+										className="project-switcher-menu__swatch"
+										aria-hidden="true"
+									/>
+								)}
+								{project.creationStatus === undefined && project.emoji ? (
 									<span
 										className="project-switcher-menu__emoji"
 										aria-hidden="true"
@@ -342,7 +352,9 @@ export function ProjectSwitcherMenu({
 									event.stopPropagation();
 									onClose(project.id);
 								}}
-								disabled={projects.length <= 1}
+								disabled={
+									projects.length <= 1 || project.creationStatus === 'loading'
+								}
 								aria-label={`Close ${project.title}`}
 							>
 								×

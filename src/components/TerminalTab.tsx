@@ -63,6 +63,7 @@ export type TerminalTabMoveProject = {
 
 export type TerminalPanelParams = {
 	sessionId: string;
+	terminalHydrationStatus?: 'loading' | 'ready' | 'failed';
 	terminalSessionStatus?: 'running' | 'exited' | 'interrupted';
 	cwd?: string;
 	/** Optional server-owned stream used by the incremental panel migration. */
@@ -123,6 +124,9 @@ export function TerminalTab(
 		onClearMacroRun,
 	} = params || {};
 	const recordingStatus = params?.recordingStatus ?? 'idle';
+	const isHydrating =
+		params?.terminalHydrationStatus !== 'ready' &&
+		params?.terminalHydrationStatus !== 'failed';
 	const terminalActivityState = params?.terminalActivityState ?? 'viewed';
 	const displayedActivityState =
 		params?.activityIndicatorsEnabled === false ||
@@ -609,7 +613,14 @@ export function TerminalTab(
 				closeAriaLabel="Close terminal"
 				onClose={onClose}
 				leading={
-					emoji ? <span className="terminal-tab-emoji">{emoji}</span> : null
+					isHydrating ? (
+						<LoaderCircle
+							className="terminal-tab-loading-icon"
+							aria-label="Loading terminal"
+						/>
+					) : emoji ? (
+						<span className="terminal-tab-emoji">{emoji}</span>
+					) : null
 				}
 				afterTitle={
 					<>
