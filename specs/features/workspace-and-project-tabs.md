@@ -53,6 +53,14 @@ identity. Project-sidebar sizing and title-visibility behavior is governed by
 - A user-created project or terminal receives keyboard focus in that xterm
   so typing starts immediately. Creation chrome such as the project and
   terminal `+` controls must not keep focus after the new session is ready.
+- Creating a project immediately adds a non-active pending tab with the future
+  project label and a spinning project icon. Validation, canonical project
+  creation, terminal launch, and terminal hydration happen behind that tab
+  without covering or replacing the active project, which remains usable. When
+  the terminal is ready, Terminay activates and focuses the new project only if
+  the user has not selected another project since creation began. If the user
+  has moved elsewhere, the ready project remains in the background. A creation
+  failure activates the pending tab and presents its error there.
 - The project-bar split button's primary `+` creates a project on **This
   server** immediately. Its arrow opens an accessible environment chooser with
   This server, recent SSH/Puzed targets, provider create/browse actions,
@@ -62,8 +70,8 @@ identity. Project-sidebar sizing and title-visibility behavior is governed by
   Terminay Server because it may be remote from the client.
 - New projects use the selected environment profile's default root or verified
   account home. They never copy an active project root from another
-  environment. Target/root validation completes before a normal tab is
-  committed. A successful user-created project receives one terminal through
+  environment. Target/root validation completes before the pending tab becomes
+  a normal project tab. A successful user-created project receives one terminal through
   the selected server's normal terminal-launch resolver; this is an explicit
   creation flow, never a renderer repair for an empty workspace. After a Local
   Desktop restart, each restored project likewise receives one fresh terminal

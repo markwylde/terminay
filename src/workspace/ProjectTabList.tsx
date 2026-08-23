@@ -266,15 +266,22 @@ export function ProjectTabList({
 						<Reorder.Item
 							key={project.id}
 							value={project.id}
-							data-project-id={project.id}
-							className={`project-tab${project.id === activeProjectId ? ' project-tab--active' : ''}${project.id === draggingProjectId ? ' project-tab--dragging' : ''}${project.id === draggingProjectId && isDraggingTabTornOff ? ' project-tab--torn-off' : ''}`}
+							data-project-id={
+								project.creationStatus === undefined ? project.id : undefined
+							}
+							data-pending-project-id={
+								project.creationStatus === undefined ? undefined : project.id
+							}
+							className={`project-tab${project.id === activeProjectId ? ' project-tab--active' : ''}${project.id === draggingProjectId ? ' project-tab--dragging' : ''}${project.id === draggingProjectId && isDraggingTabTornOff ? ' project-tab--torn-off' : ''}${project.creationStatus ? ` project-tab--creation-${project.creationStatus}` : ''}`}
 							role="tab"
 							aria-selected={project.id === activeProjectId}
 							tabIndex={project.id === activeProjectId ? 0 : -1}
 							style={{ '--project-color': project.color } as CSSProperties}
 							dragMomentum={false}
+							dragListener={project.creationStatus === undefined}
 							transition={{ layout: { duration: 0 } }}
 							onDragStart={() => {
+								if (project.creationStatus !== undefined) return;
 								document.body.classList.add('project-tabbar-reordering');
 								onDragStart(project.id);
 							}}
@@ -284,8 +291,12 @@ export function ProjectTabList({
 								document.body.classList.remove('project-tabbar-reordering');
 								void onDragEnd(project.id);
 							}}
-							onClick={() => onActivate(project.id)}
-							onDoubleClick={() => void onEdit(project.id)}
+							onClick={() => {
+								if (project.creationStatus !== 'loading') onActivate(project.id);
+							}}
+							onDoubleClick={() => {
+								if (project.creationStatus === undefined) void onEdit(project.id);
+							}}
 							onKeyDown={(event) => {
 								if (event.key === 'Enter' || event.key === ' ') {
 									event.preventDefault();
@@ -298,7 +309,21 @@ export function ProjectTabList({
 							title="Double-click to edit tab"
 						>
 							<span className="project-tab-main">
-								{project.projectEnvironmentId &&
+								{project.creationStatus === 'loading' ? (
+									<span
+										className="project-tab-creation-spinner"
+										role="img"
+										aria-label="Creating project"
+									/>
+								) : project.creationStatus === 'failed' ? (
+									<span
+										className="project-tab-creation-error"
+										role="img"
+										aria-label="Project creation failed"
+									>
+										!
+									</span>
+								) : project.projectEnvironmentId &&
 								project.projectEnvironmentId !== 'terminay:this-server' ? (
 									<span
 										className={`project-tab-environment project-tab-environment--${project.environmentStatus ?? 'ready'}`}
@@ -309,7 +334,7 @@ export function ProjectTabList({
 										⇄
 									</span>
 								) : null}
-								{project.emoji ? (
+								{project.creationStatus === undefined && project.emoji ? (
 									<span className="project-tab-emoji" aria-hidden="true">
 										{project.emoji}
 									</span>
@@ -318,6 +343,7 @@ export function ProjectTabList({
 							</span>
 							<button
 								type="button"
+								disabled={project.creationStatus === 'loading'}
 								className="project-tab-close"
 								onClick={(event) => {
 									event.stopPropagation();
@@ -360,7 +386,12 @@ export function ProjectTabList({
 						<div
 							key={project.id}
 							className="project-tab project-tab--overflowed"
-							data-project-id={project.id}
+							data-project-id={
+								project.creationStatus === undefined ? project.id : undefined
+							}
+							data-pending-project-id={
+								project.creationStatus === undefined ? undefined : project.id
+							}
 							aria-hidden="true"
 							style={{ '--project-color': project.color } as CSSProperties}
 						>

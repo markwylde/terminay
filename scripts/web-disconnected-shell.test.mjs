@@ -36,6 +36,20 @@ test('disconnected web shell styles preserve an app-like workspace behind the mo
   assert.doesNotMatch(webStyleSource, /\.connection-card/u)
 })
 
+test('server connection loading state is centered and branded', () => {
+  assert.match(webEntrySource, /browser-host-shell__connection-state/u)
+  assert.match(webEntrySource, /browser-host-shell__connection-logo/u)
+  assert.match(webEntrySource, /src="terminay\.svg"/u)
+  assert.match(webEntrySource, /browser-host-shell__loading-dots/u)
+  assert.match(webEntrySource, /Array\.from\(\{ length: 5 \}/u)
+  assert.match(webEntrySource, /aria-busy=\{phase === 'connecting'\}/u)
+  assert.match(webEntrySource, /desktopContext\?\.profile\?\.isLocal === false/u)
+  assert.match(webEntrySource, /phase !== 'connecting' \|\| showConnectingMessage/u)
+  assert.match(webStyleSource, /\.browser-host-shell__connection-state\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*0;[\s\S]*?place-content:\s*center;/u)
+  assert.match(webStyleSource, /#db5757[\s\S]*#c1db57[\s\S]*#57db8c[\s\S]*#578cdb[\s\S]*#c157db/u)
+  assert.match(webStyleSource, /@media \(prefers-reduced-motion: reduce\)/u)
+})
+
 test('archived web profiles are recoverable without advertising an unavailable open action', () => {
   assert.match(webEntrySource, /function restoreConnection\(profileId: string\)/u)
   assert.match(webEntrySource, /host\.unarchive\(profileId\)/u)

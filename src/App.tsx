@@ -161,7 +161,10 @@ import {
 } from './workspace/closeProtection';
 import { FileExplorerTree } from './workspace/FileExplorerTree';
 import { ProjectTabList } from './workspace/ProjectTabList';
-import type { ProjectTab } from './workspace/projectTabModel';
+import {
+	createProjectTab,
+	type ProjectTab,
+} from './workspace/projectTabModel';
 import {
 	type ConnectionSwitcherEntry,
 	RemoteAccessConnectionMenu,
@@ -222,6 +225,12 @@ import { recordBootstrapDiagnostic } from './shared/rendererDiagnostics';
 
 type GitPushAgentAction = QuickPushAction;
 type GitPushAgentActionGroup = 'current' | 'new' | 'default';
+
+type PendingProjectCreation = Readonly<{
+	initialActiveProjectId: string;
+	projectId?: string;
+	tab: ProjectTab;
+}>;
 
 const GIT_PUSH_AGENT_ACTIONS: Array<{
 	action: GitPushAgentAction;
@@ -5308,6 +5317,8 @@ function App({
 		new Map<string, ProjectWorkspaceHandle | null>(),
 	);
 	const draggingProjectIdRef = useRef<string | null>(null);
+	const heldActiveProjectIdRef = useRef<string | null>(null);
+	const projectCreationInFlightRef = useRef(false);
 	const confirmProjectClose = useCallback(
 		async (projectId: string) => {
 			const preflight = await observeTerminalClosePreflight(
@@ -5324,6 +5335,7 @@ function App({
 		requestedWorkspaceViewId ?? workspaceSnapshot?.viewOrder[0] ?? null;
 	const {
 		activeProjectId,
+		activeProjectIdRef,
 		activateProject,
 		addProject,
 		adoptedTerminalsByProject,
@@ -5335,6 +5347,7 @@ function App({
 		projectCreationError,
 		projects,
 		projectsRef,
+		setActiveProjectId,
 		setProjects,
 		updateProject,
 	} = useProjectCollection<MovedTerminalTab>({
@@ -5344,12 +5357,15 @@ function App({
 				workspaceSnapshot.views[boundWorkspaceViewId ?? '']?.projectIds[0] ?? ''
 			]?.root ?? '',
 		holdProjectOrderRef: draggingProjectIdRef,
+		holdActiveProjectIdRef: heldActiveProjectIdRef,
 		isAdoptWindow: false,
 		projectColorScope: currentServerId,
 		sidebarSettings: settings.sidebar,
 		workspaceSnapshotStore: terminalClientContext?.workspaceSnapshotStore,
 		workspaceViewId: boundWorkspaceViewId,
 	});
+	const [pendingProjectCreation, setPendingProjectCreation] =
+		useState<PendingProjectCreation | null>(null);
 	const {
 		draggingProjectId,
 		dropPreview,
@@ -5452,9 +5468,6 @@ function App({
 		useState<AppUpdateStatus | null>(null);
 	const activityMenuRef = useRef<HTMLDivElement | null>(null);
 	const [isActivityMenuOpen, setIsActivityMenuOpen] = useState(false);
-	const [projectEnvironmentNotice, setProjectEnvironmentNotice] = useState<
-		string | null
-	>(null);
 	const projectEnvironmentsClient = useMemo(
 		() =>
 			terminalClientContext?.applicationClient === undefined
@@ -5505,27 +5518,34 @@ function App({
 				throw new Error('The server did not publish the new project terminal.');
 			}
 			const startedAt = performance.now();
-			await new Promise<void>((resolve) => {
-				const focusCreated = () => {
-					const host = workspaceRefs.current.get(projectId);
-					const textarea = document.querySelector(
-						`.project-workspace--active .terminal-panel[data-terminay-terminal-session-id="${CSS.escape(sessionId)}"] .xterm-helper-textarea`,
+			await new Promise<void>((resolve, reject) => {
+				const waitForCreatedPresentation = () => {
+					const terminalPanel = document.querySelector(
+						`.project-workspace[data-terminay-project-id="${CSS.escape(projectId)}"] .terminal-panel[data-terminay-terminal-session-id="${CSS.escape(sessionId)}"]`,
 					);
-					if (host) host.focusActiveTerminal();
-					if (host && textarea) {
-						scheduleCreatedTerminalFocus(sessionId);
+					const attachmentError = terminalPanel?.querySelector(
+						'.terminal-panel-connection-error',
+					);
+					if (attachmentError?.textContent) {
+						reject(new Error(attachmentError.textContent.trim()));
+						return;
+					}
+					if (
+						terminalPanel?.querySelector('.xterm-helper-textarea') &&
+						!terminalPanel.querySelector('.terminal-panel-loading')
+					) {
 						resolve();
 						return;
 					}
-					if (performance.now() - startedAt >= 2_000) {
-						scheduleCreatedTerminalFocus(sessionId);
-						resolve();
+					if (performance.now() - startedAt >= 30_000) {
+						reject(new Error('The new project terminal did not become ready.'));
 						return;
 					}
-					window.requestAnimationFrame(focusCreated);
+					window.requestAnimationFrame(waitForCreatedPresentation);
 				};
-				focusCreated();
+				waitForCreatedPresentation();
 			});
+			return sessionId;
 		},
 		[
 			terminalClientContext?.client,
@@ -5565,15 +5585,45 @@ function App({
 			window.removeEventListener('terminay-open-extensions', openExtensions);
 		};
 	}, [auxiliaryRouteController]);
-	const chooseProjectEnvironment = useCallback(
+	const createProjectForEnvironment = useCallback(
 		async (environment: ProjectEnvironmentSummaryDto) => {
 			if (projectEnvironmentsClient === null || boundWorkspaceViewId === null) {
-				setProjectEnvironmentNotice(
-					'The selected server workspace is not ready.',
-				);
 				return;
 			}
-			setProjectEnvironmentNotice(`Validating ${environment.name}…`);
+			if (
+				pendingProjectCreation !== null ||
+				projectCreationInFlightRef.current
+			) {
+				return;
+			}
+			projectCreationInFlightRef.current = true;
+			const initialActiveProjectId = activeProjectIdRef.current;
+			heldActiveProjectIdRef.current = initialActiveProjectId;
+			const projectNumber =
+				Object.keys(
+					terminalClientContext?.workspaceSnapshotStore?.snapshot?.projects ?? {},
+				).length + 1;
+			const pendingId = `pending-project-${Date.now().toString(36)}`;
+			const pendingTab: ProjectTab = {
+				...createProjectTab(
+					projectNumber,
+					environment.defaultRoot ?? '',
+					projectsRef.current.map((project) => project.color),
+					settings.sidebar,
+					currentServerId,
+				),
+				creationStatus: 'loading',
+				environmentLabel: environment.name,
+				environmentStatus: 'connecting',
+				id: pendingId,
+				projectEnvironmentId: environment.id,
+				title: `Project ${projectNumber}`,
+			};
+			const pending: PendingProjectCreation = {
+				initialActiveProjectId,
+				tab: pendingTab,
+			};
+			setPendingProjectCreation(pending);
 			try {
 				const operation = await projectEnvironmentsClient.createProject({
 					environmentId: environment.id,
@@ -5587,23 +5637,59 @@ function App({
 						'The selected server did not return the new project identity.',
 					);
 				}
-				await createInitialTerminalForProject(operation.projectId);
-				setProjectEnvironmentNotice(
-					operation.message ?? `Project creation ${operation.state}.`,
+				setPendingProjectCreation({
+					...pending,
+					projectId: operation.projectId,
+				});
+				const sessionId = await createInitialTerminalForProject(
+					operation.projectId,
 				);
 				await terminalClientContext?.workspaceSnapshotStore?.refresh();
+				const desiredProjectId = heldActiveProjectIdRef.current;
+				heldActiveProjectIdRef.current = null;
+				projectCreationInFlightRef.current = false;
+				setPendingProjectCreation(null);
+				if (desiredProjectId === initialActiveProjectId) {
+					activeProjectIdRef.current = operation.projectId;
+					setActiveProjectId(operation.projectId);
+					window.requestAnimationFrame(() =>
+						scheduleCreatedTerminalFocus(sessionId),
+					);
+				} else if (desiredProjectId !== null) {
+					activateProject(desiredProjectId);
+				}
 			} catch (error) {
-				setProjectEnvironmentNotice(
-					error instanceof Error ? error.message : String(error),
-				);
+				heldActiveProjectIdRef.current = null;
+				setPendingProjectCreation((current) => ({
+					...(current ?? pending),
+					tab: {
+						...(current?.tab ?? pendingTab),
+						creationError:
+							error instanceof Error ? error.message : String(error),
+						creationStatus: 'failed',
+					},
+				}));
 			}
 		},
 		[
+			activateProject,
+			activeProjectIdRef,
 			boundWorkspaceViewId,
 			createInitialTerminalForProject,
+			currentServerId,
+			pendingProjectCreation,
 			projectEnvironmentsClient,
+			projectsRef,
+			settings.sidebar,
+			setActiveProjectId,
 			terminalClientContext?.workspaceSnapshotStore,
 		],
+	);
+	const chooseProjectEnvironment = useCallback(
+		(environment: ProjectEnvironmentSummaryDto) => {
+			void createProjectForEnvironment(environment);
+		},
+		[createProjectForEnvironment],
 	);
 	const createThisServerProject = useCallback(async () => {
 		if (projectEnvironmentsClient === null || boundWorkspaceViewId === null) {
@@ -5612,31 +5698,25 @@ function App({
 			addProject();
 			return;
 		}
-		setProjectEnvironmentNotice('Validating This server…');
-		try {
-			const operation = await projectEnvironmentsClient.createProject({
-				environmentId: 'terminay:this-server',
-				viewId: boundWorkspaceViewId,
-			});
-			if (operation.projectId === undefined) {
-				throw new Error(
-					'The selected server did not return the new project identity.',
-				);
-			}
-			await createInitialTerminalForProject(operation.projectId);
-			setProjectEnvironmentNotice(operation.message ?? null);
-			await terminalClientContext?.workspaceSnapshotStore?.refresh();
-		} catch (error) {
-			setProjectEnvironmentNotice(
-				error instanceof Error ? error.message : String(error),
-			);
-		}
+		const thisServer = projectEnvironmentChoices.find(
+			(environment) => environment.id === 'terminay:this-server',
+		) ?? {
+			endpointSummary: 'Local embedded server',
+			id: 'terminay:this-server',
+			isThisServer: true,
+			name: 'This server',
+			providerId: 'terminay:this-server',
+			providerLabel: 'This Terminay Server',
+			referencedProjectCount: 0,
+			status: 'ready' as const,
+		};
+		await createProjectForEnvironment(thisServer);
 	}, [
 		addProject,
 		boundWorkspaceViewId,
-		createInitialTerminalForProject,
+		createProjectForEnvironment,
+		projectEnvironmentChoices,
 		projectEnvironmentsClient,
-		terminalClientContext?.workspaceSnapshotStore,
 	]);
 	const [terminalActivityItemsByProject, setTerminalActivityItemsByProject] =
 		useState<Record<string, TerminalActivityOverviewItem[]>>({});
@@ -6001,8 +6081,40 @@ function App({
 		};
 	}, [isActivityMenuOpen]);
 
-	const activeProject =
-		projects.find((project) => project.id === activeProjectId) ?? null;
+	const isPendingProjectFailure =
+		pendingProjectCreation?.tab.creationStatus === 'failed';
+	const activeProject = isPendingProjectFailure
+		? null
+		: (projects.find((project) => project.id === activeProjectId) ?? null);
+	const displayedActiveProjectId = isPendingProjectFailure
+		? pendingProjectCreation.tab.id
+		: activeProjectId;
+	const displayedProjects = pendingProjectCreation
+		? [
+				...projects.filter(
+					(project) => project.id !== pendingProjectCreation.projectId,
+				),
+				pendingProjectCreation.tab,
+			]
+		: projects;
+	const activateDisplayedProject = (projectId: string) => {
+		if (projectId === pendingProjectCreation?.tab.id) return;
+		activateProject(projectId);
+	};
+	const closeDisplayedProject = (projectId: string) => {
+		if (projectId !== pendingProjectCreation?.tab.id) {
+			closeProject(projectId);
+			return;
+		}
+		if (pendingProjectCreation.projectId !== undefined) {
+			closeProject(pendingProjectCreation.projectId, {
+				skipConfirmation: true,
+			});
+		}
+		heldActiveProjectIdRef.current = null;
+		projectCreationInFlightRef.current = false;
+		setPendingProjectCreation(null);
+	};
 	const hasAppUpdate =
 		appUpdateStatus?.hasUpdate === true &&
 		typeof appUpdateStatus.releaseUrl === 'string';
@@ -6014,7 +6126,7 @@ function App({
 		<div
 			className={`app-shell${isMac && hasNativeWindowControls ? ' app-shell--macos' : ''}`}
 			data-terminay-app-component={TERMINAY_APP_COMPONENT_ID}
-			data-terminay-active-project-id={activeProjectId}
+			data-terminay-active-project-id={displayedActiveProjectId}
 			data-terminay-server-id={terminalClientContext?.serverId}
 			data-terminay-workspace-revision={
 				terminalClientContext?.workspaceSnapshotStore?.snapshot?.revision
@@ -6051,29 +6163,37 @@ function App({
 					</button>
 				</div>
 				<ProjectTabList
-					activeProjectId={activeProjectId}
+					activeProjectId={displayedActiveProjectId}
 					draggingProjectId={draggingProjectId}
 					dropPreview={dropPreview}
 					isDraggingTabTornOff={isDraggingTabTornOff}
-					onActivate={activateProject}
-					onClose={closeProject}
+					onActivate={activateDisplayedProject}
+					onClose={closeDisplayedProject}
 					onDragEnd={handleProjectTabDragEnd}
 					onDragMove={handleProjectTabDragMove}
 					onDragStart={handleProjectTabDragStart}
 					onEdit={openEditProjectWindow}
-					onReorder={onReorder}
+					onReorder={(nextProjects) =>
+						onReorder(
+							nextProjects.filter(
+								(project) => project.creationStatus === undefined,
+							),
+						)
+					}
 					onReorderCommit={persistMovedProject}
 					onSwitcherOpen={() => {
 						setIsRemoteMenuOpen(false);
 						setIsActivityMenuOpen(false);
 					}}
-					canCreateProject={canAddProject}
+					canCreateProject={
+						canAddProject && pendingProjectCreation === null
+					}
 					onCreateProject={() => void createThisServerProject()}
-					projects={projects}
+					projects={displayedProjects}
 				/>
 				<div className="project-tab-add-box">
 					<ProjectEnvironmentSplitButton
-						canCreate={canAddProject}
+						canCreate={canAddProject && pendingProjectCreation === null}
 						environments={projectEnvironmentChoices}
 						createActions={projectEnvironmentProviders.flatMap((provider) => [
 							...(provider.profileForm === undefined ||
@@ -6184,15 +6304,13 @@ function App({
 			</header>
 
 			<div className="workspace-stack">
-				{projectEnvironmentNotice !== null ? (
-					<div className="workspace-empty-state" role="status">
-						{projectEnvironmentNotice}
-						<button
-							type="button"
-							onClick={() => setProjectEnvironmentNotice(null)}
-						>
-							Dismiss
-						</button>
+				{isPendingProjectFailure ? (
+					<div
+						className="workspace-empty-state workspace-empty-state--error"
+						role="alert"
+					>
+						{pendingProjectCreation.tab.creationError ??
+							'Project creation failed.'}
 					</div>
 				) : null}
 				{isWorkspaceHydrating ? (
@@ -6232,7 +6350,9 @@ function App({
 						}}
 						agentStatusSnapshot={agentStatusSnapshot}
 						auxiliaryRoutes={auxiliaryRouteController}
-						isActive={project.id === activeProjectId}
+						isActive={
+							!isPendingProjectFailure && project.id === activeProjectId
+						}
 						isMac={isMac}
 						macros={macros}
 						onAddProject={createThisServerProject}
