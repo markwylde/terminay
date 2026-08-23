@@ -526,6 +526,17 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	} | null>(null);
 	const hasTerminalNote = typeof props.params.terminalNote === 'string';
 
+	useEffect(() => {
+		props.api.updateParameters({
+			terminalHydrationStatus:
+				serverTerminalError !== null
+					? 'failed'
+					: isTerminalHydrating
+						? 'loading'
+						: 'ready',
+		});
+	}, [isTerminalHydrating, props.api, serverTerminalError]);
+
 	tabColorRef.current = props.params.color;
 
 	useEffect(() => {
@@ -2363,17 +2374,12 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				</div>
 			) : null}
 			{isTerminalHydrating && serverTerminalError === null ? (
-				<div className="terminal-panel-loading" role="status" aria-busy="true">
-					<div className="terminal-panel-loading__content">
-						<img
-							className="terminal-panel-loading__logo"
-							src="terminay.svg"
-							alt=""
-							aria-hidden="true"
-						/>
-						<p>Loading terminal…</p>
-					</div>
-				</div>
+				<div
+					className="terminal-panel-loading"
+					role="status"
+					aria-label="Loading terminal"
+					aria-busy="true"
+				/>
 			) : null}
 			{dictationOverlay ? <DictationOverlay {...dictationOverlay} /> : null}
 			{terminalContextMenu ? (

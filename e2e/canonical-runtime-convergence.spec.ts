@@ -135,6 +135,7 @@ test('populated canonical workspace reloads without duplicate projects or sessio
 	await canonicalIdentity(mainWindow);
 	await mainWindow.getByLabel('Create project on This server').click();
 	await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+	await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 	const populated = await canonicalIdentity(mainWindow);
 	expect(new Set(populated.projectIds).size).toBe(2);
 	expect(populated.terminalTabCount).toBe(1);

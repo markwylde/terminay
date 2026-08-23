@@ -176,8 +176,13 @@ status must not be conflated with terminal or agent attention.
   appropriate or opens a new sandboxed window. Rebinding the current window is
   an explicit action, not an accidental side effect of menu selection.
 - A newly opened Desktop connection window remains in the normal loading state
-  until its own local or remote server connection is ready; the originating
-  window keeps its existing server binding during that handoff.
+  until its own local or remote server connection is ready. The loading state
+  centers the Terminay mark in the window above a looping five-dot loading
+  indicator. The dots use five fixed, contrasting colours from the tab hue
+  palette and enter in sequence. Local embedded-server startup has no text,
+  while remote connections also show a short status message. Native window
+  controls never overlap it. The originating window keeps its existing server
+  binding during that handoff.
 - Multiple windows may target the same server and different logical workspace
   views. Other windows may simultaneously target other servers.
 - Local server startup, shutdown, crash recovery, and update are host actions.
