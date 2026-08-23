@@ -386,6 +386,10 @@ async function stopDevelopmentProcess(
  * output, and drives the launched Electron renderer through its DevTools port.
  */
 test('canonical npm run dev retains a rapid Agents/Git resize after mouse-up', async () => {
+	test.skip(
+		Boolean(process.env.CI),
+		'Host-only diagnostic against a live npm run dev session; not part of the Docker E2E suite.',
+	);
 	test.setTimeout(120_000);
 	const reportedDevelopmentWorktree = path.resolve(
 		process.cwd(),
