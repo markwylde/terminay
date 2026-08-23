@@ -295,14 +295,42 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 		);
 	}
 
+	const showConnectingMessage =
+		getSessionTransportHost() !== undefined ||
+		desktopContext?.profile?.isLocal === false;
+
 	return (
 		<main className="browser-host-shell">
-			<section className="browser-host-shell__panel" aria-live="polite">
-				<h1>
-					{phase === 'connecting'
-						? 'Connecting to Terminay…'
-						: 'Connection unavailable'}
-				</h1>
+			<section
+				className="browser-host-shell__panel browser-host-shell__connection-state"
+				aria-live="polite"
+				aria-busy={phase === 'connecting'}
+			>
+				{phase === 'connecting' && (
+					<div className="browser-host-shell__connection-brand">
+						<img
+							className="browser-host-shell__connection-logo"
+							src="terminay.svg"
+							alt=""
+							aria-hidden="true"
+						/>
+						<div
+							className="browser-host-shell__loading-dots"
+							aria-hidden="true"
+						>
+							{Array.from({ length: 5 }, (_, index) => (
+								<span key={index} />
+							))}
+						</div>
+					</div>
+				)}
+				{(phase !== 'connecting' || showConnectingMessage) && (
+					<h1>
+						{phase === 'connecting'
+							? 'Connecting to Terminay…'
+							: 'Connection unavailable'}
+					</h1>
+				)}
 				{error !== undefined && <p role="alert">{error}</p>}
 				{phase === 'ready' && (
 					<button type="button" onClick={recoverConnection}>
