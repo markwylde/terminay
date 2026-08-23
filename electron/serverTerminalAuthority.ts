@@ -47,9 +47,9 @@ import {
 } from '../packages/server-core/src/extensions/index';
 import {
 	CanonicalProjectPathResolver,
-	FileCatalog,
 	DocumentationCatalog,
 	type DocumentationProjectContext,
+	FileCatalog,
 	type FileCatalogOperationFailure,
 	type FileCatalogProjectContext,
 	type FileCatalogStorage,
@@ -57,15 +57,19 @@ import {
 	FileContentStreamService,
 	type FileProjectContext,
 	type FileSessionStorage,
+	ServerDocumentationCatalogAdapter,
 	ServerFileAdapter,
 	ServerFileCatalogAdapter,
-	ServerDocumentationCatalogAdapter,
 	ServerFileContentAdapter,
 } from '../packages/server-core/src/fileService/index';
-import { MdxRuntime, ServerMdxRuntimeAdapter, type MdxRuntimeProjectContext } from '../packages/server-core/src/mdxRuntime/index';
 import { ServerFileObservationAdapter } from '../packages/server-core/src/fileService/observationAdapter';
 import { ServerGitAdapter } from '../packages/server-core/src/gitService/adapter';
 import { GitService } from '../packages/server-core/src/gitService/service';
+import {
+	MdxRuntime,
+	type MdxRuntimeProjectContext,
+	ServerMdxRuntimeAdapter,
+} from '../packages/server-core/src/mdxRuntime/index';
 import {
 	createInitialProjectEnvironmentState,
 	ProjectEnvironmentRegistry,
@@ -96,6 +100,7 @@ import type {
 } from '../packages/server-core/src/types';
 import {
 	createInitialWorkspace,
+	type WorkspaceCommand,
 	type WorkspaceProject,
 	WorkspaceStore,
 } from '../packages/server-core/src/workspace';
@@ -217,6 +222,20 @@ export interface ServerTerminalAcceptedResize {
 	readonly rows: number;
 }
 
+/**
+ * Deliberately narrow, test-only observation of commands that reached the
+ * authoritative workspace reducer. It omits command-specific fields other
+ * than the sidebar patch E2E needs to assert the preview/commit boundary.
+ */
+export interface ServerWorkspaceTestCommandRecord {
+	readonly operation: 'workspace.command';
+	readonly command?: {
+		readonly type: string;
+		readonly projectId?: string;
+		readonly sidebar?: Readonly<Record<string, unknown>>;
+	};
+}
+
 /** Metadata-only host observation of a failed server-owned file operation. */
 export type ServerFileOperationFailure = FileCatalogOperationFailure;
 
@@ -262,8 +281,8 @@ export interface ServerTerminalAuthorityOptions {
 	readonly projectEnvironmentRepository?: ProjectEnvironmentRepository;
 	/** Already-loaded canonical repository. Production hosts must inject this;
 	 * the in-memory default remains available only to focused authority tests. */
-	readonly workspaceRepository?: WorkspaceRepository;	/** Desktop provider adapter retained behind the server protocol while the
-	 * canonical AI target registry is wired to workspace presentation state. */
+	readonly workspaceRepository?: WorkspaceRepository /** Desktop provider adapter retained behind the server protocol while the
+	 * canonical AI target registry is wired to workspace presentation state. */;
 	readonly aiMetadata?: {
 		readonly listModels: (
 			provider: 'claudeCode' | 'codex',
@@ -336,8 +355,14 @@ export class ServerTerminalAuthority {
 		string,
 		FileCatalogProjectContext
 	>();
-	private readonly documentationProjects = new Map<string, DocumentationProjectContext>();
-	private readonly mdxRuntimeProjects = new Map<string, MdxRuntimeProjectContext>();
+	private readonly documentationProjects = new Map<
+		string,
+		DocumentationProjectContext
+	>();
+	private readonly mdxRuntimeProjects = new Map<
+		string,
+		MdxRuntimeProjectContext
+	>();
 	private readonly fileContentProjects = new Map<
 		string,
 		FileContentProjectContext
@@ -350,6 +375,10 @@ export class ServerTerminalAuthority {
 	private readonly workspaceRepository: WorkspaceRepository | undefined;
 	/** Publishes asynchronous state changes from server-owned application features. */
 	private readonly eventJournal: OrderedEventJournal;
+	/** Undefined outside Docker/E2E runs so production performs no recording. */
+	private readonly workspaceCommandTestRecords:
+		| ServerWorkspaceTestCommandRecord[]
+		| undefined;
 
 	constructor(options: ServerTerminalAuthorityOptions) {
 		if (
@@ -364,6 +393,9 @@ export class ServerTerminalAuthority {
 		this.workspace =
 			options.workspaceRepository?.workspace ??
 			new WorkspaceStore(createInitialWorkspace(options.serverId));
+		this.workspaceCommandTestRecords =
+			process.env.TERMINAY_TEST === '1' ? [] : undefined;
+		this.installWorkspaceCommandTestObserver();
 		this.activity = new TerminalActivityService({ serverId: options.serverId });
 		this.agents = new AgentStatusService({ activity: this.activity });
 		this.git = new GitService({
@@ -387,13 +419,17 @@ export class ServerTerminalAuthority {
 		const fileCatalogAdapter = new ServerFileCatalogAdapter({
 			serverId: options.serverId,
 			projects: this.fileCatalogProjects,
-			onOperationFailure: (failure) => options.onFileOperationFailure?.(failure),
+			onOperationFailure: (failure) =>
+				options.onFileOperationFailure?.(failure),
 		});
 		const documentationCatalogAdapter = new ServerDocumentationCatalogAdapter({
 			serverId: options.serverId,
 			projects: this.documentationProjects,
 		});
-		const mdxRuntimeAdapter = new ServerMdxRuntimeAdapter({ serverId: options.serverId, projects: this.mdxRuntimeProjects });
+		const mdxRuntimeAdapter = new ServerMdxRuntimeAdapter({
+			serverId: options.serverId,
+			projects: this.mdxRuntimeProjects,
+		});
 		const fileContentAdapter = new ServerFileContentAdapter({
 			serverId: options.serverId,
 			projects: this.fileContentProjects,
@@ -541,7 +577,8 @@ export class ServerTerminalAuthority {
 			},
 		});
 		const fileCatalogOperations = fileCatalogAdapter.operations();
-		const documentationCatalogOperations = documentationCatalogAdapter.operations();
+		const documentationCatalogOperations =
+			documentationCatalogAdapter.operations();
 		const mdxRuntimeOperations = mdxRuntimeAdapter.operations();
 		const fileContentOperations = fileContentAdapter.operations();
 		const fileSessionOperations = fileSessionAdapter.operations();
@@ -803,17 +840,22 @@ export class ServerTerminalAuthority {
 						? {}
 						: {
 								'mcp-install.install': (request: CommandRequest) =>
-									mcpInstall.install(mcpAgent(request)) as unknown as Promise<JsonValue>,
+									mcpInstall.install(
+										mcpAgent(request),
+									) as unknown as Promise<JsonValue>,
 								'mcp-install.uninstall': (request: CommandRequest) =>
-									mcpInstall.uninstall(mcpAgent(request)) as unknown as Promise<JsonValue>,
+									mcpInstall.uninstall(
+										mcpAgent(request),
+									) as unknown as Promise<JsonValue>,
 							}),
 					...(remoteAccess === undefined
 						? {}
 						: {
 								'remote-access.toggle-server': (request: CommandRequest) =>
 									remoteCommand(request, 'toggle-server'),
-								'remote-access.create-pairing-link': (request: CommandRequest) =>
-									remoteCommand(request, 'create-pairing-link'),
+								'remote-access.create-pairing-link': (
+									request: CommandRequest,
+								) => remoteCommand(request, 'create-pairing-link'),
 								'remote-access.revoke-device': (request: CommandRequest) =>
 									remoteCommand(request, 'revoke-device', 'deviceId'),
 								'remote-access.close-connection': (request: CommandRequest) =>
@@ -870,6 +912,49 @@ export class ServerTerminalAuthority {
 			this.handleEvent(event),
 		);
 		this.consumers = new DetachableTerminalConsumerRegistry(this.service);
+	}
+
+	/**
+	 * E2E-only observability stays at the workspace reducer boundary, after the
+	 * protocol has parsed and authorized a command. The renderer receives no
+	 * workspace capability from this hook: it can only reset and read its own
+	 * redacted observation buffer through the main-process test IPC seam.
+	 */
+	resetWorkspaceCommandTestRecords(): void {
+		this.workspaceCommandTestRecords?.splice(0);
+	}
+
+	getWorkspaceCommandTestRecords(): readonly ServerWorkspaceTestCommandRecord[] {
+		return (this.workspaceCommandTestRecords ?? []).map((record) => {
+			const command = record.command;
+			return {
+				operation: record.operation,
+				...(command === undefined
+					? {}
+					: {
+							command: {
+								type: command.type,
+								...(command.projectId === undefined
+									? {}
+									: { projectId: command.projectId }),
+								...(command.sidebar === undefined
+									? {}
+									: { sidebar: structuredClone(command.sidebar) }),
+							},
+						}),
+			};
+		});
+	}
+
+	private installWorkspaceCommandTestObserver(): void {
+		if (this.workspaceCommandTestRecords === undefined) return;
+		const apply = this.workspace.apply.bind(this.workspace);
+		this.workspace.apply = (envelope) => {
+			this.workspaceCommandTestRecords?.push(
+				workspaceCommandTestRecord(envelope.command),
+			);
+			return apply(envelope);
+		};
 	}
 
 	/**
@@ -1168,8 +1253,18 @@ export class ServerTerminalAuthority {
 			projectId,
 			catalog: new FileCatalog(resolver, nodeFileCatalogStorage),
 		});
-		this.documentationProjects.set(projectId, { projectId, catalog: new DocumentationCatalog(resolver, nodeFileCatalogStorage) });
-		this.mdxRuntimeProjects.set(projectId, { projectId, runtime: new MdxRuntime({ projectId, resolver, storage: nodeFileCatalogStorage }) });
+		this.documentationProjects.set(projectId, {
+			projectId,
+			catalog: new DocumentationCatalog(resolver, nodeFileCatalogStorage),
+		});
+		this.mdxRuntimeProjects.set(projectId, {
+			projectId,
+			runtime: new MdxRuntime({
+				projectId,
+				resolver,
+				storage: nodeFileCatalogStorage,
+			}),
+		});
 		this.fileSessionProjects.set(projectId, {
 			projectId,
 			resolver,
@@ -1202,8 +1297,18 @@ export class ServerTerminalAuthority {
 			projectId,
 			catalog: new FileCatalog(resolver, nodeFileCatalogStorage),
 		};
-		const documentationContext = { projectId, catalog: new DocumentationCatalog(resolver, nodeFileCatalogStorage) };
-		const mdxRuntimeContext = { projectId, runtime: new MdxRuntime({ projectId, resolver, storage: nodeFileCatalogStorage }) };
+		const documentationContext = {
+			projectId,
+			catalog: new DocumentationCatalog(resolver, nodeFileCatalogStorage),
+		};
+		const mdxRuntimeContext = {
+			projectId,
+			runtime: new MdxRuntime({
+				projectId,
+				resolver,
+				storage: nodeFileCatalogStorage,
+			}),
+		};
 		const contentContext = {
 			projectId,
 			content: new FileContentStreamService(resolver, nodeFileCatalogStorage),
@@ -2065,6 +2170,22 @@ function legacyConsumerId(rendererId: number): string {
 	if (!Number.isSafeInteger(rendererId) || rendererId < 0)
 		throw new TypeError('renderer id is invalid');
 	return `legacy-renderer:${rendererId}`;
+}
+
+function workspaceCommandTestRecord(
+	command: WorkspaceCommand,
+): ServerWorkspaceTestCommandRecord {
+	const projectId = 'projectId' in command ? command.projectId : undefined;
+	return Object.freeze({
+		operation: 'workspace.command',
+		command: Object.freeze({
+			type: command.type,
+			...(projectId === undefined ? {} : { projectId }),
+			...(command.type === 'project.sidebar.update'
+				? { sidebar: structuredClone(command.sidebar) }
+				: {}),
+		}),
+	});
 }
 
 function embeddedDictationSettings(

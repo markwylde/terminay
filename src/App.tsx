@@ -55,6 +55,7 @@ import {
 	type AgentsSidebarItem,
 } from './components/AgentsSidebar';
 import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
+import { DocumentationTree } from './components/DocumentationTree';
 import type {
 	FilePanelInstanceParams,
 	FilePanelSaveHandler,
@@ -67,8 +68,6 @@ import {
 import type { FolderPanelInstanceParams } from './components/folder-viewer';
 import { FolderPanel, FolderTab } from './components/folder-viewer';
 import { WorktreesPanel } from './components/git-panel/WorktreesPanel';
-import { DocumentationTree } from './components/DocumentationTree';
-import { useDocumentationController } from './workspace/useDocumentationController';
 import { McpInstallModal } from './components/McpInstallModal';
 import {
 	SidebarPanelStack,
@@ -97,10 +96,7 @@ import {
 	createServerTerminalSettingsClient,
 	useTerminalSettings,
 } from './hooks/useTerminalSettings';
-import {
-	checkForAppUpdate,
-	openExternalUrl,
-} from './host/nativeActions';
+import { checkForAppUpdate, openExternalUrl } from './host/nativeActions';
 import {
 	findCommandForKeyboardEvent,
 	getCommandShortcut,
@@ -126,6 +122,7 @@ import {
 	resolveProjectFeatureAuthority,
 } from './shared/featureQueryAuthority';
 import { composeProjectTerminalClientContext } from './shared/projectTerminalClientContext';
+import { RemotePairingModal } from './shared/RemotePairingModal';
 import {
 	adaptServerAgentSnapshot,
 	subscribeServerAgentSnapshots,
@@ -148,9 +145,7 @@ import type {
 } from './types/agentStatus';
 import type { FileViewerMode } from './types/fileViewer';
 import type { MacroDefinition, MacroFieldValue } from './types/macros';
-import type {
-	SidebarPanelId,
-} from './types/settings';
+import type { SidebarPanelId } from './types/settings';
 import type {
 	AiTabMetadataTarget,
 	AppCommand,
@@ -171,7 +166,6 @@ import {
 	type ConnectionSwitcherEntry,
 	RemoteAccessConnectionMenu,
 } from './workspace/RemoteAccessConnectionMenu';
-import { RemotePairingModal } from './shared/RemotePairingModal';
 import {
 	buildTerminalActivityOverview,
 	TerminalActivityOverview,
@@ -193,6 +187,7 @@ import {
 } from './workspace/terminalTransferOrchestration';
 import { useDictationController } from './workspace/useDictationController';
 import { useDockviewPanelLifecycle } from './workspace/useDockviewPanelLifecycle';
+import { useDocumentationController } from './workspace/useDocumentationController';
 import { useFileExplorerController } from './workspace/useFileExplorerController';
 import {
 	type GitPushMenuTarget,
@@ -456,6 +451,19 @@ type ProjectWorkspaceProps = {
 		projectId: string,
 		items: TerminalActivityOverviewItem[],
 	) => void;
+	onCommitProjectSidebar: (
+		projectId: string,
+		patch: Partial<
+			Pick<
+				ProjectTab,
+				| 'fileExplorerWidth'
+				| 'sidebarExplorerHeight'
+				| 'sidebarAgentsHeight'
+				| 'sidebarGitHeight'
+				| 'sidebarDocumentationHeight'
+			>
+		>,
+	) => Promise<void>;
 	onUpdateProject: (projectId: string, updates: Partial<ProjectTab>) => void;
 	agentStatusSnapshot: AgentStatusSnapshot;
 	popoutUrl: string;
@@ -467,7 +475,6 @@ type ProjectWorkspaceProps = {
 	adoptedTerminals?: MovedTerminalTab[];
 };
 
-const MIN_SIDEBAR_PANE_HEIGHT = 80;
 const DOCKVIEW_SASH_ACTIVITY_DEFER_MS = 300;
 const PROJECT_DEACTIVATION_ACTIVITY_SETTLE_MS = 1_500;
 
@@ -1201,6 +1208,7 @@ const ProjectWorkspace = forwardRef<
 			onMoveTerminalToProject,
 			onPopoutProject,
 			onTerminalActivityOverviewChange,
+			onCommitProjectSidebar,
 			onUpdateProject,
 			popoutUrl,
 			project,
@@ -1288,12 +1296,19 @@ const ProjectWorkspace = forwardRef<
 				),
 			);
 		}, [terminalClientContext?.applicationClient]);
-		const {
-			settings,
-			error: settingsError,
-		} = useTerminalSettings(serverSettingsClient);
+		const { settings, error: settingsError } =
+			useTerminalSettings(serverSettingsClient);
 		const serverFileViewerClient = featureAuthority?.fileViewerClient;
-		const documentation = useDocumentationController({ enabled: !project.isDocumentationPaneCollapsed, client: featureAuthority?.documentationClient, observationClient: featureAuthority?.fileObservationClient, projectId: project.id, scopeKey: featureAuthority?.scope.projectRoot ?? project.rootFolder, expandedFolderIds: project.expandedDocumentationFolderIds, onExpandedFolderIdsChange: (expandedDocumentationFolderIds) => onUpdateProject(project.id, { expandedDocumentationFolderIds }) });
+		const documentation = useDocumentationController({
+			enabled: !project.isDocumentationPaneCollapsed,
+			client: featureAuthority?.documentationClient,
+			observationClient: featureAuthority?.fileObservationClient,
+			projectId: project.id,
+			scopeKey: featureAuthority?.scope.projectRoot ?? project.rootFolder,
+			expandedFolderIds: project.expandedDocumentationFolderIds,
+			onExpandedFolderIdsChange: (expandedDocumentationFolderIds) =>
+				onUpdateProject(project.id, { expandedDocumentationFolderIds }),
+		});
 		const fileViewerClient = useMemo(
 			() =>
 				serverFileViewerClient ??
@@ -2100,13 +2115,25 @@ const ProjectWorkspace = forwardRef<
 							existingPanel.params?.presentation === 'documentation' &&
 							options?.presentation === 'file-viewer'
 						) {
-							const flush = filePanelSaveHandlersRef.current.get(existingPanel.id);
+							const flush = filePanelSaveHandlersRef.current.get(
+								existingPanel.id,
+							);
 							if (flush !== undefined) {
-								try { await flush(); } catch { return; }
+								try {
+									await flush();
+								} catch {
+									return;
+								}
 							}
 						}
-						if (options?.presentation && existingPanel.params?.presentation !== options.presentation) {
-							existingPanel.api.updateParameters({ ...(existingPanel.params ?? {}), presentation: options.presentation });
+						if (
+							options?.presentation &&
+							existingPanel.params?.presentation !== options.presentation
+						) {
+							existingPanel.api.updateParameters({
+								...(existingPanel.params ?? {}),
+								presentation: options.presentation,
+							});
 						}
 						if (options?.initialMode) {
 							existingPanel.api.updateParameters({
@@ -2169,11 +2196,25 @@ const ProjectWorkspace = forwardRef<
 		useEffect(() => {
 			const openDocumentationLink = (event: Event) => {
 				const path = (event as CustomEvent<{ path?: unknown }>).detail?.path;
-				if (typeof path !== 'string' || !path || path.startsWith('/') || path.includes('\\') || path.split('/').some((part) => !part || part === '.' || part === '..')) return;
+				if (
+					typeof path !== 'string' ||
+					!path ||
+					path.startsWith('/') ||
+					path.includes('\\') ||
+					path.split('/').some((part) => !part || part === '.' || part === '..')
+				)
+					return;
 				void openFile(path, { presentation: 'documentation' });
 			};
-			window.addEventListener('terminay-documentation-open', openDocumentationLink);
-			return () => window.removeEventListener('terminay-documentation-open', openDocumentationLink);
+			window.addEventListener(
+				'terminay-documentation-open',
+				openDocumentationLink,
+			);
+			return () =>
+				window.removeEventListener(
+					'terminay-documentation-open',
+					openDocumentationLink,
+				);
 		}, [openFile]);
 
 		const handleOpenTerminalAt = useCallback(
@@ -3509,8 +3550,12 @@ const ProjectWorkspace = forwardRef<
 				if (panel.params?.presentation === 'documentation') {
 					const flush = filePanelSaveHandlersRef.current.get(panelId);
 					if (flush !== undefined) {
-						try { await flush(); } catch (error) {
-							setErrorText(error instanceof Error ? error.message : String(error));
+						try {
+							await flush();
+						} catch (error) {
+							setErrorText(
+								error instanceof Error ? error.message : String(error),
+							);
 							return;
 						}
 					}
@@ -3594,11 +3639,13 @@ const ProjectWorkspace = forwardRef<
 
 		useEffect(() => {
 			const listener = (event: Event) => {
-				const panelId = (event as CustomEvent<{ panelId?: unknown }>).detail?.panelId;
+				const panelId = (event as CustomEvent<{ panelId?: unknown }>).detail
+					?.panelId;
 				if (typeof panelId === 'string') void requestClosePanel(panelId);
 			};
 			window.addEventListener('terminay-request-close-file', listener);
-			return () => window.removeEventListener('terminay-request-close-file', listener);
+			return () =>
+				window.removeEventListener('terminay-request-close-file', listener);
 		}, [requestClosePanel]);
 
 		const closeActivePanel = useCallback(async () => {
@@ -4489,12 +4536,40 @@ const ProjectWorkspace = forwardRef<
 							/>
 						),
 				},
-					documentation: {
-					id: 'documentation', title: 'Documentation', height: project.sidebarDocumentationHeight, collapsed: project.isDocumentationPaneCollapsed,
-					onToggleCollapsed: () => onUpdateProject(project.id, { isDocumentationPaneCollapsed: !project.isDocumentationPaneCollapsed }),
-						actions: <button type="button" className="sidebar-pane__action-button" onClick={documentation.refresh} aria-label="Reload documentation" title="Reload documentation"><RefreshCw size={14} aria-hidden="true" /></button>,
+				documentation: {
+					id: 'documentation',
+					title: 'Documentation',
+					height: project.sidebarDocumentationHeight,
+					collapsed: project.isDocumentationPaneCollapsed,
+					onToggleCollapsed: () =>
+						onUpdateProject(project.id, {
+							isDocumentationPaneCollapsed:
+								!project.isDocumentationPaneCollapsed,
+						}),
+					actions: (
+						<button
+							type="button"
+							className="sidebar-pane__action-button"
+							onClick={documentation.refresh}
+							aria-label="Reload documentation"
+							title="Reload documentation"
+						>
+							<RefreshCw size={14} aria-hidden="true" />
+						</button>
+					),
 					count: documentation.catalog?.documents.length,
-					children: <DocumentationTree catalog={documentation.catalog} error={documentation.error} expandedFolders={documentation.expandedFolders} loading={documentation.loading} onToggleFolder={documentation.toggleFolder} onOpen={(path) => openFile(path, { presentation: 'documentation' })} />,
+					children: (
+						<DocumentationTree
+							catalog={documentation.catalog}
+							error={documentation.error}
+							expandedFolders={documentation.expandedFolders}
+							loading={documentation.loading}
+							onToggleFolder={documentation.toggleFolder}
+							onOpen={(path) =>
+								openFile(path, { presentation: 'documentation' })
+							}
+						/>
+					),
 				},
 			};
 		const visibleSidebarPanelIds = project.sidebarPanelOrder.filter(
@@ -4503,6 +4578,39 @@ const ProjectWorkspace = forwardRef<
 		const sidebarPanelItems = visibleSidebarPanelIds.map(
 			(id) => sidebarPanelItemsById[id],
 		);
+		const commitSidebarHeights = (
+			heights: Readonly<Record<string, number>>,
+		): Promise<void> => {
+			const patch: Partial<
+				Pick<
+					ProjectTab,
+					| 'sidebarExplorerHeight'
+					| 'sidebarAgentsHeight'
+					| 'sidebarGitHeight'
+					| 'sidebarDocumentationHeight'
+				>
+			> = {};
+			for (const [id, height] of Object.entries(heights)) {
+				const persistedHeight = Math.min(
+					2_000,
+					Math.max(30, Math.round(height)),
+				);
+				if (id === 'explorer') patch.sidebarExplorerHeight = persistedHeight;
+				else if (id === 'agents') patch.sidebarAgentsHeight = persistedHeight;
+				else if (id === 'git') patch.sidebarGitHeight = persistedHeight;
+				else if (id === 'documentation')
+					patch.sidebarDocumentationHeight = persistedHeight;
+			}
+			if (Object.keys(patch).length === 0) return Promise.resolve();
+			return onCommitProjectSidebar(project.id, patch).catch((error) => {
+				setErrorText(
+					`Unable to save sidebar size: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+				);
+				throw error;
+			});
+		};
 
 		return (
 			<section
@@ -4525,24 +4633,26 @@ const ProjectWorkspace = forwardRef<
 					className="project-workspace-body"
 					isNavigationVisible={project.isFileExplorerOpen}
 					navigationWidth={project.fileExplorerWidth}
-					onNavigationWidthChange={(width) =>
-						onUpdateProject(project.id, { fileExplorerWidth: width })
-					}
+					onNavigationWidthCommit={(width) => {
+						void onCommitProjectSidebar(project.id, {
+							fileExplorerWidth: Math.min(
+								2_000,
+								Math.max(30, Math.round(width)),
+							),
+						}).catch((error) => {
+							setErrorText(
+								`Unable to save sidebar width: ${
+									error instanceof Error ? error.message : String(error)
+								}`,
+							);
+						});
+					}}
 					navigation={
 						project.isFileExplorerOpen ? (
 							<div className="file-explorer-sidebar">
 								<SidebarPanelStack
 									items={sidebarPanelItems}
-									minPaneHeight={MIN_SIDEBAR_PANE_HEIGHT}
-									onHeightChange={(id, height) => {
-										onUpdateProject(project.id, {
-											...(id === 'explorer'
-												? { sidebarExplorerHeight: height }
-												: id === 'agents'
-													? { sidebarAgentsHeight: height }
-													: id === 'git' ? { sidebarGitHeight: height } : { sidebarDocumentationHeight: height }),
-										});
-									}}
+									onHeightsCommit={commitSidebarHeights}
 									onReorder={(orderedIds) => {
 										const reorderedVisibleIds = orderedIds.filter(
 											(id): id is SidebarPanelId =>
@@ -5177,10 +5287,8 @@ function App({
 					),
 		[terminalClientContext?.applicationClient],
 	);
-	const {
-		settings,
-		error: terminalSettingsError,
-	} = useTerminalSettings(serverSettingsClient);
+	const { settings, error: terminalSettingsError } =
+		useTerminalSettings(serverSettingsClient);
 	const connectionFeatureError = useMemo(() => {
 		const failed =
 			macroSettingsError === null
@@ -5221,6 +5329,7 @@ function App({
 		adoptedTerminalsByProject,
 		canAddProject,
 		closeProject,
+		commitProjectSidebar,
 		homePath,
 		isWorkspaceHydrating,
 		projectCreationError,
@@ -5691,7 +5800,11 @@ function App({
 				targetViewId: boundWorkspaceViewId,
 			});
 		},
-		[boundWorkspaceViewId, projectsRef, terminalClientContext?.workspaceSnapshotStore],
+		[
+			boundWorkspaceViewId,
+			projectsRef,
+			terminalClientContext?.workspaceSnapshotStore,
+		],
 	);
 
 	const focusProjectTerminal = useCallback(
@@ -6128,6 +6241,7 @@ function App({
 						onMoveTerminalToProject={moveTerminalToProject}
 						onPopoutProject={popoutProject}
 						onTerminalActivityOverviewChange={updateTerminalActivityOverview}
+						onCommitProjectSidebar={commitProjectSidebar}
 						onUpdateProject={updateProject}
 						popoutUrl={popoutUrl}
 						project={project}
