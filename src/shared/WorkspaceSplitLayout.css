@@ -2,6 +2,12 @@
 	box-sizing: border-box;
 	display: grid;
 	position: relative;
+	/* The layout is a direct flex child of a project workspace. Give the grid a
+	 * definite block size so navigation children cannot establish an intrinsic
+	 * height larger than the viewport (and leave the sidebar stack with stale,
+	 * clipped pane allocations after a window resize). */
+	height: 100%;
+	flex: 1 1 auto;
 	grid-template-columns: var(--workspace-navigation-width, 22rem) minmax(0, 1fr);
 	width: 100%;
 	min-width: 0;

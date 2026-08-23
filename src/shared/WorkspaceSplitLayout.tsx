@@ -13,6 +13,7 @@ import './WorkspaceSplitLayout.css';
 const minimumNavigationWidth = 192;
 const defaultNavigationWidth = 352;
 const maximumNavigationWidthRatio = 0.8;
+const maximumPersistedNavigationWidth = 2_000;
 const navigationResizeStep = 16;
 
 function getInitialRootWidth(): number | null {
@@ -31,7 +32,9 @@ export interface WorkspaceSplitLayoutProps {
 	 * rendered sidebar on one authority instead of leaving an empty grid gutter. */
 	readonly navigationWidth?: number;
 	readonly maximumNavigationWidth?: number;
+	/** Called once for a completed width change; never for a pointer preview. */
 	readonly onNavigationWidthChange?: (width: number) => void;
+	/** Preferred committed callback for canonical width persistence. */
 	readonly onNavigationWidthCommit?: (width: number) => void;
 }
 
@@ -53,6 +56,13 @@ export function WorkspaceSplitLayout({
 	const navigationId = useId();
 	const [uncontrolledNavigationWidth, setUncontrolledNavigationWidth] =
 		useState(defaultNavigationWidth);
+	// A local width is the presentation authority while a resize is active and
+	// until a completed controlled update has reached this component. React may
+	// render for an unrelated workspace snapshot during that interval; rendering
+	// the canonical prop in that pass would visibly fight the pointer.
+	const [localNavigationWidth, setLocalNavigationWidth] = useState<
+		number | null
+	>(null);
 	const [rootWidth, setRootWidth] = useState<number | null>(
 		getInitialRootWidth,
 	);
@@ -74,19 +84,33 @@ export function WorkspaceSplitLayout({
 			(rootWidth ?? defaultNavigationWidth) * maximumNavigationWidthRatio,
 		),
 	);
-	const resolvedMaximumNavigationWidth =
-		controlledMaximumNavigationWidth ?? responsiveMaximumNavigationWidth;
+	const resolvedMaximumNavigationWidth = Math.max(
+		minimumNavigationWidth,
+		Math.min(
+			maximumPersistedNavigationWidth,
+			controlledMaximumNavigationWidth ?? responsiveMaximumNavigationWidth,
+		),
+	);
 	const clampNavigationWidth = (width: number) =>
 		Math.min(
 			resolvedMaximumNavigationWidth,
 			Math.max(minimumNavigationWidth, width),
 		);
 	const resolvedNavigationWidth = clampNavigationWidth(navigationWidth);
+	const canonicalNavigationWidthRef = useRef(resolvedNavigationWidth);
+	const clampNavigationWidthRef = useRef(clampNavigationWidth);
+	canonicalNavigationWidthRef.current = resolvedNavigationWidth;
+	clampNavigationWidthRef.current = clampNavigationWidth;
+	const activePreviewNavigationWidth = dragStateRef.current?.latestWidth;
+	const renderedNavigationWidth =
+		activePreviewNavigationWidth ??
+		localNavigationWidth ??
+		resolvedNavigationWidth;
 
 	function applyNavigationWidth(width: number) {
 		rootRef.current?.style.setProperty(
 			'--workspace-navigation-width',
-			`${clampNavigationWidth(width)}px`,
+			`${clampNavigationWidthRef.current(width)}px`,
 		);
 	}
 
@@ -94,33 +118,37 @@ export function WorkspaceSplitLayout({
 		const nextWidth = clampNavigationWidth(width);
 		if (controlledNavigationWidth === undefined)
 			setUncontrolledNavigationWidth(nextWidth);
-		onNavigationWidthChange?.(nextWidth);
 		return nextWidth;
+	}
+
+	function commitNavigationWidth(width: number) {
+		const nextWidth = resizeNavigation(width);
+		setLocalNavigationWidth(nextWidth);
+		applyNavigationWidth(nextWidth);
+		// `onNavigationWidthChange` is retained as the legacy committed-value
+		// callback. Live pointer movement intentionally updates only the inline
+		// presentation variable; canonical owners receive one value here.
+		onNavigationWidthChange?.(nextWidth);
+		onNavigationWidthCommit?.(nextWidth);
 	}
 
 	function handleSeparatorKeyDown(event: KeyboardEvent<HTMLHRElement>) {
 		switch (event.key) {
 			case 'ArrowLeft':
 				event.preventDefault();
-				onNavigationWidthCommit?.(
-					resizeNavigation(resolvedNavigationWidth - navigationResizeStep),
-				);
+				commitNavigationWidth(renderedNavigationWidth - navigationResizeStep);
 				break;
 			case 'ArrowRight':
 				event.preventDefault();
-				onNavigationWidthCommit?.(
-					resizeNavigation(resolvedNavigationWidth + navigationResizeStep),
-				);
+				commitNavigationWidth(renderedNavigationWidth + navigationResizeStep);
 				break;
 			case 'Home':
 				event.preventDefault();
-				onNavigationWidthCommit?.(resizeNavigation(minimumNavigationWidth));
+				commitNavigationWidth(minimumNavigationWidth);
 				break;
 			case 'End':
 				event.preventDefault();
-				onNavigationWidthCommit?.(
-					resizeNavigation(resolvedMaximumNavigationWidth),
-				);
+				commitNavigationWidth(resolvedMaximumNavigationWidth);
 				break;
 		}
 	}
@@ -133,17 +161,31 @@ export function WorkspaceSplitLayout({
 		if (state.separator.hasPointerCapture(state.pointerId)) {
 			state.separator.releasePointerCapture(state.pointerId);
 		}
-		const finalWidth = resizeNavigation(state.latestWidth);
-		applyNavigationWidth(finalWidth);
-		onNavigationWidthCommit?.(finalWidth);
+		commitNavigationWidth(state.latestWidth);
+	}
+
+	function cancelNavigationResize() {
+		const state = dragStateRef.current;
+		if (state === null) return;
+		dragStateRef.current = null;
+		state.removeListeners();
+		if (state.separator.hasPointerCapture(state.pointerId)) {
+			state.separator.releasePointerCapture(state.pointerId);
+		}
+		// Pointer cancellation abandons the transient CSS preview and restores the
+		// latest canonical width without producing a workspace mutation. The
+		// canonical prop might have changed while the pointer was held.
+		setLocalNavigationWidth(null);
+		applyNavigationWidth(canonicalNavigationWidthRef.current);
 	}
 
 	function previewNavigationResize(pointerId: number, clientX: number) {
 		const state = dragStateRef.current;
 		if (state === null || pointerId !== state.pointerId) return;
-		state.latestWidth = clampNavigationWidth(
+		state.latestWidth = clampNavigationWidthRef.current(
 			state.startWidth + clientX - state.startX,
 		);
+		setLocalNavigationWidth(state.latestWidth);
 		state.root.style.setProperty(
 			'--workspace-navigation-width',
 			`${state.latestWidth}px`,
@@ -169,38 +211,50 @@ export function WorkspaceSplitLayout({
 		};
 		const handleWindowPointerEnd = (windowEvent: PointerEvent) => {
 			windowEvent.preventDefault();
-			completeNavigationResize(windowEvent.pointerId);
+			if (windowEvent.type === 'pointercancel') {
+				if (dragStateRef.current?.pointerId === windowEvent.pointerId) {
+					cancelNavigationResize();
+				}
+			} else {
+				completeNavigationResize(windowEvent.pointerId);
+			}
 		};
+		const handleWindowBlur = () => cancelNavigationResize();
 		const removeListeners = () => {
 			ownerWindow?.removeEventListener('pointermove', handleWindowPointerMove);
 			ownerWindow?.removeEventListener('pointerup', handleWindowPointerEnd);
 			ownerWindow?.removeEventListener('pointercancel', handleWindowPointerEnd);
+			ownerWindow?.removeEventListener('blur', handleWindowBlur);
 		};
 		dragStateRef.current = {
 			pointerId: event.pointerId,
 			separator: event.currentTarget,
 			root,
-			startWidth: resolvedNavigationWidth,
+			startWidth: renderedNavigationWidth,
 			startX: event.clientX,
-			latestWidth: resolvedNavigationWidth,
+			latestWidth: renderedNavigationWidth,
 			removeListeners,
 		};
 		ownerWindow?.addEventListener('pointermove', handleWindowPointerMove);
 		ownerWindow?.addEventListener('pointerup', handleWindowPointerEnd);
 		ownerWindow?.addEventListener('pointercancel', handleWindowPointerEnd);
-		applyNavigationWidth(resolvedNavigationWidth);
-	}
-
-	function handleSeparatorPointerMove(event: ReactPointerEvent<HTMLHRElement>) {
-		if (dragStateRef.current?.pointerId !== event.pointerId) return;
-		event.preventDefault();
-		previewNavigationResize(event.pointerId, event.clientX);
+		ownerWindow?.addEventListener('blur', handleWindowBlur);
+		setLocalNavigationWidth(renderedNavigationWidth);
+		applyNavigationWidth(renderedNavigationWidth);
 	}
 
 	function handleSeparatorPointerEnd(event: ReactPointerEvent<HTMLHRElement>) {
 		if (dragStateRef.current?.pointerId !== event.pointerId) return;
 		event.preventDefault();
 		completeNavigationResize(event.pointerId);
+	}
+
+	function handleSeparatorPointerCancel(
+		event: ReactPointerEvent<HTMLHRElement>,
+	) {
+		if (dragStateRef.current?.pointerId !== event.pointerId) return;
+		event.preventDefault();
+		cancelNavigationResize();
 	}
 
 	useEffect(() => {
@@ -227,6 +281,19 @@ export function WorkspaceSplitLayout({
 	}, []);
 
 	useEffect(() => {
+		if (
+			dragStateRef.current !== null ||
+			localNavigationWidth === null ||
+			Math.abs(localNavigationWidth - resolvedNavigationWidth) > 0.5
+		) {
+			return;
+		}
+		// The controlled/uncontrolled authority has caught up with a completed
+		// interaction, so future canonical updates can render normally.
+		setLocalNavigationWidth(null);
+	}, [localNavigationWidth, resolvedNavigationWidth]);
+
+	useEffect(() => {
 		return () => {
 			const state = dragStateRef.current;
 			if (state === null) return;
@@ -245,7 +312,7 @@ export function WorkspaceSplitLayout({
 			data-navigation-visible={isNavigationVisible ? 'true' : 'false'}
 			style={
 				{
-					'--workspace-navigation-width': `${resolvedNavigationWidth}px`,
+					'--workspace-navigation-width': `${renderedNavigationWidth}px`,
 				} as CSSProperties
 			}
 		>
@@ -265,13 +332,13 @@ export function WorkspaceSplitLayout({
 				aria-orientation="vertical"
 				aria-valuemin={minimumNavigationWidth}
 				aria-valuemax={resolvedMaximumNavigationWidth}
-				aria-valuenow={resolvedNavigationWidth}
-				aria-valuetext={`${resolvedNavigationWidth} pixels`}
+				aria-valuenow={renderedNavigationWidth}
+				aria-valuetext={`${renderedNavigationWidth} pixels`}
 				onKeyDown={handleSeparatorKeyDown}
 				onPointerDown={handleSeparatorPointerDown}
-				onPointerMove={handleSeparatorPointerMove}
 				onPointerUp={handleSeparatorPointerEnd}
-				onPointerCancel={handleSeparatorPointerEnd}
+				onPointerCancel={handleSeparatorPointerCancel}
+				onLostPointerCapture={cancelNavigationResize}
 			/>
 			<section
 				className="workspace-split-layout__content"

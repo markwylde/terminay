@@ -25,8 +25,8 @@ import {
 	dialog,
 	ipcMain,
 	Menu,
-	nativeImage,
 	Notification,
+	nativeImage,
 	powerMonitor,
 	safeStorage,
 	screen,
@@ -39,8 +39,21 @@ import {
 	type DesktopBundleLaunch,
 	DesktopServerBundleHost,
 } from '../apps/terminay-desktop/src/main/serverBundleHost';
-import { MacroRepository } from '../packages/server-core/src/macroService/repository';
+import {
+	CONTROL_SOCKET_ENV,
+	CONTROL_TOKEN_ENV,
+	ControlCapabilityStore,
+	ControlEndpointError,
+	type ControlRequestContext,
+	createControlEndpoint,
+	createTerminalControlAdapter,
+	type LocalControlEndpoint,
+	type TerminalControlAdapter,
+} from '../apps/terminay-server/src/index';
+import { loadOrCreateHostedHostKey } from '../apps/terminay-server/src/remote/hostedHostKey';
+import { parseHostedIceServers } from '../apps/terminay-server/src/remote/hostedPeerLifecycle';
 import { ParakeetRuntime } from '../packages/server-core/src/aiService/parakeetRuntime';
+import { MacroRepository } from '../packages/server-core/src/macroService/repository';
 import {
 	FileProjectEnvironmentStateBackend,
 	ProjectEnvironmentRepository,
@@ -50,25 +63,14 @@ import {
 	ServerRecordingAdapter,
 } from '../packages/server-core/src/recordingService/index';
 import { ServerSettingsRepository } from '../packages/server-core/src/settings/repository';
-import {
-	CONTROL_SOCKET_ENV,
-	CONTROL_TOKEN_ENV,
-	ControlCapabilityStore,
-	ControlEndpointError,
-	createControlEndpoint,
-	createTerminalControlAdapter,
-	type ControlRequestContext,
-	type LocalControlEndpoint,
-	type TerminalControlAdapter,
-} from '../apps/terminay-server/src/index';
 import { createServerVaultComposition } from '../packages/server-core/src/settings/vaultComposition';
-import { openCanonicalWorkspace } from '../packages/server-core/src/workspaceHydration';
 import {
 	createNodeShellDiscoveryHost,
 	ShellProfileCatalogueService,
 	ShellProfileDiscoveryService,
 } from '../packages/server-core/src/shellProfiles/index';
 import type { TerminalEvent } from '../packages/server-core/src/terminalService/index';
+import { openCanonicalWorkspace } from '../packages/server-core/src/workspaceHydration';
 import {
 	findCommandForKeyboardEvent,
 	getCommandShortcut,
@@ -95,27 +97,7 @@ import {
 	AiTabMetadataService,
 	warmAiTabMetadataProviderEnv,
 } from './aiTabMetadata/service';
-import {
-	getMcpInstallStatus,
-	installMcpAgent,
-	type McpServerCommand,
-	uninstallMcpAgent,
-} from './mcpInstall';
-import {
-	bindLocalServerUiDocumentEndpoint,
-	bindRemoteServerUiDocumentEndpoint,
-} from './serverUiDocumentEndpoint';
 import { showCanonicalLaunchRecovery } from './canonicalLaunchRecovery';
-import {
-	createEmbeddedWorkspaceStateBackend,
-	embeddedWorkspacePersistenceFault,
-} from './workspacePersistence';
-import {
-	assertBoundServerUiEvent,
-	bindServerUiWindow,
-	getServerUiPartitionName,
-	releaseServerUiWindowBinding,
-} from './serverUiHost';
 import {
 	bindAppChildDiagnostics,
 	bindWebContentsDiagnostics,
@@ -135,31 +117,49 @@ import {
 	bindMainWindowCloseConfirmation,
 	createCloseConfirmationDialog,
 } from './mainWindowCloseConfirmation';
+import {
+	getMcpInstallStatus,
+	installMcpAgent,
+	type McpServerCommand,
+	uninstallMcpAgent,
+} from './mcpInstall';
 import { TerminalRecordingService } from './recording/service';
-import { createDesktopReconnectTransport } from './remote/desktopReconnect';
 import { establishDesktopDevicePairing } from './remote/desktopPairing';
+import { createDesktopReconnectTransport } from './remote/desktopReconnect';
 import { createDesktopBootstrappedWebRtcConnection } from './remote/desktopWebRtcBootstrap';
 import { resolveDesktopWebRtcRuntimeRoot } from './remote/desktopWebRtcRuntimeRoot';
-import { loadOrCreateHostedHostKey } from '../apps/terminay-server/src/remote/hostedHostKey';
 import {
 	createEphemeralTestProtectedValueCodec,
 	DesktopDeviceCredentialStore,
 } from './remote/deviceCredentialStore';
-import { createPairingPinHash, verifyPairingPin } from './remote/pin';
 import { hostedPairingDiagnosticEvent } from './remote/hostedPairingDiagnostics';
+import { createPairingPinHash, verifyPairingPin } from './remote/pin';
 import { DesktopServerOwnedExposure } from './remote/serverOwnedExposure';
-import { parseHostedIceServers } from '../apps/terminay-server/src/remote/hostedPeerLifecycle';
 import { buildServerUiArchive } from './remote/serverUiArchive';
 import {
 	ServerTerminalAuthority,
 	writePortDiagnostic,
 } from './serverTerminalAuthority';
+import {
+	bindLocalServerUiDocumentEndpoint,
+	bindRemoteServerUiDocumentEndpoint,
+} from './serverUiDocumentEndpoint';
+import {
+	assertBoundServerUiEvent,
+	bindServerUiWindow,
+	getServerUiPartitionName,
+	releaseServerUiWindowBinding,
+} from './serverUiHost';
 import { secureSession } from './sessionSecurity';
 import { assertTrustedIpcSender } from './trustedIpcSender';
 import {
 	ElectronSafeStorageVaultAdapter,
 	FileSafeStorageVaultRepository,
 } from './vault/safeStorageVault';
+import {
+	createEmbeddedWorkspaceStateBackend,
+	embeddedWorkspacePersistenceFault,
+} from './workspacePersistence';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RELEASES_LATEST_URL =
@@ -167,6 +167,12 @@ const RELEASES_LATEST_URL =
 const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const DICTATION_OPENAI_SECRET_ID = 'dictation-openai-api-key';
 const DICTATION_OPENAI_SECRET_NAME = 'OpenAI API key';
+/**
+ * Leaves room for the project tab bar, four rendered sidebar title rows, and a
+ * usable workspace body. The flat sidebar solver treats anything smaller as an
+ * explicitly unsupported embedded/web presentation rather than clipping titles.
+ */
+const MAIN_PROJECT_WINDOW_MIN_HEIGHT = 260;
 const desktopTestCredentialCodec =
 	process.env.TERMINAY_TEST === '1'
 		? createEphemeralTestProtectedValueCodec()
@@ -688,17 +694,24 @@ function createDesktopDeviceCredentialStore(): DesktopDeviceCredentialStore {
  * cancellation/failure cannot leave a partial requested destination. */
 async function savePreviewDownload(
 	window: BrowserWindow,
-	action: Extract<TerminayHostActionRequest['action'], { type: 'preview.download' }>,
+	action: Extract<
+		TerminayHostActionRequest['action'],
+		{ type: 'preview.download' }
+	>,
 ): Promise<{ canceled: boolean }> {
 	const result = await dialog.showSaveDialog(window, {
 		defaultPath: action.filename,
 		title: 'Save preview download',
 	});
-	if (result.canceled || result.filePath === undefined) return { canceled: true };
+	if (result.canceled || result.filePath === undefined)
+		return { canceled: true };
 	const bytes = Buffer.from(action.bytesBase64, 'base64');
 	if (bytes.byteLength === 0 || bytes.byteLength > 16 * 1024 * 1024)
 		throw new Error('Preview download payload is invalid.');
-	const temporary = path.join(path.dirname(result.filePath), `.${path.basename(result.filePath)}.${randomUUID()}.download`);
+	const temporary = path.join(
+		path.dirname(result.filePath),
+		`.${path.basename(result.filePath)}.${randomUUID()}.download`,
+	);
 	try {
 		await writeFile(temporary, bytes, { flag: 'wx', mode: 0o600 });
 		await rename(temporary, result.filePath);
@@ -785,16 +798,14 @@ function sanitizedDesktopConnectionProfiles(
 function getRunningTerminalCount(): number {
 	const authority = serverTerminalAuthority;
 	if (authority === null) return 0;
-	return authority.list().filter(
-		(session) => {
-			const activity = authority.activity.get({
-				serverId: session.serverId,
-				projectId: session.projectId,
-				sessionId: session.id,
-			});
-			return activity?.foregroundBusy === true;
-		},
-	).length;
+	return authority.list().filter((session) => {
+		const activity = authority.activity.get({
+			serverId: session.serverId,
+			projectId: session.projectId,
+			sessionId: session.id,
+		});
+		return activity?.foregroundBusy === true;
+	}).length;
 }
 
 async function getRunningTerminalCountForWindow(
@@ -1183,8 +1194,7 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 			mcpInstall: {
 				getStatus: () => getMcpInstallStatus(getMcpServerCommand()),
 				install: (agent) => installMcpAgent(agent, getMcpServerCommand()),
-				uninstall: (agent) =>
-					uninstallMcpAgent(agent, getMcpServerCommand()),
+				uninstall: (agent) => uninstallMcpAgent(agent, getMcpServerCommand()),
 			},
 			remoteAccess: {
 				getStatus: () => currentRemoteAccessStatus(),
@@ -1364,7 +1374,9 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		verifyPairingPin: (pin) =>
 			verifyPairingPin(readEmbeddedRemoteAccessSettings().pairingPinHash, pin),
 		resolveIceServers: () =>
-			parseHostedIceServers(readEmbeddedRemoteAccessSettings().webRtcIceServers),
+			parseHostedIceServers(
+				readEmbeddedRemoteAccessSettings().webRtcIceServers,
+			),
 		onStatusChanged: () => {
 			authority.notifyRemoteAccessChanged();
 		},
@@ -1930,7 +1942,10 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 							terminal: entry.id,
 							name: panel?.title ?? entry.id,
 							status: entry.status,
-							active: panel?.id === authority.workspace.state.projects[context.projectId]?.activePanelId,
+							active:
+								panel?.id ===
+								authority.workspace.state.projects[context.projectId]
+									?.activePanelId,
 							self: entry.id === context.terminalSessionId,
 							cwd: entry.cwd,
 							activity: activity?.status ?? 'idle',
@@ -1977,7 +1992,10 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 			return {
 				terminal: target.id,
 				format: params.format,
-				output: params.format === 'text' ? (presentation.rows ?? []).join('\n') : (presentation.ansi ?? ''),
+				output:
+					params.format === 'text'
+						? (presentation.rows ?? []).join('\n')
+						: (presentation.ansi ?? ''),
 				output_position: presentation.outputPosition,
 				dimensions: presentation.dimensions,
 				presentation_truncated: presentation.truncated,
@@ -1987,11 +2005,14 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 		},
 		searchTerminal: async (params, context) => {
 			const target = terminal(context, params.terminal);
-			const presentation = await requireMcpAuthority().service.readPresentation(target.id, {
-				authorization: mcpAuthorization(context),
-				format: 'text',
-				maxBytes: params.maxBytes,
-			});
+			const presentation = await requireMcpAuthority().service.readPresentation(
+				target.id,
+				{
+					authorization: mcpAuthorization(context),
+					format: 'text',
+					maxBytes: params.maxBytes,
+				},
+			);
 			return buildMcpTerminalSearchResult(target.id, presentation, params);
 		},
 		getTerminalStatus: (params, context) => {
@@ -2008,7 +2029,8 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 				cwd: target.cwd,
 				activity: activity?.status ?? 'idle',
 				attention: activity?.attention ?? false,
-				output_position: authority.service.getSession(target.id)?.outputPosition ?? 0,
+				output_position:
+					authority.service.getSession(target.id)?.outputPosition ?? 0,
 				replay_from: authority.service.getSession(target.id)?.replayFrom ?? 0,
 			};
 		},
@@ -2045,14 +2067,27 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 		writeTerminal: async (params, context) => {
 			const target = terminal(context, params.terminal);
 			const data = params.submit === true ? `${params.text}\r` : params.text;
-			await requireMcpAuthority().write(target.id, data, mcpAuthorization(context));
-			return { terminal: target.id, bytes: new TextEncoder().encode(data).byteLength };
+			await requireMcpAuthority().write(
+				target.id,
+				data,
+				mcpAuthorization(context),
+			);
+			return {
+				terminal: target.id,
+				bytes: new TextEncoder().encode(data).byteLength,
+			};
 		},
 		runCommand: async (params, context) => {
 			const target = terminal(context, params.terminal);
-			const from = requireMcpAuthority().service.getSession(target.id)?.outputPosition ?? 0;
+			const from =
+				requireMcpAuthority().service.getSession(target.id)?.outputPosition ??
+				0;
 			const data = `\u001b[200~${params.command}\u001b[201~\r`;
-			await requireMcpAuthority().write(target.id, data, mcpAuthorization(context));
+			await requireMcpAuthority().write(
+				target.id,
+				data,
+				mcpAuthorization(context),
+			);
 			return {
 				terminal: target.id,
 				command_id: context.requestId,
@@ -2069,18 +2104,30 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 		focusTerminal: (params, context) => {
 			const target = terminal(context, params.terminal);
 			const panel = mcpPanelFor(target.id, context.projectId);
-			if (panel === undefined) throw new ControlEndpointError('terminal_not_found', 'The requested terminal is unavailable.');
+			if (panel === undefined)
+				throw new ControlEndpointError(
+					'terminal_not_found',
+					'The requested terminal is unavailable.',
+				);
 			applyMcpWorkspaceCommand(context, {
-				type: 'panel.activate', projectId: context.projectId, panelId: panel.id,
+				type: 'panel.activate',
+				projectId: context.projectId,
+				panelId: panel.id,
 			});
 			return { terminal: target.id, focused: true };
 		},
 		renameTerminal: (params, context) => {
 			const target = terminal(context, params.terminal);
 			const panel = mcpPanelFor(target.id, context.projectId);
-			if (panel === undefined) throw new ControlEndpointError('terminal_not_found', 'The requested terminal is unavailable.');
+			if (panel === undefined)
+				throw new ControlEndpointError(
+					'terminal_not_found',
+					'The requested terminal is unavailable.',
+				);
 			applyMcpWorkspaceCommand(context, {
-				type: 'panel.update', panelId: panel.id, patch: { title: params.name },
+				type: 'panel.update',
+				panelId: panel.id,
+				patch: { title: params.name },
 			});
 			return { terminal: target.id, name: params.name };
 		},
@@ -2115,38 +2162,70 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 			return { terminal: target.id, idle: true };
 		},
 		waitForCommand: () => {
-			throw new ControlEndpointError('unsupported_op', 'Structured command-completion observation is unavailable.');
+			throw new ControlEndpointError(
+				'unsupported_op',
+				'Structured command-completion observation is unavailable.',
+			);
 		},
 		waitForAttention: () => {
-			throw new ControlEndpointError('unsupported_op', 'Attention waiting is unavailable.');
+			throw new ControlEndpointError(
+				'unsupported_op',
+				'Attention waiting is unavailable.',
+			);
 		},
 	};
 }
 
-function desktopMcpToolAvailability(): readonly { readonly tool: string; readonly available: boolean }[] {
+function desktopMcpToolAvailability(): readonly {
+	readonly tool: string;
+	readonly available: boolean;
+}[] {
 	const unavailable = new Set(['wait_for_command', 'wait_for_attention']);
 	return [
-		'get_mcp_capabilities', 'list_terminals', 'read_terminal', 'search_terminal',
-		'get_terminal_status', 'open_terminal', 'write_terminal', 'run_command',
-		'close_terminal', 'focus_terminal', 'rename_terminal', 'split_terminal',
-		'wait_for_idle', 'wait_for_command', 'wait_for_attention',
+		'get_mcp_capabilities',
+		'list_terminals',
+		'read_terminal',
+		'search_terminal',
+		'get_terminal_status',
+		'open_terminal',
+		'write_terminal',
+		'run_command',
+		'close_terminal',
+		'focus_terminal',
+		'rename_terminal',
+		'split_terminal',
+		'wait_for_idle',
+		'wait_for_command',
+		'wait_for_attention',
 	].map((tool) => ({ tool, available: !unavailable.has(tool) }));
 }
 
 function buildMcpTerminalSearchResult(
 	terminal: string,
-	presentation: Awaited<ReturnType<ServerTerminalAuthority['service']['readPresentation']>>,
+	presentation: Awaited<
+		ReturnType<ServerTerminalAuthority['service']['readPresentation']>
+	>,
 	params: Parameters<NonNullable<TerminalControlAdapter['searchTerminal']>>[0],
 ) {
 	const rows = presentation.rows ?? [];
-	const query = params.caseSensitive ? params.query : params.query.toLocaleLowerCase();
-	const matches: Array<{ row: number; text: string; before: readonly string[]; after: readonly string[] }> = [];
+	const query = params.caseSensitive
+		? params.query
+		: params.query.toLocaleLowerCase();
+	const matches: Array<{
+		row: number;
+		text: string;
+		before: readonly string[];
+		after: readonly string[];
+	}> = [];
 	let matchesTruncated = false;
 	for (let row = 0; row < rows.length; row += 1) {
 		const text = rows[row] ?? '';
 		const comparable = params.caseSensitive ? text : text.toLocaleLowerCase();
 		if (!comparable.includes(query)) continue;
-		if (matches.length >= params.maxMatches) { matchesTruncated = true; break; }
+		if (matches.length >= params.maxMatches) {
+			matchesTruncated = true;
+			break;
+		}
 		let context = params.contextLines;
 		let candidate: (typeof matches)[number];
 		do {
@@ -2156,10 +2235,17 @@ function buildMcpTerminalSearchResult(
 				before: rows.slice(Math.max(0, row - context), row),
 				after: rows.slice(row + 1, row + 1 + context),
 			};
-			if (Buffer.byteLength(JSON.stringify([...matches, candidate]), 'utf8') <= params.maxBytes) break;
+			if (
+				Buffer.byteLength(JSON.stringify([...matches, candidate]), 'utf8') <=
+				params.maxBytes
+			)
+				break;
 			context -= 1;
 		} while (context >= 0);
-		if (Buffer.byteLength(JSON.stringify([...matches, candidate]), 'utf8') > params.maxBytes) {
+		if (
+			Buffer.byteLength(JSON.stringify([...matches, candidate]), 'utf8') >
+			params.maxBytes
+		) {
 			matchesTruncated = true;
 			break;
 		}
@@ -2178,7 +2264,10 @@ function buildMcpTerminalSearchResult(
 
 function requireMcpAuthority(): ServerTerminalAuthority {
 	if (serverTerminalAuthority === null)
-		throw new ControlEndpointError('not_in_terminay', 'The local Terminay server is unavailable.');
+		throw new ControlEndpointError(
+			'not_in_terminay',
+			'The local Terminay server is unavailable.',
+		);
 	return serverTerminalAuthority;
 }
 
@@ -2191,14 +2280,15 @@ function mcpPanelFor(sessionId: string, projectId: string) {
 	);
 }
 
-function resolveMcpTerminal(
-	context: ControlRequestContext,
-	reference: string,
-) {
+function resolveMcpTerminal(context: ControlRequestContext, reference: string) {
 	const candidates = requireMcpAuthority()
 		.list()
 		.filter((entry) => entry.projectId === context.projectId)
-		.filter((entry) => entry.id === reference || mcpPanelFor(entry.id, context.projectId)?.title === reference);
+		.filter(
+			(entry) =>
+				entry.id === reference ||
+				mcpPanelFor(entry.id, context.projectId)?.title === reference,
+		);
 	if (candidates.length === 1) return candidates[0]!;
 	if (candidates.length > 1)
 		throw new ControlEndpointError(
@@ -2206,7 +2296,10 @@ function resolveMcpTerminal(
 			'The terminal reference is ambiguous.',
 			candidates.map((entry) => entry.id),
 		);
-	throw new ControlEndpointError('terminal_not_found', 'The requested terminal is unavailable.');
+	throw new ControlEndpointError(
+		'terminal_not_found',
+		'The requested terminal is unavailable.',
+	);
 }
 
 function mcpAuthorization(context: ControlRequestContext) {
@@ -2219,16 +2312,26 @@ function mcpAuthorization(context: ControlRequestContext) {
 
 function applyMcpWorkspaceCommand(
 	context: ControlRequestContext,
-	command: Parameters<NonNullable<ServerTerminalAuthority['composition']['workspaceOperations']>['applyHostCommand']>[1],
+	command: Parameters<
+		NonNullable<
+			ServerTerminalAuthority['composition']['workspaceOperations']
+		>['applyHostCommand']
+	>[1],
 ): void {
 	const authority = requireMcpAuthority();
 	const applied = authority.composition.workspaceOperations?.applyHostCommand(
-		`mcp:${context.requestId}:${Math.random().toString(36).slice(2)}`.slice(0, 128),
+		`mcp:${context.requestId}:${Math.random().toString(36).slice(2)}`.slice(
+			0,
+			128,
+		),
 		command,
 		authority.workspace.state.revision,
 	);
 	if (applied === undefined || !applied.ok)
-		throw new ControlEndpointError('internal', 'The workspace rejected the control operation.');
+		throw new ControlEndpointError(
+			'internal',
+			'The workspace rejected the control operation.',
+		);
 }
 
 function detachSessionsForWebContents(webContentsId: number): void {
@@ -2939,6 +3042,7 @@ function createWindow(options?: {
 		icon: windowIconPath,
 		width: isAuxiliary ? 1180 : 1400,
 		height: isAuxiliary ? 820 : 900,
+		minHeight: isAuxiliary ? undefined : MAIN_PROJECT_WINDOW_MIN_HEIGHT,
 		// Place a torn-off window's title bar near the drop point, like a browser.
 		x: options?.bounds ? Math.round(options.bounds.x) - 120 : undefined,
 		y: options?.bounds ? Math.round(options.bounds.y) - 12 : undefined,
@@ -3892,10 +3996,7 @@ if (process.env.TERMINAY_TEST === '1') {
 				payload.projectId.trim().length > 0
 					? payload.projectId.trim()
 					: 'desktop';
-			const session = await createServerOwnedTerminalSession(
-				projectId,
-				cwd,
-			);
+			const session = await createServerOwnedTerminalSession(projectId, cwd);
 			attachServerTerminalRenderer(session.id, event.sender.id);
 			return { id: session.id };
 		},
@@ -4083,6 +4184,20 @@ if (process.env.TERMINAY_TEST === '1') {
 			});
 		},
 	);
+
+	ipcMain.handle('test:reset-workspace-command-records', (event) => {
+		assertBoundServerUiEvent(event);
+		if (!serverTerminalAuthority)
+			throw new Error('embedded server is unavailable');
+		serverTerminalAuthority.resetWorkspaceCommandTestRecords();
+	});
+
+	ipcMain.handle('test:get-workspace-command-records', (event) => {
+		assertBoundServerUiEvent(event);
+		if (!serverTerminalAuthority)
+			throw new Error('embedded server is unavailable');
+		return serverTerminalAuthority.getWorkspaceCommandTestRecords();
+	});
 
 	ipcMain.handle(
 		'test:set-ai-tab-metadata-mock',

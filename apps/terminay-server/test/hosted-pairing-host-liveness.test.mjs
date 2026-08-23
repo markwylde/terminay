@@ -24,7 +24,10 @@ test('the production hosted pairing host owns ICE servers, grace, and one handsh
 	assert.match(host, /handshakeGeneration/u);
 	assert.match(host, /applyHandshakeSignal/u);
 	assert.match(exposure, /resolveIceServers/u);
-	assert.match(main, /parseHostedIceServers\(readEmbeddedRemoteAccessSettings\(\)\.webRtcIceServers\)/u);
+	assert.match(
+		main,
+		/parseHostedIceServers\(\s*readEmbeddedRemoteAccessSettings\(\)\.webRtcIceServers,?\s*\)/u,
+	);
 	assert.match(cli, /TERMINAY_WEBRTC_ICE_SERVERS/u);
 	assert.match(cli, /parseHostedIceServers/u);
 });

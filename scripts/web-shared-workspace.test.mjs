@@ -2,27 +2,15 @@ import assert from 'node:assert/strict';
 import { access, readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const [
-	webEntry,
-	webMount,
-	sharedMount,
-	app,
-	splitLayout,
-	splitStyle,
-	sidebarStack,
-	sidebarSplit,
-	sidebarStyle,
-] = await Promise.all([
-	readFile('src/web/main.tsx', 'utf8'),
-	readFile('src/web/ConnectedWebRendererWorkspace.tsx', 'utf8'),
-	readFile('src/shared/ConnectedRendererWorkspace.tsx', 'utf8'),
-	readFile('src/App.tsx', 'utf8'),
-	readFile('src/shared/WorkspaceSplitLayout.tsx', 'utf8'),
-	readFile('src/shared/WorkspaceSplitLayout.css', 'utf8'),
-	readFile('src/components/sidebar/SidebarPanelStack.tsx', 'utf8'),
-	readFile('src/components/sidebar/SidebarSplit.tsx', 'utf8'),
-	readFile('src/components/sidebar/sidebar.css', 'utf8'),
-]);
+const [webEntry, webMount, sharedMount, app, splitLayout, splitStyle] =
+	await Promise.all([
+		readFile('src/web/main.tsx', 'utf8'),
+		readFile('src/web/ConnectedWebRendererWorkspace.tsx', 'utf8'),
+		readFile('src/shared/ConnectedRendererWorkspace.tsx', 'utf8'),
+		readFile('src/App.tsx', 'utf8'),
+		readFile('src/shared/WorkspaceSplitLayout.tsx', 'utf8'),
+		readFile('src/shared/WorkspaceSplitLayout.css', 'utf8'),
+	]);
 
 test('web production mounts the canonical connected renderer and App tree', () => {
 	assert.match(webEntry, /<ConnectedWebRendererWorkspace/u);
@@ -45,7 +33,10 @@ test('web production mounts the canonical connected renderer and App tree', () =
 });
 
 test('connected web host uses selected-server settings and preserves the disconnected manager', () => {
-	assert.match(webMount, /TerminalSettingsClientProvider client=\{serverSettingsClient\}/u);
+	assert.match(
+		webMount,
+		/TerminalSettingsClientProvider client=\{serverSettingsClient\}/u,
+	);
 	assert.doesNotMatch(webMount, /createBrowserTerminalSettingsClient/u);
 	assert.match(webMount, /createBrowserMacroSettingsClient/u);
 	assert.match(webMount, /SharedConnectionsRouteBody/u);
@@ -57,7 +48,7 @@ test('browser and Desktop share the host-neutral production workspace split layo
 	assert.match(app, /import\s+\{\s*WorkspaceSplitLayout\s*\}/u);
 	assert.match(app, /<WorkspaceSplitLayout/u);
 	assert.match(app, /navigationWidth=\{project\.fileExplorerWidth\}/u);
-	assert.match(app, /onNavigationWidthChange=\{\(width\)\s*=>/u);
+	assert.match(app, /onNavigationWidthCommit=\{\(width\)\s*=>/u);
 	assert.doesNotMatch(app, /maximumNavigationWidth=\{Math\.max/u);
 	assert.doesNotMatch(
 		app,
@@ -85,9 +76,8 @@ test('browser and Desktop share the host-neutral production workspace split layo
 		/left:\s*var\(--workspace-navigation-width,\s*22rem\)/u,
 	);
 	assert.match(splitLayout, /onPointerDown=\{handleSeparatorPointerDown\}/u);
-	assert.match(splitLayout, /onPointerMove=\{handleSeparatorPointerMove\}/u);
 	assert.match(splitLayout, /onPointerUp=\{handleSeparatorPointerEnd\}/u);
-	assert.match(splitLayout, /onNavigationWidthCommit\?\.\(finalWidth\)/u);
+	assert.match(splitLayout, /commitNavigationWidth\(state\.latestWidth\)/u);
 	assert.doesNotMatch(
 		splitStyle,
 		/grid-template-columns:\s*clamp\([^;]*--workspace-navigation-width/u,
@@ -107,36 +97,16 @@ test('browser and Desktop share the host-neutral production workspace split layo
 	);
 });
 
-test('nested sidebar resize observers keep a stable element ref', () => {
-	assert.match(sidebarSplit, /const setRoot = useCallback/u);
-	assert.match(sidebarSplit, /ref=\{setRoot\}/u);
-	assert.match(sidebarSplit, /containerHeight - SIDEBAR_SPLITTER_HEIGHT - bottomMinHeight/u);
-	assert.match(sidebarSplit, /minHeight:\s*`\$\{bottomMinHeight\}px`/u);
-	assert.match(sidebarSplit, /bottomMinHeight = SIDEBAR_HEADER_MIN_HEIGHT/u);
-	assert.doesNotMatch(
-		sidebarSplit,
-		/ref=\{\(element\) => \{[\s\S]*setRootElement/u,
-	);
-});
-
-test('nested sidebar panes share height without clipping lower headers', () => {
-	assert.match(sidebarStyle, /\.sidebar-panel-stack\s*\{[\s\S]*height:\s*100%/u);
-	assert.match(sidebarStyle, /\.sidebar-panel-stack\s*\{[\s\S]*min-height:\s*0/u);
-	assert.match(sidebarStyle, /\.sidebar-split__pane\s*\{[\s\S]*overflow:\s*hidden/u);
-	assert.match(sidebarSplit, /SIDEBAR_HEADER_MIN_HEIGHT/u);
-	assert.match(sidebarSplit, /bottomMinHeight\s*=\s*SIDEBAR_HEADER_MIN_HEIGHT/u);
-	assert.match(sidebarStack, /bottomMinHeight=\{SIDEBAR_HEADER_MIN_HEIGHT \* bottom\.length\}/u);
-	assert.match(sidebarSplit, /containerHeight - SIDEBAR_SPLITTER_HEIGHT - bottomMinHeight/u);
-	assert.match(sidebarSplit, /onTopHeightCommit\?\.\(state\.latestHeight\)/u);
-});
-
 test('command launcher scroll stays bounded and non-animated', () => {
 	assert.match(app, /macroLauncherListRef/u);
 	assert.match(app, /list\.scrollTop\s*=/u);
 	assert.match(app, /activeItem\.getBoundingClientRect\(\)/u);
 	assert.doesNotMatch(app, /activeItem\.scrollIntoView/u);
 	assert.doesNotMatch(app, /behavior:\s*['"]smooth['"]/u);
-	assert.doesNotMatch(app, /matchMedia\(['"]\\(prefers-reduced-motion: reduce\\)['"]\)/u);
+	assert.doesNotMatch(
+		app,
+		/matchMedia\(['"]\\(prefers-reduced-motion: reduce\\)['"]\)/u,
+	);
 	assert.doesNotMatch(app, /backdrop-filter:\s*blur/u);
 });
 

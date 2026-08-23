@@ -12,7 +12,8 @@ terminal title into an identity boundary.
 Markdown and MDX files can use the rich
 [Documentation presentation](./documentation-sidebar-and-editor.md) within a
 canonical file panel; changing presentation does not change panel or file
-identity.
+identity. Project-sidebar sizing and title-visibility behavior is governed by
+[Project sidebar layout](./project-sidebar-layout.md).
 
 ## User contract
 
@@ -165,6 +166,10 @@ client focus.
   state changes. Reloading or reconnecting restores each project's own sidebar
   visibility, pane order, dimensions, collapse choices, and supported pane
   navigation state.
+- Resizing a project sidebar previews locally and commits once when the
+  interaction finishes. Every visible pane title remains on-screen, the sidebar
+  itself does not scroll vertically, and overflowing pane content scrolls inside
+  its own pane.
 - One view may contain This server, SSH, and Puzed projects without clients
   connecting directly to the target machines.
 - Moving or popping a project does not duplicate a terminal session or lose its
