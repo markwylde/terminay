@@ -157,7 +157,7 @@ test('live xterm surfaces attach WebGL after open and headless xterm never does'
 	for (const source of [panelSource, settingsSource, recordingsSource]) {
 		assert.match(
 			source,
-			/terminal\.open\(root\)[\s\S]*attachTerminalWebglRenderer\(\s*terminal,\s*\(\) => new WebglAddon\(\)/u,
+			/terminal\.open\(root\)[\s\S]*attachTerminalWebglRenderer\(\s*terminal,\s*\(\) =>[\s\S]*new WebglAddon\([\s\S]*createTerminalWebglAddonOptions\(/u,
 		);
 	}
 
