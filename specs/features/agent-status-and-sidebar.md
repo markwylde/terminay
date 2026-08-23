@@ -4,8 +4,8 @@
 
 Terminay observes supported coding-agent session journals and reduces their
 native records into provider-neutral agent entries. A journal is authoritative
-only after Terminay binds its live writer process to the exact server-owned PTY
-that launched it.
+only after Terminay binds it to the exact server-owned PTY through that
+provider's documented terminal identity evidence.
 
 The same canonical model feeds terminal-tab status, a project-scoped **Agents**
 pane with roots and in-process subagents, and the header activity dropdown.
@@ -73,10 +73,10 @@ For an environment exposing proven native process observation, Terminay records
 the spawned shell PID for the immutable
 `serverId`/`projectId`/`projectEnvironmentId`/`sessionId` terminal identity.
 When a supported provider becomes the foreground process, that environment's
-privileged host discovers journal files held open by the provider process or
-its descendants. A journal becomes authoritative only when its writer belongs
-to the exact PTY process tree. Environments without this capability use the
-documented terminal-activity fallback.
+privileged host obtains its documented terminal identity evidence. Codex uses
+an eligible writable journal below the exact PTY process tree. Claude Code and
+omp use their provider-specific terminal/session association. Environments
+without the required evidence use the documented terminal-activity fallback.
 
 The terminal/process-tree boundary is immutable for one live provider-process
 incarnation, but its root-session binding is renewable. Provider-native
@@ -93,27 +93,31 @@ Every transition away from the shell therefore starts a new bounded
 journal-discovery window even when the foreground name is not a recognized
 provider. This lets a resumed session launched long after terminal startup
 bind its reopened journal without treating the wrapper itself as an agent.
-The journal is still admitted only after a writable handle is proven beneath
-the exact PTY process tree. An `omp` binary that sets its process title still
-matches `omp` directly; a `bun` wrapper is admitted only through that proven
-open JSONL handle under the omp sessions root.
+The journal is still admitted only after the provider's documented identity
+evidence is proven. An `omp` binary that sets its process title still matches
+`omp` directly; a `bun` wrapper is admitted only after the OMP terminal
+breadcrumb for the exact PTY identifies a validated OMP root JSONL.
 
 CWD, filename timestamps, terminal title, active tab, and “closest match” logic
-must not independently establish an authoritative binding. Claude Code is the
-exception where its exact descendant process CWD establishes the native project
-journal directory and post-process-start root writes select the active session,
-because Claude does not retain its JSONL file descriptor. A host that cannot
-establish either provider proof uses terminal fallback instead.
+must not independently establish an authoritative binding. Claude Code uses its
+exact descendant process CWD to establish the native project journal directory
+and post-process-start root writes to select the active session. OMP uses its
+own terminal-scoped breadcrumb, whose terminal ID is derived from the PTY TTY
+that runs OMP and whose target is validated under OMP's allowed session root.
+A host that cannot establish provider proof uses terminal fallback instead.
 
 ## Journal source contract
 
 A provider journal source:
 
-1. discovers an open native journal beneath the effective provider home;
-2. proves that its writer descends from the registered PTY shell process;
+1. obtains provider-specific terminal-to-journal identity evidence beneath the
+   effective provider home;
+2. proves that evidence belongs to the registered PTY shell process or its
+   terminal TTY;
 3. reads a bounded initial window and then only appended bytes;
 4. buffers an incomplete final JSONL line until it is completed;
-5. detects truncation, replacement, writer exit, and process-incarnation change;
+5. detects truncation, atomic replacement, provider session switch, writer exit,
+   and process-incarnation change;
 6. emits raw records only to the selected privileged driver;
 7. stops all file/process observation when the terminal, integration, or server stops.
 
@@ -227,12 +231,17 @@ must not compete with root journals during process-bound discovery. When one
 writer holds multiple eligible root journals, the most recently modified
 eligible root is selected.
 
-The writer keeps the JSONL file descriptor open for the process lifetime, so
-discovery is the Codex-style open-handle proof under the sessions root, not
-Claude's cwd/`--resume` exception. CWD, filename timestamps, newest-file
-heuristics, and terminal breadcrumbs (`~/.omp/agent/terminal-sessions/`) never
-establish ownership. Breadcrumbs may exist before the JSONL is created; they
-are not a v1 identity source.
+OMP writes a terminal-scoped breadcrumb below its effective agent data root:
+`terminal-sessions/<terminal-id>`. The identifier is derived from the OMP
+process's TTY, and the breadcrumb records its CWD, exact session-file path, and
+an optional `fresh` marker. Terminay derives the same ID from the registered
+PTY shell's TTY, accepts only a bounded well-formed breadcrumb whose target is
+a validated root JSONL below an allowed OMP sessions root, and rechecks it while
+OMP remains foreground. A `fresh` breadcrumb whose JSONL is not yet materialized
+keeps terminal-activity fallback until the target exists. A changed breadcrumb
+rebinds the same terminal to the newly validated root. CWD, filename timestamps,
+and newest-file heuristics never establish ownership. Open-FD observation is
+supplementary evidence only.
 
 A brand-new interactive session remains memory-only until the first assistant
 message is persisted or the process forces the file onto disk. Until that
