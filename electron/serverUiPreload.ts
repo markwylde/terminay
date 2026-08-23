@@ -227,6 +227,26 @@ if (
 	(process as NodeJS.Process & { isMainFrame?: boolean }).isMainFrame !== false
 ) {
 	contextBridge.exposeInMainWorld(
+		'terminayWorkspaceTest',
+		Object.freeze({
+			resetCommandRecords: () =>
+				ipcRenderer.invoke(
+					'test:reset-workspace-command-records',
+				) as Promise<void>,
+			getCommandRecords: () =>
+				ipcRenderer.invoke('test:get-workspace-command-records') as Promise<
+					readonly {
+						operation: string;
+						command?: {
+							type: string;
+							projectId?: string;
+							sidebar?: Record<string, unknown>;
+						};
+					}[]
+				>,
+		}),
+	);
+	contextBridge.exposeInMainWorld(
 		'terminayLocalConnectionFaultTest',
 		Object.freeze({
 			failActiveConnection: async () => {

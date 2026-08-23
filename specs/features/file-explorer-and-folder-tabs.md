@@ -4,8 +4,9 @@
 
 Each project can expose its root folder in a resizable sidebar Explorer and open
 directories as dockable Folder tabs. Explorer joins Documentation, Agents, and
-Git in a persistent, reorderable vertical stack. The focused Markdown/MDX tree
-and rich editor are governed by
+Git in a persistent, reorderable vertical stack governed by
+[Project sidebar layout](./project-sidebar-layout.md). The focused Markdown/MDX
+tree and rich editor are governed by
 [Documentation sidebar and editor](./documentation-sidebar-and-editor.md).
 
 ## Explorer

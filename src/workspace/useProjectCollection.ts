@@ -5,13 +5,67 @@ import {
 	useRef,
 	useState,
 } from 'react';
-import type { WorkspaceSnapshotStore } from '../shared/WorkspaceSnapshotStore';
 import { closeHostPresentation } from '../host/nativeActions';
+import type { WorkspaceSnapshotStore } from '../shared/WorkspaceSnapshotStore';
 import { normalizeSidebarPanelOrder } from '../terminalSettings';
 import type { SidebarSettings } from '../types/settings';
-import { createProjectTab, projectSidebarPatch, projectSidebarState, type ProjectTab } from './projectTabModel';
+import {
+	createProjectTab,
+	type ProjectSidebarState,
+	type ProjectTab,
+	projectSidebarPatch,
+	projectSidebarState,
+} from './projectTabModel';
 
 const DEFAULT_AGENTS_PANE_HEIGHT = 200;
+
+type PendingSidebarCommit = Readonly<{
+	sequence: number;
+	patch: Partial<ProjectSidebarState>;
+}>;
+
+type ProjectSidebarSnapshot = Omit<
+	ProjectSidebarState,
+	| 'expandedAgentEntryIds'
+	| 'expandedDocumentationFolderIds'
+	| 'sidebarPanelOrder'
+> & {
+	readonly expandedAgentEntryIds: readonly string[];
+	readonly expandedDocumentationFolderIds: readonly string[];
+	readonly sidebarPanelOrder: readonly ProjectSidebarState['sidebarPanelOrder'][number][];
+};
+
+function applyPendingSidebarCommits(
+	sidebar: ProjectSidebarSnapshot,
+	commits: readonly PendingSidebarCommit[] | undefined,
+): ProjectSidebarState {
+	const resolved: ProjectSidebarState = {
+		...sidebar,
+		expandedAgentEntryIds: [...sidebar.expandedAgentEntryIds],
+		expandedDocumentationFolderIds: [...sidebar.expandedDocumentationFolderIds],
+		sidebarPanelOrder: [...sidebar.sidebarPanelOrder],
+	};
+	if (commits === undefined || commits.length === 0) return resolved;
+	for (const commit of commits) Object.assign(resolved, commit.patch);
+	return resolved;
+}
+
+function sidebarMatchesPatch(
+	sidebar: ProjectSidebarSnapshot,
+	patch: Partial<ProjectSidebarState>,
+): boolean {
+	return Object.entries(patch).every(([key, value]) => {
+		const current = sidebar[key as keyof ProjectSidebarState];
+		if (Array.isArray(value)) {
+			return (
+				Array.isArray(current) &&
+				current.length === value.length &&
+				current.every((entry, index) => entry === value[index])
+			);
+		}
+		return current === value;
+	});
+}
 
 export function useProjectCollection<TTerminal>({
 	defaultProjectRoot = '',
@@ -46,7 +100,9 @@ export function useProjectCollection<TTerminal>({
 	const initialViewId =
 		workspaceViewId ?? initialServerSnapshot?.viewOrder[0] ?? null;
 	const initialServerView =
-		initialViewId === null ? undefined : initialServerSnapshot?.views[initialViewId];
+		initialViewId === null
+			? undefined
+			: initialServerSnapshot?.views[initialViewId];
 	const initialServerProjects =
 		initialServerView?.projectIds
 			.map((projectId) => initialServerSnapshot?.projects[projectId])
@@ -118,6 +174,17 @@ export function useProjectCollection<TTerminal>({
 	const [adoptedTerminalsByProject, setAdoptedTerminalsByProject] = useState<
 		Record<string, TTerminal[]>
 	>({});
+	/**
+	 * Sidebar changes are optimistic, but snapshots remain the canonical source.
+	 * Keep outstanding patches separate from the server projection so an event for
+	 * an earlier revision cannot visibly undo a completed local interaction while
+	 * its command is still converging.
+	 */
+	const pendingSidebarCommitsRef = useRef<Map<string, PendingSidebarCommit[]>>(
+		new Map(),
+	);
+	const sidebarCommitTailsRef = useRef<Map<string, Promise<void>>>(new Map());
+	const sidebarCommitSequenceRef = useRef(0);
 
 	useEffect(() => {
 		sidebarDefaultsRef.current = sidebarSettings;
@@ -158,9 +225,13 @@ export function useProjectCollection<TTerminal>({
 						const base = existing ?? generated;
 						const color = serverProject.color ?? generated.color;
 						usedColors.push(color);
+						const sidebar = applyPendingSidebarCommits(
+							projectSidebarState(serverProject.sidebar),
+							pendingSidebarCommitsRef.current.get(serverProject.id),
+						);
 						return {
 							...base,
-							...projectSidebarState(serverProject.sidebar),
+							...sidebar,
 							id: serverProject.id,
 							projectEnvironmentId: serverProject.projectEnvironmentId,
 							environmentRevision: serverProject.environmentRevision,
@@ -276,7 +347,12 @@ export function useProjectCollection<TTerminal>({
 			),
 		]);
 		setActiveProjectId(`project-${index}`);
-	}, [defaultProjectRoot, projectColorScope, workspaceSnapshotStore, workspaceViewId]);
+	}, [
+		defaultProjectRoot,
+		projectColorScope,
+		workspaceSnapshotStore,
+		workspaceViewId,
+	]);
 
 	const closeProject = useCallback(
 		(projectId: string, options: { skipConfirmation?: boolean } = {}) => {
@@ -354,15 +430,26 @@ export function useProjectCollection<TTerminal>({
 				...project,
 				id,
 				isAgentsPaneCollapsed: project.isAgentsPaneCollapsed ?? false,
-				isDocumentationPaneCollapsed: project.isDocumentationPaneCollapsed ?? true,
+				isDocumentationPaneCollapsed:
+					project.isDocumentationPaneCollapsed ?? true,
 				expandedAgentEntryIds: Array.isArray(project.expandedAgentEntryIds)
 					? project.expandedAgentEntryIds.filter(
 							(entryId): entryId is string => typeof entryId === 'string',
 						)
-						: [],
-				expandedDocumentationFolderIds: Array.isArray(project.expandedDocumentationFolderIds)
+					: [],
+				expandedDocumentationFolderIds: Array.isArray(
+					project.expandedDocumentationFolderIds,
+				)
 					? project.expandedDocumentationFolderIds.filter(
-							(folder): folder is string => typeof folder === 'string' && folder.length > 0 && folder.length <= 4096 && !folder.startsWith('/') && !folder.includes('\\') && !folder.split('/').some((part) => !part || part === '.' || part === '..'),
+							(folder): folder is string =>
+								typeof folder === 'string' &&
+								folder.length > 0 &&
+								folder.length <= 4096 &&
+								!folder.startsWith('/') &&
+								!folder.includes('\\') &&
+								!folder
+									.split('/')
+									.some((part) => !part || part === '.' || part === '..'),
 						)
 					: [],
 				sidebarAgentsHeight:
@@ -391,32 +478,125 @@ export function useProjectCollection<TTerminal>({
 		[],
 	);
 
+	const commitProjectSidebar = useCallback(
+		(projectId: string, patch: Partial<ProjectSidebarState>): Promise<void> => {
+			if (Object.keys(patch).length === 0) return Promise.resolve();
+
+			// Always update presentation immediately. The pending patch below keeps
+			// this value intact when an older canonical snapshot is published before
+			// the command's resulting revision arrives.
+			setProjects((current) =>
+				current.map((project) =>
+					project.id === projectId ? { ...project, ...patch } : project,
+				),
+			);
+			if (workspaceSnapshotStore === undefined) return Promise.resolve();
+
+			const commit: PendingSidebarCommit = {
+				sequence: ++sidebarCommitSequenceRef.current,
+				patch,
+			};
+			const pending = pendingSidebarCommitsRef.current.get(projectId) ?? [];
+			pendingSidebarCommitsRef.current.set(projectId, [...pending, commit]);
+
+			const removePending = () => {
+				const current = pendingSidebarCommitsRef.current.get(projectId);
+				if (current === undefined) return;
+				const next = current.filter(
+					(candidate) => candidate.sequence !== commit.sequence,
+				);
+				if (next.length === 0)
+					pendingSidebarCommitsRef.current.delete(projectId);
+				else pendingSidebarCommitsRef.current.set(projectId, next);
+			};
+
+			// Serialize sidebar commands per project. A later drag can begin before
+			// the earlier one has converged, but it cannot overtake it at the
+			// canonical authority or leave an older response to win locally.
+			const previous = sidebarCommitTailsRef.current.get(projectId);
+			const run = (
+				previous === undefined
+					? Promise.resolve()
+					: previous.catch(() => undefined)
+			)
+				.then(async () => {
+					await workspaceSnapshotStore.updateProjectSidebar({
+						projectId,
+						sidebar: commit.patch,
+					});
+					// A command response proves the server may have advanced, but the
+					// workspace event can be delayed or lost. `waitForSnapshot` installs
+					// its listener before forcing reconciliation, so the pending overlay
+					// is released only after the authoritative projection contains this
+					// commit (or a refresh has made the conflict visible).
+					await workspaceSnapshotStore.waitForSnapshot(
+						(snapshot) => {
+							const serverProject = snapshot.projects[projectId];
+							return (
+								serverProject !== undefined &&
+								sidebarMatchesPatch(serverProject.sidebar, commit.patch)
+							);
+						},
+						{ timeoutMs: 2_000 },
+					);
+					removePending();
+					// Publishing the current canonical snapshot after removing the
+					// overlay ensures a conflict from another client is accepted rather
+					// than leaving the optimistic value mounted indefinitely.
+					await workspaceSnapshotStore.refresh();
+				})
+				.catch(async (error) => {
+					removePending();
+					try {
+						await workspaceSnapshotStore.refresh();
+					} catch {
+						// Preserve the existing failure path; the next interaction can
+						// still attempt a fresh bounded commit.
+					}
+					throw error;
+				});
+			sidebarCommitTailsRef.current.set(projectId, run);
+			const clearTail = () => {
+				if (sidebarCommitTailsRef.current.get(projectId) === run) {
+					sidebarCommitTailsRef.current.delete(projectId);
+				}
+			};
+			void run.then(clearTail, clearTail);
+			return run;
+		},
+		[workspaceSnapshotStore],
+	);
+
 	const updateProject = useCallback(
 		(projectId: string, updates: Partial<ProjectTab>) => {
 			const { rootFolder, ...localUpdates } = updates;
 			const sidebar = projectSidebarPatch(localUpdates);
-			if (Object.keys(localUpdates).length > 0) {
+			const nonSidebarUpdates = { ...localUpdates };
+			if (sidebar !== null) {
+				for (const key of Object.keys(sidebar)) {
+					delete (nonSidebarUpdates as Record<string, unknown>)[key];
+				}
+			}
+			if (Object.keys(nonSidebarUpdates).length > 0) {
 				setProjects((current) =>
 					current.map((project) =>
 						project.id === projectId
-							? { ...project, ...localUpdates }
+							? { ...project, ...nonSidebarUpdates }
 							: project,
 					),
 				);
 			}
-			if (workspaceSnapshotStore !== undefined && sidebar !== null) {
-				void workspaceSnapshotStore
-					.updateProjectSidebar({ projectId, sidebar })
-					.catch(() => {
-						void workspaceSnapshotStore.refresh().catch(() => undefined);
-					});
+			if (sidebar !== null) {
+				void commitProjectSidebar(projectId, sidebar).catch(() => {
+					// `commitProjectSidebar` has already reconciled the last known
+					// authority. Keep generic project interactions non-throwing.
+				});
 			}
 			if (rootFolder === undefined) return;
 			if (workspaceSnapshotStore === undefined) {
 				setProjects((current) =>
 					current.map((project) =>
-						project.id === projectId
-							? { ...project, rootFolder } : project,
+						project.id === projectId ? { ...project, rootFolder } : project,
 					),
 				);
 				return;
@@ -427,7 +607,7 @@ export function useProjectCollection<TTerminal>({
 					void workspaceSnapshotStore.refresh().catch(() => undefined);
 				});
 		},
-		[workspaceSnapshotStore],
+		[commitProjectSidebar, workspaceSnapshotStore],
 	);
 
 	const activateProject = useCallback(
@@ -466,6 +646,7 @@ export function useProjectCollection<TTerminal>({
 		projectCreationError,
 		projects,
 		projectsRef,
+		commitProjectSidebar,
 		setActiveProjectId,
 		setProjects,
 		updateProject,

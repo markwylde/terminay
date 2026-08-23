@@ -1,5 +1,12 @@
 import { ChevronDown, GripVertical } from 'lucide-react';
-import type { JSX, KeyboardEvent, PointerEvent, ReactNode } from 'react';
+import type {
+	CSSProperties,
+	JSX,
+	KeyboardEvent,
+	PointerEvent,
+	ReactNode,
+	Ref,
+} from 'react';
 import './sidebar.css';
 
 export type SidebarPaneDropPosition = 'before' | 'after';
@@ -13,6 +20,12 @@ export type SidebarPaneReorderProps = {
 };
 
 export type SidebarPaneProps = {
+	/** Stable project-sidebar identity, used by the flat layout controller. */
+	paneId?: string;
+	/** DOM id used by a resize separator's aria-controls relationship. */
+	paneDomId?: string;
+	/** The flat layout observes this rendered title row as the pane hard minimum. */
+	headerRef?: Ref<HTMLDivElement>;
 	title: string;
 	collapsed: boolean;
 	onToggleCollapsed: () => void;
@@ -21,6 +34,7 @@ export type SidebarPaneProps = {
 	/** Interactive controls shown at the right of the header, outside the collapse toggle. */
 	actions?: ReactNode;
 	className?: string;
+	style?: CSSProperties;
 	reorder?: SidebarPaneReorderProps;
 	children: ReactNode;
 };
@@ -34,6 +48,10 @@ export function SidebarPane(props: SidebarPaneProps): JSX.Element {
 		accessory,
 		actions,
 		className,
+		style,
+		paneId,
+		paneDomId,
+		headerRef,
 		reorder,
 		children,
 	} = props;
@@ -42,9 +60,7 @@ export function SidebarPane(props: SidebarPaneProps): JSX.Element {
 		'sidebar-pane',
 		collapsed ? 'sidebar-pane--collapsed' : '',
 		reorder?.dragging ? 'sidebar-pane--dragging' : '',
-		reorder?.dropPosition
-			? `sidebar-pane--drop-${reorder.dropPosition}`
-			: '',
+		reorder?.dropPosition ? `sidebar-pane--drop-${reorder.dropPosition}` : '',
 		className ?? '',
 	]
 		.filter(Boolean)
@@ -58,10 +74,18 @@ export function SidebarPane(props: SidebarPaneProps): JSX.Element {
 		.join(' ');
 
 	return (
-		<section className={rootClassName} data-sidebar-panel-id={reorder?.panelId}>
+		<section
+			id={paneDomId}
+			className={rootClassName}
+			style={style}
+			data-sidebar-pane-id={paneId}
+			data-sidebar-panel-id={reorder?.panelId}
+		>
 			<div
 				className="sidebar-pane__header-row"
+				data-sidebar-pane-title={title}
 				data-sidebar-panel-drop-id={reorder?.panelId}
+				ref={headerRef}
 			>
 				{reorder ? (
 					<button
