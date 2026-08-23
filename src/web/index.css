@@ -79,6 +79,77 @@ code { border-radius: 6px; background: #0b1119; color: #d5e1ee; padding: 2px 5px
   margin-left: auto;
 }
 
+.browser-host-shell__connection-state {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 14px;
+  padding: 32px;
+  text-align: center;
+}
+
+.browser-host-shell__connection-logo {
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .38);
+}
+
+.browser-host-shell__connection-brand {
+  display: grid;
+  justify-items: center;
+  gap: 16px;
+}
+
+.browser-host-shell__loading-dots {
+  display: flex;
+  gap: 7px;
+}
+
+.browser-host-shell__loading-dots span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  opacity: .2;
+  transform: scale(.65);
+  animation: browser-host-loading-dot 1.6s ease-in-out infinite;
+}
+
+.browser-host-shell__loading-dots span:nth-child(1) { background: #db5757; }
+.browser-host-shell__loading-dots span:nth-child(2) { background: #c1db57; animation-delay: .12s; }
+.browser-host-shell__loading-dots span:nth-child(3) { background: #57db8c; animation-delay: .24s; }
+.browser-host-shell__loading-dots span:nth-child(4) { background: #578cdb; animation-delay: .36s; }
+.browser-host-shell__loading-dots span:nth-child(5) { background: #c157db; animation-delay: .48s; }
+
+@keyframes browser-host-loading-dot {
+  0%, 55%, 100% { opacity: .2; transform: scale(.65); }
+  18%, 36% { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .browser-host-shell__loading-dots span {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.browser-host-shell__connection-state h1 {
+  margin: 0;
+  color: #9ba9ba;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.browser-host-shell__connection-state p {
+  max-width: 480px;
+  margin: 0;
+  color: #ff9f9f;
+}
+
 .browser-host-workspace {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
