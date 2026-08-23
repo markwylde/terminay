@@ -1,6 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
-import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal } from '@xterm/xterm'
 import {
   Check,
@@ -26,10 +25,6 @@ import {
 import { SharedRecordingsLibraryPane } from '../shared/SharedRecordingsLibraryPane'
 import { SharedRecordingsRouteBody } from '../shared/SharedRecordingsRouteBody'
 import type { RecordingListItem, RecordingsClient } from '@terminay/client-core'
-import {
-  attachTerminalWebglRenderer,
-  createTerminalWebglAddonOptions,
-} from './terminalWebglRenderer'
 import '../settings.css'
 import '../recordings.css'
 
@@ -658,25 +653,25 @@ export function RecordingsWindow({ client }: { readonly client: RecordingsClient
 
     setIsPlaying(false)
     root.innerHTML = ''
-    const terminal = new Terminal({
-      ...buildReplayTerminalOptions(settings ?? defaultTerminalSettings, replayTheme),
-      allowProposedApi: true,
-      cols: replayIndexRef.current?.cols ?? 80,
-      disableStdin: false,
-      rows: replayIndexRef.current?.rows ?? 24,
-    })
-    terminal.loadAddon(new Unicode11Addon())
-    terminal.unicode.activeVersion = '11'
-    terminal.open(root)
-    const webglRenderer = attachTerminalWebglRenderer(
-      terminal,
-      () =>
-        new WebglAddon(
-          createTerminalWebglAddonOptions(
-            (settings ?? defaultTerminalSettings).customGlyphs,
-          ),
-        ),
-    )
+    let terminal: Terminal
+    try {
+      terminal = new Terminal({
+        ...buildReplayTerminalOptions(settings ?? defaultTerminalSettings, replayTheme),
+        allowProposedApi: true,
+        cols: replayIndexRef.current?.cols ?? 80,
+        disableStdin: false,
+        documentOverride: root.ownerDocument,
+        rows: replayIndexRef.current?.rows ?? 24,
+      })
+      terminal.loadAddon(new Unicode11Addon())
+      terminal.unicode.activeVersion = '11'
+      terminal.open(root)
+    } catch (error) {
+      console.error('Failed to open the recordings replay terminal', error)
+      return
+    }
+    // Replay uses the DOM renderer. Live split panes keep WebGL; a scaled
+    // replay canvas in an auxiliary window is not a shared atlas surface.
     const restoreMouseCoordinates = patchReplayTerminalMouseCoordinates(terminal, () => displayScaleRef.current)
     terminal.attachCustomKeyEventHandler(() => false)
     terminal.focus()
@@ -705,7 +700,6 @@ export function RecordingsWindow({ client }: { readonly client: RecordingsClient
       seekAbortRef.current?.abort()
       playbackAbortRef.current?.abort()
       restoreMouseCoordinates()
-      webglRenderer.dispose()
       terminal.dispose()
       terminalRef.current = null
     }
