@@ -30,8 +30,8 @@ export function providerFromForegroundProcess(processName: string): AgentProvide
   if (/^claude(?:[-_.]|$)/u.test(executable)) return "claude-code";
   // A macOS shebang launch exposes Bun as the PTY foreground executable.
   // This is only a journal-discovery hint: NodeAgentJournalSource still
-  // requires an omp root JSONL held writable by this exact PTY tree before
-  // it emits an authoritative agent record.
+  // requires a materialized OMP root JSONL selected by the exact PTY's
+  // terminal-scoped breadcrumb before it emits an authoritative record.
   return /^(?:omp|oh-my-pi|bun)(?:[-_.]|$)/u.test(executable) ? "omp" : null;
 }
 

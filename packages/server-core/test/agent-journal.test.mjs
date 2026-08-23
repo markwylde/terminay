@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, mkdir, mkdtemp, realpath, rm, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rename, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -14,6 +14,122 @@ function ompTitleSlot(title = "Untitled") {
 function ompJournal(id) {
   return `${ompTitleSlot()}${JSON.stringify({ type: "session", id, version: "0.1.0" })}\n`;
 }
+
+async function waitFor(predicate, attempts = 80) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (predicate()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return predicate();
+}
+
+function breadcrumb(cwd, sessionFile, fresh = false) {
+  return `${cwd}\n${sessionFile}\n${fresh ? "fresh\n" : ""}`;
+}
+
+test("omp binds each terminal to its own valid breadcrumb without an open writer", async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminay-omp-breadcrumb-"));
+  const sessions = join(root, "agent", "sessions", "-same-cwd");
+  const breadcrumbs = join(root, "agent", "terminal-sessions");
+  const firstPath = join(sessions, "2026-08-23_first.jsonl");
+  const secondPath = join(sessions, "2026-08-23_second.jsonl");
+  const firstIdentity = Object.freeze({ serverId: "server-1", projectId: "project-1", sessionId: "terminal-1" });
+  const secondIdentity = Object.freeze({ serverId: "server-1", projectId: "project-1", sessionId: "terminal-2" });
+  const observations = [];
+  await mkdir(sessions, { recursive: true }); await mkdir(breadcrumbs, { recursive: true });
+  await Promise.all([
+    writeFile(firstPath, ompJournal("first-root")), writeFile(secondPath, ompJournal("second-root")),
+    writeFile(join(breadcrumbs, "ttys001"), breadcrumb("/same/cwd", firstPath)),
+    writeFile(join(breadcrumbs, "ttys002"), breadcrumb("/same/cwd", secondPath)),
+  ]);
+  const source = new NodeAgentJournalSource({
+    ompHome: root, platform: "darwin", pollMs: 25,
+    resolveOmpTerminalId: async (pid) => pid === 101 ? "ttys001" : pid === 102 ? "ttys002" : undefined,
+  });
+  try {
+    await source.start((observation) => observations.push(observation));
+    source.registerTerminal(firstIdentity); source.registerTerminal(secondIdentity);
+    source.terminalStarted(firstIdentity, 101); source.terminalStarted(secondIdentity, 102);
+    source.foregroundProcessChanged(firstIdentity, "omp", false); source.foregroundProcessChanged(secondIdentity, "omp", false);
+    assert.equal(await waitFor(() => observations.some((item) => item.identity.sessionId === "terminal-1" && item.record.id === "first-root")
+      && observations.some((item) => item.identity.sessionId === "terminal-2" && item.record.id === "second-root")), true);
+    assert.equal(observations.some((item) => item.identity.sessionId === "terminal-1" && item.record.id === "second-root"), false);
+  } finally {
+    await source.stop(); await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a recognised Bun OMP wrapper uses its exact terminal breadcrumb", async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminay-omp-bun-breadcrumb-"));
+  const sessions = join(root, "agent", "sessions", "-workspace");
+  const breadcrumbs = join(root, "agent", "terminal-sessions");
+  const path = join(sessions, "2026-08-23_bun.jsonl");
+  const identity = Object.freeze({ serverId: "server-1", projectId: "project-1", sessionId: "terminal-1" });
+  const observations = [];
+  await mkdir(sessions, { recursive: true }); await mkdir(breadcrumbs, { recursive: true });
+  await Promise.all([writeFile(path, ompJournal("bun-root")), writeFile(join(breadcrumbs, "ttys005"), breadcrumb("/workspace", path))]);
+  const source = new NodeAgentJournalSource({
+    ompHome: root, platform: "darwin", pollMs: 25, resolveOmpTerminalId: async () => "ttys005", hasOmpProcess: async () => true,
+  });
+  try {
+    await source.start((observation) => observations.push(observation));
+    source.registerTerminal(identity); source.terminalStarted(identity, 105);
+    // The process observer supplies only "bun" and so no named provider.
+    source.foregroundProcessChanged(identity, null, false);
+    assert.equal(await waitFor(() => observations.some((item) => item.record.id === "bun-root")), true);
+  } finally {
+    await source.stop(); await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("omp rebinds a terminal when its breadcrumb changes and tails atomic replacement", async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminay-omp-rebind-"));
+  const sessions = join(root, "agent", "sessions", "-workspace");
+  const breadcrumbs = join(root, "agent", "terminal-sessions");
+  const firstPath = join(sessions, "2026-08-23_first.jsonl");
+  const secondPath = join(sessions, "2026-08-23_second.jsonl");
+  const identity = Object.freeze({ serverId: "server-1", projectId: "project-1", sessionId: "terminal-1" });
+  const observations = [];
+  await mkdir(sessions, { recursive: true }); await mkdir(breadcrumbs, { recursive: true });
+  await writeFile(firstPath, ompJournal("first-root"));
+  await writeFile(secondPath, ompJournal("second-root"));
+  await writeFile(join(breadcrumbs, "ttys003"), breadcrumb("/workspace", firstPath));
+  const source = new NodeAgentJournalSource({ ompHome: root, platform: "darwin", pollMs: 25, resolveOmpTerminalId: async () => "ttys003" });
+  try {
+    await source.start((observation) => observations.push(observation));
+    source.registerTerminal(identity); source.terminalStarted(identity, 103); source.foregroundProcessChanged(identity, "omp", false);
+    assert.equal(await waitFor(() => observations.some((item) => item.record.id === "first-root")), true);
+    await writeFile(join(breadcrumbs, "ttys003"), breadcrumb("/workspace", secondPath));
+    assert.equal(await waitFor(() => observations.some((item) => item.record.id === "second-root")), true);
+    const replacement = `${ompJournal("second-root")}${JSON.stringify({ type: "message", id: "replacement" })}\n`;
+    await writeFile(`${secondPath}.next`, replacement); await rename(`${secondPath}.next`, secondPath);
+    assert.equal(await waitFor(() => observations.some((item) => item.record.id === "replacement")), true);
+  } finally {
+    await source.stop(); await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("omp ignores malformed, outside-root, and fresh pre-file breadcrumbs", async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminay-omp-breadcrumb-invalid-"));
+  const breadcrumbs = join(root, "agent", "terminal-sessions");
+  const identity = Object.freeze({ serverId: "server-1", projectId: "project-1", sessionId: "terminal-1" });
+  const observations = [];
+  await mkdir(breadcrumbs, { recursive: true });
+  await writeFile(join(breadcrumbs, "ttys004"), "not-a-breadcrumb");
+  const source = new NodeAgentJournalSource({ ompHome: root, platform: "darwin", pollMs: 25, discoveryAttemptLimit: 2, resolveOmpTerminalId: async () => "ttys004" });
+  try {
+    await source.start((observation) => observations.push(observation));
+    source.registerTerminal(identity); source.terminalStarted(identity, 104); source.foregroundProcessChanged(identity, "omp", false);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await writeFile(join(breadcrumbs, "ttys004"), breadcrumb("/workspace", "/outside/session.jsonl"));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await writeFile(join(breadcrumbs, "ttys004"), breadcrumb("/workspace", join(root, "agent", "sessions", "-workspace", "missing.jsonl"), true));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(observations, []);
+  } finally {
+    await source.stop(); await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("omp discovery requires the exact PTY tree writer and skips its title slot", { skip: !["darwin", "linux"].includes(process.platform) }, async () => {
   const root = await mkdtemp(join(tmpdir(), "terminay-omp-journal-"));
