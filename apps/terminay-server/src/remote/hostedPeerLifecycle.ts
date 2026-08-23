@@ -153,6 +153,14 @@ export function needsDisconnectGrace(
 	return isRecoverableDisconnectState(iceState) && peerState !== 'connected';
 }
 
+export type HostedPeerLifecycleHooks = Readonly<{
+	onGrace?: (
+		phase: 'started' | 'cleared' | 'expired',
+		peerState: string | undefined,
+		iceState: string | undefined,
+	) => void;
+}>;
+
 /** One connection-scoped ICE/peer authority. Grace is shared across peer and ICE. */
 export class HostedPeerLifecycle {
 	private recoveryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -161,15 +169,18 @@ export class HostedPeerLifecycle {
 	private readonly peer: PeerLike;
 	private readonly recoveryGraceMs: number;
 	private readonly closeSession: (reason: string) => void;
+	private readonly hooks: HostedPeerLifecycleHooks | undefined;
 
 	constructor(
 		peer: PeerLike,
 		recoveryGraceMs: number,
 		closeSession: (reason: string) => void,
+		hooks?: HostedPeerLifecycleHooks,
 	) {
 		this.peer = peer;
 		this.recoveryGraceMs = recoveryGraceMs;
 		this.closeSession = closeSession;
+		this.hooks = hooks;
 	}
 
 	observe(source: 'peer' | 'ice'): void {
@@ -187,23 +198,26 @@ export class HostedPeerLifecycle {
 			return;
 		}
 		if (needsDisconnectGrace(peerState, iceState)) {
+			const started = this.recoveryTimer === undefined;
 			this.recoveryTimer ??= setTimeout(() => {
 				this.recoveryTimer = undefined;
 				if (this.stopped || this.terminal) return;
 				const currentPeerState = this.peer.connectionState;
 				const currentIceState = this.peer.iceConnectionState;
 				if (needsDisconnectGrace(currentPeerState, currentIceState)) {
+					this.hooks?.onGrace?.('expired', currentPeerState, currentIceState);
 					this.fail(
 						`WebRTC recovery grace period expired (peer: ${currentPeerState}, ICE: ${currentIceState}).`,
 					);
 				} else {
-					this.cancelRecovery();
+					this.cancelRecovery('cleared');
 				}
 			}, this.recoveryGraceMs);
 			this.recoveryTimer.unref?.();
+			if (started) this.hooks?.onGrace?.('started', peerState, iceState);
 			return;
 		}
-		this.cancelRecovery();
+		this.cancelRecovery('cleared');
 	}
 
 	stop(): void {
@@ -219,10 +233,17 @@ export class HostedPeerLifecycle {
 		this.closeSession(reason);
 	}
 
-	private cancelRecovery(): void {
+	private cancelRecovery(phase?: 'cleared'): void {
 		if (this.recoveryTimer === undefined) return;
 		clearTimeout(this.recoveryTimer);
 		this.recoveryTimer = undefined;
+		if (phase === 'cleared' && !this.stopped && !this.terminal) {
+			this.hooks?.onGrace?.(
+				'cleared',
+				this.peer.connectionState,
+				this.peer.iceConnectionState,
+			);
+		}
 	}
 }
 

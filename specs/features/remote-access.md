@@ -403,6 +403,34 @@ framed-host schema. The manager vault may hold per-origin device credentials
 for framed sessions and may clone a credential only to the matching session
 origin.
 
+## Diagnostics
+
+Hosted WebRTC liveness is always-on and local. The Desktop Diagnostics folder
+records the signaling events above plus peer/ICE state, ICE disconnect grace,
+data-channel open/close, and application-lane counters after a client joins.
+Standalone `terminay-server` writes the same metadata-only events as JSON
+lines to stderr and, when configured, `--log-sink`. The framed session
+bootstrap logs the matching client-side counters to the browser console as
+`[terminay-session]` JSON lines so a phone or desktop browser can copy them
+without a Desktop log folder.
+
+These traces include only:
+
+- peer and ICE connection states;
+- data-channel readyState for the fixed labels `control`, `application`,
+  `terminal`, `assets`, `asset`, and `api`;
+- inbound/outbound frame counts, byte counts, last-activity age, and
+  buffered amount on the application lane;
+- inbound kind class (`bytes`, `blob`, `string`, `empty`, `other`) and send
+  failure class; and
+- stall class (`no-outbound` when the host has received application frames
+  but has not sent any, or `outbound-stalled` when outbound was live and then
+  stopped while inbound continued).
+
+They never include PTY bytes, typed input, SDP, ICE candidate addresses,
+pairing URLs, PINs, tickets, session ids, or hostnames. High-frequency PTY
+frames do not produce one log line per frame.
+
 ## Failure behaviour
 
 - An expired or consumed pairing URL asks the user to generate another one.
