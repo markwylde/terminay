@@ -192,6 +192,14 @@ attach through `TerminayTerminalPanelClient`, and keep temporary local
 measurements that are either discarded or committed through explicit workspace
 commands.
 
+Dockview mounts only the active terminal body, so a newly created terminal
+cannot complete xterm hydration while its tab remains inactive. While that
+hydration is in progress, the terminal tab uses a small rotating loader in its
+icon position and the terminal body remains an undecorated, empty terminal
+surface. It must not show a centered Terminay mark or loading copy. The loader
+is removed when hydration completes; an attachment failure replaces the blank
+state with the existing actionable terminal error presentation.
+
 `TerminalInputSourceAdapter` is the server-side write boundary for keyboard,
 paste, macro, dictation, MCP, and remote sources. It validates the exact
 server/project/session authorization, preserves per-session write ordering,

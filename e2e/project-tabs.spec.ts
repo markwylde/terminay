@@ -108,6 +108,7 @@ test.describe('project tabs', () => {
 	}) => {
 		await mainWindow.getByLabel('Create project on This server').click();
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 
 		const editWindow = await openProjectEditWindow(mainWindow);
 		await editWindow
@@ -195,6 +196,7 @@ test.describe('project tabs', () => {
 	}) => {
 		await mainWindow.getByLabel('Create project on This server').click();
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 		const draggedProject = mainWindow.locator('.project-tab').last();
 		const projectBox = await draggedProject.boundingBox();
 		if (!projectBox)
@@ -266,6 +268,7 @@ test.describe('project tabs', () => {
 
 		await mainWindow.getByLabel('Create project on This server').click();
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 		await expect(mainWindow.locator('.project-tab--active')).toContainText(
 			'Project 2',
 		);
@@ -470,6 +473,7 @@ test.describe('project tabs', () => {
 			'.project-tab:not(.project-tab--overflowed)',
 		);
 		await expect(tabs).toHaveCount(2);
+		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 		await expect(mainWindow.locator('.project-tab-title')).toHaveText([
 			'Project',
 			'Project 2',
@@ -502,6 +506,7 @@ test.describe('project tabs', () => {
 	}) => {
 		await mainWindow.getByLabel('Create project on This server').click();
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 		await expect(mainWindow.locator('.project-tab--active')).toContainText(
 			'Project 2',
 		);

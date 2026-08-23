@@ -4,6 +4,8 @@ import type { SidebarPanelId, SidebarSettings } from '../types/settings';
 const PROJECT_TAB_COLOR_PALETTE_SIZE = 20;
 
 export type ProjectTab = {
+	creationError?: string;
+	creationStatus?: 'loading' | 'failed';
 	projectEnvironmentId?: string;
 	environmentRevision?: number;
 	environmentLabel?: string;

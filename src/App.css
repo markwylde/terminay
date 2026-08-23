@@ -807,6 +807,35 @@
   flex-shrink: 0;
 }
 
+.project-tab-creation-spinner {
+  width: 13px;
+  height: 13px;
+  border: 2px solid color-mix(in srgb, var(--project-color) 35%, transparent);
+  border-top-color: var(--project-color);
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: project-tab-creation-spin 700ms linear infinite;
+}
+
+.project-tab-creation-error {
+  color: #ff8f8f;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.project-tab--creation-loading {
+  cursor: progress;
+}
+
+@keyframes project-tab-creation-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-tab-creation-spinner { animation-duration: 1.8s; }
+}
+
 .project-tab-environment {
   color: #8cb7ff;
   font-size: 12px;
@@ -1821,6 +1850,15 @@ body.project-tabbar-reordering .project-tabbar {
   line-height: 1;
   margin-left: 8px;
   flex-shrink: 0;
+}
+
+.terminal-tab-loading-icon {
+  width: 14px;
+  height: 14px;
+  margin-left: 8px;
+  flex-shrink: 0;
+  color: currentColor;
+  animation: terminal-tab-spinner 900ms linear infinite;
 }
 
 .terminal-tab-title {
@@ -2906,31 +2944,7 @@ body.project-tabbar-reordering .project-tabbar {
   position: absolute;
   inset: 0;
   z-index: 2;
-  display: grid;
-  place-items: center;
-  padding: 32px;
   background: var(--terminal-panel-surface, #111316);
-  color: #9bb0c8;
-  text-align: center;
-}
-
-.terminal-panel-loading__content {
-  display: grid;
-  justify-items: center;
-  gap: 12px;
-}
-
-.terminal-panel-loading__logo {
-  width: 64px;
-  height: 64px;
-  border-radius: 16px;
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
-}
-
-.terminal-panel-loading p {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 700;
 }
 
 /* Server-backed panels never fall back to ambient preload terminal authority
