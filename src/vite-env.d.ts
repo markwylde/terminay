@@ -37,6 +37,19 @@ declare global {
 			subscribe(listener: (frame: Uint8Array | null) => void): () => void;
 		};
 		terminayTest?: TerminayTestApi;
+		terminayWorkspaceTest?: {
+			resetCommandRecords(): Promise<void>;
+			getCommandRecords(): Promise<
+				readonly {
+					operation: string;
+					command?: {
+						type: string;
+						projectId?: string;
+						sidebar?: Readonly<Record<string, unknown>>;
+					};
+				}[]
+			>;
+		};
 		terminayLocalConnectionFaultTest?: {
 			failActiveConnection: () => Promise<{ connectionId: string }>;
 		};
