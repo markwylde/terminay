@@ -70,12 +70,8 @@ test('stale, future, malformed, and non-positive activation windows cannot steal
 	);
 });
 
-test('terminal pointerdown leaves xterm focus and selection handling alone', () => {
+test('touch pointerdown bridges iOS focus without taking over xterm gestures', () => {
 	assert.doesNotMatch(terminalPanelSource, /activatePanelFromPointer/u);
-	assert.doesNotMatch(
-		terminalPanelSource,
-		/root\.addEventListener\('pointerdown', [^)]*focus/u,
-	);
 	assert.doesNotMatch(
 		terminalPanelSource,
 		/root\.addEventListener\('pointerdown', [^)]*setActive/u,
@@ -85,6 +81,11 @@ test('terminal pointerdown leaves xterm focus and selection handling alone', () 
 		/root\.addEventListener\('pointerdown', activatePanelFromPointer\)/u,
 	);
 	assert.doesNotMatch(terminalPanelSource, /pointerFocusGesture/u);
+	assert.match(terminalPanelSource, /shouldFocusTerminalForTouchPointer\(event\.pointerType\)/u);
+	assert.match(terminalPanelSource, /root\.addEventListener\('pointerdown', handleTouchPointerDown\)/u);
+	assert.match(terminalPanelSource, /root\.addEventListener\(\s*'touchstart',\s*handleTouchStart/u);
+	assert.doesNotMatch(terminalPanelSource, /handleTouchPointerDown[\s\S]{0,280}preventDefault/u);
+	assert.doesNotMatch(terminalPanelSource, /handleTouchPointerDown[\s\S]{0,280}stopPropagation/u);
 });
 
 test('created terminals reclaim focus from project and terminal creation chrome', () => {
