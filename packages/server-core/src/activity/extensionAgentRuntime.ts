@@ -49,6 +49,7 @@ interface TrackedTerminal {
   readonly identity: ActivitySessionIdentity;
   shellPid?: number;
   incarnation: number;
+  notBoundRetries: number;
   context?: ExtensionAgentTerminalContext;
   lastProcessName?: string;
   reobserveTimer?: ReturnType<typeof setTimeout>;
@@ -59,6 +60,7 @@ interface TrackedTerminal {
 }
 
 const LOCAL_CAPABILITIES = Object.freeze(["process-observation", "filesystem-observation", "agent-journal"]);
+const MAX_NOT_BOUND_DISCOVERY_RETRIES = 10;
 
 /**
  * Server-side admission authority for manifest-declared agent providers.
@@ -98,7 +100,7 @@ export class ExtensionAgentRuntimeRegistry {
   register(identity: ActivitySessionIdentity): void {
     const current = this.terminals.get(identity.sessionId);
     if (current !== undefined && sameIdentity(current.identity, identity)) return;
-    this.terminals.set(identity.sessionId, { identity: Object.freeze({ ...identity }), incarnation: (current?.incarnation ?? 0) + 1, environmentBinding: this.bindEnvironment(identity) });
+    this.terminals.set(identity.sessionId, { identity: Object.freeze({ ...identity }), incarnation: (current?.incarnation ?? 0) + 1, notBoundRetries: 0, environmentBinding: this.bindEnvironment(identity) });
   }
 
   terminalStarted(identity: ActivitySessionIdentity, shellPid: number): void {
@@ -123,6 +125,7 @@ export class ExtensionAgentRuntimeRegistry {
       this.clearTimers(terminal);
       terminal.context = undefined;
       terminal.incarnation += 1;
+      terminal.notBoundRetries = 0;
       try { this.options.agents.releaseExtensionProvider(terminal.identity, previous.providerId); }
       catch { /* terminal exit/replacement can race foreground observation */ }
       void this.options.hosts.cancelAgentTerminal({ contextId: previous.contextId, reason: "terminal-replaced" }).catch(() => undefined);
@@ -178,8 +181,14 @@ export class ExtensionAgentRuntimeRegistry {
     const observationCapabilities = context.projectEnvironmentId === THIS_SERVER_ENVIRONMENT_ID
       ? contribution.requiredEnvironmentCapabilities.filter((capability) => this.localObservationCapabilities.includes(capability))
       : contribution.requiredEnvironmentCapabilities;
-    void this.options.hosts.admitAgentTerminal({ context, observationCapabilities }).then(() => {
-      if (terminal.context === context) this.scheduleTopologyPoll(terminal);
+    void this.options.hosts.admitAgentTerminal({ context, observationCapabilities }).then((result) => {
+      if (terminal.context !== context) return;
+      if (admissionState(result) === "not-bound") {
+        this.scheduleDiscoveryRetry(terminal, contribution, processName);
+        return;
+      }
+      terminal.notBoundRetries = 0;
+      this.scheduleTopologyPoll(terminal);
     }).catch((error: unknown) => {
       // The claim was synchronous so the legacy path did not see this exact
       // foreground change. Release and replay it if host admission fails.
@@ -200,6 +209,15 @@ export class ExtensionAgentRuntimeRegistry {
       terminal.reobserveTimer = undefined;
       void this.reobserve(terminal, contribution, processName);
     }, this.reobserveDebounceMs);
+  }
+
+  /** A provider may receive the foreground edge before its process/journal is
+   * visible. Keep the claim scoped to that PTY and retry only a short bounded
+   * window; a shell edge, replacement, or teardown clears this timer. */
+  private scheduleDiscoveryRetry(terminal: TrackedTerminal, contribution: AgentProviderContribution, processName: string): void {
+    if (terminal.notBoundRetries >= MAX_NOT_BOUND_DISCOVERY_RETRIES) return;
+    terminal.notBoundRetries += 1;
+    this.scheduleReobserve(terminal, contribution, processName);
   }
 
   private async reobserve(terminal: TrackedTerminal, contribution: AgentProviderContribution, processName: string): Promise<void> {
@@ -291,7 +309,7 @@ export class ExtensionAgentRuntimeRegistry {
   private requireTerminal(identity: ActivitySessionIdentity): TrackedTerminal {
     const terminal = this.terminals.get(identity.sessionId);
     if (terminal !== undefined && sameIdentity(terminal.identity, identity)) return terminal;
-    const created: TrackedTerminal = { identity: Object.freeze({ ...identity }), incarnation: 1, environmentBinding: this.bindEnvironment(identity) };
+    const created: TrackedTerminal = { identity: Object.freeze({ ...identity }), incarnation: 1, notBoundRetries: 0, environmentBinding: this.bindEnvironment(identity) };
     this.terminals.set(identity.sessionId, created);
     return created;
   }
@@ -376,4 +394,10 @@ function classifyAdmissionFailure(error: unknown): ExtensionAgentAdmissionFailur
   if (message.includes("host") || message.includes("extension")) return "host-failed";
   if (message.includes("unavailable") || message.includes("does not exist") || message.includes("not found")) return "unavailable";
   return "failed";
+}
+function admissionState(value: unknown): string | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    && typeof (value as Record<string, unknown>).state === "string"
+    ? (value as Record<string, unknown>).state as string
+    : undefined;
 }

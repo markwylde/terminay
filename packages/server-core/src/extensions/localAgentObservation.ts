@@ -199,7 +199,13 @@ export class ThisServerAgentObservationAdapter {
   private async openFiles(state: TerminalState, payload: JsonValue, signal: AbortSignal): Promise<JsonValue> {
     const request = record(payload); const supplied = Array.isArray(request?.processes) ? request.processes : undefined;
     const options = record(request?.options); const access = options?.access;
-    if (supplied === undefined || supplied.length === 0 || supplied.length > MAX_PROCESSES || (access !== "writable" && access !== "readable")) throw new Error("agent open-file request is invalid");
+    // A foreground transition can precede the kernel process-table update for
+    // its descendant.  An empty, host-issued snapshot is therefore normal
+    // discovery evidence: it means no process-bound journal yet, not a bad
+    // extension request.  The runtime will make its bounded retry while the
+    // same foreground incarnation remains current.
+    if (supplied === undefined || supplied.length > MAX_PROCESSES || (access !== "writable" && access !== "readable")) throw new Error("agent open-file request is invalid");
+    if (supplied.length === 0) return [];
     const pids = supplied.map((value) => this.processFor(state, value).pid);
     const files = await this.system.openFiles([...new Set(pids)], access, signal);
     if (files.length > MAX_OPEN_FILES) throw new Error("agent open-file observation exceeds its limit");
