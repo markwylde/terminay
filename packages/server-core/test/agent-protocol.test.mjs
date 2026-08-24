@@ -11,7 +11,7 @@ async function publish(agents, identity, title = "Provider session") {
   assert.equal(agents.claimExtensionProvider(identity, providerId), true);
   return agents.ingestExtensionLifecycle(identity, providerId, "1", binding, [
     { kind: "session.started", title },
-    { kind: "wait.started", state: "waiting", reason: "approval" },
+    { kind: "wait.started", waitId: "wait-1", state: "waiting", reason: "approval" },
   ]);
 }
 

@@ -102,7 +102,7 @@ test("extension lifecycle replay cannot close the application connection or bloc
     await agents.ingestExtensionLifecycle(identity, providerId, "1", binding, [{ kind: "session.started" }]);
     for (let index = 0; index < 2_000; index += 1) {
       now += 1;
-      await agents.ingestExtensionLifecycle(identity, providerId, "1", undefined, [{ kind: "wait.started", state: "waiting", reason: "approval" }]);
+      await agents.ingestExtensionLifecycle(identity, providerId, "1", undefined, [{ kind: "wait.started", waitId: `wait-${index}`, state: "waiting", reason: "approval" }]);
     }
     await new Promise((resolve) => setImmediate(resolve));
 
