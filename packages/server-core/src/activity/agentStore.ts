@@ -191,6 +191,20 @@ export class AgentStatusStore {
     return true;
   }
 
+  /** Atomically applies a validated publication. A rejected event must never
+   * leave the sidebar at a prefix of the provider's publication. */
+  dispatchBatch(events: readonly AgentLifecycleEvent[]): boolean {
+    let next = this.snapshot;
+    for (const event of events) {
+      const reduced = reduceAgentStatusSnapshot(next, event);
+      if (reduced === next) return false;
+      next = reduced;
+    }
+    if (next === this.snapshot) return false;
+    this.publish(next);
+    return true;
+  }
+
   markAcknowledged(entryId: string, acknowledgedAt = Date.now()): boolean {
     const entry = this.snapshot.entries[entryId];
     if (!entry || !Number.isFinite(acknowledgedAt)) return false;

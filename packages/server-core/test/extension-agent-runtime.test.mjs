@@ -107,3 +107,34 @@ test("topology polling is inert for an unchanged signature and rebinds exactly o
   assert.equal(admitted.length, 2); assert.deepEqual(cancelled, [{ contextId: admitted[0].context.contextId, reason: "terminal-replaced" }]);
   registry.terminalExited(identity); await agents.stop();
 });
+
+test("remote terminals admit through declared capabilities without a local fallback", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
+  const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
+  const admitted=[];
+  const registry=new ExtensionAgentRuntimeRegistry({agents,projectEnvironmentRouter:{bindProject(){return {serverId:identity.serverId,projectId:identity.projectId,projectEnvironmentId:"remote-1",environmentRevision:9};}},hosts:{agentProviderContributions:()=>[provider],async admitAgentTerminal(value){admitted.push(value);},async cancelAgentTerminal(){return true;},async drainAgentObservers(){}}});
+  registry.register(identity); assert.equal(registry.foregroundProcessChanged(identity,"test-agent"),true); await new Promise((resolve)=>setImmediate(resolve));
+  assert.equal(admitted[0].context.projectEnvironmentId,"remote-1"); assert.deepEqual(admitted[0].observationCapabilities,provider.requiredEnvironmentCapabilities);
+  assert.equal(registry.environmentBinding(admitted[0].context).environmentRevision,9);
+  registry.terminalExited(identity); await agents.stop();
+});
+
+test("provider retirement and project teardown are exact and idempotent", async () => {
+  const secondIdentity={...identity,sessionId:"terminal-2"};
+  const otherProvider={...provider,id:"com.terminay.agent-other/test"};
+  const activity=new TerminalActivityService({serverId:identity.serverId}); activity.register(identity);activity.register(secondIdentity);
+  const agents=new AgentStatusService({activity});await agents.start();agents.register(identity);agents.register(secondIdentity);
+  const admitted=[];const cancelled=[];
+  const registry=new ExtensionAgentRuntimeRegistry({agents,hosts:{agentProviderContributions:()=>[provider,otherProvider],async admitAgentTerminal(value){admitted.push(value);},async cancelAgentTerminal(value){cancelled.push(value);return true;},async drainAgentObservers(){}}});
+  registry.register(identity);registry.register(secondIdentity);
+  registry.foregroundProcessChanged(identity,"test-agent");
+  // Select the unrelated provider deterministically through its unique matcher.
+  otherProvider.processMatchers=[{executableName:"other-agent"}]; registry.foregroundProcessChanged(secondIdentity,"other-agent");
+  await new Promise((resolve)=>setImmediate(resolve));
+  assert.equal(await registry.retireProvider(provider.id),1);assert.equal(await registry.retireProvider(provider.id),0);
+  assert.deepEqual(cancelled,[{contextId:admitted[0].context.contextId,reason:"provider-disabled"}]);
+  registry.projectRemoved(identity.projectId);await new Promise((resolve)=>setImmediate(resolve));
+  assert.equal(cancelled.length,2);assert.equal(cancelled[1].contextId,admitted[1].context.contextId);
+  registry.projectRemoved(identity.projectId);await new Promise((resolve)=>setImmediate(resolve));assert.equal(cancelled.length,2);
+  await agents.stop();
+});

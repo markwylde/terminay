@@ -1,5 +1,5 @@
 import { validateAgentLifecycleEvent, validateAgentSessionBindingRequest, type AgentLifecycleEvent as ExtensionAgentLifecycleEvent } from "@terminay/extension-api";
-import { AgentStatusStore, makeAgentStatusEntryId, makeAgentStatusStreamId, selectAgentStatusEntry, selectAgentStatusesForTerminal } from "./agentStore.js";
+import { AgentStatusStore, makeAgentStatusEntryId, makeAgentStatusStreamId, reduceAgentStatusSnapshot, selectAgentStatusEntry, selectAgentStatusesForTerminal } from "./agentStore.js";
 import { isExtensionAgentProvider, type AgentLifecycleEvent as CanonicalAgentLifecycleEvent, type AgentProvider, type AgentStatusListener, type AgentStatusSnapshot } from "./agentTypes.js";
 import type { ActivitySessionIdentity, TerminalActivityService } from "./service.js";
 import type { ProviderActivityState, ProviderActivityUpdate } from "./types.js";
@@ -165,20 +165,35 @@ export class AgentStatusService {
     try {
       this.assertActive(identity); this.assertExtensionClaim(identity, providerId);
       if (!isMappingVersion(mappingVersion)) throw new Error("extension agent mapping version is invalid");
-      if (binding !== undefined) this.bindExtensionSession(identity, providerId, mappingVersion, binding);
-      const activeBinding = this.bindings.get(identity.sessionId);
+      const validatedBinding = binding === undefined ? undefined : validateAgentSessionBindingRequest(binding);
+      if (validatedBinding !== undefined && !validatedBinding.ok) throw new Error("extension agent session binding is invalid");
+      if (validatedBinding?.ok && validatedBinding.value.mappingVersion !== mappingVersion) throw new Error("extension agent mapping version is invalid");
+      const currentBinding = this.bindings.get(identity.sessionId);
+      const activeBinding: ProviderBinding | undefined = validatedBinding?.ok
+        ? { provider: providerId, providerSessionId: validatedBinding.value.providerSessionId, mappingVersion }
+        : currentBinding;
       if (activeBinding === undefined || activeBinding.provider !== providerId || activeBinding.mappingVersion !== mappingVersion) throw new Error("extension agent session is not bound");
       if (!Array.isArray(events) || events.length > 64) throw new Error("extension lifecycle publication is invalid");
-      let acceptedEventCount = 0;
+      const validatedEvents: ExtensionAgentLifecycleEvent[] = [];
       for (const candidate of events) {
         const validated = validateAgentLifecycleEvent(candidate);
-        if (!validated.ok) return Object.freeze({ acceptedEventCount, rejectedEventCount: events.length - acceptedEventCount, failure: "extension lifecycle event is invalid" });
-        const event = this.correlateSubagentLaunch(this.toCanonicalExtensionEvent(identity, providerId, activeBinding, validated.value));
-        this.store.dispatch(event);
-        if (event.kind !== "agent.metadata") this.activity.ingestProvider(identity, toProviderUpdate(event));
-        acceptedEventCount += 1;
+        if (!validated.ok) throw new Error("extension lifecycle event is invalid");
+        validatedEvents.push(validated.value);
       }
-      return Object.freeze({ acceptedEventCount, rejectedEventCount: 0 });
+      const replacing = currentBinding !== undefined && (currentBinding.provider !== providerId || currentBinding.providerSessionId !== activeBinding.providerSessionId);
+      if (replacing) throw new Error("extension agent session replacement requires a separate binding publication");
+      const startSequence = this.sequences.get(identity.sessionId)?.get(providerId) ?? 1;
+      const rawCanonical = validatedEvents.map((event, index) => this.toCanonicalExtensionEventAt(identity, providerId, activeBinding, event, startSequence + index));
+      validateLifecycleTransitions(this.store.getSnapshot(), rawCanonical);
+      const canonical = rawCanonical.map((event) => this.correlateSubagentLaunch(event));
+      if (canonical.length > 0 && !this.store.dispatchBatch(canonical)) throw new Error("extension lifecycle transition is invalid");
+      if (validatedBinding?.ok) this.bindings.set(identity.sessionId, activeBinding);
+      if (canonical.length > 0) {
+        const sequences = this.sequences.get(identity.sessionId) ?? new Map<string, number>();
+        this.sequences.set(identity.sessionId, sequences); sequences.set(providerId, startSequence + canonical.length);
+      }
+      for (const event of canonical) if (event.kind !== "agent.metadata") this.activity.ingestProvider(identity, toProviderUpdate(event));
+      return Object.freeze({ acceptedEventCount: canonical.length, rejectedEventCount: 0 });
     } catch (error) {
       return Object.freeze({ acceptedEventCount: 0, rejectedEventCount: Array.isArray(events) ? events.length : 0, failure: error instanceof Error ? error.message : "extension lifecycle publication failed" });
     }
@@ -224,8 +239,8 @@ export class AgentStatusService {
   private removePendingSubagentLaunches(sessionId: string): void { for (const [streamId] of this.pendingSubagentLaunches) if (streamId.split(":").some((part) => decodeURIComponent(part) === sessionId)) this.pendingSubagentLaunches.delete(streamId); }
   private assertExtensionProvider(providerId: string): asserts providerId is AgentProvider { if (!isExtensionAgentProvider(providerId)) throw new Error("extension agent provider id must be a bounded namespaced id"); }
   private assertExtensionClaim(identity: ActivitySessionIdentity, providerId: string): void { this.assertExtensionProvider(providerId); if (this.extensionProviderBySession.get(identity.sessionId) !== providerId) throw new Error("extension agent provider does not own this terminal session"); }
-  private toCanonicalExtensionEvent(identity: ActivitySessionIdentity, provider: AgentProvider, binding: ProviderBinding, event: ExtensionAgentLifecycleEvent): CanonicalAgentLifecycleEvent {
-    const common = { provider, sessionId: binding.providerSessionId, activationTerminalSessionId: identity.sessionId, sequence: this.nextSequence(provider, identity.sessionId), occurredAt: this.now() } as const;
+  private toCanonicalExtensionEventAt(identity: ActivitySessionIdentity, provider: AgentProvider, binding: ProviderBinding, event: ExtensionAgentLifecycleEvent, sequence: number): CanonicalAgentLifecycleEvent {
+    const common = { provider, sessionId: binding.providerSessionId, activationTerminalSessionId: identity.sessionId, sequence, occurredAt: this.now() } as const;
     switch (event.kind) {
       case "session.started": return { ...common, kind: event.kind, ...(event.title === undefined ? {} : { displayName: event.title }), ...(event.promptText === undefined ? {} : { promptText: event.promptText }), ...(event.model === undefined ? {} : { model: event.model }) };
       case "agent.metadata": return { ...common, kind: event.kind, ...(event.agentId === undefined ? {} : { agentId: event.agentId }), ...(event.title === undefined ? {} : { displayName: event.title }), ...(event.promptText === undefined ? {} : { promptText: event.promptText }), ...(event.model === undefined ? {} : { model: event.model }) };
@@ -250,3 +265,31 @@ function toProviderUpdate(event: CanonicalAgentLifecycleEvent): ProviderActivity
   return Object.freeze({ provider: event.provider, state, sequence: event.sequence, agentId, source: `extension:${event.provider}` });
 }
 function isMappingVersion(value: string): boolean { return typeof value === "string" && value.length > 0 && value.length <= 64; }
+
+function validateLifecycleTransitions(snapshot: AgentStatusSnapshot, events: readonly CanonicalAgentLifecycleEvent[]): void {
+  let projected = snapshot;
+  for (const event of events) {
+    const root = projected.entries[makeAgentStatusEntryId(event.activationTerminalSessionId, event.sessionId)];
+    const targetId = "subagentId" in event ? event.subagentId : "agentId" in event && event.agentId ? event.agentId : event.sessionId;
+    const target = projected.entries[makeAgentStatusEntryId(event.activationTerminalSessionId, event.sessionId, targetId)];
+    let valid = true;
+    switch (event.kind) {
+      case "session.started": valid = targetId === event.sessionId && root?.active !== true; break;
+      case "agent.metadata": valid = target?.active === true; break;
+      case "session.stopped": valid = targetId === event.sessionId && root?.active === true; break;
+      case "turn.started": valid = target?.active === true; break;
+      case "tool.started": valid = target?.active === true && !target.activeTools.some((tool) => tool.id === event.tool.id); break;
+      case "tool.finished": valid = target?.active === true && target.activeTools.some((tool) => tool.id === event.toolId); break;
+      case "wait.started": valid = target?.active === true && target.state !== "done"; break;
+      case "wait.finished": valid = target?.active === true && (target.state === "waiting" || target.state === "blocked"); break;
+      case "agent.done": valid = target?.active === true; break;
+      case "agent.exited": valid = target?.active === true; break;
+      case "subagent.started": valid = root?.active === true && target === undefined; break;
+      case "subagent.stopped": valid = target?.kind === "subagent" && target.active; break;
+    }
+    if (!valid) throw new Error("extension lifecycle transition is invalid");
+    const next = reduceAgentStatusSnapshot(projected, event);
+    if (next === projected) throw new Error("extension lifecycle transition is invalid");
+    projected = next;
+  }
+}

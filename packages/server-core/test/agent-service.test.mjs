@@ -55,3 +55,33 @@ test("provider release retires only its exact terminal lifecycle run", async () 
   assert.equal(entry.lastEventKind, "session.stopped");
   await agents.stop();
 });
+
+test("lifecycle publications reject invalid transitions atomically with sequence state unchanged", async () => {
+  const { agents } = await fixture();
+  const before = agents.getSnapshot();
+  const rejected = await agents.ingestExtensionLifecycle(identity, providerId, "1", binding, [
+    { kind: "session.started" },
+    { kind: "tool.finished", toolId: "missing" },
+  ]);
+  assert.match(rejected.failure, /transition/);
+  assert.strictEqual(agents.getSnapshot(), before);
+  const accepted = await agents.ingestExtensionLifecycle(identity, providerId, "1", binding, [
+    { kind: "session.started" }, { kind: "turn.started", turnId: "turn-1" }, { kind: "tool.started", toolId: "tool-1", name: "shell" },
+  ]);
+  assert.deepEqual(accepted, { acceptedEventCount: 3, rejectedEventCount: 0 });
+  const [entry] = Object.values(agents.getSnapshot().entries);
+  assert.equal(entry.lastEventSequence, 3);
+  const revision = agents.getSnapshot().revision;
+  for (const events of [
+    [{ kind: "session.started" }],
+    [{ kind: "tool.started", toolId: "tool-1", name: "duplicate" }],
+    [{ kind: "tool.finished", toolId: "wrong" }],
+    [{ kind: "wait.finished" }],
+    [{ kind: "subagent.done", subagentId: "unknown", outcome: "success" }],
+  ]) {
+    const result = await agents.ingestExtensionLifecycle(identity, providerId, "1", undefined, events);
+    assert.match(result.failure, /(transition|event is invalid)/);
+    assert.equal(agents.getSnapshot().revision, revision);
+  }
+  await agents.stop();
+});
