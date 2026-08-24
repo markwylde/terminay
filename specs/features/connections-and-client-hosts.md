@@ -181,7 +181,10 @@ status must not be conflated with terminal or agent attention.
   indicator. The dots use five fixed, contrasting colours from the tab hue
   palette and enter in sequence. Local embedded-server startup has no text,
   while remote connections also show a short status message. Native window
-  controls never overlap it. The originating window keeps its existing server
+  controls never overlap it. The initial document paints this loading state
+  before the renderer bundle evaluates, so startup never presents an empty
+  window. If the renderer cannot bootstrap, it replaces the loading state with
+  a visible reload action. The originating window keeps its existing server
   binding during that handoff.
 - Multiple windows may target the same server and different logical workspace
   views. Other windows may simultaneously target other servers.
