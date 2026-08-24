@@ -10,6 +10,12 @@ export const EXTENSION_LIMITS = Object.freeze({
   contributions: 32,
   permissions: 32,
   dependencies: 32,
+  /** Public target operations declared by one project-environment provider. */
+  providerDependencyOperations: 32,
+  providerDependencyOperationNameLength: 128,
+  /** JSON data sent to, or returned from, a dependency provider. */
+  providerDependencyPayloadBytes: 256 * 1024,
+  providerDependencyResultBytes: 256 * 1024,
   formSections: 32,
   formFields: 128,
   fieldOptions: 256,
@@ -59,6 +65,8 @@ export const EXTENSION_LIMITS = Object.freeze({
 
 export const EXTENSION_ID_PATTERN = /^[a-z0-9](?:[a-z0-9.-]{1,126}[a-z0-9])?$/;
 export const LOCAL_ID_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
+/** Dot-separated, provider-owned public operation names; never commands. */
+export const PROVIDER_DEPENDENCY_OPERATION_PATTERN = /^[a-z][a-z0-9-]{0,63}(?:\.[a-z][a-z0-9-]{0,63})*$/;
 export const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 export function namespacedId(extensionId: string, localId: string): string {

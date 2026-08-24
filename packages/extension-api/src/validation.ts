@@ -3,6 +3,7 @@ import {
   ENVIRONMENT_VARIABLE_NAME_PATTERN,
   EXTENSION_LIMITS,
   LOCAL_ID_PATTERN,
+  PROVIDER_DEPENDENCY_OPERATION_PATTERN,
   isNamespacedId,
 } from "./constants.js";
 import type {
@@ -25,11 +26,18 @@ import type {
   AgentEnvironmentRelativePathRequest,
   ExtensionPermission,
   FormField,
+  JsonValue,
   OptionSourceResult,
   ProgressPresentation,
   ProvisioningResult,
   ProjectEnvironmentContribution,
   ProviderDefinition,
+  ProviderDependencyCallContext,
+  ProviderDependencyCaller,
+  ProviderDependencyHandler,
+  ProviderDependencyOperation,
+  ProviderDependencyRequest,
+  ProviderDependencyTargetRequest,
   ProviderEnvironmentStatus,
   SshAgentIdentity,
   SshAgentSignature,
@@ -159,7 +167,7 @@ function validateContributions(value: unknown, extensionId: string, out: SchemaI
   value.forEach((item, index) => {
     const path = `$.contributes.projectEnvironments[${index}]`;
     if (!record(item)) { out.push({ path, code: "invalid_type", message: "Expected an object" }); return; }
-    closed(item, new Set(["id", "displayName", "description", "icon", "capabilities"]), path, out);
+    closed(item, new Set(["id", "displayName", "description", "icon", "capabilities", "dependencyOperations"]), path, out);
     if (string(item.id, `${path}.id`, out, EXTENSION_LIMITS.providerIdLength) && !isNamespacedId(item.id, extensionId)) out.push({ path: `${path}.id`, code: "invalid_namespace", message: "Provider id must be namespaced by the extension id" });
     string(item.displayName, `${path}.displayName`, out, EXTENSION_LIMITS.displayNameLength);
     if (!Array.isArray(item.capabilities) || item.capabilities.length === 0) out.push({ path: `${path}.capabilities`, code: "invalid_array", message: "Expected capabilities" });
@@ -167,6 +175,7 @@ function validateContributions(value: unknown, extensionId: string, out: SchemaI
       unique(item.capabilities, `${path}.capabilities`, out);
       item.capabilities.forEach((capability, capabilityIndex) => { if (!capabilities.has(String(capability))) out.push({ path: `${path}.capabilities[${capabilityIndex}]`, code: "unknown_capability", message: "Unknown capability" }); });
     }
+    if (item.dependencyOperations !== undefined) validateProviderDependencyOperationsInto(item.dependencyOperations, `${path}.dependencyOperations`, out);
     ids.push(item.id);
   });
   unique(ids, "$.contributes.projectEnvironments", out);
@@ -407,6 +416,140 @@ export function validateProviderDefinition(value: unknown): ValidationResult<Pro
     if (!result.ok) out.push(...result.issues.map((issue) => ({ ...issue, path: `$.${key}${issue.path.slice(1)}` })));
   }
   return out.length === 0 ? { ok: true, value: value as unknown as ProviderDefinition } : { ok: false, issues: out };
+}
+
+/** Validates one manifest-declared, provider-owned dependency operation. */
+export function validateProviderDependencyOperation(value: unknown): ValidationResult<ProviderDependencyOperation> {
+  const out: SchemaIssue[] = [];
+  validateProviderDependencyOperationInto(value, "$", out);
+  return out.length === 0 ? { ok: true, value: value as ProviderDependencyOperation } : { ok: false, issues: out };
+}
+
+/** Validates a closed caller-side request before the host routes it. */
+export function validateProviderDependencyRequest(value: unknown): ValidationResult<ProviderDependencyRequest> {
+  const out: SchemaIssue[] = [];
+  if (!record(value)) return invalidObject();
+  closed(value, new Set(["providerId", "operation", "payload"]), "$", out);
+  validateProviderDependencyProviderId(value.providerId, "$.providerId", out);
+  validateProviderDependencyOperationName(value.operation, "$.operation", out);
+  ensureProviderDependencyJson(value.payload, "$.payload", EXTENSION_LIMITS.providerDependencyPayloadBytes, out);
+  return out.length === 0 ? { ok: true, value: value as unknown as ProviderDependencyRequest } : { ok: false, issues: out };
+}
+
+/** Validates the host-authenticated caller identity delivered to a target. */
+export function validateProviderDependencyCaller(value: unknown): ValidationResult<ProviderDependencyCaller> {
+  const out: SchemaIssue[] = [];
+  validateProviderDependencyCallerInto(value, "$", out);
+  return out.length === 0 ? { ok: true, value: value as ProviderDependencyCaller } : { ok: false, issues: out };
+}
+
+/** Validates a closed target-side request. Caller identity is host-supplied. */
+export function validateProviderDependencyTargetRequest(value: unknown): ValidationResult<ProviderDependencyTargetRequest> {
+  const out: SchemaIssue[] = [];
+  if (!record(value)) return invalidObject();
+  closed(value, new Set(["operation", "payload", "caller"]), "$", out);
+  validateProviderDependencyOperationName(value.operation, "$.operation", out);
+  ensureProviderDependencyJson(value.payload, "$.payload", EXTENSION_LIMITS.providerDependencyPayloadBytes, out);
+  validateProviderDependencyCallerInto(value.caller, "$.caller", out);
+  return out.length === 0 ? { ok: true, value: value as unknown as ProviderDependencyTargetRequest } : { ok: false, issues: out };
+}
+
+/** Validates host-propagated deadline, cancellation, and mutation context. */
+export function validateProviderDependencyCallContext(value: unknown): ValidationResult<ProviderDependencyCallContext> {
+  const out: SchemaIssue[] = [];
+  if (!record(value)) return invalidObject();
+  closed(value, new Set(["deadlineAt", "signal", "idempotencyKey", "expectedRevision"]), "$", out);
+  if (typeof value.deadlineAt !== "string" || value.deadlineAt.length > 64 || Number.isNaN(Date.parse(value.deadlineAt))) out.push({ path: "$.deadlineAt", code: "invalid_deadline", message: "Expected an ISO-8601 deadline" });
+  if (!record(value.signal) || typeof value.signal.aborted !== "boolean" || typeof value.signal.throwIfAborted !== "function") out.push({ path: "$.signal", code: "invalid_signal", message: "Expected a cancellation signal" });
+  if (value.idempotencyKey !== undefined) string(value.idempotencyKey, "$.idempotencyKey", out, 256);
+  if (value.expectedRevision !== undefined && (!Number.isSafeInteger(value.expectedRevision) || Number(value.expectedRevision) < 0)) out.push({ path: "$.expectedRevision", code: "invalid_revision", message: "Expected a non-negative integer" });
+  return out.length === 0 ? { ok: true, value: value as unknown as ProviderDependencyCallContext } : { ok: false, issues: out };
+}
+
+/** Validates provider-owned JSON returned through the target dependency boundary. */
+export function validateProviderDependencyResult(value: unknown): ValidationResult<JsonValue> {
+  const out: SchemaIssue[] = [];
+  ensureProviderDependencyJson(value, "$", EXTENSION_LIMITS.providerDependencyResultBytes, out);
+  return out.length === 0 ? { ok: true, value: value as JsonValue } : { ok: false, issues: out };
+}
+
+/** Runtime shape validation for an activation-time dependency target handler. */
+export function validateProviderDependencyHandler(value: unknown): ValidationResult<ProviderDependencyHandler> {
+  const out: SchemaIssue[] = [];
+  if (!record(value)) return invalidObject();
+  closed(value, new Set(["call"]), "$", out);
+  if (typeof value.call !== "function") out.push({ path: "$.call", code: "invalid_type", message: "Expected a dependency handler function" });
+  return out.length === 0 ? { ok: true, value: value as unknown as ProviderDependencyHandler } : { ok: false, issues: out };
+}
+
+function validateProviderDependencyOperationsInto(value: unknown, path: string, out: SchemaIssue[]): void {
+  if (!Array.isArray(value) || value.length === 0 || value.length > EXTENSION_LIMITS.providerDependencyOperations) {
+    out.push({ path, code: "invalid_array", message: "Expected one or more bounded dependency operations" });
+    return;
+  }
+  const names: unknown[] = [];
+  value.forEach((operation, index) => {
+    validateProviderDependencyOperationInto(operation, `${path}[${index}]`, out);
+    if (record(operation)) names.push(operation.name);
+  });
+  unique(names, path, out);
+}
+
+function validateProviderDependencyOperationInto(value: unknown, path: string, out: SchemaIssue[]): void {
+  if (!record(value)) { out.push({ path, code: "invalid_type", message: "Expected an operation object" }); return; }
+  closed(value, new Set(["name"]), path, out);
+  validateProviderDependencyOperationName(value.name, `${path}.name`, out);
+}
+
+function validateProviderDependencyOperationName(value: unknown, path: string, out: SchemaIssue[]): void {
+  if (string(value, path, out, EXTENSION_LIMITS.providerDependencyOperationNameLength) && !PROVIDER_DEPENDENCY_OPERATION_PATTERN.test(value)) {
+    out.push({ path, code: "invalid_operation", message: "Expected a bounded dot-separated provider operation name" });
+  }
+}
+
+function validateProviderDependencyProviderId(value: unknown, path: string, out: SchemaIssue[]): void {
+  if (!string(value, path, out, EXTENSION_LIMITS.providerIdLength)) return;
+  const separator = value.lastIndexOf("/");
+  if (separator <= 0 || !EXTENSION_ID_PATTERN.test(value.slice(0, separator)) || !LOCAL_ID_PATTERN.test(value.slice(separator + 1))) {
+    out.push({ path, code: "invalid_provider_id", message: "Expected an extension-namespaced provider id" });
+  }
+}
+
+function validateProviderDependencyCallerInto(value: unknown, path: string, out: SchemaIssue[]): void {
+  if (!record(value)) { out.push({ path, code: "invalid_type", message: "Expected a caller identity" }); return; }
+  closed(value, new Set(["extensionId", "providerId"]), path, out);
+  if (string(value.extensionId, `${path}.extensionId`, out, EXTENSION_LIMITS.extensionIdLength) && !EXTENSION_ID_PATTERN.test(value.extensionId)) {
+    out.push({ path: `${path}.extensionId`, code: "invalid_extension_id", message: "Expected a valid extension id" });
+  }
+  validateProviderDependencyProviderId(value.providerId, `${path}.providerId`, out);
+  if (typeof value.extensionId === "string" && typeof value.providerId === "string" && !value.providerId.startsWith(`${value.extensionId}/`)) {
+    out.push({ path: `${path}.providerId`, code: "caller_provider_mismatch", message: "Caller provider must be owned by the caller extension" });
+  }
+}
+
+function ensureProviderDependencyJson(value: unknown, path: string, maximumBytes: number, out: SchemaIssue[]): void {
+  const initialIssueCount = out.length;
+  ensureJson(value, path, out);
+  if (out.length !== initialIssueCount) return;
+  if (!hasOnlyJsonContainers(value)) {
+    out.push({ path, code: "invalid_json", message: "Expected plain JSON arrays and objects" });
+    return;
+  }
+  let serialized: string;
+  try { serialized = JSON.stringify(value); } catch { out.push({ path, code: "invalid_json", message: "Expected serializable JSON-safe data" }); return; }
+  if (serialized === undefined || new TextEncoder().encode(serialized).byteLength > maximumBytes) {
+    out.push({ path, code: "limit_exceeded", message: `JSON data exceeds ${maximumBytes} bytes` });
+  }
+}
+
+function hasOnlyJsonContainers(value: unknown, seen = new WeakSet<object>()): boolean {
+  if (value === null || typeof value !== "object") return true;
+  if (seen.has(value)) return true;
+  seen.add(value);
+  if (Array.isArray(value)) return value.every((item) => hasOnlyJsonContainers(item, seen));
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return false;
+  return Object.values(value).every((item) => hasOnlyJsonContainers(item, seen));
 }
 
 export function validateOptionSourceResult(value: unknown): ValidationResult<OptionSourceResult> {

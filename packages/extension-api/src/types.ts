@@ -37,6 +37,17 @@ export interface ProjectEnvironmentContribution {
   description?: string;
   icon?: ExtensionIcon;
   capabilities: EnvironmentCapability[];
+  /**
+   * Provider-owned public operations that compatible dependent extensions may
+   * request through the host. The operation DTO schemas remain provider-owned
+   * JSON; this declaration is the host authorization allowlist.
+   */
+  dependencyOperations?: ProviderDependencyOperation[];
+}
+
+/** One public, host-authorized operation exposed by a provider dependency. */
+export interface ProviderDependencyOperation {
+  name: string;
 }
 
 /** A capability an agent extension needs from the terminal's exact environment. */
@@ -323,17 +334,48 @@ export interface ProviderSshAgentBroker {
 }
 
 export interface ProviderDependencyRequest {
+  /** The manifest-contributed provider to call, not an extension module path. */
   providerId: string;
   operation: string;
   payload: JsonValue;
 }
 
+/** Host-authenticated identity of the extension/provider making a dependency call. */
+export interface ProviderDependencyCaller {
+  extensionId: string;
+  providerId: string;
+}
+
+/** Bounded call context propagated unchanged to the target handler. */
+export interface ProviderDependencyCallContext {
+  /** Absolute ISO-8601 deadline assigned by the host. */
+  deadlineAt: string;
+  signal: CancellationSignal;
+  /** Present for retryable mutations and stable across retries. */
+  idempotencyKey?: string;
+  /** Optimistic-concurrency revision for mutations of existing target state. */
+  expectedRevision?: number;
+}
+
+/** Request delivered to a target provider after host authorization. */
+export interface ProviderDependencyTargetRequest {
+  operation: string;
+  payload: JsonValue;
+  /** Supplied by the host; a target must not trust caller-provided identity. */
+  caller: ProviderDependencyCaller;
+}
+
+/**
+ * Target-side public contract for a provider dependency. The host dispatches
+ * only operations declared by the target provider's manifest contribution and
+ * only from an extension that declares a compatible dependency.
+ */
+export interface ProviderDependencyHandler {
+  call(request: ProviderDependencyTargetRequest, context: ProviderDependencyCallContext): Promise<JsonValue>;
+}
+
 export interface ProviderDependencyBroker {
-  call(request: ProviderDependencyRequest, context: {
-    deadlineAt: string;
-    signal: CancellationSignal;
-    idempotencyKey?: string;
-  }): Promise<JsonValue>;
+  call(request: ProviderDependencyRequest, context: ProviderDependencyCallContext): Promise<JsonValue>;
 }
 
 export interface ProfileValuesRequest {
@@ -447,6 +489,8 @@ export interface ProviderRuntimeReply {
 export interface ProviderRegistration {
   definition: ProviderDefinition;
   runtime: ProviderRuntime;
+  /** Optional target handler for this provider's manifest-declared dependency operations. */
+  dependencyOperations?: ProviderDependencyHandler;
 }
 
 export interface CancellationSignal {
