@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { AgentProviderContribution } from "@terminay/extension-api";
 import { THIS_SERVER_ENVIRONMENT_ID } from "../workspace.js";
 import type { ProjectEnvironmentBinding, ProjectEnvironmentRouter } from "../projectEnvironment/router.js";
@@ -81,8 +82,13 @@ export class ExtensionAgentRuntimeRegistry {
   constructor(private readonly options: ExtensionAgentRuntimeRegistryOptions) {
     this.localObservationCapabilities = Object.freeze([...(options.localObservationCapabilities ?? LOCAL_CAPABILITIES)]);
     this.platform = options.platform ?? platformName();
-    this.makeContextId = options.contextId ?? ((identity, incarnation) =>
-      `extension-agent:${identity.serverId}:${identity.projectId}:${identity.sessionId}:${incarnation}`);
+    // Context ids are opaque, live authority capabilities—not a derivation of
+    // user-restorable project/session labels. A fresh registry nonce prevents
+    // two simultaneous server processes with identical persisted labels from
+    // ever minting the same extension-host handle.
+    const authorityNonce = randomBytes(18).toString("base64url");
+    this.makeContextId = options.contextId ?? ((_identity, incarnation) =>
+      `extension-agent:${authorityNonce}:${incarnation}`);
     this.reobserveDebounceMs = Math.max(0, options.reobserveDebounceMs ?? 100);
     this.topologyPollIntervalMs = Math.max(100, options.topologyPollIntervalMs ?? 1_500);
     this.schedule = options.schedule ?? ((callback, milliseconds) => setTimeout(callback, milliseconds));
@@ -103,9 +109,25 @@ export class ExtensionAgentRuntimeRegistry {
   /** Claims a matching local terminal synchronously, then performs the child
    * IPC admission in the background. Returning true means legacy foreground
    * and journal mutations are now suppressed by AgentStatusService. */
-  foregroundProcessChanged(identity: ActivitySessionIdentity, processName: string): boolean {
+  foregroundProcessChanged(identity: ActivitySessionIdentity, processName: string, shellForeground = false): boolean {
     const terminal = this.requireTerminal(identity);
     terminal.lastProcessName = processName;
+    // A provider journal may be shared by a later `resume` in another
+    // Terminay authority.  Once this exact PTY returns to its shell, its
+    // descendant proof has ended and its observer must be revoked immediately;
+    // otherwise the old child can keep following the global provider journal
+    // and project a subsequent writer's events into this terminal.
+    if (shellForeground) {
+      const previous = terminal.context;
+      if (previous === undefined) return false;
+      this.clearTimers(terminal);
+      terminal.context = undefined;
+      terminal.incarnation += 1;
+      try { this.options.agents.releaseExtensionProvider(terminal.identity, previous.providerId); }
+      catch { /* terminal exit/replacement can race foreground observation */ }
+      void this.options.hosts.cancelAgentTerminal({ contextId: previous.contextId, reason: "terminal-replaced" }).catch(() => undefined);
+      return false;
+    }
     const contribution = this.match(processName, identity);
     if (terminal.context !== undefined) {
       if (contribution?.id === terminal.context.providerId) this.scheduleReobserve(terminal, contribution, processName);

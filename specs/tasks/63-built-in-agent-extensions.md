@@ -820,6 +820,30 @@ fail only the affected extension and fail release validation.
 
 ## Acceptance checks
 
+- [ ] **Task 63 instance-authority isolation:** reproduce with two isolated
+  Desktop profiles and two concurrent Server Core compositions. They may use
+  the same project display name, project id, terminal session id, provider
+  session id, and extension package; a lifecycle event admitted by one
+  authority never appears in the other authority's snapshot or subscription.
+- [ ] **Task 63 immutable scope fencing:** prove publication, acknowledgement,
+  replay, and observation resolution each require the exact server, project,
+  terminal session, and terminal incarnation issued by their owning authority.
+  Equal project names and reused terminal ids are never a substitute for a
+  server-instance match.
+- [ ] **Task 63 public-runtime isolation:** prove the extension host accepts
+  only a context minted by its own selected Server runtime and that a matching
+  context string from another server/profile cannot publish, observe, cancel,
+  or subscribe across that runtime.
+- [ ] **Task 63 endpoint/server isolation:** give every implicit embedded or
+  standalone server a stable data-root-scoped identity. Two `terminay-server`
+  processes with separate roots and endpoints must not default to a shared
+  server identity; an explicit `--server-id` remains an intentional operator
+  choice and is rejected when its endpoint/data-root ownership is inconsistent.
+- [ ] **Task 63 Docker Electron proof:** run the required Docker Electron E2E
+  with two simultaneous isolated application profiles that intentionally open
+  identically named projects and terminal ids, publish distinct root/subagent
+  lifecycle state, and assert each Agents panel renders only its own state.
+
 - `rg`/dependency-graph gates find no provider-specific agent implementation in
   Server Core, Electron, client-core, or renderer code.
 - All six built-ins are independently packable public npm projects and import

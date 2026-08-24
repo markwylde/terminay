@@ -569,6 +569,51 @@ test("a running extension manager exposes its agent provider and admits the exac
   await manager.shutdown();
 });
 
+test("a shell return cancels the real extension-child observer before its journal can outlive the PTY", async (t) => {
+  const descriptor = await fixture("example.agent-shell-return", `export function activate(context) {
+    context.agents.registerProvider("example.agent-shell-return/cli", {
+      mappingVersion: "0.1", matchesForeground() { return true; },
+      async observe() { return { state: "not-bound" }; }
+    });
+  }`);
+  descriptor.permissions = ["agent-observation"];
+  descriptor.agentProviders = [{
+    id: "example.agent-shell-return/cli", displayName: "Shell return fixture",
+    processMatchers: [{ executableName: "codex" }],
+    requiredEnvironmentCapabilities: [],
+  }];
+  const manager = new ExtensionHostManager({
+    broker: { async request() {} },
+    agents: { async observe() { return {}; }, async publish(request) { return { acceptedEventCount: request.events.length }; } },
+  });
+  const identity = { serverId: "server-shell-return", projectId: "project-shell-return", sessionId: "terminal-shell-return" };
+  const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
+  const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
+  t.after(async () => { await manager.shutdown().catch(() => undefined); await agents.stop().catch(() => undefined); });
+  await manager.start(descriptor);
+  const admitted = [];
+  const runtime = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: {
+      agentProviderContributions: () => manager.agentProviderContributions(),
+      async admitAgentTerminal(value) { admitted.push(value); return manager.admitAgentTerminal(value); },
+      cancelAgentTerminal: (value) => manager.cancelAgentTerminal(value),
+      drainAgentObservers: (reason) => manager.drainAgentObservers(reason),
+    },
+  });
+  runtime.register(identity);
+  assert.equal(runtime.foregroundProcessChanged(identity, "codex"), true);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(admitted.length, 1);
+  const contextId = admitted[0].context.contextId;
+
+  assert.equal(runtime.foregroundProcessChanged(identity, "zsh", true), false);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(runtime.observationTerminal(admitted[0].context), undefined);
+  assert.equal(await manager.cancelAgentTerminal({ contextId, reason: "terminal-replaced" }), false,
+    "the runtime's shell-return cancellation reached the child-owned context exactly once");
+});
+
 test("agent registration fails closed when a child registers a provider not declared by its manifest", async () => {
   const descriptor = await fixture("example.agent-undeclared", `export function activate(context) {
     context.agents.registerProvider("example.agent-undeclared/other", { mappingVersion: "0.1", matchesForeground() { return true; }, async observe() { return { state: "not-bound" }; } });
