@@ -1,0 +1,30 @@
+{
+  "name": "@terminay/agent-provider-conformance-fixture",
+  "version": "1.0.0",
+  "description": "Independent third-party agent extension conformance fixture.",
+  "license": "MIT",
+  "type": "module",
+  "exports": { ".": "./dist/extension.js" },
+  "files": ["dist", "README.md"],
+  "peerDependencies": { "@terminay/extension-api": "^1.1.0" },
+  "terminay": {
+    "manifestVersion": 1,
+    "id": "dev.terminay.agent-fixture",
+    "displayName": "Fixture Agent",
+    "description": "A portable agent-provider conformance fixture.",
+    "api": "^1.1.0",
+    "engines": { "terminay": ">=1.0.0", "node": ">=24" },
+    "entrypoint": "dist/extension.js",
+    "permissions": ["agent-observation"],
+    "contributes": {
+      "agentProviders": [{
+        "id": "dev.terminay.agent-fixture/fixture",
+        "displayName": "Fixture Agent",
+        "icon": "terminal",
+        "processMatchers": [{ "executableName": "fixture-agent" }],
+        "mappings": [{ "mappingVersion": "1", "providerVersionRange": ">=1" }],
+        "requiredEnvironmentCapabilities": ["process-observation", "filesystem-observation", "agent-journal"]
+      }]
+    }
+  }
+}
