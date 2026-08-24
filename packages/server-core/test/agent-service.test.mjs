@@ -85,3 +85,17 @@ test("lifecycle publications reject invalid transitions atomically with sequence
   }
   await agents.stop();
 });
+
+test("publication bounds and retirement reject late events without touching unrelated providers",async()=>{
+  const activity=new TerminalActivityService({serverId:identity.serverId});const other={...identity,sessionId:"terminal-2"};activity.register(identity);activity.register(other);
+  const agents=new AgentStatusService({activity,now:()=>1000});await agents.start();agents.register(identity);agents.register(other);
+  const otherProvider="example.other/test";agents.claimExtensionProvider(identity,providerId);agents.claimExtensionProvider(other,otherProvider);
+  const otherBinding={...binding,providerSessionId:"other-session"};
+  await agents.ingestExtensionLifecycle(identity,providerId,"1",binding,[{kind:"session.started"}]);
+  await agents.ingestExtensionLifecycle(other,otherProvider,"1",otherBinding,[{kind:"session.started",title:"Healthy"}]);
+  const before=agents.getSnapshot();const oversized=await agents.ingestExtensionLifecycle(identity,providerId,"1",undefined,Array.from({length:65},(_,index)=>({kind:"turn.started",turnId:`turn-${index}`})));
+  assert.match(oversized.failure,/publication is invalid/);assert.strictEqual(agents.getSnapshot(),before);
+  assert.equal(agents.releaseExtensionProvider(identity,providerId),true);const retired=agents.getSnapshot();
+  const late=await agents.ingestExtensionLifecycle(identity,providerId,"1",undefined,[{kind:"turn.started",turnId:"late"}]);assert.match(late.failure,/does not own/);assert.strictEqual(agents.getSnapshot(),retired);
+  const healthy=Object.values(agents.getSnapshot().entries).find((entry)=>entry.provider===otherProvider);assert.equal(healthy.active,true);assert.equal(healthy.displayName,"Healthy");await agents.stop();
+});

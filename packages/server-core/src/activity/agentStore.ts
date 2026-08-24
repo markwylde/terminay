@@ -201,7 +201,10 @@ export class AgentStatusStore {
       next = reduced;
     }
     if (next === this.snapshot) return false;
-    this.publish(next);
+    // Preflight above guarantees the whole batch is reducible before the first
+    // observer notification. Preserve one canonical journal revision per
+    // lifecycle event for connected clients and replay cursors.
+    for (const event of events) this.publish(reduceAgentStatusSnapshot(this.snapshot, event));
     return true;
   }
 
