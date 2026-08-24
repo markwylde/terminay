@@ -89,8 +89,11 @@ export class ManagedBindingService {
     if (existing) return { bindingId: id, publicKey: existing.publicKey };
     const logicalHostIdentity = optionalText(input.logicalHostIdentityHint) ?? `puzed:${ownerProfileId}:pending:${operationId}`;
     const generated = generateKeyPairSync("ed25519");
-    const privateKey = new Uint8Array(generated.privateKey.export({ format: "der", type: "pkcs8" }) as Buffer);
-    const publicKey = opensshPublicKey(generated.publicKey.export({ format: "der", type: "spki" }) as Buffer, `terminay-puzed-ssh:${id}`);
+    const spki = generated.publicKey.export({ format: "der", type: "spki" }) as Buffer;
+    const pkcs8 = generated.privateKey.export({ format: "der", type: "pkcs8" }) as Buffer;
+    const comment = `terminay-puzed-ssh:${id}`;
+    const privateKey = new Uint8Array(Buffer.from(opensshPrivateKey(spki, pkcs8, comment), "utf8"));
+    const publicKey = opensshPublicKey(spki, comment);
     const stored = await context.vault.put({ bindingKey: id, purpose: PURPOSE, value: privateKey, idempotencyKey });
     privateKey.fill(0);
     const binding: ManagedBinding = { id, ownerProfileId, profileId: `managed:${id}`, publicKey, vaultBinding: stored.binding, vaultRevision: stored.revision, revision: 1, logicalHostIdentity };
@@ -114,14 +117,20 @@ export class ManagedBindingService {
   }
 
   private async verify(input: Record<string, unknown>, context: ProviderDependencyTargetContext): Promise<JsonValue> {
-    const binding = this.binding(input); this.assertReady(binding);
+    const binding = this.binding(input); this.assertExpected(binding, context); this.assertReady(binding);
     if (!this.#runtime.invokeService) throw new SshProviderError("unsupported", "SSH services are unavailable");
-    const resolved = await this.#runtime.invokeService({ ...environmentRequest(binding), capability: "filesystem", operation: "resolveRoot", projectId: `managed:${binding.id}`, environmentRevision: binding.revision, input: { root: binding.root! } }, targetCallContext(binding, context)) as Record<string, JsonValue>;
-    return { state: "ready", bindingId: binding.id, revision: binding.revision, canonicalRoot: typeof resolved.root === "string" ? resolved.root : binding.root!, logicalHostIdentity: binding.logicalHostIdentity };
+    try {
+      const resolved = await this.#runtime.invokeService({ ...environmentRequest(binding), capability: "filesystem", operation: "resolveRoot", projectId: `managed:${binding.id}`, environmentRevision: binding.revision, input: { root: binding.root! } }, targetCallContext(binding, context)) as Record<string, JsonValue>;
+      return { state: "ready", bindingId: binding.id, revision: binding.revision, canonicalRoot: typeof resolved.root === "string" ? resolved.root : binding.root!, logicalHostIdentity: binding.logicalHostIdentity };
+    } catch (error) {
+      if (!(error instanceof SshProviderError) || !["host-key-approval-required", "host-key-mismatch"].includes(error.code)) throw error;
+      const details = record(json(error.details ?? {}));
+      return { state: "trust-required", bindingId: binding.id, revision: binding.revision, challengeId: typeof details.challengeId === "string" ? details.challengeId : "", fingerprint: typeof details.fingerprint === "string" ? details.fingerprint : "", algorithm: typeof details.algorithm === "string" ? details.algorithm : "unknown", changed: error.code === "host-key-mismatch" };
+    }
   }
 
   private async approveTrust(input: Record<string, unknown>, context: ProviderDependencyTargetContext): Promise<JsonValue> {
-    const binding = this.binding(input); this.assertReady(binding);
+    const binding = this.binding(input); this.assertExpected(binding, context); this.assertReady(binding);
     const action = input.action === "approve" ? "trust-host" : input.action === "replace" ? "replace-host-key" : undefined;
     if (!action) throw new SshProviderError("invalid-input", "SSH trust action is invalid");
     const result = await this.#runtime.invokeAction({ ...environmentRequest(binding), actionId: action, values: { challengeId: text(input.challengeId, "challengeId") } }, targetCallContext(binding, context));
@@ -132,7 +141,7 @@ export class ManagedBindingService {
   }
 
   private async service(input: Record<string, unknown>, context: ProviderDependencyTargetContext): Promise<JsonValue> {
-    const binding = this.binding(input); this.assertReady(binding);
+    const binding = this.binding(input); this.assertExpected(binding, context); this.assertReady(binding);
     const expectedRevision = integer(input.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER);
     if (expectedRevision !== binding.revision) throw new SshProviderError("conflict", "SSH managed binding revision changed");
     if (!this.#runtime.invokeService) throw new SshProviderError("unsupported", "SSH services are unavailable");
@@ -142,13 +151,14 @@ export class ManagedBindingService {
   }
 
   private async remove(input: Record<string, unknown>, context: ProviderDependencyTargetContext): Promise<JsonValue> {
-    const binding = this.binding(input); const idempotencyKey = requiredIdempotency(context);
+    const binding = this.binding(input); this.assertExpected(binding, context); const idempotencyKey = requiredIdempotency(context);
     await context.vault.remove({ binding: binding.vaultBinding, idempotencyKey, expectedRevision: binding.vaultRevision });
     const profile = tryProfile(this.#profiles, binding.profileId); if (profile) await this.#profiles.remove(binding.profileId, profile.revision, "puzed-dependency");
     delete this.#state.bindings[binding.id]; await this.persist(); return { state: "deleted" };
   }
 
   private binding(input: Record<string, unknown>): ManagedBinding { const id = text(input.bindingId, "bindingId"); const value = this.#state.bindings[id]; if (!value) throw new SshProviderError("profile-not-found", "SSH managed binding was not found"); return value; }
+  private assertExpected(binding: ManagedBinding, context: ProviderDependencyTargetContext): void { if (context.expectedRevision !== undefined && context.expectedRevision !== binding.revision) throw new SshProviderError("conflict", "SSH managed binding revision changed"); }
   private assertReady(binding: ManagedBinding): asserts binding is ManagedBinding & Required<Pick<ManagedBinding, "host" | "port" | "username" | "root">> { if (!binding.host || !binding.port || !binding.username || !binding.root) throw new SshProviderError("invalid-input", "SSH managed binding is not connected to a machine"); }
   private async persist(): Promise<void> { const value = JSON.stringify(this.#state, null, 2); this.#writes = this.#writes.then(async () => { await mkdir(dirname(this.#file), { recursive: true }); const temp = `${this.#file}.${process.pid}.${randomUUID()}.tmp`; await writeFile(temp, value, { mode: 0o600 }); await rename(temp, this.#file); }); await this.#writes; }
 }
@@ -166,6 +176,7 @@ function environmentRequest(binding: ManagedBinding) { if (!binding.profileRevis
 function tryProfile(store: ProfileStore, id: string) { try { return store.get(id); } catch { return undefined; } }
 function requiredIdempotency(context: ProviderDependencyTargetContext): string { if (!context.idempotencyKey) throw new SshProviderError("invalid-input", "SSH managed binding mutation requires idempotency"); return context.idempotencyKey; }
 function opensshPublicKey(spki: Buffer, comment: string): string { const key = spki.subarray(spki.length - 32); const part = (value: Buffer) => { const size = Buffer.alloc(4); size.writeUInt32BE(value.length); return Buffer.concat([size, value]); }; return `ssh-ed25519 ${Buffer.concat([part(Buffer.from("ssh-ed25519")), part(key)]).toString("base64")} ${comment}`; }
+function opensshPrivateKey(spki: Buffer, pkcs8: Buffer, comment: string): string { const publicKey = spki.subarray(spki.length - 32); const seed = pkcs8.subarray(pkcs8.length - 32); const u32 = (value: number) => { const buffer = Buffer.alloc(4); buffer.writeUInt32BE(value); return buffer; }; const part = (value: Buffer) => Buffer.concat([u32(value.length), value]); const type = Buffer.from("ssh-ed25519"); const publicBlob = Buffer.concat([part(type), part(publicKey)]); const check = Number.parseInt(randomUUID().replaceAll("-", "").slice(0, 8), 16); let privateBlob = Buffer.concat([u32(check), u32(check), part(type), part(publicKey), part(Buffer.concat([seed, publicKey])), part(Buffer.from(comment))]); privateBlob = Buffer.concat([privateBlob, Buffer.from(Array.from({ length: (8 - (privateBlob.length % 8)) % 8 || 8 }, (_, index) => index + 1))]); const body = Buffer.concat([Buffer.from("openssh-key-v1\0"), part(Buffer.from("none")), part(Buffer.from("none")), part(Buffer.alloc(0)), u32(1), part(publicBlob), part(privateBlob)]).toString("base64").match(/.{1,70}/gu)?.join("\n") ?? ""; return `-----BEGIN OPENSSH PRIVATE KEY-----\n${body}\n-----END OPENSSH PRIVATE KEY-----\n`; }
 function record(value: JsonValue): Record<string, unknown> { if (!value || typeof value !== "object" || Array.isArray(value)) throw new SshProviderError("invalid-input", "SSH managed-binding input must be an object"); return value; }
 function json(value: unknown): JsonValue { if (value === undefined) return null; return JSON.parse(JSON.stringify(value)) as JsonValue; }
 function text(value: unknown, name: string): string { if (typeof value !== "string" || !value || value.length > 512 || value.includes("\0")) throw new SshProviderError("invalid-input", `Invalid ${name}`); return value; }

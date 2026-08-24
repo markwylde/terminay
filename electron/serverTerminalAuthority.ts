@@ -47,7 +47,7 @@ import { OrderedEventJournal } from '../packages/server-core/src/events';
 import {
 	createDefaultExtensionManagement,
 	createThisServerAgentObservationAdapter,
-	createPuzedSshProductionExtensionManagement,
+	createProductionExtensionManagement,
 	ExtensionProjectEnvironmentRuntime,
 } from '../packages/server-core/src/extensions/index';
 import {
@@ -625,7 +625,7 @@ export class ServerTerminalAuthority {
 									: { childEntrypoint: options.extensionHostChildEntrypoint }),
 								...(options.builtInExtensionArtifactRoot === undefined ? {} : { builtInArtifactRoot: options.builtInExtensionArtifactRoot }),
 							})
-						: createPuzedSshProductionExtensionManagement({
+						: createProductionExtensionManagement({
 								dataRoot: options.dataRoot,
 								authorityLabel: 'This server',
 								agents: broker,
@@ -635,7 +635,6 @@ export class ServerTerminalAuthority {
 								...(options.builtInExtensionArtifactRoot === undefined ? {} : { builtInArtifactRoot: options.builtInExtensionArtifactRoot }),
 								vault: options.vault,
 								projectEnvironments,
-								workspace: this.workspace,
 							});
 				if (management !== undefined) {
 						extensionAgents = new ExtensionAgentRuntimeRegistry({
@@ -663,7 +662,7 @@ export class ServerTerminalAuthority {
 				? undefined
 				: (
 						extensionManagement as ReturnType<
-							typeof createPuzedSshProductionExtensionManagement
+							typeof createProductionExtensionManagement
 						>
 					).profiles;
 		const parakeetProvider =

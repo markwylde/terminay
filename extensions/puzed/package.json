@@ -47,7 +47,7 @@
     "engines": { "terminay": ">=1.0.0", "node": ">=22" },
     "entrypoint": "dist/index.js",
     "permissions": ["configuration:read", "configuration:write", "data:read", "data:write", "network", "secrets:resolve", "provider:depend", "external-resources:manage"],
-    "extensionDependencies": [{ "extensionId": "com.terminay.ssh", "apiRange": "^1.0.0" }],
+    "extensionDependencies": [{ "extensionId": "com.terminay.ssh", "apiRange": "^1.1.0" }],
     "contributes": {
       "projectEnvironments": [{
         "id": "com.puzed.platform/vm",

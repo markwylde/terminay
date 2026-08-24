@@ -26,3 +26,19 @@ PUZED_OPENAPI_TYPES_SOURCE=/path/to/openapi.d.ts npm run refresh-openapi
 ```sh
 npm test
 ```
+
+## Install, compatibility, and troubleshooting
+
+Puzed ships built in, installed offline and enabled by default. Disable or
+re-enable it in **Extensions** settings without deleting profiles, vault
+bindings, jobs, or VMs; a compatible npm release may override the bundled
+floor. Create an environment, save its API key through Terminay's secret field,
+select a machine tagged exactly `system:Terminay`, and use its lifecycle
+actions. SSH is called only through its public provider dependency.
+
+Only the transient vault callback sees API-key bytes. This release manages
+existing tagged VMs and uses SSH for transport. It requires Extension API 1.1,
+Node.js 22+, and compatible SSH/OpenAPI contracts. Empty inventory usually
+means the account, key, or exact tag is wrong. Retry stuck work by durable
+operation id. Tests mock Platform traffic; there is no default real-cloud smoke
+because lifecycle actions can affect billable VMs.
