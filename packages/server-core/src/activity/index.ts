@@ -7,5 +7,6 @@ export * from "./agentStore.js";
 export * from "./agentService.js";
 export * from "./extensionAgentBridge.js";
 export * from "./extensionAgentRuntime.js";
+export * from "./extensionAgentObservationRouter.js";
 export * from "./agentProtocol.js";
 export * from "./protocol.js";

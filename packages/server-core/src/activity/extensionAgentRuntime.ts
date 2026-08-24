@@ -1,6 +1,6 @@
 import type { AgentProviderContribution } from "@terminay/extension-api";
 import { THIS_SERVER_ENVIRONMENT_ID } from "../workspace.js";
-import type { ProjectEnvironmentRouter } from "../projectEnvironment/router.js";
+import type { ProjectEnvironmentBinding, ProjectEnvironmentRouter } from "../projectEnvironment/router.js";
 import type { ExtensionHostManager } from "../extensions/manager.js";
 import type { ExtensionAgentTerminalCancellationReason } from "../extensions/types.js";
 import type { ExtensionAgentTerminalContext } from "../extensions/types.js";
@@ -41,6 +41,7 @@ interface TrackedTerminal {
   topologyTimer?: ReturnType<typeof setTimeout>;
   topologySignature?: string;
   topologyPolling?: boolean;
+  environmentBinding?: ProjectEnvironmentBinding;
 }
 
 const LOCAL_CAPABILITIES = Object.freeze(["process-observation", "filesystem-observation", "agent-journal"]);
@@ -78,7 +79,7 @@ export class ExtensionAgentRuntimeRegistry {
   register(identity: ActivitySessionIdentity): void {
     const current = this.terminals.get(identity.sessionId);
     if (current !== undefined && sameIdentity(current.identity, identity)) return;
-    this.terminals.set(identity.sessionId, { identity: Object.freeze({ ...identity }), incarnation: (current?.incarnation ?? 0) + 1 });
+    this.terminals.set(identity.sessionId, { identity: Object.freeze({ ...identity }), incarnation: (current?.incarnation ?? 0) + 1, environmentBinding: this.bindEnvironment(identity) });
   }
 
   terminalStarted(identity: ActivitySessionIdentity, shellPid: number): void {
@@ -124,7 +125,10 @@ export class ExtensionAgentRuntimeRegistry {
     });
     terminal.context = context;
     terminal.lastProcessName = processName;
-    void this.options.hosts.admitAgentTerminal({ context, observationCapabilities: this.localObservationCapabilities }).then(() => {
+    const observationCapabilities = context.projectEnvironmentId === THIS_SERVER_ENVIRONMENT_ID
+      ? this.localObservationCapabilities
+      : contribution.requiredEnvironmentCapabilities;
+    void this.options.hosts.admitAgentTerminal({ context, observationCapabilities }).then(() => {
       if (terminal.context === context) this.scheduleTopologyPoll(terminal);
     }).catch(() => {
       // The claim was synchronous so the legacy path did not see this exact
@@ -175,6 +179,35 @@ export class ExtensionAgentRuntimeRegistry {
     await this.options.hosts.drainAgentObservers(reason);
   }
 
+  /** Retire only contexts owned by a disabled/crashed provider. Other agent
+   * extensions continue observing their terminals. */
+  async retireProvider(providerId: string, reason: "provider-disabled" | "extension-stopped" = "provider-disabled"): Promise<number> {
+    const retiring = [...this.terminals.values()].filter((terminal) => terminal.context?.providerId === providerId);
+    for (const terminal of retiring) {
+      this.clearTimers(terminal);
+      const context = terminal.context!;
+      terminal.context = undefined;
+      await this.options.hosts.cancelAgentTerminal({ contextId: context.contextId, reason }).catch(() => undefined);
+      try { this.options.agents.releaseExtensionProvider(terminal.identity, providerId); } catch { /* already torn down */ }
+    }
+    return retiring.length;
+  }
+
+  /** Environment revisions are immutable terminal bindings. A revision change
+   * invalidates the old observer instead of silently following the project. */
+  environmentRevisionChanged(projectId: string): void {
+    for (const terminal of [...this.terminals.values()]) if (terminal.identity.projectId === projectId) this.terminalExited(terminal.identity, "terminal-replaced");
+  }
+
+  projectRemoved(projectId: string): void {
+    for (const terminal of [...this.terminals.values()]) if (terminal.identity.projectId === projectId) this.terminalExited(terminal.identity, "terminal-closed");
+  }
+
+  environmentBinding(context: ExtensionAgentTerminalContext): ProjectEnvironmentBinding | undefined {
+    const terminal = this.terminals.get(context.terminalSessionId);
+    return terminal?.context?.contextId === context.contextId ? terminal.environmentBinding : undefined;
+  }
+
   /** Resolve only a currently admitted, exact terminal context for the local
    * observation adapter. The extension never calls this directly. */
   observationTerminal(context: ExtensionAgentTerminalContext): ThisServerAgentTerminal | undefined {
@@ -192,7 +225,7 @@ export class ExtensionAgentRuntimeRegistry {
   private requireTerminal(identity: ActivitySessionIdentity): TrackedTerminal {
     const terminal = this.terminals.get(identity.sessionId);
     if (terminal !== undefined && sameIdentity(terminal.identity, identity)) return terminal;
-    const created: TrackedTerminal = { identity: Object.freeze({ ...identity }), incarnation: 1 };
+    const created: TrackedTerminal = { identity: Object.freeze({ ...identity }), incarnation: 1, environmentBinding: this.bindEnvironment(identity) };
     this.terminals.set(identity.sessionId, created);
     return created;
   }
@@ -229,21 +262,23 @@ export class ExtensionAgentRuntimeRegistry {
   }
 
   private match(processName: string, identity: ActivitySessionIdentity): AgentProviderContribution | undefined {
-    // Local node APIs must never be used for a routed remote project. The
-    // fallback remains active until a remote environment adapter is supplied.
-    if (this.projectEnvironmentId(identity) !== THIS_SERVER_ENVIRONMENT_ID) return undefined;
+    const tracked = this.terminals.get(identity.sessionId);
+    if (this.options.projectEnvironmentRouter !== undefined && tracked?.environmentBinding === undefined) return undefined;
     const executable = executableName(processName);
     if (executable.length === 0) return undefined;
     return this.options.hosts.agentProviderContributions().find((provider) =>
       (provider.platforms === undefined || provider.platforms.includes(this.platform))
-      && requiredCapabilitiesAvailable(provider, this.localObservationCapabilities)
+      && (this.projectEnvironmentId(identity) !== THIS_SERVER_ENVIRONMENT_ID || requiredCapabilitiesAvailable(provider, this.localObservationCapabilities))
       && provider.processMatchers?.some((matcher) => matcher.arguments === undefined && matcher.executableName.toLowerCase() === executable) === true,
     );
   }
 
   private projectEnvironmentId(identity: ActivitySessionIdentity): string {
-    try { return this.options.projectEnvironmentRouter?.bindProject(identity.projectId).projectEnvironmentId ?? THIS_SERVER_ENVIRONMENT_ID; }
+    try { return this.terminals.get(identity.sessionId)?.environmentBinding?.projectEnvironmentId ?? this.options.projectEnvironmentRouter?.bindProject(identity.projectId).projectEnvironmentId ?? THIS_SERVER_ENVIRONMENT_ID; }
     catch { return "terminay:environment-unavailable"; }
+  }
+  private bindEnvironment(identity: ActivitySessionIdentity): ProjectEnvironmentBinding | undefined {
+    try { return this.options.projectEnvironmentRouter?.bindProject(identity.projectId); } catch { return undefined; }
   }
 }
 
