@@ -36,6 +36,19 @@ test("extension provider claims one terminal incarnation before host admission",
     id: "context-1", providerId: provider.id, incarnation: "1",
   }]);
   assert.equal(await agents.ingestJournalRecord(identity, "untrusted-provider", { type: "untrusted-record" }), false);
+  const projected = await agents.ingestExtensionLifecycle(identity, provider.id, "test-v1", {
+    providerSessionId: "provider-session-1",
+    mappingVersion: "test-v1",
+    fingerprint: { kind: "fixture", metadata: { source: "test" } },
+  }, [
+    { kind: "session.started", title: "Extension session" },
+    { kind: "turn.started", turnId: "turn-1", promptText: "Hello from the extension" },
+  ]);
+  assert.deepEqual(projected, { acceptedEventCount: 2, rejectedEventCount: 0 });
+  const [entry] = Object.values(agents.getSnapshot().entries);
+  assert.equal(entry.provider, provider.id);
+  assert.equal(entry.displayName, "Extension session");
+  assert.equal(entry.promptText, "Hello from the extension");
 
   // A second matching topology signal cancels the old observer before a new
   // incarnation is admitted; no two child observers own this terminal.

@@ -13,6 +13,17 @@ import {
   createInitialWorkspace,
 } from "../dist/index.js";
 
+async function publishAgentLifecycle(agents, identity, events) {
+  const providerId = "example.agent/test";
+  assert.equal(agents.claimExtensionProvider(identity, providerId), true);
+  const result = await agents.ingestExtensionLifecycle(identity, providerId, "1", {
+    providerSessionId: `provider-${identity.sessionId}`,
+    mappingVersion: "1",
+    fingerprint: { kind: "test", metadata: { proof: "fixture" } },
+  }, events);
+  assert.equal(result.rejectedEventCount, 0);
+}
+
 function createPtyFactory() {
   const processes = [];
   return {
@@ -708,12 +719,14 @@ test("two clients receive one canonical reduced agent sequence and reconnect to 
   const removeFirst = firstSubscription.onEvent((event) => firstEvents.push(event.payload));
   const removeSecond = secondSubscription.onEvent((event) => secondEvents.push(event.payload));
   try {
-    await agents.ingestJournalRecord(identity, "codex", { type: "session_meta", payload: { id: "codex-session", private: "never-export" } });
-    await agents.ingestJournalRecord(identity, "codex", { type: "event_msg", payload: { type: "request_user_input", private: "never-export" } });
+    await publishAgentLifecycle(agents, identity, [
+      { kind: "session.started", title: "Agent session" },
+      { kind: "wait.started", state: "waiting", reason: "approval" },
+    ]);
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(firstEvents.length, 2);
     assert.deepEqual(firstEvents, secondEvents);
-    assert.doesNotMatch(JSON.stringify(firstEvents), /agent-sequence-token|never-export/);
+    assert.doesNotMatch(JSON.stringify(firstEvents), /agent-sequence-token|fingerprint|fixture/);
     const firstSnapshot = await first.client.query("agent.snapshot");
     const secondSnapshot = await second.client.query("agent.snapshot");
     assert.deepEqual(firstSnapshot.result, secondSnapshot.result);
@@ -813,8 +826,8 @@ test("project-scoped clients receive only their own agent snapshots and live eve
   const removeA = aSubscription.onEvent((event) => aEvents.push(event.payload));
   const removeB = bSubscription.onEvent((event) => bEvents.push(event.payload));
   try {
-    await agents.ingestJournalRecord(projectA, "codex", { type: "session_meta", payload: { id: "agent-a" } });
-    await agents.ingestJournalRecord(projectB, "codex", { type: "session_meta", payload: { id: "agent-b" } });
+    await publishAgentLifecycle(agents, projectA, [{ kind: "session.started", title: "Project A" }]);
+    await publishAgentLifecycle(agents, projectB, [{ kind: "session.started", title: "Project B" }]);
     await new Promise((resolve) => setTimeout(resolve, 0));
     const snapshotA = await a.client.query("agent.snapshot");
     const snapshotB = await b.client.query("agent.snapshot");
