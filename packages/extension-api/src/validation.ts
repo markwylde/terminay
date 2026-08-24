@@ -26,6 +26,7 @@ import type {
   AgentRelativeToEnvironmentRequest,
   AgentPathUnderEnvironmentRequest,
   AgentEnvironmentRelativePathRequest,
+  AgentDirectoryListOptions,
   ExtensionPermission,
   FormField,
   JsonValue,
@@ -93,6 +94,13 @@ function closed(value: Record<string, unknown>, allowed: Set<string>, path: stri
 function string(value: unknown, path: string, out: SchemaIssue[], max: number = EXTENSION_LIMITS.stringLength): value is string {
   if (typeof value !== "string" || value.length === 0 || value.length > max) {
     out.push({ path, code: "invalid_string", message: `Expected a non-empty string of at most ${max} characters` });
+    return false;
+  }
+  return true;
+}
+function boundedInteger(value: unknown, path: string, minimum: number, maximum: number, out: SchemaIssue[]): value is number {
+  if (!Number.isSafeInteger(value) || (value as number) < minimum || (value as number) > maximum) {
+    out.push({ path, code: "invalid_integer", message: `Expected an integer from ${minimum} through ${maximum}` });
     return false;
   }
   return true;
@@ -183,27 +191,27 @@ function validateContributions(value: unknown, extensionId: string, out: SchemaI
       unique(item.capabilities, `${path}.capabilities`, out);
       item.capabilities.forEach((capability, capabilityIndex) => { if (!capabilities.has(String(capability))) out.push({ path: `${path}.capabilities[${capabilityIndex}]`, code: "unknown_capability", message: "Unknown capability" }); });
     }
+    if (item.profileSave !== undefined) validateProfileSaveContribution(item.profileSave, `${path}.profileSave`, out);
     if (item.dependencyOperations !== undefined) validateProviderDependencyOperationsInto(item.dependencyOperations, `${path}.dependencyOperations`, out);
     ids.push(item.id);
   });
   unique(ids, "$.contributes.projectEnvironments", out);
 }
 
-function validateAgentContributions(value: unknown, extensionId: string, out: SchemaIssue[]): void {
-  if (!Array.isArray(value) || value.length === 0 || value.length > EXTENSION_LIMITS.contributions) {
-    if (item.profileSave !== undefined) validateProfileSaveContribution(item.profileSave, `${path}.profileSave`, out);
-    out.push({ path: "$.contributes.agentProviders", code: "invalid_array", message: "Expected one or more bounded contributions" });
-    return;
-  }
-  const ids: unknown[] = [];
-  value.forEach((item, index) => {
-    const result = validateAgentProviderContribution(item, extensionId);
 function validateProfileSaveContribution(value: unknown, path: string, out: SchemaIssue[]): void {
   if (!record(value)) { out.push({ path, code: "invalid_type", message: "Expected an object" }); return; }
   closed(value, new Set(["createEnvironment"]), path, out);
   if (value.createEnvironment !== true) out.push({ path: `${path}.createEnvironment`, code: "explicit_opt_in_required", message: "Profile-save environment creation requires explicit true" });
 }
 
+function validateAgentContributions(value: unknown, extensionId: string, out: SchemaIssue[]): void {
+  if (!Array.isArray(value) || value.length === 0 || value.length > EXTENSION_LIMITS.contributions) {
+    out.push({ path: "$.contributes.agentProviders", code: "invalid_array", message: "Expected one or more bounded contributions" });
+    return;
+  }
+  const ids: unknown[] = [];
+  value.forEach((item, index) => {
+    const result = validateAgentProviderContribution(item, extensionId);
     if (!result.ok) out.push(...result.issues.map((issue) => ({ ...issue, path: `$.contributes.agentProviders[${index}]${issue.path.slice(1)}` })));
     if (record(item)) ids.push(item.id);
   });
@@ -906,6 +914,24 @@ export function validateAgentHomeRelativePathRequest(value: unknown): Validation
     validateHomeRelativePath(value.beneath.homeRelative, "$.beneath.homeRelative", out);
   }
   return out.length === 0 ? { ok: true, value: value as unknown as AgentHomeRelativePathRequest } : { ok: false, issues: out };
+}
+
+/** Validates bounded opaque-directory discovery without accepting paths. */
+export function validateAgentDirectoryListOptions(value: unknown): ValidationResult<AgentDirectoryListOptions> {
+  const out: SchemaIssue[] = [];
+  if (!record(value)) return invalidObject();
+  closed(value, new Set(["extensions", "maxDepth", "maxEntries", "maxBytes"]), "$", out);
+  const extensions = value.extensions;
+  if (!Array.isArray(extensions) || extensions.length === 0 || extensions.length > 16) {
+    out.push({ path: "$.extensions", code: "invalid_array", message: "Expected bounded file suffixes" });
+  } else {
+    unique(extensions, "$.extensions", out);
+    extensions.forEach((extension, index) => validateFileExtension(extension, `$.extensions[${index}]`, out));
+  }
+  boundedInteger(value.maxDepth, "$.maxDepth", 0, EXTENSION_LIMITS.agentDirectoryListDepth, out);
+  boundedInteger(value.maxEntries, "$.maxEntries", 1, EXTENSION_LIMITS.agentDirectoryListEntries, out);
+  boundedInteger(value.maxBytes, "$.maxBytes", 1, EXTENSION_LIMITS.agentDirectoryListBytes, out);
+  return out.length === 0 ? { ok: true, value: value as unknown as AgentDirectoryListOptions } : { ok: false, issues: out };
 }
 
 /**

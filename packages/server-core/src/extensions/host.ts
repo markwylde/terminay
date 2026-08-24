@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { isChildFrame, frameByteLength, EXTENSION_HOST_PROTOCOL_VERSION, type ChildFrame, type HostFrame } from "./protocol.js";
 import { validateExtensionLaunchDescriptor } from "./descriptor.js";
 import type { ExtensionAgentBroker, ExtensionAgentLifecyclePublication, ExtensionAgentObservationRequest, ExtensionAgentTerminalAdmission, ExtensionAgentTerminalCancellation, ExtensionAgentTerminalContext, ExtensionBroker, ExtensionDependencyRouter, ExtensionHostLimits, ExtensionHostStatus, ExtensionInvocation, ExtensionLaunchDescriptor, ExtensionProfileBroker, ExtensionProviderInvocation, ExtensionSecretAccessBroker, ExtensionSshAgentBroker } from "./types.js";
-import { isNamespacedId, validateAgentLifecycleEvent, validateDeclarativeForm, validateEnvironmentActionResult, validateOptionSourceResult, validateProviderDefinition, validateProviderDependencyCallContext, validateProviderDependencyRequest, validateProviderDependencyResult, validateProviderDependencyTargetRequest, validateProviderEnvironmentStatus, validateProviderVaultPutRequest, validateProviderVaultRemoveRequest, validateProviderVaultWithSecretRequest, validateProvisioningResult, validateSshAgentIdentities, validateSshAgentSignature, validateValidationIssues, type AgentProviderContribution, type JsonValue, type ProviderDefinition, type ProviderDependencyCallContext, type ProviderDependencyTargetRequest } from "@terminay/extension-api";
+import { EXTENSION_API_VERSION, isNamespacedId, validateAgentLifecycleEvent, validateDeclarativeForm, validateEnvironmentActionResult, validateOptionSourceResult, validateProviderDefinition, validateProviderDependencyCallContext, validateProviderDependencyRequest, validateProviderDependencyResult, validateProviderDependencyTargetRequest, validateProviderEnvironmentStatus, validateProviderVaultPutRequest, validateProviderVaultRemoveRequest, validateProviderVaultWithSecretRequest, validateProvisioningResult, validateSshAgentIdentities, validateSshAgentSignature, validateValidationIssues, type AgentProviderContribution, type JsonValue, type ProjectEnvironmentContribution, type ProviderDefinition, type ProviderDependencyCallContext, type ProviderDependencyTargetRequest } from "@terminay/extension-api";
 import { ExtensionProviderVault, type ProviderVaultPrincipal } from "./providerVault.js";
 
 interface PendingCall {
@@ -69,6 +69,15 @@ export class ExtensionHost {
 
   status(): ExtensionHostStatus { return Object.freeze({ ...this.state, providers: this.providers, agentProviders: this.agentProviders }); }
   launchDescriptor(): ExtensionLaunchDescriptor | undefined { return this.descriptor; }
+  /** Only manifest contributions whose provider actually registered during
+   * this running activation may receive host routing or profile-save effects. */
+  activatedProjectEnvironmentContributions(): readonly ProjectEnvironmentContribution[] {
+    if (this.state.state !== "running" || this.descriptor === undefined) return Object.freeze([]);
+    const registered = new Set(this.providers.map((provider) => provider.providerId));
+    return Object.freeze((this.descriptor.projectEnvironmentProviders ?? [])
+      .filter((contribution) => registered.has(contribution.id))
+      .map((contribution) => structuredClone(contribution)));
+  }
 
   async start(descriptor: ExtensionLaunchDescriptor): Promise<void> {
     if (descriptor.extensionId !== this.extensionId) throw new TypeError("extension descriptor identity mismatch");
@@ -95,7 +104,7 @@ export class ExtensionHost {
     try {
       const activated = await this.call("activate", {
         extensionId: this.extensionId,
-        apiVersion: "1.0.0",
+        apiVersion: EXTENSION_API_VERSION,
         entrypoint: this.descriptor.entrypoint,
         configDirectory: this.descriptor.configDirectory,
         dataDirectory: this.descriptor.dataDirectory,
@@ -103,7 +112,7 @@ export class ExtensionHost {
         permissions: [...this.descriptor.permissions],
         agentProviders: this.descriptor.agentProviders === undefined ? [] : structuredClone(this.descriptor.agentProviders),
       }, this.limits.startupTimeoutMs, undefined, true);
-      this.providers = validateProviders(record(activated)?.providers, this.extensionId);
+      this.providers = validateProviders(record(activated)?.providers, this.extensionId, this.descriptor);
       this.agentProviders = validateAgentProviders(record(activated)?.agentProviders, this.descriptor);
       this.dependencyProviders = validateDependencyProviders(record(activated)?.dependencyProviders, this.providers, this.descriptor);
       this.state = { extensionId: this.extensionId, state: "running", consecutiveCrashes: 0 };
@@ -476,7 +485,7 @@ function failureMessage(value: unknown): string { const message = record(value)?
 function safeFailure(error: Error): string { return error.message.replace(/[\r\n]/gu, " ").slice(0, 1_000); }
 function boundedId(value: unknown): string | undefined { return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u.test(value) ? value : undefined; }
 function cancellationSignal(signal: AbortSignal): import("@terminay/extension-api").CancellationSignal { return Object.freeze({ get aborted() { return signal.aborted; }, throwIfAborted() { if (signal.aborted) throw new Error("provider dependency call cancelled"); } }); }
-function validateProviders(value: unknown, extensionId: string): readonly ProviderDefinition[] {
+function validateProviders(value: unknown, extensionId: string, descriptor: ExtensionLaunchDescriptor): readonly ProviderDefinition[] {
   if (!Array.isArray(value) || value.length > 32) throw new Error("extension returned invalid provider registrations");
   const seen = new Set<string>();
   const providers: ProviderDefinition[] = [];
@@ -484,6 +493,8 @@ function validateProviders(value: unknown, extensionId: string): readonly Provid
     const provider = record(item);
     const validation = validateProviderDefinition(item);
     if (provider === undefined || !validation.ok || typeof provider.providerId !== "string" || !isNamespacedId(provider.providerId, extensionId) || seen.has(provider.providerId)) throw new Error("extension returned invalid provider registrations");
+    const contribution = descriptor.projectEnvironmentProviders?.find((candidate) => candidate.id === provider.providerId);
+    if (descriptor.projectEnvironmentProviders !== undefined && (contribution === undefined || contribution.displayName !== provider.displayName || !sameValues(contribution.capabilities, provider.capabilities as string[]))) throw new Error("extension provider registration does not match its manifest contribution");
     for (const form of [provider.profileForm, provider.createForm]) {
       if (form !== undefined && !validateDeclarativeForm(form).ok) throw new Error("extension returned an invalid declarative form");
     }
@@ -491,6 +502,9 @@ function validateProviders(value: unknown, extensionId: string): readonly Provid
     providers.push(structuredClone(item) as ProviderDefinition);
   }
   return Object.freeze(providers);
+}
+function sameValues(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function validateAgentProviders(value: unknown, descriptor: ExtensionLaunchDescriptor): readonly AgentProviderContribution[] {
@@ -537,7 +551,7 @@ function validateAgentTerminalAdmission(value: ExtensionAgentTerminalAdmission, 
 
 function parseAgentObservationRequest(value: unknown): ExtensionAgentObservationRequest | undefined {
   const payload = record(value); const contextId = boundedId(payload?.contextId); const providerId = boundedId(payload?.providerId); const operation = payload?.operation;
-  if (!contextId || !providerId || typeof operation !== "string" || !["process.foreground", "process.descendants", "process.open-files", "process.environment", "terminal.tty", "filesystem.resolve-home-relative", "filesystem.resolve-path-under-home", "filesystem.home-relative-path", "filesystem.resolve-relative-to-environment", "filesystem.resolve-path-under-environment", "filesystem.environment-relative-path", "filesystem.realpath", "filesystem.stat", "filesystem.read", "filesystem.follow", "filesystem.unfollow"].includes(operation) || !jsonValue(payload?.payload)) return undefined;
+  if (!contextId || !providerId || typeof operation !== "string" || !["process.foreground", "process.descendants", "process.open-files", "process.environment", "terminal.tty", "filesystem.resolve-home-relative", "filesystem.resolve-home-directory", "filesystem.resolve-path-under-home", "filesystem.home-relative-path", "filesystem.resolve-relative-to-environment", "filesystem.resolve-directory-relative-to-environment", "filesystem.resolve-path-under-environment", "filesystem.environment-relative-path", "filesystem.list-directory", "filesystem.watch-directory", "filesystem.unwatch-directory", "filesystem.realpath", "filesystem.stat", "filesystem.read", "filesystem.follow", "filesystem.unfollow"].includes(operation) || !jsonValue(payload?.payload)) return undefined;
   return Object.freeze({ contextId, providerId, operation: operation as import("./types.js").ExtensionAgentObservationOperation, payload: structuredClone(payload!.payload) as import("@terminay/extension-api").JsonValue });
 }
 

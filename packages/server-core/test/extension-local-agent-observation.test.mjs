@@ -28,6 +28,12 @@ function fixtureSystem() {
     async foreground(pid) { calls.push(["foreground", pid]); return { executableName: "zsh", arguments: ["-l"] }; },
     async realpath(path) { calls.push(["realpath", path]); return path; },
     async stat(path) { calls.push(["stat", path]); const bytes = files.get(path); return bytes === undefined ? undefined : { kind: "file", size: bytes.byteLength, modifiedAt: "2026-08-24T12:00:00.000Z" }; },
+    async readDirectory(path) {
+      calls.push(["readDirectory", path]);
+      const prefix = `${path.replace(/\/$/, "")}/`;
+      const names = [...files.keys()].filter((file) => file.startsWith(prefix)).map((file) => file.slice(prefix.length).split("/")[0]).filter(Boolean);
+      return [...new Set(names)].map((name) => ({ name, kind: name.includes(".") ? "file" : "directory" }));
+    },
     async read(path, position, maximum) { calls.push(["read", path, position, maximum]); return files.get(path)?.slice(position, position + maximum); },
   };
 }
@@ -126,4 +132,73 @@ test("home-relative resolution derives HOME from the admitted terminal process, 
   }, signal);
   assert.deepEqual(handle, { id: "file-1" });
   assert(system.calls.some(([kind, path]) => kind === "realpath" && path === "/terminal-home/.claude/projects/session.jsonl"));
+});
+
+test("opaque directory discovery is terminal-scoped, bounded, canonical and suffix constrained", async () => {
+  const system = fixtureSystem();
+  system.files.set("/home/mark/.codex/sessions/root.jsonl", new Uint8Array([1, 2]));
+  system.files.set("/home/mark/.codex/sessions/nested/child.jsonl", new Uint8Array([3]));
+  system.files.set("/home/mark/.codex/sessions/ignored.txt", new Uint8Array([4]));
+  const originalStat = system.stat;
+  system.stat = async (path) => path === "/home/mark/.codex/sessions" || path === "/home/mark/.codex/sessions/nested"
+    ? { kind: "directory", size: 0 }
+    : originalStat(path);
+  const adapter = new ThisServerAgentObservationAdapter({ homeDirectory: "/home/mark", system, resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }) });
+  const current = terminal("directory");
+  const root = await adapter.observe(current, "filesystem.resolve-home-directory", { relativePath: ".codex/sessions", beneath: { homeRelative: ".codex" } }, signal);
+  assert.deepEqual(root, { id: "directory-1" });
+  const listed = await adapter.observe(current, "filesystem.list-directory", { root, options: { extensions: [".jsonl"], maxDepth: 1, maxEntries: 10, maxBytes: 16 } }, signal);
+  assert.deepEqual(listed.entries.map((entry) => entry.relativePath), ["nested/child.jsonl", "root.jsonl"]);
+  assert.equal(listed.truncated, false);
+  const bounded = await adapter.observe(current, "filesystem.list-directory", { root, options: { extensions: [".jsonl"], maxDepth: 1, maxEntries: 1, maxBytes: 16 } }, signal);
+  assert.equal(bounded.entries.length, 1); assert.equal(bounded.truncated, true);
+  const directoryWatcher = await adapter.observe(current, "filesystem.watch-directory", { root, options: { extensions: [".jsonl"], maxDepth: 1, maxEntries: 10, maxBytes: 16 } }, signal);
+  assert.match(directoryWatcher.watcherId, /^directory-watch-/);
+  assert.deepEqual(directoryWatcher.snapshot.entries.map((entry) => entry.relativePath), ["nested/child.jsonl", "root.jsonl"]);
+  system.files.set("/home/mark/.codex/sessions/late.jsonl", new Uint8Array([5]));
+  const changed = await adapter.observe(current, "filesystem.watch-directory", { watcherId: directoryWatcher.watcherId }, signal);
+  assert.deepEqual(changed.snapshot.entries.map((entry) => entry.relativePath), ["late.jsonl", "nested/child.jsonl", "root.jsonl"]);
+  assert.deepEqual(await adapter.observe(current, "filesystem.watch-directory", { watcherId: directoryWatcher.watcherId }, signal), { closed: false });
+  assert.deepEqual(await adapter.observe(current, "filesystem.unwatch-directory", { watcherId: directoryWatcher.watcherId }, signal), { stopped: true });
+  await assert.rejects(adapter.observe(current, "filesystem.watch-directory", { watcherId: directoryWatcher.watcherId }, signal), /directory watcher is unavailable/);
+  await assert.rejects(adapter.observe(terminal("directory-other"), "filesystem.list-directory", { root, options: { extensions: [".jsonl"], maxDepth: 0, maxEntries: 1, maxBytes: 1 } }, signal), /directory handle is unavailable/);
+  await assert.rejects(adapter.observe(current, "filesystem.list-directory", { root: { id: "directory-forged" }, options: { extensions: [".jsonl"], maxDepth: 0, maxEntries: 1, maxBytes: 1 } }, signal), /directory handle is unavailable/);
+});
+
+test("file follow replays an equal-size metadata rewrite exactly once as replace", async () => {
+  const system = fixtureSystem(); let modifiedAt = "2026-08-24T12:00:00.000Z";
+  const originalStat = system.stat;
+  system.stat = async (path) => {
+    const details = await originalStat(path);
+    return details?.kind === "file" ? { ...details, modifiedAt } : details;
+  };
+  const adapter = new ThisServerAgentObservationAdapter({ homeDirectory: "/home/mark", system, resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }) });
+  const current = terminal("same-size");
+  const descendants = await adapter.observe(current, "process.descendants", {}, signal);
+  const files = await adapter.observe(current, "process.open-files", { processes: descendants, options: { access: "writable" } }, signal);
+  const watcher = await adapter.observe(current, "filesystem.follow", { handle: files[0].handle, options: { maxChunkBytes: 128 } }, signal);
+  await adapter.observe(current, "filesystem.follow", { watcherId: watcher.watcherId }, signal);
+  system.files.set("/home/mark/.example-agent/sessions/one.jsonl", new TextEncoder().encode('{"two":true}\n'));
+  modifiedAt = "2026-08-24T12:00:01.000Z";
+  assert.deepEqual(await adapter.observe(current, "filesystem.follow", { watcherId: watcher.watcherId }, signal), {
+    events: [{ type: "replace", bytes: [...new TextEncoder().encode('{"two":true}\n')] }], closed: false,
+  });
+  assert.deepEqual(await adapter.observe(current, "filesystem.follow", { watcherId: watcher.watcherId }, signal), { events: [], closed: false });
+});
+
+test("file follow detects atomic same-path replacement from a host-private identity fact", async () => {
+  const system = fixtureSystem(); let identity = "device:inode-one";
+  const originalStat = system.stat;
+  system.stat = async (path) => {
+    const details = await originalStat(path);
+    return details?.kind === "file" ? { ...details, identity } : details;
+  };
+  const adapter = new ThisServerAgentObservationAdapter({ homeDirectory: "/home/mark", system, resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }) });
+  const current = terminal("atomic-replacement");
+  const descendants = await adapter.observe(current, "process.descendants", {}, signal);
+  const files = await adapter.observe(current, "process.open-files", { processes: descendants, options: { access: "writable" } }, signal);
+  const watcher = await adapter.observe(current, "filesystem.follow", { handle: files[0].handle, options: { maxChunkBytes: 128 } }, signal);
+  await adapter.observe(current, "filesystem.follow", { watcherId: watcher.watcherId }, signal);
+  identity = "device:inode-two";
+  assert.equal((await adapter.observe(current, "filesystem.follow", { watcherId: watcher.watcherId }, signal)).events[0].type, "replace");
 });

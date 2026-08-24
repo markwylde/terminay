@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
-import { cp, mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
+import { copyFile, cp, mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -16,6 +16,7 @@ const HEADLESS_CHROMIUM_ARGS = [
 const appPath = resolve(
 	process.env.TERMINAY_PACKAGED_APP ?? 'release/0.0.0/mac-arm64/Terminay.app',
 );
+const developmentLaunch = process.env.TERMINAY_DEV_ELECTRON === '1';
 const retainedDiagnosticsRoot = process.env.TERMINAY_RELEASE_DIAGNOSTICS_DIR;
 const execFileAsync = promisify(execFile);
 
@@ -29,7 +30,13 @@ test(
 		const userData = await mkdtemp(join(tmpdir(), 'terminay-release-smoke-'));
 		const evidence = [];
 		try {
-			await requireCanonicalArtifactInventory();
+			if (process.env.TERMINAY_SEED_WORKSPACE_FILE) {
+				await copyFile(
+					resolve(process.env.TERMINAY_SEED_WORKSPACE_FILE),
+					join(userData, 'workspace.v3.json'),
+				);
+			}
+			if (!developmentLaunch) await requireCanonicalArtifactInventory();
 			const fresh = await exerciseLaunch({ mode: 'fresh', userData });
 			evidence.push(fresh);
 			const restored = await exerciseLaunch({
@@ -109,10 +116,10 @@ async function requireCanonicalArtifactInventory() {
 
 async function exerciseLaunch({ expected, mode, userData }) {
 	const executablePath = join(
-		appPath,
+		developmentLaunch ? resolve('node_modules/electron/dist/Electron.app') : appPath,
 		'Contents',
 		'MacOS',
-		basename(appPath, '.app'),
+		developmentLaunch ? 'Electron' : basename(appPath, '.app'),
 	);
 	const failures = [];
 	const mainStderr = { text: '' };
@@ -120,7 +127,7 @@ async function exerciseLaunch({ expected, mode, userData }) {
 	try {
 		electronApp = await electron.launch({
 			executablePath,
-			args: packagedChromiumLaunchArgs(),
+			args: developmentLaunch ? [resolve('.'), ...packagedChromiumLaunchArgs()] : packagedChromiumLaunchArgs(),
 			env: {
 				...process.env,
 				CI: '1',
@@ -143,6 +150,7 @@ async function exerciseLaunch({ expected, mode, userData }) {
 			);
 		await requireNativeMenu(electronApp, window);
 		await requireSidebarQuery(window);
+		await requireBuiltInExtensionsInstalled(electronApp, window, failures);
 		await requireTerminalInputOutput(window, mode);
 
 		await window.reload({ waitUntil: 'domcontentloaded' });
@@ -256,6 +264,52 @@ async function requireNativeMenu(electronApp, window) {
 		0,
 		'Desktop must not render the browser application menu',
 	);
+}
+
+async function requireBuiltInExtensionsInstalled(electronApp, window, failures) {
+	const nextWindow = electronApp.waitForEvent('window');
+	await window.evaluate(async () => {
+		const host = window.terminayHost;
+		if (!host) throw new Error('canonical Terminay host is unavailable');
+		const context = await host.getContext();
+		await host.requestAction({
+			bridgeVersion: context.hostBridgeVersion,
+			profileId: context.profileId,
+			schemaVersion: context.schemaVersion,
+			serverId: context.serverId,
+			sourceId: context.sourceId,
+			userGesture: true,
+			windowId: context.windowId,
+			action: {
+				disposition: 'native-window',
+				logicalViewId: 'settings',
+				route: '/?auxiliary=settings&section=extensions',
+				type: 'route.present',
+			},
+		});
+	});
+	const settings = await nextWindow;
+	captureRendererFailures(settings, failures);
+	try {
+		await settings.getByRole('heading', { name: 'Settings' }).waitFor({ timeout: 15_000 });
+		for (const packageName of [
+			'terminay-plugin-ssh',
+			'terminay-plugin-puzed',
+			'terminay-agent-codex',
+			'terminay-agent-claude-code',
+			'terminay-agent-cursor',
+			'terminay-agent-omp',
+		]) {
+			const card = settings.locator('.extension-card').filter({ hasText: packageName });
+			await card.waitFor({ state: 'visible', timeout: 15_000 });
+			assert.equal(await card.count(), 1, `${packageName} must have one extension card`);
+			const text = await card.innerText();
+			assert.match(text, /Version \d+\.\d+\.\d+/u, `${packageName} must be materialized from the release bundle`);
+			assert.doesNotMatch(text, /Not installed|\bfailed\b|\bincompatible\b/iu, `${packageName} must be healthy`);
+		}
+	} finally {
+		await settings.close();
+	}
 }
 
 async function requireSidebarQuery(window) {
@@ -422,6 +476,10 @@ async function retainDiagnostics(userData, evidence, error) {
 	if (!retainedDiagnosticsRoot) return;
 	await mkdir(retainedDiagnosticsRoot, { recursive: true });
 	await cp(join(userData, 'logs'), join(retainedDiagnosticsRoot, 'logs'), {
+		recursive: true,
+		force: true,
+	}).catch(() => undefined);
+	await cp(join(userData, 'extensions'), join(retainedDiagnosticsRoot, 'extensions'), {
 		recursive: true,
 		force: true,
 	}).catch(() => undefined);

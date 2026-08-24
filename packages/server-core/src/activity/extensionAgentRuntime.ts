@@ -8,6 +8,16 @@ import type { ThisServerAgentTerminal } from "../extensions/localAgentObservatio
 import type { ActivitySessionIdentity } from "./service.js";
 import { AgentStatusService } from "./agentService.js";
 
+/** Bounded, metadata-only evidence that a matched provider could not begin
+ * observing a terminal. Hosts can send this to their local diagnostics sink;
+ * raw extension errors and provider data deliberately stay private. */
+export interface ExtensionAgentAdmissionFailure {
+  readonly kind: "agent-admission-failed";
+  readonly providerId: string;
+  readonly terminal: Readonly<ActivitySessionIdentity>;
+  readonly failureClass: "cancelled" | "invalid" | "timed-out" | "unavailable" | "host-failed" | "failed";
+}
+
 export interface ExtensionAgentRuntimeRegistryOptions {
   /** The selected server's live extension hosts. Contributions are read only
    * while the host is running; admission still validates ownership in the
@@ -21,6 +31,9 @@ export interface ExtensionAgentRuntimeRegistryOptions {
   readonly localObservationCapabilities?: readonly string[];
   readonly platform?: "darwin" | "linux" | "win32";
   readonly contextId?: (identity: ActivitySessionIdentity, incarnation: number) => string;
+  /** A best-effort, metadata-only telemetry hook. A diagnostic sink is never
+   * allowed to change terminal ownership or fallback behaviour. */
+  readonly onAdmissionFailure?: (failure: ExtensionAgentAdmissionFailure) => void;
   readonly reobserveDebounceMs?: number;
   /** Host-private, terminal-scoped topology probe. It may inspect only the
    * admitted terminal's descendants/open-file identity and must not expose
@@ -92,6 +105,7 @@ export class ExtensionAgentRuntimeRegistry {
    * and journal mutations are now suppressed by AgentStatusService. */
   foregroundProcessChanged(identity: ActivitySessionIdentity, processName: string): boolean {
     const terminal = this.requireTerminal(identity);
+    terminal.lastProcessName = processName;
     const contribution = this.match(processName, identity);
     if (terminal.context !== undefined) {
       if (contribution?.id === terminal.context.providerId) this.scheduleReobserve(terminal, contribution, processName);
@@ -99,6 +113,20 @@ export class ExtensionAgentRuntimeRegistry {
     }
     if (contribution === undefined) return false;
     return this.claimAndAdmit(terminal, contribution, processName);
+  }
+
+  /** Re-evaluate the last host-observed foreground process for every live
+   * terminal. The extension manager calls this after atomically publishing a
+   * new provider inventory, so a late-installed agent can bind an already
+   * running CLI without requiring a new terminal event or restart. */
+  reobserveExistingTerminals(): number {
+    let admitted = 0;
+    for (const terminal of this.terminals.values()) {
+      if (terminal.context !== undefined || terminal.lastProcessName === undefined) continue;
+      const contribution = this.match(terminal.lastProcessName, terminal.identity);
+      if (contribution !== undefined && this.claimAndAdmit(terminal, contribution, terminal.lastProcessName)) admitted += 1;
+    }
+    return admitted;
   }
 
   /** A host process/open-file watcher can call this when a still-matching
@@ -126,15 +154,16 @@ export class ExtensionAgentRuntimeRegistry {
     terminal.context = context;
     terminal.lastProcessName = processName;
     const observationCapabilities = context.projectEnvironmentId === THIS_SERVER_ENVIRONMENT_ID
-      ? this.localObservationCapabilities
+      ? contribution.requiredEnvironmentCapabilities.filter((capability) => this.localObservationCapabilities.includes(capability))
       : contribution.requiredEnvironmentCapabilities;
     void this.options.hosts.admitAgentTerminal({ context, observationCapabilities }).then(() => {
       if (terminal.context === context) this.scheduleTopologyPoll(terminal);
-    }).catch(() => {
+    }).catch((error: unknown) => {
       // The claim was synchronous so the legacy path did not see this exact
       // foreground change. Release and replay it if host admission fails.
       if (terminal.context !== context) return;
       terminal.context = undefined;
+      this.reportAdmissionFailure(identity, contribution.id, error);
       try {
         this.options.agents.releaseExtensionProvider(identity, contribution.id);
         this.options.agents.foregroundProcessChanged(identity, processName, false);
@@ -295,6 +324,20 @@ export class ExtensionAgentRuntimeRegistry {
   private bindEnvironment(identity: ActivitySessionIdentity): ProjectEnvironmentBinding | undefined {
     try { return this.options.projectEnvironmentRouter?.bindProject(identity.projectId); } catch { return undefined; }
   }
+
+  private reportAdmissionFailure(identity: ActivitySessionIdentity, providerId: string, error: unknown): void {
+    const failure: ExtensionAgentAdmissionFailure = Object.freeze({
+      kind: "agent-admission-failed",
+      providerId: providerId.slice(0, 256),
+      terminal: Object.freeze({
+        serverId: identity.serverId.slice(0, 256),
+        projectId: identity.projectId.slice(0, 256),
+        sessionId: identity.sessionId.slice(0, 256),
+      }),
+      failureClass: classifyAdmissionFailure(error),
+    });
+    try { this.options.onAdmissionFailure?.(failure); } catch { /* diagnostics are best effort */ }
+  }
 }
 
 function requiredCapabilitiesAvailable(provider: AgentProviderContribution, available: readonly string[]): boolean {
@@ -303,3 +346,12 @@ function requiredCapabilitiesAvailable(provider: AgentProviderContribution, avai
 function executableName(value: string): string { return value.trim().split(/[\\/]/u).pop()?.toLowerCase() ?? ""; }
 function sameIdentity(left: ActivitySessionIdentity, right: ActivitySessionIdentity): boolean { return left.serverId === right.serverId && left.projectId === right.projectId && left.sessionId === right.sessionId; }
 function platformName(): "darwin" | "linux" | "win32" { return process.platform === "darwin" || process.platform === "win32" ? process.platform : "linux"; }
+function classifyAdmissionFailure(error: unknown): ExtensionAgentAdmissionFailure["failureClass"] {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (message.includes("cancel") || message.includes("abort")) return "cancelled";
+  if (message.includes("timeout") || message.includes("deadline")) return "timed-out";
+  if (message.includes("invalid") || message.includes("validation") || message.includes("scope")) return "invalid";
+  if (message.includes("host") || message.includes("extension")) return "host-failed";
+  if (message.includes("unavailable") || message.includes("does not exist") || message.includes("not found")) return "unavailable";
+  return "failed";
+}

@@ -483,6 +483,12 @@ pairing fragment or private key.
   launched server-UI inventory contains only the current build's assets, so
   leftover hashed files from a previous watch rebuild cannot be published or
   launched.
+- Source-development Desktop uses a dedicated `Terminay Development` user-data
+  namespace by default. It must not read, mutate, or silently attach to an
+  installed Terminay release's persistence or embedded server authority. Tests
+  and migration tooling may select an explicit isolated namespace with
+  `TERMINAY_USER_DATA_DIR`; packaged releases retain the normal `Terminay`
+  namespace.
 - Wide layouts resemble the Electron workspace.
 - Narrow layouts replace wide tab strips and sidebars with accessible
   selectors, drawers, stacked surfaces, and touch controls while retaining the

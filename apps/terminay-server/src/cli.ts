@@ -33,7 +33,7 @@ import {
 	createProductionExtensionManagement,
 	createServerAiProviderAdapters,
 	createServerCoreComposition,
-	ExtensionProjectEnvironmentRuntime,
+	registerActivatedExtensionProjectEnvironmentRuntimes,
 	FileCatalog,
 	DocumentationCatalog,
 	MdxRuntime,
@@ -419,14 +419,11 @@ async function createServerComposition(
 		vault,
 		projectEnvironments,
 	});
-	projectEnvironmentRegistry.register(
-		new ExtensionProjectEnvironmentRuntime(
-			'com.terminay.ssh/connection',
-			['terminal', 'filesystem'],
-			extensions.hosts,
-			() => projectEnvironments.state,
-		),
-	);
+	registerActivatedExtensionProjectEnvironmentRuntimes({
+		registry: projectEnvironmentRegistry,
+		hosts: extensions.hosts,
+		snapshot: () => projectEnvironments.state,
+	});
 	const git = new ServerGitAdapter({
 		serverId: options.serverId,
 		git: gitService,

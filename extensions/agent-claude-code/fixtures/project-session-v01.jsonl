@@ -1,0 +1,5 @@
+{"type":"permission-mode","mode":"default","sessionId":"5f2aff08-eab3-4852-96eb-48235fc7f471","version":"2.1.201"}
+{"type":"ai-title","sessionId":"5f2aff08-eab3-4852-96eb-48235fc7f471","aiTitle":"Investigate the parser"}
+{"type":"user","sessionId":"5f2aff08-eab3-4852-96eb-48235fc7f471","promptId":"prompt-1","message":{"role":"user","content":"Inspect the parser"}}
+{"type":"assistant","sessionId":"5f2aff08-eab3-4852-96eb-48235fc7f471","uuid":"assistant-1","message":{"role":"assistant","model":"claude-opus-4-8","content":[{"type":"tool_use","id":"toolu-shell","name":"Bash","input":{"command":"redacted"}},{"type":"tool_use","id":"toolu-agent","name":"Agent","input":{"description":"Research parser","prompt":"Inspect the journal","subagent_type":"general-purpose"}}]}}
+{"type":"user","sessionId":"5f2aff08-eab3-4852-96eb-48235fc7f471","uuid":"result-1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu-shell","is_error":false,"content":"redacted"}]}}

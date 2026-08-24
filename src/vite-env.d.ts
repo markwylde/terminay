@@ -54,10 +54,11 @@ declare global {
 			failActiveConnection: () => Promise<{ connectionId: string }>;
 		};
 		terminayAgentStatusTest?: {
-			emitJournalRecord: (payload: {
-				provider: 'codex' | 'claude';
+			publishLifecycle: (payload: {
+				provider: string;
 				terminalSessionId: string;
-				record: Record<string, unknown>;
+				providerSessionId: string;
+				events: ReadonlyArray<Record<string, unknown>>;
 			}) => Promise<boolean>;
 		};
 		terminayAiMetadataTest?: {

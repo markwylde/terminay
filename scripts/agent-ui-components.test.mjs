@@ -211,7 +211,7 @@ test('sidebar presents omp with its provider display name', () => {
 	const ompEntry = {
 		entryId: 'omp-root-entry',
 		kind: 'root',
-		provider: 'omp',
+		provider: 'com.terminay.agent.omp/cli',
 		agentId: 'omp-root',
 		sessionId: 'omp-session',
 		activationTerminalSessionId: 'omp-terminal',

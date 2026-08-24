@@ -606,6 +606,8 @@ export interface AgentProjectHandle { readonly id: string; readonly __agentProje
 export interface AgentEnvironmentHandle { readonly id: string; readonly __agentEnvironmentHandle: unique symbol; }
 export interface AgentProcessHandle { readonly id: string; readonly __agentProcessHandle: unique symbol; }
 export interface AgentFileHandle { readonly id: string; readonly __agentFileHandle: unique symbol; }
+/** An opaque, terminal-scoped directory root. It is only usable for bounded discovery. */
+export interface AgentDirectoryHandle { readonly id: string; readonly __agentDirectoryHandle: unique symbol; }
 
 /**
  * A bounded fact about the terminal device. It can be used to derive a
@@ -691,6 +693,48 @@ export interface AgentHomeRelativePathRequest {
   beneath: { homeRelative: string };
 }
 
+/** A regular file discovered below an already-issued opaque directory root. */
+export interface AgentDiscoveredFile {
+  handle: AgentFileHandle;
+  /** A normalized non-escaping fact relative to the opaque root; never authority. */
+  relativePath: string;
+  size: number;
+  modifiedAt?: string;
+}
+
+/** Explicit caller limits for a provider's journal discovery. */
+export interface AgentDirectoryListOptions {
+  /** Only these file suffixes are returned. At least one suffix is required. */
+  extensions: readonly string[];
+  /** Directory nesting below the opaque root, where zero is the root itself. */
+  maxDepth: number;
+  maxEntries: number;
+  maxBytes: number;
+  signal?: CancellationSignal;
+}
+
+export interface AgentDirectoryListing {
+  entries: readonly AgentDiscoveredFile[];
+  /** True when a declared limit stopped the snapshot early. */
+  truncated: boolean;
+}
+
+/** A host-driven snapshot stream for one opaque directory root. */
+export interface AgentDirectoryWatcher extends AsyncIterable<AgentDirectoryListing>, Disposable {}
+
+/** Resolves a provider-known directory under the terminal environment's home. */
+export interface AgentHomeRelativeDirectoryOptions {
+  beneath?: { homeRelative: string };
+  signal?: CancellationSignal;
+}
+
+/** Resolves a provider-known directory below one exact terminal environment value. */
+export interface AgentEnvironmentRelativeDirectoryOptions {
+  environmentVariable: string;
+  beneathRelative?: string;
+  signal?: CancellationSignal;
+}
+
 export interface AgentReadOptions {
   maxBytes: number;
   signal?: CancellationSignal;
@@ -774,6 +818,20 @@ export interface AgentEnvironmentRelativePathRequest {
 }
 
 export interface AgentFileObservationBroker {
+  /**
+   * Issues an opaque root for bounded discovery below the terminal home. A
+   * provider cannot turn a returned relative path into read authority.
+   */
+  resolveHomeDirectory(relativePath: string, options?: AgentHomeRelativeDirectoryOptions): Promise<AgentDirectoryHandle | undefined>;
+  /** Issues an opaque root below one declared terminal environment variable. */
+  resolveDirectoryRelativeToEnvironment(relativePath: string, options: AgentEnvironmentRelativeDirectoryOptions): Promise<AgentDirectoryHandle | undefined>;
+  /** Lists only regular files below an opaque root, subject to all supplied limits. */
+  listDirectory(root: AgentDirectoryHandle, options: AgentDirectoryListOptions): Promise<AgentDirectoryListing>;
+  /**
+   * Follows bounded changes below an opaque root. The first iteration is the
+   * current snapshot; later iterations are emitted only after it changes.
+   */
+  watchDirectory(root: AgentDirectoryHandle, options: AgentDirectoryListOptions): Promise<AgentDirectoryWatcher>;
   /**
    * Resolves a non-escaping path below the value of one declared terminal
    * process environment variable. The host holds the root value internally.
@@ -946,6 +1004,8 @@ export interface AgentJsonlSession {
   binding: AgentSessionBinding;
   source: AgentFileWatcher | Promise<AgentFileWatcher>;
   childSources?: readonly AgentChildJournalSource[];
+  /** New provider-native children discovered after root observation begins. */
+  childSourceDiscovery?: AsyncIterable<AgentChildJournalSource> | Promise<AsyncIterable<AgentChildJournalSource>>;
   mapRecord(record: unknown, session: AgentRecordContext): void | Promise<void>;
 }
 
@@ -953,6 +1013,7 @@ export interface AgentJsonlSessionOptions {
   binding: AgentSessionBinding;
   source: AgentFileWatcher | Promise<AgentFileWatcher>;
   childSources?: readonly AgentChildJournalSource[];
+  childSourceDiscovery?: AsyncIterable<AgentChildJournalSource> | Promise<AsyncIterable<AgentChildJournalSource>>;
   mapRecord(record: unknown, session: AgentRecordContext): void | Promise<void>;
 }
 

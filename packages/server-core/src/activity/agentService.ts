@@ -284,7 +284,10 @@ function validateLifecycleTransitions(snapshot: AgentStatusSnapshot, events: rea
       case "wait.finished": valid = target?.active === true && (target.state === "waiting" || target.state === "blocked"); break;
       case "agent.done": valid = target?.active === true; break;
       case "agent.exited": valid = target?.active === true; break;
-      case "subagent.started": valid = root?.active === true && target === undefined; break;
+      // A provider-native child may resume under the same durable child id.
+      // Reopen its existing row rather than creating a duplicate or dropping
+      // the later lifecycle after a parent/session reconnect.
+      case "subagent.started": valid = root?.active === true && (target === undefined || target.kind === "subagent" && target.active === false); break;
       case "subagent.stopped": valid = target?.kind === "subagent" && target.active; break;
     }
     if (!valid) throw new Error("extension lifecycle transition is invalid");

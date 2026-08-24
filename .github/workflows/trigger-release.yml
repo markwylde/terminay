@@ -488,6 +488,7 @@ jobs:
           node scripts/stage-selected-secure-werift-runtime.mjs
           cp -R build/webrtc-runtime apps/terminay-server/dist/webrtc-runtime
           node apps/terminay-server/scripts/write-release-integrity-manifest.mjs
+          npm run verify:built-in-extensions
           npm pack --workspace @terminay/server --json --pack-destination "$OUTPUT" > "$RUNNER_TEMP/terminay-server-pack.json"
 
           EXPECTED="terminay-server-$VERSION.tgz"
@@ -507,6 +508,7 @@ jobs:
           test -d "$EXTRACTED/package"
           test -f "$EXTRACTED/package/dist/release-integrity.json"
           test -f "$EXTRACTED/package/dist/webrtc-runtime/artifact/lib/index.mjs"
+          test -f "$EXTRACTED/package/dist/built-in-extensions/inventory.v1.json"
           test ! -L "$EXTRACTED/package"
           MANIFEST="$RUNNER_TEMP/terminay-server-artifact-manifest.json"
           node scripts/standalone-artifact.mjs "$EXTRACTED/package" "$MANIFEST"

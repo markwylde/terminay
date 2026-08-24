@@ -1,5 +1,5 @@
 import { pathToFileURL } from "node:url";
-import { validateAgentProviderDefinition } from "@terminay/extension-api";
+import { EXTENSION_API_VERSION, validateAgentChildJournalSources, validateAgentProviderDefinition } from "@terminay/extension-api";
 import { EXTENSION_HOST_PROTOCOL_VERSION, frameByteLength, type HostFrame, type ChildFrame } from "./protocol.js";
 
 const MAX_MESSAGE_BYTES = 256 * 1024;
@@ -11,6 +11,7 @@ const providerRuntimes = new Map<string, Record<string, unknown>>();
 const dependencyRuntimes = new Map<string, { call(request: unknown, context: unknown): Promise<unknown> }>();
 const agentRuntimes = new Map<string, Record<string, unknown>>();
 const agentTerminals = new Map<string, { readonly providerId: string; readonly controller: AbortController; readonly context: Record<string, unknown> }>();
+let subscriptions: Array<{ dispose(): unknown | Promise<unknown> }> = [];
 let sequence = 0;
 
 process.on("message", (message: unknown) => { void receive(message); });
@@ -48,7 +49,11 @@ async function receive(message: unknown): Promise<void> {
     for (const controller of invocations.values()) controller.abort();
     for (const terminal of agentTerminals.values()) terminal.controller.abort();
     agentTerminals.clear();
-    try { await deactivate?.(); send({ protocolVersion: 1, kind: "deactivated", id: message.id }); }
+    try {
+      try { await deactivate?.(); }
+      finally { await disposeSubscriptions(); }
+      send({ protocolVersion: 1, kind: "deactivated", id: message.id });
+    }
     catch (error) { failure(message.id, error); }
     return;
   }
@@ -71,6 +76,7 @@ async function activateExtension(frame: HostFrame): Promise<void> {
     providerRuntimes.clear();
     dependencyRuntimes.clear();
     agentRuntimes.clear();
+    subscriptions = [];
     for (const terminal of agentTerminals.values()) terminal.controller.abort();
     agentTerminals.clear();
     const declaredAgentProviders = new Set(Array.isArray(payload.agentProviders)
@@ -78,7 +84,7 @@ async function activateExtension(frame: HostFrame): Promise<void> {
       : []);
     const result = await activate(Object.freeze({
       extensionId: payload.extensionId,
-      apiVersion: typeof payload.apiVersion === "string" ? payload.apiVersion : "1.0.0",
+      apiVersion: typeof payload.apiVersion === "string" ? payload.apiVersion : EXTENSION_API_VERSION,
       paths: Object.freeze({ configuration: payload.configDirectory, data: payload.dataDirectory, cache: payload.cacheDirectory }),
       registerProjectEnvironmentProvider(registration: unknown) {
         const value = object(registration);
@@ -110,6 +116,14 @@ async function activateExtension(frame: HostFrame): Promise<void> {
           }});
         },
       }),
+      subscriptions: Object.freeze({
+        add(subscription: unknown) {
+          const value = object(subscription);
+          if (value === undefined || typeof value.dispose !== "function") throw new Error("extension subscription must be disposable");
+          subscriptions.push(value as { dispose(): unknown | Promise<unknown> });
+          return subscription;
+        },
+      }),
       // Private broker capabilities are host-injected. They are deliberately
       // not application protocol handlers or raw transports.
       directories: Object.freeze({ config: payload.configDirectory, data: payload.dataDirectory, cache: payload.cacheDirectory }),
@@ -129,6 +143,12 @@ async function activateExtension(frame: HostFrame): Promise<void> {
     deactivate = (extension?.deactivate ?? definition.deactivate) as typeof deactivate;
     send({ protocolVersion: 1, kind: "ready", id: frame.id, payload: { methods: Object.keys(callbacks).sort(), providers, agentProviders, dependencyProviders: [...dependencyRuntimes.keys()].sort() } });
   } catch (error) { failure(frame.id, error); }
+}
+
+async function disposeSubscriptions(): Promise<void> {
+  const owned = subscriptions;
+  subscriptions = [];
+  for (const subscription of owned.reverse()) await subscription.dispose();
 }
 
 async function admitAgentTerminal(frame: HostFrame): Promise<void> {
@@ -193,6 +213,10 @@ function createAgentTerminalContext(context: Record<string, unknown>, capabiliti
   const observation = Object.freeze({
     processes: Object.freeze({ descendants: (options: unknown = {}) => request("process.descendants", options), openFiles: (processes: unknown, options: unknown = {}) => request("process.open-files", { processes, options }), environment: (names: unknown, options: unknown = {}) => request("process.environment", { names, ...object(options) }) }),
     files: Object.freeze({
+      resolveHomeDirectory: (relativePath: unknown, options: unknown = {}) => request("filesystem.resolve-home-directory", { relativePath, ...object(options) }),
+      resolveDirectoryRelativeToEnvironment: (relativePath: unknown, options: unknown) => request("filesystem.resolve-directory-relative-to-environment", { relativePath, ...object(options) }),
+      listDirectory: (root: unknown, options: unknown) => request("filesystem.list-directory", { root, options: object(options) }),
+      watchDirectory: async (root: unknown, options: unknown) => pollingDirectoryWatcher(request, root, options, signal),
       resolveHomeRelative: (relativePath: unknown, options: unknown = {}) => request("filesystem.resolve-home-relative", { relativePath, ...object(options) }),
       resolvePathUnderHome: (providerPath: unknown, options: unknown) => request("filesystem.resolve-path-under-home", { providerPath, ...object(options) }),
       homeRelativePath: (handle: unknown, options: unknown) => request("filesystem.home-relative-path", { handle, ...object(options) }),
@@ -202,9 +226,14 @@ function createAgentTerminalContext(context: Record<string, unknown>, capabiliti
       canonicalFile: (handle: unknown, options: unknown = {}) => request("filesystem.realpath", { handle, options }),
       realpath: (handle: unknown, options: unknown = {}) => request("filesystem.realpath", { handle, options }),
       stat: (handle: unknown, options: unknown = {}) => request("filesystem.stat", { handle, options }),
-      read: (handle: unknown, options: unknown) => request("filesystem.read", { handle, options }),
-      readJson: (handle: unknown, options: unknown) => request("filesystem.read", { handle, options: { ...object(options), encoding: "json" } }),
-      readJsonLine: (handle: unknown, options: unknown) => request("filesystem.read", { handle, options: { ...object(options), encoding: "jsonl" } }),
+      read: async (handle: unknown, options: unknown) => decodeAgentObservationBytes(await request("filesystem.read", { handle, options })),
+      readJson: async (handle: unknown, options: unknown) => parseObservedJson(
+        decodeAgentObservationBytes(await request("filesystem.read", { handle, options: { ...object(options), encoding: "json" } })),
+      ),
+      readJsonLine: async (handle: unknown, options: unknown) => parseObservedJsonLine(
+        decodeAgentObservationBytes(await request("filesystem.read", { handle, options: { ...object(options), encoding: "jsonl" } })),
+        object(options)?.position,
+      ),
       follow: async (handle: unknown, options: unknown = {}) => pollingWatcher(request, handle, options, signal),
     }),
   });
@@ -215,13 +244,46 @@ function createAgentTerminalContext(context: Record<string, unknown>, capabiliti
   return Object.freeze({ terminal, publisher });
 }
 
+/** File bytes cross the host IPC as JSON-safe integer arrays. Keep that
+ * transport detail inside the private bridge so public extension methods keep
+ * their documented `Uint8Array` / parsed-JSON contracts. */
+export function decodeAgentObservationBytes(value: unknown): Uint8Array {
+  if (value instanceof Uint8Array) {
+    if (value.byteLength > 4 * 1024 * 1024) throw new Error("agent file observation exceeds its byte limit");
+    return value;
+  }
+  if (Array.isArray(value) && value.length > 4 * 1024 * 1024) {
+    throw new Error("agent file observation exceeds its byte limit");
+  }
+  if (!Array.isArray(value) || value.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)) {
+    throw new Error("agent file observation returned invalid bytes");
+  }
+  return new Uint8Array(value);
+}
+
+export function parseObservedJson(bytes: Uint8Array): unknown | undefined {
+  const text = new TextDecoder().decode(bytes).trim();
+  if (!text) return undefined;
+  try { return JSON.parse(text); } catch { return undefined; }
+}
+
+export function parseObservedJsonLine(bytes: Uint8Array, position: unknown): unknown | undefined {
+  const lines = new TextDecoder().decode(bytes).split("\n").filter(Boolean);
+  const line = position === "last" ? lines.at(-1) : lines[0];
+  if (!line) return undefined;
+  try { return JSON.parse(line); } catch { return undefined; }
+}
+
 async function consumeAgentSession(result: unknown, publisher: Record<string, (event: unknown) => Promise<unknown>>, signal: AbortSignal): Promise<void> {
   const session = object(result);
   if (session?.state !== "bound" || typeof session.mapRecord !== "function" || !("source" in session) || !session.binding || typeof session.binding !== "object") return;
-  try {
-    const source = await Promise.resolve(session.source) as { [Symbol.asyncIterator]?: () => AsyncIterator<unknown>; dispose?: () => unknown | Promise<unknown> };
+  const mapping = session.mapRecord as (record: unknown, context: unknown) => unknown | Promise<unknown>;
+  let releaseRootFirstRecord: (() => void) | undefined;
+  const rootFirstRecord = new Promise<void>((resolve) => { releaseRootFirstRecord = resolve; });
+  const consume = async (sourceValue: unknown, journal: Record<string, unknown>): Promise<void> => {
+    try {
+    const source = await Promise.resolve(sourceValue) as { [Symbol.asyncIterator]?: () => AsyncIterator<unknown>; dispose?: () => unknown | Promise<unknown> };
     if (typeof source?.[Symbol.asyncIterator] !== "function") return;
-    const mapping = session.mapRecord as (record: unknown, context: unknown) => unknown | Promise<unknown>;
     for await (const chunk of source as AsyncIterable<unknown>) {
       if (signal.aborted) return;
       const bytes = object(chunk)?.bytes;
@@ -229,11 +291,45 @@ async function consumeAgentSession(result: unknown, publisher: Record<string, (e
       const text = new TextDecoder().decode(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes as number[]));
       for (const line of text.split("\n")) {
         if (!line) continue;
-        try { await mapping(JSON.parse(line), Object.freeze({ binding: session.binding, publish: publisher, signal })); } catch { /* Provider parsing failures remain local. */ }
+        try { await mapping(JSON.parse(line), Object.freeze({ binding: session.binding, journal, publish: publisher, signal })); } catch { /* Provider parsing failures remain local. */ }
+        if (journal.role === "root") releaseRootFirstRecord?.();
       }
     }
     await source.dispose?.();
-  } catch { /* Observation disappearance/cancellation is provider-local fallback. */ }
+    } catch { /* Observation disappearance/cancellation is provider-local fallback. */ }
+    finally { if (journal.role === "root") releaseRootFirstRecord?.(); }
+  };
+  const childSources = Array.isArray(session.childSources) ? session.childSources : [];
+  const consumedChildIds = new Set<string>();
+  const consumeChild = (child: unknown): Promise<void> | undefined => {
+    const source = object(child); const childId = typeof source?.childId === "string" ? source.childId : undefined;
+    if (!childId || source === undefined || !("source" in source) || consumedChildIds.has(childId) || !validateAgentChildJournalSources([source]).ok) return undefined;
+    consumedChildIds.add(childId);
+    return consume(source.source, Object.freeze({ role: "child", childId }));
+  };
+  const root = consume(session.source, Object.freeze({ role: "root" }));
+  // A child source cannot legitimately precede its owning root session. Wait
+  // until the root mapper has seen its first journal record so concurrent
+  // initial replay cannot race lifecycle validation in the host.
+  const children = (async () => {
+    await rootFirstRecord;
+    const staticChildren = childSources.flatMap((child) => {
+      const task = consumeChild(child); return task === undefined ? [] : [task];
+    });
+    const discovery = async (): Promise<void> => {
+      const stream = session.childSourceDiscovery === undefined ? undefined : await Promise.resolve(session.childSourceDiscovery) as { [Symbol.asyncIterator]?: () => AsyncIterator<unknown> };
+      if (!stream || typeof stream[Symbol.asyncIterator] !== "function") return;
+      for await (const child of stream as AsyncIterable<unknown>) {
+        if (signal.aborted) return;
+        // Do not await the child stream: a long-lived JSONL watcher must not
+        // block discovery of its siblings. The source has its own cancellation
+        // path via the admitted terminal controller.
+        void consumeChild(child);
+      }
+    };
+    await Promise.all([...staticChildren, discovery()]);
+  })();
+  await Promise.all([root, children]);
 }
 
 async function pollingWatcher(request: (operation: string, payload: unknown) => Promise<unknown>, handle: unknown, options: unknown, signal: AbortSignal): Promise<{ [Symbol.asyncIterator](): AsyncIterator<unknown>; dispose(): Promise<void> }> {
@@ -251,6 +347,26 @@ async function pollingWatcher(request: (operation: string, payload: unknown) => 
       }
     },
     async dispose(): Promise<void> { await request("filesystem.unfollow", { watcherId }); },
+  });
+}
+
+async function pollingDirectoryWatcher(request: (operation: string, payload: unknown) => Promise<unknown>, root: unknown, options: unknown, signal: AbortSignal): Promise<{ [Symbol.asyncIterator](): AsyncIterator<unknown>; dispose(): Promise<void> }> {
+  const opened = object(await request("filesystem.watch-directory", { root, options: object(options) }));
+  const watcherId = typeof opened?.watcherId === "string" ? opened.watcherId : undefined;
+  if (!watcherId) throw new Error("agent directory watcher is unavailable");
+  const initial = object(opened?.snapshot);
+  return Object.freeze({
+    async *[Symbol.asyncIterator](): AsyncGenerator<unknown> {
+      if (initial) yield initial;
+      while (!signal.aborted) {
+        const next = object(await request("filesystem.watch-directory", { watcherId }));
+        const snapshot = object(next?.snapshot);
+        if (snapshot) yield snapshot;
+        if (next?.closed === true) return;
+        if (!snapshot) await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    },
+    async dispose(): Promise<void> { await request("filesystem.unwatch-directory", { watcherId }); },
   });
 }
 

@@ -1,5 +1,5 @@
 import type { EnvironmentCapability, JsonValue } from "@terminay/extension-api";
-import type { ProjectEnvironmentRuntime, ProjectEnvironmentInvocationContext } from "../projectEnvironment/registry.js";
+import type { ProjectEnvironmentRegistry, ProjectEnvironmentRuntime, ProjectEnvironmentInvocationContext } from "../projectEnvironment/registry.js";
 import type { ProjectEnvironmentCapability, ProjectEnvironmentState } from "../projectEnvironment/types.js";
 import type { ExtensionHostManager } from "./manager.js";
 import { randomUUID } from "node:crypto";
@@ -64,6 +64,45 @@ export class ExtensionProjectEnvironmentRuntime implements ProjectEnvironmentRun
     if (created.sessionId !== sessionId) throw new Error("remote terminal identity mismatch");
     return new ProviderPty(this, context, sessionId);
   }
+}
+
+/** Mirrors every active public project-environment contribution into the
+ * selected server's router. This is deliberately provider-neutral: the host
+ * owns activation/ownership, while each runtime still verifies the exact
+ * server-owned environment binding before forwarding child IPC. */
+export function registerActivatedExtensionProjectEnvironmentRuntimes(options: Readonly<{
+  registry: ProjectEnvironmentRegistry;
+  hosts: Pick<ExtensionHostManager, "invokeProvider" | "activatedProjectEnvironmentContributions" | "onContributionsChanged">;
+  snapshot: () => ProjectEnvironmentState;
+}>): { dispose(): void } {
+  const registered = new Set<string>();
+  const reconcile = (): void => {
+    const contributions = options.hosts.activatedProjectEnvironmentContributions();
+    const desired = new Map(contributions.map((contribution) => [contribution.id, contribution]));
+    for (const providerId of registered) {
+      if (!desired.has(providerId)) {
+        options.registry.unregister(providerId);
+        registered.delete(providerId);
+      }
+    }
+    for (const contribution of desired.values()) {
+      if (registered.has(contribution.id)) continue;
+      options.registry.register(new ExtensionProjectEnvironmentRuntime(
+        contribution.id,
+        contribution.capabilities as readonly ProjectEnvironmentCapability[],
+        options.hosts,
+        options.snapshot,
+      ));
+      registered.add(contribution.id);
+    }
+  };
+  reconcile();
+  const unsubscribe = options.hosts.onContributionsChanged(reconcile);
+  return Object.freeze({ dispose() {
+    unsubscribe();
+    for (const providerId of registered) options.registry.unregister(providerId);
+    registered.clear();
+  } });
 }
 function clean(value:Record<string,unknown>):Record<string,unknown>{return Object.fromEntries(Object.entries(value).filter(([,entry])=>entry!==undefined));}
 

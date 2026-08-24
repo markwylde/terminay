@@ -40,6 +40,6 @@ export function createExtensionAgentObservationRouter(options: ExtensionAgentObs
 
 function observationCapability(operation: ExtensionAgentObservationOperation): ProjectEnvironmentCapability {
   if (operation.startsWith("process.") || operation === "terminal.tty") return "process-observation";
-  if (operation === "filesystem.follow" || operation === "filesystem.unfollow" || operation === "filesystem.read") return "agent-journal";
+  if (operation === "filesystem.follow" || operation === "filesystem.unfollow" || operation === "filesystem.read" || operation === "filesystem.watch-directory" || operation === "filesystem.unwatch-directory") return "agent-journal";
   return "filesystem-observation";
 }

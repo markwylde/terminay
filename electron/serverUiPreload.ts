@@ -279,13 +279,14 @@ if (
 	contextBridge.exposeInMainWorld(
 		'terminayAgentStatusTest',
 		Object.freeze({
-			emitJournalRecord: (payload: {
-				provider: 'codex' | 'claude';
+			publishLifecycle: (payload: {
+				provider: string;
 				terminalSessionId: string;
-				record: Record<string, unknown>;
+				providerSessionId: string;
+				events: ReadonlyArray<Record<string, unknown>>;
 			}) =>
 				ipcRenderer.invoke(
-					'test:emit-agent-journal-record',
+					'test:publish-agent-lifecycle',
 					payload,
 				) as Promise<boolean>,
 		}),

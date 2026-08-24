@@ -1,4 +1,5 @@
-import { createJsonlRecordDecoder } from "./agent.js";
+import { createAgentLifecyclePublisher, createJsonlRecordDecoder } from "./agent.js";
+import { EXTENSION_API_VERSION } from "./constants.js";
 import {
   ExtensionSchemaError,
   validateProviderDependencyHandler,
@@ -182,6 +183,7 @@ export function fixtureTerminal(options: FixtureTerminalOptions): AgentTerminalC
   const files = new Map<string, Uint8Array>();
   for (const [path, records] of Object.entries(options.files ?? {})) files.set(path, new TextEncoder().encode(records.map((record) => JSON.stringify(record)).join("\n") + (records.length ? "\n" : "")));
   const fileHandle = (path: string): AgentFileHandle => ({ id: path } as unknown as AgentFileHandle);
+  const directoryHandle = (path: string): import("./types.js").AgentDirectoryHandle => ({ id: path } as unknown as import("./types.js").AgentDirectoryHandle);
   const process = { id: "fixture-process" } as unknown as AgentProcessHandle;
   const foreground: AgentForegroundProcess = { executableName: options.foregroundExecutable, arguments: options.arguments };
   const lookup = (handle: AgentFileHandle): Uint8Array => files.get(handle.id) ?? new Uint8Array();
@@ -201,6 +203,40 @@ export function fixtureTerminal(options: FixtureTerminalOptions): AgentTerminalC
         },
       },
       files: {
+        async resolveHomeDirectory(relativePath: string) {
+          const root = `/home/test/${relativePath.replace(/\/$/, "")}`;
+          return [...files.keys()].some((path) => path.startsWith(`${root}/`)) ? directoryHandle(root) : undefined;
+        },
+        async resolveDirectoryRelativeToEnvironment(relativePath: string, request: { environmentVariable: string }) {
+          const environmentRoot = options.environment?.[request.environmentVariable]?.replace(/\/$/, "");
+          const root = environmentRoot ? `${environmentRoot}/${relativePath.replace(/\/$/, "")}` : undefined;
+          return root && [...files.keys()].some((path) => path.startsWith(`${root}/`)) ? directoryHandle(root) : undefined;
+        },
+        async listDirectory(root: import("./types.js").AgentDirectoryHandle, request: import("./types.js").AgentDirectoryListOptions) {
+          const prefix = `${root.id.replace(/\/$/, "")}/`;
+          let bytes = 0; let truncated = false;
+          const entries: import("./types.js").AgentDiscoveredFile[] = [];
+          for (const path of [...files.keys()].sort()) {
+            const relativePath = path.startsWith(prefix) ? path.slice(prefix.length) : undefined;
+            if (!relativePath || relativePath.split("/").length - 1 > request.maxDepth || !request.extensions.some((extension) => relativePath.endsWith(extension))) continue;
+            const data = files.get(path)!;
+            if (entries.length >= request.maxEntries || bytes + data.byteLength > request.maxBytes) { truncated = true; break; }
+            bytes += data.byteLength; entries.push({ handle: fileHandle(path), relativePath, size: data.byteLength });
+          }
+          return { entries, truncated };
+        },
+        async watchDirectory(root: import("./types.js").AgentDirectoryHandle, request: import("./types.js").AgentDirectoryListOptions) {
+          const prefix = `${root.id.replace(/\/$/, "")}/`; let bytes = 0;
+          const entries: import("./types.js").AgentDiscoveredFile[] = [];
+          for (const path of [...files.keys()].sort()) {
+            const relativePath = path.startsWith(prefix) ? path.slice(prefix.length) : undefined;
+            if (!relativePath || relativePath.split("/").length - 1 > request.maxDepth || !request.extensions.some((extension) => relativePath.endsWith(extension))) continue;
+            const data = files.get(path)!; if (entries.length >= request.maxEntries || bytes + data.byteLength > request.maxBytes) break;
+            bytes += data.byteLength; entries.push({ handle: fileHandle(path), relativePath, size: data.byteLength });
+          }
+          const snapshot = { entries, truncated: entries.length >= request.maxEntries };
+          return { async *[Symbol.asyncIterator]() { yield snapshot; }, dispose(): void {} };
+        },
         async resolveRelativeToEnvironment(relativePath: string, request: { environmentVariable: string }) {
           const root = request.environmentVariable && options.environment?.[request.environmentVariable];
           const exact = root === undefined ? undefined : `${root.replace(/\/$/, "")}/${relativePath}`;
@@ -245,9 +281,22 @@ export interface AgentExtensionHarness { observe(terminal: AgentTerminalContext)
 /** Activates an extension in-memory and captures its validated lifecycle events. */
 export async function createAgentExtensionHarness(extension: TerminayExtension): Promise<AgentExtensionHarness> {
   const registrations = new Map<string, AgentProviderRuntime>(); const subscriptions: AgentProviderRegistration[] = [];
-  const context: ExtensionContext = { extensionId: "test.extension", apiVersion: "1.1.0", paths: { configuration: "/fixture/config", data: "/fixture/data", cache: "/fixture/cache" }, registerProjectEnvironmentProvider(): void {}, agents: { registerProvider(providerId, runtime) { if (registrations.has(providerId)) throw new Error(`Duplicate agent provider: ${providerId}`); registrations.set(providerId, runtime); return { providerId, dispose(): void { registrations.delete(providerId); } }; } }, subscriptions: { add(subscription) { subscriptions.push(subscription as AgentProviderRegistration); return subscription; } } };
+  const context: ExtensionContext = { extensionId: "test.extension", apiVersion: EXTENSION_API_VERSION, paths: { configuration: "/fixture/config", data: "/fixture/data", cache: "/fixture/cache" }, registerProjectEnvironmentProvider(): void {}, agents: { registerProvider(providerId, runtime) { if (registrations.has(providerId)) throw new Error(`Duplicate agent provider: ${providerId}`); registrations.set(providerId, runtime); return { providerId, dispose(): void { registrations.delete(providerId); } }; } }, subscriptions: { add(subscription) { subscriptions.push(subscription as AgentProviderRegistration); return subscription; } } };
   await extension.activate(context); const emitted: AgentLifecycleEvent[] = [];
-  return { async observe(terminal) { for (const runtime of registrations.values()) { if (!runtime.matchesForeground(terminal.foreground)) continue; const result = await runtime.observe(terminal); if (result.state !== "bound" || !("source" in result)) continue; const publish = fixturePublisher(emitted); await replaySource(result.source, { binding: result.binding, journal: { role: "root" }, publish, signal: terminal.signal }, result.mapRecord); for (const child of result.childSources ?? []) await replaySource(child.source, { binding: result.binding, journal: { role: "child", childId: child.childId }, publish, signal: terminal.signal }, result.mapRecord); } }, events: () => emitted.slice(), async dispose() { for (const subscription of subscriptions) await subscription.dispose(); await extension.deactivate?.(); } };
+  return { async observe(terminal) { for (const runtime of registrations.values()) { if (!runtime.matchesForeground(terminal.foreground)) continue; const result = await runtime.observe(terminal); if (result.state !== "bound" || !("source" in result)) continue; const publish = fixturePublisher(emitted); await replaySource(result.source, { binding: result.binding, journal: { role: "root" }, publish, signal: terminal.signal }, result.mapRecord); for (const child of result.childSources ?? []) await replaySource(child.source, { binding: result.binding, journal: { role: "child", childId: child.childId }, publish, signal: terminal.signal }, result.mapRecord); const discovery = result.childSourceDiscovery === undefined ? undefined : await Promise.resolve(result.childSourceDiscovery); if (discovery) for await (const child of discovery) await replaySource(child.source, { binding: result.binding, journal: { role: "child", childId: child.childId }, publish, signal: terminal.signal }, result.mapRecord); } }, events: () => emitted.slice(), async dispose() { for (const subscription of subscriptions) await subscription.dispose(); await extension.deactivate?.(); } };
 }
-async function replaySource(source: AgentFileWatcher | Promise<AgentFileWatcher>, context: AgentRecordContext, mapRecord: (record: unknown, context: AgentRecordContext) => void | Promise<void>): Promise<void> { const watcher = await source; const decoder = createJsonlRecordDecoder(); try { for await (const chunk of watcher) for (const record of decoder.push(chunk.bytes, chunk.type !== "append")) await mapRecord(record, context); } finally { await watcher.dispose(); } }
-function fixturePublisher(events: AgentLifecycleEvent[]): AgentLifecyclePublisher { const emit = (event: AgentLifecycleEvent): void => { events.push(event); }; return { publish: emit, sessionStarted: (event) => emit({ kind: "session.started", ...event }), metadataChanged: (event) => emit({ kind: "agent.metadata", ...event }), turnStarted: (event) => emit({ kind: "turn.started", ...event }), toolStarted: (event) => emit({ kind: "tool.started", ...event }), toolFinished: (event) => emit({ kind: "tool.finished", ...event }), waitStarted: (event) => emit({ kind: "wait.started", ...event }), waitFinished: (event) => emit({ kind: "wait.finished", ...event }), done: (event) => emit({ kind: "agent.done", ...event }), exited: (event) => emit({ kind: "agent.exited", ...event }), subagentStarted: (event) => emit({ kind: "subagent.started", ...event }), subagentDone: (event) => emit({ kind: "subagent.done", ...event }) }; }
+async function replaySource(source: AgentFileWatcher | Promise<AgentFileWatcher>, context: AgentRecordContext, mapRecord: (record: unknown, context: AgentRecordContext) => void | Promise<void>): Promise<void> {
+  context.signal.throwIfAborted();
+  const watcher = await source;
+  const decoder = createJsonlRecordDecoder();
+  try {
+    for await (const chunk of watcher) {
+      context.signal.throwIfAborted();
+      for (const record of decoder.push(chunk.bytes, chunk.type !== "append")) {
+        context.signal.throwIfAborted();
+        await mapRecord(record, context);
+      }
+    }
+  } finally { await watcher.dispose(); }
+}
+function fixturePublisher(events: AgentLifecycleEvent[]): AgentLifecyclePublisher { return createAgentLifecyclePublisher((event) => { events.push(event); }); }

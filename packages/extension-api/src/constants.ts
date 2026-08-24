@@ -1,5 +1,10 @@
 export const EXTENSION_MANIFEST_VERSION = 1 as const;
-export const EXTENSION_API_VERSION = "1.1.0" as const;
+/**
+ * The public extension SDK version implemented by this host. New optional
+ * agent directory discovery and dynamic child-source observation landed in
+ * 1.2, so extensions that call those APIs must declare `^1.2.0`.
+ */
+export const EXTENSION_API_VERSION = "1.2.0" as const;
 
 export const EXTENSION_LIMITS = Object.freeze({
   manifestBytes: 64 * 1024,
@@ -67,6 +72,10 @@ export const EXTENSION_LIMITS = Object.freeze({
   agentEnvironmentVariableNameLength: 128,
   agentEnvironmentVariableValueLength: 4 * 1024,
   agentEnvironmentRelativePathLength: 4 * 1024,
+  /** Bounded, terminal-scoped provider journal discovery. */
+  agentDirectoryListDepth: 8,
+  agentDirectoryListEntries: 256,
+  agentDirectoryListBytes: 16 * 1024 * 1024,
 } as const);
 
 export const EXTENSION_ID_PATTERN = /^[a-z0-9](?:[a-z0-9.-]{1,126}[a-z0-9])?$/;

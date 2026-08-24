@@ -6,7 +6,10 @@ import { join } from "node:path";
 import {
   ExtensionHost,
   ExtensionHostManager,
+  AgentStatusService,
+  ExtensionAgentRuntimeRegistry,
   ServerVaultService,
+  TerminalActivityService,
   assertExtensionCompatible,
   extensionLaunchDescriptor,
   validateExtensionLaunchDescriptor,
@@ -47,7 +50,7 @@ test("one extension child activates, invokes methods, and uses an identity-scope
       context.registerProjectEnvironmentProvider({ providerId: "example.test/main", displayName: "Example", capabilities: ["terminal"] });
       return { methods: {
         echo(input) { return { input, extensionId: context.extensionId }; },
-        runtime() { return { electronRunAsNode: process.env.ELECTRON_RUN_AS_NODE, nodeEnv: process.env.NODE_ENV }; },
+        runtime() { return { electronRunAsNode: process.env.ELECTRON_RUN_AS_NODE, nodeEnv: process.env.NODE_ENV, apiVersion: context.apiVersion }; },
         async log(input) { return context.broker.request("log", input); }
       }};
     }
@@ -58,10 +61,26 @@ test("one extension child activates, invokes methods, and uses an identity-scope
   assert.equal(host.status().state, "running");
   assert.deepEqual(host.status().providers.map((provider) => provider.providerId), ["example.test/main"]);
   assert.deepEqual(await host.invoke({ method: "echo", input: "hello" }), { input: "hello", extensionId: "example.test" });
-  assert.deepEqual(await host.invoke({ method: "runtime" }), { electronRunAsNode: "1", nodeEnv: "production" });
+  assert.deepEqual(await host.invoke({ method: "runtime" }), { electronRunAsNode: "1", nodeEnv: "production", apiVersion: "1.2.0" });
   assert.equal(await host.invoke({ method: "log", input: { message: "safe" } }), "resolved-metadata");
   assert.equal(requests[0].extensionId, "example.test");
   assert.equal(requests[0].operation, "log");
+  await host.stop();
+  assert.equal(host.status().state, "stopped");
+});
+
+test("the child supplies host-owned extension subscriptions", async () => {
+  const descriptor = await fixture("example.subscriptions", `
+    export function activate(context) {
+      let disposed = false;
+      const registration = { dispose() { disposed = true; } };
+      if (context.subscriptions.add(registration) !== registration) throw new Error("subscription identity changed");
+      return { methods: { disposed() { return disposed; } } };
+    }
+  `);
+  const host = new ExtensionHost(descriptor.extensionId, { broker: { async request() {} } });
+  await host.start(descriptor);
+  assert.equal(await host.invoke({ method: "disposed" }), false);
   await host.stop();
   assert.equal(host.status().state, "stopped");
 });
@@ -96,6 +115,118 @@ test("a crashing extension is isolated from another running provider", async () 
   assert.equal(manager.statuses().find((status) => status.extensionId === "example.crashing").state, "failed");
   assert.equal(manager.statuses().find((status) => status.extensionId === "example.healthy").state, "running");
   await manager.shutdown();
+});
+
+test("manager publishes a complete contribution set only after activation", async () => {
+  const descriptor = await fixture("example.atomic", `export async function activate(context) { await new Promise((resolve) => setTimeout(resolve, 40)); context.registerProjectEnvironmentProvider({ providerId: "example.atomic/main", displayName: "Atomic", capabilities: ["terminal"] }); }`);
+  const manager = new ExtensionHostManager({ broker: { async request() {} }, agents: { async observe() { return { name: "codex" }; }, async publish(request) { return { acceptedEventCount: request.events.length }; } } });
+  const start = manager.start(descriptor);
+  assert.deepEqual(manager.providerDefinitions(), []);
+  await start;
+  assert.deepEqual(manager.providerDefinitions().map(({ providerId }) => providerId), ["example.atomic/main"]);
+  await manager.shutdown();
+});
+
+test("only activated manifest-matching environment contributions are published", async () => {
+  const descriptor = await fixture("example.declared", `export function activate(context) { context.registerProjectEnvironmentProvider({ providerId: "example.declared/direct", displayName: "Direct", capabilities: ["terminal", "filesystem"] }); }`);
+  descriptor.projectEnvironmentProviders = [{ id: "example.declared/direct", displayName: "Direct", capabilities: ["terminal", "filesystem"], profileSave: { createEnvironment: true } }];
+  const manager = new ExtensionHostManager({ broker: { async request() {} } });
+  await manager.start(descriptor);
+  assert.deepEqual(manager.activatedProjectEnvironmentContributions(), descriptor.projectEnvironmentProviders);
+  await manager.stop(descriptor.extensionId);
+  assert.deepEqual(manager.activatedProjectEnvironmentContributions(), []);
+
+  const mismatch = await fixture("example.mismatch", `export function activate(context) { context.registerProjectEnvironmentProvider({ providerId: "example.mismatch/direct", displayName: "Unexpected", capabilities: ["terminal"] }); }`);
+  mismatch.projectEnvironmentProviders = [{ id: "example.mismatch/direct", displayName: "Direct", capabilities: ["terminal"] }];
+  await assert.rejects(manager.start(mismatch), /does not match its manifest contribution/);
+  await manager.shutdown();
+});
+
+test("an agent provider may read only its manifest-declared terminal environment variables", async (t) => {
+  const descriptor = await fixture("example.agent-environment", `
+    export function activate(context) {
+      context.agents.registerProvider("example.agent-environment/cli", {
+        mappingVersion: "v1", matchesForeground() { return true; },
+        async observe(terminal) {
+          const allowed = await terminal.observation.processes.environment(["CODEX_HOME"]);
+          if (allowed.CODEX_HOME !== "/fixture/codex") throw new Error("declared environment value was unavailable");
+          try {
+            await terminal.observation.processes.environment(["HOME"]);
+            throw new Error("undeclared environment value was accepted");
+          } catch (error) {
+            if (!String(error.message).includes("not declared")) throw error;
+          }
+          return { state: "not-bound" };
+        },
+      });
+    }
+  `);
+  descriptor.permissions = ["agent-observation"];
+  descriptor.agentProviders = [{
+    id: "example.agent-environment/cli",
+    displayName: "Fixture agent",
+    processMatchers: [{ executableName: "fixture-agent" }],
+    requiredEnvironmentCapabilities: ["process-observation"],
+    requiredEnvironmentVariables: ["CODEX_HOME"],
+  }];
+  const observedNames = [];
+  const host = new ExtensionHost(descriptor.extensionId, {
+    broker: { async request() {} },
+    agents: {
+      async observe(request) {
+        observedNames.push(request.payload.names);
+        return { CODEX_HOME: "/fixture/codex" };
+      },
+      async publish(request) { return { acceptedEventCount: request.events.length }; },
+    },
+  });
+  t.after(async () => { await host.stop().catch(() => undefined); });
+  await host.start(descriptor);
+  await host.admitAgentTerminal({
+    context: {
+      contextId: "fixture-context", serverId: "fixture-server", projectId: "fixture-project",
+      projectEnvironmentId: "terminay.this-server", terminalSessionId: "fixture-terminal",
+      terminalIncarnationId: "1", providerId: "example.agent-environment/cli",
+    },
+    observationCapabilities: ["process-observation"],
+  });
+  assert.deepEqual(observedNames, [["CODEX_HOME"]]);
+});
+
+test("seeded SSH and Puzed hosts reconcile four late agents and re-admit an existing Codex terminal", async (t) => {
+  const manager = new ExtensionHostManager({ broker: { async request() {} }, agents: { async observe() { return { name: "codex" }; }, async publish(request) { return { acceptedEventCount: request.events.length }; } } });
+  t.after(async () => { await manager.shutdown().catch(() => undefined); });
+  const ssh = await fixture("com.terminay.ssh", `export function activate(context) { context.registerProjectEnvironmentProvider({ providerId: "com.terminay.ssh/connection", displayName: "SSH", capabilities: ["terminal"] }); }`);
+  const puzed = await fixture("com.terminay.puzed", `export function activate(context) { context.registerProjectEnvironmentProvider({ providerId: "com.terminay.puzed/connection", displayName: "Puzed", capabilities: ["terminal"] }); }`);
+  await manager.start(ssh); await manager.start(puzed);
+
+  const identity = { serverId: "server-late", projectId: "project-late", sessionId: "terminal-late" };
+  const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
+  const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
+  t.after(async () => { await agents.stop().catch(() => undefined); });
+  const failures = [];
+  const runtime = new ExtensionAgentRuntimeRegistry({ agents, hosts: manager, reobserveDebounceMs: 0, onAdmissionFailure: (failure) => failures.push(failure) });
+  manager.onContributionsChanged(() => { runtime.reobserveExistingTerminals(); });
+  runtime.register(identity); runtime.terminalStarted(identity, 4242);
+  assert.equal(runtime.foregroundProcessChanged(identity, "codex"), false, "SSH/Puzed do not claim coding-agent terminals");
+
+  const lateAgents = [
+    ["com.terminay.agent.codex", "codex", "Codex"],
+    ["com.terminay.agent.claude-code", "claude", "Claude Code"],
+    ["com.terminay.agent.cursor", "agent", "Cursor Agent"],
+    ["com.terminay.agent.omp", "omp", "omp"],
+  ];
+  for (const [extensionId, executable, displayName] of lateAgents) {
+    const descriptor = await fixture(extensionId, `export function activate(context) { context.agents.registerProvider("${extensionId}/cli", { mappingVersion: "late-v1", matchesForeground() { return true; }, async observe(terminal) { await terminal.observation.processes.descendants(); const binding = await terminal.bindSession({ providerSessionId: "late-session", mappingVersion: "late-v1", fingerprint: { kind: "fixture" } }); return { state: "bound", binding, source: { async *[Symbol.asyncIterator]() { yield { bytes: new TextEncoder().encode('{"type":"started"}\\n') }; } }, mapRecord(record, session) { if (record.type === "started") return session.publish.sessionStarted({ title: "Late Codex" }); } }; } }); }`);
+    descriptor.permissions = ["agent-observation"];
+    descriptor.agentProviders = [{ id: `${extensionId}/cli`, displayName, processMatchers: [{ executableName: executable }], requiredEnvironmentCapabilities: ["process-observation"] }];
+    await manager.start(descriptor);
+  }
+  assert.deepEqual(manager.agentProviderContributions().map((provider) => provider.id), lateAgents.map(([extensionId]) => `${extensionId}/cli`).sort());
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.deepEqual(failures, []);
+  assert.equal(agents.claimExtensionProvider(identity, "com.terminay.agent.codex/cli"), false, "the late Codex provider owns the already-running terminal");
+  runtime.terminalExited(identity);
 });
 
 test("launch validation rejects escaping entrypoints before import", async () => {
@@ -352,7 +483,12 @@ test("agent providers require a manifest declaration and receive only parent-adm
       async observe(terminal) {
         const descendants = await terminal.observation.processes.descendants();
         const binding = await terminal.bindSession({ providerSessionId: "session-1", mappingVersion: "0.1", fingerprint: { kind: "fixture" } });
-        return { state: "bound", binding, source: { async *[Symbol.asyncIterator]() { yield { bytes: new TextEncoder().encode(JSON.stringify({ type: "started", title: descendants.name }) + "\\n") }; } }, mapRecord(record, session) { if (record.type === "started") return session.publish.sessionStarted({ title: record.title }); } };
+        return { state: "bound", binding,
+          source: { async *[Symbol.asyncIterator]() { yield { bytes: new TextEncoder().encode(JSON.stringify({ type: "started", title: descendants.name }) + "\\n") }; } },
+          childSources: [{ childId: "child-1", journal: { id: "child-journal" }, source: { async *[Symbol.asyncIterator]() { yield { bytes: new TextEncoder().encode('{"type":"child"}\\n') }; } } }],
+          childSourceDiscovery: { async *[Symbol.asyncIterator]() { yield { childId: "child-2", journal: { id: "child-journal-2" }, source: { async *[Symbol.asyncIterator]() { yield { bytes: new TextEncoder().encode('{"type":"child"}\\n') }; } } }; } },
+          mapRecord(record, session) { if (record.type === "started") return session.publish.sessionStarted({ title: record.title }); if (record.type === "child" && session.journal.role === "child") return session.publish.subagentStarted({ subagentId: session.journal.childId, title: "Child" }); }
+        };
       }
     });
   }`);
@@ -387,12 +523,50 @@ test("agent providers require a manifest declaration and receive only parent-adm
   assert.equal(observations.length, 1);
   assert.equal(observations[0].terminal.terminalSessionId, "terminal-1");
   await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.equal(publications.length, 2, "binding and lifecycle event publish separately");
+  assert.equal(publications.length, 4, "binding, root, static child and late child lifecycle events publish separately");
   assert.equal(publications[1].events[0].kind, "session.started");
+  assert.deepEqual(publications[2].events[0], { kind: "subagent.started", subagentId: "child-1", title: "Child" });
+  assert.deepEqual(publications[3].events[0], { kind: "subagent.started", subagentId: "child-2", title: "Child" });
   assert.equal(await host.cancelAgentTerminal({ contextId: "context-1", reason: "terminal-closed" }), true);
   assert.equal(cancellations.length, 1);
   assert.equal(await host.cancelAgentTerminal({ contextId: "context-1", reason: "terminal-closed" }), false, "teardown is exactly once");
   await host.stop();
+});
+
+test("a running extension manager exposes its agent provider and admits the exact terminal context", async () => {
+  const descriptor = await fixture("example.agent-manager", `export function activate(context) {
+    context.agents.registerProvider("example.agent-manager/cli", {
+      mappingVersion: "0.1", matchesForeground() { return true; },
+      async observe(terminal) { await terminal.observation.processes.descendants(); return { state: "not-bound" }; }
+    });
+  }`);
+  descriptor.permissions = ["agent-observation"];
+  descriptor.agentProviders = [{
+    id: "example.agent-manager/cli", displayName: "Manager fixture",
+    requiredEnvironmentCapabilities: ["process-observation"],
+  }];
+  const observations = [];
+  const manager = new ExtensionHostManager({
+    broker: { async request() {} },
+    agents: {
+      async observe(request) { observations.push(request); return { name: "fixture-agent" }; },
+      async publish(request) { return { acceptedEventCount: request.events.length }; },
+      terminalCancelled() {},
+    },
+  });
+  await manager.start(descriptor);
+  assert.deepEqual(manager.agentProviderContributions().map((value) => value.id), ["example.agent-manager/cli"]);
+  await manager.admitAgentTerminal({
+    context: {
+      contextId: "context-manager-1", serverId: "server-1", projectId: "project-1",
+      projectEnvironmentId: "environment-1", terminalSessionId: "terminal-1",
+      terminalIncarnationId: "incarnation-1", providerId: "example.agent-manager/cli",
+    },
+    observationCapabilities: ["process-observation"],
+  });
+  assert.equal(observations.length, 1);
+  assert.equal(observations[0].terminal.contextId, "context-manager-1");
+  await manager.shutdown();
 });
 
 test("agent registration fails closed when a child registers a provider not declared by its manifest", async () => {

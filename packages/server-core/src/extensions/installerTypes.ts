@@ -14,7 +14,9 @@ export interface RegistryPackageResolution {
   readonly audit?: Readonly<{ critical: number; high: number; moderate: number; low: number }>;
   readonly dependencyCount?: number;
   readonly manifestMetadata?: unknown;
-  readonly source?: "npmjs" | "uploaded";
+  /** `built-in` is a verified release artifact. It never reaches npm at
+   * runtime and is materially distinct from an npm-installed override. */
+  readonly source?: "npmjs" | "uploaded" | "built-in";
   readonly uploadedFilename?: string;
   /** Private server staging path. Never serialized into receipts or DTOs. */
   readonly archivePath?: string;
@@ -73,6 +75,26 @@ export interface ExtensionRegistryClient {
 export interface ExtensionMaterializer {
   readonly npmVersion: string;
   materialize(resolution: RegistryPackageResolution, stagingRoot: string, signal?: AbortSignal): Promise<void>;
+}
+
+/** One immutable, release-shipped extension tree. `materialize` below must
+ * copy a complete npm-like staging root (package-lock plus node_modules) and
+ * must not use the network. The installer re-validates it after every copy. */
+export interface BuiltInExtensionArtifact extends RegistryPackageResolution {
+  readonly source: "built-in";
+  readonly extensionId: string;
+  /** Digest of the complete staged tree, supplied by release assembly. */
+  readonly inventoryHash: string;
+  /** Digest of the staged package-lock, supplied by release assembly. */
+  readonly lockHash: string;
+  /** Release-packed local dependencies such as the public SDK. These are
+   * explicitly inventory-bound; arbitrary local dependencies stay forbidden. */
+  readonly localDependencies?: readonly string[];
+}
+
+export interface BuiltInExtensionArtifactSource {
+  list(signal?: AbortSignal): Promise<readonly BuiltInExtensionArtifact[]>;
+  materialize(artifact: BuiltInExtensionArtifact, stagingRoot: string, signal?: AbortSignal): Promise<void>;
 }
 
 export interface ExtensionReferences {

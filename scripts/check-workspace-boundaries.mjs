@@ -107,6 +107,10 @@ function desktopLayer(path, record) {
   return rest[0] || null;
 }
 
+function isExtensionWorkspace(record) {
+  return typeof record?.directory === 'string' && record.directory.split(sep).includes('extensions');
+}
+
 function isDesktopEmbeddedServerImport(file, owner, target) {
   return owner?.name === '@terminay/desktop'
     && target?.name === '@terminay/server'
@@ -185,6 +189,7 @@ function inspectSpecifier({ file, owner, sourceFile, node, specifier, records, v
       addViolation(violations, file, sourceFile, node, `application packages cannot depend on one another: ${specifier}`);
     }
     if (owner && target !== owner && !moduleDependencies(owner.manifest).has(target.name)) addViolation(violations, file, sourceFile, node, `workspace dependency is not declared by ${owner.name}: ${target.name}`);
+    if (isExtensionWorkspace(owner) && target !== owner && target.name !== '@terminay/extension-api') addViolation(violations, file, sourceFile, node, `built-in extensions may import only the public @terminay/extension-api workspace package: ${specifier}`);
     if (target.name === '@terminay/server-core' && owner?.name !== '@terminay/server') addViolation(violations, file, sourceFile, node, 'server-core is only imported by the Server composition');
     return;
   }

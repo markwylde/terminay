@@ -23,18 +23,35 @@ async function createTerminalAndGetActiveSessionId(page: Page): Promise<string> 
 }
 
 async function emitJournalRecord(page: Page, terminalSessionId: string, record: Record<string, unknown>): Promise<void> {
-	await page.evaluate(async ({ value, sessionId }) => {
+	const providerSessionId = providerSessions.get(terminalSessionId);
+	if (!providerSessionId) throw new Error('Agent provider session is unavailable');
+	const events = lifecycleEvents(record);
+	if (events.length === 0) return;
+	await page.evaluate(async ({ events: value, providerSessionId: providerSession, sessionId }) => {
 		if (!window.terminayAgentStatusTest) throw new Error('Agent status test seam is unavailable');
-		const accepted = await window.terminayAgentStatusTest.emitJournalRecord({ provider: 'codex', terminalSessionId: sessionId, record: value });
-		if (!accepted) throw new Error('Agent journal record was not accepted');
-	}, { value: record, sessionId: terminalSessionId });
+		const accepted = await window.terminayAgentStatusTest.publishLifecycle({ provider: 'com.terminay.agent.codex/cli', terminalSessionId: sessionId, providerSessionId: providerSession, events: value });
+		if (!accepted) throw new Error('Agent lifecycle publication was not accepted');
+	}, { events, providerSessionId, sessionId: terminalSessionId });
 }
 
+const providerSessions = new Map<string, string>();
+
 async function beginCodexSession(page: Page, terminalSessionId: string, providerSessionId: string): Promise<void> {
-	await emitJournalRecord(page, terminalSessionId, {
-		type: 'session_meta',
-		payload: { id: providerSessionId, cli_version: '0.2.0', originator: 'codex-tui', source: 'cli' },
-	});
+	providerSessions.set(terminalSessionId, providerSessionId);
+	await emitJournalRecord(page, terminalSessionId, { type: 'session_meta', payload: { id: providerSessionId } });
+}
+
+function lifecycleEvents(record: Record<string, unknown>): Array<Record<string, unknown>> {
+	const payload = record.payload as Record<string, unknown> | undefined;
+	if (record.type === 'session_meta') return [{ kind: 'session.started', title: 'Codex' }];
+	if (record.type !== 'event_msg' || !payload || typeof payload.type !== 'string') return [];
+	if (payload.type === 'task_started') return [{ kind: 'turn.started', turnId: String(payload.turn_id ?? 'turn') }];
+	if (payload.type === 'user_message') return [{ kind: 'agent.metadata', promptText: String(payload.message ?? ''), ...(typeof payload.model === 'string' ? { model: { id: payload.model, displayName: payload.model } } : {}) }];
+	if (payload.type === 'request_user_input') return [{ kind: 'wait.started', waitId: 'request-user-input', state: 'waiting', reason: 'request_user_input' }];
+	if (payload.type === 'task_complete') return [{ kind: 'agent.done', outcome: 'success' }];
+	if (payload.type === 'sub_agent_activity' && payload.kind === 'started') return [{ kind: 'subagent.started', subagentId: String(payload.agent_thread_id), title: String(payload.agent_path ?? '').split('/').filter(Boolean).at(-1) ?? String(payload.agent_thread_id) }];
+	if (payload.type === 'sub_agent_activity' && payload.kind === 'completed') return [{ kind: 'subagent.done', subagentId: String(payload.agent_thread_id), outcome: 'success' }];
+	return [];
 }
 
 test('Codex rollout state projects to the terminal indicator and Agents sidebar', async ({ mainWindow }) => {
@@ -108,6 +125,9 @@ test('a completed agent resumes working while a second running agent appears', a
 		'codex-e2e-concurrent-root',
 	);
 	await emitJournalRecord(mainWindow, secondTerminalSessionId, {
+		type: 'event_msg', payload: { type: 'task_started', turn_id: 'turn-1' },
+	});
+	await emitJournalRecord(mainWindow, secondTerminalSessionId, {
 		type: 'event_msg',
 		payload: { type: 'user_message', message: 'Agents not updating' },
 	});
@@ -140,6 +160,7 @@ test('agent integration setting disables and restores journal-backed status', as
 	await restoredWindow.close();
 	const sessionId = await getActiveSessionId(mainWindow);
 	await beginCodexSession(mainWindow, sessionId, 'codex-restored');
+	await emitJournalRecord(mainWindow, sessionId, { type: 'event_msg', payload: { type: 'task_started', turn_id: 'turn-1' } });
 	await emitJournalRecord(mainWindow, sessionId, { type: 'event_msg', payload: { type: 'user_message', message: 'Agent integration restored' } });
 	await openFileExplorer(mainWindow);
 	await expect(mainWindow.locator('.agents-sidebar__name')).toContainText('Agent integration restored');

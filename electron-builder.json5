@@ -28,6 +28,12 @@
     {
       "from": "node_modules/@esbuild",
       "to": "esbuild"
+    },
+    // Extension children execute their packed ESM from ordinary files; do not
+    // place this release-verified payload in app.asar.
+    {
+      "from": "build/built-in-extensions",
+      "to": "built-in-extensions"
     }
   ],
   "mac": {

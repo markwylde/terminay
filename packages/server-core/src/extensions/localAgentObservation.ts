@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { open, readFile, readlink, realpath, stat } from "node:fs/promises";
+import { open, readFile, readdir, readlink, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import type { JsonValue } from "@terminay/extension-api";
 import type { ExtensionAgentObservationOperation, ExtensionAgentTerminalContext } from "./types.js";
@@ -10,6 +10,9 @@ const MAX_OPEN_FILES = 8_192;
 const MAX_WATCHERS_PER_TERMINAL = 32;
 const MAX_READ_BYTES = 4 * 1024 * 1024;
 const MAX_FOLLOW_CHUNK_BYTES = 256 * 1024;
+const MAX_DIRECTORY_LIST_DEPTH = 8;
+const MAX_DIRECTORY_LIST_ENTRIES = 256;
+const MAX_DIRECTORY_LIST_BYTES = 16 * 1024 * 1024;
 
 /** A server-owned lookup for one admitted terminal.  This is intentionally
  * separate from the public terminal context: extensions never receive the
@@ -34,6 +37,7 @@ export interface ThisServerAgentObservationSystem {
   environment(shellPid: number, names: readonly string[], signal: AbortSignal): Promise<Readonly<Record<string, string>>>;
   realpath(path: string, signal: AbortSignal): Promise<string | undefined>;
   stat(path: string, signal: AbortSignal): Promise<ThisServerAgentFileStat | undefined>;
+  readDirectory(path: string, signal: AbortSignal): Promise<readonly ThisServerAgentDirectoryEntry[] | undefined>;
   read(path: string, position: number, maximum: number, signal: AbortSignal): Promise<Uint8Array | undefined>;
 }
 
@@ -53,6 +57,13 @@ export interface ThisServerAgentFileStat {
   readonly kind: "file" | "directory" | "other";
   readonly size: number;
   readonly modifiedAt?: string;
+  /** Host-private stable file identity used only to reset a watcher safely. */
+  readonly identity?: string;
+}
+
+export interface ThisServerAgentDirectoryEntry {
+  readonly name: string;
+  readonly kind: "file" | "directory" | "other";
 }
 
 export interface ThisServerAgentObservationAdapterOptions {
@@ -67,8 +78,10 @@ export interface ThisServerAgentObservationAdapterOptions {
 
 interface ProcessHandle { readonly id: string; readonly pid: number; }
 interface FileHandle { readonly id: string; path: string; }
-interface Watcher { readonly id: string; readonly file: FileHandle; readonly maximumChunkBytes: number; path: string; offset: number; }
-interface TerminalState { readonly processes: Map<string, ProcessHandle>; readonly files: Map<string, FileHandle>; readonly watchers: Map<string, Watcher>; nextId: number; homeDirectory?: string; }
+interface DirectoryHandle { readonly id: string; path: string; }
+interface Watcher { readonly id: string; readonly file: FileHandle; readonly maximumChunkBytes: number; path: string; offset: number; modifiedAt?: string; identity?: string; }
+interface DirectoryWatcher { readonly id: string; readonly directory: DirectoryHandle; readonly options: JsonValue; signature: string; }
+interface TerminalState { readonly processes: Map<string, ProcessHandle>; readonly files: Map<string, FileHandle>; readonly directories: Map<string, DirectoryHandle>; readonly watchers: Map<string, Watcher>; readonly directoryWatchers: Map<string, DirectoryWatcher>; nextId: number; homeDirectory?: string; }
 
 /**
  * Adapter for exactly the local Terminay Server environment.  It is a narrow
@@ -101,6 +114,11 @@ export class ThisServerAgentObservationAdapter {
       case "process.open-files": return this.openFiles(state, payload, signal);
       case "process.environment": return this.environment(local, payload, signal);
       case "terminal.tty": return this.tty(local, signal);
+      case "filesystem.resolve-home-directory": return this.resolveHomeDirectory(state, payload, signal);
+      case "filesystem.resolve-directory-relative-to-environment": return this.resolveDirectoryRelativeToEnvironment(local, state, payload, signal);
+      case "filesystem.list-directory": return this.listDirectory(state, payload, signal);
+      case "filesystem.watch-directory": return this.watchDirectory(state, payload, signal);
+      case "filesystem.unwatch-directory": return this.unwatchDirectory(state, payload);
       case "filesystem.resolve-home-relative": return this.resolveHomeRelative(state, payload, signal);
       case "filesystem.resolve-path-under-home": return this.resolvePathUnderHome(state, payload, signal);
       case "filesystem.home-relative-path": return this.homeRelativePath(state, payload, signal);
@@ -148,7 +166,7 @@ export class ThisServerAgentObservationAdapter {
   private stateFor(contextId: string): TerminalState {
     let state = this.states.get(contextId);
     if (state === undefined) {
-      state = { processes: new Map(), files: new Map(), watchers: new Map(), nextId: 0 };
+      state = { processes: new Map(), files: new Map(), directories: new Map(), watchers: new Map(), directoryWatchers: new Map(), nextId: 0 };
       this.states.set(contextId, state);
     }
     return state;
@@ -164,7 +182,7 @@ export class ThisServerAgentObservationAdapter {
   private async descendants(terminal: ThisServerAgentTerminal, state: TerminalState, signal: AbortSignal): Promise<JsonValue> {
     const processes = await this.system.descendants(requiredPid(terminal), signal);
     if (processes.length > MAX_PROCESSES) throw new Error("agent process observation exceeds its limit");
-    return processes.map((process) => {
+    const result = processes.map((process) => {
       if (!validPid(process.pid) || !safeText(process.executableName, 512)) throw new Error("agent process observation is malformed");
       const handle = this.registerProcess(state, process.pid);
       const startedAt = safeText(process.startedAt, 128) ? process.startedAt : undefined;
@@ -175,6 +193,7 @@ export class ThisServerAgentObservationAdapter {
         ...(cwd === undefined ? {} : { cwd }),
       };
     });
+    return result;
   }
 
   private async openFiles(state: TerminalState, payload: JsonValue, signal: AbortSignal): Promise<JsonValue> {
@@ -184,12 +203,13 @@ export class ThisServerAgentObservationAdapter {
     const pids = supplied.map((value) => this.processFor(state, value).pid);
     const files = await this.system.openFiles([...new Set(pids)], access, signal);
     if (files.length > MAX_OPEN_FILES) throw new Error("agent open-file observation exceeds its limit");
-    return files.flatMap((file) => {
+    const result = files.flatMap((file) => {
       const path = safePath(file.path);
       if (path === undefined || !isOpenAccess(file.access)) return [];
       const handle = this.registerFile(state, path);
       return [{ handle: { id: handle.id }, path, access: file.access }];
     });
+    return result;
   }
 
   private async environment(terminal: ThisServerAgentTerminal, payload: JsonValue, signal: AbortSignal): Promise<JsonValue> {
@@ -199,7 +219,8 @@ export class ThisServerAgentObservationAdapter {
     const values = await this.system.environment(requiredPid(terminal), safeNames, signal);
     const entries: Array<[string, string]> = [];
     for (const name of safeNames) { const value = values[name]; if (safeText(value, 4_096)) entries.push([name, value]); }
-    return Object.fromEntries(entries);
+    const result = Object.fromEntries(entries);
+    return result;
   }
 
   private async tty(terminal: ThisServerAgentTerminal, signal: AbortSignal): Promise<JsonValue> {
@@ -217,6 +238,90 @@ export class ThisServerAgentObservationAdapter {
     if (!this.matchesFileConstraint(canonical, options, state.homeDirectory)) return null;
     file.path = canonical;
     return { id: file.id };
+  }
+
+  private async resolveHomeDirectory(state: TerminalState, payload: JsonValue, signal: AbortSignal): Promise<JsonValue> {
+    const request = record(payload); const relativePath = request?.relativePath;
+    if (typeof relativePath !== "string" || !safeRelativePath(relativePath)) return null;
+    const homeDirectory = state.homeDirectory; if (homeDirectory === undefined) return null;
+    const canonical = await this.system.realpath(resolve(homeDirectory, relativePath), signal);
+    if (canonical === undefined || safePath(canonical) === undefined || !this.withinHomeConstraint(canonical, request, true, homeDirectory)) return null;
+    if ((await this.system.stat(canonical, signal))?.kind !== "directory") return null;
+    return { id: this.registerDirectory(state, canonical).id };
+  }
+
+  private async resolveDirectoryRelativeToEnvironment(terminal: ThisServerAgentTerminal, state: TerminalState, payload: JsonValue, signal: AbortSignal): Promise<JsonValue> {
+    const request = record(payload); const relativePath = request?.relativePath;
+    if (typeof relativePath !== "string" || !safeRelativePath(relativePath)) return null;
+    const root = await this.environmentRoot(terminal, request?.environmentVariable, signal); if (root === undefined) return null;
+    const canonical = await this.system.realpath(resolve(root, relativePath), signal);
+    const beneath = typeof request?.beneathRelative === "string" && safeRelativePath(request.beneathRelative) ? resolve(root, request.beneathRelative) : root;
+    if (canonical === undefined || safePath(canonical) === undefined || !contained(beneath, canonical)) return null;
+    if ((await this.system.stat(canonical, signal))?.kind !== "directory") return null;
+    return { id: this.registerDirectory(state, canonical).id };
+  }
+
+  private async listDirectory(state: TerminalState, payload: JsonValue, signal: AbortSignal): Promise<JsonValue> {
+    const request = record(payload); const root = this.directoryFor(state, request?.root); const options = record(request?.options);
+    return this.directoryListing(state, root, options, signal);
+  }
+
+  private async watchDirectory(state: TerminalState, payload: JsonValue, signal: AbortSignal): Promise<JsonValue> {
+    const request = record(payload);
+    if (typeof request?.watcherId === "string") {
+      const watcher = state.directoryWatchers.get(request.watcherId);
+      if (watcher === undefined) throw new Error("agent directory watcher is unavailable");
+      const snapshot = await this.directoryListing(state, watcher.directory, record(watcher.options), signal);
+      const signature = JSON.stringify(snapshot);
+      if (signature === watcher.signature) return { closed: false };
+      watcher.signature = signature; return { snapshot, closed: false };
+    }
+    if (state.directoryWatchers.size >= MAX_WATCHERS_PER_TERMINAL) throw new Error("agent directory watch exceeds its limit");
+    const root = this.directoryFor(state, request?.root); const options = record(request?.options);
+    const snapshot = await this.directoryListing(state, root, options, signal);
+    const watcher: DirectoryWatcher = { id: `directory-watch-${++state.nextId}`, directory: root, options: structuredClone(options ?? {}), signature: JSON.stringify(snapshot) };
+    state.directoryWatchers.set(watcher.id, watcher);
+    return { watcherId: watcher.id, snapshot };
+  }
+
+  private unwatchDirectory(state: TerminalState, payload: JsonValue): JsonValue {
+    const watcherId = record(payload)?.watcherId;
+    if (typeof watcherId !== "string" || !state.directoryWatchers.delete(watcherId)) throw new Error("agent directory watcher is unavailable");
+    return { stopped: true };
+  }
+
+  private async directoryListing(state: TerminalState, root: DirectoryHandle, options: Record<string, JsonValue> | undefined, signal: AbortSignal): Promise<JsonValue> {
+    const extensions = Array.isArray(options?.extensions) && options.extensions.length > 0 && options.extensions.length <= 16
+      && options.extensions.every((extension) => typeof extension === "string" && extension.length > 0 && extension.length <= 64 && extension.startsWith("."))
+      ? options.extensions as string[] : undefined;
+    const maxDepth = boundedInteger(options?.maxDepth, 0, MAX_DIRECTORY_LIST_DEPTH);
+    const maxEntries = boundedInteger(options?.maxEntries, 1, MAX_DIRECTORY_LIST_ENTRIES);
+    const maxBytes = boundedInteger(options?.maxBytes, 1, MAX_DIRECTORY_LIST_BYTES);
+    if (!extensions || maxDepth === undefined || maxEntries === undefined || maxBytes === undefined) throw new Error("agent directory list request is invalid");
+    const entries: JsonValue[] = []; let bytes = 0; let truncated = false;
+    const visit = async (directory: string, depth: number): Promise<void> => {
+      if (truncated || signal.aborted) return;
+      const children = await this.system.readDirectory(directory, signal);
+      if (children === undefined) return;
+      for (const child of [...children].sort((left, right) => left.name.localeCompare(right.name))) {
+        if (truncated || signal.aborted) return;
+        if (!safeDirectoryEntryName(child.name)) continue;
+        const candidate = resolve(directory, child.name);
+        if (child.kind === "directory") { if (depth < maxDepth) await visit(candidate, depth + 1); continue; }
+        if (child.kind !== "file" || !extensions.some((extension) => child.name.endsWith(extension))) continue;
+        const canonical = await this.system.realpath(candidate, signal);
+        if (canonical === undefined || !contained(root.path, canonical)) continue;
+        const details = await this.system.stat(canonical, signal);
+        if (details?.kind !== "file" || details.size < 0 || !Number.isSafeInteger(details.size)) continue;
+        if (entries.length >= maxEntries || bytes + details.size > maxBytes) { truncated = true; return; }
+        const relativePath = relative(root.path, canonical);
+        if (!safeRelativePath(relativePath)) continue;
+        bytes += details.size;
+        entries.push({ handle: { id: this.registerFile(state, canonical).id }, relativePath, size: details.size, ...(safeText(details.modifiedAt, 128) ? { modifiedAt: details.modifiedAt } : {}) });
+      }
+    };
+    await visit(root.path, 0); throwIfAborted(signal);
+    return { entries, truncated };
   }
 
   private async resolveHomeRelative(state: TerminalState, payload: JsonValue, signal: AbortSignal): Promise<JsonValue> {
@@ -352,9 +457,17 @@ export class ThisServerAgentObservationAdapter {
     const details = await this.system.stat(canonical, signal);
     if (details === undefined || details.kind !== "file") return { events: [], closed: true };
     let type: "append" | "replace" | "truncate" | undefined;
+    const changedIdentity = watcher.identity !== undefined && details.identity !== undefined && watcher.identity !== details.identity;
+    const changedMetadata = watcher.modifiedAt !== undefined && details.modifiedAt !== undefined && watcher.modifiedAt !== details.modifiedAt;
     if (canonical !== watcher.path) { watcher.path = canonical; watcher.file.path = canonical; watcher.offset = 0; type = "replace"; }
     else if (details.size < watcher.offset) { watcher.offset = 0; type = "truncate"; }
     else if (details.size > watcher.offset) type = "append";
+    // Atomic replacement and an in-place equal-size rewrite need not change
+    // the pathname or length. mtime is only a conservative replacement fact:
+    // reset and replay rather than risk silently missing metadata updates.
+    else if (changedIdentity || changedMetadata) { watcher.offset = 0; type = "replace"; }
+    watcher.modifiedAt = details.modifiedAt;
+    watcher.identity = details.identity;
     if (type === undefined) return { events: [], closed: false };
     const bytes = await this.system.read(watcher.path, watcher.offset, watcher.maximumChunkBytes, signal) ?? new Uint8Array();
     watcher.offset += bytes.byteLength;
@@ -383,6 +496,17 @@ export class ThisServerAgentObservationAdapter {
     const handle = { id: `file-${++state.nextId}`, path };
     state.files.set(handle.id, handle); return handle;
   }
+  private registerDirectory(state: TerminalState, path: string): DirectoryHandle {
+    for (const handle of state.directories.values()) if (handle.path === path) return handle;
+    const handle = { id: `directory-${++state.nextId}`, path };
+    state.directories.set(handle.id, handle); return handle;
+  }
+  private directoryFor(state: TerminalState, value: JsonValue | undefined): DirectoryHandle {
+    const source = record(value); const nested = record(source?.handle); const id = nested?.id ?? source?.id;
+    const handle = typeof id === "string" ? state.directories.get(id) : undefined;
+    if (handle === undefined) throw new Error("agent directory handle is unavailable");
+    return handle;
+  }
   private fileFor(state: TerminalState, value: JsonValue | undefined): FileHandle {
     const id = record(value)?.id; const handle = typeof id === "string" ? state.files.get(id) : undefined;
     if (handle === undefined) throw new Error("agent file handle is unavailable");
@@ -403,9 +527,15 @@ const nodeSystem: ThisServerAgentObservationSystem = {
   foreground: nodeForeground,
   environment: nodeEnvironment,
   realpath: async (path, signal) => { throwIfAborted(signal); return realpath(path).catch(() => undefined); },
-  stat: async (path, signal) => { throwIfAborted(signal); const value = await stat(path).catch(() => undefined); if (value === undefined) return undefined; return { kind: value.isFile() ? "file" : value.isDirectory() ? "directory" : "other", size: value.size, modifiedAt: Number.isFinite(value.mtimeMs) ? new Date(value.mtimeMs).toISOString() : undefined }; },
+  stat: async (path, signal) => { throwIfAborted(signal); const value = await stat(path).catch(() => undefined); if (value === undefined) return undefined; return { kind: value.isFile() ? "file" : value.isDirectory() ? "directory" : "other", size: value.size, modifiedAt: Number.isFinite(value.mtimeMs) ? new Date(value.mtimeMs).toISOString() : undefined, identity: fileIdentity(value) }; },
+  readDirectory: async (path, signal) => { throwIfAborted(signal); const values = await readdir(path, { withFileTypes: true }).catch(() => undefined); throwIfAborted(signal); return values?.map((entry) => ({ name: entry.name, kind: entry.isFile() ? "file" as const : entry.isDirectory() ? "directory" as const : "other" as const })); },
   read: nodeRead,
 };
+
+function fileIdentity(value: object): string | undefined {
+  const candidate = value as { readonly dev?: unknown; readonly ino?: unknown };
+  return Number.isSafeInteger(candidate.dev) && Number.isSafeInteger(candidate.ino) ? `:` : undefined;
+}
 
 async function nodeDescendants(shellPid: number, signal: AbortSignal): Promise<readonly ThisServerAgentProcess[]> {
   throwIfAborted(signal);
@@ -520,10 +650,12 @@ function environmentName(value: unknown): value is string { return typeof value 
 function matchesExtension(path: string, extension: JsonValue | undefined): boolean { return extension === undefined || typeof extension === "string" && extension.length > 0 && extension.length <= 64 && path.endsWith(extension); }
 function safePath(value: unknown): string | undefined { return safeText(value, MAX_PATH_LENGTH) && isAbsolute(value) ? value : undefined; }
 function safeRelativePath(value: string): boolean { return value.length > 0 && value.length <= MAX_PATH_LENGTH && !value.includes("\0") && !isAbsolute(value) && !value.split(/[\\/]/u).includes(".."); }
+function safeDirectoryEntryName(value: string): boolean { return safeRelativePath(value) && !value.includes("/") && !value.includes("\\") && value !== "." && value !== ".."; }
 function contained(root: string, path: string): boolean { const candidate = relative(root, path); return candidate !== "" && candidate !== ".." && !candidate.startsWith(`..${pathSeparator()}`) && !isAbsolute(candidate); }
 function record(value: unknown): Record<string, JsonValue> | undefined { return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, JsonValue> : undefined; }
 function isOpenAccess(value: unknown): value is "readable" | "writable" | "read-write" { return value === "readable" || value === "writable" || value === "read-write"; }
 function boundedBytes(value: unknown, maximum: number): number { if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0 || value > maximum) throw new Error("agent file byte limit is invalid"); return value; }
+function boundedInteger(value: unknown, minimum: number, maximum: number): number | undefined { return typeof value === "number" && Number.isSafeInteger(value) && value >= minimum && value <= maximum ? value : undefined; }
 function positiveBound(value: number | undefined, fallback: number): number { if (value === undefined) return fallback; if (!Number.isSafeInteger(value) || value <= 0 || value > fallback) throw new RangeError("invalid agent observation byte limit"); return value; }
 function basenameSafe(path: string): string { const slash = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")); return path.slice(slash + 1); }
 function pathSeparator(): string { return process.platform === "win32" ? "\\" : "/"; }

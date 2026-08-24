@@ -3,6 +3,7 @@ import { readFile, readdir, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { assertManifestMatchesPackage, parseExtensionManifest, type TerminayExtensionManifest } from "@terminay/extension-api";
 import type { RegistryPackageResolution } from "./installerTypes.js";
+import { assertExtensionCompatible } from "./descriptor.js";
 
 const MAX_FILES = 20_000;
 const MAX_BYTES = 256 * 1024 * 1024;
@@ -15,7 +16,7 @@ export interface ValidatedExtensionTree {
   readonly inventoryHash: string;
 }
 
-export async function validateMaterializedExtension(stagingRoot: string, resolution: RegistryPackageResolution): Promise<ValidatedExtensionTree> {
+export async function validateMaterializedExtension(stagingRoot: string, resolution: RegistryPackageResolution, installedExtensions?: ReadonlyMap<string, { readonly apiVersion: string }>): Promise<ValidatedExtensionTree> {
   const lockBytes = await readFile(join(stagingRoot, "package-lock.json"));
   const lock = parseObject(lockBytes, "package-lock.json");
   validateNpmLockfile(lock, resolution);
@@ -27,6 +28,10 @@ export async function validateMaterializedExtension(stagingRoot: string, resolut
   if (packageJson.name !== resolution.packageName || packageJson.version !== resolution.version) throw new Error("materialized package identity differs from preview");
   const manifest = parseExtensionManifest(packageJson.terminay);
   assertManifestMatchesPackage(manifest, packageJson);
+  // Reject an incompatible bundle before it reaches a persisted active slot.
+  // This makes a bad release artifact an isolated reconciliation failure rather
+  // than a startup-time host activation failure.
+  assertExtensionCompatible(manifest, { terminayVersion: "1.0.0", installedExtensions });
   const inventory = await inventoryTree(stagingRoot);
   return Object.freeze({ packageRoot, manifest, lockHash: sha256(lockBytes), inventoryHash: sha256(JSON.stringify(inventory)) });
 }
@@ -46,8 +51,12 @@ export function validateNpmLockfile(lock: unknown, resolution: RegistryPackageRe
     const record = value as Record<string, unknown>;
     if (typeof record.integrity !== "string" || record.integrity.length < 20) throw new Error("every dependency requires registry integrity");
     if (typeof record.resolved === "string" && !record.resolved.startsWith("https://registry.npmjs.org/")) {
-      const uploadedRoot = path === `node_modules/${resolution.packageName}` && resolution.source === "uploaded" && record.resolved.startsWith("file:");
-      if (!uploadedRoot) throw new Error("dependency did not resolve from public npmjs");
+      // Only the root package of a verified offline release artifact may have
+      // a local resolution. Every dependency remains registry-bound with an
+      // integrity, exactly as it is for npm and uploaded installations.
+      const localRoot = path === `node_modules/${resolution.packageName}` && (resolution.source === "uploaded" || resolution.source === "built-in") && record.resolved.startsWith("file:");
+      const localBuiltInDependency = resolution.source === "built-in" && isAllowedBuiltInLocalDependency(resolution, path) && record.resolved.startsWith("file:");
+      if (!localRoot && !localBuiltInDependency) throw new Error("dependency did not resolve from public npmjs");
     }
     if (record.link === true) throw new Error("linked dependencies are unsupported");
     const scripts = record.hasInstallScript;
@@ -59,6 +68,12 @@ export function validateNpmLockfile(lock: unknown, resolution: RegistryPackageRe
       }
     }
   }
+}
+
+function isAllowedBuiltInLocalDependency(resolution: RegistryPackageResolution, path: string): boolean {
+  const allowed = (resolution as import("./installerTypes.js").BuiltInExtensionArtifact).localDependencies;
+  const packageName = path.slice("node_modules/".length);
+  return Array.isArray(allowed) && allowed.includes(packageName) && packageName === "@terminay/extension-api";
 }
 
 async function inventoryTree(root: string): Promise<readonly { path: string; size: number; hash: string }[]> {

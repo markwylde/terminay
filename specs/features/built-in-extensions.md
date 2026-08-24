@@ -82,6 +82,16 @@ server upgrades. A release may provide a newer built-in slot, but startup never
 silently re-enables an extension, changes an explicitly selected external
 version, or hot-swaps a slot beneath a live provider.
 
+Reconciliation is also a supported live server lifecycle. If a verified
+release artifact materializes an enabled active built-in after the extension
+manager is already running, the server activates that exact slot before it
+reports reconciliation complete. Provider and agent-provider contributions
+become visible together only after that host is running. A failed activation is
+recorded as that extension's explicit failed runtime state; the UI never calls
+an enabled-but-unhosted record `installed`. Reconciliation does not restart an
+unchanged running provider, and it never swaps a selected override beneath an
+active use.
+
 The immutable artifact shipped with the current release cannot be physically
 removed through extension management. A user can disable it, install and select
 a compatible newer npm version, roll back to the release artifact, or remove
@@ -107,6 +117,13 @@ observers. Existing canonical entries for that provider are retired and the
 terminal returns to generic activity fallback. Disabling SSH or Puzed affects
 their environments through the existing dependency and in-use rules; it does
 not implicitly disable unrelated agent packages.
+
+When a newly reconciled agent host becomes available, Terminay re-evaluates
+the last host-observed foreground executable for every live terminal. A newly
+matching provider is admitted without restarting the terminal; a non-matching
+terminal remains on generic activity. Local admission exposes only the
+capabilities that provider declared, even when This server offers additional
+observation capabilities.
 
 ## Acceptance outcomes
 

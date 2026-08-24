@@ -1,0 +1,87 @@
+{
+  "name": "terminay-agent-cursor",
+  "version": "0.1.0",
+  "description": "Official Cursor Agent CLI sidebar extension for Terminay",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/terminay/terminay.git",
+    "directory": "extensions/agent-cursor"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "fixtures",
+    "README.md",
+    "LICENSE",
+    "AGENTS.md"
+  ],
+  "scripts": {
+    "compile": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run compile && node --test test/*.test.mjs",
+    "test:compat": "npm run compile && node --test test/compatibility.test.mjs",
+    "test:packed": "npm run compile && node --test test/packed.test.mjs",
+    "test:real-cli": "npm run compile && TERMINAY_CURSOR_AGENT_REAL=1 node --test test/real-cli.test.mjs"
+  },
+  "peerDependencies": {
+    "@terminay/extension-api": "^1.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@terminay/extension-api": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@terminay/extension-api": "^1.1.0",
+    "@types/node": "^24.0.0",
+    "typescript": "^6.0.0"
+  },
+  "terminay": {
+    "manifestVersion": 1,
+    "id": "com.terminay.agent.cursor",
+    "displayName": "Cursor Agent",
+    "description": "Shows Cursor Agent CLI sessions in Terminay's Agents sidebar.",
+    "api": "^1.1.0",
+    "engines": {
+      "terminay": ">=1.0.0",
+      "node": ">=22"
+    },
+    "entrypoint": "dist/index.js",
+    "platforms": ["darwin", "linux"],
+    "permissions": ["agent-observation"],
+    "contributes": {
+      "agentProviders": [
+        {
+          "id": "com.terminay.agent.cursor/cli",
+          "displayName": "Cursor",
+          "description": "Cursor Agent CLI sessions bound through their writable chat store.",
+          "icon": "terminal",
+          "platforms": ["darwin", "linux"],
+          "processMatchers": [
+            { "executableName": "agent" },
+            { "executableName": "cursor-agent" }
+          ],
+          "mappings": [
+            { "mappingVersion": "0.1", "providerVersionRange": ">=2026.8.11" }
+          ],
+          "requiredEnvironmentCapabilities": ["process-observation", "filesystem-observation", "agent-journal"]
+        }
+      ]
+    }
+  }
+}
