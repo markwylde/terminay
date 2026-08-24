@@ -10,6 +10,7 @@ import { readFile } from "node:fs/promises";
 
 const require = createRequire(new URL("../../../package.json", import.meta.url));
 const npmEnvironment = Object.fromEntries(Object.entries(process.env).filter(([key]) => !["INIT_CWD", "npm_config_local_prefix", "npm_config_user_agent", "npm_config_workspace"].includes(key)));
+const projectEnvironmentProviders = [{ id: PROVIDER_ID, displayName: "SSH server", capabilities: ["terminal", "filesystem", "agent-journal"], dependencyOperations: ["generate", "bind", "update", "verify", "approve-trust", "service", "remove"].map((name) => ({ name: `managed-binding.${name}` })) }];
 
 test("packed package activates and all public provider callbacks cross the real host IPC", async () => {
   const root = await mkdtemp(join(tmpdir(), "terminay-ssh-host-")); const repository = new URL("../../../", import.meta.url); const packed = spawnSync("npm", ["pack", "--workspace", "terminay-plugin-ssh", "--pack-destination", root, "--json"], { cwd: repository, encoding: "utf8", env: npmEnvironment }); assert.equal(packed.status, 0, packed.stderr);
@@ -19,7 +20,7 @@ test("packed package activates and all public provider callbacks cross the real 
   const [{ ExtensionHostManager }] = await Promise.all([import(require.resolve("@terminay/server-core"))]);
   const configDirectory = join(root, "config"), dataDirectory = join(root, "data"), cacheDirectory = join(root, "cache"); await Promise.all([configDirectory, dataDirectory, cacheDirectory].map((path) => mkdir(path)));
   const brokerCalls = []; const manager = new ExtensionHostManager({ broker: { async request(request) { brokerCalls.push(request); throw new Error("fixture broker unavailable"); } } });
-  await manager.start({ extensionId: EXTENSION_ID, packageRoot, entrypoint: "dist/index.js", configDirectory, dataDirectory, cacheDirectory, permissions: ["secrets:resolve", "network"] });
+  await manager.start({ extensionId: EXTENSION_ID, packageRoot, entrypoint: "dist/index.js", configDirectory, dataDirectory, cacheDirectory, permissions: ["secrets:resolve", "network"], projectEnvironmentProviders, extensionDependencies: [] });
   assert.equal(manager.providerDefinitions()[0].providerId, PROVIDER_ID);
   const invoke = (callback, request, extra = {}) => manager.invokeProvider({ providerId: PROVIDER_ID, callback, request, ...extra });
   assert.deepEqual(await invoke("resolveOptions", { sourceId: "unknown", values: {} }), { options: [] });

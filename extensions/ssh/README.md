@@ -51,3 +51,20 @@ records/256 KiB. Missing, incompatible, stale, or mismatched helpers fail
 closed; normal terminal-output activity detection continues as fallback. Raw
 journal records remain inside the Terminay Server/extension boundary and only
 the existing reduced agent-status projection reaches clients.
+
+## Install, compatibility, and troubleshooting
+
+SSH ships built in, installed offline and enabled by default. Disable or
+re-enable it in **Extensions** settings without deleting profiles; a compatible
+npm release may override the bundled floor. Create an SSH environment, enter
+its host and authentication fields, and approve the presented host key.
+
+It requires Extension API 1.1 and Node.js 22+. Remote agent observation also
+requires a compatible `terminay-target-helper`; without it the terminal works
+but agent detection fails closed. For failures, verify address, port,
+credential, host approval, helper version, and remote `PATH`. Passwords,
+private keys, raw journals, and transports never reach clients.
+
+Run `npm test --workspace terminay-extension-ssh`. The opt-in Docker smoke is
+`npm run test:e2e --workspace terminay-extension-ssh`; it uses a disposable
+local server and test keys, not a real remote host.

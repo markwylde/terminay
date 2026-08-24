@@ -3,7 +3,7 @@
   "id": "com.terminay.ssh",
   "displayName": "SSH",
   "description": "Open POSIX projects on existing SSH servers.",
-  "api": "^1.0.0",
+  "api": "^1.1.0",
   "engines": {
     "terminay": ">=1.0.0",
     "node": ">=22"
@@ -25,7 +25,16 @@
         "displayName": "SSH server",
         "description": "A POSIX host reached directly by the selected Terminay Server.",
         "icon": "server",
-        "capabilities": ["terminal", "filesystem", "agent-journal"]
+        "capabilities": ["terminal", "filesystem", "agent-journal"],
+        "dependencyOperations": [
+          { "name": "managed-binding.generate" },
+          { "name": "managed-binding.bind" },
+          { "name": "managed-binding.update" },
+          { "name": "managed-binding.verify" },
+          { "name": "managed-binding.approve-trust" },
+          { "name": "managed-binding.service" },
+          { "name": "managed-binding.remove" }
+        ]
       }
     ]
   }

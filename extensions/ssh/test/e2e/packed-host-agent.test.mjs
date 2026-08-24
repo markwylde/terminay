@@ -35,7 +35,7 @@ test("packed host grants agent broker only to agent profiles", async () => {
       secrets: { async withSecret(_principal, _request, use) { return use(Buffer.from("secret-pass")); } },
       sshAgent: { async listIdentities() { agentLists++; return []; }, async sign() { throw new Error("no identity"); } },
     });
-    await manager.start({ extensionId: EXTENSION_ID, packageRoot, entrypoint: "dist/index.js", ...dirs, permissions: ["network", "secrets:resolve", "ssh-agent:use"] });
+    await manager.start({ extensionId: EXTENSION_ID, packageRoot, entrypoint: "dist/index.js", ...dirs, permissions: ["network", "secrets:resolve", "ssh-agent:use"], projectEnvironmentProviders: [{ id: PROVIDER_ID, displayName: "SSH server", capabilities: ["terminal", "filesystem", "agent-journal"], dependencyOperations: ["generate", "bind", "update", "verify", "approve-trust", "service", "remove"].map((name) => ({ name: `managed-binding.${name}` })) }], extensionDependencies: [] });
     const invoke = (profileId) => manager.invokeProvider({ providerId: PROVIDER_ID, callback: "testProfile", request: { profileId, values: {} } });
     const passwordIssues = await invoke("password");
     assert.deepEqual(passwordIssues, []);
