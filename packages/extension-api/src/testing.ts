@@ -1,10 +1,12 @@
 import { createJsonlRecordDecoder } from "./agent.js";
+import { ExtensionSchemaError, validateProviderDependencyCallContext, validateProviderDependencyHandler, validateProviderDependencyResult, validateProviderDependencyTargetRequest } from "./validation.js";
 import type {
   AgentFileHandle, AgentFileWatcher, AgentForegroundProcess, AgentLifecycleEvent, AgentLifecyclePublisher,
   AgentObservationCapability, AgentProcessHandle, AgentProcessSnapshot, AgentProjectHandle, AgentProviderRegistration,
   AgentProviderRuntime, AgentRecordContext, AgentSessionBinding, AgentSessionBindingRequest, AgentTerminalContext,
   AgentTerminalHandle, AgentTerminalTtyFact, CancellationSignal, ExtensionContext, TerminayExtension,
 } from "./types.js";
+import type { JsonValue, ProviderDependencyCallContext, ProviderDependencyHandler, ProviderDependencyTargetRequest } from "./types.js";
 
 export interface FixtureTerminalOptions {
   foregroundExecutable: string;
@@ -20,6 +22,39 @@ export interface FixtureTerminalOptions {
 }
 
 const notCancelled: CancellationSignal = Object.freeze({ aborted: false, throwIfAborted(): void {} });
+
+export interface ProviderDependencyTargetHarness {
+  /** Validates and invokes a public dependency target as the host would. */
+  call(request: ProviderDependencyTargetRequest, context?: Partial<Omit<ProviderDependencyCallContext, "signal">> & { signal?: CancellationSignal }): Promise<JsonValue>;
+}
+
+/**
+ * Creates an in-memory target-side dependency boundary for public extension
+ * tests. It deliberately does not emulate authorization; hosts authorize the
+ * caller manifest dependency and target contribution before this boundary.
+ */
+export function createProviderDependencyTargetHarness(handler: ProviderDependencyHandler): ProviderDependencyTargetHarness {
+  assertValid(validateProviderDependencyHandler(handler), "Invalid provider dependency handler");
+  return {
+    async call(request, overrides = {}): Promise<JsonValue> {
+      assertValid(validateProviderDependencyTargetRequest(request), "Invalid provider dependency target request");
+      const context: ProviderDependencyCallContext = {
+        deadlineAt: new Date(Date.now() + 60_000).toISOString(),
+        signal: notCancelled,
+        ...overrides,
+      };
+      assertValid(validateProviderDependencyCallContext(context), "Invalid provider dependency call context");
+      const result = await handler.call(request, context);
+      assertValid(validateProviderDependencyResult(result), "Invalid provider dependency result");
+      return result;
+    },
+  };
+}
+
+function assertValid<T>(result: { ok: true; value: T } | { ok: false; issues: readonly { path: string; code: string; message: string }[] }, message: string): T {
+  if (!result.ok) throw new ExtensionSchemaError(message, [...result.issues]);
+  return result.value;
+}
 
 /** Creates one terminal-scoped in-memory observation context for public extension tests. */
 export function fixtureTerminal(options: FixtureTerminalOptions): AgentTerminalContext {
