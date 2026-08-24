@@ -35,6 +35,7 @@ export function createExtensionAgentBroker(
         return Object.freeze({ acceptedEventCount: 0, rejectedEventCount: request.events.length, failure: "extension agent provider is outside its namespace" });
       }
       const identity = identityFor(request.terminal);
+      if (retiredContexts.has(request.terminal.contextId)) return Object.freeze({ acceptedEventCount: 0, rejectedEventCount: request.events.length, failure: "extension lifecycle scope is retired" });
       const prior = publications.get(request.terminal.contextId)?.get(request.publicationId);
       if (prior !== undefined) return prior;
       const contextId = request.terminal.contextId;

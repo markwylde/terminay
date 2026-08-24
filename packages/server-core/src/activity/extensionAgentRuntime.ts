@@ -155,10 +155,12 @@ export class ExtensionAgentRuntimeRegistry {
     const previous = terminal.context;
     if (previous === undefined || previous.providerId !== contribution.id) return;
     await this.options.hosts.cancelAgentTerminal({ contextId: previous.contextId, reason: "terminal-replaced" }).catch(() => undefined);
-    if (terminal.context !== previous) return;
-    terminal.context = undefined;
-    try { this.options.agents.releaseExtensionProvider(terminal.identity, contribution.id); }
-    catch { return; }
+    if (terminal.context !== previous && terminal.context !== undefined) return;
+    if (terminal.context === previous) {
+      terminal.context = undefined;
+      try { this.options.agents.releaseExtensionProvider(terminal.identity, contribution.id); }
+      catch { return; }
+    }
     terminal.incarnation += 1;
     this.claimAndAdmit(terminal, contribution, processName);
   }
@@ -187,9 +189,11 @@ export class ExtensionAgentRuntimeRegistry {
     for (const terminal of retiring) {
       this.clearTimers(terminal);
       const context = terminal.context!;
-      terminal.context = undefined;
       await this.options.hosts.cancelAgentTerminal({ contextId: context.contextId, reason }).catch(() => undefined);
-      try { this.options.agents.releaseExtensionProvider(terminal.identity, providerId); } catch { /* already torn down */ }
+      if (terminal.context === context) {
+        terminal.context = undefined;
+        try { this.options.agents.releaseExtensionProvider(terminal.identity, providerId); } catch { /* already torn down */ }
+      }
     }
     return retiring.length;
   }
