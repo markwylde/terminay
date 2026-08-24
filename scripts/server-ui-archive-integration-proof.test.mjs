@@ -26,6 +26,7 @@ test('generic hosted-manager fixture installs the real server archive through on
     }),
     notifyTerminalRemoteSizeOverride: () => {}, onStatusChanged: () => {}, publicDir: join(root, 'public'),
     rendererDistDir: renderer, saveGeneratedTlsPaths: () => {}, userDataPath: root,
+    serverId: 'archive-proof-server',
   })
   const fixture = new GenericHostedManagerFixture()
   const peer = new FixturePeer(fixture.channel)

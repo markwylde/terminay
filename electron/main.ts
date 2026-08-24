@@ -1,5 +1,5 @@
 import './headlessBootstrap';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import {
 	chmodSync,
 	existsSync,
@@ -59,6 +59,7 @@ import {
 	FileProjectEnvironmentStateBackend,
 	ProjectEnvironmentRepository,
 } from '../packages/server-core/src/projectEnvironment/index';
+import { MigratingProjectEnvironmentStateBackend } from './projectEnvironmentPersistence';
 import {
 	RecordingService,
 	ServerRecordingAdapter,
@@ -109,6 +110,14 @@ import {
 	initializeDesktopDiagnostics,
 } from './diagnostics/service';
 import { normalizeExternalUrl } from './externalUrl';
+import {
+	desktopEmbeddedStorePaths,
+	desktopLocalServerUiPartitionKey,
+	migrateLegacyEmbeddedProjectEnvironmentServerId,
+	migrateLegacyEmbeddedRecordingServerId,
+	migrateLegacyEmbeddedWorkspaceServerId,
+	resolveDesktopInstanceIdentity,
+} from './desktopInstanceIdentity';
 import { FileBufferService } from './fileViewer/fileBufferService';
 import { FileWatchService } from './fileViewer/fileWatchService';
 import { GitDiffService } from './fileViewer/gitDiffService';
@@ -194,6 +203,12 @@ const resolvedUserDataPath = resolveDesktopUserDataPath({
 if (resolvedUserDataPath) {
 	app.setPath('userData', resolvedUserDataPath);
 }
+const embeddedDesktopInstance = resolveDesktopInstanceIdentity(
+	app.getPath('userData'),
+);
+const embeddedServerId = embeddedDesktopInstance.id;
+const embeddedStorePaths = desktopEmbeddedStorePaths(embeddedDesktopInstance);
+const embeddedLocalProfileId = LocalServerUiSession.profileIdFor(embeddedServerId);
 
 try {
 	if (process.env.TERMINAY_TEST === '1' && resolvedUserDataPath) {
@@ -269,9 +284,10 @@ function recordCanonicalRecoveryDiagnostic(message: unknown): Promise<void> {
 		)
 		.catch(() => undefined);
 }
-const localServerUiPartitionKey = createHash('sha256')
-	.update('desktop-local\0local:embedded')
-	.digest('base64url');
+const localServerUiPartitionKey = desktopLocalServerUiPartitionKey(
+	embeddedServerId,
+	embeddedLocalProfileId,
+);
 
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
 	? path.join(process.env.APP_ROOT, 'public')
@@ -771,11 +787,11 @@ function sanitizedDesktopConnectionProfiles(
 	loadRememberedRemoteConnections();
 	const profiles = [
 		{
-			id: LocalServerUiSession.profileId,
+			id: embeddedLocalProfileId,
 			isLocal: true,
 			label: 'Local',
 			status:
-				selectedProfileId === LocalServerUiSession.profileId
+				selectedProfileId === embeddedLocalProfileId
 					? ('connected' as const)
 					: ('offline' as const),
 		},
@@ -900,18 +916,17 @@ function handleServerTerminalEvent(event: TerminalEvent): void {
 }
 
 const serverRecordingService = new RecordingService({
-	serverId: 'desktop-local',
-	recordingRoot: path.join(app.getPath('userData'), 'server-recordings'),
+	serverId: embeddedServerId,
+	recordingRoot: embeddedStorePaths.recordings,
 	homeDirectory: app.getPath('home'),
-	libraryIndexPath: path.join(
-		app.getPath('userData'),
-		'server-recording-roots.v1.json',
-	),
+	libraryIndexPath: embeddedStorePaths.recordingLibrary,
+	migrateStoredMetadata: (metadata) =>
+		migrateLegacyEmbeddedRecordingServerId(metadata, embeddedServerId),
 });
 const serverRecordingAdapter = new ServerRecordingAdapter(
 	serverRecordingService,
 	{
-		serverId: 'desktop-local',
+		serverId: embeddedServerId,
 		resolveSessionProject: (sessionId) =>
 			serverTerminalAuthority?.service
 				.listSessions()
@@ -1136,10 +1151,14 @@ await desktopDiagnostics.record(
 	{ channel: 'lifecycle' },
 );
 const embeddedProjectEnvironments = new ProjectEnvironmentRepository(
-	new FileProjectEnvironmentStateBackend(
-		path.join(app.getPath('userData'), 'project-environments.v1.json'),
+	new MigratingProjectEnvironmentStateBackend(
+		new FileProjectEnvironmentStateBackend(
+			embeddedStorePaths.projectEnvironments,
+		),
+		(state) =>
+			migrateLegacyEmbeddedProjectEnvironmentServerId(state, embeddedServerId),
 	),
-	'desktop-local',
+	embeddedServerId,
 );
 await embeddedProjectEnvironments.load();
 const embeddedVaultAdapter = await ElectronSafeStorageVaultAdapter.open({
@@ -1178,7 +1197,7 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		embeddedStartupWindow,
 	);
 	const authority: ServerTerminalAuthority = new ServerTerminalAuthority({
-		serverId: 'desktop-local',
+		serverId: embeddedServerId,
 		dataRoot: app.getPath('userData'),
 		extensionHostChildEntrypoint: path.join(MAIN_DIST, 'extensionHostEntry.js'),
 		builtInExtensionArtifactRoot: embeddedBuiltInExtensionArtifactRoot({
@@ -1350,11 +1369,11 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 	await startMcpControlEndpoint();
 	localServerUiSession = new LocalServerUiSession({
 		bundleRoot: SERVER_UI_DIST,
-		cacheRoot: path.join(app.getPath('userData'), 'ui-bundles'),
+		cacheRoot: embeddedStorePaths.uiBundles,
 		serverId: authority.service.serverId,
 	});
 	remoteServerUiBundleHost = new DesktopServerBundleHost({
-		cacheRoot: path.join(app.getPath('userData'), 'ui-bundles'),
+		cacheRoot: embeddedStorePaths.uiBundles,
 		capabilities: {
 			clipboardWrite: 1,
 			filePicker: 1,
@@ -2737,7 +2756,7 @@ async function presentCanonicalAuxiliaryRoute(
 			return;
 		}
 		let workspaceWindow: BrowserWindow | null;
-		if (context.profileId === LocalServerUiSession.profileId) {
+		if (context.profileId === embeddedLocalProfileId) {
 			workspaceWindow = createWindow({
 				bounds: { x, y },
 				workspaceViewId,
@@ -2832,7 +2851,7 @@ async function presentCanonicalAuxiliaryRoute(
 	auxiliaryWindowsByPresentation.delete(presentationId);
 
 	let auxiliaryWindow: BrowserWindow | null;
-	if (context.profileId === LocalServerUiSession.profileId) {
+	if (context.profileId === embeddedLocalProfileId) {
 		auxiliaryWindow = createWindow({
 			auxiliary: { ...auxiliary, presentationId },
 		});
@@ -2982,10 +3001,12 @@ async function openEmbeddedWorkspaceWithRecovery(
 	const openWorkspace = () =>
 		openCanonicalWorkspace({
 			backend: createEmbeddedWorkspaceStateBackend({
-				filePath: path.join(app.getPath('userData'), 'workspace.v3.json'),
+				filePath: embeddedStorePaths.workspace,
+				migrate: (state) =>
+					migrateLegacyEmbeddedWorkspaceServerId(state, embeddedServerId),
 				testFault: embeddedWorkspacePersistenceFault(process.env),
 			}),
-			serverId: 'desktop-local',
+			serverId: embeddedServerId,
 			defaultProjectRoot: app.getPath('home'),
 		});
 	return recoverEmbeddedWorkspaceOperation(window, openWorkspace);

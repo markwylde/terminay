@@ -266,13 +266,18 @@ test('Local UI session verifies once per window and never owns a listener or cre
 		const session = new LocalServerUiSession({
 			bundleRoot: localRoot,
 			cacheRoot: join(root, 'cache'),
-			serverId: 'desktop-local',
+			serverId: 'desktop-0123456789abcdefghijklmnopqrstuvwxyzAB',
 		});
 		const first = await session.prepare(41);
 		const repeated = await session.prepare(41);
 		assert.equal(first, repeated);
 		assert.equal(first.source, 'embedded');
-		assert.equal(first.context.profileId, 'local:embedded');
+		assert.equal(
+			first.context.profileId,
+			LocalServerUiSession.profileIdFor(
+				'desktop-0123456789abcdefghijklmnopqrstuvwxyzAB',
+			),
+		);
 		assert.equal(session.launchFor(41), first);
 		assert.equal('authToken' in session, false);
 		assert.equal('listener' in session, false);

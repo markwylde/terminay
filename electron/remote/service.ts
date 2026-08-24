@@ -88,7 +88,7 @@ export type RemoteAccessServiceOptions = {
 	rendererDistDir: string;
 	userDataPath?: string;
 	/** Authenticated server identity bound to the hosted UI bootstrap. */
-	serverId?: string;
+	serverId: string;
 	serverVersion?: string;
 };
 
@@ -356,7 +356,9 @@ export class RemoteAccessService {
 		this.onStatusChanged = options.onStatusChanged;
 		this.publicDir = options.publicDir;
 		this.rendererDistDir = options.rendererDistDir;
-		this.serverId = options.serverId ?? 'desktop-local';
+		if (typeof options.serverId !== 'string' || options.serverId.length === 0)
+			throw new TypeError('remote access server identity is required');
+		this.serverId = options.serverId;
 		this.remoteDir = path.join(userDataPath, 'remote-access');
 		this.auditStore = new AuditStore(
 			path.join(this.remoteDir, 'audit-log.json'),
