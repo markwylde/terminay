@@ -12,8 +12,9 @@ import { createPuzedSshCompositionBroker, SSH_EXTENSION_ID, type PuzedSshComposi
 import { ExtensionHostComposedSshRuntime } from "./composedSshRuntime.js";
 import { RepositoryCanonicalProjectOpener } from "./puzedSshProjectAdapter.js";
 import { ExtensionProfileService } from "./profileService.js";
+import { DirectoryBuiltInExtensionArtifactSource } from "./builtInArtifacts.js";
 
-export interface DefaultExtensionManagementOptions { readonly dataRoot: string; readonly authorityLabel: string; readonly broker?: ExtensionBroker; readonly childEntrypoint?: string; readonly secrets?: ExtensionSecretAccessBroker; readonly profiles?: ExtensionProfileBroker; readonly agents?: ExtensionAgentBroker; }
+export interface DefaultExtensionManagementOptions { readonly dataRoot: string; readonly authorityLabel: string; readonly broker?: ExtensionBroker; readonly childEntrypoint?: string; readonly secrets?: ExtensionSecretAccessBroker; readonly profiles?: ExtensionProfileBroker; readonly agents?: ExtensionAgentBroker; /** Host-owned immutable release resource directory. */ readonly builtInArtifactRoot?: string; }
 
 /** Construct the identical selected-server extension authority for Desktop's
  * embedded server, standalone installations, and containers. */
@@ -23,6 +24,7 @@ export function createDefaultExtensionManagement(options: DefaultExtensionManage
   const npm = new NpmCliRegistryClient({ workRoot: join(options.dataRoot, "extensions", "cache", "npm") });
   const installer = new ExtensionInstaller({
     dataRoot: options.dataRoot, registryClient: npm, materializer: npm,
+    ...(options.builtInArtifactRoot === undefined ? {} : { builtIns: new DirectoryBuiltInExtensionArtifactSource(options.builtInArtifactRoot) }),
     probe: async ({ extensionId, packageRoot, entrypoint, manifest }) => {
       const root = join(options.dataRoot, "extensions"); const directories = { config: join(root, "config", extensionId), data: join(root, "data", extensionId), cache: join(root, "cache", extensionId) };
       await Promise.all(Object.values(directories).map((directory) => mkdir(directory, { recursive: true })));
@@ -48,7 +50,7 @@ export function createDefaultExtensionManagement(options: DefaultExtensionManage
   return { installer, hosts, authorityLabel: options.authorityLabel, activate, activateEnabled, restart: activate };
 }
 
-export function createPuzedSshProductionExtensionManagement(options: Readonly<{ dataRoot: string; authorityLabel: string; childEntrypoint?: string; vault: ServerVaultComposition; projectEnvironments: ProjectEnvironmentRepository; workspace: WorkspaceStore }>) {
+export function createPuzedSshProductionExtensionManagement(options: Readonly<{ dataRoot: string; authorityLabel: string; childEntrypoint?: string; vault: ServerVaultComposition; projectEnvironments: ProjectEnvironmentRepository; workspace: WorkspaceStore; agents?: ExtensionAgentBroker; builtInArtifactRoot?: string }>) {
   let target: PuzedSshCompositionBroker | undefined;
   let ssh: ExtensionHostComposedSshRuntime | undefined;
   let profileService: ExtensionProfileService | undefined;
@@ -57,7 +59,7 @@ export function createPuzedSshProductionExtensionManagement(options: Readonly<{ 
     registerManifest(manifest: Parameters<PuzedSshCompositionBroker["registerManifest"]>[0]) { target?.registerManifest(manifest); },
   };
   const profiles: ExtensionProfileBroker = { async get(extensionId, providerId, profileId, signal) { if (extensionId === SSH_EXTENSION_ID && providerId === "com.terminay.ssh/connection" && ssh !== undefined && profileId.startsWith("composed:")) return ssh.getProfile(profileId, signal); if (profileService === undefined) throw new Error("extension profile access is unavailable"); return profileService.get(extensionId, providerId, profileId, signal); } };
-  const management = createDefaultExtensionManagement({ dataRoot: options.dataRoot, authorityLabel: options.authorityLabel, broker: proxy, ...(options.childEntrypoint === undefined ? {} : { childEntrypoint: options.childEntrypoint }), secrets: options.vault.extensionSecrets, profiles });
+  const management = createDefaultExtensionManagement({ dataRoot: options.dataRoot, authorityLabel: options.authorityLabel, broker: proxy, ...(options.childEntrypoint === undefined ? {} : { childEntrypoint: options.childEntrypoint }), secrets: options.vault.extensionSecrets, profiles, ...(options.agents === undefined ? {} : { agents: options.agents }), ...(options.builtInArtifactRoot === undefined ? {} : { builtInArtifactRoot: options.builtInArtifactRoot }) });
   ssh = new ExtensionHostComposedSshRuntime(join(options.dataRoot, "extensions", "composition", "ssh-bindings.v1.json"), management.hosts);
   profileService = new ExtensionProfileService(options.projectEnvironments, management.hosts, options.vault);
   const projects = new RepositoryCanonicalProjectOpener(options.projectEnvironments, options.workspace);

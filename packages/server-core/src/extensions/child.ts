@@ -187,7 +187,18 @@ function createAgentTerminalContext(context: Record<string, unknown>, capabiliti
   });
   const observation = Object.freeze({
     processes: Object.freeze({ descendants: (options: unknown = {}) => request("process.descendants", options), openFiles: (processes: unknown, options: unknown = {}) => request("process.open-files", { processes, options }) }),
-    files: Object.freeze({ canonicalFile: (handle: unknown) => request("filesystem.realpath", { handle }), realpath: (handle: unknown) => request("filesystem.realpath", { handle }), stat: (handle: unknown) => request("filesystem.stat", { handle }), read: (handle: unknown, options: unknown) => request("filesystem.read", { handle, options }), readJson: (handle: unknown, options: unknown) => request("filesystem.read", { handle, options: { ...object(options), encoding: "json" } }), readJsonLine: (handle: unknown, options: unknown) => request("filesystem.read", { handle, options: { ...object(options), encoding: "jsonl" } }), follow: async (handle: unknown, options: unknown = {}) => pollingWatcher(request, handle, options, signal), }),
+    files: Object.freeze({
+      resolveHomeRelative: (relativePath: unknown, options: unknown = {}) => request("filesystem.resolve-home-relative", { relativePath, ...object(options) }),
+      resolvePathUnderHome: (providerPath: unknown, options: unknown) => request("filesystem.resolve-path-under-home", { providerPath, ...object(options) }),
+      homeRelativePath: (handle: unknown, options: unknown) => request("filesystem.home-relative-path", { handle, ...object(options) }),
+      canonicalFile: (handle: unknown, options: unknown = {}) => request("filesystem.realpath", { handle, options }),
+      realpath: (handle: unknown, options: unknown = {}) => request("filesystem.realpath", { handle, options }),
+      stat: (handle: unknown, options: unknown = {}) => request("filesystem.stat", { handle, options }),
+      read: (handle: unknown, options: unknown) => request("filesystem.read", { handle, options }),
+      readJson: (handle: unknown, options: unknown) => request("filesystem.read", { handle, options: { ...object(options), encoding: "json" } }),
+      readJsonLine: (handle: unknown, options: unknown) => request("filesystem.read", { handle, options: { ...object(options), encoding: "jsonl" } }),
+      follow: async (handle: unknown, options: unknown = {}) => pollingWatcher(request, handle, options, signal),
+    }),
   });
   const terminal = Object.freeze({
     terminal: Object.freeze({ id: context.terminalSessionId }), project: Object.freeze({ id: context.projectId }), environment: Object.freeze({ id: context.projectEnvironmentId }), process: Object.freeze({ id: context.contextId }), foreground: Object.freeze({ executableName: "" }), capabilities: new Set(capabilities.filter((value): value is string => typeof value === "string")), observation, signal,
