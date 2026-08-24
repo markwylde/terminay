@@ -11,9 +11,9 @@ import type {
 } from "@terminay/extension-api";
 
 /**
- * Opaque server-issued identity for one terminal incarnation. Agent extensions
- * may use this only as a broker and lifecycle-publication scope; it is not an
- * authority to inspect another terminal, project, or environment.
+ * Server-issued identity for one terminal incarnation. Lifecycle publication
+ * is scoped to this context. On This server the child also receives `shellPid`
+ * so it can observe the PTY with Node.
  */
 export interface ExtensionAgentTerminalContext {
   readonly contextId: string;
@@ -23,6 +23,9 @@ export interface ExtensionAgentTerminalContext {
   readonly terminalSessionId: string;
   readonly terminalIncarnationId: string;
   readonly providerId: string;
+  /** Present for This-server PTYs so the extension child can observe with Node. */
+  readonly shellPid?: number;
+  readonly ttyPath?: string;
 }
 
 export interface ExtensionAgentTerminalAdmission {

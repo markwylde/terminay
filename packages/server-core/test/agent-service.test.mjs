@@ -118,3 +118,16 @@ test("publication bounds and retirement reject late events without touching unre
   const late=await agents.ingestExtensionLifecycle(identity,providerId,"1",undefined,[{kind:"turn.started",turnId:"late"}]);assert.match(late.failure,/does not own/);assert.strictEqual(agents.getSnapshot(),retired);
   const healthy=Object.values(agents.getSnapshot().entries).find((entry)=>entry.provider===otherProvider);assert.equal(healthy.active,true);assert.equal(healthy.displayName,"Healthy");await agents.stop();
 });
+
+test("agent snapshots are stamped with the constructing process instance id", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId });
+  activity.register(identity);
+  const first = new AgentStatusService({ activity, now: () => 1_000, processInstanceId: "process-a" });
+  const second = new AgentStatusService({ activity, now: () => 1_000, processInstanceId: "process-b" });
+  await first.start(); await second.start();
+  first.register(identity); second.register(identity);
+  assert.equal(first.getSnapshot().processInstanceId, "process-a");
+  assert.equal(second.getSnapshot().processInstanceId, "process-b");
+  assert.notEqual(new AgentStatusService({ activity }).processId, first.processId);
+  await first.stop(); await second.stop();
+});

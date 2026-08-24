@@ -1,6 +1,8 @@
 import { pathToFileURL } from "node:url";
-import { EXTENSION_API_VERSION, validateAgentChildJournalSources, validateAgentProviderDefinition } from "@terminay/extension-api";
-import { EXTENSION_HOST_PROTOCOL_VERSION, frameByteLength, type HostFrame, type ChildFrame } from "./protocol.js";
+import { EXTENSION_API_VERSION, validateAgentChildJournalSources, validateAgentProviderDefinition, type JsonValue } from "@terminay/extension-api";
+import { ThisServerAgentObservationAdapter } from "./localAgentObservation.js";
+import { EXTENSION_HOST_PROTOCOL_VERSION, frameByteLength, jsonIpcValue, type HostFrame, type ChildFrame } from "./protocol.js";
+import type { ExtensionAgentObservationOperation, ExtensionAgentTerminalContext } from "./types.js";
 
 const MAX_MESSAGE_BYTES = 256 * 1024;
 const invocations = new Map<string, AbortController>();
@@ -190,9 +192,11 @@ async function drainAgentTerminals(frame: HostFrame): Promise<void> {
 
 function createAgentTerminalContext(context: Record<string, unknown>, capabilities: unknown[], signal: AbortSignal): { readonly terminal: Record<string, unknown>; readonly publisher: Record<string, (event: unknown) => Promise<unknown>> } {
   const contextId = String(context.contextId); const providerId = String(context.providerId);
-  const request = (operation: string, payload: unknown) => agentRequest("agent.observation.request", {
-    contextId, providerId, operation, payload,
-  });
+  const terminalContext = localObservationContext(context);
+  const local = localObservationAdapter(context);
+  const request = (operation: string, payload: unknown) => local === undefined
+    ? agentRequest("agent.observation.request", { contextId, providerId, operation, payload })
+    : local.observe(terminalContext, operation as ExtensionAgentObservationOperation, (payload ?? null) as JsonValue, signal);
   const publish = (binding: unknown, events: unknown[]) => agentRequest("agent.lifecycle.publish", {
     contextId, providerId, publicationId: `${contextId}:${++sequence}`, mappingVersion: typeof binding === "object" && binding !== null && typeof (binding as Record<string, unknown>).mappingVersion === "string" ? (binding as Record<string, unknown>).mappingVersion : "0.1", binding, events,
   });
@@ -211,7 +215,7 @@ function createAgentTerminalContext(context: Record<string, unknown>, capabiliti
     subagentDone(event: unknown) { return publish(undefined, [{ kind: "subagent.done", ...(object(event) ?? {}) }]); },
   });
   const observation = Object.freeze({
-    processes: Object.freeze({ descendants: (options: unknown = {}) => request("process.descendants", options), openFiles: (processes: unknown, options: unknown = {}) => request("process.open-files", { processes, options }), environment: (names: unknown, options: unknown = {}) => request("process.environment", { names, ...object(options) }) }),
+    processes: Object.freeze({ descendants: (options: unknown = {}) => request("process.descendants", options), openFiles: (processes: unknown, options: unknown = {}) => request("process.open-files", { processes, options }), environment: (names: unknown) => request("process.environment", { names }) }),
     files: Object.freeze({
       resolveHomeDirectory: (relativePath: unknown, options: unknown = {}) => request("filesystem.resolve-home-directory", { relativePath, ...object(options) }),
       resolveDirectoryRelativeToEnvironment: (relativePath: unknown, options: unknown) => request("filesystem.resolve-directory-relative-to-environment", { relativePath, ...object(options) }),
@@ -475,12 +479,39 @@ function agentRequest(kind: "agent.observation.request" | "agent.lifecycle.publi
 }
 
 function send(frame: ChildFrame): boolean {
-  if (frameByteLength(frame) > MAX_MESSAGE_BYTES || typeof process.send !== "function" || !process.connected) return false;
-  try { return process.send(frame); } catch { return false; }
+  const safe = jsonIpcValue(frame);
+  if (safe === undefined || frameByteLength(safe) > MAX_MESSAGE_BYTES || typeof process.send !== "function" || !process.connected) return false;
+  try { return process.send(safe as ChildFrame); } catch { return false; }
 }
 
 function failure(id: string, error: unknown): void { send({ protocolVersion: 1, kind: "failure", id, payload: { message: error instanceof Error ? error.message.slice(0, 1_000) : "extension operation failed" } }); }
 function object(value: unknown): Record<string, unknown> | undefined { return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined; }
+function localPid(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 && value <= 4_194_304 ? value : undefined;
+}
+function localObservationContext(context: Record<string, unknown>): ExtensionAgentTerminalContext {
+  const shellPid = localPid(context.shellPid);
+  const ttyPath = typeof context.ttyPath === "string" ? context.ttyPath : undefined;
+  return Object.freeze({
+    contextId: String(context.contextId),
+    serverId: String(context.serverId),
+    projectId: String(context.projectId),
+    projectEnvironmentId: String(context.projectEnvironmentId),
+    terminalSessionId: String(context.terminalSessionId),
+    terminalIncarnationId: String(context.terminalIncarnationId),
+    providerId: String(context.providerId),
+    ...(shellPid === undefined ? {} : { shellPid }),
+    ...(ttyPath === undefined ? {} : { ttyPath }),
+  });
+}
+function localObservationAdapter(context: Record<string, unknown>): ThisServerAgentObservationAdapter | undefined {
+  const shellPid = localPid(context.shellPid);
+  if (shellPid === undefined) return undefined;
+  const ttyPath = typeof context.ttyPath === "string" ? context.ttyPath : undefined;
+  return new ThisServerAgentObservationAdapter({
+    resolveTerminal: () => ({ environment: "this-server", shellPid, ...(ttyPath === undefined ? {} : { ttyPath }) }),
+  });
+}
 function isHostFrame(value: unknown): value is HostFrame {
   const frame = object(value);
   return frame?.protocolVersion === EXTENSION_HOST_PROTOCOL_VERSION

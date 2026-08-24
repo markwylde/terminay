@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { validateAgentLifecycleEvent, validateAgentSessionBindingRequest, type AgentLifecycleEvent as ExtensionAgentLifecycleEvent } from "@terminay/extension-api";
 import { AgentStatusStore, makeAgentStatusEntryId, makeAgentStatusStreamId, reduceAgentStatusSnapshot, selectAgentStatusEntry, selectAgentStatusesForTerminal } from "./agentStore.js";
 import { isExtensionAgentProvider, type AgentLifecycleEvent as CanonicalAgentLifecycleEvent, type AgentProvider, type AgentStatusListener, type AgentStatusSnapshot } from "./agentTypes.js";
@@ -10,6 +11,9 @@ export interface AgentStatusServiceOptions {
   readonly now?: () => number;
   readonly store?: AgentStatusStore;
   readonly enabled?: boolean;
+  /** Live process identity for Agents snapshots. Generated at construction
+   * when omitted; never persisted in user-data. */
+  readonly processInstanceId?: string;
 }
 
 interface ProviderBinding {
@@ -43,26 +47,35 @@ export class AgentStatusService {
   private readonly pendingSubagentLaunches = new Map<string, Array<{ readonly displayName?: string; readonly promptText?: string; readonly toolId: string }>>();
   private started = false;
   private enabled: boolean;
+  private readonly processInstanceId: string;
+  private lastInnerSnapshot: AgentStatusSnapshot | undefined;
+  private lastStampedSnapshot: AgentStatusSnapshot | undefined;
 
   constructor(options: AgentStatusServiceOptions) {
     this.activity = options.activity;
     this.now = options.now ?? Date.now;
     this.store = options.store ?? new AgentStatusStore();
     this.enabled = options.enabled ?? true;
+    this.processInstanceId = options.processInstanceId ?? randomUUID();
   }
 
-  getSnapshot(): AgentStatusSnapshot { return this.store.getSnapshot(); }
+  get processId(): string { return this.processInstanceId; }
+  getSnapshot(): AgentStatusSnapshot { return this.withProcessInstance(this.store.getSnapshot()); }
   isSessionActive(identity: ActivitySessionIdentity): boolean {
     const current = this.active.get(identity.sessionId);
     return current !== undefined && current.serverId === identity.serverId && current.projectId === identity.projectId;
   }
-  getSnapshotForProject(projectId: string | undefined): AgentStatusSnapshot { return this.filterSnapshotForProject(this.store.getSnapshot(), projectId); }
+  getSnapshotForProject(projectId: string | undefined): AgentStatusSnapshot {
+    return this.withProcessInstance(this.filterSnapshotForProject(this.store.getSnapshot(), projectId));
+  }
   filterSnapshotForProject(snapshot: AgentStatusSnapshot, projectId: string | undefined): AgentStatusSnapshot {
     if (projectId === undefined) return snapshot;
     const entries = Object.fromEntries(Object.entries(snapshot.entries).filter(([, entry]) => this.sessionScopes.get(entry.activationTerminalSessionId)?.projectId === projectId));
     return Object.freeze({ ...snapshot, entries: Object.freeze(entries) });
   }
-  subscribe(listener: AgentStatusListener): () => void { return this.store.subscribe(listener); }
+  subscribe(listener: AgentStatusListener): () => void {
+    return this.store.subscribe((snapshot) => listener(this.withProcessInstance(snapshot)));
+  }
   get listening(): boolean { return this.started; }
   get serverId(): string { return this.activity.serverId; }
   get integrationEnabled(): boolean { return this.enabled; }
@@ -255,6 +268,16 @@ export class AgentStatusService {
       case "subagent.started": return { ...common, kind: event.kind, subagentId: event.subagentId, ...(event.parentAgentId === undefined ? {} : { parentAgentId: event.parentAgentId }), ...(event.title === undefined ? {} : { displayName: event.title }), ...(event.promptText === undefined ? {} : { promptText: event.promptText }), ...(event.model === undefined ? {} : { model: event.model }) };
       case "subagent.done": return { ...common, kind: "subagent.stopped", subagentId: event.subagentId, outcome: event.outcome, ...(event.summary === undefined ? {} : { summary: event.summary }) };
     }
+  }
+
+  private withProcessInstance(snapshot: AgentStatusSnapshot): AgentStatusSnapshot {
+    if (snapshot === this.lastInnerSnapshot && this.lastStampedSnapshot !== undefined) return this.lastStampedSnapshot;
+    const stamped = snapshot.processInstanceId === this.processInstanceId
+      ? snapshot
+      : Object.freeze({ ...snapshot, processInstanceId: this.processInstanceId });
+    this.lastInnerSnapshot = snapshot;
+    this.lastStampedSnapshot = stamped;
+    return stamped;
   }
 }
 

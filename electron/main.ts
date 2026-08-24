@@ -203,6 +203,10 @@ const resolvedUserDataPath = resolveDesktopUserDataPath({
 if (resolvedUserDataPath) {
 	app.setPath('userData', resolvedUserDataPath);
 }
+if (!app.requestSingleInstanceLock()) {
+	app.exit(1);
+	process.exit(1);
+}
 const embeddedDesktopInstance = resolveDesktopInstanceIdentity(
 	app.getPath('userData'),
 );

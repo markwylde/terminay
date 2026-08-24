@@ -196,6 +196,9 @@ export type AgentStatusSnapshot = {
 	entries: Readonly<Record<string, AgentStatusEntry>>;
 	/** Last accepted event per normalized provider-session stream. */
 	eventCursors: Readonly<Record<string, AgentEventCursor>>;
+	/** Live process that produced this snapshot. Renderers drop a snapshot
+	 * whose id does not match the connection they already hold. */
+	processInstanceId?: string;
 };
 
 export type AgentStatusListener = (snapshot: AgentStatusSnapshot) => void;

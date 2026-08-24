@@ -106,6 +106,9 @@ export interface AgentStatusSnapshot {
   readonly revision: number;
   readonly entries: Readonly<Record<string, AgentStatusEntry>>;
   readonly eventCursors: Readonly<Record<string, AgentEventCursor>>;
+  /** Ephemeral id of the emitting Terminay process. Absent only on empty
+   * store-internal snapshots before the service stamps its boot identity. */
+  readonly processInstanceId?: string;
 }
 export type AgentStatusListener = (snapshot: AgentStatusSnapshot) => void;
 

@@ -59,6 +59,25 @@ export function frameByteLength(value: unknown): number {
   }
 }
 
+/** Drop AbortSignal and other non-JSON values before child IPC. Electron's
+ * `process.send` uses structured clone; a live signal makes the send throw,
+ * which the child surfaces as a generic admission failure. */
+export function jsonIpcValue(value: unknown): unknown {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof AbortSignal !== "undefined" && value instanceof AbortSignal) return undefined;
+  if (Array.isArray(value)) return value.map((item) => jsonIpcValue(item) ?? null);
+  if (typeof value !== "object") return undefined;
+  const result: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (key === "signal" && (item === undefined || typeof item === "object")) continue;
+    const next = jsonIpcValue(item);
+    if (next === undefined) continue;
+    result[key] = next;
+  }
+  return result;
+}
+
 export function isChildFrame(value: unknown): value is ChildFrame {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const frame = value as Record<string, unknown>;

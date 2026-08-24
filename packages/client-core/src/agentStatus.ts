@@ -26,6 +26,8 @@ export interface AgentClientSnapshot {
   readonly revision: number;
   readonly cursor: string;
   readonly entries: Readonly<Record<string, AgentClientEntry>>;
+  /** Live server process that produced this snapshot. */
+  readonly processInstanceId?: string;
 }
 
 export interface AgentClientEvent {
@@ -68,6 +70,7 @@ export class AgentStatusClient {
   private readonly sessions = new Set<string>();
   private readonly listeners = new Set<(snapshot: AgentClientSnapshot) => void>();
   private unsubscribe: (() => void) | undefined;
+  private pinnedProcessInstanceId: string | undefined;
 
   constructor(
     sessionIds: readonly string[] = [],
@@ -168,19 +171,36 @@ export class AgentStatusClient {
   private publishScopedEntries(): void {
     const entries = this.projectEntries(this.sourceEntries);
     if (sameEntryProjection(this.current.entries, entries)) return;
-    this.current = freezeSnapshot({ revision: this.current.revision, cursor: this.current.cursor, entries });
+    this.current = freezeSnapshot({
+      revision: this.current.revision,
+      cursor: this.current.cursor,
+      entries,
+      ...(typeof this.current.processInstanceId === "string"
+        ? { processInstanceId: this.current.processInstanceId }
+        : {}),
+    });
     this.publish();
   }
 
   onChange(listener: (snapshot: AgentClientSnapshot) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
 
   applySnapshot(snapshot: AgentClientSnapshot): AgentClientApplyResult {
+    if (this.rejectForeignProcess(snapshot)) {
+      return { kind: "ignored", revision: this.current.revision, changed: false };
+    }
     const source = this.normalizeSnapshot(snapshot);
     if (snapshot.revision < this.current.revision) {
       return { kind: "ignored", revision: this.current.revision, changed: false };
     }
     this.sourceEntries = Object.freeze({ ...source });
-    const normalized = freezeSnapshot({ revision: snapshot.revision, cursor: snapshot.cursor, entries: this.projectEntries(source) });
+    const normalized = freezeSnapshot({
+      revision: snapshot.revision,
+      cursor: snapshot.cursor,
+      entries: this.projectEntries(source),
+      ...(typeof snapshot.processInstanceId === "string"
+        ? { processInstanceId: snapshot.processInstanceId }
+        : {}),
+    });
     if (snapshot.revision === this.current.revision && snapshot.cursor === this.current.cursor && sameEntryProjection(this.current.entries, normalized.entries)) {
       return { kind: "ignored", revision: this.current.revision, changed: false };
     }
@@ -191,8 +211,16 @@ export class AgentStatusClient {
 
   /** Apply an authoritative reload snapshot even if its revision restarted. */
   reset(snapshot: AgentClientSnapshot): AgentClientApplyResult {
+    this.pinnedProcessInstanceId = typeof snapshot.processInstanceId === "string" ? snapshot.processInstanceId : undefined;
     const source = this.normalizeSnapshot(snapshot);
-    const normalized = freezeSnapshot({ revision: snapshot.revision, cursor: snapshot.cursor, entries: this.projectEntries(source) });
+    const normalized = freezeSnapshot({
+      revision: snapshot.revision,
+      cursor: snapshot.cursor,
+      entries: this.projectEntries(source),
+      ...(typeof snapshot.processInstanceId === "string"
+        ? { processInstanceId: snapshot.processInstanceId }
+        : {}),
+    });
     if (snapshot.revision === this.current.revision && snapshot.cursor === this.current.cursor && sameEntryProjection(this.current.entries, normalized.entries)) {
       return { kind: "ignored", revision: this.current.revision, changed: false };
     }
@@ -218,7 +246,14 @@ export class AgentStatusClient {
     this.sourceEntries = Object.freeze(sourceEntries);
     const entries = this.projectEntries(sourceEntries);
     const changed = !sameEntryProjection(this.current.entries, entries);
-    this.current = freezeSnapshot({ revision: event.revision, cursor: event.cursor, entries });
+    this.current = freezeSnapshot({
+      revision: event.revision,
+      cursor: event.cursor,
+      entries,
+      ...(typeof this.current.processInstanceId === "string"
+        ? { processInstanceId: this.current.processInstanceId }
+        : {}),
+    });
     if (changed) this.publish();
     return changed ? { kind: "applied", revision: event.revision, changed: true } : { kind: "ignored", revision: event.revision, changed: false };
   }
@@ -248,6 +283,15 @@ export class AgentStatusClient {
   }
 
   private publish(): void { for (const listener of this.listeners) { try { listener(this.current); } catch { /* observer failures cannot change projection */ } } }
+
+  private rejectForeignProcess(snapshot: AgentClientSnapshot): boolean {
+    if (typeof snapshot.processInstanceId !== "string") return false;
+    if (this.pinnedProcessInstanceId === undefined) {
+      this.pinnedProcessInstanceId = snapshot.processInstanceId;
+      return false;
+    }
+    return snapshot.processInstanceId !== this.pinnedProcessInstanceId;
+  }
 }
 
 function isProviderId(value: unknown): value is string {
@@ -255,8 +299,18 @@ function isProviderId(value: unknown): value is string {
     && /^[a-z0-9](?:[a-z0-9.-]{1,126}[a-z0-9])?\/[a-z][a-z0-9-]{0,63}$/u.test(value);
 }
 
-function freezeSnapshot(value: { readonly revision: number; readonly cursor: string; readonly entries: Readonly<Record<string, AgentClientEntry>> }): AgentClientSnapshot {
-  return Object.freeze({ revision: value.revision, cursor: value.cursor, entries: Object.freeze({ ...value.entries }) });
+function freezeSnapshot(value: {
+  readonly revision: number;
+  readonly cursor: string;
+  readonly entries: Readonly<Record<string, AgentClientEntry>>;
+  readonly processInstanceId?: string;
+}): AgentClientSnapshot {
+  return Object.freeze({
+    revision: value.revision,
+    cursor: value.cursor,
+    entries: Object.freeze({ ...value.entries }),
+    ...(typeof value.processInstanceId === "string" ? { processInstanceId: value.processInstanceId } : {}),
+  });
 }
 
 function sameEntryProjection(left: Readonly<Record<string, AgentClientEntry>>, right: Readonly<Record<string, AgentClientEntry>>): boolean {

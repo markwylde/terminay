@@ -324,9 +324,6 @@ export class ExtensionHost {
     if (context === undefined || context.providerId !== request.providerId || this.options.agents === undefined) {
       this.sendAgentObservationResult(frame.id, { contextId: request.contextId, ok: false, failure: "agent observation scope is unavailable" }); return;
     }
-    if (!this.agentObservationIsDeclared(request)) {
-      this.sendAgentObservationResult(frame.id, { contextId: request.contextId, ok: false, failure: "agent environment observation is not declared" }); return;
-    }
     const controller = new AbortController(); this.activeBrokerCalls.set(frame.id, controller);
     try {
       const value = await this.options.agents.observe({ extensionId: this.extensionId, providerId: request.providerId, terminal: context, operation: request.operation, payload: request.payload }, controller.signal);
@@ -334,15 +331,6 @@ export class ExtensionHost {
     } catch (error) {
       this.sendAgentObservationResult(frame.id, { contextId: request.contextId, ok: false, failure: safeFailure(error instanceof Error ? error : new Error("agent observation failed")) });
     } finally { this.activeBrokerCalls.delete(frame.id); }
-  }
-
-  private agentObservationIsDeclared(request: ExtensionAgentObservationRequest): boolean {
-    if (request.operation !== "process.environment" && !request.operation.includes("environment")) return true;
-    const provider = this.agentProviders.find((value) => value.id === request.providerId);
-    const payload = record(request.payload);
-    const names = request.operation === "process.environment" ? payload?.names : [payload?.environmentVariable];
-    return Array.isArray(names) && names.length > 0 && names.length <= 16
-      && names.every((name) => typeof name === "string" && provider?.requiredEnvironmentVariables?.includes(name));
   }
 
   private async handleAgentLifecyclePublication(frame: ChildFrame): Promise<void> {
@@ -379,7 +367,15 @@ export class ExtensionHost {
   }
 
   private sendAgentObservationResult(id: string, result: { readonly contextId: string; readonly ok: boolean; readonly value?: unknown; readonly failure?: string }): void {
-    if (!this.send({ protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION, kind: "agent.observation.result", id, payload: result })) this.protocolViolation("agent observation result exceeds IPC limit");
+    if (this.send({ protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION, kind: "agent.observation.result", id, payload: result })) return;
+    // A huge success payload is ordinary discovery evidence (lsof of a Node
+    // tree), not a protocol violation. Fail the pending observe() so the
+    // provider can retry; do not terminate the extension child.
+    if (result.ok === false) { this.protocolViolation("agent observation result exceeds IPC limit"); return; }
+    const failure = { contextId: result.contextId, ok: false as const, failure: "agent observation result exceeds IPC limit" };
+    if (!this.send({ protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION, kind: "agent.observation.result", id, payload: failure })) {
+      this.protocolViolation("agent observation result exceeds IPC limit");
+    }
   }
 
   private sendAgentLifecycleAck(id: string, acknowledgement: { readonly contextId: string; readonly publicationId: string; readonly acceptedEventCount: number; readonly rejectedEventCount: number; readonly failure?: string }): void {
@@ -537,6 +533,12 @@ function validateAgentTerminalAdmission(value: ExtensionAgentTerminalAdmission, 
   const context = value?.context;
   if (!context || !boundedId(context.contextId) || !boundedId(context.serverId) || !boundedId(context.projectId) || !boundedId(context.projectEnvironmentId) || !boundedId(context.terminalSessionId) || !boundedId(context.terminalIncarnationId) || !boundedId(context.providerId) || !providers.some((provider) => provider.id === context.providerId)) {
     throw new Error("agent terminal admission is outside the registered provider scope");
+  }
+  if (context.shellPid !== undefined && (!Number.isInteger(context.shellPid) || context.shellPid <= 0 || context.shellPid > 4_194_304)) {
+    throw new Error("agent terminal admission has an invalid shell pid");
+  }
+  if (context.ttyPath !== undefined && (typeof context.ttyPath !== "string" || context.ttyPath.length === 0 || context.ttyPath.length > 4_096)) {
+    throw new Error("agent terminal admission has an invalid tty path");
   }
   if (!Array.isArray(value.observationCapabilities) || value.observationCapabilities.length > 16 || value.observationCapabilities.some((capability) => typeof capability !== "string" || capability.length === 0 || capability.length > 100)) {
     throw new Error("agent terminal admission has invalid observation capabilities");

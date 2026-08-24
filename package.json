@@ -52,7 +52,7 @@
 		"check:boundaries": "node scripts/check-workspace-boundaries.mjs",
 		"check:deterministic-artifacts": "node scripts/check-deterministic-workspace-builds.mjs",
 		"test:boundaries": "node --test scripts/workspace-boundaries.test.mjs",
-		"test:close-protection": "node --test scripts/process-cwd-foreground.test.mjs scripts/foreground-close-protection.test.mjs scripts/main-window-close-confirmation.test.mjs",
+		"test:close-protection": "node --test scripts/process-cwd-foreground.test.mjs scripts/foreground-close-protection.test.mjs scripts/main-window-close-confirmation.test.mjs scripts/user-data-process-lock.test.mjs",
 		"typecheck:workspaces": "npm run build:shared && npm run typecheck --workspaces --if-present",
 		"smoke:workspaces": "npm run check:boundaries && npm run test:boundaries && npm run typecheck:workspaces && npm run check:deterministic-artifacts && npm run build:applications",
 		"smoke": "npm run lint && npm run test:close-protection && npm run test:desktop-diagnostics && node --test scripts/canonical-application-feature-ipc.test.mjs scripts/e2e-container-contract.test.mjs scripts/provider-portable-ci.test.mjs scripts/stage-macos-app-from-dmg.test.mjs scripts/release-artifact-build-contract.test.mjs scripts/task54-canonical-runtime-journeys.test.mjs scripts/task54-legacy-architecture-gate.test.mjs && npm run build:app && node --test scripts/packaged-desktop-artifact.test.mjs && npm run smoke:workspaces && npm run test:security-boundaries",
