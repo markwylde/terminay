@@ -99,6 +99,67 @@ test("records cannot cross exact terminal scope and content records are ignored"
   await agents.stop();
 });
 
+test("a claimed extension provider owns one terminal and public lifecycle DTOs receive canonical ordering", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId });
+  activity.register(identity);
+  const agents = new AgentStatusService({ activity, journalSource: fakeJournalSource(), now: () => 100 });
+  await agents.start(); agents.register(identity);
+  const provider = "com.example.agent/example";
+
+  assert.equal(agents.claimExtensionProvider(identity, provider), true);
+  assert.equal(agents.claimExtensionProvider(identity, provider), false);
+  // The formerly authoritative built-in journal route cannot publish beside a
+  // claimed extension provider for this terminal incarnation.
+  assert.equal(await agents.ingestJournalRecord(identity, "codex", { type: "session_meta", payload: { id: "legacy" } }), false);
+
+  assert.equal(agents.bindExtensionSession(identity, provider, "0.1", {
+    providerSessionId: "provider-session",
+    mappingVersion: "0.1",
+    fingerprint: { kind: "process-bound", process: { id: "process-1" } },
+  }), true);
+  const result = await agents.ingestExtensionLifecycle(identity, provider, "0.1", undefined, [
+    { kind: "session.started", title: "Extension title", model: { id: "example-1", displayName: "Example 1" } },
+    { kind: "turn.started", turnId: "turn-1", promptText: "Use public lifecycle events" },
+    { kind: "wait.started", waitId: "wait-1", state: "waiting", reason: "Permission required" },
+  ]);
+  assert.deepEqual(result, { acceptedEventCount: 3, rejectedEventCount: 0 });
+  const [entry] = Object.values(agents.getSnapshot().entries);
+  assert.deepEqual({
+    provider: entry.provider,
+    sessionId: entry.sessionId,
+    displayName: entry.displayName,
+    promptText: entry.promptText,
+    model: entry.model?.id,
+    state: entry.state,
+    sequence: entry.lastEventSequence,
+  }, {
+    provider,
+    sessionId: "provider-session",
+    displayName: "Extension title",
+    promptText: "Use public lifecycle events",
+    model: "example-1",
+    state: "waiting",
+    sequence: 3,
+  });
+  assert.equal(activity.snapshot().sessions[identity.sessionId].source, `extension:${provider}`);
+
+  assert.equal(agents.releaseExtensionProvider(identity, provider), true);
+  assert.equal(Object.values(agents.getSnapshot().entries)[0].active, false);
+  await agents.stop();
+});
+
+test("extension lifecycle publication rejects an unclaimed or cross-project terminal scope", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId });
+  activity.register(identity);
+  const agents = new AgentStatusService({ activity, journalSource: fakeJournalSource() });
+  await agents.start(); agents.register(identity);
+  const provider = "com.example.agent/example";
+  const unclaimed = await agents.ingestExtensionLifecycle(identity, provider, "0.1", undefined, []);
+  assert.match(unclaimed.failure, /does not own/u);
+  await assert.rejects(() => Promise.resolve(agents.claimExtensionProvider({ ...identity, projectId: "other-project" }, provider)), /not active/u);
+  await agents.stop();
+});
+
 test("current Codex collaboration records create a named child beneath the root", async () => {
   const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
   const source = fakeJournalSource(); const agents = new AgentStatusService({ activity, journalSource: source, now: () => 100 });
