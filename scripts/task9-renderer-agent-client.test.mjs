@@ -39,3 +39,16 @@ test('connected agent source uses its server client and stops on unsubscribe', (
 	for (const listener of listeners) listener({ revision: 3, cursor: '3', entries: {} })
 	assert.deepEqual(received, [1, 2])
 })
+
+test('drops snapshots from a different process instance after the connection is pinned', () => {
+	const listeners = new Set()
+	const client = {
+		snapshot: { revision: 1, cursor: '1', processInstanceId: 'process-a', entries: { 'term-a:session-a:agent-a': entry() } },
+		onChange(listener) { listeners.add(listener); return () => listeners.delete(listener) },
+	}
+	const received = []
+	subscribeServerAgentSnapshots(client, (snapshot) => received.push(snapshot.processInstanceId))
+	for (const listener of listeners) listener({ revision: 2, cursor: '2', processInstanceId: 'process-b', entries: { 'term-a:session-a:agent-a': entry({ unread: false }) } })
+	for (const listener of listeners) listener({ revision: 3, cursor: '3', processInstanceId: 'process-a', entries: { 'term-a:session-a:agent-a': entry({ unread: false }) } })
+	assert.deepEqual(received, ['process-a', 'process-a'])
+})

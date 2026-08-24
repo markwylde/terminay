@@ -162,17 +162,23 @@ async function findProcessBoundRootRollout(terminal: AgentTerminalContext): Prom
  * context. No extension-host home directory or raw path becomes authority.
  */
 async function findSessionIndex(terminal: AgentTerminalContext): Promise<AgentFileHandle | undefined> {
-  const environment = await terminal.observation.processes.environment(["CODEX_HOME"], { signal: terminal.signal });
-  if (environment.CODEX_HOME) {
-    return terminal.observation.files.resolveRelativeToEnvironment("session_index.jsonl", {
-      environmentVariable: "CODEX_HOME",
+  try {
+    const environment = await terminal.observation.processes.environment(["CODEX_HOME"], { signal: terminal.signal });
+    if (environment.CODEX_HOME) {
+      return await terminal.observation.files.resolveRelativeToEnvironment("session_index.jsonl", {
+        environmentVariable: "CODEX_HOME",
+        signal: terminal.signal,
+      });
+    }
+    return await terminal.observation.files.resolveHomeRelative(".codex/session_index.jsonl", {
+      beneath: { homeRelative: ".codex" },
       signal: terminal.signal,
     });
+  } catch {
+    // Titles are enrichment. A declared-env or home-index miss must not unwind
+    // an already proven writer-bound rollout.
+    return undefined;
   }
-  return terminal.observation.files.resolveHomeRelative(".codex/session_index.jsonl", {
-    beneath: { homeRelative: ".codex" },
-    signal: terminal.signal,
-  });
 }
 
 /**

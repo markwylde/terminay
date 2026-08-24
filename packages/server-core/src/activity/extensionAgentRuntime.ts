@@ -17,6 +17,8 @@ export interface ExtensionAgentAdmissionFailure {
   readonly providerId: string;
   readonly terminal: Readonly<ActivitySessionIdentity>;
   readonly failureClass: "cancelled" | "invalid" | "timed-out" | "unavailable" | "host-failed" | "failed";
+  /** Host-local stderr diagnostic. Not a provider payload. */
+  readonly reason?: string;
 }
 
 export interface ExtensionAgentRuntimeRegistryOptions {
@@ -131,8 +133,12 @@ export class ExtensionAgentRuntimeRegistry {
       void this.options.hosts.cancelAgentTerminal({ contextId: previous.contextId, reason: "terminal-replaced" }).catch(() => undefined);
       return false;
     }
-    const contribution = this.match(processName, identity);
+    const contribution = this.resolveContribution(processName, identity);
     if (terminal.context !== undefined) {
+      if (contribution !== undefined && contribution.id !== terminal.context.providerId) {
+        this.scheduleReobserve(terminal, contribution, processName);
+        return true;
+      }
       if (contribution?.id === terminal.context.providerId) this.scheduleReobserve(terminal, contribution, processName);
       return true;
     }
@@ -148,7 +154,7 @@ export class ExtensionAgentRuntimeRegistry {
     let admitted = 0;
     for (const terminal of this.terminals.values()) {
       if (terminal.context !== undefined || terminal.lastProcessName === undefined) continue;
-      const contribution = this.match(terminal.lastProcessName, terminal.identity);
+      const contribution = this.resolveContribution(terminal.lastProcessName, terminal.identity);
       if (contribution !== undefined && this.claimAndAdmit(terminal, contribution, terminal.lastProcessName)) admitted += 1;
     }
     return admitted;
@@ -160,7 +166,8 @@ export class ExtensionAgentRuntimeRegistry {
   topologyChanged(identity: ActivitySessionIdentity): void {
     const terminal = this.terminals.get(identity.sessionId);
     if (terminal?.context === undefined || !sameIdentity(terminal.identity, identity)) return;
-    const contribution = this.options.hosts.agentProviderContributions().find((value) => value.id === terminal.context!.providerId);
+    const contribution = this.resolveContribution(terminal.lastProcessName ?? "", terminal.identity)
+      ?? this.options.hosts.agentProviderContributions().find((value) => value.id === terminal.context!.providerId);
     if (contribution !== undefined) this.scheduleReobserve(terminal, contribution, terminal.lastProcessName ?? "");
   }
 
@@ -175,6 +182,7 @@ export class ExtensionAgentRuntimeRegistry {
       terminalSessionId: identity.sessionId,
       terminalIncarnationId: String(terminal.incarnation),
       providerId: contribution.id,
+      ...(terminal.shellPid === undefined ? {} : { shellPid: terminal.shellPid }),
     });
     terminal.context = context;
     terminal.lastProcessName = processName;
@@ -190,15 +198,13 @@ export class ExtensionAgentRuntimeRegistry {
       terminal.notBoundRetries = 0;
       this.scheduleTopologyPoll(terminal);
     }).catch((error: unknown) => {
-      // The claim was synchronous so the legacy path did not see this exact
-      // foreground change. Release and replay it if host admission fails.
+      // Observation can throw before the journal is visible (IPC that cannot
+      // clone AbortSignal, missing shell pid, lsof races). Keep the claim on
+      // this PTY and retry the same way as `not-bound`; releasing here left
+      // Codex running in the terminal with an empty Agents pane.
       if (terminal.context !== context) return;
-      terminal.context = undefined;
       this.reportAdmissionFailure(identity, contribution.id, error);
-      try {
-        this.options.agents.releaseExtensionProvider(identity, contribution.id);
-        this.options.agents.foregroundProcessChanged(identity, processName, false);
-      } catch { /* terminal was closed or replaced while admission was pending */ }
+      this.scheduleDiscoveryRetry(terminal, contribution, processName);
     });
     return true;
   }
@@ -215,19 +221,27 @@ export class ExtensionAgentRuntimeRegistry {
    * visible. Keep the claim scoped to that PTY and retry only a short bounded
    * window; a shell edge, replacement, or teardown clears this timer. */
   private scheduleDiscoveryRetry(terminal: TrackedTerminal, contribution: AgentProviderContribution, processName: string): void {
-    if (terminal.notBoundRetries >= MAX_NOT_BOUND_DISCOVERY_RETRIES) return;
+    if (terminal.notBoundRetries >= MAX_NOT_BOUND_DISCOVERY_RETRIES) {
+      this.scheduleTopologyPoll(terminal);
+      return;
+    }
     terminal.notBoundRetries += 1;
+    // Stay on the same provider. Rotating Codex → OMP on a `node` wrapper
+    // abandoned the journal that was about to appear.
     this.scheduleReobserve(terminal, contribution, processName);
   }
 
   private async reobserve(terminal: TrackedTerminal, contribution: AgentProviderContribution, processName: string): Promise<void> {
     const previous = terminal.context;
-    if (previous === undefined || previous.providerId !== contribution.id) return;
+    if (previous === undefined) {
+      this.claimAndAdmit(terminal, contribution, processName);
+      return;
+    }
     await this.options.hosts.cancelAgentTerminal({ contextId: previous.contextId, reason: "terminal-replaced" }).catch(() => undefined);
     if (terminal.context !== previous && terminal.context !== undefined) return;
     if (terminal.context === previous) {
       terminal.context = undefined;
-      try { this.options.agents.releaseExtensionProvider(terminal.identity, contribution.id); }
+      try { this.options.agents.releaseExtensionProvider(terminal.identity, previous.providerId); }
       catch { return; }
     }
     terminal.incarnation += 1;
@@ -346,14 +360,27 @@ export class ExtensionAgentRuntimeRegistry {
   }
 
   private match(processName: string, identity: ActivitySessionIdentity): AgentProviderContribution | undefined {
-    const tracked = this.terminals.get(identity.sessionId);
-    if (this.options.projectEnvironmentRouter !== undefined && tracked?.environmentBinding === undefined) return undefined;
     const executable = executableName(processName);
     if (executable.length === 0) return undefined;
-    return this.options.hosts.agentProviderContributions().find((provider) =>
+    return this.capableProviders(identity).find((provider) =>
+      provider.processMatchers?.some((matcher) => matcher.arguments === undefined && matcher.executableName.toLowerCase() === executable) === true,
+    );
+  }
+
+  /** Exact executable match first; otherwise every capable provider so a
+   * `node`/`bun` wrapper still opens the bounded discovery window. An empty
+   * name is not a leave-shell edge and must not admit the first provider. */
+  private resolveContribution(processName: string, identity: ActivitySessionIdentity): AgentProviderContribution | undefined {
+    if (executableName(processName).length === 0) return undefined;
+    return this.match(processName, identity) ?? this.capableProviders(identity)[0];
+  }
+
+  private capableProviders(identity: ActivitySessionIdentity): AgentProviderContribution[] {
+    const tracked = this.terminals.get(identity.sessionId);
+    if (this.options.projectEnvironmentRouter !== undefined && tracked?.environmentBinding === undefined) return [];
+    return this.options.hosts.agentProviderContributions().filter((provider) =>
       (provider.platforms === undefined || provider.platforms.includes(this.platform))
-      && (this.projectEnvironmentId(identity) !== THIS_SERVER_ENVIRONMENT_ID || requiredCapabilitiesAvailable(provider, this.localObservationCapabilities))
-      && provider.processMatchers?.some((matcher) => matcher.arguments === undefined && matcher.executableName.toLowerCase() === executable) === true,
+      && (this.projectEnvironmentId(identity) !== THIS_SERVER_ENVIRONMENT_ID || requiredCapabilitiesAvailable(provider, this.localObservationCapabilities)),
     );
   }
 
@@ -375,6 +402,7 @@ export class ExtensionAgentRuntimeRegistry {
         sessionId: identity.sessionId.slice(0, 256),
       }),
       failureClass: classifyAdmissionFailure(error),
+      ...(admissionReason(error) === undefined ? {} : { reason: admissionReason(error) }),
     });
     try { this.options.onAdmissionFailure?.(failure); } catch { /* diagnostics are best effort */ }
   }
@@ -386,6 +414,11 @@ function requiredCapabilitiesAvailable(provider: AgentProviderContribution, avai
 function executableName(value: string): string { return value.trim().split(/[\\/]/u).pop()?.toLowerCase() ?? ""; }
 function sameIdentity(left: ActivitySessionIdentity, right: ActivitySessionIdentity): boolean { return left.serverId === right.serverId && left.projectId === right.projectId && left.sessionId === right.sessionId; }
 function platformName(): "darwin" | "linux" | "win32" { return process.platform === "darwin" || process.platform === "win32" ? process.platform : "linux"; }
+function admissionReason(error: unknown): string | undefined {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  const reason = message.replace(/[\r\n]/gu, " ").trim().slice(0, 300);
+  return reason.length > 0 ? reason : undefined;
+}
 function classifyAdmissionFailure(error: unknown): ExtensionAgentAdmissionFailure["failureClass"] {
   const message = error instanceof Error ? error.message.toLowerCase() : "";
   if (message.includes("cancel") || message.includes("abort")) return "cancelled";

@@ -66,18 +66,108 @@ test("extension provider claims one terminal incarnation before host admission",
   await agents.stop();
 });
 
-test("non-matching terminals do not create an extension-owned sidebar run", async () => {
+test("non-matching terminals still arm discovery so a wrapper can bind, without creating a sidebar run until the provider publishes", async () => {
   const activity = new TerminalActivityService({ serverId: identity.serverId });
   activity.register(identity);
   const agents = new AgentStatusService({ activity });
   await agents.start(); agents.register(identity);
+  const admitted = [];
   const registry = new ExtensionAgentRuntimeRegistry({
     agents,
-    hosts: { agentProviderContributions: () => [provider], async admitAgentTerminal() {}, async cancelAgentTerminal() { return false; }, async drainAgentObservers() {} },
+    hosts: {
+      agentProviderContributions: () => [provider],
+      async admitAgentTerminal(value) { admitted.push(value); return { state: "not-bound" }; },
+      async cancelAgentTerminal() { return false; },
+      async drainAgentObservers() {},
+    },
   });
   registry.register(identity);
-  assert.equal(registry.foregroundProcessChanged(identity, "other-agent"), false);
-  assert.equal(await agents.ingestJournalRecord(identity, "untrusted-provider", { type: "untrusted-record" }), false);
+  assert.equal(registry.foregroundProcessChanged(identity, "other-agent"), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(admitted.length, 1);
+  assert.deepEqual(agents.getSnapshot().entries, {});
+  await agents.stop();
+});
+
+test("an empty foreground name does not admit the first capable provider", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId });
+  activity.register(identity);
+  const agents = new AgentStatusService({ activity });
+  await agents.start(); agents.register(identity);
+  const admitted = [];
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: {
+      agentProviderContributions: () => [provider],
+      async admitAgentTerminal(value) { admitted.push(value); },
+      async cancelAgentTerminal() { return true; },
+      async drainAgentObservers() {},
+    },
+  });
+  registry.register(identity); registry.terminalStarted(identity, 4321);
+  assert.equal(registry.foregroundProcessChanged(identity, ""), false);
+  assert.equal(registry.foregroundProcessChanged(identity, "   "), false);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(admitted.length, 0);
+  await agents.stop();
+});
+
+test("an admission throw retries discovery instead of giving up on the foreground incarnation", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId });
+  activity.register(identity);
+  const agents = new AgentStatusService({ activity });
+  await agents.start(); agents.register(identity);
+  const admitted = []; const scheduled = [];
+  let attempts = 0;
+  const omp = { ...provider, id: "com.terminay.agent.omp/cli", displayName: "OMP", processMatchers: [{ executableName: "omp" }] };
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: {
+      agentProviderContributions: () => [provider, omp],
+      async admitAgentTerminal(value) {
+        admitted.push(value);
+        attempts += 1;
+        if (attempts === 1) throw new Error("agent IPC send failed");
+        return { state: "bound" };
+      },
+      async cancelAgentTerminal() { return true; },
+      async drainAgentObservers() {},
+    },
+    schedule(callback, milliseconds) { const timer = { callback, milliseconds }; scheduled.push(timer); return timer; },
+    cancelSchedule() {},
+  });
+  registry.register(identity); registry.terminalStarted(identity, 4321);
+  assert.equal(registry.foregroundProcessChanged(identity, "node"), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(attempts, 1);
+  assert.equal(scheduled.length, 1);
+  await scheduled.shift().callback();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(attempts, 2);
+  assert.equal(admitted.length, 2);
+  assert.deepEqual(admitted.map((value) => value.context.providerId), [provider.id, provider.id]);
+  await agents.stop();
+});
+
+test("a node wrapper foreground still admits the capable agent provider", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId });
+  activity.register(identity);
+  const agents = new AgentStatusService({ activity });
+  await agents.start(); agents.register(identity);
+  const admitted = [];
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: {
+      agentProviderContributions: () => [provider],
+      async admitAgentTerminal(value) { admitted.push(value); },
+      async cancelAgentTerminal() { return true; },
+      async drainAgentObservers() {},
+    },
+  });
+  registry.register(identity); registry.terminalStarted(identity, 4321);
+  assert.equal(registry.foregroundProcessChanged(identity, "node"), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(admitted[0].context.providerId, provider.id);
   await agents.stop();
 });
 
@@ -206,6 +296,7 @@ test("a failed agent admission is observable before the sidebar falls back to no
     providerId: provider.id,
     terminal: identity,
     failureClass: "host-failed",
+    reason: "agent extension host does not exist: /private/provider-journal",
   }], "a failed admission must be visible even though the sidebar has no provider entry");
   assert.deepEqual(agents.getSnapshot().entries, {}, "the failed provider claim is released instead of leaving a phantom sidebar agent");
   assert.equal(registry.foregroundProcessChanged(identity, "test-agent"), true, "a failing diagnostics sink cannot prevent the terminal from retrying");
@@ -236,6 +327,44 @@ test("topology polling is inert for an unchanged signature and rebinds exactly o
   const reobserve = scheduled.find((timer) => timer.milliseconds === 0);
   await reobserve.callback(); await new Promise((resolve) => setImmediate(resolve));
   assert.equal(admitted.length, 2); assert.deepEqual(cancelled, [{ contextId: admitted[0].context.contextId, reason: "terminal-replaced" }]);
+  registry.terminalExited(identity); await agents.stop();
+});
+
+test("a topology change that loses the writer cancels the observer and rejects late lifecycle", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
+  const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
+  const admitted = []; const cancelled = []; const scheduled = [];
+  let signature = "writer-present";
+  let state = "bound";
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: {
+      agentProviderContributions: () => [provider],
+      async admitAgentTerminal(value) { admitted.push(value); return { state }; },
+      async cancelAgentTerminal(value) { cancelled.push(value); return true; },
+      async drainAgentObservers() {},
+    },
+    reobserveDebounceMs: 0,
+    topologyPollIntervalMs: 100,
+    topologySignature: async () => signature,
+    schedule(callback, milliseconds) { const timer = { callback, milliseconds }; scheduled.push(timer); return timer; },
+    cancelSchedule() {},
+  });
+  registry.register(identity);
+  assert.equal(registry.foregroundProcessChanged(identity, "test-agent"), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  const binding = { providerSessionId: "writer-session", mappingVersion: "test-v1", fingerprint: { kind: "fixture", process: { id: "writer-1" }, metadata: { source: "test" } } };
+  assert.equal((await agents.ingestExtensionLifecycle(identity, provider.id, "test-v1", binding, [{ kind: "session.started", title: "Local writer" }])).acceptedEventCount, 1);
+  await scheduled.shift().callback(); await new Promise((resolve) => setImmediate(resolve));
+  signature = "writer-left";
+  state = "not-bound";
+  await scheduled.shift().callback(); await new Promise((resolve) => setImmediate(resolve));
+  const reobserve = scheduled.find((timer) => timer.milliseconds === 0);
+  await reobserve.callback(); await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(cancelled, [{ contextId: admitted[0].context.contextId, reason: "terminal-replaced" }]);
+  const late = await agents.ingestExtensionLifecycle(identity, provider.id, "test-v1", undefined, [{ kind: "turn.started", turnId: "foreign-turn" }]);
+  assert.equal(late.acceptedEventCount, 0);
+  assert.match(late.failure ?? "", /bound|own|claim/u);
   registry.terminalExited(identity); await agents.stop();
 });
 

@@ -142,20 +142,14 @@ test("only activated manifest-matching environment contributions are published",
   await manager.shutdown();
 });
 
-test("an agent provider may read only its manifest-declared terminal environment variables", async (t) => {
+test("an agent provider may read terminal environment variables through observation", async (t) => {
   const descriptor = await fixture("example.agent-environment", `
     export function activate(context) {
       context.agents.registerProvider("example.agent-environment/cli", {
         mappingVersion: "v1", matchesForeground() { return true; },
         async observe(terminal) {
-          const allowed = await terminal.observation.processes.environment(["CODEX_HOME"]);
-          if (allowed.CODEX_HOME !== "/fixture/codex") throw new Error("declared environment value was unavailable");
-          try {
-            await terminal.observation.processes.environment(["HOME"]);
-            throw new Error("undeclared environment value was accepted");
-          } catch (error) {
-            if (!String(error.message).includes("not declared")) throw error;
-          }
+          const allowed = await terminal.observation.processes.environment(["CODEX_HOME"], { signal: new AbortController().signal });
+          if (allowed.CODEX_HOME !== "/fixture/codex") throw new Error("environment value was unavailable");
           return { state: "not-bound" };
         },
       });
@@ -191,6 +185,48 @@ test("an agent provider may read only its manifest-declared terminal environment
     observationCapabilities: ["process-observation"],
   });
   assert.deepEqual(observedNames, [["CODEX_HOME"]]);
+});
+
+test("This-server terminals with a shell pid observe inside the extension child", async (t) => {
+  const descriptor = await fixture("example.agent-local-observe", `
+    export function activate(context) {
+      context.agents.registerProvider("example.agent-local-observe/cli", {
+        mappingVersion: "v1", matchesForeground() { return true; },
+        async observe(terminal) {
+          const descendants = await terminal.observation.processes.descendants();
+          if (!Array.isArray(descendants)) throw new Error("local descendants were unavailable");
+          return { state: "not-bound" };
+        },
+      });
+    }
+  `);
+  descriptor.permissions = ["agent-observation"];
+  descriptor.agentProviders = [{
+    id: "example.agent-local-observe/cli",
+    displayName: "Local observe fixture",
+    processMatchers: [{ executableName: "fixture-agent" }],
+    requiredEnvironmentCapabilities: ["process-observation"],
+  }];
+  let hostObservations = 0;
+  const host = new ExtensionHost(descriptor.extensionId, {
+    broker: { async request() {} },
+    agents: {
+      async observe() { hostObservations += 1; return []; },
+      async publish(request) { return { acceptedEventCount: request.events.length }; },
+    },
+  });
+  t.after(async () => { await host.stop().catch(() => undefined); });
+  await host.start(descriptor);
+  await host.admitAgentTerminal({
+    context: {
+      contextId: "local-context", serverId: "server-1", projectId: "project-1",
+      projectEnvironmentId: "terminay.this-server", terminalSessionId: "terminal-1",
+      terminalIncarnationId: "1", providerId: "example.agent-local-observe/cli",
+      shellPid: process.pid,
+    },
+    observationCapabilities: ["process-observation"],
+  });
+  assert.equal(hostObservations, 0);
 });
 
 test("seeded SSH and Puzed hosts reconcile four late agents and re-admit an existing Codex terminal", async (t) => {
@@ -530,6 +566,44 @@ test("agent providers require a manifest declaration and receive only parent-adm
   assert.equal(await host.cancelAgentTerminal({ contextId: "context-1", reason: "terminal-closed" }), true);
   assert.equal(cancellations.length, 1);
   assert.equal(await host.cancelAgentTerminal({ contextId: "context-1", reason: "terminal-closed" }), false, "teardown is exactly once");
+  await host.stop();
+});
+
+test("an oversized agent observation result fails that observe without killing the extension host", async () => {
+  const descriptor = await fixture("example.agent-oversize", `export function activate(context) {
+    context.agents.registerProvider("example.agent-oversize/cli", {
+      mappingVersion: "0.1", matchesForeground() { return true; },
+      async observe(terminal) {
+        try { await terminal.observation.processes.descendants(); return { state: "not-bound" }; }
+        catch { return { state: "not-bound" }; }
+      }
+    });
+  }`);
+  descriptor.permissions = ["agent-observation"];
+  descriptor.agentProviders = [{
+    id: "example.agent-oversize/cli", displayName: "Oversize fixture",
+    requiredEnvironmentCapabilities: ["process-observation"],
+  }];
+  const host = new ExtensionHost(descriptor.extensionId, {
+    broker: { async request() {} },
+    limits: { maxMessageBytes: 4_096 },
+    agents: {
+      async observe() { return { pad: "x".repeat(8_000) }; },
+      async publish(request) { return { acceptedEventCount: request.events.length }; },
+      terminalCancelled() {},
+    },
+  });
+  await host.start(descriptor);
+  await host.admitAgentTerminal({
+    context: {
+      contextId: "context-oversize", serverId: "server-1", projectId: "project-1",
+      projectEnvironmentId: "environment-1", terminalSessionId: "terminal-1",
+      terminalIncarnationId: "incarnation-1", providerId: "example.agent-oversize/cli",
+    },
+    observationCapabilities: ["process-observation"],
+  });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(host.status().state, "running");
   await host.stop();
 });
 

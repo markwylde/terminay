@@ -201,6 +201,48 @@ test("file follow replays an equal-size metadata rewrite exactly once as replace
   assert.deepEqual(await adapter.observe(current, "filesystem.follow", { watcherId: watcher.watcherId }, signal), { events: [], closed: false });
 });
 
+test("This-server open-file snapshots prefer journal paths and stay inside the IPC budget", async () => {
+  const system = fixtureSystem();
+  const clutter = Array.from({ length: 400 }, (_, index) => ({
+    path: `/Users/mark/.nvm/versions/node/v24.14.0/lib/node_modules/pad-${index}.js`,
+    access: "read-write",
+  }));
+  system.openFiles = async () => [
+    ...clutter,
+    { path: "/home/mark/.codex/sessions/rollout.jsonl", access: "writable" },
+  ];
+  const adapter = new ThisServerAgentObservationAdapter({
+    homeDirectory: "/home/mark", system,
+    resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }),
+  });
+  const current = terminal("journal-preference");
+  const descendants = await adapter.observe(current, "process.descendants", {}, signal);
+  const files = await adapter.observe(current, "process.open-files", {
+    processes: descendants, options: { access: "writable" },
+  }, signal);
+  assert.deepEqual(files.map((entry) => entry.path), ["/home/mark/.codex/sessions/rollout.jsonl"]);
+});
+
+test("This-server open-file snapshots cap a journal-less lsof dump instead of throwing", async () => {
+  const system = fixtureSystem();
+  system.openFiles = async () => Array.from({ length: 9000 }, (_, index) => ({
+    path: `/tmp/writable-${index}`,
+    access: "writable",
+  }));
+  const adapter = new ThisServerAgentObservationAdapter({
+    homeDirectory: "/home/mark", system,
+    resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }),
+  });
+  const current = terminal("capped-open-files");
+  const descendants = await adapter.observe(current, "process.descendants", {}, signal);
+  const files = await adapter.observe(current, "process.open-files", {
+    processes: descendants, options: { access: "writable" },
+  }, signal);
+  assert.equal(files.length, 128);
+  assert.equal(files[0].path, "/tmp/writable-0");
+  assert.equal(files.at(-1).path, "/tmp/writable-127");
+});
+
 test("file follow detects atomic same-path replacement from a host-private identity fact", async () => {
   const system = fixtureSystem(); let identity = "device:inode-one";
   const originalStat = system.stat;

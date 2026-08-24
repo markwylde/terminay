@@ -1,4 +1,8 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import type { Page } from '@playwright/test';
+import { _electron as electron } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { sendAppCommand } from './support/app';
 import { openFileExplorer } from './support/ui';
@@ -23,7 +27,7 @@ async function createTerminalAndGetActiveSessionId(page: Page): Promise<string> 
 }
 
 async function emitJournalRecord(page: Page, terminalSessionId: string, record: Record<string, unknown>): Promise<void> {
-	const providerSessionId = providerSessions.get(terminalSessionId);
+	const providerSessionId = sessionsFor(page).get(terminalSessionId);
 	if (!providerSessionId) throw new Error('Agent provider session is unavailable');
 	const events = lifecycleEvents(record);
 	if (events.length === 0) return;
@@ -34,10 +38,18 @@ async function emitJournalRecord(page: Page, terminalSessionId: string, record: 
 	}, { events, providerSessionId, sessionId: terminalSessionId });
 }
 
-const providerSessions = new Map<string, string>();
+const providerSessions = new WeakMap<Page, Map<string, string>>();
+
+function sessionsFor(page: Page): Map<string, string> {
+	const existing = providerSessions.get(page);
+	if (existing) return existing;
+	const created = new Map<string, string>();
+	providerSessions.set(page, created);
+	return created;
+}
 
 async function beginCodexSession(page: Page, terminalSessionId: string, providerSessionId: string): Promise<void> {
-	providerSessions.set(terminalSessionId, providerSessionId);
+	sessionsFor(page).set(terminalSessionId, providerSessionId);
 	await emitJournalRecord(page, terminalSessionId, { type: 'session_meta', payload: { id: providerSessionId } });
 }
 
@@ -164,4 +176,59 @@ test('agent integration setting disables and restores journal-backed status', as
 	await emitJournalRecord(mainWindow, sessionId, { type: 'event_msg', payload: { type: 'user_message', message: 'Agent integration restored' } });
 	await openFileExplorer(mainWindow);
 	await expect(mainWindow.locator('.agents-sidebar__name')).toContainText('Agent integration restored');
+});
+
+test('two live Desktop profiles keep Agents panes isolated', async ({
+	mainWindow,
+	appHarness,
+}) => {
+	const isolatedTempDir = await mkdtemp(path.join(os.tmpdir(), 'terminay-e2e-agents-isolated-'));
+	const isolatedUserDataDir = path.join(isolatedTempDir, 'user-data');
+	const isolatedApp = await electron.launch({
+		args: ['.'],
+		env: {
+			...process.env,
+			CI: '1',
+			ELECTRON_ENABLE_LOGGING: '1',
+			TEMP: isolatedTempDir,
+			TERMINAY_E2E_TEMP_DIR: isolatedTempDir,
+			TERMINAY_TEST: '1',
+			TERMINAY_USER_DATA_DIR: isolatedUserDataDir,
+			TMP: isolatedTempDir,
+			TMPDIR: isolatedTempDir,
+		},
+	});
+	try {
+		const isolatedWindow = await isolatedApp.firstWindow();
+		await appHarness.prepareWindow(isolatedWindow);
+		const firstSessionId = await getActiveSessionId(mainWindow);
+		const secondSessionId = await getActiveSessionId(isolatedWindow);
+		await beginCodexSession(mainWindow, firstSessionId, 'codex-profile-a');
+		await emitJournalRecord(mainWindow, firstSessionId, {
+			type: 'event_msg',
+			payload: { type: 'task_started', turn_id: 'turn-1' },
+		});
+		await emitJournalRecord(mainWindow, firstSessionId, {
+			type: 'event_msg',
+			payload: { type: 'user_message', message: 'Profile A agent' },
+		});
+		await beginCodexSession(isolatedWindow, secondSessionId, 'codex-profile-b');
+		await emitJournalRecord(isolatedWindow, secondSessionId, {
+			type: 'event_msg',
+			payload: { type: 'task_started', turn_id: 'turn-1' },
+		});
+		await emitJournalRecord(isolatedWindow, secondSessionId, {
+			type: 'event_msg',
+			payload: { type: 'user_message', message: 'Profile B agent' },
+		});
+		await openFileExplorer(mainWindow);
+		await openFileExplorer(isolatedWindow);
+		await expect(mainWindow.locator('.agents-sidebar__name')).toContainText('Profile A agent');
+		await expect(mainWindow.locator('.agents-sidebar__name')).not.toContainText('Profile B agent');
+		await expect(isolatedWindow.locator('.agents-sidebar__name')).toContainText('Profile B agent');
+		await expect(isolatedWindow.locator('.agents-sidebar__name')).not.toContainText('Profile A agent');
+	} finally {
+		await isolatedApp.close();
+		await rm(isolatedTempDir, { recursive: true, force: true });
+	}
 });

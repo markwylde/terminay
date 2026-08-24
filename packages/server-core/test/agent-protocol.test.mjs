@@ -25,6 +25,8 @@ test("agent protocol exposes only reduced extension lifecycle state and acknowle
     await publish(agents, identity);
     const snapshot = registry.operations.queries[AGENT_OPERATIONS.snapshot](query(AGENT_OPERATIONS.snapshot));
     const entry = Object.values(snapshot.entries)[0];
+    assert.equal(typeof snapshot.processInstanceId, "string");
+    assert.ok(snapshot.processInstanceId.length > 0);
     assert.equal(entry.activationTerminalSessionId, identity.sessionId);
     assert.doesNotMatch(JSON.stringify(snapshot), /fingerprint|fixture/u);
     assert.equal(journal.replay(0).events.at(-1).event, AGENT_OPERATIONS.event);

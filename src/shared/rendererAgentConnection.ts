@@ -25,12 +25,28 @@ export function adaptServerAgentSnapshot(source: AgentClientSnapshot): AgentStat
 		if (entry.entryId !== entryId) throw new TypeError('server agent entry key mismatch')
 		entries[entryId] = entry
 	}
-	return Object.freeze({ revision: source.revision, entries: Object.freeze(entries), eventCursors: Object.freeze({}) })
+	return Object.freeze({
+		revision: source.revision,
+		entries: Object.freeze(entries),
+		eventCursors: Object.freeze({}),
+		...(typeof source.processInstanceId === 'string'
+			? { processInstanceId: source.processInstanceId }
+			: {}),
+	})
 }
 
 export function subscribeServerAgentSnapshots(client: AgentStatusClient, listener: (snapshot: AgentStatusSnapshot) => void): () => void {
-	listener(adaptServerAgentSnapshot(client.snapshot))
-	return client.onChange((snapshot) => listener(adaptServerAgentSnapshot(snapshot)))
+	let pinnedProcessInstanceId: string | undefined
+	const emit = (source: AgentClientSnapshot) => {
+		const adapted = adaptServerAgentSnapshot(source)
+		if (typeof adapted.processInstanceId === 'string') {
+			if (pinnedProcessInstanceId === undefined) pinnedProcessInstanceId = adapted.processInstanceId
+			else if (adapted.processInstanceId !== pinnedProcessInstanceId) return
+		}
+		listener(adapted)
+	}
+	emit(client.snapshot)
+	return client.onChange(emit)
 }
 
 function adaptEntry(value: AgentClientEntry): AgentStatusEntry {

@@ -6,7 +6,10 @@ import type { ExtensionAgentObservationOperation, ExtensionAgentTerminalContext 
 
 const MAX_PATH_LENGTH = 4_096;
 const MAX_PROCESSES = 2_048;
-const MAX_OPEN_FILES = 8_192;
+/** Keep process/open-file snapshots bounded for the provider, not because they
+ * cross host IPC. Local observation now runs inside the extension child. */
+const MAX_OBSERVED_PROCESSES = 256;
+const MAX_OBSERVED_OPEN_FILES = 128;
 const MAX_WATCHERS_PER_TERMINAL = 32;
 const MAX_READ_BYTES = 4 * 1024 * 1024;
 const MAX_FOLLOW_CHUNK_BYTES = 256 * 1024;
@@ -141,10 +144,10 @@ export class ThisServerAgentObservationAdapter {
     const local = await this.requireLocalTerminal(terminal, signal);
     const shellPid = requiredPid(local);
     const descendants = await this.system.descendants(shellPid, signal);
-    if (descendants.length > MAX_PROCESSES || descendants.some((process) => !validPid(process.pid) || !safeText(process.executableName, 512))) return undefined;
+    if (descendants.length > MAX_PROCESSES) return undefined;
+    if (descendants.some((process) => !validPid(process.pid) || !safeText(process.executableName, 512))) return undefined;
     const processes = descendants.map((process) => process.pid).sort((left, right) => left - right);
-    const files = await this.system.openFiles(processes, "writable", signal);
-    if (files.length > MAX_OPEN_FILES) return undefined;
+    const files = selectObservedOpenFiles(await this.system.openFiles(processes, "writable", signal));
     const processFacts = descendants.map((process) => `${process.pid}:${process.executableName}`).sort();
     const fileFacts = files.map((file) => `${file.access}:${safePath(file.path) ?? ""}`).filter((value) => !value.endsWith(":")).sort();
     return JSON.stringify([processFacts, fileFacts]);
@@ -180,20 +183,19 @@ export class ThisServerAgentObservationAdapter {
   }
 
   private async descendants(terminal: ThisServerAgentTerminal, state: TerminalState, signal: AbortSignal): Promise<JsonValue> {
-    const processes = await this.system.descendants(requiredPid(terminal), signal);
-    if (processes.length > MAX_PROCESSES) throw new Error("agent process observation exceeds its limit");
-    const result = processes.map((process) => {
-      if (!validPid(process.pid) || !safeText(process.executableName, 512)) throw new Error("agent process observation is malformed");
+    const processes = (await this.system.descendants(requiredPid(terminal), signal)).slice(0, MAX_PROCESSES);
+    const result = processes.flatMap((process) => {
+      if (!validPid(process.pid) || !safeText(process.executableName, 512)) return [];
       const handle = this.registerProcess(state, process.pid);
       const startedAt = safeText(process.startedAt, 128) ? process.startedAt : undefined;
       const cwd = safePath(process.cwd);
-      return {
+      return [{
         handle: { id: handle.id }, executableName: process.executableName,
         ...(startedAt === undefined ? {} : { startedAt }),
         ...(cwd === undefined ? {} : { cwd }),
-      };
+      }];
     });
-    return result;
+    return result.slice(0, MAX_OBSERVED_PROCESSES);
   }
 
   private async openFiles(state: TerminalState, payload: JsonValue, signal: AbortSignal): Promise<JsonValue> {
@@ -207,8 +209,7 @@ export class ThisServerAgentObservationAdapter {
     if (supplied === undefined || supplied.length > MAX_PROCESSES || (access !== "writable" && access !== "readable")) throw new Error("agent open-file request is invalid");
     if (supplied.length === 0) return [];
     const pids = supplied.map((value) => this.processFor(state, value).pid);
-    const files = await this.system.openFiles([...new Set(pids)], access, signal);
-    if (files.length > MAX_OPEN_FILES) throw new Error("agent open-file observation exceeds its limit");
+    const files = selectObservedOpenFiles(await this.system.openFiles([...new Set(pids)], access, signal));
     const result = files.flatMap((file) => {
       const path = safePath(file.path);
       if (path === undefined || !isOpenAccess(file.access)) return [];
@@ -546,7 +547,12 @@ function fileIdentity(value: object): string | undefined {
 async function nodeDescendants(shellPid: number, signal: AbortSignal): Promise<readonly ThisServerAgentProcess[]> {
   throwIfAborted(signal);
   if (process.platform === "linux") return linuxDescendants(shellPid, signal);
-  const output = await commandText("ps", ["-axo", "pid=,ppid=,comm="], 4 * 1024 * 1024, signal);
+  let output: string;
+  try {
+    output = await commandText("ps", ["-axo", "pid=,ppid=,comm="], 4 * 1024 * 1024, signal);
+  } catch {
+    return [];
+  }
   const children = new Map<number, number[]>(); const names = new Map<number, string>();
   for (const line of output.split(/\r?\n/u)) {
     const [pidText, parentText, ...command] = line.trim().split(/\s+/u); const pid = Number(pidText); const parent = Number(parentText);
@@ -572,18 +578,25 @@ async function linuxDescendants(shellPid: number, signal: AbortSignal): Promise<
 async function nodeOpenFiles(processIds: readonly number[], access: "writable" | "readable", signal: AbortSignal): Promise<readonly ThisServerAgentOpenFile[]> {
   if (processIds.length === 0) return [];
   if (process.platform === "linux") return linuxOpenFiles(processIds, access, signal);
-  const output = await commandText("lsof", ["-p", processIds.join(","), "-F", "pan"], 8 * 1024 * 1024, signal, true);
-  const files: ThisServerAgentOpenFile[] = []; let current: "readable" | "writable" | "read-write" | undefined;
+  let output: string;
+  try {
+    output = await commandText("lsof", ["-p", processIds.join(","), "-F", "pan"], 8 * 1024 * 1024, signal, true);
+  } catch {
+    return [];
+  }
+  const files = accumulateObservedOpenFiles(); let current: "readable" | "writable" | "read-write" | undefined;
   for (const line of output.split(/\r?\n/u)) {
     if (line.startsWith("p")) current = undefined;
     else if (line.startsWith("a")) current = lsofAccess(line.slice(1));
-    else if (line.startsWith("n") && current !== undefined && (access === "readable" || current !== "readable")) files.push({ path: line.slice(1), access: current });
+    else if (line.startsWith("n") && current !== undefined && (access === "readable" || current !== "readable")) {
+      files.add({ path: line.slice(1), access: current });
+    }
   }
-  return files;
+  return files.snapshot();
 }
 
 async function linuxOpenFiles(processIds: readonly number[], access: "writable" | "readable", signal: AbortSignal): Promise<readonly ThisServerAgentOpenFile[]> {
-  const result: ThisServerAgentOpenFile[] = [];
+  const result = accumulateObservedOpenFiles();
   for (const pid of processIds) {
     throwIfAborted(signal);
     const entries = await commandText("sh", ["-c", `printf '%s\\n' /proc/${pid}/fd/*`], 512 * 1024, signal).catch(() => "");
@@ -593,10 +606,10 @@ async function linuxOpenFiles(processIds: readonly number[], access: "writable" 
       const flags = await readFile(`/proc/${pid}/fdinfo/${fd.slice(fd.lastIndexOf("/") + 1)}`, "utf8").catch(() => "");
       const octal = /^flags:\s*(0[0-7]+)/mu.exec(flags)?.[1]; const mode = octal === undefined ? undefined : Number.parseInt(octal, 8) & 3;
       const fileAccess = mode === 1 ? "writable" : mode === 2 ? "read-write" : mode === 0 ? "readable" : undefined;
-      if (fileAccess !== undefined && (access === "readable" || fileAccess !== "readable")) result.push({ path: safe, access: fileAccess });
+      if (fileAccess !== undefined && (access === "readable" || fileAccess !== "readable")) result.add({ path: safe, access: fileAccess });
     }
   }
-  return result;
+  return result.snapshot();
 }
 
 async function nodeTty(shellPid: number, signal: AbortSignal): Promise<string | undefined> {
@@ -660,6 +673,27 @@ function safeDirectoryEntryName(value: string): boolean { return safeRelativePat
 function contained(root: string, path: string): boolean { const candidate = relative(root, path); return candidate !== "" && candidate !== ".." && !candidate.startsWith(`..${pathSeparator()}`) && !isAbsolute(candidate); }
 function record(value: unknown): Record<string, JsonValue> | undefined { return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, JsonValue> : undefined; }
 function isOpenAccess(value: unknown): value is "readable" | "writable" | "read-write" { return value === "readable" || value === "writable" || value === "read-write"; }
+function isAgentJournalPath(path: string): boolean { return path.endsWith(".jsonl") || path.includes("/sessions/"); }
+function accumulateObservedOpenFiles(): { add(file: ThisServerAgentOpenFile): void; snapshot(): ThisServerAgentOpenFile[] } {
+  const journals: ThisServerAgentOpenFile[] = [];
+  const others: ThisServerAgentOpenFile[] = [];
+  return {
+    add(file) {
+      const path = safePath(file.path);
+      if (path === undefined || !isOpenAccess(file.access)) return;
+      const entry = { path, access: file.access };
+      if (isAgentJournalPath(path)) {
+        if (journals.length < MAX_OBSERVED_OPEN_FILES) journals.push(entry);
+      } else if (others.length < MAX_OBSERVED_OPEN_FILES) others.push(entry);
+    },
+    snapshot() { return journals.length > 0 ? journals : others; },
+  };
+}
+function selectObservedOpenFiles(files: readonly ThisServerAgentOpenFile[]): ThisServerAgentOpenFile[] {
+  const collected = accumulateObservedOpenFiles();
+  for (const file of files) collected.add(file);
+  return collected.snapshot();
+}
 function boundedBytes(value: unknown, maximum: number): number { if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0 || value > maximum) throw new Error("agent file byte limit is invalid"); return value; }
 function boundedInteger(value: unknown, minimum: number, maximum: number): number | undefined { return typeof value === "number" && Number.isSafeInteger(value) && value >= minimum && value <= maximum ? value : undefined; }
 function positiveBound(value: number | undefined, fallback: number): number { if (value === undefined) return fallback; if (!Number.isSafeInteger(value) || value <= 0 || value > fallback) throw new RangeError("invalid agent observation byte limit"); return value; }

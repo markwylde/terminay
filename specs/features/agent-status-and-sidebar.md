@@ -29,12 +29,14 @@ prompts, responses, instructions, reasoning, tool arguments, and tool output
 never cross the server boundary and are never logged by the integration.
 
 Foreground-process and journal discovery are public project-environment
-capabilities exposed to an agent extension only through a terminal-scoped
-observation broker.
-This server may use the native process tree. An SSH/Puzed environment without a
-proven remote source retains generic terminal activity but reports authoritative
-agent observation unavailable; the local SSH client PID or local provider home
-can never establish ownership of a remote journal.
+capabilities. Agent extensions are ordinary trusted Node.js programs: on This
+server they combine the host-issued terminal context (including the PTY shell
+PID) with Node process and filesystem APIs, typically through the public
+observation helpers. Those helpers run in the extension child; they are not a
+sandbox and must not round-trip local `lsof`/`ps` snapshots through host IPC.
+SSH and other non-local environments cannot use the server host's process tree
+or home directory. They use the environment-routed observation broker when the
+environment advertises that capability; otherwise observation is unavailable.
 
 ## Product outcomes
 
@@ -116,6 +118,21 @@ evidence is proven. An `omp` binary that sets its process title still matches
 `omp` directly; a `bun` wrapper is admitted only after the OMP terminal
 breadcrumb for the exact PTY identifies a validated OMP root JSONL.
 
+Live Agents projection is scoped to one running Terminay process, not to a
+durable user-data `serverId`. Each process mints an ephemeral
+`processInstanceId` at boot and stamps it on every snapshot it emits. A
+client connected to that process renders only that snapshot. Two processes
+that share project names, session ids, or `~/.codex` files still cannot
+populate each other's Agents pane.
+
+Observation stays bound only while the journal writer remains a descendant of
+a PTY shell this process spawned. A later `codex resume` in another Terminay
+process may write the same journal path; the first process must drop the
+observer as soon as that writer leaves its PTY tree. Sharing a user-data
+directory is an Electron profile concern, not Agents authority: live pane
+state is the processInstanceId on the snapshot, not occupancy of
+`Terminay Development`.
+
 CWD, filename timestamps, terminal title, active tab, and “closest match” logic
 must not independently establish an authoritative binding. Claude Code uses its
 exact descendant process CWD to establish the native project journal directory
@@ -142,13 +159,19 @@ An agent extension observation runtime:
 
 Discovery is retried briefly after terminal startup and whenever the shell
 loses foreground because either transition can arrive before the journal is
-opened. A provider that reports `not-bound` is retried at most ten times at a
-100 ms debounce while that exact foreground incarnation remains current. An
-empty process snapshot is ordinary transient evidence, not an admission
-failure. Once a supported provider is known to be foreground, discovery remains
-armed until that incarnation is bound or leaves the foreground. Expensive
+opened. A blank or unknown process name is not a leave-shell edge and does not
+start discovery. A provider that reports `not-bound`, or whose observation
+throws before a journal is proven, is retried at most ten times at a 100 ms
+debounce while that exact foreground incarnation remains current. After that
+fast window, topology polling keeps discovery armed until the incarnation is
+bound or returns to the shell. An empty process snapshot is ordinary transient
+evidence, not a reason to give up on the pane. Expensive
 open-file/process inspection is used for initial binding, not for every
-appended record. Symlinks, non-regular files, paths outside the canonical
+appended record. Local open-file snapshots prefer journal paths
+(`.jsonl` and `/sessions/`) and stay bounded for the provider, not because
+they cross host IPC. Optional enrichment after a proven bind (session-name
+index, child directory listing, `CODEX_HOME`) must not fail admission.
+Symlinks, non-regular files, paths outside the canonical
 sessions root, oversized records, invalid JSON, and unbounded growth are
 handled defensively.
 

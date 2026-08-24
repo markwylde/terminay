@@ -85,6 +85,19 @@ test("new, resumed and branched roots rebind only to the newest exact writable C
   assert.equal(terminal.bindingRequest.fingerprint.file.id, resumedPath);
 });
 
+test("a proven Codex rollout still binds when declared environment observation is refused", async () => {
+  const path = "/home/test/.codex/sessions/2026/rollout-root.jsonl";
+  const terminal = terminalFor({
+    [path]: { modifiedAt: "2026-08-24T10:01:00.000Z", records: [root("root")] },
+  });
+  terminal.observation.processes.environment = async () => {
+    throw new Error("agent environment observation is not declared");
+  };
+  const result = await codexAgentProvider.observe(terminal);
+  assert.equal(result.state, "bound");
+  assert.equal(result.binding.providerSessionId, "root");
+});
+
 test("separate Codex child rollouts attach only through their native parent_thread_id", async () => {
   const rootPath = "/home/test/.codex/sessions/2026/08/rollout-root.jsonl";
   const childPath = "/home/test/.codex/sessions/2026/08/rollout-child.jsonl";
