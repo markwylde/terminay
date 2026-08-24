@@ -317,3 +317,65 @@ test("SSH agent broker is explicit, permission-scoped, and child environment sta
   await assert.rejects(deniedHost.invokeProvider({providerId:"example.agent-denied/main",callback:"testProfile",request:{profileId:"profile-1",values:{}}}), /SSH agent access is denied/);
   await deniedHost.stop();
 });
+
+test("agent providers require a manifest declaration and receive only parent-admitted terminal contexts", async () => {
+  const descriptor = await fixture("example.agent-runtime", `export function activate(context) {
+    context.agents.registerProvider("example.agent-runtime/cli", {
+      mappingVersion: "0.1",
+      matchesForeground() { return true; },
+      async observe(terminal) {
+        const descendants = await terminal.observation.processes.descendants();
+        const binding = await terminal.bindSession({ providerSessionId: "session-1", mappingVersion: "0.1", fingerprint: { kind: "fixture" } });
+        return { state: "bound", binding, source: { async *[Symbol.asyncIterator]() { yield { bytes: new TextEncoder().encode(JSON.stringify({ type: "started", title: descendants.name }) + "\\n") }; } }, mapRecord(record, session) { if (record.type === "started") return session.publish.sessionStarted({ title: record.title }); } };
+      }
+    });
+  }`);
+  descriptor.permissions = ["agent-observation"];
+  descriptor.agentProviders = [{
+    id: "example.agent-runtime/cli", displayName: "Fixture CLI",
+    requiredEnvironmentCapabilities: ["process-observation"],
+  }];
+  const observations = [];
+  const publications = [];
+  const cancellations = [];
+  const host = new ExtensionHost(descriptor.extensionId, {
+    broker: { async request() {} },
+    agents: {
+      async observe(request) {
+        observations.push(request);
+        return { name: "fixture-agent" };
+      },
+      async publish(request) {
+        publications.push(request);
+        return { acceptedEventCount: request.events.length };
+      },
+      terminalCancelled(request) { cancellations.push(request); },
+    },
+  });
+  await host.start(descriptor);
+  assert.deepEqual(host.status().agentProviders.map((provider) => provider.id), ["example.agent-runtime/cli"]);
+  await host.admitAgentTerminal({
+    context: { contextId: "context-1", serverId: "server-1", projectId: "project-1", projectEnvironmentId: "environment-1", terminalSessionId: "terminal-1", terminalIncarnationId: "incarnation-1", providerId: "example.agent-runtime/cli" },
+    observationCapabilities: ["process-observation"],
+  });
+  assert.equal(observations.length, 1);
+  assert.equal(observations[0].terminal.terminalSessionId, "terminal-1");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(publications.length, 2, "binding and lifecycle event publish separately");
+  assert.equal(publications[1].events[0].kind, "session.started");
+  assert.equal(await host.cancelAgentTerminal({ contextId: "context-1", reason: "terminal-closed" }), true);
+  assert.equal(cancellations.length, 1);
+  assert.equal(await host.cancelAgentTerminal({ contextId: "context-1", reason: "terminal-closed" }), false, "teardown is exactly once");
+  await host.stop();
+});
+
+test("agent registration fails closed when a child registers a provider not declared by its manifest", async () => {
+  const descriptor = await fixture("example.agent-undeclared", `export function activate(context) {
+    context.agents.registerProvider("example.agent-undeclared/other", { mappingVersion: "0.1", matchesForeground() { return true; }, async observe() { return { state: "not-bound" }; } });
+  }`);
+  descriptor.permissions = ["agent-observation"];
+  descriptor.agentProviders = [{ id: "example.agent-undeclared/cli", displayName: "Declared", requiredEnvironmentCapabilities: [] }];
+  const host = new ExtensionHost(descriptor.extensionId, { broker: { async request() {} } });
+  await assert.rejects(host.start(descriptor), /undeclared or invalid/);
+  assert.deepEqual(host.status().agentProviders, []);
+});

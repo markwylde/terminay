@@ -52,7 +52,7 @@ export class ExtensionInstaller {
     const expiresAt = (this.options.now ?? Date.now)() + 10 * 60_000;
     const resolution: RegistryPackageResolution = Object.freeze({ packageName, version, integrity: inspected.integrity, source: "uploaded", uploadedFilename: filename, archivePath, manifestMetadata: inspected.packageJson.terminay, provenance: "unverified", dependencyCount: typeof inspected.packageJson.dependencies === "object" && inspected.packageJson.dependencies !== null ? Object.keys(inspected.packageJson.dependencies).length : 0 });
     const previewDigest = digest(canonicalJson({ packageName, version, integrity: inspected.integrity, manifest, expiresAt, uploadId }));
-    const preview = Object.freeze({ ...resolution, previewDigest, expiresAt, official: false, trustedCodeWarning: WARNING, declaredPermissions: Object.freeze([...manifest.permissions]), declaredProviderIds: Object.freeze(manifest.contributes.projectEnvironments.map((provider) => provider.id)) });
+    const preview = Object.freeze({ ...resolution, previewDigest, expiresAt, official: false, trustedCodeWarning: WARNING, declaredPermissions: Object.freeze([...manifest.permissions]), declaredProviderIds: Object.freeze((manifest.contributes.projectEnvironments ?? []).map((provider) => provider.id)) });
     this.previews.set(previewDigest, preview);
     this.expirePreview(previewDigest, preview);
     return preview;
@@ -66,7 +66,7 @@ export class ExtensionInstaller {
     const official = OFFICIAL_EXTENSION_CATALOGUE.some((item) => item.packageName === packageName);
     const expiresAt = (this.options.now ?? Date.now)() + 10 * 60_000;
     const previewDigest = digest(canonicalJson({ resolution, manifest, expiresAt }));
-    const preview = Object.freeze({ ...resolution, previewDigest, expiresAt, official, declaredPermissions: Object.freeze([...manifest.permissions]), declaredProviderIds: Object.freeze(manifest.contributes.projectEnvironments.map((provider) => provider.id)), ...(!official ? { trustedCodeWarning: WARNING } : {}) });
+    const preview = Object.freeze({ ...resolution, previewDigest, expiresAt, official, declaredPermissions: Object.freeze([...manifest.permissions]), declaredProviderIds: Object.freeze((manifest.contributes.projectEnvironments ?? []).map((provider) => provider.id)), ...(!official ? { trustedCodeWarning: WARNING } : {}) });
     this.previews.set(previewDigest, preview);
     this.expirePreview(previewDigest, preview);
     return preview;
