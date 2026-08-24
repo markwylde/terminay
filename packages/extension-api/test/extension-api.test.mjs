@@ -15,6 +15,13 @@ import {
   validProviderDefinitionFixture,
   validateDeclarativeForm,
   validateEnvironmentActionResult,
+  validateAgentBindingFingerprint,
+  validateAgentLifecycleEvent,
+  validateAgentModelMetadata,
+  validateAgentObservationDiagnostic,
+  validateAgentProviderContribution,
+  validateAgentProviderDefinition,
+  validateAgentSessionBindingRequest,
   validateExtensionManifest,
   validateOptionSourceResult,
   validateProgressPresentation,
@@ -59,6 +66,150 @@ test("manifest arrays reject duplicates and unsupported capabilities", () => {
 test("SSH agent access is an explicit supported manifest permission", () => {
   const result = validateExtensionManifest({ ...validManifestFixture, permissions: ["network", "ssh-agent:use"] });
   assert.equal(result.ok, true);
+});
+
+test("agent-observation is an additive manifest permission required by agent contributions", () => {
+  const agentProvider = {
+    id: "dev.terminay.fixture/agent",
+    displayName: "Fixture Agent",
+    requiredEnvironmentCapabilities: ["process-observation", "agent-journal"],
+  };
+  const valid = validateExtensionManifest({
+    ...validManifestFixture,
+    permissions: [...validManifestFixture.permissions, "agent-observation"],
+    contributes: { agentProviders: [agentProvider] },
+  });
+  assert.equal(valid.ok, true);
+
+  const missingPermission = validateExtensionManifest({
+    ...validManifestFixture,
+    contributes: { agentProviders: [agentProvider] },
+  });
+  assert.equal(missingPermission.ok, false);
+  assert.ok(missingPermission.issues.some((issue) => issue.path === "$.permissions" && issue.code === "missing_permission"));
+});
+
+test("project-environment and agent-provider contributions are independently optional and may be combined", () => {
+  const agentProvider = {
+    id: "dev.terminay.fixture/agent",
+    displayName: "Fixture Agent",
+    requiredEnvironmentCapabilities: ["process-observation"],
+  };
+  assert.equal(validateExtensionManifest(validManifestFixture).ok, true, "project environment only");
+  assert.equal(validateExtensionManifest({
+    ...validManifestFixture,
+    permissions: [...validManifestFixture.permissions, "agent-observation"],
+    contributes: { agentProviders: [agentProvider] },
+  }).ok, true, "agent provider only");
+  assert.equal(validateExtensionManifest({
+    ...validManifestFixture,
+    permissions: [...validManifestFixture.permissions, "agent-observation"],
+    contributes: {
+      projectEnvironments: validManifestFixture.contributes.projectEnvironments,
+      agentProviders: [agentProvider],
+    },
+  }).ok, true, "combined contributions");
+
+  const noContributions = validateExtensionManifest({ ...validManifestFixture, contributes: {} });
+  assert.equal(noContributions.ok, false);
+  assert.ok(noContributions.issues.some((issue) => issue.path === "$.contributes" && issue.code === "missing_contribution"));
+});
+
+test("agent provider contribution declarations are namespaced, bounded, and declarative", () => {
+  const valid = {
+    id: "dev.terminay.fixture/agent",
+    displayName: "Fixture Agent",
+    description: "Observes the fixture CLI.",
+    icon: "terminal",
+    platforms: ["darwin", "linux"],
+    processMatchers: [{ executableName: "fixture-agent", arguments: ["--json"] }],
+    mappings: [{ mappingVersion: "0.1", providerVersionRange: ">=1" }],
+    requiredEnvironmentCapabilities: ["process-observation", "agent-journal"],
+  };
+  assert.equal(validateAgentProviderContribution(valid, "dev.terminay.fixture").ok, true);
+
+  for (const [name, value, code] of [
+    ["foreign provider id", { ...valid, id: "dev.other/agent" }, "invalid_namespace"],
+    ["unsupported observation capability", { ...valid, requiredEnvironmentCapabilities: ["telepathy"] }, "invalid_capability"],
+    ["executable callback", { ...valid, observe: () => {} }, "unknown_field"],
+    ["unsafe matcher", { ...valid, processMatchers: [{ executableName: "fixture-agent", command: "fixture-agent --json" }] }, "unknown_field"],
+  ]) {
+    const result = validateAgentProviderContribution(value, "dev.terminay.fixture");
+    assert.equal(result.ok, false, name);
+    assert.ok(result.issues.some((issue) => issue.code === code), name);
+  }
+});
+
+test("agent runtime provider declarations accept only the public callback contract", () => {
+  const valid = {
+    mappingVersion: "0.1",
+    matchesForeground() { return true; },
+    async observe() { return { state: "not-bound" }; },
+  };
+  assert.equal(validateAgentProviderDefinition(valid).ok, true);
+
+  for (const [name, definition] of [
+    ["missing matcher", { mappingVersion: "0.1", observe: valid.observe }],
+    ["missing observer", { mappingVersion: "0.1", matchesForeground: valid.matchesForeground }],
+    ["non-function matcher", { ...valid, matchesForeground: true }],
+    ["host lifecycle callback", { ...valid, dispose() {} }],
+  ]) {
+    const result = validateAgentProviderDefinition(definition);
+    assert.equal(result.ok, false, name);
+    assert.ok(result.issues.length > 0, name);
+  }
+});
+
+test("agent binding, metadata, and diagnostic validators reject nested or host-owned data", () => {
+  assert.equal(validateAgentBindingFingerprint({ kind: "writable-file", file: { id: "file-1" }, metadata: { source: "journal", attempt: 1 } }).ok, true);
+  assert.equal(validateAgentSessionBindingRequest({
+    providerSessionId: "session-1",
+    mappingVersion: "0.1",
+    fingerprint: { kind: "writable-file", file: { id: "file-1" }, metadata: { source: "journal" } },
+    metadata: { title: "Fixture task" },
+  }).ok, true);
+  assert.equal(validateAgentModelMetadata({ id: "fixture-1", displayName: "Fixture", contextWindowTokens: 128_000 }).ok, true);
+  assert.equal(validateAgentObservationDiagnostic({ reason: "session-not-found", message: "No active session" }).ok, true);
+
+  for (const [name, result] of [
+    ["nested fingerprint metadata", validateAgentBindingFingerprint({ kind: "writer", file: { id: "file-1" }, metadata: { nested: { value: "no" } } })],
+    ["nested session metadata", validateAgentSessionBindingRequest({ providerSessionId: "session-1", mappingVersion: "0.1", fingerprint: { kind: "writer", file: { id: "file-1" } }, metadata: { nested: ["no"] } })],
+    ["host scope in diagnostic", validateAgentObservationDiagnostic({ reason: "session-not-found", terminalId: "terminal-1" })],
+    ["unsafe diagnostic payload", validateAgentObservationDiagnostic({ reason: "session-not-found", error: { stack: "secret" } })],
+    ["oversized model id", validateAgentModelMetadata({ id: "x".repeat(257) })],
+  ]) {
+    assert.equal(result.ok, false, name);
+    assert.ok(result.issues.length > 0, name);
+  }
+});
+
+test("public agent lifecycle validator accepts only bounded provider-neutral event DTOs", () => {
+  for (const event of [
+    { kind: "session.started", title: "Fixture task", model: { id: "fixture-1", displayName: "Fixture" } },
+    { kind: "turn.started", turnId: "turn-1", promptText: "Fix the fixtures" },
+    { kind: "tool.started", toolId: "tool-1", name: "read_file" },
+    { kind: "wait.started", waitId: "wait-1", state: "waiting", reason: "Approval required" },
+    { kind: "agent.done", outcome: "success", summary: "Completed" },
+    { kind: "subagent.done", subagentId: "child-1", outcome: "cancelled" },
+  ]) {
+    assert.equal(validateAgentLifecycleEvent(event).ok, true, event.kind);
+  }
+
+  for (const [name, event] of [
+    ["terminal scope", { kind: "agent.done", outcome: "success", terminalId: "terminal-1" }],
+    ["project scope", { kind: "agent.done", outcome: "success", projectId: "project-1" }],
+    ["server scope", { kind: "agent.done", outcome: "success", serverId: "server-1" }],
+    ["session scope", { kind: "agent.done", outcome: "success", sessionId: "session-1" }],
+    ["host sequence", { kind: "agent.done", outcome: "success", sequence: 1 }],
+    ["unknown event field", { kind: "agent.done", outcome: "success", rawRecord: { credential: "secret" } }],
+    ["oversized title", { kind: "session.started", title: "x".repeat(513) }],
+    ["oversized prompt", { kind: "turn.started", turnId: "turn-1", promptText: "x".repeat(4_097) }],
+    ["nested metadata", { kind: "session.started", model: { id: "fixture-1", nested: { value: { value: { value: "no" } } } } }],
+  ]) {
+    const result = validateAgentLifecycleEvent(event);
+    assert.equal(result.ok, false, name);
+    assert.ok(result.issues.length > 0, name);
+  }
 });
 
 test("declarative form fixture validates and executable UI is rejected", () => {
