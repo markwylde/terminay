@@ -54,6 +54,7 @@ export const EXTENSION_LIMITS = Object.freeze({
   agentEnvironmentVariables: 32,
   agentEnvironmentVariableNameLength: 128,
   agentEnvironmentVariableValueLength: 4 * 1024,
+  agentEnvironmentRelativePathLength: 4 * 1024,
 } as const);
 
 export const EXTENSION_ID_PATTERN = /^[a-z0-9](?:[a-z0-9.-]{1,126}[a-z0-9])?$/;
