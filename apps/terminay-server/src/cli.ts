@@ -84,7 +84,9 @@ import {
 	createServerHealthServer,
 	createServerRemoteExposure,
 	createStandaloneServer,
+	FileDataRootLease,
 	runServerMcpStdio,
+	resolveStandaloneServerIdentity,
 	type LocalUiServer,
 	type ServerPairingHandoff,
 	type ServerRemoteExposure,
@@ -113,7 +115,7 @@ const MAX_STANDALONE_FOLDER_SIZE_ENTRIES = 50_000;
 
 await assertStandaloneReleaseIntegrity();
 
-const options = parseServerCliOptions(process.argv.slice(2), process.env);
+let options = parseServerCliOptions(process.argv.slice(2), process.env);
 if (options.command === 'help') process.stdout.write(formatServerHelp());
 else if (options.command === 'version')
 	process.stdout.write(`${options.serverVersion}\n`);
@@ -129,6 +131,20 @@ else if (options.command === 'mcp') {
 	});
 }
 else {
+	// The lease is acquired before resolving or opening any durable server
+	// authority. It prevents two standalone processes from concurrently owning
+	// one workspace, while identity resolution gives separate roots distinct
+	// authorities without breaking a legacy workspace's canonical id.
+	const standaloneLease = options.command === 'start' ? new FileDataRootLease() : undefined;
+	if (standaloneLease !== undefined) {
+		await standaloneLease.acquire(options.dataRoot);
+		try {
+			options = await resolveStandaloneServerIdentity(options);
+		} catch (error) {
+			await standaloneLease.release(options.dataRoot).catch(() => undefined);
+			throw error;
+		}
+	}
 	const remotePairingPin = requiresRemotePairingPin(options)
 		? requiredRemotePairingPin(options)
 		: undefined;
@@ -150,6 +166,7 @@ else {
 			`${JSON.stringify({ serverId: options.serverId, endpoint: options.endpoint, roomId: handoff.roomId, pairingSessionId: handoff.pairingSessionId, pairingUrl: handoff.pairingUrl, expiresAt: handoff.pairingExpiresAt, expiresInSeconds: Math.max(1, Math.ceil((handoff.expiresAt - Date.now()) / 1000)), requiresApproval: true })}\n`,
 		);
 	} else {
+		try {
 		// Pairing material is the sole local HTTP credential. It is delivered in
 		// the URL fragment and never copied into a second readiness field.
 		const handoff = remote.start();
@@ -255,6 +272,7 @@ else {
 				await runtime!.stop().catch(() => undefined);
 				await composition.shutdown().catch(() => undefined);
 				await healthServer?.stop().catch(() => undefined);
+				await standaloneLease?.release(options.dataRoot).catch(() => undefined);
 				process.stderr.write(
 					`${error instanceof Error ? error.message : 'server failed'}\n`,
 				);
@@ -276,6 +294,7 @@ else {
 				await runtime!.stop();
 				await composition.shutdown();
 				await healthServer?.stop();
+				await standaloneLease?.release(options.dataRoot);
 			})()
 				.then(() => process.exit(0))
 				.catch((error: unknown) => {
@@ -287,6 +306,10 @@ else {
 		};
 		process.on('SIGINT', shutdown);
 		process.on('SIGTERM', shutdown);
+		} catch (error) {
+			await standaloneLease?.release(options.dataRoot).catch(() => undefined);
+			throw error;
+		}
 	}
 }
 

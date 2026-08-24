@@ -764,7 +764,7 @@ export function composeActivityLifecycle(
           // Foreground observation cannot change PTY supervision.
         }
       }
-      if (!event.shellForeground) extensionAgents?.foregroundProcessChanged(identity, event.processName);
+      extensionAgents?.foregroundProcessChanged(identity, event.processName, event.shellForeground);
       agents?.foregroundProcessChanged(identity, event.processName, event.shellForeground);
       lifecycle?.foregroundProcessChanged?.(identity, event);
     },

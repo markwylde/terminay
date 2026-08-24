@@ -3,12 +3,18 @@ import { resolve } from "node:path";
 export interface ServerCliOptions {
   readonly command: "start" | "status" | "pairing" | "mcp" | "help" | "version";
   readonly serverId: string;
+  /** True only when the operator provided --server-id or TERMINAY_SERVER_ID.
+   * Implicit ids are resolved from the leased data root before startup. */
+  readonly serverIdExplicit: boolean;
   readonly serverVersion: string;
   readonly dataRoot: string;
   readonly projectRoot: string;
   readonly webOrigin: string;
   readonly endpoint: string;
   readonly remoteOrigin: string;
+  /** Whether the remote origin was explicitly configured rather than derived
+   * from the server authority. */
+  readonly remoteOriginExplicit: boolean;
   /** Exact six-digit pairing PIN kept in the operator's protected environment. */
   readonly remotePairingPin?: string;
   readonly publicOrigin?: string;
@@ -42,8 +48,10 @@ export function allowedWebOrigins(webOrigin: string): readonly string[] {
 
 export function parseServerCliOptions(argv: readonly string[], env: Readonly<Record<string, string | undefined>>): ServerCliOptions {
   const command = argv.includes("--help") ? "help" : argv.includes("--version") ? "version" : argv.includes("--status") ? "status" : argv.includes("--pairing") ? "pairing" : argv[0] === "mcp" ? "mcp" : "start";
-  const serverId = value(argv, "--server-id") ?? env.TERMINAY_SERVER_ID ?? "local-server";
-  const remoteOrigin = value(argv, "--remote-origin") ?? env.TERMINAY_REMOTE_ORIGIN ?? defaultRemoteOrigin(serverId);
+  const configuredServerId = value(argv, "--server-id") ?? env.TERMINAY_SERVER_ID;
+  const serverId = configuredServerId ?? "local-server";
+  const configuredRemoteOrigin = value(argv, "--remote-origin") ?? env.TERMINAY_REMOTE_ORIGIN;
+  const remoteOrigin = configuredRemoteOrigin ?? defaultRemoteOrigin(serverId);
   const remotePairingPin = env.TERMINAY_REMOTE_PAIRING_PIN;
   const publicOrigin = value(argv, "--public-origin") ?? env.TERMINAY_PUBLIC_ORIGIN;
   const logSink = value(argv, "--log-sink") ?? env.TERMINAY_LOG_SINK;
@@ -58,12 +66,14 @@ export function parseServerCliOptions(argv: readonly string[], env: Readonly<Rec
   return Object.freeze({
     command,
     serverId,
+    serverIdExplicit: configuredServerId !== undefined,
     serverVersion: env.TERMINAY_SERVER_VERSION ?? "0.0.0",
     dataRoot: value(argv, "--data-root") ?? env.TERMINAY_DATA_ROOT ?? ".terminay",
     projectRoot: normalizeProjectRoot(value(argv, "--project-root") ?? env.TERMINAY_PROJECT_ROOT ?? process.cwd()),
     webOrigin: normalizePublicOrigin(value(argv, "--web-origin") ?? env.TERMINAY_WEB_ORIGIN ?? "http://localhost:8080"),
     endpoint: value(argv, "--endpoint") ?? env.TERMINAY_ENDPOINT ?? "loopback",
     remoteOrigin,
+    remoteOriginExplicit: configuredRemoteOrigin !== undefined,
     ...(remotePairingPin === undefined ? {} : { remotePairingPin }),
     ...(publicOrigin === undefined ? {} : { publicOrigin: normalizePublicOrigin(publicOrigin) }),
     ...(httpHost === undefined ? {} : { httpHost }),
@@ -85,7 +95,7 @@ export function formatServerHelp(): string {
     "  --data-root PATH   server data directory (TERMINAY_DATA_ROOT)",
     "  --project-root PATH initial project root (TERMINAY_PROJECT_ROOT; defaults to cwd)",
     "  --web-origin URL   browser origin allowed to call the local protocol (TERMINAY_WEB_ORIGIN)",
-    "  --server-id ID     stable server identity (TERMINAY_SERVER_ID)",
+    "  --server-id ID     stable server identity; implicit startup identities are persisted per data root (TERMINAY_SERVER_ID)",
     "  --endpoint VALUE   local endpoint policy (TERMINAY_ENDPOINT)",
     "  --http-host HOST   authenticated HTTP bind host (TERMINAY_HTTP_HOST)",
     "  --http-port PORT   authenticated HTTP port; 0 selects one (TERMINAY_HTTP_PORT)",
@@ -153,7 +163,7 @@ function normalizeProjectRoot(value: string): string {
   return resolve(value);
 }
 
-function defaultRemoteOrigin(serverId: string): string {
+export function defaultRemoteOrigin(serverId: string): string {
   const label = serverId.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "server";
   return `https://${label}.remote.terminay.local`;
 }

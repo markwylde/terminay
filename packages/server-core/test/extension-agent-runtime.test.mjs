@@ -81,6 +81,55 @@ test("non-matching terminals do not create an extension-owned sidebar run", asyn
   await agents.stop();
 });
 
+test("a shell return revokes the exact observer before a globally resumed journal can publish again", async () => {
+  // Separate desktop/server authorities can legitimately observe the same
+  // Codex journal path after `/resume`. Only the authority whose PTY still
+  // owns the provider process may retain the observer.
+  const createAuthority = async () => {
+    const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
+    const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
+    const admitted = []; const cancelled = [];
+    const registry = new ExtensionAgentRuntimeRegistry({
+      agents,
+      hosts: {
+        agentProviderContributions: () => [provider],
+        async admitAgentTerminal(value) { admitted.push(value); },
+        async cancelAgentTerminal(value) { cancelled.push(value); return true; },
+        async drainAgentObservers() {},
+      },
+    });
+    registry.register(identity);
+    return { agents, admitted, cancelled, registry };
+  };
+  const first = await createAuthority();
+  const second = await createAuthority();
+  first.registry.foregroundProcessChanged(identity, "test-agent");
+  await new Promise((resolve) => setImmediate(resolve));
+  const firstContext = first.admitted[0].context.contextId;
+  const binding = { providerSessionId: "shared-resumed-session", mappingVersion: "test-v1", fingerprint: { kind: "fixture", process: { id: "first-process" }, metadata: { source: "test" } } };
+  assert.equal((await first.agents.ingestExtensionLifecycle(identity, provider.id, "test-v1", binding, [{ kind: "session.started", title: "First owner" }])).acceptedEventCount, 1);
+
+  // The first PTY returned to its shell before the second authority resumed
+  // the same provider session. Its old context is cancelled and can no longer
+  // mutate the first sidebar, even if the shared journal receives new bytes.
+  assert.equal(first.registry.foregroundProcessChanged(identity, "zsh", true), false);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(first.cancelled, [{ contextId: firstContext, reason: "terminal-replaced" }]);
+  const stale = await first.agents.ingestExtensionLifecycle(identity, provider.id, "test-v1", undefined, [{ kind: "turn.started", turnId: "second-turn" }]);
+  assert.equal(stale.acceptedEventCount, 0);
+  assert.match(stale.failure ?? "", /own|claimed|bound/u);
+
+  second.registry.foregroundProcessChanged(identity, "test-agent");
+  await new Promise((resolve) => setImmediate(resolve));
+  const secondContext = second.admitted[0].context.contextId;
+  assert.notEqual(firstContext, secondContext, "same restored server/project/session labels must not mint a cross-instance context capability");
+  const secondBinding = { ...binding, fingerprint: { kind: "fixture", process: { id: "second-process" }, metadata: { source: "test" } } };
+  assert.equal((await second.agents.ingestExtensionLifecycle(identity, provider.id, "test-v1", secondBinding, [{ kind: "session.started", title: "Second owner" }, { kind: "turn.started", turnId: "second-turn" }])).acceptedEventCount, 2);
+  assert.equal(Object.values(first.agents.getSnapshot().entries)[0].displayName, "First owner");
+  assert.equal(Object.values(second.agents.getSnapshot().entries)[0].displayName, "Second owner");
+  await first.agents.stop(); await second.agents.stop();
+});
+
 test("a late-published agent provider re-admits an already-running matching terminal", async () => {
   const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
   const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
