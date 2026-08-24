@@ -357,6 +357,67 @@ export interface ProviderDependencyCallContext {
   expectedRevision?: number;
 }
 
+/**
+ * A durable opaque reference scoped by the host to this extension installation
+ * and this target provider. It is not a vault path or a host-global secret id.
+ */
+export interface ProviderVaultBinding {
+  readonly bindingRef: string;
+}
+
+/** Atomically creates or replaces one target-owned vault binding. */
+export interface ProviderVaultPutRequest {
+  bindingKey: string;
+  purpose: string;
+  value: Uint8Array;
+  idempotencyKey: string;
+  expectedRevision?: number;
+}
+
+export interface ProviderVaultPutResult {
+  binding: ProviderVaultBinding;
+  revision: number;
+}
+
+export interface ProviderVaultWithSecretRequest {
+  binding: ProviderVaultBinding;
+  purpose: string;
+}
+
+export interface ProviderVaultRemoveRequest {
+  binding: ProviderVaultBinding;
+  idempotencyKey: string;
+  expectedRevision?: number;
+}
+
+export interface ProviderVaultRemoveResult {
+  state: "deleted" | "pending";
+}
+
+/**
+ * The target provider's only secret surface. The host inherits the enclosing
+ * target callback deadline and cancellation signal for every operation.
+ *
+ * `withSecret` transfers a transient copy only to the child-side callback.
+ * Its callback result is local: it is never sent over vault IPC and may be any
+ * value, including a live local object. Hosts zeroize their parent and child
+ * copies after use; extensions must not retain, log, present, or return bytes.
+ */
+export interface ProviderVaultBroker {
+  put(request: ProviderVaultPutRequest): Promise<ProviderVaultPutResult>;
+  withSecret<T>(request: ProviderVaultWithSecretRequest, use: (copy: Uint8Array) => T | Promise<T>): Promise<T>;
+  remove(request: ProviderVaultRemoveRequest): Promise<ProviderVaultRemoveResult>;
+}
+
+/**
+ * Target-side context. `vault` is runtime-provided and is intentionally the
+ * only target-owned broker: target handlers do not receive profiles, secrets,
+ * or an SSH agent.
+ */
+export interface ProviderDependencyTargetContext extends ProviderDependencyCallContext {
+  vault: ProviderVaultBroker;
+}
+
 /** Request delivered to a target provider after host authorization. */
 export interface ProviderDependencyTargetRequest {
   operation: string;
@@ -371,7 +432,7 @@ export interface ProviderDependencyTargetRequest {
  * only from an extension that declares a compatible dependency.
  */
 export interface ProviderDependencyHandler {
-  call(request: ProviderDependencyTargetRequest, context: ProviderDependencyCallContext): Promise<JsonValue>;
+  call(request: ProviderDependencyTargetRequest, context: ProviderDependencyTargetContext): Promise<JsonValue>;
 }
 
 export interface ProviderDependencyBroker {

@@ -37,3 +37,10 @@ an agent socket, private key, forwarding primitive, ambient environment, or UI
 DTO. The host authorizes every list/sign request independently.
 Extensions using this broker must declare the visible `ssh-agent:use` manifest
 permission; undeclared calls fail closed.
+
+Provider dependency targets receive a separate `ProviderDependencyTargetContext`.
+Its only target-owned broker is the generic atomic `vault`: `put`, local-callback
+`withSecret`, and `remove`. Bindings are durable opaque `{ bindingRef }` values
+scoped to the target provider and installation. The public surface has no
+read/list/export API and never returns raw secret bytes. See the [API reference](docs/api-reference.md#target-vault)
+for cancellation, zeroization, pending removal, and crash-cleanup obligations.

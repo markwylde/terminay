@@ -1,12 +1,28 @@
 import { createJsonlRecordDecoder } from "./agent.js";
-import { ExtensionSchemaError, validateProviderDependencyCallContext, validateProviderDependencyHandler, validateProviderDependencyResult, validateProviderDependencyTargetRequest } from "./validation.js";
+import {
+  ExtensionSchemaError,
+  validateProviderDependencyHandler,
+  validateProviderDependencyResult,
+  validateProviderDependencyTargetContext,
+  validateProviderDependencyTargetRequest,
+  validateProviderVaultPutRequest,
+  validateProviderVaultRemoveRequest,
+  validateProviderVaultWithSecretRequest,
+} from "./validation.js";
 import type {
   AgentFileHandle, AgentFileWatcher, AgentForegroundProcess, AgentLifecycleEvent, AgentLifecyclePublisher,
   AgentObservationCapability, AgentProcessHandle, AgentProcessSnapshot, AgentProjectHandle, AgentProviderRegistration,
   AgentProviderRuntime, AgentRecordContext, AgentSessionBinding, AgentSessionBindingRequest, AgentTerminalContext,
   AgentTerminalHandle, AgentTerminalTtyFact, CancellationSignal, ExtensionContext, TerminayExtension,
 } from "./types.js";
-import type { JsonValue, ProviderDependencyCallContext, ProviderDependencyHandler, ProviderDependencyTargetRequest } from "./types.js";
+import type {
+  JsonValue,
+  ProviderDependencyHandler,
+  ProviderDependencyTargetContext,
+  ProviderDependencyTargetRequest,
+  ProviderVaultBinding,
+  ProviderVaultBroker,
+} from "./types.js";
 
 export interface FixtureTerminalOptions {
   foregroundExecutable: string;
@@ -25,7 +41,7 @@ const notCancelled: CancellationSignal = Object.freeze({ aborted: false, throwIf
 
 export interface ProviderDependencyTargetHarness {
   /** Validates and invokes a public dependency target as the host would. */
-  call(request: ProviderDependencyTargetRequest, context?: Partial<Omit<ProviderDependencyCallContext, "signal">> & { signal?: CancellationSignal }): Promise<JsonValue>;
+  call(request: ProviderDependencyTargetRequest, context?: Partial<Omit<ProviderDependencyTargetContext, "signal" | "vault">> & { signal?: CancellationSignal; vault?: ProviderVaultBroker }): Promise<JsonValue>;
 }
 
 /**
@@ -35,21 +51,126 @@ export interface ProviderDependencyTargetHarness {
  */
 export function createProviderDependencyTargetHarness(handler: ProviderDependencyHandler): ProviderDependencyTargetHarness {
   assertValid(validateProviderDependencyHandler(handler), "Invalid provider dependency handler");
+  const vault = createProviderVaultHarness();
   return {
     async call(request, overrides = {}): Promise<JsonValue> {
       assertValid(validateProviderDependencyTargetRequest(request), "Invalid provider dependency target request");
-      const context: ProviderDependencyCallContext = {
+      const context: ProviderDependencyTargetContext = {
         deadlineAt: new Date(Date.now() + 60_000).toISOString(),
         signal: notCancelled,
+        vault,
         ...overrides,
       };
-      assertValid(validateProviderDependencyCallContext(context), "Invalid provider dependency call context");
+      assertValid(validateProviderDependencyTargetContext(context), "Invalid provider dependency target context");
       const result = await handler.call(request, context);
       assertValid(validateProviderDependencyResult(result), "Invalid provider dependency result");
       return result;
     },
   };
 }
+
+interface FixtureVaultEntry {
+  binding: ProviderVaultBinding;
+  bindingKey: string;
+  purpose: string;
+  value: Uint8Array;
+  revision: number;
+  state: "active" | "pending" | "deleted";
+  activeUses: number;
+  putResults: Map<string, { binding: ProviderVaultBinding; revision: number }>;
+  removeResults: Map<string, { state: "deleted" | "pending" }>;
+}
+
+/**
+ * Creates a one-scope in-memory vault broker for extension tests. It validates
+ * the public contract, models callback lifetime/zeroization and pending
+ * removal, but deliberately does not pretend to enforce cross-extension or
+ * installation security. Production hosts must enforce that boundary.
+ */
+export function createProviderVaultHarness(): ProviderVaultBroker {
+  const entriesByKey = new Map<string, FixtureVaultEntry>();
+  const entriesByBinding = new Map<string, FixtureVaultEntry>();
+  const unavailable = (): never => { throw new Error("Vault binding unavailable"); };
+  const dispose = (entry: FixtureVaultEntry): void => {
+    entry.value.fill(0);
+    entry.state = "deleted";
+    entriesByKey.delete(entry.bindingKey);
+  };
+  const entryFor = (binding: ProviderVaultBinding): FixtureVaultEntry => {
+    const entry = entriesByBinding.get(binding.bindingRef);
+    if (!entry || entry.state !== "active") return unavailable();
+    return entry;
+  };
+
+  return {
+    async put(request) {
+      assertValid(validateProviderVaultPutRequest(request), "Invalid provider vault put request");
+      const existing = entriesByKey.get(request.bindingKey);
+      if (existing?.state === "active") {
+        const repeated = existing.putResults.get(request.idempotencyKey);
+        if (repeated) return repeated;
+        if (request.expectedRevision !== undefined && request.expectedRevision !== existing.revision) throw new Error("Vault revision conflict");
+        const received = request.value.slice();
+        const stored = received.slice();
+        received.fill(0);
+        existing.value.fill(0);
+        existing.value = stored;
+        existing.purpose = request.purpose;
+        existing.revision += 1;
+        const result = { binding: existing.binding, revision: existing.revision };
+        existing.putResults.set(request.idempotencyKey, result);
+        return result;
+      }
+      if (request.expectedRevision !== undefined) throw new Error("Vault revision conflict");
+      const received = request.value.slice();
+      const stored = received.slice();
+      received.fill(0);
+      const binding = Object.freeze({ bindingRef: fixtureBindingRef() });
+      const entry: FixtureVaultEntry = {
+        binding, bindingKey: request.bindingKey, purpose: request.purpose, value: stored, revision: 0,
+        state: "active", activeUses: 0, putResults: new Map(), removeResults: new Map(),
+      };
+      entriesByKey.set(entry.bindingKey, entry);
+      entriesByBinding.set(binding.bindingRef, entry);
+      const result = { binding, revision: entry.revision };
+      entry.putResults.set(request.idempotencyKey, result);
+      return result;
+    },
+    async withSecret(request, use) {
+      assertValid(validateProviderVaultWithSecretRequest(request), "Invalid provider vault secret request");
+      if (typeof use !== "function") throw new ExtensionSchemaError("Invalid provider vault callback", [{ path: "$.use", code: "invalid_type", message: "Expected a local callback function" }]);
+      const entry = entryFor(request.binding);
+      if (entry.purpose !== request.purpose) return unavailable();
+      entry.activeUses += 1;
+      const parentCopy = entry.value.slice();
+      const childCopy = parentCopy.slice();
+      parentCopy.fill(0);
+      try {
+        return await use(childCopy);
+      } finally {
+        childCopy.fill(0);
+        entry.activeUses -= 1;
+        if (entry.state === "pending" && entry.activeUses === 0) dispose(entry);
+      }
+    },
+    async remove(request) {
+      assertValid(validateProviderVaultRemoveRequest(request), "Invalid provider vault remove request");
+      const entry = entriesByBinding.get(request.binding.bindingRef);
+      if (!entry || entry.state === "deleted") return unavailable();
+      const repeated = entry.removeResults.get(request.idempotencyKey);
+      if (repeated) return repeated;
+      if (request.expectedRevision !== undefined && request.expectedRevision !== entry.revision) throw new Error("Vault revision conflict");
+      const result = { state: entry.activeUses > 0 ? "pending" as const : "deleted" as const };
+      entry.removeResults.set(request.idempotencyKey, result);
+      if (result.state === "pending") entry.state = "pending";
+      else dispose(entry);
+      return result;
+    },
+  };
+}
+
+let fixtureBindingSequence = 0;
+function fixtureBindingRef(): string { return `fixture_vault_ref_${(++fixtureBindingSequence).toString(36).padStart(16, "0")}`; }
 
 function assertValid<T>(result: { ok: true; value: T } | { ok: false; issues: readonly { path: string; code: string; message: string }[] }, message: string): T {
   if (!result.ok) throw new ExtensionSchemaError(message, [...result.issues]);

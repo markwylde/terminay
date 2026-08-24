@@ -4,6 +4,8 @@ import {
   EXTENSION_LIMITS,
   LOCAL_ID_PATTERN,
   PROVIDER_DEPENDENCY_OPERATION_PATTERN,
+  PROVIDER_VAULT_BINDING_REF_PATTERN,
+  PROVIDER_VAULT_KEY_PATTERN,
   isNamespacedId,
 } from "./constants.js";
 import type {
@@ -38,6 +40,12 @@ import type {
   ProviderDependencyOperation,
   ProviderDependencyRequest,
   ProviderDependencyTargetRequest,
+  ProviderDependencyTargetContext,
+  ProviderVaultPutRequest,
+  ProviderVaultPutResult,
+  ProviderVaultRemoveRequest,
+  ProviderVaultRemoveResult,
+  ProviderVaultWithSecretRequest,
   ProviderEnvironmentStatus,
   SshAgentIdentity,
   SshAgentSignature,
@@ -459,11 +467,101 @@ export function validateProviderDependencyCallContext(value: unknown): Validatio
   const out: SchemaIssue[] = [];
   if (!record(value)) return invalidObject();
   closed(value, new Set(["deadlineAt", "signal", "idempotencyKey", "expectedRevision"]), "$", out);
-  if (typeof value.deadlineAt !== "string" || value.deadlineAt.length > 64 || Number.isNaN(Date.parse(value.deadlineAt))) out.push({ path: "$.deadlineAt", code: "invalid_deadline", message: "Expected an ISO-8601 deadline" });
+  validateProviderDependencyTimingContextInto(value, out);
   if (!record(value.signal) || typeof value.signal.aborted !== "boolean" || typeof value.signal.throwIfAborted !== "function") out.push({ path: "$.signal", code: "invalid_signal", message: "Expected a cancellation signal" });
-  if (value.idempotencyKey !== undefined) string(value.idempotencyKey, "$.idempotencyKey", out, 256);
-  if (value.expectedRevision !== undefined && (!Number.isSafeInteger(value.expectedRevision) || Number(value.expectedRevision) < 0)) out.push({ path: "$.expectedRevision", code: "invalid_revision", message: "Expected a non-negative integer" });
   return out.length === 0 ? { ok: true, value: value as unknown as ProviderDependencyCallContext } : { ok: false, issues: out };
+}
+
+/**
+ * Validates base timing/mutation fields and the runtime cancellation shape.
+ * `vault` is an injected runtime capability, not DTO data, so a public
+ * validator must never inspect or serialize it.
+ */
+export function validateProviderDependencyTargetContext(value: unknown): ValidationResult<ProviderDependencyTargetContext> {
+  const out: SchemaIssue[] = [];
+  if (!record(value)) return invalidObject();
+  validateProviderDependencyTimingContextInto(value, out);
+  if (!record(value.signal) || typeof value.signal.aborted !== "boolean" || typeof value.signal.throwIfAborted !== "function") out.push({ path: "$.signal", code: "invalid_signal", message: "Expected a cancellation signal" });
+  return out.length === 0 ? { ok: true, value: value as unknown as ProviderDependencyTargetContext } : { ok: false, issues: out };
+}
+
+/** Validates an atomic target-vault write DTO without exposing a secret value. */
+export function validateProviderVaultPutRequest(value: unknown): ValidationResult<ProviderVaultPutRequest> {
+  const out: SchemaIssue[] = [];
+  if (!record(value)) return invalidObject();
+  closed(value, new Set(["bindingKey", "purpose", "value", "idempotencyKey", "expectedRevision"]), "$", out);
+  vaultKey(value.bindingKey, "$.bindingKey", EXTENSION_LIMITS.providerVaultBindingKeyLength, out);
+  vaultKey(value.purpose, "$.purpose", EXTENSION_LIMITS.providerVaultPurposeLength, out);
+  bytes(value.value, "$.value", EXTENSION_LIMITS.providerVaultSecretBytes, out);
+  string(value.idempotencyKey, "$.idempotencyKey", out, EXTENSION_LIMITS.providerVaultIdempotencyKeyLength);
+  validateExpectedRevision(value.expectedRevision, "$.expectedRevision", out);
+  return out.length === 0 ? { ok: true, value: value as unknown as ProviderVaultPutRequest } : { ok: false, issues: out };
+}
+
+/** Validates a local callback's opaque binding and purpose request. */
+export function validateProviderVaultWithSecretRequest(value: unknown): ValidationResult<ProviderVaultWithSecretRequest> {
+  const out: SchemaIssue[] = [];
+  if (!record(value)) return invalidObject();
+  closed(value, new Set(["binding", "purpose"]), "$", out);
+  validateProviderVaultBindingInto(value.binding, "$.binding", out);
+  vaultKey(value.purpose, "$.purpose", EXTENSION_LIMITS.providerVaultPurposeLength, out);
+  return out.length === 0 ? { ok: true, value: value as unknown as ProviderVaultWithSecretRequest } : { ok: false, issues: out };
+}
+
+/** Validates an atomic target-vault removal request. */
+export function validateProviderVaultRemoveRequest(value: unknown): ValidationResult<ProviderVaultRemoveRequest> {
+  const out: SchemaIssue[] = [];
+  if (!record(value)) return invalidObject();
+  closed(value, new Set(["binding", "idempotencyKey", "expectedRevision"]), "$", out);
+  validateProviderVaultBindingInto(value.binding, "$.binding", out);
+  string(value.idempotencyKey, "$.idempotencyKey", out, EXTENSION_LIMITS.providerVaultIdempotencyKeyLength);
+  validateExpectedRevision(value.expectedRevision, "$.expectedRevision", out);
+  return out.length === 0 ? { ok: true, value: value as unknown as ProviderVaultRemoveRequest } : { ok: false, issues: out };
+}
+
+/** Validates metadata-only results of target vault calls. */
+export function validateProviderVaultPutResult(value: unknown): ValidationResult<ProviderVaultPutResult> {
+  const out: SchemaIssue[] = [];
+  if (!record(value)) return invalidObject();
+  closed(value, new Set(["binding", "revision"]), "$", out);
+  validateProviderVaultBindingInto(value.binding, "$.binding", out);
+  validateRevision(value.revision, "$.revision", out);
+  return out.length === 0 ? { ok: true, value: value as unknown as ProviderVaultPutResult } : { ok: false, issues: out };
+}
+
+/** Validates metadata-only removal state. */
+export function validateProviderVaultRemoveResult(value: unknown): ValidationResult<ProviderVaultRemoveResult> {
+  const out: SchemaIssue[] = [];
+  if (!record(value)) return invalidObject();
+  closed(value, new Set(["state"]), "$", out);
+  if (value.state !== "deleted" && value.state !== "pending") out.push({ path: "$.state", code: "invalid_state", message: "Expected deleted or pending vault removal state" });
+  return out.length === 0 ? { ok: true, value: value as unknown as ProviderVaultRemoveResult } : { ok: false, issues: out };
+}
+
+function validateProviderDependencyTimingContextInto(value: Record<string, unknown>, out: SchemaIssue[]): void {
+  if (typeof value.deadlineAt !== "string" || value.deadlineAt.length > 64 || Number.isNaN(Date.parse(value.deadlineAt))) out.push({ path: "$.deadlineAt", code: "invalid_deadline", message: "Expected an ISO-8601 deadline" });
+  if (value.idempotencyKey !== undefined) string(value.idempotencyKey, "$.idempotencyKey", out, 256);
+  validateExpectedRevision(value.expectedRevision, "$.expectedRevision", out);
+}
+
+function validateExpectedRevision(value: unknown, path: string, out: SchemaIssue[]): void {
+  if (value !== undefined && (!Number.isSafeInteger(value) || Number(value) < 0)) out.push({ path, code: "invalid_revision", message: "Expected a non-negative integer" });
+}
+
+function validateRevision(value: unknown, path: string, out: SchemaIssue[]): void {
+  if (!Number.isSafeInteger(value) || Number(value) < 0) out.push({ path, code: "invalid_revision", message: "Expected a non-negative integer" });
+}
+
+function vaultKey(value: unknown, path: string, maximum: number, out: SchemaIssue[]): void {
+  if (string(value, path, out, maximum) && !PROVIDER_VAULT_KEY_PATTERN.test(value)) out.push({ path, code: "invalid_vault_key", message: "Expected a bounded provider-owned vault key" });
+}
+
+function validateProviderVaultBindingInto(value: unknown, path: string, out: SchemaIssue[]): void {
+  if (!record(value)) { out.push({ path, code: "invalid_binding", message: "Expected an opaque vault binding" }); return; }
+  closed(value, new Set(["bindingRef"]), path, out);
+  if (string(value.bindingRef, `${path}.bindingRef`, out, EXTENSION_LIMITS.providerVaultBindingRefLength) && !PROVIDER_VAULT_BINDING_REF_PATTERN.test(value.bindingRef)) {
+    out.push({ path: `${path}.bindingRef`, code: "invalid_binding", message: "Expected a bounded opaque vault binding reference" });
+  }
 }
 
 /** Validates provider-owned JSON returned through the target dependency boundary. */
