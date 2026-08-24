@@ -96,6 +96,9 @@ export class ThisServerAgentObservationAdapter {
       case "process.descendants": return this.descendants(local, state, signal);
       case "process.open-files": return this.openFiles(state, payload, signal);
       case "terminal.tty": return this.tty(local, signal);
+      case "filesystem.resolve-home-relative": return this.resolveHomeRelative(state, payload, signal);
+      case "filesystem.resolve-path-under-home": return this.resolvePathUnderHome(state, payload, signal);
+      case "filesystem.home-relative-path": return this.homeRelativePath(state, payload, signal);
       case "filesystem.realpath": return this.canonicalFile(state, payload, signal);
       case "filesystem.stat": return this.fileStat(state, payload, signal);
       case "filesystem.read": return this.read(state, payload, signal);
@@ -180,6 +183,45 @@ export class ThisServerAgentObservationAdapter {
     if (!this.matchesFileConstraint(canonical, options)) return null;
     file.path = canonical;
     return { id: file.id };
+  }
+
+  private async resolveHomeRelative(state: TerminalState, payload: JsonValue, signal: AbortSignal): Promise<JsonValue> {
+    const request = record(payload); const relativePath = request?.relativePath;
+    if (typeof relativePath !== "string" || !safeRelativePath(relativePath) || this.homeDirectory === undefined) return null;
+    const candidate = resolve(this.homeDirectory, relativePath);
+    const canonical = await this.system.realpath(candidate, signal);
+    if (canonical === undefined || safePath(canonical) === undefined || !this.withinHomeConstraint(canonical, request, true)) return null;
+    const details = await this.system.stat(canonical, signal);
+    if (details?.kind !== "file") return null;
+    return { id: this.registerFile(state, canonical).id };
+  }
+
+  private async resolvePathUnderHome(state: TerminalState, payload: JsonValue, signal: AbortSignal): Promise<JsonValue> {
+    const request = record(payload); const providerPath = request?.providerPath;
+    if (typeof providerPath !== "string" || safePath(providerPath) === undefined || record(request?.beneath)?.homeRelative === undefined) return null;
+    const canonical = await this.system.realpath(providerPath, signal);
+    if (canonical === undefined || safePath(canonical) === undefined || !this.withinHomeConstraint(canonical, request, false)) return null;
+    const details = await this.system.stat(canonical, signal);
+    if (details?.kind !== "file") return null;
+    return { id: this.registerFile(state, canonical).id };
+  }
+
+  private async homeRelativePath(state: TerminalState, payload: JsonValue, signal: AbortSignal): Promise<JsonValue> {
+    const request = record(payload); const file = this.fileFor(state, request?.handle);
+    const canonical = await this.system.realpath(file.path, signal);
+    if (canonical === undefined || safePath(canonical) === undefined || !this.withinHomeConstraint(canonical, request, false)) return null;
+    const details = await this.system.stat(canonical, signal);
+    const beneath = record(request?.beneath); const homeRelative = beneath?.homeRelative;
+    if (details?.kind !== "file" || typeof homeRelative !== "string" || this.homeDirectory === undefined || !safeRelativePath(homeRelative)) return null;
+    const result = relative(resolve(this.homeDirectory, homeRelative), canonical);
+    if (!safeRelativePath(result)) return null;
+    return result;
+  }
+
+  private withinHomeConstraint(path: string, request: Record<string, JsonValue> | undefined, defaultHome: boolean): boolean {
+    const beneath = record(request?.beneath); const homeRelative = beneath?.homeRelative;
+    if (homeRelative === undefined) return defaultHome && this.homeDirectory !== undefined && contained(resolve(this.homeDirectory), path);
+    return this.matchesFileConstraint(path, request);
   }
 
   private matchesFileConstraint(path: string, options: Record<string, JsonValue> | undefined): boolean {
@@ -376,6 +418,7 @@ function validPid(value: unknown): value is number { return typeof value === "nu
 function safeText(value: unknown, maximum: number): value is string { return typeof value === "string" && value.length > 0 && value.length <= maximum && !value.includes("\0"); }
 function safePath(value: unknown): string | undefined { return safeText(value, MAX_PATH_LENGTH) && isAbsolute(value) ? value : undefined; }
 function safeRelativePath(value: string): boolean { return value.length > 0 && value.length <= MAX_PATH_LENGTH && !value.includes("\0") && !isAbsolute(value) && !value.split(/[\\/]/u).includes(".."); }
+function contained(root: string, path: string): boolean { const candidate = relative(root, path); return candidate !== "" && candidate !== ".." && !candidate.startsWith(`..${pathSeparator()}`) && !isAbsolute(candidate); }
 function record(value: unknown): Record<string, JsonValue> | undefined { return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, JsonValue> : undefined; }
 function isOpenAccess(value: unknown): value is "readable" | "writable" | "read-write" { return value === "readable" || value === "writable" || value === "read-write"; }
 function boundedBytes(value: unknown, maximum: number): number { if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0 || value > maximum) throw new Error("agent file byte limit is invalid"); return value; }

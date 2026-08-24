@@ -445,7 +445,7 @@ function validateAgentTerminalAdmission(value: ExtensionAgentTerminalAdmission, 
 
 function parseAgentObservationRequest(value: unknown): ExtensionAgentObservationRequest | undefined {
   const payload = record(value); const contextId = boundedId(payload?.contextId); const providerId = boundedId(payload?.providerId); const operation = payload?.operation;
-  if (!contextId || !providerId || typeof operation !== "string" || !["process.foreground", "process.descendants", "process.open-files", "terminal.tty", "filesystem.realpath", "filesystem.stat", "filesystem.read", "filesystem.follow", "filesystem.unfollow"].includes(operation) || !jsonValue(payload?.payload)) return undefined;
+  if (!contextId || !providerId || typeof operation !== "string" || !["process.foreground", "process.descendants", "process.open-files", "terminal.tty", "filesystem.resolve-home-relative", "filesystem.resolve-path-under-home", "filesystem.home-relative-path", "filesystem.realpath", "filesystem.stat", "filesystem.read", "filesystem.follow", "filesystem.unfollow"].includes(operation) || !jsonValue(payload?.payload)) return undefined;
   return Object.freeze({ contextId, providerId, operation: operation as import("./types.js").ExtensionAgentObservationOperation, payload: structuredClone(payload!.payload) as import("@terminay/extension-api").JsonValue });
 }
 

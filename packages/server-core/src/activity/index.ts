@@ -8,5 +8,6 @@ export * from "./agentDrivers.js";
 export * from "./agentJournal.js";
 export * from "./agentService.js";
 export * from "./extensionAgentBridge.js";
+export * from "./extensionAgentRuntime.js";
 export * from "./agentProtocol.js";
 export * from "./protocol.js";

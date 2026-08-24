@@ -23,6 +23,10 @@ import {
 import type { JsonValue } from '@terminay/protocol';
 import { decodeFrame } from '@terminay/protocol';
 import { AgentStatusService } from '../packages/server-core/src/activity/agentService';
+import {
+	createExtensionAgentBroker,
+	ExtensionAgentRuntimeRegistry,
+} from '../packages/server-core/src/activity/index';
 import type { ActivitySessionIdentity } from '../packages/server-core/src/activity/service';
 import { TerminalActivityService } from '../packages/server-core/src/activity/service';
 import {
@@ -42,6 +46,7 @@ import {
 import { OrderedEventJournal } from '../packages/server-core/src/events';
 import {
 	createDefaultExtensionManagement,
+	createThisServerAgentObservationAdapter,
 	createPuzedSshProductionExtensionManagement,
 	ExtensionProjectEnvironmentRuntime,
 } from '../packages/server-core/src/extensions/index';
@@ -247,6 +252,8 @@ export interface ServerTerminalAuthorityOptions {
 	readonly serverId: string;
 	readonly dataRoot?: string;
 	readonly extensionHostChildEntrypoint?: string;
+	/** Verified release resources, outside ASAR so extension children can run. */
+	readonly builtInExtensionArtifactRoot?: string;
 	/** Test/host injection; production uses the embedded node-pty factory. */
 	readonly terminalService?: TerminalService;
 	/** Desktop-owned current shell settings for protocol-created sessions. */
@@ -589,27 +596,58 @@ export class ServerTerminalAuthority {
 		) {
 			throw new RangeError('maxReplayBytes must be a positive safe integer');
 		}
-		const extensionManagement =
-			options.dataRoot === undefined
-				? undefined
-				: options.vault === undefined
-					? createDefaultExtensionManagement({
-							dataRoot: options.dataRoot,
-							authorityLabel: 'This server',
-							...(options.extensionHostChildEntrypoint === undefined
-								? {}
-								: { childEntrypoint: options.extensionHostChildEntrypoint }),
-						})
-					: createPuzedSshProductionExtensionManagement({
-							dataRoot: options.dataRoot,
-							authorityLabel: 'This server',
-							...(options.extensionHostChildEntrypoint === undefined
-								? {}
-								: { childEntrypoint: options.extensionHostChildEntrypoint }),
-							vault: options.vault,
-							projectEnvironments,
-							workspace: this.workspace,
-						});
+		const extensionRuntime =
+			// The local broker closes the host/registry construction cycle: the
+			// adapter resolves only contexts subsequently admitted by the registry.
+			// No extension can acquire a terminal, PID, or local path through it.
+			(() => {
+				let extensionAgents: ExtensionAgentRuntimeRegistry | undefined;
+				const observation = createThisServerAgentObservationAdapter({
+					resolveTerminal: (context) => extensionAgents?.observationTerminal(context),
+				});
+				const broker = createExtensionAgentBroker(this.agents, {
+					observe: (request, signal) => observation.observe(
+						request.terminal,
+						request.operation,
+						request.payload,
+						signal,
+					),
+				});
+				const management = options.dataRoot === undefined
+					? undefined
+					: options.vault === undefined
+						? createDefaultExtensionManagement({
+								dataRoot: options.dataRoot,
+								authorityLabel: 'This server',
+								agents: broker,
+								...(options.extensionHostChildEntrypoint === undefined
+									? {}
+									: { childEntrypoint: options.extensionHostChildEntrypoint }),
+								...(options.builtInExtensionArtifactRoot === undefined ? {} : { builtInArtifactRoot: options.builtInExtensionArtifactRoot }),
+							})
+						: createPuzedSshProductionExtensionManagement({
+								dataRoot: options.dataRoot,
+								authorityLabel: 'This server',
+								agents: broker,
+								...(options.extensionHostChildEntrypoint === undefined
+									? {}
+									: { childEntrypoint: options.extensionHostChildEntrypoint }),
+								...(options.builtInExtensionArtifactRoot === undefined ? {} : { builtInArtifactRoot: options.builtInExtensionArtifactRoot }),
+								vault: options.vault,
+								projectEnvironments,
+								workspace: this.workspace,
+							});
+				if (management !== undefined) {
+					extensionAgents = new ExtensionAgentRuntimeRegistry({
+						hosts: management.hosts,
+						agents: this.agents,
+							projectEnvironmentRouter,
+					});
+				}
+				return { management, extensionAgents };
+			})();
+		const extensionManagement = extensionRuntime.management;
+		const extensionAgentRuntime = extensionRuntime.extensionAgents;
 		if (extensionManagement !== undefined && options.vault !== undefined)
 			projectEnvironmentRegistry.register(
 				new ExtensionProjectEnvironmentRuntime(
@@ -739,6 +777,9 @@ export class ServerTerminalAuthority {
 			},
 			activity: this.activity,
 			agents: this.agents,
+			...(extensionAgentRuntime === undefined
+				? {}
+				: { extensionAgentRuntime }),
 			git: gitAdapter,
 			eventJournal,
 			projectEnvironmentRouter,
