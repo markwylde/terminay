@@ -174,6 +174,7 @@ export class ExtensionAgentRuntimeRegistry {
   }
 
   async drain(reason: "provider-disabled" | "extension-stopped" | "server-stopping" = "server-stopping"): Promise<void> {
+    if (this.terminals.size === 0) return;
     for (const terminal of this.terminals.values()) this.clearTimers(terminal);
     this.terminals.clear();
     await this.options.hosts.drainAgentObservers(reason);
@@ -191,6 +192,16 @@ export class ExtensionAgentRuntimeRegistry {
       try { this.options.agents.releaseExtensionProvider(terminal.identity, providerId); } catch { /* already torn down */ }
     }
     return retiring.length;
+  }
+
+  /** Mirror a host-originated retirement (provider disposal or child crash)
+   * without sending cancellation back into the already-retired host. */
+  contextRetired(contextId: string, providerId: string): boolean {
+    const terminal = [...this.terminals.values()].find((candidate) => candidate.context?.contextId === contextId && candidate.context.providerId === providerId);
+    if (terminal?.context === undefined) return false;
+    this.clearTimers(terminal); terminal.context = undefined;
+    try { this.options.agents.releaseExtensionProvider(terminal.identity, providerId); } catch { /* teardown is idempotent */ }
+    return true;
   }
 
   /** Environment revisions are immutable terminal bindings. A revision change
