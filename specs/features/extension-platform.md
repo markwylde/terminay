@@ -82,6 +82,17 @@ independently optional arrays; at least one supported contribution is required.
 An agent package does not register a fake project environment merely to satisfy
 the manifest.
 
+An activated project-environment contribution registers its declared
+capabilities with the selected server's environment router. The server derives
+this registration from the activated manifest/extension pair; Desktop,
+standalone composition, and generic Server Core never name an extension or
+provider id. A contribution can opt into `profileSave: { createEnvironment:
+true }`. Saving a profile otherwise persists only the profile. The opt-in
+creates one environment bound to the just-saved profile and calls the public
+`createEnvironment` callback; it is not inferred from a provider id, form, or
+capability. This keeps provisioners that require additional create-form input,
+such as Puzed, from receiving an unintended environment.
+
 Package name and extension id are separate so repository/package ownership can
 change without breaking persisted environment identities. Provider/action/form
 ids are namespaced by the immutable extension id. Unknown manifest fields,

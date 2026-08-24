@@ -210,6 +210,12 @@ action, not a project-chooser action. Choosing a direct creation action opens
 the same Project Environments window with its sidebar and authority context
 preserved and the requested form already selected.
 
+Saving a connection profile does not implicitly create a project environment
+unless its currently activated public provider contribution explicitly declares
+`profileSave: { createEnvironment: true }`. This lets direct connections expose
+their intentional one-step journey while Puzed profile saves remain profiles
+until the user supplies the VM create-form values.
+
 Project creation is atomic from the user's perspective: the target and initial
 root validate before a normal project tab is committed. Provider glyph/status
 may appear subtly on the tab and environment chip, with complete accessible

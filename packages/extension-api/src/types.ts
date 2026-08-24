@@ -38,11 +38,23 @@ export interface ProjectEnvironmentContribution {
   icon?: ExtensionIcon;
   capabilities: EnvironmentCapability[];
   /**
+   * Optional, declarative behaviour after a successfully saved profile. The
+   * absence of this object is an explicit no-side-effect default: providers
+   * must not have an environment created merely because a profile was saved.
+   */
+  profileSave?: ProfileSaveContribution;
+  /**
    * Provider-owned public operations that compatible dependent extensions may
    * request through the host. The operation DTO schemas remain provider-owned
    * JSON; this declaration is the host authorization allowlist.
    */
   dependencyOperations?: ProviderDependencyOperation[];
+}
+
+/** A profile-save action which an environment provider must opt into. */
+export interface ProfileSaveContribution {
+  /** Creates one provider environment bound to the just-saved profile. */
+  createEnvironment: true;
 }
 
 /** One public, host-authorized operation exposed by a provider dependency. */

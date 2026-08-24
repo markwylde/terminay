@@ -14,13 +14,23 @@ package owns one immutable extension id.
 | `platforms` | Optional subset of `darwin`, `linux`, `win32`. Omit for portable packages. |
 | `permissions` | Exact visible capabilities requested from the host. |
 | `extensionDependencies` | Other Terminay extension ids and compatible API ranges, not npm libraries. |
-| `contributes.projectEnvironments` | Optional array of namespaced project-environment provider identities, plain metadata, icons, and capabilities. |
+| `contributes.projectEnvironments` | Optional array of namespaced project-environment provider identities, plain metadata, icons, capabilities, and optional profile-save behaviour. |
 | `contributes.agentProviders` | Optional array of namespaced agent provider identities, plain metadata, icons, and required environment observation capabilities. |
 
 At least one of `projectEnvironments` or `agentProviders` must contain a
 contribution. Provider ids use `<extension-id>/<local-id>`. Action, form, field,
 option-source, and operation ids follow the same ownership rule where
 applicable. Package name and extension id are deliberately independent.
+
+## Profile-save behaviour
+
+Saving a provider profile has no environment-creation side effect unless its
+project-environment contribution explicitly contains
+`"profileSave": { "createEnvironment": true }`. The literal `true` is
+required; omitted, false, malformed, or unknown settings fail closed to the
+no-side-effect default. The server honours this only for the matching provider
+that registered in the current activation. Providers that need create-form
+values must omit it and wait for an explicit create-environment action.
 
 An agent provider contribution uses this shape:
 

@@ -69,6 +69,7 @@
           "description": "A POSIX host reached directly by the selected Terminay Server.",
           "icon": "server",
           "capabilities": ["terminal", "filesystem", "agent-journal"],
+          "profileSave": { "createEnvironment": true },
           "dependencyOperations": [
             { "name": "managed-binding.generate" },
             { "name": "managed-binding.bind" },
