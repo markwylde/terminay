@@ -40,6 +40,10 @@ test('production forms originate from server provider descriptors without provid
 test('generic form renderer covers bounded async choices and accessible preset cards',()=>{
 	assert.match(forms,/optionSource/);
 	assert.match(forms,/AbortController/);
+	assert.match(forms,/formDefaults/);
+	assert.match(forms,/option\.default === true/);
+	assert.match(forms,/field\.suggestionSource/);
+	assert.match(forms,/Regenerate/);
 	assert.match(surfaces,/client!\.resolveOptions/);
 	assert.match(forms,/No options available/);
 	assert.match(forms,/type="radio"/);

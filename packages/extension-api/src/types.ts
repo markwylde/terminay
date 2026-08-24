@@ -79,6 +79,7 @@ export interface SelectOption {
   label: string;
   description?: string;
   disabledReason?: string;
+  default?: boolean;
 }
 
 interface BaseField {
@@ -88,6 +89,7 @@ interface BaseField {
   required?: boolean;
   disabledReason?: string;
   visibleWhen?: VisibilityCondition;
+  defaultValue?: JsonPrimitive;
 }
 
 export interface TextField extends BaseField {
@@ -96,6 +98,8 @@ export interface TextField extends BaseField {
   minLength?: number;
   maxLength?: number;
   pattern?: string;
+  suggestionSource?: string;
+  suggestionLabel?: string;
 }
 
 export interface NumberField extends BaseField {

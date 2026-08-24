@@ -1,5 +1,5 @@
 .project-environment-split { display: flex; position: relative; height: 100%; }
-.declarative-provider-preset-cards { display: grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr)); gap: 8px; margin-top: 12px; }.declarative-provider-preset-cards label { min-height: 58px; display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; background:var(--settings-input-bg); border:1px solid var(--settings-input-border); border-radius:7px; cursor:pointer; }.declarative-provider-preset-cards label.is-selected { border-color:var(--settings-accent); background:color-mix(in srgb,var(--settings-accent) 10%,var(--settings-input-bg)); }.declarative-provider-preset-cards label span { display:flex;flex-direction:column;gap:3px; }.declarative-provider-preset-cards small { color:var(--settings-text-muted);font-size:11px;line-height:1.35; }.declarative-provider-async-select { display:flex;gap:6px; }.declarative-provider-async-select input { flex:1; }.declarative-provider-async-select button { min-width:72px; }
+.declarative-provider-preset-cards { display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:12px; }.declarative-provider-preset-cards label { min-height:64px;display:flex;align-items:center;gap:12px;padding:14px 16px;background:var(--settings-input-bg);border:1px solid var(--settings-input-border);border-radius:8px;cursor:pointer;transition:border-color 120ms ease,background 120ms ease; }.declarative-provider-preset-cards label:hover { border-color:color-mix(in srgb,var(--settings-accent) 55%,var(--settings-input-border)); }.declarative-provider-preset-cards label.is-selected { border-color:var(--settings-accent);background:color-mix(in srgb,var(--settings-accent) 14%,var(--settings-input-bg)); }.declarative-provider-preset-cards label.is-disabled { cursor:not-allowed;opacity:.55; }.declarative-provider-preset-cards label span { display:flex;flex-direction:column;gap:4px; }.declarative-provider-preset-cards small { color:var(--settings-text-muted);font-size:12px;line-height:1.4; }.declarative-provider-async-select { display:flex;gap:8px; }.declarative-provider-async-select input { flex:1; }.declarative-provider-async-select button { min-width:82px; }
 .project-environment-split__primary { border-radius: 4px 0 0 4px; }
 .project-environment-split__arrow { width: 22px; aspect-ratio: auto; border-radius: 0 4px 4px 0; border-left: 1px solid rgba(255,255,255,.1); }
 .project-environment-menu { position: fixed; z-index: 1000; top: calc(100% + 5px); left: 12px; width: min(420px, calc(100vw - 24px)); max-height: min(620px, calc(100vh - 64px)); display: flex; flex-direction: column; padding: 10px; color: #e8edf7; background: #131820; border: 1px solid #303846; border-radius: 10px; box-shadow: 0 18px 50px rgba(0,0,0,.55); }
@@ -60,12 +60,13 @@
 .declarative-provider-form .settings-category-header { margin-bottom:32px; }
 .declarative-provider-section { margin-bottom:32px; }
 .declarative-provider-section__description { margin:-2px 16px 8px; }
-.declarative-provider-field__control { width:min(360px,55%); }
+.declarative-provider-field__control { width:min(620px,58%); }
 .declarative-provider-field__control > .settings-input-text,
 .declarative-provider-field__control > .settings-input-textarea,
 .declarative-provider-field__control > .settings-select,
 .declarative-provider-select-control { width:100%; }
 .declarative-provider-select-control { display:grid;gap:8px; }
+.declarative-provider-suggested-input { display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px; }
 .declarative-provider-toggle input { width:18px;height:18px;accent-color:var(--settings-accent); }
 .declarative-provider-preset-field { margin:0;border:0; }
 .declarative-provider-disclosure { overflow:hidden; }
@@ -73,10 +74,10 @@
 .declarative-provider-disclosure > summary::-webkit-details-marker { display:none; }
 .declarative-provider-disclosure__chevron { color:var(--settings-text-muted);font-size:21px;line-height:1;transform:rotate(0deg);transition:transform 120ms ease; }
 .declarative-provider-disclosure[open] .declarative-provider-disclosure__chevron { transform:rotate(90deg); }
-.declarative-provider-disclosure__body { border-top:1px solid var(--settings-border); }
+.declarative-provider-disclosure__body { border-top:1px solid var(--settings-border);padding:0 16px 12px; }
 .declarative-provider-form__errors { margin-bottom:24px; }
 .declarative-provider-form__errors ul { margin:6px 0 0;padding-left:20px; }
 .declarative-provider-form__actions { display:flex;justify-content:flex-end;gap:8px;padding-top:4px; }
-@media (max-width: 720px) { .environment-category-header { flex-direction: column; }.environment-setting-value,.extension-preview-value { max-width: none; text-align: left; }.extension-install-row { align-items: stretch; }.extension-install-control { width: 100%; }.extension-card .settings-row { align-items: flex-start; }.extension-card .settings-inline-actions { justify-content: flex-start; }.declarative-provider-form { padding:32px 20px 44px; }.declarative-provider-field__control { width:100%; }.project-environment-menu { position: fixed; left: 12px; right: 12px; top: auto; bottom: 12px; width: auto; }.project-environment-menu__items button,.project-environment-menu footer button { min-height: 44px; } }
+@media (max-width: 720px) { .environment-category-header { flex-direction: column; }.environment-setting-value,.extension-preview-value { max-width: none; text-align: left; }.extension-install-row { align-items: stretch; }.extension-install-control { width: 100%; }.extension-card .settings-row { align-items: flex-start; }.extension-card .settings-inline-actions { justify-content: flex-start; }.declarative-provider-form { padding:32px 20px 44px; }.declarative-provider-field__control { width:100%; }.declarative-provider-preset-cards { grid-template-columns:1fr; }.declarative-provider-suggested-input { grid-template-columns:1fr; }.project-environment-menu { position: fixed; left: 12px; right: 12px; top: auto; bottom: 12px; width: auto; }.project-environment-menu__items button,.project-environment-menu footer button { min-height: 44px; } }
 @media (prefers-reduced-motion: reduce) { .project-environment-menu * { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
 @media (forced-colors: active) { .project-environment-menu,.extension-card { border: 1px solid CanvasText; }.environment-status { color: CanvasText; } }

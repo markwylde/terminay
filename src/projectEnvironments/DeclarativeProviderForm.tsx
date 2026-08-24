@@ -3,7 +3,11 @@ import type { FormEvent, ReactNode } from 'react';
 import type { DeclarativeFieldDto, DeclarativeFormDto } from './uiModel';
 
 type FormValue = string | boolean;
-type SelectOption = Readonly<{ label: string; value: string; description?: string }>;
+type SelectOption = Readonly<{ label: string; value: string; description?: string; disabledReason?: string; default?: boolean }>;
+
+function formDefaults(form: DeclarativeFormDto): Record<string, FormValue> {
+	return Object.fromEntries(form.sections.flatMap((section) => section.fields.flatMap((field) => field.defaultValue === undefined || field.defaultValue === null ? [] : [[field.id, typeof field.defaultValue === 'boolean' ? field.defaultValue : String(field.defaultValue)]])));
+}
 
 export function DeclarativeProviderForm({
 	form,
@@ -18,7 +22,7 @@ export function DeclarativeProviderForm({
 	onLoadOptions?: (fieldId: string, source: string, query: string, values: Readonly<Record<string, FormValue>>, signal: AbortSignal) => Promise<readonly SelectOption[]>;
 	initialValues?: Readonly<Record<string, FormValue>>;
 }>) {
-	const [values, setValues] = useState<Record<string, FormValue>>({ ...initialValues });
+	const [values, setValues] = useState<Record<string, FormValue>>({ ...formDefaults(form), ...initialValues });
 	const [errors, setErrors] = useState<readonly string[]>([]);
 	const [submitting, setSubmitting] = useState(false);
 	const visibleSections = useMemo(() => form.sections.map((section) => ({
@@ -124,6 +128,7 @@ function DeclarativeField({
 	const [query, setQuery] = useState('');
 	const [loading, setLoading] = useState(false);
 	const [loadError, setLoadError] = useState('');
+	const [suggesting, setSuggesting] = useState(false);
 	const valuesKey = JSON.stringify(values);
 	const loadOptions = async (signal?: AbortSignal) => {
 		if (field.optionSource === undefined || onLoadOptions === undefined) return;
@@ -131,21 +136,31 @@ function DeclarativeField({
 		setLoading(true);
 		setLoadError('');
 		try {
-			setOptions(await onLoadOptions(field.id, field.optionSource, query, values, signal ?? controller!.signal));
+			const loaded = await onLoadOptions(field.id, field.optionSource, query, values, signal ?? controller!.signal);
+			setOptions(loaded);
+			const preferred = loaded.find((option) => option.default === true && option.disabledReason === undefined);
+			if ((value === undefined || value === '') && preferred !== undefined) onChange(preferred.value);
 		} catch (error) {
-			if (!(error instanceof DOMException && error.name === 'AbortError')) {
+			if (!((error instanceof DOMException && error.name === 'AbortError') || signal?.aborted === true)) {
 				setLoadError(error instanceof Error ? error.message : String(error));
 			}
 		} finally {
 			setLoading(false);
 		}
 	};
+	useEffect(() => { setOptions(field.options ?? []); setQuery(''); setLoadError(''); }, [field.id, field.optionSource]);
 	useEffect(() => {
 		if (field.optionSource === undefined || onLoadOptions === undefined) return;
 		const controller = new AbortController();
 		void loadOptions(controller.signal);
 		return () => controller.abort();
 	}, [field.id, field.optionSource, onLoadOptions, valuesKey]);
+	useEffect(() => {
+		if (field.suggestionSource === undefined || onLoadOptions === undefined || value !== undefined && value !== '') return;
+		const controller = new AbortController(); setSuggesting(true);
+		void onLoadOptions(field.id, field.suggestionSource, '', values, controller.signal).then((suggestions) => { if (suggestions[0]) onChange(suggestions[0].value); }).catch((error) => { if (!controller.signal.aborted) setLoadError(error instanceof Error ? error.message : String(error)); }).finally(() => setSuggesting(false));
+		return () => controller.abort();
+	}, [field.id, field.suggestionSource, onLoadOptions]);
 
 	if (field.kind === 'checkbox' || field.kind === 'switch') {
 		return (
@@ -168,8 +183,8 @@ function DeclarativeField({
 				{field.description ? <span className="settings-row-description" id={describedBy}>{field.description}</span> : null}
 				<div className="declarative-provider-preset-cards" aria-describedby={describedBy}>
 					{options.map((option) => (
-						<label key={option.value} className={value === option.value ? 'is-selected' : ''}>
-							<input type="radio" name={field.id} value={option.value} checked={value === option.value} onChange={() => onChange(option.value)} />
+						<label key={option.value} className={`${value === option.value ? 'is-selected' : ''}${option.disabledReason ? ' is-disabled' : ''}`} title={option.disabledReason}>
+							<input type="radio" name={field.id} value={option.value} checked={value === option.value} disabled={option.disabledReason !== undefined} onChange={() => onChange(option.value)} />
 							<span><strong>{option.label}</strong>{option.description ? <small>{option.description}</small> : null}</span>
 						</label>
 					))}
@@ -193,13 +208,14 @@ function DeclarativeField({
 				) : null}
 				<select className="settings-select" id={`declarative-field-${field.id}`} required={field.required} value={String(value ?? '')} onChange={(event) => onChange(event.target.value)} aria-describedby={describedBy}>
 					<option value="">Choose…</option>
-					{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+					{options.map((option) => <option key={option.value} value={option.value} disabled={option.disabledReason !== undefined}>{option.label}{option.disabledReason ? ` — ${option.disabledReason}` : ''}</option>)}
 				</select>
 				{loadError?<span className="settings-row-description declarative-provider-option-error" role="alert">{loadError}</span>:!loading&&field.optionSource!==undefined&&options.length===0?<span className="settings-row-description" role="status">No options available.</span>:null}
 			</div>
 		);
 	} else {
-		control = <input className="settings-input-text" id={`declarative-field-${field.id}`} required={field.required} type={field.kind === 'secret' ? 'password' : field.kind} value={String(value ?? '')} placeholder={field.placeholder} onChange={(event) => onChange(event.target.value)} aria-describedby={describedBy} />;
+		const input = <input className="settings-input-text" id={`declarative-field-${field.id}`} required={field.required} type={field.kind === 'secret' ? 'password' : field.kind} value={String(value ?? '')} placeholder={field.placeholder} onChange={(event) => onChange(event.target.value)} aria-describedby={describedBy} />;
+		control = field.suggestionSource && onLoadOptions ? <div className="declarative-provider-suggested-input">{input}<button className="settings-secondary-button" type="button" disabled={suggesting} onClick={() => { setSuggesting(true); void onLoadOptions(field.id, field.suggestionSource!, '', values, new AbortController().signal).then((suggestions) => { if (suggestions[0]) onChange(suggestions[0].value); }).catch((error) => setLoadError(error instanceof Error ? error.message : String(error))).finally(() => setSuggesting(false)); }}>{suggesting ? 'Generating…' : field.suggestionLabel ?? 'Regenerate'}</button></div> : input;
 	}
 
 	return (
