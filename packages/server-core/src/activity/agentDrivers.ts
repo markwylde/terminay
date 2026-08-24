@@ -12,6 +12,8 @@ export interface AgentDriverContext {
    */
   readonly journalRole?: "root" | "child";
   readonly childAgentId?: string;
+  readonly providerDisplayName?: string;
+  readonly providerModelId?: string;
 }
 
 export interface AgentJournalSession {
@@ -62,6 +64,7 @@ function model(payload: JsonObject): AgentModelMetadata | undefined {
   const id = boundedString(200, payload.model);
   return id === undefined ? undefined : {
     id,
+    ...(boundedString(200, payload.model_display_name) ? { displayName: boundedString(200, payload.model_display_name) } : {}),
     ...(boundedString(100, payload.effort, payload.reasoning_effort) === undefined ? {} : { reasoningEffort: boundedString(100, payload.effort, payload.reasoning_effort) }),
   };
 }
@@ -370,6 +373,59 @@ export const claudeCodeV01Driver: AgentDriver = Object.freeze({
   },
 });
 
+function cursorContent(message: JsonObject): readonly JsonObject[] {
+  return Array.isArray(message.content) ? message.content.map(object).filter((item): item is JsonObject => item !== undefined) : [];
+}
+
+function cursorPromptText(message: JsonObject): string | undefined {
+  const text = cursorContent(message)
+    .filter((item) => item.type === "text")
+    .map((item) => boundedString(4_000, item.text))
+    .filter((item): item is string => item !== undefined)
+    .join("")
+    .slice(0, 4_000);
+  const wrapped = /<user_query>\s*([\s\S]*?)\s*<\/user_query>/u.exec(text)?.[1];
+  return boundedString(4_000, wrapped, text);
+}
+
+function cursorModelDisplayName(id: string): string {
+  return id.split("-").map((part) => /^\d/u.test(part) ? part : `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`).join(" ");
+}
+
+/** Cursor Agent CLI transcript mapping v0.1. Session identity comes from the process-bound chat store path. */
+export const cursorV01Driver: AgentDriver = Object.freeze({
+  provider: "cursor",
+  mappingVersion: "0.1",
+  displayName: "Cursor",
+  inspectSession(): AgentJournalSession | null { return null; },
+  normalize(record: unknown, context: AgentDriverContext): AgentLifecycleEvent | readonly AgentLifecycleEvent[] | null {
+    const envelope = object(record);
+    if (!envelope) return null;
+    const message = { ...(object(envelope.message) ?? {}), ...(context.providerModelId ? { model: context.providerModelId, model_display_name: cursorModelDisplayName(context.providerModelId) } : {}) };
+    const common = base(context, envelope, message, "cursor", false);
+    if (!common) return null;
+    if (envelope.type === "terminay.session_metadata") {
+      return { ...common, kind: "agent.metadata", displayName: boundedString(200, context.providerDisplayName) };
+    }
+    if (envelope.role === "user") {
+      const promptText = cursorPromptText(message);
+      return [
+        { ...common, kind: "session.started", displayName: boundedString(200, context.providerDisplayName, "Cursor") },
+        { ...common, kind: "turn.started", ...(promptText ? { promptText } : {}) },
+      ];
+    }
+    if (envelope.role === "assistant") return { ...common, kind: "turn.started" };
+    if (envelope.type === "turn_ended") {
+      const status = boundedString(100, envelope.status)?.toLowerCase();
+      const completion = status?.includes("cancel") || status?.includes("abort")
+        ? "cancelled"
+        : status?.includes("error") || status?.includes("fail") ? "error" : "success";
+      return { ...common, kind: "agent.done", outcome: completion };
+    }
+    return null;
+  },
+});
+
 function ompPromptText(content: unknown): string | undefined {
   if (typeof content === "string") return boundedString(4_000, content);
   if (!Array.isArray(content)) return undefined;
@@ -512,7 +568,7 @@ function compareVersion(left: string, right: string): number {
   return (a[0] ?? 0) - (b[0] ?? 0) || (a[1] ?? 0) - (b[1] ?? 0);
 }
 
-export function createAgentDriverRegistry(drivers: readonly AgentDriver[] = [codexV01Driver, claudeCodeV01Driver, ompV01Driver]): AgentDriverRegistry {
+export function createAgentDriverRegistry(drivers: readonly AgentDriver[] = [codexV01Driver, claudeCodeV01Driver, cursorV01Driver, ompV01Driver]): AgentDriverRegistry {
   const ordered = [...drivers].sort((left, right) => left.provider.localeCompare(right.provider) || compareVersion(left.mappingVersion, right.mappingVersion));
   const resolve = (provider: string, providerVersion?: string): ResolvedAgentDriver | undefined => {
     const candidates = ordered.filter((driver) => driver.provider === provider);

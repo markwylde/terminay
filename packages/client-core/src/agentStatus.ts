@@ -11,7 +11,7 @@ export type AgentClientState = "working" | "waiting" | "blocked" | "done" | "idl
 export interface AgentClientEntry {
   readonly entryId: string;
   readonly kind: "root" | "subagent";
-  readonly provider: "codex" | "claude-code" | "omp";
+  readonly provider: "codex" | "claude-code" | "cursor" | "omp";
   readonly agentId: string;
   readonly sessionId: string;
   readonly activationTerminalSessionId: string;
@@ -238,7 +238,7 @@ export class AgentStatusClient {
   }
 
   private normalizeEntry(value: AgentClientEntry): AgentClientEntry {
-    if (!value || typeof value !== "object" || !ID_PATTERN.test(value.entryId) || !ID_PATTERN.test(value.sessionId) || !ID_PATTERN.test(value.activationTerminalSessionId) || (value.provider !== "codex" && value.provider !== "claude-code" && value.provider !== "omp") || (value.kind !== "root" && value.kind !== "subagent") || !["working", "waiting", "blocked", "done", "idle"].includes(value.state) || typeof value.active !== "boolean" || typeof value.unread !== "boolean") throw new TypeError("agent entry is invalid");
+    if (!value || typeof value !== "object" || !ID_PATTERN.test(value.entryId) || !ID_PATTERN.test(value.sessionId) || !ID_PATTERN.test(value.activationTerminalSessionId) || (value.provider !== "codex" && value.provider !== "claude-code" && value.provider !== "cursor" && value.provider !== "omp") || (value.kind !== "root" && value.kind !== "subagent") || !["working", "waiting", "blocked", "done", "idle"].includes(value.state) || typeof value.active !== "boolean" || typeof value.unread !== "boolean") throw new TypeError("agent entry is invalid");
     return Object.freeze({ ...value });
   }
 

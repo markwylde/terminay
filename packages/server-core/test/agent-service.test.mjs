@@ -27,6 +27,11 @@ test("omp foreground detection keeps a Bun wrapper armed without creating an unb
   assert.equal(providerFromForegroundProcess("/opt/homebrew/bin/bun"), "omp");
 });
 
+test("Cursor Agent CLI foreground executables select the Cursor journal source", () => {
+  assert.equal(providerFromForegroundProcess("agent"), "cursor");
+  assert.equal(providerFromForegroundProcess("/usr/local/bin/cursor-agent"), "cursor");
+});
+
 test("journal records reduce to canonical agent and activity state", async () => {
   const activity = new TerminalActivityService({ serverId: identity.serverId });
   activity.register(identity);
@@ -44,6 +49,20 @@ test("journal records reduce to canonical agent and activity state", async () =>
   assert.equal(entry.state, "working");
   assert.equal(activity.snapshot().sessions[identity.sessionId].source, "journal:codex");
   assert(source.calls.some(([kind, , pid]) => kind === "started" && pid === 4321));
+  await agents.stop();
+});
+
+test("a process-bound Cursor transcript identity establishes and completes a root session", async () => {
+  const activity = new TerminalActivityService({ serverId: "server-1" });
+  activity.register(identity);
+  const agents = new AgentStatusService({ activity, journalSource: fakeJournalSource(), now: () => 100 });
+  await agents.start(); agents.register(identity);
+  await agents.ingestJournalRecord(identity, "cursor", { role: "user", message: { content: [{ type: "text", text: "Cursor prompt" }] } }, { providerSessionId: "cursor-session" });
+  await agents.ingestJournalRecord(identity, "cursor", { type: "turn_ended", status: "success" }, { providerSessionId: "cursor-session" });
+  await agents.ingestJournalRecord(identity, "cursor", { type: "terminay.session_metadata" }, { providerSessionId: "cursor-session", providerDisplayName: "Renamed Cursor Session" });
+  const [entry] = Object.values(agents.getSnapshot().entries);
+  assert.equal(entry.provider, "cursor"); assert.equal(entry.sessionId, "cursor-session");
+  assert.equal(entry.promptText, "Cursor prompt"); assert.equal(entry.displayName, "Renamed Cursor Session"); assert.equal(entry.state, "done");
   await agents.stop();
 });
 

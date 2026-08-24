@@ -33,7 +33,7 @@ can never establish ownership of a remote journal.
 
 ## Product outcomes
 
-- Running `codex`, `claude`, or `omp` normally in an interactive Terminay
+- Running `codex`, `claude`, `agent` (Cursor Agent CLI), or `omp` normally in an interactive Terminay
   terminal is discovered without editing provider configuration or installing
   global integrations.
 - Agent state remains associated with the exact terminal the user can activate.
@@ -44,10 +44,9 @@ can never establish ownership of a remote journal.
 
 ## Canonical model
 
-The canonical providers are `codex`, `claude-code`, and `omp`. Each has a
+The canonical providers are `codex`, `claude-code`, `cursor`, and `omp`. Each has a
 versioned driver and a process-bound journal source. Display names are Codex,
-Claude Code, and omp. A fourth CLI cannot appear until its driver and source
-are specified and implemented.
+Claude Code, Cursor, and omp.
 
 | State | Meaning | Indicator |
 | --- | --- | --- |
@@ -88,7 +87,8 @@ incarnation and activation terminal without allowing stale events from the
 previous incarnation to mutate it.
 
 The Codex launcher may expose a generic wrapper such as `node` as the PTY
-foreground process. A shebang-run `omp` on macOS may likewise expose `bun`.
+foreground process. Cursor's bundled worker may likewise expose `node`, and a
+shebang-run `omp` on macOS may expose `bun`.
 Every transition away from the shell therefore starts a new bounded
 journal-discovery window even when the foreground name is not a recognized
 provider. This lets a resumed session launched long after terminal startup
@@ -206,6 +206,40 @@ explicit `ai-title` records for the root label, assistant model metadata,
 bounded tool lifecycle, and `Agent` tool use/result pairs for named child
 lifecycle. Meta/local-command user records, tool-result content, assistant
 text, and reasoning are never projected.
+
+## Cursor Agent CLI journal mapping
+
+Cursor Agent CLI chats live below `~/.cursor/chats`, while their JSONL
+transcripts live below `~/.cursor/projects`. Terminay does not read Cursor's
+SQLite conversation payloads. It uses only an exact writable `store.db` held
+by the registered PTY process tree, the bounded adjacent `meta.json` cwd, and
+the shared session UUID in the chat-store and transcript paths to bind the
+corresponding transcript. The canonical cwd is encoded using Cursor's project
+directory convention. Paths outside either canonical Cursor root, malformed
+UUIDs, symlinks escaping those roots, and timestamp/nearest-file matches are
+not eligible.
+
+The first supported mapping is `(cursor, 0.1)`. Cursor transcripts do not carry
+a session header, so the process-bound chat-store path supplies the stable
+provider session ID. A bounded non-empty `meta.json` title is the root label and
+is refreshed while the transcript remains bound so Cursor renames update live.
+Terminay reads only the bounded `lastUsedModel` field from the exact
+process-bound `store.db` metadata row in read-only mode; it never reads SQLite
+conversation blobs. This model metadata is also refreshed while bound.
+When no title exists, a user record starts a turn and its bounded
+`<user_query>` content, excluding Cursor's timestamp wrapper, becomes the root
+label. Assistant records keep the turn working without
+projecting assistant text, reasoning, tool arguments, or tool output. A
+`type: "turn_ended"` record maps its status to a successful, failed, or
+cancelled `done` result. Current transcripts do not persist an unresolved
+permission or elicitation record, so they do not authoritatively produce
+`waiting` or `blocked`; generic terminal activity remains the fallback while
+such a prompt is on screen.
+
+Cursor currently persists `Task` tool calls without stable task IDs or matching
+completion records. Terminay therefore does not project those calls as child
+agents: an inferred child that cannot be authoritatively completed would leave
+stale or misattributed sidebar entries.
 
 ## omp journal mapping
 

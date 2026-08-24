@@ -13,6 +13,27 @@ async function ompFixture(name) {
   return text.trim().split("\n").map((line) => JSON.parse(line));
 }
 
+async function cursorFixture() {
+  const text = await readFile(new URL("./fixtures/cursor/v0.1/basic.jsonl", import.meta.url), "utf8");
+  return text.trim().split("\n").map((line) => JSON.parse(line));
+}
+
+test("Cursor v0.1 transcript reduces turns without exposing assistant or tool content", async () => {
+  const records = await cursorFixture();
+  const registry = createAgentDriverRegistry();
+  assert.equal(registry.resolve("cursor")?.mappingVersion, "0.1");
+  const events = records.map((record, index) => registry.normalize("cursor", undefined, record, {
+    activationTerminalSessionId: "terminal-1", providerSessionId: "cursor-session", providerDisplayName: "Cursor Session Title", providerModelId: "grok-4.6", sequence: index + 1, occurredAt: index + 1,
+  })).filter(Boolean).flat();
+  assert.deepEqual(events.map(({ kind }) => kind), ["session.started", "turn.started", "turn.started", "agent.done"]);
+  assert.equal(events[1]?.promptText, "Inspect Cursor support");
+  assert.equal(events[0]?.displayName, "Cursor Session Title");
+  assert.deepEqual(events[0]?.model, { id: "grok-4.6", displayName: "Grok 4.6" });
+  assert.equal(events[3]?.outcome, "success");
+  assert.equal(JSON.stringify(events).includes("Private response"), false);
+  assert.equal(JSON.stringify(events).includes("private"), false);
+});
+
 test("Codex v0.1 rollout records normalize through the v0.1 mapping", async () => {
   const registry = createAgentDriverRegistry();
   const records = await fixture("v0.1");
