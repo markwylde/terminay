@@ -31,6 +31,7 @@ export interface ThisServerAgentObservationSystem {
   openFiles(processIds: readonly number[], access: "writable" | "readable", signal: AbortSignal): Promise<readonly ThisServerAgentOpenFile[]>;
   tty(shellPid: number, signal: AbortSignal): Promise<string | undefined>;
   foreground(shellPid: number, signal: AbortSignal): Promise<Readonly<{ executableName: string; arguments?: readonly string[]; startedAt?: string }> | undefined>;
+  environment(shellPid: number, names: readonly string[], signal: AbortSignal): Promise<Readonly<Record<string, string>>>;
   realpath(path: string, signal: AbortSignal): Promise<string | undefined>;
   stat(path: string, signal: AbortSignal): Promise<ThisServerAgentFileStat | undefined>;
   read(path: string, position: number, maximum: number, signal: AbortSignal): Promise<Uint8Array | undefined>;
@@ -95,10 +96,14 @@ export class ThisServerAgentObservationAdapter {
       case "process.foreground": return this.foreground(local, signal);
       case "process.descendants": return this.descendants(local, state, signal);
       case "process.open-files": return this.openFiles(state, payload, signal);
+      case "process.environment": return this.environment(local, payload, signal);
       case "terminal.tty": return this.tty(local, signal);
       case "filesystem.resolve-home-relative": return this.resolveHomeRelative(state, payload, signal);
       case "filesystem.resolve-path-under-home": return this.resolvePathUnderHome(state, payload, signal);
       case "filesystem.home-relative-path": return this.homeRelativePath(state, payload, signal);
+      case "filesystem.resolve-relative-to-environment": return this.resolveRelativeToEnvironment(local, state, payload, signal);
+      case "filesystem.resolve-path-under-environment": return this.resolvePathUnderEnvironment(local, state, payload, signal);
+      case "filesystem.environment-relative-path": return this.environmentRelativePath(local, state, payload, signal);
       case "filesystem.realpath": return this.canonicalFile(state, payload, signal);
       case "filesystem.stat": return this.fileStat(state, payload, signal);
       case "filesystem.read": return this.read(state, payload, signal);
@@ -106,6 +111,22 @@ export class ThisServerAgentObservationAdapter {
       case "filesystem.unfollow": return this.unfollow(state, payload);
       default: throw new Error("agent observation operation is unavailable");
     }
+  }
+
+  /** A host-private topology fact for re-observation. It deliberately returns
+   * only a stable signature: native process ids and open paths never cross
+   * into the extension or public protocol. */
+  async topologySignature(terminal: ExtensionAgentTerminalContext, signal: AbortSignal): Promise<string | undefined> {
+    const local = await this.requireLocalTerminal(terminal, signal);
+    const shellPid = requiredPid(local);
+    const descendants = await this.system.descendants(shellPid, signal);
+    if (descendants.length > MAX_PROCESSES || descendants.some((process) => !validPid(process.pid) || !safeText(process.executableName, 512))) return undefined;
+    const processes = descendants.map((process) => process.pid).sort((left, right) => left - right);
+    const files = await this.system.openFiles(processes, "writable", signal);
+    if (files.length > MAX_OPEN_FILES) return undefined;
+    const processFacts = descendants.map((process) => `${process.pid}:${process.executableName}`).sort();
+    const fileFacts = files.map((file) => `${file.access}:${safePath(file.path) ?? ""}`).filter((value) => !value.endsWith(":")).sort();
+    return JSON.stringify([processFacts, fileFacts]);
   }
 
   /** Terminal teardown must call this after cancelling its extension child.
@@ -168,6 +189,16 @@ export class ThisServerAgentObservationAdapter {
     });
   }
 
+  private async environment(terminal: ThisServerAgentTerminal, payload: JsonValue, signal: AbortSignal): Promise<JsonValue> {
+    const names = record(payload)?.names;
+    if (!Array.isArray(names) || names.length === 0 || names.length > 16 || names.some((name) => !environmentName(name))) throw new Error("agent environment request is invalid");
+    const safeNames = names as string[];
+    const values = await this.system.environment(requiredPid(terminal), safeNames, signal);
+    const entries: Array<[string, string]> = [];
+    for (const name of safeNames) { const value = values[name]; if (safeText(value, 4_096)) entries.push([name, value]); }
+    return Object.fromEntries(entries);
+  }
+
   private async tty(terminal: ThisServerAgentTerminal, signal: AbortSignal): Promise<JsonValue> {
     const path = terminal.ttyPath ?? await this.system.tty(requiredPid(terminal), signal);
     if (path === undefined) return null;
@@ -216,6 +247,42 @@ export class ThisServerAgentObservationAdapter {
     const result = relative(resolve(this.homeDirectory, homeRelative), canonical);
     if (!safeRelativePath(result)) return null;
     return result;
+  }
+
+  private async resolveRelativeToEnvironment(terminal: ThisServerAgentTerminal, state: TerminalState, payload: JsonValue, signal: AbortSignal): Promise<JsonValue> {
+    const request = record(payload); const relativePath = request?.relativePath;
+    if (typeof relativePath !== "string" || !safeRelativePath(relativePath)) return null;
+    const root = await this.environmentRoot(terminal, request?.environmentVariable, signal); if (root === undefined) return null;
+    const canonical = await this.system.realpath(resolve(root, relativePath), signal);
+    if (canonical === undefined || !contained(root, canonical) || !matchesExtension(canonical, request?.extension)) return null;
+    if ((await this.system.stat(canonical, signal))?.kind !== "file") return null;
+    return { id: this.registerFile(state, canonical).id };
+  }
+
+  private async resolvePathUnderEnvironment(terminal: ThisServerAgentTerminal, state: TerminalState, payload: JsonValue, signal: AbortSignal): Promise<JsonValue> {
+    const request = record(payload); const providerPath = request?.providerPath;
+    if (typeof providerPath !== "string" || safePath(providerPath) === undefined) return null;
+    const root = await this.environmentRoot(terminal, request?.environmentVariable, signal); if (root === undefined) return null;
+    const canonical = await this.system.realpath(providerPath, signal);
+    if (canonical === undefined || !contained(resolve(root, typeof request?.beneathRelative === "string" && safeRelativePath(request.beneathRelative) ? request.beneathRelative : "."), canonical) || !matchesExtension(canonical, request?.extension)) return null;
+    if ((await this.system.stat(canonical, signal))?.kind !== "file") return null;
+    return { id: this.registerFile(state, canonical).id };
+  }
+
+  private async environmentRelativePath(terminal: ThisServerAgentTerminal, state: TerminalState, payload: JsonValue, signal: AbortSignal): Promise<JsonValue> {
+    const request = record(payload); const file = this.fileFor(state, request?.handle); const root = await this.environmentRoot(terminal, request?.environmentVariable, signal);
+    const canonical = root === undefined ? undefined : await this.system.realpath(file.path, signal);
+    if (root === undefined || canonical === undefined || !contained(resolve(root, typeof request?.beneathRelative === "string" && safeRelativePath(request.beneathRelative) ? request.beneathRelative : "."), canonical)) return null;
+    if ((await this.system.stat(canonical, signal))?.kind !== "file") return null;
+    return relative(root, canonical);
+  }
+
+  private async environmentRoot(terminal: ThisServerAgentTerminal, name: JsonValue | undefined, signal: AbortSignal): Promise<string | undefined> {
+    if (!environmentName(name)) return undefined;
+    const value = (await this.system.environment(requiredPid(terminal), [name], signal))[name];
+    const path = safePath(value); if (path === undefined) return undefined;
+    const canonical = await this.system.realpath(path, signal);
+    return canonical !== undefined && safePath(canonical) !== undefined && (await this.system.stat(canonical, signal))?.kind === "directory" ? canonical : undefined;
   }
 
   private withinHomeConstraint(path: string, request: Record<string, JsonValue> | undefined, defaultHome: boolean): boolean {
@@ -318,6 +385,7 @@ const nodeSystem: ThisServerAgentObservationSystem = {
   openFiles: nodeOpenFiles,
   tty: nodeTty,
   foreground: nodeForeground,
+  environment: nodeEnvironment,
   realpath: async (path, signal) => { throwIfAborted(signal); return realpath(path).catch(() => undefined); },
   stat: async (path, signal) => { throwIfAborted(signal); const value = await stat(path).catch(() => undefined); if (value === undefined) return undefined; return { kind: value.isFile() ? "file" : value.isDirectory() ? "directory" : "other", size: value.size, modifiedAt: Number.isFinite(value.mtimeMs) ? new Date(value.mtimeMs).toISOString() : undefined }; },
   read: nodeRead,
@@ -391,6 +459,22 @@ async function nodeForeground(shellPid: number, signal: AbortSignal): Promise<Re
   const executableName = basenameSafe(output.trim()); return executableName ? { executableName } : undefined;
 }
 
+async function nodeEnvironment(shellPid: number, names: readonly string[], signal: AbortSignal): Promise<Readonly<Record<string, string>>> {
+  throwIfAborted(signal);
+  if (process.platform === "linux") {
+    const raw = await readFile(`/proc/${shellPid}/environ`).catch(() => undefined);
+    if (raw === undefined) return {};
+    const values = new Map(raw.toString("utf8").split("\0").flatMap((entry) => {
+      const equals = entry.indexOf("="); return equals <= 0 ? [] : [[entry.slice(0, equals), entry.slice(equals + 1)]];
+    }));
+    return Object.fromEntries(names.flatMap((name) => values.has(name) ? [[name, values.get(name)!]] : []));
+  }
+  const output = await commandText("ps", ["e", "-p", String(shellPid), "-o", "command="], 256 * 1024, signal, true);
+  const values = new Map<string, string>();
+  for (const token of output.split(/\s+/u)) { const equals = token.indexOf("="); if (equals > 0) values.set(token.slice(0, equals), token.slice(equals + 1)); }
+  return Object.fromEntries(names.flatMap((name) => values.has(name) ? [[name, values.get(name)!]] : []));
+}
+
 async function nodeRead(path: string, position: number, maximum: number, signal: AbortSignal): Promise<Uint8Array | undefined> {
   throwIfAborted(signal);
   const file = await open(path, "r").catch(() => undefined); if (file === undefined) return undefined;
@@ -416,6 +500,8 @@ function foregroundValue(value: Readonly<{ executableName: string; arguments?: r
 function requiredPid(terminal: ThisServerAgentTerminal): number { if (!validPid(terminal.shellPid)) throw new Error("agent terminal process observation is unavailable"); return terminal.shellPid; }
 function validPid(value: unknown): value is number { return typeof value === "number" && Number.isSafeInteger(value) && value > 0 && value <= 4_194_304; }
 function safeText(value: unknown, maximum: number): value is string { return typeof value === "string" && value.length > 0 && value.length <= maximum && !value.includes("\0"); }
+function environmentName(value: unknown): value is string { return typeof value === "string" && /^[A-Z][A-Z0-9_]{0,127}$/u.test(value); }
+function matchesExtension(path: string, extension: JsonValue | undefined): boolean { return extension === undefined || typeof extension === "string" && extension.length > 0 && extension.length <= 64 && path.endsWith(extension); }
 function safePath(value: unknown): string | undefined { return safeText(value, MAX_PATH_LENGTH) && isAbsolute(value) ? value : undefined; }
 function safeRelativePath(value: string): boolean { return value.length > 0 && value.length <= MAX_PATH_LENGTH && !value.includes("\0") && !isAbsolute(value) && !value.split(/[\\/]/u).includes(".."); }
 function contained(root: string, path: string): boolean { const candidate = relative(root, path); return candidate !== "" && candidate !== ".." && !candidate.startsWith(`..${pathSeparator()}`) && !isAbsolute(candidate); }

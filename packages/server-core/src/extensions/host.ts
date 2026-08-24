@@ -254,6 +254,9 @@ export class ExtensionHost {
     if (context === undefined || context.providerId !== request.providerId || this.options.agents === undefined) {
       this.sendAgentObservationResult(frame.id, { contextId: request.contextId, ok: false, failure: "agent observation scope is unavailable" }); return;
     }
+    if (!this.agentObservationIsDeclared(request)) {
+      this.sendAgentObservationResult(frame.id, { contextId: request.contextId, ok: false, failure: "agent environment observation is not declared" }); return;
+    }
     const controller = new AbortController(); this.activeBrokerCalls.set(frame.id, controller);
     try {
       const value = await this.options.agents.observe({ extensionId: this.extensionId, providerId: request.providerId, terminal: context, operation: request.operation, payload: request.payload }, controller.signal);
@@ -261,6 +264,15 @@ export class ExtensionHost {
     } catch (error) {
       this.sendAgentObservationResult(frame.id, { contextId: request.contextId, ok: false, failure: safeFailure(error instanceof Error ? error : new Error("agent observation failed")) });
     } finally { this.activeBrokerCalls.delete(frame.id); }
+  }
+
+  private agentObservationIsDeclared(request: ExtensionAgentObservationRequest): boolean {
+    if (request.operation !== "process.environment" && !request.operation.includes("environment")) return true;
+    const provider = this.agentProviders.find((value) => value.id === request.providerId);
+    const payload = record(request.payload);
+    const names = request.operation === "process.environment" ? payload?.names : [payload?.environmentVariable];
+    return Array.isArray(names) && names.length > 0 && names.length <= 16
+      && names.every((name) => typeof name === "string" && provider?.requiredEnvironmentVariables?.includes(name));
   }
 
   private async handleAgentLifecyclePublication(frame: ChildFrame): Promise<void> {
@@ -445,7 +457,7 @@ function validateAgentTerminalAdmission(value: ExtensionAgentTerminalAdmission, 
 
 function parseAgentObservationRequest(value: unknown): ExtensionAgentObservationRequest | undefined {
   const payload = record(value); const contextId = boundedId(payload?.contextId); const providerId = boundedId(payload?.providerId); const operation = payload?.operation;
-  if (!contextId || !providerId || typeof operation !== "string" || !["process.foreground", "process.descendants", "process.open-files", "terminal.tty", "filesystem.resolve-home-relative", "filesystem.resolve-path-under-home", "filesystem.home-relative-path", "filesystem.realpath", "filesystem.stat", "filesystem.read", "filesystem.follow", "filesystem.unfollow"].includes(operation) || !jsonValue(payload?.payload)) return undefined;
+  if (!contextId || !providerId || typeof operation !== "string" || !["process.foreground", "process.descendants", "process.open-files", "process.environment", "terminal.tty", "filesystem.resolve-home-relative", "filesystem.resolve-path-under-home", "filesystem.home-relative-path", "filesystem.resolve-relative-to-environment", "filesystem.resolve-path-under-environment", "filesystem.environment-relative-path", "filesystem.realpath", "filesystem.stat", "filesystem.read", "filesystem.follow", "filesystem.unfollow"].includes(operation) || !jsonValue(payload?.payload)) return undefined;
   return Object.freeze({ contextId, providerId, operation: operation as import("./types.js").ExtensionAgentObservationOperation, payload: structuredClone(payload!.payload) as import("@terminay/extension-api").JsonValue });
 }
 
