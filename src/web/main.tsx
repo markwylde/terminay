@@ -39,6 +39,27 @@ type ConnectedSession = Readonly<{
 	serverId: string;
 }>;
 
+function TerminayMark({ className }: Readonly<{ className: string }>): React.JSX.Element {
+	return (
+		<svg
+			aria-hidden="true"
+			className={className}
+			fill="none"
+			focusable="false"
+			stroke="#ffffff"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			strokeWidth="1.75"
+			viewBox="0 0 24 24"
+		>
+			<rect x="1" y="1" width="22" height="22" rx="5" fill="#000000" stroke="none" />
+			<polygon points="12 4 4.5 7.75 12 11.5 19.5 7.75 12 4" />
+			<polyline points="4.5 15.25 12 19 19.5 15.25" />
+			<polyline points="4.5 11.5 12 15.25 19.5 11.5" />
+		</svg>
+	);
+}
+
 class WorkspaceErrorBoundary extends Component<
 	Readonly<{ children: ReactNode }>,
 	Readonly<{ failed: boolean }>
@@ -308,11 +329,8 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 			>
 				{phase === 'connecting' && (
 					<div className="browser-host-shell__connection-brand">
-						<img
+						<TerminayMark
 							className="browser-host-shell__connection-logo"
-							src="terminay.svg"
-							alt=""
-							aria-hidden="true"
 						/>
 						<div
 							className="browser-host-shell__loading-dots"
