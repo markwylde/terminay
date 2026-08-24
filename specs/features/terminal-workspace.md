@@ -32,9 +32,15 @@ forwards input, resize, and lifecycle commands through the application protocol.
   WebGL addon so split panes that share a glyph atlas rebuild after atlas
   page merges instead of painting stale glyphs. Custom box-drawing glyphs are
   a WebGL addon option, not a core xterm option.
-- On touch devices, a vertical drag over the terminal canvas scrolls xterm's
-  retained buffer without emitting terminal input. A tap remains available for
-  focus and the custom scrollbar remains an equivalent scroll control.
+- On touch devices, xterm owns scrollback and the terminal mouse/key sequences
+  required by interactive TUIs. Terminay does not translate or suppress touch
+  input over the xterm surface. A synchronous, non-cancelling touch focus
+  bridge focuses xterm's helper textarea so iOS can present its software
+  keyboard. While that keyboard is visible, Terminay presents a compact
+  accessory row immediately above it for Escape, Tab, one-shot Control, Shift,
+  and Alt modifiers, arrow keys, Enter, Paste, and keyboard dismissal. The
+  accessory sends its bytes through the terminal panel's normal input boundary;
+  it never implements scrolling or gesture translation.
 - Dropping operating-system files onto a Desktop terminal inserts their native
   paths without copying the files. Dropping browser-local files onto a web
   terminal uploads bounded file contents into the selected server project's
