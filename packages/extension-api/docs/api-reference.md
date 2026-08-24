@@ -23,6 +23,16 @@ The definition's id, display metadata, icon, capabilities, `profileForm`, and
 
 | Method | Purpose | Result |
 | --- | --- | --- |
+### Profile-save environment creation
+
+Saving a profile creates only the profile by default. A provider may opt in to
+creating one environment bound to that new profile by declaring
+`profileSave: { createEnvironment: true }` on its manifest
+`contributes.projectEnvironments` entry. This is an activated-contribution
+declaration: the host honours it only after that exact provider has registered
+at activation. Providers without the declaration—including provisioners whose
+`createEnvironment` needs additional create-form values—are never guessed.
+
 | `testProfile` | Validate non-secret values and brokered connectivity. | `ValidationIssue[]` |
 | `resolveOptions` | Bounded async options for a declared source. | `OptionSourceResult` |
 | `createEnvironment` | Create/bind an environment id assigned by the host. | `ProvisioningResult` |

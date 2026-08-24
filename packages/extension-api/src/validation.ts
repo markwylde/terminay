@@ -175,7 +175,7 @@ function validateContributions(value: unknown, extensionId: string, out: SchemaI
   value.forEach((item, index) => {
     const path = `$.contributes.projectEnvironments[${index}]`;
     if (!record(item)) { out.push({ path, code: "invalid_type", message: "Expected an object" }); return; }
-    closed(item, new Set(["id", "displayName", "description", "icon", "capabilities", "dependencyOperations"]), path, out);
+    closed(item, new Set(["id", "displayName", "description", "icon", "capabilities", "profileSave", "dependencyOperations"]), path, out);
     if (string(item.id, `${path}.id`, out, EXTENSION_LIMITS.providerIdLength) && !isNamespacedId(item.id, extensionId)) out.push({ path: `${path}.id`, code: "invalid_namespace", message: "Provider id must be namespaced by the extension id" });
     string(item.displayName, `${path}.displayName`, out, EXTENSION_LIMITS.displayNameLength);
     if (!Array.isArray(item.capabilities) || item.capabilities.length === 0) out.push({ path: `${path}.capabilities`, code: "invalid_array", message: "Expected capabilities" });
@@ -191,12 +191,19 @@ function validateContributions(value: unknown, extensionId: string, out: SchemaI
 
 function validateAgentContributions(value: unknown, extensionId: string, out: SchemaIssue[]): void {
   if (!Array.isArray(value) || value.length === 0 || value.length > EXTENSION_LIMITS.contributions) {
+    if (item.profileSave !== undefined) validateProfileSaveContribution(item.profileSave, `${path}.profileSave`, out);
     out.push({ path: "$.contributes.agentProviders", code: "invalid_array", message: "Expected one or more bounded contributions" });
     return;
   }
   const ids: unknown[] = [];
   value.forEach((item, index) => {
     const result = validateAgentProviderContribution(item, extensionId);
+function validateProfileSaveContribution(value: unknown, path: string, out: SchemaIssue[]): void {
+  if (!record(value)) { out.push({ path, code: "invalid_type", message: "Expected an object" }); return; }
+  closed(value, new Set(["createEnvironment"]), path, out);
+  if (value.createEnvironment !== true) out.push({ path: `${path}.createEnvironment`, code: "explicit_opt_in_required", message: "Profile-save environment creation requires explicit true" });
+}
+
     if (!result.ok) out.push(...result.issues.map((issue) => ({ ...issue, path: `$.contributes.agentProviders[${index}]${issue.path.slice(1)}` })));
     if (record(item)) ids.push(item.id);
   });

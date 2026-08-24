@@ -112,6 +112,23 @@ test("provider dependency manifest allowlists are closed, unique, and bounded", 
   }
 });
 
+test("profile-save environment creation is an explicit, closed manifest opt-in", () => {
+  const contribution = validManifestFixture.contributes.projectEnvironments[0];
+  const optedIn = validateExtensionManifest({
+    ...validManifestFixture,
+    contributes: { projectEnvironments: [{ ...contribution, profileSave: { createEnvironment: true } }] },
+  });
+  assert.equal(optedIn.ok, true);
+  for (const profileSave of [{}, { createEnvironment: false }, { createEnvironment: true, inferred: true }]) {
+    const result = validateExtensionManifest({
+      ...validManifestFixture,
+      contributes: { projectEnvironments: [{ ...contribution, profileSave }] },
+    });
+    assert.equal(result.ok, false);
+    assert.ok(result.issues.some((issue) => issue.code === "explicit_opt_in_required" || issue.code === "unknown_field"));
+  }
+});
+
 test("public dependency target harness validates calls, cancellation, and JSON results", async () => {
   const cancelled = { aborted: true, throwIfAborted() { throw new Error("cancelled"); } };
   const seen = [];
