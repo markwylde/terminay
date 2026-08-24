@@ -6195,34 +6195,24 @@ function App({
 					<ProjectEnvironmentSplitButton
 						canCreate={canAddProject && pendingProjectCreation === null}
 						environments={projectEnvironmentChoices}
-						createActions={projectEnvironmentProviders.flatMap((provider) => [
-							...(provider.profileForm === undefined ||
-							provider.providerId === 'terminay:this-server'
-								? []
-								: [
-										{
-											providerId: provider.providerId,
-											label: `New ${provider.displayName}…`,
-											description: provider.description,
-										},
-									]),
-							...projectEnvironmentProfiles
-								.filter(
-									(profile) =>
-										profile.providerId === provider.providerId &&
-										provider.createForm !== undefined,
-								)
-								.map((profile) => ({
-									providerId: provider.providerId,
-									profileId: profile.id,
-									label: provider.displayName
-										.toLocaleLowerCase()
-										.includes('puzed')
-										? 'Create new Puzed VM…'
-										: `New ${provider.displayName} project…`,
-									description: profile.name,
-								})),
-						])}
+					createActions={projectEnvironmentProviders.flatMap((provider) =>
+						projectEnvironmentProfiles
+							.filter(
+								(profile) =>
+									profile.providerId === provider.providerId &&
+									provider.createForm !== undefined,
+							)
+							.map((profile) => ({
+								providerId: provider.providerId,
+								profileId: profile.id,
+								label: provider.displayName
+									.toLocaleLowerCase()
+									.includes('puzed')
+									? 'Create new Puzed VM…'
+									: `New ${provider.displayName} project…`,
+								description: profile.name,
+							})),
+					)}
 						onCreateProvider={(action) =>
 							void auxiliaryRouteController.openProjectEnvironments({
 								providerId: action.providerId,
