@@ -123,7 +123,6 @@ export function createProviderRuntime({ store, trust, pool, filesystem }: Runtim
       const limit = request.capability === "terminal" ? 262_144 : 512 * 1024;
       const requested = input.maxBytes ?? input.length;
       if (requested !== undefined && (!Number.isInteger(requested) || Number(requested) < 0 || Number(requested) > limit)) throw new SshProviderError("invalid-input", "SSH read exceeds the service transport limit");
-      if (request.capability === "filesystem" && input.length === undefined) input.length = limit;
     }
     const signal = asAbortSignal(call.signal);
     if (request.capability === "terminal") {

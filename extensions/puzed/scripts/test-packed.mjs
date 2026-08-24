@@ -23,6 +23,6 @@ try {
   await loaded.activate({ extensionId: "com.puzed.platform", apiVersion: "1.0.0", paths: { configuration: "/tmp/config", data: "/tmp/data", cache: "/tmp/cache" }, registerProjectEnvironmentProvider: (value) => definitions.push(value) });
   assert.equal(definitions.length, 1);
   assert.equal(definitions[0].definition.providerId, "com.puzed.platform/vm");
-  assert.equal(definitions[0].definition.profileForm.sections[0].fields.some((field) => field.id === "apiKey" && field.type === "secret"), true);
+  assert.equal(definitions[0].definition.profileForm.sections[0].fields.some((field) => field.id === "api-key" && field.type === "secret"), true);
   console.log("Packed extension activation passed.");
 } finally { await rm(directory, { recursive: true, force: true }); }

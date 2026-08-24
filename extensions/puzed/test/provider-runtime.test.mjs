@@ -9,7 +9,7 @@ function runtimeFixture() {
   const call = {
     deadlineAt: new Date(Date.now() + 60_000).toISOString(), idempotencyKey: "open-machine", expectedRevision: undefined,
     signal: { aborted: false, throwIfAborted() {} },
-    dependencies: { async call(request) { calls.push(structuredClone(request)); if (request.operation === "managed-binding.bind") return { bindingId: "binding-1", revision: 3 }; if (request.operation === "managed-binding.verify") return { state: "ready", canonicalRoot: "/srv/project", revision: 3 }; if (request.operation === "managed-binding.service") return { forwarded: true }; throw new Error(`unexpected ${request.operation}`); } },
+    dependencies: { async call(request) { calls.push(structuredClone(request)); if (request.operation === "managed-binding.generate") return { bindingId: "binding-1", publicKey: "ssh-ed25519 AAAA fixture" }; if (request.operation === "managed-binding.bind") return { bindingId: "binding-1", revision: 3 }; if (request.operation === "managed-binding.verify") return { state: "ready", canonicalRoot: "/srv/project", revision: 3 }; if (request.operation === "managed-binding.service") return { forwarded: true }; throw new Error(`unexpected ${request.operation}`); } },
     profiles: { async get() { return { profileId: "profile-1", providerId: "com.puzed.platform/vm", values: { baseUrl: "https://platform.test" }, secretFields: ["apiKey"], revision: 1 }; } },
     secrets: { async withValue(_request, use) { return use(new TextEncoder().encode("secret")); } },
     sshAgent: { async listIdentities() { return []; }, async sign() { throw new Error("unused"); } },
@@ -24,6 +24,13 @@ test("Puzed creates a composed environment only through the public SSH dependenc
   assert.deepEqual(f.calls.map((item) => item.operation), ["managed-binding.bind", "managed-binding.verify"]);
   assert.equal(f.calls.every((item) => item.providerId === "com.terminay.ssh/connection"), true);
   assert.equal(JSON.stringify(f.calls).includes("secret"), false);
+});
+
+test("Puzed requests a dedicated SSH-owned key when no retained binding exists", async () => {
+  const f = runtimeFixture();
+  await f.runtime.createEnvironment({ environmentId: "env-2", profileId: "profile-1", displayName: "New VM", values: { baseUrl: "https://platform.test", machineId: "machine-2", operationId: "create-machine-2", host: "192.0.2.5", username: "vms" } }, f.call);
+  assert.deepEqual(f.calls.map((item) => item.operation), ["managed-binding.generate", "managed-binding.bind", "managed-binding.verify"]);
+  assert.equal(JSON.stringify(f.calls).includes("private"), false);
 });
 
 test("Puzed terminal/filesystem operations stay revision-bound and forward through SSH", async () => {

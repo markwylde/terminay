@@ -20,6 +20,7 @@ import {
 } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { basename, dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { JsonValue } from '@terminay/protocol';
 import { managerOriginFromSessionOrigin } from '@terminay/protocol';
 import {
@@ -29,7 +30,7 @@ import {
 	FileWorkspaceStateBackend,
 	createNodePtyFactory,
 	createNodeShellDiscoveryHost,
-	createPuzedSshProductionExtensionManagement,
+	createProductionExtensionManagement,
 	createServerAiProviderAdapters,
 	createServerCoreComposition,
 	ExtensionProjectEnvironmentRuntime,
@@ -335,7 +336,7 @@ async function createServerComposition(
 		core: ServerCoreComposition;
 		workspaceWasCreated: boolean;
 		vault: Awaited<ReturnType<typeof createStandaloneVaultComposition>>;
-		extensions: ReturnType<typeof createPuzedSshProductionExtensionManagement>;
+		extensions: ReturnType<typeof createProductionExtensionManagement>;
 	}>
 > {
 	const eventJournal = new OrderedEventJournal();
@@ -411,12 +412,12 @@ async function createServerComposition(
 			? {}
 			: { unlockFd: options.vaultUnlockFd }),
 	});
-	const extensions = createPuzedSshProductionExtensionManagement({
+	const extensions = createProductionExtensionManagement({
 		dataRoot: options.dataRoot,
 		authorityLabel: 'This server',
+		builtInArtifactRoot: resolveBuiltInExtensionArtifactRoot(),
 		vault,
 		projectEnvironments,
-		workspace,
 	});
 	projectEnvironmentRegistry.register(
 		new ExtensionProjectEnvironmentRuntime(
@@ -1385,6 +1386,14 @@ function resolveWebRtcRuntimeRoot(
 	const configured = env.TERMINAY_WEBRTC_RUNTIME_ROOT?.trim();
 	if (configured) return resolve(configured);
 	return resolve(cwd, '../../build/webrtc-runtime');
+}
+
+/** The standalone npm package carries the same staged artifact bytes as the
+ * Electron resource bundle. This lookup is module-relative, never cwd based. */
+function resolveBuiltInExtensionArtifactRoot(): string {
+	const configured = process.env.TERMINAY_BUILTIN_EXTENSIONS_ROOT?.trim();
+	if (configured) return resolve(configured);
+	return resolve(dirname(fileURLToPath(import.meta.url)), 'built-in-extensions');
 }
 
 function hostedSignalOptions(env: Readonly<Record<string, string | undefined>>): {
