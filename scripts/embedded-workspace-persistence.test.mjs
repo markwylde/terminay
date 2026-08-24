@@ -21,9 +21,54 @@ await build({
 });
 const {
 	createEmbeddedWorkspaceStateBackend,
+	embeddedBuiltInExtensionArtifactRoot,
 	embeddedWorkspacePersistenceFault,
+	isEmbeddedWorkspacePersistenceError,
+	WorkspacePersistenceError,
 } = await import(pathToFileURL(output).href);
 test.after(async () => rm(directory, { recursive: true, force: true }));
+
+test('development and packaged runtimes resolve their distinct built-in artifact roots', () => {
+	assert.equal(
+		embeddedBuiltInExtensionArtifactRoot({
+			appRoot: '/checkout',
+			isPackaged: false,
+			resourcesPath: '/Electron.app/Contents/Resources',
+		}),
+		join('/checkout', 'build', 'built-in-extensions'),
+	);
+	assert.equal(
+		embeddedBuiltInExtensionArtifactRoot({
+			appRoot: '/Applications/Terminay.app/Contents/Resources/app.asar',
+			isPackaged: true,
+			resourcesPath: '/Applications/Terminay.app/Contents/Resources',
+		}),
+		join(
+			'/Applications/Terminay.app/Contents/Resources',
+			'built-in-extensions',
+		),
+	);
+});
+
+test('only canonical persistence errors enter workspace recovery', async () => {
+	const backend = createEmbeddedWorkspaceStateBackend({
+		filePath: '/unused',
+		testFault: 'unreadable',
+	});
+	const persistenceError = await backend.load().catch((error) => error);
+	// The injected backend error is deliberately below the repository boundary.
+	assert.equal(isEmbeddedWorkspacePersistenceError(persistenceError), false);
+	assert.equal(
+		isEmbeddedWorkspacePersistenceError(
+			new WorkspacePersistenceError('persistence_unreadable'),
+		),
+		true,
+	);
+	assert.equal(
+		isEmbeddedWorkspacePersistenceError(new ReferenceError('torn build')),
+		false,
+	);
+});
 
 test('the embedded persistence fault seam is inert outside an explicit test process', () => {
 	assert.equal(
