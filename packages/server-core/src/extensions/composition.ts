@@ -27,7 +27,7 @@ export function createDefaultExtensionManagement(options: DefaultExtensionManage
       const root = join(options.dataRoot, "extensions"); const directories = { config: join(root, "config", extensionId), data: join(root, "data", extensionId), cache: join(root, "cache", extensionId) };
       await Promise.all(Object.values(directories).map((directory) => mkdir(directory, { recursive: true })));
       if ("registerManifest" in broker && typeof broker.registerManifest === "function") broker.registerManifest(manifest);
-      await hosts.start({ extensionId, packageRoot, entrypoint, configDirectory: directories.config, dataDirectory: directories.data, cacheDirectory: directories.cache, permissions: manifest.permissions }); await hosts.stop(extensionId);
+      await hosts.start({ extensionId, packageRoot, entrypoint, configDirectory: directories.config, dataDirectory: directories.data, cacheDirectory: directories.cache, permissions: manifest.permissions, agentProviders: manifest.contributes.agentProviders ?? [] }); await hosts.stop(extensionId);
     },
   });
   const activate = async (extensionId: string): Promise<void> => {
@@ -37,7 +37,7 @@ export function createDefaultExtensionManagement(options: DefaultExtensionManage
     await Promise.all(Object.values(directories).map((directory) => mkdir(directory, { recursive: true })));
     if ("registerManifest" in broker && typeof broker.registerManifest === "function") broker.registerManifest(descriptor.manifest);
     await hosts.stop(extensionId);
-    await hosts.start({ ...descriptor, configDirectory: directories.config, dataDirectory: directories.data, cacheDirectory: directories.cache, permissions: descriptor.manifest.permissions });
+    await hosts.start({ ...descriptor, configDirectory: directories.config, dataDirectory: directories.data, cacheDirectory: directories.cache, permissions: descriptor.manifest.permissions, agentProviders: descriptor.agentProviders });
   };
   const activateEnabled = async (): Promise<void> => {
     for (const extensionId of await installer.enabledExtensionIds()) {

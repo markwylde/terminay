@@ -38,6 +38,7 @@ export async function extensionLaunchDescriptor(input: ExtensionPackageLaunchInp
     dataDirectory: input.dataDirectory,
     cacheDirectory: input.cacheDirectory,
     permissions: manifest.permissions,
+    agentProviders: manifest.contributes.agentProviders ?? [],
   });
   return Object.freeze({ descriptor, manifest });
 }
