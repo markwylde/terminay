@@ -4,7 +4,7 @@ import { ExtensionInstaller } from "./installer.js";
 import { ExtensionHostManager } from "./manager.js";
 import { NpmCliRegistryClient } from "./npmClient.js";
 import type { ExtensionOperationOptions } from "./operations.js";
-import type { ExtensionBroker, ExtensionProfileBroker, ExtensionSecretAccessBroker } from "./types.js";
+import type { ExtensionAgentBroker, ExtensionBroker, ExtensionProfileBroker, ExtensionSecretAccessBroker } from "./types.js";
 import type { ServerVaultComposition } from "../settings/vaultComposition.js";
 import type { ProjectEnvironmentRepository } from "../projectEnvironment/repository.js";
 import type { WorkspaceStore } from "../workspace.js";
@@ -13,13 +13,13 @@ import { ExtensionHostComposedSshRuntime } from "./composedSshRuntime.js";
 import { RepositoryCanonicalProjectOpener } from "./puzedSshProjectAdapter.js";
 import { ExtensionProfileService } from "./profileService.js";
 
-export interface DefaultExtensionManagementOptions { readonly dataRoot: string; readonly authorityLabel: string; readonly broker?: ExtensionBroker; readonly childEntrypoint?: string; readonly secrets?: ExtensionSecretAccessBroker; readonly profiles?: ExtensionProfileBroker; }
+export interface DefaultExtensionManagementOptions { readonly dataRoot: string; readonly authorityLabel: string; readonly broker?: ExtensionBroker; readonly childEntrypoint?: string; readonly secrets?: ExtensionSecretAccessBroker; readonly profiles?: ExtensionProfileBroker; readonly agents?: ExtensionAgentBroker; }
 
 /** Construct the identical selected-server extension authority for Desktop's
  * embedded server, standalone installations, and containers. */
 export function createDefaultExtensionManagement(options: DefaultExtensionManagementOptions): ExtensionOperationOptions & { readonly installer: ExtensionInstaller; readonly hosts: ExtensionHostManager } {
   const broker: ExtensionBroker = options.broker ?? { request: async () => { throw new Error("extension broker capability is unavailable"); } };
-  const hosts = new ExtensionHostManager({ broker, ...(options.childEntrypoint === undefined ? {} : { childEntrypoint: options.childEntrypoint }), ...(options.secrets === undefined ? {} : { secrets: options.secrets }), ...(options.profiles === undefined ? {} : { profiles: options.profiles }) });
+  const hosts = new ExtensionHostManager({ broker, ...(options.childEntrypoint === undefined ? {} : { childEntrypoint: options.childEntrypoint }), ...(options.secrets === undefined ? {} : { secrets: options.secrets }), ...(options.profiles === undefined ? {} : { profiles: options.profiles }), ...(options.agents === undefined ? {} : { agents: options.agents }) });
   const npm = new NpmCliRegistryClient({ workRoot: join(options.dataRoot, "extensions", "cache", "npm") });
   const installer = new ExtensionInstaller({
     dataRoot: options.dataRoot, registryClient: npm, materializer: npm,
