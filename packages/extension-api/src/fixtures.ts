@@ -73,6 +73,7 @@ export const validAgentProviderContributionFixture: AgentProviderContribution = 
   displayName: "Fixture Agent",
   processMatchers: [{ executableName: "fixture-agent" }],
   mappings: [{ mappingVersion: "0.1", providerVersionRange: ">=0.1" }],
+  requiredEnvironmentVariables: ["FIXTURE_AGENT_HOME"],
   requiredEnvironmentCapabilities: ["process-observation", "agent-journal"],
 } satisfies AgentProviderContribution);
 

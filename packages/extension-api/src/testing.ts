@@ -13,6 +13,8 @@ export interface FixtureTerminalOptions {
   tty?: AgentTerminalTtyFact;
   /** Bounded foreground/descendant CWD fact; never filesystem authority. */
   cwd?: string;
+  /** Values exposed only through `processes.environment(requestedNames)`. */
+  environment?: Record<string, string>;
   capabilities?: AgentObservationCapability[];
   files?: Record<string, unknown[]>;
 }
@@ -37,8 +39,22 @@ export function fixtureTerminal(options: FixtureTerminalOptions): AgentTerminalC
       processes: {
         async descendants(): Promise<AgentProcessSnapshot[]> { return [{ handle: process, executableName: foreground.executableName, cwd: options.cwd }]; },
         async openFiles(): Promise<any[]> { return [...files.keys()].map((path) => ({ handle: fileHandle(path), path, access: "writable" })); },
+        async environment(names: readonly string[]): Promise<Record<string, string>> {
+          const values = options.environment ?? {};
+          return Object.fromEntries(names.flatMap((name) => values[name] === undefined ? [] : [[name, values[name]] as const]));
+        },
       },
       files: {
+        async resolveRelativeToEnvironment(relativePath: string, request: { environmentVariable: string }) {
+          const root = request.environmentVariable && options.environment?.[request.environmentVariable];
+          const exact = root === undefined ? undefined : `${root.replace(/\/$/, "")}/${relativePath}`;
+          return exact !== undefined && files.has(exact) ? fileHandle(exact) : undefined;
+        },
+        async resolvePathUnderEnvironment(providerPath: string, request: { environmentVariable: string; beneathRelative?: string }) {
+          const root = request.environmentVariable && options.environment?.[request.environmentVariable];
+          const prefix = root === undefined ? undefined : `${root.replace(/\/$/, "")}/${request.beneathRelative ? `${request.beneathRelative}/` : ""}`;
+          return prefix !== undefined && providerPath.startsWith(prefix) && files.has(providerPath) ? fileHandle(providerPath) : undefined;
+        },
         async resolveHomeRelative(relativePath: string) {
           const exact = `/home/test/${relativePath}`;
           return files.has(exact) ? fileHandle(exact) : files.has(relativePath) ? fileHandle(relativePath) : undefined;

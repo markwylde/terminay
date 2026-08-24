@@ -50,10 +50,15 @@ export const EXTENSION_LIMITS = Object.freeze({
   agentFileExtensionLength: 64,
   /** Child journals share a root binding and are never root candidates. */
   agentChildJournalSources: 64,
+  /** Declared names and observed values are bounded terminal-scoped facts. */
+  agentEnvironmentVariables: 32,
+  agentEnvironmentVariableNameLength: 128,
+  agentEnvironmentVariableValueLength: 4 * 1024,
 } as const);
 
 export const EXTENSION_ID_PATTERN = /^[a-z0-9](?:[a-z0-9.-]{1,126}[a-z0-9])?$/;
 export const LOCAL_ID_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
+export const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 export function namespacedId(extensionId: string, localId: string): string {
   if (!EXTENSION_ID_PATTERN.test(extensionId)) throw new Error("invalid extension id");
