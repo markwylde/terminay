@@ -2,8 +2,9 @@
 
 ## Summary
 
-Terminay observes supported coding-agent session journals and reduces their
-native records into provider-neutral agent entries. A journal is authoritative
+Terminay composes installed coding-agent extension providers with project
+environments and reduces their canonical lifecycle events into provider-neutral
+agent entries. A native source is authoritative
 only after Terminay binds it to the exact server-owned PTY through that
 provider's documented terminal identity evidence.
 
@@ -15,17 +16,21 @@ journal cannot be discovered or parsed. See
 
 ## Ownership and privacy
 
-Journal discovery, process binding, incremental reading, driver selection,
-provider normalization, canonical snapshots, acknowledgement, and
-terminal/project mapping live in Terminay Server. Connected clients subscribe
-to the same ordered reduced snapshot. Clients never read provider journals or
-create competing agent state.
+Terminal/project authorization, environment routing, canonical validation,
+ordering, snapshots, acknowledgement, and terminal/project mapping live in
+Terminay Server. Provider-specific discovery, process binding, incremental
+reading, version selection, and native-record normalization live in separately
+hosted extensions using only the public Extension API. Connected clients
+subscribe to the same ordered reduced snapshot. Clients never read provider
+journals or create competing agent state.
 
-Provider journals are private privileged inputs. Their raw records, prompts,
-responses, instructions, reasoning, tool arguments, and tool output never cross
-the server boundary and are never logged by the integration.
+Provider journals and stores are private privileged inputs. Their raw records,
+prompts, responses, instructions, reasoning, tool arguments, and tool output
+never cross the server boundary and are never logged by the integration.
 
-Foreground-process and journal discovery are project-environment capabilities.
+Foreground-process and journal discovery are public project-environment
+capabilities exposed to an agent extension only through a terminal-scoped
+observation broker.
 This server may use the native process tree. An SSH/Puzed environment without a
 proven remote source retains generic terminal activity but reports authoritative
 agent observation unavailable; the local SSH client PID or local provider home
@@ -33,9 +38,9 @@ can never establish ownership of a remote journal.
 
 ## Product outcomes
 
-- Running `codex`, `claude`, `agent` (Cursor Agent CLI), or `omp` normally in an interactive Terminay
-  terminal is discovered without editing provider configuration or installing
-  global integrations.
+- Running a CLI supplied by an enabled agent extension normally in an
+  interactive Terminay terminal is discovered without editing provider
+  configuration or installing global integrations.
 - Agent state remains associated with the exact terminal the user can activate.
 - Provider file formats and versions stay out of client components and stores.
 - Newer compatible provider versions reuse the latest known mapping.
@@ -44,9 +49,12 @@ can never establish ownership of a remote journal.
 
 ## Canonical model
 
-The canonical providers are `codex`, `claude-code`, `cursor`, and `omp`. Each has a
-versioned driver and a process-bound journal source. Display names are Codex,
-Claude Code, Cursor, and omp.
+Provider ids are namespaced extension contributions rather than a closed core
+union. Terminay bundles enabled-by-default Codex, Claude Code, Cursor Agent,
+and omp providers. A third-party provider appears through the same validated
+manifest, hosted runtime, canonical event, Settings, and disablement contracts.
+Persisted unknown or disabled provider ids remain bounded metadata and never
+cause provider code to load in a client.
 
 | State | Meaning | Indicator |
 | --- | --- | --- |
@@ -106,9 +114,9 @@ own terminal-scoped breadcrumb, whose terminal ID is derived from the PTY TTY
 that runs OMP and whose target is validated under OMP's allowed session root.
 A host that cannot establish provider proof uses terminal fallback instead.
 
-## Journal source contract
+## Agent extension observation contract
 
-A provider journal source:
+An agent extension observation runtime:
 
 1. obtains provider-specific terminal-to-journal identity evidence beneath the
    effective provider home;
@@ -118,7 +126,8 @@ A provider journal source:
 4. buffers an incomplete final JSONL line until it is completed;
 5. detects truncation, atomic replacement, provider session switch, writer exit,
    and process-incarnation change;
-6. emits raw records only to the selected privileged driver;
+6. keeps raw records inside its isolated extension host and emits only validated
+   canonical lifecycle events;
 7. stops all file/process observation when the terminal, integration, or server stops.
 
 Discovery is retried briefly after terminal startup and whenever the shell
@@ -130,13 +139,14 @@ appended record. Symlinks, non-regular files, paths outside the canonical
 sessions root, oversized records, invalid JSON, and unbounded growth are
 handled defensively.
 
-## Versioned driver contract
+## Public versioned driver contract
 
-The driver abstraction is identified by `(provider, mappingVersion)`, for
+The public driver abstraction is identified by `(provider, mappingVersion)`, for
 example `(codex, 0.1)`. A driver recognizes session metadata, maps a strict
 allowlist of native records to canonical lifecycle events, and reads only
-bounded lifecycle/display metadata. It never focuses UI, infers terminal
-ownership, reads arbitrary paths, mutates the store directly, or exposes raw
+bounded lifecycle/display metadata. It never focuses UI, asserts project or
+terminal authorization, reads outside broker-issued capabilities, mutates the
+canonical store directly, imports a private Terminay module, or exposes raw
 records.
 
 Mapping versions describe Terminay parsers. Provider CLI versions are
@@ -146,13 +156,18 @@ known mappings uses the newest mapping optimistically; one older than all
 mappings uses the oldest. Unknown records are ignored so additive changes are
 compatible.
 
-Each mapping has provider-owned JSONL fixtures and contract tests. A
+Each extension package owns its mappings, bounded fixtures, documentation, and
+contract tests. A
 compatibility script runs a candidate provider-version fixture against the
 mapping the registry would select. Passing means no new mapping is required;
 semantic failure requires a new mapping and fixtures without changing earlier
 mappings.
 
-## Codex journal mapping
+## Codex extension mapping
+
+The `terminay-agent-codex` package owns every Codex executable name, home-root
+rule, process/journal binding rule, mapping version, fixture, and compatibility
+test described here.
 
 Codex sessions live below the effective `CODEX_HOME/sessions` root; when
 `CODEX_HOME` is unset, the host account's `.codex/sessions` root is used. Shell
@@ -196,7 +211,10 @@ open by that exact process tree. Opening a different eligible root rollout
 switches the tail, retires the previous root, and replays the fresh or resumed
 session.
 
-Claude Code uses the same zero-injection boundary. Terminay binds an exact
+## Claude Code extension mapping
+
+The `terminay-agent-claude-code` package owns the Claude Code mapping and uses
+the same zero-injection boundary. It binds an exact
 `claude --resume <uuid>` descendant to that UUID's root JSONL below the project
 directory in `~/.claude/projects`. For a new `claude` process it admits only one
 root journal created for the exact process working directory after that process
@@ -207,7 +225,11 @@ bounded tool lifecycle, and `Agent` tool use/result pairs for named child
 lifecycle. Meta/local-command user records, tool-result content, assistant
 text, and reasoning are never projected.
 
-## Cursor Agent CLI journal mapping
+## Cursor Agent extension mapping
+
+The `terminay-agent-cursor` package owns Cursor executable recognition,
+process-bound chat-store discovery, transcript mapping, metadata refresh,
+fixtures, compatibility tests, and the privacy boundary described here.
 
 Cursor Agent CLI chats live below `~/.cursor/chats`, while their JSONL
 transcripts live below `~/.cursor/projects`. Terminay does not read Cursor's
@@ -241,7 +263,11 @@ completion records. Terminay therefore does not project those calls as child
 agents: an inferred child that cannot be authoritatively completed would leave
 stale or misattributed sidebar entries.
 
-## omp journal mapping
+## omp extension mapping
+
+The `terminay-agent-omp` package owns every omp/Bun executable rule, data-root
+rule, terminal breadcrumb, mapping, title-slot parser, and fixture described
+here.
 
 omp sessions live below the effective agent sessions root. When
 `PI_CODING_AGENT_DIR` is unset and no named `OMP_PROFILE` / `PI_PROFILE` is
