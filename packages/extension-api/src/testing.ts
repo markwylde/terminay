@@ -55,6 +55,11 @@ export function fixtureTerminal(options: FixtureTerminalOptions): AgentTerminalC
           const prefix = root === undefined ? undefined : `${root.replace(/\/$/, "")}/${request.beneathRelative ? `${request.beneathRelative}/` : ""}`;
           return prefix !== undefined && providerPath.startsWith(prefix) && files.has(providerPath) ? fileHandle(providerPath) : undefined;
         },
+        async environmentRelativePath(handle: AgentFileHandle, request: { environmentVariable: string; beneathRelative?: string }) {
+          const root = request.environmentVariable && options.environment?.[request.environmentVariable];
+          const prefix = root === undefined ? undefined : `${root.replace(/\/$/, "")}/${request.beneathRelative ? `${request.beneathRelative}/` : ""}`;
+          return prefix !== undefined && handle.id.startsWith(prefix) && files.has(handle.id) ? handle.id.slice(prefix.length) : undefined;
+        },
         async resolveHomeRelative(relativePath: string) {
           const exact = `/home/test/${relativePath}`;
           return files.has(exact) ? fileHandle(exact) : files.has(relativePath) ? fileHandle(relativePath) : undefined;

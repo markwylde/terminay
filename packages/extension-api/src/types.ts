@@ -643,6 +643,19 @@ export interface AgentPathUnderEnvironmentRequest {
   extension?: string;
 }
 
+/** Constraints for a fact-only path lookup below one terminal environment value. */
+export interface AgentEnvironmentRelativePathOptions {
+  environmentVariable: string;
+  beneathRelative?: string;
+  signal?: CancellationSignal;
+}
+
+export interface AgentEnvironmentRelativePathRequest {
+  handle: AgentFileHandle;
+  environmentVariable: string;
+  beneathRelative?: string;
+}
+
 export interface AgentFileObservationBroker {
   /**
    * Resolves a non-escaping path below the value of one declared terminal
@@ -655,6 +668,12 @@ export interface AgentFileObservationBroker {
    * absolute-path access.
    */
   resolvePathUnderEnvironment(providerPath: string, options: AgentPathUnderEnvironmentOptions): Promise<AgentFileHandle | undefined>;
+  /**
+   * Returns a normalized relative path fact below one declared terminal
+   * environment value (and optional contained subdirectory). It grants no
+   * read authority: read and follow still require the opaque file handle.
+   */
+  environmentRelativePath(handle: AgentFileHandle, options: AgentEnvironmentRelativePathOptions): Promise<string | undefined>;
   /**
    * Resolves one known non-escaping path in the selected environment's home.
    * The returned opaque handle is the only authority for subsequent reads or

@@ -22,6 +22,7 @@ import type {
   AgentProcessEnvironmentRequest,
   AgentRelativeToEnvironmentRequest,
   AgentPathUnderEnvironmentRequest,
+  AgentEnvironmentRelativePathRequest,
   ExtensionPermission,
   FormField,
   OptionSourceResult,
@@ -336,6 +337,31 @@ export function validateAgentPathUnderEnvironmentRequest(value: unknown): Valida
   if (value.beneathRelative !== undefined) validateHomeRelativePath(value.beneathRelative, "$.beneathRelative", out);
   if (value.extension !== undefined) validateFileExtension(value.extension, "$.extension", out);
   return out.length === 0 ? { ok: true, value: value as unknown as AgentPathUnderEnvironmentRequest } : { ok: false, issues: out };
+}
+
+/** Validates a fact-only path lookup below one declared terminal environment value. */
+export function validateAgentEnvironmentRelativePathRequest(value: unknown): ValidationResult<AgentEnvironmentRelativePathRequest> {
+  const out: SchemaIssue[] = [];
+  if (!record(value)) return invalidObject();
+  closed(value, new Set(["handle", "environmentVariable", "beneathRelative"]), "$", out);
+  validateOpaqueHandle(value.handle, "$.handle", out);
+  validateEnvironmentVariableName(value.environmentVariable, "$.environmentVariable", out);
+  if (value.beneathRelative !== undefined) validateHomeRelativePath(value.beneathRelative, "$.beneathRelative", out);
+  return out.length === 0 ? { ok: true, value: value as unknown as AgentEnvironmentRelativePathRequest } : { ok: false, issues: out };
+}
+
+/** Validates a normalized non-escaping relative path fact returned by the host. */
+export function validateAgentEnvironmentRelativePath(value: unknown): ValidationResult<string> {
+  const out: SchemaIssue[] = [];
+  validateEnvironmentRelativePath(value, "$", out);
+  return out.length === 0 ? { ok: true, value: value as string } : { ok: false, issues: out };
+}
+
+function validateEnvironmentRelativePath(value: unknown, path: string, out: SchemaIssue[]): void {
+  if (!string(value, path, out, EXTENSION_LIMITS.agentEnvironmentRelativePathLength)) return;
+  if (value.startsWith("/") || value.startsWith("\\") || value.includes("\\") || value.split("/").some((part) => part === "" || part === "." || part === "..")) {
+    out.push({ path, code: "unsafe_path", message: "Expected a normalized non-escaping relative path" });
+  }
 }
 
 function validateEnvironmentVariableName(value: unknown, path: string, out: SchemaIssue[]): void {
