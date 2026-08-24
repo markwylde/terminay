@@ -130,6 +130,34 @@ test("a shell return revokes the exact observer before a globally resumed journa
   await first.agents.stop(); await second.agents.stop();
 });
 
+test("a not-bound foreground provider retries its exact terminal until its journal appears", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
+  const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
+  const admitted = []; const cancelled = []; const scheduled = [];
+  let state = "not-bound";
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: {
+      agentProviderContributions: () => [provider],
+      async admitAgentTerminal(value) { admitted.push(value); return { state }; },
+      async cancelAgentTerminal(value) { cancelled.push(value); return true; },
+      async drainAgentObservers() {},
+    },
+    schedule(callback, milliseconds) { const timer = { callback, milliseconds }; scheduled.push(timer); return timer; },
+    cancelSchedule() {},
+  });
+  registry.register(identity);
+  assert.equal(registry.foregroundProcessChanged(identity, "test-agent"), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(scheduled.length, 1);
+  assert.equal(scheduled[0].milliseconds, 100);
+  state = "bound";
+  await scheduled.shift().callback(); await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(admitted.length, 2);
+  assert.deepEqual(cancelled, [{ contextId: admitted[0].context.contextId, reason: "terminal-replaced" }]);
+  await agents.stop();
+});
+
 test("a late-published agent provider re-admits an already-running matching terminal", async () => {
   const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
   const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);

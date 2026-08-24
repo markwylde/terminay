@@ -142,7 +142,10 @@ An agent extension observation runtime:
 
 Discovery is retried briefly after terminal startup and whenever the shell
 loses foreground because either transition can arrive before the journal is
-opened. Once a supported provider is known to be foreground, discovery remains
+opened. A provider that reports `not-bound` is retried at most ten times at a
+100 ms debounce while that exact foreground incarnation remains current. An
+empty process snapshot is ordinary transient evidence, not an admission
+failure. Once a supported provider is known to be foreground, discovery remains
 armed until that incarnation is bound or leaves the foreground. Expensive
 open-file/process inspection is used for initial binding, not for every
 appended record. Symlinks, non-regular files, paths outside the canonical

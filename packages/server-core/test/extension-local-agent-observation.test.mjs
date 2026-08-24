@@ -80,6 +80,21 @@ test("This-server observation adapter issues opaque terminal-scoped process and 
   await assert.rejects(adapter.observe(current, "filesystem.follow", { watcherId: watcher.watcherId }, signal), /watcher is unavailable/);
 });
 
+test("This-server observation treats an empty host-issued descendant snapshot as no journal yet", async () => {
+  const system = fixtureSystem();
+  system.descendants = async () => [];
+  const adapter = new ThisServerAgentObservationAdapter({
+    homeDirectory: "/home/mark", system,
+    resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }),
+  });
+  const current = terminal("empty-descendants");
+  const descendants = await adapter.observe(current, "process.descendants", {}, signal);
+  assert.deepEqual(descendants, []);
+  assert.deepEqual(await adapter.observe(current, "process.open-files", {
+    processes: descendants, options: { access: "writable" },
+  }, signal), []);
+});
+
 test("This-server adapter rejects remote contexts before consulting local processes or files", async () => {
   const system = fixtureSystem();
   const adapter = new ThisServerAgentObservationAdapter({
