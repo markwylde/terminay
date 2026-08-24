@@ -71,3 +71,30 @@ test("non-matching or remote-routed terminals do not suppress legacy providers",
   assert.equal(await agents.ingestJournalRecord(identity, "codex", { type: "session_meta", payload: { id: "legacy", cli_version: "0.2.0" } }), true);
   await agents.stop();
 });
+
+test("topology polling is inert for an unchanged signature and rebinds exactly once when it changes", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
+  const agents = new AgentStatusService({ activity, journalSource: inertJournal() }); await agents.start(); agents.register(identity);
+  const admitted = []; const cancelled = []; const scheduled = []; let signature = "one";
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: { agentProviderContributions: () => [provider], async admitAgentTerminal(value) { admitted.push(value); }, async cancelAgentTerminal(value) { cancelled.push(value); return true; }, async drainAgentObservers() {} },
+    reobserveDebounceMs: 0,
+    topologyPollIntervalMs: 100,
+    topologySignature: async () => signature,
+    schedule(callback, milliseconds) { const timer = { callback, milliseconds }; scheduled.push(timer); return timer; },
+    cancelSchedule() {},
+  });
+  registry.register(identity); registry.foregroundProcessChanged(identity, "test-agent");
+  await new Promise((resolve) => setImmediate(resolve));
+  // First sample establishes the baseline; its successor finds no change.
+  await scheduled.shift().callback(); await new Promise((resolve) => setImmediate(resolve));
+  await scheduled.shift().callback(); await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(admitted.length, 1); assert.equal(cancelled.length, 0);
+  signature = "two";
+  await scheduled.shift().callback(); await new Promise((resolve) => setImmediate(resolve));
+  const reobserve = scheduled.find((timer) => timer.milliseconds === 0);
+  await reobserve.callback(); await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(admitted.length, 2); assert.deepEqual(cancelled, [{ contextId: admitted[0].context.contextId, reason: "terminal-replaced" }]);
+  registry.terminalExited(identity); await agents.stop();
+});
