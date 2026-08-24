@@ -1,0 +1,61 @@
+{
+  "name": "terminay-plugin-puzed",
+  "version": "0.1.0",
+  "description": "Official Puzed Platform project-environment provider for Terminay",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:markwylde/terminay.git",
+    "directory": "extensions/puzed"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-generated.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs && node scripts/test-packed.mjs",
+    "refresh-openapi": "node scripts/refresh-openapi.mjs"
+  },
+  "engines": { "node": ">=22" },
+  "peerDependencies": { "@terminay/extension-api": "^1.1.0" },
+  "devDependencies": {
+    "@terminay/extension-api": "^1.1.0",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3"
+  },
+  "peerDependenciesMeta": {
+    "@terminay/extension-api": {
+      "optional": true
+    }
+  },
+  "terminay": {
+    "manifestVersion": 1,
+    "id": "com.puzed.platform",
+    "displayName": "Puzed Platform",
+    "description": "Manage Terminay-created Puzed VMs as project environments.",
+    "api": "^1.1.0",
+    "engines": { "terminay": ">=1.0.0", "node": ">=22" },
+    "entrypoint": "dist/index.js",
+    "permissions": ["configuration:read", "configuration:write", "data:read", "data:write", "network", "secrets:resolve", "provider:depend", "external-resources:manage"],
+    "extensionDependencies": [{ "extensionId": "com.terminay.ssh", "apiRange": "^1.0.0" }],
+    "contributes": {
+      "projectEnvironments": [{
+        "id": "com.puzed.platform/vm",
+        "displayName": "Puzed VM",
+        "description": "A Terminay-created virtual machine managed by Puzed Platform.",
+        "icon": "cloud",
+        "capabilities": ["terminal", "filesystem"]
+      }]
+    }
+  }
+}
