@@ -316,6 +316,9 @@ function toUiForm(
 				...(field.placeholder === undefined
 					? {}
 					: { placeholder: field.placeholder }),
+				...(field.defaultValue === undefined ? {} : { defaultValue: field.defaultValue }),
+				...(field.suggestionSource === undefined ? {} : { suggestionSource: field.suggestionSource }),
+				...(field.suggestionLabel === undefined ? {} : { suggestionLabel: field.suggestionLabel }),
 				...(field.options === undefined ? {} : { options: field.options }),
 				...(field.optionSource === undefined
 					? {}
