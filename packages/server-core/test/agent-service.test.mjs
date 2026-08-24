@@ -156,7 +156,7 @@ test("extension lifecycle publication rejects an unclaimed or cross-project term
   const provider = "com.example.agent/example";
   const unclaimed = await agents.ingestExtensionLifecycle(identity, provider, "0.1", undefined, []);
   assert.match(unclaimed.failure, /does not own/u);
-  await assert.rejects(() => Promise.resolve(agents.claimExtensionProvider({ ...identity, projectId: "other-project" }, provider)), /not active/u);
+  await assert.rejects(async () => agents.claimExtensionProvider({ ...identity, projectId: "other-project" }, provider), /not active/u);
   await agents.stop();
 });
 
