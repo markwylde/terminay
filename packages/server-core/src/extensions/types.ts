@@ -1,5 +1,103 @@
 import type { JsonValue, ProviderDefinition, ProviderRuntimeMethod } from "@terminay/extension-api";
 
+/**
+ * Opaque server-issued identity for one terminal incarnation. Agent extensions
+ * may use this only as a broker and lifecycle-publication scope; it is not an
+ * authority to inspect another terminal, project, or environment.
+ */
+export interface ExtensionAgentTerminalContext {
+  readonly contextId: string;
+  readonly serverId: string;
+  readonly projectId: string;
+  readonly projectEnvironmentId: string;
+  readonly terminalSessionId: string;
+  readonly terminalIncarnationId: string;
+  readonly providerId: string;
+}
+
+export interface ExtensionAgentTerminalAdmission {
+  readonly context: ExtensionAgentTerminalContext;
+  readonly observationCapabilities: readonly string[];
+}
+
+export type ExtensionAgentTerminalCancellationReason =
+  | "terminal-closed"
+  | "terminal-replaced"
+  | "provider-disabled"
+  | "extension-stopped"
+  | "server-stopping";
+
+export interface ExtensionAgentTerminalCancellation {
+  readonly contextId: string;
+  readonly reason: ExtensionAgentTerminalCancellationReason;
+}
+
+/**
+ * A request made by an admitted agent runtime. The host routes it through the
+ * terminal's project environment and validates both the operation and payload
+ * before exposing any process or filesystem facts.
+ */
+export type ExtensionAgentObservationOperation =
+  | "process.foreground"
+  | "process.descendants"
+  | "process.open-files"
+  | "terminal.tty"
+  | "filesystem.realpath"
+  | "filesystem.stat"
+  | "filesystem.read"
+  | "filesystem.follow"
+  | "filesystem.unfollow";
+
+export interface ExtensionAgentObservationRequest {
+  readonly contextId: string;
+  readonly operation: ExtensionAgentObservationOperation;
+  readonly payload: JsonValue;
+}
+
+export interface ExtensionAgentObservationResult {
+  readonly contextId: string;
+  readonly ok: boolean;
+  readonly value?: JsonValue;
+  readonly failure?: string;
+}
+
+/**
+ * Provider-normalized lifecycle events remain structured JSON at this private
+ * IPC boundary. Canonical event validation, terminal ownership, and ordering
+ * are host responsibilities and happen before acknowledgement.
+ */
+export interface ExtensionAgentLifecyclePublication {
+  readonly contextId: string;
+  readonly providerId: string;
+  readonly publicationId: string;
+  readonly mappingVersion: string;
+  readonly events: readonly JsonValue[];
+}
+
+export interface ExtensionAgentLifecycleAcknowledgement {
+  readonly contextId: string;
+  readonly publicationId: string;
+  readonly acceptedEventCount: number;
+  readonly rejectedEventCount: number;
+  readonly failure?: string;
+}
+
+/**
+ * The host can pause publication without dropping a terminal binding. A child
+ * must retain its bounded pending events and resume only when the state returns
+ * to normal or a later acknowledgement permits progress.
+ */
+export interface ExtensionAgentLifecycleBackpressure {
+  readonly contextId: string;
+  readonly state: "normal" | "pause" | "drain";
+  readonly maxInFlightPublications: number;
+  readonly retryAfterMs?: number;
+}
+
+export interface ExtensionAgentDrainRequest {
+  readonly reason: "provider-disabled" | "extension-stopped" | "server-stopping";
+}
+
 export type ExtensionHostState =
   | "stopped"
   | "starting"
