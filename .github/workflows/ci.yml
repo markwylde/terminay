@@ -52,6 +52,52 @@ jobs:
           TERMINAY_RELEASE_DIAGNOSTICS_DIR: ${{ runner.temp }}/terminay-packaged-smoke
         run: bash scripts/packaged-macos-pr-smoke.sh
 
+  packaged-linux-built-in-lifecycle:
+    name: Packaged Linux built-in lifecycle (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-24.04
+            node_arch: x64
+            uname_arch: x86_64
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+            node_arch: arm64
+            uname_arch: aarch64
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+          cache: npm
+
+      - name: Require the native supported Linux architecture
+        env:
+          EXPECTED_NODE_ARCH: ${{ matrix.node_arch }}
+          EXPECTED_UNAME_ARCH: ${{ matrix.uname_arch }}
+        run: |
+          test "$(node -p 'process.platform')" = linux
+          test "$(node -p 'process.arch')" = "$EXPECTED_NODE_ARCH"
+          test "$(uname -m)" = "$EXPECTED_UNAME_ARCH"
+
+      - name: Install dependencies from the clean manifest
+        run: |
+          npm install --global npm@12.0.2
+          npm ci
+
+      - name: Build, extract, and exercise packaged built-ins offline
+        run: npm run test:packaged-built-in-extension-runtime:linux -- ${{ matrix.target }}
+
   build-and-test:
     name: Build, lint, and unit tests
     runs-on: ubuntu-latest

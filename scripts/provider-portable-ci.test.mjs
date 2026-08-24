@@ -24,7 +24,7 @@ function job(workflow, name) {
 test("GitHub and Gitea discover separate provider-specific CI workflows", () => {
   assert.deepEqual(
     [...githubCi.slice(githubCi.indexOf("jobs:\n")).matchAll(/^ {2}([a-z][a-z0-9-]+):$/gmu)].map((match) => match[1]),
-    ["packaged-macos-smoke", "build-and-test", "mcp-cli-compatibility", "e2e-image", "e2e-test"],
+    ["packaged-macos-smoke", "packaged-linux-built-in-lifecycle", "build-and-test", "mcp-cli-compatibility", "e2e-image", "e2e-test"],
   );
   assert.deepEqual(
     [...giteaCi.slice(giteaCi.indexOf("jobs:\n")).matchAll(/^ {2}([a-z][a-z0-9-]+):$/gmu)].map((match) => match[1]),
@@ -37,6 +37,17 @@ test("GitHub and Gitea discover separate provider-specific CI workflows", () => 
   assert.match(job(giteaCi, "packaged-macos-smoke"), /packaged-macos-pr-smoke\.sh/u);
   assert.doesNotMatch(job(giteaCi, "packaged-macos-smoke"), /setup-node/u);
   assert.doesNotMatch(job(giteaCi, "packaged-macos-smoke"), /unavailable macOS runner|Gitea has no macOS runners/u);
+  const packagedLinux = job(githubCi, "packaged-linux-built-in-lifecycle");
+  assert.match(packagedLinux, /target: linux-x64/u);
+  assert.match(packagedLinux, /target: linux-arm64/u);
+  assert.match(packagedLinux, /runner: ubuntu-24\.04-arm/u);
+  assert.match(packagedLinux, /node_arch: arm64/u);
+  assert.match(packagedLinux, /uname_arch: aarch64/u);
+  assert.match(packagedLinux, /Require the native supported Linux architecture/u);
+  assert.match(packagedLinux, /test "\$\(node -p 'process\.arch'\)" = "\$EXPECTED_NODE_ARCH"/u);
+  assert.match(packagedLinux, /test "\$\(uname -m\)" = "\$EXPECTED_UNAME_ARCH"/u);
+  assert.match(packagedLinux, /npm ci/u);
+  assert.match(packagedLinux, /test:packaged-built-in-extension-runtime:linux -- \$\{\{ matrix\.target \}\}/u);
   assert.match(triggerRelease, /stage-macos-app-from-dmg\.sh/u);
   assert.doesNotMatch(triggerRelease, /TERMINAY_PACKAGED_APP="\$APP_BUNDLE"/u);
   assert.doesNotMatch(githubCi, /github\.server_url|gitea-e2e|ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5|9bc31d5ccc31df68ecc42ccf4149144866c47d8a/u);

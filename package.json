@@ -84,6 +84,7 @@
 		"test:pty-packaged-macos": "npm run build:app && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir --mac --arm64 --publish never && TERMINAY_PACKAGED_APP=release/0.0.0/mac-arm64/Terminay.app node --test scripts/pty-packaged-macos.test.mjs",
 		"test:packaged-startup-macos": "TERMINAY_PACKAGED_APP=${TERMINAY_PACKAGED_APP:-release/0.0.0/mac-arm64/Terminay.app} node --test scripts/packaged-desktop-startup-smoke.test.mjs",
 		"test:packaged-built-in-extension-runtime": "node --test scripts/packaged-built-in-extension-runtime.test.mjs",
+		"test:packaged-built-in-extension-runtime:linux": "sh scripts/run-packaged-built-in-extension-runtime-linux.sh",
 		"test:pty-packaged-linux": "npm run build:app && electron-builder --linux AppImage --x64 --publish never && TERMINAY_PACKAGED_APPIMAGE=release/0.0.0/Terminay-Linux-0.0.0.AppImage xvfb-run --auto-servernum node --test scripts/pty-packaged-linux.test.mjs",
 		"test:terminal-input": "node --test scripts/terminal-input.test.mjs",
 		"test:parakeet-runtime": "node --test scripts/parakeet-runtime.test.mjs",
