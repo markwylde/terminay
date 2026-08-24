@@ -721,7 +721,7 @@ test("two clients receive one canonical reduced agent sequence and reconnect to 
   try {
     await publishAgentLifecycle(agents, identity, [
       { kind: "session.started", title: "Agent session" },
-      { kind: "wait.started", state: "waiting", reason: "approval" },
+      { kind: "wait.started", waitId: "wait-1", state: "waiting", reason: "approval" },
     ]);
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(firstEvents.length, 2);

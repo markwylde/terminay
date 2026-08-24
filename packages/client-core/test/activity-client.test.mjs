@@ -230,7 +230,7 @@ test("a reconnect after server restart replaces canonical activity and agent pro
                 "session-a:root": {
                   entryId: "session-a:root",
                   kind: "root",
-                  provider: "codex",
+                  provider: "example.agent/test",
                   agentId: "agent-a",
                   sessionId: "session-a",
                   activationTerminalSessionId: "session-a",
@@ -247,7 +247,7 @@ test("a reconnect after server restart replaces canonical activity and agent pro
                 "session-a:root": {
                   entryId: "session-a:root",
                   kind: "root",
-                  provider: "codex",
+                  provider: "example.agent/test",
                   agentId: "agent-a",
                   sessionId: "session-a",
                   activationTerminalSessionId: "session-a",

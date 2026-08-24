@@ -20,7 +20,7 @@ test("agent status service projects only claimed extension lifecycle DTOs", asyn
   const result = await agents.ingestExtensionLifecycle(identity, providerId, "1", binding, [
     { kind: "session.started", title: "Provider session", model: { id: "model-1", displayName: "Model One" } },
     { kind: "turn.started", turnId: "turn-1", promptText: "A bounded prompt" },
-    { kind: "wait.started", state: "waiting", reason: "approval" },
+    { kind: "wait.started", waitId: "wait-1", state: "waiting", reason: "approval" },
   ]);
   assert.deepEqual(result, { acceptedEventCount: 3, rejectedEventCount: 0 });
   const [entry] = Object.values(agents.getSnapshot().entries);
