@@ -75,7 +75,10 @@ test('standalone server crash loops release the listener and recover the same da
         '--data-root', dataRoot,
         '--endpoint', 'disabled',
         '--health-port', '0',
-      ], { stdio: ['ignore', 'pipe', 'pipe'] })
+      ], {
+        env: { ...process.env, TERMINAY_REMOTE_PAIRING_PIN: '736941' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
       children.push(child)
 
       const readiness = await readReadiness(child)

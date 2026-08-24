@@ -12,7 +12,7 @@ test.after(async () => { await rm(directory, { recursive: true, force: true }) }
 
 function entry(overrides = {}) {
 	return {
-		entryId: 'term-a:session-a:agent-a', kind: 'root', provider: 'codex', agentId: 'agent-a', sessionId: 'session-a', activationTerminalSessionId: 'term-a', terminalSessionId: 'term-a', inProcess: false,
+		entryId: 'term-a:session-a:agent-a', kind: 'root', provider: 'com.terminay.agent.codex/cli', agentId: 'agent-a', sessionId: 'session-a', activationTerminalSessionId: 'term-a', terminalSessionId: 'term-a', inProcess: false,
 		state: 'waiting', stateStartedAt: 10, updatedAt: 11, lastEventKind: 'wait.started', lastEventSequence: 4, active: true, activeTools: [], unread: true,
 		...overrides,
 	}

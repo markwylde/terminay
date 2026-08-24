@@ -37,7 +37,10 @@ test('standalone server CLI exposes help and explicit pairing handoff without se
 	assert.match(run('--help'), /--pairing/);
 	assert.match(run('--help'), /headless MCP stdio adapter/);
 	const pairing = JSON.parse(
-		run('--pairing', '--server-id', 'server-pair', '--endpoint', 'loopback'),
+		runWithEnv(
+			['--pairing', '--server-id', 'server-pair', '--endpoint', 'loopback'],
+			{ TERMINAY_REMOTE_PAIRING_PIN: '736941' },
+		),
 	);
 	assert.equal(pairing.serverId, 'server-pair');
 	assert.equal(pairing.endpoint, 'loopback');
@@ -63,7 +66,7 @@ test('standalone mcp entry fails closed without an inherited local control socke
 		},
 	});
 	assert.notEqual(result.status, 0);
-	assert.match(result.stderr, /requires TERMINAY_CONTROL_SOCKET/);
+	assert.match(result.stderr, /requires an absolute local control socket/);
 	assert.doesNotMatch(result.stderr, /TERMINAY_CONTROL_TOKEN/);
 });
 
@@ -118,7 +121,11 @@ test('clean foreground startup emits bounded readiness and responds to SIGTERM',
 			'loopback',
 		],
 		{
-			env: { ...process.env, TERMINAY_SERVER_VERSION: '1.2.3' },
+			env: {
+				...process.env,
+				TERMINAY_REMOTE_PAIRING_PIN: '736941',
+				TERMINAY_SERVER_VERSION: '1.2.3',
+			},
 			stdio: ['ignore', 'pipe', 'pipe'],
 		},
 	);
@@ -191,7 +198,10 @@ test('clean foreground startup emits bounded readiness and responds to SIGTERM',
 		);
 		assert.ok((bootstrap.get('pairingToken') ?? '').length >= 16);
 		assert.equal(ready.pairing.requiresApproval, true);
-		assert.equal(ready.pairing.expiresInSeconds, 300);
+		assert.ok(
+			ready.pairing.expiresInSeconds > 0 &&
+				ready.pairing.expiresInSeconds <= 300,
+		);
 		assert.equal(stderr, '');
 	} finally {
 		child.kill('SIGTERM');
