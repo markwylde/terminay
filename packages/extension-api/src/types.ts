@@ -11,7 +11,8 @@ export type ExtensionPermission =
   | "secrets:resolve"
   | "ssh-agent:use"
   | "provider:depend"
-  | "external-resources:manage";
+  | "external-resources:manage"
+  | "agent-observation";
 
 export type EnvironmentCapability =
   | "terminal"
@@ -38,6 +39,37 @@ export interface ProjectEnvironmentContribution {
   capabilities: EnvironmentCapability[];
 }
 
+/** A capability an agent extension needs from the terminal's exact environment. */
+export type AgentObservationCapability =
+  | "process-observation"
+  | "filesystem-observation"
+  | "agent-journal";
+
+/** A deliberately small, safe foreground-process matcher declared in a manifest. */
+export interface AgentProcessMatcher {
+  executableName: string;
+  /** Optional exact argument tokens. This is not a regular expression or shell command. */
+  arguments?: string[];
+}
+
+/** Maps a provider release range to a provider-owned record mapping. */
+export interface AgentMappingDeclaration {
+  mappingVersion: string;
+  providerVersionRange: string;
+}
+
+/** Declarative metadata for one coding-agent provider. */
+export interface AgentProviderContribution {
+  id: string;
+  displayName: string;
+  description?: string;
+  icon?: ExtensionIcon;
+  platforms?: Array<"darwin" | "linux" | "win32">;
+  processMatchers?: AgentProcessMatcher[];
+  mappings?: AgentMappingDeclaration[];
+  requiredEnvironmentCapabilities: AgentObservationCapability[];
+}
+
 export interface TerminayExtensionManifest {
   manifestVersion: 1;
   id: string;
@@ -53,7 +85,8 @@ export interface TerminayExtensionManifest {
   permissions: ExtensionPermission[];
   extensionDependencies?: ExtensionDependency[];
   contributes: {
-    projectEnvironments: ProjectEnvironmentContribution[];
+    projectEnvironments?: ProjectEnvironmentContribution[];
+    agentProviders?: AgentProviderContribution[];
   };
 }
 
@@ -424,6 +457,10 @@ export interface ExtensionContext {
   apiVersion: string;
   paths: { configuration: string; data: string; cache: string };
   registerProjectEnvironmentProvider(registration: ProviderRegistration): void;
+  /** Agent observation is available only to manifests granted agent-observation. */
+  agents: AgentProviderRegistry;
+  /** Host-disposed registrations and observers owned by this activation. */
+  subscriptions: ExtensionSubscriptions;
 }
 
 export interface TerminayExtension {
@@ -433,4 +470,320 @@ export interface TerminayExtension {
 
 export function defineExtension(extension: TerminayExtension): TerminayExtension {
   return extension;
+}
+
+/** Idempotent registration/observer cleanup supplied by the extension host. */
+export interface Disposable {
+  dispose(): void | Promise<void>;
+}
+
+export interface ExtensionSubscriptions {
+  add(subscription: Disposable): Disposable;
+}
+
+/** Opaque handles are valid only for the issued terminal observation context. */
+export interface AgentTerminalHandle { readonly id: string; readonly __agentTerminalHandle: unique symbol; }
+export interface AgentProjectHandle { readonly id: string; readonly __agentProjectHandle: unique symbol; }
+export interface AgentEnvironmentHandle { readonly id: string; readonly __agentEnvironmentHandle: unique symbol; }
+export interface AgentProcessHandle { readonly id: string; readonly __agentProcessHandle: unique symbol; }
+export interface AgentFileHandle { readonly id: string; readonly __agentFileHandle: unique symbol; }
+
+/**
+ * A bounded fact about the terminal device. It can be used to derive a
+ * provider-specific terminal identifier, but is never accepted as a path or
+ * filesystem authority by this API.
+ */
+export interface AgentTerminalTtyFact {
+  deviceId: string;
+  deviceName?: string;
+}
+
+export interface AgentForegroundProcess {
+  executableName: string;
+  /** Safe, bounded process arguments supplied only when the environment can prove them. */
+  arguments?: readonly string[];
+  startedAt?: string;
+}
+
+export interface AgentProcessSnapshot {
+  handle: AgentProcessHandle;
+  executableName: string;
+  startedAt?: string;
+  cwd?: string;
+}
+
+export interface AgentOpenFile {
+  handle: AgentFileHandle;
+  /** A safe environment-routed display path, never an authority to read a local path. */
+  path: string;
+  access: "readable" | "writable" | "read-write";
+}
+
+export interface AgentFileStat {
+  handle: AgentFileHandle;
+  kind: "file";
+  size: number;
+  modifiedAt?: string;
+}
+
+export interface AgentCanonicalFileOptions {
+  beneath?: { homeRelative: string };
+  extension?: string;
+  signal?: CancellationSignal;
+}
+
+/** Constraints for resolving one known file beneath the environment home. */
+export interface AgentHomeRelativeFileOptions {
+  beneath?: { homeRelative: string };
+  extension?: string;
+  signal?: CancellationSignal;
+}
+
+/** Closed, serializable form of a home-relative resolution request. */
+export interface AgentHomeRelativeFileRequest {
+  relativePath: string;
+  beneath?: { homeRelative: string };
+  extension?: string;
+}
+
+/** Constraints for one provider-record path canonicalized beneath an allowed home root. */
+export interface AgentPathUnderHomeOptions {
+  beneath: { homeRelative: string };
+  extension?: string;
+  signal?: CancellationSignal;
+}
+
+/** Closed, serializable form of a constrained provider-record path request. */
+export interface AgentPathUnderHomeRequest {
+  providerPath: string;
+  beneath: { homeRelative: string };
+  extension?: string;
+}
+
+/** Constraints for a fact-only normalized path lookup on an opaque file handle. */
+export interface AgentHomeRelativePathOptions {
+  beneath: { homeRelative: string };
+  signal?: CancellationSignal;
+}
+
+/** Closed transport shape for a fact-only home-relative path lookup. */
+export interface AgentHomeRelativePathRequest {
+  handle: AgentFileHandle;
+  beneath: { homeRelative: string };
+}
+
+export interface AgentReadOptions {
+  maxBytes: number;
+  signal?: CancellationSignal;
+}
+
+export interface AgentJsonLineOptions extends AgentReadOptions {
+  position: "first" | "last";
+}
+
+export interface AgentFileWatchOptions {
+  signal?: CancellationSignal;
+  /** Maximum bytes delivered per chunk; the host may lower this value. */
+  maxChunkBytes?: number;
+}
+
+export interface AgentFileWatchChunk {
+  type: "append" | "replace" | "truncate";
+  bytes: Uint8Array;
+}
+
+export interface AgentFileWatcher extends AsyncIterable<AgentFileWatchChunk>, Disposable {}
+
+export interface AgentProcessObservationBroker {
+  descendants(options?: { signal?: CancellationSignal }): Promise<AgentProcessSnapshot[]>;
+  openFiles(processes: readonly AgentProcessSnapshot[] | readonly AgentProcessHandle[], options: {
+    access: "writable" | "readable";
+    signal?: CancellationSignal;
+  }): Promise<AgentOpenFile[]>;
+}
+
+export interface AgentFileObservationBroker {
+  /**
+   * Resolves one known non-escaping path in the selected environment's home.
+   * The returned opaque handle is the only authority for subsequent reads or
+   * follows; the input path itself never grants local filesystem access.
+   */
+  resolveHomeRelative(relativePath: string, options?: AgentHomeRelativeFileOptions): Promise<AgentFileHandle | undefined>;
+  /**
+   * Canonicalizes a provider-record absolute path only beneath the explicit
+   * home-relative root. This is not arbitrary absolute-path access.
+   */
+  resolvePathUnderHome(providerPath: string, options: AgentPathUnderHomeOptions): Promise<AgentFileHandle | undefined>;
+  /**
+   * Returns a normalized path fact relative to the explicit home-relative
+   * constraint for a canonical regular file. The string cannot be passed to
+   * read or follow; those methods continue to require the original opaque
+   * handle.
+   */
+  homeRelativePath(handle: AgentFileHandle, options: AgentHomeRelativePathOptions): Promise<string | undefined>;
+  canonicalFile(handle: AgentFileHandle, options?: AgentCanonicalFileOptions): Promise<AgentFileHandle | undefined>;
+  realpath(handle: AgentFileHandle, options?: { signal?: CancellationSignal }): Promise<AgentFileHandle | undefined>;
+  stat(handle: AgentFileHandle, options?: { signal?: CancellationSignal }): Promise<AgentFileStat | undefined>;
+  read(handle: AgentFileHandle, options: AgentReadOptions): Promise<Uint8Array>;
+  readJson<T = JsonValue>(handle: AgentFileHandle, options: AgentReadOptions): Promise<T | undefined>;
+  readJsonLine<T = JsonValue>(handle: AgentFileHandle, options: AgentJsonLineOptions): Promise<T | undefined>;
+  follow(handle: AgentFileHandle, options?: AgentFileWatchOptions): Promise<AgentFileWatcher>;
+}
+
+/** All observation operations are terminal-scoped and environment-routed. */
+export interface AgentObservationBroker {
+  processes: AgentProcessObservationBroker;
+  files: AgentFileObservationBroker;
+}
+
+export interface AgentBindingFingerprint {
+  kind: string;
+  /** Only scoped process/file handles and bounded primitive metadata are allowed. */
+  process?: AgentProcessHandle;
+  file?: AgentFileHandle;
+  metadata?: Record<string, JsonPrimitive>;
+}
+
+export interface AgentSessionBindingRequest {
+  providerSessionId: string;
+  mappingVersion: string;
+  journal?: AgentFileHandle;
+  fingerprint: AgentBindingFingerprint;
+  metadata?: Record<string, JsonPrimitive>;
+}
+
+/** Host-validated session identity, opaque outside its issuing terminal context. */
+export interface AgentSessionBinding {
+  readonly providerSessionId: string;
+  readonly mappingVersion: string;
+  readonly journal?: AgentFileHandle;
+  readonly __agentSessionBinding: unique symbol;
+}
+
+export type AgentUnavailableReason =
+  | "environment-capability-missing"
+  | "process-not-recognized"
+  | "session-not-found"
+  | "session-not-bound"
+  | "unsupported-provider-version"
+  | "malformed-observation"
+  | "observation-limit-exceeded"
+  | "cancelled";
+
+export interface AgentObservationDiagnostic {
+  reason: AgentUnavailableReason;
+  /** Safe display text only; it must not contain paths, prompts, credentials, or raw records. */
+  message?: string;
+}
+
+export type AgentObservationResult =
+  | AgentJsonlSession
+  | { state: "not-bound" }
+  | { state: "unavailable"; reason: AgentUnavailableReason };
+
+export interface AgentTerminalContext {
+  terminal: AgentTerminalHandle;
+  project: AgentProjectHandle;
+  environment: AgentEnvironmentHandle;
+  process: AgentProcessHandle;
+  foreground: AgentForegroundProcess;
+  /** Present only when the environment can prove the registered PTY's TTY. */
+  tty?: AgentTerminalTtyFact;
+  capabilities: ReadonlySet<AgentObservationCapability>;
+  observation: AgentObservationBroker;
+  signal: CancellationSignal;
+  bindSession(request: AgentSessionBindingRequest): Promise<AgentSessionBinding>;
+}
+
+export interface AgentModelMetadata {
+  id: string;
+  displayName?: string;
+  reasoningEffort?: string;
+  contextWindowTokens?: number;
+}
+
+export type AgentCompletionOutcome = "success" | "error" | "cancelled";
+export type AgentWaitState = "waiting" | "blocked";
+
+export type AgentLifecycleEvent =
+  | { kind: "session.started"; title?: string; promptText?: string; model?: AgentModelMetadata; occurredAt?: string }
+  | { kind: "agent.metadata"; agentId?: string; title?: string; promptText?: string; model?: AgentModelMetadata; occurredAt?: string }
+  | { kind: "turn.started"; agentId?: string; turnId: string; promptText?: string; occurredAt?: string }
+  | { kind: "tool.started"; agentId?: string; toolId: string; name: string; description?: string; occurredAt?: string }
+  | { kind: "tool.finished"; agentId?: string; toolId: string; outcome?: AgentCompletionOutcome; occurredAt?: string }
+  | { kind: "wait.started"; agentId?: string; waitId: string; state: AgentWaitState; reason?: string; occurredAt?: string }
+  | { kind: "wait.finished"; agentId?: string; waitId: string; occurredAt?: string }
+  | { kind: "agent.done"; agentId?: string; outcome: AgentCompletionOutcome; summary?: string; occurredAt?: string }
+  | { kind: "agent.exited"; agentId?: string; exitCode?: number; signal?: string; occurredAt?: string }
+  | { kind: "session.stopped"; reason?: string; occurredAt?: string }
+  | { kind: "subagent.started"; subagentId: string; parentAgentId?: string; title?: string; promptText?: string; model?: AgentModelMetadata; occurredAt?: string }
+  | { kind: "subagent.done"; subagentId: string; outcome: AgentCompletionOutcome; summary?: string; occurredAt?: string };
+
+export interface AgentLifecyclePublisher {
+  publish(event: AgentLifecycleEvent): void | Promise<void>;
+  sessionStarted(event: Omit<Extract<AgentLifecycleEvent, { kind: "session.started" }>, "kind">): void | Promise<void>;
+  metadataChanged(event: Omit<Extract<AgentLifecycleEvent, { kind: "agent.metadata" }>, "kind">): void | Promise<void>;
+  turnStarted(event: Omit<Extract<AgentLifecycleEvent, { kind: "turn.started" }>, "kind">): void | Promise<void>;
+  toolStarted(event: Omit<Extract<AgentLifecycleEvent, { kind: "tool.started" }>, "kind">): void | Promise<void>;
+  toolFinished(event: Omit<Extract<AgentLifecycleEvent, { kind: "tool.finished" }>, "kind">): void | Promise<void>;
+  waitStarted(event: Omit<Extract<AgentLifecycleEvent, { kind: "wait.started" }>, "kind">): void | Promise<void>;
+  waitFinished(event: Omit<Extract<AgentLifecycleEvent, { kind: "wait.finished" }>, "kind">): void | Promise<void>;
+  done(event: Omit<Extract<AgentLifecycleEvent, { kind: "agent.done" }>, "kind">): void | Promise<void>;
+  exited(event: Omit<Extract<AgentLifecycleEvent, { kind: "agent.exited" }>, "kind">): void | Promise<void>;
+  subagentStarted(event: Omit<Extract<AgentLifecycleEvent, { kind: "subagent.started" }>, "kind">): void | Promise<void>;
+  subagentDone(event: Omit<Extract<AgentLifecycleEvent, { kind: "subagent.done" }>, "kind">): void | Promise<void>;
+}
+
+export interface AgentRecordContext {
+  binding: AgentSessionBinding;
+  /** Identifies which journal under this one root binding produced the record. */
+  journal: { role: "root" } | { role: "child"; childId: string };
+  publish: AgentLifecyclePublisher;
+  signal: CancellationSignal;
+}
+
+/**
+ * A provider-native child journal. It is attached to the existing root
+ * binding and must carry a stable child id; it cannot create another root.
+ */
+export interface AgentChildJournalSource {
+  childId: string;
+  journal: AgentFileHandle;
+  source: AgentFileWatcher | Promise<AgentFileWatcher>;
+}
+
+/** A host-driven JSONL observer declaration. The host owns replay limits and flow control. */
+export interface AgentJsonlSession {
+  state: "bound";
+  binding: AgentSessionBinding;
+  source: AgentFileWatcher | Promise<AgentFileWatcher>;
+  childSources?: readonly AgentChildJournalSource[];
+  mapRecord(record: unknown, session: AgentRecordContext): void | Promise<void>;
+}
+
+export interface AgentJsonlSessionOptions {
+  binding: AgentSessionBinding;
+  source: AgentFileWatcher | Promise<AgentFileWatcher>;
+  childSources?: readonly AgentChildJournalSource[];
+  mapRecord(record: unknown, session: AgentRecordContext): void | Promise<void>;
+}
+
+export interface AgentProviderDefinition {
+  mappingVersion: string;
+  matchesForeground(process: AgentForegroundProcess): boolean;
+  observe(terminal: AgentTerminalContext): Promise<AgentObservationResult>;
+}
+
+export type AgentProviderRuntime = AgentProviderDefinition;
+
+export interface AgentProviderRegistration extends Disposable {
+  readonly providerId: string;
+}
+
+export interface AgentProviderRegistry {
+  registerProvider(providerId: string, runtime: AgentProviderRuntime): AgentProviderRegistration;
+}
+
+export function defineAgentProvider(provider: AgentProviderDefinition): AgentProviderDefinition {
+  return provider;
 }
