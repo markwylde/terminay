@@ -67,6 +67,8 @@ export interface AgentProviderContribution {
   platforms?: Array<"darwin" | "linux" | "win32">;
   processMatchers?: AgentProcessMatcher[];
   mappings?: AgentMappingDeclaration[];
+  /** Names requested from the exact foreground/descendant process only. */
+  requiredEnvironmentVariables?: string[];
   requiredEnvironmentCapabilities: AgentObservationCapability[];
 }
 
@@ -600,9 +602,59 @@ export interface AgentProcessObservationBroker {
     access: "writable" | "readable";
     signal?: CancellationSignal;
   }): Promise<AgentOpenFile[]>;
+  /**
+   * Reads only manifest-declared, bounded values from the exact terminal's
+   * foreground process or descendant. It never exposes the extension host's
+   * ambient Node environment.
+   */
+  environment(names: readonly string[], options?: { signal?: CancellationSignal }): Promise<Record<string, string>>;
+}
+
+/** Closed transport form for an environment fact request. */
+export interface AgentProcessEnvironmentRequest {
+  names: string[];
+}
+
+/** Constraints for resolving a known path below one declared process environment value. */
+export interface AgentRelativeToEnvironmentOptions {
+  environmentVariable: string;
+  extension?: string;
+  signal?: CancellationSignal;
+}
+
+export interface AgentRelativeToEnvironmentRequest {
+  relativePath: string;
+  environmentVariable: string;
+  extension?: string;
+}
+
+/** Constraints for canonicalizing provider-record path data below one declared environment value. */
+export interface AgentPathUnderEnvironmentOptions {
+  environmentVariable: string;
+  beneathRelative?: string;
+  extension?: string;
+  signal?: CancellationSignal;
+}
+
+export interface AgentPathUnderEnvironmentRequest {
+  providerPath: string;
+  environmentVariable: string;
+  beneathRelative?: string;
+  extension?: string;
 }
 
 export interface AgentFileObservationBroker {
+  /**
+   * Resolves a non-escaping path below the value of one declared terminal
+   * process environment variable. The host holds the root value internally.
+   */
+  resolveRelativeToEnvironment(relativePath: string, options: AgentRelativeToEnvironmentOptions): Promise<AgentFileHandle | undefined>;
+  /**
+   * Canonicalizes provider-record absolute path data only below the value of
+   * one declared terminal process environment variable; it is not arbitrary
+   * absolute-path access.
+   */
+  resolvePathUnderEnvironment(providerPath: string, options: AgentPathUnderEnvironmentOptions): Promise<AgentFileHandle | undefined>;
   /**
    * Resolves one known non-escaping path in the selected environment's home.
    * The returned opaque handle is the only authority for subsequent reads or

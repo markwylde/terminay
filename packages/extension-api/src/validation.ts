@@ -1,5 +1,6 @@
 import {
   EXTENSION_ID_PATTERN,
+  ENVIRONMENT_VARIABLE_NAME_PATTERN,
   EXTENSION_LIMITS,
   LOCAL_ID_PATTERN,
   isNamespacedId,
@@ -18,6 +19,9 @@ import type {
   AgentProviderDefinition,
   AgentSessionBindingRequest,
   AgentTerminalTtyFact,
+  AgentProcessEnvironmentRequest,
+  AgentRelativeToEnvironmentRequest,
+  AgentPathUnderEnvironmentRequest,
   ExtensionPermission,
   FormField,
   OptionSourceResult,
@@ -186,7 +190,7 @@ export function validateAgentProviderContribution(value: unknown, extensionId: s
   const out: SchemaIssue[] = [];
   if (!record(value)) return invalidObject();
   closed(value, new Set([
-    "id", "displayName", "description", "icon", "platforms", "processMatchers", "mappings", "requiredEnvironmentCapabilities",
+    "id", "displayName", "description", "icon", "platforms", "processMatchers", "mappings", "requiredEnvironmentVariables", "requiredEnvironmentCapabilities",
   ]), "$", out);
   if (string(value.id, "$.id", out, EXTENSION_LIMITS.providerIdLength) && !isNamespacedId(value.id, extensionId)) {
     out.push({ path: "$.id", code: "invalid_namespace", message: "Provider id must be namespaced by the extension id" });
@@ -199,6 +203,7 @@ export function validateAgentProviderContribution(value: unknown, extensionId: s
   validatePlatforms(value.platforms, "$.platforms", out);
   validateAgentProcessMatchers(value.processMatchers, out);
   validateAgentMappings(value.mappings, out);
+  validateAgentEnvironmentVariableNamesInto(value.requiredEnvironmentVariables, "$.requiredEnvironmentVariables", out, true);
   if (!Array.isArray(value.requiredEnvironmentCapabilities) || value.requiredEnvironmentCapabilities.length === 0 || value.requiredEnvironmentCapabilities.length > EXTENSION_LIMITS.agentRequiredCapabilities) {
     out.push({ path: "$.requiredEnvironmentCapabilities", code: "invalid_array", message: "Expected bounded required environment capabilities" });
   } else {
@@ -263,6 +268,80 @@ function validateAgentMappings(value: unknown, out: SchemaIssue[]): void {
     versions.push(mapping.mappingVersion);
   });
   unique(versions, "$.mappings", out);
+}
+
+/** Validates a declared/requested bounded environment-variable name list. */
+export function validateAgentEnvironmentVariableNames(value: unknown): ValidationResult<string[]> {
+  const out: SchemaIssue[] = [];
+  validateAgentEnvironmentVariableNamesInto(value, "$.names", out);
+  return out.length === 0 ? { ok: true, value: value as string[] } : { ok: false, issues: out };
+}
+
+function validateAgentEnvironmentVariableNamesInto(value: unknown, path: string, out: SchemaIssue[], optional = false): void {
+  if (value === undefined && optional) return;
+  if (!Array.isArray(value) || value.length === 0 || value.length > EXTENSION_LIMITS.agentEnvironmentVariables) {
+    out.push({ path, code: "invalid_array", message: "Expected bounded environment-variable names" });
+  } else {
+    unique(value, path, out);
+    value.forEach((name, index) => validateEnvironmentVariableName(name, `${path}[${index}]`, out));
+  }
+}
+
+/** Validates one closed process-environment request before host routing. */
+export function validateAgentProcessEnvironmentRequest(value: unknown): ValidationResult<AgentProcessEnvironmentRequest> {
+  const out: SchemaIssue[] = [];
+  if (!record(value)) return invalidObject();
+  closed(value, new Set(["names"]), "$", out);
+  validateAgentEnvironmentVariableNamesInto(value.names, "$.names", out);
+  return out.length === 0 ? { ok: true, value: value as unknown as AgentProcessEnvironmentRequest } : { ok: false, issues: out };
+}
+
+/** Validates bounded values returned from terminal-scoped process observation. */
+export function validateAgentObservedEnvironment(value: unknown, requestedNames?: readonly string[]): ValidationResult<Record<string, string>> {
+  const out: SchemaIssue[] = [];
+  if (!record(value)) return invalidObject();
+  const requested = requestedNames === undefined ? undefined : new Set(requestedNames);
+  const entries = Object.entries(value);
+  if (entries.length > EXTENSION_LIMITS.agentEnvironmentVariables) out.push({ path: "$", code: "limit_exceeded", message: "Too many observed environment variables" });
+  entries.forEach(([name, observed]) => {
+    validateEnvironmentVariableName(name, `$.${name}`, out);
+    if (requested !== undefined && !requested.has(name)) out.push({ path: `$.${name}`, code: "undeclared_environment_variable", message: "Observed variable was not requested" });
+    if (typeof observed !== "string" || observed.length > EXTENSION_LIMITS.agentEnvironmentVariableValueLength) {
+      out.push({ path: `$.${name}`, code: "invalid_environment_value", message: `Expected a string of at most ${EXTENSION_LIMITS.agentEnvironmentVariableValueLength} characters` });
+    }
+  });
+  return out.length === 0 ? { ok: true, value: value as Record<string, string> } : { ok: false, issues: out };
+}
+
+/** Validates a known path resolved below one declared terminal environment value. */
+export function validateAgentRelativeToEnvironmentRequest(value: unknown): ValidationResult<AgentRelativeToEnvironmentRequest> {
+  const out: SchemaIssue[] = [];
+  if (!record(value)) return invalidObject();
+  closed(value, new Set(["relativePath", "environmentVariable", "extension"]), "$", out);
+  validateHomeRelativePath(value.relativePath, "$.relativePath", out);
+  validateEnvironmentVariableName(value.environmentVariable, "$.environmentVariable", out);
+  if (value.extension !== undefined) validateFileExtension(value.extension, "$.extension", out);
+  return out.length === 0 ? { ok: true, value: value as unknown as AgentRelativeToEnvironmentRequest } : { ok: false, issues: out };
+}
+
+/** Validates provider-record path data constrained by one declared terminal environment value. */
+export function validateAgentPathUnderEnvironmentRequest(value: unknown): ValidationResult<AgentPathUnderEnvironmentRequest> {
+  const out: SchemaIssue[] = [];
+  if (!record(value)) return invalidObject();
+  closed(value, new Set(["providerPath", "environmentVariable", "beneathRelative", "extension"]), "$", out);
+  if (string(value.providerPath, "$.providerPath", out, EXTENSION_LIMITS.agentProviderPathLength)) {
+    if (!isAbsoluteProviderPath(value.providerPath) || /[\0\r\n]/.test(value.providerPath)) out.push({ path: "$.providerPath", code: "unsafe_path", message: "Expected a bounded absolute provider-record path" });
+  }
+  validateEnvironmentVariableName(value.environmentVariable, "$.environmentVariable", out);
+  if (value.beneathRelative !== undefined) validateHomeRelativePath(value.beneathRelative, "$.beneathRelative", out);
+  if (value.extension !== undefined) validateFileExtension(value.extension, "$.extension", out);
+  return out.length === 0 ? { ok: true, value: value as unknown as AgentPathUnderEnvironmentRequest } : { ok: false, issues: out };
+}
+
+function validateEnvironmentVariableName(value: unknown, path: string, out: SchemaIssue[]): void {
+  if (string(value, path, out, EXTENSION_LIMITS.agentEnvironmentVariableNameLength) && !ENVIRONMENT_VARIABLE_NAME_PATTERN.test(value)) {
+    out.push({ path, code: "invalid_environment_variable", message: "Expected an identifier-like environment-variable name" });
+  }
 }
 
 export function validateDeclarativeForm(value: unknown): ValidationResult<DeclarativeForm> {
