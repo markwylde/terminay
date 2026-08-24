@@ -1,7 +1,8 @@
 import { createAgentDriverRegistry, type AgentDriverRegistry } from "./agentDrivers.js";
 import { NodeAgentJournalSource, type AgentJournalSource } from "./agentJournal.js";
 import { AgentStatusStore, makeAgentStatusEntryId, makeAgentStatusStreamId, selectAgentStatusEntry, selectAgentStatusesForTerminal } from "./agentStore.js";
-import type { AgentLifecycleEvent, AgentProvider, AgentStatusListener, AgentStatusSnapshot } from "./agentTypes.js";
+import { isExtensionAgentProvider, type AgentLifecycleEvent as CanonicalAgentLifecycleEvent, type AgentProvider, type AgentStatusListener, type AgentStatusSnapshot } from "./agentTypes.js";
+import { validateAgentLifecycleEvent, validateAgentSessionBindingRequest, type AgentLifecycleEvent as ExtensionAgentLifecycleEvent } from "@terminay/extension-api";
 import type { ActivitySessionIdentity, TerminalActivityService } from "./service.js";
 import type { ProviderActivityState, ProviderActivityUpdate } from "./types.js";
 
@@ -20,6 +21,13 @@ interface ProviderBinding {
   readonly providerSessionId: string;
   readonly providerVersion?: string;
   readonly mappingVersion: string;
+  readonly source?: "journal" | "extension";
+}
+
+export interface ExtensionLifecycleIngestResult {
+  readonly acceptedEventCount: number;
+  readonly rejectedEventCount: number;
+  readonly failure?: string;
 }
 
 const DEFAULT_FOREGROUND_EXIT_CONFIRMATION_MS = 500;
@@ -46,6 +54,9 @@ export class AgentStatusService {
   private readonly active = new Map<string, ActivitySessionIdentity>();
   private readonly sessionScopes = new Map<string, ActivitySessionIdentity>();
   private readonly bindings = new Map<string, ProviderBinding>();
+  /** Exactly one extension provider may own a terminal incarnation. While it
+   * does, the legacy journal path is intentionally ignored. */
+  private readonly extensionProviderBySession = new Map<string, AgentProvider>();
   private readonly sequences = new Map<string, Map<string, number>>();
   private readonly pendingSubagentLaunches = new Map<string, Array<{ readonly displayName?: string; readonly promptText?: string; readonly toolId: string }>>();
   private readonly foregroundProviderBySession = new Map<string, AgentProvider | null>();
@@ -97,7 +108,7 @@ export class AgentStatusService {
 
   async stop(): Promise<void> {
     for (const identity of [...this.active.values()]) this.terminalExited(identity);
-    this.active.clear(); this.sessionScopes.clear(); this.bindings.clear(); this.sequences.clear();
+    this.active.clear(); this.sessionScopes.clear(); this.bindings.clear(); this.extensionProviderBySession.clear(); this.sequences.clear();
     this.clearForegroundTracking(); this.pendingSubagentLaunches.clear();
     this.started = false;
     await this.journalSource.stop();
@@ -109,7 +120,7 @@ export class AgentStatusService {
     this.enabled = enabled;
     this.journalSource.setEnabled(enabled);
     if (!enabled) {
-      this.active.clear(); this.sessionScopes.clear(); this.bindings.clear(); this.sequences.clear();
+      this.active.clear(); this.sessionScopes.clear(); this.bindings.clear(); this.extensionProviderBySession.clear(); this.sequences.clear();
       this.clearForegroundTracking(); this.pendingSubagentLaunches.clear(); this.store.clear();
     }
     return true;
@@ -134,6 +145,7 @@ export class AgentStatusService {
     if (!current || current.projectId !== identity.projectId || current.serverId !== identity.serverId) return;
     this.active.delete(identity.sessionId);
     this.bindings.delete(identity.sessionId);
+    this.extensionProviderBySession.delete(identity.sessionId);
     this.sequences.delete(identity.sessionId);
     this.removePendingSubagentLaunches(identity.sessionId);
     this.clearForegroundTrackingForSession(identity.sessionId);
@@ -153,7 +165,7 @@ export class AgentStatusService {
   abandonTerminalSession(identity: ActivitySessionIdentity): void {
     const current = this.active.get(identity.sessionId);
     if (!current || current.projectId !== identity.projectId || current.serverId !== identity.serverId) return;
-    this.active.delete(identity.sessionId); this.bindings.delete(identity.sessionId); this.sequences.delete(identity.sessionId);
+    this.active.delete(identity.sessionId); this.bindings.delete(identity.sessionId); this.extensionProviderBySession.delete(identity.sessionId); this.sequences.delete(identity.sessionId);
     this.removePendingSubagentLaunches(identity.sessionId); this.clearForegroundTrackingForSession(identity.sessionId);
     this.journalSource.unregisterTerminal(identity);
   }
@@ -172,6 +184,110 @@ export class AgentStatusService {
     return changed;
   }
 
+  /**
+   * Gives one manifest-owned extension provider the authoritative lifecycle
+   * path for this exact terminal incarnation. A claim is deliberately scoped
+   * to the terminal, never globally to a provider, so an extension cannot
+   * suppress journal observations for another project or terminal.
+   */
+  claimExtensionProvider(identity: ActivitySessionIdentity, providerId: string): boolean {
+    this.assertActive(identity);
+    this.assertExtensionProvider(providerId);
+    const previousOwner = this.extensionProviderBySession.get(identity.sessionId);
+    if (previousOwner !== undefined && previousOwner !== providerId) throw new Error("another extension provider already owns this terminal session");
+    if (previousOwner === providerId) return false;
+    const previousBinding = this.bindings.get(identity.sessionId);
+    if (previousBinding !== undefined && previousBinding.provider !== providerId) this.retireBinding(identity, previousBinding);
+    this.extensionProviderBySession.set(identity.sessionId, providerId);
+    this.foregroundProviderBySession.set(identity.sessionId, providerId);
+    this.cancelPendingForegroundExit(identity.sessionId);
+    return true;
+  }
+
+  /** Releases a prior exact-terminal claim and retires its live provider run. */
+  releaseExtensionProvider(identity: ActivitySessionIdentity, providerId: string): boolean {
+    this.assertActive(identity);
+    if (this.extensionProviderBySession.get(identity.sessionId) !== providerId) return false;
+    const binding = this.bindings.get(identity.sessionId);
+    if (binding?.provider === providerId) {
+      this.retireBinding(identity, binding, "extension-released");
+      this.bindings.delete(identity.sessionId);
+    }
+    this.extensionProviderBySession.delete(identity.sessionId);
+    this.foregroundProviderBySession.delete(identity.sessionId);
+    const sequences = this.sequences.get(identity.sessionId);
+    sequences?.delete(providerId);
+    return true;
+  }
+
+  /**
+   * Validates and binds an extension's provider session evidence to the
+   * already-claimed terminal. The host validates opaque handles against its
+   * observation admission; this service preserves only the canonical session
+   * identity and mapping version required by the sidebar projection.
+   */
+  bindExtensionSession(
+    identity: ActivitySessionIdentity,
+    providerId: string,
+    mappingVersion: string,
+    binding: unknown,
+  ): boolean {
+    this.assertActive(identity);
+    this.assertExtensionClaim(identity, providerId);
+    const validated = validateAgentSessionBindingRequest(binding);
+    if (!validated.ok) throw new Error("extension agent session binding is invalid");
+    if (!isMappingVersion(mappingVersion) || validated.value.mappingVersion !== mappingVersion) throw new Error("extension agent mapping version is invalid");
+    const previous = this.bindings.get(identity.sessionId);
+    if (previous !== undefined && (previous.provider !== providerId || previous.providerSessionId !== validated.value.providerSessionId)) {
+      this.retireBinding(identity, previous);
+    }
+    this.bindings.set(identity.sessionId, {
+      provider: providerId,
+      providerSessionId: validated.value.providerSessionId,
+      mappingVersion,
+      source: "extension",
+    });
+    return true;
+  }
+
+  /**
+   * Projects public, provider-neutral lifecycle DTOs after host validation.
+   * The extension cannot choose the terminal/session identity, sequence, or
+   * canonical timestamp; those values are assigned at this boundary.
+   */
+  async ingestExtensionLifecycle(
+    identity: ActivitySessionIdentity,
+    providerId: string,
+    mappingVersion: string,
+    binding: unknown | undefined,
+    events: readonly unknown[],
+  ): Promise<ExtensionLifecycleIngestResult> {
+    try {
+      this.assertActive(identity);
+      this.assertExtensionClaim(identity, providerId);
+      if (!isMappingVersion(mappingVersion)) throw new Error("extension agent mapping version is invalid");
+      if (binding !== undefined) this.bindExtensionSession(identity, providerId, mappingVersion, binding);
+      const activeBinding = this.bindings.get(identity.sessionId);
+      if (activeBinding === undefined || activeBinding.provider !== providerId || activeBinding.mappingVersion !== mappingVersion) {
+        throw new Error("extension agent session is not bound");
+      }
+      if (!Array.isArray(events) || events.length > 64) throw new Error("extension lifecycle publication is invalid");
+      let acceptedEventCount = 0;
+      for (const candidate of events) {
+        const validated = validateAgentLifecycleEvent(candidate);
+        if (!validated.ok) return Object.freeze({ acceptedEventCount, rejectedEventCount: events.length - acceptedEventCount, failure: "extension lifecycle event is invalid" });
+        const event = this.toCanonicalExtensionEvent(identity, providerId, activeBinding, validated.value);
+        const correlated = this.correlateSubagentLaunch(event);
+        this.store.dispatch(correlated);
+        if (correlated.kind !== "agent.metadata") this.activity.ingestProvider(identity, toProviderUpdate(correlated, "extension"));
+        acceptedEventCount += 1;
+      }
+      return Object.freeze({ acceptedEventCount, rejectedEventCount: 0 });
+    } catch (error) {
+      return Object.freeze({ acceptedEventCount: 0, rejectedEventCount: Array.isArray(events) ? events.length : 0, failure: error instanceof Error ? error.message : "extension lifecycle publication failed" });
+    }
+  }
+
   /** Testable server-side boundary used by the journal source and fixtures. */
   async ingestJournalRecord(
     identity: ActivitySessionIdentity,
@@ -180,6 +296,7 @@ export class AgentStatusService {
     source: { readonly journalRole?: "root" | "child"; readonly childAgentId?: string; readonly providerSessionId?: string; readonly providerVersion?: string; readonly providerDisplayName?: string; readonly providerModelId?: string } = {},
   ): Promise<boolean> {
     this.assertActive(identity);
+    if (this.extensionProviderBySession.has(identity.sessionId)) return false;
     // A child omp journal has its own session header, but that header belongs
     // beneath the root binding and must never replace the PTY's root session.
     const inspected = source.journalRole === "child" ? null : this.drivers.inspectSession(provider, record);
@@ -235,6 +352,7 @@ export class AgentStatusService {
     if (!this.active.has(identity.sessionId)) return;
     const provider = providerFromForegroundProcess(processName);
     this.journalSource.foregroundProcessChanged(identity, provider, shellForeground);
+    if (this.extensionProviderBySession.has(identity.sessionId)) return;
     const previous = this.foregroundProviderBySession.get(identity.sessionId);
     if (provider !== null) {
       this.foregroundProviderBySession.set(identity.sessionId, provider);
@@ -264,24 +382,24 @@ export class AgentStatusService {
     if (providerSequences) providerSequences.set(provider, (providerSequences.get(provider) ?? 1) + count);
   }
 
-  private retireBinding(identity: ActivitySessionIdentity, binding: ProviderBinding): void {
+  private retireBinding(identity: ActivitySessionIdentity, binding: ProviderBinding, reason = "rollout-switched"): void {
     const root = selectAgentStatusesForTerminal(this.store.getSnapshot(), identity.sessionId)
       .find((entry) => entry.kind === "root" && entry.provider === binding.provider && entry.sessionId === binding.providerSessionId && entry.active);
     if (!root) return;
-    const event: AgentLifecycleEvent = {
+    const event: CanonicalAgentLifecycleEvent = {
       kind: "session.stopped",
       provider: binding.provider,
       sessionId: binding.providerSessionId,
       activationTerminalSessionId: identity.sessionId,
       sequence: this.nextSequence(binding.provider, identity.sessionId),
       occurredAt: Math.max(this.now(), root.updatedAt),
-      reason: "rollout-switched",
+      reason,
     };
     this.store.dispatch(event);
-    this.activity.ingestProvider(identity, toProviderUpdate(event));
+    this.activity.ingestProvider(identity, toProviderUpdate(event, binding.source ?? "journal"));
   }
 
-  private correlateSubagentLaunch(event: AgentLifecycleEvent): AgentLifecycleEvent {
+  private correlateSubagentLaunch(event: CanonicalAgentLifecycleEvent): CanonicalAgentLifecycleEvent {
     const streamId = makeAgentStatusStreamId(event.provider, event.activationTerminalSessionId, event.sessionId);
     if (event.kind === "tool.started" && event.tool.subagentLaunch !== undefined) {
       const pending = this.pendingSubagentLaunches.get(streamId) ?? [];
@@ -331,9 +449,47 @@ export class AgentStatusService {
   private cancelPendingForegroundExit(sessionId: string): void { const timer = this.pendingForegroundExits.get(sessionId); if (timer !== undefined) { clearTimeout(timer); this.pendingForegroundExits.delete(sessionId); } }
   private clearForegroundTrackingForSession(sessionId: string): void { this.cancelPendingForegroundExit(sessionId); this.foregroundProviderBySession.delete(sessionId); }
   private clearForegroundTracking(): void { for (const id of this.pendingForegroundExits.keys()) this.cancelPendingForegroundExit(id); this.foregroundProviderBySession.clear(); }
+
+  private assertExtensionProvider(providerId: string): asserts providerId is AgentProvider {
+    if (!isExtensionAgentProvider(providerId)) throw new Error("extension agent provider id must be a bounded namespaced id");
+  }
+
+  private assertExtensionClaim(identity: ActivitySessionIdentity, providerId: string): void {
+    this.assertExtensionProvider(providerId);
+    if (this.extensionProviderBySession.get(identity.sessionId) !== providerId) throw new Error("extension agent provider does not own this terminal session");
+  }
+
+  private toCanonicalExtensionEvent(
+    identity: ActivitySessionIdentity,
+    provider: AgentProvider,
+    binding: ProviderBinding,
+    event: ExtensionAgentLifecycleEvent,
+  ): CanonicalAgentLifecycleEvent {
+    const common = {
+      provider,
+      sessionId: binding.providerSessionId,
+      activationTerminalSessionId: identity.sessionId,
+      sequence: this.nextSequence(provider, identity.sessionId),
+      occurredAt: this.now(),
+    } as const;
+    switch (event.kind) {
+      case "session.started": return { ...common, kind: event.kind, ...(event.title === undefined ? {} : { displayName: event.title }), ...(event.promptText === undefined ? {} : { promptText: event.promptText }), ...(event.model === undefined ? {} : { model: event.model }) };
+      case "agent.metadata": return { ...common, kind: event.kind, ...(event.agentId === undefined ? {} : { agentId: event.agentId }), ...(event.title === undefined ? {} : { displayName: event.title }), ...(event.promptText === undefined ? {} : { promptText: event.promptText }), ...(event.model === undefined ? {} : { model: event.model }) };
+      case "session.stopped": return { ...common, kind: event.kind, ...(event.reason === undefined ? {} : { reason: event.reason }) };
+      case "turn.started": return { ...common, kind: event.kind, ...(event.agentId === undefined ? {} : { agentId: event.agentId }), turnId: event.turnId, ...(event.promptText === undefined ? {} : { promptText: event.promptText }) };
+      case "tool.started": return { ...common, kind: event.kind, ...(event.agentId === undefined ? {} : { agentId: event.agentId }), tool: { id: event.toolId, name: event.name, ...(event.description === undefined ? {} : { description: event.description }) } };
+      case "tool.finished": return { ...common, kind: event.kind, ...(event.agentId === undefined ? {} : { agentId: event.agentId }), toolId: event.toolId, ...(event.outcome === undefined ? {} : { outcome: event.outcome }) };
+      case "wait.started": return { ...common, kind: event.kind, ...(event.agentId === undefined ? {} : { agentId: event.agentId }), state: event.state, ...(event.reason === undefined ? {} : { reason: event.reason }) };
+      case "wait.finished": return { ...common, kind: event.kind, ...(event.agentId === undefined ? {} : { agentId: event.agentId }) };
+      case "agent.done": return { ...common, kind: event.kind, ...(event.agentId === undefined ? {} : { agentId: event.agentId }), outcome: event.outcome, ...(event.summary === undefined ? {} : { summary: event.summary }) };
+      case "agent.exited": return { ...common, kind: event.kind, ...(event.agentId === undefined ? {} : { agentId: event.agentId }), ...(event.exitCode === undefined ? {} : { exitCode: event.exitCode }), ...(event.signal === undefined ? {} : { signal: event.signal }) };
+      case "subagent.started": return { ...common, kind: event.kind, subagentId: event.subagentId, ...(event.parentAgentId === undefined ? {} : { parentAgentId: event.parentAgentId }), ...(event.title === undefined ? {} : { displayName: event.title }), ...(event.promptText === undefined ? {} : { promptText: event.promptText }), ...(event.model === undefined ? {} : { model: event.model }) };
+      case "subagent.done": return { ...common, kind: "subagent.stopped", subagentId: event.subagentId, outcome: event.outcome, ...(event.summary === undefined ? {} : { summary: event.summary }) };
+    }
+  }
 }
 
-function toProviderUpdate(event: AgentLifecycleEvent): ProviderActivityUpdate {
+function toProviderUpdate(event: CanonicalAgentLifecycleEvent, sourceKind = "journal"): ProviderActivityUpdate {
   let state: ProviderActivityState;
   switch (event.kind) {
     case "session.started": case "session.stopped": state = "idle"; break;
@@ -342,13 +498,17 @@ function toProviderUpdate(event: AgentLifecycleEvent): ProviderActivityUpdate {
     default: state = "working";
   }
   const agentId = "subagentId" in event ? event.subagentId : "agentId" in event && event.agentId ? event.agentId : event.sessionId;
-  return Object.freeze({ provider: event.provider, state, sequence: event.sequence, agentId, source: `journal:${event.provider}` });
+  return Object.freeze({ provider: event.provider, state, sequence: event.sequence, agentId, source: `${sourceKind}:${event.provider}` });
 }
 
-function validateLifecycleEvent(event: AgentLifecycleEvent, provider: string, terminalSessionId: string): void {
+function validateLifecycleEvent(event: CanonicalAgentLifecycleEvent, provider: string, terminalSessionId: string): void {
   if (!event || typeof event !== "object" || event.provider !== provider || event.activationTerminalSessionId !== terminalSessionId) throw new Error("agent driver returned an invalid scope");
   if (typeof event.sessionId !== "string" || event.sessionId.length === 0 || event.sessionId.length > 512) throw new Error("agent driver returned an invalid provider session");
   if (!Number.isSafeInteger(event.sequence) || event.sequence < 0 || !Number.isFinite(event.occurredAt)) throw new Error("agent driver returned invalid ordering metadata");
   if ("agentId" in event && event.agentId !== undefined && (typeof event.agentId !== "string" || event.agentId.length === 0 || event.agentId.length > 512)) throw new Error("agent driver returned an invalid agent id");
   if ("subagentId" in event && (typeof event.subagentId !== "string" || event.subagentId.length === 0 || event.subagentId.length > 512)) throw new Error("agent driver returned an invalid subagent id");
+}
+
+function isMappingVersion(value: string): boolean {
+  return typeof value === "string" && value.length > 0 && value.length <= 64;
 }
