@@ -19,7 +19,7 @@ async function publishAgentLifecycle(agents, identity, events) {
   const result = await agents.ingestExtensionLifecycle(identity, providerId, "1", {
     providerSessionId: `provider-${identity.sessionId}`,
     mappingVersion: "1",
-    fingerprint: { kind: "test", metadata: { proof: "fixture" } },
+    fingerprint: { kind: "test", process: { id: "process-1" }, metadata: { proof: "fixture" } },
   }, events);
   assert.equal(result.rejectedEventCount, 0);
 }

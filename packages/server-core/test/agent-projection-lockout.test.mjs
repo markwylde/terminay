@@ -98,7 +98,7 @@ test("extension lifecycle replay cannot close the application connection or bloc
 
     const providerId = "example.agent/pressure";
     assert.equal(agents.claimExtensionProvider(identity, providerId), true);
-    const binding = { providerSessionId: "large-resumed-session", mappingVersion: "1", fingerprint: { kind: "test", metadata: { proof: "fixture" } } };
+    const binding = { providerSessionId: "large-resumed-session", mappingVersion: "1", fingerprint: { kind: "test", process: { id: "process-1" }, metadata: { proof: "fixture" } } };
     await agents.ingestExtensionLifecycle(identity, providerId, "1", binding, [{ kind: "session.started" }]);
     for (let index = 0; index < 2_000; index += 1) {
       now += 1;
