@@ -197,17 +197,18 @@ transport recovery. Desktop and browser therefore converge on the same
 server-owned inventory without keeping a renderer-owned copy as authority.
 
 The menu groups **This Terminay Server**, recent/favourite SSH profiles, recent
-Puzed VMs by Platform profile, provider creation/browse actions, **Project
+Puzed VMs by Platform profile, direct creation actions, **Project
 Environments…**, and **Extensions…**. Large inventories use searchable pickers
 instead of unbounded menus. **This server** includes secondary text such as
 `Local to Production Terminay`.
 
 Provider actions are derived from the currently authenticated server snapshot,
-not hardcoded client knowledge. A running provider with a profile form appears
-as **New <provider>…**. Each saved profile whose provider contributes a create
-form appears as a direct creation action, including **Create new Puzed VM…**.
-Choosing one opens the same Project Environments window with its sidebar and
-authority context preserved and the requested form already selected.
+not hardcoded client knowledge. Each saved profile whose provider contributes a
+create form appears as a direct creation action, including **Create new
+Puzed VM…**. Adding new connections is a Project Environments management
+action, not a project-chooser action. Choosing a direct creation action opens
+the same Project Environments window with its sidebar and authority context
+preserved and the requested form already selected.
 
 Project creation is atomic from the user's perspective: the target and initial
 root validate before a normal project tab is committed. Provider glyph/status
