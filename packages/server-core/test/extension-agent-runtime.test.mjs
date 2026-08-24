@@ -39,7 +39,7 @@ test("extension provider claims one terminal incarnation before host admission",
   const projected = await agents.ingestExtensionLifecycle(identity, provider.id, "test-v1", {
     providerSessionId: "provider-session-1",
     mappingVersion: "test-v1",
-    fingerprint: { kind: "fixture", metadata: { source: "test" } },
+    fingerprint: { kind: "fixture", process: { id: "process-1" }, metadata: { source: "test" } },
   }, [
     { kind: "session.started", title: "Extension session" },
     { kind: "turn.started", turnId: "turn-1", promptText: "Hello from the extension" },

@@ -6,7 +6,7 @@ const context = Object.freeze({ connectionId: "connection-a", clientId: "client-
 const query = (operation, payload = {}) => ({ envelope: { operation, payload }, body: new Uint8Array(), context });
 const command = (operation, payload, claims) => ({ envelope: { operation, commandId: "command-a", correlationId: "correlation-a", payload }, body: new Uint8Array(), context: claims === undefined ? context : { ...context, claims } });
 const providerId = "example.agent/test";
-const binding = { providerSessionId: "provider-session", mappingVersion: "1", fingerprint: { kind: "test", metadata: { proof: "fixture" } } };
+const binding = { providerSessionId: "provider-session", mappingVersion: "1", fingerprint: { kind: "test", process: { id: "process-1" }, metadata: { proof: "fixture" } } };
 async function publish(agents, identity, title = "Provider session") {
   assert.equal(agents.claimExtensionProvider(identity, providerId), true);
   return agents.ingestExtensionLifecycle(identity, providerId, "1", binding, [

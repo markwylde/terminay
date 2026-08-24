@@ -4,7 +4,7 @@ import { AgentStatusService, TerminalActivityService } from "../dist/index.js";
 
 const identity = Object.freeze({ serverId: "server-1", projectId: "project-1", sessionId: "terminal-1" });
 const providerId = "example.agent/test";
-const binding = Object.freeze({ providerSessionId: "provider-session-1", mappingVersion: "1", fingerprint: { kind: "test", metadata: { proof: "fixture" } } });
+const binding = Object.freeze({ providerSessionId: "provider-session-1", mappingVersion: "1", fingerprint: { kind: "test", process: { id: "process-1" }, metadata: { proof: "fixture" } } });
 
 async function fixture() {
   const activity = new TerminalActivityService({ serverId: identity.serverId });
