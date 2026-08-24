@@ -8,6 +8,46 @@
     <link rel="icon" type="image/svg+xml" href="./terminay.svg" />
     <link rel="apple-touch-icon" href="./terminay.svg" />
     <title>Terminay</title>
+    <style>
+      html, body, #web-root { width: 100%; min-height: 100%; margin: 0; }
+      body { background: #0d1117; }
+      .terminay-bootstrap-loading {
+        display: grid;
+        min-height: 100vh;
+        place-items: center;
+        padding: 32px;
+        background: #0d1117;
+        color: #9ba9ba;
+        font-family: "Open Sans", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        text-align: center;
+      }
+      .terminay-bootstrap-loading__brand { display: grid; justify-items: center; gap: 16px; }
+      .terminay-bootstrap-loading__logo { width: 72px; height: 72px; border-radius: 18px; }
+      .terminay-bootstrap-loading__dots { display: flex; gap: 7px; }
+      .terminay-bootstrap-loading__dots span {
+        width: 7px; height: 7px; border-radius: 50%; opacity: .2; transform: scale(.65);
+        animation: terminay-bootstrap-loading-dot 1.6s ease-in-out infinite;
+      }
+      .terminay-bootstrap-loading__dots span:nth-child(1) { background: #db5757; }
+      .terminay-bootstrap-loading__dots span:nth-child(2) { background: #c1db57; animation-delay: .12s; }
+      .terminay-bootstrap-loading__dots span:nth-child(3) { background: #57db8c; animation-delay: .24s; }
+      .terminay-bootstrap-loading__dots span:nth-child(4) { background: #578cdb; animation-delay: .36s; }
+      .terminay-bootstrap-loading__dots span:nth-child(5) { background: #c157db; animation-delay: .48s; }
+      .terminay-bootstrap-loading__error { display: grid; gap: 12px; max-width: 360px; }
+      .terminay-bootstrap-loading__error h1 { margin: 0; color: #dce5ef; font-size: 18px; }
+      .terminay-bootstrap-loading__error p { margin: 0; line-height: 1.5; }
+      .terminay-bootstrap-loading__error button {
+        justify-self: center; border: 1px solid #2f4158; border-radius: 8px;
+        background: #1a2330; color: #dce2f0; padding: .5rem .85rem; font: inherit;
+      }
+      @keyframes terminay-bootstrap-loading-dot {
+        0%, 55%, 100% { opacity: .2; transform: scale(.65); }
+        18%, 36% { opacity: 1; transform: scale(1); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .terminay-bootstrap-loading__dots span { animation: none; opacity: 1; transform: none; }
+      }
+    </style>
     <script>
       try {
         if (globalThis.parent !== globalThis) document.documentElement.classList.add('is-framed')
@@ -17,7 +57,21 @@
     </script>
   </head>
   <body>
-    <div id="web-root"></div>
+    <div id="web-root">
+      <main class="terminay-bootstrap-loading" aria-busy="true" aria-live="polite">
+        <div class="terminay-bootstrap-loading__brand">
+          <svg class="terminay-bootstrap-loading__logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <rect x="1" y="1" width="22" height="22" rx="5" fill="#000000" stroke="none" />
+            <polygon points="12 4 4.5 7.75 12 11.5 19.5 7.75 12 4" />
+            <polyline points="4.5 15.25 12 19 19.5 15.25" />
+            <polyline points="4.5 11.5 12 15.25 19.5 11.5" />
+          </svg>
+          <div class="terminay-bootstrap-loading__dots" aria-hidden="true">
+            <span></span><span></span><span></span><span></span><span></span>
+          </div>
+        </div>
+      </main>
+    </div>
     <script type="module" src="/src/web/serverEntry.ts"></script>
   </body>
 </html>

@@ -94,7 +94,6 @@ code { border-radius: 6px; background: #0b1119; color: #d5e1ee; padding: 2px 5px
   width: 72px;
   height: 72px;
   border-radius: 18px;
-  box-shadow: 0 18px 48px rgba(0, 0, 0, .38);
 }
 
 .browser-host-shell__connection-brand {
