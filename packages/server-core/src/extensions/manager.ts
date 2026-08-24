@@ -1,5 +1,7 @@
-import type { ExtensionAgentBroker, ExtensionAgentTerminalAdmission, ExtensionAgentTerminalCancellation, ExtensionBroker, ExtensionHostLimits, ExtensionHostStatus, ExtensionInvocation, ExtensionLaunchDescriptor, ExtensionProfileBroker, ExtensionProviderInvocation, ExtensionSecretAccessBroker, ExtensionSshAgentBroker } from "./types.js";
+import type { ExtensionAgentBroker, ExtensionAgentTerminalAdmission, ExtensionAgentTerminalCancellation, ExtensionBroker, ExtensionDependencyCall, ExtensionHostLimits, ExtensionHostStatus, ExtensionInvocation, ExtensionLaunchDescriptor, ExtensionProfileBroker, ExtensionProviderInvocation, ExtensionSecretAccessBroker, ExtensionSshAgentBroker } from "./types.js";
 import { ExtensionHost } from "./host.js";
+import { ExtensionProviderVault } from "./providerVault.js";
+import type { ServerVaultService } from "../settings/vault.js";
 
 export interface ExtensionHostManagerOptions {
   readonly broker: ExtensionBroker;
@@ -10,6 +12,7 @@ export interface ExtensionHostManagerOptions {
   readonly secrets?: ExtensionSecretAccessBroker;
   readonly sshAgent?: ExtensionSshAgentBroker;
   readonly agents?: ExtensionAgentBroker;
+  readonly vault?: ServerVaultService;
 }
 
 /** Owns independent per-extension supervisors. No extension failure is allowed
@@ -18,14 +21,15 @@ export class ExtensionHostManager {
   private readonly hosts = new Map<string, ExtensionHost>();
   private readonly providerOwners = new Map<string, string>();
   private readonly agentProviderOwners = new Map<string, string>();
-  constructor(private readonly options: ExtensionHostManagerOptions) {}
+  private readonly providerVault: ExtensionProviderVault | undefined;
+  constructor(private readonly options: ExtensionHostManagerOptions) { this.providerVault = options.vault === undefined ? undefined : new ExtensionProviderVault(options.vault); }
 
   statuses(): readonly ExtensionHostStatus[] { return Object.freeze([...this.hosts.values()].map((host) => host.status()).sort((a, b) => a.extensionId.localeCompare(b.extensionId))); }
 
   async start(descriptor: ExtensionLaunchDescriptor): Promise<ExtensionHostStatus> {
     let host = this.hosts.get(descriptor.extensionId);
     if (host === undefined) {
-      host = new ExtensionHost(descriptor.extensionId, this.options);
+      host = new ExtensionHost(descriptor.extensionId, { ...this.options, dependencies: { call: (request) => this.callDependency(request) }, ...(this.providerVault === undefined ? {} : { providerVault: this.providerVault }) });
       this.hosts.set(descriptor.extensionId, host);
     }
     await host.start(descriptor);
@@ -74,6 +78,18 @@ export class ExtensionHostManager {
     const host = this.hosts.get(extensionId);
     if (host === undefined) return Promise.reject(new Error("extension host does not exist"));
     return host.invoke(invocation);
+  }
+
+  private callDependency(call: ExtensionDependencyCall) {
+    const owner = this.providerOwners.get(call.request.providerId);
+    if (owner === undefined) return Promise.reject(new Error("provider dependency target is unavailable"));
+    if (owner === call.callerExtensionId) return Promise.reject(new Error("provider dependency target must be a declared external extension"));
+    const caller = this.hosts.get(call.callerExtensionId); const target = this.hosts.get(owner);
+    const callerDescriptor = caller?.launchDescriptor();
+    if (callerDescriptor === undefined || target === undefined) return Promise.reject(new Error("provider dependency host is unavailable"));
+    const dependency = callerDescriptor.extensionDependencies?.find((value) => value.extensionId === owner);
+    if (dependency === undefined) return Promise.reject(new Error("provider dependency extension is not declared"));
+    return target.invokeDependency(call.request.providerId, { operation: call.request.operation, payload: call.request.payload, caller: { extensionId: call.callerExtensionId, providerId: call.callerProviderId } }, call.context, call.signal);
   }
 
   async stop(extensionId: string): Promise<void> {

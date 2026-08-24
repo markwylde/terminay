@@ -1,7 +1,11 @@
 import type {
   AgentLifecycleEvent,
   AgentProviderContribution,
+  ExtensionDependency,
   JsonValue,
+  ProjectEnvironmentContribution,
+  ProviderDependencyCallContext,
+  ProviderDependencyRequest,
   ProviderDefinition,
   ProviderRuntimeMethod,
 } from "@terminay/extension-api";
@@ -134,6 +138,8 @@ export interface ExtensionLaunchDescriptor {
    * after public manifest validation; the host uses it to reject undeclared
    * child registrations before they become live. */
   readonly agentProviders?: readonly AgentProviderContribution[];
+  readonly projectEnvironmentProviders?: readonly ProjectEnvironmentContribution[];
+  readonly extensionDependencies?: readonly ExtensionDependency[];
 }
 
 export interface ExtensionHostStatus {
@@ -169,6 +175,18 @@ export interface ExtensionBrokerRequest {
   readonly extensionId: string;
   readonly operation: "log" | "secret.resolve" | "profile.get" | "agent.list" | "agent.sign" | "provider.call";
   readonly payload: unknown;
+}
+
+export interface ExtensionDependencyCall {
+  readonly callerExtensionId: string;
+  readonly callerProviderId: string;
+  readonly request: ProviderDependencyRequest;
+  readonly context: Omit<ProviderDependencyCallContext, "signal">;
+  readonly signal: AbortSignal;
+}
+
+export interface ExtensionDependencyRouter {
+  call(request: ExtensionDependencyCall): Promise<JsonValue>;
 }
 
 export interface ExtensionProfileSnapshot {
