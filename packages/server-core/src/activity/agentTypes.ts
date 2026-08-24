@@ -6,17 +6,7 @@
  * provider-specific configuration details.
  */
 
-/**
- * Legacy provider ids are kept so existing snapshots and journal adapters are
- * wire-compatible while built-in providers move behind extensions. New
- * providers use a manifest-owned, namespaced id such as
- * `com.terminay.agent-codex/codex`.
- */
-export const LEGACY_AGENT_PROVIDERS = ["codex", "claude-code", "cursor", "omp"] as const;
-/** @deprecated Use `LEGACY_AGENT_PROVIDERS` when a closed legacy list is required. */
-export const AGENT_PROVIDERS = LEGACY_AGENT_PROVIDERS;
-export type LegacyAgentProvider = (typeof LEGACY_AGENT_PROVIDERS)[number];
-/** A bounded legacy id or a manifest-owned namespaced extension provider id. */
+/** A bounded, manifest-owned extension provider id. */
 export type AgentProvider = string;
 
 export const AGENT_STATES = ["working", "waiting", "blocked", "done", "idle"] as const;
@@ -126,9 +116,7 @@ export function isExtensionAgentProvider(value: unknown): value is AgentProvider
 }
 
 export function isAgentProvider(value: unknown): value is AgentProvider {
-  return typeof value === "string" && (
-    (LEGACY_AGENT_PROVIDERS as readonly string[]).includes(value) || isExtensionAgentProvider(value)
-  );
+  return isExtensionAgentProvider(value);
 }
 
 export function isAgentState(value: unknown): value is AgentState {

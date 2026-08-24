@@ -4,8 +4,6 @@ export * from "./reducer.js";
 export * from "./service.js";
 export * from "./agentTypes.js";
 export * from "./agentStore.js";
-export * from "./agentDrivers.js";
-export * from "./agentJournal.js";
 export * from "./agentService.js";
 export * from "./extensionAgentBridge.js";
 export * from "./extensionAgentRuntime.js";

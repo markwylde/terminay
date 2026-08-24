@@ -11,7 +11,8 @@ export type AgentClientState = "working" | "waiting" | "blocked" | "done" | "idl
 export interface AgentClientEntry {
   readonly entryId: string;
   readonly kind: "root" | "subagent";
-  readonly provider: "codex" | "claude-code" | "cursor" | "omp";
+  /** Manifest-owned extension provider id. */
+  readonly provider: string;
   readonly agentId: string;
   readonly sessionId: string;
   readonly activationTerminalSessionId: string;
@@ -238,7 +239,7 @@ export class AgentStatusClient {
   }
 
   private normalizeEntry(value: AgentClientEntry): AgentClientEntry {
-    if (!value || typeof value !== "object" || !ID_PATTERN.test(value.entryId) || !ID_PATTERN.test(value.sessionId) || !ID_PATTERN.test(value.activationTerminalSessionId) || (value.provider !== "codex" && value.provider !== "claude-code" && value.provider !== "cursor" && value.provider !== "omp") || (value.kind !== "root" && value.kind !== "subagent") || !["working", "waiting", "blocked", "done", "idle"].includes(value.state) || typeof value.active !== "boolean" || typeof value.unread !== "boolean") throw new TypeError("agent entry is invalid");
+    if (!value || typeof value !== "object" || !ID_PATTERN.test(value.entryId) || !ID_PATTERN.test(value.sessionId) || !ID_PATTERN.test(value.activationTerminalSessionId) || !isProviderId(value.provider) || (value.kind !== "root" && value.kind !== "subagent") || !["working", "waiting", "blocked", "done", "idle"].includes(value.state) || typeof value.active !== "boolean" || typeof value.unread !== "boolean") throw new TypeError("agent entry is invalid");
     return Object.freeze({ ...value });
   }
 
@@ -247,6 +248,11 @@ export class AgentStatusClient {
   }
 
   private publish(): void { for (const listener of this.listeners) { try { listener(this.current); } catch { /* observer failures cannot change projection */ } } }
+}
+
+function isProviderId(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 192
+    && /^[a-z0-9](?:[a-z0-9.-]{1,126}[a-z0-9])?\/[a-z][a-z0-9-]{0,63}$/u.test(value);
 }
 
 function freezeSnapshot(value: { readonly revision: number; readonly cursor: string; readonly entries: Readonly<Record<string, AgentClientEntry>> }): AgentClientSnapshot {
