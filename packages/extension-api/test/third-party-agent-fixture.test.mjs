@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -20,14 +20,17 @@ test("independent third-party fixture validates, packs, activates, and maps life
 
   const temporary = await mkdtemp(join(tmpdir(), "terminay-third-party-agent-"));
   t.after(() => rm(temporary, { recursive: true, force: true }));
-  const { stdout } = await execFileAsync("npm", ["pack", "--json", "--pack-destination", temporary], { cwd: packageRoot });
-  const packed = JSON.parse(stdout)[0];
-  assert.ok(packed.files.some((file) => file.path === "dist/extension.js"));
-  assert.ok(packed.files.some((file) => file.path === "README.md"));
+  await execFileAsync("npm", ["pack", "--ignore-scripts", "--pack-destination", temporary], { cwd: packageRoot });
+  const archives = (await readdir(temporary)).filter((name) => name.endsWith(".tgz"));
+  assert.equal(archives.length, 1);
+  const archive = join(temporary, archives[0]);
+  const { stdout: archiveListing } = await execFileAsync("tar", ["-tzf", archive]);
+  assert.match(archiveListing, /^package\/dist\/extension\.js$/m);
+  assert.match(archiveListing, /^package\/README\.md$/m);
 
   const extracted = join(temporary, "package");
   await mkdir(extracted, { recursive: true });
-  await execFileAsync("tar", ["-xzf", join(temporary, packed.filename), "-C", extracted, "--strip-components=1"]);
+  await execFileAsync("tar", ["-xzf", archive, "-C", extracted, "--strip-components=1"]);
   await mkdir(join(extracted, "node_modules", "@terminay"), { recursive: true });
   await symlink(sdkRoot, join(extracted, "node_modules", "@terminay", "extension-api"), "dir");
 
