@@ -381,21 +381,36 @@ async function exercisePackagedHostRuntime(label, artifactRoot) {
   }
 }
 
-test('Electron and standalone packaged resources pass the complete offline built-in lifecycle', async () => {
-  const electron = process.env.TERMINAY_ELECTRON_BUILT_INS
-  const standalone = process.env.TERMINAY_STANDALONE_BUILT_INS
-  assert.ok(electron, 'TERMINAY_ELECTRON_BUILT_INS must point at the packaged Electron resource')
-  assert.ok(standalone, 'TERMINAY_STANDALONE_BUILT_INS must point at the packaged standalone resource')
-  const electronInventory = await exercisePackagedRoot('electron', electron)
-  const standaloneInventory = await exercisePackagedRoot('standalone', standalone)
-  assert.deepEqual(standaloneInventory, electronInventory, 'Electron and standalone must ship one identical inventory')
+const target = process.env.TERMINAY_PACKAGED_LIFECYCLE_TARGET ?? 'both'
+
+if (!['both', 'electron', 'standalone'].includes(target)) {
+  throw new Error('TERMINAY_PACKAGED_LIFECYCLE_TARGET must be both, electron, or standalone')
+}
+
+function requiredArtifactRoot(name) {
+  const root = process.env[name]
+  assert.ok(root, `${name} must point at the packaged runtime resource`)
+  return root
+}
+
+test('selected packaged resources pass the complete offline built-in lifecycle', async () => {
+  const inventories = []
+  if (target === 'both' || target === 'electron') {
+    inventories.push(await exercisePackagedRoot('electron', requiredArtifactRoot('TERMINAY_ELECTRON_BUILT_INS')))
+  }
+  if (target === 'both' || target === 'standalone') {
+    inventories.push(await exercisePackagedRoot('standalone', requiredArtifactRoot('TERMINAY_STANDALONE_BUILT_INS')))
+  }
+  if (inventories.length === 2) {
+    assert.deepEqual(inventories[1], inventories[0], 'Electron and standalone must ship one identical inventory')
+  }
 })
 
-test('Electron and standalone packaged resources activate staged extensions and admit lifecycle through real extension children', async () => {
-  const electron = process.env.TERMINAY_ELECTRON_BUILT_INS
-  const standalone = process.env.TERMINAY_STANDALONE_BUILT_INS
-  assert.ok(electron, 'TERMINAY_ELECTRON_BUILT_INS must point at the packaged Electron resource')
-  assert.ok(standalone, 'TERMINAY_STANDALONE_BUILT_INS must point at the packaged standalone resource')
-  await exercisePackagedHostRuntime('electron', electron)
-  await exercisePackagedHostRuntime('standalone', standalone)
+test('selected packaged resources activate staged extensions and admit lifecycle through real extension children', async () => {
+  if (target === 'both' || target === 'electron') {
+    await exercisePackagedHostRuntime('electron', requiredArtifactRoot('TERMINAY_ELECTRON_BUILT_INS'))
+  }
+  if (target === 'both' || target === 'standalone') {
+    await exercisePackagedHostRuntime('standalone', requiredArtifactRoot('TERMINAY_STANDALONE_BUILT_INS'))
+  }
 })

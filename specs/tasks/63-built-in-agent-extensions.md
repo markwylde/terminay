@@ -580,7 +580,7 @@ the SDK suite passed 44 tests; and the agent boundary suite passed 2/2.
   projection. The bridge bytes fix and declared `CODEX_HOME` observation input
   are covered by focused tests alongside that E2E artifact. This closes the
   exact-dev gate only; broader Docker/release gates remain below.
-- [x] Verify the packaged Electron/standalone runtime activates the staged
+- [ ] Verify the packaged Electron/standalone runtime activates the staged
   agent extensions, admits their lifecycle, and survives restart/disable/
   override/rollback on supported architectures.
 
@@ -595,6 +595,11 @@ the SDK suite passed 44 tests; and the agent boundary suite passed 2/2.
     corrupted-artifact failure isolation.
   - [x] Admit a Codex terminal in a packaged runtime and observe its canonical
     provider lifecycle through the packaged extension host.
+  - [x] Exercise the real macOS arm64 Electron resource tree and matching
+    standalone payload.
+  - [x] Exercise a clean Linux arm64 standalone archive payload.
+  - [ ] Exercise real Linux x64 Electron and standalone payloads on a native
+    Linux x64 runner.
 - [ ] Verify Docker's clean dependency manifests install and stage all six
   package closures without relying on local `node_modules` or developer state.
 - [ ] Run the complete `npm run test:e2e` through the required Docker-isolated
@@ -612,6 +617,33 @@ the canonical agent store, and proves restart disablement, npm override
 activation, bundled-floor rollback, corrupt-artifact isolation, and byte-equal
 Electron/standalone inventories. The remaining unchecked tests are broader
 clean-install and aggregate gates, not this release-runtime proof.
+
+Supported-architecture evidence (2026-08-24): the authoritative matrix is
+the initial distribution decision in
+[`server-foundation`](../decisions/server-foundation.md): Desktop is macOS
+arm64 and GNU/Linux x64; standalone Server is GNU/Linux x64 and arm64 on a
+Debian 12-compatible, glibc 2.36-or-newer host. macOS x64, Linux arm64
+Desktop, Windows, standalone macOS/Windows, and Alpine/musl are explicitly
+outside that matrix. The earlier native macOS arm64 package matrix passed 2/2
+in 13.1 seconds. A fresh `Dockerfile.e2e` Linux arm64 build then reported
+`uname -m` as `aarch64` and Node as `linux/arm64`; it rebuilt/staged all six
+extensions, `npm pack`ed and extracted the standalone Server payload, and the
+standalone-only lifecycle matrix passed 2/2 in 16.4 seconds. That is direct
+clean-container artifact and host-lifecycle evidence, not a claim of a hosted
+native release-runner qualification.
+
+The same local Docker/Podman path does **not** prove Linux x64 on this Darwin
+arm64 host. Its `--platform linux/amd64` clean image completed dependency
+installation and extension staging, then QEMU terminated with signal 11 while
+running `npm run build:app` (Docker build exit 139), before a Linux Electron
+package or lifecycle test existed. This is an emulation failure, not a product
+failure or x64 test pass. `.github/workflows/ci.yml` therefore adds the
+`packaged-linux-built-in-lifecycle` matrix: native `ubuntu-24.04` x64 packages
+the Linux Electron resource and extracted standalone package, while native
+`ubuntu-24.04-arm` validates the extracted standalone payload. Both require a
+clean `npm ci` and assert Node and `uname` architectures before the offline
+lifecycle test. Those CI executions remain required evidence, so the
+supported-architecture parent gate remains open.
 
 #### Original aggregate gates and final hygiene
 
