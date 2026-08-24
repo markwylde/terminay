@@ -26,6 +26,7 @@ import { AgentStatusService } from '../packages/server-core/src/activity/agentSe
 import {
 	createExtensionAgentBroker,
 	ExtensionAgentRuntimeRegistry,
+	type ExtensionAgentAdmissionFailure,
 } from '../packages/server-core/src/activity/index';
 import type { ActivitySessionIdentity } from '../packages/server-core/src/activity/service';
 import { TerminalActivityService } from '../packages/server-core/src/activity/service';
@@ -48,7 +49,7 @@ import {
 	createDefaultExtensionManagement,
 	createThisServerAgentObservationAdapter,
 	createProductionExtensionManagement,
-	ExtensionProjectEnvironmentRuntime,
+	registerActivatedExtensionProjectEnvironmentRuntimes,
 } from '../packages/server-core/src/extensions/index';
 import {
 	CanonicalProjectPathResolver,
@@ -263,6 +264,12 @@ export interface ServerTerminalAuthorityOptions {
 	/** Metadata-only observation of bounded protocol delivery pressure. */
 	readonly onDeliveryDiagnostic?: (
 		diagnostic: ConnectionDeliveryDiagnostic,
+	) => void;
+	/** Metadata-only report when a matched provider cannot begin observing a
+	 * terminal. The default is written to Desktop diagnostics; no raw extension
+	 * error, journal, path, prompt, or output is exposed. */
+	readonly onAgentAdmissionFailure?: (
+		failure: ExtensionAgentAdmissionFailure,
 	) => void;
 	/** Metadata-only observer for failed server-owned filesystem operations. */
 	readonly onFileOperationFailure?: (
@@ -642,6 +649,16 @@ export class ServerTerminalAuthority {
 						agents: this.agents,
 						projectEnvironmentRouter,
 						topologySignature: (context, signal) => observation.topologySignature(context, signal),
+						onAdmissionFailure: (failure) => {
+							// stderr is captured by DesktopDiagnostics in production. Keep this
+							// record deliberately metadata-only so a broken extension is
+							// observable without leaking provider-private data.
+							process.stderr.write(`[terminay-agent-admission] ${JSON.stringify(failure)}\n`);
+							try { options.onAgentAdmissionFailure?.(failure); } catch { /* host diagnostics cannot affect terminal fallback */ }
+						},
+					});
+					management.hosts.onContributionsChanged(() => {
+						extensionAgents?.reobserveExistingTerminals();
 					});
 				}
 				return { management, extensionAgents };
@@ -649,14 +666,11 @@ export class ServerTerminalAuthority {
 		const extensionManagement = extensionRuntime.management;
 		const extensionAgentRuntime = extensionRuntime.extensionAgents;
 		if (extensionManagement !== undefined && options.vault !== undefined)
-			projectEnvironmentRegistry.register(
-				new ExtensionProjectEnvironmentRuntime(
-					'com.terminay.ssh/connection',
-					['terminal', 'filesystem'],
-					extensionManagement.hosts,
-					() => projectEnvironments.state,
-				),
-			);
+			registerActivatedExtensionProjectEnvironmentRuntimes({
+				registry: projectEnvironmentRegistry,
+				hosts: extensionManagement.hosts,
+				snapshot: () => projectEnvironments.state,
+			});
 		const extensionProfiles =
 			options.vault === undefined || extensionManagement === undefined
 				? undefined

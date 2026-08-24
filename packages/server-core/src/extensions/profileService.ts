@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { JsonValue, ProtocolId } from "@terminay/protocol";
-import type { ProviderDefinition, ProvisioningResult } from "@terminay/extension-api";
+import type { ProjectEnvironmentContribution, ProviderDefinition, ProvisioningResult } from "@terminay/extension-api";
 import type { ProjectEnvironmentProviderControl, ProviderControlContext } from "../projectEnvironment/operations.js";
 import type { ProjectEnvironmentRepository } from "../projectEnvironment/repository.js";
 import type { EnvironmentProfile, ProjectEnvironmentRecord } from "../projectEnvironment/types.js";
@@ -56,7 +56,9 @@ export class ExtensionProfileService implements ExtensionProfileBroker, ProjectE
       const now = Date.now();
       const profile: EnvironmentProfile = { id: profileId, providerId, name: stringValue(values["display-name"], definition.displayName), endpointSummary: stringValue(values.hostname ?? values["base-url"], definition.displayName), ...(typeof values["default-root"] === "string" && values["default-root"] ? { defaultRoot: values["default-root"] } : {}), activeRevision: 1, recommendedRevision: 1, revisions: { "1": { revision: 1, createdAt: now, configuration, secretReferences: secretFields.map((fieldId, index) => `${fieldId}=${secretIds[index]}`) } }, archived: false };
       this.pending.set(profileId, { extensionId, profile });
-      const environments = extensionId === "com.terminay.ssh" ? [await this.createSshEnvironment(definition, profile, context)] : [];
+      const environments = this.profileSaveContribution(providerId)?.profileSave?.createEnvironment === true
+        ? [await this.createProfileEnvironment(definition, profile, context)]
+        : [];
       return { profile, environments };
     } catch (error) {
       for (const fieldId of secretFields) this.vault.extensionSecrets.removeBinding(extensionId, profileId, fieldId);
@@ -102,7 +104,7 @@ export class ExtensionProfileService implements ExtensionProfileBroker, ProjectE
 
   async validateRoot(environment: ProjectEnvironmentRecord, root: string | undefined): Promise<string> { return root ?? environment.defaultRoot ?? "~"; }
 
-  private async createSshEnvironment(definition: ProviderDefinition, profile: EnvironmentProfile, context: ProviderControlContext): Promise<ProjectEnvironmentRecord> {
+  private async createProfileEnvironment(definition: ProviderDefinition, profile: EnvironmentProfile, context: ProviderControlContext): Promise<ProjectEnvironmentRecord> {
     const environmentId = `environment:${randomUUID()}`;
     const result = await this.invoke<ProvisioningResult>(profile.providerId, "createEnvironment", { environmentId, displayName: profile.name, profileId: profile.id, values: {} }, context);
     const ready = result.state === "ready";
@@ -111,6 +113,7 @@ export class ExtensionProfileService implements ExtensionProfileBroker, ProjectE
   }
 
   private definition(providerId: string): ProviderDefinition { const value = this.hosts.providerDefinitions().find((item) => item.providerId === providerId); if (value === undefined) throw new Error("project environment provider is unavailable"); return value; }
+  private profileSaveContribution(providerId: string): ProjectEnvironmentContribution | undefined { return this.hosts.activatedProjectEnvironmentContributions().find((item) => item.id === providerId); }
   private owner(providerId: string): string { const status = this.hosts.statuses().find((item) => item.providers?.some((provider) => provider.providerId === providerId)); if (status === undefined) throw new Error("project environment provider is unavailable"); return status.extensionId; }
   private invoke<T>(providerId: string, callback: Parameters<ExtensionHostManager["invokeProvider"]>[0]["callback"], request: JsonValue, context: ProviderControlContext): Promise<T> { return this.hosts.invokeProvider({ providerId, callback, request, deadlineMs: context.deadline === undefined ? 30_000 : Math.max(1, context.deadline - Date.now()), ...(context.idempotencyKey === undefined ? {} : { idempotencyKey: context.idempotencyKey }), ...(context.expectedRevision === undefined ? {} : { expectedRevision: context.expectedRevision }), signal: context.signal }) as Promise<T>; }
 }

@@ -1,0 +1,55 @@
+{
+  "name": "terminay-agent-claude-code",
+  "version": "0.1.0",
+  "description": "Official Claude Code agent-status provider for Terminay",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:markwylde/terminay.git",
+    "directory": "extensions/agent-claude-code"
+  },
+  "publishConfig": { "access": "public", "provenance": true },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "test:compat": "npm run build && node --test test/compat.test.mjs",
+    "test:packed": "npm run build && node test/packed.test.mjs",
+    "test:real-cli": "npm run build && TERMINAY_TEST_REAL_CLAUDE_CODE=1 node test/real-cli-smoke.mjs"
+  },
+  "engines": { "node": ">=24" },
+  "peerDependencies": { "@terminay/extension-api": "^1.1.0" },
+  "devDependencies": {
+    "@terminay/extension-api": "^1.1.0",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3"
+  },
+  "terminay": {
+    "manifestVersion": 1,
+    "id": "com.terminay.agent.claude-code",
+    "displayName": "Claude Code",
+    "description": "Show Claude Code CLI sessions in Terminay's Agents sidebar.",
+    "api": "^1.1.0",
+    "engines": { "terminay": ">=1.0.0", "node": ">=24" },
+    "entrypoint": "dist/index.js",
+    "platforms": ["darwin", "linux"],
+    "permissions": ["agent-observation"],
+    "contributes": {
+      "agentProviders": [{
+        "id": "com.terminay.agent.claude-code/cli",
+        "displayName": "Claude Code",
+        "description": "Claude Code project-session journals.",
+        "icon": "terminal",
+        "platforms": ["darwin", "linux"],
+        "processMatchers": [{ "executableName": "claude" }],
+        "mappings": [{ "mappingVersion": "0.1", "providerVersionRange": ">=0" }],
+        "requiredEnvironmentCapabilities": ["process-observation", "agent-journal"]
+      }]
+    }
+  }
+}

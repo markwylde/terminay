@@ -70,7 +70,7 @@ test('Desktop and browser File menus converge on shared management commands',()=
 
 test('Extensions use the ordinary selected-server Settings surface',()=>{
 	assert.match(settings,/id: 'extensions'/);
-	assert.match(settings,/ExtensionSettingsSection applicationClient=\{applicationClient\}/);
+	assert.match(settings,/<ExtensionSettingsSection\s+applicationClient=\{applicationClient\}\s+serverName=\{serverIdentity\}/);
 	assert.match(settings,/activeCategoryId === 'extensions' \? undefined/);
 	assert.match(extensionSettings,/new ExtensionsClient\(new TerminayClientFacade\(applicationClient\)\)/);
 	assert.match(extensionSettings,/className="settings-category-header"/);
@@ -87,7 +87,9 @@ test('Project Environments use a full auxiliary window rather than an editor dia
 	assert.doesNotMatch(surfaces,/ProjectEnvironmentSurfaceDialog|aria-modal|role="dialog"|surface-backdrop/);
 	assert.doesNotMatch(surfaces,/ExtensionManager|ExtensionsClient/);
 	assert.doesNotMatch(app,/ProjectEnvironmentSurfaceDialog|projectEnvironmentSurface/);
-	assert.match(desktop,/openProjectEnvironmentsWindow\(event\.sender,intent\)/);
+	assert.match(desktop,/'project-environments': 'Project Environments'/);
+	assert.match(desktop,/canonicalAuxiliaryRequest/);
+	assert.match(desktop,/presentCanonicalAuxiliaryRoute/);
 	assert.match(environmentManager,/sidebarAction=/);
 	assert.match(environmentManager,/Add connection/);
 	assert.match(environmentManager,/\{detail \?\? \(/);
@@ -98,8 +100,11 @@ test('installed provider actions open the exact profile or environment journey',
 	assert.match(app,/projectEnvironmentProviders\.flatMap/);
 	assert.match(app,/Create new Puzed VM/);
 	assert.match(split,/createActions\.map/);
-	assert.match(desktop,/desktop:project-environments-host:intent/);
-	assert.match(surfaces,/subscribeIntent/);
+	assert.match(browser,/params\.set\('auxiliary', 'project-environments'\)/);
+	assert.match(browser,/params\.set\('provider', request\.intent\.providerId\)/);
+	assert.match(browser,/params\.set\('mode', request\.intent\.mode\)/);
+	assert.match(browser,/initialIntent=\{route\.intent\}/);
+	assert.match(surfaces,/initialIntent \?\? intentFromLocation\(\)/);
 });
 
 test('remote project selection invokes the server and never falls back to Local',()=>{

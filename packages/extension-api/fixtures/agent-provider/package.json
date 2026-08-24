@@ -23,6 +23,7 @@
         "icon": "terminal",
         "processMatchers": [{ "executableName": "fixture-agent" }],
         "mappings": [{ "mappingVersion": "1", "providerVersionRange": ">=1" }],
+        "requiredEnvironmentVariables": ["FIXTURE_AGENT_HOME"],
         "requiredEnvironmentCapabilities": ["process-observation", "filesystem-observation", "agent-journal"]
       }]
     }

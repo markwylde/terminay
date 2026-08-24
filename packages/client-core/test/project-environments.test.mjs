@@ -47,3 +47,13 @@ test('clients reject unbounded or malformed server DTOs', async () => {
 	const extensions=new ExtensionsClient({query:async()=>({revision:0,extensions:[],catalogue:new Array(513).fill({})}),command:async()=>null});
 	await assert.rejects(extensions.list(),/exceeds/);
 });
+
+test('extension client never presents an enabled unhosted extension as installed', async () => {
+	const client=new ExtensionsClient({
+		async query(){return {authorityLabel:'Production',revision:4,catalogue:[],extensions:[{extensionId:'dev.example.pending',packageName:'pending-extension',displayName:'Pending extension',description:'',official:false,enabled:true,compatible:true,activeVersion:'1.0.0',runtimeState:'activation-required',failureMessage:'Host has not started'}]};},
+		async command(){return null;},
+	});
+	const extension=(await client.list()).extensions[0];
+	assert.equal(extension.state,'pending');
+	assert.equal(extension.failureMessage,'Host has not started');
+});

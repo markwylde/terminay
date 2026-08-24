@@ -52,6 +52,7 @@ import {
 } from '../apps/terminay-server/src/index';
 import { loadOrCreateHostedHostKey } from '../apps/terminay-server/src/remote/hostedHostKey';
 import { parseHostedIceServers } from '../apps/terminay-server/src/remote/hostedPeerLifecycle';
+import type { AgentLifecycleEvent } from '../packages/extension-api/src/index';
 import { ParakeetRuntime } from '../packages/server-core/src/aiService/parakeetRuntime';
 import { MacroRepository } from '../packages/server-core/src/macroService/repository';
 import {
@@ -152,6 +153,7 @@ import {
 } from './serverUiHost';
 import { secureSession } from './sessionSecurity';
 import { assertTrustedIpcSender } from './trustedIpcSender';
+import { resolveDesktopUserDataPath } from './userDataNamespace';
 import {
 	ElectronSafeStorageVaultAdapter,
 	FileSafeStorageVaultRepository,
@@ -184,13 +186,18 @@ process.env.APP_ROOT = path.join(__dirname, '..');
 app.setName('Terminay');
 
 const customUserDataPath = process.env.TERMINAY_USER_DATA_DIR?.trim();
-if (customUserDataPath) {
-	app.setPath('userData', customUserDataPath);
+const resolvedUserDataPath = resolveDesktopUserDataPath({
+	appDataPath: app.getPath('appData'),
+	...(customUserDataPath ? { customPath: customUserDataPath } : {}),
+	isPackaged: app.isPackaged,
+});
+if (resolvedUserDataPath) {
+	app.setPath('userData', resolvedUserDataPath);
 }
 
 try {
-	if (process.env.TERMINAY_TEST === '1' && customUserDataPath) {
-		app.setAppLogsPath(path.join(customUserDataPath, 'logs'));
+	if (process.env.TERMINAY_TEST === '1' && resolvedUserDataPath) {
+		app.setAppLogsPath(path.join(resolvedUserDataPath, 'logs'));
 	} else {
 		app.setAppLogsPath();
 	}
@@ -4235,13 +4242,14 @@ if (process.env.TERMINAY_TEST === '1') {
 	);
 
 	ipcMain.handle(
-		'test:emit-agent-journal-record',
+		'test:publish-agent-lifecycle',
 		async (
 			event,
 			payload?: {
 				provider?: unknown;
 				terminalSessionId?: unknown;
-				record?: unknown;
+				providerSessionId?: unknown;
+				events?: unknown;
 			},
 		) => {
 			assertBoundServerUiEvent(event);
@@ -4254,26 +4262,30 @@ if (process.env.TERMINAY_TEST === '1') {
 			) {
 				throw new Error('A terminal session id is required.');
 			}
-			if (
-				!payload.record ||
-				typeof payload.record !== 'object' ||
-				Array.isArray(payload.record)
-			) {
-				throw new Error('An agent journal record is required.');
-			}
+			if (typeof payload?.providerSessionId !== 'string' || payload.providerSessionId.length === 0)
+				throw new Error('An agent provider session id is required.');
+			if (!Array.isArray(payload.events) || payload.events.length === 0)
+				throw new Error('Agent lifecycle events are required.');
+			const events = payload.events as AgentLifecycleEvent[];
 			const serverSession = serverTerminalAuthority?.get(
 				payload.terminalSessionId,
 			);
 			if (serverSession !== undefined) {
-				return serverTerminalAuthority!.agents.ingestJournalRecord(
+				serverTerminalAuthority!.agents.claimExtensionProvider(
 					{
 						serverId: serverSession.serverId,
 						projectId: serverSession.projectId,
 						sessionId: serverSession.id,
 					},
 					payload.provider,
-					payload.record as Record<string, unknown>,
 				);
+				return serverTerminalAuthority!.agents.ingestExtensionLifecycle(
+					{ serverId: serverSession.serverId, projectId: serverSession.projectId, sessionId: serverSession.id },
+					payload.provider,
+					'e2e',
+					{ providerSessionId: payload.providerSessionId, mappingVersion: 'e2e', fingerprint: { kind: 'test', process: { id: `e2e:${serverSession.id}` }, metadata: { source: 'electron-e2e' } } },
+					events,
+				).then((result) => result.acceptedEventCount === events.length);
 			}
 			throw new Error('The terminal session is not available.');
 		},

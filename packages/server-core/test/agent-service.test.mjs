@@ -56,6 +56,25 @@ test("provider release retires only its exact terminal lifecycle run", async () 
   await agents.stop();
 });
 
+test("a resumed native child reuses its exact row and preserves root isolation", async () => {
+  const { agents } = await fixture();
+  assert.deepEqual(await agents.ingestExtensionLifecycle(identity, providerId, "1", binding, [
+    { kind: "session.started", title: "Root" },
+    { kind: "subagent.started", subagentId: "child-1", title: "First child", model: { id: "model-a" } },
+    { kind: "subagent.done", subagentId: "child-1", outcome: "success" },
+    { kind: "subagent.started", subagentId: "child-1", title: "Resumed child", model: { id: "model-b" } },
+    { kind: "agent.metadata", agentId: "child-1", title: "Renamed child", model: { id: "model-c" } },
+  ]), { acceptedEventCount: 5, rejectedEventCount: 0 });
+  const entries = Object.values(agents.getSnapshot().entries);
+  assert.equal(entries.length, 2);
+  const child = entries.find((entry) => entry.kind === "subagent");
+  assert.equal(child?.active, true);
+  assert.equal(child?.displayName, "Renamed child");
+  assert.equal(child?.model?.id, "model-c");
+  assert.equal(child?.parentEntryId, entries.find((entry) => entry.kind === "root")?.entryId);
+  await agents.stop();
+});
+
 test("lifecycle publications reject invalid transitions atomically with sequence state unchanged", async () => {
   const { agents } = await fixture();
   const before = agents.getSnapshot();

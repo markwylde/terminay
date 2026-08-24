@@ -1,4 +1,8 @@
-# Extension API v1 reference
+# Extension API v1.2 reference
+
+Directory discovery and dynamic agent child sources were introduced in 1.2.
+An extension using either must declare `"api": "^1.2.0"` in its Terminay
+manifest; extensions using the prior surface remain compatible with this host.
 
 Import only from `@terminay/extension-api`. The package's generated TypeScript
 declarations are canonical; this page explains the callable surface and
@@ -19,10 +23,6 @@ Registration contains a declarative `ProviderDefinition` and a `ProviderRuntime`
 The definition's id, display metadata, icon, capabilities, `profileForm`, and
 `createForm` must agree with the manifest contribution.
 
-## Runtime callbacks
-
-| Method | Purpose | Result |
-| --- | --- | --- |
 ### Profile-save environment creation
 
 Saving a profile creates only the profile by default. A provider may opt in to
@@ -33,6 +33,10 @@ declaration: the host honours it only after that exact provider has registered
 at activation. Providers without the declaration—including provisioners whose
 `createEnvironment` needs additional create-form values—are never guessed.
 
+## Runtime callbacks
+
+| Method | Purpose | Result |
+| --- | --- | --- |
 | `testProfile` | Validate non-secret values and brokered connectivity. | `ValidationIssue[]` |
 | `resolveOptions` | Bounded async options for a declared source. | `OptionSourceResult` |
 | `createEnvironment` | Create/bind an environment id assigned by the host. | `ProvisioningResult` |
@@ -192,6 +196,19 @@ The file broker has three deliberately narrow discovery operations:
 All three requests reject traversal, backslashes, unsafe extensions, and roots
 outside their declared constraint at the host boundary.
 
+For a provider-owned multi-journal format, first resolve an opaque directory
+root with `resolveHomeDirectory()` or
+`resolveDirectoryRelativeToEnvironment()`. Then call
+`listDirectory(root, { extensions, maxDepth, maxEntries, maxBytes })`; every
+limit and at least one suffix is mandatory. Results contain opaque regular-file
+handles plus a relative-path fact, size, and optional timestamp. They cannot
+be used to traverse, read, or follow another directory. `watchDirectory()` has
+the same limits, yields the initial snapshot and subsequent changed snapshots,
+and must be disposed. It is the public mechanism for a provider to discover a
+late native child without polling its own local filesystem or re-binding the
+terminal. Remote routing either provides the same scoped capability or fails;
+it never falls back to the server's local disk.
+
 An agent-provider contribution may additionally declare bounded
 `requiredEnvironmentVariables` names. `observation.processes.environment(names)`
 then returns only declared, bounded facts from the exact terminal foreground
@@ -217,11 +234,31 @@ tool, wait, metadata, completion, exit, and subagent lifecycle facts. The host
 assigns canonical order and rejects invalid transitions, stale contexts,
 cross-terminal handles, and oversized values.
 
+`createJsonlRecordDecoder(maxRecordBytes?)` is the public plain-data decoder for
+provider tests and non-host adapters. It buffers incomplete lines and split
+UTF-8 bytes, discards an oversized record through its terminating newline, and
+accepts `push(bytes, true)` (or `reset()`) after truncate or atomic replacement.
+It never emits a partial or malformed record. The host-driven harness checks
+the terminal cancellation signal before acquiring a watcher, between chunks,
+and before each mapping callback, and disposes every acquired watcher in a
+`finally` path. Providers must also pass `terminal.signal` to broker calls.
+
+`selectAgentMapping()` chooses the greatest declared semantic mapping no newer
+than a recognized provider version. Versions below the oldest mapping use that
+oldest conservative mapping; unparseable future labels use the newest declared
+mapping so the mapper can ignore unknown records. `safeAgentString()` rejects,
+rather than truncates, unsafe identity text. `createAgentLifecyclePublisher()`
+builds the semantic convenience methods around any event sink and validates
+every bounded canonical event before delivery.
+
 One `jsonlSession()` has one root source and may declare bounded `childSources`.
 Every child carries a stable `childId`, its own opaque journal handle, and a
 watcher, but it shares the root binding and cannot establish another root
 session. In `mapRecord(record, context)`, use `context.journal.role` and, for a
 child, `context.journal.childId` to interpret provider-native child records.
+For children that appear later, `childSourceDiscovery` is an async iterable of
+the same child-source shape. The host starts each newly discovered stable id
+once, after the root has begun, and de-duplicates it for that root binding.
 
 For ordinary local server work, extensions may import public `node:` modules and
 their declared npm dependencies. Node filesystem/process values are not a

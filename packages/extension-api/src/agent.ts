@@ -8,6 +8,9 @@ export function jsonlSession(options: AgentJsonlSessionOptions): AgentJsonlSessi
     const result = validateAgentChildJournalSources(options.childSources);
     if (!result.ok) throw new Error(result.issues.map((issue) => `${issue.path}: ${issue.message}`).join("; "));
   }
+  if (options.childSourceDiscovery !== undefined && typeof (options.childSourceDiscovery as AsyncIterable<unknown>)[Symbol.asyncIterator] !== "function" && !(options.childSourceDiscovery instanceof Promise)) {
+    throw new Error("childSourceDiscovery: expected an async iterable or promise");
+  }
   return { state: "bound", ...options };
 }
 
@@ -66,24 +69,31 @@ export interface JsonlRecordDecoder {
 /** Bounded UTF-8 JSONL decoder; reset on truncate or replacement. */
 export function createJsonlRecordDecoder(maxRecordBytes = EXTENSION_LIMITS.agentRecordBytes): JsonlRecordDecoder {
   const maximum = Math.max(1, Math.min(maxRecordBytes, EXTENSION_LIMITS.agentRecordBytes));
-  const decoder = new TextDecoder();
-  let pending = "";
+  let decoder = new TextDecoder();
+  let pending: number[] = [];
+  let discarding = false;
+  const clear = (): void => { decoder = new TextDecoder(); pending = []; discarding = false; };
   return {
     push(chunk, reset = false): unknown[] {
-      if (reset) pending = "";
+      if (reset) clear();
       if (chunk.byteLength > EXTENSION_LIMITS.agentFollowChunkBytes) return [];
-      pending += decoder.decode(chunk, { stream: true });
-      if (pending.length > maximum * 2) { pending = ""; return []; }
-      const lines = pending.split("\n");
-      pending = lines.pop() ?? "";
       const records: unknown[] = [];
-      for (const line of lines) {
-        if (line.length === 0 || line.length > maximum) continue;
-        try { records.push(JSON.parse(line)); } catch { /* provider-private malformed input */ }
+      for (const byte of chunk) {
+        if (byte === 0x0a) {
+          if (!discarding && pending.length > 0) {
+            const line = decoder.decode(Uint8Array.from(pending));
+            try { records.push(JSON.parse(line)); } catch { /* provider-private malformed input */ }
+          }
+          decoder = new TextDecoder(); pending = []; discarding = false;
+          continue;
+        }
+        if (discarding) continue;
+        pending.push(byte);
+        if (pending.length > maximum) { pending = []; discarding = true; }
       }
       return records;
     },
-    reset(): void { pending = ""; },
+    reset: clear,
   };
 }
 
@@ -92,4 +102,25 @@ export function assertAgentLifecycleEvent(value: unknown): AgentLifecycleEvent {
   const result = validateAgentLifecycleEvent(value);
   if (!result.ok) throw new Error(result.issues.map((issue) => `${issue.path}: ${issue.message}`).join("; "));
   return result.value;
+}
+
+/** Creates a validating publisher for canonical provider-neutral lifecycle events. */
+export function createAgentLifecyclePublisher(
+  sink: (event: AgentLifecycleEvent) => void | Promise<void>,
+): import("./types.js").AgentLifecyclePublisher {
+  const emit = (event: AgentLifecycleEvent): void | Promise<void> => sink(assertAgentLifecycleEvent(event));
+  return {
+    publish: emit,
+    sessionStarted: (event) => emit({ kind: "session.started", ...event }),
+    metadataChanged: (event) => emit({ kind: "agent.metadata", ...event }),
+    turnStarted: (event) => emit({ kind: "turn.started", ...event }),
+    toolStarted: (event) => emit({ kind: "tool.started", ...event }),
+    toolFinished: (event) => emit({ kind: "tool.finished", ...event }),
+    waitStarted: (event) => emit({ kind: "wait.started", ...event }),
+    waitFinished: (event) => emit({ kind: "wait.finished", ...event }),
+    done: (event) => emit({ kind: "agent.done", ...event }),
+    exited: (event) => emit({ kind: "agent.exited", ...event }),
+    subagentStarted: (event) => emit({ kind: "subagent.started", ...event }),
+    subagentDone: (event) => emit({ kind: "subagent.done", ...event }),
+  };
 }

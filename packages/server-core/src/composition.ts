@@ -568,8 +568,11 @@ export function createServerCoreComposition(
 		lifecycle = "starting";
 		startPromise = (async () => {
 			try {
-				await options.extensions?.installer.initialize();
-				await options.extensions?.activateEnabled?.();
+				if (options.extensions?.initialize !== undefined) await options.extensions.initialize();
+				else {
+					await options.extensions?.installer.initialize();
+					await options.extensions?.activateEnabled?.();
+				}
 				await options.settings?.load();
 				await options.serviceLifecycle?.start?.();
 				await options.agents?.start();

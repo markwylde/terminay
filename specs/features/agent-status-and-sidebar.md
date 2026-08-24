@@ -47,6 +47,16 @@ can never establish ownership of a remote journal.
 - Unsupported, missing, malformed, or ephemeral journals degrade safely to
   terminal activity.
 
+If a running provider is matched and its terminal admission subsequently
+fails, Terminay releases that provider claim and replays the same foreground
+change through terminal activity. This is a fallback, not a successful agent
+observation: the privileged host records one bounded `agent-admission-failed`
+diagnostic containing only the provider id, opaque terminal identity, and a
+coarse failure class. It never records raw journals, paths, prompts, or an
+extension error message. The diagnostic makes a failed admission distinguishable
+from a terminal that simply has no agent, without allowing an extension failure
+to interrupt the terminal.
+
 ## Canonical model
 
 Provider ids are namespaced extension contributions rather than a closed core
@@ -205,6 +215,32 @@ root is selected.
 Sequence numbers come from accepted record order within one binding
 incarnation. Provider timestamps are used only when valid. Replayed initial
 windows and repeated records cannot rewind an entry.
+
+Codex stores an explicit user-edited session title separately from a rollout in
+the effective `CODEX_HOME/session_index.jsonl` file (or
+`~/.codex/session_index.jsonl` when `CODEX_HOME` is unset). Its matching `id`
+and bounded non-empty `thread_name` are display metadata for that same root
+session. The extension follows that terminal-scoped index while the rollout is
+bound: an initial title, every subsequent rename, and a title recovered after
+the index is atomically replaced or truncated updates the existing root entry
+in place. A title change never creates another root, replays lifecycle events,
+or changes working, waiting, blocked, done, or child state. If there is no
+explicit title, the first eligible user message remains the root label.
+
+Codex subagents have separate rollout journals under the same effective
+sessions root. A child journal declares its native parent in
+`session_meta.source.subagent.thread_spawn.parent_thread_id` and repeats the
+bounded parent/session and display metadata needed for safe projection. The
+extension lists and follows only a bounded terminal-scoped sessions directory
+through the public observation broker, so children created after the root is
+bound are admitted live as well. It includes a journal as a child source only
+when that native parent id equals the already bound root provider session id;
+native child ids are de-duplicated across the initial listing and later
+directory snapshots. Timestamp,
+path proximity, `agent_path`, and display text never establish a child-parent
+relationship. A discovered child starts, updates, completes, and exits beneath
+the existing root without changing that root's lifecycle or creating a second
+root binding.
 
 While Codex remains in the foreground, Terminay revalidates the rollout held
 open by that exact process tree. Opening a different eligible root rollout

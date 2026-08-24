@@ -44,6 +44,7 @@ export type ExtensionSummaryDto = Readonly<{
 	permissions: readonly string[];
 	dependants: readonly string[];
 	provenance?: string;
+	failureMessage?: string;
 }>;
 
 export type DeclarativeFieldDto = Readonly<{

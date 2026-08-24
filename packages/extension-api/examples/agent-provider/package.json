@@ -1,0 +1,35 @@
+{
+  "name": "terminay-example-agent-provider",
+  "version": "1.0.0",
+  "type": "module",
+  "license": "MIT",
+  "exports": { ".": "./extension.js" },
+  "peerDependencies": {
+    "@terminay/extension-api": "^1.1.0"
+  },
+  "devDependencies": {
+    "@terminay/extension-api": "^1.1.0"
+  },
+  "terminay": {
+    "manifestVersion": 1,
+    "id": "com.example.agent",
+    "displayName": "Example Agent",
+    "description": "Shows Example Agent sessions in Terminay.",
+    "api": "^1.1.0",
+    "engines": { "terminay": ">=1.0.0", "node": ">=24" },
+    "entrypoint": "extension.js",
+    "platforms": ["darwin", "linux"],
+    "permissions": ["agent-observation"],
+    "contributes": {
+      "agentProviders": [{
+        "id": "com.example.agent/cli",
+        "displayName": "Example Agent",
+        "icon": "terminal",
+        "requiredEnvironmentCapabilities": [
+          "filesystem-observation",
+          "agent-journal"
+        ]
+      }]
+    }
+  }
+}

@@ -4,23 +4,28 @@ import { ExtensionInstaller } from "./installer.js";
 import { ExtensionHostManager } from "./manager.js";
 import { NpmCliRegistryClient } from "./npmClient.js";
 import type { ExtensionOperationOptions } from "./operations.js";
+import type { BuiltInExtensionArtifactSource, ExtensionRegistrySnapshot } from "./installerTypes.js";
 import type { ExtensionAgentBroker, ExtensionBroker, ExtensionProfileBroker, ExtensionSecretAccessBroker } from "./types.js";
 import type { ServerVaultComposition } from "../settings/vaultComposition.js";
 import type { ProjectEnvironmentRepository } from "../projectEnvironment/repository.js";
 import { ExtensionProfileService } from "./profileService.js";
 import { DirectoryBuiltInExtensionArtifactSource } from "./builtInArtifacts.js";
 
-export interface DefaultExtensionManagementOptions { readonly dataRoot: string; readonly authorityLabel: string; readonly broker?: ExtensionBroker; readonly childEntrypoint?: string; readonly secrets?: ExtensionSecretAccessBroker; readonly profiles?: ExtensionProfileBroker; readonly agents?: ExtensionAgentBroker; readonly vault?: ServerVaultComposition; /** Host-owned immutable release resource directory. */ readonly builtInArtifactRoot?: string; }
+export interface DefaultExtensionManagementOptions { readonly dataRoot: string; readonly authorityLabel: string; readonly broker?: ExtensionBroker; readonly childEntrypoint?: string; readonly secrets?: ExtensionSecretAccessBroker; readonly profiles?: ExtensionProfileBroker; readonly agents?: ExtensionAgentBroker; readonly vault?: ServerVaultComposition; /** Host-owned immutable release resource directory. */ readonly builtInArtifactRoot?: string; /** Test/composition seam for a host-owned verified inventory. Production uses builtInArtifactRoot. */ readonly builtIns?: BuiltInExtensionArtifactSource; }
 
 /** Construct the identical selected-server extension authority for Desktop's
  * embedded server, standalone installations, and containers. */
-export function createDefaultExtensionManagement(options: DefaultExtensionManagementOptions): ExtensionOperationOptions & { readonly installer: ExtensionInstaller; readonly hosts: ExtensionHostManager } {
+export function createDefaultExtensionManagement(options: DefaultExtensionManagementOptions): ExtensionOperationOptions & { readonly installer: ExtensionInstaller; readonly hosts: ExtensionHostManager; readonly initialize: () => Promise<ExtensionRegistrySnapshot>; readonly reconcileBuiltIns: (signal?: AbortSignal) => Promise<ExtensionRegistrySnapshot> } {
   const broker: ExtensionBroker = options.broker ?? { request: async () => { throw new Error("extension broker capability is unavailable"); } };
   const hosts = new ExtensionHostManager({ broker, ...(options.childEntrypoint === undefined ? {} : { childEntrypoint: options.childEntrypoint }), ...(options.secrets === undefined ? {} : { secrets: options.secrets }), ...(options.profiles === undefined ? {} : { profiles: options.profiles }), ...(options.agents === undefined ? {} : { agents: options.agents }), ...(options.vault === undefined ? {} : { vault: options.vault.vault }) });
   const npm = new NpmCliRegistryClient({ workRoot: join(options.dataRoot, "extensions", "cache", "npm") });
+  let activateReconciled: ((before: ExtensionRegistrySnapshot, after: ExtensionRegistrySnapshot) => Promise<void>) | undefined;
   const installer = new ExtensionInstaller({
     dataRoot: options.dataRoot, registryClient: npm, materializer: npm,
-    ...(options.builtInArtifactRoot === undefined ? {} : { builtIns: new DirectoryBuiltInExtensionArtifactSource(options.builtInArtifactRoot) }),
+    ...(options.builtIns === undefined
+      ? options.builtInArtifactRoot === undefined ? {} : { builtIns: new DirectoryBuiltInExtensionArtifactSource(options.builtInArtifactRoot) }
+      : { builtIns: options.builtIns }),
+    onBuiltInsReconciled: async (before, after) => activateReconciled?.(before, after),
     probe: async ({ extensionId, packageRoot, entrypoint, manifest }) => {
       const root = join(options.dataRoot, "extensions"); const directories = { config: join(root, "config", extensionId), data: join(root, "data", extensionId), cache: join(root, "cache", extensionId) };
       await Promise.all(Object.values(directories).map((directory) => mkdir(directory, { recursive: true })));
@@ -39,11 +44,37 @@ export function createDefaultExtensionManagement(options: DefaultExtensionManage
   };
   const activateEnabled = async (): Promise<void> => {
     for (const extensionId of await installer.enabledExtensionIds()) {
+      if (hosts.statuses().find((status) => status.extensionId === extensionId)?.state === "running") continue;
       try { await activate(extensionId); }
       catch (error) { await installer.setFailureState(extensionId, "failed", error instanceof Error ? error.message : "extension activation failed"); }
     }
   };
-  return { installer, hosts, authorityLabel: options.authorityLabel, activate, activateEnabled, restart: activate };
+  activateReconciled = async (before, reconciled): Promise<void> => {
+    for (const record of Object.values(reconciled.extensions)) {
+      if (!shouldActivateAfterReconciliation(before.extensions[record.extensionId], record, hosts)) continue;
+      try { await activate(record.extensionId); }
+      catch (error) { await installer.setFailureState(record.extensionId, "failed", error instanceof Error ? error.message : "extension activation failed"); }
+    }
+  };
+  const reconcileBuiltIns = (signal?: AbortSignal): Promise<ExtensionRegistrySnapshot> => installer.reconcileBuiltIns(signal);
+  const initialize = async (): Promise<ExtensionRegistrySnapshot> => {
+    await installer.initialize();
+    await activateEnabled();
+    return installer.snapshot();
+  };
+  return { installer, hosts, authorityLabel: options.authorityLabel, activate, activateEnabled, initialize, reconcileBuiltIns, restart: activate };
+}
+
+/** A newly selected active slot, or an enabled slot without a running host,
+ * must be activated before the management surface can call it installed. */
+function shouldActivateAfterReconciliation(
+  previous: import("./installerTypes.js").InstalledExtensionRecord | undefined,
+  next: import("./installerTypes.js").InstalledExtensionRecord,
+  hosts: ExtensionHostManager,
+): boolean {
+  if (!next.enabled || next.activeSlotId === undefined || next.state === "failed" || next.state === "incompatible" || next.state === "quarantined") return false;
+  if (previous?.activeSlotId !== next.activeSlotId || previous.enabled !== true) return true;
+  return hosts.statuses().find((status) => status.extensionId === next.extensionId)?.state !== "running";
 }
 
 /** Production composition for ordinary public project-environment extensions.

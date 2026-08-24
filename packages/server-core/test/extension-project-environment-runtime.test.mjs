@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ExtensionProjectEnvironmentRuntime } from "../dist/extensions/projectEnvironmentRuntime.js";
+import { ExtensionProjectEnvironmentRuntime, registerActivatedExtensionProjectEnvironmentRuntimes } from "../dist/extensions/projectEnvironmentRuntime.js";
+import { ProjectEnvironmentRegistry } from "../dist/projectEnvironment/registry.js";
 
 const providerId = "com.terminay.ssh/connection";
 const environment = {
@@ -20,6 +21,25 @@ test("extension service runtime injects canonical provider state and accepts onl
   assert.deepEqual(calls[0].request, { environmentId: "env-ssh", profileId: "profile-1", providerState: { opaque: "server-owned" }, capability: "terminal", operation: "input", projectId: "project-1", environmentRevision: 4, input: { sessionId: "s", data: "x" } });
   await assert.rejects(runtime.invoke("terminal", "exec", {}, context), /unavailable/);
   await assert.rejects(runtime.invoke("git", "status", {}, context), /unavailable/);
+});
+
+test("activated manifest contributions register and retire generic environment runtimes", async () => {
+  const listeners = new Set(); const calls = [];
+  let contributions = [{ id: providerId, displayName: "Direct", capabilities: ["terminal", "filesystem"] }];
+  const hosts = {
+    activatedProjectEnvironmentContributions: () => contributions,
+    onContributionsChanged(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+    async invokeProvider(call) { calls.push(call); return { accepted: true }; },
+  };
+  const registry = new ProjectEnvironmentRegistry();
+  const registration = registerActivatedExtensionProjectEnvironmentRuntimes({ registry, hosts, snapshot: () => state });
+  const runtime = registry.resolve(environment, "terminal");
+  assert.deepEqual(await runtime.invoke("terminal", "input", { sessionId: "s", data: "x" }, context), { accepted: true });
+  assert.equal(calls[0].providerId, providerId);
+  contributions = [];
+  for (const listener of listeners) listener();
+  assert.throws(() => registry.resolve(environment, "terminal"), /unavailable/);
+  registration.dispose();
 });
 
 test("revision and provider changes fail closed before extension IPC", async () => {

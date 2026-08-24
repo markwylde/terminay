@@ -81,6 +81,60 @@ test("non-matching terminals do not create an extension-owned sidebar run", asyn
   await agents.stop();
 });
 
+test("a late-published agent provider re-admits an already-running matching terminal", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
+  const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
+  const providers = []; const admitted = [];
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: {
+      agentProviderContributions: () => providers,
+      async admitAgentTerminal(value) { admitted.push(value); },
+      async cancelAgentTerminal() { return false; },
+      async drainAgentObservers() {},
+    },
+  });
+  registry.register(identity); registry.terminalStarted(identity, 4321);
+  assert.equal(registry.foregroundProcessChanged(identity, "codex"), false);
+  providers.push({ ...provider, id: "com.terminay.agent.codex/cli", displayName: "Codex", processMatchers: [{ executableName: "codex" }] });
+  assert.equal(registry.reobserveExistingTerminals(), 1);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(admitted.map(({ context }) => context.providerId), ["com.terminay.agent.codex/cli"]);
+  await agents.stop();
+});
+
+test("a failed agent admission is observable before the sidebar falls back to no agent entries", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId });
+  activity.register(identity);
+  const agents = new AgentStatusService({ activity });
+  await agents.start(); agents.register(identity);
+  const failures = [];
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: {
+      agentProviderContributions: () => [provider],
+      async admitAgentTerminal() { throw new Error("agent extension host does not exist: /private/provider-journal"); },
+      async cancelAgentTerminal() { return false; },
+      async drainAgentObservers() {},
+    },
+    onAdmissionFailure(failure) { failures.push(failure); throw new Error("diagnostics unavailable"); },
+  });
+
+  registry.register(identity);
+  assert.equal(registry.foregroundProcessChanged(identity, "test-agent"), true, "the matched provider is claimed before asynchronous admission");
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(failures, [{
+    kind: "agent-admission-failed",
+    providerId: provider.id,
+    terminal: identity,
+    failureClass: "host-failed",
+  }], "a failed admission must be visible even though the sidebar has no provider entry");
+  assert.deepEqual(agents.getSnapshot().entries, {}, "the failed provider claim is released instead of leaving a phantom sidebar agent");
+  assert.equal(registry.foregroundProcessChanged(identity, "test-agent"), true, "a failing diagnostics sink cannot prevent the terminal from retrying");
+  await agents.stop();
+});
+
 test("topology polling is inert for an unchanged signature and rebinds exactly once when it changes", async () => {
   const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
   const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);

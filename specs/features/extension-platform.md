@@ -197,6 +197,15 @@ startup every enabled, compatible active slot is restored before provider
 catalogues are served. Activation failure is represented explicitly and never
 falls back to This server.
 
+The same rule applies when the selected server reconciles release-built-ins
+after startup: materializing a new enabled active slot includes bounded host
+activation before reconciliation completes. The host manager publishes the new
+provider ownership and contribution set only after activation succeeds. While
+activation is in progress, management surfaces a pending activation state; if
+it fails, it surfaces the bounded failure and offers Restart. It must not
+present the extension as installed while no running host owns its declared
+providers.
+
 Terminay Server runs each enabled extension in its own child process under the
 server's bundled Node runtime. The process uses a private inherited framed
 channel, a minimal environment, an immutable package-slot working directory,
