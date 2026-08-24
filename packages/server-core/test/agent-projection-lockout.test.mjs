@@ -29,7 +29,7 @@ function createPtyFactory() {
   };
 }
 
-test("Codex journal replay cannot close the application connection or block terminal creation", { timeout: 5_000 }, async () => {
+test("extension lifecycle replay cannot close the application connection or block terminal creation", { timeout: 5_000 }, async () => {
   const pty = createPtyFactory();
   let now = 1;
   const activity = new TerminalActivityService({
@@ -96,16 +96,13 @@ test("Codex journal replay cannot close the application connection or block term
     blockServerWrites = true;
     serverWriteGate = new Promise((resolve) => { releaseServerWrites = resolve; });
 
-    await agents.ingestJournalRecord(identity, "codex", {
-      type: "session_meta",
-      payload: { id: "large-resumed-codex-session", cli_version: "0.2.0" },
-    });
+    const providerId = "example.agent/pressure";
+    assert.equal(agents.claimExtensionProvider(identity, providerId), true);
+    const binding = { providerSessionId: "large-resumed-session", mappingVersion: "1", fingerprint: { kind: "test", metadata: { proof: "fixture" } } };
+    await agents.ingestExtensionLifecycle(identity, providerId, "1", binding, [{ kind: "session.started" }]);
     for (let index = 0; index < 2_000; index += 1) {
       now += 1;
-      await agents.ingestJournalRecord(identity, "codex", {
-        type: "event_msg",
-        payload: { type: "request_user_input" },
-      });
+      await agents.ingestExtensionLifecycle(identity, providerId, "1", undefined, [{ kind: "wait.started", state: "waiting", reason: "approval" }]);
     }
     await new Promise((resolve) => setImmediate(resolve));
 
