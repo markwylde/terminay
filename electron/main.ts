@@ -158,7 +158,9 @@ import {
 } from './vault/safeStorageVault';
 import {
 	createEmbeddedWorkspaceStateBackend,
+	embeddedBuiltInExtensionArtifactRoot,
 	embeddedWorkspacePersistenceFault,
+	isEmbeddedWorkspacePersistenceError,
 } from './workspacePersistence';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1172,6 +1174,11 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		serverId: 'desktop-local',
 		dataRoot: app.getPath('userData'),
 		extensionHostChildEntrypoint: path.join(MAIN_DIST, 'extensionHostEntry.js'),
+		builtInExtensionArtifactRoot: embeddedBuiltInExtensionArtifactRoot({
+			appRoot: process.env.APP_ROOT,
+			isPackaged: app.isPackaged,
+			resourcesPath: process.resourcesPath,
+		}),
 		vault: embeddedVault,
 		parakeetRuntime,
 		defaultProjectRoot: () => app.getPath('home'),
@@ -2984,7 +2991,15 @@ async function recoverEmbeddedWorkspaceOperation<T>(
 	try {
 		return await operation();
 	} catch (initialError) {
-		return new Promise((resolve) => {
+		// This recovery surface is specifically for the canonical workspace
+		// persistence boundary.  Do not disguise extension activation, server
+		// composition, or a torn application build as damaged application storage.
+		// Those failures must escape to the desktop bootstrap recovery path, which
+		// records the real startup failure and offers a clean process relaunch.
+		if (!isEmbeddedWorkspacePersistenceError(initialError)) {
+			throw initialError;
+		}
+		return new Promise((resolve, reject) => {
 			const renderRecovery = async (cause: unknown): Promise<void> => {
 				console.error('[workspace] canonical persistence unavailable', cause);
 				await showCanonicalLaunchRecovery({
@@ -2996,6 +3011,10 @@ async function recoverEmbeddedWorkspaceOperation<T>(
 						try {
 							resolve(await operation());
 						} catch (error) {
+							if (!isEmbeddedWorkspacePersistenceError(error)) {
+								reject(error);
+								return;
+							}
 							await renderRecovery(error);
 						}
 					},
@@ -4521,7 +4540,7 @@ async function recoverFailedDesktopBootstrap(error: unknown): Promise<void> {
 	await showCanonicalLaunchRecovery({
 		window,
 		error: new Error(
-			'Terminay could not finish starting. Retry after checking that application storage is available.',
+			'Terminay could not finish starting. Relaunch to retry. Technical details were recorded in Terminay diagnostics.',
 		),
 		retry: async () => {
 			// A failed main-process composition may have partially initialized native

@@ -1,13 +1,35 @@
+import path from 'node:path';
 import type { WorkspaceState } from '../packages/server-core/src/workspace';
 import {
 	FileWorkspaceStateBackend,
+	WorkspacePersistenceError,
 	type WorkspaceStateBackend,
 } from '../packages/server-core/src/workspaceRepository';
+
+export { WorkspacePersistenceError };
 
 export type EmbeddedWorkspacePersistenceFault =
 	| 'unreadable'
 	| 'invalid'
 	| 'uncommittable';
+
+export function embeddedBuiltInExtensionArtifactRoot(
+	options: Readonly<{
+		appRoot: string;
+		isPackaged: boolean;
+		resourcesPath: string;
+	}>,
+): string {
+	return options.isPackaged
+		? path.join(options.resourcesPath, 'built-in-extensions')
+		: path.join(options.appRoot, 'build', 'built-in-extensions');
+}
+
+export function isEmbeddedWorkspacePersistenceError(
+	error: unknown,
+): error is WorkspacePersistenceError {
+	return error instanceof WorkspacePersistenceError;
+}
 
 /** Resolve the deterministic E2E-only persistence fault. Merely setting the
  * fault variable in a production process has no effect. */
