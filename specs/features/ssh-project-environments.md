@@ -13,8 +13,9 @@ Puzed after they provision or select a VM.
 
 ## Extension and profile ownership
 
-`terminay-plugin-ssh` is a separate npm repository/package and an official
-catalogue entry. It uses only the public
+`terminay-plugin-ssh` is an independently publishable npm package under
+`extensions/ssh`, a built-in extension, and an official catalogue entry. It
+uses only the public
 [server extension platform](./extension-platform.md). The selected Terminay
 Server owns its installation, profiles, trusted host keys, vault references,
 connection pool, runtime status, and audit records.
