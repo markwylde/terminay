@@ -68,7 +68,7 @@ export interface ThisServerAgentObservationAdapterOptions {
 interface ProcessHandle { readonly id: string; readonly pid: number; }
 interface FileHandle { readonly id: string; path: string; }
 interface Watcher { readonly id: string; readonly file: FileHandle; readonly maximumChunkBytes: number; path: string; offset: number; }
-interface TerminalState { readonly processes: Map<string, ProcessHandle>; readonly files: Map<string, FileHandle>; readonly watchers: Map<string, Watcher>; nextId: number; }
+interface TerminalState { readonly processes: Map<string, ProcessHandle>; readonly files: Map<string, FileHandle>; readonly watchers: Map<string, Watcher>; nextId: number; homeDirectory?: string; }
 
 /**
  * Adapter for exactly the local Terminay Server environment.  It is a narrow
@@ -84,7 +84,9 @@ export class ThisServerAgentObservationAdapter {
 
   constructor(private readonly options: ThisServerAgentObservationAdapterOptions) {
     this.system = options.system ?? nodeSystem;
-    this.homeDirectory = options.homeDirectory === undefined ? process.env.HOME : safePath(options.homeDirectory);
+    // A supplied directory is a test-only deterministic override. Production
+    // resolution uses the admitted terminal shell's environment below.
+    this.homeDirectory = options.homeDirectory === undefined ? undefined : safePath(options.homeDirectory);
     this.maximumReadBytes = positiveBound(options.maximumReadBytes, MAX_READ_BYTES);
     this.maximumFollowChunkBytes = positiveBound(options.maximumFollowChunkBytes, MAX_FOLLOW_CHUNK_BYTES);
   }
@@ -92,6 +94,7 @@ export class ThisServerAgentObservationAdapter {
   async observe(terminal: ExtensionAgentTerminalContext, operation: ExtensionAgentObservationOperation, payload: JsonValue, signal: AbortSignal): Promise<JsonValue> {
     const local = await this.requireLocalTerminal(terminal, signal);
     const state = this.stateFor(terminal.contextId);
+    if (state.homeDirectory === undefined) state.homeDirectory = await this.homeDirectoryFor(local, signal);
     switch (operation) {
       case "process.foreground": return this.foreground(local, signal);
       case "process.descendants": return this.descendants(local, state, signal);
@@ -211,17 +214,18 @@ export class ThisServerAgentObservationAdapter {
     const canonical = await this.system.realpath(file.path, signal);
     if (canonical === undefined || safePath(canonical) === undefined) return null;
     const options = record(request?.options);
-    if (!this.matchesFileConstraint(canonical, options)) return null;
+    if (!this.matchesFileConstraint(canonical, options, state.homeDirectory)) return null;
     file.path = canonical;
     return { id: file.id };
   }
 
   private async resolveHomeRelative(state: TerminalState, payload: JsonValue, signal: AbortSignal): Promise<JsonValue> {
     const request = record(payload); const relativePath = request?.relativePath;
-    if (typeof relativePath !== "string" || !safeRelativePath(relativePath) || this.homeDirectory === undefined) return null;
-    const candidate = resolve(this.homeDirectory, relativePath);
+    if (typeof relativePath !== "string" || !safeRelativePath(relativePath)) return null;
+    const homeDirectory = state.homeDirectory; if (homeDirectory === undefined) return null;
+    const candidate = resolve(homeDirectory, relativePath);
     const canonical = await this.system.realpath(candidate, signal);
-    if (canonical === undefined || safePath(canonical) === undefined || !this.withinHomeConstraint(canonical, request, true)) return null;
+    if (canonical === undefined || safePath(canonical) === undefined || !this.withinHomeConstraint(canonical, request, true, homeDirectory)) return null;
     const details = await this.system.stat(canonical, signal);
     if (details?.kind !== "file") return null;
     return { id: this.registerFile(state, canonical).id };
@@ -240,11 +244,15 @@ export class ThisServerAgentObservationAdapter {
   private async homeRelativePath(state: TerminalState, payload: JsonValue, signal: AbortSignal): Promise<JsonValue> {
     const request = record(payload); const file = this.fileFor(state, request?.handle);
     const canonical = await this.system.realpath(file.path, signal);
-    if (canonical === undefined || safePath(canonical) === undefined || !this.withinHomeConstraint(canonical, request, false)) return null;
+    // The opaque file handle has already been terminal-scoped. Its original
+    // admission terminal is encoded in adapter state; home is looked up from
+    // that exact terminal before returning a fact.
+    const homeDirectory = state.homeDirectory;
+    if (canonical === undefined || safePath(canonical) === undefined || !this.withinHomeConstraint(canonical, request, false, homeDirectory)) return null;
     const details = await this.system.stat(canonical, signal);
     const beneath = record(request?.beneath); const homeRelative = beneath?.homeRelative;
-    if (details?.kind !== "file" || typeof homeRelative !== "string" || this.homeDirectory === undefined || !safeRelativePath(homeRelative)) return null;
-    const result = relative(resolve(this.homeDirectory, homeRelative), canonical);
+    if (details?.kind !== "file" || typeof homeRelative !== "string" || homeDirectory === undefined || !safeRelativePath(homeRelative)) return null;
+    const result = relative(resolve(homeDirectory, homeRelative), canonical);
     if (!safeRelativePath(result)) return null;
     return result;
   }
@@ -285,19 +293,27 @@ export class ThisServerAgentObservationAdapter {
     return canonical !== undefined && safePath(canonical) !== undefined && (await this.system.stat(canonical, signal))?.kind === "directory" ? canonical : undefined;
   }
 
-  private withinHomeConstraint(path: string, request: Record<string, JsonValue> | undefined, defaultHome: boolean): boolean {
+  private withinHomeConstraint(path: string, request: Record<string, JsonValue> | undefined, defaultHome: boolean, homeDirectory = this.homeDirectory): boolean {
     const beneath = record(request?.beneath); const homeRelative = beneath?.homeRelative;
-    if (homeRelative === undefined) return defaultHome && this.homeDirectory !== undefined && contained(resolve(this.homeDirectory), path);
-    return this.matchesFileConstraint(path, request);
+    if (homeRelative === undefined) return defaultHome && homeDirectory !== undefined && contained(resolve(homeDirectory), path);
+    return this.matchesFileConstraint(path, request, homeDirectory);
   }
 
-  private matchesFileConstraint(path: string, options: Record<string, JsonValue> | undefined): boolean {
+  private async homeDirectoryFor(terminal: ThisServerAgentTerminal, signal: AbortSignal): Promise<string | undefined> {
+    if (this.homeDirectory !== undefined) return this.homeDirectory;
+    const value = (await this.system.environment(requiredPid(terminal), ["HOME"], signal)).HOME;
+    const path = safePath(value); if (path === undefined) return undefined;
+    const canonical = await this.system.realpath(path, signal);
+    return canonical !== undefined && (await this.system.stat(canonical, signal))?.kind === "directory" ? canonical : undefined;
+  }
+
+  private matchesFileConstraint(path: string, options: Record<string, JsonValue> | undefined, homeDirectory = this.homeDirectory): boolean {
     const extension = options?.extension;
     if (extension !== undefined && (typeof extension !== "string" || extension.length === 0 || extension.length > 64 || !path.endsWith(extension))) return false;
     const beneath = record(options?.beneath); const homeRelative = beneath?.homeRelative;
     if (homeRelative === undefined) return true;
-    if (typeof homeRelative !== "string" || this.homeDirectory === undefined || !safeRelativePath(homeRelative)) return false;
-    const root = resolve(this.homeDirectory, homeRelative);
+    if (typeof homeRelative !== "string" || homeDirectory === undefined || !safeRelativePath(homeRelative)) return false;
+    const root = resolve(homeDirectory, homeRelative);
     const pathRelative = relative(root, path);
     return pathRelative !== "" && pathRelative !== ".." && !pathRelative.startsWith(`..${pathSeparator()}`) && !isAbsolute(pathRelative);
   }

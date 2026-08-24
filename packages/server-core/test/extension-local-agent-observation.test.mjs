@@ -110,3 +110,20 @@ test("This-server adapter applies canonical home and extension constraints witho
   assert.equal(await adapter.observe(current, "filesystem.realpath", { handle, options: { extension: ".sqlite" } }, signal), null);
   assert.equal(await adapter.observe(current, "filesystem.realpath", { handle, options: { beneath: { homeRelative: "../etc" } } }, signal), null);
 });
+
+test("home-relative resolution derives HOME from the admitted terminal process, not the host", async () => {
+  const system = fixtureSystem();
+  system.files.set("/terminal-home/.claude/projects/session.jsonl", new Uint8Array([1]));
+  const originalStat = system.stat;
+  system.stat = async (path) => path === "/terminal-home" ? { kind: "directory", size: 0 } : originalStat(path);
+  system.environment = async (pid, names) => {
+    assert.equal(pid, 10); assert.deepEqual(names, ["HOME"]);
+    return { HOME: "/terminal-home" };
+  };
+  const adapter = new ThisServerAgentObservationAdapter({ system, resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }) });
+  const handle = await adapter.observe(terminal("terminal-home"), "filesystem.resolve-home-relative", {
+    relativePath: ".claude/projects/session.jsonl", beneath: { homeRelative: ".claude/projects" }, extension: ".jsonl",
+  }, signal);
+  assert.deepEqual(handle, { id: "file-1" });
+  assert(system.calls.some(([kind, path]) => kind === "realpath" && path === "/terminal-home/.claude/projects/session.jsonl"));
+});
