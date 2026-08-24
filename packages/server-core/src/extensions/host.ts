@@ -2,8 +2,9 @@ import { fork, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { isChildFrame, frameByteLength, EXTENSION_HOST_PROTOCOL_VERSION, type ChildFrame, type HostFrame } from "./protocol.js";
 import { validateExtensionLaunchDescriptor } from "./descriptor.js";
-import type { ExtensionAgentBroker, ExtensionAgentLifecyclePublication, ExtensionAgentObservationRequest, ExtensionAgentTerminalAdmission, ExtensionAgentTerminalCancellation, ExtensionAgentTerminalContext, ExtensionBroker, ExtensionHostLimits, ExtensionHostStatus, ExtensionInvocation, ExtensionLaunchDescriptor, ExtensionProfileBroker, ExtensionProviderInvocation, ExtensionSecretAccessBroker, ExtensionSshAgentBroker } from "./types.js";
-import { isNamespacedId, validateAgentLifecycleEvent, validateDeclarativeForm, validateEnvironmentActionResult, validateOptionSourceResult, validateProviderDefinition, validateProviderEnvironmentStatus, validateProvisioningResult, validateSshAgentIdentities, validateSshAgentSignature, validateValidationIssues, type AgentProviderContribution, type ProviderDefinition } from "@terminay/extension-api";
+import type { ExtensionAgentBroker, ExtensionAgentLifecyclePublication, ExtensionAgentObservationRequest, ExtensionAgentTerminalAdmission, ExtensionAgentTerminalCancellation, ExtensionAgentTerminalContext, ExtensionBroker, ExtensionDependencyRouter, ExtensionHostLimits, ExtensionHostStatus, ExtensionInvocation, ExtensionLaunchDescriptor, ExtensionProfileBroker, ExtensionProviderInvocation, ExtensionSecretAccessBroker, ExtensionSshAgentBroker } from "./types.js";
+import { isNamespacedId, validateAgentLifecycleEvent, validateDeclarativeForm, validateEnvironmentActionResult, validateOptionSourceResult, validateProviderDefinition, validateProviderDependencyCallContext, validateProviderDependencyRequest, validateProviderDependencyResult, validateProviderDependencyTargetRequest, validateProviderEnvironmentStatus, validateProviderVaultPutRequest, validateProviderVaultRemoveRequest, validateProviderVaultWithSecretRequest, validateProvisioningResult, validateSshAgentIdentities, validateSshAgentSignature, validateValidationIssues, type AgentProviderContribution, type JsonValue, type ProviderDefinition, type ProviderDependencyCallContext, type ProviderDependencyTargetRequest } from "@terminay/extension-api";
+import { ExtensionProviderVault, type ProviderVaultPrincipal } from "./providerVault.js";
 
 interface PendingCall {
   readonly resolve: (value: unknown) => void;
@@ -22,6 +23,8 @@ export interface ExtensionHostOptions {
   readonly secrets?: ExtensionSecretAccessBroker;
   readonly sshAgent?: ExtensionSshAgentBroker;
   readonly agents?: ExtensionAgentBroker;
+  readonly dependencies?: ExtensionDependencyRouter;
+  readonly providerVault?: ExtensionProviderVault;
 }
 
 const DEFAULTS = Object.freeze({
@@ -51,6 +54,8 @@ export class ExtensionHost {
   private stopping = false;
   private providers: readonly ProviderDefinition[] = Object.freeze([]);
   private agentProviders: readonly AgentProviderContribution[] = Object.freeze([]);
+  private dependencyProviders = new Set<string>();
+  private readonly activeDependencyCalls = new Map<string, { readonly principal: ProviderVaultPrincipal; readonly signal: AbortSignal }>();
   private readonly agentContexts = new Map<string, ExtensionAgentTerminalContext>();
   private agentPublicationsInFlight = 0;
   private readonly limits: Required<ExtensionHostLimits>;
@@ -63,6 +68,7 @@ export class ExtensionHost {
   }
 
   status(): ExtensionHostStatus { return Object.freeze({ ...this.state, providers: this.providers, agentProviders: this.agentProviders }); }
+  launchDescriptor(): ExtensionLaunchDescriptor | undefined { return this.descriptor; }
 
   async start(descriptor: ExtensionLaunchDescriptor): Promise<void> {
     if (descriptor.extensionId !== this.extensionId) throw new TypeError("extension descriptor identity mismatch");
@@ -99,6 +105,7 @@ export class ExtensionHost {
       }, this.limits.startupTimeoutMs, undefined, true);
       this.providers = validateProviders(record(activated)?.providers, this.extensionId);
       this.agentProviders = validateAgentProviders(record(activated)?.agentProviders, this.descriptor);
+      this.dependencyProviders = validateDependencyProviders(record(activated)?.dependencyProviders, this.providers, this.descriptor);
       this.state = { extensionId: this.extensionId, state: "running", consecutiveCrashes: 0 };
     } catch (error) {
       this.terminateChild();
@@ -144,12 +151,31 @@ export class ExtensionHost {
       return;
     }
     await this.drainAgentObservers("extension-stopped").catch(() => undefined);
+    await this.cleanupProviderVault();
     try { await this.call("deactivate", undefined, this.limits.shutdownTimeoutMs); } catch { /* bounded forced termination below */ }
     this.terminateChild();
     this.rejectPending(new Error("extension host stopped"));
     this.state = { extensionId: this.extensionId, state: "stopped", consecutiveCrashes: this.state.consecutiveCrashes };
     this.providers = Object.freeze([]);
     this.agentProviders = Object.freeze([]);
+    this.dependencyProviders.clear();
+  }
+
+  async invokeDependency(providerId: string, request: ProviderDependencyTargetRequest, context: Omit<ProviderDependencyCallContext, "signal">, signal: AbortSignal): Promise<JsonValue> {
+    if (!this.dependencyProviders.has(providerId) || this.descriptor === undefined) throw new Error("dependency target is unavailable");
+    const target = validated(validateProviderDependencyTargetRequest(request), "dependency target request is invalid");
+    const timing = runtimeValidated(validateProviderDependencyCallContext({ ...context, signal: cancellationSignal(signal) }), "dependency call context is invalid");
+    const declared = this.descriptor.projectEnvironmentProviders?.find((provider) => provider.id === providerId)?.dependencyOperations ?? [];
+    if (!declared.some((operation) => operation.name === target.operation)) throw new Error("dependency target operation is not declared");
+    const remaining = Date.parse(timing.deadlineAt) - this.now();
+    if (!Number.isFinite(remaining) || remaining <= 0 || remaining > 300_000) throw new Error("dependency call deadline is invalid");
+    const callToken = `${this.extensionId}:dependency:${++this.providerSequence}`;
+    const principal = { extensionId: this.extensionId, providerId, dataDirectory: this.descriptor.dataDirectory };
+    this.activeDependencyCalls.set(callToken, { principal, signal });
+    try {
+      const result = await this.invoke({ method: "dependency.invoke", input: { callToken, providerId, request: target, context: { deadlineAt: timing.deadlineAt, ...(timing.idempotencyKey === undefined ? {} : { idempotencyKey: timing.idempotencyKey }), ...(timing.expectedRevision === undefined ? {} : { expectedRevision: timing.expectedRevision }) } }, deadlineMs: remaining, signal });
+      return validated(validateProviderDependencyResult(result), "dependency target returned an invalid result");
+    } finally { this.activeDependencyCalls.delete(callToken); }
   }
 
   clearQuarantine(): void {
@@ -220,6 +246,7 @@ export class ExtensionHost {
   private receive(message: unknown): void {
     if (frameByteLength(message) > this.limits.maxMessageBytes) { this.protocolViolation("oversized child message"); return; }
     if (!isChildFrame(message)) { this.protocolViolation("malformed child message"); return; }
+    if (message.kind === "broker.cancel") { this.activeBrokerCalls.get(message.id)?.abort(); return; }
     if (message.kind === "broker.request") { void this.handleBrokerRequest(message); return; }
     if (message.kind === "agent.observation.request") { void this.handleAgentObservationRequest(message); return; }
     if (message.kind === "agent.lifecycle.publish") { void this.handleAgentLifecyclePublication(message); return; }
@@ -232,10 +259,14 @@ export class ExtensionHost {
     if (this.activeBrokerCalls.size >= this.limits.maxConcurrentInvocations) { this.sendBrokerResult(frame.id, undefined, "broker admission limit reached"); return; }
     const payload = record(frame.payload);
     const operation = payload?.operation;
-    if (operation !== "log" && operation !== "secret.resolve" && operation !== "profile.get" && operation !== "agent.list" && operation !== "agent.sign" && operation !== "provider.call") { this.sendBrokerResult(frame.id, undefined, "unsupported broker operation"); return; }
+    if (operation !== "log" && operation !== "secret.resolve" && operation !== "profile.get" && operation !== "agent.list" && operation !== "agent.sign" && operation !== "provider.call" && operation !== "vault.put" && operation !== "vault.withSecret" && operation !== "vault.remove") { this.sendBrokerResult(frame.id, undefined, "unsupported broker operation"); return; }
     const controller = new AbortController(); this.activeBrokerCalls.set(frame.id, controller);
     try {
-      const result = operation === "profile.get"
+      const result = operation === "provider.call"
+        ? await this.callDependency(payload?.payload, controller.signal)
+        : operation === "vault.put" || operation === "vault.withSecret" || operation === "vault.remove"
+          ? await this.useProviderVault(operation, payload?.payload, controller.signal)
+        : operation === "profile.get"
         ? await this.readProfile(payload?.payload, controller.signal)
         : operation === "secret.resolve"
           ? await this.resolveSecret(payload?.payload, controller.signal)
@@ -245,6 +276,36 @@ export class ExtensionHost {
       this.sendBrokerResult(frame.id, result);
     } catch (error) { this.sendBrokerResult(frame.id, undefined, error instanceof Error ? error.message : "broker request failed"); }
     finally { this.activeBrokerCalls.delete(frame.id); }
+  }
+
+  private async callDependency(input: unknown, signal: AbortSignal): Promise<JsonValue> {
+    const payload = record(input); const callerProviderId = boundedId(payload?.callerProviderId);
+    if (this.descriptor !== undefined && this.descriptor.extensionDependencies === undefined && !this.descriptor.permissions.includes("provider:depend")) {
+      return this.options.broker.request({ extensionId: this.extensionId, operation: "provider.call", payload }, signal) as Promise<JsonValue>;
+    }
+    if (this.options.dependencies === undefined || this.descriptor === undefined || !this.descriptor.permissions.includes("provider:depend")) throw new Error("provider dependency access is denied");
+    if (callerProviderId === undefined || !this.providers.some((provider) => provider.providerId === callerProviderId)) throw new Error("provider dependency caller is denied");
+    const request = validated(validateProviderDependencyRequest(payload?.request), "provider dependency request is invalid");
+    const timing = runtimeValidated(validateProviderDependencyCallContext({ ...record(payload?.context), signal: cancellationSignal(signal) }), "provider dependency context is invalid");
+    const dependencyOwner = request.providerId.split("/")[0];
+    const dependency = this.descriptor.extensionDependencies?.find((candidate) => candidate.extensionId === dependencyOwner);
+    if (dependency === undefined) throw new Error("provider dependency is not declared");
+    return this.options.dependencies.call({ callerExtensionId: this.extensionId, callerProviderId, request, context: { deadlineAt: timing.deadlineAt, ...(timing.idempotencyKey === undefined ? {} : { idempotencyKey: timing.idempotencyKey }), ...(timing.expectedRevision === undefined ? {} : { expectedRevision: timing.expectedRevision }) }, signal });
+  }
+
+  private async useProviderVault(operation: "vault.put" | "vault.withSecret" | "vault.remove", input: unknown, signal: AbortSignal): Promise<unknown> {
+    if (this.options.providerVault === undefined) throw new Error("provider vault is unavailable");
+    const payload = record(input); const callToken = boundedId(payload?.callToken); const active = callToken === undefined ? undefined : this.activeDependencyCalls.get(callToken);
+    if (active === undefined || active.signal.aborted) throw new Error("provider vault call scope is unavailable");
+    const combined = AbortSignal.any([signal, active.signal]);
+    if (operation === "vault.put") {
+      const raw = record(payload?.request); const bytes = raw?.value;
+      const request = { ...raw, ...(Array.isArray(bytes) && bytes.length <= 1024 * 1024 && bytes.every((byte) => Number.isInteger(byte) && Number(byte) >= 0 && Number(byte) <= 255) ? { value: new Uint8Array(bytes as number[]) } : {}) };
+      return this.options.providerVault.put(active.principal, validated(validateProviderVaultPutRequest(request), "provider vault put request is invalid"), combined);
+    }
+    if (operation === "vault.remove") return this.options.providerVault.remove(active.principal, validated(validateProviderVaultRemoveRequest(payload?.request), "provider vault remove request is invalid"), combined);
+    const request = validated(validateProviderVaultWithSecretRequest(payload?.request), "provider vault secret request is invalid");
+    return this.options.providerVault.withSecret(active.principal, request, combined, (secret) => [...secret]);
   }
 
   private async handleAgentObservationRequest(frame: ChildFrame): Promise<void> {
@@ -381,7 +442,14 @@ export class ExtensionHost {
     for (const controller of this.activeBrokerCalls.values()) controller.abort();
     this.activeBrokerCalls.clear();
     void this.drainAgentObservers("extension-stopped");
+    void this.cleanupProviderVault();
     if (!this.stopping && this.state.state !== "failed" && this.state.state !== "quarantined") this.recordFailure(new Error(`extension child exited (${code ?? signal ?? "unknown"})`));
+  }
+
+  private async cleanupProviderVault(): Promise<void> {
+    if (this.options.providerVault === undefined || this.descriptor === undefined) return;
+    await Promise.all([...this.dependencyProviders].map((providerId) => this.options.providerVault!.cleanup({ extensionId: this.extensionId, providerId, dataDirectory: this.descriptor!.dataDirectory }).catch(() => undefined)));
+    this.activeDependencyCalls.clear();
   }
 
   private recordFailure(error: Error): void {
@@ -407,6 +475,7 @@ function record(value: unknown): Record<string, unknown> | undefined { return ty
 function failureMessage(value: unknown): string { const message = record(value)?.message; return typeof message === "string" ? message.slice(0, 1_000) : "extension operation failed"; }
 function safeFailure(error: Error): string { return error.message.replace(/[\r\n]/gu, " ").slice(0, 1_000); }
 function boundedId(value: unknown): string | undefined { return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u.test(value) ? value : undefined; }
+function cancellationSignal(signal: AbortSignal): import("@terminay/extension-api").CancellationSignal { return Object.freeze({ get aborted() { return signal.aborted; }, throwIfAborted() { if (signal.aborted) throw new Error("provider dependency call cancelled"); } }); }
 function validateProviders(value: unknown, extensionId: string): readonly ProviderDefinition[] {
   if (!Array.isArray(value) || value.length > 32) throw new Error("extension returned invalid provider registrations");
   const seen = new Set<string>();
@@ -437,6 +506,17 @@ function validateAgentProviders(value: unknown, descriptor: ExtensionLaunchDescr
     seen.add(valueId); result.push(structuredClone(contribution));
   }
   return Object.freeze(result);
+}
+
+function validateDependencyProviders(value: unknown, providers: readonly ProviderDefinition[], descriptor: ExtensionLaunchDescriptor): Set<string> {
+  if (!Array.isArray(value) || value.length > 32) throw new Error("extension returned invalid dependency target registrations");
+  const declared = new Map((descriptor.projectEnvironmentProviders ?? []).map((provider) => [provider.id, provider])); const result = new Set<string>();
+  for (const providerId of value) {
+    const contribution = typeof providerId === "string" ? declared.get(providerId) : undefined;
+    if (contribution === undefined || !providers.some((provider) => provider.providerId === providerId) || !Array.isArray(contribution.dependencyOperations) || contribution.dependencyOperations.length === 0 || result.has(providerId)) throw new Error("extension registered an undeclared dependency target");
+    result.add(providerId);
+  }
+  return result;
 }
 
 function validateAgentTerminalAdmission(value: ExtensionAgentTerminalAdmission, extensionId: string, providers: readonly AgentProviderContribution[]): ExtensionAgentTerminalContext {
@@ -553,3 +633,4 @@ function hasExecutable(value: unknown, seen = new Set<unknown>()): boolean {
   return Object.values(value as Record<string, unknown>).some((item) => hasExecutable(item, seen));
 }
 function validated<T>(result: { readonly ok: true; readonly value: T } | { readonly ok: false }, message: string): T { if (!result.ok) throw new Error(message); return structuredClone(result.value); }
+function runtimeValidated<T>(result: { readonly ok: true; readonly value: T } | { readonly ok: false }, message: string): T { if (!result.ok) throw new Error(message); return result.value; }

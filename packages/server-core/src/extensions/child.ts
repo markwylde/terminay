@@ -8,6 +8,7 @@ const brokerCalls = new Map<string, { resolve: (value: unknown) => void; reject:
 let deactivate: (() => unknown | Promise<unknown>) | undefined;
 let callbacks: Record<string, (input: unknown, context: { signal: AbortSignal }) => unknown | Promise<unknown>> = {};
 const providerRuntimes = new Map<string, Record<string, unknown>>();
+const dependencyRuntimes = new Map<string, { call(request: unknown, context: unknown): Promise<unknown> }>();
 const agentRuntimes = new Map<string, Record<string, unknown>>();
 const agentTerminals = new Map<string, { readonly providerId: string; readonly controller: AbortController; readonly context: Record<string, unknown> }>();
 let sequence = 0;
@@ -68,6 +69,7 @@ async function activateExtension(frame: HostFrame): Promise<void> {
     const providers: unknown[] = [];
     const agentProviders: string[] = [];
     providerRuntimes.clear();
+    dependencyRuntimes.clear();
     agentRuntimes.clear();
     for (const terminal of agentTerminals.values()) terminal.controller.abort();
     agentTerminals.clear();
@@ -85,6 +87,8 @@ async function activateExtension(frame: HostFrame): Promise<void> {
         if (definition === undefined) throw new Error("invalid provider registration");
         providers.push(structuredClone(definition));
         if (runtime !== undefined && typeof definition.providerId === "string") providerRuntimes.set(definition.providerId, runtime);
+        const dependencyOperations = object(value?.dependencyOperations);
+        if (dependencyOperations !== undefined && typeof dependencyOperations.call === "function" && typeof definition.providerId === "string") dependencyRuntimes.set(definition.providerId, dependencyOperations as unknown as { call(request: unknown, context: unknown): Promise<unknown> });
       },
       agents: Object.freeze({
         registerProvider(providerId: string, runtime: unknown) {
@@ -120,9 +124,10 @@ async function activateExtension(frame: HostFrame): Promise<void> {
       callbacks[name] = callback as typeof callbacks[string];
     }
     callbacks["provider.invoke"] = invokeProvider;
+    callbacks["dependency.invoke"] = invokeDependency;
     if (definition.deactivate !== undefined && typeof definition.deactivate !== "function") throw new Error("extension returned an invalid deactivate callback");
     deactivate = (extension?.deactivate ?? definition.deactivate) as typeof deactivate;
-    send({ protocolVersion: 1, kind: "ready", id: frame.id, payload: { methods: Object.keys(callbacks).sort(), providers, agentProviders } });
+    send({ protocolVersion: 1, kind: "ready", id: frame.id, payload: { methods: Object.keys(callbacks).sort(), providers, agentProviders, dependencyProviders: [...dependencyRuntimes.keys()].sort() } });
   } catch (error) { failure(frame.id, error); }
 }
 
@@ -266,7 +271,14 @@ async function invokeProvider(input: unknown, invocationContext: { signal: Abort
     ...(Number.isSafeInteger(payload?.expectedRevision) ? { expectedRevision: payload?.expectedRevision } : {}),
     dependencies: Object.freeze({
       call(request: unknown, dependencyContext: unknown) {
-        return brokerRequest("provider.call", { request, context: dependencyContext });
+        const requested = object(dependencyContext);
+        const requestedDeadline = typeof requested?.deadlineAt === "string" ? requested.deadlineAt : deadlineAt;
+        const boundedDeadline = Date.parse(requestedDeadline) < Date.parse(deadlineAt) ? requestedDeadline : deadlineAt;
+        return brokerRequest("provider.call", { callerProviderId: providerId, request, context: {
+          deadlineAt: boundedDeadline,
+          ...(typeof requested?.idempotencyKey === "string" ? { idempotencyKey: requested.idempotencyKey } : {}),
+          ...(Number.isSafeInteger(requested?.expectedRevision) ? { expectedRevision: requested?.expectedRevision } : {}),
+        } }, invocationContext.signal);
       },
     }),
     profiles: Object.freeze({
@@ -289,6 +301,26 @@ async function invokeProvider(input: unknown, invocationContext: { signal: Abort
   return { callId, ok: true, result };
 }
 
+async function invokeDependency(input: unknown, invocationContext: { signal: AbortSignal }): Promise<unknown> {
+  const payload = object(input); const providerId = typeof payload?.providerId === "string" ? payload.providerId : "";
+  const runtime = dependencyRuntimes.get(providerId); const callToken = typeof payload?.callToken === "string" ? payload.callToken : "";
+  if (runtime === undefined || !callToken) throw new Error("dependency target is unavailable");
+  const timing = object(payload?.context); const deadlineAt = typeof timing?.deadlineAt === "string" ? timing.deadlineAt : "";
+  const vault = Object.freeze({
+    put(request: unknown) { const value = object(request); const bytes = value?.value; return brokerRequest("vault.put", { callToken, request: { ...value, ...(bytes instanceof Uint8Array ? { value: [...bytes] } : {}) } }); },
+    async withSecret<T>(request: unknown, use: (copy: Uint8Array) => T | Promise<T>): Promise<T> {
+      if (typeof use !== "function") throw new Error("provider vault callback is required");
+      const raw = await brokerRequest("vault.withSecret", { callToken, request });
+      if (!Array.isArray(raw) || raw.length > 1024 * 1024 || raw.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)) throw new Error("provider vault returned invalid bytes");
+      const copy = new Uint8Array(raw);
+      try { return await use(copy); } finally { copy.fill(0); raw.fill(0); }
+    },
+    remove(request: unknown) { return brokerRequest("vault.remove", { callToken, request }); },
+  });
+  const context = Object.freeze({ deadlineAt, signal: invocationContext.signal, ...(typeof timing?.idempotencyKey === "string" ? { idempotencyKey: timing.idempotencyKey } : {}), ...(Number.isSafeInteger(timing?.expectedRevision) ? { expectedRevision: timing?.expectedRevision } : {}), vault });
+  return runtime.call(payload?.request, context);
+}
+
 async function invoke(frame: HostFrame): Promise<void> {
   const payload = object(frame.payload);
   const method = typeof payload?.method === "string" ? callbacks[payload.method] : undefined;
@@ -302,11 +334,14 @@ async function invoke(frame: HostFrame): Promise<void> {
   finally { invocations.delete(frame.id); }
 }
 
-function brokerRequest(operation: "log" | "secret.resolve" | "profile.get" | "agent.list" | "agent.sign" | "provider.call", payload: unknown): Promise<unknown> {
-  if (operation !== "log" && operation !== "secret.resolve" && operation !== "profile.get" && operation !== "agent.list" && operation !== "agent.sign" && operation !== "provider.call") return Promise.reject(new Error("unsupported broker operation"));
+function brokerRequest(operation: "log" | "secret.resolve" | "profile.get" | "agent.list" | "agent.sign" | "provider.call" | "vault.put" | "vault.withSecret" | "vault.remove", payload: unknown, signal?: AbortSignal): Promise<unknown> {
+  if (operation !== "log" && operation !== "secret.resolve" && operation !== "profile.get" && operation !== "agent.list" && operation !== "agent.sign" && operation !== "provider.call" && operation !== "vault.put" && operation !== "vault.withSecret" && operation !== "vault.remove") return Promise.reject(new Error("unsupported broker operation"));
   const id = `broker:${++sequence}`;
   return new Promise((resolve, reject) => {
-    brokerCalls.set(id, { resolve, reject });
+    const abort = () => { brokerCalls.delete(id); send({ protocolVersion: 1, kind: "broker.cancel", id }); reject(new Error("broker request cancelled")); };
+    if (signal?.aborted) { reject(new Error("broker request cancelled")); return; }
+    signal?.addEventListener("abort", abort, { once:true });
+    brokerCalls.set(id, { resolve: (value) => { signal?.removeEventListener("abort",abort); resolve(value); }, reject: (error) => { signal?.removeEventListener("abort",abort); reject(error); } });
     if (!send({ protocolVersion: 1, kind: "broker.request", id, payload: { operation, payload } })) {
       brokerCalls.delete(id); reject(new Error("broker IPC send failed"));
     }

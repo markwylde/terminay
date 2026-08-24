@@ -18,3 +18,4 @@ export * from "./puzedSshProjectAdapter.js";
 export * from "./projectEnvironmentRuntime.js";
 export * from "./composedSshRuntime.js";
 export * from "./localAgentObservation.js";
+export * from "./providerVault.js";

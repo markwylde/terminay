@@ -6,10 +6,24 @@ import { join } from "node:path";
 import {
   ExtensionHost,
   ExtensionHostManager,
+  ServerVaultService,
   assertExtensionCompatible,
   extensionLaunchDescriptor,
   validateExtensionLaunchDescriptor,
 } from "../dist/index.js";
+
+function memoryVault() {
+  const values = new Map();
+  return new ServerVaultService({
+    backend: "custom", status: () => "unlocked", unlock: async () => {}, lock: () => {},
+    list: () => [...values.keys()].map((id) => ({ id, configured: true })),
+    async put({ id, value }) { if (values.has(id)) throw new Error("exists"); values.set(id, new Uint8Array(value)); return { id, configured: true }; },
+    async replace({ id, value }) { if (!values.has(id)) throw new Error("missing"); values.set(id, new Uint8Array(value)); return { id, configured: true }; },
+    async test(id) { if (!values.has(id)) throw new Error("missing"); },
+    async remove(id) { return values.delete(id); }, async rotate() {},
+    async withSecret(id, use) { const value = values.get(id); if (!value) throw new Error("missing"); const copy = new Uint8Array(value); try { return await use(copy); } finally { copy.fill(0); } },
+  });
+}
 
 async function fixture(extensionId, source) {
   const root = await mkdtemp(join(tmpdir(), "terminay-extension-host-"));
@@ -390,4 +404,32 @@ test("agent registration fails closed when a child registers a provider not decl
   const host = new ExtensionHost(descriptor.extensionId, { broker: { async request() {} } });
   await assert.rejects(host.start(descriptor), /undeclared or invalid/);
   assert.deepEqual(host.status().agentProviders, []);
+});
+
+test("dependency calls authenticate the caller, enforce manifest operation allowlists, and keep vault bytes private", async () => {
+  const target = await fixture("example.target", `export function activate(context) { context.registerProjectEnvironmentProvider({
+    definition: { providerId: "example.target/main", displayName: "Target", capabilities: ["terminal"] },
+    runtime: { testProfile: async()=>[], resolveOptions:async()=>({options:[]}), createEnvironment:async()=>({state:"ready",providerState:{},status:{state:"available",revision:1}}), resumeOperation:async()=>({state:"ready",providerState:{},status:{state:"available",revision:1}}), getStatus:async()=>({state:"available",revision:1}), invokeAction:async()=>({state:"complete",providerState:{},status:{state:"available",revision:1}}) },
+    dependencyOperations: { async call(request, context) { const stored = await context.vault.put({ bindingKey:"primary", purpose:"fixture", value:new Uint8Array([11,22,33]), idempotencyKey:context.idempotencyKey }); return context.vault.withSecret({binding:stored.binding,purpose:"fixture"}, bytes => ({ operation:request.operation, byteCount:bytes.length, binding:stored.binding, revision:stored.revision })); } }
+  }); }`);
+  target.permissions = []; target.projectEnvironmentProviders = [{ id: "example.target/main", displayName: "Target", capabilities: ["terminal"], dependencyOperations: [{ name: "credential.generate" }] }];
+  const caller = await fixture("example.caller", `export function activate(context) { context.registerProjectEnvironmentProvider({ definition:{providerId:"example.caller/main",displayName:"Caller",capabilities:["terminal"]}, runtime:{ testProfile:async()=>[], async resolveOptions(_request, call) { const result=await call.dependencies.call({providerId:"example.target/main",operation:"credential.generate",payload:{}},{deadlineAt:call.deadlineAt,signal:call.signal,idempotencyKey:"generate-1"}); return {options:[{value:JSON.stringify(result),label:"Result"}]}; }, createEnvironment:async()=>({state:"ready",providerState:{},status:{state:"available",revision:1}}), resumeOperation:async()=>({state:"ready",providerState:{},status:{state:"available",revision:1}}), getStatus:async()=>({state:"available",revision:1}), invokeAction:async()=>({state:"complete",providerState:{},status:{state:"available",revision:1}}) } }); }`);
+  caller.permissions = ["provider:depend"]; caller.extensionDependencies = [{ extensionId: "example.target", apiRange: "^1.1.0" }];
+  const manager = new ExtensionHostManager({ broker:{async request(){}}, vault: memoryVault() });
+  await manager.start(target); await manager.start(caller);
+  const options = await manager.invokeProvider({ providerId:"example.caller/main", callback:"resolveOptions", request:{sourceId:"fixture",values:{}}, idempotencyKey:"outer", deadlineMs:1000 });
+  const result=JSON.parse(options.options[0].value);
+  assert.deepEqual(result, { operation:"credential.generate", byteCount:3, binding:{bindingRef:result.binding.bindingRef}, revision:1 });
+  assert.match(result.binding.bindingRef, /^pvb_/); assert.equal(JSON.stringify(result).includes("11"), false);
+  await manager.shutdown();
+});
+
+test("dependency routing rejects undeclared callers and undeclared target operations", async () => {
+  const target = await fixture("secure.target", `export function activate(context){context.registerProjectEnvironmentProvider({definition:{providerId:"secure.target/main",displayName:"Target",capabilities:["terminal"]},runtime:{testProfile:async()=>[],resolveOptions:async()=>({options:[]}),createEnvironment:async()=>({state:"ready",providerState:{},status:{state:"available",revision:1}}),resumeOperation:async()=>({state:"ready",providerState:{},status:{state:"available",revision:1}}),getStatus:async()=>({state:"available",revision:1}),invokeAction:async()=>({state:"complete",providerState:{},status:{state:"available",revision:1}})},dependencyOperations:{async call(){return [];}}});}`);
+  target.projectEnvironmentProviders = [{ id:"secure.target/main", displayName:"Target", capabilities:["terminal"], dependencyOperations:[{name:"allowed"}] }];
+  const caller = await fixture("secure.caller", `export function activate(context){context.registerProjectEnvironmentProvider({definition:{providerId:"secure.caller/main",displayName:"Caller",capabilities:["terminal"]},runtime:{async testProfile(_r,c){return c.dependencies.call({providerId:"secure.target/main",operation:"denied",payload:{}},{deadlineAt:c.deadlineAt,signal:c.signal});},resolveOptions:async()=>({options:[]}),createEnvironment:async()=>({state:"ready",providerState:{},status:{state:"available",revision:1}}),resumeOperation:async()=>({state:"ready",providerState:{},status:{state:"available",revision:1}}),getStatus:async()=>({state:"available",revision:1}),invokeAction:async()=>({state:"complete",providerState:{},status:{state:"available",revision:1}})}});}`);
+  caller.permissions=["provider:depend"]; caller.extensionDependencies=[{extensionId:"secure.target",apiRange:"^1.1.0"}];
+  const manager=new ExtensionHostManager({broker:{async request(){}},vault:memoryVault()}); await manager.start(target); await manager.start(caller);
+  await assert.rejects(manager.invokeProvider({providerId:"secure.caller/main",callback:"testProfile",request:{values:{}},deadlineMs:1000}), /not declared/);
+  await manager.shutdown();
 });
