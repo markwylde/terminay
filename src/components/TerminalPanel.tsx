@@ -1006,6 +1006,12 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			resizeFrame = null;
 
 			const nextRootSize = getTerminalRootSize(root);
+			// A panel can mount before Dockview has assigned its active-content
+			// dimensions. Fitting that transient zero-sized root produces xterm's
+			// minimum grid, which must never become this PTY's claimed viewport.
+			if (nextRootSize.width <= 0 || nextRootSize.height <= 0) {
+				return;
+			}
 			if (
 				!force &&
 				nextRootSize.width === lastFitSize.width &&
@@ -1411,7 +1417,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 							if (recoveryDeadlineTimer !== null)
 								window.clearTimeout(recoveryDeadlineTimer);
 							recoveryDeadlineTimer = null;
-							setIsTerminalHydrating(false);
 							terminalPanelConnectionContext?.reportConnectionHydrated?.();
 							reportTerminalRebindDiagnostic(sessionId, 'attached');
 
@@ -1426,14 +1431,13 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 							}
 
 							serverInputQueue?.attach(attachment);
-							if (
-								pendingPanelResize !== null &&
-								terminalPresentationControllerRef.current
-							) {
-								const resize = pendingPanelResize;
-								pendingPanelResize = null;
-								void attachment.resize(resize).catch(() => {});
-							}
+							// Checkpoint restoration must use its saved grid, but that grid is
+							// not necessarily the active Dockview panel's viewport. Re-fit after
+							// the checkpoint and its ordered tail have completed, before removing
+							// the hydration cover. This also replaces any pre-attach measurement
+							// with one authoritative current-viewport resize.
+							fitAndResizeNow(true);
+							setIsTerminalHydrating(false);
 							// The initial focus call runs before the asynchronous attachment is ready.
 							// During browser connection setup Dockview/layout work can return focus to
 							// body, leaving xterm's hidden textarea unable to receive the first key.

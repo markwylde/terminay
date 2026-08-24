@@ -205,6 +205,12 @@ surface. It must not show a centered Terminay mark or loading copy. The loader
 is removed when hydration completes; an attachment failure replaces the blank
 state with the existing actionable terminal error presentation.
 
+A newly mounted terminal restores its checkpoint at the checkpoint's original
+grid, then fits to the active panel's non-zero viewport before hydration becomes
+visible and before it claims the current viewport dimensions from the PTY. A
+saved checkpoint grid never leaves a newly activated terminal visibly narrow
+when its active panel is wider.
+
 `TerminalInputSourceAdapter` is the server-side write boundary for keyboard,
 paste, macro, dictation, MCP, and remote sources. It validates the exact
 server/project/session authorization, preserves per-session write ordering,
