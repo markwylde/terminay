@@ -78,7 +78,7 @@ test('mounted terminal keeps one client facade while replacement calls use the n
       outdir: outputDirectory, platform: 'node',
       plugins: [{ name: 'stubs', setup(api) {
         api.onResolve({ filter: /^@xterm\/|^lucide-react$/ }, (args) => ({ path: args.path, namespace: 'stub' }))
-        api.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({ contents: 'export class Terminal {}; export class FitAddon {}; export class SearchAddon {}; export class Unicode11Addon {}; export class WebglAddon {}; export class WebLinksAddon {}; export const AlertTriangle=0, Mic=0, RotateCcw=0, Square=0, X=0;', loader: 'js' }))
+        api.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({ contents: 'export class Terminal {}; export class FitAddon {}; export class SearchAddon {}; export class Unicode11Addon {}; export class WebglAddon {}; export class WebLinksAddon {}; export const AlertTriangle=0, KeyboardOff=0, Mic=0, RotateCcw=0, Square=0, X=0;', loader: 'js' }))
       } }],
     })
     const module = await import(pathToFileURL(join(outputDirectory, 'TerminalPanel.js')).href)
@@ -142,7 +142,7 @@ test('context resolution uses the supplied shared terminal client for a real att
       '@xterm/addon-unicode11': 'export class Unicode11Addon {}',
       '@xterm/addon-webgl': 'export class WebglAddon {}',
       '@xterm/addon-web-links': 'export class WebLinksAddon {}',
-      'lucide-react': 'export const AlertTriangle=0, Mic=0, RotateCcw=0, Square=0, X=0;',
+      'lucide-react': 'export const AlertTriangle=0, KeyboardOff=0, Mic=0, RotateCcw=0, Square=0, X=0;',
     }
 
     await build({

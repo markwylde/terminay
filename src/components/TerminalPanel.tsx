@@ -24,7 +24,8 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import type { ILinkHandler } from '@xterm/xterm';
 import { Terminal } from '@xterm/xterm';
 import type { IDockviewPanelProps } from 'dockview';
-import type { CSSProperties } from 'react';
+import { KeyboardOff } from 'lucide-react';
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import {
 	createContext,
 	useCallback,
@@ -79,6 +80,16 @@ import { createTerminalLinkInteraction } from './terminalLinkInteraction';
 import { shouldInsertTerminalMultilineNewline } from './terminalMultilineInteraction';
 import { shouldReturnFocusToTerminalFromNote } from './terminalNoteInteraction';
 import {
+	applyTerminalMobileModifiers,
+	EMPTY_TERMINAL_MOBILE_MODIFIERS,
+	hasTerminalMobileModifier,
+	shouldFocusTerminalForTouchPointer,
+	shouldFocusTerminalForTouchStart,
+	toggleTerminalMobileModifier,
+	type TerminalMobileModifier,
+	type TerminalMobileModifiers,
+} from './terminalMobileKeyboardInteraction';
+import {
 	isTerminalRetryActionable,
 	type TerminalPanelBinding,
 	TerminalPanelBindingFence,
@@ -95,7 +106,6 @@ import { buildTerminalPresentationOptions } from './terminalPresentationInteract
 import { getTerminalScrollbackAction } from './terminalScrollbackInteraction';
 import { isTerminalSearchShortcut } from './terminalSearchInteraction';
 import { getTerminalSwitcherDirection } from './terminalSwitcherInteraction';
-import { bindTerminalTouchScroll } from './terminalTouchScrollInteraction';
 import {
 	type AttachTerminalWebglRendererResult,
 	attachTerminalWebglRenderer,
@@ -405,6 +415,11 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	const terminalPresentationActionRef = useRef<() => Promise<void>>(() =>
 		Promise.resolve(),
 	);
+	const mobileTerminalModifiersRef = useRef<TerminalMobileModifiers>(
+		EMPTY_TERMINAL_MOBILE_MODIFIERS,
+	);
+	const mobileKeyboardViewportMaximumRef = useRef(0);
+	const mobileKeyboardViewportWidthRef = useRef(0);
 	const retryServerAttachmentRef = useRef<() => void>(() => {});
 	const rebindServerAttachmentRef = useRef<
 		(
@@ -526,6 +541,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	});
 	const [dictationOverlay, setDictationOverlay] =
 		useState<DictationOverlayProps | null>(null);
+	const [mobileTerminalModifiers, setMobileTerminalModifiers] =
+		useState<TerminalMobileModifiers>(EMPTY_TERMINAL_MOBILE_MODIFIERS);
+	const [isMobileKeyboardVisible, setIsMobileKeyboardVisible] = useState(false);
 	const [terminalContextMenu, setTerminalContextMenu] = useState<{
 		x: number;
 		y: number;
@@ -533,6 +551,107 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		hasSelection: boolean;
 	} | null>(null);
 	const hasTerminalNote = typeof props.params.terminalNote === 'string';
+
+	const resetMobileTerminalModifiers = useCallback(() => {
+		mobileTerminalModifiersRef.current = EMPTY_TERMINAL_MOBILE_MODIFIERS;
+		setMobileTerminalModifiers(EMPTY_TERMINAL_MOBILE_MODIFIERS);
+	}, []);
+
+	const toggleMobileTerminalModifier = useCallback(
+		(modifier: TerminalMobileModifier) => {
+			const next = toggleTerminalMobileModifier(
+				mobileTerminalModifiersRef.current,
+				modifier,
+			);
+			mobileTerminalModifiersRef.current = next;
+			setMobileTerminalModifiers(next);
+		},
+		[],
+	);
+
+	const announceMobileTerminalInput = useCallback(() => {
+		window.dispatchEvent(
+			new CustomEvent('terminay-terminal-user-input', {
+				detail: { sessionId: props.params.sessionId },
+			}),
+		);
+	}, [props.params.sessionId]);
+
+	const sendMobileTerminalAccessoryInput = useCallback(
+		(input: string) => {
+			const terminal = terminalRef.current;
+			if (terminal === null) return;
+
+			const data = applyTerminalMobileModifiers(
+				input,
+				mobileTerminalModifiersRef.current,
+			);
+			resetMobileTerminalModifiers();
+			terminal.focus();
+			announceMobileTerminalInput();
+			window.dispatchEvent(
+				new CustomEvent(TERMINAL_PANEL_INPUT_EVENT, {
+					detail: { sessionId: props.params.sessionId, data },
+				}),
+			);
+		},
+		[
+			announceMobileTerminalInput,
+			props.params.sessionId,
+			resetMobileTerminalModifiers,
+		],
+	);
+
+	const pasteFromMobileTerminalAccessory = useCallback(() => {
+		const terminal = terminalRef.current;
+		if (terminal === null) return;
+
+		resetMobileTerminalModifiers();
+		void pasteTerminalClipboard(readTerminalClipboard, {
+			announceInput: announceMobileTerminalInput,
+			paste: (text) => terminal.paste(text),
+			focus: () => terminal.focus(),
+		});
+	}, [announceMobileTerminalInput, resetMobileTerminalModifiers]);
+
+	const dismissMobileTerminalKeyboard = useCallback(() => {
+		resetMobileTerminalModifiers();
+		terminalRef.current?.blur();
+	}, [resetMobileTerminalModifiers]);
+
+	const preserveMobileTerminalFocus = useCallback(
+		(event: ReactPointerEvent<HTMLButtonElement>) => {
+			event.preventDefault();
+			terminalRef.current?.focus();
+		},
+		[],
+	);
+
+	useEffect(() => {
+		const viewport = window.visualViewport;
+		if (viewport === null) return;
+
+		const updateKeyboardVisibility = () => {
+			const widthChanged =
+				mobileKeyboardViewportWidthRef.current !== 0 &&
+				Math.abs(viewport.width - mobileKeyboardViewportWidthRef.current) > 80;
+			if (widthChanged || viewport.height > mobileKeyboardViewportMaximumRef.current) {
+				mobileKeyboardViewportMaximumRef.current = viewport.height;
+			}
+			mobileKeyboardViewportWidthRef.current = viewport.width;
+			setIsMobileKeyboardVisible(
+				mobileKeyboardViewportMaximumRef.current - viewport.height > 150,
+			);
+		};
+
+		updateKeyboardVisibility();
+		viewport.addEventListener('resize', updateKeyboardVisibility);
+		viewport.addEventListener('scroll', updateKeyboardVisibility);
+		return () => {
+			viewport.removeEventListener('resize', updateKeyboardVisibility);
+			viewport.removeEventListener('scroll', updateKeyboardVisibility);
+		};
+	}, []);
 
 	useEffect(() => {
 		props.api.updateParameters({
@@ -1617,10 +1736,14 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		});
 
 		const dataDisposer = terminal.onData((data) => {
+			const modifiers = mobileTerminalModifiersRef.current;
+			if (hasTerminalMobileModifier(modifiers)) {
+				resetMobileTerminalModifiers();
+				writePanelInput(applyTerminalMobileModifiers(data, modifiers));
+				return;
+			}
 			writePanelInput(data);
 		});
-
-		const touchScrollDisposer = bindTerminalTouchScroll(root, terminal);
 
 		const resizeDisposer = props.api.onDidDimensionsChange(() => {
 			fitAndResize();
@@ -1658,6 +1781,26 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
 		const markPointerDownInside = () => {
 			pointerDownInsideAt = Date.now();
+		};
+
+		// xterm 6.1 owns touch panning, but its gesture listener cancels the
+		// compatibility mousedown that normally focuses its helper textarea.
+		// Focus while the trusted touch event is still in flight so iOS may show
+		// the software keyboard; do not cancel or stop the event, since xterm
+		// must still receive it for native scrolling and TUI input.
+		const focusTerminalFromTouch = () => {
+			terminal.focus();
+			announceTerminalFocus();
+		};
+
+		const handleTouchPointerDown = (event: PointerEvent) => {
+			if (!shouldFocusTerminalForTouchPointer(event.pointerType)) return;
+			focusTerminalFromTouch();
+		};
+
+		const handleTouchStart = () => {
+			if (!shouldFocusTerminalForTouchStart('PointerEvent' in window)) return;
+			focusTerminalFromTouch();
 		};
 
 		const reassertTerminalFocus = () => {
@@ -1935,6 +2078,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		root.addEventListener('contextmenu', openTerminalContextMenu);
 		root.addEventListener('pointerdown', announceTerminalUserInput);
 		root.addEventListener('pointerdown', markPointerDownInside);
+		root.addEventListener('pointerdown', handleTouchPointerDown);
+		root.addEventListener('touchstart', handleTouchStart);
 		window.addEventListener('focus', handleWindowRefocus);
 		window.addEventListener('focus', repaintTerminalOnWindowFocus);
 		window.addEventListener('terminay-focus-terminal', focusTerminal);
@@ -1978,6 +2123,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			root.removeEventListener('contextmenu', openTerminalContextMenu);
 			root.removeEventListener('pointerdown', announceTerminalUserInput);
 			root.removeEventListener('pointerdown', markPointerDownInside);
+			root.removeEventListener('pointerdown', handleTouchPointerDown);
+			root.removeEventListener('touchstart', handleTouchStart);
 			window.removeEventListener('focus', handleWindowRefocus);
 			window.removeEventListener('focus', repaintTerminalOnWindowFocus);
 			if (refocusFrame !== null) {
@@ -2008,7 +2155,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			resizeDisposer.dispose();
 			keyDisposer.dispose();
 			dataDisposer.dispose();
-			touchScrollDisposer();
 			panelEventDisposer?.();
 			if (presentationRenewTimer !== null)
 				window.clearTimeout(presentationRenewTimer);
@@ -2057,6 +2203,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		props.params.terminalClientMode,
 		props.params.terminalPanelClient,
 		resolvedTerminalClient,
+		resetMobileTerminalModifiers,
 		settingsClient,
 	]);
 
@@ -2430,6 +2577,130 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				</div>
 			) : null}
 			<div className="terminal-panel-root" ref={xtermRootRef} />
+			{isMobileKeyboardVisible ? (
+				<fieldset
+					className="terminal-mobile-keyboard-accessory"
+					aria-label="Terminal keyboard controls"
+				>
+					<button
+						type="button"
+						className="terminal-mobile-keyboard-accessory__key"
+						onPointerDown={preserveMobileTerminalFocus}
+						onClick={() => sendMobileTerminalAccessoryInput('\x1b')}
+					>
+						Esc
+					</button>
+					<button
+						type="button"
+						className="terminal-mobile-keyboard-accessory__key"
+						onPointerDown={preserveMobileTerminalFocus}
+						onClick={() => sendMobileTerminalAccessoryInput('\t')}
+					>
+						Tab
+					</button>
+					<button
+						type="button"
+						className={`terminal-mobile-keyboard-accessory__key${
+							mobileTerminalModifiers.ctrl
+								? ' terminal-mobile-keyboard-accessory__key--active'
+								: ''
+						}`}
+						aria-pressed={mobileTerminalModifiers.ctrl}
+						onPointerDown={preserveMobileTerminalFocus}
+						onClick={() => toggleMobileTerminalModifier('ctrl')}
+					>
+						Ctrl
+					</button>
+					<button
+						type="button"
+						className="terminal-mobile-keyboard-accessory__key"
+						onPointerDown={preserveMobileTerminalFocus}
+						onClick={() => sendMobileTerminalAccessoryInput('\x1b[A')}
+						aria-label="Arrow up"
+					>
+						↑
+					</button>
+					<button
+						type="button"
+						className={`terminal-mobile-keyboard-accessory__key${
+							mobileTerminalModifiers.shift
+								? ' terminal-mobile-keyboard-accessory__key--active'
+								: ''
+						}`}
+						aria-pressed={mobileTerminalModifiers.shift}
+						onPointerDown={preserveMobileTerminalFocus}
+						onClick={() => toggleMobileTerminalModifier('shift')}
+					>
+						Shift
+					</button>
+					<button
+						type="button"
+						className="terminal-mobile-keyboard-accessory__key terminal-mobile-keyboard-accessory__key--icon"
+						onPointerDown={preserveMobileTerminalFocus}
+						onClick={dismissMobileTerminalKeyboard}
+						aria-label="Hide keyboard"
+					>
+						<KeyboardOff aria-hidden="true" size={16} strokeWidth={2} />
+					</button>
+					<button
+						type="button"
+						className={`terminal-mobile-keyboard-accessory__key${
+							mobileTerminalModifiers.alt
+								? ' terminal-mobile-keyboard-accessory__key--active'
+								: ''
+						}`}
+						aria-pressed={mobileTerminalModifiers.alt}
+						onPointerDown={preserveMobileTerminalFocus}
+						onClick={() => toggleMobileTerminalModifier('alt')}
+					>
+						Alt
+					</button>
+					<button
+						type="button"
+						className="terminal-mobile-keyboard-accessory__key"
+						disabled={!canReadTerminalClipboard()}
+						onPointerDown={preserveMobileTerminalFocus}
+						onClick={pasteFromMobileTerminalAccessory}
+					>
+						Paste
+					</button>
+					<button
+						type="button"
+						className="terminal-mobile-keyboard-accessory__key"
+						onPointerDown={preserveMobileTerminalFocus}
+						onClick={() => sendMobileTerminalAccessoryInput('\x1b[D')}
+						aria-label="Arrow left"
+					>
+						←
+					</button>
+					<button
+						type="button"
+						className="terminal-mobile-keyboard-accessory__key"
+						onPointerDown={preserveMobileTerminalFocus}
+						onClick={() => sendMobileTerminalAccessoryInput('\x1b[B')}
+						aria-label="Arrow down"
+					>
+						↓
+					</button>
+					<button
+						type="button"
+						className="terminal-mobile-keyboard-accessory__key"
+						onPointerDown={preserveMobileTerminalFocus}
+						onClick={() => sendMobileTerminalAccessoryInput('\x1b[C')}
+						aria-label="Arrow right"
+					>
+						→
+					</button>
+					<button
+						type="button"
+						className="terminal-mobile-keyboard-accessory__key"
+						onPointerDown={preserveMobileTerminalFocus}
+						onClick={() => sendMobileTerminalAccessoryInput('\r')}
+					>
+						Enter
+					</button>
+				</fieldset>
+			) : null}
 			{serverTerminalError ? (
 				<div className="terminal-panel-connection-error" role="alert">
 					<p>{serverTerminalError}</p>

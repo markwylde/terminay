@@ -2940,6 +2940,75 @@ body.project-tabbar-reordering .project-tabbar {
   overflow: hidden;
 }
 
+.terminal-mobile-keyboard-accessory {
+  display: none;
+}
+
+/* A web page cannot add controls to iOS's native input assistant. The visual
+ * viewport does shrink for its software keyboard though, so this normal flex
+ * row lands directly above it without overlaying the xterm cursor or output. */
+@media (hover: none) and (pointer: coarse) {
+  .terminal-mobile-keyboard-accessory {
+    position: relative;
+    z-index: 4;
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    flex: 0 0 auto;
+    min-inline-size: 0;
+    margin: 0;
+    gap: 4px 6px;
+    border: 0;
+    border-top: 1px solid #282e2f;
+    background: #15191a;
+    padding: 4px max(8px, env(safe-area-inset-right, 0px)) 4px max(8px, env(safe-area-inset-left, 0px));
+  }
+
+  .terminal-mobile-keyboard-accessory__key {
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    height: 28px;
+    min-height: 0;
+    border: 1px solid #2b3233;
+    border-radius: 6px;
+    background: #1d2223;
+    color: #c5c9c9;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 13px;
+    font-weight: 650;
+    line-height: 1;
+    padding: 0;
+    touch-action: manipulation;
+  }
+
+  .terminal-mobile-keyboard-accessory__key--icon {
+    color: #aeb5b5;
+  }
+
+  .terminal-mobile-keyboard-accessory__key--icon svg {
+    display: block;
+    flex: 0 0 16px;
+  }
+
+  .terminal-mobile-keyboard-accessory__key--active {
+    border-color: #48a98f;
+    background: #1e4f45;
+    color: #e9fff8;
+  }
+
+  .terminal-mobile-keyboard-accessory__key:disabled {
+    color: #687071;
+    opacity: 0.56;
+  }
+
+  .terminal-mobile-keyboard-accessory__key:focus-visible {
+    outline: 2px solid #71d9bb;
+    outline-offset: -2px;
+  }
+}
+
 .terminal-panel-loading {
   position: absolute;
   inset: 0;
