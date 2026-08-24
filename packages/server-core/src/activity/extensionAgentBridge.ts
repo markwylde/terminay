@@ -9,6 +9,7 @@ export interface ExtensionAgentBrokerOptions {
   readonly observe?: ExtensionAgentBroker["observe"];
   readonly maximumQueuedPublications?: number;
   readonly acknowledgementDeadlineMs?: number;
+  readonly onTerminalCancelled?: (contextId: string, providerId: string) => void;
 }
 
 /**
@@ -24,6 +25,7 @@ export function createExtensionAgentBroker(
   const tails = new Map<string, Promise<void>>();
   const queued = new Map<string, number>();
   const inFlight = new Map<string, Promise<ExtensionLifecycleIngestResult>>();
+  const retiredContexts = new Set<string>();
   const maximumQueued = options.maximumQueuedPublications ?? 64;
   const acknowledgementDeadlineMs = options.acknowledgementDeadlineMs ?? 5_000;
   return {
@@ -70,12 +72,16 @@ export function createExtensionAgentBroker(
       try { return await execution; } finally { if (inFlight.get(publicationKey) === execution) inFlight.delete(publicationKey); }
     },
     terminalCancelled(request) {
+      if (retiredContexts.has(request.terminal.contextId)) return;
+      if (retiredContexts.size >= 4_096) retiredContexts.delete(retiredContexts.values().next().value!);
+      retiredContexts.add(request.terminal.contextId);
       publications.delete(request.terminal.contextId);
       queued.delete(request.terminal.contextId);
       tails.delete(request.terminal.contextId);
       for (const key of inFlight.keys()) if (key.startsWith(`${request.terminal.contextId}\0`)) inFlight.delete(key);
       const identity = identityFor(request.terminal);
       try { service.releaseExtensionProvider(identity, request.providerId); } catch { /* terminal teardown is idempotent */ }
+      options.onTerminalCancelled?.(request.terminal.contextId, request.providerId);
     },
   };
 }

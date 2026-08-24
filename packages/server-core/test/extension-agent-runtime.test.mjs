@@ -138,3 +138,47 @@ test("provider retirement and project teardown are exact and idempotent", async 
   registry.projectRemoved(identity.projectId);await new Promise((resolve)=>setImmediate(resolve));assert.equal(cancelled.length,2);
   await agents.stop();
 });
+
+test("a host-originated child retirement clears only its exact runtime context", async()=>{
+  const activity=new TerminalActivityService({serverId:identity.serverId});activity.register(identity);
+  const agents=new AgentStatusService({activity});await agents.start();agents.register(identity);const admitted=[];
+  const registry=new ExtensionAgentRuntimeRegistry({agents,hosts:{agentProviderContributions:()=>[provider],async admitAgentTerminal(value){admitted.push(value);},async cancelAgentTerminal(){throw new Error("must not echo cancellation");},async drainAgentObservers(){}}});
+  registry.register(identity);registry.foregroundProcessChanged(identity,"test-agent");await new Promise((resolve)=>setImmediate(resolve));
+  assert.equal(registry.contextRetired(admitted[0].context.contextId,provider.id),true);
+  assert.equal(registry.contextRetired(admitted[0].context.contextId,provider.id),false);
+  assert.equal(registry.foregroundProcessChanged(identity,"test-agent"),true);
+  await new Promise((resolve)=>setImmediate(resolve));assert.equal(admitted.length,2);await agents.stop();
+});
+
+test("teardown causes retire each context exactly once", async (t) => {
+  const scenarios=[
+    ["terminal exit",(registry,id,context)=>registry.terminalExited(id),"terminal-closed",1],
+    ["provider disable",(registry,id,context)=>registry.retireProvider(context.providerId,"provider-disabled"),"provider-disabled",1],
+    ["provider update",(registry,id,context)=>registry.retireProvider(context.providerId,"extension-stopped"),"extension-stopped",1],
+    ["project removal",(registry,id)=>registry.projectRemoved(id.projectId),"terminal-closed",1],
+    ["environment revision",(registry,id)=>registry.environmentRevisionChanged(id.projectId),"terminal-replaced",1],
+    ["child crash",(registry,id,context)=>registry.contextRetired(context.contextId,context.providerId),undefined,0],
+    ["server shutdown",(registry)=>registry.drain("server-stopping"),undefined,0],
+  ];
+  for(const [name,action,reason,cancelCount] of scenarios) await t.test(name,async()=>{
+    const activity=new TerminalActivityService({serverId:identity.serverId});activity.register(identity);
+    const agents=new AgentStatusService({activity});await agents.start();agents.register(identity);const admitted=[];const cancelled=[];let drains=0;
+    const registry=new ExtensionAgentRuntimeRegistry({agents,hosts:{agentProviderContributions:()=>[provider],async admitAgentTerminal(value){admitted.push(value);},async cancelAgentTerminal(value){cancelled.push(value);return true;},async drainAgentObservers(){drains++;}}});
+    registry.register(identity);registry.foregroundProcessChanged(identity,"test-agent");await new Promise((resolve)=>setImmediate(resolve));const context=admitted[0].context;
+    await action(registry,identity,context);await action(registry,identity,context);await new Promise((resolve)=>setImmediate(resolve));
+    assert.equal(cancelled.length,cancelCount);if(reason!==undefined)assert.equal(cancelled[0].reason,reason);
+    assert.equal(drains,name==="server shutdown"?1:0);await agents.stop();
+  });
+});
+
+test("a stalled provider retirement does not disturb a healthy provider context",async()=>{
+  const otherIdentity={...identity,projectId:"project-2",sessionId:"terminal-2"};const otherProvider={...provider,id:"com.terminay.agent-other/test",processMatchers:[{executableName:"other-agent"}]};
+  const activity=new TerminalActivityService({serverId:identity.serverId});activity.register(identity);activity.register(otherIdentity);
+  const agents=new AgentStatusService({activity});await agents.start();agents.register(identity);agents.register(otherIdentity);const admitted=[];let unblock;
+  const registry=new ExtensionAgentRuntimeRegistry({agents,hosts:{agentProviderContributions:()=>[provider,otherProvider],async admitAgentTerminal(value){admitted.push(value);},async cancelAgentTerminal(value){if(value.contextId===admitted[0].context.contextId)await new Promise((resolve)=>{unblock=resolve;});return true;},async drainAgentObservers(){}}});
+  registry.register(identity);registry.register(otherIdentity);registry.foregroundProcessChanged(identity,"test-agent");registry.foregroundProcessChanged(otherIdentity,"other-agent");await new Promise((resolve)=>setImmediate(resolve));
+  const retiring=registry.retireProvider(provider.id);await new Promise((resolve)=>setImmediate(resolve));
+  assert.equal(registry.observationTerminal(admitted[1].context)?.environment,"this-server");
+  assert.equal(registry.foregroundProcessChanged(otherIdentity,"other-agent"),true);unblock();await retiring;
+  assert.equal(registry.observationTerminal(admitted[1].context)?.environment,"this-server");await agents.stop();
+});

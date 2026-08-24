@@ -21,3 +21,10 @@ test("cancelled and timed-out queued publications never call the canonical store
   const controller=new AbortController(); const second=broker.publish({...request,publicationId:"two"},controller.signal); controller.abort();
   assert.match((await second).failure,/cancelled/); assert.equal(calls,1); release(); await first;
 });
+
+test("host retirement is forwarded once to the runtime context callback",()=>{
+  const retired=[];let releases=0;const broker=createExtensionAgentBroker({releaseExtensionProvider(){releases++;},async ingestExtensionLifecycle(){throw new Error("unused");}},{onTerminalCancelled:(contextId,providerId)=>retired.push([contextId,providerId])});
+  broker.terminalCancelled({extensionId:"example.agent",providerId:terminal.providerId,terminal,reason:"extension-stopped"});
+  broker.terminalCancelled({extensionId:"example.agent",providerId:terminal.providerId,terminal,reason:"extension-stopped"});
+  assert.equal(releases,1);assert.deepEqual(retired,[[terminal.contextId,terminal.providerId]]);
+});
