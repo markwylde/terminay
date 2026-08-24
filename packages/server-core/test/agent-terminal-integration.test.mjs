@@ -12,20 +12,6 @@ test("terminal lifecycle registers the exact spawned session with the generic ag
   await terminal.shutdown(); await agents.stop();
 });
 
-test("native PTY records are ignored; extensions alone publish sidebar lifecycle", async () => {
-  const activity = new TerminalActivityService({ serverId: "server-1" });
-  const agents = new AgentStatusService({ activity, now: () => 100 }); await agents.start();
-  let journalListener;
-  const process = { write() {}, resize() {}, kill() {}, onData() { return () => {}; }, onExit() { return () => {}; }, onAgentJournal(listener) { journalListener = listener; return () => { journalListener = undefined; }; } };
-  const terminal = new TerminalService({ serverId: "server-1", ptyFactory: { spawn: () => process }, sessionLifecycle: composeActivityLifecycle(activity, agents, undefined) });
-  await terminal.createSession({ projectId: "project-remote", sessionId: "remote-terminal", shellPath: "/bin/sh", cols: 80, rows: 24 });
-  journalListener({ provider: "untrusted-provider", record: { rawPrompt: "never expose" } });
-  await new Promise((resolve) => setImmediate(resolve));
-  const snapshot = agents.getSnapshotForProject("project-remote");
-  assert.deepEqual(snapshot.entries, {});
-  await terminal.shutdown(); assert.equal(journalListener, undefined); await agents.stop();
-});
-
 test("foreground PTY lifecycle reaches the exact canonical activity session", async () => {
   const activity = new TerminalActivityService({ serverId: "server-1" });
   let foregroundListener;

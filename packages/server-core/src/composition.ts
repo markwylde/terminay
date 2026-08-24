@@ -765,14 +765,6 @@ export function composeActivityLifecycle(
       agents?.foregroundProcessChanged(identity, event.processName, event.shellForeground);
       lifecycle?.foregroundProcessChanged?.(identity, event);
     },
-    agentJournalRecord: (identity, event) => {
-      // Provider journal evidence is privileged lifecycle input. Only the
-      // reduced AgentStatus projection may leave server-core.
-      if (agents?.isSessionActive(identity)) {
-        void agents.ingestJournalRecord(identity, event.provider, event.record).catch(() => undefined);
-      }
-      lifecycle?.agentJournalRecord?.(identity, event);
-    },
   };
 }
 

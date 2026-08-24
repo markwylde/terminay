@@ -37,6 +37,9 @@ test("extension implementations use public SDK imports, never private Terminay m
 test("generic agent core and renderer contain no provider implementation details", async () => {
   const targets = [
     join(root, "packages/server-core/src/activity"),
+    join(root, "packages/server-core/src/terminalService/types.ts"),
+    join(root, "packages/server-core/src/terminalService/service.ts"),
+    join(root, "packages/server-core/src/extensions/projectEnvironmentRuntime.ts"),
     join(root, "packages/server-core/src/extensions/localAgentObservation.ts"),
     join(root, "packages/client-core/src/agentStatus.ts"),
     join(root, "src/agentStatusStore.ts"),
