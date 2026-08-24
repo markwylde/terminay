@@ -22,6 +22,13 @@ export interface ExtensionAgentRuntimeRegistryOptions {
   readonly platform?: "darwin" | "linux" | "win32";
   readonly contextId?: (identity: ActivitySessionIdentity, incarnation: number) => string;
   readonly reobserveDebounceMs?: number;
+  /** Host-private, terminal-scoped topology probe. It may inspect only the
+   * admitted terminal's descendants/open-file identity and must not expose
+   * paths or process data to an extension. */
+  readonly topologySignature?: (context: ExtensionAgentTerminalContext, signal: AbortSignal) => Promise<string | undefined>;
+  readonly topologyPollIntervalMs?: number;
+  readonly schedule?: (callback: () => void, milliseconds: number) => ReturnType<typeof setTimeout>;
+  readonly cancelSchedule?: (timer: ReturnType<typeof setTimeout>) => void;
 }
 
 interface TrackedTerminal {
@@ -31,6 +38,9 @@ interface TrackedTerminal {
   context?: ExtensionAgentTerminalContext;
   lastProcessName?: string;
   reobserveTimer?: ReturnType<typeof setTimeout>;
+  topologyTimer?: ReturnType<typeof setTimeout>;
+  topologySignature?: string;
+  topologyPolling?: boolean;
 }
 
 const LOCAL_CAPABILITIES = Object.freeze(["process-observation", "filesystem-observation", "agent-journal"]);
@@ -50,6 +60,9 @@ export class ExtensionAgentRuntimeRegistry {
   private readonly platform: "darwin" | "linux" | "win32";
   private readonly makeContextId: NonNullable<ExtensionAgentRuntimeRegistryOptions["contextId"]>;
   private readonly reobserveDebounceMs: number;
+  private readonly topologyPollIntervalMs: number;
+  private readonly schedule: NonNullable<ExtensionAgentRuntimeRegistryOptions["schedule"]>;
+  private readonly cancelSchedule: NonNullable<ExtensionAgentRuntimeRegistryOptions["cancelSchedule"]>;
 
   constructor(private readonly options: ExtensionAgentRuntimeRegistryOptions) {
     this.localObservationCapabilities = Object.freeze([...(options.localObservationCapabilities ?? LOCAL_CAPABILITIES)]);
@@ -57,6 +70,9 @@ export class ExtensionAgentRuntimeRegistry {
     this.makeContextId = options.contextId ?? ((identity, incarnation) =>
       `extension-agent:${identity.serverId}:${identity.projectId}:${identity.sessionId}:${incarnation}`);
     this.reobserveDebounceMs = Math.max(0, options.reobserveDebounceMs ?? 100);
+    this.topologyPollIntervalMs = Math.max(100, options.topologyPollIntervalMs ?? 1_500);
+    this.schedule = options.schedule ?? ((callback, milliseconds) => setTimeout(callback, milliseconds));
+    this.cancelSchedule = options.cancelSchedule ?? ((timer) => clearTimeout(timer));
   }
 
   register(identity: ActivitySessionIdentity): void {
@@ -108,7 +124,9 @@ export class ExtensionAgentRuntimeRegistry {
     });
     terminal.context = context;
     terminal.lastProcessName = processName;
-    void this.options.hosts.admitAgentTerminal({ context, observationCapabilities: this.localObservationCapabilities }).catch(() => {
+    void this.options.hosts.admitAgentTerminal({ context, observationCapabilities: this.localObservationCapabilities }).then(() => {
+      if (terminal.context === context) this.scheduleTopologyPoll(terminal);
+    }).catch(() => {
       // The claim was synchronous so the legacy path did not see this exact
       // foreground change. Release and replay it if host admission fails.
       if (terminal.context !== context) return;
@@ -123,7 +141,7 @@ export class ExtensionAgentRuntimeRegistry {
 
   private scheduleReobserve(terminal: TrackedTerminal, contribution: AgentProviderContribution, processName: string): void {
     if (terminal.reobserveTimer !== undefined) return;
-    terminal.reobserveTimer = setTimeout(() => {
+    terminal.reobserveTimer = this.schedule(() => {
       terminal.reobserveTimer = undefined;
       void this.reobserve(terminal, contribution, processName);
     }, this.reobserveDebounceMs);
@@ -145,14 +163,14 @@ export class ExtensionAgentRuntimeRegistry {
     const terminal = this.terminals.get(identity.sessionId);
     if (terminal === undefined || !sameIdentity(terminal.identity, identity)) return;
     this.terminals.delete(identity.sessionId);
-    if (terminal.reobserveTimer !== undefined) clearTimeout(terminal.reobserveTimer);
+    this.clearTimers(terminal);
     if (terminal.context !== undefined) {
       void this.options.hosts.cancelAgentTerminal({ contextId: terminal.context.contextId, reason }).catch(() => undefined);
     }
   }
 
   async drain(reason: "provider-disabled" | "extension-stopped" | "server-stopping" = "server-stopping"): Promise<void> {
-    for (const terminal of this.terminals.values()) if (terminal.reobserveTimer !== undefined) clearTimeout(terminal.reobserveTimer);
+    for (const terminal of this.terminals.values()) this.clearTimers(terminal);
     this.terminals.clear();
     await this.options.hosts.drainAgentObservers(reason);
   }
@@ -177,6 +195,37 @@ export class ExtensionAgentRuntimeRegistry {
     const created: TrackedTerminal = { identity: Object.freeze({ ...identity }), incarnation: 1 };
     this.terminals.set(identity.sessionId, created);
     return created;
+  }
+
+  private scheduleTopologyPoll(terminal: TrackedTerminal): void {
+    if (this.options.topologySignature === undefined || terminal.topologyTimer !== undefined || terminal.context === undefined) return;
+    terminal.topologyTimer = this.schedule(() => {
+      terminal.topologyTimer = undefined;
+      void this.pollTopology(terminal);
+    }, this.topologyPollIntervalMs);
+  }
+
+  private async pollTopology(terminal: TrackedTerminal): Promise<void> {
+    const context = terminal.context;
+    if (context === undefined || terminal.topologyPolling || this.options.topologySignature === undefined) return;
+    terminal.topologyPolling = true;
+    const controller = new AbortController();
+    try {
+      const signature = await this.options.topologySignature(context, controller.signal);
+      if (terminal.context !== context || signature === undefined) return;
+      if (terminal.topologySignature !== undefined && terminal.topologySignature !== signature) this.topologyChanged(terminal.identity);
+      terminal.topologySignature = signature;
+    } catch { /* unavailable local/remote topology remains non-authoritative */ }
+    finally {
+      terminal.topologyPolling = false;
+      if (terminal.context === context) this.scheduleTopologyPoll(terminal);
+    }
+  }
+
+  private clearTimers(terminal: TrackedTerminal): void {
+    if (terminal.reobserveTimer !== undefined) this.cancelSchedule(terminal.reobserveTimer);
+    if (terminal.topologyTimer !== undefined) this.cancelSchedule(terminal.topologyTimer);
+    terminal.reobserveTimer = undefined; terminal.topologyTimer = undefined;
   }
 
   private match(processName: string, identity: ActivitySessionIdentity): AgentProviderContribution | undefined {

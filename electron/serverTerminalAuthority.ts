@@ -638,10 +638,11 @@ export class ServerTerminalAuthority {
 								workspace: this.workspace,
 							});
 				if (management !== undefined) {
-					extensionAgents = new ExtensionAgentRuntimeRegistry({
+						extensionAgents = new ExtensionAgentRuntimeRegistry({
 						hosts: management.hosts,
 						agents: this.agents,
-							projectEnvironmentRouter,
+						projectEnvironmentRouter,
+						topologySignature: (context, signal) => observation.topologySignature(context, signal),
 					});
 				}
 				return { management, extensionAgents };

@@ -186,11 +186,14 @@ function createAgentTerminalContext(context: Record<string, unknown>, capabiliti
     subagentDone(event: unknown) { return publish(undefined, [{ kind: "subagent.done", ...(object(event) ?? {}) }]); },
   });
   const observation = Object.freeze({
-    processes: Object.freeze({ descendants: (options: unknown = {}) => request("process.descendants", options), openFiles: (processes: unknown, options: unknown = {}) => request("process.open-files", { processes, options }) }),
+    processes: Object.freeze({ descendants: (options: unknown = {}) => request("process.descendants", options), openFiles: (processes: unknown, options: unknown = {}) => request("process.open-files", { processes, options }), environment: (names: unknown, options: unknown = {}) => request("process.environment", { names, ...object(options) }) }),
     files: Object.freeze({
       resolveHomeRelative: (relativePath: unknown, options: unknown = {}) => request("filesystem.resolve-home-relative", { relativePath, ...object(options) }),
       resolvePathUnderHome: (providerPath: unknown, options: unknown) => request("filesystem.resolve-path-under-home", { providerPath, ...object(options) }),
       homeRelativePath: (handle: unknown, options: unknown) => request("filesystem.home-relative-path", { handle, ...object(options) }),
+      resolveRelativeToEnvironment: (relativePath: unknown, options: unknown) => request("filesystem.resolve-relative-to-environment", { relativePath, ...object(options) }),
+      resolvePathUnderEnvironment: (providerPath: unknown, options: unknown) => request("filesystem.resolve-path-under-environment", { providerPath, ...object(options) }),
+      environmentRelativePath: (handle: unknown, options: unknown) => request("filesystem.environment-relative-path", { handle, ...object(options) }),
       canonicalFile: (handle: unknown, options: unknown = {}) => request("filesystem.realpath", { handle, options }),
       realpath: (handle: unknown, options: unknown = {}) => request("filesystem.realpath", { handle, options }),
       stat: (handle: unknown, options: unknown = {}) => request("filesystem.stat", { handle, options }),
