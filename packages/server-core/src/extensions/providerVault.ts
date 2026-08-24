@@ -23,16 +23,22 @@ export class ExtensionProviderVault {
     const existingRef = state.keys.get(request.bindingKey); const existing = existingRef === undefined ? undefined : state.records.get(existingRef);
     if (request.expectedRevision !== undefined && request.expectedRevision !== existing?.revision) { request.value.fill(0); throw new Error("provider vault revision conflict"); }
     const bindingRef = existing?.bindingRef ?? `pvb_${randomBytes(24).toString("base64url")}`;
-    const secretId = existing?.secretId ?? this.secretId(principal, bindingRef);
+    const revision = (existing?.revision ?? 0) + 1;
+    const secretId = this.secretId(principal, bindingRef, revision);
     const value = new Uint8Array(request.value);
     try {
-      if (existing === undefined) await this.vault.put({ id: secretId, label: "Extension private credential", value });
-      else await this.vault.replace({ id: secretId, label: "Extension private credential", value });
+      await this.vault.put({ id: secretId, label: "Extension private credential", value });
     } finally { value.fill(0); request.value.fill(0); }
     this.available(signal);
-    const record: BindingRecord = { bindingRef, bindingKey: request.bindingKey, purpose: request.purpose, secretId, revision: (existing?.revision ?? 0) + 1, pending: false };
+    const record: BindingRecord = { bindingRef, bindingKey: request.bindingKey, purpose: request.purpose, secretId, revision, pending: false };
     state.records.set(bindingRef, record); state.keys.set(record.bindingKey, bindingRef);
-    await this.persist(state);
+    try { await this.persist(state); }
+    catch (error) {
+      if (existing === undefined) { state.records.delete(bindingRef); state.keys.delete(record.bindingKey); }
+      else { state.records.set(bindingRef, existing); state.keys.set(existing.bindingKey, bindingRef); }
+      await this.vault.remove(secretId).catch(() => undefined); throw error;
+    }
+    if (existing !== undefined) await this.vault.remove(existing.secretId).catch(() => undefined);
     const result = Object.freeze({ binding: Object.freeze({ bindingRef }), revision: record.revision });
     this.remember(state, `put:${request.idempotencyKey}`, result); return result;
   }
@@ -102,7 +108,7 @@ export class ExtensionProviderVault {
     state.mutation = action.catch(() => undefined); return action;
   }
   private remember(state: ScopeState, key: string, result: unknown): void { if (state.idempotency.size >= 256) state.idempotency.delete(state.idempotency.keys().next().value!); state.idempotency.set(key, structuredClone(result)); }
-  private secretId(principal: ProviderVaultPrincipal, bindingRef: string): string { return `extpv:${createHash("sha256").update(`${principal.extensionId}\0${principal.providerId}\0${principal.dataDirectory}\0${bindingRef}`).digest("hex")}`; }
+  private secretId(principal: ProviderVaultPrincipal, bindingRef: string, revision: number): string { return `extpv:${createHash("sha256").update(`${principal.extensionId}\0${principal.providerId}\0${principal.dataDirectory}\0${bindingRef}\0${revision}`).digest("hex")}`; }
   private available(signal: AbortSignal): void { if (signal.aborted) throw new Error("provider dependency call cancelled"); }
 }
 
