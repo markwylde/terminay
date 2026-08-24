@@ -12,7 +12,8 @@ validation.
 `activate(context)` registers contributions; optional `deactivate()` releases
 resources. `ExtensionContext` exposes the immutable `extensionId`, negotiated
 `apiVersion`, own configuration/data/cache paths, and
-`registerProjectEnvironmentProvider`.
+`registerProjectEnvironmentProvider`. For agent extensions it also exposes
+`agents.registerProvider(id, provider)` and disposable `subscriptions`.
 
 Registration contains a declarative `ProviderDefinition` and a `ProviderRuntime`.
 The definition's id, display metadata, icon, capabilities, `profileForm`, and
@@ -67,13 +68,57 @@ unknown request fields are rejected. The context has the host-assigned absolute
 `deadlineAt`, cancellation `signal`, and optional `idempotencyKey` and
 `expectedRevision`. Check cancellation around external work, use the same
 idempotency key for retries of a mutation, and apply `expectedRevision` for
-optimistic concurrency when updating existing target state.
+optimistic concurrency when updating existing target state. Target handlers
+receive `ProviderDependencyTargetContext`, which contains those base fields and
+one target-owned `vault` broker. It deliberately does not contain profile,
+secret, or SSH-agent brokers.
+
+### Target vault
+
+`context.vault` owns a narrow, atomic credential lifecycle for the target
+provider. It inherits its enclosing target deadline and cancellation signal;
+none of its methods accepts a replacement signal or deadline.
+
+```ts
+const stored = await context.vault.put({
+  bindingKey: "connection.primary",
+  purpose: "ssh.authentication",
+  value: new TextEncoder().encode(token),
+  idempotencyKey: context.idempotencyKey ?? "create-connection",
+  expectedRevision: context.expectedRevision,
+});
+
+const client = await context.vault.withSecret(
+  { binding: stored.binding, purpose: "ssh.authentication" },
+  async (copy) => connectWithToken(copy),
+);
+await context.vault.remove({ binding: stored.binding, idempotencyKey: "remove-connection" });
+```
+
+`put` returns only a durable opaque `{ bindingRef }` and a revision. The ref is
+safe to persist in redacted provider state, but is scoped by the host to the
+extension installation and target provider; it is neither a vault path nor a
+host-global secret id. There is no read, get, list, export, create/bind split,
+or raw-secret result API.
+
+`withSecret` makes a transient `Uint8Array` copy available only to its local
+callback. Its generic callback result stays in the extension child—it is never
+put on vault IPC and may be a live local object. Do not return, retain, log,
+place in a presentation DTO, or otherwise expose the secret bytes. Hosts must
+zeroize parent and child copies in `finally` paths. A removal during an active
+callback returns `pending`, denies every new use, then cleans up after that
+callback finishes. After a host/child crash, hosts must deny the binding until
+their vault's crash cleanup has completed. Foreign, stale, and deleted bindings
+must be indistinguishable to the caller.
 
 Tests can import `createProviderDependencyTargetHarness()` from
 `@terminay/extension-api/testing`. It validates the public request, context,
 handler result, and cancellation plumbing; it deliberately does not emulate
-host authorization. Test authorization and manifest compatibility at the host
-boundary, rather than through private Terminay imports.
+host authorization. `createProviderVaultHarness()` is similarly a one-scope
+functional mock for atomic writes, callback lifetime, and pending removal. It
+does **not** prove cross-extension/install isolation; production hosts are
+responsible for that enforcement. Test authorization and manifest compatibility
+at the host boundary, rather than through private Terminay imports.
 
 ## Results and state
 
@@ -99,3 +144,82 @@ the Terminay-owned `ExtensionIcon` union.
 
 Use the exported runtime validators and fixtures in tests. The host applies the
 same closed validators at manifest, activation, and callback IPC boundaries.
+
+## Agent providers
+
+`defineAgentProvider()` defines the provider-specific part of agent
+observation. `matchesForeground(process)` receives only bounded safe process
+metadata. A match requests an observation attempt; it does not establish
+session ownership. `observe(terminal: AgentTerminalContext)` receives one exact
+terminal/process incarnation and must return either a bound observation or a
+typed unavailable/not-bound result.
+
+`AgentTerminalContext` provides the cancellation signal, advertised environment
+capabilities, and `AgentObservationBroker`. The broker supplies only
+terminal-scoped, environment-routed process and file evidence. Its opaque
+handles cannot be used with another terminal context. After the provider has
+validated provider-specific evidence, `terminal.bindSession()` returns an
+`AgentSessionBinding`; only that binding can create an `AgentLifecyclePublisher`.
+
+`terminal.tty` is an optional, host-issued `{ deviceId, deviceName? }` fact for
+the exact PTY. It is useful when a provider's own journal format associates a
+resume record with a terminal device, but it is neither a path nor filesystem
+authority. It can be absent; treat that as an ordinary fallback case and do not
+poll or dynamically refresh it.
+
+The file broker has three deliberately narrow discovery operations:
+
+- `resolveHomeRelative(relativePath, options)` resolves a known, non-escaping
+  relative path in the selected environment home.
+- `resolvePathUnderHome(providerPath, { beneath, ... })` accepts an absolute
+  path found in a provider record only after the host proves that it remains
+  below the explicit home-relative root. It is not arbitrary absolute-path
+  access.
+- `homeRelativePath(handle, { beneath })` returns only a normalized display or
+  comparison fact for an existing opaque handle. The returned string cannot be
+  passed to `read()` or `follow()`; retain the handle for those operations.
+
+All three requests reject traversal, backslashes, unsafe extensions, and roots
+outside their declared constraint at the host boundary.
+
+An agent-provider contribution may additionally declare bounded
+`requiredEnvironmentVariables` names. `observation.processes.environment(names)`
+then returns only declared, bounded facts from the exact terminal foreground
+process or its descendants—never the extension host's ambient Node environment.
+This evidence can be unavailable on a remote environment; return the normal
+typed unavailable/not-bound result instead of substituting `process.env`.
+
+For a provider-managed root outside home (for example
+`PI_CODING_AGENT_DIR`), use `resolveRelativeToEnvironment(relativePath,
+{ environmentVariable, ... })` for a known location, or
+`resolvePathUnderEnvironment(providerPath, { environmentVariable,
+beneathRelative?, ... })` for a provider-record absolute path. Pass the
+*declared variable name*, never its raw value: the host reads the terminal
+environment internally, canonicalizes strict containment, and returns only an
+opaque file handle. `environmentRelativePath(handle, { environmentVariable,
+beneathRelative? })` returns a normalized fact below that same declared root;
+like `homeRelativePath()`, it never grants read or follow authority.
+
+Use `jsonlSession()` for bounded JSONL replay/follow when it fits the provider's
+journal format. Its record mapper receives the parsed record and an
+`AgentRecordContext`, whose publisher has semantic methods for session, turn,
+tool, wait, metadata, completion, exit, and subagent lifecycle facts. The host
+assigns canonical order and rejects invalid transitions, stale contexts,
+cross-terminal handles, and oversized values.
+
+One `jsonlSession()` has one root source and may declare bounded `childSources`.
+Every child carries a stable `childId`, its own opaque journal handle, and a
+watcher, but it shares the root binding and cannot establish another root
+session. In `mapRecord(record, context)`, use `context.journal.role` and, for a
+child, `context.journal.childId` to interpret provider-native child records.
+
+For ordinary local server work, extensions may import public `node:` modules and
+their declared npm dependencies. Node filesystem/process values are not a
+substitute for terminal-scoped evidence and cannot inspect a remote project.
+Use `AgentObservationBroker` whenever the operation needs the selected terminal
+or its environment.
+
+The public `@terminay/extension-api/testing` entrypoint exports
+`createAgentExtensionHarness()` and `fixtureTerminal()`. It tests manifest and
+registration agreement, binding scope, cancellation, lifecycle validity, and
+bounded publication without importing Terminay internals.

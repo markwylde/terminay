@@ -16,6 +16,12 @@ export const EXTENSION_LIMITS = Object.freeze({
   /** JSON data sent to, or returned from, a dependency provider. */
   providerDependencyPayloadBytes: 256 * 1024,
   providerDependencyResultBytes: 256 * 1024,
+  /** Target-owned opaque vault keys and purposes; never vault paths or ids. */
+  providerVaultBindingKeyLength: 256,
+  providerVaultBindingRefLength: 256,
+  providerVaultPurposeLength: 128,
+  providerVaultSecretBytes: 64 * 1024,
+  providerVaultIdempotencyKeyLength: 256,
   formSections: 32,
   formFields: 128,
   fieldOptions: 256,
@@ -67,6 +73,10 @@ export const EXTENSION_ID_PATTERN = /^[a-z0-9](?:[a-z0-9.-]{1,126}[a-z0-9])?$/;
 export const LOCAL_ID_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
 /** Dot-separated, provider-owned public operation names; never commands. */
 export const PROVIDER_DEPENDENCY_OPERATION_PATTERN = /^[a-z][a-z0-9-]{0,63}(?:\.[a-z][a-z0-9-]{0,63})*$/;
+/** A durable opaque token, never a vault path or a host-global secret id. */
+export const PROVIDER_VAULT_BINDING_REF_PATTERN = /^[A-Za-z0-9_-]{16,256}$/;
+/** A provider-owned logical key/purpose; never a filesystem or vault path. */
+export const PROVIDER_VAULT_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 export const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 export function namespacedId(extensionId: string, localId: string): string {

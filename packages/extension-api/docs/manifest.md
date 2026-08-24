@@ -14,11 +14,33 @@ package owns one immutable extension id.
 | `platforms` | Optional subset of `darwin`, `linux`, `win32`. Omit for portable packages. |
 | `permissions` | Exact visible capabilities requested from the host. |
 | `extensionDependencies` | Other Terminay extension ids and compatible API ranges, not npm libraries. |
-| `contributes.projectEnvironments` | Namespaced provider identities, plain metadata, icons, and capabilities. |
+| `contributes.projectEnvironments` | Optional array of namespaced project-environment provider identities, plain metadata, icons, and capabilities. |
+| `contributes.agentProviders` | Optional array of namespaced agent provider identities, plain metadata, icons, and required environment observation capabilities. |
 
-Provider ids use `<extension-id>/<local-id>`. Action, form, field, option-source,
-and operation ids follow the same ownership rule where applicable. Package name
-and extension id are deliberately independent.
+At least one of `projectEnvironments` or `agentProviders` must contain a
+contribution. Provider ids use `<extension-id>/<local-id>`. Action, form, field,
+option-source, and operation ids follow the same ownership rule where
+applicable. Package name and extension id are deliberately independent.
+
+An agent provider contribution uses this shape:
+
+```json
+{
+  "id": "com.example.agent/cli",
+  "displayName": "Example Agent",
+  "icon": "terminal",
+  "requiredEnvironmentCapabilities": [
+    "process-observation",
+    "agent-journal"
+  ]
+}
+```
+
+Every agent-provider extension must request `agent-observation`. Required
+environment capabilities are an admission requirement, not an extra grant: if
+the selected terminal environment cannot provide them, Terminay does not start
+that provider's observation attempt. The contribution is declarative; runtime
+callbacks are registered only by the package entrypoint.
 
 ## Provider dependency targets
 
