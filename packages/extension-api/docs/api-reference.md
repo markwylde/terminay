@@ -52,6 +52,29 @@ work; do not begin work that cannot finish before the deadline.
 Broker availability is constrained by manifest permission. Calls do not confer
 ownership of ids embedded in their payloads.
 
+## Provider dependency targets
+
+A target provider optionally registers `ProviderRegistration.dependencyOperations`
+with a `ProviderDependencyHandler`. The host invokes `handler.call(request,
+context)` only after authorizing an operation named in the target's manifest
+`dependencyOperations` allowlist and a compatible caller dependency. Do not
+implement authorization in the handler by accepting an identity from payload:
+`request.caller` is host-authenticated `{ extensionId, providerId }` metadata.
+
+`request.operation` and `request.payload` are bounded JSON. A result must also
+be plain JSON (up to 256 KiB); functions, class instances, cyclic values, and
+unknown request fields are rejected. The context has the host-assigned absolute
+`deadlineAt`, cancellation `signal`, and optional `idempotencyKey` and
+`expectedRevision`. Check cancellation around external work, use the same
+idempotency key for retries of a mutation, and apply `expectedRevision` for
+optimistic concurrency when updating existing target state.
+
+Tests can import `createProviderDependencyTargetHarness()` from
+`@terminay/extension-api/testing`. It validates the public request, context,
+handler result, and cancellation plumbing; it deliberately does not emulate
+host authorization. Test authorization and manifest compatibility at the host
+boundary, rather than through private Terminay imports.
+
 ## Results and state
 
 Creation/resume returns `ready` with provider state and status, or `pending`

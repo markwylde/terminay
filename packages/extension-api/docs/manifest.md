@@ -20,6 +20,31 @@ Provider ids use `<extension-id>/<local-id>`. Action, form, field, option-source
 and operation ids follow the same ownership rule where applicable. Package name
 and extension id are deliberately independent.
 
+## Provider dependency targets
+
+A project-environment provider can expose an explicit public allowlist for
+compatible extension dependencies. Add `dependencyOperations` to its manifest
+contribution; each entry contains one bounded, dot-separated provider-owned
+name. These names are API operations, not shell commands or module paths.
+
+```json
+{
+  "id": "com.example.storage/cache",
+  "displayName": "Example Cache",
+  "capabilities": ["filesystem"],
+  "dependencyOperations": [
+    { "name": "resource.read" },
+    { "name": "resource.update" }
+  ]
+}
+```
+
+The list must be non-empty when present, contain unique names, and has a maximum
+of 32 operations. It does not grant access on its own: the calling extension
+also declares the compatible extension dependency and requests
+`provider:depend`. The host authenticates the caller and authorizes the target
+provider and operation before it invokes extension code.
+
 The three version axes are independent: npm package SemVer describes that
 package release, `manifestVersion` describes this JSON schema, and `api`
 describes the host contract. API majors may break; minors are additive. The
