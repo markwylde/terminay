@@ -106,6 +106,18 @@ test("public closed manifests are validated before constructing launch authority
   await assert.rejects(extensionLaunchDescriptor({ ...descriptor, manifest: { ...manifest, unexpected: true } }), /Invalid Terminay extension manifest/);
 });
 
+test("validated agent manifest contributions are threaded into the launch descriptor", async () => {
+  const input = await fixture("example.manifest-agent", "export function activate() {}");
+  const manifest = {
+    manifestVersion: 1, id: input.extensionId, displayName: "Manifest agent", api: "^1.1.0",
+    engines: { terminay: ">=1", node: ">=22" }, entrypoint: input.entrypoint,
+    permissions: ["agent-observation"],
+    contributes: { agentProviders: [{ id: "example.manifest-agent/cli", displayName: "Fixture CLI", requiredEnvironmentCapabilities: ["process-observation"] }] },
+  };
+  const launch = await extensionLaunchDescriptor({ ...input, manifest });
+  assert.deepEqual(launch.descriptor.agentProviders, manifest.contributes.agentProviders);
+});
+
 test("repeated activation failures quarantine only that extension", async () => {
   const descriptor = await fixture("example.quarantine", `export function activate() { throw new Error("fixture failure"); }`);
   let now = 1_000;

@@ -150,13 +150,13 @@ export class ExtensionInstaller {
     catch (error) { if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return EMPTY; throw error; }
   }
 
-  async launchDescriptor(extensionId: string): Promise<Readonly<{ extensionId: string; packageRoot: string; entrypoint: string; manifest: ExtensionReceipt["manifest"] }>> {
+  async launchDescriptor(extensionId: string): Promise<Readonly<{ extensionId: string; packageRoot: string; entrypoint: string; agentProviders: readonly import("@terminay/extension-api").AgentProviderContribution[]; manifest: ExtensionReceipt["manifest"] }>> {
     const state = await this.snapshot();
     const current = required(state, extensionId);
     if (!current.enabled || current.activeSlotId === undefined) throw new Error("extension is not enabled with an active slot");
     const slot = current.slots[current.activeSlotId];
     if (slot === undefined) throw new Error("active extension slot is missing");
-    return Object.freeze({ extensionId, packageRoot: this.slotPackageRoot(slot), entrypoint: slot.receipt.manifest.entrypoint, manifest: slot.receipt.manifest });
+    return Object.freeze({ extensionId, packageRoot: this.slotPackageRoot(slot), entrypoint: slot.receipt.manifest.entrypoint, agentProviders: Object.freeze(structuredClone(slot.receipt.manifest.contributes.agentProviders ?? [])), manifest: slot.receipt.manifest });
   }
 
   async enabledExtensionIds(): Promise<readonly string[]> {
