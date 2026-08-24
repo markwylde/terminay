@@ -9,6 +9,7 @@ export interface SharedAgentRouteBodyProps {
 const PROVIDER_LABELS: Record<AgentClientEntry['provider'], string> = {
   codex: 'Codex',
   'claude-code': 'Claude Code',
+  cursor: 'Cursor',
   omp: 'omp',
 }
 

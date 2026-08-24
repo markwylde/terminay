@@ -51,6 +51,7 @@ export function activateAgentFromSnapshot(
 const PROVIDER_LABELS: Record<AgentProvider, string> = {
 	codex: 'Codex',
 	'claude-code': 'Claude Code',
+	cursor: 'Cursor',
 	omp: 'omp',
 };
 

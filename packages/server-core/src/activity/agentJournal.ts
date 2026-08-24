@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { open, readdir, readFile, readlink, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import type { AgentProvider } from "./agentTypes.js";
 import type { ActivitySessionIdentity } from "./service.js";
 
@@ -18,6 +19,11 @@ export interface AgentJournalObservation {
    * against their already-bound root and can never replace it. */
   readonly journalRole?: "root" | "child";
   readonly childAgentId?: string;
+  /** Stable identity proven by a provider-owned path when the transcript has no header. */
+  readonly providerSessionId?: string;
+  readonly providerVersion?: string;
+  readonly providerDisplayName?: string;
+  readonly providerModelId?: string;
 }
 
 export type AgentJournalListener = (observation: AgentJournalObservation) => void | Promise<void>;
@@ -49,12 +55,13 @@ interface WatchedTerminal {
 interface JournalTail {
   provider: AgentProvider; path: string; root: string; offset: number; partial: string;
   inode?: number; device?: number;
-  timer: ReturnType<typeof setInterval>; busy: boolean; journalRole: "root" | "child"; childAgentId?: string;
+  timer: ReturnType<typeof setInterval>; busy: boolean; journalRole: "root" | "child"; childAgentId?: string; providerSessionId?: string; providerDisplayName?: string; providerModelId?: string; providerMetadataPath?: string; providerStorePath?: string;
 }
 
 export interface NodeAgentJournalSourceOptions {
   readonly claudeHome?: string;
   readonly codexHome?: string;
+  readonly cursorHome?: string;
   /** OMP's config root (the directory which normally contains `agent/`). */
   readonly ompHome?: string;
   readonly discoveryAttemptLimit?: number;
@@ -64,6 +71,8 @@ export interface NodeAgentJournalSourceOptions {
   readonly resolveOmpTerminalId?: (shellPid: number, platform: NodeJS.Platform) => Promise<string | undefined>;
   /** Test seam for recognising an OMP Bun wrapper below the exact PTY. */
   readonly hasOmpProcess?: (shellPid: number, platform: NodeJS.Platform) => Promise<boolean>;
+  /** Test seam for recognising Cursor's Node worker below the exact PTY. */
+  readonly hasCursorProcess?: (shellPid: number, platform: NodeJS.Platform) => Promise<boolean>;
 }
 
 interface OmpJournalRoot {
@@ -81,10 +90,13 @@ export class NodeAgentJournalSource implements AgentJournalSource {
   private readonly terminals = new Map<string, WatchedTerminal>();
   private readonly claudeRoot: string;
   private readonly codexRoot: string;
+  private readonly cursorChatsRoot: string;
+  private readonly cursorProjectsRoot: string;
   private readonly ompRoots: readonly OmpJournalRoot[];
   private readonly ompSessionsRoots: readonly string[];
   private readonly resolveOmpTerminalId: (shellPid: number, platform: NodeJS.Platform) => Promise<string | undefined>;
   private readonly hasOmpProcess: (shellPid: number, platform: NodeJS.Platform) => Promise<boolean>;
+  private readonly hasCursorProcess: (shellPid: number, platform: NodeJS.Platform) => Promise<boolean>;
   private readonly platform: NodeJS.Platform;
   private readonly pollMs: number;
   private readonly discoveryAttemptLimit: number;
@@ -94,11 +106,15 @@ export class NodeAgentJournalSource implements AgentJournalSource {
   constructor(options: NodeAgentJournalSourceOptions = {}) {
     this.claudeRoot = resolve(options.claudeHome ?? join(homedir(), ".claude"));
     this.codexRoot = resolve(options.codexHome ?? (process.env.CODEX_HOME?.trim() || join(homedir(), ".codex")));
+    const cursorRoot = resolve(options.cursorHome ?? join(homedir(), ".cursor"));
+    this.cursorChatsRoot = join(cursorRoot, "chats");
+    this.cursorProjectsRoot = join(cursorRoot, "projects");
     this.platform = options.platform ?? process.platform;
     this.ompRoots = ompJournalRoots(options.ompHome, this.platform);
     this.ompSessionsRoots = this.ompRoots.map((root) => root.sessions);
     this.resolveOmpTerminalId = options.resolveOmpTerminalId ?? ompTerminalIdForShell;
     this.hasOmpProcess = options.hasOmpProcess ?? hasOmpProcessBelowPty;
+    this.hasCursorProcess = options.hasCursorProcess ?? hasCursorProcessBelowPty;
     this.pollMs = Math.max(50, options.pollMs ?? POLL_MS);
     this.discoveryAttemptLimit = Math.max(1, Math.floor(options.discoveryAttemptLimit ?? 80));
   }
@@ -165,7 +181,9 @@ export class NodeAgentJournalSource implements AgentJournalSource {
         terminal.discoveryAttempts = (terminal.discoveryAttempts ?? 0) + 1;
         const ompForeground = terminal.provider === "omp"
           || terminal.provider === null && await this.hasOmpProcess(terminal.shellPid, this.platform).catch(() => false);
-        if (ompForeground) terminal.discoveryPersistent = true;
+        const cursorForeground = terminal.provider === "cursor"
+          || terminal.provider === null && await this.hasCursorProcess(terminal.shellPid, this.platform).catch(() => false);
+        if (ompForeground || cursorForeground) terminal.discoveryPersistent = true;
         const journal = ompForeground
           ? await this.findOmpBreadcrumbJournal(terminal)
             ?? await findProcessBoundAgentJournal(terminal.shellPid, {
@@ -176,6 +194,8 @@ export class NodeAgentJournalSource implements AgentJournalSource {
           : await findProcessBoundAgentJournal(terminal.shellPid, {
             claudeProjectsRoot: join(this.claudeRoot, "projects"),
             codexSessionsRoot: join(this.codexRoot, "sessions"),
+            cursorChatsRoot: this.cursorChatsRoot,
+            cursorProjectsRoot: this.cursorProjectsRoot,
             ompSessionsRoots: this.ompSessionsRoots,
             platform: this.platform,
             provider: terminal.provider,
@@ -195,7 +215,7 @@ export class NodeAgentJournalSource implements AgentJournalSource {
           if (terminal.discovery !== undefined) clearInterval(terminal.discovery);
           terminal.discovery = undefined;
         }
-        await this.startTail(terminal, journal.provider, journal.path, journal.root).catch(() => undefined);
+        await this.startTail(terminal, journal.provider, journal.path, journal.root, "providerSessionId" in journal ? journal.providerSessionId : undefined, "providerDisplayName" in journal ? journal.providerDisplayName : undefined, "providerMetadataPath" in journal ? journal.providerMetadataPath : undefined, "providerModelId" in journal ? journal.providerModelId : undefined, "providerStorePath" in journal ? journal.providerStorePath : undefined).catch(() => undefined);
         if (journal.provider === "omp") await this.refreshOmpChildTails(terminal);
       } finally {
         terminal.discoveryBusy = false;
@@ -228,14 +248,14 @@ export class NodeAgentJournalSource implements AgentJournalSource {
     return undefined;
   }
 
-  private async startTail(terminal: WatchedTerminal, provider: AgentProvider, path: string, root: string): Promise<void> {
+  private async startTail(terminal: WatchedTerminal, provider: AgentProvider, path: string, root: string, providerSessionId?: string, providerDisplayName?: string, providerMetadataPath?: string, providerModelId?: string, providerStorePath?: string): Promise<void> {
     const safePath = await safeJournalPath(path, root);
     if (!safePath || terminal.tail !== undefined) return;
     const metadata = await stat(safePath);
     if (!metadata.isFile()) return;
     const initialOffset = Math.max(0, metadata.size - MAX_INITIAL_BYTES);
     const identity = journalFileIdentity(metadata);
-    const tail: JournalTail = { provider, path: safePath, root, offset: initialOffset, partial: "", ...identity, timer: undefined as never, busy: false, journalRole: "root" };
+    const tail: JournalTail = { provider, path: safePath, root, offset: initialOffset, partial: "", ...identity, timer: undefined as never, busy: false, journalRole: "root", providerSessionId, providerDisplayName, providerMetadataPath, providerModelId, providerStorePath };
     terminal.tail = tail;
     if (initialOffset > 0) await this.emitFirstRecord(terminal, tail, safePath);
     await this.readAvailable(terminal, tail, initialOffset > 0);
@@ -280,7 +300,7 @@ export class NodeAgentJournalSource implements AgentJournalSource {
       const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
       const first = tail.provider === "omp" ? bytes.subarray(256, bytesRead) : bytes.subarray(0, bytesRead);
       const newline = first.indexOf(10);
-      if (newline >= 0) this.emitLine(terminal, tail.provider, first.subarray(0, newline).toString("utf8"), tail.journalRole, tail.childAgentId);
+      if (newline >= 0) this.emitLine(terminal, tail.provider, first.subarray(0, newline).toString("utf8"), tail.journalRole, tail.childAgentId, tail.providerSessionId, tail.providerDisplayName);
     } finally { await handle.close(); }
   }
 
@@ -288,6 +308,7 @@ export class NodeAgentJournalSource implements AgentJournalSource {
     if (tail.busy || (terminal.tail !== tail && terminal.childTails?.get(tail.path) !== tail)) return;
     tail.busy = true;
     try {
+      await this.refreshCursorTitle(terminal, tail);
       const stillSafe = await safeJournalPath(tail.path, tail.root);
       if (stillSafe !== tail.path) { this.stopTailInstance(terminal, tail); return; }
       const metadata = await stat(tail.path);
@@ -311,7 +332,7 @@ export class NodeAgentJournalSource implements AgentJournalSource {
         const lines = text.split(/\n/u);
         tail.partial = lines.pop() ?? "";
         if (Buffer.byteLength(tail.partial, "utf8") > MAX_RECORD_BYTES) tail.partial = "";
-        for (const line of lines) this.emitLine(terminal, tail.provider, line, tail.journalRole, tail.childAgentId);
+        for (const line of lines) this.emitLine(terminal, tail.provider, line, tail.journalRole, tail.childAgentId, tail.providerSessionId, tail.providerDisplayName);
       } finally { await handle.close(); }
     } catch {
       // A disappearing or temporarily unreadable provider journal is not a
@@ -319,12 +340,31 @@ export class NodeAgentJournalSource implements AgentJournalSource {
     } finally { tail.busy = false; }
   }
 
-  private emitLine(terminal: WatchedTerminal, provider: AgentProvider, line: string, journalRole: "root" | "child" = "root", childAgentId?: string): void {
+  private async refreshCursorTitle(terminal: WatchedTerminal, tail: JournalTail): Promise<void> {
+    if (tail.provider !== "cursor" || !tail.providerMetadataPath || !this.listener) return;
+    const title = await readCursorTitle(tail.providerMetadataPath, this.cursorChatsRoot);
+    const modelId = tail.providerStorePath ? await readCursorModelId(tail.providerStorePath, this.cursorChatsRoot) : undefined;
+    if ((!title || title === tail.providerDisplayName) && (!modelId || modelId === tail.providerModelId)) return;
+    if (title) tail.providerDisplayName = title;
+    if (modelId) tail.providerModelId = modelId;
+    void this.listener({
+      identity: terminal.identity,
+      provider: "cursor",
+      record: { type: "terminay.session_metadata" },
+      journalRole: tail.journalRole,
+      ...(tail.providerSessionId ? { providerSessionId: tail.providerSessionId } : {}),
+      ...(tail.providerDisplayName ? { providerDisplayName: tail.providerDisplayName } : {}),
+      ...(tail.providerModelId ? { providerModelId: tail.providerModelId } : {}),
+    });
+  }
+
+  private emitLine(terminal: WatchedTerminal, provider: AgentProvider, line: string, journalRole: "root" | "child" = "root", childAgentId?: string, providerSessionId?: string, providerDisplayName?: string): void {
     if (!line || Buffer.byteLength(line, "utf8") > MAX_RECORD_BYTES || !this.listener) return;
     try {
       const record = JSON.parse(line) as unknown;
       if (typeof record !== "object" || record === null || Array.isArray(record)) return;
-      void this.listener({ identity: terminal.identity, provider, record: record as Readonly<Record<string, unknown>>, journalRole, ...(childAgentId ? { childAgentId } : {}) });
+      const tail = journalRole === "root" ? terminal.tail : terminal.childTails?.get(childAgentId ?? "");
+      void this.listener({ identity: terminal.identity, provider, record: record as Readonly<Record<string, unknown>>, journalRole, ...(childAgentId ? { childAgentId } : {}), ...(providerSessionId ? { providerSessionId } : {}), ...(providerDisplayName ? { providerDisplayName } : {}), ...(tail?.providerModelId ? { providerModelId: tail.providerModelId } : {}) });
     } catch { /* Ignore incomplete or invalid provider records. */ }
   }
 
@@ -375,15 +415,99 @@ export async function findProcessBoundOmpSession(shellPid: number, sessionsRoot:
   return (await findProcessBoundAgentJournal(shellPid, { ompSessionsRoots: [sessionsRoot], platform, provider: "omp" }))?.path;
 }
 
+export async function findProcessBoundCursorTranscript(
+  shellPid: number,
+  cursorHome: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<string | undefined> {
+  return (await findProcessBoundAgentJournal(shellPid, {
+    cursorChatsRoot: join(cursorHome, "chats"), cursorProjectsRoot: join(cursorHome, "projects"), platform, provider: "cursor",
+  }))?.path;
+}
+
+async function readCursorTitle(path: string, chatsRoot: string): Promise<string | undefined> {
+  if (!isAbsolute(path) || basename(path) !== "meta.json") return undefined;
+  const [safe, root] = await Promise.all([realpath(path), realpath(chatsRoot)]).catch(() => [] as string[]);
+  if (!safe || !root) return undefined;
+  const rel = relative(root, safe);
+  if (!rel || rel.startsWith("..") || isAbsolute(rel)) return undefined;
+  const bytes = await readFile(safe).catch(() => undefined);
+  if (!bytes || bytes.length === 0 || bytes.length > MAX_SESSION_META_BYTES) return undefined;
+  try {
+    const title = (JSON.parse(bytes.toString("utf8")) as { title?: unknown }).title;
+    return typeof title === "string" && title.trim() ? title.trim().slice(0, 200) : undefined;
+  } catch { return undefined; }
+}
+
+async function readCursorModelId(path: string, chatsRoot: string): Promise<string | undefined> {
+  const safe = await safeCursorChatFile(path, chatsRoot, "store.db");
+  if (!safe) return undefined;
+  let database: DatabaseSync | undefined;
+  try {
+    database = new DatabaseSync(safe, { readOnly: true });
+    const row = database.prepare("SELECT value FROM meta WHERE key = ? LIMIT 1").get("0") as { value?: unknown } | undefined;
+    if (typeof row?.value !== "string" || row.value.length === 0 || row.value.length > MAX_SESSION_META_BYTES * 2) return undefined;
+    const json = /^[0-9a-f]+$/iu.test(row.value) && row.value.length % 2 === 0 ? Buffer.from(row.value, "hex").toString("utf8") : row.value;
+    const modelId = (JSON.parse(json) as { lastUsedModel?: unknown }).lastUsedModel;
+    return typeof modelId === "string" && modelId.trim() ? modelId.trim().slice(0, 200) : undefined;
+  } catch { return undefined; } finally { database?.close(); }
+}
+
+async function safeCursorChatFile(path: string, chatsRoot: string, expectedName: string): Promise<string | undefined> {
+  if (!isAbsolute(path) || basename(path) !== expectedName) return undefined;
+  const resolved = await Promise.all([realpath(path), realpath(chatsRoot)]).catch(() => undefined);
+  if (!resolved) return undefined;
+  const [candidate, root] = resolved;
+  const rel = relative(root, candidate);
+  return rel && !rel.startsWith("..") && !isAbsolute(rel) ? candidate : undefined;
+}
+
+async function findCursorTranscriptFromWritableFiles(
+  paths: readonly string[],
+  chatsRoot: string,
+  projectsRoot: string,
+): Promise<{ readonly path: string; readonly root: string; readonly providerSessionId: string; readonly providerDisplayName?: string; readonly providerMetadataPath: string; readonly providerModelId?: string; readonly providerStorePath: string } | undefined> {
+  const canonicalChats = await realpath(chatsRoot).catch(() => undefined);
+  const canonicalProjects = await realpath(projectsRoot).catch(() => undefined);
+  if (!canonicalChats || !canonicalProjects) return undefined;
+  for (const candidate of paths) {
+    if (basename(candidate) !== "store.db") continue;
+    const store = await realpath(candidate).catch(() => undefined);
+    if (!store) continue;
+    const rel = relative(canonicalChats, store);
+    const parts = rel.split(/[\\/]/u);
+    if (rel.startsWith("..") || isAbsolute(rel) || parts.length !== 3 || parts[2] !== "store.db") continue;
+    const sessionId = parts[1];
+    if (!sessionId || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(sessionId)) continue;
+    const providerMetadataPath = join(dirname(store), "meta.json");
+    const metaBytes = await readFile(providerMetadataPath).catch(() => undefined);
+    if (!metaBytes || metaBytes.length === 0 || metaBytes.length > MAX_SESSION_META_BYTES) continue;
+    let cwd: unknown; let title: unknown;
+    try { const meta = JSON.parse(metaBytes.toString("utf8")) as { cwd?: unknown; title?: unknown }; cwd = meta.cwd; title = meta.title; } catch { continue; }
+    if (typeof cwd !== "string" || !isAbsolute(cwd)) continue;
+    const canonicalCwd = await realpath(cwd).catch(() => undefined);
+    if (!canonicalCwd) continue;
+    const projectKey = canonicalCwd.replace(/^\/+/, "").replaceAll("/", "-");
+    if (!projectKey || projectKey.includes("..")) continue;
+    const transcript = join(canonicalProjects, projectKey, "agent-transcripts", sessionId, `${sessionId}.jsonl`);
+    const safe = await safeJournalPath(transcript, canonicalProjects).catch(() => undefined);
+    const providerModelId = await readCursorModelId(store, canonicalChats);
+    if (safe) return { path: safe, root: canonicalProjects, providerSessionId: sessionId, providerMetadataPath, providerStorePath: store, ...(typeof title === "string" && title.trim() ? { providerDisplayName: title.trim() } : {}), ...(providerModelId ? { providerModelId } : {}) };
+  }
+  return undefined;
+}
+
 interface ProcessBoundAgentJournalOptions {
   readonly claudeProjectsRoot?: string;
   readonly codexSessionsRoot?: string;
+  readonly cursorChatsRoot?: string;
+  readonly cursorProjectsRoot?: string;
   readonly ompSessionsRoots?: readonly string[];
   readonly platform: NodeJS.Platform;
   readonly provider: AgentProvider | null;
 }
 
-async function findProcessBoundAgentJournal(shellPid: number, options: ProcessBoundAgentJournalOptions): Promise<{ readonly provider: AgentProvider; readonly path: string; readonly root: string } | undefined> {
+async function findProcessBoundAgentJournal(shellPid: number, options: ProcessBoundAgentJournalOptions): Promise<{ readonly provider: AgentProvider; readonly path: string; readonly root: string; readonly providerSessionId?: string; readonly providerDisplayName?: string; readonly providerMetadataPath?: string; readonly providerModelId?: string; readonly providerStorePath?: string } | undefined> {
   const { platform } = options;
   if (platform !== "darwin" && platform !== "linux") return undefined;
   const descendants = platform === "linux" ? await linuxDescendants(shellPid) : await psDescendants(shellPid);
@@ -393,6 +517,10 @@ async function findProcessBoundAgentJournal(shellPid: number, options: ProcessBo
     if (claude) return { provider: "claude-code", path: claude, root: options.claudeProjectsRoot };
   }
   const paths = platform === "linux" ? await linuxWritableFiles(descendants) : await lsofWritableFiles(descendants);
+  if ((options.provider === null || options.provider === "cursor") && options.cursorChatsRoot && options.cursorProjectsRoot) {
+    const cursor = await findCursorTranscriptFromWritableFiles(paths, options.cursorChatsRoot, options.cursorProjectsRoot);
+    if (cursor) return { provider: "cursor", ...cursor };
+  }
   const matches: Array<{ provider: AgentProvider; path: string; root: string; modified: number }> = [];
   for (const path of paths) {
     if ((options.provider === null || options.provider === "codex") && options.codexSessionsRoot) {
@@ -651,6 +779,18 @@ async function hasOmpProcessBelowPty(shellPid: number, platform: NodeJS.Platform
   return command.split(/\r?\n/u).some((line) =>
     /(?:^|\s)(?:omp|oh-my-pi)(?:\s|$)/u.test(line)
     || /(?:^|\s)bun\s+\S*(?:^|\/)omp(?:\s|$)/u.test(line),
+  );
+}
+
+/** Cursor's launcher may report its bundled Node executable as foreground. */
+async function hasCursorProcessBelowPty(shellPid: number, platform: NodeJS.Platform): Promise<boolean> {
+  if (platform !== "darwin" && platform !== "linux") return false;
+  const descendants = platform === "linux" ? await linuxDescendants(shellPid) : await psDescendants(shellPid);
+  if (descendants.length === 0) return false;
+  const command = await execFileText("ps", ["-p", descendants.join(","), "-o", "command="], 512 * 1024, true);
+  return command.split(/\r?\n/u).some((line) =>
+    /(?:^|\s)(?:agent|cursor-agent)(?:\s|$)/u.test(line)
+    || /cursor-agent\/versions\/[^/\s]+\/(?:node\s+)?[^\s]*index\.js(?:\s|$)/u.test(line),
   );
 }
 

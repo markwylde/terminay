@@ -3,8 +3,9 @@ import { spawn } from "node:child_process";
 import { chmod, mkdir, mkdtemp, realpath, rename, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { findProcessBoundClaudeSession, findProcessBoundCodexRollout, findProcessBoundOmpSession, NodeAgentJournalSource } from "../dist/activity/agentJournal.js";
+import { findProcessBoundClaudeSession, findProcessBoundCodexRollout, findProcessBoundCursorTranscript, findProcessBoundOmpSession, NodeAgentJournalSource } from "../dist/activity/agentJournal.js";
 
 function ompTitleSlot(title = "Untitled") {
   const text = JSON.stringify({ type: "title", title });
@@ -21,6 +22,14 @@ async function waitFor(predicate, attempts = 80) {
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   return predicate();
+}
+
+function writeCursorStore(path, lastUsedModel) {
+  const database = new DatabaseSync(path);
+  try {
+    database.exec("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)");
+    database.prepare("INSERT INTO meta (key, value) VALUES (?, ?)").run("0", Buffer.from(JSON.stringify({ lastUsedModel }), "utf8").toString("hex"));
+  } finally { database.close(); }
 }
 
 /**
@@ -48,6 +57,60 @@ async function stopChild(child) {
 function breadcrumb(cwd, sessionFile, fresh = false) {
   return `${cwd}\n${sessionFile}\n${fresh ? "fresh\n" : ""}`;
 }
+
+test("Cursor binds the transcript UUID from the exact PTY tree's writable chat store", { skip: !["darwin", "linux"].includes(process.platform) }, async () => {
+  const cursorHome = await mkdtemp(join(tmpdir(), "terminay-cursor-journal-"));
+  const cwd = await mkdtemp(join(tmpdir(), "terminay-cursor-cwd-"));
+  const sessionId = "3afa9283-d72b-42e2-84fd-c445d0c45c3a";
+  const chat = join(cursorHome, "chats", "workspace-hash", sessionId);
+  const projectKey = (await realpath(cwd)).replace(/^\/+/, "").replaceAll("/", "-");
+  const transcript = join(cursorHome, "projects", projectKey, "agent-transcripts", sessionId, `${sessionId}.jsonl`);
+  await mkdir(chat, { recursive: true }); await mkdir(join(transcript, ".."), { recursive: true });
+  await writeFile(join(chat, "meta.json"), JSON.stringify({ schemaVersion: 1, cwd, title: "Cursor Session Title" }));
+  await writeFile(transcript, `${JSON.stringify({ role: "user", message: { content: [{ type: "text", text: "hello" }] } })}\n`);
+  const child = spawn(process.execPath, ["-e", "const fs=require('fs');fs.openSync(process.argv[1],'a+');setInterval(()=>{},1000)", join(chat, "store.db")], { stdio: "ignore" });
+  try {
+    let found;
+    for (let attempt = 0; attempt < 80 && !found; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      found = await findProcessBoundCursorTranscript(process.pid, cursorHome);
+    }
+    assert.equal(found, await realpath(transcript));
+    assert.equal(await findProcessBoundCursorTranscript(999_999_999, cursorHome), undefined);
+  } finally {
+    await stopChild(child); await rm(cursorHome, { recursive: true, force: true }); await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("Cursor's Node worker keeps discovery armed until its lazy transcript exists", { skip: !["darwin", "linux"].includes(process.platform) }, async () => {
+  const cursorHome = await mkdtemp(join(tmpdir(), "terminay-cursor-lazy-"));
+  const cwd = await mkdtemp(join(tmpdir(), "terminay-cursor-lazy-cwd-"));
+  const sessionId = "d0631e97-8fce-4d51-8b13-87f23a001daf";
+  const chat = join(cursorHome, "chats", "workspace-hash", sessionId);
+  const projectKey = (await realpath(cwd)).replace(/^\/+/, "").replaceAll("/", "-");
+  const transcript = join(cursorHome, "projects", projectKey, "agent-transcripts", sessionId, `${sessionId}.jsonl`);
+  const identity = Object.freeze({ serverId: "server-1", projectId: "project-1", sessionId: "terminal-1" });
+  await mkdir(chat, { recursive: true }); await mkdir(join(transcript, ".."), { recursive: true });
+  await writeFile(join(chat, "meta.json"), JSON.stringify({ schemaVersion: 1, cwd, title: "Lazy Cursor Title" }));
+  writeCursorStore(join(chat, "store.db"), "grok-4.6");
+  const child = spawn(process.execPath, ["-e", "const fs=require('fs');fs.openSync(process.argv[1],'a+');setInterval(()=>{},1000)", join(chat, "store.db")], { stdio: "ignore" });
+  const observations = [];
+  const source = new NodeAgentJournalSource({
+    cursorHome, codexHome: join(cursorHome, "missing-codex"), claudeHome: join(cursorHome, "missing-claude"),
+    discoveryAttemptLimit: 2, pollMs: 25, hasCursorProcess: async () => true, hasOmpProcess: async () => false,
+  });
+  try {
+    await source.start((observation) => observations.push(observation));
+    source.registerTerminal(identity); source.terminalStarted(identity, process.pid); source.foregroundProcessChanged(identity, null, false);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await writeFile(transcript, `${JSON.stringify({ role: "user", message: { content: [{ type: "text", text: "lazy" }] } })}\n`);
+    assert.equal(await waitFor(() => observations.some((item) => item.provider === "cursor" && item.providerSessionId === sessionId && item.providerDisplayName === "Lazy Cursor Title" && item.providerModelId === "grok-4.6")), true);
+    await writeFile(join(chat, "meta.json"), JSON.stringify({ schemaVersion: 1, cwd, title: "Renamed Cursor Session" }));
+    assert.equal(await waitFor(() => observations.some((item) => item.provider === "cursor" && item.providerSessionId === sessionId && item.providerDisplayName === "Renamed Cursor Session" && item.record.type === "terminay.session_metadata")), true);
+  } finally {
+    await source.stop(); await stopChild(child); await rm(cursorHome, { recursive: true, force: true }); await rm(cwd, { recursive: true, force: true });
+  }
+});
 
 test("omp binds each terminal to its own valid breadcrumb without an open writer", async () => {
   const root = await mkdtemp(join(tmpdir(), "terminay-omp-breadcrumb-"));

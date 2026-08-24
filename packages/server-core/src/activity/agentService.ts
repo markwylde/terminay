@@ -28,6 +28,7 @@ export function providerFromForegroundProcess(processName: string): AgentProvide
   const executable = processName.trim().split(/[\\/]/u).pop()?.toLowerCase() ?? "";
   if (/^codex(?:[-_.]|$)/u.test(executable)) return "codex";
   if (/^claude(?:[-_.]|$)/u.test(executable)) return "claude-code";
+  if (/^(?:agent|cursor-agent)(?:[-_.]|$)/u.test(executable)) return "cursor";
   // A macOS shebang launch exposes Bun as the PTY foreground executable.
   // This is only a journal-discovery hint: NodeAgentJournalSource still
   // requires a materialized OMP root JSONL selected by the exact PTY's
@@ -85,6 +86,10 @@ export class AgentStatusService {
       void this.ingestJournalRecord(observation.identity, observation.provider, observation.record, {
         journalRole: observation.journalRole,
         childAgentId: observation.childAgentId,
+        providerSessionId: observation.providerSessionId,
+        providerVersion: observation.providerVersion,
+        providerDisplayName: observation.providerDisplayName,
+        providerModelId: observation.providerModelId,
       }).catch(() => undefined);
     });
     this.started = true;
@@ -172,7 +177,7 @@ export class AgentStatusService {
     identity: ActivitySessionIdentity,
     provider: AgentProvider,
     record: Readonly<Record<string, unknown>>,
-    source: { readonly journalRole?: "root" | "child"; readonly childAgentId?: string } = {},
+    source: { readonly journalRole?: "root" | "child"; readonly childAgentId?: string; readonly providerSessionId?: string; readonly providerVersion?: string; readonly providerDisplayName?: string; readonly providerModelId?: string } = {},
   ): Promise<boolean> {
     this.assertActive(identity);
     // A child omp journal has its own session header, but that header belongs
@@ -189,6 +194,15 @@ export class AgentStatusService {
         provider, providerSessionId: inspected.session.providerSessionId,
         providerVersion: inspected.session.providerVersion, mappingVersion: resolved.mappingVersion,
       });
+    } else if (source.providerSessionId && source.journalRole !== "child") {
+      const resolved = this.drivers.resolve(provider, source.providerVersion);
+      if (!resolved) return false;
+      const previous = this.bindings.get(identity.sessionId);
+      if (previous && (previous.provider !== provider || previous.providerSessionId !== source.providerSessionId)) this.retireBinding(identity, previous);
+      this.bindings.set(identity.sessionId, {
+        provider, providerSessionId: source.providerSessionId,
+        providerVersion: source.providerVersion, mappingVersion: resolved.mappingVersion,
+      });
     }
     const binding = this.bindings.get(identity.sessionId);
     if (!binding || binding.provider !== provider) return false;
@@ -196,6 +210,8 @@ export class AgentStatusService {
     const normalized = this.drivers.normalize(provider, binding.providerVersion, record, {
       activationTerminalSessionId: identity.sessionId, sequence, occurredAt: this.now(), providerSessionId: binding.providerSessionId,
       journalRole: source.journalRole ?? "root", childAgentId: source.childAgentId,
+      providerDisplayName: source.providerDisplayName,
+      providerModelId: source.providerModelId,
     });
     if (normalized === null) return false;
     const events = Array.isArray(normalized) ? normalized : [normalized];

@@ -6,7 +6,7 @@
  * provider-specific configuration details.
  */
 
-export const AGENT_PROVIDERS = ["codex", "claude-code", "omp"] as const;
+export const AGENT_PROVIDERS = ["codex", "claude-code", "cursor", "omp"] as const;
 export type AgentProvider = (typeof AGENT_PROVIDERS)[number];
 
 export const AGENT_STATES = ["working", "waiting", "blocked", "done", "idle"] as const;
@@ -46,7 +46,7 @@ interface TargetedAgentEvent { readonly agentId?: string }
 export type AgentLifecycleEvent =
   | (AgentLifecycleEventBase & { readonly kind: "session.started"; readonly displayName?: string })
   /** Updates bounded provider metadata without changing lifecycle state. */
-  | (AgentLifecycleEventBase & TargetedAgentEvent & { readonly kind: "agent.metadata" })
+  | (AgentLifecycleEventBase & TargetedAgentEvent & { readonly kind: "agent.metadata"; readonly displayName?: string })
   | (AgentLifecycleEventBase & { readonly kind: "session.stopped"; readonly reason?: string })
   | (AgentLifecycleEventBase & TargetedAgentEvent & { readonly kind: "turn.started"; readonly turnId?: string })
   | (AgentLifecycleEventBase & TargetedAgentEvent & { readonly kind: "tool.started"; readonly tool: { readonly id: string; readonly name: string; readonly description?: string; readonly subagentLaunch?: { readonly displayName?: string; readonly promptText?: string } } })
