@@ -2,8 +2,8 @@ import { fork, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { isChildFrame, frameByteLength, EXTENSION_HOST_PROTOCOL_VERSION, type ChildFrame, type HostFrame } from "./protocol.js";
 import { validateExtensionLaunchDescriptor } from "./descriptor.js";
-import type { ExtensionBroker, ExtensionHostLimits, ExtensionHostStatus, ExtensionInvocation, ExtensionLaunchDescriptor, ExtensionProfileBroker, ExtensionProviderInvocation, ExtensionSecretAccessBroker, ExtensionSshAgentBroker } from "./types.js";
-import { isNamespacedId, validateDeclarativeForm, validateEnvironmentActionResult, validateOptionSourceResult, validateProviderDefinition, validateProviderEnvironmentStatus, validateProvisioningResult, validateSshAgentIdentities, validateSshAgentSignature, validateValidationIssues, type ProviderDefinition } from "@terminay/extension-api";
+import type { ExtensionAgentBroker, ExtensionAgentLifecyclePublication, ExtensionAgentObservationRequest, ExtensionAgentTerminalAdmission, ExtensionAgentTerminalCancellation, ExtensionAgentTerminalContext, ExtensionBroker, ExtensionHostLimits, ExtensionHostStatus, ExtensionInvocation, ExtensionLaunchDescriptor, ExtensionProfileBroker, ExtensionProviderInvocation, ExtensionSecretAccessBroker, ExtensionSshAgentBroker } from "./types.js";
+import { isNamespacedId, validateAgentLifecycleEvent, validateDeclarativeForm, validateEnvironmentActionResult, validateOptionSourceResult, validateProviderDefinition, validateProviderEnvironmentStatus, validateProvisioningResult, validateSshAgentIdentities, validateSshAgentSignature, validateValidationIssues, type AgentProviderContribution, type ProviderDefinition } from "@terminay/extension-api";
 
 interface PendingCall {
   readonly resolve: (value: unknown) => void;
@@ -21,6 +21,7 @@ export interface ExtensionHostOptions {
   readonly profiles?: ExtensionProfileBroker;
   readonly secrets?: ExtensionSecretAccessBroker;
   readonly sshAgent?: ExtensionSshAgentBroker;
+  readonly agents?: ExtensionAgentBroker;
 }
 
 const DEFAULTS = Object.freeze({
@@ -49,6 +50,9 @@ export class ExtensionHost {
   private providerSequence = 0;
   private stopping = false;
   private providers: readonly ProviderDefinition[] = Object.freeze([]);
+  private agentProviders: readonly AgentProviderContribution[] = Object.freeze([]);
+  private readonly agentContexts = new Map<string, ExtensionAgentTerminalContext>();
+  private agentPublicationsInFlight = 0;
   private readonly limits: Required<ExtensionHostLimits>;
   private readonly now: () => number;
 
@@ -58,7 +62,7 @@ export class ExtensionHost {
     this.state = { extensionId, state: "stopped", consecutiveCrashes: 0 };
   }
 
-  status(): ExtensionHostStatus { return Object.freeze({ ...this.state, providers: this.providers }); }
+  status(): ExtensionHostStatus { return Object.freeze({ ...this.state, providers: this.providers, agentProviders: this.agentProviders }); }
 
   async start(descriptor: ExtensionLaunchDescriptor): Promise<void> {
     if (descriptor.extensionId !== this.extensionId) throw new TypeError("extension descriptor identity mismatch");
@@ -91,8 +95,10 @@ export class ExtensionHost {
         dataDirectory: this.descriptor.dataDirectory,
         cacheDirectory: this.descriptor.cacheDirectory,
         permissions: [...this.descriptor.permissions],
+        agentProviders: this.descriptor.agentProviders === undefined ? [] : structuredClone(this.descriptor.agentProviders),
       }, this.limits.startupTimeoutMs, undefined, true);
       this.providers = validateProviders(record(activated)?.providers, this.extensionId);
+      this.agentProviders = validateAgentProviders(record(activated)?.agentProviders, this.descriptor);
       this.state = { extensionId: this.extensionId, state: "running", consecutiveCrashes: 0 };
     } catch (error) {
       this.terminateChild();
@@ -137,17 +143,47 @@ export class ExtensionHost {
       this.state = { extensionId: this.extensionId, state: "stopped", consecutiveCrashes: this.state.consecutiveCrashes };
       return;
     }
+    await this.drainAgentObservers("extension-stopped").catch(() => undefined);
     try { await this.call("deactivate", undefined, this.limits.shutdownTimeoutMs); } catch { /* bounded forced termination below */ }
     this.terminateChild();
     this.rejectPending(new Error("extension host stopped"));
     this.state = { extensionId: this.extensionId, state: "stopped", consecutiveCrashes: this.state.consecutiveCrashes };
     this.providers = Object.freeze([]);
+    this.agentProviders = Object.freeze([]);
   }
 
   clearQuarantine(): void {
     if (this.child !== undefined) throw new Error("cannot clear quarantine while extension is running");
     this.crashTimes.length = 0;
     this.state = { extensionId: this.extensionId, state: "stopped", consecutiveCrashes: 0 };
+  }
+
+  /** Admit exactly one server-issued terminal incarnation to one registered
+   * agent provider. The child cannot manufacture this context. */
+  async admitAgentTerminal(admission: ExtensionAgentTerminalAdmission, signal?: AbortSignal): Promise<unknown> {
+    const context = validateAgentTerminalAdmission(admission, this.extensionId, this.agentProviders);
+    if (this.agentContexts.has(context.contextId)) throw new Error("agent terminal context is already admitted");
+    this.agentContexts.set(context.contextId, context);
+    try {
+      return await this.call("agent.terminal.admit", admission, this.limits.invocationTimeoutMs, signal);
+    } catch (error) {
+      await this.retireAgentContext(context.contextId, "terminal-replaced");
+      throw error;
+    }
+  }
+
+  async cancelAgentTerminal(cancellation: ExtensionAgentTerminalCancellation): Promise<boolean> {
+    const context = this.agentContexts.get(cancellation.contextId);
+    if (context === undefined) return false;
+    await this.call("agent.terminal.cancel", cancellation, this.limits.shutdownTimeoutMs).catch(() => undefined);
+    await this.retireAgentContext(cancellation.contextId, cancellation.reason);
+    return true;
+  }
+
+  async drainAgentObservers(reason: "provider-disabled" | "extension-stopped" | "server-stopping"): Promise<void> {
+    if (this.agentContexts.size === 0) return;
+    await this.call("agent.drain", { reason }, this.limits.shutdownTimeoutMs).catch(() => undefined);
+    for (const contextId of [...this.agentContexts.keys()]) await this.retireAgentContext(contextId, reason);
   }
 
   private call(kind: HostFrame["kind"], payload: unknown, timeoutMs: number, signal?: AbortSignal, allowStarting = false): Promise<unknown> {
@@ -185,7 +221,10 @@ export class ExtensionHost {
     if (frameByteLength(message) > this.limits.maxMessageBytes) { this.protocolViolation("oversized child message"); return; }
     if (!isChildFrame(message)) { this.protocolViolation("malformed child message"); return; }
     if (message.kind === "broker.request") { void this.handleBrokerRequest(message); return; }
-    if (message.kind === "ready" || message.kind === "result" || message.kind === "deactivated") this.finishPending(message.id, message.payload);
+    if (message.kind === "agent.observation.request") { void this.handleAgentObservationRequest(message); return; }
+    if (message.kind === "agent.lifecycle.publish") { void this.handleAgentLifecyclePublication(message); return; }
+    if (message.kind === "agent.provider.disposed") { void this.handleAgentProviderDisposed(message); return; }
+    if (message.kind === "ready" || message.kind === "result" || message.kind === "deactivated" || message.kind === "agent.terminal.admitted" || message.kind === "agent.terminal.cancelled" || message.kind === "agent.drain.completed") this.finishPending(message.id, message.payload);
     else this.finishPending(message.id, undefined, new Error(failureMessage(message.payload)));
   }
 
@@ -206,6 +245,70 @@ export class ExtensionHost {
       this.sendBrokerResult(frame.id, result);
     } catch (error) { this.sendBrokerResult(frame.id, undefined, error instanceof Error ? error.message : "broker request failed"); }
     finally { this.activeBrokerCalls.delete(frame.id); }
+  }
+
+  private async handleAgentObservationRequest(frame: ChildFrame): Promise<void> {
+    const request = parseAgentObservationRequest(frame.payload);
+    if (request === undefined) { this.sendAgentObservationResult(frame.id, { contextId: "", ok: false, failure: "invalid agent observation request" }); return; }
+    const context = this.agentContexts.get(request.contextId);
+    if (context === undefined || context.providerId !== request.providerId || this.options.agents === undefined) {
+      this.sendAgentObservationResult(frame.id, { contextId: request.contextId, ok: false, failure: "agent observation scope is unavailable" }); return;
+    }
+    const controller = new AbortController(); this.activeBrokerCalls.set(frame.id, controller);
+    try {
+      const value = await this.options.agents.observe({ extensionId: this.extensionId, providerId: request.providerId, terminal: context, operation: request.operation, payload: request.payload }, controller.signal);
+      this.sendAgentObservationResult(frame.id, { contextId: request.contextId, ok: true, value });
+    } catch (error) {
+      this.sendAgentObservationResult(frame.id, { contextId: request.contextId, ok: false, failure: safeFailure(error instanceof Error ? error : new Error("agent observation failed")) });
+    } finally { this.activeBrokerCalls.delete(frame.id); }
+  }
+
+  private async handleAgentLifecyclePublication(frame: ChildFrame): Promise<void> {
+    const publication = parseAgentLifecyclePublication(frame.payload);
+    if (publication === undefined) { this.sendAgentLifecycleAck(frame.id, { contextId: "", publicationId: "", acceptedEventCount: 0, rejectedEventCount: 0, failure: "invalid agent lifecycle publication" }); return; }
+    const context = this.agentContexts.get(publication.contextId);
+    if (context === undefined || context.providerId !== publication.providerId || this.options.agents === undefined) {
+      this.sendAgentLifecycleAck(frame.id, { contextId: publication.contextId, publicationId: publication.publicationId, acceptedEventCount: 0, rejectedEventCount: publication.events.length, failure: "agent lifecycle scope is unavailable" }); return;
+    }
+    if (this.agentPublicationsInFlight >= this.limits.maxConcurrentInvocations) {
+      this.send({ protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION, kind: "agent.lifecycle.backpressure", id: frame.id, payload: { contextId: publication.contextId, state: "pause", maxInFlightPublications: this.limits.maxConcurrentInvocations, retryAfterMs: 50 } });
+      this.sendAgentLifecycleAck(frame.id, { contextId: publication.contextId, publicationId: publication.publicationId, acceptedEventCount: 0, rejectedEventCount: publication.events.length, failure: "agent lifecycle publication is backpressured" });
+      return;
+    }
+    this.agentPublicationsInFlight += 1;
+    const controller = new AbortController(); this.activeBrokerCalls.set(frame.id, controller);
+    try {
+      const result = await this.options.agents.publish({ extensionId: this.extensionId, providerId: publication.providerId, terminal: context, publicationId: publication.publicationId, mappingVersion: publication.mappingVersion, ...(publication.binding === undefined ? {} : { binding: publication.binding }), events: publication.events }, controller.signal);
+      this.sendAgentLifecycleAck(frame.id, { contextId: publication.contextId, publicationId: publication.publicationId, acceptedEventCount: result.acceptedEventCount, rejectedEventCount: result.rejectedEventCount ?? 0, ...(result.failure === undefined ? {} : { failure: safeFailure(new Error(result.failure)) }) });
+    } catch (error) {
+      this.sendAgentLifecycleAck(frame.id, { contextId: publication.contextId, publicationId: publication.publicationId, acceptedEventCount: 0, rejectedEventCount: publication.events.length, failure: safeFailure(error instanceof Error ? error : new Error("agent lifecycle publication failed")) });
+    } finally {
+      this.activeBrokerCalls.delete(frame.id);
+      this.agentPublicationsInFlight -= 1;
+      this.send({ protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION, kind: "agent.lifecycle.backpressure", id: frame.id, payload: { contextId: publication.contextId, state: "normal", maxInFlightPublications: this.limits.maxConcurrentInvocations } });
+    }
+  }
+
+  private async handleAgentProviderDisposed(frame: ChildFrame): Promise<void> {
+    const providerId = boundedId(record(frame.payload)?.providerId);
+    if (providerId === undefined || !this.agentProviders.some((provider) => provider.id === providerId)) { this.protocolViolation("agent provider disposal is invalid"); return; }
+    this.agentProviders = Object.freeze(this.agentProviders.filter((provider) => provider.id !== providerId));
+    for (const [contextId, context] of this.agentContexts) if (context.providerId === providerId) await this.retireAgentContext(contextId, "provider-disabled");
+  }
+
+  private sendAgentObservationResult(id: string, result: { readonly contextId: string; readonly ok: boolean; readonly value?: unknown; readonly failure?: string }): void {
+    if (!this.send({ protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION, kind: "agent.observation.result", id, payload: result })) this.protocolViolation("agent observation result exceeds IPC limit");
+  }
+
+  private sendAgentLifecycleAck(id: string, acknowledgement: { readonly contextId: string; readonly publicationId: string; readonly acceptedEventCount: number; readonly rejectedEventCount: number; readonly failure?: string }): void {
+    if (!this.send({ protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION, kind: "agent.lifecycle.ack", id, payload: acknowledgement })) this.protocolViolation("agent lifecycle acknowledgement exceeds IPC limit");
+  }
+
+  private async retireAgentContext(contextId: string, reason: ExtensionAgentTerminalCancellation["reason"]): Promise<void> {
+    const context = this.agentContexts.get(contextId);
+    if (context === undefined) return;
+    this.agentContexts.delete(contextId);
+    await this.options.agents?.terminalCancelled?.({ extensionId: this.extensionId, providerId: context.providerId, terminal: context, reason });
   }
 
   private async readProfile(input: unknown, signal: AbortSignal): Promise<unknown> {
@@ -265,6 +368,7 @@ export class ExtensionHost {
     this.rejectPending(new Error("extension child exited"));
     for (const controller of this.activeBrokerCalls.values()) controller.abort();
     this.activeBrokerCalls.clear();
+    void this.drainAgentObservers("extension-stopped");
     if (!this.stopping && this.state.state !== "failed" && this.state.state !== "quarantined") this.recordFailure(new Error(`extension child exited (${code ?? signal ?? "unknown"})`));
   }
 
@@ -274,6 +378,7 @@ export class ExtensionHost {
     const crashes = this.crashTimes.length;
     this.rejectPending(error);
     this.providers = Object.freeze([]);
+    this.agentProviders = Object.freeze([]);
     if (crashes >= this.limits.maxCrashesInWindow) {
       this.state = { extensionId: this.extensionId, state: "quarantined", consecutiveCrashes: crashes, failure: safeFailure(error) };
       return;
@@ -305,6 +410,64 @@ function validateProviders(value: unknown, extensionId: string): readonly Provid
     providers.push(structuredClone(item) as ProviderDefinition);
   }
   return Object.freeze(providers);
+}
+
+function validateAgentProviders(value: unknown, descriptor: ExtensionLaunchDescriptor): readonly AgentProviderContribution[] {
+  if (!Array.isArray(value) || value.length > 32 || (value.length > 0 && !descriptor.permissions.includes("agent-observation"))) {
+    throw new Error("extension returned invalid agent provider registrations");
+  }
+  const declared = new Map((descriptor.agentProviders ?? []).map((provider) => [provider.id, provider]));
+  const seen = new Set<string>(); const result: AgentProviderContribution[] = [];
+  for (const valueId of value) {
+    if (typeof valueId !== "string" || seen.has(valueId) || !isNamespacedId(valueId, descriptor.extensionId)) throw new Error("extension returned invalid agent provider registrations");
+    const contribution = declared.get(valueId);
+    if (contribution === undefined) throw new Error("extension registered an undeclared agent provider");
+    seen.add(valueId); result.push(structuredClone(contribution));
+  }
+  return Object.freeze(result);
+}
+
+function validateAgentTerminalAdmission(value: ExtensionAgentTerminalAdmission, extensionId: string, providers: readonly AgentProviderContribution[]): ExtensionAgentTerminalContext {
+  const context = value?.context;
+  if (!context || !boundedId(context.contextId) || !boundedId(context.serverId) || !boundedId(context.projectId) || !boundedId(context.projectEnvironmentId) || !boundedId(context.terminalSessionId) || !boundedId(context.terminalIncarnationId) || !boundedId(context.providerId) || !providers.some((provider) => provider.id === context.providerId)) {
+    throw new Error("agent terminal admission is outside the registered provider scope");
+  }
+  if (!Array.isArray(value.observationCapabilities) || value.observationCapabilities.length > 16 || value.observationCapabilities.some((capability) => typeof capability !== "string" || capability.length === 0 || capability.length > 100)) {
+    throw new Error("agent terminal admission has invalid observation capabilities");
+  }
+  const provider = providers.find((candidate) => candidate.id === context.providerId)!;
+  if (value.observationCapabilities.some((capability) => !provider.requiredEnvironmentCapabilities.includes(capability as never))) throw new Error("agent terminal admission exceeds provider capabilities");
+  // The manager is the only API that calls this method; this check documents
+  // and enforces the same extension/provider namespace ownership at runtime.
+  if (!isNamespacedId(context.providerId, extensionId)) throw new Error("agent terminal admission provider is invalid");
+  return Object.freeze(structuredClone(context));
+}
+
+function parseAgentObservationRequest(value: unknown): ExtensionAgentObservationRequest | undefined {
+  const payload = record(value); const contextId = boundedId(payload?.contextId); const providerId = boundedId(payload?.providerId); const operation = payload?.operation;
+  if (!contextId || !providerId || typeof operation !== "string" || !["process.foreground", "process.descendants", "process.open-files", "terminal.tty", "filesystem.realpath", "filesystem.stat", "filesystem.read", "filesystem.follow", "filesystem.unfollow"].includes(operation) || !jsonValue(payload?.payload)) return undefined;
+  return Object.freeze({ contextId, providerId, operation: operation as import("./types.js").ExtensionAgentObservationOperation, payload: structuredClone(payload!.payload) as import("@terminay/extension-api").JsonValue });
+}
+
+function parseAgentLifecyclePublication(value: unknown): ExtensionAgentLifecyclePublication | undefined {
+  const payload = record(value); const contextId = boundedId(payload?.contextId); const providerId = boundedId(payload?.providerId); const publicationId = boundedId(payload?.publicationId);
+  if (!contextId || !providerId || !publicationId || typeof payload?.mappingVersion !== "string" || payload.mappingVersion.length === 0 || payload.mappingVersion.length > 64 || !Array.isArray(payload.events) || payload.events.length > 64 || (payload.binding !== undefined && !jsonValue(payload.binding))) return undefined;
+  const events = [] as import("@terminay/extension-api").AgentLifecycleEvent[];
+  for (const event of payload.events) {
+    const validation = validateAgentLifecycleEvent(event);
+    if (!validation.ok) return undefined;
+    events.push(structuredClone(validation.value));
+  }
+  return Object.freeze({ contextId, providerId, publicationId, mappingVersion: payload.mappingVersion, ...(payload.binding === undefined ? {} : { binding: structuredClone(payload.binding) as import("@terminay/extension-api").JsonValue }), events: Object.freeze(events) });
+}
+
+function jsonValue(value: unknown, depth = 0): value is import("@terminay/extension-api").JsonValue {
+  if (depth > 8 || value === null || typeof value === "string" || typeof value === "boolean") return depth <= 8 && (typeof value !== "string" || value.length <= 64 * 1024);
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) return value.length <= 256 && value.every((item) => jsonValue(item, depth + 1));
+  const objectValue = record(value);
+  if (objectValue === undefined || Object.keys(objectValue).length > 128) return false;
+  return Object.entries(objectValue).every(([key, item]) => key.length <= 256 && jsonValue(item, depth + 1));
 }
 function validateProviderResult(callback: ExtensionProviderInvocation["callback"], result: unknown, request?: unknown): unknown {
   if (callback === "invokeService") return validateServiceResult(result, request);

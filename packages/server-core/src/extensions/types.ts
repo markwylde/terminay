@@ -1,4 +1,10 @@
-import type { JsonValue, ProviderDefinition, ProviderRuntimeMethod } from "@terminay/extension-api";
+import type {
+  AgentLifecycleEvent,
+  AgentProviderContribution,
+  JsonValue,
+  ProviderDefinition,
+  ProviderRuntimeMethod,
+} from "@terminay/extension-api";
 
 /**
  * Opaque server-issued identity for one terminal incarnation. Agent extensions
@@ -50,6 +56,7 @@ export type ExtensionAgentObservationOperation =
 
 export interface ExtensionAgentObservationRequest {
   readonly contextId: string;
+  readonly providerId: string;
   readonly operation: ExtensionAgentObservationOperation;
   readonly payload: JsonValue;
 }
@@ -71,7 +78,10 @@ export interface ExtensionAgentLifecyclePublication {
   readonly providerId: string;
   readonly publicationId: string;
   readonly mappingVersion: string;
-  readonly events: readonly JsonValue[];
+  /** A bind publication contains no lifecycle events and establishes the
+   * provider session identity before any later lifecycle publication. */
+  readonly binding?: JsonValue;
+  readonly events: readonly AgentLifecycleEvent[];
 }
 
 export interface ExtensionAgentLifecycleAcknowledgement {
@@ -113,6 +123,10 @@ export interface ExtensionLaunchDescriptor {
   readonly dataDirectory: string;
   readonly cacheDirectory: string;
   readonly permissions: readonly string[];
+  /** Parsed public manifest contribution metadata. The installer supplies it
+   * after public manifest validation; the host uses it to reject undeclared
+   * child registrations before they become live. */
+  readonly agentProviders?: readonly AgentProviderContribution[];
 }
 
 export interface ExtensionHostStatus {
@@ -122,6 +136,7 @@ export interface ExtensionHostStatus {
   readonly restartAt?: number;
   readonly failure?: string;
   readonly providers?: readonly ProviderDefinition[];
+  readonly agentProviders?: readonly AgentProviderContribution[];
 }
 
 export interface ExtensionInvocation {
@@ -172,6 +187,38 @@ export interface ExtensionSecretAccessBroker {
 
 export interface ExtensionBroker {
   request(request: ExtensionBrokerRequest, signal: AbortSignal): Promise<unknown>;
+}
+
+/** Private host bridge for public agent-runtime operations. It deliberately
+ * accepts already validated public DTOs and keeps environment routing,
+ * binding ownership, canonical sequencing, and store reduction in Server
+ * Core. Installed extensions never receive this bridge directly. */
+export interface ExtensionAgentBroker {
+  observe(
+    request: Readonly<{
+      extensionId: string;
+      providerId: string;
+      terminal: ExtensionAgentTerminalContext;
+      operation: ExtensionAgentObservationOperation;
+      payload: JsonValue;
+    }>,
+    signal: AbortSignal,
+  ): Promise<JsonValue>;
+  publish(
+    request: Readonly<{
+      extensionId: string;
+      providerId: string;
+      terminal: ExtensionAgentTerminalContext;
+      publicationId: string;
+      mappingVersion: string;
+      binding?: JsonValue;
+      events: readonly AgentLifecycleEvent[];
+    }>,
+    signal: AbortSignal,
+  ): Promise<Readonly<{ acceptedEventCount: number; rejectedEventCount?: number; failure?: string }>>;
+  terminalCancelled?(
+    request: Readonly<{ extensionId: string; providerId: string; terminal: ExtensionAgentTerminalContext; reason: ExtensionAgentTerminalCancellationReason }>,
+  ): Promise<void> | void;
 }
 
 export interface ExtensionHostLimits {
