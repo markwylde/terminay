@@ -600,14 +600,19 @@ the SDK suite passed 44 tests; and the agent boundary suite passed 2/2.
   - [x] Exercise a clean Linux arm64 standalone archive payload.
   - [ ] Exercise real Linux x64 Electron and standalone payloads on a native
     Linux x64 runner.
-- [ ] Verify Docker's clean dependency manifests install and stage all six
+- [x] Verify Docker's clean dependency manifests install and stage all six
   package closures without relying on local `node_modules` or developer state.
 - [ ] Run the complete `npm run test:e2e` through the required Docker-isolated
   Electron path.
 
 Evidence (2026-08-24): the artifact verifier, packaged-startup smoke, and
 installer/operations suites prove release inputs and installer semantics;
-SSH/Puzed Docker E2E passed. The isolated
+SSH/Puzed Docker E2E passed. The final clean container at commit `397ae0cf`
+ran a fresh `npm ci` (768 packages, no failure) and
+`stage-built-in-extensions` emitted exactly the six `0.1.0` closures—Puzed,
+Claude Code, Codex, Cursor Agent, omp, and SSH—under
+`/workspace/build/built-in-extensions`, without local `node_modules` input.
+The isolated
 `npm run test:packaged-built-in-extension-runtime` matrix then passed 2/2 in
 13.1 seconds against the real macOS arm64 Electron resource tree and the
 standalone server payload. It materializes each immutable floor into a fresh
@@ -647,8 +652,17 @@ supported-architecture parent gate remains open.
 
 #### Original aggregate gates and final hygiene
 
-- [ ] Run agent store, runtime, UI, resume/rebind, remote-client, disable/crash,
+- [x] Run agent store, runtime, UI, resume/rebind, remote-client, disable/crash,
   and privacy tests as one final aggregate command set.
+
+  Aggregate non-E2E evidence (2026-08-24): commit `2787512` fixes the final
+  test-contract issues. `npm run test:agents` passed 148 tests with one
+  intentional unauthenticated Cursor opt-in smoke skip; Extension API passed
+ 46/46, Server Core 647/647, Client Core 158/158, and Desktop was green. The
+ explicit remote/UI/SQLite crash/standalone crash-restart/built-in/CLI-artifact
+ matrix passed 44/44, standalone terminal passed 10/10, all six built-ins were
+ verified, and packaged lifecycle passed 2/2. This is the final non-E2E
+ aggregate only; Docker Electron E2E and architecture-matrix gates remain open.
 - [ ] Run offline Electron and standalone first-run/restart/override/rollback
   artifact tests on supported architectures.
 - [ ] Delete the hard-coded agent drivers/sources and special SSH/Puzed
@@ -852,21 +866,21 @@ fail only the affected extension and fail release validation.
 
 ## Acceptance checks
 
-- [ ] **Task 63 instance-authority isolation:** reproduce with two isolated
+- [x] **Task 63 instance-authority isolation:** reproduce with two isolated
   Desktop profiles and two concurrent Server Core compositions. They may use
   the same project display name, project id, terminal session id, provider
   session id, and extension package; a lifecycle event admitted by one
   authority never appears in the other authority's snapshot or subscription.
-- [ ] **Task 63 immutable scope fencing:** prove publication, acknowledgement,
+- [x] **Task 63 immutable scope fencing:** prove publication, acknowledgement,
   replay, and observation resolution each require the exact server, project,
   terminal session, and terminal incarnation issued by their owning authority.
   Equal project names and reused terminal ids are never a substitute for a
   server-instance match.
-- [ ] **Task 63 public-runtime isolation:** prove the extension host accepts
+- [x] **Task 63 public-runtime isolation:** prove the extension host accepts
   only a context minted by its own selected Server runtime and that a matching
   context string from another server/profile cannot publish, observe, cancel,
   or subscribe across that runtime.
-- [ ] **Task 63 endpoint/server isolation:** give every implicit embedded or
+- [x] **Task 63 endpoint/server isolation:** give every implicit embedded or
   standalone server a stable data-root-scoped identity. Two `terminay-server`
   processes with separate roots and endpoints must not default to a shared
   server identity; an explicit `--server-id` remains an intentional operator
@@ -875,6 +889,30 @@ fail only the affected extension and fail release validation.
   with two simultaneous isolated application profiles that intentionally open
   identically named projects and terminal ids, publish distinct root/subagent
   lifecycle state, and assert each Agents panel renders only its own state.
+
+Isolation evidence (2026-08-24): commit `541b1fb` fences terminal-owned agent
+contexts. Focused runtime tests (29 plus 2 integration cases) prove a stale
+shell foreground transition revokes the claim, incarnation, timers, and every
+owned context before it can publish; the real child host receives cancellation.
+The 28-test host suite includes two registries with intentionally identical
+ids and a shared journal, proving one runtime cannot resolve, publish,
+acknowledge, observe, cancel, or subscribe through the other. The six-test
+standalone identity suite proves persistent data-root-scoped standalone ids,
+legacy compatibility, explicit id/data-root mismatch rejection, and same-root
+`FileDataRootLease` ownership. At this point the Desktop persistent-identity
+coverage was still pending; the follow-up evidence below closes that gap. The
+Docker dual-profile UI gate remains independent and unchecked.
+
+Desktop identity evidence (2026-08-24): commit `7bef5bb` passes a focused
+4/4 identity suite and a broader 36/36 suite, plus the relevant builds and
+typechecks. Two exact user-data roots with identical project/session inputs
+receive distinct durable authority ids, profiles, partitions, stores, and
+stable restart identity. One resolved id threads terminal, workspace,
+environment, recording, Local UI, profile, cache, and exposure composition.
+The legacy `desktop-local` record migrates atomically; a foreign record fails
+closed. Together with the standalone per-root identity/lease proof above,
+this completes the instance-authority and combined endpoint/server identity
+requirements. The Docker dual-profile UI proof remains separately unchecked.
 
 - `rg`/dependency-graph gates find no provider-specific agent implementation in
   Server Core, Electron, client-core, or renderer code.
