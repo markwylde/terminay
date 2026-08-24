@@ -32,6 +32,7 @@ interface StorageOptions {
   readonly recordingRoot: string;
   readonly homeDirectory: string;
   readonly libraryIndexPath?: string;
+  readonly migrateStoredMetadata?: (metadata: RecordingMetadata) => RecordingMetadata;
 }
 
 const MAX_HEADER_BYTES = 64 * 1024;
@@ -218,10 +219,12 @@ function metadataFromCast(castPath: string, root: string, now: Date): RecordingM
 export class NodeRecordingStorage implements RecordingStorage {
   private readonly rootSet = new Set<string>();
   private readonly indexPath: string;
+  private readonly migrateStoredMetadata: ((metadata: RecordingMetadata) => RecordingMetadata) | undefined;
 
   constructor(options: StorageOptions) {
     const root = this.expandRoot(options.recordingRoot, options.homeDirectory);
     this.indexPath = options.libraryIndexPath ?? path.join(options.homeDirectory, ".terminay", "recording-roots.json");
+    this.migrateStoredMetadata = options.migrateStoredMetadata;
     this.loadRoots();
     this.registerRoot(root, false);
     this.persistRoots();
@@ -308,7 +311,11 @@ export class NodeRecordingStorage implements RecordingStorage {
     const metadataPath = castPath.replace(/\.cast$/i, ".json");
     try {
       const parsed = parseObject(readFileSync(metadataPath, "utf8"));
-      return parsed === null ? null : normalizeMetadata(parsed, this.authorizedRoot(castPath), path.basename(castPath, ".cast"));
+      const metadata = parsed === null ? null : normalizeMetadata(parsed, this.authorizedRoot(castPath), path.basename(castPath, ".cast"));
+      if (metadata === null || this.migrateStoredMetadata === undefined) return metadata;
+      const migrated = this.migrateStoredMetadata(metadata);
+      if (migrated !== metadata) this.writeMetadata({ metadata, castPath }, migrated);
+      return migrated;
     } catch { return null; }
   }
 

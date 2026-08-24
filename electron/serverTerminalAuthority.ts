@@ -760,7 +760,7 @@ export class ServerTerminalAuthority {
 				: dictationOnlyOperations(createAiOperationHandlers(dictationAi));
 		this.composition = createServerCoreComposition({
 			serverId: options.serverId,
-			serverVersion: 'desktop-local',
+			serverVersion: 'desktop',
 			...(options.terminalService !== undefined &&
 			options.shellProfiles === undefined
 				? { allowUnresolvedTestSessions: true }

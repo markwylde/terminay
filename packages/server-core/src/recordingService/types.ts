@@ -179,6 +179,10 @@ export interface RecordingServiceOptions {
   readonly libraryIndexPath?: string;
   readonly getLibraryIndexPath?: () => string;
   readonly serverId?: string;
+  /** Privileged startup-only compatibility migration for stored recording
+   * metadata. The callback never receives terminal content and is applied by
+   * native storage before list/replay authorization. */
+  readonly migrateStoredMetadata?: (metadata: RecordingMetadata) => RecordingMetadata;
   readonly captureInput?: boolean | (() => boolean);
   readonly sensitiveInputPolicy?: SensitiveInputPolicy | (() => SensitiveInputPolicy);
   readonly defaultRecordNewTerminals?: boolean | (() => boolean);
