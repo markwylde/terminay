@@ -1,0 +1,7 @@
+#!/usr/bin/env node
+import { readProvenCodexJournal } from "../dist/targetHelper.js";
+
+let input="";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data",(chunk)=>{input+=chunk;if(Buffer.byteLength(input)>65536){process.stderr.write("request too large\n");process.exit(2);}});
+process.stdin.on("end",async()=>{try{if(process.argv[2]!=="agent-journal-v1")throw new Error("unsupported operation");const line=input.split("\n",1)[0]??"";const result=await readProvenCodexJournal(JSON.parse(line));process.stdout.write(JSON.stringify(result));}catch(error){process.stderr.write(`${error instanceof Error?error.message:"helper failed"}\n`);process.exitCode=2;}});

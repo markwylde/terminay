@@ -1,0 +1,85 @@
+{
+  "name": "terminay-plugin-ssh",
+  "version": "0.1.0",
+  "description": "Official SSH project-environment extension for Terminay",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/terminay/terminay-plugin-ssh.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "target-helper",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "compile": "tsc -p tsconfig.json",
+    "test": "npm run compile && env -i HOME=\"$HOME\" PATH=\"$PATH\" TMPDIR=\"${TMPDIR:-/tmp}\" sh -c 'for file in test/*.test.mjs; do node --test \"$file\" || exit $?; done'",
+    "test:e2e": "npm run compile && node --test test/e2e/*.test.mjs"
+  },
+  "dependencies": {
+    "@electerm/ssh2": "1.22.0"
+  },
+  "peerDependencies": {
+    "@terminay/extension-api": "^1.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@terminay/extension-api": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@terminay/extension-api": "^1.1.0",
+    "@types/node": "24.3.0",
+    "typescript": "5.9.2"
+  },
+  "terminay": {
+    "manifestVersion": 1,
+    "id": "com.terminay.ssh",
+    "displayName": "SSH",
+    "description": "Open POSIX projects on existing SSH servers.",
+    "api": "^1.1.0",
+    "engines": {
+      "terminay": ">=1.0.0",
+      "node": ">=22"
+    },
+    "entrypoint": "dist/index.js",
+    "permissions": ["configuration:read", "configuration:write", "data:read", "data:write", "network", "secrets:resolve", "ssh-agent:use"],
+    "contributes": {
+      "projectEnvironments": [
+        {
+          "id": "com.terminay.ssh/connection",
+          "displayName": "SSH server",
+          "description": "A POSIX host reached directly by the selected Terminay Server.",
+          "icon": "server",
+          "capabilities": ["terminal", "filesystem", "agent-journal"],
+          "dependencyOperations": [
+            { "name": "managed-binding.generate" },
+            { "name": "managed-binding.bind" },
+            { "name": "managed-binding.update" },
+            { "name": "managed-binding.verify" },
+            { "name": "managed-binding.approve-trust" },
+            { "name": "managed-binding.service" },
+            { "name": "managed-binding.remove" }
+          ]
+        }
+      ]
+    }
+  }
+}

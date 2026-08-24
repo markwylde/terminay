@@ -1,0 +1,32 @@
+{
+  "manifestVersion": 1,
+  "id": "com.terminay.ssh",
+  "displayName": "SSH",
+  "description": "Open POSIX projects on existing SSH servers.",
+  "api": "^1.0.0",
+  "engines": {
+    "terminay": ">=1.0.0",
+    "node": ">=22"
+  },
+  "entrypoint": "dist/index.js",
+  "permissions": [
+    "configuration:read",
+    "configuration:write",
+    "data:read",
+    "data:write",
+    "network",
+    "secrets:resolve",
+    "ssh-agent:use"
+  ],
+  "contributes": {
+    "projectEnvironments": [
+      {
+        "id": "com.terminay.ssh/connection",
+        "displayName": "SSH server",
+        "description": "A POSIX host reached directly by the selected Terminay Server.",
+        "icon": "server",
+        "capabilities": ["terminal", "filesystem", "agent-journal"]
+      }
+    ]
+  }
+}
