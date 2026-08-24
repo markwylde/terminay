@@ -53,7 +53,10 @@ export type DeclarativeFieldDto = Readonly<{
 	required?: boolean;
 	description?: string;
 	placeholder?: string;
-	options?: readonly Readonly<{ label: string; value: string; description?: string }>[];
+	defaultValue?: string | number | boolean | null;
+	suggestionSource?: string;
+	suggestionLabel?: string;
+	options?: readonly Readonly<{ label: string; value: string; description?: string; disabledReason?: string; default?: boolean }>[];
 	optionSource?: string;
 	searchable?: boolean;
 	visibleWhen?: Readonly<{

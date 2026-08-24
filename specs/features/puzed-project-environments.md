@@ -108,14 +108,19 @@ never silently provisions a replacement.
 The create journey is a full responsive route using Puzed's existing calm,
 single-scroll, progressive-disclosure model:
 
-1. **Platform** when more than one profile exists.
+1. **Platform** only when the journey has not already been opened for a specific
+   Platform profile; a profile-scoped create route does not repeat the profile
+   selector.
 2. **Boot source:** searchable ready, SSH-capable, cloud-init images. Blank or
    non-connectable sources are unavailable with an explanation.
-3. **Size:** organization size presets as radio cards plus Custom vCPU, memory,
-   and root disk disclosure.
-4. **Host:** automatic compatible placement summary plus **Choose a host**.
-5. **Network:** default bridge/DHCP summary plus custom bridge/static disclosure.
-6. **Name:** DNS-safe unique suggestion with regeneration/editing.
+3. **Size:** organization size presets as radio cards with the organization
+   default preselected, plus Custom vCPU, memory, and root disk disclosure.
+4. **Host:** automatic compatible placement summary plus a collapsed **Choose a
+   host** disclosure; choosing a host creates the explicit override.
+5. **Network:** organization/host default bridge with DHCP, plus a collapsed
+   **Customize network** disclosure for bridge, IP mode, and static addressing.
+6. **Name:** the Platform's unique random two-word suggestion, loaded on entry,
+   with regeneration and editing.
 7. **Project access:** dedicated Terminay-managed SSH key, username `vms` by
    default, and project root/home.
 8. **Advanced:** bounded relevant Puzed fields without reproducing the entire
