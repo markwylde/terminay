@@ -6,8 +6,10 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import {
   EXTENSION_EVENT_NAMES,
+  EXTENSION_LIMITS,
   EXTENSION_OPERATION_NAMES,
   OPERATION_POLICIES,
+  createProviderDependencyTargetHarness,
   hostileManifestFixtures,
   namespacedId,
   validFormFixture,
@@ -26,6 +28,10 @@ import {
   validateOptionSourceResult,
   validateProgressPresentation,
   validateProviderDefinition,
+  validateProviderDependencyCallContext,
+  validateProviderDependencyHandler,
+  validateProviderDependencyRequest,
+  validateProviderDependencyTargetRequest,
   validateProvisioningResult,
   validateSshAgentIdentities,
   validateSshAgentSignature,
@@ -61,6 +67,76 @@ test("manifest arrays reject duplicates and unsupported capabilities", () => {
   assert.equal(result.ok, false);
   assert.ok(result.issues.some((issue) => issue.code === "duplicate"));
   assert.ok(result.issues.some((issue) => issue.code === "unknown_capability"));
+});
+
+test("provider dependency manifest allowlists are closed, unique, and bounded", () => {
+  const contribution = validManifestFixture.contributes.projectEnvironments[0];
+  const allowed = validateExtensionManifest({
+    ...validManifestFixture,
+    contributes: { projectEnvironments: [{
+      ...contribution,
+      dependencyOperations: [{ name: "resource.read" }, { name: "resource.update" }],
+    }] },
+  });
+  assert.equal(allowed.ok, true);
+
+  for (const [name, dependencyOperations, code] of [
+    ["duplicate operation", [{ name: "resource.read" }, { name: "resource.read" }], "duplicate"],
+    ["command-shaped operation", [{ name: "resource read" }], "invalid_operation"],
+    ["unknown operation field", [{ name: "resource.read", command: "read" }], "unknown_field"],
+    ["too many operations", Array.from({ length: EXTENSION_LIMITS.providerDependencyOperations + 1 }, (_, index) => ({ name: `resource.op-${index}` })), "invalid_array"],
+  ]) {
+    const result = validateExtensionManifest({
+      ...validManifestFixture,
+      contributes: { projectEnvironments: [{ ...contribution, dependencyOperations }] },
+    });
+    assert.equal(result.ok, false, name);
+    assert.ok(result.issues.some((issue) => issue.code === code), name);
+  }
+});
+
+test("public dependency target harness validates calls, cancellation, and JSON results", async () => {
+  const cancelled = { aborted: true, throwIfAborted() { throw new Error("cancelled"); } };
+  const seen = [];
+  const harness = createProviderDependencyTargetHarness({
+    async call(request, context) {
+      seen.push({ request, context });
+      context.signal.throwIfAborted();
+      return { operation: request.operation, revision: context.expectedRevision, idempotencyKey: context.idempotencyKey };
+    },
+  });
+  const request = {
+    operation: "resource.update",
+    payload: { enabled: true },
+    caller: { extensionId: "dev.terminay.caller", providerId: "dev.terminay.caller/source" },
+  };
+  const result = await harness.call(request, {
+    deadlineAt: "2030-01-01T00:00:00.000Z", idempotencyKey: "mutation-1", expectedRevision: 4,
+  });
+  assert.deepEqual(result, { operation: "resource.update", revision: 4, idempotencyKey: "mutation-1" });
+  assert.equal(seen[0].request.caller.extensionId, "dev.terminay.caller", "caller identity is the host-delivered target request");
+  assert.equal(seen[0].context.deadlineAt, "2030-01-01T00:00:00.000Z");
+  await assert.rejects(() => harness.call(request, { signal: cancelled }), /cancelled/);
+
+  await assert.rejects(() => createProviderDependencyTargetHarness({ async call() { return new Date(); } }).call(request), /Invalid provider dependency result/);
+  await assert.rejects(() => harness.call({ ...request, caller: { extensionId: "dev.terminay.caller", providerId: "dev.other/source" } }), /Invalid provider dependency target request/);
+});
+
+test("dependency request and context validators reject unbounded or forged DTOs", () => {
+  assert.equal(validateProviderDependencyRequest({ providerId: "dev.terminay.target/cache", operation: "resource.read", payload: null }).ok, true);
+  assert.equal(validateProviderDependencyTargetRequest({ operation: "resource.read", payload: [], caller: { extensionId: "dev.terminay.caller", providerId: "dev.terminay.caller/source" } }).ok, true);
+  assert.equal(validateProviderDependencyCallContext({ deadlineAt: "2030-01-01T00:00:00.000Z", signal: { aborted: false, throwIfAborted() {} }, expectedRevision: 0 }).ok, true);
+  assert.equal(validateProviderDependencyHandler({ call: async () => null }).ok, true);
+
+  for (const [name, result] of [
+    ["oversized payload", validateProviderDependencyRequest({ providerId: "dev.terminay.target/cache", operation: "resource.read", payload: "x".repeat(EXTENSION_LIMITS.providerDependencyPayloadBytes) })],
+    ["forged caller ownership", validateProviderDependencyTargetRequest({ operation: "resource.read", payload: null, caller: { extensionId: "dev.terminay.caller", providerId: "dev.other/source" } })],
+    ["negative expected revision", validateProviderDependencyCallContext({ deadlineAt: "2030-01-01T00:00:00.000Z", signal: { aborted: false, throwIfAborted() {} }, expectedRevision: -1 })],
+    ["host callback field", validateProviderDependencyHandler({ call: async () => null, authorize() {} })],
+  ]) {
+    assert.equal(result.ok, false, name);
+    assert.ok(result.issues.length > 0, name);
+  }
 });
 
 test("SSH agent access is an explicit supported manifest permission", () => {
