@@ -8,7 +8,7 @@ export const validManifestFixture: TerminayExtensionManifest = Object.freeze({
   id: fixtureExtensionId,
   displayName: "Fixture Environment",
   description: "A portable conformance fixture.",
-  api: "^1.0.0",
+  api: "^1.1.0",
   engines: { terminay: ">=1.0.0", node: ">=22" },
   entrypoint: "dist/extension.js",
   permissions: ["configuration:read", "data:write"],
