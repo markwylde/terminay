@@ -46,6 +46,7 @@ const manifestKeys = new Set([
 ]);
 const fieldKeys = new Set([
   "id", "type", "label", "description", "required", "disabledReason", "visibleWhen",
+  "defaultValue", "suggestionSource", "suggestionLabel",
   "placeholder", "minLength", "maxLength", "pattern", "minimum", "maximum", "step",
   "options", "optionSource", "searchable", "multiple",
 ]);
@@ -302,10 +303,11 @@ export function validateEnvironmentActionResult(value: unknown): ValidationResul
 function invalidObject<T>(): ValidationResult<T> { return { ok: false, issues: [{ path: "$", code: "invalid_type", message: "Expected an object" }] }; }
 function validateOption(value: unknown, path: string, out: SchemaIssue[]): void {
   if (!record(value)) { out.push({ path, code: "invalid_type", message: "Expected object" }); return; }
-  closed(value, new Set(["value", "label", "description", "disabledReason", "icon"]), path, out);
+  closed(value, new Set(["value", "label", "description", "disabledReason", "icon", "default"]), path, out);
   string(value.value, `${path}.value`, out, 1024); string(value.label, `${path}.label`, out, 128);
   if (value.description !== undefined) string(value.description, `${path}.description`, out, 1024);
   if (value.disabledReason !== undefined) string(value.disabledReason, `${path}.disabledReason`, out, 1024);
+  if (value.default !== undefined && typeof value.default !== "boolean") out.push({ path: `${path}.default`, code: "invalid_type", message: "Expected a boolean" });
 }
 function validateStatusCardInto(value: unknown, path: string, out: SchemaIssue[]): void {
   if (!record(value)) { out.push({ path, code: "invalid_type", message: "Expected object" }); return; }
@@ -339,6 +341,8 @@ function validateField(value: unknown, path: string, out: SchemaIssue[]): void {
   if ((value.type === "select" || value.type === "preset-cards") && value.options === undefined && value.optionSource === undefined) out.push({ path, code: "missing_options", message: "Select fields need options or an option source" });
   if (value.options !== undefined && (!Array.isArray(value.options) || value.options.length > EXTENSION_LIMITS.fieldOptions)) out.push({ path: `${path}.options`, code: "invalid_array", message: "Expected bounded options" });
   if (value.visibleWhen !== undefined && !record(value.visibleWhen)) out.push({ path: `${path}.visibleWhen`, code: "invalid_type", message: "Expected visibility condition" });
+  if (value.defaultValue !== undefined && !["string", "number", "boolean"].includes(typeof value.defaultValue) && value.defaultValue !== null) out.push({ path: `${path}.defaultValue`, code: "invalid_type", message: "Expected a JSON primitive" });
+  if (value.suggestionSource !== undefined && !["text", "url"].includes(String(value.type))) out.push({ path: `${path}.suggestionSource`, code: "invalid_field", message: "Suggestions are supported only by text and URL fields" });
 }
 
 export function parseExtensionManifest(value: unknown): TerminayExtensionManifest {

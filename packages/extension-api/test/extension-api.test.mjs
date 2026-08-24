@@ -68,6 +68,15 @@ test("declarative form fixture validates and executable UI is rejected", () => {
   assert.ok(result.issues.some((issue) => issue.code === "unknown_field"));
 });
 
+test("declarative forms admit bounded defaults and server-owned text suggestions", () => {
+  const form = structuredClone(validFormFixture);
+  form.sections[0].fields[0] = { ...form.sections[0].fields[0], defaultValue: "vms", suggestionSource: "com.example/name-suggestion", suggestionLabel: "Regenerate" };
+  assert.equal(validateDeclarativeForm(form).ok, true);
+  assert.equal(validateOptionSourceResult({ options: [{ value: "brave-otter", label: "brave-otter", default: true }] }).ok, true);
+  form.sections[0].fields[0].type = "checkbox";
+  assert.equal(validateDeclarativeForm(form).ok, false);
+});
+
 test("namespacing rejects traversal and core-shaped local ids", () => {
   assert.equal(namespacedId("com.example.ssh", "remote"), "com.example.ssh/remote");
   assert.throws(() => namespacedId("com.example.ssh", "../terminal.create"));
