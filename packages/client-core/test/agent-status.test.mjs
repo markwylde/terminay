@@ -5,7 +5,7 @@ import { AgentStatusClient } from "../dist/index.js";
 const entry = (sessionId, entryId = `${sessionId}:root`, state = "working") => ({
   entryId,
   kind: "root",
-  provider: "codex",
+  provider: "example.agent/test",
   agentId: entryId,
   sessionId,
   activationTerminalSessionId: sessionId,
@@ -231,7 +231,7 @@ test("agent client resync preserves canonical restart identity and revision exac
   const restartedEntry = {
     ...entry("session-a", "session-a:replacement", "working"),
     agentId: "server-owned-agent",
-    provider: "claude-code",
+    provider: "example.agent/restarted",
     unread: false,
   };
   snapshot = { revision: 1, cursor: "1", entries: { "session-a:replacement": restartedEntry } };

@@ -11,14 +11,10 @@ const provider = Object.freeze({
   requiredEnvironmentCapabilities: ["process-observation", "filesystem-observation", "agent-journal"],
 });
 
-function inertJournal() {
-  return { async start() {}, async stop() {}, setEnabled() {}, registerTerminal() {}, terminalStarted() {}, foregroundProcessChanged() {}, unregisterTerminal() {} };
-}
-
-test("extension provider claims one terminal incarnation before host admission and blocks legacy journal publication", async () => {
+test("extension provider claims one terminal incarnation before host admission", async () => {
   const activity = new TerminalActivityService({ serverId: identity.serverId });
   activity.register(identity);
-  const agents = new AgentStatusService({ activity, journalSource: inertJournal() });
+  const agents = new AgentStatusService({ activity });
   await agents.start(); agents.register(identity);
   const admitted = []; const cancelled = [];
   const registry = new ExtensionAgentRuntimeRegistry({
@@ -39,7 +35,7 @@ test("extension provider claims one terminal incarnation before host admission a
   assert.deepEqual(admitted.map(({ context }) => ({ id: context.contextId, providerId: context.providerId, incarnation: context.terminalIncarnationId })), [{
     id: "context-1", providerId: provider.id, incarnation: "1",
   }]);
-  assert.equal(await agents.ingestJournalRecord(identity, "codex", { type: "session_meta", payload: { id: "legacy", cli_version: "0.2.0" } }), false);
+  assert.equal(await agents.ingestJournalRecord(identity, "untrusted-provider", { type: "untrusted-record" }), false);
 
   // A second matching topology signal cancels the old observer before a new
   // incarnation is admitted; no two child observers own this terminal.
@@ -57,10 +53,10 @@ test("extension provider claims one terminal incarnation before host admission a
   await agents.stop();
 });
 
-test("non-matching or remote-routed terminals do not suppress legacy providers", async () => {
+test("non-matching terminals do not create an extension-owned sidebar run", async () => {
   const activity = new TerminalActivityService({ serverId: identity.serverId });
   activity.register(identity);
-  const agents = new AgentStatusService({ activity, journalSource: inertJournal() });
+  const agents = new AgentStatusService({ activity });
   await agents.start(); agents.register(identity);
   const registry = new ExtensionAgentRuntimeRegistry({
     agents,
@@ -68,13 +64,13 @@ test("non-matching or remote-routed terminals do not suppress legacy providers",
   });
   registry.register(identity);
   assert.equal(registry.foregroundProcessChanged(identity, "other-agent"), false);
-  assert.equal(await agents.ingestJournalRecord(identity, "codex", { type: "session_meta", payload: { id: "legacy", cli_version: "0.2.0" } }), true);
+  assert.equal(await agents.ingestJournalRecord(identity, "untrusted-provider", { type: "untrusted-record" }), false);
   await agents.stop();
 });
 
 test("topology polling is inert for an unchanged signature and rebinds exactly once when it changes", async () => {
   const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
-  const agents = new AgentStatusService({ activity, journalSource: inertJournal() }); await agents.start(); agents.register(identity);
+  const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
   const admitted = []; const cancelled = []; const scheduled = []; let signature = "one";
   const registry = new ExtensionAgentRuntimeRegistry({
     agents,
