@@ -16,6 +16,18 @@ test('source development cannot share the installed Terminay authority by defaul
 	);
 });
 
+test('a locally packaged development build remains isolated from the installed release profile', () => {
+	const appDataPath = path.resolve('/tmp/terminay-app-data');
+	assert.equal(
+		resolveDesktopUserDataPath({
+			appDataPath,
+			isDevelopmentBuild: true,
+			isPackaged: true,
+		}),
+		path.join(appDataPath, 'Terminay Development'),
+	);
+});
+
 test('an explicit isolated profile takes precedence in every composition', () => {
 	const customPath = path.resolve('/tmp/terminay-explicit-profile');
 	for (const isPackaged of [false, true]) {
