@@ -121,7 +121,10 @@ test("This-server observation in the extension child binds a live writable journ
   runtime.terminalStarted(identity, tree.shell.pid);
   assert.equal(runtime.foregroundProcessChanged(identity, "codex"), true);
 
-  const entry = await waitUntil(() => Object.values(agents.getSnapshot().entries)[0]);
+  const entry = await waitUntil(() => {
+    const candidate = Object.values(agents.getSnapshot().entries)[0];
+    return candidate?.displayName === "Codex" ? candidate : undefined;
+  });
   assert.equal(entry.displayName, "Codex");
   assert.equal(entry.provider, "example.agent-live/cli");
   assert.equal(entry.active, true);
