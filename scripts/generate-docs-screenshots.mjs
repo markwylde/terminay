@@ -11,6 +11,7 @@ const outputDir = path.resolve(
 const size = { width: 1200, height: 800 };
 const screenshotDeviceScaleFactor = 2;
 const settleDelayMs = 3_000;
+const useRealCodex = process.env.TERMINAY_DOCS_REAL_CODEX === '1';
 const execFileAsync = promisify(execFile);
 
 async function seedWorkspace() {
@@ -292,10 +293,29 @@ async function prepareAgentTerminal(page, workspace) {
 		'.project-workspace--active .terminal-panel:visible .xterm-helper-textarea',
 	).first();
 	await terminal.click();
-	await terminal.pressSequentially(`cd '${workspace}' && export PATH="$PWD/bin:$PATH" && clear`, { delay: 2 });
+	const setupCommand = useRealCodex
+		? `cd '${workspace}' && clear`
+		: `cd '${workspace}' && export PATH="$PWD/bin:$PATH" && clear`;
+	await terminal.pressSequentially(setupCommand, { delay: 2 });
 	await terminal.press('Enter');
-	await terminal.pressSequentially('codex "Spawn 3 subagents to solve simple math problems"', { delay: 2 });
-	await terminal.press('Enter');
+	if (useRealCodex) {
+		await terminal.pressSequentially('codex', { delay: 100 });
+		await terminal.press('Enter');
+		const panel = page.locator('.project-workspace--active .terminal-panel:visible').first();
+		await page.waitForTimeout(2_000);
+		if ((await panel.textContent())?.includes('Press enter to continue')) {
+			await terminal.press('Enter');
+		}
+		await terminal.pressSequentially('Spawn 3 subagents to solve simple math problems', { delay: 45 });
+		await terminal.press('Enter');
+		await page.waitForFunction(() => {
+			const activePanel = document.querySelector('.project-workspace--active .terminal-panel:not([style*="display: none"])');
+			return activePanel?.textContent?.includes('Spawn 3 subagents to solve simple math problems');
+		}, undefined, { timeout: 30_000 });
+	} else {
+		await terminal.pressSequentially('codex "Spawn 3 subagents to solve simple math problems"', { delay: 2 });
+		await terminal.press('Enter');
+	}
 	await page.waitForTimeout(500);
 }
 
@@ -342,6 +362,30 @@ async function populateAgentsScreenshot(page) {
 	await agentsPane.locator('.agents-sidebar__name', { hasText: prompt }).waitFor({ state: 'visible', timeout: 30_000 });
 	await agentsPane.getByRole('button', { name: `Expand 3 subagents for ${prompt}` }).click();
 	await agentsPane.getByRole('button', { name: 'Focus Division terminal' }).waitFor({ state: 'visible' });
+	await page.evaluate(() => {
+		if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+	});
+}
+
+async function populateRealAgentsScreenshot(page) {
+	const prompt = 'Spawn 3 subagents to solve simple math problems';
+	const agentsPane = page.locator('.project-workspace--active .sidebar-pane').filter({
+		has: page.locator('.sidebar-pane__title', { hasText: 'Agents' }),
+	});
+	for (const title of ['Explorer', 'Documentation', 'Git']) {
+		const pane = page.locator('.project-workspace--active .sidebar-pane').filter({
+			has: page.locator('.sidebar-pane__title', { hasText: title }),
+		});
+		if (!(await pane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed')))) {
+			await pane.locator('.sidebar-pane__header').click();
+		}
+	}
+	if (await agentsPane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed'))) {
+		await agentsPane.locator('.sidebar-pane__header').click();
+	}
+	await agentsPane.locator('.agents-sidebar__name', { hasText: prompt }).waitFor({ state: 'visible', timeout: 90_000 });
+	await agentsPane.getByRole('button', { name: `Expand 3 subagents for ${prompt}` }).waitFor({ state: 'visible', timeout: 120_000 });
+	await agentsPane.getByRole('button', { name: `Expand 3 subagents for ${prompt}` }).click();
 	await page.evaluate(() => {
 		if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
 	});
@@ -439,8 +483,15 @@ async function run() {
 		await mainWindow.locator('.project-tab').filter({ hasText: 'Docs' }).first().click();
 		await openFileExplorer(mainWindow);
 		await prepareAgentTerminal(mainWindow, seededWorkspace.workspace);
-		await populateAgentsScreenshot(mainWindow);
+		if (useRealCodex) await populateRealAgentsScreenshot(mainWindow);
+		else await populateAgentsScreenshot(mainWindow);
 		await capture(app, mainWindow, 'terminay-agents.png');
+		if (useRealCodex) {
+			const terminal = mainWindow.locator('.project-workspace--active .terminal-panel:visible .xterm-helper-textarea').first();
+			await terminal.press('Control+C');
+			await mainWindow.waitForTimeout(500);
+			await terminal.press('Control+C');
+		}
 		const documentationPane = mainWindow.locator('.project-workspace--active .sidebar-pane').filter({
 			has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Documentation' }),
 		});
