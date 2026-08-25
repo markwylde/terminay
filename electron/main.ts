@@ -198,6 +198,7 @@ const customUserDataPath = process.env.TERMINAY_USER_DATA_DIR?.trim();
 const resolvedUserDataPath = resolveDesktopUserDataPath({
 	appDataPath: app.getPath('appData'),
 	...(customUserDataPath ? { customPath: customUserDataPath } : {}),
+	isDevelopmentBuild: process.env.TERMINAY_DEVELOPMENT_SOURCE_WORKSPACES === '1',
 	isPackaged: app.isPackaged,
 });
 if (resolvedUserDataPath) {

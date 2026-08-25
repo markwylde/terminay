@@ -235,6 +235,10 @@ and insertion into the intended terminal remain server-authorized operations.
 
 ## Lifecycle and recovery
 
+- Source-development Desktop uses a dedicated `Terminay Development` user-data
+  root, including when a source build is temporarily packaged by Electron
+  Builder for local development or smoke testing. A development build must not
+  migrate or otherwise mutate an installed Desktop release's profile.
 - Client disconnect never deletes projects, closes panels, or kills PTYs.
 - Terminal exit updates all referencing panels and connected clients once. A
   successful-exit close decision uses the terminal surface's already-observed
