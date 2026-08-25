@@ -657,7 +657,8 @@ export class ServerTerminalAuthority {
 							try { options.onAgentAdmissionFailure?.(failure); } catch { /* host diagnostics cannot affect terminal fallback */ }
 						},
 					});
-					management.hosts.onContributionsChanged(() => {
+					management.hosts.onContributionsChanged(async () => {
+						await extensionAgents?.reconcileProviderInventory();
 						extensionAgents?.reobserveExistingTerminals();
 					});
 				}

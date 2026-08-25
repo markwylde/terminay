@@ -186,6 +186,32 @@ export class ExtensionAgentRuntimeRegistry {
     return admitted;
   }
 
+  /** Remove terminal claims owned by providers which are no longer published.
+   * A disabled extension host drains its child observer, but the registry
+   * retains the terminal's last foreground sample so that enabling the same
+   * provider can immediately admit it again. Without this reconciliation the
+   * stale claim makes `reobserveExistingTerminals` skip that terminal until a
+   * full server restart reconstructs the registry. */
+  async reconcileProviderInventory(): Promise<number> {
+    const available = new Set(this.options.hosts.agentProviderContributions().map((provider) => provider.id));
+    let retired = 0;
+    for (const terminal of this.terminals.values()) {
+      const context = terminal.context;
+      if (context === undefined || available.has(context.providerId)) continue;
+      this.clearTimers(terminal);
+      await this.options.hosts.cancelAgentTerminal({ contextId: context.contextId, reason: "provider-disabled" }).catch(() => undefined);
+      if (terminal.context !== context) continue;
+      terminal.context = undefined;
+      terminal.incarnation += 1;
+      terminal.notBoundRetries = 0;
+      terminal.unboundTopologyReobserve = false;
+      try { this.options.agents.releaseExtensionProvider(terminal.identity, context.providerId); }
+      catch { /* terminal lifecycle can race provider publication */ }
+      retired += 1;
+    }
+    return retired;
+  }
+
   /** A host process/open-file watcher can call this when a still-matching
    * terminal topology changes. Debouncing prevents a burst of native process
    * events from creating overlapping child observers. */
