@@ -54,10 +54,15 @@ interface TrackedTerminal {
   notBoundRetries: number;
   context?: ExtensionAgentTerminalContext;
   lastProcessName?: string;
+  pendingReobserve?: { readonly contribution: AgentProviderContribution; readonly processName: string };
   reobserveTimer?: ReturnType<typeof setTimeout>;
   topologyTimer?: ReturnType<typeof setTimeout>;
   topologySignature?: string;
   topologyPolling?: boolean;
+  /** After the fast not-bound window, topology polling must keep trying until
+   * a journal is proven or the shell returns. The first sample after
+   * exhaustion may be the first one that can see the provider's journal. */
+  unboundTopologyReobserve?: boolean;
   environmentBinding?: ProjectEnvironmentBinding;
 }
 
@@ -115,6 +120,7 @@ export class ExtensionAgentRuntimeRegistry {
    * and journal mutations are now suppressed by AgentStatusService. */
   foregroundProcessChanged(identity: ActivitySessionIdentity, processName: string, shellForeground = false): boolean {
     const terminal = this.requireTerminal(identity);
+    if (terminal.environmentBinding === undefined) terminal.environmentBinding = this.bindEnvironment(identity);
     terminal.lastProcessName = processName;
     // A provider journal may be shared by a later `resume` in another
     // Terminay authority.  Once this exact PTY returns to its shell, its
@@ -128,22 +134,28 @@ export class ExtensionAgentRuntimeRegistry {
       terminal.context = undefined;
       terminal.incarnation += 1;
       terminal.notBoundRetries = 0;
+      terminal.unboundTopologyReobserve = false;
       try { this.options.agents.releaseExtensionProvider(terminal.identity, previous.providerId); }
       catch { /* terminal exit/replacement can race foreground observation */ }
       void this.options.hosts.cancelAgentTerminal({ contextId: previous.contextId, reason: "terminal-replaced" }).catch(() => undefined);
       return false;
     }
-    const contribution = this.resolveContribution(processName, identity);
+    const queue = this.discoveryQueue(processName, identity);
     if (terminal.context !== undefined) {
-      if (contribution !== undefined && contribution.id !== terminal.context.providerId) {
-        this.scheduleReobserve(terminal, contribution, processName);
-        return true;
-      }
-      if (contribution?.id === terminal.context.providerId) this.scheduleReobserve(terminal, contribution, processName);
+      // A TUI can alternate between its launcher, runtime, and helper process
+      // names while the same PTY-owned journal writer remains live. A proven
+      // binding must outlive those generic samples; otherwise each sample
+      // cancels the watcher before it can publish its initial session record.
+      // A different explicitly matched provider is a genuine replacement.
+      // Process-topology changes from collaboration workers keep the proven
+      // root observer alive; their native journals are discovered beneath it.
+      const matched = this.match(processName, identity);
+      if (matched === undefined || matched.id === terminal.context.providerId) return true;
+      this.scheduleReobserve(terminal, matched, processName);
       return true;
     }
-    if (contribution === undefined) return false;
-    return this.claimAndAdmit(terminal, contribution, processName);
+    if (queue[0] === undefined) return false;
+    return this.claimAndAdmit(terminal, queue[0], processName);
   }
 
   /** Re-evaluate the last host-observed foreground process for every live
@@ -154,7 +166,7 @@ export class ExtensionAgentRuntimeRegistry {
     let admitted = 0;
     for (const terminal of this.terminals.values()) {
       if (terminal.context !== undefined || terminal.lastProcessName === undefined) continue;
-      const contribution = this.resolveContribution(terminal.lastProcessName, terminal.identity);
+      const contribution = this.discoveryQueue(terminal.lastProcessName, terminal.identity)[0];
       if (contribution !== undefined && this.claimAndAdmit(terminal, contribution, terminal.lastProcessName)) admitted += 1;
     }
     return admitted;
@@ -166,7 +178,17 @@ export class ExtensionAgentRuntimeRegistry {
   topologyChanged(identity: ActivitySessionIdentity): void {
     const terminal = this.terminals.get(identity.sessionId);
     if (terminal?.context === undefined || !sameIdentity(terminal.identity, identity)) return;
-    const contribution = this.resolveContribution(terminal.lastProcessName ?? "", terminal.identity)
+    // A collaboration worker is a new descendant and can hold its own native
+    // journal. That is ordinary activity inside the already-proven root PTY,
+    // not evidence that its root writer was replaced. Re-admitting here
+    // cancels the root stream just as its subagent events arrive. Explicit
+    // foreground replacement and shell return retain the authority to retire
+    // a bound context; topology polling remains the recovery path only until
+    // a provider has actually bound.
+    if (terminal.unboundTopologyReobserve !== true) return;
+    const queue = this.discoveryQueue(terminal.lastProcessName ?? "", terminal.identity);
+    const contribution = queue.find((provider) => provider.id === terminal.context!.providerId)
+      ?? queue[0]
       ?? this.options.hosts.agentProviderContributions().find((value) => value.id === terminal.context!.providerId);
     if (contribution !== undefined) this.scheduleReobserve(terminal, contribution, terminal.lastProcessName ?? "");
   }
@@ -192,28 +214,53 @@ export class ExtensionAgentRuntimeRegistry {
     void this.options.hosts.admitAgentTerminal({ context, observationCapabilities }).then((result) => {
       if (terminal.context !== context) return;
       if (admissionState(result) === "not-bound") {
-        this.scheduleDiscoveryRetry(terminal, contribution, processName);
+        const next = this.nextDiscoveryProvider(terminal, contribution, processName);
+        if (next !== undefined && next.id !== contribution.id) {
+          this.scheduleReobserve(terminal, next, processName);
+          return;
+        }
+        this.scheduleDiscoveryRetry(
+          terminal,
+          this.discoveryQueue(processName, terminal.identity)[0] ?? contribution,
+          processName,
+        );
         return;
       }
       terminal.notBoundRetries = 0;
+      terminal.unboundTopologyReobserve = false;
+      // A generic wrapper can have queued a fallback before its eventual
+      // provider opened the journal. Once that provider proves its binding,
+      // discard the stale fallback: otherwise it can retire the new observer
+      // while its first JSONL chunk is still being read.
+      this.clearReobserve(terminal);
       this.scheduleTopologyPoll(terminal);
     }).catch((error: unknown) => {
       // Observation can throw before the journal is visible (IPC that cannot
       // clone AbortSignal, missing shell pid, lsof races). Keep the claim on
       // this PTY and retry the same way as `not-bound`; releasing here left
-      // Codex running in the terminal with an empty Agents pane.
+      // a running agent with an empty Agents pane. An unmatched wrapper must
+      // still walk the queue: one failed observation cannot pin discovery
+      // away from a later provider that can bind.
       if (terminal.context !== context) return;
       this.reportAdmissionFailure(identity, contribution.id, error);
+      const next = this.nextDiscoveryProvider(terminal, contribution, processName);
+      if (next !== undefined && next.id !== contribution.id) {
+        this.scheduleReobserve(terminal, next, processName);
+        return;
+      }
       this.scheduleDiscoveryRetry(terminal, contribution, processName);
     });
     return true;
   }
 
   private scheduleReobserve(terminal: TrackedTerminal, contribution: AgentProviderContribution, processName: string): void {
+    terminal.pendingReobserve = { contribution, processName };
     if (terminal.reobserveTimer !== undefined) return;
     terminal.reobserveTimer = this.schedule(() => {
       terminal.reobserveTimer = undefined;
-      void this.reobserve(terminal, contribution, processName);
+      const pending = terminal.pendingReobserve;
+      terminal.pendingReobserve = undefined;
+      if (pending !== undefined) void this.reobserve(terminal, pending.contribution, pending.processName);
     }, this.reobserveDebounceMs);
   }
 
@@ -222,12 +269,13 @@ export class ExtensionAgentRuntimeRegistry {
    * window; a shell edge, replacement, or teardown clears this timer. */
   private scheduleDiscoveryRetry(terminal: TrackedTerminal, contribution: AgentProviderContribution, processName: string): void {
     if (terminal.notBoundRetries >= MAX_NOT_BOUND_DISCOVERY_RETRIES) {
+      terminal.unboundTopologyReobserve = true;
       this.scheduleTopologyPoll(terminal);
       return;
     }
     terminal.notBoundRetries += 1;
-    // Stay on the same provider. Rotating Codex → OMP on a `node` wrapper
-    // abandoned the journal that was about to appear.
+    // A matched provider stays put. Unmatched wrappers rotate in
+    // `claimAndAdmit` before this retry wraps the queue.
     this.scheduleReobserve(terminal, contribution, processName);
   }
 
@@ -344,8 +392,15 @@ export class ExtensionAgentRuntimeRegistry {
     try {
       const signature = await this.options.topologySignature(context, controller.signal);
       if (terminal.context !== context || signature === undefined) return;
-      if (terminal.topologySignature !== undefined && terminal.topologySignature !== signature) this.topologyChanged(terminal.identity);
+      const changed = terminal.topologySignature !== undefined && terminal.topologySignature !== signature;
+      const retryUnbound = terminal.unboundTopologyReobserve === true;
       terminal.topologySignature = signature;
+      if (changed || retryUnbound) {
+        this.topologyChanged(terminal.identity);
+        // `topologyChanged` needs this fact to admit the late unbound writer;
+        // clear it only after scheduling that one recovery attempt.
+        terminal.unboundTopologyReobserve = false;
+      }
     } catch { /* unavailable local/remote topology remains non-authoritative */ }
     finally {
       terminal.topologyPolling = false;
@@ -354,25 +409,48 @@ export class ExtensionAgentRuntimeRegistry {
   }
 
   private clearTimers(terminal: TrackedTerminal): void {
-    if (terminal.reobserveTimer !== undefined) this.cancelSchedule(terminal.reobserveTimer);
+    this.clearReobserve(terminal);
     if (terminal.topologyTimer !== undefined) this.cancelSchedule(terminal.topologyTimer);
-    terminal.reobserveTimer = undefined; terminal.topologyTimer = undefined;
+    terminal.topologyTimer = undefined;
+  }
+
+  private clearReobserve(terminal: TrackedTerminal): void {
+    if (terminal.reobserveTimer !== undefined) this.cancelSchedule(terminal.reobserveTimer);
+    terminal.reobserveTimer = undefined;
+    terminal.pendingReobserve = undefined;
   }
 
   private match(processName: string, identity: ActivitySessionIdentity): AgentProviderContribution | undefined {
     const executable = executableName(processName);
     if (executable.length === 0) return undefined;
     return this.capableProviders(identity).find((provider) =>
-      provider.processMatchers?.some((matcher) => matcher.arguments === undefined && matcher.executableName.toLowerCase() === executable) === true,
+      provider.processMatchers?.some((matcher) => matcher.arguments === undefined && matchesExecutable(matcher.executableName, executable)) === true,
     );
   }
 
-  /** Exact executable match first; otherwise every capable provider so a
-   * `node`/`bun` wrapper still opens the bounded discovery window. An empty
-   * name is not a leave-shell edge and must not admit the first provider. */
-  private resolveContribution(processName: string, identity: ActivitySessionIdentity): AgentProviderContribution | undefined {
-    if (executableName(processName).length === 0) return undefined;
-    return this.match(processName, identity) ?? this.capableProviders(identity)[0];
+  /** Exact/prefix matcher first. An unmatched wrapper must try every capable
+   * provider, rather than selecting only the first contribution and missing a
+   * later provider that can prove its journal binding. An empty name is not a
+   * leave-shell edge. */
+  private discoveryQueue(processName: string, identity: ActivitySessionIdentity): AgentProviderContribution[] {
+    if (executableName(processName).length === 0) return [];
+    const matched = this.match(processName, identity);
+    return matched === undefined ? this.capableProviders(identity) : [matched];
+  }
+
+  private nextDiscoveryProvider(
+    terminal: TrackedTerminal,
+    current: AgentProviderContribution,
+    processName: string,
+  ): AgentProviderContribution | undefined {
+    const queue = this.discoveryQueue(processName, terminal.identity);
+    if (queue.length === 0) return undefined;
+    const index = queue.findIndex((provider) => provider.id === current.id);
+    // A generic wrapper (such as a Node CLI shim) has no provider identity.
+    // Cycle its capable providers until one can prove its writer-bound
+    // journal; stopping on the final provider made a delayed rollout
+    // permanently undiscoverable after the first pass.
+    return index >= 0 ? queue[(index + 1) % queue.length] : queue[0];
   }
 
   private capableProviders(identity: ActivitySessionIdentity): AgentProviderContribution[] {
@@ -412,6 +490,12 @@ function requiredCapabilitiesAvailable(provider: AgentProviderContribution, avai
   return provider.requiredEnvironmentCapabilities.every((capability) => available.includes(capability));
 }
 function executableName(value: string): string { return value.trim().split(/[\\/]/u).pop()?.toLowerCase() ?? ""; }
+function matchesExecutable(matcher: string, executable: string): boolean {
+  const expected = matcher.trim().toLowerCase();
+  if (expected.length === 0 || executable.length === 0) return false;
+  return executable === expected || executable.startsWith(`${expected}-`)
+    || executable.startsWith(`${expected}_`) || executable.startsWith(`${expected}.`);
+}
 function sameIdentity(left: ActivitySessionIdentity, right: ActivitySessionIdentity): boolean { return left.serverId === right.serverId && left.projectId === right.projectId && left.sessionId === right.sessionId; }
 function platformName(): "darwin" | "linux" | "win32" { return process.platform === "darwin" || process.platform === "win32" ? process.platform : "linux"; }
 function admissionReason(error: unknown): string | undefined {

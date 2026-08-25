@@ -12,7 +12,7 @@ test('repository ownership decision is backed by the matched release topology', 
   const ci = await readFile(join(root, '.github/workflows/ci.yml'), 'utf8')
   const release = await readFile(join(root, '.github/workflows/trigger-release.yml'), 'utf8')
 
-  assert.deepEqual(packageJson.workspaces, ['apps/*', 'packages/*'])
+  assert.deepEqual(packageJson.workspaces, ['apps/*', 'packages/*', 'extensions/*'])
   assert.match(decision, /Keep Terminay Desktop, the embedded\/standalone Terminay Server/u)
   assert.match(decision, /hosted bootstrap\/signaling service remains an independently owned\s+repository/u)
   assert.match(runtime, /server-bundled workspace UI/u)

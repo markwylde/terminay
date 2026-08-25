@@ -56,11 +56,13 @@ test("maps titles, collaboration children, completion and privacy allowlists", (
   mapCodexRecord({ type: "event_msg", payload: { type: "item_completed", item: { type: "UserMessage", content: [{ type: "text", text: "Inspect the parser" }, { type: "image", image_url: "private" }] } } }, context);
   mapCodexRecord({ type: "event_msg", payload: { type: "collab_agent_spawn_end", new_thread_id: "child", sender_thread_id: "root", new_agent_nickname: "Ada", prompt: "Private child task", model: "gpt-5.6-terra", reasoning_effort: "high" } }, context);
   mapCodexRecord({ type: "event_msg", payload: { type: "collab_agent_interaction_end", receiver_thread_id: "child", status: { completed: "private result" } } }, context);
+  mapCodexRecord({ type: "event_msg", payload: { type: "item_completed", item: { type: "SubAgentActivity", kind: "started", agent_thread_id: "child-live", agent_path: "/root/multiply" } } }, context);
   mapCodexRecord({ type: "response_item", payload: { type: "message", content: "private assistant output" } }, context);
-  assert.deepEqual(events.map((event) => event.kind), ["agent.metadata", "subagent.started", "subagent.done"]);
+  assert.deepEqual(events.map((event) => event.kind), ["agent.metadata", "subagent.started", "subagent.done", "subagent.started"]);
   assert.equal(events[0]?.promptText, "Inspect the parser");
   assert.equal(events[1]?.title, "Ada");
   assert.deepEqual(events[1]?.model, { id: "gpt-5.6-terra", reasoningEffort: "high" });
+  assert.deepEqual(events[3], { kind: "subagent.started", subagentId: "child-live", title: "multiply" });
   assert.equal(JSON.stringify(events).includes("private assistant"), false);
   assert.equal(JSON.stringify(events).includes("private result"), false);
 });

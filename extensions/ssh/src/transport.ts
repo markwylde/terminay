@@ -65,7 +65,9 @@ export interface SshChannel {
   resume?(): void;
 }
 
-export interface SftpClient {}
+/** Opaque transport surface. Filesystem adapters cast it to the SSH library's
+ * concrete SFTP type at their integration boundary. */
+export type SftpClient = Record<string, unknown>;
 
 export interface SshClient {
   once(event: "ready", listener: () => void): this;

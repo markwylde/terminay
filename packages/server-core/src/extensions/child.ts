@@ -200,9 +200,15 @@ function createAgentTerminalContext(context: Record<string, unknown>, capabiliti
   const publish = (binding: unknown, events: unknown[]) => agentRequest("agent.lifecycle.publish", {
     contextId, providerId, publicationId: `${contextId}:${++sequence}`, mappingVersion: typeof binding === "object" && binding !== null && typeof (binding as Record<string, unknown>).mappingVersion === "string" ? (binding as Record<string, unknown>).mappingVersion : "0.1", binding, events,
   });
+  let rootSessionStarted = false;
   const publisher = Object.freeze({
     publish(event: unknown) { return publish(undefined, [event]); },
-    sessionStarted(event: unknown) { return publish(undefined, [{ kind: "session.started", ...(object(event) ?? {}) }]); },
+    sessionStarted(event: unknown) {
+      const payload = object(event) ?? {};
+      if (rootSessionStarted) return publish(undefined, [{ kind: "agent.metadata", ...payload }]);
+      rootSessionStarted = true;
+      return publish(undefined, [{ kind: "session.started", ...payload }]);
+    },
     metadataChanged(event: unknown) { return publish(undefined, [{ kind: "agent.metadata", ...(object(event) ?? {}) }]); },
     turnStarted(event: unknown) { return publish(undefined, [{ kind: "turn.started", ...(object(event) ?? {}) }]); },
     toolStarted(event: unknown) { return publish(undefined, [{ kind: "tool.started", ...(object(event) ?? {}) }]); },
@@ -243,7 +249,16 @@ function createAgentTerminalContext(context: Record<string, unknown>, capabiliti
   });
   const terminal = Object.freeze({
     terminal: Object.freeze({ id: context.terminalSessionId }), project: Object.freeze({ id: context.projectId }), environment: Object.freeze({ id: context.projectEnvironmentId }), process: Object.freeze({ id: context.contextId }), foreground: Object.freeze({ executableName: "" }), capabilities: new Set(capabilities.filter((value): value is string => typeof value === "string")), observation, signal,
-    async bindSession(binding: unknown) { await publish(binding, []); return Object.freeze(structuredClone(binding)); },
+    async bindSession(binding: unknown) {
+      await publish(binding, []);
+      // Binding is exact evidence that this provider owns a live session in
+      // this PTY. Materialize the root immediately, then let the first native
+      // session record refine it as metadata. This prevents a late watcher or
+      // an optional enrichment stream from leaving a proven live session
+      // absent from the Agents pane.
+      await publisher.sessionStarted({});
+      return Object.freeze(structuredClone(binding));
+    },
   });
   return Object.freeze({ terminal, publisher });
 }

@@ -258,7 +258,9 @@ function validatePlatforms(value: unknown, path: string, out: SchemaIssue[]): vo
   }
   unique(value, path, out);
   value.forEach((item, index) => {
-    if (!["darwin", "linux", "win32"].includes(String(item))) out.push({ path: `${path}[${index}]`, code: "invalid_platform", message: "Unsupported platform metadata" });
+    if (!["darwin", "linux", "win32"].includes(String(item))) {
+      out.push({ path: `${path}[${index}]`, code: "invalid_platform", message: "Unsupported platform metadata" });
+    }
   });
 }
 
@@ -278,7 +280,9 @@ function validateAgentProcessMatchers(value: unknown, out: SchemaIssue[]): void 
     }
     if (matcher.arguments !== undefined) {
       if (!Array.isArray(matcher.arguments) || matcher.arguments.length > 16) out.push({ path: `${path}.arguments`, code: "invalid_array", message: "Expected bounded argument tokens" });
-      else matcher.arguments.forEach((argument, argumentIndex) => string(argument, `${path}.arguments[${argumentIndex}]`, out, 256));
+    else matcher.arguments.forEach((argument, argumentIndex) => {
+      string(argument, `${path}.arguments[${argumentIndex}]`, out, 256);
+    });
     }
     identities.push(JSON.stringify([matcher.executableName, matcher.arguments]));
   });
@@ -316,7 +320,9 @@ function validateAgentEnvironmentVariableNamesInto(value: unknown, path: string,
     out.push({ path, code: "invalid_array", message: "Expected bounded environment-variable names" });
   } else {
     unique(value, path, out);
-    value.forEach((name, index) => validateEnvironmentVariableName(name, `${path}[${index}]`, out));
+    value.forEach((name, index) => {
+      validateEnvironmentVariableName(name, `${path}[${index}]`, out);
+    });
   }
 }
 
@@ -926,7 +932,9 @@ export function validateAgentDirectoryListOptions(value: unknown): ValidationRes
     out.push({ path: "$.extensions", code: "invalid_array", message: "Expected bounded file suffixes" });
   } else {
     unique(extensions, "$.extensions", out);
-    extensions.forEach((extension, index) => validateFileExtension(extension, `$.extensions[${index}]`, out));
+    extensions.forEach((extension, index) => {
+      validateFileExtension(extension, `$.extensions[${index}]`, out);
+    });
   }
   boundedInteger(value.maxDepth, "$.maxDepth", 0, EXTENSION_LIMITS.agentDirectoryListDepth, out);
   boundedInteger(value.maxEntries, "$.maxEntries", 1, EXTENSION_LIMITS.agentDirectoryListEntries, out);

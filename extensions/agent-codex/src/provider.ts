@@ -49,7 +49,8 @@ export function effectiveCodexHome(environment: NodeJS.ProcessEnv = process.env)
 
 /** Codex is intentionally recognized only by its executable, never text output. */
 export function isCodexForeground(executableName: string): boolean {
-  return executableName === "codex" || executableName === "codex-cli";
+  const name = executableName.trim().toLowerCase();
+  return name === "codex" || name.startsWith("codex-") || name.startsWith("codex_") || name.startsWith("codex.");
 }
 
 export const codexAgentProvider = defineAgentProvider({
@@ -322,12 +323,28 @@ class CodexSessionWatcher implements AgentFileWatcher {
   dispose(): void { this.closed = true; }
 
   async *[Symbol.asyncIterator](): AsyncIterator<AgentFileWatchChunk> {
+    try { yield* this.followedChunks(); }
+    catch {
+      // A live writer remains authoritative even if a host watcher loses its
+      // opaque handle during Codex's rapid collaboration startup. Fall back
+      // to bounded snapshot tails through that same issued handle; no path is
+      // reconstructed and no unrelated session can enter the stream.
+      yield* this.snapshotChunks();
+    }
+  }
+
+  private async *followedChunks(): AsyncGenerator<AgentFileWatchChunk> {
     const { terminal, rollout, sessionIndex, sessionId } = this.options;
     const watchOptions = { signal: terminal.signal, maxChunkBytes: LIMITS.recordBytes };
     const rolloutWatcher = await terminal.observation.files.follow(rollout, watchOptions);
-    const indexWatcher = sessionIndex === undefined
-      ? undefined
-      : await terminal.observation.files.follow(sessionIndex, watchOptions);
+    // The rollout is the binding authority. The optional title index can be
+    // rotated between discovery and watcher setup, so it must never prevent
+    // the root stream (and its collaboration children) from being consumed.
+    let indexWatcher: AgentFileWatcher | undefined;
+    if (sessionIndex !== undefined) {
+      try { indexWatcher = await terminal.observation.files.follow(sessionIndex, watchOptions); }
+      catch { /* title enrichment is unavailable until the next observation */ }
+    }
     const watchers = [rolloutWatcher, ...(indexWatcher === undefined ? [] : [indexWatcher])];
     const decoder = createJsonlRecordDecoder(LIMITS.recordBytes);
     let lastTitle: string | undefined;
@@ -361,6 +378,29 @@ class CodexSessionWatcher implements AgentFileWatcher {
     } finally {
       this.closed = true;
       await Promise.all(watchers.map((watcher) => watcher.dispose()));
+    }
+  }
+
+  private async *snapshotChunks(): AsyncGenerator<AgentFileWatchChunk> {
+    const { terminal, rollout } = this.options;
+    let previous: Uint8Array<ArrayBufferLike> = new Uint8Array();
+    while (!this.closed && !terminal.signal.aborted) {
+      const current = await terminal.observation.files.read(rollout, {
+        maxBytes: LIMITS.recordBytes,
+        signal: terminal.signal,
+      });
+      const shared = Math.min(previous.byteLength, current.byteLength);
+      let prefixMatches = previous.byteLength <= current.byteLength;
+      for (let index = 0; prefixMatches && index < shared; index += 1) {
+        if (previous[index] !== current[index]) prefixMatches = false;
+      }
+      if (prefixMatches && current.byteLength > previous.byteLength) {
+        yield { type: "append", bytes: current.slice(previous.byteLength) };
+      } else if (!prefixMatches || current.byteLength < previous.byteLength) {
+        yield { type: "replace", bytes: current };
+      }
+      previous = current;
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
 }
@@ -459,6 +499,7 @@ export function mapCodexRecord(record: unknown, context: AgentRecordContext, sta
     if (prompt) publishPrompt(prompt, undefined, publish, state, occurredAt);
     const item = object(payload.item);
     if (item?.type === "CollabAgentToolCall") mapCollabTool(item, publish, occurredAt);
+    if (item?.type === "SubAgentActivity") mapSubagentActivity(item, publish, occurredAt);
     return;
   }
   if (eventType === "task_complete" || eventType === "turn_complete") {

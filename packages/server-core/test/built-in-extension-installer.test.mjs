@@ -85,6 +85,21 @@ test("post-start reconciliation hot-activates a newly materialized enabled built
   } finally { await value.cleanup(); }
 });
 
+test("a newer bundled inventory replaces the previous built-in slot so development restages take effect", async () => {
+  const value = await fixture();
+  try {
+    let state = await value.installer.initialize();
+    const first = state.extensions[EXTENSION].activeSlotId;
+    assert.equal(state.extensions[EXTENSION].slots[first].version, "1.0.0");
+    value.builtIns.release("1.0.1");
+    state = await value.installer.reconcileBuiltIns();
+    const next = state.extensions[EXTENSION].activeSlotId;
+    assert.notEqual(next, first);
+    assert.equal(state.extensions[EXTENSION].slots[next].version, "1.0.1");
+    assert.equal(state.extensions[EXTENSION].slots[next].receipt.source, "built-in");
+  } finally { await value.cleanup(); }
+});
+
 test("an external npm version overrides a bundled floor and remove restores the floor without changing enablement", async () => {
   const value = await fixture();
   try {

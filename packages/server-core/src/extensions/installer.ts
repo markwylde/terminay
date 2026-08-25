@@ -46,9 +46,10 @@ export class ExtensionInstaller {
     return this.reconcileBuiltIns();
   }
 
-  /** Reconcile release-shipped rollback floors without changing a user's
-   * current selection or enabled state. One invalid artifact is isolated to
-   * that extension; a healthy built-in remains available offline. */
+  /** Reconcile release-shipped rollback floors. A newer bundled inventory
+   * replaces the previous built-in slot. An external override remains the
+   * selected slot; disablement is preserved. One invalid artifact is isolated
+   * to that extension; a healthy built-in remains available offline. */
   async reconcileBuiltIns(signal?: AbortSignal): Promise<ExtensionRegistrySnapshot> {
     let before: ExtensionRegistrySnapshot | undefined;
     const reconciled = await this.serial(async () => {
@@ -254,7 +255,12 @@ export class ExtensionInstaller {
       const slots = Object.freeze({ ...(previous?.slots ?? {}), [slotId]: slot });
       const refs = await this.references(receipt.extensionId);
       const activeUses = refs.activeUses ?? 0;
-      const preserveSelection = resolution.source === "built-in" && previous?.activeSlotId !== undefined;
+      const activeSlot = previous?.activeSlotId === undefined ? undefined : previous.slots[previous.activeSlotId];
+      // A newer bundled inventory must become the live built-in. Preserve the
+      // selected slot only when the user has an external override; otherwise
+      // development restages and production rebuilds stayed on the first
+      // 0.1.0 slot forever while Agents observed stale provider code.
+      const preserveSelection = resolution.source === "built-in" && activeSlot !== undefined && activeSlot.receipt.source !== "built-in";
       const immediateUpdate = !preserveSelection && previous?.activeSlotId !== undefined && activeUses === 0 && previous.activeSlotId !== slotId;
       if (immediateUpdate) {
         const active = previous.slots[previous.activeSlotId];
@@ -262,7 +268,7 @@ export class ExtensionInstaller {
         await this.migrateData(previous, active.version, slot.version, state.revision + 1);
       }
       const enabled = persisted?.enabled ?? true;
-      const next: InstalledExtensionRecord = Object.freeze({ extensionId: receipt.extensionId, packageName: receipt.packageName, state: enabled === false ? "disabled" : activeUses > 0 && previous?.activeSlotId && !preserveSelection ? "pending" : "installed", enabled, activeSlotId: preserveSelection || (activeUses > 0 && previous?.activeSlotId) ? previous.activeSlotId : slotId, ...(previous?.activeSlotId && previous.activeSlotId !== slotId && !preserveSelection ? { previousSlotId: previous.activeSlotId } : {}), ...(activeUses > 0 && previous?.activeSlotId && !preserveSelection ? { pendingSlotId: slotId } : {}), slots });
+      const next: InstalledExtensionRecord = Object.freeze({ extensionId: receipt.extensionId, packageName: receipt.packageName, state: enabled === false ? "disabled" : activeUses > 0 && previous?.activeSlotId && !preserveSelection ? "pending" : "installed", enabled, activeSlotId: (preserveSelection || (activeUses > 0 && previous?.activeSlotId !== undefined)) ? previous?.activeSlotId ?? slotId : slotId, ...(previous?.activeSlotId && previous.activeSlotId !== slotId && !preserveSelection ? { previousSlotId: previous.activeSlotId } : {}), ...(activeUses > 0 && previous?.activeSlotId && !preserveSelection ? { pendingSlotId: slotId } : {}), slots });
       return this.commit(state, next, "extension.installed");
     } catch (error) {
       await rm(staging, { recursive: true, force: true });

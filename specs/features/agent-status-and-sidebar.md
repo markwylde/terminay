@@ -34,6 +34,14 @@ server they combine the host-issued terminal context (including the PTY shell
 PID) with Node process and filesystem APIs, typically through the public
 observation helpers. Those helpers run in the extension child; they are not a
 sandbox and must not round-trip local `lsof`/`ps` snapshots through host IPC.
+The child inherits a bounded host environment (`PATH`, `HOME`, locale) so the
+same `ps`/`lsof` binaries the Electron process used on main still resolve;
+installer-style sterile `NODE_OPTIONS` is not applied to agent observation.
+Process-name matching is only a prompt: `codex`/`codex-tui` bind Codex, while
+an unmatched `node`/`bun` wrapper tries every capable provider until one
+proves a writer-held journal, the same way main scanned every journal when
+the foreground name did not name a provider. Observation also inspects the
+PTY shell PID itself so an `exec`'d CLI still has its open files examined.
 SSH and other non-local environments cannot use the server host's process tree
 or home directory. They use the environment-routed observation broker when the
 environment advertises that capability; otherwise observation is unavailable.
@@ -117,6 +125,17 @@ The journal is still admitted only after the provider's documented identity
 evidence is proven. An `omp` binary that sets its process title still matches
 `omp` directly; a `bun` wrapper is admitted only after the OMP terminal
 breadcrumb for the exact PTY identifies a validated OMP root JSONL.
+
+Codex's TUI typically opens its writable rollout after the first foreground
+edge. The fast not-bound window therefore often finishes while the journal
+does not yet exist. Topology polling must re-admit on the first sample after
+that window, not only when a later signature changes; otherwise a live Codex
+session sits in the terminal with an empty Agents pane.
+
+Once an extension proves a terminal-scoped binding, Server Core materializes
+the root session immediately. The first provider-native `session.started`
+record refines that root as metadata, so a slow watcher or optional enrichment
+cannot hide a proven active session from the Agents pane.
 
 Live Agents projection is scoped to one running Terminay process, not to a
 durable user-data `serverId`. Each process mints an ephemeral
@@ -223,7 +242,7 @@ root is selected.
 | --- | --- |
 | root `session_meta` with `originator: codex-tui` and `source: cli` | root `session.started` / `idle` |
 | `event_msg/item_completed` carrying a `UserMessage`, or legacy `event_msg/user_message` | the first user-facing message becomes the stable root prompt label, matching Codex's own session-list derivation; raw `response_item` messages are ignored |
-| `event_msg/item_completed` carrying a `CollabAgentToolCall` | fan out its bounded receiver identities and state map into child lifecycle events |
+| `event_msg/item_completed` carrying a `CollabAgentToolCall` or `SubAgentActivity` | fan out its bounded child identity and state into child lifecycle events |
 | model-context user item such as `<turn_aborted>` | ignored for naming |
 | `event_msg/task_started` | root `turn.started` / `working` |
 | tool/item begin or callable response item | corresponding root or child `working` |

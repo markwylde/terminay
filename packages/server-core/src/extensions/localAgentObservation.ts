@@ -549,9 +549,9 @@ async function nodeDescendants(shellPid: number, signal: AbortSignal): Promise<r
   if (process.platform === "linux") return linuxDescendants(shellPid, signal);
   let output: string;
   try {
-    output = await commandText("ps", ["-axo", "pid=,ppid=,comm="], 4 * 1024 * 1024, signal);
+    output = await commandText(unixTool("ps"), ["-axo", "pid=,ppid=,comm="], 4 * 1024 * 1024, signal);
   } catch {
-    return [];
+    return [{ pid: shellPid, executableName: "shell" }];
   }
   const children = new Map<number, number[]>(); const names = new Map<number, string>();
   for (const line of output.split(/\r?\n/u)) {
@@ -559,11 +559,11 @@ async function nodeDescendants(shellPid: number, signal: AbortSignal): Promise<r
     if (!validPid(pid) || !Number.isSafeInteger(parent)) continue;
     children.set(parent, [...(children.get(parent) ?? []), pid]); names.set(pid, command.join(" "));
   }
-  return descend(shellPid, children).map((pid) => ({ pid, executableName: basenameSafe(names.get(pid) ?? "") })).filter((item) => item.executableName.length > 0);
+  return sessionProcesses(shellPid, children, names);
 }
 
 async function linuxDescendants(shellPid: number, signal: AbortSignal): Promise<readonly ThisServerAgentProcess[]> {
-  const entries = await commandText("sh", ["-c", "printf '%s\\n' /proc/[0-9]*"], 4 * 1024 * 1024, signal).catch(() => "");
+  const entries = await commandText(unixTool("sh"), ["-c", "printf '%s\\n' /proc/[0-9]*"], 4 * 1024 * 1024, signal).catch(() => "");
   const children = new Map<number, number[]>(); const names = new Map<number, string>();
   for (const entry of entries.split(/\r?\n/u)) {
     const pid = Number(entry.slice("/proc/".length)); if (!validPid(pid)) continue;
@@ -572,7 +572,7 @@ async function linuxDescendants(shellPid: number, signal: AbortSignal): Promise<
     if (!Number.isSafeInteger(parent) || !safeText(name, 512)) continue;
     children.set(parent, [...(children.get(parent) ?? []), pid]); names.set(pid, name);
   }
-  return descend(shellPid, children).map((pid) => ({ pid, executableName: names.get(pid) ?? "" })).filter((item) => item.executableName.length > 0);
+  return sessionProcesses(shellPid, children, names);
 }
 
 async function nodeOpenFiles(processIds: readonly number[], access: "writable" | "readable", signal: AbortSignal): Promise<readonly ThisServerAgentOpenFile[]> {
@@ -580,7 +580,7 @@ async function nodeOpenFiles(processIds: readonly number[], access: "writable" |
   if (process.platform === "linux") return linuxOpenFiles(processIds, access, signal);
   let output: string;
   try {
-    output = await commandText("lsof", ["-p", processIds.join(","), "-F", "pan"], 8 * 1024 * 1024, signal, true);
+    output = await commandText(unixTool("lsof"), ["-p", processIds.join(","), "-F", "pan"], 8 * 1024 * 1024, signal, true);
   } catch {
     return [];
   }
@@ -599,7 +599,7 @@ async function linuxOpenFiles(processIds: readonly number[], access: "writable" 
   const result = accumulateObservedOpenFiles();
   for (const pid of processIds) {
     throwIfAborted(signal);
-    const entries = await commandText("sh", ["-c", `printf '%s\\n' /proc/${pid}/fd/*`], 512 * 1024, signal).catch(() => "");
+    const entries = await commandText(unixTool("sh"), ["-c", `printf '%s\\n' /proc/${pid}/fd/*`], 512 * 1024, signal).catch(() => "");
     for (const fd of entries.split(/\r?\n/u)) {
       if (!fd) continue;
       const path = await readlink(fd).catch(() => undefined); const safe = safePath(path); if (safe === undefined) continue;
@@ -615,12 +615,12 @@ async function linuxOpenFiles(processIds: readonly number[], access: "writable" 
 async function nodeTty(shellPid: number, signal: AbortSignal): Promise<string | undefined> {
   throwIfAborted(signal);
   if (process.platform === "linux") return readlink(`/proc/${shellPid}/fd/0`).catch(() => undefined);
-  const output = await commandText("lsof", ["-a", "-p", String(shellPid), "-d", "0", "-Fn"], 64 * 1024, signal, true);
+  const output = await commandText(unixTool("lsof"), ["-a", "-p", String(shellPid), "-d", "0", "-Fn"], 64 * 1024, signal, true);
   return output.split(/\r?\n/u).find((line) => line.startsWith("n"))?.slice(1);
 }
 
 async function nodeForeground(shellPid: number, signal: AbortSignal): Promise<Readonly<{ executableName: string; arguments?: readonly string[] }> | undefined> {
-  const output = await commandText("ps", ["-p", String(shellPid), "-o", "comm="], 64 * 1024, signal, true);
+  const output = await commandText(unixTool("ps"), ["-p", String(shellPid), "-o", "comm="], 64 * 1024, signal, true);
   const executableName = basenameSafe(output.trim()); return executableName ? { executableName } : undefined;
 }
 
@@ -634,7 +634,7 @@ async function nodeEnvironment(shellPid: number, names: readonly string[], signa
     }));
     return Object.fromEntries(names.flatMap((name) => values.has(name) ? [[name, values.get(name)!]] : []));
   }
-  const output = await commandText("ps", ["e", "-p", String(shellPid), "-o", "command="], 256 * 1024, signal, true);
+  const output = await commandText(unixTool("ps"), ["e", "-p", String(shellPid), "-o", "command="], 256 * 1024, signal, true);
   const values = new Map<string, string>();
   for (const token of output.split(/\s+/u)) { const equals = token.indexOf("="); if (equals > 0) values.set(token.slice(0, equals), token.slice(equals + 1)); }
   return Object.fromEntries(names.flatMap((name) => values.has(name) ? [[name, values.get(name)!]] : []));
@@ -646,10 +646,22 @@ async function nodeRead(path: string, position: number, maximum: number, signal:
   try { const buffer = Buffer.alloc(maximum); const read = await file.read(buffer, 0, maximum, position); throwIfAborted(signal); return new Uint8Array(read.buffer.subarray(0, read.bytesRead)); } finally { await file.close().catch(() => undefined); }
 }
 
+function unixTool(name: "ps" | "lsof" | "sh"): string {
+  if (process.platform === "darwin") return name === "lsof" ? "/usr/sbin/lsof" : `/bin/${name}`;
+  if (process.platform === "linux") return name === "lsof" ? "/usr/bin/lsof" : `/bin/${name}`;
+  return name;
+}
+
+function observationSpawnEnv(): NodeJS.ProcessEnv {
+  const fallback = "/usr/sbin:/usr/bin:/bin:/sbin";
+  const path = process.env.PATH;
+  return { ...process.env, PATH: path && path.length > 0 ? `${path}:${fallback}` : fallback };
+}
+
 function commandText(command: string, args: readonly string[], maximum: number, signal: AbortSignal, allowNoMatches = false): Promise<string> {
   throwIfAborted(signal);
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] }); let output = ""; let settled = false;
+    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"], env: observationSpawnEnv() }); let output = ""; let settled = false;
     const finish = (callback: () => void) => { if (settled) return; settled = true; signal.removeEventListener("abort", abort); callback(); };
     const abort = () => { child.kill("SIGTERM"); finish(() => reject(new Error("agent observation cancelled"))); };
     signal.addEventListener("abort", abort, { once: true });
@@ -660,6 +672,13 @@ function commandText(command: string, args: readonly string[], maximum: number, 
 }
 
 function descend(root: number, children: ReadonlyMap<number, readonly number[]>): number[] { const found: number[] = []; const pending = [...(children.get(root) ?? [])]; while (pending.length > 0) { const pid = pending.shift(); if (pid === undefined || found.includes(pid) || found.length >= MAX_PROCESSES) continue; found.push(pid); pending.push(...(children.get(pid) ?? [])); } return found; }
+function sessionProcesses(shellPid: number, children: ReadonlyMap<number, readonly number[]>, names: ReadonlyMap<number, string>): ThisServerAgentProcess[] {
+  const pids = [shellPid, ...descend(shellPid, children).filter((pid) => pid !== shellPid)];
+  return pids.flatMap((pid) => {
+    const executableName = basenameSafe(names.get(pid) ?? (pid === shellPid ? "shell" : ""));
+    return executableName.length > 0 ? [{ pid, executableName }] : [];
+  });
+}
 function lsofAccess(value: string): "readable" | "writable" | "read-write" | undefined { const read = value.includes("r"); const write = value.includes("w") || value.includes("u"); return read && write ? "read-write" : write ? "writable" : read ? "readable" : undefined; }
 function foregroundValue(value: Readonly<{ executableName: string; arguments?: readonly string[]; startedAt?: string }>): JsonValue { if (!safeText(value.executableName, 512)) throw new Error("agent foreground observation is malformed"); const argumentsSafe = value.arguments?.filter((item) => safeText(item, 4_096) !== undefined).slice(0, 64); const startedAt = safeText(value.startedAt, 128) ? value.startedAt : undefined; return { executableName: value.executableName, ...(argumentsSafe === undefined ? {} : { arguments: argumentsSafe }), ...(startedAt === undefined ? {} : { startedAt }) }; }
 function requiredPid(terminal: ThisServerAgentTerminal): number { if (!validPid(terminal.shellPid)) throw new Error("agent terminal process observation is unavailable"); return terminal.shellPid; }
