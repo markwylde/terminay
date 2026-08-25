@@ -1,5 +1,5 @@
 import { defineExtension, type ExtensionContext, type JsonValue, type ProviderCallContext, type ProviderRuntime } from "@terminay/extension-api";
-import { PuzedClient } from "./client.js";
+import { PuzedApiError, PuzedClient } from "./client.js";
 export * from "./api-types.js";
 export * from "./client.js";
 export * from "./events.js";
@@ -67,8 +67,20 @@ const puzedRuntime: ProviderRuntime = {
     const profileId = required(request.profileId, "profileId");
     const platform = client(profileId, await profileValues(profileId, request.values, call), call);
     if (request.sourceId === "com.puzed.platform/vm/images") {
-      const page = await platform.listImages();
-      return { options: (page.items ?? []).filter((image) => image.status === "ready" && image.cloud_init_supported).map((image) => ({ value: image.id, label: image.name, ...(image.description === undefined ? {} : { description: image.description }), ...(image.min_disk_bytes === undefined ? {} : { disabledReason: "Choose a size with enough root disk." }) })) };
+      const [page, settings] = await Promise.all([platform.listImages(), platform.getSettings()]);
+      const selectedPreset = typeof request.values["size-preset"] === "string"
+        ? (settings.settings.default_size_presets ?? []).find((preset) => preset.id === request.values["size-preset"])
+        : undefined;
+      return { options: (page.items ?? [])
+        .filter((image) => image.status === "ready" && image.cloud_init_supported)
+        .map((image) => ({
+          value: image.id,
+          label: image.name,
+          ...(image.description === undefined ? {} : { description: image.description }),
+          ...(selectedPreset !== undefined && image.min_disk_bytes !== undefined && selectedPreset.root_disk_bytes < image.min_disk_bytes
+            ? { disabledReason: `Requires at least ${formatBytes(image.min_disk_bytes)} of root disk.` }
+            : {}),
+        })) };
     }
     if (request.sourceId === "com.puzed.platform/vm/size-presets") {
       const settings = (await platform.getSettings()).settings;
@@ -148,7 +160,15 @@ async function createVm(request: Parameters<ProviderRuntime["createEnvironment"]
   if (preset === undefined) throw new Error("Selected Puzed size is unavailable");
   const generated = record(await dependency(call, "managed-binding.generate", { ownerProfileId: profileId, operationId: required(call.idempotencyKey, "idempotencyKey"), logicalHostIdentityHint: `puzed:${profileId}:pending` }));
   const bindingId = required(generated.bindingId, "bindingId"); const publicKey = required(generated.publicKey, "publicKey");
-  const created = await platform.createMachine({ name: required(values.name, "name"), worker_id: required(values["worker-id"], "workerId"), vcpus: preset.vcpus, memory_bytes: preset.memory_bytes, root_disk_bytes: preset.root_disk_bytes, source: { type: "image", image_id: required(values["image-id"], "imageId") }, guest_agent: true, guest_login_mode: "ssh_key_only", ssh_keys: [publicKey], start: true, tags: ["system:Terminay"], ...(typeof values["bridge-id"] === "string" && values["bridge-id"] !== "" ? { nics: [{ bridge_id: values["bridge-id"], ip_mode: "dhcp" }] } : {}) }, required(call.idempotencyKey, "idempotencyKey"));
+  let created: Awaited<ReturnType<PuzedClient["createMachine"]>>;
+  try {
+    created = await platform.createMachine({ name: required(values.name, "name"), worker_id: required(values["worker-id"], "workerId"), vcpus: preset.vcpus, memory_bytes: preset.memory_bytes, root_disk_bytes: preset.root_disk_bytes, source: { type: "image", image_id: required(values["image-id"], "imageId") }, guest_agent: true, guest_login_mode: "ssh_key_only", ssh_keys: [publicKey], start: true, tags: ["system:Terminay"], ...(typeof values["bridge-id"] === "string" && values["bridge-id"] !== "" ? { nics: [{ bridge_id: values["bridge-id"], ip_mode: "dhcp" }] } : {}) }, required(call.idempotencyKey, "idempotencyKey"));
+  } catch (error) {
+    if (error instanceof PuzedApiError) {
+      throw new Error(`Puzed rejected VM creation (HTTP ${error.status}, ${error.code}).`);
+    }
+    throw error;
+  }
   const providerState = state(request.displayName, profileId, created.machine.id, bindingId, 0, values);
   providerState.jobId = created.job_id; providerState.managementState = "provisioning";
   return { state: "pending" as const, operationId: created.job_id, providerState, progress: provisioningProgress(created.job_id), pollAfterMs: 2_000 };
