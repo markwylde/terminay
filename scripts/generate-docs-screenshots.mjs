@@ -224,7 +224,7 @@ async function createWorkspaceProjects(page, rootFolder) {
 		}
 		await editActiveProject(page, { ...project, rootFolder });
 	}
-	await page.locator('.project-tab').filter({ hasText: 'Terminay' }).first().click();
+	await page.locator('.project-tab').first().click();
 }
 
 async function createTerminalGrid(page) {
@@ -266,6 +266,54 @@ async function openFileExplorer(page) {
 	const explorer = page.locator('.project-workspace--active .file-explorer-sidebar');
 	if (!(await explorer.isVisible())) await page.getByLabel('Toggle file explorer').click();
 	await explorer.waitFor({ state: 'visible' });
+}
+
+async function populateAgentsScreenshot(page) {
+	const terminalSessionId = await page
+		.locator('.project-workspace--active .terminal-panel:visible')
+		.first()
+		.getAttribute('data-terminay-terminal-session-id');
+	if (!terminalSessionId) throw new Error('The docs terminal session is unavailable.');
+
+	const prompt = 'Spawn 3 subagents to solve simple math problems';
+	const accepted = await page.evaluate(async ({ sessionId, rootPrompt }) => {
+		if (!window.terminayAgentStatusTest) throw new Error('The agent screenshot seam is unavailable.');
+		return window.terminayAgentStatusTest.publishLifecycle({
+			provider: 'com.terminay.agent.codex/cli',
+			terminalSessionId: sessionId,
+			providerSessionId: 'docs-agent-root',
+			events: [
+				{ kind: 'session.started', title: 'Codex' },
+				{ kind: 'agent.metadata', promptText: rootPrompt, model: { id: 'gpt-5.6', displayName: 'GPT-5.6' } },
+				{ kind: 'turn.started', turnId: 'docs-math-turn' },
+				{ kind: 'subagent.started', subagentId: 'addition', title: 'Addition', promptText: 'Solve 128 + 256' },
+				{ kind: 'subagent.started', subagentId: 'multiplication', title: 'Multiplication', promptText: 'Solve 24 × 18' },
+				{ kind: 'subagent.started', subagentId: 'division', title: 'Division', promptText: 'Solve 1,024 ÷ 16' },
+			],
+		});
+	}, { rootPrompt: prompt, sessionId: terminalSessionId });
+	if (!accepted) throw new Error('The agent screenshot lifecycle was not accepted.');
+
+	const agentsPane = page.locator('.project-workspace--active .sidebar-pane').filter({
+		has: page.locator('.sidebar-pane__title', { hasText: 'Agents' }),
+	});
+	for (const title of ['Explorer', 'Documentation', 'Git']) {
+		const pane = page.locator('.project-workspace--active .sidebar-pane').filter({
+			has: page.locator('.sidebar-pane__title', { hasText: title }),
+		});
+		if (!(await pane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed')))) {
+			await pane.locator('.sidebar-pane__header').click();
+		}
+	}
+	if (await agentsPane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed'))) {
+		await agentsPane.locator('.sidebar-pane__header').click();
+	}
+	await agentsPane.locator('.agents-sidebar__name', { hasText: prompt }).waitFor({ state: 'visible', timeout: 30_000 });
+	await agentsPane.getByRole('button', { name: `Expand 3 subagents for ${prompt}` }).click();
+	await agentsPane.getByRole('button', { name: 'Focus Division terminal' }).waitFor({ state: 'visible' });
+	await page.evaluate(() => {
+		if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+	});
 }
 
 function explorerItem(page, name) {
@@ -359,6 +407,8 @@ async function run() {
 		// demonstrates the 2x2 layout, while the Docs project is a clean one-pane canvas.
 		await mainWindow.locator('.project-tab').filter({ hasText: 'Docs' }).first().click();
 		await openFileExplorer(mainWindow);
+		await populateAgentsScreenshot(mainWindow);
+		await capture(app, mainWindow, 'terminay-agents.png');
 		const documentationPane = mainWindow.locator('.project-workspace--active .sidebar-pane').filter({
 			has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Documentation' }),
 		});
