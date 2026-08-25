@@ -21,6 +21,17 @@ async function seedWorkspace() {
 	await mkdir(path.join(workspace, 'handbook'), { recursive: true });
 	await mkdir(path.join(workspace, 'reference'), { recursive: true });
 	await mkdir(path.join(workspace, 'src'), { recursive: true });
+	await mkdir(path.join(workspace, 'bin'), { recursive: true });
+	await writeFile(path.join(workspace, 'bin', 'codex'), [
+		'#!/bin/sh',
+		'printf "\\033[1;36mCodex\\033[0m  GPT-5.6\\n\\n"',
+		'printf "\\033[1m› %s\\033[0m\\n\\n" "$1"',
+		'printf "• Spawning three subagents\\n"',
+		'printf "  ↳ Addition       Solve 128 + 256\\n"',
+		'printf "  ↳ Multiplication Solve 24 × 18\\n"',
+		'printf "  ↳ Division       Solve 1,024 ÷ 16\\n\\n"',
+		'printf "\\033[33mWorking (3 subagents)\\033[0m\\n"',
+	].join('\n'), { mode: 0o755 });
 	await writeFile(path.join(workspace, 'README.md'), [
 		'# Terminay',
 		'',
@@ -268,6 +279,26 @@ async function openFileExplorer(page) {
 	await explorer.waitFor({ state: 'visible' });
 }
 
+async function prepareAgentTerminal(page, workspace) {
+	const panels = page.locator('.project-workspace--active .terminal-tab-content:visible');
+	while (await panels.count() > 1) {
+		await panels.last().click();
+		await invokeMenuCommand(page, 'close-active');
+		await page.waitForTimeout(250);
+	}
+	await panels.first().waitFor({ state: 'visible', timeout: 30_000 });
+
+	const terminal = page.locator(
+		'.project-workspace--active .terminal-panel:visible .xterm-helper-textarea',
+	).first();
+	await terminal.click();
+	await terminal.pressSequentially(`cd '${workspace}' && export PATH="$PWD/bin:$PATH" && clear`, { delay: 2 });
+	await terminal.press('Enter');
+	await terminal.pressSequentially('codex "Spawn 3 subagents to solve simple math problems"', { delay: 2 });
+	await terminal.press('Enter');
+	await page.waitForTimeout(500);
+}
+
 async function populateAgentsScreenshot(page) {
 	const terminalSessionId = await page
 		.locator('.project-workspace--active .terminal-panel:visible')
@@ -407,6 +438,7 @@ async function run() {
 		// demonstrates the 2x2 layout, while the Docs project is a clean one-pane canvas.
 		await mainWindow.locator('.project-tab').filter({ hasText: 'Docs' }).first().click();
 		await openFileExplorer(mainWindow);
+		await prepareAgentTerminal(mainWindow, seededWorkspace.workspace);
 		await populateAgentsScreenshot(mainWindow);
 		await capture(app, mainWindow, 'terminay-agents.png');
 		const documentationPane = mainWindow.locator('.project-workspace--active .sidebar-pane').filter({
