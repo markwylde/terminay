@@ -14,7 +14,7 @@ test('the session-owned browser transport mounts the opaque workspace client', a
 	assert.match(manager, /createConnectedServerClientContext/u);
 	assert.doesNotMatch(manager, /legacyRemote|session-list|session-opened|attach-session/u);
 	assert.match(transport, /ByteTransport/u);
-	assert.match(transport, /connect\(options/u);
+	assert.match(transport, /connect\(\s*options/u);
 	assert.doesNotMatch(transport, /RTCDataChannel|getChannel/u);
 });
 

@@ -43,6 +43,7 @@ import { createActivityEventProjector, createActivityOperationRegistry, type Act
 import { createAgentEventProjector, createAgentOperationRegistry, type AgentOperationRegistry } from "./activity/agentProtocol.js";
 import type { TerminalActivityService } from "./activity/service.js";
 import { AgentStatusService } from "./activity/agentService.js";
+import { ExtensionAgentRuntimeRegistry } from "./activity/extensionAgentRuntime.js";
 import type { TerminalSessionLifecycle } from "./terminalService/types.js";
 import { createAiOperationHandlers, type AiService } from "./aiService/index.js";
 import type { ServerGitAdapter } from "./gitService/adapter.js";
@@ -137,6 +138,10 @@ export interface ServerCoreCompositionOptions
   /** Optional server-owned provider-journal and agent status authority. It shares
    * the terminal lifecycle with activity; it is never a renderer service. */
   readonly agents?: AgentStatusService;
+  /** Optional extension-backed agent admission authority. It claims an exact
+   * terminal incarnation before an installed provider can publish sidebar
+   * lifecycle state; legacy journal drivers remain the fallback. */
+  readonly extensionAgentRuntime?: ExtensionAgentRuntimeRegistry;
   /** Other server-owned operation handlers to merge with terminal handlers. */
   readonly operations?: OperationRegistries;
   /** Optional selected-server extension manager. Fixed operations are merged
@@ -197,6 +202,7 @@ export interface ServerCoreComposition {
   readonly workspace?: WorkspaceStore;
   readonly activity?: TerminalActivityService;
   readonly agents?: AgentStatusService;
+  readonly extensionAgentRuntime?: ExtensionAgentRuntimeRegistry;
   readonly activityOperations?: ActivityOperationRegistry;
   readonly agentOperations?: AgentOperationRegistry;
   readonly terminalOperations: TerminalOperationRegistry;
@@ -562,8 +568,11 @@ export function createServerCoreComposition(
 		lifecycle = "starting";
 		startPromise = (async () => {
 			try {
-				await options.extensions?.installer.initialize();
-				await options.extensions?.activateEnabled?.();
+				if (options.extensions?.initialize !== undefined) await options.extensions.initialize();
+				else {
+					await options.extensions?.installer.initialize();
+					await options.extensions?.activateEnabled?.();
+				}
 				await options.settings?.load();
 				await options.serviceLifecycle?.start?.();
 				await options.agents?.start();
@@ -589,6 +598,7 @@ export function createServerCoreComposition(
 			};
 			await attempt(() => Promise.allSettled([...connections].map((connection) => connection.close())));
 			connections.clear();
+			await attempt(() => options.extensionAgentRuntime?.drain("server-stopping"));
 			// Terminal exit is a final agent lifecycle input, so terminal stops
 			// before the agent service. Every later cleanup still runs if it fails.
 			await attempt(() => terminal.shutdown());
@@ -618,6 +628,7 @@ export function createServerCoreComposition(
     ...(workspaceOperations === undefined ? {} : { workspaceOperations }),
     ...(options.activity === undefined ? {} : { activity: options.activity }),
     ...(options.agents === undefined ? {} : { agents: options.agents }),
+    ...(options.extensionAgentRuntime === undefined ? {} : { extensionAgentRuntime: options.extensionAgentRuntime }),
     ...(activityOperations === undefined ? {} : { activityOperations }),
     ...(agentOperations === undefined ? {} : { agentOperations }),
     terminalOperations,
@@ -674,9 +685,9 @@ function composeTerminal(options: ServerCoreCompositionOptions): TerminalService
     ptyFactory: options.projectEnvironmentRouter === undefined
 		? options.ptyFactory
 		: createEnvironmentRoutedPtyFactory(options.projectEnvironmentRouter, options.ptyFactory),
-    ...((options.activity === undefined && options.agents === undefined)
+    ...((options.activity === undefined && options.agents === undefined && options.extensionAgentRuntime === undefined)
       ? {}
-      : { sessionLifecycle: composeActivityLifecycle(options.activity, options.agents, terminalOptions.sessionLifecycle) }),
+      : { sessionLifecycle: composeActivityLifecycle(options.activity, options.agents, terminalOptions.sessionLifecycle, options.extensionAgentRuntime) }),
   });
   bindTerminalActivity(terminal, options.activity);
   return terminal;
@@ -711,16 +722,19 @@ export function composeActivityLifecycle(
   activity: TerminalActivityService | undefined,
   agents: AgentStatusService | undefined,
   lifecycle: ComposedTerminalSessionLifecycle | undefined,
+  extensionAgents?: ExtensionAgentRuntimeRegistry,
 ): ComposedTerminalSessionLifecycle {
   return {
     prepareTerminalSession: (identity) => {
       if (activity !== undefined) ensureActivitySession(activity, identity);
       agents?.register(identity);
+      extensionAgents?.register(identity);
       const hostEnvironment = lifecycle?.prepareTerminalSession(identity) ?? {};
       return { ...hostEnvironment };
     },
     terminalStarted: (identity, shellPid) => {
       agents?.terminalStarted(identity, shellPid);
+      extensionAgents?.terminalStarted(identity, shellPid);
       lifecycle?.terminalStarted?.(identity, shellPid);
     },
     terminalInput: (identity) => {
@@ -730,6 +744,7 @@ export function composeActivityLifecycle(
       if (activity !== undefined) {
         try { activity.markExited(identity); } catch { /* terminal exit remains authoritative */ }
       }
+      extensionAgents?.terminalExited(identity);
       agents?.terminalExited(identity, exit);
       lifecycle?.terminalExited(identity, exit);
     },
@@ -749,16 +764,9 @@ export function composeActivityLifecycle(
           // Foreground observation cannot change PTY supervision.
         }
       }
+      extensionAgents?.foregroundProcessChanged(identity, event.processName, event.shellForeground);
       agents?.foregroundProcessChanged(identity, event.processName, event.shellForeground);
       lifecycle?.foregroundProcessChanged?.(identity, event);
-    },
-    agentJournalRecord: (identity, event) => {
-      // Provider journal evidence is privileged lifecycle input. Only the
-      // reduced AgentStatus projection may leave server-core.
-      if (agents?.isSessionActive(identity)) {
-        void agents.ingestJournalRecord(identity, event.provider, event.record).catch(() => undefined);
-      }
-      lifecycle?.agentJournalRecord?.(identity, event);
     },
   };
 }

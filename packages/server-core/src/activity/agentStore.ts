@@ -118,7 +118,7 @@ function applyEvent(entry: AgentStatusEntry, event: AgentLifecycleEvent): AgentS
     case "agent.metadata":
       // Provider model changes are observational. In particular, a model
       // switch while a turn is working must not reset it to idle.
-      return withState(entry, entry.state, event);
+      return withState(entry, entry.state, event, { displayName: event.displayName ?? entry.displayName });
     case "session.stopped":
       return withState(entry, "idle", event, { active: false, activeTools: [], waitingReason: undefined, summary: event.reason ?? entry.summary });
     case "turn.started":
@@ -188,6 +188,23 @@ export class AgentStatusStore {
     const next = reduceAgentStatusSnapshot(this.snapshot, event);
     if (next === this.snapshot) return false;
     this.publish(next);
+    return true;
+  }
+
+  /** Atomically applies a validated publication. A rejected event must never
+   * leave the sidebar at a prefix of the provider's publication. */
+  dispatchBatch(events: readonly AgentLifecycleEvent[]): boolean {
+    let next = this.snapshot;
+    for (const event of events) {
+      const reduced = reduceAgentStatusSnapshot(next, event);
+      if (reduced === next) return false;
+      next = reduced;
+    }
+    if (next === this.snapshot) return false;
+    // Preflight above guarantees the whole batch is reducible before the first
+    // observer notification. Preserve one canonical journal revision per
+    // lifecycle event for connected clients and replay cursors.
+    for (const event of events) this.publish(reduceAgentStatusSnapshot(this.snapshot, event));
     return true;
   }
 

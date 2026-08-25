@@ -6,8 +6,8 @@
  * provider-specific configuration details.
  */
 
-export const AGENT_PROVIDERS = ["codex", "claude-code", "omp"] as const;
-export type AgentProvider = (typeof AGENT_PROVIDERS)[number];
+/** A bounded, manifest-owned extension provider id. */
+export type AgentProvider = string;
 
 export const AGENT_STATES = ["working", "waiting", "blocked", "done", "idle"] as const;
 export type AgentState = (typeof AGENT_STATES)[number];
@@ -46,7 +46,7 @@ interface TargetedAgentEvent { readonly agentId?: string }
 export type AgentLifecycleEvent =
   | (AgentLifecycleEventBase & { readonly kind: "session.started"; readonly displayName?: string })
   /** Updates bounded provider metadata without changing lifecycle state. */
-  | (AgentLifecycleEventBase & TargetedAgentEvent & { readonly kind: "agent.metadata" })
+  | (AgentLifecycleEventBase & TargetedAgentEvent & { readonly kind: "agent.metadata"; readonly displayName?: string })
   | (AgentLifecycleEventBase & { readonly kind: "session.stopped"; readonly reason?: string })
   | (AgentLifecycleEventBase & TargetedAgentEvent & { readonly kind: "turn.started"; readonly turnId?: string })
   | (AgentLifecycleEventBase & TargetedAgentEvent & { readonly kind: "tool.started"; readonly tool: { readonly id: string; readonly name: string; readonly description?: string; readonly subagentLaunch?: { readonly displayName?: string; readonly promptText?: string } } })
@@ -106,11 +106,20 @@ export interface AgentStatusSnapshot {
   readonly revision: number;
   readonly entries: Readonly<Record<string, AgentStatusEntry>>;
   readonly eventCursors: Readonly<Record<string, AgentEventCursor>>;
+  /** Ephemeral id of the emitting Terminay process. Absent only on empty
+   * store-internal snapshots before the service stamps its boot identity. */
+  readonly processInstanceId?: string;
 }
 export type AgentStatusListener = (snapshot: AgentStatusSnapshot) => void;
 
+const EXTENSION_AGENT_PROVIDER_ID = /^[a-z0-9](?:[a-z0-9.-]{1,126}[a-z0-9])?\/[a-z][a-z0-9-]{0,63}$/u;
+
+export function isExtensionAgentProvider(value: unknown): value is AgentProvider {
+  return typeof value === "string" && value.length <= 192 && EXTENSION_AGENT_PROVIDER_ID.test(value);
+}
+
 export function isAgentProvider(value: unknown): value is AgentProvider {
-  return typeof value === "string" && (AGENT_PROVIDERS as readonly string[]).includes(value);
+  return isExtensionAgentProvider(value);
 }
 
 export function isAgentState(value: unknown): value is AgentState {

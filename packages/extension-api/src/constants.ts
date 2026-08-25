@@ -1,5 +1,10 @@
 export const EXTENSION_MANIFEST_VERSION = 1 as const;
-export const EXTENSION_API_VERSION = "1.0.0" as const;
+/**
+ * The public extension SDK version implemented by this host. New optional
+ * agent directory discovery and dynamic child-source observation landed in
+ * 1.2, so extensions that call those APIs must declare `^1.2.0`.
+ */
+export const EXTENSION_API_VERSION = "1.2.0" as const;
 
 export const EXTENSION_LIMITS = Object.freeze({
   manifestBytes: 64 * 1024,
@@ -10,6 +15,18 @@ export const EXTENSION_LIMITS = Object.freeze({
   contributions: 32,
   permissions: 32,
   dependencies: 32,
+  /** Public target operations declared by one project-environment provider. */
+  providerDependencyOperations: 32,
+  providerDependencyOperationNameLength: 128,
+  /** JSON data sent to, or returned from, a dependency provider. */
+  providerDependencyPayloadBytes: 256 * 1024,
+  providerDependencyResultBytes: 256 * 1024,
+  /** Target-owned opaque vault keys and purposes; never vault paths or ids. */
+  providerVaultBindingKeyLength: 256,
+  providerVaultBindingRefLength: 256,
+  providerVaultPurposeLength: 128,
+  providerVaultSecretBytes: 64 * 1024,
+  providerVaultIdempotencyKeyLength: 256,
   formSections: 32,
   formFields: 128,
   fieldOptions: 256,
@@ -22,10 +39,54 @@ export const EXTENSION_LIMITS = Object.freeze({
   sshAgentPublicKeyBytes: 16 * 1024,
   sshAgentChallengeBytes: 256 * 1024,
   sshAgentSignatureBytes: 16 * 1024,
+  agentProcessMatchers: 16,
+  agentMappings: 32,
+  agentRequiredCapabilities: 16,
+  agentProviderVersionLength: 64,
+  agentSessionIdLength: 256,
+  agentNativeIdLength: 256,
+  agentTitleLength: 512,
+  agentPromptLength: 4 * 1024,
+  agentReasonLength: 1_024,
+  agentSummaryLength: 4 * 1024,
+  agentDiagnosticLength: 512,
+  agentMetadataEntries: 32,
+  agentFingerprintEntries: 16,
+  agentEventDepth: 8,
+  agentInitialReplayBytes: 4 * 1024 * 1024,
+  agentRecordBytes: 256 * 1024,
+  agentFileReadBytes: 4 * 1024 * 1024,
+  agentFollowChunkBytes: 256 * 1024,
+  agentStreamInFlight: 64,
+  /** A terminal device fact is an identifier, never a filesystem capability. */
+  agentTtyDeviceIdLength: 256,
+  agentTtyDeviceNameLength: 128,
+  agentHomeRelativePathLength: 1_024,
+  agentProviderPathLength: 4_096,
+  agentAllowedHomeRoots: 8,
+  agentFileExtensionLength: 64,
+  /** Child journals share a root binding and are never root candidates. */
+  agentChildJournalSources: 64,
+  /** Declared names and observed values are bounded terminal-scoped facts. */
+  agentEnvironmentVariables: 32,
+  agentEnvironmentVariableNameLength: 128,
+  agentEnvironmentVariableValueLength: 4 * 1024,
+  agentEnvironmentRelativePathLength: 4 * 1024,
+  /** Bounded, terminal-scoped provider journal discovery. */
+  agentDirectoryListDepth: 8,
+  agentDirectoryListEntries: 256,
+  agentDirectoryListBytes: 16 * 1024 * 1024,
 } as const);
 
 export const EXTENSION_ID_PATTERN = /^[a-z0-9](?:[a-z0-9.-]{1,126}[a-z0-9])?$/;
 export const LOCAL_ID_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
+/** Dot-separated, provider-owned public operation names; never commands. */
+export const PROVIDER_DEPENDENCY_OPERATION_PATTERN = /^[a-z][a-z0-9-]{0,63}(?:\.[a-z][a-z0-9-]{0,63})*$/;
+/** A durable opaque token, never a vault path or a host-global secret id. */
+export const PROVIDER_VAULT_BINDING_REF_PATTERN = /^[A-Za-z0-9_-]{16,256}$/;
+/** A provider-owned logical key/purpose; never a filesystem or vault path. */
+export const PROVIDER_VAULT_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
+export const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 export function namespacedId(extensionId: string, localId: string): string {
   if (!EXTENSION_ID_PATTERN.test(extensionId)) throw new Error("invalid extension id");

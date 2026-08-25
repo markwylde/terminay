@@ -1,5 +1,5 @@
 import './headlessBootstrap';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import {
 	chmodSync,
 	existsSync,
@@ -52,12 +52,14 @@ import {
 } from '../apps/terminay-server/src/index';
 import { loadOrCreateHostedHostKey } from '../apps/terminay-server/src/remote/hostedHostKey';
 import { parseHostedIceServers } from '../apps/terminay-server/src/remote/hostedPeerLifecycle';
+import type { AgentLifecycleEvent } from '../packages/extension-api/src/index';
 import { ParakeetRuntime } from '../packages/server-core/src/aiService/parakeetRuntime';
 import { MacroRepository } from '../packages/server-core/src/macroService/repository';
 import {
 	FileProjectEnvironmentStateBackend,
 	ProjectEnvironmentRepository,
 } from '../packages/server-core/src/projectEnvironment/index';
+import { MigratingProjectEnvironmentStateBackend } from './projectEnvironmentPersistence';
 import {
 	RecordingService,
 	ServerRecordingAdapter,
@@ -108,6 +110,14 @@ import {
 	initializeDesktopDiagnostics,
 } from './diagnostics/service';
 import { normalizeExternalUrl } from './externalUrl';
+import {
+	desktopEmbeddedStorePaths,
+	desktopLocalServerUiPartitionKey,
+	migrateLegacyEmbeddedProjectEnvironmentServerId,
+	migrateLegacyEmbeddedRecordingServerId,
+	migrateLegacyEmbeddedWorkspaceServerId,
+	resolveDesktopInstanceIdentity,
+} from './desktopInstanceIdentity';
 import { FileBufferService } from './fileViewer/fileBufferService';
 import { FileWatchService } from './fileViewer/fileWatchService';
 import { GitDiffService } from './fileViewer/gitDiffService';
@@ -152,13 +162,16 @@ import {
 } from './serverUiHost';
 import { secureSession } from './sessionSecurity';
 import { assertTrustedIpcSender } from './trustedIpcSender';
+import { resolveDesktopUserDataPath } from './userDataNamespace';
 import {
 	ElectronSafeStorageVaultAdapter,
 	FileSafeStorageVaultRepository,
 } from './vault/safeStorageVault';
 import {
 	createEmbeddedWorkspaceStateBackend,
+	embeddedBuiltInExtensionArtifactRoot,
 	embeddedWorkspacePersistenceFault,
+	isEmbeddedWorkspacePersistenceError,
 } from './workspacePersistence';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -182,13 +195,28 @@ process.env.APP_ROOT = path.join(__dirname, '..');
 app.setName('Terminay');
 
 const customUserDataPath = process.env.TERMINAY_USER_DATA_DIR?.trim();
-if (customUserDataPath) {
-	app.setPath('userData', customUserDataPath);
+const resolvedUserDataPath = resolveDesktopUserDataPath({
+	appDataPath: app.getPath('appData'),
+	...(customUserDataPath ? { customPath: customUserDataPath } : {}),
+	isPackaged: app.isPackaged,
+});
+if (resolvedUserDataPath) {
+	app.setPath('userData', resolvedUserDataPath);
 }
+if (!app.requestSingleInstanceLock()) {
+	app.exit(1);
+	process.exit(1);
+}
+const embeddedDesktopInstance = resolveDesktopInstanceIdentity(
+	app.getPath('userData'),
+);
+const embeddedServerId = embeddedDesktopInstance.id;
+const embeddedStorePaths = desktopEmbeddedStorePaths(embeddedDesktopInstance);
+const embeddedLocalProfileId = LocalServerUiSession.profileIdFor(embeddedServerId);
 
 try {
-	if (process.env.TERMINAY_TEST === '1' && customUserDataPath) {
-		app.setAppLogsPath(path.join(customUserDataPath, 'logs'));
+	if (process.env.TERMINAY_TEST === '1' && resolvedUserDataPath) {
+		app.setAppLogsPath(path.join(resolvedUserDataPath, 'logs'));
 	} else {
 		app.setAppLogsPath();
 	}
@@ -260,9 +288,10 @@ function recordCanonicalRecoveryDiagnostic(message: unknown): Promise<void> {
 		)
 		.catch(() => undefined);
 }
-const localServerUiPartitionKey = createHash('sha256')
-	.update('desktop-local\0local:embedded')
-	.digest('base64url');
+const localServerUiPartitionKey = desktopLocalServerUiPartitionKey(
+	embeddedServerId,
+	embeddedLocalProfileId,
+);
 
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
 	? path.join(process.env.APP_ROOT, 'public')
@@ -762,11 +791,11 @@ function sanitizedDesktopConnectionProfiles(
 	loadRememberedRemoteConnections();
 	const profiles = [
 		{
-			id: LocalServerUiSession.profileId,
+			id: embeddedLocalProfileId,
 			isLocal: true,
 			label: 'Local',
 			status:
-				selectedProfileId === LocalServerUiSession.profileId
+				selectedProfileId === embeddedLocalProfileId
 					? ('connected' as const)
 					: ('offline' as const),
 		},
@@ -891,18 +920,17 @@ function handleServerTerminalEvent(event: TerminalEvent): void {
 }
 
 const serverRecordingService = new RecordingService({
-	serverId: 'desktop-local',
-	recordingRoot: path.join(app.getPath('userData'), 'server-recordings'),
+	serverId: embeddedServerId,
+	recordingRoot: embeddedStorePaths.recordings,
 	homeDirectory: app.getPath('home'),
-	libraryIndexPath: path.join(
-		app.getPath('userData'),
-		'server-recording-roots.v1.json',
-	),
+	libraryIndexPath: embeddedStorePaths.recordingLibrary,
+	migrateStoredMetadata: (metadata) =>
+		migrateLegacyEmbeddedRecordingServerId(metadata, embeddedServerId),
 });
 const serverRecordingAdapter = new ServerRecordingAdapter(
 	serverRecordingService,
 	{
-		serverId: 'desktop-local',
+		serverId: embeddedServerId,
 		resolveSessionProject: (sessionId) =>
 			serverTerminalAuthority?.service
 				.listSessions()
@@ -1127,10 +1155,14 @@ await desktopDiagnostics.record(
 	{ channel: 'lifecycle' },
 );
 const embeddedProjectEnvironments = new ProjectEnvironmentRepository(
-	new FileProjectEnvironmentStateBackend(
-		path.join(app.getPath('userData'), 'project-environments.v1.json'),
+	new MigratingProjectEnvironmentStateBackend(
+		new FileProjectEnvironmentStateBackend(
+			embeddedStorePaths.projectEnvironments,
+		),
+		(state) =>
+			migrateLegacyEmbeddedProjectEnvironmentServerId(state, embeddedServerId),
 	),
-	'desktop-local',
+	embeddedServerId,
 );
 await embeddedProjectEnvironments.load();
 const embeddedVaultAdapter = await ElectronSafeStorageVaultAdapter.open({
@@ -1169,9 +1201,14 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		embeddedStartupWindow,
 	);
 	const authority: ServerTerminalAuthority = new ServerTerminalAuthority({
-		serverId: 'desktop-local',
+		serverId: embeddedServerId,
 		dataRoot: app.getPath('userData'),
 		extensionHostChildEntrypoint: path.join(MAIN_DIST, 'extensionHostEntry.js'),
+		builtInExtensionArtifactRoot: embeddedBuiltInExtensionArtifactRoot({
+			appRoot: process.env.APP_ROOT,
+			isPackaged: app.isPackaged,
+			resourcesPath: process.resourcesPath,
+		}),
 		vault: embeddedVault,
 		parakeetRuntime,
 		defaultProjectRoot: () => app.getPath('home'),
@@ -1336,11 +1373,11 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 	await startMcpControlEndpoint();
 	localServerUiSession = new LocalServerUiSession({
 		bundleRoot: SERVER_UI_DIST,
-		cacheRoot: path.join(app.getPath('userData'), 'ui-bundles'),
+		cacheRoot: embeddedStorePaths.uiBundles,
 		serverId: authority.service.serverId,
 	});
 	remoteServerUiBundleHost = new DesktopServerBundleHost({
-		cacheRoot: path.join(app.getPath('userData'), 'ui-bundles'),
+		cacheRoot: embeddedStorePaths.uiBundles,
 		capabilities: {
 			clipboardWrite: 1,
 			filePicker: 1,
@@ -2723,7 +2760,7 @@ async function presentCanonicalAuxiliaryRoute(
 			return;
 		}
 		let workspaceWindow: BrowserWindow | null;
-		if (context.profileId === LocalServerUiSession.profileId) {
+		if (context.profileId === embeddedLocalProfileId) {
 			workspaceWindow = createWindow({
 				bounds: { x, y },
 				workspaceViewId,
@@ -2818,7 +2855,7 @@ async function presentCanonicalAuxiliaryRoute(
 	auxiliaryWindowsByPresentation.delete(presentationId);
 
 	let auxiliaryWindow: BrowserWindow | null;
-	if (context.profileId === LocalServerUiSession.profileId) {
+	if (context.profileId === embeddedLocalProfileId) {
 		auxiliaryWindow = createWindow({
 			auxiliary: { ...auxiliary, presentationId },
 		});
@@ -2968,10 +3005,12 @@ async function openEmbeddedWorkspaceWithRecovery(
 	const openWorkspace = () =>
 		openCanonicalWorkspace({
 			backend: createEmbeddedWorkspaceStateBackend({
-				filePath: path.join(app.getPath('userData'), 'workspace.v3.json'),
+				filePath: embeddedStorePaths.workspace,
+				migrate: (state) =>
+					migrateLegacyEmbeddedWorkspaceServerId(state, embeddedServerId),
 				testFault: embeddedWorkspacePersistenceFault(process.env),
 			}),
-			serverId: 'desktop-local',
+			serverId: embeddedServerId,
 			defaultProjectRoot: app.getPath('home'),
 		});
 	return recoverEmbeddedWorkspaceOperation(window, openWorkspace);
@@ -2984,7 +3023,15 @@ async function recoverEmbeddedWorkspaceOperation<T>(
 	try {
 		return await operation();
 	} catch (initialError) {
-		return new Promise((resolve) => {
+		// This recovery surface is specifically for the canonical workspace
+		// persistence boundary.  Do not disguise extension activation, server
+		// composition, or a torn application build as damaged application storage.
+		// Those failures must escape to the desktop bootstrap recovery path, which
+		// records the real startup failure and offers a clean process relaunch.
+		if (!isEmbeddedWorkspacePersistenceError(initialError)) {
+			throw initialError;
+		}
+		return new Promise((resolve, reject) => {
 			const renderRecovery = async (cause: unknown): Promise<void> => {
 				console.error('[workspace] canonical persistence unavailable', cause);
 				await showCanonicalLaunchRecovery({
@@ -2996,6 +3043,10 @@ async function recoverEmbeddedWorkspaceOperation<T>(
 						try {
 							resolve(await operation());
 						} catch (error) {
+							if (!isEmbeddedWorkspacePersistenceError(error)) {
+								reject(error);
+								return;
+							}
 							await renderRecovery(error);
 						}
 					},
@@ -4216,13 +4267,14 @@ if (process.env.TERMINAY_TEST === '1') {
 	);
 
 	ipcMain.handle(
-		'test:emit-agent-journal-record',
+		'test:publish-agent-lifecycle',
 		async (
 			event,
 			payload?: {
 				provider?: unknown;
 				terminalSessionId?: unknown;
-				record?: unknown;
+				providerSessionId?: unknown;
+				events?: unknown;
 			},
 		) => {
 			assertBoundServerUiEvent(event);
@@ -4235,26 +4287,30 @@ if (process.env.TERMINAY_TEST === '1') {
 			) {
 				throw new Error('A terminal session id is required.');
 			}
-			if (
-				!payload.record ||
-				typeof payload.record !== 'object' ||
-				Array.isArray(payload.record)
-			) {
-				throw new Error('An agent journal record is required.');
-			}
+			if (typeof payload?.providerSessionId !== 'string' || payload.providerSessionId.length === 0)
+				throw new Error('An agent provider session id is required.');
+			if (!Array.isArray(payload.events) || payload.events.length === 0)
+				throw new Error('Agent lifecycle events are required.');
+			const events = payload.events as AgentLifecycleEvent[];
 			const serverSession = serverTerminalAuthority?.get(
 				payload.terminalSessionId,
 			);
 			if (serverSession !== undefined) {
-				return serverTerminalAuthority!.agents.ingestJournalRecord(
+				serverTerminalAuthority!.agents.claimExtensionProvider(
 					{
 						serverId: serverSession.serverId,
 						projectId: serverSession.projectId,
 						sessionId: serverSession.id,
 					},
 					payload.provider,
-					payload.record as Record<string, unknown>,
 				);
+				return serverTerminalAuthority!.agents.ingestExtensionLifecycle(
+					{ serverId: serverSession.serverId, projectId: serverSession.projectId, sessionId: serverSession.id },
+					payload.provider,
+					'e2e',
+					{ providerSessionId: payload.providerSessionId, mappingVersion: 'e2e', fingerprint: { kind: 'test', process: { id: `e2e:${serverSession.id}` }, metadata: { source: 'electron-e2e' } } },
+					events,
+				).then((result) => result.acceptedEventCount === events.length);
 			}
 			throw new Error('The terminal session is not available.');
 		},
@@ -4521,7 +4577,7 @@ async function recoverFailedDesktopBootstrap(error: unknown): Promise<void> {
 	await showCanonicalLaunchRecovery({
 		window,
 		error: new Error(
-			'Terminay could not finish starting. Retry after checking that application storage is available.',
+			'Terminay could not finish starting. Relaunch to retry. Technical details were recorded in Terminay diagnostics.',
 		),
 		retry: async () => {
 			// A failed main-process composition may have partially initialized native

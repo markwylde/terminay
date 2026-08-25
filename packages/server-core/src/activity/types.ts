@@ -40,7 +40,7 @@ export type ProviderActivityState =
   | "idle";
 
 export interface ProviderActivityUpdate {
-  /** Stable provider id, for example `codex` or `claude-code`. */
+  /** Stable manifest-owned provider id. */
   readonly provider: string;
   /** Canonical provider state. `status` is accepted as a compatibility alias. */
   readonly state?: ProviderActivityState;

@@ -232,6 +232,11 @@ function ExtensionCard({ extension, busy, onInstall, onUpdate, onAction }: Reado
 					<div className="settings-chip-row">{extension.permissions.map((permission) => <span className="settings-chip" key={permission}>{permission}</span>)}</div>
 				</div>
 			)}
+			{extension.failureMessage === undefined ? null : (
+				<div className="settings-group-footer extension-card-footer" role="alert">
+					<span className="settings-row-description">{extension.failureMessage}</span>
+				</div>
+			)}
 		</article>
 	);
 }

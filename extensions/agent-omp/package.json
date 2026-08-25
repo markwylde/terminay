@@ -1,0 +1,60 @@
+{
+  "name": "terminay-agent-omp",
+  "version": "0.1.0",
+  "description": "Official oh-my-pi (omp) agent-status extension for Terminay",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/terminay/terminay.git",
+    "directory": "extensions/agent-omp"
+  },
+  "publishConfig": { "access": "public", "provenance": true },
+  "engines": { "node": ">=22" },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js", "default": "./dist/index.js" }
+  },
+  "files": ["dist", "README.md", "LICENSE", "AGENTS.md"],
+  "scripts": {
+    "compile": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run compile && node --test test/omp-agent.test.mjs test/boundary.test.mjs test/compatibility.test.mjs",
+    "test:compat": "npm run compile && node --test test/compatibility.test.mjs",
+    "test:packed": "node -e \"require('node:fs').mkdirSync('.tmp-pack', { recursive: true })\" && npm pack --json --pack-destination .tmp-pack && node --test test/packed.test.mjs",
+    "test:real-cli": "npm run compile && node test/real-cli-smoke.mjs"
+  },
+  "peerDependencies": { "@terminay/extension-api": "^1.1.0" },
+  "devDependencies": {
+    "@terminay/extension-api": "^1.1.0",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.2"
+  },
+  "terminay": {
+    "manifestVersion": 1,
+    "id": "com.terminay.agent.omp",
+    "displayName": "omp",
+    "description": "Shows oh-my-pi CLI sessions in Terminay's Agents sidebar.",
+    "api": "^1.1.0",
+    "engines": { "terminay": ">=1.0.0", "node": ">=22" },
+    "entrypoint": "dist/index.js",
+    "platforms": ["darwin", "linux"],
+    "permissions": ["agent-observation"],
+    "contributes": {
+      "agentProviders": [{
+        "id": "com.terminay.agent.omp/cli",
+        "displayName": "omp",
+        "description": "oh-my-pi CLI journals bound by its terminal breadcrumb.",
+        "icon": "terminal",
+        "platforms": ["darwin", "linux"],
+        "processMatchers": [
+          { "executableName": "omp" },
+          { "executableName": "oh-my-pi" },
+          { "executableName": "bun" }
+        ],
+        "mappings": [{ "mappingVersion": "0.1", "providerVersionRange": ">=0" }],
+        "requiredEnvironmentVariables": ["OMP_PROFILE", "PI_PROFILE", "PI_CODING_AGENT_DIR", "XDG_DATA_HOME", "XDG_STATE_HOME"],
+        "requiredEnvironmentCapabilities": ["process-observation", "filesystem-observation", "agent-journal"]
+      }]
+    }
+  }
+}

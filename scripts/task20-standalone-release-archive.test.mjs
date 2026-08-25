@@ -25,6 +25,22 @@ function run(command, args, { cwd = new URL('.', repositoryRoot).pathname } = {}
   })
 }
 
+function runBytes(command, args, { cwd = new URL('.', repositoryRoot).pathname } = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] })
+    const stdout = []
+    let stderr = ''
+    child.stdout.on('data', (chunk) => { stdout.push(chunk) })
+    child.stderr.setEncoding('utf8')
+    child.stderr.on('data', (chunk) => { stderr += chunk })
+    child.once('error', reject)
+    child.once('close', (code) => {
+      if (code === 0) resolve(Buffer.concat(stdout))
+      else reject(new Error(`${command} ${args.join(' ')} exited ${code}: ${stderr}`))
+    })
+  })
+}
+
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex')
 }
@@ -69,12 +85,12 @@ test('standalone release archive contains only safe regular package entries and 
 
     for (const descriptor of integrity.files) {
       assert.equal(typeof descriptor.path, 'string')
-      assert.match(descriptor.path, /^(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._/-]+$/u)
+      assert.match(descriptor.path, /^(?!.*(?:^|\/)\.\.(?:\/|$))[@A-Za-z0-9._/-]+$/u)
       assert.ok(Number.isSafeInteger(descriptor.size) && descriptor.size >= 0)
       assert.match(descriptor.sha256, /^[a-f0-9]{64}$/u)
       const packedPath = `package/dist/${descriptor.path}`
       assert.ok(paths.includes(packedPath), `integrity descriptor must reference a packed payload: ${packedPath}`)
-      const bytes = Buffer.from((await run('tar', ['-xOzf', archive, packedPath])).stdout)
+      const bytes = await runBytes('tar', ['-xOzf', archive, packedPath])
       assert.equal(bytes.byteLength, descriptor.size, `integrity size must bind ${packedPath}`)
       assert.equal(sha256(bytes), descriptor.sha256, `integrity hash must bind ${packedPath}`)
     }

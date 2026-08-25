@@ -12,14 +12,29 @@ user's current working directory.
 
 Every supported Terminay Server artifact includes its pinned Node runtime and
 matching pinned npm installer. Operators do not install system Node/npm or a
-compiler. Official SSH and Puzed entries are hardcoded catalogue metadata, but
-their packages are fetched from the public npmjs registry and are not available
-for a fresh offline installation.
+compiler. Every release carries verified, packed offline artifacts for SSH,
+Puzed, Codex, Claude Code, Cursor Agent, and omp. On first start Terminay
+copies those artifacts into ordinary immutable extension slots and enables them
+unless that server already has a recorded enabled/disabled choice. Built-ins
+use the same host and manifest validation as every other extension; they are
+not a privileged runtime tier.
+
+Release-built-in reconciliation is safe while a server is already running. A
+new enabled active artifact is started before reconciliation reports success;
+its provider contributions are then published as one host-manager update. An
+unchanged running extension is not restarted. If activation fails, the registry
+records that extension as failed and Settings shows its bounded failure and
+Restart action rather than an installed-but-stopped provider.
 
 Registry installation and uploaded packages with production dependencies
 require outbound HTTPS access from Terminay Server to public npmjs. A package
 file with no external dependencies can be installed while npmjs is unavailable.
 Private/custom registries are outside v1.
+
+The bundled artifact inventory includes the packed package, its production
+dependency closure, lock and tree digests, manifest permissions, and
+contributions. Electron and standalone Server consume the same bytes. A
+built-in does not contact npm during first-run materialization.
 
 ## Data-root layout
 
@@ -94,7 +109,9 @@ actually closed.
 Uninstall is blocked while enabled, referenced by another extension, profile,
 environment, or project, or used by an active operation. Code removal never
 cascade-deletes projects, provider data, secrets, VMs, or remote files. Bundled
-official baseline slots remain available for rollback even when disabled.
+official baseline slots remain available for rollback even when disabled. For a
+built-in with an npm-installed override, **Remove** removes that override and
+selects the bundled floor; it never removes the bundled artifact itself.
 
 ## Failure recovery
 

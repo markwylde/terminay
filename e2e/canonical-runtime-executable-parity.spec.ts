@@ -229,7 +229,16 @@ test('development orchestration and extracted packaged app expose identical cano
 				);
 			}
 		});
-		expect(packagedEvidence).toEqual(developmentEvidence);
+		// These two identities are minted per fresh local runtime. The parity
+		// contract is their shape and every stable UI/runtime fact, not equality
+		// across independently initialized data roots.
+		expect(developmentEvidence.profileId).toMatch(/^local:/u);
+		expect(packagedEvidence.profileId).toMatch(/^local:/u);
+		expect(developmentEvidence.serverId).toMatch(/^desktop-/u);
+		expect(packagedEvidence.serverId).toMatch(/^desktop-/u);
+		const { profileId: _developmentProfileId, serverId: _developmentServerId, ...stableDevelopmentEvidence } = developmentEvidence;
+		const { profileId: _packagedProfileId, serverId: _packagedServerId, ...stablePackagedEvidence } = packagedEvidence;
+		expect(stablePackagedEvidence).toEqual(stableDevelopmentEvidence);
 		await test.step('close packaged composition cleanly', () => closeCleanly(packaged!));
 		packaged = undefined;
 	} finally {

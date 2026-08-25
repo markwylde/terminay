@@ -15,8 +15,9 @@ when the Platform API is temporarily unavailable.
 
 ## Extension composition
 
-`terminay-plugin-puzed` is a separate npm repository/package and official
-catalogue entry. It declares a compatible SSH extension/provider dependency
+`terminay-plugin-puzed` is an independently publishable npm package under
+`extensions/puzed`, a built-in extension, and an official catalogue entry. It
+declares a compatible SSH extension/provider dependency
 through the public [extension platform](./extension-platform.md). It never
 imports SSH internals, receives an SSH private key, or duplicates a remote PTY/
 filesystem implementation.

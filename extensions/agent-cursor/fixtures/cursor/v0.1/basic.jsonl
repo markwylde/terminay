@@ -1,0 +1,3 @@
+{"role":"user","message":{"content":[{"type":"text","text":"<timestamp>Monday, Aug 24, 2026</timestamp>\n<user_query>\nInspect Cursor support\n</user_query>"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"Private response"},{"type":"tool_use","name":"Read","input":{"path":"private"}}]}}
+{"type":"turn_ended","status":"success"}

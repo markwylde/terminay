@@ -1,208 +1,133 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AgentStatusService, TerminalActivityService } from "../dist/index.js";
-import { providerFromForegroundProcess } from "../dist/activity/agentService.js";
-
-function fakeJournalSource() {
-  let listener;
-  const calls = [];
-  return {
-    calls,
-    async start(value) { listener = value; calls.push(["start"]); },
-    async stop() { calls.push(["stop"]); },
-    registerTerminal(identity) { calls.push(["register", identity]); },
-    terminalStarted(identity, pid) { calls.push(["started", identity, pid]); },
-    foregroundProcessChanged(identity, provider, shell) { calls.push(["foreground", identity, provider, shell]); },
-    unregisterTerminal(identity) { calls.push(["unregister", identity]); },
-    setEnabled(enabled) { calls.push(["enabled", enabled]); },
-    emit(observation) { return listener(observation); },
-  };
-}
 
 const identity = Object.freeze({ serverId: "server-1", projectId: "project-1", sessionId: "terminal-1" });
+const providerId = "example.agent/test";
+const binding = Object.freeze({ providerSessionId: "provider-session-1", mappingVersion: "1", fingerprint: { kind: "test", process: { id: "process-1" }, metadata: { proof: "fixture" } } });
 
-test("omp foreground detection keeps a Bun wrapper armed without creating an unbound agent", () => {
-  assert.equal(providerFromForegroundProcess("omp"), "omp");
-  assert.equal(providerFromForegroundProcess("oh-my-pi"), "omp");
-  assert.equal(providerFromForegroundProcess("/opt/homebrew/bin/bun"), "omp");
-});
-
-test("journal records reduce to canonical agent and activity state", async () => {
+async function fixture() {
   const activity = new TerminalActivityService({ serverId: identity.serverId });
   activity.register(identity);
-  const source = fakeJournalSource();
-  const agents = new AgentStatusService({ activity, journalSource: source, now: () => 100 });
-  await agents.start();
-  agents.register(identity);
-  agents.terminalStarted(identity, 4321);
-  agents.foregroundProcessChanged(identity, "codex", false);
-  await source.emit({ identity, provider: "codex", record: { type: "session_meta", payload: { id: "codex-session", cli_version: "0.2.0" } } });
-  await source.emit({ identity, provider: "codex", record: { type: "event_msg", payload: { type: "task_started", turn_id: "turn-1" } } });
-  const entry = Object.values(agents.getSnapshot().entries)[0];
-  assert.equal(entry.provider, "codex");
-  assert.equal(entry.sessionId, "codex-session");
-  assert.equal(entry.state, "working");
-  assert.equal(activity.snapshot().sessions[identity.sessionId].source, "journal:codex");
-  assert(source.calls.some(([kind, , pid]) => kind === "started" && pid === 4321));
+  const agents = new AgentStatusService({ activity, now: () => 1_000 });
+  await agents.start(); agents.register(identity);
+  assert.equal(agents.claimExtensionProvider(identity, providerId), true);
+  return { agents };
+}
+
+test("agent status service projects only claimed extension lifecycle DTOs", async () => {
+  const { agents } = await fixture();
+  const result = await agents.ingestExtensionLifecycle(identity, providerId, "1", binding, [
+    { kind: "session.started", title: "Provider session", model: { id: "model-1", displayName: "Model One" } },
+    { kind: "turn.started", turnId: "turn-1", promptText: "A bounded prompt" },
+    { kind: "wait.started", waitId: "wait-1", state: "waiting", reason: "approval" },
+  ]);
+  assert.deepEqual(result, { acceptedEventCount: 3, rejectedEventCount: 0 });
+  const [entry] = Object.values(agents.getSnapshot().entries);
+  assert.equal(entry.provider, providerId);
+  assert.equal(entry.displayName, "Provider session");
+  assert.equal(entry.promptText, "A bounded prompt");
+  assert.equal(entry.state, "waiting");
+  assert.equal(entry.model.id, "model-1");
   await agents.stop();
 });
 
-test("OMP model metadata preserves the current lifecycle state", async () => {
-  const activity = new TerminalActivityService({ serverId: identity.serverId });
-  activity.register(identity);
-  const source = fakeJournalSource();
-  const agents = new AgentStatusService({ activity, journalSource: source, now: () => 100 });
-  await agents.start(); agents.register(identity);
-  await agents.ingestJournalRecord(identity, "omp", { type: "session", id: "omp-session" });
-  await agents.ingestJournalRecord(identity, "omp", {
-    type: "message", id: "user-1", message: { role: "user", content: "A bounded prompt" },
-  });
-  await agents.ingestJournalRecord(identity, "omp", {
-    type: "model_change", model: "openai-codex/gpt-5.6-terra",
-  });
-  const root = Object.values(agents.getSnapshot().entries).find((entry) => entry.kind === "root");
-  assert.deepEqual({ state: root?.state, model: root?.model?.id }, {
-    state: "working", model: "openai-codex/gpt-5.6-terra",
-  });
-  assert.equal(activity.snapshot().sessions[identity.sessionId].providerState, "working");
+test("agent status service rejects unclaimed, invalid, and native-record input", async () => {
+  const { agents } = await fixture();
+  assert.equal(await agents.ingestJournalRecord(identity, providerId, { arbitrary: true }), false);
+  assert.deepEqual(
+    await agents.ingestExtensionLifecycle(identity, "example.agent/other", "1", binding, [{ kind: "session.started" }]),
+    { acceptedEventCount: 0, rejectedEventCount: 1, failure: "extension agent provider does not own this terminal session" },
+  );
+  assert.deepEqual(
+    await agents.ingestExtensionLifecycle(identity, providerId, "1", binding, [{ kind: "not-an-event" }]),
+    { acceptedEventCount: 0, rejectedEventCount: 1, failure: "extension lifecycle event is invalid" },
+  );
   await agents.stop();
 });
 
-test("records cannot cross exact terminal scope and content records are ignored", async () => {
-  const activity = new TerminalActivityService({ serverId: identity.serverId });
-  activity.register(identity);
-  const source = fakeJournalSource();
-  const agents = new AgentStatusService({ activity, journalSource: source });
-  await agents.start(); agents.register(identity);
-  await assert.rejects(() => agents.ingestJournalRecord({ ...identity, projectId: "other" }, "codex", { type: "session_meta", payload: { id: "bad" } }), /not active/u);
-  assert.equal(await agents.ingestJournalRecord(identity, "codex", { type: "response_item", payload: { type: "message", content: "private" } }), false);
-  assert.equal(Object.keys(agents.getSnapshot().entries).length, 0);
+test("provider release retires only its exact terminal lifecycle run", async () => {
+  const { agents } = await fixture();
+  await agents.ingestExtensionLifecycle(identity, providerId, "1", binding, [{ kind: "session.started" }]);
+  assert.equal(agents.releaseExtensionProvider(identity, providerId), true);
+  const [entry] = Object.values(agents.getSnapshot().entries);
+  assert.equal(entry.active, false);
+  assert.equal(entry.lastEventKind, "session.stopped");
   await agents.stop();
 });
 
-test("current Codex collaboration records create a named child beneath the root", async () => {
-  const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
-  const source = fakeJournalSource(); const agents = new AgentStatusService({ activity, journalSource: source, now: () => 100 });
-  await agents.start(); agents.register(identity);
-  await agents.ingestJournalRecord(identity, "codex", { type: "session_meta", payload: { id: "root-thread", cli_version: "0.149.0" } });
-  await agents.ingestJournalRecord(identity, "codex", { type: "event_msg", payload: {
-    type: "collab_agent_spawn_end", sender_thread_id: "root-thread", new_thread_id: "child-thread",
-    new_agent_nickname: "Ada", new_agent_role: "explorer", prompt: "Inspect the parser", status: "running",
-  } });
+test("a resumed native child reuses its exact row and preserves root isolation", async () => {
+  const { agents } = await fixture();
+  assert.deepEqual(await agents.ingestExtensionLifecycle(identity, providerId, "1", binding, [
+    { kind: "session.started", title: "Root" },
+    { kind: "subagent.started", subagentId: "child-1", title: "First child", model: { id: "model-a" } },
+    { kind: "subagent.done", subagentId: "child-1", outcome: "success" },
+    { kind: "subagent.started", subagentId: "child-1", title: "Resumed child", model: { id: "model-b" } },
+    { kind: "agent.metadata", agentId: "child-1", title: "Renamed child", model: { id: "model-c" } },
+  ]), { acceptedEventCount: 5, rejectedEventCount: 0 });
   const entries = Object.values(agents.getSnapshot().entries);
+  assert.equal(entries.length, 2);
   const child = entries.find((entry) => entry.kind === "subagent");
-  assert.deepEqual({
-    displayName: child?.displayName, promptText: child?.promptText, parentAgentId: child?.parentAgentId,
-    parentEntryId: child?.parentEntryId, state: child?.state, active: child?.active,
-  }, {
-    displayName: "Ada", promptText: "Inspect the parser", parentAgentId: "root-thread",
-    parentEntryId: "terminal-1:root-thread:root-thread", state: "working", active: true,
-  });
-  await agents.ingestJournalRecord(identity, "codex", { type: "event_msg", payload: {
-    type: "collab_agent_interaction_end", receiver_thread_id: "child-thread", status: { completed: "private result" },
-  } });
-  const completedChild = Object.values(agents.getSnapshot().entries).find((entry) => entry.kind === "subagent");
-  assert.deepEqual({ state: completedChild?.state, active: completedChild?.active, outcome: completedChild?.completionOutcome }, {
-    state: "done", active: true, outcome: "success",
-  });
+  assert.equal(child?.active, true);
+  assert.equal(child?.displayName, "Renamed child");
+  assert.equal(child?.model?.id, "model-c");
+  assert.equal(child?.parentEntryId, entries.find((entry) => entry.kind === "root")?.entryId);
   await agents.stop();
 });
 
-test("the first genuine Codex prompt remains the root session label", async () => {
-  const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
-  const source = fakeJournalSource(); const agents = new AgentStatusService({ activity, journalSource: source, now: () => 100 });
-  await agents.start(); agents.register(identity);
-  await agents.ingestJournalRecord(identity, "codex", { type: "session_meta", payload: { id: "root-thread", cli_version: "0.149.0" } });
-  const rawMessage = (text) => ({ type: "response_item", payload: {
-    type: "message", role: "user", content: [{ type: "input_text", text }],
-  } });
-  const completedMessage = (text, id) => ({ type: "event_msg", payload: {
-    type: "item_completed", item: { type: "UserMessage", id, content: [{ type: "text", text, text_elements: [] }] },
-  } });
-  assert.equal(await agents.ingestJournalRecord(identity, "codex", rawMessage("# AGENTS.md instructions\nInjected context")), false);
-  assert.equal(await agents.ingestJournalRecord(identity, "codex", rawMessage("hi")), false);
-  await agents.ingestJournalRecord(identity, "codex", completedMessage("hi", "user-message-1"));
-  assert.equal(await agents.ingestJournalRecord(identity, "codex", rawMessage("a later follow-up")), false);
-  await agents.ingestJournalRecord(identity, "codex", completedMessage("a later follow-up", "user-message-2"));
-  const root = Object.values(agents.getSnapshot().entries).find((entry) => entry.kind === "root");
-  assert.equal(root?.promptText, "hi");
-  await agents.stop();
-});
-
-test("a new process-bound rollout retires the old root and admits the fresh session", async () => {
-  const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
-  const source = fakeJournalSource(); const agents = new AgentStatusService({ activity, journalSource: source, now: () => 100 });
-  await agents.start(); agents.register(identity);
-  await agents.ingestJournalRecord(identity, "codex", { type: "session_meta", payload: { id: "old-root", cli_version: "0.149.0" } });
-  await agents.ingestJournalRecord(identity, "codex", { type: "session_meta", payload: { id: "fresh-root", cli_version: "0.149.0" } });
-  const roots = Object.values(agents.getSnapshot().entries).filter((entry) => entry.kind === "root");
-  assert.deepEqual(roots.map(({ sessionId, active }) => ({ sessionId, active })), [
-    { sessionId: "old-root", active: false },
-    { sessionId: "fresh-root", active: true },
+test("lifecycle publications reject invalid transitions atomically with sequence state unchanged", async () => {
+  const { agents } = await fixture();
+  const before = agents.getSnapshot();
+  const rejected = await agents.ingestExtensionLifecycle(identity, providerId, "1", binding, [
+    { kind: "session.started" },
+    { kind: "tool.finished", toolId: "missing" },
   ]);
-  await agents.stop();
-});
-
-test("current Codex item records replay all subagents into the root session", async () => {
-  const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
-  const source = fakeJournalSource(); const agents = new AgentStatusService({ activity, journalSource: source, now: () => 100 });
-  await agents.start(); agents.register(identity);
-  await agents.ingestJournalRecord(identity, "codex", { type: "session_meta", payload: { id: "root-thread", cli_version: "0.149.0" } });
-  for (const [id, nickname] of [["child-a", "Gauss"], ["child-b", "Popper"], ["child-c", "Jason"]]) {
-    await agents.ingestJournalRecord(identity, "codex", { type: "event_msg", payload: { type: "item_completed", item: {
-      type: "CollabAgentToolCall", tool: "spawn_agent", sender_thread_id: "root-thread",
-      receiver_thread_ids: [id], receiver_agents: [{ thread_id: id, agent_nickname: nickname }], prompt: "Solve independently",
-    } } });
+  assert.match(rejected.failure, /transition/);
+  assert.strictEqual(agents.getSnapshot(), before);
+  const accepted = await agents.ingestExtensionLifecycle(identity, providerId, "1", binding, [
+    { kind: "session.started" }, { kind: "turn.started", turnId: "turn-1" }, { kind: "tool.started", toolId: "tool-1", name: "shell" },
+  ]);
+  assert.deepEqual(accepted, { acceptedEventCount: 3, rejectedEventCount: 0 });
+  const [entry] = Object.values(agents.getSnapshot().entries);
+  assert.equal(entry.lastEventSequence, 3);
+  const revision = agents.getSnapshot().revision;
+  for (const events of [
+    [{ kind: "session.started" }],
+    [{ kind: "tool.started", toolId: "tool-1", name: "duplicate" }],
+    [{ kind: "tool.finished", toolId: "wrong" }],
+    [{ kind: "wait.finished" }],
+    [{ kind: "subagent.done", subagentId: "unknown", outcome: "success" }],
+  ]) {
+    const result = await agents.ingestExtensionLifecycle(identity, providerId, "1", undefined, events);
+    assert.match(result.failure, /(transition|event is invalid)/);
+    assert.equal(agents.getSnapshot().revision, revision);
   }
-  await agents.ingestJournalRecord(identity, "codex", { type: "event_msg", payload: { type: "item_completed", item: {
-    type: "CollabAgentToolCall", tool: "wait", agents_states: {
-      "child-a": { completed: "private result" }, "child-b": { completed: "private result" }, "child-c": { completed: "private result" },
-    },
-  } } });
-  const children = Object.values(agents.getSnapshot().entries).filter((entry) => entry.kind === "subagent");
-  assert.deepEqual(children.map(({ displayName, state }) => ({ displayName, state })), [
-    { displayName: "Gauss", state: "done" },
-    { displayName: "Popper", state: "done" },
-    { displayName: "Jason", state: "done" },
-  ]);
   await agents.stop();
 });
 
-test("Claude title, model, tools, and Agent subagents reduce from session records", async () => {
-  const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
-  const source = fakeJournalSource(); let now = 0;
-  const agents = new AgentStatusService({ activity, journalSource: source, now: () => ++now });
-  await agents.start(); agents.register(identity);
-  await agents.ingestJournalRecord(identity, "claude-code", { type: "permission-mode", mode: "default", sessionId: "claude-root", version: "2.1.201" });
-  await agents.ingestJournalRecord(identity, "claude-code", { type: "user", sessionId: "claude-root", promptId: "prompt-1", message: { role: "user", content: [{ type: "text", text: "private prompt" }] } });
-  await agents.ingestJournalRecord(identity, "claude-code", { type: "ai-title", sessionId: "claude-root", aiTitle: "Add white background to text" });
-  await agents.ingestJournalRecord(identity, "claude-code", { type: "assistant", sessionId: "claude-root", message: {
-    role: "assistant", model: "claude-opus-4-8", content: [{ type: "tool_use", id: "toolu-agent-1", name: "Agent", input: {
-      description: "Research parser", prompt: "Inspect the journal", subagent_type: "general-purpose",
-    } }],
-  } });
-  await agents.ingestJournalRecord(identity, "claude-code", { type: "user", sessionId: "claude-root", message: {
-    role: "user", content: [{ type: "tool_result", tool_use_id: "toolu-agent-1", is_error: false, content: "private result" }],
-  } });
-  const entries = Object.values(agents.getSnapshot().entries);
-  const root = entries.find((entry) => entry.kind === "root"); const child = entries.find((entry) => entry.kind === "subagent");
-  assert.deepEqual({ prompt: root?.promptText, model: root?.model?.id, state: root?.state }, {
-    prompt: "Add white background to text", model: "claude-opus-4-8", state: "working",
-  });
-  assert.deepEqual({ name: child?.displayName, prompt: child?.promptText, state: child?.state, outcome: child?.completionOutcome }, {
-    name: "Research parser", prompt: "Inspect the journal", state: "done", outcome: "success",
-  });
-  await agents.stop();
+test("publication bounds and retirement reject late events without touching unrelated providers",async()=>{
+  const activity=new TerminalActivityService({serverId:identity.serverId});const other={...identity,sessionId:"terminal-2"};activity.register(identity);activity.register(other);
+  const agents=new AgentStatusService({activity,now:()=>1000});await agents.start();agents.register(identity);agents.register(other);
+  const otherProvider="example.other/test";agents.claimExtensionProvider(identity,providerId);agents.claimExtensionProvider(other,otherProvider);
+  const otherBinding={...binding,providerSessionId:"other-session"};
+  await agents.ingestExtensionLifecycle(identity,providerId,"1",binding,[{kind:"session.started"}]);
+  await agents.ingestExtensionLifecycle(other,otherProvider,"1",otherBinding,[{kind:"session.started",title:"Healthy"}]);
+  const before=agents.getSnapshot();const oversized=await agents.ingestExtensionLifecycle(identity,providerId,"1",undefined,Array.from({length:65},(_,index)=>({kind:"turn.started",turnId:`turn-${index}`})));
+  assert.match(oversized.failure,/publication is invalid/);assert.strictEqual(agents.getSnapshot(),before);
+  assert.equal(agents.releaseExtensionProvider(identity,providerId),true);const retired=agents.getSnapshot();
+  const late=await agents.ingestExtensionLifecycle(identity,providerId,"1",undefined,[{kind:"turn.started",turnId:"late"}]);assert.match(late.failure,/does not own/);assert.strictEqual(agents.getSnapshot(),retired);
+  const healthy=Object.values(agents.getSnapshot().entries).find((entry)=>entry.provider===otherProvider);assert.equal(healthy.active,true);assert.equal(healthy.displayName,"Healthy");await agents.stop();
 });
 
-test("disabling stops observation and clears reduced state", async () => {
-  const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
-  const source = fakeJournalSource(); const agents = new AgentStatusService({ activity, journalSource: source });
-  await agents.start(); agents.register(identity);
-  await agents.ingestJournalRecord(identity, "codex", { type: "session_meta", payload: { id: "session" } });
-  assert.equal(Object.keys(agents.getSnapshot().entries).length, 1);
-  assert.equal(agents.setIntegrationEnabled(false), true);
-  assert.equal(Object.keys(agents.getSnapshot().entries).length, 0);
-  assert(source.calls.some(([kind, enabled]) => kind === "enabled" && enabled === false));
-  await agents.stop();
+test("agent snapshots are stamped with the constructing process instance id", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId });
+  activity.register(identity);
+  const first = new AgentStatusService({ activity, now: () => 1_000, processInstanceId: "process-a" });
+  const second = new AgentStatusService({ activity, now: () => 1_000, processInstanceId: "process-b" });
+  await first.start(); await second.start();
+  first.register(identity); second.register(identity);
+  assert.equal(first.getSnapshot().processInstanceId, "process-a");
+  assert.equal(second.getSnapshot().processInstanceId, "process-b");
+  assert.notEqual(new AgentStatusService({ activity }).processId, first.processId);
+  await first.stop(); await second.stop();
 });

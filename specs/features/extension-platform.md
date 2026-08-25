@@ -3,12 +3,12 @@
 ## Summary
 
 Terminay extensions are npm-distributed, server-installed packages that add
-project-environment providers. They execute only on the selected Terminay
-Server. Desktop and browser clients render bounded declarative contributions
+project-environment or coding-agent providers. They execute only on the
+selected Terminay Server. Desktop and browser clients render bounded declarative contributions
 from the server's matching UI bundle and never load extension code.
 
-The first public API is deliberately narrow: it supports the capabilities
-needed by the official SSH and Puzed extensions and leaves themes, editor
+The public API supports the capabilities needed by the official SSH, Puzed,
+Codex, Claude Code, Cursor Agent, and omp extensions and leaves themes, editor
 plugins, autocomplete, arbitrary commands, renderer components, and generic
 Server Core operation registration out of scope.
 
@@ -19,10 +19,12 @@ root. Embedded and standalone servers expose the same manager and runtime.
 Opening Extensions on a remote server manages that server, not Desktop's
 embedded server.
 
-Terminay ships a hardcoded official catalogue containing the SSH and Puzed npm
-packages and their expected metadata. The ordinary install path fetches these
-packages directly from the public npmjs registry; Terminay releases do not
-embed extension tarballs. An administrator may instead upload an npm-pack
+Terminay ships an official catalogue containing the built-in SSH, Puzed,
+Codex, Claude Code, Cursor Agent, and omp npm packages and their expected
+metadata. Verified package artifacts for that exact release are embedded in
+Electron and standalone server distributions, installed without network access,
+and enabled by default. See [built-in extensions](./built-in-extensions.md).
+An administrator may also install from public npmjs or upload an npm-pack
 compatible `.tgz` package to the selected Terminay Server, including a package
 that has not yet been published.
 Official packages use the same public manifest, extension host, broker, and
@@ -73,7 +75,23 @@ One npm package contributes one immutable extension identity in v1. Its
 - one relative ESM entrypoint exported inside the package;
 - declared permissions;
 - Terminay extension dependencies and compatible contribution ranges; and
-- namespaced project-environment provider contributions.
+- namespaced project-environment and coding-agent provider contributions.
+
+`contributes.projectEnvironments` and `contributes.agentProviders` are
+independently optional arrays; at least one supported contribution is required.
+An agent package does not register a fake project environment merely to satisfy
+the manifest.
+
+An activated project-environment contribution registers its declared
+capabilities with the selected server's environment router. The server derives
+this registration from the activated manifest/extension pair; Desktop,
+standalone composition, and generic Server Core never name an extension or
+provider id. A contribution can opt into `profileSave: { createEnvironment:
+true }`. Saving a profile otherwise persists only the profile. The opt-in
+creates one environment bound to the just-saved profile and calls the public
+`createEnvironment` callback; it is not inferred from a provider id, form, or
+capability. This keeps provisioners that require additional create-form input,
+such as Puzed, from receiving an unintended environment.
 
 Package name and extension id are separate so repository/package ownership can
 change without breaking persisted environment identities. Provider/action/form
@@ -95,7 +113,7 @@ authentication contexts, client transports, Electron, or host bridges.
 
 ## Public extension API
 
-The first API permits an extension to:
+The API permits an extension to:
 
 - define redacted profile/environment types and project-environment provider
   capabilities;
@@ -107,12 +125,36 @@ The first API permits an extension to:
 - make bounded provider-dependency calls, such as Puzed asking SSH to validate
   or open an environment; and
 - implement provider runtime callbacks through bounded typed IPC with
-  cancellation, deadlines, and concurrency limits.
+  cancellation, deadlines, and concurrency limits;
+- contribute a coding-agent provider and register its provider-specific
+  observation runtime;
+- use a terminal-scoped, environment-routed observation broker for bounded
+  process, TTY, open-file, realpath/stat/read, and append/replace evidence; and
+- publish validated provider-neutral root, turn, tool, wait, model, completion,
+  exit, and subagent lifecycle events to the host-owned canonical projection.
 
 The API does not expose raw application-protocol handlers, operation policies,
 workspace snapshots, arbitrary vault ids, other extension instances,
 authenticated client envelopes, UI-bundle internals, terminal data outside the
-provider-owned session, or native host APIs.
+broker-issued terminal scope, canonical store mutation, renderer hooks, or
+native host APIs.
+
+An agent provider declares the `agent-observation` permission and each required
+environment observation capability. The permission authorizes agent-context
+delivery and canonical publication; it does not grant client authority or
+direct canonical-store mutation. Extensions are ordinary trusted Node.js
+programs and may use public Node APIs and declared npm dependencies with the
+selected server account's authority. “Public Extension API only” prohibits
+imports from private Terminay packages and internal host bridges, not Node.js.
+
+For This server, an agent extension may combine its host-issued terminal
+context with Node process and filesystem APIs. For SSH and other non-local
+environments, local Node APIs cannot establish remote terminal or journal
+identity; the extension uses the environment-routed observation broker when
+the environment advertises that capability. The host accepts canonical events
+only for the terminal context it issued, but the extension process is not an
+OS sandbox and the installation warning accurately describes its broader
+filesystem and network authority.
 
 Extension dependencies are distinct from npm library dependencies. Puzed
 declares a compatible SSH extension dependency and calls its public provider
@@ -155,6 +197,15 @@ startup every enabled, compatible active slot is restored before provider
 catalogues are served. Activation failure is represented explicitly and never
 falls back to This server.
 
+The same rule applies when the selected server reconciles release-built-ins
+after startup: materializing a new enabled active slot includes bounded host
+activation before reconciliation completes. The host manager publishes the new
+provider ownership and contribution set only after activation succeeds. While
+activation is in progress, management surfaces a pending activation state; if
+it fails, it surfaces the bounded failure and offers Restart. It must not
+present the extension as installed while no running host owns its declared
+providers.
+
 Terminay Server runs each enabled extension in its own child process under the
 server's bundled Node runtime. The process uses a private inherited framed
 channel, a minimal environment, an immutable package-slot working directory,
@@ -179,7 +230,7 @@ Per-extension processes isolate crashes and reduce accidental cross-extension
 secret sharing. They do not constitute an operating-system security sandbox;
 custom extensions remain trusted code with the server account's authority.
 
-Server startup validates registry records and manifests without executing
+Server startup validates registry records, built-in inventories, and manifests without executing
 disabled or incompatible packages. Providers activate lazily on management,
 profile, or project use. States distinguish bundled/installed, enabled/disabled,
 compatible/incompatible, stopped/starting/running/failed, quarantined, and
@@ -250,7 +301,9 @@ Uninstall is blocked while enabled, referenced by profiles/projects, required
 by another extension, or in use. Code removal does not cascade-delete projects,
 external resources, credentials, or provider data. An installed official
 version can be disabled and retained as a rollback floor under the same
-slot-retention policy as a custom extension.
+slot-retention policy as a custom extension. A release-bundled slot is an
+immutable rollback floor: it can be disabled or superseded by a compatible
+external slot but cannot be physically removed from that release.
 
 ## Secrets and permissions
 
@@ -281,8 +334,9 @@ native-window chrome as every other Settings section. They are not presented
 in a project-editor sheet, a bespoke full-screen modal, or a second list/detail
 application nested inside Settings. Providers use ordinary Settings groups,
 rows, fields, buttons, badges, and disclosure patterns. The section names
-the selected Terminay Server as the authority and shows official SSH/Puzed
-cards, installed and disabled states, available explicit updates,
+the selected Terminay Server as the authority and shows built-in SSH, Puzed,
+Codex, Claude Code, Cursor Agent, and omp cards, installed and disabled states,
+available explicit updates,
 compatibility/failure details, permissions, dependants, and **Install from
 npm…**.
 
@@ -319,7 +373,8 @@ result instead of leaving the spent confirmation visible.
   experience.
 - Embedded and standalone servers install and run the same extension package;
   Desktop/browser clients neither store nor execute it.
-- Official and custom packages pass the same public manifest/host contract.
+- Built-in, official, and custom packages pass the same public manifest/host
+  contract; a bundled artifact has no private API access.
 - A custom exact npm package installs with scripts disabled and cannot use a
   git/file/http/alias spec or native/install-dependent tree.
 - Interrupted/failed update preserves the previous active version; rollback

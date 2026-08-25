@@ -72,6 +72,17 @@ export function selectForegroundProcessFromTable(
 		return { command: foregroundDescendants[0].command, consultProcessGroup: false }
 	}
 	if (foregroundDescendants.length > 1) {
+		// A number of interactive CLIs are launched through a one-process
+		// interpreter shim (`node -> codex`, `python -> claude`, and so on).
+		// Both processes own the foreground process group, but the executable
+		// which actually owns the session is the single descendant below that
+		// shim. Keep the existing conservative behaviour for a bushy TUI: a
+		// single unambiguous foreground chain may be unwrapped, while sibling
+		// helpers still report the terminal-facing parent.
+		const unwrapped = deepestUnambiguousForegroundDescendant(foregroundDescendants)
+		if (unwrapped !== undefined) {
+			return { command: unwrapped.command, consultProcessGroup: true }
+		}
 		return {
 			command: nearestDescendant(foregroundDescendants).command,
 			consultProcessGroup: true,
@@ -107,7 +118,7 @@ export interface HostProcessRow {
 function resolveSessionDescendants(
 	rootPid: number,
 	table: ReadonlyMap<number, HostProcessRow>,
-): ReadonlyArray<{ command: string; foreground: boolean; depth: number; pgid: number }> {
+): ReadonlyArray<{ pid: number; ppid: number; command: string; foreground: boolean; depth: number; pgid: number }> {
 	const children = new Map<number, number[]>()
 	for (const row of table.values()) {
 		const siblings = children.get(row.ppid)
@@ -116,7 +127,7 @@ function resolveSessionDescendants(
 	}
 	const pending: Array<{ pid: number; depth: number }> = [{ pid: rootPid, depth: 0 }]
 	const visited = new Set<number>([rootPid])
-	const descendants: Array<{ command: string; foreground: boolean; depth: number; pgid: number }> = []
+	const descendants: Array<{ pid: number; ppid: number; command: string; foreground: boolean; depth: number; pgid: number }> = []
 	while (pending.length > 0 && visited.size <= SESSION_PROCESS_LIMIT) {
 		const current = pending.shift()!
 		const next = (children.get(current.pid) ?? []).filter((pid) => !visited.has(pid))
@@ -126,6 +137,8 @@ function resolveSessionDescendants(
 			const row = table.get(pid)
 			if (row === undefined) continue
 			descendants.push({
+				pid: row.pid,
+				ppid: row.ppid,
 				command: row.command,
 				foreground: row.stat.includes('+'),
 				depth: current.depth + 1,
@@ -134,6 +147,34 @@ function resolveSessionDescendants(
 		}
 	}
 	return descendants
+}
+
+/** Return the leaf of a one-child foreground wrapper chain. We intentionally
+ * decline a branch: helpers often share a TUI's group and must not replace the
+ * TUI as the process reported to ordinary foreground consumers. */
+function deepestUnambiguousForegroundDescendant<T extends { pid: number; ppid: number; foreground: boolean; depth: number }>(
+	entries: readonly T[],
+): T | undefined {
+	const byParent = new Map<number, T[]>()
+	for (const entry of entries) {
+		const children = byParent.get(entry.ppid)
+		if (children === undefined) byParent.set(entry.ppid, [entry])
+		else children.push(entry)
+	}
+	const roots = entries.filter((entry) => !entries.some((candidate) => candidate.pid === entry.ppid))
+	if (roots.length !== 1) return undefined
+	let current = roots[0]
+	if (current === undefined) return undefined
+	let changed = false
+	for (;;) {
+		const children = (byParent.get(current.pid) ?? []).filter((entry) => entry.foreground)
+		if (children.length === 0) return changed ? current : undefined
+		if (children.length !== 1) return undefined
+		const child = children[0]
+		if (child === undefined) return undefined
+		current = child
+		changed = true
+	}
 }
 
 function nearestDescendant<T extends { depth: number }>(entries: readonly T[]): T {

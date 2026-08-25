@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "extensions": [
+    { "directory": "ssh", "extensionId": "com.terminay.ssh", "packageName": "terminay-plugin-ssh" },
+    { "directory": "puzed", "extensionId": "com.puzed.platform", "packageName": "terminay-plugin-puzed" },
+    { "directory": "agent-codex", "extensionId": "com.terminay.agent.codex", "packageName": "terminay-agent-codex" },
+    { "directory": "agent-claude-code", "extensionId": "com.terminay.agent.claude-code", "packageName": "terminay-agent-claude-code" },
+    { "directory": "agent-cursor", "extensionId": "com.terminay.agent.cursor", "packageName": "terminay-agent-cursor" },
+    { "directory": "agent-omp", "extensionId": "com.terminay.agent.omp", "packageName": "terminay-agent-omp" }
+  ]
+}

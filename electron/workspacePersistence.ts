@@ -1,13 +1,35 @@
+import path from 'node:path';
 import type { WorkspaceState } from '../packages/server-core/src/workspace';
 import {
 	FileWorkspaceStateBackend,
+	WorkspacePersistenceError,
 	type WorkspaceStateBackend,
 } from '../packages/server-core/src/workspaceRepository';
+
+export { WorkspacePersistenceError };
 
 export type EmbeddedWorkspacePersistenceFault =
 	| 'unreadable'
 	| 'invalid'
 	| 'uncommittable';
+
+export function embeddedBuiltInExtensionArtifactRoot(
+	options: Readonly<{
+		appRoot: string;
+		isPackaged: boolean;
+		resourcesPath: string;
+	}>,
+): string {
+	return options.isPackaged
+		? path.join(options.resourcesPath, 'built-in-extensions')
+		: path.join(options.appRoot, 'build', 'built-in-extensions');
+}
+
+export function isEmbeddedWorkspacePersistenceError(
+	error: unknown,
+): error is WorkspacePersistenceError {
+	return error instanceof WorkspacePersistenceError;
+}
 
 /** Resolve the deterministic E2E-only persistence fault. Merely setting the
  * fault variable in a production process has no effect. */
@@ -28,12 +50,46 @@ export function embeddedWorkspacePersistenceFault(
 export function createEmbeddedWorkspaceStateBackend(
 	options: Readonly<{
 		filePath: string;
+		/** Compatibility transform applied and durably committed before the
+		 * canonical repository sees a restored snapshot. */
+		migrate?: (state: unknown) => unknown;
 		testFault?: EmbeddedWorkspacePersistenceFault;
 	}>,
 ): WorkspaceStateBackend {
-	const backend = new FileWorkspaceStateBackend(options.filePath);
+	const fileBackend = new FileWorkspaceStateBackend(options.filePath);
+	const backend =
+		options.migrate === undefined
+			? fileBackend
+			: new MigratingWorkspaceStateBackend(fileBackend, options.migrate);
 	if (options.testFault === undefined) return backend;
 	return new FaultingWorkspaceStateBackend(backend, options.testFault);
+}
+
+class MigratingWorkspaceStateBackend implements WorkspaceStateBackend {
+	constructor(
+		private readonly backend: WorkspaceStateBackend,
+		private readonly migrate: (state: unknown) => unknown,
+	) {}
+
+	async load(): Promise<unknown | undefined> {
+		const state = await this.backend.load();
+		if (state === undefined) return undefined;
+		const migrated = this.migrate(state);
+		if (migrated !== state) {
+			await this.backend.commit(migrated as WorkspaceState);
+		}
+		return migrated;
+	}
+
+	commit(state: WorkspaceState): Promise<void> {
+		return this.backend.commit(state);
+	}
+
+	commitSync(state: WorkspaceState): void {
+		if (this.backend.commitSync === undefined)
+			throw new Error('embedded workspace backend lacks an atomic commit');
+		this.backend.commitSync(state);
+	}
 }
 
 class FaultingWorkspaceStateBackend implements WorkspaceStateBackend {

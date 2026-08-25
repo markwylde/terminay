@@ -20,6 +20,7 @@ import {
 } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { basename, dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { JsonValue } from '@terminay/protocol';
 import { managerOriginFromSessionOrigin } from '@terminay/protocol';
 import {
@@ -29,10 +30,10 @@ import {
 	FileWorkspaceStateBackend,
 	createNodePtyFactory,
 	createNodeShellDiscoveryHost,
-	createPuzedSshProductionExtensionManagement,
+	createProductionExtensionManagement,
 	createServerAiProviderAdapters,
 	createServerCoreComposition,
-	ExtensionProjectEnvironmentRuntime,
+	registerActivatedExtensionProjectEnvironmentRuntimes,
 	FileCatalog,
 	DocumentationCatalog,
 	MdxRuntime,
@@ -83,7 +84,9 @@ import {
 	createServerHealthServer,
 	createServerRemoteExposure,
 	createStandaloneServer,
+	FileDataRootLease,
 	runServerMcpStdio,
+	resolveStandaloneServerIdentity,
 	type LocalUiServer,
 	type ServerPairingHandoff,
 	type ServerRemoteExposure,
@@ -112,7 +115,7 @@ const MAX_STANDALONE_FOLDER_SIZE_ENTRIES = 50_000;
 
 await assertStandaloneReleaseIntegrity();
 
-const options = parseServerCliOptions(process.argv.slice(2), process.env);
+let options = parseServerCliOptions(process.argv.slice(2), process.env);
 if (options.command === 'help') process.stdout.write(formatServerHelp());
 else if (options.command === 'version')
 	process.stdout.write(`${options.serverVersion}\n`);
@@ -128,6 +131,20 @@ else if (options.command === 'mcp') {
 	});
 }
 else {
+	// The lease is acquired before resolving or opening any durable server
+	// authority. It prevents two standalone processes from concurrently owning
+	// one workspace, while identity resolution gives separate roots distinct
+	// authorities without breaking a legacy workspace's canonical id.
+	const standaloneLease = options.command === 'start' ? new FileDataRootLease() : undefined;
+	if (standaloneLease !== undefined) {
+		await standaloneLease.acquire(options.dataRoot);
+		try {
+			options = await resolveStandaloneServerIdentity(options);
+		} catch (error) {
+			await standaloneLease.release(options.dataRoot).catch(() => undefined);
+			throw error;
+		}
+	}
 	const remotePairingPin = requiresRemotePairingPin(options)
 		? requiredRemotePairingPin(options)
 		: undefined;
@@ -149,6 +166,7 @@ else {
 			`${JSON.stringify({ serverId: options.serverId, endpoint: options.endpoint, roomId: handoff.roomId, pairingSessionId: handoff.pairingSessionId, pairingUrl: handoff.pairingUrl, expiresAt: handoff.pairingExpiresAt, expiresInSeconds: Math.max(1, Math.ceil((handoff.expiresAt - Date.now()) / 1000)), requiresApproval: true })}\n`,
 		);
 	} else {
+		try {
 		// Pairing material is the sole local HTTP credential. It is delivered in
 		// the URL fragment and never copied into a second readiness field.
 		const handoff = remote.start();
@@ -254,6 +272,7 @@ else {
 				await runtime!.stop().catch(() => undefined);
 				await composition.shutdown().catch(() => undefined);
 				await healthServer?.stop().catch(() => undefined);
+				await standaloneLease?.release(options.dataRoot).catch(() => undefined);
 				process.stderr.write(
 					`${error instanceof Error ? error.message : 'server failed'}\n`,
 				);
@@ -275,6 +294,7 @@ else {
 				await runtime!.stop();
 				await composition.shutdown();
 				await healthServer?.stop();
+				await standaloneLease?.release(options.dataRoot);
 			})()
 				.then(() => process.exit(0))
 				.catch((error: unknown) => {
@@ -286,6 +306,10 @@ else {
 		};
 		process.on('SIGINT', shutdown);
 		process.on('SIGTERM', shutdown);
+		} catch (error) {
+			await standaloneLease?.release(options.dataRoot).catch(() => undefined);
+			throw error;
+		}
 	}
 }
 
@@ -335,7 +359,7 @@ async function createServerComposition(
 		core: ServerCoreComposition;
 		workspaceWasCreated: boolean;
 		vault: Awaited<ReturnType<typeof createStandaloneVaultComposition>>;
-		extensions: ReturnType<typeof createPuzedSshProductionExtensionManagement>;
+		extensions: ReturnType<typeof createProductionExtensionManagement>;
 	}>
 > {
 	const eventJournal = new OrderedEventJournal();
@@ -411,21 +435,18 @@ async function createServerComposition(
 			? {}
 			: { unlockFd: options.vaultUnlockFd }),
 	});
-	const extensions = createPuzedSshProductionExtensionManagement({
+	const extensions = createProductionExtensionManagement({
 		dataRoot: options.dataRoot,
 		authorityLabel: 'This server',
+		builtInArtifactRoot: resolveBuiltInExtensionArtifactRoot(),
 		vault,
 		projectEnvironments,
-		workspace,
 	});
-	projectEnvironmentRegistry.register(
-		new ExtensionProjectEnvironmentRuntime(
-			'com.terminay.ssh/connection',
-			['terminal', 'filesystem'],
-			extensions.hosts,
-			() => projectEnvironments.state,
-		),
-	);
+	registerActivatedExtensionProjectEnvironmentRuntimes({
+		registry: projectEnvironmentRegistry,
+		hosts: extensions.hosts,
+		snapshot: () => projectEnvironments.state,
+	});
 	const git = new ServerGitAdapter({
 		serverId: options.serverId,
 		git: gitService,
@@ -1385,6 +1406,14 @@ function resolveWebRtcRuntimeRoot(
 	const configured = env.TERMINAY_WEBRTC_RUNTIME_ROOT?.trim();
 	if (configured) return resolve(configured);
 	return resolve(cwd, '../../build/webrtc-runtime');
+}
+
+/** The standalone npm package carries the same staged artifact bytes as the
+ * Electron resource bundle. This lookup is module-relative, never cwd based. */
+function resolveBuiltInExtensionArtifactRoot(): string {
+	const configured = process.env.TERMINAY_BUILTIN_EXTENSIONS_ROOT?.trim();
+	if (configured) return resolve(configured);
+	return resolve(dirname(fileURLToPath(import.meta.url)), 'built-in-extensions');
 }
 
 function hostedSignalOptions(env: Readonly<Record<string, string | undefined>>): {
