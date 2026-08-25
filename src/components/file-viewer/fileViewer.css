@@ -207,6 +207,12 @@
 	margin: 0 0 1.1em;
 }
 
+.documentation-editor__content img {
+	display: block;
+	max-width: 100%;
+	height: auto;
+}
+
 .documentation-editor__content h1,
 .documentation-editor__content h2,
 .documentation-editor__content h3,
