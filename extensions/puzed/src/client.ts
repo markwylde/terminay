@@ -1,4 +1,4 @@
-import type { DeleteMachineRequest, HostBridgesResponse, ImagesResponse, Job, JobResponse, Machine, MachineAsyncResponse, MachineNICsResponse, MachinePowerRequest, MachineResponse, MachinesResponse, Me, OrgSettingsResponse, WorkersResponse } from "./api-types.js";
+import type { CreateMachineRequest, DeleteMachineRequest, HostBridgesResponse, ImagesResponse, Job, JobResponse, Machine, MachineAsyncResponse, MachineNameSuggestionResponse, MachineNICsResponse, MachinePowerRequest, MachineResponse, MachinesResponse, Me, OrgSettingsResponse, WorkersResponse } from "./api-types.js";
 import { normalizeBaseUrl, validateMe, type ProfileValidation } from "./profile.js";
 
 export class PuzedApiError extends Error {
@@ -52,6 +52,11 @@ export class PuzedClient {
   listWorkers(cursor?: string, signal?: AbortSignal) { return this.request<WorkersResponse>("/api/v1/workers", { query: { page_size: "100", ...(cursor ? { cursor } : {}) }, signal }); }
   listBridges(cursor?: string, signal?: AbortSignal) { return this.request<HostBridgesResponse>("/api/v1/bridges", { query: { page_size: "100", ...(cursor ? { cursor } : {}) }, signal }); }
   getSettings(signal?: AbortSignal) { return this.request<OrgSettingsResponse>("/api/v1/org/settings", { signal }); }
+  suggestMachineName(signal?: AbortSignal) { return this.request<MachineNameSuggestionResponse>("/api/v1/machines/name-suggestion", { signal }); }
+
+  createMachine(request: CreateMachineRequest, idempotencyKey: string, signal?: AbortSignal) {
+    return this.request<MachineAsyncResponse>("/api/v1/machines", { method: "POST", body: request, headers: { "Idempotency-Key": idempotencyKey }, signal });
+  }
 
   powerMachine(id: string, state: MachinePowerRequest["state"], idempotencyKey: string, signal?: AbortSignal) {
     return this.request<MachineAsyncResponse>(`/api/v1/machines/${encodeURIComponent(id)}/power`, { method: "POST", body: { state }, headers: { "Idempotency-Key": idempotencyKey }, signal });

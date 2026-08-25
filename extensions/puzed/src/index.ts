@@ -28,6 +28,23 @@ export function activate(context: ExtensionContext): void {
             { id: "default-root", type: "text", label: "Default project root" },
           ] }],
         },
+        createForm: {
+          id: "puzed-create-vm", title: "Create Puzed VM",
+          description: "Terminay creates a dedicated SSH key for this VM and stores its private half only in this server's vault.", submitLabel: "Create VM and open project",
+          sections: [
+            { id: "source", title: "Boot source", disclosure: "always", fields: [
+              { id: "image-id", type: "select", label: "Image", required: true, searchable: true, optionSource: "com.puzed.platform/vm/images" },
+              { id: "size-preset", type: "preset-cards", label: "Size", required: true, optionSource: "com.puzed.platform/vm/size-presets" },
+              { id: "worker-id", type: "select", label: "Host", required: true, searchable: true, optionSource: "com.puzed.platform/vm/workers" },
+              { id: "bridge-id", type: "select", label: "Network", optionSource: "com.puzed.platform/vm/bridges" },
+            ] },
+            { id: "project", title: "Project access", disclosure: "always", fields: [
+              { id: "name", type: "text", label: "VM name", required: true, suggestionSource: "com.puzed.platform/vm/name-suggestion", suggestionLabel: "Regenerate" },
+              { id: "username", type: "text", label: "SSH username", defaultValue: "vms", required: true },
+              { id: "root", type: "text", label: "Project root", defaultValue: "~", required: true },
+            ] },
+          ],
+        },
       },
       runtime: puzedRuntime,
     });
@@ -36,18 +53,52 @@ export function activate(context: ExtensionContext): void {
 interface PuzedEnvironmentState extends Record<string, JsonValue> {
   profileId: string; machineId: string; bindingId: string; sshRevision: number;
   displayName: string; baseUrl: string; managementState: string; trustChallenge: JsonValue;
+  jobId?: string; username?: string; root?: string;
 }
 
 /** Puzed owns Platform management identity and delegates all workspace
  * transport to SSH through the public provider-dependency broker. */
 const puzedRuntime: ProviderRuntime = {
   async testProfile(request, call) {
-    try { await client(request.profileId, request.values, call).validateProfile(); return []; }
+    try { await client(request.profileId, await profileValues(request.profileId, request.values, call), call).validateProfile(); return []; }
     catch (error) { return [{ code: safeCode(error), message: safeMessage(error, "Puzed Platform connection failed") }]; }
   },
-  async resolveOptions() { return { options: [] }; },
+  async resolveOptions(request, call) {
+    const profileId = required(request.profileId, "profileId");
+    const platform = client(profileId, await profileValues(profileId, request.values, call), call);
+    if (request.sourceId === "com.puzed.platform/vm/images") {
+      const page = await platform.listImages();
+      return { options: (page.items ?? []).filter((image) => image.status === "ready" && image.cloud_init_supported).map((image) => ({ value: image.id, label: image.name, ...(image.description === undefined ? {} : { description: image.description }), ...(image.min_disk_bytes === undefined ? {} : { disabledReason: "Choose a size with enough root disk." }) })) };
+    }
+    if (request.sourceId === "com.puzed.platform/vm/size-presets") {
+      const settings = (await platform.getSettings()).settings;
+      return { options: (settings.default_size_presets ?? []).map((preset) => ({ value: preset.id, label: preset.label, description: `${preset.vcpus} vCPU · ${formatBytes(preset.memory_bytes)} RAM · ${formatBytes(preset.root_disk_bytes)} disk`, default: preset.id === settings.default_size_preset_id })) };
+    }
+    if (request.sourceId === "com.puzed.platform/vm/workers") {
+      const page = await platform.listWorkers();
+      return { options: (page.items ?? []).map((worker) => ({ value: worker.id, label: worker.name, description: `${worker.cpu_cores} cores · ${formatBytes(worker.memory_total_bytes)} RAM`, ...(worker.status !== "online" || worker.draining || worker.fault_state !== "ok" ? { disabledReason: worker.status_reason ?? "This host is unavailable." } : {}) })) };
+    }
+    if (request.sourceId === "com.puzed.platform/vm/bridges") {
+      const page = await platform.listBridges();
+      return { options: (page.items ?? []).map((bridge) => ({ value: bridge.id, label: bridge.name, default: bridge.is_default })) };
+    }
+    if (request.sourceId === "com.puzed.platform/vm/name-suggestion") {
+      const suggestion = await platform.suggestMachineName();
+      return { options: [{ value: suggestion.name, label: suggestion.name, default: true }] };
+    }
+    throw new Error("Puzed option source is unavailable");
+  },
   async createEnvironment(request, call) {
-    const values = request.values; const profileId = required(request.profileId, "profileId");
+    const profileId = required(request.profileId, "profileId");
+    // The original public composition API accepts a complete ephemeral machine
+    // description. Keep that path independent of the profile broker: it is
+    // also how another trusted provider can compose Puzed with SSH. The
+    // declarative UI path deliberately fetches the saved profile so its URL
+    // and vault-backed credential remain authoritative.
+    const values = typeof request.values["image-id"] === "string"
+      ? await profileValues(profileId, request.values, call)
+      : request.values;
+    if (typeof values["image-id"] === "string") return createVm(request, profileId, values, call);
     const machineId = required(values.machineId, "machineId");
     const generated = typeof values.bindingId === "string" ? undefined : record(await dependency(call, "managed-binding.generate", { ownerProfileId: profileId, operationId: required(values.operationId ?? call.idempotencyKey, "operationId"), logicalHostIdentityHint: `puzed:${profileId}:${machineId}` }));
     const bindingId = typeof values.bindingId === "string" ? required(values.bindingId, "bindingId") : required(generated?.bindingId, "bindingId");
@@ -62,7 +113,9 @@ const puzedRuntime: ProviderRuntime = {
     return { state: "ready", providerState, status: available(providerState, String(record(verified).canonicalRoot ?? values.root ?? "~")) };
   },
   async resumeOperation(request, call) {
-    const current = parseState(request.providerState); const verified = record(await dependency(call, "managed-binding.verify", { bindingId: current.bindingId }, current.sshRevision));
+    const current = parseState(request.providerState);
+    if (current.jobId !== undefined) return resumeCreatedVm(request, current, call);
+    const verified = record(await dependency(call, "managed-binding.verify", { bindingId: current.bindingId }, current.sshRevision));
     if (verified.state !== "ready") return { state: "pending", operationId: request.operationId, providerState: current, progress: waitingProgress(request.operationId), pollAfterMs: 2_000 };
     current.trustChallenge = null; return { state: "ready", providerState: current, status: available(current, String(verified.canonicalRoot ?? "~")) };
   },
@@ -89,11 +142,41 @@ const puzedRuntime: ProviderRuntime = {
 };
 
 function dependency(call: ProviderCallContext, operation: string, payload: JsonValue, expectedRevision?: number): Promise<JsonValue> { return call.dependencies.call({ providerId: "com.terminay.ssh/connection", operation, payload }, { deadlineAt: call.deadlineAt, signal: call.signal, ...(call.idempotencyKey ? { idempotencyKey: call.idempotencyKey } : {}), ...(expectedRevision === undefined ? {} : { expectedRevision }) }); }
-function client(profileId: string | undefined, values: Record<string, JsonValue>, call: ProviderCallContext): PuzedClient { const id = required(profileId, "profileId"); return new PuzedClient(required(values["base-url"] ?? values.baseUrl, "baseUrl"), { withApiKey: (use) => call.secrets.withValue({ profileId: id, fieldId: "api-key", purpose: "puzed-api-key" }, use) }); }
-function state(displayName: string, profileId: string, machineId: string, bindingId: string, sshRevision: number, values: Record<string, JsonValue>): PuzedEnvironmentState { return { profileId, machineId, bindingId, sshRevision, displayName, baseUrl: required(values["base-url"] ?? values.baseUrl, "baseUrl"), managementState: "running", trustChallenge: null }; }
+async function createVm(request: Parameters<ProviderRuntime["createEnvironment"]>[0], profileId: string, values: Record<string, JsonValue>, call: ProviderCallContext) {
+  const platform = client(profileId, values, call); const settings = (await platform.getSettings()).settings;
+  const preset = (settings.default_size_presets ?? []).find((item) => item.id === values["size-preset"]);
+  if (preset === undefined) throw new Error("Selected Puzed size is unavailable");
+  const generated = record(await dependency(call, "managed-binding.generate", { ownerProfileId: profileId, operationId: required(call.idempotencyKey, "idempotencyKey"), logicalHostIdentityHint: `puzed:${profileId}:pending` }));
+  const bindingId = required(generated.bindingId, "bindingId"); const publicKey = required(generated.publicKey, "publicKey");
+  const created = await platform.createMachine({ name: required(values.name, "name"), worker_id: required(values["worker-id"], "workerId"), vcpus: preset.vcpus, memory_bytes: preset.memory_bytes, root_disk_bytes: preset.root_disk_bytes, source: { type: "image", image_id: required(values["image-id"], "imageId") }, guest_agent: true, guest_login_mode: "ssh_key_only", ssh_keys: [publicKey], start: true, tags: ["system:Terminay"], ...(typeof values["bridge-id"] === "string" && values["bridge-id"] !== "" ? { nics: [{ bridge_id: values["bridge-id"], ip_mode: "dhcp" }] } : {}) }, required(call.idempotencyKey, "idempotencyKey"));
+  const providerState = state(request.displayName, profileId, created.machine.id, bindingId, 0, values);
+  providerState.jobId = created.job_id; providerState.managementState = "provisioning";
+  return { state: "pending" as const, operationId: created.job_id, providerState, progress: provisioningProgress(created.job_id), pollAfterMs: 2_000 };
+}
+
+async function resumeCreatedVm(request: Parameters<ProviderRuntime["resumeOperation"]>[0], current: PuzedEnvironmentState, call: ProviderCallContext) {
+  const platform = client(current.profileId, await profileValues(current.profileId, {}, call), call);
+  const job = await platform.getJob(current.jobId!);
+  if (job.status === "failed" || job.status === "canceled") throw new Error("Puzed VM provisioning did not complete");
+  if (job.status !== "succeeded") return { state: "pending" as const, operationId: current.jobId!, providerState: current, progress: provisioningProgress(current.jobId!), pollAfterMs: 2_000 };
+  const interfaces = await platform.getMachineInterfaces(current.machineId);
+  const host = (interfaces.items ?? []).find((item) => typeof item.observed_ip === "string")?.observed_ip;
+  if (host === undefined) return { state: "pending" as const, operationId: current.jobId!, providerState: current, progress: waitingProgress(current.jobId!), pollAfterMs: 2_000 };
+  const ssh = record(await dependency(call, "managed-binding.bind", { bindingId: current.bindingId, machineId: current.machineId, logicalHostIdentity: `puzed:${current.profileId}:${current.machineId}`, host, port: 22, username: current.username ?? "vms", root: current.root ?? "~" }));
+  const revision = number(ssh.revision, "revision"); const verified = record(await dependency(call, "managed-binding.verify", { bindingId: current.bindingId }, revision));
+  current.sshRevision = revision; delete current.jobId; current.managementState = "running";
+  if (verified.state !== "ready") { current.trustChallenge = verified; return { state: "pending" as const, operationId: request.operationId, providerState: current, progress: waitingProgress(request.operationId), pollAfterMs: 2_000 }; }
+  return { state: "ready" as const, providerState: current, status: available(current, String(verified.canonicalRoot ?? current.root ?? "~")) };
+}
+
+async function profileValues(profileId: string | undefined, values: Record<string, JsonValue>, call: ProviderCallContext): Promise<Record<string, JsonValue>> { if (profileId === undefined) return values; const profile = await call.profiles.get(profileId); return { ...profile.values, ...values }; }
+function client(profileId: string | undefined, values: Record<string, JsonValue>, call: ProviderCallContext): PuzedClient { const baseUrl = required(values["base-url"] ?? values.baseUrl, "baseUrl"); if (profileId === undefined) { const apiKey = required(values["api-key"] ?? values.apiKey, "apiKey"); return new PuzedClient(baseUrl, { async withApiKey(use) { const bytes = new TextEncoder().encode(apiKey); try { return await use(bytes); } finally { bytes.fill(0); } } }); } return new PuzedClient(baseUrl, { withApiKey: (use) => call.secrets.withValue({ profileId, fieldId: "api-key", purpose: "puzed-api-key" }, use) }); }
+function state(displayName: string, profileId: string, machineId: string, bindingId: string, sshRevision: number, values: Record<string, JsonValue>): PuzedEnvironmentState { return { profileId, machineId, bindingId, sshRevision, displayName, baseUrl: required(values["base-url"] ?? values.baseUrl, "baseUrl"), managementState: "running", trustChallenge: null, ...(typeof values.username === "string" ? { username: values.username } : {}), ...(typeof values.root === "string" ? { root: values.root } : {}) }; }
 function parseState(value: JsonValue): PuzedEnvironmentState { const item = record(value); for (const key of ["profileId", "machineId", "bindingId", "displayName", "baseUrl", "managementState"]) required(item[key], key); number(item.sshRevision, "sshRevision"); return item as PuzedEnvironmentState; }
 function available(value: PuzedEnvironmentState, root: string) { return { state: "available" as const, defaultRoot: root, revision: value.sshRevision, card: { id: "puzed-vm", title: value.displayName, summary: "Puzed management and SSH workspace are ready.", icon: "cloud" as const, tone: "positive" as const, facts: [{ label: "Machine", value: value.machineId }, { label: "Root", value: root }], httpsLink: { label: "Open in Puzed", url: new URL(`/vms/${encodeURIComponent(value.machineId)}`, value.baseUrl).toString() } } }; }
 function waitingProgress(operationId: string) { return { operationId, title: "Waiting for SSH", resumable: true, stages: [{ id: "ssh", label: "Verify SSH access", state: "active" as const }] }; }
+function provisioningProgress(operationId: string) { return { operationId, title: "Creating Puzed VM", resumable: true, stages: [{ id: "puzed", label: "Provision Puzed VM", state: "active" as const }, { id: "ssh", label: "Verify SSH access", state: "pending" as const }] }; }
+function formatBytes(value: number): string { if (value >= 1024 ** 3) return `${Math.round(value / 1024 ** 3)} GB`; return `${Math.round(value / 1024 ** 2)} MB`; }
 function record(value: JsonValue): Record<string, JsonValue> { if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Puzed provider data is invalid"); return value; }
 function required(value: unknown, name: string): string { if (typeof value !== "string" || !value || value.length > 2048 || value.includes("\0")) throw new Error(`Puzed ${name} is invalid`); return value; }
 function number(value: unknown, name: string): number { if (!Number.isSafeInteger(value) || Number(value) < 0) throw new Error(`Puzed ${name} is invalid`); return Number(value); }
