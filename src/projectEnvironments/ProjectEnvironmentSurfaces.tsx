@@ -144,10 +144,30 @@ export function ProjectEnvironmentsWindow({
 		},
 		[refresh],
 	);
+	const submitForm = useCallback(
+		async (action: () => Promise<unknown>, success: string) => {
+			setBusy(true);
+			setError('');
+			setAnnouncement('Operation started.');
+			try {
+				await action();
+				setAnnouncement(success);
+				await refresh();
+			} catch (cause) {
+				setAnnouncement('');
+				// DeclarativeProviderForm owns submit failures so it can keep the
+				// user's values visible and place the error beside the submission.
+				throw cause instanceof Error ? cause : new Error(String(cause));
+			} finally {
+				setBusy(false);
+			}
+		},
+		[refresh],
+	);
 
 	return (
 		<div className="project-environments-window" aria-busy={busy}>
-				{error ? (
+				{error && formTarget === null ? (
 					<div className="settings-error-banner environment-window-banner" role="alert">
 						<strong>Unable to complete the server operation</strong>
 						<p>{error}</p>
@@ -244,14 +264,17 @@ export function ProjectEnvironmentsWindow({
 						onCancel={() => setFormTarget(null)}
 						onSubmit={async (values) => {
 							if (formTarget.mode === 'environment' && formTarget.profileId !== undefined) {
-								await run(() => client!.createEnvironment(formTarget.providerId, formTarget.profileId!, values), 'Environment creation started.');
+								await submitForm(
+									() => client!.createEnvironment(formTarget.providerId, formTarget.profileId!, values),
+									'Environment creation started.',
+								);
 							} else if (formTarget.profileId === undefined) {
-								await run(
+								await submitForm(
 									() => client!.createProfile(formTarget.providerId, values),
 									'Connection saved.',
 								);
 							} else {
-								await run(
+								await submitForm(
 									() => client!.updateProfile(formTarget.profileId!, values),
 									'Connection updated.',
 								);

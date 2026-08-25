@@ -49,6 +49,11 @@ test('development watches the same generated server workspace used by releases',
 		/TERMINAY_DEVELOPMENT_SOURCE_WORKSPACES = '1'/u,
 		'development must have Vite transform and watch workspace source directly',
 	);
+	assert.match(
+		runner,
+		/await runFile\(process\.execPath, \[npmCli, 'run', 'build:shared'\]/u,
+		'a clean worktree must build server-core before extension package tests stage built-ins',
+	);
 	assert.match(runner, /stageSelectedSecureWeriftRuntime\(undefined, \{ reuseValidated: true \}\)/u);
 	assert.match(runner, /Promise\.all\(\[initialBundle, preloadBuild, runtimeStage\]\)/u);
 	assert.doesNotMatch(

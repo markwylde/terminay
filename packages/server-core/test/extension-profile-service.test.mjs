@@ -40,3 +40,19 @@ test("profile save never guesses environment creation without the explicit contr
   assert.equal(result.environments.length, 0);
   assert.deepEqual(calls, ["testProfile"]);
 });
+
+test("profile validation returns the provider's explicit public issue rather than a generic command failure", async () => {
+  let durable; const repository = new ProjectEnvironmentRepository({ async load() { return durable; }, async commit(value) { durable = structuredClone(value); } }, "server-profile"); await repository.load();
+  const hosts = {
+    providerDefinitions: () => [definition],
+    statuses: () => [{ extensionId: "dev.example.provisioner", state: "running", providers: [definition] }],
+    activatedProjectEnvironmentContributions: () => [],
+    async invokeProvider() { return [{ message: "Puzed request failed (403)." }]; },
+  };
+  const vault = { vault: { async put() {}, async remove() {} }, extensionSecrets: { upsertBinding() {}, removeBinding() {} } };
+  const service = new ExtensionProfileService(repository, hosts, vault);
+  await assert.rejects(
+    () => service.createProfile(definition.providerId, { "display-name": "VM account", hostname: "api.example" }, { clientId: "client", signal: new AbortController().signal }),
+    (error) => error?.code === "validation" && error.message === "Puzed request failed (403).",
+  );
+});
