@@ -116,7 +116,8 @@ the isolated [MDX browser runtime](./mdx-browser-runtime.md).
 - Relative project images and assets resolve from the document folder through
   server-authorized resource identities. Image insertion that creates or copies
   a project file is an explicit filesystem mutation with normal project scope
-  validation.
+  validation. Rich-editor images preserve their intrinsic aspect ratio and are
+  capped at the available width of the Documentation reading canvas.
 - The executable preview is always rendered through the isolated MDX browser
   runtime. The MDXEditor editing surface never evaluates project imports inside
   Terminay's main renderer.
