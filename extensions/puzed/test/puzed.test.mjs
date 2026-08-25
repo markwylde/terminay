@@ -86,6 +86,19 @@ test("lifecycle calls carry idempotency and revision controls", async () => {
   assert.deepEqual(JSON.parse(requests[1].init.body), { disk_disposition: "keep" });
 });
 
+test("VM creation sends the dedicated public key, exact Terminay tag, and durable idempotency key", async () => {
+  const requests = [];
+  const client = new PuzedClient("https://platform.test", secret(), { fetch: async (url, init) => {
+    requests.push({ url: String(url), init });
+    return Response.json({ machine: machine({ id: "created-vm" }), job_id: "job-1" }, { status: 202 });
+  }});
+  const created = await client.createMachine({ name: "brave-otter", worker_id: "worker-1", vcpus: 2, memory_bytes: 2_000_000_000, root_disk_bytes: 20_000_000_000, source: { type: "image", image_id: "image-1" }, guest_login_mode: "ssh_key_only", ssh_keys: ["ssh-ed25519 AAAA managed"], tags: ["system:Terminay"], start: true }, "create-key");
+  assert.equal(created.machine.id, "created-vm");
+  assert.equal(requests[0].url, "https://platform.test/api/v1/machines");
+  assert.equal(requests[0].init.headers["Idempotency-Key"], "create-key");
+  assert.deepEqual(JSON.parse(requests[0].init.body), { name: "brave-otter", worker_id: "worker-1", vcpus: 2, memory_bytes: 2_000_000_000, root_disk_bytes: 20_000_000_000, source: { type: "image", image_id: "image-1" }, guest_login_mode: "ssh_key_only", ssh_keys: ["ssh-ed25519 AAAA managed"], tags: ["system:Terminay"], start: true });
+});
+
 test("inventory excludes untagged VMs and requires a retained SSH binding", () => {
   const base = new URL("https://platform.test");
   assert.throws(() => toInventoryItem(machine({ tags: ["production"] }), "profile-1", base, undefined, "10.0.0.2"));

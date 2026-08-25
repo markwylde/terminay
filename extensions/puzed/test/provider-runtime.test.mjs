@@ -14,8 +14,26 @@ function runtimeFixture() {
     secrets: { async withValue(_request, use) { return use(new TextEncoder().encode("secret")); } },
     sshAgent: { async listIdentities() { return []; }, async sign() { throw new Error("unused"); } },
   };
-  return { runtime: registrations[0].runtime, calls, call };
+  return { definition: registrations[0].definition, runtime: registrations[0].runtime, calls, call };
 }
+
+test("Puzed exposes a create form and tests a saved profile with its vault-bound API key", async () => {
+  const f = runtimeFixture();
+  assert.equal(f.definition.createForm?.submitLabel, "Create VM and open project");
+  assert.equal(f.definition.createForm?.sections[0]?.fields.some((field) => field.id === "image-id"), true);
+  const fetch = globalThis.fetch; const requests = [];
+  globalThis.fetch = async (url, init) => {
+    requests.push({ url: String(url), init });
+    return Response.json({ principal_type: "api_key", effective_scopes: { machines: "write", images: "read", workers: "read", networks: "read", jobs: "read", events: "read", settings: "read" }, org: { id: "org-1", slug: "home", status: "ready" } });
+  };
+  try {
+    assert.deepEqual(await f.runtime.testProfile({ profileId: "profile-1", values: {} }, f.call), []);
+  } finally {
+    globalThis.fetch = fetch;
+  }
+  assert.equal(requests[0].url, "https://platform.test/api/v1/me");
+  assert.equal(requests[0].init.headers.Authorization, "Bearer secret");
+});
 
 test("Puzed creates a composed environment only through the public SSH dependency", async () => {
   const f = runtimeFixture();

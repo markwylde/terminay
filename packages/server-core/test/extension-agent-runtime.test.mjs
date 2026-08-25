@@ -399,6 +399,36 @@ test("a late-published agent provider re-admits an already-running matching term
   await agents.stop();
 });
 
+test("a disabled then re-enabled provider immediately reclaims its live terminal", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
+  const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
+  const providers = [provider]; const admitted = []; const cancelled = [];
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: {
+      agentProviderContributions: () => providers,
+      async admitAgentTerminal(value) { admitted.push(value); },
+      async cancelAgentTerminal(value) { cancelled.push(value); return true; },
+      async drainAgentObservers() {},
+    },
+    contextId: (_identity, incarnation) => `context-${incarnation}`,
+  });
+  registry.register(identity); registry.terminalStarted(identity, 4321);
+  assert.equal(registry.foregroundProcessChanged(identity, "test-agent"), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(admitted.length, 1);
+
+  providers.splice(0);
+  assert.equal(await registry.reconcileProviderInventory(), 1);
+  assert.deepEqual(cancelled, [{ contextId: "context-1", reason: "provider-disabled" }]);
+
+  providers.push(provider);
+  assert.equal(registry.reobserveExistingTerminals(), 1);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(admitted.map(({ context }) => context.contextId), ["context-1", "context-2"]);
+  await agents.stop();
+});
+
 test("a failed agent admission is observable before the sidebar falls back to no agent entries", async () => {
   const activity = new TerminalActivityService({ serverId: identity.serverId });
   activity.register(identity);
