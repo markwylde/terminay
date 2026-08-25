@@ -50,18 +50,17 @@ test("extension provider claims one terminal incarnation before host admission",
   assert.equal(entry.displayName, "Extension session");
   assert.equal(entry.promptText, "Hello from the extension");
 
-  // A second matching topology signal cancels the old observer before a new
-  // incarnation is admitted; no two child observers own this terminal.
-  assert.equal(registry.foregroundProcessChanged(identity, "test-agent"), true);
+  // A worker joining the process topology must not cancel the already-proven
+  // root observer. Explicit foreground replacement owns that transition.
+  registry.topologyChanged(identity);
   await new Promise((resolve) => setTimeout(resolve, 5));
-  assert.deepEqual(admitted.map(({ context }) => context.contextId), ["context-1", "context-2"]);
-  assert.deepEqual(cancelled, [{ contextId: "context-1", reason: "terminal-replaced" }]);
+  assert.deepEqual(admitted.map(({ context }) => context.contextId), ["context-1"]);
+  assert.deepEqual(cancelled, []);
 
   registry.terminalExited(identity);
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(cancelled, [
-    { contextId: "context-1", reason: "terminal-replaced" },
-    { contextId: "context-2", reason: "terminal-closed" },
+    { contextId: "context-1", reason: "terminal-closed" },
   ]);
   await agents.stop();
 });
@@ -145,7 +144,7 @@ test("an admission throw retries discovery instead of giving up on the foregroun
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(attempts, 2);
   assert.equal(admitted.length, 2);
-  assert.deepEqual(admitted.map((value) => value.context.providerId), [provider.id, provider.id]);
+  assert.deepEqual(admitted.map((value) => value.context.providerId), [provider.id, omp.id]);
   await agents.stop();
 });
 
@@ -168,6 +167,64 @@ test("a node wrapper foreground still admits the capable agent provider", async 
   assert.equal(registry.foregroundProcessChanged(identity, "node"), true);
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(admitted[0].context.providerId, provider.id);
+  await agents.stop();
+});
+
+test("a node wrapper does not stay on the first alphabetical provider when a later one binds", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId });
+  activity.register(identity);
+  const agents = new AgentStatusService({ activity });
+  await agents.start(); agents.register(identity);
+  const claude = { ...provider, id: "com.terminay.agent.claude-code/cli", displayName: "Claude Code", processMatchers: [{ executableName: "claude" }] };
+  const codex = { ...provider, id: "com.terminay.agent.codex/cli", displayName: "Codex", processMatchers: [{ executableName: "codex" }] };
+  const admitted = [];
+  const scheduled = [];
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: {
+      agentProviderContributions: () => [claude, codex],
+      async admitAgentTerminal(value) {
+        admitted.push(value);
+        return { state: value.context.providerId === codex.id ? "bound" : "not-bound" };
+      },
+      async cancelAgentTerminal() { return true; },
+      async drainAgentObservers() {},
+    },
+    schedule(callback, milliseconds) { const timer = { callback, milliseconds }; scheduled.push(timer); return timer; },
+    cancelSchedule() {},
+  });
+  registry.register(identity); registry.terminalStarted(identity, 4321);
+  assert.equal(registry.foregroundProcessChanged(identity, "node"), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(admitted[0].context.providerId, claude.id);
+  assert.equal(scheduled.length, 1);
+  await scheduled.shift().callback();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(admitted.map((value) => value.context.providerId), [claude.id, codex.id]);
+  await agents.stop();
+});
+
+test("a prefixed Codex executable matches the Codex provider instead of the first capable one", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId });
+  activity.register(identity);
+  const agents = new AgentStatusService({ activity });
+  await agents.start(); agents.register(identity);
+  const claude = { ...provider, id: "com.terminay.agent.claude-code/cli", displayName: "Claude Code", processMatchers: [{ executableName: "claude" }] };
+  const codex = { ...provider, id: "com.terminay.agent.codex/cli", displayName: "Codex", processMatchers: [{ executableName: "codex" }] };
+  const admitted = [];
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: {
+      agentProviderContributions: () => [claude, codex],
+      async admitAgentTerminal(value) { admitted.push(value); return { state: "bound" }; },
+      async cancelAgentTerminal() { return true; },
+      async drainAgentObservers() {},
+    },
+  });
+  registry.register(identity); registry.terminalStarted(identity, 4321);
+  assert.equal(registry.foregroundProcessChanged(identity, "codex-tui"), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(admitted[0].context.providerId, codex.id);
   await agents.stop();
 });
 
@@ -218,6 +275,39 @@ test("a shell return revokes the exact observer before a globally resumed journa
   assert.equal(Object.values(first.agents.getSnapshot().entries)[0].displayName, "First owner");
   assert.equal(Object.values(second.agents.getSnapshot().entries)[0].displayName, "Second owner");
   await first.agents.stop(); await second.agents.stop();
+});
+
+test("a throwing unmatched provider does not pin discovery away from a later binder", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
+  const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
+  const claude = { ...provider, id: "com.terminay.agent.claude-code/cli", displayName: "Claude Code", processMatchers: [{ executableName: "claude" }] };
+  const codex = { ...provider, id: "com.terminay.agent.codex/cli", displayName: "Codex", processMatchers: [{ executableName: "codex" }] };
+  const admitted = []; const scheduled = [];
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: {
+      agentProviderContributions: () => [claude, codex],
+      async admitAgentTerminal(value) {
+        admitted.push(value.context.providerId);
+        if (value.context.providerId === claude.id) throw new Error("claude observe failed");
+        return { state: "bound" };
+      },
+      async cancelAgentTerminal() { return true; },
+      async drainAgentObservers() {},
+    },
+    reobserveDebounceMs: 0,
+    schedule(callback, milliseconds) { const timer = { callback, milliseconds }; scheduled.push(timer); return timer; },
+    cancelSchedule() {},
+  });
+  registry.register(identity); registry.terminalStarted(identity, 4321);
+  assert.equal(registry.foregroundProcessChanged(identity, "node"), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  const rotate = scheduled.find((timer) => timer.milliseconds === 0);
+  assert.ok(rotate, "a throwing unmatched provider must rotate to the next capable provider");
+  await rotate.callback();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(admitted, [claude.id, codex.id]);
+  registry.terminalExited(identity); await agents.stop();
 });
 
 test("a not-bound foreground provider retries its exact terminal until its journal appears", async () => {
@@ -303,7 +393,52 @@ test("a failed agent admission is observable before the sidebar falls back to no
   await agents.stop();
 });
 
-test("topology polling is inert for an unchanged signature and rebinds exactly once when it changes", async () => {
+test("topology polling keeps discovery armed after the fast not-bound window so a late Codex journal still binds", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
+  const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
+  const admitted = []; const cancelled = []; const scheduled = [];
+  let state = "not-bound";
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: {
+      agentProviderContributions: () => [provider],
+      async admitAgentTerminal(value) { admitted.push(value); return { state }; },
+      async cancelAgentTerminal(value) { cancelled.push(value); return true; },
+      async drainAgentObservers() {},
+    },
+    reobserveDebounceMs: 0,
+    topologyPollIntervalMs: 100,
+    topologySignature: async () => "codex-journal-open",
+    schedule(callback, milliseconds) { const timer = { callback, milliseconds }; scheduled.push(timer); return timer; },
+    cancelSchedule() {},
+  });
+  registry.register(identity); registry.terminalStarted(identity, 4321);
+  assert.equal(registry.foregroundProcessChanged(identity, "codex"), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  for (let attempt = 0; attempt < 16 && state === "not-bound"; attempt += 1) {
+    const retry = scheduled.find((timer) => timer.milliseconds === 0);
+    if (retry === undefined) break;
+    scheduled.splice(scheduled.indexOf(retry), 1);
+    await retry.callback();
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const beforeTopology = admitted.length;
+  assert.ok(beforeTopology >= 11, "the fast window must exhaust before topology takes over");
+  state = "bound";
+  const topology = scheduled.find((timer) => timer.milliseconds === 100);
+  assert.ok(topology, "exhausted discovery must arm topology polling");
+  scheduled.splice(scheduled.indexOf(topology), 1);
+  await topology.callback();
+  await new Promise((resolve) => setImmediate(resolve));
+  const reobserve = scheduled.find((timer) => timer.milliseconds === 0);
+  assert.ok(reobserve, "the first topology sample after exhaustion must reobserve even when the signature is unchanged");
+  await reobserve.callback();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(admitted.length > beforeTopology, "a journal that appears after the fast window must still be admitted");
+  registry.terminalExited(identity); await agents.stop();
+});
+
+test("topology polling is inert after a proven binding, including when workers change the topology", async () => {
   const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
   const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
   const admitted = []; const cancelled = []; const scheduled = []; let signature = "one";
@@ -324,13 +459,11 @@ test("topology polling is inert for an unchanged signature and rebinds exactly o
   assert.equal(admitted.length, 1); assert.equal(cancelled.length, 0);
   signature = "two";
   await scheduled.shift().callback(); await new Promise((resolve) => setImmediate(resolve));
-  const reobserve = scheduled.find((timer) => timer.milliseconds === 0);
-  await reobserve.callback(); await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(admitted.length, 2); assert.deepEqual(cancelled, [{ contextId: admitted[0].context.contextId, reason: "terminal-replaced" }]);
+  assert.equal(admitted.length, 1); assert.deepEqual(cancelled, []);
   registry.terminalExited(identity); await agents.stop();
 });
 
-test("a topology change that loses the writer cancels the observer and rejects late lifecycle", async () => {
+test("a topology change does not tear down a proven writer; terminal replacement still owns retirement", async () => {
   const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
   const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
   const admitted = []; const cancelled = []; const scheduled = [];
@@ -359,12 +492,9 @@ test("a topology change that loses the writer cancels the observer and rejects l
   signature = "writer-left";
   state = "not-bound";
   await scheduled.shift().callback(); await new Promise((resolve) => setImmediate(resolve));
-  const reobserve = scheduled.find((timer) => timer.milliseconds === 0);
-  await reobserve.callback(); await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(cancelled, [{ contextId: admitted[0].context.contextId, reason: "terminal-replaced" }]);
-  const late = await agents.ingestExtensionLifecycle(identity, provider.id, "test-v1", undefined, [{ kind: "turn.started", turnId: "foreign-turn" }]);
-  assert.equal(late.acceptedEventCount, 0);
-  assert.match(late.failure ?? "", /bound|own|claim/u);
+  assert.deepEqual(cancelled, []);
+  const continued = await agents.ingestExtensionLifecycle(identity, provider.id, "test-v1", undefined, [{ kind: "turn.started", turnId: "same-pty-turn" }]);
+  assert.equal(continued.acceptedEventCount, 1);
   registry.terminalExited(identity); await agents.stop();
 });
 
@@ -412,12 +542,12 @@ test("a host-originated child retirement clears only its exact runtime context",
 
 test("teardown causes retire each context exactly once", async (t) => {
   const scenarios=[
-    ["terminal exit",(registry,id,context)=>registry.terminalExited(id),"terminal-closed",1],
-    ["provider disable",(registry,id,context)=>registry.retireProvider(context.providerId,"provider-disabled"),"provider-disabled",1],
-    ["provider update",(registry,id,context)=>registry.retireProvider(context.providerId,"extension-stopped"),"extension-stopped",1],
+    ["terminal exit",(registry,id,_context)=>registry.terminalExited(id),"terminal-closed",1],
+    ["provider disable",(registry,_id,context)=>registry.retireProvider(context.providerId,"provider-disabled"),"provider-disabled",1],
+    ["provider update",(registry,_id,context)=>registry.retireProvider(context.providerId,"extension-stopped"),"extension-stopped",1],
     ["project removal",(registry,id)=>registry.projectRemoved(id.projectId),"terminal-closed",1],
     ["environment revision",(registry,id)=>registry.environmentRevisionChanged(id.projectId),"terminal-replaced",1],
-    ["child crash",(registry,id,context)=>registry.contextRetired(context.contextId,context.providerId),undefined,0],
+    ["child crash",(registry,_id,context)=>registry.contextRetired(context.contextId,context.providerId),undefined,0],
     ["server shutdown",(registry)=>registry.drain("server-stopping"),undefined,0],
   ];
   for(const [name,action,reason,cancelCount] of scenarios) await t.test(name,async()=>{

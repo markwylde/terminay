@@ -10,8 +10,9 @@ export async function consumeEventStream(response: Response, onInvalidation: (va
   let buffer = "";
   while (true) {
     const { value, done } = await reader.read(); buffer += value ?? "";
-    let boundary: number;
-    while ((boundary = buffer.indexOf("\n\n")) >= 0) {
+    while (true) {
+      const boundary = buffer.indexOf("\n\n");
+      if (boundary < 0) break;
       const block = buffer.slice(0, boundary).replace(/\r/g, ""); buffer = buffer.slice(boundary + 2);
       let name = ""; let data = ""; let cursor = "";
       for (const line of block.split("\n")) {

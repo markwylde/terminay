@@ -39,6 +39,33 @@ const DEFAULTS = Object.freeze({
   maxBackoffMs: 30_000,
 });
 
+const INHERITED_CHILD_ENV = Object.freeze([
+  "PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "LC_CTYPE", "TZ",
+]);
+const UNIX_PATH = "/usr/sbin:/usr/bin:/bin:/sbin";
+
+/** Bounded host environment for an extension child. npm's sterile env stays
+ * on the installer; This-server agent observation needs PATH/HOME so `ps` and
+ * `lsof` resolve the same way they did in the Electron process on main. */
+export function extensionChildEnvironment(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  // Electron augments ProcessEnv with application variables that are required
+  // in its own process but deliberately absent from an extension child.
+  const env = {} as NodeJS.ProcessEnv;
+  for (const key of INHERITED_CHILD_ENV) {
+    const value = source[key];
+    if (typeof value === "string" && value.length > 0) env[key] = value;
+  }
+  env.PATH = completeChildPath(env.PATH);
+  env.ELECTRON_RUN_AS_NODE = "1";
+  env.NODE_ENV = "production";
+  env.TERMINAY_EXTENSION_HOST = "1";
+  return env;
+}
+
+function completeChildPath(path: string | undefined): string {
+  return [...new Set([...(path?.split(":") ?? []), ...UNIX_PATH.split(":")].filter((part) => part.length > 0))].join(":");
+}
+
 /** Supervises exactly one extension process. The process boundary is crash
  * isolation, not an OS security sandbox: installed extensions remain trusted
  * code running as the Terminay Server account. */
@@ -93,7 +120,7 @@ export class ExtensionHost {
       cwd: this.descriptor.packageRoot,
       execPath: this.options.nodeExecutable,
       execArgv: [],
-      env: { ELECTRON_RUN_AS_NODE: "1", NODE_ENV: "production", TERMINAY_EXTENSION_HOST: "1" } as unknown as NodeJS.ProcessEnv,
+      env: extensionChildEnvironment(),
       stdio: ["ignore", "ignore", "ignore", "ipc"],
       serialization: "json",
     });

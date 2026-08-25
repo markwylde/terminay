@@ -46,7 +46,7 @@ test('a real process-bound Codex wrapper retries its delayed rollout, then publi
 		// retry before the exact one-child chain can bind.
 		await typeInVisibleTerminal(
 			mainWindow,
-			"node -e \"setTimeout(() => require('node:child_process').spawn('codex', [], { stdio: 'inherit' }), 350)\"\n",
+			"node -e \"setTimeout(() => require('node:child_process').spawn('codex', [], { stdio: 'inherit' }), 350); setInterval(() => {}, 1000)\"\n",
 		);
 		await openFileExplorer(mainWindow);
 		const root = mainWindow

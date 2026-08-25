@@ -11,6 +11,7 @@ import {
   ServerVaultService,
   TerminalActivityService,
   assertExtensionCompatible,
+  extensionChildEnvironment,
   extensionLaunchDescriptor,
   validateExtensionLaunchDescriptor,
 } from "../dist/index.js";
@@ -44,13 +45,29 @@ async function fixture(extensionId, source) {
   };
 }
 
+test("the extension child inherits host PATH and HOME without installer-style NODE_OPTIONS", () => {
+  const env = extensionChildEnvironment({
+    PATH: "/opt/custom/bin",
+    HOME: "/tmp/terminay-home",
+    NODE_OPTIONS: "--require ./evil.js",
+    DYLD_INSERT_LIBRARIES: "/tmp/inject.dylib",
+  });
+  assert.match(env.PATH, /^\/opt\/custom\/bin:/u);
+  assert.match(env.PATH, /\/usr\/sbin/u);
+  assert.equal(env.HOME, "/tmp/terminay-home");
+  assert.equal(env.NODE_OPTIONS, undefined);
+  assert.equal(env.DYLD_INSERT_LIBRARIES, undefined);
+  assert.equal(env.ELECTRON_RUN_AS_NODE, "1");
+  assert.equal(env.TERMINAY_EXTENSION_HOST, "1");
+});
+
 test("one extension child activates, invokes methods, and uses an identity-scoped broker", async () => {
   const descriptor = await fixture("example.test", `
     export async function activate(context) {
       context.registerProjectEnvironmentProvider({ providerId: "example.test/main", displayName: "Example", capabilities: ["terminal"] });
       return { methods: {
         echo(input) { return { input, extensionId: context.extensionId }; },
-        runtime() { return { electronRunAsNode: process.env.ELECTRON_RUN_AS_NODE, nodeEnv: process.env.NODE_ENV, apiVersion: context.apiVersion }; },
+        runtime() { return { electronRunAsNode: process.env.ELECTRON_RUN_AS_NODE, nodeEnv: process.env.NODE_ENV, apiVersion: context.apiVersion, path: process.env.PATH, home: process.env.HOME }; },
         async log(input) { return context.broker.request("log", input); }
       }};
     }
@@ -61,7 +78,13 @@ test("one extension child activates, invokes methods, and uses an identity-scope
   assert.equal(host.status().state, "running");
   assert.deepEqual(host.status().providers.map((provider) => provider.providerId), ["example.test/main"]);
   assert.deepEqual(await host.invoke({ method: "echo", input: "hello" }), { input: "hello", extensionId: "example.test" });
-  assert.deepEqual(await host.invoke({ method: "runtime" }), { electronRunAsNode: "1", nodeEnv: "production", apiVersion: "1.2.0" });
+  const runtime = await host.invoke({ method: "runtime" });
+  assert.equal(runtime.electronRunAsNode, "1");
+  assert.equal(runtime.nodeEnv, "production");
+  assert.equal(runtime.apiVersion, "1.2.0");
+  assert.equal(typeof runtime.path, "string");
+  assert.match(runtime.path, /\/usr\/sbin|\/usr\/bin|\/bin/u);
+  if (process.env.HOME) assert.equal(runtime.home, process.env.HOME);
   assert.equal(await host.invoke({ method: "log", input: { message: "safe" } }), "resolved-metadata");
   assert.equal(requests[0].extensionId, "example.test");
   assert.equal(requests[0].operation, "log");
@@ -559,10 +582,11 @@ test("agent providers require a manifest declaration and receive only parent-adm
   assert.equal(observations.length, 1);
   assert.equal(observations[0].terminal.terminalSessionId, "terminal-1");
   await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.equal(publications.length, 4, "binding, root, static child and late child lifecycle events publish separately");
+  assert.equal(publications.length, 5, "binding, provisional root, root enrichment, static child and late child lifecycle events publish separately");
   assert.equal(publications[1].events[0].kind, "session.started");
-  assert.deepEqual(publications[2].events[0], { kind: "subagent.started", subagentId: "child-1", title: "Child" });
-  assert.deepEqual(publications[3].events[0], { kind: "subagent.started", subagentId: "child-2", title: "Child" });
+  assert.deepEqual(publications[2].events[0], { kind: "agent.metadata", title: "fixture-agent" });
+  assert.deepEqual(publications[3].events[0], { kind: "subagent.started", subagentId: "child-1", title: "Child" });
+  assert.deepEqual(publications[4].events[0], { kind: "subagent.started", subagentId: "child-2", title: "Child" });
   assert.equal(await host.cancelAgentTerminal({ contextId: "context-1", reason: "terminal-closed" }), true);
   assert.equal(cancellations.length, 1);
   assert.equal(await host.cancelAgentTerminal({ contextId: "context-1", reason: "terminal-closed" }), false, "teardown is exactly once");
