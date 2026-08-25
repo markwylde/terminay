@@ -161,8 +161,13 @@ status must not be conflated with terminal or agent attention.
   private authenticated Desktop host transport and does not require a network
   listener, internet access, hosted signaling, or WebRTC; remote profiles
   require their own selected transport.
-- A Desktop installation has one embedded Local server identity and may
-  remember any number of remote profiles.
+- A Desktop user-data root has one embedded Local server identity and may
+  remember any number of remote profiles. On first use Desktop creates an
+  opaque random identity in that root and retains it across restart; it never
+  derives authority from the application name, project name, path, window, or
+  process. Two Desktop profiles, development/packaged installations, or test
+  roots therefore remain separate even when their restored project and
+  terminal ids are identical.
 - A native window is bound to exactly one server at a time. Its title and
   security scope make the connection clear.
 - The header connection menu lists every remembered profile, with **Local**
@@ -483,6 +488,17 @@ pairing fragment or private key.
   launched server-UI inventory contains only the current build's assets, so
   leftover hashed files from a previous watch rebuild cannot be published or
   launched.
+- Source-development Desktop uses a dedicated `Terminay Development` user-data
+  namespace by default. It must not read, mutate, or silently attach to an
+  installed Terminay release's persistence or embedded server authority. Tests
+  and migration tooling may select an explicit isolated namespace with
+  `TERMINAY_USER_DATA_DIR`; packaged releases retain the normal `Terminay`
+  namespace. Each selected namespace owns its durable opaque Local identity,
+  Local profile route, server-UI partition, workspace/environment/recording
+  stores, and bundle cache. Historical embedded records using the former
+  canonical Local id migrate only within their own namespace before normal
+  server/project/session validation; a foreign server identity is never
+  adopted or rewritten.
 - Wide layouts resemble the Electron workspace.
 - Narrow layouts replace wide tab strips and sidebars with accessible
   selectors, drawers, stacked surfaces, and touch controls while retaining the

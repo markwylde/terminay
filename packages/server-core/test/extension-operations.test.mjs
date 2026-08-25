@@ -21,7 +21,7 @@ function installer() {
 test("fixed extension operations expose bounded catalogue and preview DTOs", async () => {
   const handlers = createExtensionOperationHandlers({ installer: installer(), authorityLabel: "Remote Terminay" });
   const list = await handlers.queries["extensions.list"](query("extensions.list", {}));
-  assert.equal(list.authorityLabel, "Remote Terminay"); assert.equal(list.catalogue.length, 2); assert.equal(list.catalogue[0].official, true);
+  assert.equal(list.authorityLabel, "Remote Terminay"); assert.equal(list.catalogue.length, 6); assert.equal(list.catalogue[0].official, true);
   const preview = await handlers.queries["extensions.preview-install"](query("extensions.preview-install", { spec: "fixture-extension" }, ["extensions:manage"]));
   assert.equal(preview.exactVersion, "1.2.3"); assert.equal(preview.extensionId, "dev.example.fixture"); assert.deepEqual(preview.permissions, ["network"]); assert.equal(preview.trustedCodeWarning, "trusted code");
 });
@@ -43,4 +43,48 @@ test("extension operations enforce transport permissions and optimistic revision
   assert.equal(result.revision, 1); assert.equal(result.result.authorityLabel, "This server");
   const replay = await handlers.commands["extensions.install"](command("extensions.install", { previewDigest: "digest", confirmation: true, expectedRevision: 0 }, 0));
   assert.deepEqual(replay, result); assert.deepEqual(events, [{ revision: 1 }]); assert.equal(audits.length, 1); assert.equal(audits[0].clientId, "client");
+});
+
+test("Settings receives one merged built-in override entry and reflects disablement and reversion", async () => {
+  const extensionId = "com.terminay.agent.codex";
+  const manifest = { displayName: "Codex", id: extensionId };
+  const bundled = { slotId: "built-in-v1", version: "1.0.0", receipt: { source: "built-in", manifest } };
+  const override = { slotId: "npm-v2", version: "2.0.0", receipt: { source: "npmjs", manifest } };
+  let snapshot = { schemaVersion: 1, revision: 3, extensions: { [extensionId]: { extensionId, packageName: "terminay-agent-codex", enabled: true, state: "installed", activeSlotId: override.slotId, pendingSlotId: bundled.slotId, slots: { [bundled.slotId]: bundled, [override.slotId]: override } } } };
+  const fixture = {
+    snapshot: async () => snapshot,
+    disable: async () => (snapshot = { ...snapshot, revision: 4, extensions: { [extensionId]: { ...snapshot.extensions[extensionId], enabled: false, state: "disabled" } } }),
+    remove: async () => (snapshot = { ...snapshot, revision: 5, extensions: { [extensionId]: { ...snapshot.extensions[extensionId], activeSlotId: bundled.slotId, pendingSlotId: undefined } } }),
+  };
+  const handlers = createExtensionOperationHandlers({ installer: fixture, authorityLabel: "This server" });
+  const listed = await handlers.queries["extensions.list"](query("extensions.list", {}));
+  assert.equal(listed.extensions.length, 1); assert.equal(listed.catalogue.some((item) => item.extensionId === extensionId), false);
+  const entry = listed.extensions[0];
+  assert.deepEqual({ builtIn: entry.builtIn, bundledVersion: entry.bundledVersion, override: entry.override, origin: entry.origin, activeVersion: entry.activeVersion, pendingVersion: entry.pendingVersion, enabled: entry.enabled, compatible: entry.compatible, runtimeState: entry.runtimeState }, { builtIn: true, bundledVersion: "1.0.0", override: true, origin: "npmjs", activeVersion: "2.0.0", pendingVersion: "1.0.0", enabled: true, compatible: true, runtimeState: "activation-required" });
+  const fetched = await handlers.queries["extensions.get"](query("extensions.get", { extensionId }));
+  assert.equal(fetched.extensionId, extensionId);
+  await handlers.commands["extensions.disable"](command("extensions.disable", { extensionId, expectedRevision: 3 }, 3));
+  let after = await handlers.queries["extensions.list"](query("extensions.list", {}));
+  assert.equal(after.extensions[0].enabled, false); assert.equal(after.extensions[0].runtimeState, "stopped");
+  await handlers.commands["extensions.remove"](command("extensions.remove", { extensionId, expectedRevision: 4 }, 4));
+  after = await handlers.queries["extensions.list"](query("extensions.list", {}));
+  assert.equal(after.extensions[0].activeVersion, "1.0.0"); assert.equal(after.extensions[0].origin, "built-in"); assert.equal(after.extensions[0].override, false);
+});
+
+test("enabled records without a running host are pending, and a failed hot activation is explicit", async () => {
+  const extensionId = "dev.example.reconciled";
+  const manifest = { displayName: "Reconciled", id: extensionId };
+  const slot = { slotId: "slot-v1", version: "1.0.0", receipt: { source: "built-in", manifest } };
+  let snapshot = { schemaVersion: 1, revision: 2, extensions: { [extensionId]: { extensionId, packageName: "terminay-reconciled", enabled: true, state: "installed", activeSlotId: slot.slotId, slots: { [slot.slotId]: slot } } } };
+  const fixture = {
+    snapshot: async () => snapshot,
+    enable: async () => snapshot,
+    setFailureState: async (id, state, failureClass) => (snapshot = { ...snapshot, revision: snapshot.revision + 1, extensions: { ...snapshot.extensions, [id]: { ...snapshot.extensions[id], state, failureClass } } }),
+  };
+  const handlers = createExtensionOperationHandlers({ installer: fixture, authorityLabel: "This server", hosts: { statuses: () => [] }, activate: async () => { throw new Error("activation refused"); } });
+  const pending = await handlers.queries["extensions.list"](query("extensions.list", {}));
+  assert.equal(pending.extensions[0].runtimeState, "activation-required");
+  const result = await handlers.commands["extensions.enable"](command("extensions.enable", { extensionId, expectedRevision: 2 }, 2));
+  assert.equal(result.result.extensions[0].runtimeState, "failed");
+  assert.equal(result.result.extensions[0].failureMessage, "activation refused");
 });

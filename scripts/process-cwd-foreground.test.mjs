@@ -89,6 +89,18 @@ test('a TUI whose helpers share the foreground group is still a running process'
 	);
 });
 
+test('a single foreground interpreter wrapper reports the CLI below it', () => {
+	const table = parseHostProcessTable(`
+  100   1   100 Ss   zsh
+  101 100   101 S+   node
+  102 101   101 S+   /opt/codex/bin/codex
+`);
+	assert.deepEqual(
+		selectForegroundProcessFromTable(100, table, 'zsh'),
+		{ command: 'codex', consultProcessGroup: true },
+	);
+});
+
 test('a non-job-control shell sharing its process group with a TUI is still busy', () => {
 	const table = parseHostProcessTable(`
   820   1   820 Ss   dash

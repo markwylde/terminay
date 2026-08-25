@@ -251,6 +251,10 @@ test('repeated AGENTS.md autosaves do not conflict with their own filesystem eve
 	createWorkspace,
 	mainWindow,
 }) => {
+	// This scenario intentionally waits for twelve one-second autosave cycles.
+	// Keep its timeout independent from the suite default so Docker build/load
+	// variance cannot cancel the final pending save before it is observed.
+	test.setTimeout(60_000);
 	const workspace = await createWorkspace({
 		name: 'documentation-repeated-autosave-self-watch',
 		seed: {

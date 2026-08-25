@@ -95,7 +95,7 @@ export class RecordingService {
     const home = options.homeDirectory ?? options.getHomePath?.() ?? process.env.HOME ?? process.cwd();
     const root = options.recordingRoot ?? options.directory ?? DEFAULT_RECORDING_ROOT;
     const index = options.libraryIndexPath ?? options.getLibraryIndexPath?.();
-    this.storage = options.storage ?? new NodeRecordingStorage({ recordingRoot: root, homeDirectory: home, ...(index === undefined ? {} : { libraryIndexPath: index }) });
+    this.storage = options.storage ?? new NodeRecordingStorage({ recordingRoot: root, homeDirectory: home, ...(index === undefined ? {} : { libraryIndexPath: index }), ...(options.migrateStoredMetadata === undefined ? {} : { migrateStoredMetadata: options.migrateStoredMetadata }) });
     this.options = {
       serverId: options.serverId ?? "",
       captureInput: options.captureInput,

@@ -1,4 +1,8 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import type { Page } from '@playwright/test';
+import { _electron as electron } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { sendAppCommand } from './support/app';
 import { openFileExplorer } from './support/ui';
@@ -23,18 +27,43 @@ async function createTerminalAndGetActiveSessionId(page: Page): Promise<string> 
 }
 
 async function emitJournalRecord(page: Page, terminalSessionId: string, record: Record<string, unknown>): Promise<void> {
-	await page.evaluate(async ({ value, sessionId }) => {
+	const providerSessionId = sessionsFor(page).get(terminalSessionId);
+	if (!providerSessionId) throw new Error('Agent provider session is unavailable');
+	const events = lifecycleEvents(record);
+	if (events.length === 0) return;
+	await page.evaluate(async ({ events: value, providerSessionId: providerSession, sessionId }) => {
 		if (!window.terminayAgentStatusTest) throw new Error('Agent status test seam is unavailable');
-		const accepted = await window.terminayAgentStatusTest.emitJournalRecord({ provider: 'codex', terminalSessionId: sessionId, record: value });
-		if (!accepted) throw new Error('Agent journal record was not accepted');
-	}, { value: record, sessionId: terminalSessionId });
+		const accepted = await window.terminayAgentStatusTest.publishLifecycle({ provider: 'com.terminay.agent.codex/cli', terminalSessionId: sessionId, providerSessionId: providerSession, events: value });
+		if (!accepted) throw new Error('Agent lifecycle publication was not accepted');
+	}, { events, providerSessionId, sessionId: terminalSessionId });
+}
+
+const providerSessions = new WeakMap<Page, Map<string, string>>();
+
+function sessionsFor(page: Page): Map<string, string> {
+	const existing = providerSessions.get(page);
+	if (existing) return existing;
+	const created = new Map<string, string>();
+	providerSessions.set(page, created);
+	return created;
 }
 
 async function beginCodexSession(page: Page, terminalSessionId: string, providerSessionId: string): Promise<void> {
-	await emitJournalRecord(page, terminalSessionId, {
-		type: 'session_meta',
-		payload: { id: providerSessionId, cli_version: '0.2.0', originator: 'codex-tui', source: 'cli' },
-	});
+	sessionsFor(page).set(terminalSessionId, providerSessionId);
+	await emitJournalRecord(page, terminalSessionId, { type: 'session_meta', payload: { id: providerSessionId } });
+}
+
+function lifecycleEvents(record: Record<string, unknown>): Array<Record<string, unknown>> {
+	const payload = record.payload as Record<string, unknown> | undefined;
+	if (record.type === 'session_meta') return [{ kind: 'session.started', title: 'Codex' }];
+	if (record.type !== 'event_msg' || !payload || typeof payload.type !== 'string') return [];
+	if (payload.type === 'task_started') return [{ kind: 'turn.started', turnId: String(payload.turn_id ?? 'turn') }];
+	if (payload.type === 'user_message') return [{ kind: 'agent.metadata', promptText: String(payload.message ?? ''), ...(typeof payload.model === 'string' ? { model: { id: payload.model, displayName: payload.model } } : {}) }];
+	if (payload.type === 'request_user_input') return [{ kind: 'wait.started', waitId: 'request-user-input', state: 'waiting', reason: 'request_user_input' }];
+	if (payload.type === 'task_complete') return [{ kind: 'agent.done', outcome: 'success' }];
+	if (payload.type === 'sub_agent_activity' && payload.kind === 'started') return [{ kind: 'subagent.started', subagentId: String(payload.agent_thread_id), title: String(payload.agent_path ?? '').split('/').filter(Boolean).at(-1) ?? String(payload.agent_thread_id) }];
+	if (payload.type === 'sub_agent_activity' && payload.kind === 'completed') return [{ kind: 'subagent.done', subagentId: String(payload.agent_thread_id), outcome: 'success' }];
+	return [];
 }
 
 test('Codex rollout state projects to the terminal indicator and Agents sidebar', async ({ mainWindow }) => {
@@ -108,6 +137,9 @@ test('a completed agent resumes working while a second running agent appears', a
 		'codex-e2e-concurrent-root',
 	);
 	await emitJournalRecord(mainWindow, secondTerminalSessionId, {
+		type: 'event_msg', payload: { type: 'task_started', turn_id: 'turn-1' },
+	});
+	await emitJournalRecord(mainWindow, secondTerminalSessionId, {
 		type: 'event_msg',
 		payload: { type: 'user_message', message: 'Agents not updating' },
 	});
@@ -140,7 +172,63 @@ test('agent integration setting disables and restores journal-backed status', as
 	await restoredWindow.close();
 	const sessionId = await getActiveSessionId(mainWindow);
 	await beginCodexSession(mainWindow, sessionId, 'codex-restored');
+	await emitJournalRecord(mainWindow, sessionId, { type: 'event_msg', payload: { type: 'task_started', turn_id: 'turn-1' } });
 	await emitJournalRecord(mainWindow, sessionId, { type: 'event_msg', payload: { type: 'user_message', message: 'Agent integration restored' } });
 	await openFileExplorer(mainWindow);
 	await expect(mainWindow.locator('.agents-sidebar__name')).toContainText('Agent integration restored');
+});
+
+test('two live Desktop profiles keep Agents panes isolated', async ({
+	mainWindow,
+	appHarness,
+}) => {
+	const isolatedTempDir = await mkdtemp(path.join(os.tmpdir(), 'terminay-e2e-agents-isolated-'));
+	const isolatedUserDataDir = path.join(isolatedTempDir, 'user-data');
+	const isolatedApp = await electron.launch({
+		args: ['.'],
+		env: {
+			...process.env,
+			CI: '1',
+			ELECTRON_ENABLE_LOGGING: '1',
+			TEMP: isolatedTempDir,
+			TERMINAY_E2E_TEMP_DIR: isolatedTempDir,
+			TERMINAY_TEST: '1',
+			TERMINAY_USER_DATA_DIR: isolatedUserDataDir,
+			TMP: isolatedTempDir,
+			TMPDIR: isolatedTempDir,
+		},
+	});
+	try {
+		const isolatedWindow = await isolatedApp.firstWindow();
+		await appHarness.prepareWindow(isolatedWindow);
+		const firstSessionId = await getActiveSessionId(mainWindow);
+		const secondSessionId = await getActiveSessionId(isolatedWindow);
+		await beginCodexSession(mainWindow, firstSessionId, 'codex-profile-a');
+		await emitJournalRecord(mainWindow, firstSessionId, {
+			type: 'event_msg',
+			payload: { type: 'task_started', turn_id: 'turn-1' },
+		});
+		await emitJournalRecord(mainWindow, firstSessionId, {
+			type: 'event_msg',
+			payload: { type: 'user_message', message: 'Profile A agent' },
+		});
+		await beginCodexSession(isolatedWindow, secondSessionId, 'codex-profile-b');
+		await emitJournalRecord(isolatedWindow, secondSessionId, {
+			type: 'event_msg',
+			payload: { type: 'task_started', turn_id: 'turn-1' },
+		});
+		await emitJournalRecord(isolatedWindow, secondSessionId, {
+			type: 'event_msg',
+			payload: { type: 'user_message', message: 'Profile B agent' },
+		});
+		await openFileExplorer(mainWindow);
+		await openFileExplorer(isolatedWindow);
+		await expect(mainWindow.locator('.agents-sidebar__name')).toContainText('Profile A agent');
+		await expect(mainWindow.locator('.agents-sidebar__name')).not.toContainText('Profile B agent');
+		await expect(isolatedWindow.locator('.agents-sidebar__name')).toContainText('Profile B agent');
+		await expect(isolatedWindow.locator('.agents-sidebar__name')).not.toContainText('Profile A agent');
+	} finally {
+		await isolatedApp.close();
+		await rm(isolatedTempDir, { recursive: true, force: true });
+	}
 });

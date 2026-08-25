@@ -11,6 +11,7 @@ const outputDir = path.resolve(
 const size = { width: 1200, height: 800 };
 const screenshotDeviceScaleFactor = 2;
 const settleDelayMs = 3_000;
+const useRealCodex = process.env.TERMINAY_DOCS_REAL_CODEX === '1';
 const execFileAsync = promisify(execFile);
 
 async function seedWorkspace() {
@@ -21,6 +22,17 @@ async function seedWorkspace() {
 	await mkdir(path.join(workspace, 'handbook'), { recursive: true });
 	await mkdir(path.join(workspace, 'reference'), { recursive: true });
 	await mkdir(path.join(workspace, 'src'), { recursive: true });
+	await mkdir(path.join(workspace, 'bin'), { recursive: true });
+	await writeFile(path.join(workspace, 'bin', 'codex'), [
+		'#!/bin/sh',
+		'printf "\\033[1;36mCodex\\033[0m  GPT-5.6\\n\\n"',
+		'printf "\\033[1m› %s\\033[0m\\n\\n" "$1"',
+		'printf "• Spawning three subagents\\n"',
+		'printf "  ↳ Addition       Solve 128 + 256\\n"',
+		'printf "  ↳ Multiplication Solve 24 × 18\\n"',
+		'printf "  ↳ Division       Solve 1,024 ÷ 16\\n\\n"',
+		'printf "\\033[33mWorking (3 subagents)\\033[0m\\n"',
+	].join('\n'), { mode: 0o755 });
 	await writeFile(path.join(workspace, 'README.md'), [
 		'# Terminay',
 		'',
@@ -224,7 +236,7 @@ async function createWorkspaceProjects(page, rootFolder) {
 		}
 		await editActiveProject(page, { ...project, rootFolder });
 	}
-	await page.locator('.project-tab').filter({ hasText: 'Terminay' }).first().click();
+	await page.locator('.project-tab').first().click();
 }
 
 async function createTerminalGrid(page) {
@@ -266,6 +278,117 @@ async function openFileExplorer(page) {
 	const explorer = page.locator('.project-workspace--active .file-explorer-sidebar');
 	if (!(await explorer.isVisible())) await page.getByLabel('Toggle file explorer').click();
 	await explorer.waitFor({ state: 'visible' });
+}
+
+async function prepareAgentTerminal(page, workspace) {
+	const panels = page.locator('.project-workspace--active .terminal-tab-content:visible');
+	while (await panels.count() > 1) {
+		await panels.last().click();
+		await invokeMenuCommand(page, 'close-active');
+		await page.waitForTimeout(250);
+	}
+	await panels.first().waitFor({ state: 'visible', timeout: 30_000 });
+
+	const terminal = page.locator(
+		'.project-workspace--active .terminal-panel:visible .xterm-helper-textarea',
+	).first();
+	await terminal.click();
+	const setupCommand = useRealCodex
+		? `cd '${workspace}' && clear`
+		: `cd '${workspace}' && export PATH="$PWD/bin:$PATH" && clear`;
+	await terminal.pressSequentially(setupCommand, { delay: 2 });
+	await terminal.press('Enter');
+	if (useRealCodex) {
+		await terminal.pressSequentially('codex', { delay: 100 });
+		await terminal.press('Enter');
+		const panel = page.locator('.project-workspace--active .terminal-panel:visible').first();
+		await page.waitForTimeout(2_000);
+		if ((await panel.textContent())?.includes('Press enter to continue')) {
+			await terminal.press('Enter');
+		}
+		await terminal.pressSequentially('Spawn 3 subagents to solve simple math problems', { delay: 45 });
+		await terminal.press('Enter');
+		await page.waitForFunction(() => {
+			const activePanel = document.querySelector('.project-workspace--active .terminal-panel:not([style*="display: none"])');
+			return activePanel?.textContent?.includes('Spawn 3 subagents to solve simple math problems');
+		}, undefined, { timeout: 30_000 });
+	} else {
+		await terminal.pressSequentially('codex "Spawn 3 subagents to solve simple math problems"', { delay: 2 });
+		await terminal.press('Enter');
+	}
+	await page.waitForTimeout(500);
+}
+
+async function populateAgentsScreenshot(page) {
+	const terminalSessionId = await page
+		.locator('.project-workspace--active .terminal-panel:visible')
+		.first()
+		.getAttribute('data-terminay-terminal-session-id');
+	if (!terminalSessionId) throw new Error('The docs terminal session is unavailable.');
+
+	const prompt = 'Spawn 3 subagents to solve simple math problems';
+	const accepted = await page.evaluate(async ({ sessionId, rootPrompt }) => {
+		if (!window.terminayAgentStatusTest) throw new Error('The agent screenshot seam is unavailable.');
+		return window.terminayAgentStatusTest.publishLifecycle({
+			provider: 'com.terminay.agent.codex/cli',
+			terminalSessionId: sessionId,
+			providerSessionId: 'docs-agent-root',
+			events: [
+				{ kind: 'session.started', title: 'Codex' },
+				{ kind: 'agent.metadata', promptText: rootPrompt, model: { id: 'gpt-5.6', displayName: 'GPT-5.6' } },
+				{ kind: 'turn.started', turnId: 'docs-math-turn' },
+				{ kind: 'subagent.started', subagentId: 'addition', title: 'Addition', promptText: 'Solve 128 + 256' },
+				{ kind: 'subagent.started', subagentId: 'multiplication', title: 'Multiplication', promptText: 'Solve 24 × 18' },
+				{ kind: 'subagent.started', subagentId: 'division', title: 'Division', promptText: 'Solve 1,024 ÷ 16' },
+			],
+		});
+	}, { rootPrompt: prompt, sessionId: terminalSessionId });
+	if (!accepted) throw new Error('The agent screenshot lifecycle was not accepted.');
+
+	const agentsPane = page.locator('.project-workspace--active .sidebar-pane').filter({
+		has: page.locator('.sidebar-pane__title', { hasText: 'Agents' }),
+	});
+	for (const title of ['Explorer', 'Documentation', 'Git']) {
+		const pane = page.locator('.project-workspace--active .sidebar-pane').filter({
+			has: page.locator('.sidebar-pane__title', { hasText: title }),
+		});
+		if (!(await pane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed')))) {
+			await pane.locator('.sidebar-pane__header').click();
+		}
+	}
+	if (await agentsPane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed'))) {
+		await agentsPane.locator('.sidebar-pane__header').click();
+	}
+	await agentsPane.locator('.agents-sidebar__name', { hasText: prompt }).waitFor({ state: 'visible', timeout: 30_000 });
+	await agentsPane.getByRole('button', { name: `Expand 3 subagents for ${prompt}` }).click();
+	await agentsPane.getByRole('button', { name: 'Focus Division terminal' }).waitFor({ state: 'visible' });
+	await page.evaluate(() => {
+		if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+	});
+}
+
+async function populateRealAgentsScreenshot(page) {
+	const prompt = 'Spawn 3 subagents to solve simple math problems';
+	const agentsPane = page.locator('.project-workspace--active .sidebar-pane').filter({
+		has: page.locator('.sidebar-pane__title', { hasText: 'Agents' }),
+	});
+	for (const title of ['Explorer', 'Documentation', 'Git']) {
+		const pane = page.locator('.project-workspace--active .sidebar-pane').filter({
+			has: page.locator('.sidebar-pane__title', { hasText: title }),
+		});
+		if (!(await pane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed')))) {
+			await pane.locator('.sidebar-pane__header').click();
+		}
+	}
+	if (await agentsPane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed'))) {
+		await agentsPane.locator('.sidebar-pane__header').click();
+	}
+	await agentsPane.locator('.agents-sidebar__name', { hasText: prompt }).waitFor({ state: 'visible', timeout: 90_000 });
+	await agentsPane.getByRole('button', { name: `Expand 3 subagents for ${prompt}` }).waitFor({ state: 'visible', timeout: 120_000 });
+	await agentsPane.getByRole('button', { name: `Expand 3 subagents for ${prompt}` }).click();
+	await page.evaluate(() => {
+		if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+	});
 }
 
 function explorerItem(page, name) {
@@ -359,6 +482,16 @@ async function run() {
 		// demonstrates the 2x2 layout, while the Docs project is a clean one-pane canvas.
 		await mainWindow.locator('.project-tab').filter({ hasText: 'Docs' }).first().click();
 		await openFileExplorer(mainWindow);
+		await prepareAgentTerminal(mainWindow, seededWorkspace.workspace);
+		if (useRealCodex) await populateRealAgentsScreenshot(mainWindow);
+		else await populateAgentsScreenshot(mainWindow);
+		await capture(app, mainWindow, 'terminay-agents.png');
+		if (useRealCodex) {
+			const terminal = mainWindow.locator('.project-workspace--active .terminal-panel:visible .xterm-helper-textarea').first();
+			await terminal.press('Control+C');
+			await mainWindow.waitForTimeout(500);
+			await terminal.press('Control+C');
+		}
 		const documentationPane = mainWindow.locator('.project-workspace--active .sidebar-pane').filter({
 			has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Documentation' }),
 		});

@@ -6,8 +6,8 @@
  * `sessionId` + `activationTerminalSessionId`).
  */
 
-export const AGENT_PROVIDERS = ['codex', 'claude-code', 'omp'] as const;
-export type AgentProvider = (typeof AGENT_PROVIDERS)[number];
+/** Manifest-owned provider id supplied by an installed agent extension. */
+export type AgentProvider = string;
 
 export const AGENT_STATES = [
 	'working',
@@ -196,15 +196,16 @@ export type AgentStatusSnapshot = {
 	entries: Readonly<Record<string, AgentStatusEntry>>;
 	/** Last accepted event per normalized provider-session stream. */
 	eventCursors: Readonly<Record<string, AgentEventCursor>>;
+	/** Live process that produced this snapshot. Renderers drop a snapshot
+	 * whose id does not match the connection they already hold. */
+	processInstanceId?: string;
 };
 
 export type AgentStatusListener = (snapshot: AgentStatusSnapshot) => void;
 
 export function isAgentProvider(value: unknown): value is AgentProvider {
-	return (
-		typeof value === 'string' &&
-		(AGENT_PROVIDERS as readonly string[]).includes(value)
-	);
+	return typeof value === 'string' && value.length <= 192 &&
+		/^[a-z0-9](?:[a-z0-9.-]{1,126}[a-z0-9])?\/[a-z][a-z0-9-]{0,63}$/.test(value);
 }
 
 export function isAgentState(value: unknown): value is AgentState {

@@ -48,11 +48,19 @@ export function activateAgentFromSnapshot(
 	}
 }
 
-const PROVIDER_LABELS: Record<AgentProvider, string> = {
-	codex: 'Codex',
-	'claude-code': 'Claude Code',
-	omp: 'omp',
+const PROVIDER_LABELS: Readonly<Record<string, string>> = {
+	'com.terminay.agent.codex/cli': 'Codex',
+	'com.terminay.agent.claude-code/cli': 'Claude Code',
+	'com.terminay.agent.cursor/cli': 'Cursor',
+	'com.terminay.agent.omp/cli': 'omp',
 };
+
+function providerLabel(provider: AgentProvider): string {
+	const known = PROVIDER_LABELS[provider];
+	if (known) return known;
+	const name = provider.split('/').at(-1) ?? provider;
+	return name.replace(/[-_.]+/gu, ' ').replace(/\b\w/gu, (value) => value.toUpperCase());
+}
 
 function buildAgentTree(items: readonly AgentsSidebarItem[]): AgentTreeNode[] {
 	const nodes = new Map<string, AgentTreeNode>();
@@ -92,7 +100,7 @@ function getEntryName(entry: AgentStatusEntry): string {
 		return 'Subagent';
 	}
 
-	return PROVIDER_LABELS[entry.provider];
+	return providerLabel(entry.provider);
 }
 
 function cleanText(value: string | undefined): string | undefined {
@@ -106,7 +114,7 @@ function meaningfulDisplayName(entry: AgentStatusEntry): string | undefined {
 		return undefined;
 	}
 	const normalized = displayName.toLowerCase();
-	const provider = PROVIDER_LABELS[entry.provider].toLowerCase();
+	const provider = providerLabel(entry.provider).toLowerCase();
 	return normalized === 'default' ||
 		normalized === 'agent' ||
 		normalized === 'subagent' ||
@@ -147,7 +155,7 @@ function getPresentation(
 	prompt?: string;
 } {
 	const { entry } = node.item;
-	const provider = PROVIDER_LABELS[entry.provider];
+	const provider = providerLabel(entry.provider);
 	const displayName = meaningfulDisplayName(entry);
 	const prompt = cleanText(node.item.prompt);
 	const terminalTitle = cleanText(node.item.terminalTitle);
@@ -227,7 +235,7 @@ function AgentRow({
 				data-agent-state={entry.state}
 				style={{ paddingLeft: `${10 + depth * 12}px` }}
 			>
-				{entry.kind === 'root' && childCount > 0 ? (
+				{childCount > 0 ? (
 					<button
 						type="button"
 						className="agents-sidebar__disclosure"

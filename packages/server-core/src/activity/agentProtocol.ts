@@ -76,7 +76,12 @@ function asSnapshot(snapshot: ReturnType<AgentStatusService["getSnapshot"]>): Js
   // Agent entries contain optional fields represented as `undefined` in the
   // internal model. Strip those implementation values before a strict JSON
   // journal validates the wire payload.
-  return JSON.parse(JSON.stringify({ revision: snapshot.revision, cursor: String(snapshot.revision), entries: snapshot.entries })) as JsonValue;
+  return JSON.parse(JSON.stringify({
+    revision: snapshot.revision,
+    cursor: String(snapshot.revision),
+    entries: snapshot.entries,
+    ...(typeof snapshot.processInstanceId === "string" ? { processInstanceId: snapshot.processInstanceId } : {}),
+  })) as JsonValue;
 }
 
 function assertReadable(request: QueryRequest): void {

@@ -2,8 +2,9 @@
 
 ## Summary
 
-Terminay observes supported coding-agent session journals and reduces their
-native records into provider-neutral agent entries. A journal is authoritative
+Terminay composes installed coding-agent extension providers with project
+environments and reduces their canonical lifecycle events into provider-neutral
+agent entries. A native source is authoritative
 only after Terminay binds it to the exact server-owned PTY through that
 provider's documented terminal identity evidence.
 
@@ -15,39 +16,65 @@ journal cannot be discovered or parsed. See
 
 ## Ownership and privacy
 
-Journal discovery, process binding, incremental reading, driver selection,
-provider normalization, canonical snapshots, acknowledgement, and
-terminal/project mapping live in Terminay Server. Connected clients subscribe
-to the same ordered reduced snapshot. Clients never read provider journals or
-create competing agent state.
+Terminal/project authorization, environment routing, canonical validation,
+ordering, snapshots, acknowledgement, and terminal/project mapping live in
+Terminay Server. Provider-specific discovery, process binding, incremental
+reading, version selection, and native-record normalization live in separately
+hosted extensions using only the public Extension API. Connected clients
+subscribe to the same ordered reduced snapshot. Clients never read provider
+journals or create competing agent state.
 
-Provider journals are private privileged inputs. Their raw records, prompts,
-responses, instructions, reasoning, tool arguments, and tool output never cross
-the server boundary and are never logged by the integration.
+Provider journals and stores are private privileged inputs. Their raw records,
+prompts, responses, instructions, reasoning, tool arguments, and tool output
+never cross the server boundary and are never logged by the integration.
 
-Foreground-process and journal discovery are project-environment capabilities.
-This server may use the native process tree. An SSH/Puzed environment without a
-proven remote source retains generic terminal activity but reports authoritative
-agent observation unavailable; the local SSH client PID or local provider home
-can never establish ownership of a remote journal.
+Foreground-process and journal discovery are public project-environment
+capabilities. Agent extensions are ordinary trusted Node.js programs: on This
+server they combine the host-issued terminal context (including the PTY shell
+PID) with Node process and filesystem APIs, typically through the public
+observation helpers. Those helpers run in the extension child; they are not a
+sandbox and must not round-trip local `lsof`/`ps` snapshots through host IPC.
+The child inherits a bounded host environment (`PATH`, `HOME`, locale) so the
+same `ps`/`lsof` binaries the Electron process used on main still resolve;
+installer-style sterile `NODE_OPTIONS` is not applied to agent observation.
+Process-name matching is only a prompt: `codex`/`codex-tui` bind Codex, while
+an unmatched `node`/`bun` wrapper tries every capable provider until one
+proves a writer-held journal, the same way main scanned every journal when
+the foreground name did not name a provider. Observation also inspects the
+PTY shell PID itself so an `exec`'d CLI still has its open files examined.
+SSH and other non-local environments cannot use the server host's process tree
+or home directory. They use the environment-routed observation broker when the
+environment advertises that capability; otherwise observation is unavailable.
 
 ## Product outcomes
 
-- Running `codex`, `claude`, or `omp` normally in an interactive Terminay
-  terminal is discovered without editing provider configuration or installing
-  global integrations.
+- Running a CLI supplied by an enabled agent extension normally in an
+  interactive Terminay terminal is discovered without editing provider
+  configuration or installing global integrations.
 - Agent state remains associated with the exact terminal the user can activate.
 - Provider file formats and versions stay out of client components and stores.
 - Newer compatible provider versions reuse the latest known mapping.
 - Unsupported, missing, malformed, or ephemeral journals degrade safely to
   terminal activity.
 
+If a running provider is matched and its terminal admission subsequently
+fails, Terminay releases that provider claim and replays the same foreground
+change through terminal activity. This is a fallback, not a successful agent
+observation: the privileged host records one bounded `agent-admission-failed`
+diagnostic containing only the provider id, opaque terminal identity, and a
+coarse failure class. It never records raw journals, paths, prompts, or an
+extension error message. The diagnostic makes a failed admission distinguishable
+from a terminal that simply has no agent, without allowing an extension failure
+to interrupt the terminal.
+
 ## Canonical model
 
-The canonical providers are `codex`, `claude-code`, and `omp`. Each has a
-versioned driver and a process-bound journal source. Display names are Codex,
-Claude Code, and omp. A fourth CLI cannot appear until its driver and source
-are specified and implemented.
+Provider ids are namespaced extension contributions rather than a closed core
+union. Terminay bundles enabled-by-default Codex, Claude Code, Cursor Agent,
+and omp providers. A third-party provider appears through the same validated
+manifest, hosted runtime, canonical event, Settings, and disablement contracts.
+Persisted unknown or disabled provider ids remain bounded metadata and never
+cause provider code to load in a client.
 
 | State | Meaning | Indicator |
 | --- | --- | --- |
@@ -88,15 +115,46 @@ incarnation and activation terminal without allowing stale events from the
 previous incarnation to mutate it.
 
 The Codex launcher may expose a generic wrapper such as `node` as the PTY
-foreground process. A shebang-run `omp` on macOS may likewise expose `bun`.
+foreground process. Cursor's bundled worker may likewise expose `node`, and a
+shebang-run `omp` on macOS may expose `bun`.
 Every transition away from the shell therefore starts a new bounded
 journal-discovery window even when the foreground name is not a recognized
 provider. This lets a resumed session launched long after terminal startup
 bind its reopened journal without treating the wrapper itself as an agent.
+Foreground sampling may miss a brief return to the shell between an exited
+session and `codex resume`. A repeated match for the same provider keeps an
+active root observer intact, but starts a fresh binding incarnation when that
+terminal's canonical root has already exited.
 The journal is still admitted only after the provider's documented identity
 evidence is proven. An `omp` binary that sets its process title still matches
 `omp` directly; a `bun` wrapper is admitted only after the OMP terminal
 breadcrumb for the exact PTY identifies a validated OMP root JSONL.
+
+Codex's TUI typically opens its writable rollout after the first foreground
+edge. The fast not-bound window therefore often finishes while the journal
+does not yet exist. Topology polling must re-admit on the first sample after
+that window, not only when a later signature changes; otherwise a live Codex
+session sits in the terminal with an empty Agents pane.
+
+Once an extension proves a terminal-scoped binding, Server Core materializes
+the root session immediately. The first provider-native `session.started`
+record refines that root as metadata, so a slow watcher or optional enrichment
+cannot hide a proven active session from the Agents pane.
+
+Live Agents projection is scoped to one running Terminay process, not to a
+durable user-data `serverId`. Each process mints an ephemeral
+`processInstanceId` at boot and stamps it on every snapshot it emits. A
+client connected to that process renders only that snapshot. Two processes
+that share project names, session ids, or `~/.codex` files still cannot
+populate each other's Agents pane.
+
+Observation stays bound only while the journal writer remains a descendant of
+a PTY shell this process spawned. A later `codex resume` in another Terminay
+process may write the same journal path; the first process must drop the
+observer as soon as that writer leaves its PTY tree. Sharing a user-data
+directory is an Electron profile concern, not Agents authority: live pane
+state is the processInstanceId on the snapshot, not occupancy of
+`Terminay Development`.
 
 CWD, filename timestamps, terminal title, active tab, and “closest match” logic
 must not independently establish an authoritative binding. Claude Code uses its
@@ -106,9 +164,9 @@ own terminal-scoped breadcrumb, whose terminal ID is derived from the PTY TTY
 that runs OMP and whose target is validated under OMP's allowed session root.
 A host that cannot establish provider proof uses terminal fallback instead.
 
-## Journal source contract
+## Agent extension observation contract
 
-A provider journal source:
+An agent extension observation runtime:
 
 1. obtains provider-specific terminal-to-journal identity evidence beneath the
    effective provider home;
@@ -118,25 +176,36 @@ A provider journal source:
 4. buffers an incomplete final JSONL line until it is completed;
 5. detects truncation, atomic replacement, provider session switch, writer exit,
    and process-incarnation change;
-6. emits raw records only to the selected privileged driver;
+6. keeps raw records inside its isolated extension host and emits only validated
+   canonical lifecycle events;
 7. stops all file/process observation when the terminal, integration, or server stops.
 
 Discovery is retried briefly after terminal startup and whenever the shell
 loses foreground because either transition can arrive before the journal is
-opened. Once a supported provider is known to be foreground, discovery remains
-armed until that incarnation is bound or leaves the foreground. Expensive
+opened. A blank or unknown process name is not a leave-shell edge and does not
+start discovery. A provider that reports `not-bound`, or whose observation
+throws before a journal is proven, is retried at most ten times at a 100 ms
+debounce while that exact foreground incarnation remains current. After that
+fast window, topology polling keeps discovery armed until the incarnation is
+bound or returns to the shell. An empty process snapshot is ordinary transient
+evidence, not a reason to give up on the pane. Expensive
 open-file/process inspection is used for initial binding, not for every
-appended record. Symlinks, non-regular files, paths outside the canonical
+appended record. Local open-file snapshots prefer journal paths
+(`.jsonl` and `/sessions/`) and stay bounded for the provider, not because
+they cross host IPC. Optional enrichment after a proven bind (session-name
+index, child directory listing, `CODEX_HOME`) must not fail admission.
+Symlinks, non-regular files, paths outside the canonical
 sessions root, oversized records, invalid JSON, and unbounded growth are
 handled defensively.
 
-## Versioned driver contract
+## Public versioned driver contract
 
-The driver abstraction is identified by `(provider, mappingVersion)`, for
+The public driver abstraction is identified by `(provider, mappingVersion)`, for
 example `(codex, 0.1)`. A driver recognizes session metadata, maps a strict
 allowlist of native records to canonical lifecycle events, and reads only
-bounded lifecycle/display metadata. It never focuses UI, infers terminal
-ownership, reads arbitrary paths, mutates the store directly, or exposes raw
+bounded lifecycle/display metadata. It never focuses UI, asserts project or
+terminal authorization, reads outside broker-issued capabilities, mutates the
+canonical store directly, imports a private Terminay module, or exposes raw
 records.
 
 Mapping versions describe Terminay parsers. Provider CLI versions are
@@ -146,13 +215,18 @@ known mappings uses the newest mapping optimistically; one older than all
 mappings uses the oldest. Unknown records are ignored so additive changes are
 compatible.
 
-Each mapping has provider-owned JSONL fixtures and contract tests. A
+Each extension package owns its mappings, bounded fixtures, documentation, and
+contract tests. A
 compatibility script runs a candidate provider-version fixture against the
 mapping the registry would select. Passing means no new mapping is required;
 semantic failure requires a new mapping and fixtures without changing earlier
 mappings.
 
-## Codex journal mapping
+## Codex extension mapping
+
+The `terminay-agent-codex` package owns every Codex executable name, home-root
+rule, process/journal binding rule, mapping version, fixture, and compatibility
+test described here.
 
 Codex sessions live below the effective `CODEX_HOME/sessions` root; when
 `CODEX_HOME` is unset, the host account's `.codex/sessions` root is used. Shell
@@ -172,7 +246,7 @@ root is selected.
 | --- | --- |
 | root `session_meta` with `originator: codex-tui` and `source: cli` | root `session.started` / `idle` |
 | `event_msg/item_completed` carrying a `UserMessage`, or legacy `event_msg/user_message` | the first user-facing message becomes the stable root prompt label, matching Codex's own session-list derivation; raw `response_item` messages are ignored |
-| `event_msg/item_completed` carrying a `CollabAgentToolCall` | fan out its bounded receiver identities and state map into child lifecycle events |
+| `event_msg/item_completed` carrying a `CollabAgentToolCall` or `SubAgentActivity` | fan out its bounded child identity and state into child lifecycle events |
 | model-context user item such as `<turn_aborted>` | ignored for naming |
 | `event_msg/task_started` | root `turn.started` / `working` |
 | tool/item begin or callable response item | corresponding root or child `working` |
@@ -191,12 +265,41 @@ Sequence numbers come from accepted record order within one binding
 incarnation. Provider timestamps are used only when valid. Replayed initial
 windows and repeated records cannot rewind an entry.
 
+Codex stores an explicit user-edited session title separately from a rollout in
+the effective `CODEX_HOME/session_index.jsonl` file (or
+`~/.codex/session_index.jsonl` when `CODEX_HOME` is unset). Its matching `id`
+and bounded non-empty `thread_name` are display metadata for that same root
+session. The extension follows that terminal-scoped index while the rollout is
+bound: an initial title, every subsequent rename, and a title recovered after
+the index is atomically replaced or truncated updates the existing root entry
+in place. A title change never creates another root, replays lifecycle events,
+or changes working, waiting, blocked, done, or child state. If there is no
+explicit title, the first eligible user message remains the root label.
+
+Codex subagents have separate rollout journals under the same effective
+sessions root. A child journal declares its native parent in
+`session_meta.source.subagent.thread_spawn.parent_thread_id` and repeats the
+bounded parent/session and display metadata needed for safe projection. The
+extension lists and follows only a bounded terminal-scoped sessions directory
+through the public observation broker, so children created after the root is
+bound are admitted live as well. It includes a journal as a child source only
+when that native parent id equals the already bound root provider session id;
+native child ids are de-duplicated across the initial listing and later
+directory snapshots. Timestamp,
+path proximity, `agent_path`, and display text never establish a child-parent
+relationship. A discovered child starts, updates, completes, and exits beneath
+the existing root without changing that root's lifecycle or creating a second
+root binding.
+
 While Codex remains in the foreground, Terminay revalidates the rollout held
 open by that exact process tree. Opening a different eligible root rollout
 switches the tail, retires the previous root, and replays the fresh or resumed
 session.
 
-Claude Code uses the same zero-injection boundary. Terminay binds an exact
+## Claude Code extension mapping
+
+The `terminay-agent-claude-code` package owns the Claude Code mapping and uses
+the same zero-injection boundary. It binds an exact
 `claude --resume <uuid>` descendant to that UUID's root JSONL below the project
 directory in `~/.claude/projects`. For a new `claude` process it admits only one
 root journal created for the exact process working directory after that process
@@ -207,7 +310,49 @@ bounded tool lifecycle, and `Agent` tool use/result pairs for named child
 lifecycle. Meta/local-command user records, tool-result content, assistant
 text, and reasoning are never projected.
 
-## omp journal mapping
+## Cursor Agent extension mapping
+
+The `terminay-agent-cursor` package owns Cursor executable recognition,
+process-bound chat-store discovery, transcript mapping, metadata refresh,
+fixtures, compatibility tests, and the privacy boundary described here.
+
+Cursor Agent CLI chats live below `~/.cursor/chats`, while their JSONL
+transcripts live below `~/.cursor/projects`. Terminay does not read Cursor's
+SQLite conversation payloads. It uses only an exact writable `store.db` held
+by the registered PTY process tree, the bounded adjacent `meta.json` cwd, and
+the shared session UUID in the chat-store and transcript paths to bind the
+corresponding transcript. The canonical cwd is encoded using Cursor's project
+directory convention. Paths outside either canonical Cursor root, malformed
+UUIDs, symlinks escaping those roots, and timestamp/nearest-file matches are
+not eligible.
+
+The first supported mapping is `(cursor, 0.1)`. Cursor transcripts do not carry
+a session header, so the process-bound chat-store path supplies the stable
+provider session ID. A bounded non-empty `meta.json` title is the root label and
+is refreshed while the transcript remains bound so Cursor renames update live.
+Terminay reads only the bounded `lastUsedModel` field from the exact
+process-bound `store.db` metadata row in read-only mode; it never reads SQLite
+conversation blobs. This model metadata is also refreshed while bound.
+When no title exists, a user record starts a turn and its bounded
+`<user_query>` content, excluding Cursor's timestamp wrapper, becomes the root
+label. Assistant records keep the turn working without
+projecting assistant text, reasoning, tool arguments, or tool output. A
+`type: "turn_ended"` record maps its status to a successful, failed, or
+cancelled `done` result. Current transcripts do not persist an unresolved
+permission or elicitation record, so they do not authoritatively produce
+`waiting` or `blocked`; generic terminal activity remains the fallback while
+such a prompt is on screen.
+
+Cursor currently persists `Task` tool calls without stable task IDs or matching
+completion records. Terminay therefore does not project those calls as child
+agents: an inferred child that cannot be authoritatively completed would leave
+stale or misattributed sidebar entries.
+
+## omp extension mapping
+
+The `terminay-agent-omp` package owns every omp/Bun executable rule, data-root
+rule, terminal breadcrumb, mapping, title-slot parser, and fixture described
+here.
 
 omp sessions live below the effective agent sessions root. When
 `PI_CODING_AGENT_DIR` is unset and no named `OMP_PROFILE` / `PI_PROFILE` is

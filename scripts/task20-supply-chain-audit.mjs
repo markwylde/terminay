@@ -124,7 +124,7 @@ function packageNameFromPath(path) {
 }
 
 function isWorkspacePath(path) {
-  return /^(?:apps|packages)\/[^/]+$/u.test(path)
+  return /^(?:apps|packages|extensions)\/[^/]+$/u.test(path)
 }
 
 function findBundleOwner(packages, path) {

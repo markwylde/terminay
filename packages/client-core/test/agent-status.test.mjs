@@ -5,7 +5,7 @@ import { AgentStatusClient } from "../dist/index.js";
 const entry = (sessionId, entryId = `${sessionId}:root`, state = "working") => ({
   entryId,
   kind: "root",
-  provider: "codex",
+  provider: "example.agent/test",
   agentId: entryId,
   sessionId,
   activationTerminalSessionId: sessionId,
@@ -231,7 +231,7 @@ test("agent client resync preserves canonical restart identity and revision exac
   const restartedEntry = {
     ...entry("session-a", "session-a:replacement", "working"),
     agentId: "server-owned-agent",
-    provider: "claude-code",
+    provider: "example.agent/restarted",
     unread: false,
   };
   snapshot = { revision: 1, cursor: "1", entries: { "session-a:replacement": restartedEntry } };
@@ -277,6 +277,32 @@ test("agent subscription tears down when its post-subscribe snapshot cannot be r
   });
   await assert.rejects(() => client.subscribe(), /snapshot unavailable/u);
   assert.deepEqual(requests, ["subscribe", "unsubscribe"]);
+});
+
+test("agent client ignores snapshots from a different live process until an explicit reload", () => {
+  const client = new AgentStatusClient(["session-a"]);
+  assert.equal(client.applySnapshot({
+    revision: 1,
+    cursor: "1",
+    processInstanceId: "process-a",
+    entries: { "session-a:root": entry("session-a") },
+  }).kind, "applied");
+  assert.equal(client.snapshot.processInstanceId, "process-a");
+  assert.equal(client.applySnapshot({
+    revision: 2,
+    cursor: "2",
+    processInstanceId: "process-b",
+    entries: { "session-a:root": entry("session-a", "session-a:root", "waiting") },
+  }).kind, "ignored");
+  assert.equal(client.snapshot.entries["session-a:root"].state, "working");
+  assert.equal(client.reset({
+    revision: 1,
+    cursor: "1",
+    processInstanceId: "process-b",
+    entries: { "session-a:root": entry("session-a", "session-a:root", "waiting") },
+  }).kind, "applied");
+  assert.equal(client.snapshot.processInstanceId, "process-b");
+  assert.equal(client.snapshot.entries["session-a:root"].state, "waiting");
 });
 
 test("agent client rejects a query-command compatibility bridge before it can retain a stale projection", () => {

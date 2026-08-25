@@ -20,7 +20,7 @@ export async function inspectReleaseInputs(root = process.cwd()) {
   if (lockfile.packages?.['']?.version !== packageJson.version) throw new Error('lockfile root version does not match package.json')
   const workspaces = []
   for (const pattern of packageJson.workspaces ?? []) {
-    if (pattern !== 'apps/*' && pattern !== 'packages/*') continue
+    if (pattern !== 'apps/*' && pattern !== 'packages/*' && pattern !== 'extensions/*') continue
     const prefix = pattern.replace('/*', '')
     const names = Object.keys(lockfile.packages).filter((key) => key.startsWith(`${prefix}/`) && key.slice(prefix.length + 1).includes('/') === false)
     for (const key of names) workspaces.push(key)

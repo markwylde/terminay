@@ -137,7 +137,7 @@ test('RemoteAccessService caches one server UI archive for browser clients', asy
   assert.equal(context.hostKind, 'browser')
 })
 
-function createTestService({ hostWindows = [], pairingPinHash = 'configured-pin-hash', tempDir, serverId }) {
+function createTestService({ hostWindows = [], pairingPinHash = 'configured-pin-hash', tempDir, serverId = 'remote-service-test-server' }) {
   return new RemoteAccessService({
     userDataPath: tempDir,
     serverId,

@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
+import { prepareDevelopmentBuiltInExtensions } from './prepare-development-built-in-extensions.mjs';
 import { stageSelectedSecureWeriftRuntime } from './stage-selected-secure-werift-runtime.mjs';
 
 const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -43,6 +44,11 @@ const initialBundle = new Promise((resolve, reject) => {
 	initialBundleFailed = reject;
 });
 try {
+	// Electron resolves its development built-ins from build/, not directly
+	// from workspace source. Complete this atomic stage and verification before
+	// starting Vite/Electron so a clean checkout cannot boot without agents.
+	const builtInStage = await prepareDevelopmentBuiltInExtensions({ root: repositoryRoot });
+	process.stdout.write(`[dev] verified ${builtInStage.artifacts.length} built-in extensions\n`);
 	const [watcher, preloadBuild, runtimeStage] = await Promise.all([
 		build({
 			configFile: 'vite.server-ui.config.ts',

@@ -1,39 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AgentStatusService, TerminalActivityService, TerminalService, composeActivityLifecycle } from "../dist/index.js";
+import { AgentStatusService, ExtensionAgentRuntimeRegistry, TerminalActivityService, TerminalService, composeActivityLifecycle } from "../dist/index.js";
 
-test("terminal lifecycle forwards the exact spawned PTY shell PID to journal observation", async () => {
-  const calls = [];
-  const journalSource = {
-    async start() {}, async stop() {}, setEnabled() {},
-    registerTerminal(identity) { calls.push(["register", identity.sessionId]); },
-    terminalStarted(identity, pid) { calls.push(["started", identity.sessionId, pid]); },
-    foregroundProcessChanged() {}, unregisterTerminal() {},
-  };
+test("terminal lifecycle registers the exact spawned session with the generic agent projection", async () => {
   const activity = new TerminalActivityService({ serverId: "server-1" });
-  const agents = new AgentStatusService({ activity, journalSource }); await agents.start();
+  const agents = new AgentStatusService({ activity }); await agents.start();
   const process = { pid: 9876, write() {}, resize() {}, kill() {}, onData() { return () => {}; }, onExit() { return () => {}; } };
   const terminal = new TerminalService({ serverId: "server-1", ptyFactory: { spawn: () => process }, sessionLifecycle: composeActivityLifecycle(activity, agents, undefined) });
   await terminal.createSession({ projectId: "project-1", sessionId: "terminal-1", shellPath: "/bin/sh", cols: 80, rows: 24 });
-  assert.deepEqual(calls.slice(0, 2), [["register", "terminal-1"], ["started", "terminal-1", 9876]]);
+  assert.equal(agents.isSessionActive({ serverId: "server-1", projectId: "project-1", sessionId: "terminal-1" }), true);
   await terminal.shutdown(); await agents.stop();
-});
-
-test("provider-neutral PTY journal callback feeds only the reduced authoritative agent projection", async () => {
-  const activity = new TerminalActivityService({ serverId: "server-1" });
-  const inertJournal = { async start() {}, async stop() {}, setEnabled() {}, registerTerminal() {}, terminalStarted() {}, foregroundProcessChanged() {}, unregisterTerminal() {} };
-  const agents = new AgentStatusService({ activity, journalSource: inertJournal, now: () => 100 }); await agents.start();
-  let journalListener;
-  const process = { write() {}, resize() {}, kill() {}, onData() { return () => {}; }, onExit() { return () => {}; }, onAgentJournal(listener) { journalListener = listener; return () => { journalListener = undefined; }; } };
-  const terminal = new TerminalService({ serverId: "server-1", ptyFactory: { spawn: () => process }, sessionLifecycle: composeActivityLifecycle(activity, agents, undefined) });
-  await terminal.createSession({ projectId: "project-remote", sessionId: "remote-terminal", shellPath: "/bin/sh", cols: 80, rows: 24 });
-  journalListener({ provider: "codex", record: { type: "session_meta", payload: { id: "remote-codex", cli_version: "0.2.0", rawPrompt: "never expose" } } });
-  journalListener({ provider: "codex", record: { type: "event_msg", payload: { type: "task_started", rawResponse: "never expose" } } });
-  await new Promise((resolve) => setImmediate(resolve));
-  const snapshot = agents.getSnapshotForProject("project-remote");
-  assert.equal(Object.values(snapshot.entries)[0].sessionId, "remote-codex");
-  assert.doesNotMatch(JSON.stringify(snapshot), /never expose/u);
-  await terminal.shutdown(); assert.equal(journalListener, undefined); await agents.stop();
 });
 
 test("foreground PTY lifecycle reaches the exact canonical activity session", async () => {
@@ -75,4 +51,60 @@ test("foreground PTY lifecycle reaches the exact canonical activity session", as
   });
   await terminal.shutdown();
   assert.equal(foregroundListener, undefined);
+});
+
+test("a shell foreground event revokes an extension observer through the composed PTY lifecycle", async () => {
+  const identity = { serverId: "server-1", projectId: "project-1", sessionId: "terminal-1" };
+  const provider = {
+    id: "com.terminay.agent-codex/cli",
+    displayName: "Codex",
+    processMatchers: [{ executableName: "codex" }],
+    mappings: [{ mappingVersion: "test-v1", providerVersionRange: ">=1" }],
+    requiredEnvironmentCapabilities: ["process-observation", "filesystem-observation", "agent-journal"],
+  };
+  const activity = new TerminalActivityService({ serverId: identity.serverId });
+  const agents = new AgentStatusService({ activity }); await agents.start();
+  const admitted = []; const cancelled = [];
+  const extensionAgents = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: {
+      agentProviderContributions: () => [provider],
+      async admitAgentTerminal(value) { admitted.push(value); },
+      async cancelAgentTerminal(value) { cancelled.push(value); return true; },
+      async drainAgentObservers() {},
+    },
+  });
+  let foregroundListener;
+  const process = {
+    write() {}, resize() {}, kill() {},
+    onData() { return () => {}; },
+    onExit() { return () => {}; },
+    onForegroundProcess(listener) { foregroundListener = listener; return () => { foregroundListener = undefined; }; },
+  };
+  const terminal = new TerminalService({
+    serverId: identity.serverId,
+    ptyFactory: { spawn: () => process },
+    sessionLifecycle: composeActivityLifecycle(activity, agents, undefined, extensionAgents),
+  });
+  await terminal.createSession({ ...identity, shellPath: "/bin/sh", cols: 80, rows: 24 });
+
+  foregroundListener({ processName: "codex", shellForeground: false });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(admitted.length, 1);
+  const binding = {
+    providerSessionId: "global-resumed-session",
+    mappingVersion: "test-v1",
+    fingerprint: { kind: "fixture", process: { id: "owner-one" }, metadata: { source: "test" } },
+  };
+  assert.equal((await agents.ingestExtensionLifecycle(identity, provider.id, "test-v1", binding, [{ kind: "session.started", title: "Original Codex" }])).acceptedEventCount, 1);
+
+  // This is the exact previously-missing route: a PTY shell return must reach
+  // the extension runtime, even though it is not a busy foreground process.
+  foregroundListener({ processName: "zsh", shellForeground: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(cancelled, [{ contextId: admitted[0].context.contextId, reason: "terminal-replaced" }]);
+  const stale = await agents.ingestExtensionLifecycle(identity, provider.id, "test-v1", undefined, [{ kind: "turn.started", turnId: "late-global-resume" }]);
+  assert.equal(stale.acceptedEventCount, 0);
+
+  await terminal.shutdown(); await agents.stop();
 });
