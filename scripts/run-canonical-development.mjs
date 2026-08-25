@@ -1,12 +1,15 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { build } from 'vite';
 import { prepareDevelopmentBuiltInExtensions } from './prepare-development-built-in-extensions.mjs';
 import { stageSelectedSecureWeriftRuntime } from './stage-selected-secure-werift-runtime.mjs';
 
 const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const viteCli = join(repositoryRoot, 'node_modules', 'vite', 'bin', 'vite.js');
+const npmCli = join(repositoryRoot, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+const runFile = promisify(execFile);
 
 let stopping = false;
 let developmentServer;
@@ -44,6 +47,12 @@ const initialBundle = new Promise((resolve, reject) => {
 	initialBundleFailed = reject;
 });
 try {
+	// Built-in extension package tests load the server-core public runtime. A
+	// fresh worktree has no compiled workspace output, so build that dependency
+	// before staging extensions rather than relying on an unrelated prior build.
+	await runFile(process.execPath, [npmCli, 'run', 'build:shared'], {
+		cwd: repositoryRoot,
+	});
 	// Electron resolves its development built-ins from build/, not directly
 	// from workspace source. Complete this atomic stage and verification before
 	// starting Vite/Electron so a clean checkout cannot boot without agents.

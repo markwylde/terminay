@@ -35,6 +35,49 @@ test("Puzed exposes a create form and tests a saved profile with its vault-bound
   assert.equal(requests[0].init.headers.Authorization, "Bearer secret");
 });
 
+test("Puzed enables an image when the selected size meets its root-disk minimum", async () => {
+  const f = runtimeFixture();
+  const fetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const path = new URL(String(url)).pathname;
+    if (path === "/api/v1/images") return Response.json({ items: [
+      { id: "base", name: "Debian Base", status: "ready", cloud_init_supported: true, min_disk_bytes: 10 * 1024 ** 3 },
+      { id: "desktop", name: "Debian Desktop", status: "ready", cloud_init_supported: true, min_disk_bytes: 25 * 1024 ** 3 },
+    ] });
+    if (path === "/api/v1/org/settings") return Response.json({ settings: { default_size_preset_id: "medium", default_size_presets: [
+      { id: "medium", label: "Medium", vcpus: 2, memory_bytes: 2 * 1024 ** 3, root_disk_bytes: 20 * 1024 ** 3 },
+    ] } });
+    throw new Error(`unexpected request ${path}`);
+  };
+  try {
+    const result = await f.runtime.resolveOptions({ profileId: "profile-1", sourceId: "com.puzed.platform/vm/images", values: { "size-preset": "medium" } }, f.call);
+    assert.deepEqual(result.options, [
+      { value: "base", label: "Debian Base" },
+      { value: "desktop", label: "Debian Desktop", disabledReason: "Requires at least 25 GB of root disk." },
+    ]);
+  } finally {
+    globalThis.fetch = fetch;
+  }
+});
+
+test("Puzed exposes a bounded VM-create rejection with its HTTP status and provider code", async () => {
+  const f = runtimeFixture(); const fetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const path = new URL(String(url)).pathname;
+    if (path === "/api/v1/org/settings") return Response.json({ settings: { default_size_presets: [{ id: "medium", label: "Medium", vcpus: 2, memory_bytes: 2 * 1024 ** 3, root_disk_bytes: 20 * 1024 ** 3 }] } });
+    if (path === "/api/v1/machines") return Response.json({ code: "host_capacity_exhausted" }, { status: 422 });
+    throw new Error(`unexpected request ${path}`);
+  };
+  try {
+    await assert.rejects(
+      () => f.runtime.createEnvironment({ environmentId: "env-3", profileId: "profile-1", displayName: "Rejected VM", values: { "image-id": "image-1", "size-preset": "medium", "worker-id": "worker-1", name: "rejected-vm" } }, f.call),
+      /Puzed rejected VM creation \(HTTP 422, host_capacity_exhausted\)\./,
+    );
+  } finally {
+    globalThis.fetch = fetch;
+  }
+});
+
 test("Puzed creates a composed environment only through the public SSH dependency", async () => {
   const f = runtimeFixture();
   const created = await f.runtime.createEnvironment({ environmentId: "env-1", profileId: "profile-1", displayName: "Dev VM", values: { baseUrl: "https://platform.test", machineId: "machine-1", bindingId: "binding-1", host: "192.0.2.4", username: "vms", root: "/srv/project" } }, f.call);

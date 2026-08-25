@@ -39,7 +39,7 @@ export class ExtensionProfileService implements ExtensionProfileBroker, ProjectE
     const definition = this.definition(providerId);
     const extensionId = this.owner(providerId);
     const issues = await this.invoke<readonly { message?: string }[]>(providerId, "testProfile", { values }, context);
-    if (issues.length > 0) throw new Error(issues.map((issue) => issue.message ?? "profile validation failed").join("; "));
+    if (issues.length > 0) throw publicProfileValidationError(issues);
     const profileId = `profile:${randomUUID()}`;
     const secretFields = secretFieldIds(definition).filter((fieldId) => typeof values[fieldId] === "string" && values[fieldId] !== "");
     const secretIds: string[] = [];
@@ -69,7 +69,7 @@ export class ExtensionProfileService implements ExtensionProfileBroker, ProjectE
 
   async testProfile(profile: EnvironmentProfile, context: ProviderControlContext): Promise<void> {
     const issues = await this.invoke<readonly { message?: string }[]>(profile.providerId, "testProfile", { profileId: profile.id, values: {} }, context);
-    if (issues.length > 0) throw new Error(issues.map((issue) => issue.message ?? "profile validation failed").join("; "));
+    if (issues.length > 0) throw publicProfileValidationError(issues);
   }
 
   async updateProfile(profile: EnvironmentProfile, values: Readonly<Record<string, string | boolean>>, context: ProviderControlContext) {
@@ -121,3 +121,9 @@ export class ExtensionProfileService implements ExtensionProfileBroker, ProjectE
 function secretFieldIds(definition: ProviderDefinition): string[] { return definition.profileForm?.sections.flatMap((section) => section.fields.filter((field) => field.type === "secret").map((field) => field.id)) ?? []; }
 function secretReferences(references: readonly string[]): Map<string,string> { const result=new Map<string,string>();for(const reference of references){const separator=reference.indexOf("=");if(separator<=0)throw new Error("extension profile secret reference is invalid");result.set(reference.slice(0,separator),reference.slice(separator+1));}return result; }
 function stringValue(value: unknown, fallback: string): string { return typeof value === "string" && value.length > 0 ? value : fallback; }
+/** The provider contract marks testProfile issues as public validation feedback.
+ * Keep that deliberate channel distinct from arbitrary thrown extension errors. */
+function publicProfileValidationError(issues: readonly { message?: string }[]): Error & { code: "validation"; retryable: false } {
+  const messages = [...new Set(issues.flatMap((issue) => typeof issue.message === "string" ? [issue.message.replace(/[\r\n\0]+/gu, " ").trim().slice(0, 500)] : []).filter(Boolean))].slice(0, 5);
+  return Object.assign(new Error(messages.join("; ") || "profile validation failed"), { code: "validation" as const, retryable: false as const });
+}
