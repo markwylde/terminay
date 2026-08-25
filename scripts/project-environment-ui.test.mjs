@@ -56,6 +56,15 @@ test('generic form renderer covers bounded async choices and accessible preset c
 	assert.doesNotMatch(forms,/grid-template-columns:\s*repeat\(2/);
 });
 
+test('failed provider submissions stay in their form with a visible inline error',()=>{
+	assert.match(surfaces,/const submitForm = useCallback/);
+	assert.match(surfaces,/DeclarativeProviderForm owns submit failures/);
+	assert.match(surfaces,/await submitForm\(/);
+	assert.match(surfaces,/error && formTarget === null/);
+	assert.match(forms,/setErrors\(\[error instanceof Error \? error\.message : String\(error\)\]\)/);
+	assert.doesNotMatch(surfaces,/await run\(\(\) => client!\.createEnvironment/);
+});
+
 test('Desktop and browser File menus converge on shared management commands',()=>{
 	for(const command of ['open-project-environments','open-extensions']){
 		assert.match(desktop,new RegExp(command));
