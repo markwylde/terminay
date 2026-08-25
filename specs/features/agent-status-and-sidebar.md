@@ -121,6 +121,10 @@ Every transition away from the shell therefore starts a new bounded
 journal-discovery window even when the foreground name is not a recognized
 provider. This lets a resumed session launched long after terminal startup
 bind its reopened journal without treating the wrapper itself as an agent.
+Foreground sampling may miss a brief return to the shell between an exited
+session and `codex resume`. A repeated match for the same provider keeps an
+active root observer intact, but starts a fresh binding incarnation when that
+terminal's canonical root has already exited.
 The journal is still admitted only after the provider's documented identity
 evidence is proven. An `omp` binary that sets its process title still matches
 `omp` directly; a `bun` wrapper is admitted only after the OMP terminal

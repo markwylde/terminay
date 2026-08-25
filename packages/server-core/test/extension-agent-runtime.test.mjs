@@ -50,6 +50,13 @@ test("extension provider claims one terminal incarnation before host admission",
   assert.equal(entry.displayName, "Extension session");
   assert.equal(entry.promptText, "Hello from the extension");
 
+  // Repeated foreground samples for the same live provider do not tear down
+  // its root observer while collaboration processes are starting.
+  assert.equal(registry.foregroundProcessChanged(identity, "test-agent"), true);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual(admitted.map(({ context }) => context.contextId), ["context-1"]);
+  assert.deepEqual(cancelled, []);
+
   // A worker joining the process topology must not cancel the already-proven
   // root observer. Explicit foreground replacement owns that transition.
   registry.topologyChanged(identity);
@@ -275,6 +282,38 @@ test("a shell return revokes the exact observer before a globally resumed journa
   assert.equal(Object.values(first.agents.getSnapshot().entries)[0].displayName, "First owner");
   assert.equal(Object.values(second.agents.getSnapshot().entries)[0].displayName, "Second owner");
   await first.agents.stop(); await second.agents.stop();
+});
+
+test("a same-terminal resume re-admits an exited provider when the shell edge was missed", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
+  const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
+  const admitted = []; const cancelled = [];
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: {
+      agentProviderContributions: () => [provider],
+      async admitAgentTerminal(value) { admitted.push(value); },
+      async cancelAgentTerminal(value) { cancelled.push(value); return true; },
+      async drainAgentObservers() {},
+    },
+    contextId: (_identity, incarnation) => `resume-context-${incarnation}`,
+    reobserveDebounceMs: 0,
+  });
+  registry.register(identity); registry.terminalStarted(identity, 4321);
+  assert.equal(registry.foregroundProcessChanged(identity, "test-agent"), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  const binding = { providerSessionId: "resumed-session", mappingVersion: "test-v1", fingerprint: { kind: "fixture", process: { id: "process-1" }, metadata: { source: "test" } } };
+  assert.equal((await agents.ingestExtensionLifecycle(identity, provider.id, "test-v1", binding, [
+    { kind: "session.started", title: "Original session" },
+    { kind: "agent.exited", exitCode: 0 },
+  ])).acceptedEventCount, 2);
+
+  // Process sampling saw `test-agent` again but missed the intervening shell.
+  assert.equal(registry.foregroundProcessChanged(identity, "test-agent"), true);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual(admitted.map(({ context }) => context.contextId), ["resume-context-1", "resume-context-2"]);
+  assert.deepEqual(cancelled, [{ contextId: "resume-context-1", reason: "terminal-replaced" }]);
+  await agents.stop();
 });
 
 test("a throwing unmatched provider does not pin discovery away from a later binder", async () => {

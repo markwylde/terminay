@@ -150,7 +150,21 @@ export class ExtensionAgentRuntimeRegistry {
       // Process-topology changes from collaboration workers keep the proven
       // root observer alive; their native journals are discovered beneath it.
       const matched = this.match(processName, identity);
-      if (matched === undefined || matched.id === terminal.context.providerId) return true;
+      if (matched === undefined) return true;
+      if (matched.id === terminal.context.providerId) {
+        // The shell edge between a short-lived CLI session and `codex resume`
+        // can be missed by process sampling. Preserve a live root (including
+        // collaboration topology), but re-admit the same provider once its
+        // canonical root has exited so the resumed writer can bind again.
+        const activeRoot = Object.values(this.options.agents.getSnapshot().entries).some((entry) =>
+          entry.kind === "root"
+          && entry.provider === matched.id
+          && entry.activationTerminalSessionId === terminal.identity.sessionId
+          && entry.active,
+        );
+        if (!activeRoot) this.scheduleReobserve(terminal, matched, processName);
+        return true;
+      }
       this.scheduleReobserve(terminal, matched, processName);
       return true;
     }
