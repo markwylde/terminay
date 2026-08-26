@@ -29,7 +29,7 @@ async function fixture(overrides = {}) {
 	});
 }
 
-test('authenticated transport transcript has stable canonical bytes and exact SDP binding', async () => {
+test('authenticated transport transcript has stable canonical bytes and exact fingerprint binding', async () => {
 	const transcript = await fixture();
 	const serialized = new TextDecoder().decode(serializeAuthenticatedWebRtcTransportTranscript(transcript));
 	assert.equal(serialized, new TextDecoder().decode(serializeAuthenticatedWebRtcTransportTranscript(transcript)));
@@ -39,10 +39,15 @@ test('authenticated transport transcript has stable canonical bytes and exact SD
 		scope: 'pairing', scopeId: 'room-12345678', sessionOrigin: 'https://server123.terminay.com',
 		serverId: 'server-a', clientNonce: 'B'.repeat(43), sdp, now: 2_000,
 	})).offerId, 'C'.repeat(43));
-	await assert.rejects(() => assertAuthenticatedWebRtcTransportTranscript(transcript, {
+	await assertAuthenticatedWebRtcTransportTranscript(transcript, {
 		scope: 'pairing', scopeId: 'room-12345678', sessionOrigin: 'https://server123.terminay.com',
 		serverId: 'server-a', clientNonce: 'B'.repeat(43), sdp: `${sdp} `, now: 2_000,
-	}), /offer|fingerprint/);
+	});
+	const changedFingerprint = sdp.replace(fingerprint, fingerprint.replace(/^00/u, 'FF'));
+	await assert.rejects(() => assertAuthenticatedWebRtcTransportTranscript(transcript, {
+		scope: 'pairing', scopeId: 'room-12345678', sessionOrigin: 'https://server123.terminay.com',
+		serverId: 'server-a', clientNonce: 'B'.repeat(43), sdp: changedFingerprint, now: 2_000,
+	}), /fingerprint/);
 });
 
 test('authenticated transport transcript rejects mutation, replay context, unsafe time, and fingerprints', async () => {
