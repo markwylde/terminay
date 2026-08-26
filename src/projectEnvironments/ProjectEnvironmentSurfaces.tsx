@@ -271,12 +271,14 @@ export function ProjectEnvironmentsWindow({
 						).options}
 						onCancel={() => setFormTarget(null)}
 						onSubmit={async (values) => {
+							const provider = providers.find(
+								(candidate) => candidate.providerId === formTarget.providerId,
+							);
+							const managesProvider = provider?.createForm !== undefined;
 							const createdProvider =
 								formTarget.mode !== 'environment' &&
 								formTarget.profileId === undefined &&
-								providers.find(
-									(provider) => provider.providerId === formTarget.providerId,
-								)?.createForm !== undefined;
+								managesProvider;
 							if (formTarget.mode === 'environment' && formTarget.profileId !== undefined) {
 								await submitForm(
 									() => client!.createEnvironment(formTarget.providerId, formTarget.profileId!, values),
@@ -285,7 +287,7 @@ export function ProjectEnvironmentsWindow({
 							} else if (formTarget.profileId === undefined) {
 								await submitForm(
 									() => client!.createProfile(formTarget.providerId, values),
-									'Provider or connection saved.',
+									managesProvider ? 'Provider saved.' : 'Connection saved.',
 								);
 								if (
 									createdProvider &&
@@ -300,7 +302,7 @@ export function ProjectEnvironmentsWindow({
 							} else {
 								await submitForm(
 									() => client!.updateProfile(formTarget.profileId!, values),
-									'Provider or connection updated.',
+									managesProvider ? 'Provider updated.' : 'Connection updated.',
 								);
 							}
 							setFormTarget(null);
