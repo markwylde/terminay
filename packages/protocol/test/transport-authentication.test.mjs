@@ -33,6 +33,7 @@ test('authenticated transport transcript has stable canonical bytes and exact SD
 	const transcript = await fixture();
 	const serialized = new TextDecoder().decode(serializeAuthenticatedWebRtcTransportTranscript(transcript));
 	assert.equal(serialized, new TextDecoder().decode(serializeAuthenticatedWebRtcTransportTranscript(transcript)));
+	assert.doesNotMatch(serialized, /\\u0000/u, 'signaling transcripts must be PostgreSQL jsonb safe');
 	assert.deepEqual(validateAuthenticatedWebRtcTransportTranscript(JSON.parse(serialized)), transcript);
 	assert.equal((await assertAuthenticatedWebRtcTransportTranscript(transcript, {
 		scope: 'pairing', scopeId: 'room-12345678', sessionOrigin: 'https://server123.terminay.com',

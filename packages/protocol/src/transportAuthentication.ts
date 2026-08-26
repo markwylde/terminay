@@ -2,7 +2,7 @@ import { encodeCanonicalJson } from './json.js';
 
 export const AUTHENTICATED_WEBRTC_TRANSPORT_VERSION = 1 as const;
 export const AUTHENTICATED_WEBRTC_TRANSPORT_DOMAIN =
-	'terminay\u0000v1\u0000authenticated-webrtc-transport' as const;
+	'terminay:v1:authenticated-webrtc-transport' as const;
 export const AUTHENTICATED_WEBRTC_PAIRING_HKDF_LABEL =
 	'terminay remote v1 authenticated transport pairing' as const;
 
