@@ -610,8 +610,15 @@ the SDK suite passed 44 tests; and the agent boundary suite passed 2/2.
     Linux x64 runner.
 - [x] Verify Docker's clean dependency manifests install and stage all six
   package closures without relying on local `node_modules` or developer state.
-- [ ] Run the complete `npm run test:e2e` through the required Docker-isolated
+- [x] Run the complete `npm run test:e2e` through the required Docker-isolated
   Electron path.
+
+  Release evidence (2026-08-26): the `v3.5.3` main commit `5e2b7fd` completed
+  the required Docker-isolated Electron matrix in
+  [Gitea Actions run 9657](https://git.i.wylde.net/markwylde/terminay/actions/runs/9657).
+  Its five `npm run test:e2e -- --shard=N/5` jobs all passed (243 passed,
+  12 explicitly skipped). This proves the required full Docker command, but
+  does not replace the more specific two-profile Docker acceptance gate below.
 
 Evidence (2026-08-24): the artifact verifier, packaged-startup smoke, and
 installer/operations suites prove release inputs and installer semantics;
