@@ -110,7 +110,13 @@ async function launchExtractedPackagedComposition(
 async function observeRuntime(app: ElectronApplication): Promise<RuntimeEvidence> {
 	const page = await app.firstWindow();
 	await page.waitForLoadState('domcontentloaded');
-	await expect(page.locator('[data-terminay-app-component]')).toBeVisible();
+	// A fresh packaged composition creates its Local server, workspace, and
+	// built-in extension floor after Chromium has reached DOMContentLoaded.
+	// CI's extracted app can legitimately need longer than Playwright's 5s
+	// assertion default before the canonical root is rendered.
+	await expect(page.locator('[data-terminay-app-component]')).toBeVisible({
+		timeout: 30_000,
+	});
 	await expect(page.locator('.project-tab')).toHaveCount(1);
 	await expect(page.locator('.terminal-panel')).toHaveCount(1);
 	const context = await page.evaluate(() => window.terminayHost?.getContext());
@@ -246,6 +252,14 @@ test('development orchestration and extracted packaged app expose identical cano
 			await terminateFailedComposition(development);
 		if (packaged !== undefined && packaged.process().exitCode === null)
 			await terminateFailedComposition(packaged);
-		await rm(root, { recursive: true, force: true });
+		// Chromium child processes may release profile partitions shortly after
+		// the Electron main process exits. Retry removal so a failed first
+		// attempt cannot poison Playwright's retry with ENOTEMPTY.
+		await rm(root, {
+			recursive: true,
+			force: true,
+			maxRetries: 10,
+			retryDelay: 100,
+		});
 	}
 });
