@@ -24,8 +24,8 @@ export async function stageBuiltInExtensions(options = {}) {
   const temporary = await mkdtemp(join(tmpdir(), "terminay-built-in-stage-"));
   const next = `${output}.next`;
   try {
-    await npm(root, ["run", "build", "--workspace", SDK]);
-    if (!options.skipChecks) await buildAndTest(root, catalogue);
+    await npm(root, ["run", "build:built-in-extension-workspaces"]);
+    if (!options.skipChecks) await testBuiltInExtensions(root, catalogue);
     const packs = join(temporary, "packs");
     await mkdir(packs);
     const sdk = await pack(root, SDK, packs, true);
@@ -77,11 +77,9 @@ export async function stageBuiltInExtensions(options = {}) {
   }
 }
 
-async function buildAndTest(root, catalogue) {
+async function testBuiltInExtensions(root, catalogue) {
   for (const entry of catalogue) {
-    await npm(root, ["run", "build", "--workspace", entry.packageName, "--if-present"]);
-    await npm(root, ["run", "compile", "--workspace", entry.packageName, "--if-present"]);
-    await npm(root, ["test", "--workspace", entry.packageName]);
+    await npm(root, ["run", "test:ci", "--workspace", entry.packageName]);
   }
 }
 

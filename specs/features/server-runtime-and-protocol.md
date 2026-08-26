@@ -142,6 +142,9 @@ foreground start emits a bounded readiness record and handles `SIGINT` and
 - Repository builds use one dependency-aware Turborepo task graph. A package
   build consumes the declared builds of its workspace dependencies instead of
   recursively rebuilding them itself.
+- Every built-in extension exposes a cacheable compile task, and extension
+  artifact staging materializes those tasks through the same graph before
+  packing the verified release payload.
 - Only declared reproducible build outputs are cacheable. Linting, type
   checking, and tests execute for every CI run.
 - Trusted CI and developer builds use the authenticated internal
