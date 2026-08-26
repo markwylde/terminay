@@ -29,7 +29,7 @@ test("GitHub and Gitea discover separate provider-specific CI workflows", () => 
   );
   assert.deepEqual(
     [...giteaCi.slice(giteaCi.indexOf("jobs:\n")).matchAll(/^ {2}([a-z][a-z0-9-]+):$/gmu)].map((match) => match[1]),
-    ["packaged-macos-smoke", "build-and-test", "mcp-cli-compatibility", "e2e-image", "e2e-test"],
+    ["packaged-macos-smoke", "packaged-linux-built-in-lifecycle", "build-and-test", "mcp-cli-compatibility", "e2e-image", "e2e-test"],
   );
   assert.match(job(githubCi, "packaged-macos-smoke"), /^ {4}runs-on: macos-latest$/mu);
   assert.match(job(githubCi, "packaged-macos-smoke"), /packaged-macos-pr-smoke\.sh/u);
@@ -49,6 +49,13 @@ test("GitHub and Gitea discover separate provider-specific CI workflows", () => 
   assert.match(packagedLinux, /test "\$\(uname -m\)" = "\$EXPECTED_UNAME_ARCH"/u);
   assert.match(packagedLinux, /npm ci/u);
   assert.match(packagedLinux, /test:packaged-built-in-extension-runtime:linux -- \$\{\{ matrix\.target \}\}/u);
+  const giteaPackagedLinux = job(giteaCi, "packaged-linux-built-in-lifecycle");
+  assert.match(giteaPackagedLinux, /^ {4}runs-on: ubuntu-latest$/mu);
+  assert.match(giteaPackagedLinux, /Require the native supported Linux x64 architecture/u);
+  assert.match(giteaPackagedLinux, /test "\$\(node -p 'process\.arch'\)" = x64/u);
+  assert.match(giteaPackagedLinux, /test "\$\(uname -m\)" = x86_64/u);
+  assert.match(giteaPackagedLinux, /npm ci/u);
+  assert.match(giteaPackagedLinux, /test:packaged-built-in-extension-runtime:linux -- linux-x64/u);
   const applicationGraphBuild = packagedBuiltIns.indexOf('npm run build:application-graph')
   const postcompile = packagedBuiltIns.indexOf('npm run build:server-postcompile')
   assert.ok(applicationGraphBuild >= 0 && postcompile > applicationGraphBuild,
