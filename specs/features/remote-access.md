@@ -41,7 +41,10 @@ Remote browser access uses five concepts:
   origin's device credential in a separate origin-keyed vault.
 - A **server host key** is a long-lived key pair owned by Terminay Server for
   its stable session origin. Signaling stores the public key. The private key
-  never leaves the server. This proves the WebRTC host is that server. It is
+  never leaves the server. During first pairing, the fragment authenticates
+  this public key and the exact WebRTC transport. The device then pins the
+  public key. On reconnect, that pinned key authenticates every new WebRTC
+  transport before the device releases credentials or application data. It is
   not a browser device key.
 
 The pairing secret enrolls a browser device once. It is not a reconnect
@@ -64,12 +67,61 @@ server host key is how signaling knows the reconnect host is the same server.
 - The signaling service routes authenticated WebRTC offers, answers, and ICE
   candidates for one server session. It admits a pairing client only with the
   fragment-derived join credential. It admits a reconnect host only when that
-  host proves the registered server host key.
+  host proves the registered server host key. Signaling is an untrusted router
+  for confidentiality and integrity: it cannot substitute or proxy a WebRTC
+  endpoint without client verification failing.
 - TURN may relay encrypted WebRTC packets and does not terminate the Terminay
   application protocol.
 
 Each server has one stable session origin. Credentials created at one origin or
 for one server never authorize another.
+
+## End-to-end WebRTC host authentication
+
+WebRTC DTLS encryption is not sufficient by itself because signaling carries
+the SDP fingerprint. Every pairing and reconnect generation therefore uses a
+server-authenticated transport transcript. The transcript has one canonical,
+versioned byte serialization and includes at least:
+
+- a Terminay protocol/domain separator and transcript version;
+- pairing or reconnect scope plus the pairing room or stable session id;
+- stable session origin and server id;
+- server host public key and algorithm;
+- a fresh client-generated nonce for this connection attempt;
+- a server-generated offer/generation id, issued time, and short expiry;
+- a cryptographic hash of the exact offered SDP bytes; and
+- every offered DTLS certificate fingerprint, including algorithm and value.
+
+The server host key signs the canonical transcript. The signature and
+transcript travel with the offer; they are not a separate registration claim.
+The client verifies the exact received offer against the signed hash and
+fingerprints before calling `setRemoteDescription`.
+
+First pairing has no previously pinned host key. The server also authenticates
+the transcript and host public key with a pairing-authentication key derived
+from the fragment using a dedicated HKDF label. The signaling service receives
+neither that key nor enough material to calculate it. The client verifies this
+pairing authenticator, then the host-key signature, and atomically stores the
+verified host public key with the newly enrolled device credential.
+
+Reconnect sends a fresh client nonce before the server creates its offer. The
+client requires the transcript to contain that exact nonce and verifies the
+signature with the host public key pinned during pairing. A host-key mismatch,
+missing or duplicate fingerprint, changed SDP, stale transcript, repeated
+offer id, wrong origin/server/scope, unsupported algorithm, or invalid
+signature fails the generation.
+
+No PIN, approval response, device public key, device challenge signature,
+connection ticket, UI bundle, application frame, clipboard content, or terminal
+data crosses a WebRTC data channel until transport authentication succeeds.
+The signaling service may replay, reorder, replace, or suppress signaling
+messages only to cause a bounded visible connection failure; it cannot obtain
+an authenticated plaintext position between the client and server.
+
+The pinned host key is part of the device credential, not a profile label or
+signaling record. Host-key rotation is an explicit trust reset requiring a new
+pairing ceremony. Restoring or cloning server state must preserve the host key
+or deliberately rotate server identity and invalidate prior device trust.
 
 ## Exposure
 
@@ -220,14 +272,18 @@ privileged connection host.
 
 1. The user opens a stable session origin directly, selects its PWA manager
    profile, or opens its Desktop profile.
-2. The server sends a short-lived challenge containing the server identity,
+2. The client sends a fresh connection nonce, receives the WebRTC offer and
+   authenticated transport transcript, and verifies that transcript with the
+   host key pinned for this device.
+3. Only after transport authentication, the server sends a short-lived
+   challenge containing the server identity,
    session origin, device id, nonce, and expiry.
-3. The client signs the challenge with its device private key.
-4. The server verifies the signature with the registered public key and checks
+4. The client signs the challenge with its device private key.
+5. The server verifies the signature with the registered public key and checks
    expiry and revocation state.
-5. The server issues a short-lived, single-use connection ticket bound to that
+6. The server issues a short-lived, single-use connection ticket bound to that
    authenticated device and WebRTC peer.
-6. The client opens the application transport and resumes workspace and
+7. The client opens the application transport and resumes workspace and
    terminal subscriptions from confirmed revisions and sequence positions.
 
 Standalone `terminay-server` keeps a device-authentication signaling session
@@ -441,6 +497,10 @@ frames do not produce one log line per frame.
 - A host that cannot prove the registered server host key cannot take over
   that session's signaling registration. Exposure fails closed if a different
   key is already registered.
+- A missing, stale, malformed, replayed, or invalid transport transcript fails
+  before pairing or device authentication. A pinned host-key mismatch is shown
+  as a server identity change and requires explicit re-pairing; the client does
+  not silently trust the replacement key.
 - Offline server, signaling failure, relay failure, invalid server identity,
   invalid bundle, archive transfer failure, and revoked device are distinct
   visible errors.
@@ -464,6 +524,13 @@ frames do not produce one log line per frame.
 - Signaling admits a reconnect host only with proof of the registered server
   host key. A public session origin or server id cannot become the WebRTC host
   for that session.
+- The pairing fragment authenticates the first server host key and exact DTLS
+  transport. Every reconnect authenticates the exact DTLS transport with that
+  pinned host key and a fresh client nonce.
+- The signaling and TURN services are outside the application confidentiality
+  and integrity boundary. Compromise permits denial of service but not
+  plaintext observation, mutation, credential relay, endpoint substitution,
+  or successful two-peer proxying.
 - Browser private keys are non-extractable. A first-party session document
   binds them to that session origin. A framed PWA session binds them to the
   manager vault slot for that exact origin.
@@ -498,6 +565,12 @@ frames do not produce one log line per frame.
   reconnects without the pairing URL.
 - A second host that knows only the session origin cannot replace the
   registered reconnect host.
+- A signaling relay that substitutes an offer, fingerprint, host key, nonce,
+  scope, origin, server id, generation id, expiry, or signature is rejected
+  before any pairing or reconnect credential is released.
+- An adversarial signaling relay cannot authenticate two separate WebRTC peers
+  and proxy a pairing or reconnect session. Its only successful forwarding
+  path preserves the server-authenticated DTLS endpoint end to end.
 - Scanning or pasting the same pairing URL in the PWA uses the same save
   prompt and frames enrollment without leaving `app.terminay.com`.
 - Returning to the PWA list unloads the iframe; selecting the profile frames

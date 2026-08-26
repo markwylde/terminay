@@ -29,6 +29,7 @@ function install(overrides = {}) {
 	globalThis.window = {
 		location: { origin: 'https://room.terminay.com' },
 		__TERMINAY_SESSION_TRANSPORT__: {
+			authenticatedTransportVersion: 1,
 			version: 1,
 			sessionId: 'room',
 			origin: 'https://room.terminay.com',
@@ -54,6 +55,7 @@ test('production bootstrap installs one immutable host from the narrow hosted au
 	globalThis.window = {
 		location: { origin: 'https://room.terminay.com' },
 		__TERMINAY_HOSTED_SESSION_AUTHORITY__: {
+			authenticatedTransportVersion: 1,
 			serverId: 'server-a',
 			hostContext: { serverId: 'server-a' },
 			readBundle: async () => new Uint8Array([1, 2, 3]),
@@ -78,6 +80,7 @@ test('production bootstrap copies a non-secret connection hostname onto the sess
 	globalThis.window = {
 		location: { origin: 'https://room.terminay.com' },
 		__TERMINAY_HOSTED_SESSION_AUTHORITY__: {
+			authenticatedTransportVersion: 1,
 			serverId: 'server-a',
 			hostName: 'Studio-Mac',
 			hostContext: { serverId: 'server-a' },
@@ -95,6 +98,7 @@ test('production bootstrap copies a non-secret connection hostname onto the sess
 test('rejects incompatible versions, origins, and missing capabilities', async () => {
 	for (const overrides of [
 		{ version: 2 },
+		{ authenticatedTransportVersion: 2 },
 		{ origin: 'https://sibling.terminay.com' },
 		{ connect: undefined },
 		{ prepareWorkspace: undefined },
