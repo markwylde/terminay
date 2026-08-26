@@ -60,6 +60,68 @@ test("Puzed enables an image when the selected size meets its root-disk minimum"
   }
 });
 
+test("Puzed loads networks only from the selected host's bridge inventory", async () => {
+  const f = runtimeFixture(); const requests = []; const fetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const path = new URL(String(url)).pathname; requests.push(path);
+    if (path === "/api/v1/workers/worker-2/bridges") return Response.json({ items: [
+      { id: "bridge-2", name: "br-worker-2", is_default: true, worker_id: "worker-2" },
+    ] });
+    throw new Error(`unexpected request ${path}`);
+  };
+  try {
+    assert.deepEqual(
+      await f.runtime.resolveOptions({ profileId: "profile-1", sourceId: "com.puzed.platform/vm/bridges", values: { "worker-id": "worker-2" } }, f.call),
+      { options: [{ value: "bridge-2", label: "br-worker-2", default: true }] },
+    );
+    assert.deepEqual(await f.runtime.resolveOptions({ profileId: "profile-1", sourceId: "com.puzed.platform/vm/bridges", values: {} }, f.call), { options: [] });
+    assert.deepEqual(requests, ["/api/v1/workers/worker-2/bridges"]);
+  } finally {
+    globalThis.fetch = fetch;
+  }
+});
+
+test("Puzed preflights the selected host and network before generating a key or creating a VM", async () => {
+  const f = runtimeFixture(); const requests = []; const fetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const path = new URL(String(url)).pathname; requests.push(path);
+    if (path === "/api/v1/org/settings") return Response.json({ settings: { default_size_presets: [{ id: "medium", label: "Medium", vcpus: 2, memory_bytes: 2 * 1024 ** 3, root_disk_bytes: 20 * 1024 ** 3 }] } });
+    if (path === "/api/v1/workers/worker-1/bridges") return Response.json({ items: [{ id: "bridge-other", name: "other", is_default: true, worker_id: "worker-1" }] });
+    throw new Error(`unexpected request ${path}`);
+  };
+  try {
+    await assert.rejects(
+      () => f.runtime.createEnvironment({ environmentId: "env-preflight", profileId: "profile-1", displayName: "Rejected VM", values: { "image-id": "image-1", "size-preset": "medium", "worker-id": "worker-1", "bridge-id": "bridge-stale", name: "rejected-vm" } }, f.call),
+      /Puzed rejected VM creation \(HTTP 409, bridge_worker_mismatch\)\./,
+    );
+    assert.deepEqual(requests, ["/api/v1/org/settings", "/api/v1/workers/worker-1/bridges"]);
+    assert.deepEqual(f.calls, []);
+  } finally {
+    globalThis.fetch = fetch;
+  }
+});
+
+test("a late authoritative bridge rejection remains bounded after preflight", async () => {
+  const f = runtimeFixture(); const requests = []; const fetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    const path = new URL(String(url)).pathname; requests.push({ path, init });
+    if (path === "/api/v1/org/settings") return Response.json({ settings: { default_size_presets: [{ id: "medium", label: "Medium", vcpus: 2, memory_bytes: 2 * 1024 ** 3, root_disk_bytes: 20 * 1024 ** 3 }] } });
+    if (path === "/api/v1/workers/worker-1/bridges") return Response.json({ items: [{ id: "bridge-1", name: "default", is_default: true, worker_id: "worker-1" }] });
+    if (path === "/api/v1/machines") return Response.json({ code: "bridge_worker_mismatch" }, { status: 409 });
+    throw new Error(`unexpected request ${path}`);
+  };
+  try {
+    await assert.rejects(
+      () => f.runtime.createEnvironment({ environmentId: "env-late-rejection", profileId: "profile-1", displayName: "Rejected VM", values: { "image-id": "image-1", "size-preset": "medium", "worker-id": "worker-1", "bridge-id": "bridge-1", name: "rejected-vm" } }, f.call),
+      /Puzed rejected VM creation \(HTTP 409, bridge_worker_mismatch\)\./,
+    );
+    assert.deepEqual(f.calls.map((call) => call.operation), ["managed-binding.generate"]);
+    assert.deepEqual(requests.map((request) => request.path), ["/api/v1/org/settings", "/api/v1/workers/worker-1/bridges", "/api/v1/machines"]);
+  } finally {
+    globalThis.fetch = fetch;
+  }
+});
+
 test("Puzed exposes a bounded VM-create rejection with its HTTP status and provider code", async () => {
   const f = runtimeFixture(); const fetch = globalThis.fetch;
   globalThis.fetch = async (url) => {

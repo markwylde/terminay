@@ -103,8 +103,10 @@ test('environment creation preserves explicit public provider validation feedbac
 test('Puzed VM creation preserves its bounded public rejection instead of a generic provider failure', async()=>{
   const subject=fixture(); await subject.repository.load();
   const providerDefinitions=()=>[{providerId:'com.puzed.platform/vm',displayName:'Puzed VM',capabilities:['terminal','filesystem'],createForm:{id:'create',title:'Create',sections:[],submitLabel:'Create'}}];
-  const providerRuntime={async invokeProvider(invocation){if(invocation.callback==='testProfile')return [];throw new Error('Puzed rejected VM creation (HTTP 422, host_capacity_exhausted).');}};
+  const providerRuntime={async invokeProvider(invocation){if(invocation.callback==='testProfile')return [];throw new Error('Puzed rejected VM creation (HTTP 409, bridge_worker_mismatch).');}};
   const operations=createProjectEnvironmentOperationHandlers({repository:subject.repository,workspace:subject.workspace,thisServerRoot:()=>'/home/server',providerDefinitions,providerRuntime});
   const request={envelope:{type:'command',commandId:'create-puzed-rejected',correlationId:'create-puzed-rejected',operation:'project-environments.create',payload:{providerId:'com.puzed.platform/vm',values:{name:'VM'}}},body:new Uint8Array(),context:{connectionId:'c',clientId:'client-a',authScope:'admin',permissions:['environments:manage'],signal:new AbortController().signal,expectedRevision:0}};
-  await assert.rejects(() => operations.commands['project-environments.create'](request), /Puzed rejected VM creation \(HTTP 422, host_capacity_exhausted\)\./);
+  const before=structuredClone(subject.repository.state);
+  await assert.rejects(() => operations.commands['project-environments.create'](request), /Puzed rejected VM creation \(HTTP 409, bridge_worker_mismatch\)\./);
+  assert.deepEqual(subject.repository.state,before);
 });
