@@ -97,6 +97,7 @@ import {
 import {
 	isTerminalPresentationOwnershipError,
 	ServerTerminalInputQueue,
+	type TerminalPasteProgress,
 } from './terminalPanelInputQueue';
 import {
 	pasteTerminalClipboard,
@@ -415,6 +416,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	const terminalPresentationActionRef = useRef<() => Promise<void>>(() =>
 		Promise.resolve(),
 	);
+	const pasteTerminalTextRef = useRef<(text: string) => void>(() => {});
+	const cancelTerminalPasteRef = useRef<() => void>(() => {});
 	const mobileTerminalModifiersRef = useRef<TerminalMobileModifiers>(
 		EMPTY_TERMINAL_MOBILE_MODIFIERS,
 	);
@@ -525,6 +528,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	const [isRemoteSizeOverrideActive, setIsRemoteSizeOverrideActive] =
 		useState(false);
 	const [isTerminalHydrating, setIsTerminalHydrating] = useState(true);
+	const [terminalPasteProgress, setTerminalPasteProgress] = useState<
+		Pick<TerminalPasteProgress, 'completedBytes' | 'totalBytes'> | null
+	>(null);
 	const [serverTerminalError, setServerTerminalError] = useState<string | null>(
 		null,
 	);
@@ -603,14 +609,11 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	);
 
 	const pasteFromMobileTerminalAccessory = useCallback(() => {
-		const terminal = terminalRef.current;
-		if (terminal === null) return;
-
 		resetMobileTerminalModifiers();
 		void pasteTerminalClipboard(readTerminalClipboard, {
 			announceInput: announceMobileTerminalInput,
-			paste: (text) => terminal.paste(text),
-			focus: () => terminal.focus(),
+			paste: (text) => pasteTerminalTextRef.current(text),
+			focus: () => terminalRef.current?.focus(),
 		});
 	}, [announceMobileTerminalInput, resetMobileTerminalModifiers]);
 
@@ -926,15 +929,44 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			reportTerminalRebindDiagnostic(sessionId, 'failed', error);
 		};
 		let serverInputQueue: ServerTerminalInputQueue | null = null;
+		let pasteProgressClearTimer: number | null = null;
+		const clearPasteProgressTimer = () => {
+			if (pasteProgressClearTimer === null) return;
+			window.clearTimeout(pasteProgressClearTimer);
+			pasteProgressClearTimer = null;
+		};
 
-		const writePanelInput = (data: string) => {
+		const writePanelInput = (data: string, isPaste = false) => {
 			if (
 				!useServerTerminal ||
 				serverAttachmentFailed ||
 				!terminalPresentationControllerRef.current
 			)
 				return;
-			serverInputQueue?.enqueue(data);
+			if (!isPaste) {
+				serverInputQueue?.enqueue(data);
+				return;
+			}
+			serverInputQueue?.enqueuePaste(data, (progress) => {
+				if (progress.status === 'cancelled') {
+					clearPasteProgressTimer();
+					setTerminalPasteProgress(null);
+					return;
+				}
+				setTerminalPasteProgress({
+					completedBytes: progress.completedBytes,
+					totalBytes: progress.totalBytes,
+				});
+				if (progress.status === 'complete') {
+					clearPasteProgressTimer();
+					pasteProgressClearTimer = window.setTimeout(() => {
+						pasteProgressClearTimer = null;
+						setTerminalPasteProgress(null);
+					}, 750);
+					return;
+				}
+				clearPasteProgressTimer();
+			});
 		};
 
 		const submitPendingPanelResize = () => {
@@ -1046,7 +1078,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 					// server-backed panels use writePanelInput below. Do not call a
 					// terminal preload write method from this UI-only clipboard path.
 					announceInput: announceTerminalUserInput,
-					paste: (text) => terminal.paste(text),
+					paste: pasteTerminalText,
 					focus: () => terminal.focus(),
 				});
 
@@ -1281,9 +1313,15 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				const binding = bindingFence.begin();
 				activeBinding = binding;
 				serverInputQueue?.close();
-				serverInputQueue = new ServerTerminalInputQueue((error) =>
-					failServerTransport(error, binding),
+				serverInputQueue = new ServerTerminalInputQueue(
+					(error) => failServerTransport(error, binding),
+					() =>
+						new Promise((resolve) =>
+							window.requestAnimationFrame(() => resolve()),
+						),
 				);
+				cancelTerminalPasteRef.current = () =>
+					serverInputQueue?.cancelPaste();
 				const attachmentClient = client ?? panelClient;
 				const nextRequest = {
 					...request,
@@ -1734,6 +1772,16 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		const keyDisposer = terminal.onKey(() => {
 			announceTerminalUserInput();
 		});
+		let pastingClipboardText = false;
+		const pasteTerminalText = (text: string) => {
+			pastingClipboardText = true;
+			try {
+				terminal.paste(text);
+			} finally {
+				pastingClipboardText = false;
+			}
+		};
+		pasteTerminalTextRef.current = pasteTerminalText;
 
 		const dataDisposer = terminal.onData((data) => {
 			const modifiers = mobileTerminalModifiersRef.current;
@@ -1742,7 +1790,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				writePanelInput(applyTerminalMobileModifiers(data, modifiers));
 				return;
 			}
-			writePanelInput(data);
+			writePanelInput(data, pastingClipboardText);
 		});
 
 		const resizeDisposer = props.api.onDidDimensionsChange(() => {
@@ -2030,7 +2078,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			event.stopPropagation();
 			void pasteTerminalClipboard(readTerminalClipboard, {
 				announceInput: announceTerminalUserInput,
-				paste: (text) => terminal.paste(text),
+				paste: pasteTerminalText,
 				focus: () => terminal.focus(),
 			});
 		};
@@ -2166,10 +2214,13 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			bindingFence.retire();
 			activeBinding = null;
 			serverInputQueue?.close();
+			clearPasteProgressTimer();
 			const attachmentToDetach = panelAttachment;
 			panelAttachment = null;
 			terminalPanelResizeRef.current = () => {};
 			terminalPresentationActionRef.current = () => Promise.resolve();
+			pasteTerminalTextRef.current = () => {};
+			cancelTerminalPasteRef.current = () => {};
 			retryServerAttachmentRef.current = () => {};
 			rebindServerAttachmentRef.current = () => {};
 			terminalPresentationControllerRef.current = false;
@@ -2407,8 +2458,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	};
 
 	const pasteFromContextMenu = () => {
-		const terminal = terminalRef.current;
-		if (!terminal) {
+		if (!terminalRef.current) {
 			return;
 		}
 
@@ -2420,8 +2470,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 					}),
 				);
 			},
-			paste: (text) => terminal.paste(text),
-			focus: () => terminal.focus(),
+			paste: (text) => pasteTerminalTextRef.current(text),
+			focus: () => terminalRef.current?.focus(),
 		});
 	};
 
@@ -2577,6 +2627,36 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				</div>
 			) : null}
 			<div className="terminal-panel-root" ref={xtermRootRef} />
+			{terminalPasteProgress ? (
+				<div
+					className="terminal-paste-progress"
+				>
+					<span
+						role="status"
+						aria-live="polite"
+						aria-label={`Pasting into terminal: ${Math.round((terminalPasteProgress.completedBytes / terminalPasteProgress.totalBytes) * 100)}%`}
+					>
+						Pasting{' '}
+						{Math.round(
+							(terminalPasteProgress.completedBytes /
+								terminalPasteProgress.totalBytes) *
+								100,
+						)}
+						%
+					</span>
+					<progress
+						max={terminalPasteProgress.totalBytes}
+						value={terminalPasteProgress.completedBytes}
+					/>
+					<button
+						type="button"
+						onMouseDown={(event) => event.preventDefault()}
+						onClick={() => cancelTerminalPasteRef.current()}
+					>
+						Stop
+					</button>
+				</div>
+			) : null}
 			{isMobileKeyboardVisible ? (
 				<fieldset
 					className="terminal-mobile-keyboard-accessory"
