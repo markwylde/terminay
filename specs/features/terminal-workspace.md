@@ -17,7 +17,14 @@ forwards input, resize, and lifecycle commands through the application protocol.
   not maintain separate shell or cwd fallbacks.
 - Terminals support splits, search, copy/paste including bracketed-paste-aware
   input, dropped paths, guarded external links, resizing, scrollback, zoom, and
-  exit handling. On Desktop, a user-initiated terminal paste prefers copied
+  exit handling. Clipboard text that exceeds one terminal-input frame is sent in
+  ordered, bounded chunks. The terminal advances the paste one delivered chunk
+  per render frame so its compact indicator visibly reports the actual
+  delivered-byte percentage for the whole transfer; it must not complete merely
+  because the browser or transport has buffered the remainder. The indicator
+  includes a Stop control. Stop prevents unsent clipboard chunks from reaching
+  the PTY while leaving bytes already accepted by the transport untouched. On Desktop, a user-initiated
+  terminal paste prefers copied
   file paths, then text, then converts an image-only clipboard item into a PNG
   in Terminay's temporary clipboard directory and inserts its shell-escaped
   path. Clipboard images and their temporary paths are read and created only by

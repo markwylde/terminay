@@ -16,7 +16,11 @@ await build({
   outdir: outputDirectory,
   platform: 'node',
 })
-const { MAX_PANEL_INPUT_QUEUE_BYTES, ServerTerminalInputQueue } = await import(
+const {
+  MAX_PANEL_INPUT_QUEUE_BYTES,
+  MAX_PANEL_PASTE_CHUNK_BYTES,
+  ServerTerminalInputQueue,
+} = await import(
   pathToFileURL(join(outputDirectory, 'terminalPanelInputQueue.js')).href,
 )
 
@@ -245,6 +249,121 @@ test('server-backed terminal input bounds queued data by UTF-8 bytes', async () 
   await tick()
 
   assert.deepEqual(writes, [maximumPayload])
+})
+
+test('large clipboard pastes are chunked in order and report their transport progress', async () => {
+  const writes = []
+  const progress = []
+  const payload = 'é'.repeat(MAX_PANEL_INPUT_QUEUE_BYTES)
+  const attachment = {
+    async write(data) {
+      writes.push(data)
+    },
+    async detach() {},
+  }
+  const queue = new ServerTerminalInputQueue(() => {})
+
+  queue.attach(attachment)
+  queue.enqueuePaste(payload, (update) => progress.push(update))
+  queue.enqueue('\r')
+  await tick()
+  await tick()
+
+  assert.equal(writes.join(''), `${payload}\r`)
+  assert.ok(writes.length > 2)
+  assert.ok(
+    writes.slice(0, -1).every((chunk) => Buffer.byteLength(chunk) <= MAX_PANEL_PASTE_CHUNK_BYTES),
+  )
+  assert.deepEqual(progress[0], {
+    completedBytes: 0,
+    status: 'in_progress',
+    totalBytes: Buffer.byteLength(payload),
+  })
+  assert.deepEqual(progress.at(-1), {
+    completedBytes: Buffer.byteLength(payload),
+    status: 'complete',
+    totalBytes: Buffer.byteLength(payload),
+  })
+})
+
+test('large clipboard paste progress yields to the renderer between delivered chunks', async () => {
+  const frames = []
+  const writes = []
+  const progress = []
+  const payload = 'x'.repeat(MAX_PANEL_INPUT_QUEUE_BYTES * 2)
+  const attachment = {
+    async write(data) {
+      writes.push(data)
+    },
+    async detach() {},
+  }
+  const queue = new ServerTerminalInputQueue(
+    () => {},
+    () => {
+      const frame = deferred()
+      frames.push(frame)
+      return frame.promise
+    },
+  )
+
+  queue.attach(attachment)
+  queue.enqueuePaste(payload, (update) => progress.push(update))
+  await tick()
+
+  assert.equal(writes.length, 1)
+  assert.equal(progress.at(-1)?.completedBytes, MAX_PANEL_PASTE_CHUNK_BYTES)
+  assert.equal(frames.length, 1)
+
+  frames.shift().resolve()
+  await tick()
+  assert.equal(writes.length, 2)
+  assert.equal(progress.at(-1)?.completedBytes, MAX_PANEL_PASTE_CHUNK_BYTES * 2)
+  assert.equal(frames.length, 1)
+
+  while (frames.length > 0) {
+    frames.shift().resolve()
+    await tick()
+  }
+  await tick()
+
+  assert.equal(writes.join(''), payload)
+  assert.deepEqual(progress.at(-1), {
+    completedBytes: Buffer.byteLength(payload),
+    status: 'complete',
+    totalBytes: Buffer.byteLength(payload),
+  })
+})
+
+test('stopping a large clipboard paste prevents its remaining chunks from being written', async () => {
+  const firstWrite = deferred()
+  const writes = []
+  const progress = []
+  const payload = 'x'.repeat(MAX_PANEL_INPUT_QUEUE_BYTES * 2)
+  const attachment = {
+    async write(data) {
+      writes.push(data)
+      if (writes.length === 1) await firstWrite.promise
+    },
+    async detach() {},
+  }
+  const queue = new ServerTerminalInputQueue(() => {})
+
+  queue.attach(attachment)
+  queue.enqueuePaste(payload, (update) => progress.push(update))
+  queue.enqueue('\r')
+  assert.equal(writes.length, 1)
+
+  queue.cancelPaste()
+  firstWrite.resolve()
+  await tick()
+  await tick()
+
+  assert.deepEqual(writes, [payload.slice(0, MAX_PANEL_PASTE_CHUNK_BYTES), '\r'])
+  assert.deepEqual(progress.at(-1), {
+    completedBytes: 0,
+    status: 'cancelled',
+    totalBytes: Buffer.byteLength(payload),
+  })
 })
 
 test('closed server-backed terminal input detaches a late attachment without writing queued input', async () => {

@@ -498,6 +498,59 @@ test.describe('terminal behavior', () => {
 		).toContainText('terminay-clipboard-image-paste');
 	});
 
+	test('pastes clipboard text larger than the terminal input queue', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		const pastedBytes = 70 * 1024;
+		const command = `printf %s '${'x'.repeat(pastedBytes)}' | wc -c`;
+
+		await electronApp.evaluate(({ clipboard }, value) => {
+			clipboard.writeText(value);
+		}, command);
+
+		await mainWindow.locator('.terminal-panel').first().click();
+		await expectTerminalInputFocused(mainWindow);
+		await mainWindow.keyboard.press('Control+Shift+V');
+		const pasteProgress = mainWindow.locator('.terminal-paste-progress');
+		await expect(pasteProgress).toBeVisible();
+		await expect(
+			pasteProgress.getByRole('button', { name: 'Stop' }),
+		).toBeVisible();
+		await expect
+			.poll(async () =>
+				pasteProgress.locator('progress').evaluate((element) => element.value),
+			)
+			.toBeGreaterThan(0);
+		await mainWindow.keyboard.press('Enter');
+
+		await expect(
+			mainWindow.locator('.project-workspace--active .xterm-rows'),
+		).toContainText(String(pastedBytes), { timeout: 20_000 });
+		const stoppablePasteBytes = 512 * 1024;
+		await electronApp.evaluate(({ clipboard }, value) => {
+			clipboard.writeText(value);
+		}, 'y'.repeat(stoppablePasteBytes));
+		await mainWindow.keyboard.press('Control+Shift+V');
+		await expect(pasteProgress).toBeVisible();
+		await expect
+			.poll(async () =>
+				pasteProgress.locator('progress').evaluate((element) => element.value),
+			)
+			.toBeGreaterThan(0);
+		const firstProgressValue = await pasteProgress
+			.locator('progress')
+			.evaluate((element) => element.value);
+		await expect
+			.poll(async () =>
+				pasteProgress.locator('progress').evaluate((element) => element.value),
+			)
+			.not.toBe(firstProgressValue);
+		await pasteProgress.getByRole('button', { name: 'Stop' }).click();
+		await expect(pasteProgress).toBeHidden({ timeout: 5_000 });
+		await mainWindow.keyboard.press('Control+C');
+	});
+
 	test('pastes clipboard text with macOS Cmd+V', async ({
 		electronApp,
 		mainWindow,
