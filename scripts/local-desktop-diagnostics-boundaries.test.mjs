@@ -7,6 +7,18 @@ const preload = await readFile(
 	new URL('../electron/serverUiPreload.ts', import.meta.url),
 	'utf8',
 );
+const startupLoadingDocument = await readFile(
+	new URL('../electron/startupLoadingDocument.ts', import.meta.url),
+	'utf8',
+);
+const serverDocument = await readFile(
+	new URL('../server.html', import.meta.url),
+	'utf8',
+);
+const browserHostStyles = await readFile(
+	new URL('../src/web/index.css', import.meta.url),
+	'utf8',
+);
 const authority = await readFile(
 	new URL('../electron/serverTerminalAuthority.ts', import.meta.url),
 	'utf8',
@@ -23,19 +35,66 @@ test('diagnostics initialize before Electron readiness, recovery window, and Loc
 		'createWindow({ deferCanonicalLaunch: true })',
 		ready,
 	);
+	const startupLoading = main.indexOf(
+		'loadURL(desktopStartupLoadingDocument())',
+		recoveryWindow,
+	);
+	const workspace = main.indexOf(
+		'openEmbeddedWorkspaceWithRecovery(',
+		startupLoading,
+	);
 	const localServerConstruction = main.indexOf(
 		'new ServerTerminalAuthority',
-		recoveryWindow,
+		workspace,
 	);
 	assert.ok(diagnosticsStart > 0);
 	assert.ok(ready > diagnosticsStart);
 	assert.ok(recoveryWindow > ready);
-	assert.ok(localServerConstruction > recoveryWindow);
+	assert.ok(startupLoading > recoveryWindow);
+	assert.ok(workspace > startupLoading);
+	assert.ok(localServerConstruction > workspace);
 	assert.ok(
 		main.indexOf('DocumentPolicyIncludeJSCallStacksInCrashReports') <
 			diagnosticsStart,
 	);
 	assert.match(main, /crashReporter,/u);
+});
+
+test('the pre-server Desktop loading document is self-contained and branded', () => {
+	assert.match(startupLoadingDocument, /desktopStartupLoadingDocument/u);
+	assert.match(
+		startupLoadingDocument,
+		/default-src 'none'; style-src 'unsafe-inline'/u,
+	);
+	assert.match(startupLoadingDocument, /aria-label="Starting Terminay"/u);
+	assert.match(startupLoadingDocument, /<svg class="logo"/u);
+	assert.match(
+		startupLoadingDocument,
+		/<span><\/span><span><\/span><span><\/span><span><\/span><span><\/span>/u,
+	);
+});
+
+test('loading-dot motion stays in phase through the bootstrap handoff', () => {
+	for (const source of [
+		startupLoadingDocument,
+		serverDocument,
+		browserHostStyles,
+	]) {
+		assert.match(source, /--terminay-loading-phase/u);
+	}
+	assert.match(startupLoadingDocument, /Date\.now\(\) % 1600/u);
+	assert.match(serverDocument, /Date\.now\(\) % 1600/u);
+	assert.match(
+		browserHostStyles,
+		/animation-delay: var\(--terminay-loading-phase, 0ms\)/u,
+	);
+});
+
+test('the verified bootstrap loader keeps the native loader’s viewport centre', () => {
+	assert.match(
+		serverDocument,
+		/\.terminay-bootstrap-loading \{\s*box-sizing: border-box;[\s\S]*?min-height: 100vh;[\s\S]*?padding: 32px;/u,
+	);
 });
 
 test('embedded vault unlock occurs after recovery setup and before Local renderer admission', () => {
@@ -56,6 +115,10 @@ test('embedded vault unlock occurs after recovery setup and before Local rendere
 	assert.ok(localReady > unlock);
 	assert.ok(launch > localReady);
 	assert.equal(main.indexOf('await embeddedVault.unlock', 0), unlock);
+});
+
+test('a close while the early loading document is visible tolerates unpublished Remote services', () => {
+	assert.match(main, /desktopRemoteExposure\?\.shutdown\(\)/u);
 });
 
 test('canonical preload exposes only negotiated host actions and bounded server bytes', () => {

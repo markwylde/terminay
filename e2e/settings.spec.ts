@@ -67,7 +67,7 @@ test('shows selected-server extensions and saves a secret-backed connection prof
 	await expect(environmentsWindow.getByRole('heading',{name:'Create fixture environment'})).toBeVisible()
 	await expect(environmentsWindow.locator('option', { hasText: 'Debian 13' })).toHaveCount(1)
 	await expect(environmentsWindow.getByText('Medium',{exact:true})).toBeVisible()
-	await environmentsWindow.getByLabel('Image').selectOption('debian-13')
+	await environmentsWindow.getByRole('combobox', { name: 'Image', exact: true }).selectOption('debian-13')
 	await environmentsWindow.getByText('Medium',{exact:true}).click()
 	await environmentsWindow.getByRole('button',{name:'Create',exact:true}).click()
 	await expect(environmentsWindow.getByRole('heading',{name:'Create fixture environment'})).toBeVisible()
