@@ -17,6 +17,7 @@ export function deriveHostedPairingSecrets(qrSecret: string) {
 		);
 	const relayJoinToken = derive(HKDF_LABELS.relayJoinToken);
 	return Object.freeze({
+		qrSecret,
 		pairingRoomId: derive(HKDF_LABELS.pairingRoomId),
 		pairingToken: derive(HKDF_LABELS.pairingToken),
 		relayJoinToken,

@@ -12,8 +12,8 @@ untrusted provider binaries become safe by themselves.
 | local control socket → Server | per-terminal MCP token, project/session scope, terminal input/output | tokens are opaque, bounded, revocable, and resolve to immutable server/project/session state; no PID or renderer fallback |
 | Server ↔ provider hooks | provider lifecycle state and hook token | loopback-only, exact session binding, bounded canonical fields, replay/order fences, no provider secret in snapshots |
 | Server filesystem/Git services → project root | project files, drafts, recordings, Git credentials | canonical paths and opaque ids are revalidated at mutation time; traversal, symlink escape, dirty/main deletion, and stale revisions fail closed |
-| Server ↔ remote device/WebRTC | device keys, PIN/approval, reconnect grants, application data | admission follows proof and origin checks; channels are bounded and revoked peers are closed; application data never enters manager storage; framed PWA device credentials are origin-keyed vault entries cloned only to the matching session iframe |
-| Server ↔ hosted signaling | session host registration, server host key | a reconnect host is admitted only with proof of the registered host key; a public session hostname alone cannot own that device session |
+| Server ↔ remote device/WebRTC | device keys, PIN/approval, reconnect grants, application data | the fragment authenticates and pins the first host key; every generation binds the pinned key and fresh client nonce to the exact offer/DTLS fingerprints before credentials or data; channels are bounded and revoked peers are closed |
+| Server ↔ hosted signaling | session host registration, offers, answers, ICE, server host public key | signaling is untrusted for confidentiality and integrity; host registration and client-verified transport transcripts prevent endpoint substitution, credential relay, and two-peer proxying; compromise can cause only bounded denial of service |
 | server UI bundle → client host | executable UI archive and protocol compatibility | the server is authenticated before transfer; archive paths remain within its exact session-origin bundle namespace and bounded extraction limits apply; host bridge checks origin/source/target/gesture |
 | vault/migration/logging → operators | provider secrets, safe-storage material, migration backups, diagnostics | only metadata crosses transport; secret bytes are scoped to privileged callbacks, zeroized, redacted, and never logged |
 | authenticated client → extension/environment management | server-account code, profiles, host trust, infrastructure | actor/scope come from the authenticated transport; explicit permissions, revisions, confirmations, and audit gate every privileged action |
@@ -44,6 +44,12 @@ untrusted provider binaries become safe by themselves.
   host. Signaling admits device-host registration only with proof of the
   registered server host key. A different key does not overwrite a live
   registration.
+- A malicious signaling or TURN service cannot terminate and proxy separate
+  client/server WebRTC connections. First pairing authenticates the host key
+  and transport transcript with fragment-derived key material; reconnect uses
+  that pinned host key. The transcript covers a fresh client nonce and the
+  exact offer/DTLS fingerprints, and verification precedes every PIN, device
+  signature, ticket, bundle, and application frame.
 - A hostile bundle or host page cannot escape its route. Bundle paths are
   namespace-bound and hash-verified; browser messages require exact origin,
   source, target window, validated payload, and user gesture where applicable.

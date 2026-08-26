@@ -5,6 +5,7 @@ import {
 	sign,
 	type KeyObject,
 } from 'node:crypto';
+import { AUTHENTICATED_WEBRTC_TRANSPORT_VERSION } from '@terminay/protocol';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
@@ -18,6 +19,7 @@ export interface HostedHostKey {
 }
 
 export interface DeviceHostReadyMessage {
+	readonly authenticatedTransportVersion: typeof AUTHENTICATED_WEBRTC_TRANSPORT_VERSION;
 	readonly expiresAt: string;
 	readonly hostKeyAlgorithm: 'ed25519';
 	readonly hostProof: string;
@@ -75,12 +77,13 @@ export function loadOrCreateHostedHostKey(file: string): HostedHostKey {
 }
 
 export function deviceHostProofPayload(input: {
+	readonly authenticatedTransportVersion?: typeof AUTHENTICATED_WEBRTC_TRANSPORT_VERSION;
 	readonly expiresAt: string;
 	readonly hostPublicKey: string;
 	readonly sessionId: string;
 }): Buffer {
 	return Buffer.from(
-		`${DEVICE_HOST_PROOF_LABEL}\n${input.sessionId}\n${input.expiresAt}\n${input.hostPublicKey}`,
+		`${DEVICE_HOST_PROOF_LABEL}\n${input.authenticatedTransportVersion ?? AUTHENTICATED_WEBRTC_TRANSPORT_VERSION}\n${input.sessionId}\n${input.expiresAt}\n${input.hostPublicKey}`,
 	);
 }
 
@@ -93,6 +96,7 @@ export function createDeviceHostReadyMessage(input: {
 	const hostProof = sign(
 		null,
 		deviceHostProofPayload({
+			authenticatedTransportVersion: AUTHENTICATED_WEBRTC_TRANSPORT_VERSION,
 			expiresAt: input.expiresAt,
 			hostPublicKey: input.hostKey.publicKey,
 			sessionId: input.sessionId,
@@ -100,6 +104,7 @@ export function createDeviceHostReadyMessage(input: {
 		privateKey,
 	).toString('base64url');
 	return Object.freeze({
+		authenticatedTransportVersion: AUTHENTICATED_WEBRTC_TRANSPORT_VERSION,
 		expiresAt: input.expiresAt,
 		hostKeyAlgorithm: 'ed25519',
 		hostProof,
