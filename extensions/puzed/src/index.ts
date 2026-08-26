@@ -53,7 +53,7 @@ export function activate(context: ExtensionContext): void {
 interface PuzedEnvironmentState extends Record<string, JsonValue> {
   profileId: string; machineId: string; bindingId: string; sshRevision: number;
   displayName: string; baseUrl: string; managementState: string; trustChallenge: JsonValue;
-  jobId?: string; username?: string; root?: string;
+  jobId?: string; username?: string; root?: string; sshIssue?: "unavailable";
 }
 
 /** Puzed owns Platform management identity and delegates all workspace
@@ -131,21 +131,32 @@ const puzedRuntime: ProviderRuntime = {
   async resumeOperation(request, call) {
     const current = parseState(request.providerState);
     if (current.jobId !== undefined) return resumeCreatedVm(request, current, call);
-    const verified = record(await dependency(call, "managed-binding.verify", { bindingId: current.bindingId }, current.sshRevision));
-    if (verified.state !== "ready") return { state: "pending", operationId: request.operationId, providerState: current, progress: waitingProgress(request.operationId), pollAfterMs: 2_000 };
-    current.trustChallenge = null; return { state: "ready", providerState: current, status: available(current, String(verified.canonicalRoot ?? "~")) };
+    return verifySshReadiness(current, request.operationId, call);
   },
   async getStatus(request, call) {
     const current = parseState(request.providerState);
-    try { const verified = record(await dependency(call, "managed-binding.verify", { bindingId: current.bindingId }, current.sshRevision)); return verified.state === "ready" ? available(current, String(verified.canonicalRoot ?? "~")) : { state: "unavailable", message: String(verified.message ?? "SSH access is unavailable"), revision: current.sshRevision }; }
-    catch (error) { return { state: "unavailable", message: safeMessage(error, "SSH access is unavailable"), revision: current.sshRevision }; }
+    if (current.jobId !== undefined) return pendingPuzedStatus(current);
+    if (trustRequired(current.trustChallenge)) return pendingTrustStatus(current);
+    if (current.sshIssue === "unavailable") return pendingSshIssueStatus(current);
+    try {
+      const verified = record(await dependency(call, "managed-binding.verify", { bindingId: current.bindingId }, current.sshRevision));
+      if (verified.state === "ready") return available(current, String(verified.canonicalRoot ?? "~"));
+      if (trustRequired(verified)) return pendingTrustStatus(current, verified);
+      return pendingSshIssueStatus(current);
+    } catch {
+      return pendingSshIssueStatus(current);
+    }
   },
   async invokeAction(request, call) {
     const current = parseState(request.providerState);
     if (request.actionId === "trust-host" || request.actionId === "replace-host-key") {
-      const result = record(await dependency(call, "managed-binding.approve-trust", { bindingId: current.bindingId, challengeId: required(request.values?.challengeId, "challengeId"), action: request.actionId === "trust-host" ? "approve" : "replace" }, current.sshRevision));
-      current.sshRevision = number(result.revision, "revision"); return { state: "complete", providerState: current, status: available(current, "~") };
+      const challengeId = trustChallengeId(current.trustChallenge);
+      if (challengeId === undefined) throw new Error("Puzed host trust approval is no longer available. Retry SSH verification.");
+      const result = record(await dependency(call, "managed-binding.approve-trust", { bindingId: current.bindingId, challengeId, action: request.actionId === "trust-host" ? "approve" : "replace" }, current.sshRevision));
+      current.sshRevision = number(result.revision, "revision"); current.trustChallenge = null;
+      return readinessActionResult(await verifySshReadiness(current, `puzed-ssh:${current.machineId}`, call));
     }
+    if (request.actionId === "retry") return readinessActionResult(await verifySshReadiness(current, `puzed-ssh:${current.machineId}`, call));
     if (!["start", "resume", "stop", "pause", "reboot"].includes(request.actionId)) throw new Error("Puzed environment action is unsupported");
     const snapshot = await call.profiles.get(current.profileId); const platform = client(current.profileId, snapshot.values, call);
     await platform.powerMachine(current.machineId, request.actionId as "start" | "resume" | "stop" | "pause" | "reboot", required(call.idempotencyKey, "idempotencyKey"));
@@ -197,10 +208,35 @@ async function resumeCreatedVm(request: Parameters<ProviderRuntime["resumeOperat
   const host = (interfaces.items ?? []).find((item) => typeof item.observed_ip === "string")?.observed_ip;
   if (host === undefined) return { state: "pending" as const, operationId: current.jobId!, providerState: current, progress: waitingProgress(current.jobId!), pollAfterMs: 2_000 };
   const ssh = record(await dependency(call, "managed-binding.bind", { bindingId: current.bindingId, machineId: current.machineId, logicalHostIdentity: `puzed:${current.profileId}:${current.machineId}`, host, port: 22, username: current.username ?? "vms", root: current.root ?? "~" }));
-  const revision = number(ssh.revision, "revision"); const verified = record(await dependency(call, "managed-binding.verify", { bindingId: current.bindingId }, revision));
-  current.sshRevision = revision; delete current.jobId; current.managementState = "running";
-  if (verified.state !== "ready") { current.trustChallenge = verified; return { state: "pending" as const, operationId: request.operationId, providerState: current, progress: waitingProgress(request.operationId), pollAfterMs: 2_000 }; }
-  return { state: "ready" as const, providerState: current, status: available(current, String(verified.canonicalRoot ?? current.root ?? "~")) };
+  current.sshRevision = number(ssh.revision, "revision"); delete current.jobId; current.managementState = "running";
+  return verifySshReadiness(current, request.operationId, call);
+}
+
+/** Keep a durable Puzed operation pending until the SSH provider has verified
+ * the endpoint. A host-key challenge is intentionally not treated as ready. */
+async function verifySshReadiness(current: PuzedEnvironmentState, operationId: string, call: ProviderCallContext) {
+  try {
+    const verified = record(await dependency(call, "managed-binding.verify", { bindingId: current.bindingId }, current.sshRevision));
+    if (verified.state === "ready") {
+      current.trustChallenge = null; delete current.sshIssue;
+      return { state: "ready" as const, providerState: current, status: available(current, String(verified.canonicalRoot ?? current.root ?? "~")) };
+    }
+    if (trustRequired(verified)) {
+      current.trustChallenge = verified; delete current.sshIssue;
+      return { state: "pending" as const, operationId, providerState: current, progress: waitingProgress(operationId, verified), pollAfterMs: 2_000 };
+    }
+  } catch {
+    // The SSH dependency deliberately does not expose arbitrary connection
+    // errors to Puzed. Persist only a bounded retryable state; the VM remains.
+  }
+  current.trustChallenge = null; current.sshIssue = "unavailable";
+  return { state: "pending" as const, operationId, providerState: current, progress: waitingProgress(operationId), pollAfterMs: 5_000 };
+}
+
+function readinessActionResult(result: Awaited<ReturnType<typeof verifySshReadiness>>) {
+  return result.state === "ready"
+    ? { state: "complete" as const, providerState: result.providerState, status: result.status }
+    : { state: "pending" as const, operationId: result.operationId, providerState: result.providerState, progress: result.progress };
 }
 
 async function profileValues(profileId: string | undefined, values: Record<string, JsonValue>, call: ProviderCallContext): Promise<Record<string, JsonValue>> { if (profileId === undefined) return values; const profile = await call.profiles.get(profileId); return { ...profile.values, ...values }; }
@@ -208,12 +244,17 @@ function client(profileId: string | undefined, values: Record<string, JsonValue>
 function state(displayName: string, profileId: string, machineId: string, bindingId: string, sshRevision: number, values: Record<string, JsonValue>): PuzedEnvironmentState { return { profileId, machineId, bindingId, sshRevision, displayName, baseUrl: required(values["base-url"] ?? values.baseUrl, "baseUrl"), managementState: "running", trustChallenge: null, ...(typeof values.username === "string" ? { username: values.username } : {}), ...(typeof values.root === "string" ? { root: values.root } : {}) }; }
 function parseState(value: JsonValue): PuzedEnvironmentState { const item = record(value); for (const key of ["profileId", "machineId", "bindingId", "displayName", "baseUrl", "managementState"]) required(item[key], key); number(item.sshRevision, "sshRevision"); return item as PuzedEnvironmentState; }
 function available(value: PuzedEnvironmentState, root: string) { return { state: "available" as const, defaultRoot: root, revision: value.sshRevision, card: { id: "puzed-vm", title: value.displayName, summary: "Puzed management and SSH workspace are ready.", icon: "cloud" as const, tone: "positive" as const, facts: [{ label: "Machine", value: value.machineId }, { label: "Root", value: root }], httpsLink: { label: "Open in Puzed", url: new URL(`/vms/${encodeURIComponent(value.machineId)}`, value.baseUrl).toString() } } }; }
-function waitingProgress(operationId: string) { return { operationId, title: "Waiting for SSH", resumable: true, stages: [{ id: "ssh", label: "Verify SSH access", state: "active" as const }] }; }
+function waitingProgress(operationId: string, challenge?: Record<string, JsonValue>) { return { operationId, title: challenge === undefined ? "Waiting for SSH" : "Awaiting host trust", resumable: true, stages: [{ id: "ssh", label: "Verify SSH access", state: challenge === undefined ? "active" as const : "complete" as const }, ...(challenge === undefined ? [] : [{ id: "trust", label: "Approve SSH host key", state: "active" as const }]) ] }; }
 function provisioningProgress(operationId: string) { return { operationId, title: "Creating Puzed VM", resumable: true, stages: [{ id: "puzed", label: "Provision Puzed VM", state: "active" as const }, { id: "ssh", label: "Verify SSH access", state: "pending" as const }] }; }
+function pendingPuzedStatus(current: PuzedEnvironmentState) { return { state: "connecting" as const, message: "Puzed VM provisioning is still in progress.", revision: current.sshRevision, card: { id: "puzed-provisioning", title: current.displayName, summary: "Puzed is provisioning this VM. SSH access is not available until readiness verification completes.", icon: "cloud" as const, tone: "neutral" as const, facts: [{ label: "Machine", value: current.machineId }] } }; }
+function pendingTrustStatus(current: PuzedEnvironmentState, challenge = record(current.trustChallenge)) { const changed = challenge.changed === true; const fingerprint = typeof challenge.fingerprint === "string" && challenge.fingerprint.length > 0 ? challenge.fingerprint : "Unavailable"; return { state: "connecting" as const, message: "SSH host verification requires approval.", revision: current.sshRevision, card: { id: "puzed-host-trust", title: "Approve SSH host key", summary: changed ? "The VM presented a changed SSH host key. Confirm the expected fingerprint before continuing." : "The VM is ready to verify. Confirm its SSH host key before opening the project.", icon: "cloud" as const, tone: "warning" as const, facts: [{ label: "Machine", value: current.machineId }, { label: "Host key", value: fingerprint }], actions: [{ id: changed ? "replace-host-key" : "trust-host", label: changed ? "Replace trusted host key" : "Trust host key", kind: "primary" as const }] } }; }
+function pendingSshIssueStatus(current: PuzedEnvironmentState) { return { state: "connecting" as const, message: "SSH verification is not available yet.", revision: current.sshRevision, card: { id: "puzed-ssh-retry", title: "SSH connection pending", summary: "The VM was preserved, but Terminay could not verify SSH access yet. Retry when the VM network and SSH service are ready.", icon: "cloud" as const, tone: "warning" as const, facts: [{ label: "Machine", value: current.machineId }], actions: [{ id: "retry", label: "Retry SSH connection", kind: "primary" as const }] } }; }
 function formatBytes(value: number): string { if (value >= 1024 ** 3) return `${Math.round(value / 1024 ** 3)} GB`; return `${Math.round(value / 1024 ** 2)} MB`; }
 function record(value: JsonValue): Record<string, JsonValue> { if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Puzed provider data is invalid"); return value; }
 function required(value: unknown, name: string): string { if (typeof value !== "string" || !value || value.length > 2048 || value.includes("\0")) throw new Error(`Puzed ${name} is invalid`); return value; }
 function optional(value: unknown): string | undefined { return typeof value === "string" && value.length > 0 ? required(value, "value") : undefined; }
+function trustRequired(value: JsonValue): value is Record<string, JsonValue> { return typeof value === "object" && value !== null && !Array.isArray(value) && value.state === "trust-required" && trustChallengeId(value) !== undefined; }
+function trustChallengeId(value: JsonValue): string | undefined { return typeof value === "object" && value !== null && !Array.isArray(value) && typeof value.challengeId === "string" && value.challengeId.length > 0 ? value.challengeId : undefined; }
 function number(value: unknown, name: string): number { if (!Number.isSafeInteger(value) || Number(value) < 0) throw new Error(`Puzed ${name} is invalid`); return Number(value); }
 function safeCode(error: unknown): string { return error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code.slice(0, 64) : "puzed_error"; }
 function safeMessage(error: unknown, fallback: string): string { return error instanceof Error ? error.message.slice(0, 500) : fallback; }
