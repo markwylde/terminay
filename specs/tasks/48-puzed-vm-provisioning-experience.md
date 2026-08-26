@@ -66,6 +66,8 @@ using the stable SSH provider contract/test double until live convergence.
 - [x] Serialize concurrent snapshot-driven recovery of one durable operation,
   so a successful address/SSH transition is committed exactly once rather than
   being lost to a stale compare-and-swap after the SSH binding has been made.
+- [x] Project live SSH readiness in the connection chooser while the durable
+  operation remains pending, distinguishing VM creation from SSH connection.
 - [x] On every failure preserve the VM and offer Retry/Edit SSH/Start/Stop/
   Reboot/Delete/Open in Puzed; never auto-delete or fall back Local.
 

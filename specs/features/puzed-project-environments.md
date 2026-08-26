@@ -186,6 +186,9 @@ API fields; clients render omitted fields as empty lists rather than rejecting
 the whole environment snapshot. In particular, a host-key challenge must offer an explicit
 trust or replacement action from the pending VM connection; a client must not
 need to wait for the operation to become ready before it can approve the key.
+The connection chooser projects that live provider status: an already-created
+VM awaiting SSH is shown as **Connecting** (or **Offline** when SSH is
+unreachable), never misleadingly as still creating a VM.
 That action re-runs SSH verification and reaches **Ready** only on successful
 verification. Connection failures remain a bounded retryable SSH state; they
 never claim that the project environment is available.
