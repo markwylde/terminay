@@ -26,10 +26,10 @@ RUN --mount=type=cache,id=terminay-npm-cache-node24,target=/root/.npm,sharing=lo
   npm ci
 
 COPY tsconfig.base.json ./
+COPY turbo.json ./
 COPY apps ./apps
 COPY packages ./packages
-RUN npm run build --workspace @terminay/protocol
-RUN npm run build --workspace @terminay/server
+RUN npx turbo run build --filter=@terminay/server
 RUN npm prune --omit=dev
 
 FROM node:24.15.0-bookworm-slim AS runtime

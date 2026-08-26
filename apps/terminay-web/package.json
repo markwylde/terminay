@@ -23,8 +23,9 @@
     "node": "24.15.0"
   },
   "scripts": {
-    "build": "node ../../scripts/build-workspace-graph.mjs --target @terminay/web",
+    "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test test/*.test.mjs"
+    "test": "npm run build && node --test test/*.test.mjs",
+    "test:ci": "node --test test/*.test.mjs"
   }
 }
