@@ -172,15 +172,6 @@ export function ProjectEnvironmentsWindow({
 
 	return (
 		<div className="project-environments-window" aria-busy={busy}>
-				{error && formTarget === null ? (
-					<div className="settings-error-banner environment-window-banner" role="alert">
-						<strong>Unable to complete the server operation</strong>
-						<p>{error}</p>
-						<button type="button" onClick={() => void refresh()}>
-							Retry
-						</button>
-					</div>
-				) : null}
 				<ProjectEnvironmentManager
 						environments={environments}
 						profiles={profiles}
@@ -193,6 +184,12 @@ export function ProjectEnvironmentsWindow({
 						serverName={authorityLabel}
 						selectionHint={selectionHint}
 						onSelectionHintHandled={() => setSelectionHint(null)}
+						operationNotice={error === '' ? undefined : (
+							<ProjectEnvironmentOperationError
+								message={error}
+								onRetry={() => void refresh()}
+							/>
+						)}
 						onCreateProfile={(providerId) => {
 							const provider = providers.find(
 								(candidate) => candidate.providerId === providerId,
@@ -321,6 +318,26 @@ export function ProjectEnvironmentsWindow({
 					</div>
 				) : null}
 		</div>
+	);
+}
+
+/** A normal in-flow content panel, deliberately separate from form-specific
+ * validation. Provider operation errors remain visible while leaving the
+ * selected provider, connection, and form controls usable. */
+function ProjectEnvironmentOperationError({
+	message,
+	onRetry,
+}: Readonly<{ message: string; onRetry: () => void }>) {
+	return (
+		<section className="environment-operation-error" role="alert" aria-live="assertive">
+			<div>
+				<h2>Unable to complete the server operation</h2>
+				<p>{message}</p>
+			</div>
+			<button type="button" className="settings-secondary-button" onClick={onRetry}>
+				Retry
+			</button>
+		</section>
 	);
 }
 

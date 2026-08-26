@@ -259,6 +259,11 @@ browser, the same shared route is presented in-page with equivalent management
 semantics. Repeated invocation focuses the existing presentation instead of
 opening duplicates.
 
+Server-operation failures appear in a dedicated, in-flow content panel above
+the current provider, connection, or declarative form. The panel may offer
+Retry, but is never a fixed or floating overlay: the selected detail and its
+recovery controls must remain visible and usable.
+
 The project-bar chooser's **Project Environments…** action and the matching
 Command Bar action invoke that same semantic route. Extension installation and
 updates are not duplicated in this window: links that require an environment
