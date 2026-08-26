@@ -127,7 +127,7 @@ test("trusted Gitea builds use the signed internal Turborepo cache without bakin
   const cacheEnvironment = /TURBO_TEAM: wylde\n\s+TURBO_TOKEN: \$\{\{ secrets\.TURBO_TOKEN \}\}\n\s+TURBO_REMOTE_CACHE_SIGNATURE_KEY: \$\{\{ secrets\.TURBO_REMOTE_CACHE_SIGNATURE_KEY \}\}/u;
 
   assert.equal(packageData.devDependencies.turbo, "2.10.12");
-  assert.match(packageData.scripts["build:workspaces"], /^turbo run build$/u);
+  assert.match(packageData.scripts["build:workspaces"], /^turbo run build --filter=!terminay-\* && turbo run compile --filter=terminay-\*$/u);
   assert.match(packageData.scripts["test:workspaces"], /^turbo run test:ci --concurrency=1$/u);
   assert.deepEqual(turbo.remoteCache, {
     apiUrl: "https://turborepo.i.wylde.net",
