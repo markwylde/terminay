@@ -206,7 +206,7 @@ jobs:
           IMAGE_KEY: ${{ needs.e2e-image.outputs.image-key }}
         run: |
           docker pull "$IMAGE_TAG"
-          test "$(docker image inspect --format '{{ index .Config.Labels \"net.wylde.terminay.e2e-cache-key\" }}' "$IMAGE_TAG")" = "$IMAGE_KEY"
+          test "$(docker image inspect --format '{{ index .Config.Labels "net.wylde.terminay.e2e-cache-key" }}' "$IMAGE_TAG")" = "$IMAGE_KEY"
 
       - name: Run end-to-end test shard
         env:
