@@ -49,9 +49,11 @@ test("packed Puzed calls packed SSH only through the public dependency and targe
     await manager.stop("com.puzed.platform"); await manager.start(puzedDescriptor);
     assert.equal((await manager.invokeProvider({ providerId: "com.puzed.platform/vm", callback: "resumeOperation", expectedRevision: resumed.providerState.sshRevision, request: { environmentId: "env-1", profileId: "profile-1", operationId: created.operationId, providerState: resumed.providerState } })).state, "ready");
     await manager.stop("com.terminay.ssh");
-    await assert.rejects(manager.invokeProvider({ providerId: "com.puzed.platform/vm", callback: "resumeOperation", expectedRevision: resumed.providerState.sshRevision, request: { environmentId: "env-1", profileId: "profile-1", operationId: created.operationId, providerState: resumed.providerState } }), /target is unavailable/);
+    const unavailable = await manager.invokeProvider({ providerId: "com.puzed.platform/vm", callback: "resumeOperation", expectedRevision: resumed.providerState.sshRevision, request: { environmentId: "env-1", profileId: "profile-1", operationId: created.operationId, providerState: resumed.providerState } });
+    assert.equal(unavailable.state, "pending");
+    assert.equal(unavailable.providerState.sshIssue, "unavailable");
     await manager.start(sshDescriptor);
-    assert.equal((await manager.invokeProvider({ providerId: "com.puzed.platform/vm", callback: "resumeOperation", expectedRevision: resumed.providerState.sshRevision, request: { environmentId: "env-1", profileId: "profile-1", operationId: created.operationId, providerState: resumed.providerState } })).state, "ready");
+    assert.equal((await manager.invokeProvider({ providerId: "com.puzed.platform/vm", callback: "resumeOperation", expectedRevision: unavailable.providerState.sshRevision, request: { environmentId: "env-1", profileId: "profile-1", operationId: created.operationId, providerState: unavailable.providerState } })).state, "ready");
     assert.equal(secrets.size, 1, "SSH target stored one private key in the host vault");
     assert.equal(externalBrokerCalls.length, 0, "generic manager routed the declared dependency internally");
     assert.equal(JSON.stringify(manager.statuses()).includes("PRIVATE KEY"), false);
