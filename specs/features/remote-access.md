@@ -89,13 +89,15 @@ versioned byte serialization and includes at least:
 - server host public key and algorithm;
 - a fresh client-generated nonce for this connection attempt;
 - a server-generated offer/generation id, issued time, and short expiry;
-- a cryptographic hash of the exact offered SDP bytes; and
+- a diagnostic cryptographic hash of the offered SDP bytes; and
 - every offered DTLS certificate fingerprint, including algorithm and value.
 
 The server host key signs the canonical transcript. The signature and
 transcript travel with the offer; they are not a separate registration claim.
-The client verifies the exact received offer against the signed hash and
-fingerprints before calling `setRemoteDescription`.
+The client verifies the received offer's DTLS fingerprints against the signed
+fingerprints before calling `setRemoteDescription`. Other SDP fields are not a
+host-identity boundary: the untrusted relay may normalize or replace them only
+to deny service or relay opaque DTLS packets to the authenticated host.
 
 First pairing has no previously pinned host key. The server also authenticates
 the transcript and host public key with a pairing-authentication key derived
@@ -107,7 +109,7 @@ verified host public key with the newly enrolled device credential.
 Reconnect sends a fresh client nonce before the server creates its offer. The
 client requires the transcript to contain that exact nonce and verifies the
 signature with the host public key pinned during pairing. A host-key mismatch,
-missing or duplicate fingerprint, changed SDP, stale transcript, repeated
+missing, duplicate, or changed fingerprint, stale transcript, repeated
 offer id, wrong origin/server/scope, unsupported algorithm, or invalid
 signature fails the generation.
 
@@ -567,9 +569,10 @@ frames do not produce one log line per frame.
   reconnects without the pairing URL.
 - A second host that knows only the session origin cannot replace the
   registered reconnect host.
-- A signaling relay that substitutes an offer, fingerprint, host key, nonce,
-  scope, origin, server id, generation id, expiry, or signature is rejected
-  before any pairing or reconnect credential is released.
+- A signaling relay that substitutes a fingerprint, host key, nonce, scope,
+  origin, server id, generation id, expiry, or signature is rejected before
+  any pairing or reconnect credential is released. Changes to other SDP fields
+  cannot change the authenticated DTLS endpoint and may only deny service.
 - An adversarial signaling relay cannot authenticate two separate WebRTC peers
   and proxy a pairing or reconnect session. Its only successful forwarding
   path preserves the server-authenticated DTLS endpoint end to end.

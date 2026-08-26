@@ -228,9 +228,8 @@ export function assertAuthenticatedWebRtcTransportTranscript(
 			throw new Error('WebRTC transport transcript belongs to another connection.');
 		}
 		const fingerprints = extractAuthenticatedWebRtcFingerprints(expected.sdp);
-		if (JSON.stringify(fingerprints) !== JSON.stringify(transcript.fingerprints) ||
-			await sha256Base64Url(expected.sdp) !== transcript.sdpSha256) {
-			throw new Error('WebRTC offer does not match its authenticated transcript.');
+		if (JSON.stringify(fingerprints) !== JSON.stringify(transcript.fingerprints)) {
+			throw new Error('WebRTC fingerprint does not match its authenticated transcript.');
 		}
 		return transcript;
 	})();
