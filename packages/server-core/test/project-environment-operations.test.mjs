@@ -90,6 +90,25 @@ test('provider provisioning persists opaque state, resumes after restart, refres
   assert.deepEqual(calls,['testProfile','createEnvironment','resumeOperation','getStatus','resolveOptions','invokeAction']);
 });
 
+test('a provisioning environment projects a safe status-card action without leaving its durable operation', async()=>{
+  const subject=fixture(); await subject.repository.load(); const calls=[];
+  const providerDefinitions=()=>[{providerId:'com.example.cloud/vm',displayName:'Cloud VM',capabilities:['terminal','filesystem'],createForm:{id:'create',title:'Create',sections:[],submitLabel:'Create'}}];
+  const trustState={machineId:'vm-1',trustChallenge:{state:'trust-required',challengeId:'opaque-challenge',fingerprint:'SHA256:fixture'}};
+  const providerRuntime={async invokeProvider(invocation){calls.push(invocation.callback);if(invocation.callback==='testProfile')return [];if(invocation.callback==='createEnvironment'||invocation.callback==='resumeOperation')return {state:'pending',operationId:'provider-job-1',providerState:trustState,progress:{operationId:'provider-job-1',title:'Awaiting host trust',resumable:true,stages:[{id:'trust',label:'Approve SSH host key',state:'active'}]}};if(invocation.callback==='getStatus')return {state:'connecting',revision:1,card:{id:'host-trust',title:'Approve SSH host key',summary:'Confirm the host key before opening the project.',tone:'warning',facts:[{label:'Host key',value:'SHA256:fixture'}],actions:[{id:'trust-host',label:'Trust host key',kind:'primary'}]}};if(invocation.callback==='invokeAction')return {state:'complete',providerState:{machineId:'vm-1'},status:{state:'available',revision:2,defaultRoot:'/work'}};throw new Error(`unexpected ${invocation.callback}`);}};
+  const operations=createProjectEnvironmentOperationHandlers({repository:subject.repository,workspace:subject.workspace,thisServerRoot:()=>'/home/server',providerDefinitions,providerRuntime});
+  const context={connectionId:'c',clientId:'client-a',authScope:'admin',permissions:['environments:read','environments:manage'],signal:new AbortController().signal,expectedRevision:0};
+  await operations.commands['project-environments.create']({envelope:{type:'command',commandId:'create-cloud',correlationId:'create-cloud',operation:'project-environments.create',payload:{providerId:'com.example.cloud/vm',values:{name:'VM'}}},body:new Uint8Array(),context});
+  const snapshot=await operations.queries['project-environments.snapshot']({envelope:{type:'query',queryId:'snapshot',operation:'project-environments.snapshot',payload:{}},body:new Uint8Array(),context:{...context,expectedRevision:undefined}});
+  const environment=snapshot.environments.find((value)=>value.id==='env:create-cloud');
+  assert.equal(environment.status,'provisioning');
+  assert.deepEqual(environment.statusCard.actions,[{id:'trust-host',label:'Trust host key',kind:'primary'}]);
+  assert.equal(subject.repository.state.operations['create-cloud'].state,'running');
+  await operations.commands['project-environments.invoke-action']({envelope:{type:'command',commandId:'trust-host',correlationId:'trust-host',operation:'project-environments.invoke-action',payload:{environmentId:'env:create-cloud',actionId:'trust-host'}},body:new Uint8Array(),context:{...context,expectedRevision:undefined}});
+  assert.equal(subject.repository.state.environments['env:create-cloud'].status,'ready');
+  assert.equal(subject.repository.state.operations['create-cloud'].state,'succeeded');
+  assert.equal(calls.includes('getStatus'),true);
+});
+
 test('environment creation preserves explicit public provider validation feedback', async()=>{
   const subject=fixture(); await subject.repository.load();
   const providerDefinitions=()=>[{providerId:'com.puzed.platform/vm',displayName:'Puzed VM',capabilities:['terminal','filesystem'],createForm:{id:'create',title:'Create',sections:[],submitLabel:'Create'}}];

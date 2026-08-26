@@ -158,6 +158,62 @@ test("Puzed requests a dedicated SSH-owned key when no retained binding exists",
   assert.equal(JSON.stringify(f.calls).includes("private"), false);
 });
 
+test("Puzed makes pending host trust actionable and verifies again before ready", async () => {
+  const f = runtimeFixture();
+  let trusted = false;
+  f.call.dependencies.call = async (request) => {
+    f.calls.push(structuredClone(request));
+    if (request.operation === "managed-binding.bind") return { bindingId: "binding-1", revision: 3 };
+    if (request.operation === "managed-binding.verify") return trusted
+      ? { state: "ready", canonicalRoot: "/srv/project", revision: 4 }
+      : { state: "trust-required", challengeId: "challenge-1", fingerprint: "SHA256:fixture", algorithm: "ssh-ed25519", changed: false };
+    if (request.operation === "managed-binding.approve-trust") { trusted = true; return { bindingId: "binding-1", revision: 4 }; }
+    throw new Error(`unexpected ${request.operation}`);
+  };
+  const fetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const path = new URL(String(url)).pathname;
+    if (path === "/api/v1/jobs/job-1") return Response.json({ job: { id: "job-1", status: "succeeded" } });
+    if (path === "/api/v1/machines/machine-1/interfaces") return Response.json({ items: [{ id: "nic-1", observed_ip: "192.0.2.8" }] });
+    throw new Error(`unexpected request ${path}`);
+  };
+  const startingState = { profileId: "profile-1", machineId: "machine-1", bindingId: "binding-1", sshRevision: 0, displayName: "Trust VM", baseUrl: "https://platform.test", managementState: "provisioning", trustChallenge: null, jobId: "job-1", username: "vms", root: "/srv/project" };
+  try {
+    const pending = await f.runtime.resumeOperation({ environmentId: "env-1", profileId: "profile-1", operationId: "job-1", providerState: startingState }, f.call);
+    assert.equal(pending.state, "pending");
+    assert.equal(pending.providerState.jobId, undefined);
+    assert.equal(pending.providerState.trustChallenge.challengeId, "challenge-1");
+    assert.equal(pending.progress.title, "Awaiting host trust");
+    const status = await f.runtime.getStatus({ environmentId: "env-1", profileId: "profile-1", providerState: pending.providerState }, f.call);
+    assert.equal(status.state, "connecting");
+    assert.deepEqual(status.card.actions, [{ id: "trust-host", label: "Trust host key", kind: "primary" }]);
+    const approved = await f.runtime.invokeAction({ environmentId: "env-1", profileId: "profile-1", providerState: pending.providerState, actionId: "trust-host", values: {} }, f.call);
+    assert.equal(approved.state, "complete");
+    assert.equal(approved.status.state, "available");
+    assert.equal(approved.status.defaultRoot, "/srv/project");
+    assert.deepEqual(f.calls.map((call) => call.operation), ["managed-binding.bind", "managed-binding.verify", "managed-binding.approve-trust", "managed-binding.verify"]);
+  } finally {
+    globalThis.fetch = fetch;
+  }
+});
+
+test("Puzed preserves a retryable pending SSH state when verification is unavailable", async () => {
+  const f = runtimeFixture();
+  f.call.dependencies.call = async (request) => {
+    f.calls.push(structuredClone(request));
+    if (request.operation === "managed-binding.verify") throw new Error("connection refused");
+    throw new Error(`unexpected ${request.operation}`);
+  };
+  const providerState = { profileId: "profile-1", machineId: "machine-1", bindingId: "binding-1", sshRevision: 3, displayName: "Retry VM", baseUrl: "https://platform.test", managementState: "running", trustChallenge: null };
+  const pending = await f.runtime.resumeOperation({ environmentId: "env-1", profileId: "profile-1", operationId: "puzed-ssh:machine-1", providerState }, f.call);
+  assert.equal(pending.state, "pending");
+  assert.equal(pending.providerState.sshIssue, "unavailable");
+  const status = await f.runtime.getStatus({ environmentId: "env-1", profileId: "profile-1", providerState: pending.providerState }, f.call);
+  assert.equal(status.state, "connecting");
+  assert.deepEqual(status.card.actions, [{ id: "retry", label: "Retry SSH connection", kind: "primary" }]);
+  assert.equal(status.card.summary.includes("connection refused"), false);
+});
+
 test("Puzed terminal/filesystem operations stay revision-bound and forward through SSH", async () => {
   const f = runtimeFixture(); const providerState = { profileId: "profile-1", machineId: "machine-1", bindingId: "binding-1", sshRevision: 3, displayName: "Dev VM", baseUrl: "https://platform.test", managementState: "running" };
   assert.deepEqual(await f.runtime.invokeService({ environmentId: "env-1", profileId: "profile-1", providerState, capability: "filesystem", operation: "stat", projectId: "project-1", environmentRevision: 3, input: { path: "/srv/project" } }, f.call), { forwarded: true });

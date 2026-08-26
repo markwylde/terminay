@@ -180,6 +180,14 @@ hands a descriptor to SSH for bounded connection/readiness and host trust. A
 stable logical identity `puzed:<platformProfileId>:<machineId>` preserves strict
 key trust across DHCP address changes. A changed guest key still blocks.
 
+While the durable operation remains `provisioning`, its provider may expose a
+safe status card. In particular, a host-key challenge must offer an explicit
+trust or replacement action from the pending VM connection; a client must not
+need to wait for the operation to become ready before it can approve the key.
+That action re-runs SSH verification and reaches **Ready** only on successful
+verification. Connection failures remain a bounded retryable SSH state; they
+never claim that the project environment is available.
+
 If an observed address changes, live SSH sessions are not silently retargeted.
 The next validated connection uses the new address and the stable host identity.
 

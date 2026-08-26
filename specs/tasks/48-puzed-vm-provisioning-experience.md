@@ -56,6 +56,9 @@ using the stable SSH provider contract/test double until live convergence.
 
 - [x] Resume shared SSE/refetch through provisioning/boot/address; then invoke
   bounded SSH readiness and host trust as independent phases.
+- [x] Surface host-key trust and bounded SSH retry actions while the durable VM
+  operation is pending; re-verify after approval before marking the connection
+  ready.
 - [x] Support Run in background and recovery after UI/client/server restart.
 - [x] On every failure preserve the VM and offer Retry/Edit SSH/Start/Stop/
   Reboot/Delete/Open in Puzed; never auto-delete or fall back Local.
