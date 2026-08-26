@@ -40,10 +40,12 @@ tree and rich editor are governed by
 - Markdown tasks are available both for one file and recursively for a folder.
   The task surfaces parse checkboxes, expose progress/filter/search/grouping
   views, and honour the configured ignored-directory patterns.
-- Every project owns its sidebar visibility, width, pane ordering, collapse
-  state, dimensions, and supported pane navigation state. This presentation
-  state persists with the project in the server-owned workspace and never
-  alters project files or another project's sidebar.
+- Every project owns its sidebar width, pane ordering, collapse state,
+  dimensions, and supported pane navigation state. This presentation state
+  persists with the project in the server-owned workspace and never alters
+  project files or another project's sidebar. Sidebar visibility is a
+  device-local preference keyed by the selected server and project, so opening
+  or closing Explorer never changes another device's presentation.
 
 ## Ownership
 
