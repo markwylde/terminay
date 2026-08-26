@@ -15,8 +15,8 @@
     "@types/node": "^24.10.1"
   },
   "scripts": {
-    "build": "node ../../scripts/build-workspace-graph.mjs --target @terminay/ui-bundle",
-    "typecheck": "npm run build --workspace @terminay/protocol && tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build"
   }
 }

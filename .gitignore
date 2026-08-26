@@ -37,6 +37,7 @@ test-results/
 
 # Caches and temp
 .cache/
+.turbo/
 .vite/
 .eslintcache
 *.tsbuildinfo

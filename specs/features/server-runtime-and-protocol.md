@@ -121,9 +121,10 @@ foreground start emits a bounded readiness record and handles `SIGINT` and
   engine, required CLI entrypoints, payload hashes, and absence of Electron
   imports before publication. Native OS/architecture/ABI probes remain release
   evidence; this manifest check does not claim signing or notarization.
-- Release artifact builds work from their narrow workspace entry points. A
-  server-core build first materializes every public workspace package it
-  imports, including the Extension API. Runtime staging accepts the pinned npm
+- Release artifact builds work from their narrow workspace entry points through
+  the repository dependency graph. A server-core task first materializes every
+  public workspace package it imports, including the Extension API. Runtime
+  staging accepts the pinned npm
   major's exact single-result JSON shape, including npm 12's package-name map
   and singleton metadata arrays, and fails closed on missing, multiple, or
   malformed results.
@@ -135,6 +136,19 @@ foreground start emits a bounded readiness record and handles `SIGINT` and
   platform `spawn-helper` before development, tests, or artifact staging. The
   normalization is bounded to that named helper inside the installed node-pty
   package and is idempotent.
+
+### Build cache
+
+- Repository builds use one dependency-aware Turborepo task graph. A package
+  build consumes the declared builds of its workspace dependencies instead of
+  recursively rebuilding them itself.
+- Only declared reproducible build outputs are cacheable. Linting, type
+  checking, and tests execute for every CI run.
+- Trusted CI and developer builds use the authenticated internal
+  `turborepo.i.wylde.net` cache with artifact signature verification. The
+  cache holds disposable derived artifacts only: a cache miss always produces
+  a complete correct build, and no source, credentials, or runtime state are
+  stored in it.
 
 ## Server identity and storage
 

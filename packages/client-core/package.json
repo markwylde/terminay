@@ -15,8 +15,9 @@
     "@terminay/protocol": "1.0.0"
   },
   "scripts": {
-    "build": "node ../../scripts/build-workspace-graph.mjs --target @terminay/client-core",
+    "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test test/*.test.mjs"
+    "test": "npm run build && node --test test/*.test.mjs",
+    "test:ci": "node --test test/*.test.mjs"
   }
 }

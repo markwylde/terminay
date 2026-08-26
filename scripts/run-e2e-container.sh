@@ -39,12 +39,23 @@ if [ "$preloaded_image" = 1 ]; then
     exit 69
   fi
 else
-  docker build \
-    --pull \
-    --platform "$platform" \
-    --file "$repo_dir/Dockerfile.e2e" \
-    --tag "$image" \
-    "$repo_dir"
+  build_image() {
+    docker build \
+      --pull \
+      --platform "$platform" \
+      --file "$repo_dir/Dockerfile.e2e" \
+      --tag "$image" \
+      "$@" \
+      "$repo_dir"
+  }
+  if [ -n "${TURBO_TOKEN:-}" ] && [ -n "${TURBO_REMOTE_CACHE_SIGNATURE_KEY:-}" ]; then
+    DOCKER_BUILDKIT=1 build_image \
+      --build-arg "TURBO_TEAM=${TURBO_TEAM:-wylde}" \
+      --secret id=turbo_token,env=TURBO_TOKEN \
+      --secret id=turbo_signature_key,env=TURBO_REMOTE_CACHE_SIGNATURE_KEY
+  else
+    DOCKER_BUILDKIT=1 build_image
+  fi
 fi
 
 docker create \

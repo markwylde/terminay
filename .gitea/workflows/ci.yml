@@ -44,6 +44,10 @@ jobs:
           npm ci
 
       - name: Build unsigned packaged application
+        env:
+          TURBO_TEAM: wylde
+          TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+          TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
         run: |
           npm run build:app
           CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --dir --mac --arm64 --publish never
@@ -76,6 +80,10 @@ jobs:
           npm ci
 
       - name: Build, lint, and run fast tests
+        env:
+          TURBO_TEAM: wylde
+          TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+          TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
         run: npm run test:ci
 
   mcp-cli-compatibility:
@@ -127,11 +135,17 @@ jobs:
         id: archive
         env:
           IMAGE_TAG: ${{ steps.image.outputs.tag }}
+          TURBO_TEAM: wylde
+          TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+          TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
         run: |
-          docker build \
+          DOCKER_BUILDKIT=1 docker build \
             --pull \
             --platform linux/amd64 \
             --file Dockerfile.e2e \
+            --build-arg TURBO_TEAM="$TURBO_TEAM" \
+            --secret id=turbo_token,env=TURBO_TOKEN \
+            --secret id=turbo_signature_key,env=TURBO_REMOTE_CACHE_SIGNATURE_KEY \
             --tag "$IMAGE_TAG" \
             .
           mkdir -p .docker-cache/e2e-image
