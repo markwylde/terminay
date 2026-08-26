@@ -186,11 +186,15 @@ status must not be conflated with terminal or agent attention.
   indicator. The dots use five fixed, contrasting colours from the tab hue
   palette and enter in sequence. Local embedded-server startup has no text,
   while remote connections also show a short status message. Native window
-  controls never overlap it. The initial document paints this loading state
-  before the renderer bundle evaluates, so startup never presents an empty
-  window. If the renderer cannot bootstrap, it replaces the loading state with
-  a visible reload action. The originating window keeps its existing server
-  binding during that handoff.
+  controls never overlap it. At local Desktop startup, a self-contained native
+  loading document paints this state immediately after Electron is ready, before
+  workspace restoration, extension setup, or server initialization begins. The
+  verified server UI replaces it once its session is ready, and its initial
+  document paints the same loading state before the renderer bundle evaluates.
+  Its dot animation stays in phase through that handoff, so startup never
+  presents an empty window or a visibly restarted loader. If the renderer cannot
+  bootstrap, it replaces the loading state with a visible reload action. The
+  originating window keeps its existing server binding during that handoff.
 - Multiple windows may target the same server and different logical workspace
   views. Other windows may simultaneously target other servers.
 - Local server startup, shutdown, crash recovery, and update are host actions.

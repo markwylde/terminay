@@ -1,6 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
+	expect,
 	type ElectronApplication,
 	_electron as electron,
 } from '@playwright/test';
@@ -31,7 +32,7 @@ export async function launchPackagedStyleDesktop(options: {
 	tempDirectory: string;
 	userDataDirectory: string;
 }): Promise<ElectronApplication> {
-	return electron.launch({
+	const application = await electron.launch({
 		args: ['.'],
 		env: {
 			...process.env,
@@ -47,6 +48,19 @@ export async function launchPackagedStyleDesktop(options: {
 			VITE_DEV_SERVER_URL: '',
 		},
 	});
+	// Desktop now paints a native loading document before the Local server is
+	// initialized. Diagnostics callers exercise the usable packaged-style app,
+	// not that intentionally pre-server surface.
+	await expect
+		.poll(
+			async () =>
+				(await readDiagnosticEvents(options.userDataDirectory)).some(
+					(event) => event.event === 'local-server.ready',
+				),
+			{ timeout: 30_000 },
+		)
+		.toBe(true);
+	return application;
 }
 
 export async function readDiagnosticText(
