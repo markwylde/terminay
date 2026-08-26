@@ -1,4 +1,5 @@
 import type { FileViewerClient } from '@terminay/client-core';
+import type { JsonValue } from '@terminay/protocol';
 import {
 	type ActivitySessionSnapshot,
 	MacroClient,
@@ -164,6 +165,7 @@ import { ProjectTabList } from './workspace/ProjectTabList';
 import {
 	createProjectTab,
 	type ProjectTab,
+	withProjectSidebarVisibility,
 } from './workspace/projectTabModel';
 import {
 	type ConnectionSwitcherEntry,
@@ -5296,8 +5298,36 @@ function App({
 					),
 		[terminalClientContext?.applicationClient],
 	);
-	const { settings, error: terminalSettingsError } =
+	const { settings, error: terminalSettingsError, settingsClient } =
 		useTerminalSettings(serverSettingsClient);
+	const settingsRef = useRef(settings);
+	useEffect(() => {
+		settingsRef.current = settings;
+	}, [settings]);
+	const persistProjectSidebarVisibility = useCallback(
+		(projectId: string, isOpen: boolean) => {
+			const nextSettings = {
+				...settingsRef.current,
+				sidebar: withProjectSidebarVisibility(
+					settingsRef.current.sidebar,
+					currentServerId,
+					projectId,
+					isOpen,
+				),
+			};
+			settingsRef.current = nextSettings;
+			void settingsClient
+				.update<typeof nextSettings>(nextSettings as unknown as JsonValue)
+				.then((updated) => {
+					settingsRef.current = updated;
+				})
+				.catch(() => {
+					// The local presentation already reflects the interaction. A later
+					// device-settings update or reload reconciles a failed persistence.
+				});
+		},
+		[currentServerId, settingsClient],
+	);
 	const connectionFeatureError = useMemo(() => {
 		const failed =
 			macroSettingsError === null
@@ -5359,8 +5389,10 @@ function App({
 		holdProjectOrderRef: draggingProjectIdRef,
 		holdActiveProjectIdRef: heldActiveProjectIdRef,
 		isAdoptWindow: false,
+		onProjectSidebarVisibilityChange: persistProjectSidebarVisibility,
 		projectColorScope: currentServerId,
 		sidebarSettings: settings.sidebar,
+		sidebarVisibilityScope: currentServerId,
 		workspaceSnapshotStore: terminalClientContext?.workspaceSnapshotStore,
 		workspaceViewId: boundWorkspaceViewId,
 	});
