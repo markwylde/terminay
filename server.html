@@ -12,6 +12,7 @@
       html, body, #web-root { width: 100%; min-height: 100%; margin: 0; }
       body { background: #0d1117; }
       .terminay-bootstrap-loading {
+        box-sizing: border-box;
         display: grid;
         min-height: 100vh;
         place-items: center;
@@ -27,12 +28,13 @@
       .terminay-bootstrap-loading__dots span {
         width: 7px; height: 7px; border-radius: 50%; opacity: .2; transform: scale(.65);
         animation: terminay-bootstrap-loading-dot 1.6s ease-in-out infinite;
+        animation-delay: var(--terminay-loading-phase, 0ms);
       }
       .terminay-bootstrap-loading__dots span:nth-child(1) { background: #db5757; }
-      .terminay-bootstrap-loading__dots span:nth-child(2) { background: #c1db57; animation-delay: .12s; }
-      .terminay-bootstrap-loading__dots span:nth-child(3) { background: #57db8c; animation-delay: .24s; }
-      .terminay-bootstrap-loading__dots span:nth-child(4) { background: #578cdb; animation-delay: .36s; }
-      .terminay-bootstrap-loading__dots span:nth-child(5) { background: #c157db; animation-delay: .48s; }
+      .terminay-bootstrap-loading__dots span:nth-child(2) { background: #c1db57; animation-delay: calc(var(--terminay-loading-phase, 0ms) + .12s); }
+      .terminay-bootstrap-loading__dots span:nth-child(3) { background: #57db8c; animation-delay: calc(var(--terminay-loading-phase, 0ms) + .24s); }
+      .terminay-bootstrap-loading__dots span:nth-child(4) { background: #578cdb; animation-delay: calc(var(--terminay-loading-phase, 0ms) + .36s); }
+      .terminay-bootstrap-loading__dots span:nth-child(5) { background: #c157db; animation-delay: calc(var(--terminay-loading-phase, 0ms) + .48s); }
       .terminay-bootstrap-loading__error { display: grid; gap: 12px; max-width: 360px; }
       .terminay-bootstrap-loading__error h1 { margin: 0; color: #dce5ef; font-size: 18px; }
       .terminay-bootstrap-loading__error p { margin: 0; line-height: 1.5; }
@@ -49,6 +51,7 @@
       }
     </style>
     <script>
+      document.documentElement.style.setProperty('--terminay-loading-phase', `-${Date.now() % 1600}ms`)
       try {
         if (globalThis.parent !== globalThis) document.documentElement.classList.add('is-framed')
       } catch {
