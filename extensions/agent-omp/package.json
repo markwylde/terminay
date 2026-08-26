@@ -19,6 +19,7 @@
     "compile": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run compile && node --test test/omp-agent.test.mjs test/boundary.test.mjs test/compatibility.test.mjs",
+    "test:ci": "node --test test/omp-agent.test.mjs test/boundary.test.mjs test/compatibility.test.mjs",
     "test:compat": "npm run compile && node --test test/compatibility.test.mjs",
     "test:packed": "node -e \"require('node:fs').mkdirSync('.tmp-pack', { recursive: true })\" && npm pack --json --pack-destination .tmp-pack && node --test test/packed.test.mjs",
     "test:real-cli": "npm run compile && node test/real-cli-smoke.mjs"

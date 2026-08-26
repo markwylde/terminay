@@ -1,10 +1,13 @@
 .git
+.turbo
 .github
 .vscode
 node_modules
 **/node_modules
 build
 **/dist
+*.tsbuildinfo
+**/*.tsbuildinfo
 dist-web
 release
 playwright-report

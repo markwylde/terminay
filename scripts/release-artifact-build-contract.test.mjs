@@ -5,27 +5,15 @@ import test from 'node:test';
 
 const root = resolve(new URL('..', import.meta.url).pathname);
 
-test('narrow release builds materialize their workspace dependencies', async () => {
+test('narrow release builds materialize their workspace dependencies through Turbo', async () => {
+	const turbo = JSON.parse(await readFile(resolve(root, 'turbo.json'), 'utf8'));
 	const serverCorePackage = JSON.parse(
 		await readFile(resolve(root, 'packages/server-core/package.json'), 'utf8'),
 	);
-	const workspaceGraph = await readFile(
-		resolve(root, 'scripts/build-workspace-graph.mjs'),
-		'utf8',
-	);
-	assert.match(
-		serverCorePackage.scripts.build,
-		/build-workspace-graph\.mjs --target @terminay\/server-core/u,
-	);
-	const serverCoreDefinition = workspaceGraph.slice(
-		workspaceGraph.indexOf("'@terminay/server-core':"),
-		workspaceGraph.indexOf("'@terminay/server':"),
-	);
-	assert.match(
-		serverCoreDefinition,
-		/dependencies:\s*\[\s*'@terminay\/protocol',\s*'@terminay\/extension-api',\s*'@terminay\/ui-bundle',\s*\]/u,
-		'building server-core must compile the workspace packages shipped alongside it',
-	);
+
+	assert.equal(serverCorePackage.scripts.build, 'tsc -p tsconfig.json');
+	assert.deepEqual(turbo.tasks.build.dependsOn, ['^build']);
+	assert.equal(turbo.tasks.build.outputs.includes('dist/**'), true);
 });
 
 test('release pack consumers accept npm 12 single-object metadata', async () => {

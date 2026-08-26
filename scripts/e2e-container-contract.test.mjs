@@ -10,14 +10,15 @@ function job(workflow, name) {
   const start = workflow.indexOf(header);
   assert.notEqual(start, -1, `CI must declare ${name}`);
   const remainder = workflow.slice(start + header.length);
-  const next = remainder.search(/^  [a-z][a-z0-9-]+:\n/mu);
+  const next = remainder.search(/^ {2}[a-z][a-z0-9-]+:\n/mu);
   return next === -1 ? workflow.slice(start) : workflow.slice(start, start + header.length + next);
 }
 
 test("local Electron E2E defaults to an isolated Linux container", async () => {
-  const [agents, dockerfile, packageJson, runner] = await Promise.all([
+  const [agents, dockerfile, dockerignore, packageJson, runner] = await Promise.all([
     text("AGENTS.md"),
     text("Dockerfile.e2e"),
+    text(".dockerignore"),
     text("package.json"),
     text("scripts/run-e2e-container.sh"),
   ]);
@@ -32,12 +33,17 @@ test("local Electron E2E defaults to an isolated Linux container", async () => {
   assert.match(dockerfile, /USER node\nRUN npm ci \\\n\s+&& node node_modules\/electron\/install\.js \\\n\s+&& npx playwright install chromium/u);
   assert.match(dockerfile, /USER root\nRUN npx playwright install-deps chromium/u);
   assert.match(dockerfile, /apt-get install --yes --no-install-recommends libgtk-3-0 libxss1 xauth/u);
+  assert.match(dockerignore, /^\*\.tsbuildinfo$/mu);
+  assert.match(dockerignore, /^\*\*\/\*\.tsbuildinfo$/mu);
   assert.doesNotMatch(dockerfile, /chown -R node:node \/workspace/u);
   assert.match(dockerfile, /USER node/u);
   assert.match(runner, /TERMINAY_E2E_PLATFORM:-\}/u);
   assert.match(runner, /arm64\|aarch64\) platform=linux\/arm64/u);
   assert.match(runner, /x86_64\|amd64\) platform=linux\/amd64/u);
   assert.match(runner, /--pull/u);
+  assert.match(runner, /DOCKER_BUILDKIT=1 build_image/u);
+  assert.match(runner, /--secret id=turbo_token,env=TURBO_TOKEN/u);
+  assert.match(runner, /--secret id=turbo_signature_key,env=TURBO_REMOTE_CACHE_SIGNATURE_KEY/u);
   assert.match(runner, /preloaded_image=\$\{TERMINAY_E2E_IMAGE_IS_PRELOADED:-\}/u);
   assert.match(runner, /if \[ "\$preloaded_image" = 1 \]; then\n\s+if ! docker image inspect "\$image"/u);
   assert.match(runner, /--shm-size 2g/u);
@@ -98,4 +104,39 @@ test("CI shards Electron E2E through the same isolated Docker entrypoint", async
     assert.match(e2eJob, /name: playwright-report-\$\{\{ matrix\.shard \}\}-of-5/u);
     assert.match(e2eJob, /retention-days: 7/u);
   }
+});
+
+test("trusted Gitea builds use the signed internal Turborepo cache without baking credentials into the E2E image", async () => {
+  const [dockerfile, packageJson, turboJson, workflow] = await Promise.all([
+    text("Dockerfile.e2e"),
+    text("package.json"),
+    text("turbo.json"),
+    text(".gitea/workflows/ci.yml"),
+  ]);
+  const packageData = JSON.parse(packageJson);
+  const turbo = JSON.parse(turboJson);
+  const cacheEnvironment = /TURBO_TEAM: wylde\n\s+TURBO_TOKEN: \$\{\{ secrets\.TURBO_TOKEN \}\}\n\s+TURBO_REMOTE_CACHE_SIGNATURE_KEY: \$\{\{ secrets\.TURBO_REMOTE_CACHE_SIGNATURE_KEY \}\}/u;
+
+  assert.equal(packageData.devDependencies.turbo, "2.10.12");
+  assert.match(packageData.scripts["build:workspaces"], /^turbo run build$/u);
+  assert.match(packageData.scripts["test:workspaces"], /^turbo run test:ci --concurrency=1$/u);
+  assert.deepEqual(turbo.remoteCache, {
+    apiUrl: "https://turborepo.i.wylde.net",
+    teamSlug: "wylde",
+    signature: true,
+  });
+  assert.equal(turbo.tasks.build.outputs.includes("dist/**"), true);
+  assert.equal(turbo.tasks["test:ci"].cache, false);
+
+  assert.match(job(workflow, "packaged-macos-smoke"), cacheEnvironment);
+  assert.match(job(workflow, "build-and-test"), cacheEnvironment);
+  const e2eImage = job(workflow, "e2e-image");
+  assert.match(e2eImage, cacheEnvironment);
+  assert.match(e2eImage, /DOCKER_BUILDKIT=1 docker build/u);
+  assert.match(e2eImage, /--secret id=turbo_token,env=TURBO_TOKEN/u);
+  assert.match(e2eImage, /--secret id=turbo_signature_key,env=TURBO_REMOTE_CACHE_SIGNATURE_KEY/u);
+  assert.match(dockerfile, /^# syntax=docker\/dockerfile:1\.7$/mu);
+  assert.match(dockerfile, /--mount=type=secret,id=turbo_token,required=false/u);
+  assert.match(dockerfile, /--mount=type=secret,id=turbo_signature_key,required=false/u);
+  assert.match(dockerfile, /npm run build:app/u);
 });

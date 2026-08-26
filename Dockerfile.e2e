@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 FROM node:24.15.0-bookworm-slim
 
 ENV CI=1 \
@@ -48,6 +49,14 @@ RUN apt-get update \
 COPY --chown=node:node . .
 
 USER node
-RUN npm run build:app
+ARG TURBO_TEAM=wylde
+RUN --mount=type=secret,id=turbo_token,required=false,uid=1000,gid=1000,mode=0400 \
+    --mount=type=secret,id=turbo_signature_key,required=false,uid=1000,gid=1000,mode=0400 \
+    if [ -f /run/secrets/turbo_token ] && [ -f /run/secrets/turbo_signature_key ]; then \
+      export TURBO_TOKEN="$(cat /run/secrets/turbo_token)"; \
+      export TURBO_REMOTE_CACHE_SIGNATURE_KEY="$(cat /run/secrets/turbo_signature_key)"; \
+      export TURBO_TEAM; \
+    fi; \
+    npm run build:app
 
 ENTRYPOINT ["sh", "scripts/support/e2e-container-entrypoint.sh"]

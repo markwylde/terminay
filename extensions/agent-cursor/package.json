@@ -34,6 +34,7 @@
     "compile": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run compile && node --test test/*.test.mjs",
+    "test:ci": "node --test test/*.test.mjs",
     "test:compat": "npm run compile && node --test test/compatibility.test.mjs",
     "test:packed": "npm run compile && node --test test/packed.test.mjs",
     "test:real-cli": "npm run compile && TERMINAY_CURSOR_AGENT_REAL=1 node --test test/real-cli.test.mjs"

@@ -34,8 +34,8 @@ COPY . .
 # Build the standalone server and its server-owned workspace dependencies from
 # the repository lockfile. The final image receives only the runtime workspaces
 # and pruned production dependencies.
-RUN npm run build --workspace @terminay/protocol \
-  && npm run build --workspace @terminay/server \
+RUN npx turbo run build --filter=@terminay/server \
+  && npm run build:postcompile --workspace @terminay/server \
   && npm prune --omit=dev
 
 FROM node:24.15.0-bookworm-slim AS runtime
