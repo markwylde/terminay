@@ -25,6 +25,8 @@ type FormTarget = Readonly<{
 	providerId: string;
 	profileId?: string;
 	form: DeclarativeFormDto;
+	/** Safe, non-secret values from the persisted profile. */
+	initialValues?: Readonly<Record<string, string | boolean>>;
 	mode?: 'profile' | 'environment';
 }>;
 
@@ -212,9 +214,10 @@ export function ProjectEnvironmentsWindow({
 							) {
 								setFormTarget({
 									providerId: provider.providerId,
-									profileId: profile.id,
-									form: provider.profileForm,
-									mode: 'profile',
+								profileId: profile.id,
+								form: editProfileForm(provider.profileForm),
+								initialValues: profile.initialValues,
+								mode: 'profile',
 								});
 							}
 						}}
@@ -223,6 +226,12 @@ export function ProjectEnvironmentsWindow({
 						}
 						onRemoveProfile={(profileId) =>
 							run(() => client!.removeProfile(profileId), 'Provider or connection removed.')
+						}
+						onRemoveConnection={(environment) =>
+							run(
+								() => client!.removeEnvironment(environment.id),
+								'Connection removed from this Terminay Server.',
+							)
 						}
 						onAction={(environment, action) => {
 							if (
@@ -252,9 +261,7 @@ export function ProjectEnvironmentsWindow({
 						detail={formTarget === null ? undefined : (
 						<DeclarativeProviderForm
 						form={formTarget.form}
-						{...(formTarget.profileId === undefined
-							? {}
-							: { initialValues: { 'profile-id': formTarget.profileId } })}
+						initialValues={formTarget.initialValues}
 						onLoadOptions={async (_fieldId, sourceId, query, values, signal) => (
 							await client!.resolveOptions({
 								providerId: formTarget.providerId,
@@ -396,6 +403,31 @@ function toUiForm(
 					? {}
 					: { visibleWhen: field.visibleWhen }),
 			})),
+		})),
+	};
+}
+
+/**
+ * Provider definitions describe creation. Editing uses the same public form
+ * schema, but never reads secrets back from the server. A blank secret field
+ * therefore means "keep the current secret", not "erase it".
+ */
+function editProfileForm(form: DeclarativeFormDto): DeclarativeFormDto {
+	return {
+		...form,
+		title: form.title.replace(/^New\s+/i, 'Edit '),
+		submitLabel: form.submitLabel.replace(/^Test and save\s+/i, 'Test and save changes to '),
+		description: 'Saved non-secret values are shown below. Leave a secret blank to keep its current value.',
+		sections: form.sections.map((section) => ({
+			...section,
+			fields: section.fields.map((field) => field.kind !== 'secret'
+				? field
+				: {
+					...field,
+					required: false,
+					placeholder: 'Leave blank to keep the current value',
+					description: 'Stored securely and never displayed. Leave blank to keep the current value.',
+				}),
 		})),
 	};
 }
