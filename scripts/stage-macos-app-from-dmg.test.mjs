@@ -33,13 +33,20 @@ test('the DMG staging helper rejects missing arguments', async () => {
 
 test('the unsigned PR smoke copies the app off a DMG before boot', async () => {
   const smoke = new URL('./packaged-macos-pr-smoke.sh', import.meta.url)
+  const runner = new URL('./run-packaged-macos-smoke.sh', import.meta.url)
   const source = await readFile(smoke, 'utf8')
+  const runnerSource = await readFile(runner, 'utf8')
   const mode = (await stat(smoke)).mode
+  const runnerMode = (await stat(runner)).mode
   assert.equal(Boolean(mode & 0o111), true, 'PR smoke helper must be executable')
+  assert.equal(Boolean(runnerMode & 0o111), true, 'packaged smoke runner must be executable')
   assert.match(source, /hdiutil create/u)
   assert.match(source, /stage-macos-app-from-dmg\.sh/u)
-  assert.match(source, /test:packaged-startup-macos/u)
-  assert.match(source, /launchctl managername/u)
-  assert.match(source, /TERMINAY_ELECTRON_HEADLESS=1/u)
+  assert.match(source, /run-packaged-macos-smoke\.sh/u)
+  assert.match(runnerSource, /test:packaged-startup-macos/u)
+  assert.match(runnerSource, /launchctl managername/u)
+  assert.match(runnerSource, /TERMINAY_ELECTRON_HEADLESS=1/u)
+  assert.doesNotMatch(runnerSource, /export -p/u,
+    'the Aqua subprocess must receive only the explicit smoke environment')
   assert.doesNotMatch(source, /codesign --verify/u)
 })

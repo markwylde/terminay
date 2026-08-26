@@ -20,7 +20,10 @@ if [ "$target" = linux-x64 ]; then
   npm run build:app
   CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --dir --linux --x64 --publish never
 else
-  npm run build --workspace @terminay/server
+  # A clean arm64 runner has no compiled workspace declarations. Build the
+  # server dependency graph before staging its packaged extension payload.
+  npm run build:application-graph
+  npm run build:server-postcompile
 fi
 
 npm pack --workspace @terminay/server --json --pack-destination "$temporary" > "$temporary/pack.json"

@@ -3,13 +3,14 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
-const [githubCi, giteaCi, serverImage, triggerRelease, decision, packageJson] = await Promise.all([
+const [githubCi, giteaCi, serverImage, triggerRelease, decision, packageJson, packagedBuiltIns] = await Promise.all([
   read(".github/workflows/ci.yml"),
   read(".gitea/workflows/ci.yml"),
   read(".github/workflows/server-image.yml"),
   read(".github/workflows/trigger-release.yml"),
   read("specs/decisions/provider-portable-parallel-ci.md"),
   read("package.json"),
+  read("scripts/run-packaged-built-in-extension-runtime-linux.sh"),
 ]);
 
 function job(workflow, name) {
@@ -48,6 +49,10 @@ test("GitHub and Gitea discover separate provider-specific CI workflows", () => 
   assert.match(packagedLinux, /test "\$\(uname -m\)" = "\$EXPECTED_UNAME_ARCH"/u);
   assert.match(packagedLinux, /npm ci/u);
   assert.match(packagedLinux, /test:packaged-built-in-extension-runtime:linux -- \$\{\{ matrix\.target \}\}/u);
+  const applicationGraphBuild = packagedBuiltIns.indexOf('npm run build:application-graph')
+  const postcompile = packagedBuiltIns.indexOf('npm run build:server-postcompile')
+  assert.ok(applicationGraphBuild >= 0 && postcompile > applicationGraphBuild,
+    'the standalone arm64 lifecycle must compile workspace dependencies before packing the server')
   assert.match(triggerRelease, /stage-macos-app-from-dmg\.sh/u);
   assert.doesNotMatch(triggerRelease, /TERMINAY_PACKAGED_APP="\$APP_BUNDLE"/u);
   assert.doesNotMatch(githubCi, /github\.server_url|gitea-e2e|ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5|9bc31d5ccc31df68ecc42ccf4149144866c47d8a/u);

@@ -349,9 +349,9 @@ jobs:
           codesign -dvv "$STAGED_APP" 2>&1 | grep -F "TeamIdentifier=$APPLE_TEAM_ID"
           spctl --assess --type execute --verbose=4 "$STAGED_APP"
 
-          TERMINAY_PACKAGED_APP="$STAGED_APP" \
-            TERMINAY_RELEASE_DIAGNOSTICS_DIR="$RUNNER_TEMP/terminay-packaged-smoke" \
-            npm run test:packaged-startup-macos
+          export TERMINAY_PACKAGED_APP="$STAGED_APP"
+          export TERMINAY_RELEASE_DIAGNOSTICS_DIR="$RUNNER_TEMP/terminay-packaged-smoke"
+          bash scripts/run-packaged-macos-smoke.sh
 
       - name: Preserve packaged startup diagnostics
         if: ${{ always() && matrix.os == 'macos-latest' }}
