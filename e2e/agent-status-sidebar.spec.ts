@@ -13,6 +13,12 @@ async function getActiveSessionId(page: Page): Promise<string> {
 	return sessionId;
 }
 
+async function getActiveProjectId(page: Page): Promise<string> {
+	const projectId = await page.locator('.project-tab--active').getAttribute('data-project-id');
+	if (!projectId) throw new Error('Active project id is unavailable');
+	return projectId;
+}
+
 async function createTerminalAndGetActiveSessionId(page: Page): Promise<string> {
 	const previousSessionId = await getActiveSessionId(page);
 	await sendAppCommand(page, 'new-terminal');
@@ -201,9 +207,19 @@ test('two live Desktop profiles keep Agents panes isolated', async ({
 	try {
 		const isolatedWindow = await isolatedApp.firstWindow();
 		await appHarness.prepareWindow(isolatedWindow);
+		// Each new profile intentionally hydrates the same canonical initial
+		// workspace identities. The profiles' server/process authorities differ,
+		// but their visible project and terminal labels and their opaque ids match.
+		const firstProjectId = await getActiveProjectId(mainWindow);
+		const secondProjectId = await getActiveProjectId(isolatedWindow);
 		const firstSessionId = await getActiveSessionId(mainWindow);
 		const secondSessionId = await getActiveSessionId(isolatedWindow);
-		await beginCodexSession(mainWindow, firstSessionId, 'codex-profile-a');
+		expect(firstProjectId).toBe('default');
+		expect(secondProjectId).toBe(firstProjectId);
+		expect(firstSessionId).toBe('default');
+		expect(secondSessionId).toBe(firstSessionId);
+		const providerSessionId = 'codex-identical-provider-session';
+		await beginCodexSession(mainWindow, firstSessionId, providerSessionId);
 		await emitJournalRecord(mainWindow, firstSessionId, {
 			type: 'event_msg',
 			payload: { type: 'task_started', turn_id: 'turn-1' },
@@ -212,7 +228,16 @@ test('two live Desktop profiles keep Agents panes isolated', async ({
 			type: 'event_msg',
 			payload: { type: 'user_message', message: 'Profile A agent' },
 		});
-		await beginCodexSession(isolatedWindow, secondSessionId, 'codex-profile-b');
+		await emitJournalRecord(mainWindow, firstSessionId, {
+			type: 'event_msg',
+			payload: {
+				type: 'sub_agent_activity',
+				agent_thread_id: 'profile-a-child',
+				agent_path: '/root/profile-a-child',
+				kind: 'started',
+			},
+		});
+		await beginCodexSession(isolatedWindow, secondSessionId, providerSessionId);
 		await emitJournalRecord(isolatedWindow, secondSessionId, {
 			type: 'event_msg',
 			payload: { type: 'task_started', turn_id: 'turn-1' },
@@ -221,12 +246,27 @@ test('two live Desktop profiles keep Agents panes isolated', async ({
 			type: 'event_msg',
 			payload: { type: 'user_message', message: 'Profile B agent' },
 		});
+		await emitJournalRecord(isolatedWindow, secondSessionId, {
+			type: 'event_msg',
+			payload: {
+				type: 'sub_agent_activity',
+				agent_thread_id: 'profile-b-child',
+				agent_path: '/root/profile-b-child',
+				kind: 'started',
+			},
+		});
 		await openFileExplorer(mainWindow);
 		await openFileExplorer(isolatedWindow);
 		await expect(mainWindow.locator('.agents-sidebar__name')).toContainText('Profile A agent');
 		await expect(mainWindow.locator('.agents-sidebar__name')).not.toContainText('Profile B agent');
 		await expect(isolatedWindow.locator('.agents-sidebar__name')).toContainText('Profile B agent');
 		await expect(isolatedWindow.locator('.agents-sidebar__name')).not.toContainText('Profile A agent');
+		await mainWindow.getByRole('button', { name: 'Expand 1 subagent for Profile A agent' }).click();
+		await isolatedWindow.getByRole('button', { name: 'Expand 1 subagent for Profile B agent' }).click();
+		await expect(mainWindow.getByRole('button', { name: 'Focus profile-a-child terminal' })).toBeVisible();
+		await expect(mainWindow.getByRole('button', { name: 'Focus profile-b-child terminal' })).toHaveCount(0);
+		await expect(isolatedWindow.getByRole('button', { name: 'Focus profile-b-child terminal' })).toBeVisible();
+		await expect(isolatedWindow.getByRole('button', { name: 'Focus profile-a-child terminal' })).toHaveCount(0);
 	} finally {
 		await isolatedApp.close();
 		await rm(isolatedTempDir, { recursive: true, force: true });

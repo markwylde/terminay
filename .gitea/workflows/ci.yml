@@ -57,6 +57,37 @@ jobs:
           TERMINAY_RELEASE_DIAGNOSTICS_DIR: ${{ runner.temp }}/terminay-packaged-smoke
         run: bash scripts/packaged-macos-pr-smoke.sh
 
+  packaged-linux-built-in-lifecycle:
+    name: Packaged Linux built-in lifecycle (linux-x64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+          cache: npm
+
+      - name: Require the native supported Linux x64 architecture
+        run: |
+          test "$(node -p 'process.platform')" = linux
+          test "$(node -p 'process.arch')" = x64
+          test "$(uname -m)" = x86_64
+
+      - name: Install dependencies from the clean manifest
+        run: |
+          npm install --global npm@12.0.2
+          npm ci
+
+      - name: Build, extract, and exercise packaged built-ins offline
+        run: npm run test:packaged-built-in-extension-runtime:linux -- linux-x64
+
   build-and-test:
     name: Build, lint, and unit tests
     runs-on: ubuntu-latest
