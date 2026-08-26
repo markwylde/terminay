@@ -99,6 +99,29 @@ test("VM creation sends the dedicated public key, exact Terminay tag, and durabl
   assert.deepEqual(JSON.parse(requests[0].init.body), { name: "brave-otter", worker_id: "worker-1", vcpus: 2, memory_bytes: 2_000_000_000, root_disk_bytes: 20_000_000_000, source: { type: "image", image_id: "image-1" }, guest_login_mode: "ssh_key_only", ssh_keys: ["ssh-ed25519 AAAA managed"], tags: ["system:Terminay"], start: true });
 });
 
+test("worker-scoped bridge discovery never falls back to the organization bridge list", async () => {
+  const requests = [];
+  const client = new PuzedClient("https://platform.test", secret(), { fetch: async (url) => {
+    requests.push(String(url));
+    return Response.json({ items: [{ id: "bridge-1", name: "br0", is_default: true, worker_id: "worker-1" }] });
+  }});
+  const result = await client.listWorkerBridges("worker-1");
+  assert.equal(result.items?.[0]?.id, "bridge-1");
+  assert.equal(requests[0], "https://platform.test/api/v1/workers/worker-1/bridges?page_size=100");
+});
+
+test("worker-scoped compatibility discovery follows all pages", async () => {
+  const requests = [];
+  const client = new PuzedClient("https://platform.test", secret(), { fetch: async (url) => {
+    const value = new URL(String(url)); requests.push(value.searchParams.get("cursor"));
+    return Response.json(value.searchParams.has("cursor")
+      ? { items: [{ id: "bridge-2", name: "br1", is_default: false, worker_id: "worker-1" }] }
+      : { items: [{ id: "bridge-1", name: "br0", is_default: true, worker_id: "worker-1" }], next_cursor: "next" });
+  }});
+  assert.deepEqual((await client.listAllWorkerBridges("worker-1")).map((bridge) => bridge.id), ["bridge-1", "bridge-2"]);
+  assert.deepEqual(requests, [null, "next"]);
+});
+
 test("inventory excludes untagged VMs and requires a retained SSH binding", () => {
   const base = new URL("https://platform.test");
   assert.throws(() => toInventoryItem(machine({ tags: ["production"] }), "profile-1", base, undefined, "10.0.0.2"));

@@ -62,17 +62,17 @@ using the stable SSH provider contract/test double until live convergence.
 
 ### Reopened worker and bridge correctness
 
-- [ ] Filter bridge choices from the currently selected worker so the form does
+- [x] Filter bridge choices from the currently selected worker so the form does
   not offer a bridge that Puzed will reject for that worker. Automatic and
   explicit host selection must use the same compatibility source.
-- [ ] Revalidate dependent host and bridge selections whenever the selected
+- [x] Revalidate dependent host and bridge selections whenever the selected
   worker, placement mode, network mode, or refreshed provider options change.
   Clear or block a stale incompatible value with a safe, actionable explanation
   before submit.
-- [ ] Add an authoritative server-side preflight for the final worker/bridge
+- [x] Add an authoritative server-side preflight for the final worker/bridge
   combination immediately before create, without weakening Puzed's create
   request as the source of truth.
-- [ ] Recover safely from a Puzed compatibility rejection, including
+- [x] Recover safely from a Puzed compatibility rejection, including
   `bridge_worker_mismatch`: preserve the entered form state, refresh the
   applicable options, identify the invalid selection, and allow correction and
   resubmission without creating duplicate infrastructure.
@@ -94,13 +94,23 @@ using the stable SSH provider contract/test double until live convergence.
 
 - [ ] The released-form reproduction that returned `HTTP 409
   bridge_worker_mismatch` cannot submit the incompatible worker/bridge pair.
-- [ ] A changed worker or refreshed option set cannot leave an incompatible
+- [x] A changed worker or refreshed option set cannot leave an incompatible
   bridge in the create payload.
-- [ ] A server-side preflight or authoritative Puzed rejection leaves the form
+- [x] A server-side preflight or authoritative Puzed rejection leaves the form
   recoverable, does not create a duplicate VM, and does not expose raw provider
   errors or secrets.
 - [ ] Manual Puzed acceptance confirms both an invalid-pair correction and a
   successful valid VM create through the real form.
+
+Evidence (2026-08-26): Puzed provider tests prove worker-scoped bridge option
+loading, paginated final-pair preflight before SSH binding generation or POST,
+and a bounded late `bridge_worker_mismatch` rejection. Project-environment
+operation tests prove that the rejection commits no environment/operation
+record; the declarative form contract reloads option sources and clears a stale
+selection while retaining the draft. `npm run test --workspace
+terminay-plugin-puzed`, `npm run test:project-environment-ui`, server-core
+project-environment operations, and root typecheck passed. The real released
+Puzed-account correction/retry/create acceptance remains explicitly open.
 
 ## Definition of done
 
