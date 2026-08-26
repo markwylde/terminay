@@ -8,7 +8,7 @@ strictly verified POSIX SSH terminal/filesystem project environments.
 ## Delivery phase
 
 Phase 3, in parallel with
-[Task 48](../tasks_completed/48-puzed-vm-provisioning-experience.md) once the public provider and
+[Task 48](../tasks/48-puzed-vm-provisioning-experience.md) once the public provider and
 UI contracts are stable.
 
 ## Dependencies

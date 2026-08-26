@@ -7,6 +7,14 @@ extensions stored under `extensions/`, and bundle their packed artifacts into
 every Electron and standalone Terminay Server distribution. Remove provider-
 specific agent discovery and parsing from Server Core after parity is proven.
 
+## Release reconciliation (2026-08-26)
+
+The accepted `feat/agent-extensions` work was merged by PR #153 (`a5682ae`) and
+is included in `v3.5.3`. That settles the old branch/PR consolidation
+bookkeeping only. It does not prove the unchecked release, architecture, Docker
+Electron, or real-app two-instance acceptance gates in this task; those remain
+open and must not be inferred from the merge or release tag.
+
 ## Governing specifications
 
 - [Built-in extensions](../features/built-in-extensions.md)
@@ -689,9 +697,14 @@ supported-architecture parent gate remains open.
   found no `createSshEnvironment` or SSH-specific registration in Electron,
   standalone, or generic composition sources; the immutable
   `com.terminay.ssh` declaration remains only in the generic built-in catalog.
-- [ ] Consolidate every accepted Task 63 change into the single
-  `feat/agent-extensions` branch, remove temporary Task 63 worktrees/branches,
-  and prepare one PR only.
+- [x] Consolidate the accepted Task 63 implementation into
+  `feat/agent-extensions` and merge it through PR #153.
+
+  Reconciliation evidence (2026-08-26): merge commit `a5682ae` (“Merge pull
+  request 'fix(agents): keep Codex collaboration sessions live' (#153) from
+  feat/agent-extensions into main”) is an ancestor of `v3.5.3`. No Task 63
+  worktree is active. The merged branch remains as a historical ref; its
+  existence is not an unmet product or release gate.
 - [ ] Move this task to `tasks_completed/` only after release artifact evidence
   and public documentation are complete.
 
@@ -889,6 +902,12 @@ fail only the affected extension and fail release validation.
   with two simultaneous isolated application profiles that intentionally open
   identically named projects and terminal ids, publish distinct root/subagent
   lifecycle state, and assert each Agents panel renders only its own state.
+- [ ] **Task 63 manual two-instance real-app acceptance:** run two concurrent
+  real Terminay app instances with separate profiles and intentionally identical
+  project/session labels. Confirm a Codex agent appears only in the instance
+  that owns its terminal and never in the other instance; record the release,
+  reproduction, and result. This is separate from focused harness and Docker
+  fixture evidence.
 
 Isolation evidence (2026-08-24): commit `541b1fb` fences terminal-owned agent
 contexts. Focused runtime tests (29 plus 2 integration cases) prove a stale
@@ -940,3 +959,9 @@ enablement and user disablement are durable; provider-specific agent code no
 longer exists in core; and the public documentation is complete enough for a
 third party to build, test, package, and diagnose an agent extension without
 reading Terminay source.
+
+Task 63 remains active until every unchecked gate above is complete. In
+particular, the native Linux x64 artifact path, required Docker-isolated
+`npm run test:e2e` gate, supported-architecture release evidence, and manual
+two-instance real-app acceptance cannot be treated as complete because PR #153
+was merged or `v3.5.3` was released.
