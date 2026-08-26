@@ -26,6 +26,11 @@ export function DeclarativeProviderForm({
 	const [errors, setErrors] = useState<readonly string[]>([]);
 	const [submitting, setSubmitting] = useState(false);
 	const [optionRefresh, setOptionRefresh] = useState(0);
+	const initialValuesKey = JSON.stringify(initialValues);
+	useEffect(() => {
+		setValues({ ...formDefaults(form), ...initialValues });
+		setErrors([]);
+	}, [form.id, initialValuesKey]);
 	const visibleSections = useMemo(() => form.sections.map((section) => ({
 		...section,
 		fields: section.fields.filter((field) => {

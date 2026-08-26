@@ -60,7 +60,8 @@ test('failed provider submissions stay in their form with a visible inline error
 	assert.match(surfaces,/const submitForm = useCallback/);
 	assert.match(surfaces,/DeclarativeProviderForm owns submit failures/);
 	assert.match(surfaces,/await submitForm\(/);
-	assert.match(surfaces,/error && formTarget === null/);
+	assert.match(surfaces,/operationNotice=\{error === '' \? undefined/);
+	assert.match(surfaces,/ProjectEnvironmentOperationError/);
 	assert.match(forms,/setErrors\(\[error instanceof Error \? error\.message : String\(error\)\]\)/);
 	assert.doesNotMatch(surfaces,/await run\(\(\) => client!\.createEnvironment/);
 });

@@ -56,10 +56,10 @@ test('createProject never falls back for unknown or unavailable providers and pe
   assert.deepEqual(subject.workspace.state, before);
 });
 
-test('profile mutation uses one checked repository revision and publishes one change', async () => {
+test('profile mutation persists safe edited values through the profile service', async () => {
   const subject = fixture();
   const now = Date.now();
-  const operations = createProjectEnvironmentOperationHandlers({ repository:subject.repository, workspace:subject.workspace, thisServerRoot:()=>'/home/server', onChanged:(event)=>subject.events.push(event), providers:{ async createProfile(providerId) { return { profile:{ id:'profile-a',providerId,name:'Example',endpointSummary:'example.test',activeRevision:1,recommendedRevision:1,revisions:{'1':{revision:1,createdAt:now,configuration:{host:'example.test'},secretReferences:['vault:key']}},archived:false } }; } } });
+  const operations = createProjectEnvironmentOperationHandlers({ repository:subject.repository, workspace:subject.workspace, thisServerRoot:()=>'/home/server', onChanged:(event)=>subject.events.push(event), providers:{ async createProfile(providerId) { return { profile:{ id:'profile-a',providerId,name:'Example',endpointSummary:'example.test',activeRevision:1,recommendedRevision:1,revisions:{'1':{revision:1,createdAt:now,configuration:{host:'example.test','api-key':'must-not-return'},secretReferences:['api-key=vault:key']}},archived:false } }; }, async updateProfile(profile, values) { return { profile:{ ...profile, name:String(values['display-name'] ?? profile.name), endpointSummary:String(values.host ?? profile.endpointSummary), activeRevision:2, recommendedRevision:2, revisions:{ ...profile.revisions, '2':{revision:2,createdAt:now + 1,configuration:{host:String(values.host ?? 'example.test')},secretReferences:['api-key=vault:key']} } } }; } } });
   await subject.repository.load();
   const request={envelope:{type:'command',commandId:'profile-command',correlationId:'profile-command',operation:'project-environments.create-profile',payload:{providerId:'ssh:provider',values:{password:'never-return-this'}}},body:new Uint8Array(),context:{connectionId:'c',clientId:'client-a',authScope:'admin',permissions:['environments:manage'],signal:new AbortController().signal,expectedRevision:0}};
   const response=await operations.commands['project-environments.create-profile'](request);
@@ -67,7 +67,55 @@ test('profile mutation uses one checked repository revision and publishes one ch
   assert.equal(subject.repository.state.revision,1);
   assert.deepEqual(subject.events,[{revision:1}]);
   assert.equal(JSON.stringify(response).includes('never-return-this'),false);
+  const beforeEdit = await operations.queries['project-environments.snapshot']({envelope:{type:'query',queryId:'before-edit',operation:'project-environments.snapshot',payload:{}},body:new Uint8Array(),context:{...request.context,permissions:['environments:read']}});
+  assert.deepEqual(beforeEdit.profiles[0].initialValues,{host:'example.test'});
+	assert.equal(JSON.stringify(beforeEdit).includes('must-not-return'), false);
+  await operations.commands['project-environments.update-profile']({envelope:{type:'command',commandId:'profile-edit',correlationId:'profile-edit',operation:'project-environments.update-profile',payload:{profileId:'profile-a',values:{'display-name':'Edited',host:'edited.test'}}},body:new Uint8Array(),context:{...request.context,expectedRevision:1}});
+  const afterEdit = await operations.queries['project-environments.snapshot']({envelope:{type:'query',queryId:'after-edit',operation:'project-environments.snapshot',payload:{}},body:new Uint8Array(),context:{...request.context,permissions:['environments:read']}});
+  assert.equal(afterEdit.profiles[0].name,'Edited');
+  assert.deepEqual(afterEdit.profiles[0].initialValues,{host:'edited.test'});
   await assert.rejects(() => operations.commands['project-environments.create-profile']({...request,envelope:{...request.envelope,commandId:'stale'},context:{...request.context,expectedRevision:0}}),/revision changed/);
+});
+
+test('a stale unreferenced connection can be forgotten locally without touching provider infrastructure', async () => {
+  const subject = fixture();
+  await subject.repository.load();
+  const now = Date.now();
+  await subject.repository.commit(0, (state) => ({
+    ...state,
+	profiles: {
+		...state.profiles,
+		'profile-a': {
+			id: 'profile-a', providerId: 'com.puzed.platform/vm', name: 'Old Puzed', endpointSummary: 'example.test',
+			activeRevision: 1, recommendedRevision: 1,
+			revisions: { '1': { revision: 1, createdAt: now, configuration: {}, secretReferences: [] } },
+			archived: false,
+		},
+	},
+    environments: {
+      ...state.environments,
+      'puzed:stale': {
+        id: 'puzed:stale', providerId: 'com.puzed.platform/vm', profileId: 'profile-a',
+        pinnedRevision: 1, name: 'old-vm', endpointSummary: 'Puzed VM',
+        declaredCapabilities: ['terminal', 'filesystem'], availableCapabilities: [],
+        status: 'connecting', operationReferences: ['old-operation'], projectReferenceCount: 0,
+        archived: false, builtIn: false, providerState: { machineId: 'deleted-remotely' },
+        providerRevision: 1,
+      },
+    },
+    operations: {
+      ...state.operations,
+      'old-operation': { id: 'old-operation', providerId: 'com.puzed.platform/vm', environmentId: 'puzed:stale', kind: 'create', state: 'pending', providerState: {}, createdAt: now, updatedAt: now, revision: 1 },
+    },
+  }));
+  const response = await subject.command('project-environments.remove-connection', { environmentId: 'puzed:stale' }, 'forget-stale');
+  assert.equal(response.result.state, 'succeeded');
+  assert.equal(subject.repository.state.environments['puzed:stale'], undefined);
+  assert.equal(subject.repository.state.operations['old-operation'], undefined);
+  await assert.rejects(
+    () => subject.command('project-environments.remove-connection', { environmentId: 'terminay:this-server' }, 'forget-server'),
+    /cannot be removed/,
+  );
 });
 
 test('provider provisioning persists opaque state, resumes after restart, refreshes status, and never projects provider state', async()=>{

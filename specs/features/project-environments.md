@@ -264,6 +264,18 @@ the current provider, connection, or declarative form. The panel may offer
 Retry, but is never a fixed or floating overlay: the selected detail and its
 recovery controls must remain visible and usable.
 
+An unreferenced connection offers **Remove connection**. This forgets only
+Terminay's local project-environment record; it never deletes, powers off, or
+otherwise mutates provider infrastructure.
+The action is blocked while a project references the connection. A Puzed
+provider can then be removed only after all of its child connections are
+removed.
+
+Editing a provider hydrates its previously saved non-secret form values. Secret
+fields are never returned to a client: they are shown empty with explicit
+“leave blank to keep the existing value” guidance, and an empty submitted
+secret preserves the existing vault value.
+
 The project-bar chooser's **Project Environments…** action and the matching
 Command Bar action invoke that same semantic route. Extension installation and
 updates are not duplicated in this window: links that require an environment
