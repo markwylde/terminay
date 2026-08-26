@@ -464,6 +464,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 		defaultGitPaneHeight: 200,
 		defaultDocumentationPaneHeight: 240,
 		panelOrder: [...SIDEBAR_PANEL_IDS],
+		projectVisibility: {},
 	},
 	theme: {
 		foreground: '#dce2f0',
@@ -2159,6 +2160,17 @@ export function normalizeSidebarPanelOrder(value: unknown): SidebarPanelId[] {
 	];
 }
 
+function normalizeProjectSidebarVisibility(value: unknown): Record<string, boolean> {
+	if (typeof value !== 'object' || value === null || Array.isArray(value))
+		return {};
+	const entries = Object.entries(value).flatMap(([key, isOpen]) =>
+		typeof isOpen === 'boolean' && key.length > 0 && key.length <= 512
+			? ([[key, isOpen]] as const)
+			: [],
+	);
+	return Object.fromEntries(entries.slice(-256));
+}
+
 function normalizeThemeColor(
 	input: Partial<TerminalSettings['theme']>,
 	key: TerminalThemeKey,
@@ -2728,6 +2740,9 @@ export function normalizeTerminalSettings(
 				1_000,
 			),
 			panelOrder: normalizeSidebarPanelOrder(sidebarInput.panelOrder),
+			projectVisibility: normalizeProjectSidebarVisibility(
+				sidebarInput.projectVisibility,
+			),
 		},
 		theme: {
 			foreground:

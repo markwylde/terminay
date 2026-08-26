@@ -71,6 +71,8 @@ export type SidebarSettings = {
 	defaultGitPaneHeight: number;
 	defaultDocumentationPaneHeight: number;
 	panelOrder: SidebarPanelId[];
+	/** Device-local open/closed preference, indexed by server and project id. */
+	projectVisibility: Record<string, boolean>;
 };
 
 export type FileViewerSettings = {
