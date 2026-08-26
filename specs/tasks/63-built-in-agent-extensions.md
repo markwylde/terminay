@@ -606,7 +606,7 @@ the SDK suite passed 44 tests; and the agent boundary suite passed 2/2.
   - [x] Exercise the real macOS arm64 Electron resource tree and matching
     standalone payload.
   - [x] Exercise a clean Linux arm64 standalone archive payload.
-  - [ ] Exercise real Linux x64 Electron and standalone payloads on a native
+  - [x] Exercise real Linux x64 Electron and standalone payloads on a native
     Linux x64 runner.
 - [x] Verify Docker's clean dependency manifests install and stage all six
   package closures without relying on local `node_modules` or developer state.
@@ -664,6 +664,13 @@ the Linux Electron resource and extracted standalone package, while native
 clean `npm ci` and assert Node and `uname` architectures before the offline
 lifecycle test. Those CI executions remain required evidence, so the
 supported-architecture parent gate remains open.
+
+Linux x64 release evidence (2026-08-26): [Gitea Actions run
+9681](https://git.i.wylde.net/markwylde/terminay/actions/runs/9681), job
+`Packaged Linux built-in lifecycle (linux-x64)` (26663), completed successfully
+in 3m14s on the native `gitea-runner-home3-1` Linux x64 runner. The job made a
+clean `npm ci`, asserted the native architecture, packaged the Linux Electron
+resource and standalone payload, and completed their built-in lifecycle check.
 
 #### Original aggregate gates and final hygiene
 
