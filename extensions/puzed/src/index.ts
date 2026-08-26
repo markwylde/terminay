@@ -36,7 +36,7 @@ export function activate(context: ExtensionContext): void {
               { id: "image-id", type: "select", label: "Image", required: true, searchable: true, optionSource: "com.puzed.platform/vm/images" },
               { id: "size-preset", type: "preset-cards", label: "Size", required: true, optionSource: "com.puzed.platform/vm/size-presets" },
               { id: "worker-id", type: "select", label: "Host", required: true, searchable: true, optionSource: "com.puzed.platform/vm/workers" },
-              { id: "bridge-id", type: "select", label: "Network", optionSource: "com.puzed.platform/vm/bridges" },
+            { id: "bridge-id", type: "select", label: "Network", description: "Networks are limited to the selected host.", optionSource: "com.puzed.platform/vm/bridges" },
             ] },
             { id: "project", title: "Project access", disclosure: "always", fields: [
               { id: "name", type: "text", label: "VM name", required: true, suggestionSource: "com.puzed.platform/vm/name-suggestion", suggestionLabel: "Regenerate" },
@@ -91,7 +91,11 @@ const puzedRuntime: ProviderRuntime = {
       return { options: (page.items ?? []).map((worker) => ({ value: worker.id, label: worker.name, description: `${worker.cpu_cores} cores · ${formatBytes(worker.memory_total_bytes)} RAM`, ...(worker.status !== "online" || worker.draining || worker.fault_state !== "ok" ? { disabledReason: worker.status_reason ?? "This host is unavailable." } : {}) })) };
     }
     if (request.sourceId === "com.puzed.platform/vm/bridges") {
-      const page = await platform.listBridges();
+      const workerId = optional(request.values["worker-id"]);
+      // A bridge is discovered on a worker, not on the organization. Do not
+      // show a global bridge before a host exists: it could be incompatible.
+      if (workerId === undefined) return { options: [] };
+      const page = await platform.listWorkerBridges(workerId);
       return { options: (page.items ?? []).map((bridge) => ({ value: bridge.id, label: bridge.name, default: bridge.is_default })) };
     }
     if (request.sourceId === "com.puzed.platform/vm/name-suggestion") {
@@ -158,11 +162,21 @@ async function createVm(request: Parameters<ProviderRuntime["createEnvironment"]
   const platform = client(profileId, values, call); const settings = (await platform.getSettings()).settings;
   const preset = (settings.default_size_presets ?? []).find((item) => item.id === values["size-preset"]);
   if (preset === undefined) throw new Error("Selected Puzed size is unavailable");
+  const workerId = required(values["worker-id"], "workerId");
+  const bridgeId = optional(values["bridge-id"]);
+  // Validate the final pair as late as possible but before generating a
+  // binding or issuing POST. Puzed remains authoritative at create time.
+  if (bridgeId !== undefined) {
+    const compatible = await platform.listAllWorkerBridges(workerId);
+    if (!compatible.some((bridge) => bridge.id === bridgeId)) {
+      throw new PuzedCompatibilityError();
+    }
+  }
   const generated = record(await dependency(call, "managed-binding.generate", { ownerProfileId: profileId, operationId: required(call.idempotencyKey, "idempotencyKey"), logicalHostIdentityHint: `puzed:${profileId}:pending` }));
   const bindingId = required(generated.bindingId, "bindingId"); const publicKey = required(generated.publicKey, "publicKey");
   let created: Awaited<ReturnType<PuzedClient["createMachine"]>>;
   try {
-    created = await platform.createMachine({ name: required(values.name, "name"), worker_id: required(values["worker-id"], "workerId"), vcpus: preset.vcpus, memory_bytes: preset.memory_bytes, root_disk_bytes: preset.root_disk_bytes, source: { type: "image", image_id: required(values["image-id"], "imageId") }, guest_agent: true, guest_login_mode: "ssh_key_only", ssh_keys: [publicKey], start: true, tags: ["system:Terminay"], ...(typeof values["bridge-id"] === "string" && values["bridge-id"] !== "" ? { nics: [{ bridge_id: values["bridge-id"], ip_mode: "dhcp" }] } : {}) }, required(call.idempotencyKey, "idempotencyKey"));
+    created = await platform.createMachine({ name: required(values.name, "name"), worker_id: workerId, vcpus: preset.vcpus, memory_bytes: preset.memory_bytes, root_disk_bytes: preset.root_disk_bytes, source: { type: "image", image_id: required(values["image-id"], "imageId") }, guest_agent: true, guest_login_mode: "ssh_key_only", ssh_keys: [publicKey], start: true, tags: ["system:Terminay"], ...(bridgeId === undefined ? {} : { nics: [{ bridge_id: bridgeId, ip_mode: "dhcp" }] }) }, required(call.idempotencyKey, "idempotencyKey"));
   } catch (error) {
     if (error instanceof PuzedApiError) {
       throw new Error(`Puzed rejected VM creation (HTTP ${error.status}, ${error.code}).`);
@@ -199,9 +213,16 @@ function provisioningProgress(operationId: string) { return { operationId, title
 function formatBytes(value: number): string { if (value >= 1024 ** 3) return `${Math.round(value / 1024 ** 3)} GB`; return `${Math.round(value / 1024 ** 2)} MB`; }
 function record(value: JsonValue): Record<string, JsonValue> { if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Puzed provider data is invalid"); return value; }
 function required(value: unknown, name: string): string { if (typeof value !== "string" || !value || value.length > 2048 || value.includes("\0")) throw new Error(`Puzed ${name} is invalid`); return value; }
+function optional(value: unknown): string | undefined { return typeof value === "string" && value.length > 0 ? required(value, "value") : undefined; }
 function number(value: unknown, name: string): number { if (!Number.isSafeInteger(value) || Number(value) < 0) throw new Error(`Puzed ${name} is invalid`); return Number(value); }
 function safeCode(error: unknown): string { return error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code.slice(0, 64) : "puzed_error"; }
 function safeMessage(error: unknown, fallback: string): string { return error instanceof Error ? error.message.slice(0, 500) : fallback; }
+
+/** Public, bounded, non-secret failure used when the platform's current
+ * worker bridge discovery contradicts the draft immediately before submit. */
+class PuzedCompatibilityError extends Error {
+  constructor() { super("Puzed rejected VM creation (HTTP 409, bridge_worker_mismatch)."); }
+}
 
 export const extension = defineExtension({ activate });
 

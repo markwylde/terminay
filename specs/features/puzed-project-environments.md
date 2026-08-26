@@ -130,6 +130,15 @@ single-scroll, progressive-disclosure model:
 
 Async selectors are paginated, cancellable, preserve selections across
 refreshes, and show disabled architecture/capacity/bridge/minimum-disk reasons.
+Bridge choices are discovered from the selected worker's authoritative
+`/workers/{id}/bridges` route, never from the organization-wide bridge list.
+Changing the worker or refreshing options revalidates the bridge; an
+incompatible stale bridge is cleared with an actionable explanation while the
+rest of the draft remains intact. Immediately before create, the server repeats
+that worker-scoped compatibility check before generating a binding or POSTing.
+If Puzed still returns `bridge_worker_mismatch` because infrastructure changed,
+Terminay preserves the draft, refreshes its choices, and exposes only the
+bounded rejection so the user can correct and resubmit without a duplicate VM.
 Automatic placement selects a currently compatible candidate for the required
 Puzed `worker_id`; the create request remains authoritative and may reject
 changed capacity/placement.

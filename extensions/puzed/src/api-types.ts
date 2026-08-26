@@ -16,4 +16,5 @@ export type Event = components["schemas"]["Event"];
 export type ImagesResponse = components["schemas"]["ImagesResponse"];
 export type WorkersResponse = components["schemas"]["WorkersResponse"];
 export type HostBridgesResponse = components["schemas"]["HostBridgesResponse"];
+export type HostBridge = components["schemas"]["HostBridge"];
 export type OrgSettingsResponse = components["schemas"]["OrgSettingsResponse"];

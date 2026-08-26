@@ -1,4 +1,4 @@
-import type { CreateMachineRequest, DeleteMachineRequest, HostBridgesResponse, ImagesResponse, Job, JobResponse, Machine, MachineAsyncResponse, MachineNameSuggestionResponse, MachineNICsResponse, MachinePowerRequest, MachineResponse, MachinesResponse, Me, OrgSettingsResponse, WorkersResponse } from "./api-types.js";
+import type { CreateMachineRequest, DeleteMachineRequest, HostBridge, HostBridgesResponse, ImagesResponse, Job, JobResponse, Machine, MachineAsyncResponse, MachineNameSuggestionResponse, MachineNICsResponse, MachinePowerRequest, MachineResponse, MachinesResponse, Me, OrgSettingsResponse, WorkersResponse } from "./api-types.js";
 import { normalizeBaseUrl, validateMe, type ProfileValidation } from "./profile.js";
 
 export class PuzedApiError extends Error {
@@ -51,6 +51,19 @@ export class PuzedClient {
   listImages(cursor?: string, signal?: AbortSignal) { return this.request<ImagesResponse>("/api/v1/images", { query: { page_size: "100", ...(cursor ? { cursor } : {}) }, signal }); }
   listWorkers(cursor?: string, signal?: AbortSignal) { return this.request<WorkersResponse>("/api/v1/workers", { query: { page_size: "100", ...(cursor ? { cursor } : {}) }, signal }); }
   listBridges(cursor?: string, signal?: AbortSignal) { return this.request<HostBridgesResponse>("/api/v1/bridges", { query: { page_size: "100", ...(cursor ? { cursor } : {}) }, signal }); }
+  /** Bridges are host-local. Never use the organization-wide bridge list to
+   * validate a machine's network choice. */
+  listWorkerBridges(workerId: string, cursor?: string, signal?: AbortSignal) { return this.request<HostBridgesResponse>(`/api/v1/workers/${encodeURIComponent(workerId)}/bridges`, { query: { page_size: "100", ...(cursor ? { cursor } : {}) }, signal }); }
+  async listAllWorkerBridges(workerId: string, signal?: AbortSignal): Promise<HostBridge[]> {
+    const result: HostBridge[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await this.listWorkerBridges(workerId, cursor, signal);
+      result.push(...(page.items ?? []));
+      cursor = page.next_cursor;
+    } while (cursor);
+    return result;
+  }
   getSettings(signal?: AbortSignal) { return this.request<OrgSettingsResponse>("/api/v1/org/settings", { signal }); }
   suggestMachineName(signal?: AbortSignal) { return this.request<MachineNameSuggestionResponse>("/api/v1/machines/name-suggestion", { signal }); }
 
