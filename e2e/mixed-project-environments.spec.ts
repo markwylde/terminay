@@ -5,9 +5,9 @@ test.describe.configure({ timeout: 180_000 });
 
 async function expectMixedInventory(page: Page): Promise<void> {
 	await page
-		.getByRole('button', { name: 'Choose project environment' })
+		.getByRole('button', { name: 'Choose project connection' })
 		.click();
-	const menu = page.getByRole('menu', { name: 'Choose project environment' });
+	const menu = page.getByRole('menu', { name: 'Choose project connection' });
 	await expect(menu).toBeVisible();
 	await expect(
 		menu.getByRole('menuitem', { name: /This server/u }),
