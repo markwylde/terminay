@@ -1026,10 +1026,20 @@ export class ServerTerminalAuthority {
 	async initializeWorkspace(): Promise<void> {
 		await this.composition.start();
 		// File/Git/query authorities are process-local. Rebuild their bindings for
-		// every persisted project before publishing the restored workspace; PTY
-		// creation is not the only operation that requires a canonical root.
+		// every available persisted project before publishing the restored
+		// workspace; PTY creation is not the only operation that requires a
+		// canonical root. A deleted Local root is a recoverable project condition,
+		// not damaged workspace persistence: preserve the project identity so the
+		// user can repair it, but do not let it prevent the rest of Desktop from
+		// starting.
+		const unavailableProjectIds = new Set<string>();
 		for (const project of Object.values(this.workspace.state.projects)) {
-			await this.registerProjectRoot(project.id, project.root);
+			try {
+				await this.registerProjectRoot(project.id, project.root);
+			} catch (error) {
+				if (!isMissingProjectRootError(error)) throw error;
+				unavailableProjectIds.add(project.id);
+			}
 		}
 		if (this.workspaceRepository?.wasCreated === false) {
 			// Local Desktop owns these PTYs. They cannot survive this authority
@@ -1041,6 +1051,7 @@ export class ServerTerminalAuthority {
 				this.workspace.discardStaleLocalTerminalState();
 			}
 			for (const project of this.restoredLocalProjects()) {
+				if (unavailableProjectIds.has(project.id)) continue;
 				if (this.projectHasTerminalPanel(project.id)) continue;
 				await this.create({
 					projectId: project.id,
@@ -1957,6 +1968,18 @@ export class ServerTerminalAuthority {
 		});
 		if (!result.ok) throw new Error(result.conflict.message);
 	}
+}
+
+/** A Local project root may be deleted while Terminay is not running. Keep
+ * that persisted project visible for its explicit repair flow, while allowing
+ * other projects and workspace chrome to start normally. */
+function isMissingProjectRootError(error: unknown): boolean {
+	return (
+		typeof error === 'object' &&
+		error !== null &&
+		'code' in error &&
+		(error as { readonly code?: unknown }).code === 'path_missing'
+	);
 }
 
 /** Electron's main-process MessagePortMain is EventEmitter-based, unlike the
