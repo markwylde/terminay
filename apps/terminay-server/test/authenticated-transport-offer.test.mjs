@@ -34,14 +34,14 @@ test('host signs the exact pairing offer and authenticates it from the fragment'
 test('reconnect proof omits pairing material and binds the fresh client nonce', async () => {
 	const proof = await createAuthenticatedTransportOffer({
 		hostKey: createHostedHostKey(),
-		scope: { kind: 'device', sessionId: 'server123', clientNonce },
+		scope: { kind: 'device', sessionId: 'server123', deviceId: 'device-12345678', clientNonce },
 		sdp,
 		serverId: 'server-a',
 		sessionOrigin: 'https://server123.terminay.com',
 	});
 	assert.deepEqual(Object.keys(proof).sort(), ['hostSignature', 'transcript']);
 	await assert.rejects(() => assertAuthenticatedWebRtcTransportTranscript(proof.transcript, {
-		scope: 'reconnect', scopeId: 'server123', sessionOrigin: 'https://server123.terminay.com',
+		scope: 'reconnect', scopeId: 'device-12345678', sessionOrigin: 'https://server123.terminay.com',
 		serverId: 'server-a', clientNonce: Buffer.alloc(32, 0x67).toString('base64url'), sdp,
 	}), /another connection/);
 });
