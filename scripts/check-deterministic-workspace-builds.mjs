@@ -45,6 +45,13 @@ function build(root, packageName) {
   });
 }
 
+function removeIncrementalState(directory) {
+  // TypeScript trusts this file even when dist/ has been removed. A clean
+  // artifact check must remove both outputs so each build actually emits its
+  // declared files, just as a clean checkout does.
+  rmSync(join(directory, 'tsconfig.tsbuildinfo'), { force: true });
+}
+
 export function checkDeterministicBuilds(rootDirectory = process.cwd()) {
   const root = resolve(rootDirectory);
   const results = [];
@@ -56,11 +63,13 @@ export function checkDeterministicBuilds(rootDirectory = process.cwd()) {
       const packageManifest = manifest(directory);
       const output = join(directory, packageManifest.buildOutput ?? 'dist');
       rmSync(output, { recursive: true, force: true });
+      removeIncrementalState(directory);
       build(root, packageManifest.name);
       const first = hashDirectory(output);
       const firstCopy = join(staging, packageManifest.name.replaceAll('/', '__'));
       cpSync(output, firstCopy, { recursive: true });
       rmSync(output, { recursive: true, force: true });
+      removeIncrementalState(directory);
       build(root, packageManifest.name);
       const second = hashDirectory(output);
       if (first.digest !== second.digest || first.files !== second.files) {

@@ -31,6 +31,7 @@
   "scripts": {
     "compile": "tsc -p tsconfig.json",
     "test": "npm run compile && env -i HOME=\"$HOME\" PATH=\"$PATH\" TMPDIR=\"${TMPDIR:-/tmp}\" sh -c 'for file in test/*.test.mjs; do node --test \"$file\" || exit $?; done'",
+    "test:ci": "env -i HOME=\"$HOME\" PATH=\"$PATH\" TMPDIR=\"${TMPDIR:-/tmp}\" sh -c 'for file in test/*.test.mjs; do node --test \"$file\" || exit $?; done'",
     "test:e2e": "npm run compile && node --test test/e2e/*.test.mjs"
   },
   "dependencies": {

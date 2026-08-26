@@ -42,7 +42,8 @@ test('Docker server contract builds a non-root, read-only-root image with a boun
 		'npm ci should run before source copies so source edits do not reinstall dependencies',
 	);
 	assert.doesNotMatch(dockerfile, /npm ci --ignore-scripts/u);
-	assert.match(dockerfile, /npm run build --workspace @terminay\/server/u);
+	assert.match(dockerfile, /COPY turbo\.json \.\//u);
+	assert.match(dockerfile, /npx turbo run build --filter=@terminay\/server/u);
 	assert.match(dockerfile, /npm prune --omit=dev/u);
 	assert.doesNotMatch(dockerfile, /npm prune --omit=dev --ignore-scripts/u);
 	assert.match(dockerfile, /USER 10001:10001/u);

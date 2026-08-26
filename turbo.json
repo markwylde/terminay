@@ -1,0 +1,59 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "remoteCache": {
+    "apiUrl": "https://turborepo.i.wylde.net",
+    "teamSlug": "wylde",
+    "signature": true
+  },
+  "globalDependencies": ["package-lock.json"],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", "*.tsbuildinfo"],
+      "env": ["NODE_ENV"]
+    },
+    "typecheck": {
+      "dependsOn": ["^build", "build"],
+      "outputs": [],
+      "cache": false
+    },
+    "compile": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", "*.tsbuildinfo"],
+      "env": ["NODE_ENV"]
+    },
+    "test:ci": {
+      "dependsOn": ["^build", "build"],
+      "outputs": [],
+      "cache": false
+    },
+    "@terminay/client-core#test:ci": {
+      "dependsOn": ["@terminay/protocol-conformance#build", "^build", "build"],
+      "outputs": [],
+      "cache": false
+    },
+    "terminay-agent-codex#test:ci": {
+      "dependsOn": ["compile", "^build"],
+      "outputs": [],
+      "cache": false
+    },
+    "terminay-agent-cursor#test:ci": {
+      "dependsOn": ["compile", "^build"],
+      "outputs": [],
+      "cache": false
+    },
+    "terminay-agent-omp#test:ci": {
+      "dependsOn": ["compile", "^build"],
+      "outputs": [],
+      "cache": false
+    },
+    "terminay-plugin-ssh#test:ci": {
+      "dependsOn": ["compile", "^build"],
+      "outputs": [],
+      "cache": false
+    },
+    "lint": {
+      "outputs": []
+    }
+  }
+}

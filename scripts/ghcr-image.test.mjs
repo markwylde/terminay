@@ -46,11 +46,8 @@ test('server Dockerfile builds the standalone server and runs as a non-root user
 		/apt-get install --yes --no-install-recommends python3 make g\+\+/u,
 	);
 	assert.match(dockerfile, /npm ci/u);
-	assert.match(
-		dockerfile,
-		/npm run build --workspace @terminay\/protocol[\s\S]*npm run build --workspace @terminay\/server/u,
-	);
-	assert.match(dockerfile, /npm run build --workspace @terminay\/server/u);
+	assert.match(dockerfile, /npx turbo run build --filter=@terminay\/server/u);
+	assert.match(dockerfile, /npm run build:postcompile --workspace @terminay\/server/u);
 	assert.match(dockerfile, /npm prune --omit=dev/u);
 	assert.match(dockerfile, /org\.opencontainers\.image\.source/u);
 	assert.match(dockerfile, /org\.opencontainers\.image\.revision/u);
@@ -228,7 +225,7 @@ test('provider-specific workflow folders resolve only their compatible artifact 
 		const start = workflow.indexOf(header);
 		assert.notEqual(start, -1, `CI must declare ${name}`);
 		const remainder = workflow.slice(start + header.length);
-		const next = remainder.search(/^  [a-z][a-z0-9-]+:\n/mu);
+		const next = remainder.search(/^ {2}[a-z][a-z0-9-]+:\n/mu);
 		return next === -1 ? workflow.slice(start) : workflow.slice(start, start + header.length + next);
 	};
 

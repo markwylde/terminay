@@ -18,6 +18,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test test/*.test.mjs",
+    "test:ci": "node --test test/*.test.mjs",
     "test:compat": "npm run build && node --test test/compat.test.mjs",
     "test:packed": "npm run build && node test/packed.test.mjs",
     "test:real-cli": "npm run build && TERMINAY_TEST_REAL_CLAUDE_CODE=1 node test/real-cli-smoke.mjs"

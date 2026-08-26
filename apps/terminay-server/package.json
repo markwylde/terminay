@@ -18,10 +18,11 @@
     "node": "24.15.0"
   },
   "scripts": {
-    "build": "node ../../scripts/build-workspace-graph.mjs --target @terminay/server && npm run build:postcompile",
+    "build": "tsc -p tsconfig.json",
     "build:postcompile": "node ../../scripts/bundled-npm-evidence.mjs dist/bundled-npm-evidence.json && node ../../scripts/stage-built-in-extensions.mjs && node ../../scripts/copy-built-in-extension-artifacts.mjs ../../build/built-in-extensions dist/built-in-extensions && node ./scripts/write-release-integrity-manifest.mjs",
-    "typecheck": "npm run build --workspace @terminay/server-core && tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/cli.js",
-    "test": "npm run build && npm run build --workspace @terminay/client-core && node --test test/*.test.mjs"
+    "test": "npm run build && npm run build --workspace @terminay/client-core && node --test test/*.test.mjs",
+    "test:ci": "npm run build:postcompile && node --test test/*.test.mjs"
   }
 }
