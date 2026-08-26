@@ -100,6 +100,7 @@ import {
 	warmAiTabMetadataProviderEnv,
 } from './aiTabMetadata/service';
 import { showCanonicalLaunchRecovery } from './canonicalLaunchRecovery';
+import { desktopStartupLoadingDocument } from './startupLoadingDocument';
 import {
 	bindAppChildDiagnostics,
 	bindWebContentsDiagnostics,
@@ -1198,6 +1199,18 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 	if (embeddedStartupWindow === null)
 		throw new Error('The embedded workspace window could not be created.');
 	embeddedStartupWindowForRecovery = embeddedStartupWindow;
+	// Paint a self-contained loading document before any workspace, extension, or
+	// server initialization. The verified server UI replaces it only once its
+	// local session and document endpoint are ready.
+	void embeddedStartupWindow
+		.loadURL(desktopStartupLoadingDocument())
+		.then(() => {
+			if (!embeddedStartupWindow.isDestroyed()) embeddedStartupWindow.show();
+		})
+		.catch((error) => {
+			if (!embeddedStartupWindow.isDestroyed())
+				console.error('[window] startup loading document failed', error);
+		});
 	const embeddedWorkspace = await openEmbeddedWorkspaceWithRecovery(
 		embeddedStartupWindow,
 	);
@@ -3091,6 +3104,7 @@ function createWindow(options?: {
 	const isAuxiliary = options?.auxiliary !== undefined;
 
 	const window = new BrowserWindow({
+		backgroundColor: '#0d1117',
 		icon: windowIconPath,
 		width: isAuxiliary ? 1180 : 1400,
 		height: isAuxiliary ? 820 : 900,
@@ -4419,7 +4433,7 @@ const handleBeforeQuit = createGracefulQuitHandler({
 			);
 			await Promise.all([
 				stopMcpControlEndpoint(),
-				desktopRemoteExposure.shutdown(),
+				desktopRemoteExposure?.shutdown(),
 				serverTerminalAuthority?.shutdown(),
 			]);
 			await desktopDiagnostics.record(
