@@ -181,7 +181,9 @@ stable logical identity `puzed:<platformProfileId>:<machineId>` preserves strict
 key trust across DHCP address changes. A changed guest key still blocks.
 
 While the durable operation remains `provisioning`, its provider may expose a
-safe status card. In particular, a host-key challenge must offer an explicit
+safe status card. Status-card facts and actions are optional public extension
+API fields; clients render omitted fields as empty lists rather than rejecting
+the whole environment snapshot. In particular, a host-key challenge must offer an explicit
 trust or replacement action from the pending VM connection; a client must not
 need to wait for the operation to become ready before it can approve the key.
 That action re-runs SSH verification and reaches **Ready** only on successful

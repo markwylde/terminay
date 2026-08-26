@@ -24,6 +24,19 @@ test('project environment client uses fixed operations and parses safe summaries
 	assert.deepEqual(calls[2].payload,{providerId:'demo/provider',sourceId:'demo/images',profileId:'profile-1',query:'deb',values:{architecture:'amd64'}});
 });
 
+test('project environment client accepts extension status cards without optional facts or actions', async () => {
+	const client=new ProjectEnvironmentsClient({
+		async query(){return {revision:3,providers:[],profiles:[],environments:[{
+			id:'puzed:vm-1',providerId:'puzed',providerLabel:'Puzed',name:'Puzed VM',endpointSummary:'Provisioning',status:'provisioning',referencedProjectCount:0,
+			statusCard:{id:'puzed-provisioning',title:'Puzed VM',summary:'The VM is still provisioning.',tone:'neutral'},
+		}]};},
+		async command(){return null;},
+	});
+	const [environment]=(await client.snapshot()).environments;
+	assert.deepEqual(environment.statusCard?.facts,[]);
+	assert.deepEqual(environment.statusCard?.actions,[]);
+});
+
 test('extension client binds preview confirmation to exact digest and revision', async () => {
 	const calls=[];
 	const client=new ExtensionsClient({
