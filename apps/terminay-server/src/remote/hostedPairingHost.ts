@@ -1,7 +1,16 @@
 import { gzipSync } from 'node:zlib';
-import { timingSafeEqual } from 'node:crypto';
+import { createPrivateKey, randomBytes, sign, timingSafeEqual } from 'node:crypto';
 import { WebSocket } from 'ws';
-import type { ByteTransport } from '@terminay/protocol';
+import {
+	AUTHENTICATED_WEBRTC_TRANSPORT_VERSION,
+	createAuthenticatedWebRtcPairingAuthenticator,
+	createAuthenticatedWebRtcTransportTranscript,
+	extractAuthenticatedWebRtcFingerprints,
+	serializeAuthenticatedWebRtcTransportTranscript,
+	sha256Base64Url,
+	type AuthenticatedWebRtcTransportScope,
+	type ByteTransport,
+} from '@terminay/protocol';
 import type {
 	AuthenticatedClient,
 	ServerConnectionLike,
@@ -254,9 +263,16 @@ export async function startHostedPairingHost(
 	): Promise<void> {
 		if (!message || registered.handle(message)) return;
 		if (message.type === 'client-join') {
+			assertAuthenticatedTransportVersion(message.authenticatedTransportVersion);
 			diagnose({ type: 'client-join', scope: 'pairing' });
+			const clientNonce = parseClientNonce(message.clientNonce);
 			await joinQueue.enqueue(() =>
-				addHandshakePeer(socket, { kind: 'pairing', roomId: derived.pairingRoomId }),
+				addHandshakePeer(socket, {
+					kind: 'pairing',
+					roomId: derived.pairingRoomId,
+					clientNonce,
+					pairingSecret: derived.qrSecret,
+				}),
 			);
 			return;
 		}
@@ -272,9 +288,12 @@ export async function startHostedPairingHost(
 	): Promise<void> {
 		if (!message || registered.handle(message)) return;
 		if (message.type === 'device-join') {
+			assertAuthenticatedTransportVersion(message.authenticatedTransportVersion);
 			diagnose({ type: 'client-join', scope: 'device' });
+			const clientNonce = parseClientNonce(message.clientNonce);
+			const deviceId = parseDeviceId(message.deviceId);
 			await joinQueue.enqueue(() =>
-				addHandshakePeer(socket, { kind: 'device', sessionId }),
+				addHandshakePeer(socket, { kind: 'device', sessionId, deviceId, clientNonce }),
 			);
 			return;
 		}
@@ -313,6 +332,7 @@ export async function startHostedPairingHost(
 			}
 			socket.send(
 				JSON.stringify({
+					authenticatedTransportVersion: AUTHENTICATED_WEBRTC_TRANSPORT_VERSION,
 					expiresAt: handoff.pairingExpiresAt,
 					relayJoinTokenHash: derived.relayJoinTokenHash,
 					roomId: derived.pairingRoomId,
@@ -613,8 +633,18 @@ function waitForSignalType(
 }
 
 type SignalScope =
-	| { readonly kind: 'pairing'; readonly roomId: string }
-	| { readonly kind: 'device'; readonly sessionId: string };
+	| {
+			readonly kind: 'pairing';
+			readonly roomId: string;
+			readonly clientNonce: string;
+			readonly pairingSecret: string;
+	  }
+	| {
+			readonly kind: 'device';
+			readonly sessionId: string;
+			readonly deviceId: string;
+			readonly clientNonce: string;
+	  };
 
 function formatConnectHost(host: string, port: string): string {
 	return port ? `${host}:${port}` : host;
@@ -758,15 +788,84 @@ async function startPeer(
 	bindUiArchiveChannels([channels.asset!, channels.assets!], context.archive);
 
 	const offer = await peer.createOffer();
-	await peer.setLocalDescription(offer);
-	const local = peer.localDescription;
-	if (typeof local?.sdp !== 'string' || typeof local.type !== 'string') {
+	if (typeof offer.sdp !== 'string' || typeof offer.type !== 'string') {
 		throw new Error('Hosted pairing host could not create a WebRTC offer.');
 	}
-	socket.send(
-		JSON.stringify(signalMessage(scope, 'offer', { sdp: { sdp: local.sdp, type: local.type } })),
-	);
+	const authenticatedTransport = await createAuthenticatedTransportOffer({
+		hostKey: context.options.hostKey,
+		scope,
+		sdp: offer.sdp,
+		serverId: context.options.serverId,
+		sessionOrigin: context.options.handoff.sessionOrigin,
+	});
+	await peer.setLocalDescription(offer);
+	socket.send(JSON.stringify(signalMessage(scope, 'offer', {
+		authenticatedTransport,
+		sdp: { sdp: offer.sdp, type: offer.type },
+	})));
 	return peer;
+}
+
+export async function createAuthenticatedTransportOffer(input: Readonly<{
+	hostKey: HostedHostKey;
+	scope: SignalScope;
+	sdp: string;
+	serverId: string;
+	sessionOrigin: string;
+}>): Promise<Record<string, unknown>> {
+	const issuedAt = Date.now();
+	const scope: AuthenticatedWebRtcTransportScope = input.scope.kind === 'pairing' ? 'pairing' : 'reconnect';
+	const transcript = createAuthenticatedWebRtcTransportTranscript({
+		scope,
+		scopeId: input.scope.kind === 'pairing' ? input.scope.roomId : input.scope.deviceId,
+		sessionOrigin: input.sessionOrigin,
+		serverId: input.serverId,
+		hostKeyAlgorithm: 'ed25519',
+		hostPublicKey: input.hostKey.publicKey,
+		clientNonce: input.scope.clientNonce,
+		offerId: randomBytes(32).toString('base64url'),
+		issuedAt,
+		expiresAt: issuedAt + 60_000,
+		sdpSha256: await sha256Base64Url(input.sdp),
+		fingerprints: extractAuthenticatedWebRtcFingerprints(input.sdp),
+	});
+	const hostSignature = sign(
+		null,
+		Buffer.from(serializeAuthenticatedWebRtcTransportTranscript(transcript)),
+		createPrivateKey(input.hostKey.privateKeyPem),
+	).toString('base64url');
+	return Object.freeze({
+		transcript,
+		hostSignature,
+		...(input.scope.kind === 'pairing'
+			? {
+					pairingAuthenticator: await createAuthenticatedWebRtcPairingAuthenticator(
+						input.scope.pairingSecret,
+						transcript,
+					),
+			  }
+			: {}),
+	});
+}
+
+function parseClientNonce(value: unknown): string {
+	if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{43}$/u.test(value)) {
+		throw new Error('Hosted signaling client nonce is invalid.');
+	}
+	return value;
+}
+
+function parseDeviceId(value: unknown): string {
+	if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{8,128}$/u.test(value)) {
+		throw new Error('Hosted signaling device id is invalid.');
+	}
+	return value;
+}
+
+function assertAuthenticatedTransportVersion(value: unknown): void {
+	if (value !== AUTHENTICATED_WEBRTC_TRANSPORT_VERSION) {
+		throw new Error('Hosted signaling authenticated transport version is incompatible.');
+	}
 }
 
 function signalMessage(
@@ -783,6 +882,7 @@ function signalMessage(
 	}
 	return {
 		...extra,
+		deviceId: scope.deviceId,
 		sessionId: scope.sessionId,
 		type: kind === 'offer' ? 'device-offer' : 'device-ice',
 	};

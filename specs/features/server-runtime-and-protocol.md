@@ -324,7 +324,15 @@ transfers cannot block terminal control:
 
 The hosted relay carries signaling only. TURN may relay encrypted WebRTC
 packets, but Terminay-hosted application infrastructure does not terminate or
-inspect the application protocol.
+inspect the application protocol. The host signs a canonical transport
+transcript that binds the exact offer and DTLS fingerprints to the server
+identity, session origin, scope, fresh client nonce, generation, and expiry.
+First pairing authenticates that transcript with fragment-derived key material
+and pins the host public key; reconnect verifies it with the pinned key. Remote
+clients complete this check before accepting the bundle, releasing device
+credentials, or opening the application stream. Signaling can deny or disrupt
+a connection but cannot substitute a WebRTC endpoint or become an
+application-data intermediary.
 
 ## Server-bundled workspace UI
 
