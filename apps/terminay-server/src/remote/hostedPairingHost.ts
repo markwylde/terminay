@@ -786,21 +786,20 @@ async function startPeer(
 	bindUiArchiveChannels([channels.asset!, channels.assets!], context.archive);
 
 	const offer = await peer.createOffer();
-	await peer.setLocalDescription(offer);
-	const local = peer.localDescription;
-	if (typeof local?.sdp !== 'string' || typeof local.type !== 'string') {
+	if (typeof offer.sdp !== 'string' || typeof offer.type !== 'string') {
 		throw new Error('Hosted pairing host could not create a WebRTC offer.');
 	}
 	const authenticatedTransport = await createAuthenticatedTransportOffer({
 		hostKey: context.options.hostKey,
 		scope,
-		sdp: local.sdp,
+		sdp: offer.sdp,
 		serverId: context.options.serverId,
 		sessionOrigin: context.options.handoff.sessionOrigin,
 	});
+	await peer.setLocalDescription(offer);
 	socket.send(JSON.stringify(signalMessage(scope, 'offer', {
 		authenticatedTransport,
-		sdp: { sdp: local.sdp, type: local.type },
+		sdp: { sdp: offer.sdp, type: offer.type },
 	})));
 	return peer;
 }
