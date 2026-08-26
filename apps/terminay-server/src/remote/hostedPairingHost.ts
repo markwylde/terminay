@@ -291,8 +291,9 @@ export async function startHostedPairingHost(
 			assertAuthenticatedTransportVersion(message.authenticatedTransportVersion);
 			diagnose({ type: 'client-join', scope: 'device' });
 			const clientNonce = parseClientNonce(message.clientNonce);
+			const deviceId = parseDeviceId(message.deviceId);
 			await joinQueue.enqueue(() =>
-				addHandshakePeer(socket, { kind: 'device', sessionId, clientNonce }),
+				addHandshakePeer(socket, { kind: 'device', sessionId, deviceId, clientNonce }),
 			);
 			return;
 		}
@@ -641,6 +642,7 @@ type SignalScope =
 	| {
 			readonly kind: 'device';
 			readonly sessionId: string;
+			readonly deviceId: string;
 			readonly clientNonce: string;
 	  };
 
@@ -815,7 +817,7 @@ export async function createAuthenticatedTransportOffer(input: Readonly<{
 	const scope: AuthenticatedWebRtcTransportScope = input.scope.kind === 'pairing' ? 'pairing' : 'reconnect';
 	const transcript = createAuthenticatedWebRtcTransportTranscript({
 		scope,
-		scopeId: input.scope.kind === 'pairing' ? input.scope.roomId : input.scope.sessionId,
+		scopeId: input.scope.kind === 'pairing' ? input.scope.roomId : input.scope.deviceId,
 		sessionOrigin: input.sessionOrigin,
 		serverId: input.serverId,
 		hostKeyAlgorithm: 'ed25519',
@@ -853,6 +855,13 @@ function parseClientNonce(value: unknown): string {
 	return value;
 }
 
+function parseDeviceId(value: unknown): string {
+	if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{8,128}$/u.test(value)) {
+		throw new Error('Hosted signaling device id is invalid.');
+	}
+	return value;
+}
+
 function assertAuthenticatedTransportVersion(value: unknown): void {
 	if (value !== AUTHENTICATED_WEBRTC_TRANSPORT_VERSION) {
 		throw new Error('Hosted signaling authenticated transport version is incompatible.');
@@ -873,6 +882,7 @@ function signalMessage(
 	}
 	return {
 		...extra,
+		deviceId: scope.deviceId,
 		sessionId: scope.sessionId,
 		type: kind === 'offer' ? 'device-offer' : 'device-ice',
 	};
