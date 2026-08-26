@@ -912,10 +912,17 @@ fail only the affected extension and fail release validation.
   processes with separate roots and endpoints must not default to a shared
   server identity; an explicit `--server-id` remains an intentional operator
   choice and is rejected when its endpoint/data-root ownership is inconsistent.
-- [ ] **Task 63 Docker Electron proof:** run the required Docker Electron E2E
+- [x] **Task 63 Docker Electron proof:** run the required Docker Electron E2E
   with two simultaneous isolated application profiles that intentionally open
   identically named projects and terminal ids, publish distinct root/subagent
   lifecycle state, and assert each Agents panel renders only its own state.
+
+  Evidence (2026-08-26): PR #166, rebased head `ed542d467`, passed in
+  [Gitea Actions run 9696](https://git.i.wylde.net/markwylde/terminay/actions/runs/9696).
+  The deliberate two-profile Docker Electron case uses identical project,
+  terminal, and provider-session identifiers while distinguishing root and
+  subagent lifecycle state, then proves each profile's Agents panel renders
+  only its own state.
 - [ ] **Task 63 manual two-instance real-app acceptance:** run two concurrent
   real Terminay app instances with separate profiles and intentionally identical
   project/session labels. Confirm a Codex agent appears only in the instance
