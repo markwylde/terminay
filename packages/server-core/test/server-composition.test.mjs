@@ -11,6 +11,8 @@ import {
   ServerSettingsRepository,
   WorkspaceStore,
   createInitialWorkspace,
+  ProjectEnvironmentRepository,
+  createProjectEnvironmentOperationHandlers,
 } from "../dist/index.js";
 
 async function publishAgentLifecycle(agents, identity, events) {
@@ -620,6 +622,63 @@ test("composition coalesces concurrent lifecycle calls and cannot restart after 
   await Promise.all([composition.shutdown(), composition.shutdown()]);
   assert.equal(stops, 1);
   await assert.rejects(() => composition.start(), /stopped/u);
+});
+
+test("composition resumes pending provider environments during server startup", async () => {
+  let persisted;
+  const repository = new ProjectEnvironmentRepository({
+    async load() { return persisted; },
+    async commit(state) { persisted = structuredClone(state); },
+  }, "environment-recovery-server");
+  const workspace = new WorkspaceStore(createInitialWorkspace("environment-recovery-server"));
+  const providers = () => [{
+    providerId: "example.recovery/vm",
+    displayName: "Recovery VM",
+    capabilities: ["terminal", "filesystem"],
+    createForm: { id: "create", title: "Create", sections: [], submitLabel: "Create" },
+  }];
+  let resumes = 0;
+  const providerRuntime = {
+    async invokeProvider(invocation) {
+      if (invocation.callback === "testProfile") return [];
+      if (invocation.callback === "createEnvironment") {
+        return {
+          state: "pending", operationId: "provider-job", providerState: { machineId: "vm-1" },
+          progress: { operationId: "provider-job", title: "Provisioning", resumable: true, stages: [] },
+        };
+      }
+      if (invocation.callback === "resumeOperation") {
+        resumes += 1;
+        return { state: "ready", providerState: { machineId: "vm-1" }, status: { state: "available", defaultRoot: "/work", revision: 1 } };
+      }
+      throw new Error(`unexpected ${invocation.callback}`);
+    },
+  };
+  const seed = createProjectEnvironmentOperationHandlers({
+    repository, workspace, thisServerRoot: () => "/server", providerDefinitions: providers, providerRuntime,
+  });
+  const context = {
+    connectionId: "seed", clientId: "seed", authScope: "admin", permissions: ["environments:read", "environments:manage"], signal: new AbortController().signal,
+  };
+  await seed.commands["project-environments.create"]({
+    envelope: { type: "command", commandId: "create", correlationId: "create", operation: "project-environments.create", payload: { providerId: "example.recovery/vm", values: { name: "VM" } } },
+    body: new Uint8Array(), context,
+  });
+
+  const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
+    serverId: "environment-recovery-server", serverVersion: "1.0.0", capabilities: ["workspace"],
+    ptyFactory: createPtyFactory(), workspace,
+    projectEnvironments: { repository, thisServerRoot: () => "/server", providerDefinitions: providers, providerRuntime },
+  });
+  try {
+    await composition.start();
+    assert.equal(resumes, 1);
+    assert.equal(repository.state.operations.create.state, "succeeded");
+    assert.equal(repository.state.environments["env:create"].status, "ready");
+  } finally {
+    await composition.shutdown();
+  }
 });
 
 test("activity acknowledgement survives a real client reconnect and remains project/session-bound", async () => {

@@ -62,7 +62,9 @@ using the stable SSH provider contract/test double until live convergence.
 - [x] Keep an actionless provisioning status card renderable: public status-card
   facts and actions are optional, so their absence must not invalidate and hide
   the complete provider/connection snapshot.
-- [x] Support Run in background and recovery after UI/client/server restart.
+- [x] Support Run in background and recovery after UI/client/server restart;
+  startup invokes durable recovery after extension activation rather than
+  relying on a renderer snapshot request.
 - [x] Serialize concurrent snapshot-driven recovery and rebase its provider
   result if another registry mutation wins the compare-and-swap, so a
   successful address/SSH transition is not silently lost after the SSH binding

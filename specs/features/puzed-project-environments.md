@@ -172,7 +172,9 @@ close the route or disconnect; **Run in background** leaves the server saga
 running. A server admits at most 64 distinct Puzed profile/organization streams
 by default (with a hard configurable ceiling of 1,024), while all consumers of
 the same pair share one stream. Concurrent resume requests for one durable
-provisioning operation share one execution.
+provisioning operation share one execution. Server startup resumes every
+durable pending operation after extensions activate; that recovery is not
+dependent on a renderer opening the Project Environments surface.
 
 Job success does not imply that an IP or SSH is ready. After success, the
 provider reads machine interfaces, waits for an observed/static address, then
