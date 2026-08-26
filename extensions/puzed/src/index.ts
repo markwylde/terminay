@@ -17,10 +17,10 @@ export function activate(context: ExtensionContext): void {
         description: "Terminay-created virtual machines managed by Puzed Platform.",
         icon: "cloud",
         capabilities: ["terminal", "filesystem"],
-        profileForm: {
-          id: "puzed-profile", title: "Puzed Platform connection",
-          description: "The API key is stored only in this Terminay Server's vault.", submitLabel: "Test and save",
-          sections: [{ id: "connection", title: "Connection", disclosure: "always", fields: [
+		profileForm: {
+			id: "puzed-profile", title: "New Puzed provider",
+			description: "This saves a Puzed Platform provider account. The API key is stored only in this Terminay Server's vault; it does not create a VM or project connection.", submitLabel: "Test and save provider",
+			sections: [{ id: "provider", title: "Provider", disclosure: "always", fields: [
             { id: "display-name", type: "text", label: "Name", required: true, maxLength: 80 },
             { id: "base-url", type: "url", label: "Puzed Platform URL", required: true },
             { id: "api-key", type: "secret", label: "API key", required: true },

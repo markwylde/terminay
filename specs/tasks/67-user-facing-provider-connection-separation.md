@@ -150,14 +150,12 @@ SSH key, raw provider error, or arbitrary target authority. Every management,
 provisioning, lifecycle, and project-create operation remains transport-
 authorized and audited with the relevant opaque ids.
 
-## Decision requiring user approval
+## Approved terminology
 
-The above proposal changes the user-facing noun for a configured Puzed Platform
-account from the current **Puzed Platform profile** to **Puzed provider** and
-reserves **connection** for a VM/SSH target. The stale worktree consistently
-uses that model, but it is uncommitted and the current canonical features still
-use “profile”. Approval is required before implementation should make this
-terminology and associated persisted provider/connection migration canonical.
+The user approved the above presentation model on 2026-08-26: a configured
+Puzed Platform account is a **Puzed provider**, and a VM/SSH target is a
+**connection**. The stable extension/server transport term remains “profile”;
+this work deliberately changes no persisted identifier or authority boundary.
 
 ## Delivery checklist
 
@@ -178,7 +176,7 @@ terminology and associated persisted provider/connection migration canonical.
 - [x] Design the management and provisioning/selection entry points, transitions,
   labels, back/cancel behavior, and error states so the separation is clear to a
   user.
-- [ ] Implement the approved user-facing separation without duplicating secrets,
+- [x] Implement the approved user-facing separation without duplicating secrets,
   provider authority, or Puzed/SSH runtime responsibilities.
 - [ ] Ensure the separated journeys retain server-owned validation, profile and
   environment revisioning, and a clear route back to the relevant management or

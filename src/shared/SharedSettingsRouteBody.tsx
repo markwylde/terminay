@@ -6,11 +6,25 @@ export interface SharedSettingsRouteCategory {
   readonly icon?: ReactNode
 }
 
+/** A labelled group of settings-route categories.
+ *
+ * Most settings surfaces use one unlabelled list. Management surfaces can use
+ * sections when the categories represent different kinds of server-owned
+ * resources (for example, providers and connections) without inventing a
+ * second sidebar component.
+ */
+export interface SharedSettingsRouteCategorySection {
+  readonly id: string
+  readonly label: string
+  readonly categories: readonly SharedSettingsRouteCategory[]
+}
+
 export interface SharedSettingsRouteBodyProps {
   readonly title?: string
   readonly query: string
   readonly queryPlaceholder?: string
   readonly categories: readonly SharedSettingsRouteCategory[]
+  readonly categorySections?: readonly SharedSettingsRouteCategorySection[]
   readonly activeCategoryId: string
   readonly status: string
   readonly onQueryChange: (query: string) => void
@@ -37,6 +51,7 @@ export function SharedSettingsRouteBody({
   query,
   queryPlaceholder = 'Search settings...',
   categories,
+  categorySections,
   activeCategoryId,
   status,
   onQueryChange,
@@ -71,29 +86,34 @@ export function SharedSettingsRouteBody({
           </header>
 
           <nav className="settings-nav" aria-label={`${title} categories`}>
-            <div className="settings-nav-section">
-              {categories.map((category) => (
-                <button
-                  key={category.id}
-                  className={`settings-nav-item ${activeCategoryId === category.id ? 'settings-nav-item--active' : ''}`}
-                  aria-current={activeCategoryId === category.id ? 'true' : undefined}
-                  type="button"
-                  onClick={() => onCategorySelect(category.id)}
-                >
-                  <div className="settings-nav-item-inner" style={{ gap: 8 }}>
-                    {category.icon === undefined ? null : (
-                      <div
-                        className="settings-nav-icon"
-                        style={{ display: 'flex', alignItems: 'center', opacity: 0.8 }}
-                      >
-                        {category.icon}
-                      </div>
-                    )}
-                    <span>{category.label}</span>
-                  </div>
-                </button>
-              ))}
-            </div>
+            {(categorySections ?? [{ id: 'default', label: '', categories }]).map((section) => (
+              <div className="settings-nav-section" key={section.id}>
+                {section.label === '' ? null : (
+                  <h2 className="settings-nav-section-title">{section.label}</h2>
+                )}
+                {section.categories.map((category) => (
+                  <button
+                    key={category.id}
+                    className={`settings-nav-item ${activeCategoryId === category.id ? 'settings-nav-item--active' : ''}`}
+                    aria-current={activeCategoryId === category.id ? 'true' : undefined}
+                    type="button"
+                    onClick={() => onCategorySelect(category.id)}
+                  >
+                    <div className="settings-nav-item-inner" style={{ gap: 8 }}>
+                      {category.icon === undefined ? null : (
+                        <div
+                          className="settings-nav-icon"
+                          style={{ display: 'flex', alignItems: 'center', opacity: 0.8 }}
+                        >
+                          {category.icon}
+                        </div>
+                      )}
+                      <span>{category.label}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ))}
           </nav>
 
           <footer className="settings-sidebar-footer">
