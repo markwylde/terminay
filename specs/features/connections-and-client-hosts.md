@@ -183,7 +183,10 @@ status must not be conflated with terminal or agent attention.
 - A newly opened Desktop connection window remains in the normal loading state
   until its own local or remote server connection is ready. The loading state
   centers the Terminay mark in the window above a looping five-dot loading
-  indicator. The dots use five fixed, contrasting colours from the tab hue
+  indicator. Desktop packaging, browser metadata, and visible web surfaces use
+  the same square mark geometry: a pure-black background with even horizontal
+  and vertical padding around the white glyph. The dots use five fixed,
+  contrasting colours from the tab hue
   palette and enter in sequence. Local embedded-server startup has no text,
   while remote connections also show a short status message. Native window
   controls never overlap it. The initial document paints this loading state
