@@ -478,6 +478,76 @@ test('Local reopening drops every stale terminal tab and seeds one fresh termina
 	}
 });
 
+test('Local reopening preserves a missing persisted root without aborting the rest of workspace startup', async () => {
+	const pty = createPtyFactory();
+	const workspace = new WorkspaceStore(
+		createInitialWorkspace('desktop-local-missing-root'),
+	);
+	const viewId = workspace.state.viewOrder[0];
+	if (viewId === undefined)
+		throw new Error('Expected the initial Local workspace view.');
+	const apply = (commandId, command) => {
+		const result = workspace.apply({ commandId, command });
+		assert.equal(
+			result.ok,
+			true,
+			result.ok ? undefined : result.conflict.message,
+		);
+	};
+	apply('seed-available-project', {
+		type: 'project.create',
+		projectId: 'available',
+		viewId,
+		root: tmpdir(),
+		name: 'Available',
+	});
+	apply('seed-available-terminal', {
+		type: 'terminal.createPanel',
+		projectId: 'available',
+		sessionId: 'stale-available',
+		panelId: 'stale-available-panel',
+		title: 'Terminal 1',
+		cwd: tmpdir(),
+		createdAt: 1,
+	});
+	apply('seed-missing-project', {
+		type: 'project.create',
+		projectId: 'missing',
+		viewId,
+		root: join(tmpdir(), 'terminay-root-that-does-not-exist'),
+		name: 'Missing',
+	});
+	apply('seed-missing-terminal', {
+		type: 'terminal.createPanel',
+		projectId: 'missing',
+		sessionId: 'stale-missing',
+		panelId: 'stale-missing-panel',
+		title: 'Terminal 1',
+		cwd: join(tmpdir(), 'terminay-root-that-does-not-exist'),
+		createdAt: 2,
+	});
+
+	const authority = new ServerTerminalAuthority({
+		serverId: 'desktop-local-missing-root',
+		terminalService: new TerminalService({
+			serverId: 'desktop-local-missing-root',
+			ptyFactory: pty,
+		}),
+		shellProfiles: systemShellProfiles('/bin/sh'),
+		workspaceRepository: { wasCreated: false, workspace },
+	});
+	try {
+		await authority.initializeWorkspace();
+		assert.equal(pty.processes.length, 1);
+		assert.equal(pty.processes[0]?.options.projectId, 'available');
+		assert.ok(workspace.state.projects.missing);
+		assert.equal(workspace.state.projects.missing.panelIds.length, 0);
+		assert.equal(workspace.state.projects.available.panelIds.length, 1);
+	} finally {
+		await authority.shutdown();
+	}
+});
+
 test('Desktop production authority projects a real PTY foreground process onto its exact activity session', async () => {
 	const authority = new ServerTerminalAuthority({
 		serverId: 'desktop-real-foreground',
