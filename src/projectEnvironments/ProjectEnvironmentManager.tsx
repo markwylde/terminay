@@ -31,7 +31,7 @@ export type ProjectEnvironmentSelectionHint = Readonly<{
 export function ProjectEnvironmentManager({
 	environments, profiles, providers, serverName, onCreateProfile,
 	onCreateEnvironment, onEditProfile, onTestProfile, onRemoveProfile, onAction, detail,
-	selectionHint, onSelectionHintHandled,
+	selectionHint, onSelectionHintHandled, operationNotice,
 }: Readonly<{
 	environments: readonly ProjectEnvironmentSummaryDto[];
 	profiles: readonly ProviderProfile[];
@@ -44,6 +44,10 @@ export function ProjectEnvironmentManager({
 	onRemoveProfile: (profileId: string) => void;
 	onAction: (environment: ProjectEnvironmentSummaryDto, action: StatusAction) => void;
 	detail?: ReactNode;
+	/** A server-operation failure belongs in the scrollable settings content,
+	 * above the selected detail/form.  It must never be a fixed overlay: those
+	 * obscure the very controls needed to recover from the failure. */
+	operationNotice?: ReactNode;
 	selectionHint?: ProjectEnvironmentSelectionHint | null;
 	onSelectionHintHandled?: () => void;
 }>) {
@@ -107,6 +111,7 @@ export function ProjectEnvironmentManager({
 			</details>
 		)}
 	>
+		{operationNotice}
 		{detail ?? (selected === undefined ? <div className="settings-empty-hero"><h2>No matching providers or connections</h2><p>Change your search or add a provider or connection.</p></div>
 			: selected.kind === 'provider' ? <ProviderDetail item={selected} connections={selectedProviderConnections} onCreateConnection={() => onCreateEnvironment(selected.provider.providerId, selected.profile.id)} onBrowseConnection={(connection) => setSelectedId(connection.id)} onEdit={() => onEditProfile(selected.profile)} onTest={() => onTestProfile(selected.profile.id)} onRemove={() => onRemoveProfile(selected.profile.id)} />
 			: <ConnectionDetail item={selected} onAction={onAction} onEditProfile={onEditProfile} onTestProfile={onTestProfile} onRemoveProfile={onRemoveProfile} />)}
