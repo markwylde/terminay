@@ -484,7 +484,11 @@ jobs:
           VERSION="${TAG#v}"
           OUTPUT="release/$VERSION"
           mkdir -p "$OUTPUT"
-          npm run build --workspace @terminay/server
+          # The server's published declarations import these workspace
+          # packages. Build the graph rather than compiling the server in
+          # isolation, as a fresh release checkout has no cached dist output.
+          npm run build:application-graph
+          npm run build:server-postcompile
           node scripts/stage-selected-secure-werift-runtime.mjs
           cp -R build/webrtc-runtime apps/terminay-server/dist/webrtc-runtime
           node apps/terminay-server/scripts/write-release-integrity-manifest.mjs
