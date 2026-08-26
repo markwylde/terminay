@@ -110,6 +110,29 @@ test('concurrent snapshots serialize durable provisioning recovery before provid
   assert.equal(subject.repository.state.environments['env:create-cloud'].status,'ready');
 });
 
+test('provisioning recovery rebases a provider result after a concurrent registry mutation', async()=>{
+  const subject=fixture(); await subject.repository.load(); let injected=false;
+  const providerDefinitions=()=>[{providerId:'com.example.cloud/vm',displayName:'Cloud VM',capabilities:['terminal','filesystem'],createForm:{id:'create',title:'Create',sections:[],submitLabel:'Create'}}];
+  const providerRuntime={async invokeProvider(invocation){
+    if(invocation.callback==='testProfile')return [];
+    if(invocation.callback==='createEnvironment')return {state:'pending',operationId:'job-1',providerState:{machineId:'vm-1'},progress:{operationId:'job-1',title:'Creating',resumable:true,stages:[{id:'create',label:'Creating',state:'active'}]}};
+    if(invocation.callback==='resumeOperation'){
+      if(!injected){injected=true;await subject.repository.commit(subject.repository.state.revision,(state)=>({...state}));}
+      return {state:'ready',providerState:{machineId:'vm-1',sshRevision:3},status:{state:'available',defaultRoot:'/work',revision:1}};
+    }
+    if(invocation.callback==='getStatus')return {state:'available',defaultRoot:'/work',revision:1};
+    throw new Error(`unexpected ${invocation.callback}`);
+  }};
+  const operations=createProjectEnvironmentOperationHandlers({repository:subject.repository,workspace:subject.workspace,thisServerRoot:()=>'/home/server',providerDefinitions,providerRuntime});
+  const context={connectionId:'c',clientId:'client-a',authScope:'admin',permissions:['environments:read','environments:manage'],signal:new AbortController().signal,expectedRevision:undefined};
+  await operations.commands['project-environments.create']({envelope:{type:'command',commandId:'create-cloud',correlationId:'create-cloud',operation:'project-environments.create',payload:{providerId:'com.example.cloud/vm',values:{name:'VM'}}},body:new Uint8Array(),context});
+  await operations.queries['project-environments.snapshot']({envelope:{type:'query',queryId:'snapshot',operation:'project-environments.snapshot',payload:{}},body:new Uint8Array(),context});
+  assert.equal(injected,true);
+  assert.equal(subject.repository.state.environments['env:create-cloud'].status,'ready');
+  assert.equal(subject.repository.state.environments['env:create-cloud'].providerState.sshRevision,3);
+  assert.equal(subject.repository.state.operations['create-cloud'].state,'succeeded');
+});
+
 test('a provisioning environment projects a safe status-card action without leaving its durable operation', async()=>{
   const subject=fixture(); await subject.repository.load(); const calls=[];
   const providerDefinitions=()=>[{providerId:'com.example.cloud/vm',displayName:'Cloud VM',capabilities:['terminal','filesystem'],createForm:{id:'create',title:'Create',sections:[],submitLabel:'Create'}}];
