@@ -100,6 +100,37 @@ test("a newer bundled inventory replaces the previous built-in slot so developme
   } finally { await value.cleanup(); }
 });
 
+test("an already-materialized pending built-in becomes active after its use drains", async () => {
+  let activeUses = 0;
+  const value = await fixture();
+  // Recreate the development-restart path: a changed bundled artifact was
+  // copied while the old host was still in use, then a later startup sees the
+  // same artifact already on disk after that use has ended.
+  const installer = new ExtensionInstaller({
+    dataRoot: value.dataRoot,
+    registryClient: new Npm(),
+    materializer: new Npm(),
+    builtIns: value.builtIns,
+    references: async () => ({ activeUses }),
+  });
+  try {
+    let state = await installer.initialize();
+    const first = state.extensions[EXTENSION].activeSlotId;
+    value.builtIns.release("1.0.1");
+    activeUses = 1;
+    state = await installer.reconcileBuiltIns();
+    const pending = state.extensions[EXTENSION].pendingSlotId;
+    assert.ok(pending);
+    assert.equal(state.extensions[EXTENSION].activeSlotId, first);
+
+    activeUses = 0;
+    state = await installer.reconcileBuiltIns();
+    assert.equal(state.extensions[EXTENSION].activeSlotId, pending);
+    assert.equal(state.extensions[EXTENSION].pendingSlotId, undefined);
+    assert.equal(state.extensions[EXTENSION].state, "installed");
+  } finally { await value.cleanup(); }
+});
+
 test("an external npm version overrides a bundled floor and remove restores the floor without changing enablement", async () => {
   const value = await fixture();
   try {
