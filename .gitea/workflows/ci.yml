@@ -104,9 +104,12 @@ jobs:
     name: Build E2E image
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
     outputs:
       image: ${{ steps.image.outputs.tag }}
-      image-id: ${{ steps.archive.outputs.image_id }}
+      image-key: ${{ steps.image.outputs.key }}
 
     steps:
       - name: Check out code
@@ -129,16 +132,27 @@ jobs:
         id: image
         shell: bash
         run: |
-          echo "tag=terminay-e2e:ci-$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          IMAGE_KEY="$(node scripts/e2e-image-cache-key.mjs)"
+          echo "key=$IMAGE_KEY" >> "$GITHUB_OUTPUT"
+          echo "tag=git.i.wylde.net/markwylde/terminay-e2e:$IMAGE_KEY" >> "$GITHUB_OUTPUT"
 
-      - name: Build and save E2E image
-        id: archive
+      - name: Authenticate internal container registry
+        env:
+          REGISTRY_TOKEN: ${{ secrets.TERMINAY_E2E_REGISTRY_TOKEN }}
+        run: printf '%s' "$REGISTRY_TOKEN" | docker login git.i.wylde.net --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Build or restore the content-addressed E2E image
         env:
           IMAGE_TAG: ${{ steps.image.outputs.tag }}
+          IMAGE_KEY: ${{ steps.image.outputs.key }}
           TURBO_TEAM: wylde
           TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
           TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
         run: |
+          if docker manifest inspect "$IMAGE_TAG" >/dev/null; then
+            echo "Restored $IMAGE_TAG from the internal registry."
+            exit 0
+          fi
           DOCKER_BUILDKIT=1 docker build \
             --pull \
             --platform linux/amd64 \
@@ -146,28 +160,19 @@ jobs:
             --build-arg TURBO_TEAM="$TURBO_TEAM" \
             --secret id=turbo_token,env=TURBO_TOKEN \
             --secret id=turbo_signature_key,env=TURBO_REMOTE_CACHE_SIGNATURE_KEY \
+            --label "net.wylde.terminay.e2e-cache-key=$IMAGE_KEY" \
             --tag "$IMAGE_TAG" \
             .
-          mkdir -p .docker-cache/e2e-image
-          docker save --output .docker-cache/e2e-image/terminay-e2e-image.tar "$IMAGE_TAG"
-          tar -tf .docker-cache/e2e-image/terminay-e2e-image.tar >/dev/null
-          gzip -1 --no-name .docker-cache/e2e-image/terminay-e2e-image.tar
-          gzip -t .docker-cache/e2e-image/terminay-e2e-image.tar.gz
-          echo "image_id=$(docker image inspect --format '{{.Id}}' "$IMAGE_TAG")" >> "$GITHUB_OUTPUT"
-
-      - name: Upload shared E2E image
-        uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3
-        with:
-          name: terminay-e2e-image-${{ github.sha }}
-          path: .docker-cache/e2e-image/terminay-e2e-image.tar.gz
-          if-no-files-found: error
-          retention-days: 1
+          docker push "$IMAGE_TAG"
 
   e2e-test:
     name: E2E (${{ matrix.shard }}/5)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: e2e-image
+    permissions:
+      contents: read
+      packages: read
     strategy:
       fail-fast: false
       matrix:
@@ -190,20 +195,18 @@ jobs:
               ;;
           esac
 
-      - name: Download shared E2E image
-        uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
-        with:
-          name: terminay-e2e-image-${{ github.sha }}
-          path: .docker-cache/e2e-image
+      - name: Authenticate internal container registry
+        env:
+          REGISTRY_TOKEN: ${{ secrets.TERMINAY_E2E_REGISTRY_TOKEN }}
+        run: printf '%s' "$REGISTRY_TOKEN" | docker login git.i.wylde.net --username "$GITHUB_ACTOR" --password-stdin
 
-      - name: Load shared E2E image
-        run: docker load --input .docker-cache/e2e-image/terminay-e2e-image.tar.gz
-
-      - name: Verify shared E2E image
+      - name: Pull and verify content-addressed E2E image
         env:
           IMAGE_TAG: ${{ needs.e2e-image.outputs.image }}
-          EXPECTED_IMAGE_ID: ${{ needs.e2e-image.outputs.image-id }}
-        run: test "$(docker image inspect --format '{{.Id}}' "$IMAGE_TAG")" = "$EXPECTED_IMAGE_ID"
+          IMAGE_KEY: ${{ needs.e2e-image.outputs.image-key }}
+        run: |
+          docker pull "$IMAGE_TAG"
+          test "$(docker image inspect --format '{{ index .Config.Labels \"net.wylde.terminay.e2e-cache-key\" }}' "$IMAGE_TAG")" = "$IMAGE_KEY"
 
       - name: Run end-to-end test shard
         env:
