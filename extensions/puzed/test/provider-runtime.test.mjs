@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { validateProviderEnvironmentStatus } from "@terminay/extension-api";
 import { activate } from "../dist/index.js";
 
 function runtimeFixture() {
@@ -212,6 +213,19 @@ test("Puzed preserves a retryable pending SSH state when verification is unavail
   assert.equal(status.state, "connecting");
   assert.deepEqual(status.card.actions, [{ id: "retry", label: "Retry SSH connection", kind: "primary" }]);
   assert.equal(status.card.summary.includes("connection refused"), false);
+});
+
+test("Puzed provisioning status is valid when it has no user action yet", async () => {
+  const f = runtimeFixture();
+  const providerState = {
+    profileId: "profile-1", machineId: "machine-1", bindingId: "binding-1", sshRevision: 0,
+    displayName: "Provisioning VM", baseUrl: "https://platform.test", managementState: "provisioning",
+    trustChallenge: null, jobId: "job-1",
+  };
+  const status = await f.runtime.getStatus({ environmentId: "env-1", profileId: "profile-1", providerState }, f.call);
+  assert.equal(status.state, "connecting");
+  assert.equal(status.card.actions, undefined);
+  assert.equal(validateProviderEnvironmentStatus(status).ok, true);
 });
 
 test("Puzed terminal/filesystem operations stay revision-bound and forward through SSH", async () => {
