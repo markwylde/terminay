@@ -501,6 +501,8 @@ frames do not produce one log line per frame.
   before pairing or device authentication. A pinned host-key mismatch is shown
   as a server identity change and requires explicit re-pairing; the client does
   not silently trust the replacement key.
+- The host signs and signals one immutable SDP snapshot. WebRTC runtime mutation
+  during local-description activation does not change the transmitted offer.
 - Offline server, signaling failure, relay failure, invalid server identity,
   invalid bundle, archive transfer failure, and revoked device are distinct
   visible errors.
