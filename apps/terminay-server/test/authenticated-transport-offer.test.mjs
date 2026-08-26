@@ -6,7 +6,7 @@ import {
 	verifyAuthenticatedWebRtcPairingAuthenticator,
 } from '@terminay/protocol';
 import { createHostedHostKey } from '../dist/remote/hostedHostKey.js';
-import { createAuthenticatedTransportOffer } from '../dist/remote/hostedPairingHost.js';
+import { createAuthenticatedTransportOffer, createAuthenticatedTransportSignal } from '../dist/remote/hostedPairingHost.js';
 
 const fingerprint = Buffer.alloc(32, 0x77).toString('hex').match(/../g).join(':').toUpperCase();
 const sdp = `v=0\r\na=fingerprint:sha-256 ${fingerprint}\r\n`;
@@ -44,4 +44,21 @@ test('reconnect proof omits pairing material and binds the fresh client nonce', 
 		scope: 'reconnect', scopeId: 'device-12345678', sessionOrigin: 'https://server123.terminay.com',
 		serverId: 'server-a', clientNonce: Buffer.alloc(32, 0x67).toString('base64url'), sdp,
 	}), /another connection/);
+});
+
+test('signaling keeps the signed SDP snapshot when the WebRTC runtime mutates its offer', async () => {
+	const offer = { sdp, type: 'offer' };
+	const signal = await createAuthenticatedTransportSignal({
+		hostKey: createHostedHostKey(),
+		offer,
+		scope: { kind: 'device', sessionId: 'server123', deviceId: 'device-12345678', clientNonce },
+		serverId: 'server-a',
+		sessionOrigin: 'https://server123.terminay.com',
+	});
+	offer.sdp = `${sdp}a=end-of-candidates\r\n`;
+	assert.equal(signal.sdp.sdp, sdp);
+	await assertAuthenticatedWebRtcTransportTranscript(signal.authenticatedTransport.transcript, {
+		scope: 'reconnect', scopeId: 'device-12345678', sessionOrigin: 'https://server123.terminay.com',
+		serverId: 'server-a', clientNonce, sdp: signal.sdp.sdp,
+	});
 });

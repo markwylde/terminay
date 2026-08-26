@@ -791,19 +791,38 @@ async function startPeer(
 	if (typeof offer.sdp !== 'string' || typeof offer.type !== 'string') {
 		throw new Error('Hosted pairing host could not create a WebRTC offer.');
 	}
-	const authenticatedTransport = await createAuthenticatedTransportOffer({
+	const signalingOffer = await createAuthenticatedTransportSignal({
 		hostKey: context.options.hostKey,
+		offer,
 		scope,
-		sdp: offer.sdp,
 		serverId: context.options.serverId,
 		sessionOrigin: context.options.handoff.sessionOrigin,
 	});
 	await peer.setLocalDescription(offer);
-	socket.send(JSON.stringify(signalMessage(scope, 'offer', {
-		authenticatedTransport,
-		sdp: { sdp: offer.sdp, type: offer.type },
-	})));
+	socket.send(JSON.stringify(signalMessage(scope, 'offer', signalingOffer)));
 	return peer;
+}
+
+export async function createAuthenticatedTransportSignal(input: Readonly<{
+	hostKey: HostedHostKey;
+	offer: Readonly<{ sdp?: string; type?: string }>;
+	scope: SignalScope;
+	serverId: string;
+	sessionOrigin: string;
+}>): Promise<Readonly<{ authenticatedTransport: Record<string, unknown>; sdp: Readonly<{ sdp: string; type: string }> }>> {
+	if (typeof input.offer.sdp !== 'string' || typeof input.offer.type !== 'string') {
+		throw new Error('Hosted pairing host could not snapshot its WebRTC offer.');
+	}
+	const sdp = input.offer.sdp;
+	const type = input.offer.type;
+	const authenticatedTransport = await createAuthenticatedTransportOffer({
+		hostKey: input.hostKey,
+		scope: input.scope,
+		sdp,
+		serverId: input.serverId,
+		sessionOrigin: input.sessionOrigin,
+	});
+	return Object.freeze({ authenticatedTransport, sdp: Object.freeze({ sdp, type }) });
 }
 
 export async function createAuthenticatedTransportOffer(input: Readonly<{
