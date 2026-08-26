@@ -65,6 +65,13 @@ test('failed provider submissions stay in their form with a visible inline error
 	assert.doesNotMatch(surfaces,/await run\(\(\) => client!\.createEnvironment/);
 });
 
+test('dynamic options clear stale dependent selections while retaining the form draft',()=>{
+	assert.match(forms,/setOptionRefresh/);
+	assert.match(forms,/optionRefresh/);
+	assert.match(forms,/was reset because it is no longer available with the current selections/);
+	assert.match(forms,/!loaded\.some\(\(option\) => option\.value === value/);
+});
+
 test('Desktop and browser File menus converge on shared management commands',()=>{
 	for(const command of ['open-project-environments','open-extensions']){
 		assert.match(desktop,new RegExp(command));

@@ -25,6 +25,7 @@ export function DeclarativeProviderForm({
 	const [values, setValues] = useState<Record<string, FormValue>>({ ...formDefaults(form), ...initialValues });
 	const [errors, setErrors] = useState<readonly string[]>([]);
 	const [submitting, setSubmitting] = useState(false);
+	const [optionRefresh, setOptionRefresh] = useState(0);
 	const visibleSections = useMemo(() => form.sections.map((section) => ({
 		...section,
 		fields: section.fields.filter((field) => {
@@ -51,6 +52,10 @@ export function DeclarativeProviderForm({
 			await onSubmit(Object.freeze({ ...values }));
 		} catch (error) {
 			setErrors([error instanceof Error ? error.message : String(error)]);
+			// A provider can reject a selection after its options changed. Keep the
+			// draft intact, then reload option sources so dependent fields can
+			// safely clear their stale values before resubmission.
+			setOptionRefresh((current) => current + 1);
 		} finally {
 			setSubmitting(false);
 		}
@@ -76,6 +81,7 @@ export function DeclarativeProviderForm({
 						onChange={(value) => setValues((current) => ({ ...current, [field.id]: value }))}
 						onLoadOptions={onLoadOptions}
 						values={values}
+						optionRefresh={optionRefresh}
 					/>
 				));
 				if (section.disclosure === 'expanded' || section.disclosure === 'collapsed') {
@@ -116,12 +122,14 @@ function DeclarativeField({
 	onChange,
 	onLoadOptions,
 	values,
+	optionRefresh,
 }: Readonly<{
 	field: DeclarativeFieldDto;
 	value?: FormValue;
 	onChange: (value: FormValue) => void;
 	onLoadOptions?: (fieldId: string, source: string, query: string, values: Readonly<Record<string, FormValue>>, signal: AbortSignal) => Promise<readonly SelectOption[]>;
 	values: Readonly<Record<string, FormValue>>;
+	optionRefresh: number;
 }>) {
 	const describedBy = field.description === undefined ? undefined : `${field.id}-description`;
 	const [options, setOptions] = useState(field.options ?? []);
@@ -133,11 +141,18 @@ function DeclarativeField({
 	const loadOptions = async (signal?: AbortSignal) => {
 		if (field.optionSource === undefined || onLoadOptions === undefined) return;
 		const controller = signal === undefined ? new AbortController() : null;
+		const requestSignal = signal ?? controller!.signal;
 		setLoading(true);
 		setLoadError('');
 		try {
-			const loaded = await onLoadOptions(field.id, field.optionSource, query, values, signal ?? controller!.signal);
+			const loaded = await onLoadOptions(field.id, field.optionSource, query, values, requestSignal);
+			if (requestSignal.aborted) return;
 			setOptions(loaded);
+			if (query === '' && value !== undefined && value !== '' && !loaded.some((option) => option.value === value && option.disabledReason === undefined)) {
+				onChange('');
+				setLoadError(`${field.label} was reset because it is no longer available with the current selections. Choose another option before creating.`);
+				return;
+			}
 			const preferred = loaded.find((option) => option.default === true && option.disabledReason === undefined);
 			if ((value === undefined || value === '') && preferred !== undefined) onChange(preferred.value);
 		} catch (error) {
@@ -154,7 +169,7 @@ function DeclarativeField({
 		const controller = new AbortController();
 		void loadOptions(controller.signal);
 		return () => controller.abort();
-	}, [field.id, field.optionSource, onLoadOptions, valuesKey]);
+	}, [field.id, field.optionSource, onLoadOptions, valuesKey, optionRefresh]);
 	useEffect(() => {
 		if (field.suggestionSource === undefined || onLoadOptions === undefined || value !== undefined && value !== '') return;
 		const controller = new AbortController(); setSuggesting(true);
