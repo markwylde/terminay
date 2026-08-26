@@ -59,6 +59,9 @@ using the stable SSH provider contract/test double until live convergence.
 - [x] Surface host-key trust and bounded SSH retry actions while the durable VM
   operation is pending; re-verify after approval before marking the connection
   ready.
+- [x] Keep an actionless provisioning status card renderable: public status-card
+  facts and actions are optional, so their absence must not invalidate and hide
+  the complete provider/connection snapshot.
 - [x] Support Run in background and recovery after UI/client/server restart.
 - [x] On every failure preserve the VM and offer Retry/Edit SSH/Start/Stop/
   Reboot/Delete/Open in Puzed; never auto-delete or fall back Local.
