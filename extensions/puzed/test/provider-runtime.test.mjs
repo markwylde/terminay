@@ -19,6 +19,8 @@ function runtimeFixture() {
 
 test("Puzed exposes a create form and tests a saved profile with its vault-bound API key", async () => {
   const f = runtimeFixture();
+	assert.equal(f.definition.profileForm?.title, "New Puzed provider");
+	assert.equal(f.definition.profileForm?.submitLabel, "Test and save provider");
   assert.equal(f.definition.createForm?.submitLabel, "Create VM and open project");
   assert.equal(f.definition.createForm?.sections[0]?.fields.some((field) => field.id === "image-id"), true);
   const fetch = globalThis.fetch; const requests = [];

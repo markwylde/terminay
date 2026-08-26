@@ -39,6 +39,22 @@ for the governing topology.
 Terminay Server connections remain the separate client-to-server concept in
 [connections and client hosts](./connections-and-client-hosts.md).
 
+### User-facing provider and connection terms
+
+The extension and server protocol retain **environment profile** as the stable
+generic transport/persistence term. The management UI must not present every
+profile as a project target, however:
+
+- a saved Puzed Platform account is displayed as a **Puzed provider**; it is
+  reusable management context, not a connection that can open a project; and
+- a saved SSH target or Terminay-managed Puzed VM is displayed as a
+  **connection**. It is the selectable execution target from which a project
+  environment/project may be created.
+
+This wording is presentation-only. Opaque profile, environment, provider and
+revision identities remain server-owned, and no renderer migration or copied
+credential is introduced by the labels.
+
 ## Canonical model and persistence
 
 Terminay Server persists a revisioned environment registry containing:
@@ -196,8 +212,11 @@ continues to show the last successfully authenticated snapshot during transient
 transport recovery. Desktop and browser therefore converge on the same
 server-owned inventory without keeping a renderer-owned copy as authority.
 
-The menu groups **This Terminay Server**, recent/favourite SSH profiles, recent
-Puzed VMs by Platform profile, direct creation actions, **Project
+The menu groups selectable connections by their owning provider: **This
+Terminay Server**, recent/favourite SSH connections, and recent Puzed VMs by
+Puzed provider. A Puzed provider itself is never an openable menu item. Direct
+actions distinguish **New Puzed provider…** from **Create VM in
+<provider>…**, followed by **Project
 Environments…**, and **Extensions…**. Large inventories use searchable pickers
 instead of unbounded menus. **This server** includes secondary text such as
 `Local to Production Terminay`.
@@ -223,10 +242,13 @@ text. Project editing shows immutable environment identity/status, root,
 **Use environment default**, appearance, and environment-valid shell choices.
 
 **File → Project Environments…** opens or focuses a first-class management
-surface named **Project Environments**. It shows which selected Terminay Server
-owns the profiles, searchable provider groups, safe
-endpoint/default-root/status metadata, project references, and Test/Edit/Remove
-actions. On Desktop it is a dedicated native auxiliary window with the same
+surface named **Project Environments**. Its standard Settings sidebar has
+separate **Providers** and **Connections** sections. A Puzed provider shows
+safe service/account facts and its child connection count; a connection shows
+its owner, safe endpoint/default-root/status metadata, project references, and
+connection lifecycle actions. Provider Test/Edit/Remove is never shown as
+connection management for a Puzed VM. On Desktop it is a dedicated native
+auxiliary window with the same
 window chrome, content frame, responsive layout conventions, and focus/reuse
 behaviour as Settings, Macros, and Recordings. It is not a project-editor sheet
 and must not use that sheet's oversized centered-dialog presentation or an
@@ -242,10 +264,12 @@ Command Bar action invoke that same semantic route. Extension installation and
 updates are not duplicated in this window: links that require an environment
 provider open Settings at its **Extensions** section.
 
-Every running provider with a profile form contributes a clear **New
-<provider>** action. Saving SSH creates a saved SSH environment; saving Puzed
-Platform stores its URL and API-key secret and exposes its VM creation/browse
-flow. Installing or enabling a provider makes these actions available without
+Every running provider with a profile form contributes a clear creation action.
+For Puzed this is **New Puzed provider…**; saving it stores its URL and API-key
+secret and returns to that provider detail without creating a VM or project.
+That detail exposes **Create VM…** and its provider-scoped connection list.
+Saving SSH creates a saved SSH connection. Installing or enabling a provider
+makes these actions available without
 restarting the app, and focusing the window refreshes provider inventory.
 The embedded Desktop vault is unlocked only after Electron reports the app as
 ready and before the Local server is reported ready or any project window is

@@ -2,7 +2,10 @@ import type { TerminayClient } from '@terminay/client-core';
 import { ProjectEnvironmentsClient, TerminayClientFacade } from '@terminay/client-core';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { DeclarativeProviderForm } from './DeclarativeProviderForm';
-import { ProjectEnvironmentManager } from './ProjectEnvironmentManager';
+import {
+	ProjectEnvironmentManager,
+	type ProjectEnvironmentSelectionHint,
+} from './ProjectEnvironmentManager';
 import type {
 	DeclarativeFormDto,
 	ProjectEnvironmentSummaryDto,
@@ -53,6 +56,8 @@ export function ProjectEnvironmentsWindow({
 	const [providers, setProviders] = useState<readonly ProviderSummary[]>([]);
 	const [profiles, setProfiles] = useState<readonly import('@terminay/client-core').ProjectEnvironmentClientProfile[]>([]);
 	const [formTarget, setFormTarget] = useState<FormTarget | null>(null);
+	const [selectionHint, setSelectionHint] =
+		useState<ProjectEnvironmentSelectionHint | null>(null);
 	const [authorityLabel, setAuthorityLabel] = useState(serverName);
 	const [announcement, setAnnouncement] = useState('');
 	const [error, setError] = useState('');
@@ -177,7 +182,8 @@ export function ProjectEnvironmentsWindow({
 					</div>
 				) : null}
 				<ProjectEnvironmentManager
-						environments={[...environments, ...profiles.filter((profile) => !environments.some((environment) => environment.profileId === profile.id)).map((profile) => ({ id: `profile-view:${profile.id}`, providerId: profile.providerId, profileId: profile.id, providerLabel: providers.find((provider) => provider.providerId === profile.providerId)?.displayName ?? profile.providerId, name: profile.name, endpointSummary: profile.endpointSummary, ...(profile.defaultRoot === undefined ? {} : { defaultRoot: profile.defaultRoot }), status: 'ready' as const, referencedProjectCount: 0, profileOnly: true }))]}
+						environments={environments}
+						profiles={profiles}
 						providers={providers.map((provider) => ({
 							providerId: provider.providerId,
 							displayName: provider.displayName,
@@ -185,7 +191,9 @@ export function ProjectEnvironmentsWindow({
 							hasCreateForm: provider.createForm !== undefined,
 						}))}
 						serverName={authorityLabel}
-						onCreate={(providerId) => {
+						selectionHint={selectionHint}
+						onSelectionHintHandled={() => setSelectionHint(null)}
+						onCreateProfile={(providerId) => {
 							const provider = providers.find(
 								(candidate) => candidate.providerId === providerId,
 							);
@@ -197,27 +205,27 @@ export function ProjectEnvironmentsWindow({
 							const provider = providers.find((candidate) => candidate.providerId === providerId);
 							if (provider?.createForm !== undefined) setFormTarget({ providerId, profileId, form: provider.createForm, mode: 'environment' });
 						}}
-						onEdit={(environment) => {
+						onEditProfile={(profile) => {
 							const provider = providers.find(
-								(candidate) => candidate.providerId === environment.providerId,
+								(candidate) => candidate.providerId === profile.providerId,
 							);
 							if (
 								provider?.profileForm !== undefined &&
-								environment.profileId !== undefined
+								profile.id !== undefined
 							) {
 								setFormTarget({
 									providerId: provider.providerId,
-									profileId: environment.profileId,
+									profileId: profile.id,
 									form: provider.profileForm,
 									mode: 'profile',
 								});
 							}
 						}}
-						onTest={(profileId) =>
-							run(() => client!.testProfile(profileId), 'Connection test completed.')
+						onTestProfile={(profileId) =>
+							run(() => client!.testProfile(profileId), 'Provider or connection test completed.')
 						}
-						onRemove={(profileId) =>
-							run(() => client!.removeProfile(profileId), 'Environment removed.')
+						onRemoveProfile={(profileId) =>
+							run(() => client!.removeProfile(profileId), 'Provider or connection removed.')
 						}
 						onAction={(environment, action) => {
 							if (
@@ -263,6 +271,14 @@ export function ProjectEnvironmentsWindow({
 						).options}
 						onCancel={() => setFormTarget(null)}
 						onSubmit={async (values) => {
+							const provider = providers.find(
+								(candidate) => candidate.providerId === formTarget.providerId,
+							);
+							const managesProvider = provider?.createForm !== undefined;
+							const createdProvider =
+								formTarget.mode !== 'environment' &&
+								formTarget.profileId === undefined &&
+								managesProvider;
 							if (formTarget.mode === 'environment' && formTarget.profileId !== undefined) {
 								await submitForm(
 									() => client!.createEnvironment(formTarget.providerId, formTarget.profileId!, values),
@@ -271,12 +287,22 @@ export function ProjectEnvironmentsWindow({
 							} else if (formTarget.profileId === undefined) {
 								await submitForm(
 									() => client!.createProfile(formTarget.providerId, values),
-									'Connection saved.',
+									managesProvider ? 'Provider saved.' : 'Connection saved.',
 								);
+								if (
+									createdProvider &&
+									typeof values['display-name'] === 'string' &&
+									values['display-name'].trim() !== ''
+								) {
+									setSelectionHint({
+										providerId: formTarget.providerId,
+										providerName: values['display-name'],
+									});
+								}
 							} else {
 								await submitForm(
 									() => client!.updateProfile(formTarget.profileId!, values),
-									'Connection updated.',
+									managesProvider ? 'Provider updated.' : 'Connection updated.',
 								);
 							}
 							setFormTarget(null);

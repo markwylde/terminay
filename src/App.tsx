@@ -6195,29 +6195,56 @@ function App({
 					<ProjectEnvironmentSplitButton
 						canCreate={canAddProject && pendingProjectCreation === null}
 						environments={projectEnvironmentChoices}
-					createActions={projectEnvironmentProviders.flatMap((provider) =>
-						projectEnvironmentProfiles
+						connectionOwnerLabels={Object.fromEntries(
+							projectEnvironmentChoices.flatMap((environment) => {
+								if (environment.profileId === undefined) return [];
+								const profile = projectEnvironmentProfiles.find(
+									(candidate) => candidate.id === environment.profileId,
+								);
+								return profile === undefined
+									? []
+									: [[environment.id, `${profile.name} · ${environment.providerLabel}`]];
+							}),
+						)}
+					createActions={[
+						...projectEnvironmentProviders
 							.filter(
-								(profile) =>
-									profile.providerId === provider.providerId &&
+								(provider) =>
+									provider.profileForm !== undefined &&
 									provider.createForm !== undefined,
 							)
-							.map((profile) => ({
+							.map((provider) => ({
 								providerId: provider.providerId,
-								profileId: profile.id,
-								label: provider.displayName
-									.toLocaleLowerCase()
-									.includes('puzed')
-									? 'Create new Puzed VM…'
-									: `New ${provider.displayName} project…`,
-								description: profile.name,
+								mode: 'profile' as const,
+								label: provider.displayName.toLocaleLowerCase().includes('puzed')
+									? 'New Puzed provider…'
+									: `New ${provider.displayName} provider…`,
+								description: 'Manage provider credentials and connections.',
 							})),
-					)}
+						...projectEnvironmentProviders.flatMap((provider) =>
+							projectEnvironmentProfiles
+								.filter(
+									(profile) =>
+										profile.providerId === provider.providerId &&
+										provider.createForm !== undefined,
+								)
+								.map((profile) => ({
+									providerId: provider.providerId,
+									profileId: profile.id,
+									mode: 'environment' as const,
+									label: provider.displayName
+										.toLocaleLowerCase()
+										.includes('puzed')
+										? `Create VM in ${profile.name}…`
+										: `New ${provider.displayName} connection…`,
+									description: profile.name,
+								})),
+						),
+					]}
 						onCreateProvider={(action) =>
 							void auxiliaryRouteController.openProjectEnvironments({
 								providerId: action.providerId,
-								mode:
-									action.profileId === undefined ? 'profile' : 'environment',
+							mode: action.mode,
 								...(action.profileId === undefined
 									? {}
 									: { profileId: action.profileId }),

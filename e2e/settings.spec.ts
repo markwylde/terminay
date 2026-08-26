@@ -14,7 +14,7 @@ async function writeToActiveTerminal(page: Page, data: string): Promise<void> {
   await typeInVisibleTerminal(page, data)
 }
 
-test('shows selected-server extensions and saves a secret-backed connection profile', async ({ appHarness, mainWindow, userDataDir }, testInfo) => {
+test('shows selected-server extensions and creates a secret-backed provider before its connection', async ({ appHarness, mainWindow, userDataDir }, testInfo) => {
   const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'extensions' })
 
   await expect(settingsWindow.getByRole('heading', { name: 'Settings' })).toBeVisible()
@@ -25,8 +25,8 @@ test('shows selected-server extensions and saves a secret-backed connection prof
   await expect(settingsWindow.getByRole('article').filter({ hasText: 'terminay-plugin-ssh' })).toBeVisible()
   await expect(settingsWindow.getByRole('article').filter({ hasText: 'terminay-plugin-puzed' })).toBeVisible()
 
-  const profileForm = { id: 'fixture-profile', title: 'Fixture connection', description: 'Stored by the selected Terminay Server.', submitLabel: 'Save', sections: [{ id: 'connection', title: 'Connection', fields: [{ id: 'display-name', type: 'text', label: 'Name', description: 'Shown in the project environment chooser.', required: true }, { id: 'api-key', type: 'secret', label: 'API key', description: 'Stored in the selected Terminay Server vault.', required: true }] }, { id: 'advanced', title: 'Advanced', description: 'Optional connection behavior.', disclosure: 'collapsed', fields: [{ id: 'default-root', type: 'text', label: 'Default root' }] }] }
-	const createForm={id:'fixture-create',title:'Create fixture environment',submitLabel:'Create',sections:[{id:'target',title:'Target',fields:[{id:'image-id',type:'select',label:'Image',required:true,searchable:true,optionSource:'dev.terminay.e2e-uploaded/images'},{id:'size-id',type:'preset-cards',label:'Size',required:true,optionSource:'dev.terminay.e2e-uploaded/sizes',options:[]}]}]}
+  const profileForm = { id: 'fixture-profile', title: 'Fixture provider', description: 'Stored by the selected Terminay Server and used to create project connections.', submitLabel: 'Save provider', sections: [{ id: 'provider', title: 'Provider', fields: [{ id: 'display-name', type: 'text', label: 'Name', description: 'Shown when choosing where to create a project connection.', required: true }, { id: 'api-key', type: 'secret', label: 'API key', description: 'Stored in the selected Terminay Server vault.', required: true }] }, { id: 'advanced', title: 'Advanced', description: 'Optional provider behavior.', disclosure: 'collapsed', fields: [{ id: 'default-root', type: 'text', label: 'Default root' }] }] }
+	const createForm={id:'fixture-create',title:'Create fixture connection',submitLabel:'Create connection',sections:[{id:'target',title:'Target',fields:[{id:'image-id',type:'select',label:'Image',required:true,searchable:true,optionSource:'dev.terminay.e2e-uploaded/images'},{id:'size-id',type:'preset-cards',label:'Size',required:true,optionSource:'dev.terminay.e2e-uploaded/sizes',options:[]}]}]}
   const packageJson = JSON.stringify({ name: 'terminay-e2e-uploaded-extension', version: '1.0.0', type: 'module', exports: { '.': './dist/extension.js' }, terminay: { manifestVersion: 1, id: 'dev.terminay.e2e-uploaded', displayName: 'E2E uploaded provider', api: '^1.0.0', engines: { terminay: '>=1', node: '>=22' }, entrypoint: 'dist/extension.js', permissions: [], contributes: { projectEnvironments: [{ id: 'dev.terminay.e2e-uploaded/main', displayName: 'E2E uploaded', capabilities: ['terminal', 'filesystem'] }] } } })
   const archive = npmPackArchive({ 'package/package.json': packageJson, 'package/dist/extension.js': `export async function activate(context) { context.registerProjectEnvironmentProvider({ definition: { providerId: "dev.terminay.e2e-uploaded/main", displayName: "E2E uploaded", capabilities: ["terminal", "filesystem"], profileForm: ${JSON.stringify(profileForm)},createForm:${JSON.stringify(createForm)} }, runtime: { testProfile: async () => [], resolveOptions: async request => ({ options: request.sourceId.endsWith("/images")?[{value:"debian-13",label:"Debian 13"}]:[{value:"medium",label:"Medium",description:"2 vCPU · 2 GB RAM"}] }), createEnvironment: async () => { throw new Error("provider implementation details must stay private") }, resumeOperation: async () => ({ state: "ready", providerState: {}, status: { state: "available", revision: 1 } }), getStatus: async () => ({ state: "available", revision: 1 }), invokeAction: async () => ({ state: "complete", providerState: {}, status: { state: "available", revision: 1 } }) } }); }\n` })
   await settingsWindow.locator('input[type="file"][accept*=".tgz"]').setInputFiles({ name: 'terminay-e2e-uploaded-extension-1.0.0.tgz', mimeType: 'application/gzip', buffer: archive })
@@ -37,17 +37,17 @@ test('shows selected-server extensions and saves a secret-backed connection prof
   await expect(settingsWindow.getByRole('heading', { name: /Review terminay-e2e-uploaded-extension/u })).toHaveCount(0)
   await expect(settingsWindow.getByRole('status').filter({ hasText: /was installed/u })).toBeVisible()
   const environmentsWindow = await appHarness.openProjectEnvironmentsWindow(mainWindow)
-  await environmentsWindow.getByText('Add connection', { exact: true }).click()
-  await environmentsWindow.getByRole('button', { name: 'New E2E uploaded' }).click()
-  await expect(environmentsWindow.getByRole('heading', { name: 'Fixture connection' })).toBeVisible()
 	await expect(
 		environmentsWindow.getByRole('heading', {
 			level: 1,
 			name: 'Project Environments',
 		}),
 	).toBeVisible()
-  await expect(environmentsWindow.getByPlaceholder('Search environments...')).toBeVisible()
+  await expect(environmentsWindow.getByPlaceholder('Search providers and connections...')).toBeVisible()
   await expect(environmentsWindow.getByRole('button', { name: 'This server' })).toBeVisible()
+	await environmentsWindow.getByText('Add', { exact: true }).click()
+  await environmentsWindow.getByRole('button', { name: /^New E2E uploaded provider/u }).click()
+  await expect(environmentsWindow.getByRole('heading', { name: 'Fixture provider' })).toBeVisible()
   await expect(environmentsWindow.locator('.declarative-provider-form .settings-group')).toHaveCount(2)
   await expect(environmentsWindow.locator('.declarative-provider-form .settings-row').filter({ hasText: 'Name' })).toBeVisible()
   const advanced = environmentsWindow.locator('details').filter({ hasText: 'Advanced' })
@@ -55,22 +55,19 @@ test('shows selected-server extensions and saves a secret-backed connection prof
   await expect(advanced.locator('summary')).toBeVisible()
   await expect(environmentsWindow.locator('.declarative-provider-form__fields')).toHaveCount(0)
   const secretSentinel = 'terminay-e2e-secret-profile-sentinel'
-  await environmentsWindow.getByLabel('Name').fill('Secret-backed E2E connection')
+  await environmentsWindow.getByLabel('Name').fill('Secret-backed E2E provider')
   await environmentsWindow.getByLabel('API key').fill(secretSentinel)
-  await environmentsWindow.getByRole('button', { name: 'Save', exact: true }).click()
-  await expect(environmentsWindow.getByRole('button', { name: 'Secret-backed E2E connection' })).toBeVisible()
-  await expect(environmentsWindow.getByRole('status').filter({ hasText: 'Connection saved.' })).toBeVisible()
-	await mainWindow.bringToFront()
-	await mainWindow.getByRole('button',{name:'Choose project environment'}).click()
-	const createAction=mainWindow.getByRole('menuitem',{name:/New E2E uploaded project/u})
-	await expect(createAction).toBeVisible();await createAction.click();await environmentsWindow.bringToFront()
-	await expect(environmentsWindow.getByRole('heading',{name:'Create fixture environment'})).toBeVisible()
+  await environmentsWindow.getByRole('button', { name: 'Save provider', exact: true }).click()
+  await expect(environmentsWindow.getByRole('button', { name: 'Secret-backed E2E provider' })).toBeVisible()
+  await expect(environmentsWindow.getByRole('status').filter({ hasText: 'Provider saved.' })).toBeVisible()
+	await environmentsWindow.getByRole('button', { name: /^Add connection/u }).click()
+	await expect(environmentsWindow.getByRole('heading',{name:'Create fixture connection'})).toBeVisible()
 	await expect(environmentsWindow.locator('option', { hasText: 'Debian 13' })).toHaveCount(1)
 	await expect(environmentsWindow.getByText('Medium',{exact:true})).toBeVisible()
 	await environmentsWindow.getByRole('combobox', { name: 'Image', exact: true }).selectOption('debian-13')
 	await environmentsWindow.getByText('Medium',{exact:true}).click()
-	await environmentsWindow.getByRole('button',{name:'Create',exact:true}).click()
-	await expect(environmentsWindow.getByRole('heading',{name:'Create fixture environment'})).toBeVisible()
+	await environmentsWindow.getByRole('button',{name:'Create connection',exact:true}).click()
+	await expect(environmentsWindow.getByRole('heading',{name:'Create fixture connection'})).toBeVisible()
 	await expect(environmentsWindow.locator('.declarative-provider-form [role="alert"]')).toContainText('E2E uploaded could not create this environment.')
 	await expect(environmentsWindow.locator('.environment-window-banner')).toHaveCount(0)
 
