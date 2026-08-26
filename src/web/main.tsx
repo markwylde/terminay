@@ -40,7 +40,7 @@ type ConnectedSession = Readonly<{
 }>;
 
 function TerminayMark({ className }: Readonly<{ className: string }>): React.JSX.Element {
-	return <img alt="" aria-hidden="true" className={className} src="/terminay.svg" />;
+	return <img alt="" aria-hidden="true" className={className} src="./terminay.svg" />;
 }
 
 class WorkspaceErrorBoundary extends Component<
