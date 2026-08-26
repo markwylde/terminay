@@ -120,7 +120,7 @@ test('a provisioning environment projects a safe status-card action without leav
   await operations.commands['project-environments.create']({envelope:{type:'command',commandId:'create-cloud',correlationId:'create-cloud',operation:'project-environments.create',payload:{providerId:'com.example.cloud/vm',values:{name:'VM'}}},body:new Uint8Array(),context});
   const snapshot=await operations.queries['project-environments.snapshot']({envelope:{type:'query',queryId:'snapshot',operation:'project-environments.snapshot',payload:{}},body:new Uint8Array(),context:{...context,expectedRevision:undefined}});
   const environment=snapshot.environments.find((value)=>value.id==='env:create-cloud');
-  assert.equal(environment.status,'provisioning');
+  assert.equal(environment.status,'connecting');
   assert.deepEqual(environment.statusCard.actions,[{id:'trust-host',label:'Trust host key',kind:'primary'}]);
   assert.equal(subject.repository.state.operations['create-cloud'].state,'running');
   await operations.commands['project-environments.invoke-action']({envelope:{type:'command',commandId:'trust-host',correlationId:'trust-host',operation:'project-environments.invoke-action',payload:{environmentId:'env:create-cloud',actionId:'trust-host'}},body:new Uint8Array(),context:{...context,expectedRevision:undefined}});
