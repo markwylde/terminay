@@ -561,6 +561,18 @@ export function createServerCoreComposition(
 	let lifecycle: "created" | "starting" | "ready" | "stopping" | "stopped" | "failed" = "created";
 	let startPromise: Promise<void> | undefined;
 	let shutdownPromise: Promise<void> | undefined;
+	// Durable provider operations belong to the server, not to whichever client
+	// happens to open the Project Environments view. Keep a server-owned context
+	// for startup recovery so a Puzed job can advance after an embedded server
+	// restart even when no renderer has connected yet.
+	const environmentRecoveryAbort = new AbortController();
+	const environmentRecoveryContext = {
+		connectionId: `server:${options.serverId}`,
+		clientId: `server:${options.serverId}`,
+		authScope: "admin" as const,
+		permissions: ["environments:read", "environments:manage"],
+		signal: environmentRecoveryAbort.signal,
+	};
 	const start = (): Promise<void> => {
 		if (lifecycle === "ready") return Promise.resolve();
 		if (lifecycle === "starting" && startPromise !== undefined) return startPromise;
@@ -573,6 +585,10 @@ export function createServerCoreComposition(
 					await options.extensions?.installer.initialize();
 					await options.extensions?.activateEnabled?.();
 				}
+				// Extensions provide the runtime required to resume their durable
+				// operations, so recovery must follow activation but precede normal
+				// client-facing service startup.
+				await projectEnvironmentOperations?.recoverPending(environmentRecoveryContext);
 				await options.settings?.load();
 				await options.serviceLifecycle?.start?.();
 				await options.agents?.start();
@@ -591,6 +607,7 @@ export function createServerCoreComposition(
 		shutdownPromise = (async () => {
 			// If startup was still binding a hook receiver, wait for it before
 			// teardown so it cannot resurrect after shutdown begins.
+			environmentRecoveryAbort.abort();
 			await startPromise?.catch(() => undefined);
 			const failures: unknown[] = [];
 			const attempt = async (operation: () => Promise<unknown> | unknown): Promise<void> => {

@@ -176,8 +176,11 @@ this work deliberately changes no persisted identifier or authority boundary.
 - [x] Design the management and provisioning/selection entry points, transitions,
   labels, back/cancel behavior, and error states so the separation is clear to a
   user.
-- [x] Implement the approved user-facing separation without duplicating secrets,
-  provider authority, or Puzed/SSH runtime responsibilities.
+- [ ] Complete the approved user-facing separation without duplicating secrets,
+  provider authority, or Puzed/SSH runtime responsibilities. The present Puzed
+  extension exposes provider save and VM creation, but no provider-scoped
+  **Browse Terminay VMs…** inventory/selection path, so this delivery is not
+  complete.
 - [ ] Ensure the separated journeys retain server-owned validation, profile and
   environment revisioning, and a clear route back to the relevant management or
   VM action.

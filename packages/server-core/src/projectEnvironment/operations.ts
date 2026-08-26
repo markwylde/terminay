@@ -43,9 +43,16 @@ export interface ProjectEnvironmentOperationOptions {
 	readonly onChanged?: (payload: JsonValue) => void;
 }
 
+/** Protocol operations plus the server-owned lifecycle hook. Pending provider
+ * work is not renderer-owned: it must recover after a server restart even if
+ * nobody opens the Project Environments surface. */
+export interface ProjectEnvironmentOperationHandlers extends OperationRegistries {
+	readonly recoverPending: (context: RequestContext) => Promise<void>;
+}
+
 /** Fixed UI-facing management surface. Provider configuration remains behind
  * server callbacks; values and raw provider errors never enter response DTOs. */
-export function createProjectEnvironmentOperationHandlers(options: ProjectEnvironmentOperationOptions): OperationRegistries {
+export function createProjectEnvironmentOperationHandlers(options: ProjectEnvironmentOperationOptions): ProjectEnvironmentOperationHandlers {
 	let mutationTail: Promise<void> = Promise.resolve();
 	const serialize = <T>(work: () => Promise<T>): Promise<T> => {
 		const result = mutationTail.then(work, work);
@@ -56,7 +63,8 @@ export function createProjectEnvironmentOperationHandlers(options: ProjectEnviro
 	// provisioning operation while another client is reading it.  Run it through
 	// the same queue as user mutations so a second snapshot cannot make the
 	// first compare-and-swap commit stale after the provider has done work.
-	const snapshot = async (context?: RequestContext): Promise<JsonValue> => { if(context!==undefined)await serialize(() => resumePendingOperations(options,context));const presentations=context===undefined?new Map<string,ProviderEnvironmentStatus>():await refreshRuntimeStatuses(options,context);return snapshotDto(await options.repository.load(),options.workspace,options.providerDefinitions?.()??[],presentations); };
+	const recoverPending = async (context: RequestContext): Promise<void> => serialize(() => resumePendingOperations(options, context));
+	const snapshot = async (context?: RequestContext): Promise<JsonValue> => { if(context!==undefined)await recoverPending(context);const presentations=context===undefined?new Map<string,ProviderEnvironmentStatus>():await refreshRuntimeStatuses(options,context);return snapshotDto(await options.repository.load(),options.workspace,options.providerDefinitions?.()??[],presentations); };
 	const commands = {
 		[PROJECT_ENVIRONMENT_OPERATIONS.createProject]: async (request: any) => {
 			permission(request.context, 'environments:manage');
@@ -129,7 +137,7 @@ export function createProjectEnvironmentOperationHandlers(options: ProjectEnviro
 		},
 	} satisfies Record<string, any>;
 	const queries={ [PROJECT_ENVIRONMENT_OPERATIONS.snapshot]: async (request:any) => { permission(request.context, 'environments:read'); exact(request.envelope.payload, []); return snapshot(request.context); }, [PROJECT_ENVIRONMENT_OPERATIONS.resolveOptions]:async(request:any)=>{permission(request.context,'environments:read');const payload=exact(request.envelope.payload,['providerId','sourceId','profileId','query','cursor','values']);return runtimeCall<JsonValue>(options,text(payload,'providerId',256),'resolveOptions',{sourceId:text(payload,'sourceId',256),...(payload.profileId===undefined?{}:{profileId:text(payload,'profileId',256)}),...(payload.query===undefined?{}:{query:text(payload,'query',1024)}),...(payload.cursor===undefined?{}:{cursor:text(payload,'cursor',1024)}),values:values(payload.values) as Record<string,JsonValue>},providerContext(request.context));}};
-	return { queries, commands, policies: { ...Object.fromEntries(Object.keys(queries).map(name=>[name,{scope:'read'}])), ...Object.fromEntries(Object.keys(commands).map((name) => [name, { scope: 'write' }])) } };
+	return { queries, commands, policies: { ...Object.fromEntries(Object.keys(queries).map(name=>[name,{scope:'read'}])), ...Object.fromEntries(Object.keys(commands).map((name) => [name, { scope: 'write' }])) }, recoverPending };
 }
 
 function mutation(options: ProjectEnvironmentOperationOptions, serialize: <T>(work: () => Promise<T>) => Promise<T>, update: (state: ProjectEnvironmentState, payload: Record<string, JsonValue>, context: ProviderControlContext) => Promise<ProjectEnvironmentState>) {
