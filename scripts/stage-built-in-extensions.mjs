@@ -25,7 +25,12 @@ export async function stageBuiltInExtensions(options = {}) {
   const next = `${output}.next`;
   try {
     await npm(root, ["run", "build", "--workspace", SDK]);
-    if (!options.skipChecks) await buildAndTest(root, catalogue);
+    // `npm pack` takes the checked-in dist/ output. Development must therefore
+    // compile every built-in before it stages the immutable artifact tree;
+    // otherwise a source change can silently boot the previous extension code.
+    // `skipChecks` keeps restarts quick by skipping tests only, never builds.
+    await buildExtensions(root, catalogue);
+    if (!options.skipChecks) await testExtensions(root, catalogue);
     const packs = join(temporary, "packs");
     await mkdir(packs);
     const sdk = await pack(root, SDK, packs, true);
@@ -77,10 +82,15 @@ export async function stageBuiltInExtensions(options = {}) {
   }
 }
 
-async function buildAndTest(root, catalogue) {
+async function buildExtensions(root, catalogue) {
   for (const entry of catalogue) {
     await npm(root, ["run", "build", "--workspace", entry.packageName, "--if-present"]);
     await npm(root, ["run", "compile", "--workspace", entry.packageName, "--if-present"]);
+  }
+}
+
+async function testExtensions(root, catalogue) {
+  for (const entry of catalogue) {
     await npm(root, ["test", "--workspace", entry.packageName]);
   }
 }
