@@ -90,6 +90,26 @@ test('provider provisioning persists opaque state, resumes after restart, refres
   assert.deepEqual(calls,['testProfile','createEnvironment','resumeOperation','getStatus','resolveOptions','invokeAction']);
 });
 
+test('concurrent snapshots serialize durable provisioning recovery before provider side effects', async()=>{
+  const subject=fixture(); await subject.repository.load(); let active=0; let maximumActive=0; let resumes=0;
+  const providerDefinitions=()=>[{providerId:'com.example.cloud/vm',displayName:'Cloud VM',capabilities:['terminal','filesystem'],createForm:{id:'create',title:'Create',sections:[],submitLabel:'Create'}}];
+  const providerRuntime={async invokeProvider(invocation){
+    if(invocation.callback==='testProfile')return [];
+    if(invocation.callback==='createEnvironment')return {state:'pending',operationId:'job-1',providerState:{machineId:'vm-1'},progress:{operationId:'job-1',title:'Creating',resumable:true,stages:[{id:'create',label:'Creating',state:'active'}]}};
+    if(invocation.callback==='resumeOperation'){resumes+=1;active+=1;maximumActive=Math.max(maximumActive,active);await new Promise((resolve)=>setTimeout(resolve,15));active-=1;return {state:'ready',providerState:{machineId:'vm-1'},status:{state:'available',defaultRoot:'/work',revision:1}};}
+    if(invocation.callback==='getStatus')return {state:'available',defaultRoot:'/work',revision:1};
+    throw new Error(`unexpected ${invocation.callback}`);
+  }};
+  const operations=createProjectEnvironmentOperationHandlers({repository:subject.repository,workspace:subject.workspace,thisServerRoot:()=>'/home/server',providerDefinitions,providerRuntime});
+  const context={connectionId:'c',clientId:'client-a',authScope:'admin',permissions:['environments:read','environments:manage'],signal:new AbortController().signal,expectedRevision:undefined};
+  await operations.commands['project-environments.create']({envelope:{type:'command',commandId:'create-cloud',correlationId:'create-cloud',operation:'project-environments.create',payload:{providerId:'com.example.cloud/vm',values:{name:'VM'}}},body:new Uint8Array(),context});
+  const request=()=>operations.queries['project-environments.snapshot']({envelope:{type:'query',queryId:`snapshot-${Math.random()}`,operation:'project-environments.snapshot',payload:{}},body:new Uint8Array(),context});
+  await Promise.all([request(),request()]);
+  assert.equal(maximumActive,1);
+  assert.equal(resumes,1);
+  assert.equal(subject.repository.state.environments['env:create-cloud'].status,'ready');
+});
+
 test('a provisioning environment projects a safe status-card action without leaving its durable operation', async()=>{
   const subject=fixture(); await subject.repository.load(); const calls=[];
   const providerDefinitions=()=>[{providerId:'com.example.cloud/vm',displayName:'Cloud VM',capabilities:['terminal','filesystem'],createForm:{id:'create',title:'Create',sections:[],submitLabel:'Create'}}];

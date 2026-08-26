@@ -63,6 +63,9 @@ using the stable SSH provider contract/test double until live convergence.
   facts and actions are optional, so their absence must not invalidate and hide
   the complete provider/connection snapshot.
 - [x] Support Run in background and recovery after UI/client/server restart.
+- [x] Serialize concurrent snapshot-driven recovery of one durable operation,
+  so a successful address/SSH transition is committed exactly once rather than
+  being lost to a stale compare-and-swap after the SSH binding has been made.
 - [x] On every failure preserve the VM and offer Retry/Edit SSH/Start/Stop/
   Reboot/Delete/Open in Puzed; never auto-delete or fall back Local.
 

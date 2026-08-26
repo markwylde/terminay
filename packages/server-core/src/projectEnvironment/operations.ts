@@ -45,13 +45,17 @@ export interface ProjectEnvironmentOperationOptions {
 /** Fixed UI-facing management surface. Provider configuration remains behind
  * server callbacks; values and raw provider errors never enter response DTOs. */
 export function createProjectEnvironmentOperationHandlers(options: ProjectEnvironmentOperationOptions): OperationRegistries {
-	const snapshot = async (context?: RequestContext): Promise<JsonValue> => { if(context!==undefined)await resumePendingOperations(options,context);const presentations=context===undefined?new Map<string,ProviderEnvironmentStatus>():await refreshRuntimeStatuses(options,context);return snapshotDto(await options.repository.load(),options.workspace,options.providerDefinitions?.()??[],presentations); };
 	let mutationTail: Promise<void> = Promise.resolve();
 	const serialize = <T>(work: () => Promise<T>): Promise<T> => {
 		const result = mutationTail.then(work, work);
 		mutationTail = result.then(() => undefined, () => undefined);
 		return result;
 	};
+	// Snapshot-driven recovery is a mutation: a provider can advance a durable
+	// provisioning operation while another client is reading it.  Run it through
+	// the same queue as user mutations so a second snapshot cannot make the
+	// first compare-and-swap commit stale after the provider has done work.
+	const snapshot = async (context?: RequestContext): Promise<JsonValue> => { if(context!==undefined)await serialize(() => resumePendingOperations(options,context));const presentations=context===undefined?new Map<string,ProviderEnvironmentStatus>():await refreshRuntimeStatuses(options,context);return snapshotDto(await options.repository.load(),options.workspace,options.providerDefinitions?.()??[],presentations); };
 	const commands = {
 		[PROJECT_ENVIRONMENT_OPERATIONS.createProject]: async (request: any) => {
 			permission(request.context, 'environments:manage');
