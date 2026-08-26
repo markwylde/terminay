@@ -112,15 +112,36 @@ test('Project Environments use a full auxiliary window rather than an editor dia
 	assert.match(surfaces,/detail=\{formTarget === null \? undefined : \(/);
 });
 
-test('installed provider actions open the exact profile or environment journey',()=>{
+test('provider and VM actions open the exact profile or connection journey',()=>{
 	assert.match(app,/projectEnvironmentProviders\.flatMap/);
-	assert.match(app,/Create new Puzed VM/);
+	assert.match(app,/New Puzed provider/);
+	assert.match(app,/Create VM in \$\{profile\.name\}/);
+	assert.match(app,/mode: 'profile'/);
+	assert.match(app,/mode: 'environment'/);
 	assert.match(split,/createActions\.map/);
 	assert.match(browser,/params\.set\('auxiliary', 'project-environments'\)/);
 	assert.match(browser,/params\.set\('provider', request\.intent\.providerId\)/);
 	assert.match(browser,/params\.set\('mode', request\.intent\.mode\)/);
 	assert.match(browser,/initialIntent=\{route\.intent\}/);
 	assert.match(surfaces,/initialIntent \?\? intentFromLocation\(\)/);
+});
+
+test('management separates Puzed providers from selectable connections',()=>{
+	assert.match(environmentManager,/categorySections=/);
+	assert.match(environmentManager,/label: 'Providers'/);
+	assert.match(environmentManager,/label: 'Connections'/);
+	assert.match(environmentManager,/provider/);
+	assert.match(environmentManager,/Create VM/);
+	assert.match(surfaces,/Provider or connection test completed/);
+	assert.doesNotMatch(surfaces,/environments=\{\[\.\.\.environments, \.\.\.profiles/);
+	assert.match(surfaces,/profiles=\{profiles\}/);
+	assert.match(surfaces,/selectionHint/);
+	assert.match(environmentManager,/onSelectionHintHandled/);
+	assert.match(split,/Choose project connection/);
+	assert.match(split,/connectionGroups/);
+	assert.match(split,/connectionOwnerLabels/);
+	assert.match(app,/connectionOwnerLabels=/);
+	assert.match(split,/Providers are managed separately/);
 });
 
 test('remote project selection invokes the server and never falls back to Local',()=>{

@@ -5,6 +5,7 @@ import { statusLabel } from './uiModel';
 export type ProjectEnvironmentCreateAction = Readonly<{
 	providerId: string;
 	label: string;
+	mode: 'profile' | 'environment';
 	profileId?: string;
 	description?: string;
 }>;
@@ -12,6 +13,7 @@ export type ProjectEnvironmentCreateAction = Readonly<{
 export function ProjectEnvironmentSplitButton({
 	canCreate,
 	environments,
+	connectionOwnerLabels,
 	onCreateThisServer,
 	createActions,
 	onChoose,
@@ -22,6 +24,7 @@ export function ProjectEnvironmentSplitButton({
 }: Readonly<{
 	canCreate: boolean;
 	environments: readonly ProjectEnvironmentSummaryDto[];
+	connectionOwnerLabels?: Readonly<Record<string, string>>;
 	onCreateThisServer: () => void;
 	createActions: readonly ProjectEnvironmentCreateAction[];
 	onChoose: (environment: ProjectEnvironmentSummaryDto) => void;
@@ -45,6 +48,18 @@ export function ProjectEnvironmentSplitButton({
 						.includes(normalized),
 		);
 	}, [environments, query]);
+	const connectionGroups = useMemo(() => {
+		const groups = new Map<string, ProjectEnvironmentSummaryDto[]>();
+		for (const connection of choices) {
+			const owner = connection.isThisServer
+				? 'This Terminay Server'
+				: connectionOwnerLabels?.[connection.id] ?? connection.providerLabel;
+			const group = groups.get(owner) ?? [];
+			group.push(connection);
+			groups.set(owner, group);
+		}
+		return [...groups.entries()];
+	}, [choices, connectionOwnerLabels]);
 
 	useEffect(() => {
 		if (!open) return;
@@ -154,7 +169,7 @@ export function ProjectEnvironmentSplitButton({
 				ref={arrowRef}
 				type="button"
 				className="project-tab-add project-environment-split__arrow"
-				aria-label="Choose project environment"
+			aria-label="Choose project connection"
 				aria-haspopup="menu"
 				aria-expanded={open}
 				onClick={() => (open ? closeMenu() : openMenu())}
@@ -179,23 +194,26 @@ export function ProjectEnvironmentSplitButton({
 					ref={menuRef}
 					className="project-environment-menu"
 					role="menu"
-					aria-label="Choose project environment"
+					aria-label="Choose project connection"
 					onKeyDown={handleMenuKeyDown}
 				>
 					<header>
-						<strong>Choose project environment</strong>
-						<span>Connections are owned by this Terminay Server.</span>
+						<strong>Choose project connection</strong>
+						<span>Connections are owned by this Terminay Server. Providers are managed separately.</span>
 					</header>
 					<label className="project-environment-menu__search">
 						<span className="sr-only">Search environments</span>
 						<input
 							value={query}
 							onChange={(event) => setQuery(event.target.value)}
-							placeholder="Search environments"
+							placeholder="Search connections"
 						/>
 					</label>
 					<div className="project-environment-menu__items">
-						{choices.map((environment) => (
+						{connectionGroups.map(([owner, connections]) => (
+							<div className="project-environment-menu__group" key={owner}>
+								<h2>{owner}</h2>
+								{connections.map((environment) => (
 							<button
 								key={environment.id}
 								type="button"
@@ -225,6 +243,8 @@ export function ProjectEnvironmentSplitButton({
 									{statusLabel(environment.status)}
 								</span>
 							</button>
+								))}
+							</div>
 						))}
 						{choices.length === 0 ? (
 							<p role="status">No matching environments.</p>
