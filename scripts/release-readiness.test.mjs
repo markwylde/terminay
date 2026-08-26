@@ -75,6 +75,12 @@ test('release workflow keeps readiness, artifact builds, and hosted publication 
   assert.match(release.slice(releaseIndex, binariesIndex), /needs: smoke-test/)
   assert.match(release.slice(binariesIndex, notesIndex), /needs: release/)
   assert.match(release.slice(notesIndex), /needs: \[release, build-binaries, build-standalone-server\]/)
+  const standaloneJob = release.slice(standaloneIndex, notesIndex)
+  const applicationGraphBuild = standaloneJob.indexOf('npm run build:application-graph')
+  const postcompile = standaloneJob.indexOf('npm run build:server-postcompile')
+  const pack = standaloneJob.indexOf('npm pack --workspace @terminay/server')
+  assert.ok(applicationGraphBuild >= 0 && postcompile > applicationGraphBuild && pack > postcompile,
+    'standalone packaging must build the server dependency graph and postcompile artifacts before packing a fresh checkout')
   assert.doesNotMatch(release, /build-web-image|terminay-web|Dockerfile\.web|web-image-integration/)
   assert.match(packageJson.scripts['test:ci'], /test:release-evidence/)
   assert.match(release, /npm run test:release-evidence/)
