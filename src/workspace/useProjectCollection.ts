@@ -11,10 +11,12 @@ import { normalizeSidebarPanelOrder } from '../terminalSettings';
 import type { SidebarSettings } from '../types/settings';
 import {
 	createProjectTab,
+	isProjectSidebarOpenOnDevice,
 	type ProjectSidebarState,
 	type ProjectTab,
 	projectSidebarPatch,
 	projectSidebarState,
+	projectSidebarVisibilityKey,
 } from './projectTabModel';
 
 const DEFAULT_AGENTS_PANE_HEIGHT = 200;
@@ -71,6 +73,8 @@ export function useProjectCollection<TTerminal>({
 	defaultProjectRoot = '',
 	isAdoptWindow,
 	projectColorScope,
+	sidebarVisibilityScope,
+	onProjectSidebarVisibilityChange,
 	confirmProjectClose,
 	holdProjectOrderRef,
 	holdActiveProjectIdRef,
@@ -84,6 +88,12 @@ export function useProjectCollection<TTerminal>({
 	isAdoptWindow: boolean;
 	/** Stable server identity used only to synthesize unpersisted project colors. */
 	projectColorScope: string;
+	/** Stable server identity that scopes an opaque project id to this device. */
+	sidebarVisibilityScope: string;
+	onProjectSidebarVisibilityChange?: (
+		projectId: string,
+		isOpen: boolean,
+	) => void;
 	confirmProjectClose?: (projectId: string) => Promise<boolean>;
 	holdProjectOrderRef?: MutableRefObject<string | null>;
 	/** While non-null, keep this renderer selection stable even if a background
@@ -94,6 +104,7 @@ export function useProjectCollection<TTerminal>({
 	workspaceViewId: string | null;
 }) {
 	const sidebarDefaultsRef = useRef(sidebarSettings);
+	const sidebarVisibilityRef = useRef(sidebarSettings.projectVisibility);
 	const projectCounterRef = useRef(1);
 	const initialServerSnapshot = workspaceSnapshotStore?.snapshot;
 	const hasServerWorkspace = workspaceSnapshotStore !== undefined;
@@ -125,6 +136,11 @@ export function useProjectCollection<TTerminal>({
 				return {
 					...base,
 					...projectSidebarState(serverProject.sidebar),
+					isFileExplorerOpen: isProjectSidebarOpenOnDevice(
+						sidebarSettings,
+						sidebarVisibilityScope,
+						serverProject.id,
+					),
 					id: serverProject.id,
 					projectEnvironmentId: serverProject.projectEnvironmentId,
 					environmentRevision: serverProject.environmentRevision,
@@ -191,6 +207,20 @@ export function useProjectCollection<TTerminal>({
 	}, [sidebarSettings]);
 
 	useEffect(() => {
+		sidebarVisibilityRef.current = sidebarSettings.projectVisibility;
+		setProjects((current) =>
+			current.map((project) => ({
+				...project,
+				isFileExplorerOpen: isProjectSidebarOpenOnDevice(
+					sidebarSettings,
+					sidebarVisibilityScope,
+					project.id,
+				),
+			})),
+		);
+	}, [sidebarSettings, sidebarVisibilityScope]);
+
+	useEffect(() => {
 		projectsRef.current = projects;
 	}, [projects]);
 
@@ -232,6 +262,14 @@ export function useProjectCollection<TTerminal>({
 						return {
 							...base,
 							...sidebar,
+							isFileExplorerOpen: isProjectSidebarOpenOnDevice(
+								{
+									...sidebarDefaultsRef.current,
+									projectVisibility: sidebarVisibilityRef.current,
+								},
+								sidebarVisibilityScope,
+								serverProject.id,
+							),
 							id: serverProject.id,
 							projectEnvironmentId: serverProject.projectEnvironmentId,
 							environmentRevision: serverProject.environmentRevision,
@@ -280,6 +318,7 @@ export function useProjectCollection<TTerminal>({
 	}, [
 		holdActiveProjectIdRef,
 		projectColorScope,
+		sidebarVisibilityScope,
 		workspaceSnapshotStore,
 		workspaceViewId,
 	]);
@@ -323,7 +362,10 @@ export function useProjectCollection<TTerminal>({
 					name: `Project ${Object.keys(snapshot.projects).length + 1}`,
 					color: presentation.color,
 					icon: presentation.emoji,
-					sidebar: projectSidebarState(presentation),
+					sidebar: {
+						...projectSidebarState(presentation),
+						isFileExplorerOpen: false,
+					},
 				})
 				.then(() => setProjectCreationError(null))
 				.catch((error) => {
@@ -569,7 +611,22 @@ export function useProjectCollection<TTerminal>({
 
 	const updateProject = useCallback(
 		(projectId: string, updates: Partial<ProjectTab>) => {
-			const { rootFolder, ...localUpdates } = updates;
+			const { isFileExplorerOpen, rootFolder, ...localUpdates } = updates;
+			if (isFileExplorerOpen !== undefined) {
+				sidebarVisibilityRef.current = {
+					...sidebarVisibilityRef.current,
+					[projectSidebarVisibilityKey(sidebarVisibilityScope, projectId)]:
+						isFileExplorerOpen,
+				};
+				setProjects((current) =>
+					current.map((project) =>
+						project.id === projectId
+							? { ...project, isFileExplorerOpen }
+							: project,
+					),
+				);
+				onProjectSidebarVisibilityChange?.(projectId, isFileExplorerOpen);
+			}
 			const sidebar = projectSidebarPatch(localUpdates);
 			const nonSidebarUpdates = { ...localUpdates };
 			if (sidebar !== null) {
@@ -607,7 +664,12 @@ export function useProjectCollection<TTerminal>({
 					void workspaceSnapshotStore.refresh().catch(() => undefined);
 				});
 		},
-		[commitProjectSidebar, workspaceSnapshotStore],
+		[
+			commitProjectSidebar,
+			onProjectSidebarVisibilityChange,
+			sidebarVisibilityScope,
+			workspaceSnapshotStore,
+		],
 	);
 
 	const activateProject = useCallback(

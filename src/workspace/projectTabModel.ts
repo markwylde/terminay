@@ -34,7 +34,6 @@ export type ProjectTab = {
 export type ProjectSidebarState = Pick<
 	ProjectTab,
 	| 'fileExplorerWidth'
-	| 'isFileExplorerOpen'
 	| 'isExplorerPaneCollapsed'
 	| 'isAgentsPaneCollapsed'
 	| 'isGitPaneCollapsed'
@@ -59,7 +58,6 @@ type ProjectSidebarInput = Omit<
 
 const PROJECT_SIDEBAR_KEYS: readonly (keyof ProjectSidebarState)[] = [
 	'fileExplorerWidth',
-	'isFileExplorerOpen',
 	'isExplorerPaneCollapsed',
 	'isAgentsPaneCollapsed',
 	'isGitPaneCollapsed',
@@ -72,6 +70,38 @@ const PROJECT_SIDEBAR_KEYS: readonly (keyof ProjectSidebarState)[] = [
 	'sidebarDocumentationHeight',
 	'sidebarPanelOrder',
 ];
+
+export function projectSidebarVisibilityKey(
+	serverId: string,
+	projectId: string,
+): string {
+	return `${serverId}:${projectId}`;
+}
+
+export function isProjectSidebarOpenOnDevice(
+	sidebarSettings: SidebarSettings,
+	serverId: string,
+	projectId: string,
+): boolean {
+	return sidebarSettings.projectVisibility[
+		projectSidebarVisibilityKey(serverId, projectId)
+	] === true;
+}
+
+export function withProjectSidebarVisibility(
+	sidebarSettings: SidebarSettings,
+	serverId: string,
+	projectId: string,
+	isOpen: boolean,
+): SidebarSettings {
+	return {
+		...sidebarSettings,
+		projectVisibility: {
+			...sidebarSettings.projectVisibility,
+			[projectSidebarVisibilityKey(serverId, projectId)]: isOpen,
+		},
+	};
+}
 
 export function projectSidebarState(project: ProjectSidebarInput): ProjectSidebarState {
 	return {
