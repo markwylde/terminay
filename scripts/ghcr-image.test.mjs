@@ -229,10 +229,11 @@ test('provider-specific workflow folders resolve only their compatible artifact 
 		return next === -1 ? workflow.slice(start) : workflow.slice(start, start + header.length + next);
 	};
 
-	const github = `${job(githubCi, 'e2e-image')}\n${job(githubCi, 'e2e-test')}`;
-	const gitea = `${job(giteaCi, 'e2e-image')}\n${job(giteaCi, 'e2e-test')}`;
-	assert.match(github, /(?:ea165f8d65b6e75b540449e92b4886f43607fa02|d3f86a106a0bac45b974a628896c90dbdf5c8093)/u);
-	assert.doesNotMatch(github, /(?:ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5|9bc31d5ccc31df68ecc42ccf4149144866c47d8a)/u);
-	assert.match(gitea, /(?:ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5|9bc31d5ccc31df68ecc42ccf4149144866c47d8a)/u);
-	assert.doesNotMatch(gitea, /(?:ea165f8d65b6e75b540449e92b4886f43607fa02|d3f86a106a0bac45b974a628896c90dbdf5c8093)/u);
+  const github = `${job(githubCi, 'e2e-image')}\n${job(githubCi, 'e2e-test')}`;
+  const gitea = `${job(giteaCi, 'e2e-image')}\n${job(giteaCi, 'e2e-test')}`;
+  assert.match(github, /(?:ea165f8d65b6e75b540449e92b4886f43607fa02|d3f86a106a0bac45b974a628896c90dbdf5c8093)/u);
+  assert.doesNotMatch(github, /(?:ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5|9bc31d5ccc31df68ecc42ccf4149144866c47d8a)/u);
+  assert.match(gitea, /docker login git\.i\.wylde\.net/u);
+  assert.match(gitea, /docker pull "\$IMAGE_TAG"/u);
+  assert.doesNotMatch(gitea, /actions\/download-artifact/u);
 });
