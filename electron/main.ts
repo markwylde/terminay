@@ -182,9 +182,10 @@ const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const DICTATION_OPENAI_SECRET_ID = 'dictation-openai-api-key';
 const DICTATION_OPENAI_SECRET_NAME = 'OpenAI API key';
 /**
- * Leaves room for the project tab bar, four rendered sidebar title rows, and a
- * usable workspace body. The flat sidebar solver treats anything smaller as an
- * explicitly unsupported embedded/web presentation rather than clipping titles.
+ * Leaves room for the project tab bar, sidebar group tabs, the active group's
+ * pane titles, and a usable workspace body. The flat sidebar solver treats
+ * anything smaller as an explicitly unsupported embedded/web presentation
+ * rather than clipping titles.
  */
 const MAIN_PROJECT_WINDOW_MIN_HEIGHT = 260;
 const desktopTestCredentialCodec =

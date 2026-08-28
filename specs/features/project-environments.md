@@ -206,7 +206,9 @@ Safe public statuses include `ready`, `connecting`, `reconnecting`,
 
 ## Project-bar and management experience
 
-The project bar uses an accessible split button:
+The project bar uses an accessible split button. Its `+` and arrow are
+separate icon buttons with the same even pacing as the panel-strip add
+controls, not a joined chip:
 
 - the primary `+` immediately creates a new This server project;
 - every equivalent native-menu, keyboard-shortcut, and command-palette action

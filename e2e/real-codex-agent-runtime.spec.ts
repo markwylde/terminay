@@ -1,6 +1,6 @@
 import { expect, test } from './fixtures';
 import { typeInVisibleTerminal } from './support/terminal-input';
-import { openFileExplorer, openTerminalEditWindow, submitEditWindow } from './support/ui';
+import { openTerminalEditWindow, selectSidebarGroup, submitEditWindow } from './support/ui';
 
 test.skip(
 	process.env.TERMINAY_REAL_CODEX_E2E !== '1',
@@ -27,7 +27,7 @@ test('a real authenticated Codex CLI appears in the Agents pane', async ({
 	if ((await terminal.textContent())?.includes('Press enter to continue')) {
 		await typeInVisibleTerminal(mainWindow, '\n');
 	}
-	await openFileExplorer(mainWindow);
+	await selectSidebarGroup(mainWindow, 'agents');
 	const root = mainWindow.locator('.agents-sidebar__tree-item');
 	await expect(root).toBeVisible({ timeout: 60_000 });
 	await expect(root.locator('.agents-sidebar__metadata')).toContainText('Codex');

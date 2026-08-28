@@ -93,15 +93,14 @@ export function SidebarPane(props: SidebarPaneProps): JSX.Element {
 						className="sidebar-pane__drag-handle"
 						aria-label={`Reorder ${title} panel`}
 						title={`Drag to reorder ${title}`}
+						tabIndex={0}
 						onPointerDown={reorder.onPointerDown}
 						onKeyDown={(event: KeyboardEvent<HTMLButtonElement>) => {
-							if (event.key === 'ArrowUp') {
-								event.preventDefault();
-								reorder.onMove(-1);
-							} else if (event.key === 'ArrowDown') {
-								event.preventDefault();
-								reorder.onMove(1);
-							}
+							if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')
+								return;
+							event.preventDefault();
+							event.stopPropagation();
+							reorder.onMove(event.key === 'ArrowUp' ? -1 : 1);
 						}}
 					>
 						<GripVertical size={13} aria-hidden="true" />
