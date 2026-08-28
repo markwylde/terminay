@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const main = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8');
+const main = await readFile(
+	new URL('../electron/main.ts', import.meta.url),
+	'utf8',
+);
 const preload = await readFile(
 	new URL('../electron/serverUiPreload.ts', import.meta.url),
 	'utf8',
@@ -58,6 +61,14 @@ test('diagnostics initialize before Electron readiness, recovery window, and Loc
 			diagnosticsStart,
 	);
 	assert.match(main, /crashReporter,/u);
+	assert.match(
+		main,
+		/await embeddedStartupWindow\.loadURL\(desktopStartupLoadingDocument\(\)\)/u,
+	);
+	assert.doesNotMatch(
+		main,
+		/void embeddedStartupWindow[\s\S]{0,80}loadURL\(desktopStartupLoadingDocument\(\)\)/u,
+	);
 });
 
 test('the pre-server Desktop loading document is self-contained and branded', () => {
@@ -99,10 +110,7 @@ test('the verified bootstrap loader keeps the native loader’s viewport centre'
 
 test('embedded vault unlock occurs after recovery setup and before Local renderer admission', () => {
 	const ready = main.indexOf('async function completeDesktopStartup');
-	const embeddedReady = main.indexOf(
-		'await embeddedRuntimeReady',
-		ready,
-	);
+	const embeddedReady = main.indexOf('await embeddedRuntimeReady', ready);
 	const unlock = main.indexOf('await embeddedVault.unlock', ready);
 	const localReady = main.indexOf("event: 'local-server.ready'", ready);
 	const launch = main.indexOf(
@@ -127,7 +135,10 @@ test('canonical preload exposes only negotiated host actions and bounded server 
 	assert.match(preload, /parseTerminayHostContext/u);
 	assert.match(preload, /parseTerminayHostActionRequest/u);
 	assert.match(preload, /parseTerminayHostBytePacket/u);
-	assert.doesNotMatch(preload, /terminayDiagnosticsHost|desktop:diagnostics-host/u);
+	assert.doesNotMatch(
+		preload,
+		/terminayDiagnosticsHost|desktop:diagnostics-host/u,
+	);
 });
 
 test('Local server diagnostics are semantic and PTY data paths never call the sink', () => {
@@ -140,7 +151,10 @@ test('Local server diagnostics are semantic and PTY data paths never call the si
 		'local-server.stopped',
 		'local-server.terminal-congestion',
 	]) {
-		assert.match(main, new RegExp(`event: '${event.replaceAll('.', '\\.')}'`, 'u'));
+		assert.match(
+			main,
+			new RegExp(`event: '${event.replaceAll('.', '\\.')}'`, 'u'),
+		);
 	}
 	const terminalEventStart = main.indexOf('function handleServerTerminalEvent');
 	const terminalEventEnd = main.indexOf('\n}', terminalEventStart) + 2;
@@ -150,14 +164,20 @@ test('Local server diagnostics are semantic and PTY data paths never call the si
 		/desktopDiagnostics/u,
 	);
 	const acceptedWriteStart = main.indexOf('onAcceptedWrite:');
-	const acceptedResizeStart = main.indexOf('onAcceptedResize:', acceptedWriteStart);
+	const acceptedResizeStart = main.indexOf(
+		'onAcceptedResize:',
+		acceptedWriteStart,
+	);
 	assert.doesNotMatch(
 		main.slice(acceptedWriteStart, acceptedResizeStart),
 		/desktopDiagnostics/u,
 	);
 	assert.doesNotMatch(authority, /desktopDiagnostics/u);
 	const fileFailureStart = main.indexOf('onFileOperationFailure:');
-	const fileFailureEnd = main.indexOf('// These callbacks run', fileFailureStart);
+	const fileFailureEnd = main.indexOf(
+		'// These callbacks run',
+		fileFailureStart,
+	);
 	assert.ok(fileFailureStart > 0 && fileFailureEnd > fileFailureStart);
 	const fileFailure = main.slice(fileFailureStart, fileFailureEnd);
 	assert.match(fileFailure, /operation: failure\.operation/u);
@@ -195,7 +215,10 @@ test('hosted remote pairing diagnostics are named events without pairing URLs', 
 		'local-server.remote-webrtc.application-lane',
 		'local-server.remote-webrtc.peer-closed',
 	]) {
-		assert.match(diagnostics, new RegExp(`'${event.replaceAll('.', '\\.')}'`, 'u'));
+		assert.match(
+			diagnostics,
+			new RegExp(`'${event.replaceAll('.', '\\.')}'`, 'u'),
+		);
 		assert.match(mapper, new RegExp(`'${event.replaceAll('.', '\\.')}'`, 'u'));
 	}
 	assert.match(host, /rotateHandoff/u);

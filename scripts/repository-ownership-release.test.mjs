@@ -18,7 +18,7 @@ test('repository ownership decision is backed by the matched release topology', 
   assert.match(runtime, /server-bundled workspace UI/u)
   assert.match(runtime, /same source as the desktop experience/u)
   assert.match(ci, /npm run test:ci/u)
-  assert.match(ci, /npm run test:e2e -- --shard=\$\{\{ matrix\.shard \}\}\/5/u)
+  assert.match(ci, /npm run test:e2e -- --shard=\$\{\{ matrix\.shard \}\}\/10/u)
   assert.match(release, /Sync package version to release tag/u)
   assert.match(release, / {2}build-binaries:/u)
   assert.match(release, / {2}build-standalone-server:/u)

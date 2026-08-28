@@ -1,4 +1,4 @@
-import type { BrowserWindow, Event } from 'electron';
+import type { BrowserWindow, Event, WebContents } from 'electron';
 
 function boundedLaunchError(error: unknown): string {
 	const message = error instanceof Error ? error.message : String(error);
@@ -18,6 +18,23 @@ function launchRecoveryDocument(message: string): string {
 		.replaceAll('"', '&quot;');
 	const html = `<!doctype html><html><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>Terminay recovery</title><style>html{color-scheme:dark;font:15px system-ui;background:#0e1319;color:#edf2f8}body{min-height:100vh;margin:0;display:grid;place-items:center}.panel{width:min(560px,calc(100vw - 48px));padding:28px;border:1px solid #334050;border-radius:12px;background:#151c24}h1{font-size:22px;margin:0 0 10px}p{color:#aeb9c8;line-height:1.5}a{display:inline-block;margin-top:12px;padding:10px 18px;border-radius:7px;background:#1687f8;color:white;text-decoration:none;font-weight:650}</style></head><body><main class="panel" role="alert"><h1>Terminay could not open this workspace</h1><p>${escaped}</p><a href="https://terminay.invalid/retry">Retry</a></main></body></html>`;
 	return `data:text/html;charset=UTF-8,${encodeURIComponent(html)}`;
+}
+
+/** Overlapping `loadURL` calls leave Chromium pending on macOS/Linux CI. Stop
+ * the current document first so recovery can replace the startup loader. */
+async function settleInFlightNavigation(
+	webContents: WebContents,
+): Promise<void> {
+	try {
+		if (!webContents.isDestroyed() && webContents.isLoading()) {
+			webContents.stop();
+		}
+	} catch {
+		// Native teardown has already retired the document.
+	}
+	await new Promise<void>((resolve) => {
+		setImmediate(resolve);
+	});
 }
 
 export async function showCanonicalLaunchRecovery(
@@ -70,15 +87,18 @@ export async function showCanonicalLaunchRecovery(
 		setImmediate(() => {
 			void Promise.resolve()
 				.then(options.retry)
-				.catch((error) =>
-					showCanonicalLaunchRecovery({ ...options, error }),
-				);
+				.catch((error) => showCanonicalLaunchRecovery({ ...options, error }));
 		});
 	};
 	try {
 		targetWebContents.on('will-navigate', retryNavigation);
 		setRecoveryState(true);
+		await settleInFlightNavigation(targetWebContents);
+		if (options.window.isDestroyed() || targetWebContents.isDestroyed()) {
+			throw new Error('recovery window destroyed');
+		}
 		await options.window.loadURL(launchRecoveryDocument(message));
+		if (!options.window.isDestroyed()) options.window.show();
 	} catch {
 		// A WebContents can be destroyed while this asynchronous recovery document
 		// is loading. Remove the listener and contain that race: Electron must not
