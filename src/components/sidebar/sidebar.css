@@ -1,3 +1,43 @@
+.sidebar-group-tabs {
+	display: flex;
+	align-items: stretch;
+	flex: 0 0 auto;
+	height: var(--panel-tab-strip-height, 38px);
+	gap: var(--panel-tab-inset, 4px);
+	padding: var(--panel-tab-inset, 4px);
+	background: var(--project-chrome);
+	border-bottom: 1px solid rgba(0, 0, 0, 0.22);
+}
+
+.sidebar-group-tab {
+	all: unset;
+	box-sizing: border-box;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: var(--panel-tab-height, 30px);
+	height: 100%;
+	border-radius: var(--panel-tab-radius, 4px);
+	color: color-mix(in srgb, var(--tab-text-selected, #ffffff) 62%, transparent);
+	cursor: pointer;
+}
+
+.sidebar-group-tab:hover {
+	color: var(--tab-text-selected, #ffffff);
+	background: rgba(255, 255, 255, 0.1);
+}
+
+.sidebar-group-tab--active {
+	color: var(--tab-text-selected, #ffffff);
+	background: rgba(255, 255, 255, 0.1);
+}
+
+.sidebar-group-tab:focus-visible {
+	outline: 1px solid rgba(87, 183, 255, 0.7);
+	outline-offset: -1px;
+	color: #ffffff;
+}
+
 .sidebar-panel-stack {
 	position: relative;
 	height: 100%;
@@ -136,8 +176,8 @@
 	display: flex;
 	align-items: center;
 	flex: 0 0 auto;
-	background: var(--project-chrome);
-	border-bottom: 1px solid rgba(0, 0, 0, 0.22);
+	background: var(--tabbar-bg, #090b0e);
+	border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 /* Keep title actions usable where an overlay sash crosses a title boundary. */

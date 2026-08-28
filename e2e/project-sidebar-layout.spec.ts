@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page, test } from './fixtures';
-import { openFileExplorer, setProjectRoot } from './support/ui';
+import { openFileExplorer, selectSidebarGroup, setProjectRoot } from './support/ui';
 
 type WorkspaceCommandRecord = Readonly<{
 	operation: string;
@@ -85,6 +85,40 @@ async function resetCommandRecords(page: Page): Promise<void> {
 		await candidate.resetCommandRecords();
 	});
 }
+
+const EXPLORER_GROUP_IDS = ['explorer', 'git'] as const;
+
+test('sidebar groups switch Explorer, Documentation, and Agents stacks', async ({
+	mainWindow,
+}) => {
+	await openFileExplorer(mainWindow);
+	const tablist = mainWindow
+		.locator('.project-workspace--active')
+		.getByRole('tablist', { name: 'Sidebar' });
+	await expect(tablist.getByRole('tab', { name: 'Explorer' })).toHaveAttribute(
+		'aria-selected',
+		'true',
+	);
+	await expect(sidebarPane(mainWindow, 'explorer')).toBeVisible();
+	await expect(sidebarPane(mainWindow, 'git')).toBeVisible();
+	await expect(sidebarPane(mainWindow, 'documentation')).toHaveCount(0);
+	await expect(sidebarPane(mainWindow, 'agents')).toHaveCount(0);
+
+	await selectSidebarGroup(mainWindow, 'documentation');
+	await expect(sidebarPane(mainWindow, 'documentation')).toBeVisible();
+	await expect(sidebarPane(mainWindow, 'explorer')).toHaveCount(0);
+	await expect(sidebarPane(mainWindow, 'git')).toHaveCount(0);
+	await expect(sidebarPane(mainWindow, 'agents')).toHaveCount(0);
+
+	await selectSidebarGroup(mainWindow, 'agents');
+	await expect(sidebarPane(mainWindow, 'agents')).toBeVisible();
+	await expect(sidebarPane(mainWindow, 'explorer')).toHaveCount(0);
+	await expect(sidebarPane(mainWindow, 'documentation')).toHaveCount(0);
+
+	await selectSidebarGroup(mainWindow, 'explorer');
+	await expect(sidebarPane(mainWindow, 'explorer')).toBeVisible();
+	await expect(sidebarPane(mainWindow, 'git')).toBeVisible();
+});
 
 test('sidebar visibility stays local to this device and project', async ({
 	mainWindow,
@@ -341,24 +375,24 @@ test('real pointer releases preserve every repeated sidebar resize through React
 	test.setTimeout(90_000);
 	await openFileExplorer(mainWindow);
 	await requireWorkspaceTest(mainWindow);
-	const ids = ['explorer', 'agents', 'git', 'documentation'];
+	const ids = [...EXPLORER_GROUP_IDS];
 	for (const id of ids) await expandPane(mainWindow, id);
 	await expectTitleSafePanelLayout(mainWindow, ids);
 	await resetCommandRecords(mainWindow);
 
 	const interactions = [
-		['agents', 42],
+		['git', 42],
 		['git', -36],
-		['documentation', 30],
-		['agents', -42],
+		['git', 30],
+		['git', -42],
 		['git', 36],
-		['documentation', -30],
-		['agents', 42],
+		['git', -30],
+		['git', 42],
 		['git', -36],
-		['documentation', 30],
-		['agents', -42],
+		['git', 30],
+		['git', -42],
 		['git', 36],
-		['documentation', -30],
+		['git', -30],
 	] as const;
 	const traces: ResizeReleaseTrace[] = [];
 	for (const [index, [followingPaneId, deltaY]] of interactions.entries()) {
@@ -375,7 +409,7 @@ test('real pointer releases preserve every repeated sidebar resize through React
 
 	expect(traces).toHaveLength(12);
 	expect(new Set(traces.map((trace) => trace.followingPaneId))).toEqual(
-		new Set(['agents', 'git', 'documentation']),
+		new Set(['git']),
 	);
 	await expectTitleSafePanelLayout(mainWindow, ids);
 });
@@ -397,12 +431,11 @@ type FastGitResizeSample = Readonly<{
 
 /**
  * This is the manual failure report, deliberately without settling between
- * pointer down and pointer up: Explorer, Agents and Git are expanded;
- * Documentation is collapsed; the Agents/Git boundary moves upward and the
- * button is released in under 600ms. The full trace remains in the assertion
- * output when the boundary later springs back.
+ * pointer down and pointer up: Files and Git are expanded; the Files/Git
+ * boundary moves upward and the button is released in under 600ms. The full
+ * trace remains in the assertion output when the boundary later springs back.
  */
-test('fast real release of the Agents/Git boundary does not spring back', async ({
+test('fast real release of the Files/Git boundary does not spring back', async ({
 	electronApp,
 	mainWindow,
 }) => {
@@ -415,49 +448,23 @@ test('fast real release of the Agents/Git boundary does not spring back', async 
 	});
 	await openFileExplorer(mainWindow);
 	await requireWorkspaceTest(mainWindow);
-	for (const id of ['explorer', 'agents', 'git']) {
+	for (const id of EXPLORER_GROUP_IDS) {
 		await expandPane(mainWindow, id);
 	}
-	const documentation = sidebarPane(mainWindow, 'documentation');
-	if (
-		!(await documentation.evaluate((element) =>
-			element.classList.contains('sidebar-pane--collapsed'),
-		))
-	) {
-		await documentation.locator('.sidebar-pane__header').click();
-		await expect(documentation).toHaveClass(/sidebar-pane--collapsed/);
-	}
-	// Match the screenshot-like geometry before the reported gesture: a short
-	// Explorer, a tall Agents pane, a visible Git body, and collapsed Docs.
-	// Each setup resize is allowed to reconcile; only the final reported drag is
-	// intentionally fast and unsettled.
 	const stackBox = await activeSidebar(mainWindow).boundingBox();
 	if (!stackBox) throw new Error('Sidebar stack has no geometry.');
-	const desiredAgentsBoundary = Math.round(stackBox.height * 0.22);
-	const desiredGitBoundary = Math.round(stackBox.height * 0.64);
-	for (const [followingPaneId, desiredOffset] of [
-		['agents', desiredAgentsBoundary],
-		['git', desiredGitBoundary],
-	] as const) {
-		const currentOffset = await sidebarBoundaryOffset(
-			mainWindow,
-			followingPaneId,
-		);
-		await dragHandle(
-			mainWindow,
-			followingPaneId,
-			desiredOffset - currentOffset,
-		);
-		await mainWindow.mouse.up();
-		await expect
-			.poll(() => sidebarBoundaryOffset(mainWindow, followingPaneId))
-			.toBeCloseTo(desiredOffset, 0);
-	}
+	const desiredGitBoundary = Math.round(stackBox.height * 0.45);
+	const currentOffset = await sidebarBoundaryOffset(mainWindow, 'git');
+	await dragHandle(mainWindow, 'git', desiredGitBoundary - currentOffset);
+	await mainWindow.mouse.up();
+	await expect
+		.poll(() => sidebarBoundaryOffset(mainWindow, 'git'))
+		.toBeCloseTo(desiredGitBoundary, 0);
 
 	await resetCommandRecords(mainWindow);
 	const handle = resizeHandle(mainWindow, 'git');
 	const box = await handle.boundingBox();
-	if (!box) throw new Error('Agents/Git resize handle has no hit box.');
+	if (!box) throw new Error('Files/Git resize handle has no hit box.');
 	const x = box.x + box.width / 2;
 	const y = box.y + box.height / 2;
 	const startedAt = Date.now();
@@ -511,7 +518,7 @@ test('fast real release of the Agents/Git boundary does not spring back', async 
 	);
 	expect(
 		escaped,
-		`Agents/Git boundary sprang back after a fast release: ${JSON.stringify({
+		`Files/Git boundary sprang back after a fast release: ${JSON.stringify({
 			elapsedBeforeReleaseMs: Date.now() - startedAt,
 			samples,
 			commandRecords: await commandRecords(mainWindow),
@@ -525,23 +532,14 @@ test('fast real release of the Agents/Git boundary does not spring back', async 
  * pane set. Each attempt samples through the first post-release second; the
  * assertion prints every failed release rather than concealing a 2-in-3 rate.
  */
-test('twenty immediate real releases of the Agents/Git boundary never spring back', async ({
+test('twenty immediate real releases of the Files/Git boundary never spring back', async ({
 	mainWindow,
 }) => {
 	test.setTimeout(75_000);
 	await openFileExplorer(mainWindow);
 	await requireWorkspaceTest(mainWindow);
-	for (const id of ['explorer', 'agents', 'git']) {
+	for (const id of EXPLORER_GROUP_IDS) {
 		await expandPane(mainWindow, id);
-	}
-	const documentation = sidebarPane(mainWindow, 'documentation');
-	if (
-		!(await documentation.evaluate((element) =>
-			element.classList.contains('sidebar-pane--collapsed'),
-		))
-	) {
-		await documentation.locator('.sidebar-pane__header').click();
-		await expect(documentation).toHaveClass(/sidebar-pane--collapsed/);
 	}
 	await resetCommandRecords(mainWindow);
 
@@ -552,7 +550,7 @@ test('twenty immediate real releases of the Agents/Git boundary never spring bac
 	for (let attempt = 1; attempt <= 20; attempt += 1) {
 		const handle = resizeHandle(mainWindow, 'git');
 		const box = await handle.boundingBox();
-		if (!box) throw new Error('Agents/Git resize handle has no hit box.');
+		if (!box) throw new Error('Files/Git resize handle has no hit box.');
 		const x = box.x + box.width / 2;
 		const y = box.y + box.height / 2;
 		const samples: FastGitResizeSample[] = [];
@@ -593,7 +591,7 @@ test('twenty immediate real releases of the Agents/Git boundary never spring bac
 		const restoreHandle = resizeHandle(mainWindow, 'git');
 		const restoreBox = await restoreHandle.boundingBox();
 		if (!restoreBox)
-			throw new Error('Agents/Git restore handle has no hit box.');
+			throw new Error('Files/Git restore handle has no hit box.');
 		await mainWindow.mouse.move(
 			restoreBox.x + restoreBox.width / 2,
 			restoreBox.y + restoreBox.height / 2,
@@ -619,7 +617,7 @@ test('twenty immediate real releases of the Agents/Git boundary never spring bac
 	});
 	expect(
 		bounced,
-		`Fast Agents/Git release traces: ${JSON.stringify({
+		`Fast Files/Git release traces: ${JSON.stringify({
 			bounced,
 			commandRecords: await commandRecords(mainWindow),
 		})}`,
@@ -632,7 +630,7 @@ test('project sidebar keeps titles visible while previewing and committing VS Co
 	test.setTimeout(45_000);
 	await openFileExplorer(mainWindow);
 	await requireWorkspaceTest(mainWindow);
-	const ids = ['explorer', 'agents', 'git', 'documentation'];
+	const ids = [...EXPLORER_GROUP_IDS];
 	for (const id of ids) {
 		await expandPane(mainWindow, id);
 		await expect(sidebarTitle(mainWindow, id)).toBeVisible();
@@ -653,8 +651,8 @@ test('project sidebar keeps titles visible while previewing and committing VS Co
 		);
 	}
 
-	const handle = resizeHandle(mainWindow, 'agents');
-	const title = sidebarTitle(mainWindow, 'agents');
+	const handle = resizeHandle(mainWindow, 'git');
+	const title = sidebarTitle(mainWindow, 'git');
 	const [handleBox, titleBox] = await Promise.all([
 		handle.boundingBox(),
 		title.boundingBox(),
@@ -667,7 +665,7 @@ test('project sidebar keeps titles visible while previewing and committing VS Co
 
 	await resetCommandRecords(mainWindow);
 	const startExplorerHeight = before.panes.explorer.body.height;
-	await dragHandle(mainWindow, 'agents', 48);
+	await dragHandle(mainWindow, 'git', 48);
 	await expect
 		.poll(
 			async () =>
@@ -694,16 +692,19 @@ test('project sidebar keeps titles visible while previewing and committing VS Co
 	);
 	expect(verticalCommit.command?.sidebar).toEqual(
 		expect.objectContaining({
-			sidebarAgentsHeight: expect.any(Number),
-			sidebarDocumentationHeight: expect.any(Number),
 			sidebarExplorerHeight: expect.any(Number),
 			sidebarGitHeight: expect.any(Number),
+		}),
+	);
+	expect(verticalCommit.command?.sidebar).not.toEqual(
+		expect.objectContaining({
+			sidebarAgentsHeight: expect.any(Number),
 		}),
 	);
 
 	const after = await panelGeometry(mainWindow, ids);
 	expect(
-		Math.abs(after.panes.agents.title.top - preview.panes.agents.title.top),
+		Math.abs(after.panes.git.title.top - preview.panes.git.title.top),
 	).toBeLessThanOrEqual(1);
 	expect(after.stack.scrollHeight).toBeLessThanOrEqual(
 		after.stack.clientHeight + 1,
@@ -724,11 +725,11 @@ test('sidebar resize cancellation and width previews do not flood workspace comm
 }) => {
 	await openFileExplorer(mainWindow);
 	await requireWorkspaceTest(mainWindow);
-	const ids = ['explorer', 'agents', 'git', 'documentation'];
+	const ids = [...EXPLORER_GROUP_IDS];
 	for (const id of ids) await expandPane(mainWindow, id);
 	const initial = await panelGeometry(mainWindow, ids);
 	await resetCommandRecords(mainWindow);
-	const point = await dragHandle(mainWindow, 'agents', 42);
+	const point = await dragHandle(mainWindow, 'git', 42);
 	await mainWindow.evaluate(
 		({ pointerId, x, y }) => {
 			window.dispatchEvent(
@@ -787,7 +788,7 @@ test('every vertical boundary supports repeated bidirectional and keyboard resiz
 }) => {
 	await openFileExplorer(mainWindow);
 	await requireWorkspaceTest(mainWindow);
-	const ids = ['explorer', 'agents', 'git', 'documentation'];
+	const ids = [...EXPLORER_GROUP_IDS];
 	for (const id of ids) await expandPane(mainWindow, id);
 
 	for (const followingPaneId of ids.slice(1)) {
@@ -811,7 +812,7 @@ test('every vertical boundary supports repeated bidirectional and keyboard resiz
 		await expect(handle).toHaveAttribute('aria-valuenow', /\d+/);
 	}
 
-	const keyboardHandle = resizeHandle(mainWindow, 'agents');
+	const keyboardHandle = resizeHandle(mainWindow, 'git');
 	await resetCommandRecords(mainWindow);
 	await keyboardHandle.focus();
 	await mainWindow.keyboard.press('ArrowDown');
@@ -827,13 +828,13 @@ test('every vertical boundary supports repeated bidirectional and keyboard resiz
 		)
 		.toBe(4);
 
-	const documentation = sidebarPane(mainWindow, 'documentation');
-	await documentation.locator('.sidebar-pane__header').click();
-	await expect(documentation).toHaveClass(/sidebar-pane--collapsed/);
-	await expect(sidebarTitle(mainWindow, 'documentation')).toBeVisible();
-	await documentation.locator('.sidebar-pane__header').click();
-	await expect(documentation).not.toHaveClass(/sidebar-pane--collapsed/);
-	await mainWindow.getByLabel('Reorder Documentation panel').press('ArrowUp');
+	const git = sidebarPane(mainWindow, 'git');
+	await git.locator('.sidebar-pane__header').click();
+	await expect(git).toHaveClass(/sidebar-pane--collapsed/);
+	await expect(sidebarTitle(mainWindow, 'git')).toBeVisible();
+	await git.locator('.sidebar-pane__header').click();
+	await expect(git).not.toHaveClass(/sidebar-pane--collapsed/);
+	await mainWindow.getByLabel('Reorder Git panel').press('ArrowUp');
 	await expect
 		.poll(async () =>
 			activeSidebar(mainWindow)
@@ -844,7 +845,7 @@ test('every vertical boundary supports repeated bidirectional and keyboard resiz
 					),
 				),
 		)
-		.toContain('documentation');
+		.toEqual(['git', 'explorer']);
 	const geometry = await panelGeometry(mainWindow, ids);
 	for (const id of ids) {
 		expect(geometry.panes[id].title.top).toBeGreaterThanOrEqual(
@@ -874,7 +875,7 @@ test('sidebar never becomes the vertical scroller at supported window heights', 
 	});
 	await setProjectRoot(mainWindow, workspace.rootDir);
 	await openFileExplorer(mainWindow);
-	const ids = ['explorer', 'agents', 'git', 'documentation'];
+	const ids = [...EXPLORER_GROUP_IDS];
 	for (const id of ids) await expandPane(mainWindow, id);
 
 	for (const height of [520, 700]) {
@@ -927,7 +928,7 @@ test('normal project windows enforce the title-safe minimum height', async ({
 	mainWindow,
 }) => {
 	await openFileExplorer(mainWindow);
-	const ids = ['explorer', 'agents', 'git', 'documentation'];
+	const ids = [...EXPLORER_GROUP_IDS];
 	for (const id of ids) await expandPane(mainWindow, id);
 
 	const constrainedHeight = await electronApp.evaluate(({ BrowserWindow }) => {
@@ -960,14 +961,14 @@ test('committed pane sizes remain project-local through project switching and re
 }) => {
 	test.setTimeout(90_000);
 	await openFileExplorer(mainWindow);
-	const ids = ['explorer', 'agents', 'git', 'documentation'];
+	const ids = [...EXPLORER_GROUP_IDS];
 	for (const id of ids) await expandPane(mainWindow, id);
 	const firstProjectId = await mainWindow
 		.locator('.project-tab--active')
 		.getAttribute('data-project-id');
 	if (!firstProjectId)
 		throw new Error('Active project identity is unavailable.');
-	await dragHandle(mainWindow, 'agents', 56);
+	await dragHandle(mainWindow, 'git', 56);
 	await mainWindow.mouse.up();
 	const firstHeight = (await panelGeometry(mainWindow, ids)).panes.explorer.body
 		.height;

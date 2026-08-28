@@ -5,7 +5,7 @@ import type { Page } from '@playwright/test';
 import { _electron as electron } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { sendAppCommand } from './support/app';
-import { openFileExplorer } from './support/ui';
+import { openFileExplorer, selectSidebarGroup } from './support/ui';
 
 async function getActiveSessionId(page: Page): Promise<string> {
 	const sessionId = await page.locator('.terminal-panel:visible').first().getAttribute('data-terminay-terminal-session-id');
@@ -84,7 +84,7 @@ test('Codex rollout state projects to the terminal indicator and Agents sidebar'
 		type: 'event_msg', payload: { type: 'user_message', message: 'Implement the stable agent status flow', model: 'gpt-test-codex' },
 	});
 	await expect(agentTab.locator('.agent-status-indicator[data-agent-state="working"]')).toBeVisible();
-	await openFileExplorer(mainWindow);
+	await selectSidebarGroup(mainWindow, 'agents');
 	await expect(mainWindow.locator('.agents-sidebar__name')).toContainText('Implement the stable agent status flow');
 	await expect(mainWindow.locator('.agents-sidebar__metadata')).toContainText('Terminal 2 · Codex · gpt-test-codex');
 
@@ -121,7 +121,7 @@ test('a completed agent resumes working while a second running agent appears', a
 		type: 'event_msg',
 		payload: { type: 'task_complete', turn_id: 'turn-1' },
 	});
-	await openFileExplorer(mainWindow);
+	await selectSidebarGroup(mainWindow, 'agents');
 	const firstAgent = mainWindow
 		.locator('.agents-sidebar__tree-item')
 		.filter({ hasText: 'Web disconnect bug' });
@@ -180,7 +180,7 @@ test('agent integration setting disables and restores journal-backed status', as
 	await beginCodexSession(mainWindow, sessionId, 'codex-restored');
 	await emitJournalRecord(mainWindow, sessionId, { type: 'event_msg', payload: { type: 'task_started', turn_id: 'turn-1' } });
 	await emitJournalRecord(mainWindow, sessionId, { type: 'event_msg', payload: { type: 'user_message', message: 'Agent integration restored' } });
-	await openFileExplorer(mainWindow);
+	await selectSidebarGroup(mainWindow, 'agents');
 	await expect(mainWindow.locator('.agents-sidebar__name')).toContainText('Agent integration restored');
 });
 
@@ -255,8 +255,8 @@ test('two live Desktop profiles keep Agents panes isolated', async ({
 				kind: 'started',
 			},
 		});
-		await openFileExplorer(mainWindow);
-		await openFileExplorer(isolatedWindow);
+		await selectSidebarGroup(mainWindow, 'agents');
+		await selectSidebarGroup(isolatedWindow, 'agents');
 		await expect(mainWindow.locator('.agents-sidebar__name')).toContainText('Profile A agent');
 		await expect(mainWindow.locator('.agents-sidebar__name')).not.toContainText('Profile B agent');
 		await expect(isolatedWindow.locator('.agents-sidebar__name')).toContainText('Profile B agent');

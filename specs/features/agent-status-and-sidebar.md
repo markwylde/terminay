@@ -422,10 +422,10 @@ output, assistant text, and reasoning are never projected.
 
 ## Agents pane and activation
 
-The **Agents** pane is an ordinary collapsible project-sidebar section beside
-Explorer and Git. It shows only roots whose exact activation terminal belongs
-to the current project and nests children beneath them. Rows use stable ordering
-and existing tree geometry. Missing metadata is omitted and prompts are bounded.
+The **Agents** pane is the Agents sidebar group's collapsible pane. It shows
+only roots whose exact activation terminal belongs to the current project and
+nests children beneath them. Rows use stable ordering and existing tree
+geometry. Missing metadata is omitted and prompts are bounded.
 
 Activating a row activates its exact project and terminal panel, focuses the
 terminal, and acknowledges that entry without changing operational state. No

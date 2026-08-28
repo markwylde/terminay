@@ -15,8 +15,9 @@ the isolated [MDX browser runtime](./mdx-browser-runtime.md).
 
 ## Documentation pane
 
-- Documentation joins Explorer, Agents, and Git in the persistent, reorderable,
-  vertically resizable sidebar stack.
+- Documentation lives in the Documentation sidebar group as a collapsible,
+  vertically resizable pane. Additional panes in that group can be reordered
+  with it; its height and collapse state persist with the project.
 - It appears for every project. Its order, height, collapse state, and folder
   expansion state persist with that project without changing project files or
   another project's sidebar.
@@ -209,8 +210,8 @@ resumption before editing or previewing.
 
 ## Acceptance outcomes
 
-- The Documentation pane can be reordered and resized with the other sidebar
-  panes and retains explicit collapse choices.
+- The Documentation pane can be collapsed, resized with sibling panes in its
+  group, and retains explicit collapse choices.
 - The tree contains only non-ignored folders leading to `.md` or `.mdx` files,
   updates after external changes, and retains unrelated expansion and selection.
 - Valid YAML `title` frontmatter controls tree and tab titles; malformed or
