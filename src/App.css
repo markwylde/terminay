@@ -72,7 +72,7 @@
 .project-tab-add-box {
   display: flex;
   align-items: stretch;
-  padding: 5px 4px 5px 0;
+  padding: 5px 4px;
   -webkit-app-region: no-drag;
   height: 100%;
   flex-shrink: 0;
@@ -944,20 +944,21 @@
 .project-tab-add {
   height: 100%;
   aspect-ratio: 1;
+  padding: 0;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.05);
-  opacity: 0.6;
+  color: rgba(220, 226, 240, 0.55);
+  background: transparent;
   -webkit-app-region: no-drag;
 }
 
-.project-tab-add:hover {
-  opacity: 1;
-  background: rgba(255, 255, 255, 0.1);
+.project-tab-add:hover:not(:disabled) {
+  color: #dce2f0;
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .project-tab-add:disabled {
   cursor: default;
-  opacity: 0.28;
+  opacity: 0.35;
 }
 
 .project-tab-sidebar-toggle {
@@ -2773,6 +2774,14 @@ body.project-tabbar-reordering .project-tabbar {
   flex-direction: column;
   overflow: hidden;
   background: var(--terminal-panel-surface, var(--tab-bg-active));
+}
+
+.file-explorer-sidebar__group {
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .file-explorer-sidebar__body {

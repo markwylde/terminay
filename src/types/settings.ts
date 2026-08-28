@@ -59,6 +59,8 @@ export type GitPanelViewMode = 'list' | 'tree';
 export type SidebarPaneState = 'expanded' | 'collapsed';
 export const SIDEBAR_PANEL_IDS = ['explorer', 'agents', 'git', 'documentation'] as const;
 export type SidebarPanelId = (typeof SIDEBAR_PANEL_IDS)[number];
+export const SIDEBAR_GROUP_IDS = ['explorer', 'documentation', 'agents'] as const;
+export type SidebarGroupId = (typeof SIDEBAR_GROUP_IDS)[number];
 
 export type SidebarSettings = {
 	gitPanelViewMode: GitPanelViewMode;
@@ -73,6 +75,8 @@ export type SidebarSettings = {
 	panelOrder: SidebarPanelId[];
 	/** Device-local open/closed preference, indexed by server and project id. */
 	projectVisibility: Record<string, boolean>;
+	/** Device-local selected sidebar group, indexed by server and project id. */
+	projectActiveGroup: Record<string, SidebarGroupId>;
 };
 
 export type FileViewerSettings = {

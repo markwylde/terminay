@@ -19,12 +19,14 @@ identity. Project-sidebar sizing and title-visibility behavior is governed by
 
 - Users can create, rename, reorder, close, and colour/icon project tabs.
   The active project tab’s colour continues into the panel tab strip and the
-  sidebar pane titles, which use that chrome with white labels. Pane bodies
-  share the terminal background, so the workspace uses two surfaces: project
-  chrome and terminal. Sidebar pane titles stay quiet on hover; only title
+  sidebar group tab bar, so that chrome reads as one band. Sidebar
+  pane titles use the dark project-bar surface with white labels. Pane bodies
+  share the terminal background. Sidebar pane titles stay quiet on hover; only title
   actions such as refresh, explorer file rows, and the 4px resize rail
   highlight. The sidebar toggle is an icon on the dark project bar; hover
-  highlights it slightly. Panel tabs on that strip use a 4px corner: the
+  highlights it slightly. The new-project `+` and environment-chooser arrow
+  are separate icon buttons with the same even pacing as the panel-strip
+  add controls, not a joined chip. Panel tabs on that strip use a 4px corner: the
   active panel tab is the solid chip, and inactive tabs stay quiet until hover.
 - The project tab bar never steals trailing chrome. Sidebar toggle, new-project
   control, activity, and the Local connection pill stay fully visible. When
@@ -176,14 +178,15 @@ client focus.
 ## Acceptance outcomes
 
 - Multi-project work remains independent when roots, tabs, layouts, or sidebar
-  state changes. Reloading restores the current device's sidebar visibility for
-  each project; reconnecting restores each project's pane order, dimensions,
-  collapse choices, and supported pane navigation state without changing a
-  different device's visibility.
+  state changes. Reloading restores the current device's sidebar visibility and
+  selected sidebar group for each project; reconnecting restores each project's
+  pane order, dimensions, collapse choices, and supported pane navigation state
+  without changing a different device's visibility or selected group.
 - Resizing a project sidebar previews locally and commits once when the
-  interaction finishes. Every visible pane title remains on-screen, the sidebar
-  itself does not scroll vertically, and overflowing pane content scrolls inside
-  its own pane.
+  interaction finishes. The sidebar tab bar switches Explorer, Documentation,
+  and Agents. Every visible pane title in the active group remains on-screen,
+  the sidebar itself does not scroll vertically, and overflowing pane content
+  scrolls inside its own pane.
 - One view may contain This server, SSH, and Puzed projects without clients
   connecting directly to the target machines.
 - Moving or popping a project does not duplicate a terminal session or lose its
@@ -201,11 +204,14 @@ client focus.
   a wide overflowing bar the strip fills through to `+` and Local, the
   switcher stays on that right edge, at least one extra tab continues
   behind the pill, and the active project remains a real tab.
-- The active project tab stays visually joined to its panel tab strip. Sidebar
-  pane titles use that same chrome with white labels and stay quiet on hover,
-  pane bodies share the terminal background, title actions and explorer rows
-  still highlight, the sidebar toggle is an icon until hover, and inactive
-  panel tabs stay secondary to the active chip.
+- The active project tab stays visually joined to its panel tab strip and the
+  sidebar group tab bar. Sidebar
+  pane titles use the dark project-bar surface with white labels and stay
+  quiet on hover, pane bodies share the terminal background, title actions
+  and explorer rows still highlight, the sidebar toggle is an icon until hover,
+  the project-bar `+` and environment-chooser arrow keep the same even icon
+  pacing as the panel-strip add controls, and inactive panel tabs stay
+  secondary to the active chip.
 - Reconnecting from a fresh client restores project and panel identity from
   server state without recreating live terminals.
 - Sequentially closing every canonical terminal while another local panel stays

@@ -54,6 +54,25 @@ export async function openFileExplorer(page: Page): Promise<void> {
   await expect(sidebar).toBeVisible()
 }
 
+export async function selectSidebarGroup(
+  page: Page,
+  group: 'explorer' | 'documentation' | 'agents',
+): Promise<void> {
+  await openFileExplorer(page)
+  const label =
+    group === 'explorer'
+      ? 'Explorer'
+      : group === 'documentation'
+        ? 'Documentation'
+        : 'Agents'
+  const tab = page
+    .locator('.project-workspace--active')
+    .getByRole('tab', { name: label })
+  await expect(tab).toBeVisible()
+  await tab.click()
+  await expect(tab).toHaveAttribute('aria-selected', 'true')
+}
+
 export function fileExplorerItem(page: Page, name: string) {
   return page.locator('.file-explorer-tree-item').filter({ hasText: name }).first()
 }

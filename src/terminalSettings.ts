@@ -5,7 +5,9 @@ import {
 	normalizeAccelerator,
 } from './keyboardShortcuts';
 import {
+	SIDEBAR_GROUP_IDS,
 	SIDEBAR_PANEL_IDS,
+	type SidebarGroupId,
 	type SidebarPanelId,
 	type TerminalSettings,
 } from './types/settings';
@@ -465,6 +467,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 		defaultDocumentationPaneHeight: 240,
 		panelOrder: [...SIDEBAR_PANEL_IDS],
 		projectVisibility: {},
+		projectActiveGroup: {},
 	},
 	theme: {
 		foreground: '#dce2f0',
@@ -1130,7 +1133,7 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 		categoryId: 'files',
 		title: 'Sidebar',
 		description:
-			'Default layout for the Explorer, Git, and Documentation panes in the project sidebar.',
+			'Default layout for Files, Git, and Documentation panes in the project sidebar groups.',
 		fields: [
 			makeField({
 				key: 'sidebar.gitPanelViewMode',
@@ -2171,6 +2174,23 @@ function normalizeProjectSidebarVisibility(value: unknown): Record<string, boole
 	return Object.fromEntries(entries.slice(-256));
 }
 
+function normalizeProjectSidebarActiveGroup(
+	value: unknown,
+): Record<string, SidebarGroupId> {
+	if (typeof value !== 'object' || value === null || Array.isArray(value))
+		return {};
+	const allowed = new Set<string>(SIDEBAR_GROUP_IDS);
+	const entries = Object.entries(value).flatMap(([key, groupId]) =>
+		typeof groupId === 'string' &&
+		allowed.has(groupId) &&
+		key.length > 0 &&
+		key.length <= 512
+			? ([[key, groupId as SidebarGroupId]] as const)
+			: [],
+	);
+	return Object.fromEntries(entries.slice(-256));
+}
+
 function normalizeThemeColor(
 	input: Partial<TerminalSettings['theme']>,
 	key: TerminalThemeKey,
@@ -2742,6 +2762,9 @@ export function normalizeTerminalSettings(
 			panelOrder: normalizeSidebarPanelOrder(sidebarInput.panelOrder),
 			projectVisibility: normalizeProjectSidebarVisibility(
 				sidebarInput.projectVisibility,
+			),
+			projectActiveGroup: normalizeProjectSidebarActiveGroup(
+				sidebarInput.projectActiveGroup,
 			),
 		},
 		theme: {

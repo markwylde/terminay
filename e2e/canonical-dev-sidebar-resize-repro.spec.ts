@@ -484,16 +484,9 @@ test('canonical npm run dev retains a rapid Agents/Git resize after mouse-up', a
 		await openFileExplorer(page);
 		await expect(activeSidebar(page)).toBeVisible();
 
-		// Screenshot state: Explorer, Agents, Git expanded; Documentation closed.
-		for (const id of ['explorer', 'agents', 'git'])
+		for (const id of ['explorer', 'git'])
 			await ensurePaneState(page, id, false);
-		await ensurePaneState(page, 'documentation', true);
-		// Match the observed screen before the failing gesture: a short Explorer,
-		// a tall Agents pane, a visible Git pane, and the Documentation title at
-		// the bottom. Setup drags are allowed to settle; only the final drag is
-		// deliberately rapid.
-		await setBoundaryForReportedScreenshot(page, 'agents', 300);
-		await setBoundaryForReportedScreenshot(page, 'git', 762);
+		await setBoundaryForReportedScreenshot(page, 'git', 400);
 		await resetCommandRecords(page);
 		const hasCommandTestSeam = await hasWorkspaceCommandTestSeam(page);
 
@@ -503,10 +496,10 @@ test('canonical npm run dev retains a rapid Agents/Git resize after mouse-up', a
 		for (let attempt = 1; attempt <= 20; attempt += 1) {
 			// Reset to the observed geometry between independent user-equivalent
 			// releases. This step is explicitly outside the sampled fast gesture.
-			await setBoundaryForReportedScreenshot(page, 'git', 762);
+			await setBoundaryForReportedScreenshot(page, 'git', 400);
 			const handle = resizeHandle(page, 'git');
 			const box = await handle.boundingBox();
-			if (!box) throw new Error('The Agents/Git resize handle has no hit box.');
+			if (!box) throw new Error('The Files/Git resize handle has no hit box.');
 			const x = box.x + box.width / 2;
 			const y = box.y + box.height / 2;
 			let pointerDownAt = 0;

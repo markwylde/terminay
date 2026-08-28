@@ -112,10 +112,9 @@ test('installed 3.2 sidebar: rapid Agents/Git mouse release does not bounce', as
 				throw new Error('The installed BrowserWindow is unavailable.');
 			window.setBounds({ ...window.getBounds(), height: 1275, width: 1980 });
 		});
-		for (const id of ['explorer', 'agents', 'git']) {
+		for (const id of ['explorer', 'git']) {
 			await setExpanded(page, id, true);
 		}
-		await setExpanded(page, 'documentation', false);
 		await expect(page.locator('.sidebar-split__splitter')).toHaveCount(2);
 
 		// The second recursive splitter is the top edge of Git: it resizes Agents

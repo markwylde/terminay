@@ -1,7 +1,15 @@
-.project-environment-split { display: flex; position: relative; height: 100%; }
+.project-environment-split {
+  display: flex;
+  align-items: stretch;
+  position: relative;
+  height: 100%;
+  gap: var(--panel-tab-inset, 4px);
+}
 .declarative-provider-preset-cards { display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:12px; }.declarative-provider-preset-cards label { min-height:64px;display:flex;align-items:center;gap:12px;padding:14px 16px;background:var(--settings-input-bg);border:1px solid var(--settings-input-border);border-radius:8px;cursor:pointer;transition:border-color 120ms ease,background 120ms ease; }.declarative-provider-preset-cards label:hover { border-color:color-mix(in srgb,var(--settings-accent) 55%,var(--settings-input-border)); }.declarative-provider-preset-cards label.is-selected { border-color:var(--settings-accent);background:color-mix(in srgb,var(--settings-accent) 14%,var(--settings-input-bg)); }.declarative-provider-preset-cards label.is-disabled { cursor:not-allowed;opacity:.55; }.declarative-provider-preset-cards label span { display:flex;flex-direction:column;gap:4px; }.declarative-provider-preset-cards small { color:var(--settings-text-muted);font-size:12px;line-height:1.4; }.declarative-provider-async-select { display:flex;gap:8px; }.declarative-provider-async-select input { flex:1; }.declarative-provider-async-select button { min-width:82px; }
-.project-environment-split__primary { border-radius: 4px 0 0 4px; }
-.project-environment-split__arrow { width: 22px; aspect-ratio: auto; border-radius: 0 4px 4px 0; border-left: 1px solid rgba(255,255,255,.1); }
+.project-environment-split__arrow {
+  width: 22px;
+  aspect-ratio: auto;
+}
 .project-environment-menu { position: fixed; z-index: 1000; top: calc(100% + 5px); left: 12px; width: min(420px, calc(100vw - 24px)); max-height: min(620px, calc(100vh - 64px)); display: flex; flex-direction: column; padding: 10px; color: #e8edf7; background: #131820; border: 1px solid #303846; border-radius: 10px; box-shadow: 0 18px 50px rgba(0,0,0,.55); }
 .project-environment-menu header { display: flex; flex-direction: column; gap: 3px; padding: 4px 6px 10px; }
 .project-environment-menu header span, .project-environment-menu small { color: #919bab; font-size: 11px; }

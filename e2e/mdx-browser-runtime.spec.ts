@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures';
-import { openFileExplorer, setProjectRoot } from './support/ui';
+import { selectSidebarGroup, setProjectRoot } from './support/ui';
 
 test('Documentation opens MDX through the isolated preview surface', async ({
 	createWorkspace,
@@ -21,7 +21,7 @@ test('Documentation opens MDX through the isolated preview surface', async ({
 		},
 	});
 	await setProjectRoot(mainWindow, workspace.rootDir);
-	await openFileExplorer(mainWindow);
+	await selectSidebarGroup(mainWindow, 'documentation');
 	const documentationPane = mainWindow
 		.locator('.project-workspace--active .sidebar-pane')
 		.filter({
