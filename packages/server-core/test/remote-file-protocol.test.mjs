@@ -17,6 +17,7 @@ function harness() {
 	const directories = new Set(['/home/dev']);
 	const calls = [];
 	let unknownWrite = false;
+	let failRoot = false;
 	const metadata = (path) => ({
 		path,
 		size: files.get(path)?.byteLength ?? 0,
@@ -27,14 +28,18 @@ function harness() {
 	});
 	const service = async (operation, input) => {
 		calls.push({ operation, input });
-		if (operation === 'resolveRoot') return { root: '/home/dev' };
+		if (operation === 'resolveRoot') {
+			if (failRoot) throw new Error('root unavailable');
+			return { root: input.root ?? '/home/dev' };
+		}
 		if (operation === 'realpath') {
+			const base = input.root ?? '/home/dev';
 			const path =
 				input.path === '.'
-					? '/home/dev'
+					? base
 					: input.path.startsWith('/')
 						? input.path
-						: `/home/dev/${input.path}`;
+						: `${base}/${input.path}`;
 			if (!files.has(path) && !directories.has(path)) {
 				const error = new Error('missing');
 				error.code = 'ENOENT';
@@ -134,13 +139,17 @@ function harness() {
 		environmentRevision: 4,
 	};
 	const host = {
-		invokeProvider: ({ request }) => service(request.operation, request.input),
+		invokeProvider: ({ signal, request }) => {
+			if (signal?.aborted) throw new Error('remote filesystem used a disposed request signal');
+			return service(request.operation, request.input);
+		},
 	};
 	const runtime = new ExtensionProjectEnvironmentRuntime(
 		environment.providerId,
 		['filesystem'],
 		host,
 		() => environmentState,
+		(projectId) => workspace.projects[projectId]?.root,
 	);
 	const registry = new ProjectEnvironmentRegistry();
 	registry.register(runtime);
@@ -209,6 +218,8 @@ function harness() {
 		);
 	return {
 		files,
+		directories,
+		workspace,
 		calls,
 		query,
 		command,
@@ -216,6 +227,9 @@ function harness() {
 		localCalls: () => localCalls,
 		setUnknownWrite: () => {
 			unknownWrite = true;
+		},
+		failRoot: (value) => {
+			failRoot = value;
 		},
 	};
 }
@@ -259,6 +273,28 @@ test('fixed file registries map catalog, binary content, folder tasks, and uploa
 	assert.ok(
 		app.calls.filter(({ operation }) => operation === 'list').length >= 2,
 		'manual refresh performs a fresh SFTP listing',
+	);
+	assert.equal(app.localCalls(), 0);
+});
+
+test('remote listings follow the workspace project root', async () => {
+	const app = harness();
+	app.directories.add('/home/dev/test');
+	app.files.set('/home/dev/test/only.txt', Buffer.from('nested'));
+	app.workspace.projects.default = {
+		...app.workspace.projects.default,
+		root: '/home/dev/test',
+	};
+	const listing = await app.query('files.list', { path: '.' });
+	assert.deepEqual(
+		listing.entries.map(({ relativePath }) => relativePath),
+		['only.txt'],
+	);
+	assert.ok(
+		app.calls.some(
+			({ operation, input }) =>
+				operation === 'resolveRoot' && input.root === '/home/dev/test',
+		),
 	);
 	assert.equal(app.localCalls(), 0);
 });
@@ -324,4 +360,37 @@ test('outcome-unknown remote mutations fail closed and are never retried locally
 		app.calls.filter(({ operation }) => operation === 'write').length,
 		1,
 	);
+});
+
+test('later remote listings use a fresh request deadline instead of the first invoke signal', async () => {
+	const app = harness();
+	await app.query('files.list', { path: '.' });
+	const listing = await app.query('files.list', { path: '.' });
+	assert.ok(listing.entries.some(({ relativePath }) => relativePath === 'readme.md'));
+	assert.equal(app.localCalls(), 0);
+});
+
+test('remote directory listings reuse contained entry metadata instead of restatting each child', async () => {
+	const app = harness();
+	await app.query('files.list', { path: '.' });
+	const childPaths = new Set(['/home/dev/readme.md', '/home/dev/binary.bin']);
+	assert.equal(
+		app.calls.filter(
+			({ operation, input }) =>
+				(operation === 'stat' || operation === 'realpath') &&
+				childPaths.has(input.path),
+		).length,
+		0,
+	);
+	assert.ok(app.calls.some(({ operation }) => operation === 'list'));
+});
+
+test('a failed remote root lookup does not pin later listings to the rejected bundle', async () => {
+	const app = harness();
+	app.failRoot(true);
+	await assert.rejects(() => app.query('files.list', { path: '.' }));
+	app.failRoot(false);
+	const listing = await app.query('files.list', { path: '.' });
+	assert.ok(listing.entries.some(({ relativePath }) => relativePath === 'readme.md'));
+	assert.equal(app.localCalls(), 0);
 });

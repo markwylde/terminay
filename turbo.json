@@ -54,6 +54,44 @@
     },
     "lint": {
       "outputs": []
+    },
+    "//#build:dev-desktop": {
+      "dependsOn": [
+        "@terminay/client-core#build",
+        "@terminay/desktop#build",
+        "@terminay/extension-api#build",
+        "@terminay/protocol#build",
+        "@terminay/protocol-conformance#build",
+        "@terminay/responsive-ui#build",
+        "@terminay/server#build",
+        "@terminay/server-core#build",
+        "@terminay/ui-bundle#build",
+        "@terminay/web#build",
+        "terminay-agent-claude-code#compile",
+        "terminay-agent-codex#compile",
+        "terminay-agent-cursor#compile",
+        "terminay-agent-omp#compile",
+        "terminay-plugin-puzed#compile",
+        "terminay-plugin-ssh#compile"
+      ],
+      "inputs": [
+        "electron/**",
+        "src/**",
+        "public/**",
+        "server.html",
+        "remote.html",
+        "vite.config.ts",
+        "vite.server-ui.config.ts",
+        "vite.server-preload.config.ts",
+        "tsconfig.json",
+        "tsconfig.node.json",
+        "tsconfig.base.json",
+        "package.json",
+        "scripts/development-workspace-aliases.mjs",
+        "scripts/build-ui-bundle-manifest.mjs"
+      ],
+      "outputs": ["dist-web/**", "dist-electron/**", "dist/**"],
+      "env": ["NODE_ENV"]
     }
   }
 }

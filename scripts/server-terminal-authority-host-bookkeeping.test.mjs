@@ -548,6 +548,78 @@ test('Local reopening preserves a missing persisted root without aborting the re
 	}
 });
 
+test('Local reopening seeds a remote project even when its root is not on this host', async () => {
+	const pty = createPtyFactory();
+	const workspace = new WorkspaceStore(
+		createInitialWorkspace('desktop-remote-reopen'),
+	);
+	const viewId = workspace.state.viewOrder[0];
+	if (viewId === undefined)
+		throw new Error('Expected the initial Local workspace view.');
+	const apply = (commandId, command) => {
+		const result = workspace.apply({ commandId, command });
+		assert.equal(
+			result.ok,
+			true,
+			result.ok ? undefined : result.conflict.message,
+		);
+	};
+	apply('seed-remote-project', {
+		type: 'project.create',
+		projectId: 'remote-project',
+		viewId,
+		root: '/home/vms-not-on-this-host',
+		name: 'Remote',
+		projectEnvironmentId: 'ssh-env',
+		environmentRevision: 4,
+	});
+	apply('seed-remote-terminal', {
+		type: 'terminal.createPanel',
+		projectId: 'remote-project',
+		sessionId: 'stale-remote',
+		panelId: 'stale-remote-panel',
+		title: 'Terminal 1',
+		cwd: '/home/vms-not-on-this-host',
+		createdAt: 1,
+	});
+
+	const authority = new ServerTerminalAuthority({
+		serverId: 'desktop-remote-reopen',
+		terminalService: new TerminalService({
+			serverId: 'desktop-remote-reopen',
+			ptyFactory: pty,
+			generateSessionId: () => 'fresh-remote',
+		}),
+		workspaceRepository: { wasCreated: false, workspace },
+	});
+	try {
+		await authority.initializeWorkspace();
+		const deadline = Date.now() + 2_000;
+		while (
+			(pty.processes.length === 0 ||
+				(workspace.state.projects['remote-project']?.panelIds.length ?? 0) ===
+					0) &&
+			Date.now() < deadline
+		) {
+			await new Promise((resolve) => setImmediate(resolve));
+		}
+		assert.equal(pty.processes.length, 1);
+		assert.equal(
+			workspace.state.projects['remote-project']?.panelIds.length,
+			1,
+		);
+		assert.equal(workspace.state.terminalSessions['stale-remote'], undefined);
+		assert.equal(
+			Object.values(workspace.state.terminalSessions).some(
+				(session) => session.projectId === 'remote-project',
+			),
+			true,
+		);
+	} finally {
+		await authority.shutdown();
+	}
+});
+
 test('Desktop production authority projects a real PTY foreground process onto its exact activity session', async () => {
 	const authority = new ServerTerminalAuthority({
 		serverId: 'desktop-real-foreground',

@@ -115,11 +115,12 @@ renderer.
 
 Development, packaged, signed, and released Desktop builds use this same
 server-bundle entry, preload boundary, host-context negotiation, byte endpoint,
-workspace hydration, and route composition. A development server may watch and
-rebuild the selected Local server bundle, but it does not select a different
-renderer entry or authority graph. There is no Electron-only full-workspace
-entry, fallback renderer, compatibility workspace client, or environment-based
-branch that changes the application architecture.
+workspace hydration, and route composition. Development rebuilds that selected
+Local server bundle through a cacheable Turbo task and launches Electron
+against the generated files; it does not select a different renderer entry or
+authority graph. There is no Electron-only full-workspace entry, fallback
+renderer, compatibility workspace client, or environment-based branch that
+changes the application architecture.
 
 The shared workspace exposes an in-page File/Edit/View/Help menu only when the
 negotiated host lacks native application menus. Desktop advertises and renders

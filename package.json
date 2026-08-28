@@ -29,6 +29,7 @@
 	"scripts": {
 		"postinstall": "node scripts/ensure-node-pty-helper-mode.mjs",
 		"dev": "node scripts/run-canonical-development.mjs",
+		"build:dev-desktop": "TERMINAY_DEVELOPMENT_SOURCE_WORKSPACES=1 vite build --config vite.server-ui.config.ts && TERMINAY_DEVELOPMENT_SOURCE_WORKSPACES=1 vite build && TERMINAY_DEVELOPMENT_SOURCE_WORKSPACES=1 vite build --config vite.server-preload.config.ts",
 		"dev:electron": "TERMINAY_DEVELOPMENT_SOURCE_WORKSPACES=1 tsc && vite build && electron-builder --dir --mac --arm64 && open \"release/$npm_package_version/mac-arm64/Terminay.app\"",
 		"build:app": "npm run build:application-graph && npm run build:server-postcompile && npm run build:server-ui:bundle && tsc && vite build && vite build --config vite.server-preload.config.ts && node scripts/build-ui-bundle-manifest.mjs dist $npm_package_version 1 remote.html",
 		"build:built-in-extensions": "node scripts/stage-built-in-extensions.mjs",

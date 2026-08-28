@@ -410,7 +410,7 @@ export class TerminalService {
   async currentCwd(
     session: string | TerminalIdentity,
     authorization?: TerminalAuthorization,
-    timeoutMs = 1_000,
+    timeoutMs = 5_000,
   ): Promise<import("./types.js").TerminalCurrentCwd> {
     const mutable = this.requireSession(session);
     this.authorize(mutable, authorization, "read");
@@ -582,6 +582,10 @@ export class TerminalService {
       this.attachProcess(mutable, process);
       return new TerminalSessionHandle(this, mutable);
     } catch (error) {
+			// Development diagnostics are intentionally bounded to the same causal
+			// breadcrumb exposed to protocol clients. This makes an otherwise opaque
+			// remote PTY creation failure actionable without printing provider output.
+			console.error("[terminay-terminal-spawn]", boundedSpawnFailureReason(error));
 			this.sessionsById.delete(identity.sessionId);
 			const process = mutable.process;
 			if (process !== undefined) {
@@ -595,7 +599,11 @@ export class TerminalService {
         serverId: identity.serverId,
         projectId: identity.projectId,
         sessionId: identity.sessionId,
-        reason: error instanceof Error ? error.name : "spawn",
+        // The renderer keeps the user-facing message generic, but the bounded
+        // provider failure is essential to distinguish an SSH transport
+        // failure from an invalid extension response in diagnostics/protocol
+        // clients. Do not retain a stack or unbounded provider output here.
+        reason: boundedSpawnFailureReason(error),
       });
     }
   }
@@ -1096,6 +1104,23 @@ export class TerminalService {
     const prefix = `${this.serverId}:subscription:`;
     return `${prefix}${this.subscriptionCounter}:${sessionId}`.slice(0, 128);
   }
+}
+
+/**
+ * Keep a small causal breadcrumb for terminal diagnostics. Remote providers
+ * intentionally wrap their implementation errors at the routing boundary;
+ * retaining only the bounded error names/messages here lets the owner tell a
+ * rejected PTY from a failed dependency call without serialising a stack or
+ * provider payload.
+ */
+function boundedSpawnFailureReason(error: unknown): string {
+  const parts: string[] = [];
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current instanceof Error; depth += 1) {
+    parts.push(`${current.name}: ${current.message.replace(/[\r\n]/gu, " ")}`);
+    current = current.cause;
+  }
+  return (parts.length === 0 ? "spawn" : parts.join(" <- ")).slice(0, 512);
 }
 
 /** Session-scoped façade useful to application services and tests. */

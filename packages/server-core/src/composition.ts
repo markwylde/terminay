@@ -588,7 +588,10 @@ export function createServerCoreComposition(
 				// Extensions provide the runtime required to resume their durable
 				// operations, so recovery must follow activation but precede normal
 				// client-facing service startup.
-				await projectEnvironmentOperations?.recoverPending(environmentRecoveryContext);
+				// A VM can still be waiting for SSH when the server starts. Recovery is
+				// durable background work, not a prerequisite for serving the workspace;
+				// blocking here made the entire desktop appear unable to open.
+				void projectEnvironmentOperations?.recoverPending(environmentRecoveryContext).catch(() => undefined);
 				await options.settings?.load();
 				await options.serviceLifecycle?.start?.();
 				await options.agents?.start();

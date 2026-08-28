@@ -79,12 +79,15 @@ test('file explorer git status is stable across transient refresh churn', () => 
   assert.match(source, /unavailableWatchFallbacksRef/u)
   assert.match(source, /!unavailableWatchFallbacksRef\.current\.has\(path\)/u)
   assert.match(source, /unavailableWatchFallbacksRef\.current\.add\(path\)/u)
+  const watchCatch = source.match(/fileObservationClient\.startWatch\([\s\S]*?catch \{[\s\S]*?scheduleDirectoryRefresh\(path\);[\s\S]*?\}/u)?.[0] ?? ''
+  assert.ok(watchCatch.length > 0, 'expected Explorer watch fallback')
+  assert.doesNotMatch(watchCatch, /onOperationError\('Explorer'/u)
 
   const catchBlock = source.match(/catch \{[\s\S]*?Preserve the last good projection[\s\S]*?\} finally/u)?.[0] ?? ''
   assert.doesNotMatch(catchBlock, /setGitStatuses\(\{\}\)|setWorktreePanelStatus\(null\)/u)
   assert.doesNotMatch(source, /setGitStatuses\(\{\}\)|setWorktreePanelStatus\(null\)/u)
 
-  const reloadEffect = source.match(/setDirectoryChildren\(\{\}\);[\s\S]*?if \(project\.rootFolder\) \{[\s\S]*?void refreshGitStatusesForRoot\([\s\S]*?\);[\s\S]*?\}/u)?.[0] ?? ''
+  const reloadEffect = source.match(/setDirectoryChildren\(\{\}\);[\s\S]*?if \(project\.rootFolder && explorerReady\) \{[\s\S]*?void refreshGitStatusesForRoot\([\s\S]*?\);[\s\S]*?\}/u)?.[0] ?? ''
   assert.ok(reloadEffect.length > 0, 'expected the root reload effect to be present')
   assert.doesNotMatch(reloadEffect, /setGitStatuses\(\{\}\)|setWorktreePanelStatus\(null\)/u)
 })

@@ -141,7 +141,11 @@ foreground start emits a bounded readiness record and handles `SIGINT` and
 
 - Repository builds use one dependency-aware Turborepo task graph. A package
   build consumes the declared builds of its workspace dependencies instead of
-  recursively rebuilding them itself.
+  recursively rebuilding them itself. `npm run dev` runs that full graph
+  (`build:dev-desktop`) so workspace compiles and the generated Desktop Vite
+  artifacts (`dist-web`, `dist-electron`, `dist`) restore from cache, then
+  stages packed built-ins and launches Electron against those files. It does
+  not start a Vite watcher or hot-module server.
 - Every built-in extension exposes a cacheable compile task, and extension
   artifact staging materializes those tasks through the same graph before
   packing the verified release payload.

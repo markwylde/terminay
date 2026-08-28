@@ -490,11 +490,11 @@ pairing fragment or private key.
 - Desktop and web render the same projects, panels, files, terminals, settings,
   recordings, agents, and connection state.
 - Development and packaged Desktop launch that same server-bundled workspace;
-  development changes asset delivery and rebuild cadence, not renderer entry,
-  preload, state hydration, authority, or host-capability behaviour. The
-  launched server-UI inventory contains only the current build's assets, so
-  leftover hashed files from a previous watch rebuild cannot be published or
-  launched.
+  development changes only whether those generated assets are restored from the
+  Turbo cache or rebuilt, not renderer entry, preload, state hydration,
+  authority, or host-capability behaviour. The launched server-UI inventory
+  contains only the current build's assets, so leftover hashed files from a
+  previous rebuild cannot be published or launched.
 - Source-development Desktop uses a dedicated `Terminay Development` user-data
   namespace by default. It must not read, mutate, or silently attach to an
   installed Terminay release's persistence or embedded server authority. Tests
