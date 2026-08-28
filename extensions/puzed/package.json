@@ -22,6 +22,7 @@
   "files": ["dist", "README.md", "LICENSE"],
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-generated.mjs",
+    "compile": "tsc -p tsconfig.json && node scripts/copy-generated.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test test/*.test.mjs && node scripts/test-packed.mjs",
     "test:ci": "node --test test/*.test.mjs && node scripts/test-packed.mjs",

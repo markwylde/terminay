@@ -152,9 +152,9 @@ identity. Project-sidebar sizing and title-visibility behavior is governed by
 ## Boundaries and persistence
 
 Project identity, immutable environment binding, layout, panel membership,
-project-local sidebar presentation, and logical workspace views are canonical server state under
+project-local sidebar layout, and logical workspace views are canonical server state under
 [server-owned workspace state](./server-owned-workspace-state.md). Desktop
-windows and browser views are presentations of that state. A project is a
+windows and browser views retain their own per-project sidebar visibility. A project is a
 navigation and authorization boundary, while the immutable server terminal
 session id remains the identity used by services. Remote and MCP scopes derive
 from authenticated server/project/session identities, never from tab labels or
@@ -163,9 +163,10 @@ client focus.
 ## Acceptance outcomes
 
 - Multi-project work remains independent when roots, tabs, layouts, or sidebar
-  state changes. Reloading or reconnecting restores each project's own sidebar
-  visibility, pane order, dimensions, collapse choices, and supported pane
-  navigation state.
+  state changes. Reloading restores the current device's sidebar visibility for
+  each project; reconnecting restores each project's pane order, dimensions,
+  collapse choices, and supported pane navigation state without changing a
+  different device's visibility.
 - Resizing a project sidebar previews locally and commits once when the
   interaction finishes. Every visible pane title remains on-screen, the sidebar
   itself does not scroll vertically, and overflowing pane content scrolls inside

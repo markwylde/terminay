@@ -54,7 +54,12 @@ through canonical
 ## Persistence and synchronization
 
 - Pane dimensions, order, and collapse state belong to the project. Switching
-  projects immediately presents the selected project's own sidebar state.
+  projects immediately presents the selected project's own sidebar layout.
+- Sidebar open/closed visibility belongs to the current device and project. It
+  is stored with device preferences under the selected server and opaque
+  project id, so toggling a sidebar affects neither another device nor another
+  project. A device that has no preference for a project presents the sidebar
+  closed.
 - Pointer movement is presentation-local preview state. It does not submit
   workspace commands, publish workspace revisions, or allow an incoming
   canonical snapshot to fight the in-progress drag.
@@ -116,8 +121,9 @@ unrelated workbench layout system.
 - Shrinking and regrowing the window preserves preferred dimensions while
   maintaining title visibility. Collapse, expansion, reorder, and project
   switching preserve the correct pane identities and preferences.
-- Restarting, reloading, reconnecting, or opening a second client restores the
-  committed dimensions without replaying transient drag states or changing a
-  different project.
+- Restarting or reloading the same device restores its sidebar visibility for
+  each project. Reconnecting or opening another client restores the committed
+  project layout without replaying transient drag states, while that client's
+  sidebar visibility remains its own device preference.
 - Pointer and keyboard resizing pass the same geometry, persistence, and
   accessibility expectations in the shared desktop and web renderer.

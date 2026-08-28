@@ -23,7 +23,7 @@ without tying process lifetime to any renderer.
   never provider credentials or configuration.
 - A **project** has a stable id, immutable project-environment id, root folder
   interpreted by that environment, name, colour, icon, optional
-  default shell-profile id, sidebar state, ordered panels, and logical layout.
+  default shell-profile id, sidebar layout, ordered panels, and logical layout.
 - A **panel** has a stable id, type, project ownership, presentation metadata,
   and type-specific state.
 - A **terminal session** has an immutable server-issued id and runtime lifecycle
@@ -44,7 +44,7 @@ The server persists and publishes:
 
 - ordered workspace views and their active project;
 - projects, roots, names, colours, icons, default shell-profile references,
-  immutable environment references, and sidebar configuration;
+  immutable environment references, and sidebar layout configuration;
 - logical panel layout, active panel, splits, order, notes, and appearance;
 - terminal identity, lifecycle, metadata, bounded output position, activity,
   and recording state;
@@ -69,6 +69,7 @@ device:
 - encrypted device keys and reconnect credentials;
 - native window geometry and the mapping from local windows to server/view ids;
 - browser-tab choice when it is not intended to change shared active state;
+- sidebar visibility for each selected server/project pair;
 - transient dialogs, menus, selection, drag previews, and optimistic UI state;
 - hardware and host capabilities such as microphone permission; and
 - explicitly device-specific accessibility/input overrides where using the
