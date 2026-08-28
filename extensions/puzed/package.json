@@ -56,7 +56,7 @@
         "displayName": "Puzed VM",
         "description": "A Terminay-created virtual machine managed by Puzed Platform.",
         "icon": "cloud",
-        "capabilities": ["terminal", "filesystem"]
+        "capabilities": ["terminal", "filesystem", "git", "process-observation"]
       }]
     }
   }

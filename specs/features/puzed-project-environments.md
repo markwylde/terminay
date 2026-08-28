@@ -143,10 +143,11 @@ Automatic placement selects a currently compatible candidate for the required
 Puzed `worker_id`; the create request remains authoritative and may reject
 changed capacity/placement.
 
-Before create, Terminay Server generates a dedicated SSH keypair. The private
-key is stored only in the SSH-owned vault binding; only its public key enters
-the Puzed request. Image-backed creation uses key-only guest login, username
-`vms`, starts the VM, enables address observation, and lets Puzed safely compose
+Before create, Terminay Server generates a dedicated RSA SSH keypair compatible
+with Puzed's cloud-init guest-key path. The private key is stored only in the
+SSH-owned vault binding; only its public key enters the Puzed request.
+Image-backed creation uses key-only guest login, username `vms`, starts the VM,
+enables address observation, and lets Puzed safely compose
 its org/image cloud-init defaults. Blank VMs are not accepted by the automated
 project workflow. Every create request includes the exact `system:Terminay` tag
 so the VM can be rediscovered without admitting unrelated machines.
@@ -161,7 +162,7 @@ The provider owns a durable server-side operation with these safe phases:
 
 ```text
 Preparing -> Submitting -> Provisioning -> Booting -> Waiting for address
--> Verifying SSH -> Awaiting host trust -> Opening project -> Ready
+-> Verifying SSH -> Opening project -> Ready
 ```
 
 Puzed creation is asynchronous. One shared authenticated SSE stream per
@@ -172,13 +173,46 @@ close the route or disconnect; **Run in background** leaves the server saga
 running. A server admits at most 64 distinct Puzed profile/organization streams
 by default (with a hard configurable ceiling of 1,024), while all consumers of
 the same pair share one stream. Concurrent resume requests for one durable
-provisioning operation share one execution.
+provisioning operation share one execution. Server startup resumes every
+durable pending operation after extensions activate; that recovery is not
+dependent on a renderer opening the Project Environments surface.
+Each durable operation receives its own bounded recovery attempt, scheduled
+newest-first. An older VM whose SSH endpoint is unavailable must never consume
+the recovery window needed for a newer VM to advance from Puzed provisioning.
 
 Job success does not imply that an IP or SSH is ready. After success, the
 provider reads machine interfaces, waits for an observed/static address, then
-hands a descriptor to SSH for bounded connection/readiness and host trust. A
-stable logical identity `puzed:<platformProfileId>:<machineId>` preserves strict
-key trust across DHCP address changes. A changed guest key still blocks.
+hands a descriptor to SSH for bounded connection/readiness. For a VM Terminay
+created, Terminay generated the SSH key and supplied its public half in that
+same create request, so it pins that VM's initial host key automatically and
+immediately re-verifies the connection. A stable logical identity
+`puzed:<platformProfileId>:<machineId>` preserves strict key trust across DHCP
+address changes. This automatic initial pin is never presented as a user trust
+prompt. A changed guest key still blocks and requires explicit approval.
+
+While the durable operation remains `provisioning`, its provider may expose a
+safe status card. Status-card facts and actions are optional public extension
+API fields; clients render omitted fields as empty lists rather than rejecting
+the whole environment snapshot. In particular, a changed-host-key challenge
+must offer an explicit replacement action from the pending VM connection; a
+client must not need to wait for the operation to become ready before it can
+approve the key. Initial-key pinning is automatic only for a VM created by this
+provider, never for an existing or manually-composed connection.
+The connection chooser projects that live provider status: an already-created
+VM awaiting SSH is shown as **Connecting** (or **Offline** when SSH is
+unreachable), never misleadingly as still creating a VM.
+Background connection-status polling is non-blocking UI work: it refreshes the
+visible inventory without presenting a persistent global "Working" state or
+hiding saved providers and connections. An initial or explicit refresh is
+bounded and reports an in-flow retryable error if the selected server does not
+respond.
+Provider status snapshots are projections of durable connection state; they do
+not open SSH or SFTP channels. SSH verification belongs to the create/resume
+operation and an explicit retry action. This prevents one stale or slow VM from
+blocking the provider inventory or competing with a project filesystem request.
+That action re-runs SSH verification and reaches **Ready** only on successful
+verification. Connection failures remain a bounded retryable SSH state; they
+never claim that the project environment is available.
 
 If an observed address changes, live SSH sessions are not silently retargeted.
 The next validated connection uses the new address and the stable host identity.
@@ -231,7 +265,8 @@ are excluded.
   key.
 - Job, machine, and observed-address changes are event-driven, survive client
   disconnect, and resume after server restart.
-- Job success waits separately for address, SSH, and host trust.
+- Job success waits separately for address and verified SSH; only a changed
+  host key requires explicit approval.
 - Provisioning/SSH failure preserves the VM and offers explicit recovery; it
   never auto-deletes or falls back Local.
 - Closing a project or Terminay Server changes no VM power state.

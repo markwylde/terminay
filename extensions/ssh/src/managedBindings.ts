@@ -1,5 +1,6 @@
 import { createHash, generateKeyPairSync, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import type {
   JsonValue,
@@ -11,6 +12,11 @@ import type {
 } from "@terminay/extension-api";
 import type { ProfileStore } from "./store.js";
 import { SshProviderError } from "./errors.js";
+
+const require = createRequire(import.meta.url);
+const { utils: sshUtils } = require("@electerm/ssh2") as {
+  utils: { parseKey(key: Buffer): { getPublicSSH(): Buffer } | Error };
+};
 
 const PUZED_EXTENSION_ID = "com.puzed.platform";
 const PUZED_PROVIDER_ID = "com.puzed.platform/vm";
@@ -88,12 +94,15 @@ export class ManagedBindingService {
     const existing = this.#state.bindings[id];
     if (existing) return { bindingId: id, publicKey: existing.publicKey };
     const logicalHostIdentity = optionalText(input.logicalHostIdentityHint) ?? `puzed:${ownerProfileId}:pending:${operationId}`;
-    const generated = generateKeyPairSync("ed25519");
-    const spki = generated.publicKey.export({ format: "der", type: "spki" }) as Buffer;
-    const pkcs8 = generated.privateKey.export({ format: "der", type: "pkcs8" }) as Buffer;
+    // Puzed guests accept the RSA public-key format used by their cloud-init
+    // path.  In contrast, an Ed25519 key can be stored successfully yet leave
+    // SSH authentication waiting indefinitely on those guests.  Keep the
+    // private key in the vault; Puzed receives only its standard SSH public
+    // representation.
+    const generated = generateKeyPairSync("rsa", { modulusLength: 3072 });
     const comment = `terminay-puzed-ssh:${id}`;
-    const privateKey = new Uint8Array(Buffer.from(opensshPrivateKey(spki, pkcs8, comment), "utf8"));
-    const publicKey = opensshPublicKey(spki, comment);
+    const privateKey = new Uint8Array(Buffer.from(generated.privateKey.export({ format: "pem", type: "pkcs1" }) as string, "utf8"));
+    const publicKey = opensshPublicKey(privateKey, comment);
     const stored = await context.vault.put({ bindingKey: id, purpose: PURPOSE, value: privateKey, idempotencyKey });
     privateKey.fill(0);
     const binding: ManagedBinding = { id, ownerProfileId, profileId: `managed:${id}`, publicKey, vaultBinding: stored.binding, vaultRevision: stored.revision, revision: 1, logicalHostIdentity };
@@ -121,7 +130,16 @@ export class ManagedBindingService {
     if (!this.#runtime.invokeService) throw new SshProviderError("unsupported", "SSH services are unavailable");
     try {
       const resolved = await this.#runtime.invokeService({ ...environmentRequest(binding), capability: "filesystem", operation: "resolveRoot", projectId: `managed:${binding.id}`, environmentRevision: binding.revision, input: { root: binding.root! } }, targetCallContext(binding, context)) as Record<string, JsonValue>;
-      return { state: "ready", bindingId: binding.id, revision: binding.revision, canonicalRoot: typeof resolved.root === "string" ? resolved.root : binding.root!, logicalHostIdentity: binding.logicalHostIdentity };
+      const canonicalRoot = absoluteRoot(resolved.root, binding.root!);
+      // `~` is valid only as a user-facing setup value. Services must always
+      // receive the canonical root that SSH has verified. Persisting it here
+      // keeps terminal, filesystem, and later recovery operations on the same
+      // root rather than letting a later terminal request regress to `~`.
+      if (binding.root !== canonicalRoot) {
+        binding.root = canonicalRoot;
+        await this.persist();
+      }
+      return { state: "ready", bindingId: binding.id, revision: binding.revision, canonicalRoot, logicalHostIdentity: binding.logicalHostIdentity };
     } catch (error) {
       if (!(error instanceof SshProviderError) || !["host-key-approval-required", "host-key-mismatch"].includes(error.code)) throw error;
       const details = record(json(error.details ?? {}));
@@ -145,8 +163,8 @@ export class ManagedBindingService {
     const expectedRevision = integer(input.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER);
     if (expectedRevision !== binding.revision) throw new SshProviderError("conflict", "SSH managed binding revision changed");
     if (!this.#runtime.invokeService) throw new SshProviderError("unsupported", "SSH services are unavailable");
-    const capability = text(input.capability, "capability") as "terminal" | "filesystem" | "agent-journal";
-    if (!["terminal", "filesystem", "agent-journal"].includes(capability)) throw new SshProviderError("unsupported", "SSH managed service capability is unavailable");
+    const capability = text(input.capability, "capability") as "terminal" | "filesystem" | "agent-journal" | "git" | "process-observation";
+    if (!["terminal", "filesystem", "agent-journal", "git", "process-observation"].includes(capability)) throw new SshProviderError("unsupported", "SSH managed service capability is unavailable");
     return this.#runtime.invokeService({ ...environmentRequest(binding), capability, operation: text(input.operation, "operation"), projectId: text(input.projectId, "projectId"), environmentRevision: expectedRevision, input: json(input.input) }, targetCallContext(binding, context));
   }
 
@@ -175,13 +193,25 @@ function targetCallContext(binding: ManagedBinding, context: ProviderDependencyT
 function environmentRequest(binding: ManagedBinding) { if (!binding.profileRevision) throw new SshProviderError("invalid-input", "SSH managed binding has no profile"); return { environmentId: `managed:${binding.id}`, profileId: binding.profileId, providerState: { profileId: binding.profileId, profileRevision: binding.profileRevision, host: binding.host!, port: binding.port!, username: binding.username!, root: binding.root!, environmentRevision: binding.revision, trustChallenge: null, deleted: false } }; }
 function tryProfile(store: ProfileStore, id: string) { try { return store.get(id); } catch { return undefined; } }
 function requiredIdempotency(context: ProviderDependencyTargetContext): string { if (!context.idempotencyKey) throw new SshProviderError("invalid-input", "SSH managed binding mutation requires idempotency"); return context.idempotencyKey; }
-function opensshPublicKey(spki: Buffer, comment: string): string { const key = spki.subarray(spki.length - 32); const part = (value: Buffer) => { const size = Buffer.alloc(4); size.writeUInt32BE(value.length); return Buffer.concat([size, value]); }; return `ssh-ed25519 ${Buffer.concat([part(Buffer.from("ssh-ed25519")), part(key)]).toString("base64")} ${comment}`; }
-function opensshPrivateKey(spki: Buffer, pkcs8: Buffer, comment: string): string { const publicKey = spki.subarray(spki.length - 32); const seed = pkcs8.subarray(pkcs8.length - 32); const u32 = (value: number) => { const buffer = Buffer.alloc(4); buffer.writeUInt32BE(value); return buffer; }; const part = (value: Buffer) => Buffer.concat([u32(value.length), value]); const type = Buffer.from("ssh-ed25519"); const publicBlob = Buffer.concat([part(type), part(publicKey)]); const check = Number.parseInt(randomUUID().replaceAll("-", "").slice(0, 8), 16); let privateBlob = Buffer.concat([u32(check), u32(check), part(type), part(publicKey), part(Buffer.concat([seed, publicKey])), part(Buffer.from(comment))]); privateBlob = Buffer.concat([privateBlob, Buffer.from(Array.from({ length: (8 - (privateBlob.length % 8)) % 8 || 8 }, (_, index) => index + 1))]); const body = Buffer.concat([Buffer.from("openssh-key-v1\0"), part(Buffer.from("none")), part(Buffer.from("none")), part(Buffer.alloc(0)), u32(1), part(publicBlob), part(privateBlob)]).toString("base64").match(/.{1,70}/gu)?.join("\n") ?? ""; return `-----BEGIN OPENSSH PRIVATE KEY-----\n${body}\n-----END OPENSSH PRIVATE KEY-----\n`; }
+function opensshPublicKey(privateKey: Uint8Array, comment: string): string {
+  const parsed = sshUtils.parseKey(Buffer.from(privateKey));
+  if (parsed instanceof Error) throw new SshProviderError("failed", "Generated SSH key could not be read");
+  const publicBlob = parsed.getPublicSSH();
+  const length = publicBlob.readUInt32BE(0);
+  const algorithm = publicBlob.subarray(4, 4 + length).toString("ascii");
+  if (algorithm !== "ssh-rsa") throw new SshProviderError("failed", "Generated SSH key has an unexpected algorithm");
+  return `${algorithm} ${publicBlob.toString("base64")} ${comment}`;
+}
 function record(value: JsonValue): Record<string, unknown> { if (!value || typeof value !== "object" || Array.isArray(value)) throw new SshProviderError("invalid-input", "SSH managed-binding input must be an object"); return value; }
 function json(value: unknown): JsonValue { if (value === undefined) return null; return JSON.parse(JSON.stringify(value)) as JsonValue; }
 function text(value: unknown, name: string): string { if (typeof value !== "string" || !value || value.length > 512 || value.includes("\0")) throw new SshProviderError("invalid-input", `Invalid ${name}`); return value; }
 function optionalText(value: unknown): string | undefined { return value === undefined ? undefined : text(value, "value"); }
 function hostText(value: unknown): string { const valueText = text(value, "host"); if (/\s|[/@]/u.test(valueText)) throw new SshProviderError("invalid-input", "Invalid host"); return valueText; }
+function absoluteRoot(value: unknown, fallback: string): string {
+  const root = typeof value === "string" ? value : fallback;
+  if (!root.startsWith("/")) throw new SshProviderError("root-unavailable", "SSH did not resolve an absolute project root");
+  return root;
+}
 function integer(value: unknown, name: string, min: number, max: number): number { if (!Number.isInteger(value) || Number(value) < min || Number(value) > max) throw new SshProviderError("invalid-input", `Invalid ${name}`); return Number(value); }
 function isState(value: unknown): value is State { return !!value && typeof value === "object" && !Array.isArray(value) && (value as State).version === 1 && !!(value as State).bindings && typeof (value as State).bindings === "object"; }
 function isNodeError(error: unknown): error is NodeJS.ErrnoException { return error instanceof Error && "code" in error; }

@@ -138,7 +138,10 @@ function connectClient(client: SshClient, config: SshConnectConfig, signal: Abor
     const abort = (): void => { client.end(); done(reject, new SshProviderError("cancelled", "SSH connection was cancelled")); };
     signal?.addEventListener("abort", abort, { once: true });
     client.once("ready", () => done(resolve, client));
-    client.once("error", (error) => done(reject, getTrustFailure() ?? normalizeError(error)));
+    client.once("error", (error) => {
+      console.error("[terminay-ssh-connect]", `${error.name}: ${error.message}`.replace(/[\r\n]/gu, " ").slice(0, 512));
+      done(reject, getTrustFailure() ?? normalizeError(error));
+    });
     client.connect(config);
   });
 }
@@ -180,4 +183,20 @@ export interface ShellOptions { term: string; rows: number; cols: number; env: R
 export function openSftp(client: SshClient): Promise<SftpClient> { return callbackPromise((callback) => client.sftp(callback)); }
 export function openShell(client: SshClient, options: ShellOptions): Promise<SshChannel> { return callbackPromise((callback) => client.shell(options, callback)); }
 export function execRemote(client: SshClient, command: string): Promise<SshChannel> { return callbackPromise((callback) => client.exec(command, callback)); }
-export function callbackPromise<T>(start: (callback: NodeCallback<T>) => void): Promise<T> { return new Promise((resolve, reject) => start((error, value) => error ? reject(normalizeError(error)) : resolve(value))); }
+export function callbackPromise<T>(start: (callback: NodeCallback<T>) => void): Promise<T> {
+  return new Promise((resolve, reject) => start((error, value) => {
+    if (!error) { resolve(value); return; }
+    // Keep the development trace bounded while we diagnose provider channel
+    // failures. The returned provider error remains normalised.
+    // ssh2 attaches the protocol-level reason/description to channel errors.
+    // Keep that bounded and diagnostic-only: it distinguishes an endpoint
+    // policy refusal from a client-side request failure without printing any
+    // credential material.
+    const detail = error as Error & { reason?: unknown; description?: unknown; code?: unknown };
+    const protocol = [detail.reason, detail.description, detail.code]
+      .filter((item) => typeof item === "string" || typeof item === "number")
+      .join(" / ");
+    console.error("[terminay-ssh-callback]", `${error.name}: ${error.message}${protocol ? ` [${protocol}]` : ""}`.replace(/[\r\n]/gu, " ").slice(0, 512));
+    reject(normalizeError(error));
+  }));
+}

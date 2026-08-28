@@ -446,6 +446,7 @@ async function createServerComposition(
 		registry: projectEnvironmentRegistry,
 		hosts: extensions.hosts,
 		snapshot: () => projectEnvironments.state,
+		workspaceSnapshot: () => workspace.state,
 	});
 	const git = new ServerGitAdapter({
 		serverId: options.serverId,

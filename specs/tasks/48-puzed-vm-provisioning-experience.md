@@ -56,9 +56,27 @@ using the stable SSH provider contract/test double until live convergence.
 
 - [x] Resume shared SSE/refetch through provisioning/boot/address; then invoke
   bounded SSH readiness and host trust as independent phases.
-- [x] Support Run in background and recovery after UI/client/server restart.
+- [x] Surface host-key trust and bounded SSH retry actions while the durable VM
+  operation is pending; re-verify after approval before marking the connection
+  ready.
+- [x] Keep an actionless provisioning status card renderable: public status-card
+  facts and actions are optional, so their absence must not invalidate and hide
+  the complete provider/connection snapshot.
+- [x] Support Run in background and recovery after UI/client/server restart;
+  startup invokes durable recovery after extension activation rather than
+  relying on a renderer snapshot request.
+- [x] Serialize concurrent snapshot-driven recovery and rebase its provider
+  result if another registry mutation wins the compare-and-swap, so a
+  successful address/SSH transition is not silently lost after the SSH binding
+  has been made.
+- [x] Project live SSH readiness in the connection chooser while the durable
+  operation remains pending, distinguishing VM creation from SSH connection.
 - [x] On every failure preserve the VM and offer Retry/Edit SSH/Start/Stop/
   Reboot/Delete/Open in Puzed; never auto-delete or fall back Local.
+- [ ] Record a real VM's post-create transition from the Puzed job to the SSH
+  readiness state, then to ready only after its guest address answers SSH. A
+  guest with no L2/SSH reachability must stay retryable rather than be reported
+  ready.
 
 ### Reopened worker and bridge correctness
 

@@ -84,6 +84,15 @@ function parentPath(path: string): string {
 	return trimmed.slice(0, slash);
 }
 
+function explorerMayLoad(project: ProjectTab): boolean {
+	if (project.creationStatus === 'loading') return false;
+	const remote =
+		project.projectEnvironmentId !== undefined &&
+		project.projectEnvironmentId !== 'terminay:this-server';
+	if (!remote) return true;
+	return project.hydrating === false;
+}
+
 export function openTerminalAtWorktree(
 	worktree: GitWorktreeStatus,
 	onOpenTerminalAt: (path: string, isDirectory?: boolean) => unknown,
@@ -916,13 +925,23 @@ export function useFileExplorerController({
 		setDirectoryChildren({});
 		setDirectoryErrors({});
 		setDeletingWorktreePaths(new Set());
-		setLoadingPaths({});
 		setExpandedPaths(project.rootFolder ? { [project.rootFolder]: true } : {});
-		if (project.rootFolder) {
+		const explorerReady = explorerMayLoad(project);
+		setLoadingPaths(
+			project.rootFolder ? { [project.rootFolder]: true } : {},
+		);
+		if (project.rootFolder && explorerReady) {
 			void loadDirectory(project.rootFolder);
 			void refreshGitStatusesForRoot(project.rootFolder, true);
 		}
-	}, [loadDirectory, project.rootFolder, refreshGitStatusesForRoot]);
+	}, [
+		loadDirectory,
+		project.creationStatus,
+		project.hydrating,
+		project.projectEnvironmentId,
+		project.rootFolder,
+		refreshGitStatusesForRoot,
+	]);
 	useEffect(() => {
 		if (gitClient === undefined || !project.rootFolder) return;
 		let disposed = false;
@@ -1003,10 +1022,9 @@ export function useFileExplorerController({
 						unsubscribe();
 						void fileObservationClient.stopWatch(handle.subscriptionId);
 					});
-				} catch (error) {
+				} catch {
 					if (!disposed && !unavailableWatchFallbacksRef.current.has(path)) {
 						unavailableWatchFallbacksRef.current.add(path);
-						onOperationError('Explorer', error);
 						scheduleDirectoryRefresh(path);
 					}
 				}
@@ -1019,7 +1037,6 @@ export function useFileExplorerController({
 	}, [
 		expandedWatchPaths,
 		fileObservationClient,
-		onOperationError,
 		loadDirectory,
 		project.id,
 		project.isFileExplorerOpen,

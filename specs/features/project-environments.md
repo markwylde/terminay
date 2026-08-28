@@ -106,11 +106,20 @@ Providers advertise other capabilities independently:
 
 Persisted capability lists keep only current capabilities. Unknown tokens are
 dropped when the registry is loaded so a retired capability cannot prevent
-This server from starting.
+This server from starting. Routing uses the live provider contribution, so a
+provider that later gains Git still serves Git on existing ready environments
+instead of failing as `query failed` from a create-time snapshot.
 
 Unavailable optional capabilities render a clear limited/unavailable state.
 They never run against the Terminay Server host merely because the same path or
-binary exists there.
+binary exists there. Watch and folder-size protocol names route as
+`filesystem-observation`; listing, read, and write stay on `filesystem`.
+
+The SSH provider supplies Git queries through the selected remote connection.
+For a remote root that is not a repository, Git discovery and the worktree
+listing return the normal empty/not-repository result; they must not fall back
+to the Terminay Server's Git process or surface a transport failure in the
+project UI.
 
 ## Runtime routing
 
@@ -258,6 +267,26 @@ Settings headers, groups, and rows. In a
 browser, the same shared route is presented in-page with equivalent management
 semantics. Repeated invocation focuses the existing presentation instead of
 opening duplicates.
+
+Server-operation failures appear in a dedicated, in-flow content panel above
+the current provider, connection, or declarative form. The panel may offer
+Retry, but is never a fixed or floating overlay: the selected detail and its
+recovery controls must remain visible and usable.
+
+An unreferenced connection offers **Remove connection**. This forgets only
+Terminay's local project-environment record; it never deletes, powers off, or
+otherwise mutates provider infrastructure.
+The action is blocked while a project references the connection. A Puzed
+provider with no referenced projects can also be removed directly. This
+atomically forgets its unreferenced child connection records and the provider's
+local credential/profile record; it never deletes, powers off, or otherwise
+mutates the Puzed VMs. A provider used by any project remains blocked with an
+explicit reference explanation.
+
+Editing a provider hydrates its previously saved non-secret form values. Secret
+fields are never returned to a client: they are shown empty with explicit
+“leave blank to keep the existing value” guidance, and an empty submitted
+secret preserves the existing vault value.
 
 The project-bar chooser's **Project Environments…** action and the matching
 Command Bar action invoke that same semantic route. Extension installation and

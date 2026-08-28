@@ -627,7 +627,10 @@ function validateServiceResult(result: unknown, request: unknown): unknown {
     else if (operation === "realpath" && (!exactKeys(value,["path"]) || !boundedText(value.path,4096))) throw new Error("provider returned an invalid realpath result");
     else if (operation === "read" && (!exactKeys(value,["path","data","encoding","metadata"]) || !boundedText(value.path,4096) || value.encoding !== "base64" || typeof value.data !== "string" || value.data.length > 220_000 || !base64(value.data) || !metadata(value.metadata))) throw new Error("provider returned an invalid filesystem read result");
     else if ((operation === "stat") && (!exactKeys(value,["path","size","mode","mtimeMs","atimeMs","type"]) || !metadata(value))) throw new Error("provider returned invalid metadata");
-    else if ((operation === "browse" || operation === "list") && (!exactKeys(value,["path","entries"]) || !boundedText(value.path,4096) || !Array.isArray(value.entries) || value.entries.length > 10_000 || value.entries.some((entry) => { const item=record(entry); return item===undefined || !exactKeys(item,["name","path","size","mode","mtimeMs","atimeMs","type"]) || !boundedText(item.name,1024) || !metadata(item); }))) throw new Error("provider returned an invalid directory result");
+    else if ((operation === "browse" || operation === "list") && (!exactKeys(value,["path","entries"]) || !boundedText(value.path,4096) || !Array.isArray(value.entries) || value.entries.length > 10_000 || value.entries.some((entry) => !directoryEntry(entry)))) {
+      console.error("[terminay-extension-invalid-directory-result]", directoryResultDiagnostic(value));
+      throw new Error("provider returned an invalid directory result");
+    }
     else if (operation === "write" && (!exactKeys(value,["outcome","metadata","atomic"]) || value.outcome !== "written" || typeof value.atomic !== "boolean" || !metadata(value.metadata))) throw new Error("provider returned an invalid write result");
     else if (operation === "createDirectory" && (!exactKeys(value,["outcome","path"]) || value.outcome !== "created" || !boundedText(value.path,4096))) throw new Error("provider returned an invalid create result");
     else if (operation === "rename" && (!exactKeys(value,["outcome","from","to"]) || value.outcome !== "renamed" || !boundedText(value.from,4096) || !boundedText(value.to,4096))) throw new Error("provider returned an invalid rename result");
@@ -643,8 +646,11 @@ function validateServiceResult(result: unknown, request: unknown): unknown {
     else if (operation === "poll" && !processObservationPoll(value)) throw new Error("provider returned an invalid process observation poll");
     else if (operation === "stop" && (!exactKeys(value,["observationId","stopped"]) || !boundedId(value.observationId) || value.stopped !== true)) throw new Error("provider returned an invalid process observation stop");
     else if (!["observe","poll","stop"].includes(String(operation))) throw new Error("provider returned an unknown process observation operation");
-  } else if (capability === "git") {
-    if (!["discover","status","branches","worktrees","diff","fetch","quickPush","cancel"].includes(String(operation)) || !gitServiceResult(String(operation), value)) throw new Error("provider returned an invalid Git service result");
+	} else if (capability === "git") {
+    if (!["discover","status","branches","worktrees","diff","fetch","quickPush","cancel"].includes(String(operation)) || !gitServiceResult(String(operation), value)) {
+      console.error("[terminay-extension-invalid-git-result]", { operation, keys: Object.keys(value).sort(), state: value.state, projectIdType: typeof value.projectId });
+      throw new Error("provider returned an invalid Git service result");
+    }
   } else throw new Error("provider returned an unsupported service capability");
   const encoded = JSON.stringify(result);
   if (encoded === undefined || Buffer.byteLength(encoded) > 768 * 1024) throw new Error("provider returned an oversized service result");
@@ -655,15 +661,76 @@ function exactKeys(value: Record<string,unknown>, allowed: string[]): boolean { 
 function boundedText(value: unknown,max:number): value is string { return typeof value === "string" && value.length>0 && value.length<=max && !value.includes("\0"); }
 function positive(value:unknown):boolean{return Number.isSafeInteger(value)&&Number(value)>0;}
 function metadata(value:unknown):boolean{const item=record(value);return item!==undefined&&exactKeys(item,["path","size","mode","mtimeMs","atimeMs","type"])&&(item.path===undefined||boundedText(item.path,4096))&&Number.isFinite(item.size)&&Number(item.size)>=0&&Number.isFinite(item.mode)&&Number.isFinite(item.mtimeMs)&&Number.isFinite(item.atimeMs)&&["directory","symlink","file"].includes(String(item.type));}
+function directoryEntry(value: unknown): boolean {
+  const item = record(value);
+  return item !== undefined
+    && exactKeys(item,["name","path","size","mode","mtimeMs","atimeMs","type"])
+    && boundedText(item.name,1024)
+    // Reuse the metadata contract without asking it to reject the directory
+    // entry's required `name` field.
+    && metadata({ path: item.path, size: item.size, mode: item.mode, mtimeMs: item.mtimeMs, atimeMs: item.atimeMs, type: item.type });
+}
+function directoryResultDiagnostic(value: Record<string, unknown>): Record<string, unknown> {
+  const entries = Array.isArray(value.entries) ? value.entries : [];
+  const badIndex = entries.findIndex((entry) => {
+    const item = record(entry);
+    return !directoryEntry(item);
+  });
+  const entry = badIndex < 0 ? undefined : record(entries[badIndex]);
+  return {
+    pathType: typeof value.path,
+    entryCount: entries.length,
+    ...(badIndex < 0 ? {} : { badIndex, entryKeys: entry === undefined ? "not-an-object" : Object.keys(entry).sort(), entryName: typeof entry?.name === "string" ? entry.name.slice(0, 128) : typeof entry?.name, metadata: entry === undefined ? undefined : { pathType: typeof entry.path, size: entry.size, mode: entry.mode, mtimeMs: entry.mtimeMs, atimeMs: entry.atimeMs, type: entry.type } }),
+  };
+}
 function terminalExit(value:unknown):boolean{const item=record(value);return item!==undefined&&exactKeys(item,["code","signal","interrupted","reason"])&&(item.code===null||Number.isInteger(item.code))&&(item.signal===null||boundedText(item.signal,64))&&typeof item.interrupted==="boolean"&&(item.reason===undefined||item.reason==="transport-lost");}
 function filesystemObservationPoll(value:Record<string,unknown>):boolean{if(!exactKeys(value,["observationId","state","revision","events","root","manualRefreshAvailable","reason"])||!boundedId(value.observationId)||!["resync","changes","coalesced","degraded"].includes(String(value.state))||!Number.isSafeInteger(value.revision)||Number(value.revision)<0||!Array.isArray(value.events)||value.events.length>1000)return false;if(value.root!==undefined&&!boundedText(value.root,4096))return false;if(value.manualRefreshAvailable!==undefined&&typeof value.manualRefreshAvailable!=="boolean")return false;if(value.reason!==undefined&&!boundedText(value.reason,1000))return false;return value.events.every((entry)=>{const event=record(entry);return event!==undefined&&exactKeys(event,["kind","path"])&&["created","changed","removed"].includes(String(event.kind))&&boundedText(event.path,4096);});}
 function processObservationPoll(value:Record<string,unknown>):boolean{if(!exactKeys(value,["observationId","state","cwd","foregroundProcess","observedAt","lastObservedAt","reason"])||!boundedId(value.observationId)||!["available","stale","unavailable","starting"].includes(String(value.state)))return false;if(value.state==="available")return boundedText(value.cwd,4096)&&(value.foregroundProcess===null||boundedText(value.foregroundProcess,512))&&Number.isFinite(value.observedAt);if(value.reason!==undefined&&!boundedText(value.reason,256))return false;return value.cwd===null&&value.foregroundProcess===null&&(value.lastObservedAt===undefined||Number.isFinite(value.lastObservedAt));}
+function nullableId(value:unknown):boolean{return value===null||Boolean(boundedId(value));}
+function nullablePath(value:unknown):boolean{return value===null||boundedText(value,4096);}
+function gitDiscoveryState(value:unknown):boolean{return ["ready","not-repository","git-unavailable","missing-gitfile","command-error"].includes(String(value));}
+function gitError(value:unknown):boolean{
+  if(value===undefined)return true;
+  const item=record(value);
+  return item!==undefined&&exactKeys(item,["code","message","stderr","operation"])&&boundedText(item.code,64)&&boundedText(item.message,1000)&&(item.stderr===undefined||typeof item.stderr==="string"&&item.stderr.length<=4096)&&(item.operation===undefined||boundedText(item.operation,64));
+}
+function gitBranchStatus(value:unknown):boolean{
+  const item=record(value);
+  return item!==undefined&&exactKeys(item,["name","detached","head","upstream","upstreamState","ahead","behind"])
+    &&(item.name===null||boundedText(item.name,256))&&typeof item.detached==="boolean"
+    &&(item.head===null||boundedText(item.head,256))&&(item.upstream===null||boundedText(item.upstream,256))
+    &&["none","configured","missing"].includes(String(item.upstreamState))
+    &&(item.ahead===null||Number.isSafeInteger(item.ahead)&&Number(item.ahead)>=0)
+    &&(item.behind===null||Number.isSafeInteger(item.behind)&&Number(item.behind)>=0);
+}
+function gitStatusResult(value:Record<string,unknown>,extra:readonly string[]=[]):boolean{
+  return exactKeys(value,["projectId","repositoryId","repositoryRoot","worktreeId","worktreeRoot","state","branch","entries","head","bounded","error",...extra])
+    &&Boolean(boundedId(value.projectId))&&nullableId(value.repositoryId)&&nullablePath(value.repositoryRoot)&&nullableId(value.worktreeId)&&nullablePath(value.worktreeRoot)
+    &&gitDiscoveryState(value.state)&&gitBranchStatus(value.branch)&&Array.isArray(value.entries)&&value.entries.length<=10000
+    &&(value.head===null||boundedText(value.head,256))&&typeof value.bounded==="boolean"&&gitError(value.error);
+}
+function gitWorktreeSummary(value:unknown):boolean{
+  const item=record(value);
+  return item!==undefined&&exactKeys(item,["id","repositoryId","path","branch","detached","head","isMain","isBare","isPrunable","locked","state","aheadOfDefaultBranchCount","lineAdditions","lineDeletions","hasCommittedChanges","entries","error"])
+    &&Boolean(boundedId(item.id))&&Boolean(boundedId(item.repositoryId))&&boundedText(item.path,4096)
+    &&(item.branch===null||boundedText(item.branch,256))&&typeof item.detached==="boolean"&&(item.head===null||boundedText(item.head,256))
+    &&typeof item.isMain==="boolean"&&typeof item.isBare==="boolean"&&typeof item.isPrunable==="boolean"&&typeof item.locked==="boolean"
+    &&["clean","dirty","unmerged","detached","prunable","unknown"].includes(String(item.state))
+    &&(item.aheadOfDefaultBranchCount===null||Number.isSafeInteger(item.aheadOfDefaultBranchCount)&&Number(item.aheadOfDefaultBranchCount)>=0)
+    &&(item.lineAdditions===null||Number.isSafeInteger(item.lineAdditions)&&Number(item.lineAdditions)>=0)
+    &&(item.lineDeletions===null||Number.isSafeInteger(item.lineDeletions)&&Number(item.lineDeletions)>=0)
+    &&(item.hasCommittedChanges===null||typeof item.hasCommittedChanges==="boolean")
+    &&Array.isArray(item.entries)&&item.entries.length<=10000&&gitError(item.error);
+}
+/** Provider Git results must match the application protocol the renderer already
+ * consumes from This server. Extra-short shapes were rejected as a failed load
+ * even when the remote root was a normal non-repository. */
 function gitServiceResult(operation:string,value:Record<string,unknown>):boolean{
-  if(operation==="discover")return exactKeys(value,["state","repositoryRoot","repositoryId","worktreeId"])&&["ready","not-repository","git-unavailable"].includes(String(value.state))&&(value.repositoryRoot===null||boundedText(value.repositoryRoot,4096))&&(value.repositoryId===null||Boolean(boundedId(value.repositoryId)))&&(value.worktreeId===null||Boolean(boundedId(value.worktreeId)));
-  if(operation==="status")return exactKeys(value,["state","repositoryRoot","repositoryId","worktreeId","branch","head","entries","bounded"])&&typeof value.bounded==="boolean"&&Array.isArray(value.entries)&&value.entries.length<=10000;
-  if(operation==="branches")return exactKeys(value,["branches","bounded"])&&typeof value.bounded==="boolean"&&Array.isArray(value.branches)&&value.branches.length<=4096;
-  if(operation==="worktrees")return exactKeys(value,["worktrees","bounded"])&&typeof value.bounded==="boolean"&&Array.isArray(value.worktrees)&&value.worktrees.length<=256;
-  if(operation==="diff")return exactKeys(value,["patch","bounded","binary"])&&typeof value.patch==="string"&&Buffer.byteLength(value.patch)<=4*1024*1024&&typeof value.bounded==="boolean"&&typeof value.binary==="boolean";
+  if(operation==="discover")return exactKeys(value,["state","repositoryRoot","repositoryId","worktreeId"])&&["ready","not-repository","git-unavailable"].includes(String(value.state))&&nullablePath(value.repositoryRoot)&&nullableId(value.repositoryId)&&nullableId(value.worktreeId);
+  if(operation==="status")return gitStatusResult(value);
+  if(operation==="branches")return gitStatusResult(value,["operation"])&&value.operation==="branch";
+  if(operation==="worktrees")return exactKeys(value,["projectId","repositoryId","repositoryRoot","defaultBranch","state","worktrees","bounded","error"])&&Boolean(boundedId(value.projectId))&&nullableId(value.repositoryId)&&nullablePath(value.repositoryRoot)&&(value.defaultBranch===null||boundedText(value.defaultBranch,256))&&gitDiscoveryState(value.state)&&Array.isArray(value.worktrees)&&value.worktrees.length<=256&&value.worktrees.every(gitWorktreeSummary)&&typeof value.bounded==="boolean"&&gitError(value.error);
+  if(operation==="diff")return exactKeys(value,["projectId","repositoryId","worktreeId","state","compareTarget","path","files","hunks","patch","binary","bounded","error"])&&Boolean(boundedId(value.projectId))&&nullableId(value.repositoryId)&&nullableId(value.worktreeId)&&gitDiscoveryState(value.state)&&value.compareTarget==="HEAD"&&(value.path===null||boundedText(value.path,4096))&&Array.isArray(value.files)&&value.files.length<=10000&&Array.isArray(value.hunks)&&value.hunks.length<=10000&&typeof value.patch==="string"&&Buffer.byteLength(value.patch)<=4*1024*1024&&typeof value.binary==="boolean"&&typeof value.bounded==="boolean"&&gitError(value.error);
   if(operation==="fetch")return exactKeys(value,["applied","head","detail"])&&value.applied===true&&boundedText(value.head,256)&&typeof value.detail==="string"&&value.detail.length<=2048;
   if(operation==="quickPush")return exactKeys(value,["proposalId","head","actions","expiresAt"])||exactKeys(value,["applied","completed","head"]);
   return false;

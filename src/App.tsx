@@ -120,6 +120,8 @@ import {
 	describeFeatureFailure,
 	describeServerFeatureFailure,
 	featureProjectRoot,
+	isCancelledFeatureFailure,
+	isOptionalObservationFailure,
 	resolveProjectFeatureAuthority,
 } from './shared/featureQueryAuthority';
 import { composeProjectTerminalClientContext } from './shared/projectTerminalClientContext';
@@ -1404,6 +1406,8 @@ const ProjectWorkspace = forwardRef<
 					setErrorText(featureAvailability.reason);
 					return featureAvailability.reason;
 				}
+				if (isCancelledFeatureFailure(error)) return '';
+				if (isOptionalObservationFailure(error)) return '';
 				const failure = describeFeatureFailure(
 					feature,
 					error,
@@ -6121,14 +6125,42 @@ function App({
 	const displayedActiveProjectId = isPendingProjectFailure
 		? pendingProjectCreation.tab.id
 		: activeProjectId;
-	const displayedProjects = pendingProjectCreation
+	const displayedProjects = (pendingProjectCreation
 		? [
 				...projects.filter(
 					(project) => project.id !== pendingProjectCreation.projectId,
 				),
 				pendingProjectCreation.tab,
 			]
-		: projects;
+		: projects
+	).map((project) => {
+		const environment = projectEnvironmentChoices.find(
+			(candidate) => candidate.id === project.projectEnvironmentId,
+		);
+		const serverProject = workspaceSnapshot?.projects[project.id];
+		const hasTerminal =
+			serverProject !== undefined &&
+			serverProject.panelIds.some(
+				(panelId) => workspaceSnapshot?.panels[panelId]?.type === 'terminal',
+			);
+		const remote =
+			project.projectEnvironmentId !== undefined &&
+			project.projectEnvironmentId !== 'terminay:this-server';
+		return {
+			...project,
+			...(environment === undefined
+				? {}
+				: {
+						environmentLabel: environment.name,
+						environmentStatus: environment.status,
+					}),
+			hydrating:
+				project.creationStatus !== 'loading' &&
+				project.creationStatus !== 'failed' &&
+				remote &&
+				!hasTerminal,
+		};
+	});
 	const activateDisplayedProject = (projectId: string) => {
 		if (projectId === pendingProjectCreation?.tab.id) return;
 		activateProject(projectId);

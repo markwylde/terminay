@@ -26,7 +26,7 @@ test("profile revisions never share a transport and retry remains explicit", asy
 test("PTY launch uses canonical quoted root, filters environment, and adapts bytes/resize/exit", async () => {
   const client = new FakeClient(); const pool = new ConnectionPool({ store, trust: {}, broker: {}, connect: async () => client }); const manager = new RemoteTerminalManager(pool, { maxBufferedBytes: 16 });
   const created = await manager.create({ sessionId: "s1", profileId: "p", revision: 1, root: "/home/u/it's here", rows: 30, cols: 100, environment: { TERM: "xterm", TERMINAY_MCP_SOCKET: "/local/secret", HOME: "/local" } });
-  assert.equal(created.capabilities.cwd, false); assert.equal(created.capabilities.agentJournal, true); assert.equal(client.options.env.TERM, "xterm"); assert.match(client.options.env.TERMINAY_SESSION_PROOF, /^[A-Za-z0-9_-]{43}$/u); assert.match(client.channel.writes[0], /cd -- '\/home\/u\/it'\\''s here'/); assert.match(client.channel.writes[0], /exec "\$\{SHELL:-\/bin\/sh\}" -l/);
+  assert.equal(created.capabilities.cwd, true); assert.equal(created.capabilities.agentJournal, true); assert.equal(client.options.env.TERM, "xterm"); assert.match(client.options.env.TERMINAY_SESSION_PROOF, /^[A-Za-z0-9_-]{43}$/u); assert.match(client.channel.writes[0], /export TERMINAY_SESSION_PROOF=/); assert.match(client.channel.writes[0], /cd -- '\/home\/u\/it'\\''s here'/); assert.match(client.channel.writes[0], /exec "\$\{SHELL:-\/bin\/sh\}" -l/);
   client.channel.emit("data", Buffer.from("hello")); assert.equal(Buffer.from(manager.read({ sessionId: "s1" }).data, "base64").toString(), "hello");
   client.channel.emit("data", Buffer.from("0123456789abcdef")); assert.equal(client.channel.pauses, 1); manager.read({ sessionId: "s1", maxBytes: 16 }); assert.equal(client.channel.resumes, 1);
   manager.resize({ sessionId: "s1", cols: 120, rows: 40 }); assert.deepEqual(client.channel.windows[0], [40, 120, 0, 0]);
@@ -38,4 +38,14 @@ test("no replacement terminal is manufactured after transport loss", async () =>
   let connections = 0; const client = new FakeClient(); const pool = new ConnectionPool({ store, trust: {}, broker: {}, connect: async () => { connections++; return client; } }); const manager = new RemoteTerminalManager(pool);
   await manager.create({ sessionId: "old", profileId: "p", revision: 1, root: "/home/u" }); client.emit("close");
   await assert.rejects(async () => manager.input({ sessionId: "old", data: "x" }), (e) => e.code === "transport-lost"); assert.equal(connections, 1);
+});
+
+test("terminal retries once on a fresh strict transport after a session-channel refusal", async () => {
+  class RefusingClient extends FakeClient { shell(_options, callback) { callback(Object.assign(new Error("(SSH) Channel open failure: resource shortage"), { reason: 4 })); } }
+  const first = new RefusingClient(); const second = new FakeClient(); let connections = 0;
+  const pool = new ConnectionPool({ store, trust: {}, broker: {}, connect: async () => (++connections === 1 ? first : second) });
+  const manager = new RemoteTerminalManager(pool);
+  await manager.create({ sessionId: "fresh", profileId: "p", revision: 1, root: "/home/u" });
+  assert.equal(connections, 2); assert.match(second.channel.writes[0], /cd -- '\/home\/u'/);
+  manager.dispose({ sessionId: "fresh" }); await pool.close();
 });

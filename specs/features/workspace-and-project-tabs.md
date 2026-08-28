@@ -75,12 +75,17 @@ identity. Project-sidebar sizing and title-visibility behavior is governed by
   the selected server's normal terminal-launch resolver; this is an explicit
   creation flow, never a renderer repair for an empty workspace. After a Local
   Desktop restart, each restored project likewise receives one fresh terminal
-  so a project is never shown empty.
+  so a project is never shown empty. Remote SSH/Puzed roots are not treated as
+  missing local folders; their replacement PTY is seeded through the live
+  environment. The project tab shows a spinner while that connection or a
+  user-created project is still loading. Explorer does not open SFTP until
+  that replacement terminal exists.
 - Project creation commits its initial colour and icon atomically with the
   server-owned project so rapid creation cannot reuse an uncommitted colour.
 - A project root can be selected directly or derived from the active terminal's
-  working directory. Closing the final panel closes the project; closing the
-  first project does not unexpectedly quit the app.
+  working directory, including terminals on SSH/Puzed environments. Closing the
+  final panel closes the project; closing the first project does not
+  unexpectedly quit the app.
 - New terminals open in the active project. Tabs can split the active layout
   horizontally or vertically, be reordered, moved to another project, or moved
   into another workspace view.

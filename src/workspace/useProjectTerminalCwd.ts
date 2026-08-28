@@ -20,9 +20,10 @@ export function useProjectTerminalCwd(
 				currentCwd(
 					projectId: string,
 					targetSessionId: string,
-				): Promise<{ cwd: string }>;
+				): Promise<{ cwd: string; source: 'observed' | 'spawn' }>;
 			};
-			return (await liveCwdClient.currentCwd(context.projectId, sessionId)).cwd;
+			const live = await liveCwdClient.currentCwd(context.projectId, sessionId);
+			return live.source === 'observed' ? live.cwd : null;
 		},
 		[context],
 	);

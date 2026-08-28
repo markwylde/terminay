@@ -249,6 +249,10 @@ and insertion into the intended terminal remain server-authorized operations.
   interrupted unless the process can be safely reattached.
 - A missing project root or recording path remains represented with a
   recoverable error; the server does not silently retarget it to another path.
+  In particular, a deleted persisted Local project root never turns Desktop
+  startup into a persistence failure: the project remains available for its
+  explicit repair flow, while its file/Git bindings and replacement terminal
+  are withheld until its root is valid again.
 - State migrations create a recoverable backup or equivalent rollback point and
   are idempotent.
 
@@ -264,10 +268,16 @@ and insertion into the intended terminal remain server-authorized operations.
 - A non-empty repository restores its projects and non-terminal panels. Local
   Desktop restart does not restore terminal tabs: its PTYs died with the local
   server, so the server removes their stale panels and sessions and creates one
-  fresh terminal in each restored project before the workspace is shown. A
-  project is never presented without a terminal. Previous tab counts are not
-  restored. A remote server that remains alive retains its live terminal
-  sessions across reconnect.
+  fresh terminal in each restored project with a valid root before the
+  workspace is shown. A This-server project whose persisted root is missing
+  instead stays represented with its recoverable error until repaired; previous
+  tab counts are not restored. A remote SSH/Puzed project's root is interpreted
+  only by that environment, so a path such as `/home/vms` must not be treated
+  as a missing local folder and must still receive a replacement terminal. A
+  remote seed that fails while the environment is still connecting is retried
+  until the environment is ready; Explorer waits until that terminal exists
+  so SFTP cannot occupy the session channel first. A remote server that
+  remains alive retains its live terminal sessions across reconnect.
 - A renderer never repairs an empty or malformed server snapshot by inventing
   project, panel, or session identity. Repository initialization or recovery
   either succeeds authoritatively or the client presents a bounded failure.
@@ -305,6 +315,8 @@ and insertion into the intended terminal remain server-authorized operations.
   same server boundary locally and remotely.
 - A valid active project enables sidebar feature queries with its canonical
   server/project/environment identity; an unscoped query fails with a typed,
-  actionable state rather than a generic `query failed` projection.
+  actionable state rather than a generic `query failed` projection. Remote
+  project-environment routing failures (cancelled, deadline, unavailable,
+  capability) keep those protocol codes through the dispatcher.
 - A remote client cannot obtain plaintext secrets or widen a project/session
   scope by changing titles, paths, or local state.

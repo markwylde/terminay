@@ -6,6 +6,8 @@ import {
 	describeFeatureFailure,
 	describeServerFeatureFailure,
 	featureProjectRoot,
+	isCancelledFeatureFailure,
+	isOptionalObservationFailure,
 	resolveProjectFeatureAuthority,
 } from './featureQueryAuthority';
 
@@ -132,6 +134,43 @@ describe('feature failures', () => {
 			detail: 'Reconnect to server-1 and retry settings.get.',
 			retryable: true,
 			operation: 'settings.get',
+		});
+	});
+
+	it('treats cancelled Git queries as suppressible rather than a failed load', () => {
+		const error = Object.assign(new ClientError('cancelled', 'operation cancelled', { retryable: true }), {
+			operation: 'git.worktrees.list',
+		});
+		assert.equal(isCancelledFeatureFailure(error), true);
+		assert.deepEqual(describeFeatureFailure('Git', error, {
+			serverId: 'server-1', projectId: 'project-1',
+		}), {
+			title: 'Git request was cancelled',
+			detail: 'The git.worktrees.list for project project-1 on server server-1 was cancelled.',
+			retryable: true,
+			operation: 'git.worktrees.list',
+		});
+	});
+
+	it('does not treat missing remote file watch as an Explorer outage', () => {
+		const error = Object.assign(new ClientError('unavailable', 'project environment capability is unavailable: filesystem-observation', { retryable: true }), {
+			operation: 'files.watch.start',
+		});
+		assert.equal(isOptionalObservationFailure(error), true);
+		assert.equal(isCancelledFeatureFailure(error), false);
+	});
+
+	it('treats a remote deadline as a retryable outage', () => {
+		const error = Object.assign(new ClientError('deadline', 'operation deadline exceeded', { retryable: true }), {
+			operation: 'git.worktrees.list',
+		});
+		assert.deepEqual(describeFeatureFailure('Git', error, {
+			serverId: 'server-1', projectId: 'project-1',
+		}), {
+			title: 'Git is temporarily unavailable',
+			detail: 'Reconnect to server-1 and retry git.worktrees.list.',
+			retryable: true,
+			operation: 'git.worktrees.list',
 		});
 	});
 });

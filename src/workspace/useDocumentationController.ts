@@ -119,9 +119,9 @@ export function useDocumentationController(options: {
 					},
 				);
 			})
-			.catch((reason: unknown) => {
-				if (!disposed)
-					setError(reason instanceof Error ? reason.message : String(reason));
+			.catch(() => {
+				// Missing filesystem observation is an expected remote limit.
+				// Catalog listing still owns the visible documentation tree.
 			});
 		return () => {
 			disposed = true;
