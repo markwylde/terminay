@@ -4,7 +4,7 @@ Terminay is a desktop terminal workspace built with Electron, React, and Vite. I
 
 ![Terminay workspace screenshot](https://terminay.com/screenshots/terminay-hero-workspace.png)
 
-[![Specification progress](docs/spec-progress.svg?v=1787773719)](specs/README.md)
+[![Specification progress](docs/spec-progress.svg?v=1787909611)](specs/README.md)
 
 _Generated automatically from the checklists in `specs/tasks/` and
 `specs/tasks_completed/`._
