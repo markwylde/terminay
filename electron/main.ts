@@ -528,14 +528,17 @@ function getWindowIconPath(): string | undefined {
 
 let terminalZoomLevel = 0;
 
+function sendTerminalZoom(webContents: Electron.WebContents): void {
+	if (webContents.isDestroyed()) return;
+	webContents.send('server-ui-host:event', {
+		type: 'terminal.zoom',
+		zoomLevel: terminalZoomLevel,
+	});
+}
+
 function broadcastZoomChange(): void {
 	for (const window of BrowserWindow.getAllWindows()) {
-		if (window.isDestroyed()) {
-			continue;
-		}
-		window.webContents.send('terminal:zoom-changed', {
-			zoomLevel: terminalZoomLevel,
-		});
+		sendTerminalZoom(window.webContents);
 	}
 }
 
@@ -3758,10 +3761,7 @@ if (process.env.TERMINAY_TEST === '1') {
 // Orphaned renderer feature IPC was removed; canonical server authority owns these operations.
 ipcMain.on('server-ui-host:subscribe-events', (event) => {
 	assertBoundServerUiEvent(event);
-	event.sender.send('server-ui-host:event', {
-		type: 'terminal.zoom',
-		zoomLevel: terminalZoomLevel,
-	});
+	sendTerminalZoom(event.sender);
 	sendDeviceTerminalSettings(event.sender);
 });
 

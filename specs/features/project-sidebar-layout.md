@@ -27,8 +27,10 @@ through canonical
   a local constraint that contradicts the space required by another pane.
 - A resize separator is centred on the top edge of the following pane's title,
   matching the VS Code interaction model. It overlays the boundary and does not
-  consume layout height. Its visual rule may remain subtle while its pointer hit
-  target is large enough to acquire reliably.
+  consume layout height. Hover shows a 4px light rail centred on that
+  boundary after 100ms; dragging and keyboard focus show it immediately.
+  Never a filled sash. The pointer hit target stays large enough to acquire
+  reliably.
 - Dragging a separator continuously previews the resulting pane sizes. Movement
   is clamped using the available grow and shrink capacity of every affected pane
   on both sides of the boundary, so the pointer does not jump and no pane crosses

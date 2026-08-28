@@ -23,6 +23,19 @@ test('canonical workspace selects menu and window chrome from negotiated capabil
 	);
 });
 
+test('desktop zoom broadcasts terminal.zoom on the host event channel', async () => {
+	const main = await read('electron/main.ts');
+	assert.match(
+		main,
+		/function broadcastZoomChange[\s\S]*?sendTerminalZoom\(/u,
+	);
+	assert.match(
+		main,
+		/function sendTerminalZoom[\s\S]*?'server-ui-host:event'[\s\S]*?type: 'terminal\.zoom'/u,
+	);
+	assert.doesNotMatch(main, /terminal:zoom-changed/);
+});
+
 test('canonical preload exposes only protocol-validated semantic host events', async () => {
 	const [preload, protocol] = await Promise.all([
 		read('electron/serverUiPreload.ts'),

@@ -21,8 +21,10 @@ identity. Project-sidebar sizing and title-visibility behavior is governed by
   The active project tab’s colour continues into the panel tab strip and the
   sidebar pane titles, which use that chrome with white labels. Pane bodies
   share the terminal background, so the workspace uses two surfaces: project
-  chrome and terminal. The sidebar toggle is an icon on the dark project bar;
-  hover highlights it slightly. Panel tabs on that strip use a 4px corner: the
+  chrome and terminal. Sidebar pane titles stay quiet on hover; only title
+  actions such as refresh, explorer file rows, and the 4px resize rail
+  highlight. The sidebar toggle is an icon on the dark project bar; hover
+  highlights it slightly. Panel tabs on that strip use a 4px corner: the
   active panel tab is the solid chip, and inactive tabs stay quiet until hover.
 - The project tab bar never steals trailing chrome. Sidebar toggle, new-project
   control, activity, and the Local connection pill stay fully visible. When
@@ -200,8 +202,9 @@ client focus.
   switcher stays on that right edge, at least one extra tab continues
   behind the pill, and the active project remains a real tab.
 - The active project tab stays visually joined to its panel tab strip. Sidebar
-  pane titles use that same chrome with white labels, pane bodies share the
-  terminal background, the sidebar toggle is an icon until hover, and inactive
+  pane titles use that same chrome with white labels and stay quiet on hover,
+  pane bodies share the terminal background, title actions and explorer rows
+  still highlight, the sidebar toggle is an icon until hover, and inactive
   panel tabs stay secondary to the active chip.
 - Reconnecting from a fresh client restores project and panel identity from
   server state without recreating live terminals.

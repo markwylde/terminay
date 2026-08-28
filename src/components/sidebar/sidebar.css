@@ -56,21 +56,40 @@
 	left: 0;
 	right: 0;
 	top: 100%;
-	height: 1px;
+	height: 4px;
 	transform: translateY(-50%);
 	background: transparent;
 	box-shadow: none;
-	transition: background-color 150ms ease;
+	transition: background-color 120ms ease;
+	transition-delay: 0ms;
 }
 
-.sidebar-panel-stack__resize-handle:hover::before,
+.sidebar-panel-stack__resize-handle:hover,
+.sidebar-panel-stack__resize-handle:active,
+.sidebar-panel-stack__resize-handle:focus-visible {
+	background: transparent;
+	filter: none;
+}
+
+.sidebar-panel-stack__resize-handle:hover::before {
+	background-color: #ffffff;
+	transition-delay: 100ms;
+}
+
 .sidebar-panel-stack__resize-handle:active::before,
 .sidebar-panel-stack__resize-handle:focus-visible::before {
-	background-color: #57b7ff;
+	background-color: #ffffff;
+	transition-delay: 0ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.sidebar-panel-stack__resize-handle:hover::before {
+		transition-delay: 0ms;
+	}
 }
 
 .sidebar-panel-stack__resize-handle:focus-visible {
-	/* Keyboard focus is represented by the same single-pixel boundary rail.
+	/* Keyboard focus is represented by the same 4px boundary rail.
 	 * Do not outline the 12px acquisition area: it reads as a rounded panel. */
 	outline: 0;
 }
@@ -167,9 +186,7 @@
 	touch-action: none;
 	user-select: none;
 	color: rgba(255, 255, 255, 0.38);
-	transition:
-		background 100ms ease,
-		color 100ms ease;
+	transition: color 100ms ease;
 }
 
 .sidebar-panel-reordering,
@@ -179,8 +196,9 @@
 }
 
 .sidebar-pane__drag-handle:hover {
-	background: rgba(255, 255, 255, 0.08);
-	color: rgba(255, 255, 255, 0.85);
+	background: transparent;
+	filter: none;
+	color: rgba(255, 255, 255, 0.38);
 }
 
 .sidebar-pane__drag-handle:active {
@@ -191,10 +209,6 @@
 	outline: 1px solid rgba(87, 183, 255, 0.7);
 	outline-offset: -1px;
 	color: #ffffff;
-}
-
-.sidebar-pane__header-row:hover {
-	background: color-mix(in srgb, #fff 6%, var(--project-chrome));
 }
 
 .sidebar-pane__header {
@@ -209,10 +223,12 @@
 	cursor: pointer;
 	text-align: left;
 	color: #ffffff;
-	transition: color 100ms ease;
+	transition: none;
 }
 
-.sidebar-pane__header-row:hover .sidebar-pane__header {
+.sidebar-pane__header:hover {
+	background: transparent;
+	filter: none;
 	color: #ffffff;
 }
 
