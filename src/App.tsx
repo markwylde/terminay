@@ -6201,11 +6201,12 @@ function App({
 				terminalClientContext?.workspaceSnapshotStore?.snapshot?.revision
 			}
 			style={
-				displayedActiveProject?.color
-					? ({
-							'--project-color': displayedActiveProject.color,
-						} as CSSProperties)
-					: undefined
+				{
+					'--terminal-panel-surface': settings.theme.background,
+					...(displayedActiveProject?.color
+						? { '--project-color': displayedActiveProject.color }
+						: {}),
+				} as CSSProperties
 			}
 		>
 			<header

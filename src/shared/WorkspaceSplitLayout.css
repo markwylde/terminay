@@ -28,6 +28,7 @@
 	grid-column: 1;
 	grid-row: 1;
 	overflow: hidden;
+	background: var(--terminal-panel-surface, var(--tab-bg-active, #0d1014));
 }
 
 .workspace-split-layout__separator {

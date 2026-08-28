@@ -18,6 +18,7 @@
   --tab-height: 40px;
   --window-corner-radius: 10px;
   --project-tab-overflow-fade: 96px;
+  --terminal-panel-surface: #111316;
   --project-chrome: color-mix(
     in srgb,
     var(--project-color, var(--tabbar-bg)) 45%,
@@ -964,20 +965,24 @@
   aspect-ratio: 1;
   padding: 0;
   border-radius: 4px;
-  color: rgba(220, 226, 240, 0.62);
-  background: rgba(255, 255, 255, 0.04);
+  color: rgba(220, 226, 240, 0.55);
+  background: transparent;
   -webkit-app-region: no-drag;
 }
 
 .project-tab-sidebar-toggle:hover:not(:disabled) {
   color: #dce2f0;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .project-tab-sidebar-toggle--active {
   color: #ffffff;
-  background: rgba(255, 255, 255, 0.12);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  background: transparent;
+  box-shadow: none;
+}
+
+.project-tab-sidebar-toggle--active:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .project-tab-sidebar-toggle:disabled {
@@ -2767,7 +2772,7 @@ body.project-tabbar-reordering .project-tabbar {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #0d1014;
+  background: var(--terminal-panel-surface, var(--tab-bg-active));
 }
 
 .file-explorer-sidebar__body {
