@@ -18,6 +18,15 @@
   --tab-height: 40px;
   --window-corner-radius: 10px;
   --project-tab-overflow-fade: 96px;
+  --project-chrome: color-mix(
+    in srgb,
+    var(--project-color, var(--tabbar-bg)) 45%,
+    var(--tab-bg-active)
+  );
+  --panel-tab-strip-height: 38px;
+  --panel-tab-height: 30px;
+  --panel-tab-inset: 4px;
+  --panel-tab-radius: 4px;
 }
 
 .project-tabbar {
@@ -28,6 +37,8 @@
   -webkit-app-region: drag;
   font-family: 'Open Sans', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   padding: 0 0 0 6px;
+  position: relative;
+  z-index: 3;
 }
 
 .app-shell--macos .project-tabbar {
@@ -720,9 +731,16 @@
   bottom: 5px;
   left: 4px;
   right: 4px;
-  border-radius: 4px;
+  border-radius: 8px;
   background-color: color-mix(in srgb, var(--project-color) 10%, transparent);
-  transition: all 150ms ease;
+  transition:
+    background-color 150ms ease,
+    border-radius 150ms ease,
+    box-shadow 150ms ease,
+    top 150ms ease,
+    bottom 150ms ease,
+    left 150ms ease,
+    right 150ms ease;
   z-index: 0;
 }
 
@@ -760,7 +778,7 @@
 }
 
 .project-tab--drop-placeholder::before {
-  background-color: color-mix(in srgb, var(--project-color) 45%, var(--tab-bg-active));
+  background-color: var(--project-chrome);
   box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--project-color) 70%, transparent);
 }
 
@@ -769,8 +787,13 @@
 }
 
 .project-tab--dragging::before {
+  top: 5px;
+  bottom: 5px;
+  left: 4px;
+  right: 4px;
+  border-radius: 8px;
   box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4);
-  background: var(--tab-bg-active);
+  background: var(--project-chrome);
 }
 
 .project-tab:hover:not(.project-tab--active)::before {
@@ -779,11 +802,26 @@
 
 .project-tab--active {
   color: var(--tab-text-selected);
+  z-index: 2;
 }
 
 .project-tab--active::before {
-  background-color: color-mix(in srgb, var(--project-color) 45%, var(--tab-bg-active));
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  top: 6px;
+  bottom: -2px;
+  left: 0;
+  right: 0;
+  border-radius: 10px 10px 0 0;
+  background-color: var(--project-chrome);
+  box-shadow: none;
+}
+
+.project-tab--active.project-tab--dragging::before {
+  top: 5px;
+  bottom: 5px;
+  left: 4px;
+  right: 4px;
+  border-radius: 8px;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4);
 }
 
 .project-tab-main {
@@ -1006,7 +1044,7 @@
   width: 100%;
   max-width: none;
   justify-content: flex-start;
-  background: color-mix(in srgb, var(--project-color) 45%, var(--tab-bg-active));
+  background: var(--project-chrome);
   color: var(--tab-text-selected);
   font-weight: 700;
   font-size: 13px;
@@ -1274,40 +1312,65 @@ body.project-tabbar-reordering .project-tabbar {
 .workspace .dv-shell {
   --dv-group-view-background-color: var(--tab-bg);
   --dv-separator-border: var(--tab-border);
-  --dv-tab-divider-color: var(--tab-border);
-  --dv-tabs-and-actions-container-background-color: var(--tabbar-bg);
-  --dv-activegroup-visiblepanel-tab-background-color: var(--tab-bg);
-  --dv-activegroup-hiddenpanel-tab-background-color: var(--tabbar-bg);
-  --dv-inactivegroup-visiblepanel-tab-background-color: var(--tab-bg);
-  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--tabbar-bg);
+  --dv-tab-divider-color: transparent;
+  --dv-tabs-and-actions-container-background-color: var(--project-chrome);
+  --dv-tabs-and-actions-container-height: var(--panel-tab-strip-height);
+  --dv-activegroup-visiblepanel-tab-background-color: transparent;
+  --dv-activegroup-hiddenpanel-tab-background-color: transparent;
+  --dv-inactivegroup-visiblepanel-tab-background-color: transparent;
+  --dv-inactivegroup-hiddenpanel-tab-background-color: transparent;
 }
 
 .workspace .dv-tabs-and-actions-container {
-  background: var(--tabbar-bg) !important;
-  height: 34px !important;
-  border-bottom: 1px solid var(--tab-border) !important;
-  margin-left: 4px;
+  align-items: center;
+  background: var(--project-chrome) !important;
+  height: var(--panel-tab-strip-height) !important;
+  border-bottom: 0 !important;
+  margin-left: 0;
+  padding: var(--panel-tab-inset) !important;
+  box-sizing: border-box;
+}
+
+.workspace .dv-tabs-and-actions-container .dv-scrollable {
+  display: flex;
+  align-items: center;
+  min-height: 0;
+  height: 100%;
+}
+
+.workspace .dv-tabs-and-actions-container .dv-void-container {
+  align-items: center;
+  align-self: stretch;
+  gap: var(--panel-tab-inset);
+  padding-left: var(--panel-tab-inset);
 }
 
 .workspace .dv-tabs-container {
+  display: flex !important;
+  align-items: center !important;
+  gap: var(--panel-tab-inset) !important;
   padding: 0 !important;
   height: 100% !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
 }
 
 .workspace .dv-tab {
   padding: 0 !important;
   border: 0 !important;
-  border-right: 1px solid var(--tab-border) !important;
-  border-bottom: 2px solid transparent !important;
   margin: 0 !important;
   background: transparent !important;
   box-sizing: border-box;
   height: 100% !important;
   overflow: hidden;
   position: relative;
-  border-top-left-radius: 8px !important;
-  border-top-right-radius: 8px !important;
-  transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+  flex: 0 0 auto !important;
+  border-radius: var(--panel-tab-radius) !important;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.workspace .dv-tabs-and-actions-container.dv-single-tab .dv-tab {
+  flex-grow: 0 !important;
 }
 
 .workspace .dv-tab::before,
@@ -1317,7 +1380,6 @@ body.project-tabbar-reordering .project-tabbar {
 
 .workspace .dv-tab.dv-active-tab {
   background: transparent !important;
-  border-bottom-color: transparent !important;
   box-shadow: none !important;
   margin-bottom: 0 !important;
   z-index: 0;
@@ -1328,7 +1390,7 @@ body.project-tabbar-reordering .project-tabbar {
 }
 
 .workspace .dv-tab.dv-active-tab .terminal-tab-title {
-  font-weight: 500;
+  font-weight: 600;
 }
 
 /* Terminal Tabs */
@@ -1339,47 +1401,42 @@ body.project-tabbar-reordering .project-tabbar {
   position: relative;
   height: 100%;
   width: 100%;
-  padding: 0;
+  padding: 0 10px;
+  gap: 8px;
   box-sizing: border-box;
   background: transparent;
-  color: var(--tab-text);
-  border-right: 0;
-  border-top-left-radius: 8px;
-  border-top-right-radius: 8px;
+  color: color-mix(in srgb, var(--tab-text-selected) 62%, transparent);
+  border: 0;
+  border-radius: var(--panel-tab-radius);
   transition: background-color 150ms ease, color 150ms ease;
   min-width: 120px;
   max-width: 220px;
 }
 
 .terminal-tab-content[data-has-color='true'] {
-  background-color: color-mix(in srgb, var(--tab-color) 6%, transparent);
+  background-color: color-mix(in srgb, var(--tab-color) 14%, transparent);
 }
 
 .terminal-tab-content:hover:not(.terminal-tab-content--active) {
-  background: var(--tab-bg-hover);
-  color: var(--tab-text-active);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--tab-text-selected);
 }
 
 .terminal-tab-content[data-has-color='true']:hover:not(.terminal-tab-content--active) {
-  background-color: color-mix(in srgb, var(--tab-color) 12%, transparent);
+  background-color: color-mix(in srgb, var(--tab-color) 22%, rgba(255, 255, 255, 0.06));
 }
 
-.terminal-tab-content--active {
-  background: var(--terminal-tab-bg-active);
-  color: var(--tab-text-selected);
-  box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.06);
-}
-
+.terminal-tab-content--active,
 .workspace .dv-tab.dv-active-tab .terminal-tab-content:not(.terminal-tab-content--active) {
-  background: var(--terminal-tab-bg-active);
+  background: rgba(255, 255, 255, 0.14);
   color: var(--tab-text-selected);
-  box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.06);
+  box-shadow: none;
 }
 
 .terminal-tab-content--active[data-has-color='true'],
 .workspace .dv-tab.dv-active-tab .terminal-tab-content[data-has-color='true'] {
-  background-color: color-mix(in srgb, var(--tab-color) 40%, var(--terminal-tab-bg-active));
-  box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.06);
+  background-color: color-mix(in srgb, var(--tab-color) 36%, rgba(255, 255, 255, 0.1));
+  box-shadow: none;
 }
 
 /* Hue Slider Styling */
@@ -1449,9 +1506,9 @@ body.project-tabbar-reordering .project-tabbar {
 .terminal-tab-close {
   width: 20px;
   height: 20px;
-  border-radius: 4px;
+  border-radius: var(--panel-tab-radius);
   opacity: 0.25;
-  margin-right: 6px;
+  margin-right: 0;
   flex-shrink: 0;
 }
 
@@ -1470,7 +1527,7 @@ body.project-tabbar-reordering .project-tabbar {
 .terminal-tab-macro-trigger {
   height: 22px;
   min-width: 22px;
-  margin-right: 4px;
+  margin-right: 0;
   padding: 0 6px;
   border-radius: 999px;
   display: inline-flex;
@@ -1824,17 +1881,20 @@ body.project-tabbar-reordering .project-tabbar {
 .terminay-add-tab-button {
   position: relative;
   z-index: 2;
-  width: 34px;
-  height: 34px;
+  width: var(--panel-tab-height);
+  height: 100%;
+  border-radius: var(--panel-tab-radius);
+  color: color-mix(in srgb, var(--tab-text-selected) 62%, transparent);
+  opacity: 1;
   pointer-events: auto;
   -webkit-app-region: no-drag;
 }
 
 .terminay-add-tab-button:hover {
-  background: var(--tab-bg-hover);
-  color: var(--tab-text-active);
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--tab-text-selected);
 }
-.terminay-add-profile-tab-button { width: 24px; }
+.terminay-add-profile-tab-button { width: 22px; }
 
 .project-tab-close svg,
 .terminal-tab-close svg,
@@ -1848,14 +1908,14 @@ body.project-tabbar-reordering .project-tabbar {
 .terminal-tab-emoji {
   font-size: 14px;
   line-height: 1;
-  margin-left: 8px;
+  margin-left: 0;
   flex-shrink: 0;
 }
 
 .terminal-tab-loading-icon {
   width: 14px;
   height: 14px;
-  margin-left: 8px;
+  margin-left: 0;
   flex-shrink: 0;
   color: currentColor;
   animation: terminal-tab-spinner 900ms linear infinite;
@@ -1863,8 +1923,7 @@ body.project-tabbar-reordering .project-tabbar {
 
 .terminal-tab-title {
   flex: 1;
-  padding-left: 8px;
-  padding-right: 4px;
+  padding: 0;
   font-size: 13px;
   font-weight: 500;
   white-space: nowrap;
@@ -2869,15 +2928,12 @@ body.project-tabbar-reordering .project-tabbar {
   display: flex;
   align-items: center;
   min-width: 0;
-  padding: 0;
-  border-right: 1px solid var(--tab-border);
-  border-bottom: 2px solid transparent;
-  border-top-left-radius: 8px;
-  border-top-right-radius: 8px;
-  background: color-mix(in srgb, var(--terminal-tab-bg-active) 50%, transparent);
-  box-shadow:
-    inset 1px 0 0 rgba(255, 255, 255, 0.06),
-    inset 0 -3px 0 color-mix(in srgb, var(--terminal-tab-bg-active) 50%, transparent);
+  height: var(--panel-tab-height);
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--panel-tab-radius);
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: none;
   box-sizing: border-box;
   color: var(--tab-text-selected);
   font-family: 'Open Sans', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
@@ -2903,7 +2959,7 @@ body.project-tabbar-reordering .project-tabbar {
 }
 
 .workspace .dv-groupview {
-  border: 1px solid var(--tab-border);
+  border: 0;
 }
 
 .workspace .dv-tab-content {
