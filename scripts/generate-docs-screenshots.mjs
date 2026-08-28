@@ -12,7 +12,21 @@ const size = { width: 1200, height: 800 };
 const screenshotDeviceScaleFactor = 2;
 const settleDelayMs = 3_000;
 const useRealCodex = process.env.TERMINAY_DOCS_REAL_CODEX === '1';
+const screenshotGroups = ['workspace', 'agents', 'files', 'git', 'chrome'];
+const selectedGroup = process.env.TERMINAY_DOCS_SCREENSHOT_GROUP ?? 'all';
+if (selectedGroup !== 'all' && !screenshotGroups.includes(selectedGroup)) {
+	throw new Error(`Unknown screenshot group "${selectedGroup}". Use all or one of: ${screenshotGroups.join(', ')}`);
+}
 const execFileAsync = promisify(execFile);
+
+function log(message) {
+	console.log(`[docs-screenshots ${new Date().toISOString().slice(11, 19)}] ${message}`);
+}
+
+function wantsGroup(name) {
+	return selectedGroup === 'all' || selectedGroup === name;
+}
+
 const agentsPrompt = 'Spawn 3 subagents to solve simple math problems';
 const workspaceCodexPrompts = [
 	'Summarize this repository.',
@@ -173,6 +187,7 @@ async function installScreenshotWindowControls(page, placement = 'tabbar') {
 }
 
 async function capture(app, page, name) {
+	log(`capturing ${name}`);
 	await page.waitForTimeout(settleDelayMs);
 	const window = await app.browserWindow(page);
 	const dataUrl = await window.evaluate(async (nativeWindow) => {
@@ -180,6 +195,7 @@ async function capture(app, page, name) {
 		return image.toDataURL();
 	});
 	await writeFile(path.join(outputDir, name), Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64'));
+	log(`wrote ${name}`);
 }
 
 async function editActiveProject(page, { title, hue, rootFolder }) {
@@ -262,20 +278,33 @@ async function typeTerminalCommand(terminal, command) {
 	await terminal.press('Enter');
 }
 
+async function withHeartbeat(label, work) {
+	const started = Date.now();
+	const heartbeat = setInterval(() => {
+		log(`${label} (${Math.round((Date.now() - started) / 1000)}s elapsed)`);
+	}, 10_000);
+	try {
+		return await work();
+	} finally {
+		clearInterval(heartbeat);
+	}
+}
+
 async function waitForExecComplete(page) {
 	const timeout = useRealCodex ? 180_000 : 20_000;
-	await page.waitForFunction(() => {
+	await withHeartbeat('waiting for Codex exec to finish', () => page.waitForFunction(() => {
 		const panels = [...document.querySelectorAll('.project-workspace--active .terminal-panel')]
 			.filter((element) => getComputedStyle(element).display !== 'none' && element.offsetParent !== null);
 		return panels.some((element) => {
 			const text = element.textContent ?? '';
 			return text.includes('CODEX_EXEC_DONE') || /tokens used/i.test(text);
 		});
-	}, undefined, { timeout });
+	}, undefined, { timeout }));
 }
 
 async function runCodexExecThenResume(page, index, workspace, prompt) {
 	// Exec creates the session; resume opens the interactive TUI for the screenshot.
+	log(`pane ${index + 1}: codex exec — ${prompt}`);
 	const terminal = page.locator(
 		'.project-workspace--active .terminal-panel:visible .xterm-helper-textarea',
 	).nth(index);
@@ -287,6 +316,7 @@ async function runCodexExecThenResume(page, index, workspace, prompt) {
 	await page.waitForTimeout(250);
 	await typeTerminalCommand(terminal, `${codex} exec --skip-git-repo-check ${quoteShell(prompt)}`);
 	await waitForExecComplete(page);
+	log(`pane ${index + 1}: exec done, opening resume TUI`);
 	await typeTerminalCommand(terminal, 'clear');
 	await page.waitForTimeout(200);
 	await typeTerminalCommand(terminal, `${codex} resume --last --include-non-interactive`);
@@ -297,6 +327,7 @@ async function runCodexExecThenResume(page, index, workspace, prompt) {
 		await page.waitForTimeout(400);
 	}
 	await page.waitForTimeout(1_000);
+	log(`pane ${index + 1}: TUI ready`);
 }
 
 async function stopCodexTuis(page, count) {
@@ -464,7 +495,188 @@ async function findWorkspaceWindow(app) {
 	throw new Error('Terminay workspace window did not become available.');
 }
 
+async function openDocsProject(page) {
+	await page.locator('.project-tab').filter({ hasText: 'Docs' }).first().click();
+	await page.locator('.project-tab--active').filter({ hasText: 'Docs' }).waitFor({ state: 'visible', timeout: 15_000 });
+}
+
+async function captureWorkspaceGroup(app, page, workspace) {
+	log('group workspace: Codex 2x2 grid');
+	await createTerminalGrid(page);
+	await populateCodexTerminalGrid(page, workspace);
+	await page.locator('.project-workspace--active .xterm-rows').first().waitFor({ state: 'visible' });
+	await capture(app, page, 'terminay-workspace.png');
+	await copyFile(
+		path.join(outputDir, 'terminay-workspace.png'),
+		path.join(outputDir, 'terminay-hero-workspace.png'),
+	);
+	log('wrote terminay-hero-workspace.png');
+	await stopCodexTuis(page, 4);
+}
+
+async function captureAgentsGroup(app, page, workspace) {
+	log('group agents: Agents sidebar and Documentation editor');
+	await openDocsProject(page);
+	await openFileExplorer(page);
+	await selectSidebarGroup(page, 'agents');
+	await prepareAgentTerminal(page, workspace);
+	try {
+		await populateAgentsScreenshot(page);
+	} catch (error) {
+		if (!String(error?.message ?? error).includes('already owns this terminal session')) throw error;
+		await populateRealAgentsScreenshot(page);
+	}
+	await capture(app, page, 'terminay-agents.png');
+	const terminal = page.locator('.project-workspace--active .terminal-panel:visible .xterm-helper-textarea').first();
+	await terminal.press('Control+C');
+	await page.waitForTimeout(500);
+	await terminal.press('Control+C');
+	await page.waitForTimeout(400);
+	await selectSidebarGroup(page, 'documentation');
+	const documentationPane = page.locator('.project-workspace--active .sidebar-pane').filter({
+		has: page.locator('.sidebar-pane__title', { hasText: 'Documentation' }),
+	});
+	if (await documentationPane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed'))) {
+		await documentationPane.locator('.sidebar-pane__header').click();
+	}
+	await documentationPane.getByRole('tree').waitFor({ state: 'visible', timeout: 30_000 });
+	await documentationPane.getByRole('treeitem', { name: /^handbook$/i }).evaluate((element) => element.click());
+	await documentationPane.getByRole('treeitem', { name: /^Product roadmap, handbook\/roadmap\.md$/i }).evaluate((element) => element.click());
+	await page.locator('.documentation-editor').waitFor({ state: 'visible', timeout: 30_000 });
+	await page.getByRole('heading', { name: 'Product roadmap', exact: true }).waitFor({ state: 'visible', timeout: 30_000 });
+	await page.evaluate(() => {
+		if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+	});
+	await capture(app, page, 'terminay-documentation.png');
+}
+
+async function captureFilesGroup(app, page) {
+	log('group files: explorer, folders, and tasks');
+	await openDocsProject(page);
+	await openFileExplorer(page);
+	await selectSidebarGroup(page, 'explorer');
+	const explorerPane = page.locator('.project-workspace--active .sidebar-pane').filter({
+		has: page.locator('.sidebar-pane__title', { hasText: 'Files' }),
+	});
+	if (await explorerPane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed'))) {
+		await explorerPane.locator('.sidebar-pane__header').click();
+	}
+	const readme = explorerItem(page, 'README.md');
+	await readme.waitFor({ state: 'visible', timeout: 30_000 });
+	await readme.dblclick();
+	await page.locator('.file-preview-markdown').waitFor({ state: 'visible', timeout: 30_000 });
+	await capture(app, page, 'terminay-files.png');
+
+	const docsFolder = explorerItem(page, 'handbook');
+	await docsFolder.click();
+	const roadmap = explorerItem(page, 'roadmap.md');
+	await roadmap.waitFor({ state: 'visible', timeout: 30_000 });
+	await roadmap.dblclick();
+	await page.getByRole('tab', { name: 'Tasks', exact: true }).click();
+	await page.locator('.file-tasks').waitFor({ state: 'visible', timeout: 30_000 });
+	await capture(app, page, 'terminay-files-tasks.png');
+
+	await docsFolder.dblclick();
+	await page.locator('.folder-viewer__title').waitFor({ state: 'visible', timeout: 30_000 });
+	await capture(app, page, 'terminay-folders.png');
+	await page.locator('.folder-viewer__view-button').filter({ hasText: 'List' }).first().click();
+	await page.locator('.folder-viewer__list').waitFor({ state: 'visible' });
+	await capture(app, page, 'terminay-folder-list.png');
+	await page.locator('.folder-viewer__view-button').filter({ hasText: 'Tasks' }).first().click();
+	await page.locator('.folder-tasks').waitFor({ state: 'visible', timeout: 30_000 });
+	await capture(app, page, 'terminay-folder-tasks.png');
+	await page.getByRole('tab', { name: 'Kanban', exact: true }).click();
+	await page.locator('.file-kanban__board').waitFor({ state: 'visible', timeout: 30_000 });
+	await capture(app, page, 'terminay-tasks-kanban.png');
+}
+
+async function captureGitGroup(app, page) {
+	log('group git: worktrees and Quick Push');
+	await openDocsProject(page);
+	await openFileExplorer(page);
+	const gitPane = page.locator('.sidebar-pane').filter({ has: page.locator('.sidebar-pane__title', { hasText: 'Git' }) });
+	if (await gitPane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed'))) {
+		await gitPane.locator('.sidebar-pane__header').click();
+	}
+	await gitPane.locator('.worktrees-panel__worktree').first().waitFor({ state: 'visible', timeout: 30_000 });
+	await gitPane.scrollIntoViewIfNeeded();
+	await capture(app, page, 'terminay-worktrees.png');
+	await gitPane.locator('.worktrees-panel__push-button').first().click();
+	await page.locator('.context-menu').waitFor({ state: 'visible' });
+	await capture(app, page, 'terminay-quick-push.png');
+	await page.keyboard.press('Escape');
+}
+
+async function captureChromeGroup(app, page) {
+	log('group chrome: command bar, MCP, macros, recordings, settings, remote');
+	await openDocsProject(page);
+	const terminal = page.locator('.project-workspace--active .terminal-panel:visible .xterm-helper-textarea').first();
+	const recordingTab = page.locator('.project-workspace--active .terminal-tab-content').first();
+	await recordingTab.click();
+	await recordingTab.click({ button: 'right' });
+	await page.locator('.context-menu__item').filter({ hasText: 'Start Recording' }).click();
+	await terminal.focus();
+	await terminal.pressSequentially('printf "Recording a documentation session\\n"', { delay: 2 });
+	await terminal.press('Enter');
+	await page.waitForTimeout(500);
+	await recordingTab.click({ button: 'right' });
+	await page.locator('.context-menu__item').filter({ hasText: 'Stop Recording' }).click();
+
+	await page.evaluate(async () => {
+		const host = window.terminayHost;
+		if (!host) throw new Error('Canonical Terminay host is unavailable.');
+		const context = await host.getContext();
+		await host.requestAction({
+			bridgeVersion: context.hostBridgeVersion,
+			profileId: context.profileId,
+			schemaVersion: context.schemaVersion,
+			serverId: context.serverId,
+			sourceId: context.sourceId,
+			userGesture: true,
+			windowId: context.windowId,
+			action: { command: 'open-command-bar', type: 'menu.invoke' },
+		});
+	});
+	await page.getByRole('dialog', { name: 'Command bar' }).waitFor({ state: 'visible' });
+	await capture(app, page, 'terminay-command-bar.png');
+	await page.keyboard.press('Escape');
+
+	await invokeMenuCommand(page, 'open-command-bar');
+	const commandBar = page.getByRole('dialog', { name: 'Command bar' });
+	await commandBar.waitFor({ state: 'visible' });
+	await commandBar.getByLabel('Search commands').fill('Install Terminay MCP');
+	await commandBar.locator('.macro-launcher-item').filter({ hasText: 'Install Terminay MCP' }).click();
+	await page.getByRole('heading', { name: 'Install Terminay MCP' }).waitFor({ state: 'visible' });
+	await capture(app, page, 'terminay-mcp-install.png');
+	await page.getByRole('button', { name: 'Close Install Terminay MCP' }).click();
+
+	const macros = await openRoute(app, page, '/?auxiliary=macros', 'macros', '[data-shared-route-body="macros"]');
+	await installScreenshotWindowControls(macros, 'floating');
+	await capture(app, macros, 'terminay-macros.png');
+	await macros.close();
+
+	const recordings = await openRoute(app, page, '/?auxiliary=recordings', 'recordings', '[data-shared-route-body="recordings"]');
+	await installScreenshotWindowControls(recordings, 'floating');
+	await capture(app, recordings, 'terminay-recordings.png');
+	await recordings.close();
+
+	const settings = await openRoute(app, page, '/?auxiliary=settings', 'settings', '[data-shared-route-body="settings"]');
+	await installScreenshotWindowControls(settings, 'floating');
+	await capture(app, settings, 'terminay-settings.png');
+	const shortcuts = settings.locator('.settings-nav-item').filter({ hasText: 'Shortcuts' }).first();
+	await shortcuts.click();
+	await shortcuts.waitFor({ state: 'visible' });
+	await capture(app, settings, 'terminay-shortcuts.png');
+	await settings.close();
+
+	const remoteControl = await openRoute(app, page, '/?auxiliary=remote-control', 'remote-control', '[data-shared-route-body="connections"]');
+	await installScreenshotWindowControls(remoteControl, 'floating');
+	await capture(app, remoteControl, 'terminay-remote-access.png');
+	await remoteControl.close();
+}
+
 async function run() {
+	log(`starting group ${selectedGroup}`);
 	// macOS Unix-domain sockets have a short path limit. /var/folders plus a
 	// worktree path can push the MCP control socket beyond it before the UI opens.
 	const userDataRoot = process.platform === 'darwin' ? '/tmp' : os.tmpdir();
@@ -472,9 +684,10 @@ async function run() {
 	const seededWorkspace = await seedWorkspace();
 	let app;
 	try {
-		await rm(outputDir, { force: true, recursive: true });
+		if (selectedGroup === 'all') await rm(outputDir, { force: true, recursive: true });
 		await mkdir(outputDir, { recursive: true });
-		app = await electron.launch({
+		log('launching Electron');
+		app = await withHeartbeat('Electron still launching', () => electron.launch({
 			args: ['--force-device-scale-factor=2', '--high-dpi-support=1', '.'],
 			env: {
 				...process.env,
@@ -483,7 +696,8 @@ async function run() {
 				TERMINAY_TEST_ALLOW_UNAVAILABLE_WEBRTC_UI: '1',
 				TERMINAY_USER_DATA_DIR: userDataDir,
 			},
-		});
+		}));
+		log('Electron launched');
 		await app.evaluate(({ nativeTheme }) => {
 			nativeTheme.themeSource = 'dark';
 		});
@@ -495,161 +709,13 @@ async function run() {
 		await mainWindow.locator('[data-terminay-app-component]').waitFor({ state: 'visible', timeout: 60_000 });
 		await installScreenshotWindowControls(mainWindow);
 		await createWorkspaceProjects(mainWindow, seededWorkspace.workspace);
-		await createTerminalGrid(mainWindow);
-		await populateCodexTerminalGrid(mainWindow, seededWorkspace.workspace);
-		const terminal = mainWindow.locator('.project-workspace--active .terminal-panel:visible .xterm-helper-textarea').first();
-		await mainWindow.locator('.project-workspace--active .xterm-rows').first().waitFor({ state: 'visible' });
-		await capture(app, mainWindow, 'terminay-workspace.png');
-		await copyFile(
-			path.join(outputDir, 'terminay-workspace.png'),
-			path.join(outputDir, 'terminay-hero-workspace.png'),
-		);
-		await stopCodexTuis(mainWindow, 4);
-
-		// Keep the feature walkthroughs legible: the workspace image above intentionally
-		// demonstrates the 2x2 layout, while the Docs project is a clean one-pane canvas.
-		await mainWindow.locator('.project-tab').filter({ hasText: 'Docs' }).first().click();
-		await mainWindow.locator('.project-tab--active').filter({ hasText: 'Docs' }).waitFor({ state: 'visible', timeout: 15_000 });
-		await openFileExplorer(mainWindow);
-		await selectSidebarGroup(mainWindow, 'agents');
-		await prepareAgentTerminal(mainWindow, seededWorkspace.workspace);
-		try {
-			await populateAgentsScreenshot(mainWindow);
-		} catch (error) {
-			if (!String(error?.message ?? error).includes('already owns this terminal session')) throw error;
-			await populateRealAgentsScreenshot(mainWindow);
-		}
-		await capture(app, mainWindow, 'terminay-agents.png');
-		await terminal.press('Control+C');
-		await mainWindow.waitForTimeout(500);
-		await terminal.press('Control+C');
-		await mainWindow.waitForTimeout(400);
-		await selectSidebarGroup(mainWindow, 'documentation');
-		const documentationPane = mainWindow.locator('.project-workspace--active .sidebar-pane').filter({
-			has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Documentation' }),
-		});
-		if (await documentationPane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed'))) {
-			await documentationPane.locator('.sidebar-pane__header').click();
-		}
-		await documentationPane.getByRole('tree').waitFor({ state: 'visible', timeout: 30_000 });
-		await documentationPane.getByRole('treeitem', { name: /^handbook$/i }).evaluate((element) => element.click());
-		await documentationPane.getByRole('treeitem', { name: /^Product roadmap, handbook\/roadmap\.md$/i }).evaluate((element) => element.click());
-		await mainWindow.locator('.documentation-editor').waitFor({ state: 'visible', timeout: 30_000 });
-		await mainWindow.getByRole('heading', { name: 'Product roadmap', exact: true }).waitFor({ state: 'visible', timeout: 30_000 });
-		await mainWindow.evaluate(() => {
-			if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-		});
-		await capture(app, mainWindow, 'terminay-documentation.png');
-
-		await selectSidebarGroup(mainWindow, 'explorer');
-		const explorerPane = mainWindow.locator('.project-workspace--active .sidebar-pane').filter({
-			has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Files' }),
-		});
-		if (await explorerPane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed'))) {
-			await explorerPane.locator('.sidebar-pane__header').click();
-		}
-		const readme = explorerItem(mainWindow, 'README.md');
-		await readme.waitFor({ state: 'visible', timeout: 30_000 });
-		await readme.dblclick();
-		await mainWindow.locator('.file-preview-markdown').waitFor({ state: 'visible', timeout: 30_000 });
-		await capture(app, mainWindow, 'terminay-files.png');
-
-		const docsFolder = explorerItem(mainWindow, 'handbook');
-		await docsFolder.click();
-		const roadmap = explorerItem(mainWindow, 'roadmap.md');
-		await roadmap.waitFor({ state: 'visible', timeout: 30_000 });
-		await roadmap.dblclick();
-		await mainWindow.getByRole('tab', { name: 'Tasks', exact: true }).click();
-		await mainWindow.locator('.file-tasks').waitFor({ state: 'visible', timeout: 30_000 });
-		await capture(app, mainWindow, 'terminay-files-tasks.png');
-
-		await docsFolder.dblclick();
-		await mainWindow.locator('.folder-viewer__title').waitFor({ state: 'visible', timeout: 30_000 });
-		await capture(app, mainWindow, 'terminay-folders.png');
-		await mainWindow.locator('.folder-viewer__view-button').filter({ hasText: 'List' }).first().click();
-		await mainWindow.locator('.folder-viewer__list').waitFor({ state: 'visible' });
-		await capture(app, mainWindow, 'terminay-folder-list.png');
-		await mainWindow.locator('.folder-viewer__view-button').filter({ hasText: 'Tasks' }).first().click();
-		await mainWindow.locator('.folder-tasks').waitFor({ state: 'visible', timeout: 30_000 });
-		await capture(app, mainWindow, 'terminay-folder-tasks.png');
-		await mainWindow.getByRole('tab', { name: 'Kanban', exact: true }).click();
-		await mainWindow.locator('.file-kanban__board').waitFor({ state: 'visible', timeout: 30_000 });
-		await capture(app, mainWindow, 'terminay-tasks-kanban.png');
-
-		const gitPane = mainWindow.locator('.sidebar-pane').filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) });
-		if (await gitPane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed'))) {
-			await gitPane.locator('.sidebar-pane__header').click();
-		}
-		await gitPane.locator('.worktrees-panel__worktree').first().waitFor({ state: 'visible', timeout: 30_000 });
-		await gitPane.scrollIntoViewIfNeeded();
-		await capture(app, mainWindow, 'terminay-worktrees.png');
-		await gitPane.locator('.worktrees-panel__push-button').first().click();
-		await mainWindow.locator('.context-menu').waitFor({ state: 'visible' });
-		await capture(app, mainWindow, 'terminay-quick-push.png');
-		await mainWindow.keyboard.press('Escape');
-
-		const recordingTab = mainWindow.locator('.project-workspace--active .terminal-tab-content').first();
-		await recordingTab.click();
-		await recordingTab.click({ button: 'right' });
-		await mainWindow.locator('.context-menu__item').filter({ hasText: 'Start Recording' }).click();
-		await terminal.focus();
-		await terminal.pressSequentially('printf "Recording a documentation session\\n"', { delay: 2 });
-		await terminal.press('Enter');
-		await mainWindow.waitForTimeout(500);
-		await recordingTab.click({ button: 'right' });
-		await mainWindow.locator('.context-menu__item').filter({ hasText: 'Stop Recording' }).click();
-
-		await mainWindow.evaluate(async () => {
-			const host = window.terminayHost;
-			if (!host) throw new Error('Canonical Terminay host is unavailable.');
-			const context = await host.getContext();
-			await host.requestAction({
-				bridgeVersion: context.hostBridgeVersion,
-				profileId: context.profileId,
-				schemaVersion: context.schemaVersion,
-				serverId: context.serverId,
-				sourceId: context.sourceId,
-				userGesture: true,
-				windowId: context.windowId,
-				action: { command: 'open-command-bar', type: 'menu.invoke' },
-			});
-		});
-		await mainWindow.getByRole('dialog', { name: 'Command bar' }).waitFor({ state: 'visible' });
-		await capture(app, mainWindow, 'terminay-command-bar.png');
-		await mainWindow.keyboard.press('Escape');
-
-		await invokeMenuCommand(mainWindow, 'open-command-bar');
-		const commandBar = mainWindow.getByRole('dialog', { name: 'Command bar' });
-		await commandBar.waitFor({ state: 'visible' });
-		await commandBar.getByLabel('Search commands').fill('Install Terminay MCP');
-		await commandBar.locator('.macro-launcher-item').filter({ hasText: 'Install Terminay MCP' }).click();
-		await mainWindow.getByRole('heading', { name: 'Install Terminay MCP' }).waitFor({ state: 'visible' });
-		await capture(app, mainWindow, 'terminay-mcp-install.png');
-		await mainWindow.getByRole('button', { name: 'Close Install Terminay MCP' }).click();
-
-	const macros = await openRoute(app, mainWindow, '/?auxiliary=macros', 'macros', '[data-shared-route-body="macros"]');
-		await installScreenshotWindowControls(macros, 'floating');
-		await capture(app, macros, 'terminay-macros.png');
-		await macros.close();
-
-	const recordings = await openRoute(app, mainWindow, '/?auxiliary=recordings', 'recordings', '[data-shared-route-body="recordings"]');
-		await installScreenshotWindowControls(recordings, 'floating');
-		await capture(app, recordings, 'terminay-recordings.png');
-		await recordings.close();
-
-		const settings = await openRoute(app, mainWindow, '/?auxiliary=settings', 'settings', '[data-shared-route-body="settings"]');
-		await installScreenshotWindowControls(settings, 'floating');
-		await capture(app, settings, 'terminay-settings.png');
-		const shortcuts = settings.locator('.settings-nav-item').filter({ hasText: 'Shortcuts' }).first();
-		await shortcuts.click();
-		await shortcuts.waitFor({ state: 'visible' });
-		await capture(app, settings, 'terminay-shortcuts.png');
-		await settings.close();
-
-	const remoteControl = await openRoute(app, mainWindow, '/?auxiliary=remote-control', 'remote-control', '[data-shared-route-body="connections"]');
-		await installScreenshotWindowControls(remoteControl, 'floating');
-		await capture(app, remoteControl, 'terminay-remote-access.png');
-		await remoteControl.close();
+		log('workspace projects ready');
+		if (wantsGroup('workspace')) await captureWorkspaceGroup(app, mainWindow, seededWorkspace.workspace);
+		if (wantsGroup('agents')) await captureAgentsGroup(app, mainWindow, seededWorkspace.workspace);
+		if (wantsGroup('files')) await captureFilesGroup(app, mainWindow);
+		if (wantsGroup('git')) await captureGitGroup(app, mainWindow);
+		if (wantsGroup('chrome')) await captureChromeGroup(app, mainWindow);
+		log('done');
 	} finally {
 		if (app) await app.close();
 		await rm(userDataDir, { force: true, recursive: true });
