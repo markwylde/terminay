@@ -1,11 +1,32 @@
 import type { TerminalPanelAttachment } from '@terminay/client-core'
 
 export const MAX_PANEL_INPUT_QUEUE_BYTES = 64 * 1024
+export const MAX_PANEL_PASTE_CHUNK_BYTES = 16 * 1024
 
 interface QueuedServerTerminalInput {
 	readonly data: string
 	readonly byteLength: number
 }
+
+interface QueuedServerTerminalPaste {
+	readonly data: string
+	readonly totalBytes: number
+	readonly onProgress: (progress: TerminalPasteProgress) => void
+	offset: number
+	sentBytes: number
+}
+
+type QueuedServerTerminalInputItem =
+	| QueuedServerTerminalInput
+	| QueuedServerTerminalPaste
+
+export interface TerminalPasteProgress {
+	readonly completedBytes: number
+	readonly status: 'cancelled' | 'complete' | 'in_progress'
+	readonly totalBytes: number
+}
+
+export type TerminalPasteChunkScheduler = () => Promise<void>
 
 /**
  * Serializes writes for one server-backed panel. The attachment transport is
@@ -16,14 +37,18 @@ interface QueuedServerTerminalInput {
  */
 export class ServerTerminalInputQueue {
 	private readonly encoder = new TextEncoder()
-	private readonly items: QueuedServerTerminalInput[] = []
+	private readonly items: QueuedServerTerminalInputItem[] = []
 	private attachment: TerminalPanelAttachment | null = null
 	private queuedBytes = 0
 	private attachmentGeneration = 0
 	private pumping = false
 	private closed = false
 
-	constructor(private readonly onError: (error: unknown) => void) {}
+	constructor(
+		private readonly onError: (error: unknown) => void,
+		private readonly waitForNextPasteChunk: TerminalPasteChunkScheduler =
+			async () => {},
+	) {}
 
 	enqueue(data: string): void {
 		if (this.closed) {
@@ -37,6 +62,38 @@ export class ServerTerminalInputQueue {
 
 		this.items.push({ data, byteLength })
 		this.queuedBytes += byteLength
+		void this.pump()
+	}
+
+	/**
+	 * A clipboard paste can be much larger than one bounded terminal-input
+	 * frame. Keep only its next frame in flight while preserving its position
+	 * ahead of later keyboard input, so the PTY observes one ordered stream.
+	 */
+	enqueuePaste(
+		data: string,
+		onProgress: (progress: TerminalPasteProgress) => void,
+	): void {
+		if (this.closed || data.length === 0) return
+
+		const totalBytes = this.encoder.encode(data).byteLength
+		if (totalBytes <= MAX_PANEL_INPUT_QUEUE_BYTES) {
+			this.enqueue(data)
+			return
+		}
+		const item: QueuedServerTerminalPaste = {
+			data,
+			offset: 0,
+			onProgress,
+			sentBytes: 0,
+			totalBytes,
+		}
+		this.items.push(item)
+		onProgress({
+			completedBytes: 0,
+			status: 'in_progress',
+			totalBytes,
+		})
 		void this.pump()
 	}
 
@@ -55,15 +112,33 @@ export class ServerTerminalInputQueue {
 		this.closed = true
 		this.attachmentGeneration += 1
 		this.attachment = null
-		this.items.length = 0
+		this.discardItems()
 		this.queuedBytes = 0
 	}
 
 	discardPending(): void {
 		if (this.closed) return
 		this.attachmentGeneration += 1
-		this.items.length = 0
+		this.discardItems()
 		this.queuedBytes = 0
+	}
+
+	/**
+	 * Stops the unsent portion of the active clipboard paste without throwing
+	 * away keyboard input that was queued after it. A write already handed to
+	 * the attachment may still reach the PTY, but no later paste chunk is sent.
+	 */
+	cancelPaste(): void {
+		if (this.closed) return
+		const index = this.items.findIndex(isQueuedPaste)
+		if (index === -1) return
+		const [item] = this.items.splice(index, 1)
+		if (!item || !isQueuedPaste(item)) return
+		item.onProgress({
+			completedBytes: item.sentBytes,
+			status: 'cancelled',
+			totalBytes: item.totalBytes,
+		})
 	}
 
 	private async pump(): Promise<void> {
@@ -84,6 +159,9 @@ export class ServerTerminalInputQueue {
 				if (!item) {
 					return
 				}
+				const chunk = isQueuedPaste(item)
+					? takePasteChunk(item)
+					: { data: item.data, byteLength: item.byteLength, nextOffset: null }
 
 				// The lifecycle check immediately before the write prevents a
 				// resolved attach promise from using an attachment after cleanup.
@@ -91,8 +169,10 @@ export class ServerTerminalInputQueue {
 					return
 				}
 
+				let delivered = false
 				try {
-					await attachment.write(item.data)
+					await attachment.write(chunk.data)
+					delivered = true
 				} catch (error) {
 					if (!this.closed && this.attachment === attachment && this.attachmentGeneration === generation) {
 						if (isTerminalPresentationOwnershipError(error)) {
@@ -107,11 +187,31 @@ export class ServerTerminalInputQueue {
 						this.close()
 						this.onError(error)
 					}
-				} finally {
-					if (this.items[0] === item) {
+				}
+				if (!delivered || this.items[0] !== item) continue
+
+				if (isQueuedPaste(item)) {
+					if (chunk.nextOffset === null) continue
+					item.offset = chunk.nextOffset
+					item.sentBytes += chunk.byteLength
+					const complete = item.offset >= item.data.length
+					item.onProgress({
+						completedBytes: item.sentBytes,
+						status: complete ? 'complete' : 'in_progress',
+						totalBytes: item.totalBytes,
+					})
+					if (complete) {
 						this.items.shift()
-					this.queuedBytes = Math.max(0, this.queuedBytes - item.byteLength)
+					} else {
+						// Yield after each delivered frame so the renderer can paint the
+						// newly reported percentage before more input is buffered. Without
+						// this, a local PTY can accept an entire paste in one task and make
+						// the progress UI appear frozen at its initial value.
+						await this.waitForNextPasteChunk()
 					}
+				} else {
+					this.items.shift()
+					this.queuedBytes = Math.max(0, this.queuedBytes - item.byteLength)
 				}
 			}
 		} finally {
@@ -121,6 +221,54 @@ export class ServerTerminalInputQueue {
 			}
 		}
 	}
+
+	private discardItems(): void {
+		for (const item of this.items) {
+			if (!isQueuedPaste(item)) continue
+			item.onProgress({
+				completedBytes: item.sentBytes,
+				status: 'cancelled',
+				totalBytes: item.totalBytes,
+			})
+		}
+		this.items.length = 0
+	}
+}
+
+function isQueuedPaste(
+	item: QueuedServerTerminalInputItem,
+): item is QueuedServerTerminalPaste {
+	return 'totalBytes' in item
+}
+
+function takePasteChunk(item: QueuedServerTerminalPaste): {
+	readonly byteLength: number
+	readonly data: string
+	readonly nextOffset: number
+} {
+	let byteLength = 0
+	let nextOffset = item.offset
+	while (nextOffset < item.data.length) {
+		const codePoint = item.data.codePointAt(nextOffset)
+		if (codePoint === undefined) break
+		const characterBytes = utf8CodePointBytes(codePoint)
+		if (byteLength + characterBytes > MAX_PANEL_PASTE_CHUNK_BYTES) break
+		byteLength += characterBytes
+		nextOffset += codePoint > 0xffff ? 2 : 1
+	}
+
+	return {
+		byteLength,
+		data: item.data.slice(item.offset, nextOffset),
+		nextOffset,
+	}
+}
+
+function utf8CodePointBytes(codePoint: number): number {
+	if (codePoint <= 0x7f) return 1
+	if (codePoint <= 0x7ff) return 2
+	if (codePoint <= 0xffff) return 3
+	return 4
 }
 
 export function isTerminalPresentationOwnershipError(error: unknown): boolean {
