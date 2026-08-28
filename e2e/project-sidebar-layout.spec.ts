@@ -834,7 +834,13 @@ test('every vertical boundary supports repeated bidirectional and keyboard resiz
 	await expect(sidebarTitle(mainWindow, 'git')).toBeVisible();
 	await git.locator('.sidebar-pane__header').click();
 	await expect(git).not.toHaveClass(/sidebar-pane--collapsed/);
-	await mainWindow.getByLabel('Reorder Git panel').press('ArrowUp');
+	const reorderGit = activeSidebar(mainWindow).getByRole('button', {
+		name: 'Reorder Git panel',
+	});
+	await expect(reorderGit).toBeVisible();
+	await reorderGit.focus();
+	await expect(reorderGit).toBeFocused();
+	await mainWindow.keyboard.press('ArrowUp');
 	await expect
 		.poll(async () =>
 			activeSidebar(mainWindow)
