@@ -117,8 +117,8 @@
 	display: flex;
 	align-items: center;
 	flex: 0 0 auto;
-	background: #090b0e;
-	border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+	background: var(--project-chrome);
+	border-bottom: 1px solid rgba(0, 0, 0, 0.22);
 }
 
 /* Keep title actions usable where an overlay sash crosses a title boundary. */
@@ -166,7 +166,7 @@
 	cursor: grab;
 	touch-action: none;
 	user-select: none;
-	color: rgba(214, 227, 240, 0.26);
+	color: rgba(255, 255, 255, 0.38);
 	transition:
 		background 100ms ease,
 		color 100ms ease;
@@ -179,8 +179,8 @@
 }
 
 .sidebar-pane__drag-handle:hover {
-	background: rgba(255, 255, 255, 0.045);
-	color: rgba(214, 227, 240, 0.68);
+	background: rgba(255, 255, 255, 0.08);
+	color: rgba(255, 255, 255, 0.85);
 }
 
 .sidebar-pane__drag-handle:active {
@@ -190,11 +190,11 @@
 .sidebar-pane__drag-handle:focus-visible {
 	outline: 1px solid rgba(87, 183, 255, 0.7);
 	outline-offset: -1px;
-	color: rgba(214, 227, 240, 0.8);
+	color: #ffffff;
 }
 
 .sidebar-pane__header-row:hover {
-	background: #0c0f13;
+	background: color-mix(in srgb, #fff 6%, var(--project-chrome));
 }
 
 .sidebar-pane__header {
@@ -208,12 +208,12 @@
 	padding: 6px 10px;
 	cursor: pointer;
 	text-align: left;
-	color: rgba(214, 227, 240, 0.45);
+	color: #ffffff;
 	transition: color 100ms ease;
 }
 
 .sidebar-pane__header-row:hover .sidebar-pane__header {
-	color: rgba(214, 227, 240, 0.7);
+	color: #ffffff;
 }
 
 .sidebar-pane__header-aside {
@@ -242,15 +242,15 @@
 	height: 22px;
 	border-radius: 4px;
 	cursor: pointer;
-	color: rgba(214, 227, 240, 0.45);
+	color: rgba(255, 255, 255, 0.72);
 	transition:
 		background 100ms ease,
 		color 100ms ease;
 }
 
 .sidebar-pane__action-button:hover {
-	background: rgba(255, 255, 255, 0.08);
-	color: rgba(214, 227, 240, 0.85);
+	background: rgba(255, 255, 255, 0.12);
+	color: #ffffff;
 }
 
 .sidebar-pane__action-button--active {
@@ -285,8 +285,8 @@
 	font-size: 11px;
 	line-height: 16px;
 	text-align: center;
-	background: rgba(255, 255, 255, 0.08);
-	color: rgba(214, 227, 240, 0.6);
+	background: rgba(255, 255, 255, 0.16);
+	color: #ffffff;
 }
 
 .sidebar-pane__accessory {
@@ -296,7 +296,7 @@
 	text-overflow: ellipsis;
 	white-space: nowrap;
 	font-size: 11px;
-	color: rgba(214, 227, 240, 0.5);
+	color: rgba(255, 255, 255, 0.78);
 }
 
 .sidebar-pane__branch {
