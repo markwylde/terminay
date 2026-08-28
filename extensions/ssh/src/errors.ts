@@ -28,5 +28,12 @@ export function normalizeError(error: unknown, fallback = "unreachable"): SshPro
   if (code === "EEXIST" || code === "4") return new SshProviderError("conflict", "Remote path conflicts with an existing entry");
   if (["ETIMEDOUT", "ENETUNREACH", "EHOSTUNREACH", "ECONNREFUSED"].includes(code)) return new SshProviderError("unreachable", "SSH server is unreachable");
   if (String(value?.level ?? "").includes("client-authentication")) return new SshProviderError("authentication-failed", "SSH authentication failed");
-  return new SshProviderError(fallback, fallback === "outcome-unknown" ? "Remote mutation outcome is unknown" : "SSH operation failed");
+  // SSH library errors are surfaced only as a bounded single-line detail. This
+  // preserves the actionable channel/transport reason without returning a
+  // stack, host configuration, or secret material through the provider API.
+  const rawMessage = error instanceof Error ? error.message.replace(/[\r\n]/gu, " ").trim().slice(0, 240) : "";
+  const message = fallback === "outcome-unknown"
+    ? "Remote mutation outcome is unknown"
+    : rawMessage ? `SSH operation failed: ${rawMessage}` : "SSH operation failed";
+  return new SshProviderError(fallback, message);
 }

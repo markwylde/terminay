@@ -5,8 +5,9 @@ import { SftpFilesystem } from "../dist/index.js";
 
 class Attrs { constructor(type, size = 0, mtime = 10) { this.type = type; this.size = size; this.mode = type === "directory" ? 0o40700 : 0o100600; this.mtime = mtime; this.atime = mtime; } isDirectory() { return this.type === "directory"; } isSymbolicLink() { return this.type === "symlink"; } }
 class FakeSftp {
-  constructor() { this.nodes = new Map([["/home/u", { attrs: new Attrs("directory") }], ["/home/u/project", { attrs: new Attrs("directory") }], ["/home/u/project/a.txt", { attrs: new Attrs("file", 5), data: Buffer.from("hello") }], ["/outside", { attrs: new Attrs("directory") }]]); this.links = new Map([["/home/u/project/escape", "/outside"]]); this.renames = []; }
-  realpath(path, cb) { const normalized = path === "." || path === "~" ? "/home/u" : posix.normalize(path); const actual = this.links.get(normalized) ?? normalized; cb(this.nodes.has(actual) ? null : code("ENOENT"), actual); }
+  constructor() { this.nodes = new Map([["/home/u", { attrs: new Attrs("directory") }], ["/home/u/project", { attrs: new Attrs("directory") }], ["/home/u/project/a.txt", { attrs: new Attrs("file", 5), data: Buffer.from("hello") }], ["/outside", { attrs: new Attrs("directory") }]]); this.links = new Map([["/home/u/project/escape", "/outside"]]); this.renames = []; this.ends = 0; this.realpaths = 0; }
+  end() { this.ends++; }
+  realpath(path, cb) { this.realpaths++; const normalized = path === "." || path === "~" ? "/home/u" : posix.normalize(path); const actual = this.links.get(normalized) ?? normalized; cb(this.nodes.has(actual) ? null : code("ENOENT"), actual); }
   stat(path, cb) { const actual = this.links.get(path) ?? path; const node = this.nodes.get(actual); cb(node ? null : code("ENOENT"), node?.attrs); }
   lstat(path, cb) { if (this.links.has(path)) return cb(null, new Attrs("symlink")); this.stat(path, cb); }
   readdir(path, cb) { if (path !== "/home/u/project") return cb(code("ENOTDIR")); cb(null, [{ filename: "a.txt", attrs: this.nodes.get("/home/u/project/a.txt").attrs }, { filename: "escape", attrs: new Attrs("symlink") }]); }
@@ -25,8 +26,23 @@ function setup() { const sftp = new FakeSftp(); const client = { sftp: (cb) => c
 const base = { profileId: "p", revision: 1, root: "/home/u/project" };
 
 test("remote roots and directory browser canonicalize through SFTP", async () => {
-  const { fs } = setup(); assert.deepEqual(await fs.resolveRoot({ profileId: "p", revision: 1, root: "~" }), { root: "/home/u" });
+  const { fs, sftp } = setup(); assert.deepEqual(await fs.resolveRoot({ profileId: "p", revision: 1, root: "~" }), { root: "/home/u" }); assert.equal(sftp.ends, 0);
   const result = await fs.browse({ profileId: "p", revision: 1, root: "/home/u/project" }); assert.equal(result.entries.length, 2); assert.equal(result.entries[0].path, "/home/u/project/a.txt");
+  assert.equal(sftp.ends, 0, "directory listing reuses the open SFTP session");
+  const realpathsAfterFirstList = sftp.realpaths;
+  await fs.list({ profileId: "p", revision: 1, root: "/home/u/project", path: "." });
+  assert.equal(sftp.realpaths, realpathsAfterFirstList, "listing the project root again reuses the cached realpath");
+  await fs.releaseCached("p", 1);
+  assert.equal(sftp.ends, 1);
+});
+
+test("directory entries without optional SFTP atime still satisfy the public metadata contract", async () => {
+  const { fs, sftp } = setup();
+  sftp.nodes.get("/home/u/project/a.txt").attrs.atime = undefined;
+  const result = await fs.list({ ...base, path: "." });
+  const entry = result.entries.find((candidate) => candidate.name === "a.txt");
+  assert.equal(entry.atimeMs, entry.mtimeMs);
+  assert.equal(Number.isFinite(entry.atimeMs), true);
 });
 
 test("realpath containment rejects lexical and symlink escapes", async () => {

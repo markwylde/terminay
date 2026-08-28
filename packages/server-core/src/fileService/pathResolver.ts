@@ -66,6 +66,14 @@ export class CanonicalProjectPathResolver {
     if (hasTraversalSegment(requestedPath)) throw new FileServiceError("path_escape", "path traversal is not permitted", { requested: requestedPath });
 
     const root = await this.root();
+    if (
+      !isAbsolutePath(requestedPath) &&
+      (requestedPath === "." || requestedPath === "")
+    ) {
+      if (options.requireFile ?? false)
+        throw new FileServiceError("not_file", "path is not a file", { canonical: root });
+      return root;
+    }
     // For relative requests the project root is the only starting point. An
     // absolute path is accepted only after canonical containment is checked.
     const candidate = isAbsolutePath(requestedPath) ? requestedPath : joinPath(root, requestedPath);

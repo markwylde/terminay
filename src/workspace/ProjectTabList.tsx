@@ -2,7 +2,6 @@ import { Reorder } from 'framer-motion';
 import type { CSSProperties, KeyboardEvent } from 'react';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { ProjectSwitcherMenu } from './ProjectSwitcherMenu';
-import type { ProjectTab } from './projectTabModel';
 import {
 	fitProjectTabOverflow,
 	insertVisibleIdByClientX,
@@ -14,6 +13,7 @@ import {
 	projectTabStripAvailableWidth,
 	sameIdList,
 } from './projectTabOverflow';
+import { projectTabIsBusy, type ProjectTab } from './projectTabModel';
 
 export type ProjectTabDropPreview = {
 	index: number;
@@ -272,7 +272,7 @@ export function ProjectTabList({
 							data-pending-project-id={
 								project.creationStatus === undefined ? undefined : project.id
 							}
-							className={`project-tab${project.id === activeProjectId ? ' project-tab--active' : ''}${project.id === draggingProjectId ? ' project-tab--dragging' : ''}${project.id === draggingProjectId && isDraggingTabTornOff ? ' project-tab--torn-off' : ''}${project.creationStatus ? ` project-tab--creation-${project.creationStatus}` : ''}`}
+							className={`project-tab${project.id === activeProjectId ? ' project-tab--active' : ''}${project.id === draggingProjectId ? ' project-tab--dragging' : ''}${project.id === draggingProjectId && isDraggingTabTornOff ? ' project-tab--torn-off' : ''}${project.creationStatus ? ` project-tab--creation-${project.creationStatus}` : ''}${projectTabIsBusy(project) && project.creationStatus !== 'failed' ? ' project-tab--creation-loading' : ''}`}
 							role="tab"
 							aria-selected={project.id === activeProjectId}
 							tabIndex={project.id === activeProjectId ? 0 : -1}
@@ -309,13 +309,7 @@ export function ProjectTabList({
 							title="Double-click to edit tab"
 						>
 							<span className="project-tab-main">
-								{project.creationStatus === 'loading' ? (
-									<span
-										className="project-tab-creation-spinner"
-										role="img"
-										aria-label="Creating project"
-									/>
-								) : project.creationStatus === 'failed' ? (
+								{project.creationStatus === 'failed' ? (
 									<span
 										className="project-tab-creation-error"
 										role="img"
@@ -323,6 +317,16 @@ export function ProjectTabList({
 									>
 										!
 									</span>
+								) : projectTabIsBusy(project) ? (
+									<span
+										className="project-tab-creation-spinner"
+										role="img"
+										aria-label={
+											project.creationStatus === 'loading'
+												? 'Creating project'
+												: 'Connecting project'
+										}
+									/>
 								) : project.projectEnvironmentId &&
 								project.projectEnvironmentId !== 'terminay:this-server' ? (
 									<span

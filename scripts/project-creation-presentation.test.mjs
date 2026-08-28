@@ -23,6 +23,10 @@ const terminalTab = await readFile(
 	new URL('../src/components/TerminalTab.tsx', import.meta.url),
 	'utf8',
 );
+const controller = await readFile(
+	new URL('../src/workspace/useFileExplorerController.ts', import.meta.url),
+	'utf8',
+);
 
 test('project creation stays in a background pending tab until its terminal is ready', () => {
 	assert.match(app, /creationStatus: 'loading'/u);
@@ -40,11 +44,16 @@ test('project creation stays in a background pending tab until its terminal is r
 
 test('pending project tabs use a spinner and failures activate their error surface', () => {
 	assert.match(projectTabs, /project-tab-creation-spinner/u);
+	assert.match(projectTabs, /projectTabIsBusy\(project\)/u);
 	assert.match(projectTabs, /project\.creationStatus !== 'loading'/u);
+	assert.match(projectTabs, /Connecting project/u);
 	assert.match(styles, /@keyframes project-tab-creation-spin/u);
 	assert.match(app, /creationStatus: 'failed'/u);
 	assert.match(app, /displayedActiveProjectId = isPendingProjectFailure/u);
 	assert.match(app, /Project creation failed\./u);
+	assert.match(app, /hydrating:/u);
+	assert.match(controller, /explorerMayLoad\(project\)/u);
+	assert.match(controller, /project\.hydrating === false/u);
 });
 
 test('terminal hydration stays in tab chrome and leaves a blank xterm surface', () => {

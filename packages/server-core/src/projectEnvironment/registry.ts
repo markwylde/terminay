@@ -45,11 +45,14 @@ export class ProjectEnvironmentRegistry {
 		this.runtimes.set(runtime.providerId, runtime);
 	}
 	unregister(providerId: ProtocolId): void { if (providerId === THIS_SERVER_PROVIDER_ID) throw new Error('This server provider cannot be unregistered'); this.runtimes.delete(providerId); }
+	get(providerId: ProtocolId): ProjectEnvironmentRuntime | undefined { return this.runtimes.get(providerId); }
 	resolve(environment: ProjectEnvironmentRecord, capability: ProjectEnvironmentCapability): ProjectEnvironmentRuntime {
 		if (environment.archived || environment.status !== 'ready') throw new Error(`project environment is unavailable: ${environment.status}`);
-		if (!environment.availableCapabilities.includes(capability)) throw new ProjectEnvironmentCapabilityError(capability);
 		const runtime = this.runtimes.get(environment.providerId);
 		if (runtime === undefined) throw new Error('project environment provider is unavailable');
+		// The live provider contribution is current. Persisted availableCapabilities
+		// is a create-time snapshot and lags when a provider gains Git after the VM
+		// already exists. A missing live capability still fails closed.
 		if (!runtime.capabilities.includes(capability)) throw new ProjectEnvironmentCapabilityError(capability);
 		return runtime;
 	}

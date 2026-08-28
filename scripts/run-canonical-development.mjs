@@ -1,28 +1,42 @@
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
-import { build } from 'vite';
 import { prepareDevelopmentBuiltInExtensions } from './prepare-development-built-in-extensions.mjs';
 import { stageSelectedSecureWeriftRuntime } from './stage-selected-secure-werift-runtime.mjs';
 
 const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const viteCli = join(repositoryRoot, 'node_modules', 'vite', 'bin', 'vite.js');
-const npmCli = join(repositoryRoot, 'node_modules', 'npm', 'bin', 'npm-cli.js');
-const runFile = promisify(execFile);
+const turboCli = join(repositoryRoot, 'node_modules', 'turbo', 'bin', 'turbo');
+const require = createRequire(join(repositoryRoot, 'package.json'));
+const electronBinary = require('electron');
 
 let stopping = false;
-let developmentServer;
-let serverUiWatcher;
+let activeChild;
 function stop(signal = 'SIGTERM') {
 	if (stopping) return;
 	stopping = true;
-	void serverUiWatcher?.close();
-	if (developmentServer !== undefined) {
-		const child = developmentServer;
-		if (child.exitCode === null && child.signalCode === null)
-			child.kill(signal);
-	}
+	if (
+		activeChild !== undefined &&
+		activeChild.exitCode === null &&
+		activeChild.signalCode === null
+	)
+		activeChild.kill(signal);
+}
+
+function runCommand(cli, args, label) {
+	return new Promise((resolve, reject) => {
+		const child = spawn(process.execPath, [cli, ...args], {
+			cwd: repositoryRoot,
+			stdio: 'inherit',
+		});
+		activeChild = child;
+		child.once('error', reject);
+		child.once('exit', (code, signal) => {
+			if (activeChild === child) activeChild = undefined;
+			if (code === 0) resolve();
+			else reject(new Error(`${label} failed (${signal ?? `exit ${code}`})`));
+		});
+	});
 }
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
@@ -32,70 +46,52 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 	});
 }
 
-process.env.TERMINAY_SERVER_UI_WATCH = '1';
 process.env.TERMINAY_DEVELOPMENT_SOURCE_WORKSPACES = '1';
 process.env.TERMINAY_WEBRTC_RUNTIME_ROOT = join(
 	repositoryRoot,
 	'build',
 	'webrtc-runtime',
 );
-let initialBundleReady;
-let initialBundleFailed;
-let initialBundlePublished = false;
-const initialBundle = new Promise((resolve, reject) => {
-	initialBundleReady = resolve;
-	initialBundleFailed = reject;
-});
+delete process.env.TERMINAY_SERVER_UI_WATCH;
+delete process.env.VITE_DEV_SERVER_URL;
+
 try {
-	// Built-in extension package tests load the server-core public runtime. A
-	// fresh worktree has no compiled workspace output, so build that dependency
-	// before staging extensions rather than relying on an unrelated prior build.
-	await runFile(process.execPath, [npmCli, 'run', 'build:shared'], {
-		cwd: repositoryRoot,
-	});
+	// Electron loads packed built-ins and the Turbo-cached Desktop Vite
+	// artifacts, not a watcher. One graph compiles workspaces and the
+	// generated server UI / preload / Electron bundles so repeat starts
+	// restore dist-web, dist-electron, and dist from cache.
+	process.stdout.write('[dev] building workspaces and desktop artifacts\n');
+	await runCommand(
+		turboCli,
+		['run', 'build:dev-desktop'],
+		'turbo run build:dev-desktop',
+	);
+	process.stdout.write('[dev] workspace graph ready\n');
+	process.stdout.write('[dev] canonical server UI ready\n');
 	// Electron resolves its development built-ins from build/, not directly
-	// from workspace source. Complete this atomic stage and verification before
-	// starting Vite/Electron so a clean checkout cannot boot without agents.
-	const builtInStage = await prepareDevelopmentBuiltInExtensions({ root: repositoryRoot });
-	process.stdout.write(`[dev] verified ${builtInStage.artifacts.length} built-in extensions\n`);
-	const [watcher, preloadBuild, runtimeStage] = await Promise.all([
-		build({
-			configFile: 'vite.server-ui.config.ts',
-			build: { watch: {} },
-			plugins: [
-				{
-					name: 'terminay-start-electron-after-initial-server-ui-bundle',
-					buildEnd(error) {
-						if (error !== undefined) initialBundleFailed(error);
-					},
-					writeBundle() {
-						if (!initialBundlePublished) {
-							initialBundlePublished = true;
-							process.stdout.write('[dev] canonical server UI ready\n');
-						}
-						initialBundleReady();
-					},
-				},
-			],
-		}),
-		build({ configFile: 'vite.server-preload.config.ts' }),
+	// from workspace source. Complete this atomic stage and verification
+	// before launching so a clean checkout cannot boot without agents.
+	const [builtInStage] = await Promise.all([
+		prepareDevelopmentBuiltInExtensions({ root: repositoryRoot }),
 		stageSelectedSecureWeriftRuntime(undefined, { reuseValidated: true }),
 	]);
-	serverUiWatcher = watcher;
-
-	// The watcher is ready before its initial build is complete. Its write hook
-	// runs after the canonical manifest is published, so Electron never observes
-	// a partial asset inventory. The preload and trusted runtime build alongside
-	// it, rather than serially ahead of application startup.
-	await Promise.all([initialBundle, preloadBuild, runtimeStage]);
+	process.stdout.write(
+		`[dev] verified ${builtInStage.artifacts.length} built-in extensions\n`,
+	);
 	process.stdout.write('[dev] verified secure WebRTC runtime\n');
-	developmentServer = spawn(process.execPath, [viteCli], { stdio: 'inherit' });
+
+	const electronProcess = spawn(electronBinary, ['.', '--no-sandbox'], {
+		cwd: repositoryRoot,
+		stdio: 'inherit',
+	});
+	activeChild = electronProcess;
 
 	await new Promise((resolve, reject) => {
-		developmentServer.once('error', reject);
-		developmentServer.once('exit', (code, signal) => {
-			if (stopping) resolve();
-			else reject(new Error(`Vite development server exited (${signal ?? `exit ${code}`})`));
+		electronProcess.once('error', reject);
+		electronProcess.once('exit', (code, signal) => {
+			if (activeChild === electronProcess) activeChild = undefined;
+			if (stopping || code === 0) resolve();
+			else reject(new Error(`Electron exited (${signal ?? `exit ${code}`})`));
 		});
 	});
 } finally {

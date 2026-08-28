@@ -29,6 +29,7 @@
 	"scripts": {
 		"postinstall": "node scripts/ensure-node-pty-helper-mode.mjs",
 		"dev": "node scripts/run-canonical-development.mjs",
+		"build:dev-desktop": "TERMINAY_DEVELOPMENT_SOURCE_WORKSPACES=1 vite build --config vite.server-ui.config.ts && TERMINAY_DEVELOPMENT_SOURCE_WORKSPACES=1 vite build && TERMINAY_DEVELOPMENT_SOURCE_WORKSPACES=1 vite build --config vite.server-preload.config.ts",
 		"dev:electron": "TERMINAY_DEVELOPMENT_SOURCE_WORKSPACES=1 tsc && vite build && electron-builder --dir --mac --arm64 && open \"release/$npm_package_version/mac-arm64/Terminay.app\"",
 		"build:app": "npm run build:application-graph && npm run build:server-postcompile && npm run build:server-ui:bundle && tsc && vite build && vite build --config vite.server-preload.config.ts && node scripts/build-ui-bundle-manifest.mjs dist $npm_package_version 1 remote.html",
 		"build:built-in-extensions": "node scripts/stage-built-in-extensions.mjs",
@@ -62,7 +63,7 @@
 		"release": "node scripts/create-release.mjs",
 		"release:prepare-credentials": "node scripts/prepare-release-credentials.mjs",
 		"test:e2e": "sh scripts/run-project-environment-e2e.sh && sh scripts/run-e2e-container.sh",
-		"test:e2e:puzed-ssh": "npm run build --workspace @terminay/server-core && TERMINAY_RUN_PACKED_COMPOSITION_E2E=1 node --test packages/server-core/test/puzed-ssh-packed-composition.e2e.test.mjs",
+    "test:e2e:puzed-ssh": "npm run build --workspace @terminay/server-core && TERMINAY_RUN_PACKED_COMPOSITION_E2E=1 node --test packages/server-core/test/puzed-ssh-public-composition.test.mjs",
 		"test:e2e:host": "npm run build:app && playwright test",
 		"test:desktop-diagnostics": "npm run build:shared && npm run build --workspace @terminay/ui-bundle && node --test scripts/local-desktop-diagnostics-*.test.mjs scripts/renderer-root-diagnostics.test.mjs scripts/privileged-webrtc-transport-lifecycle.test.mjs",
 		"test:desktop-diagnostics-release": "npm run build:app && TERMINAY_REQUIRE_DESKTOP_DIAGNOSTICS_BUILD=1 node --test scripts/local-desktop-diagnostics-release.test.mjs",

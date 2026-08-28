@@ -112,6 +112,22 @@ export function projectEnvironmentRegistryHasUnknownCapabilities(input: unknown)
 	});
 }
 
+/**
+ * A provider profile owns the credentials for its local connection records.
+ * Older builds could persist an interrupted profile removal with the profile
+ * gone but child records still present. Those records cannot be used (and
+ * must never cause a remote VM mutation during recovery), so identify them
+ * before canonical validation rejects the whole registry.
+ */
+export function projectEnvironmentRegistryHasOrphanedProfileRecords(input: unknown): boolean {
+	if (!record(input) || !record(input.profiles) || !record(input.environments)) return false;
+	return Object.values(input.environments).some((environment) =>
+		record(environment)
+			&& typeof environment.profileId === 'string'
+			&& input.profiles[environment.profileId] === undefined,
+	);
+}
+
 function hasUnknownCapability(value: unknown): boolean {
 	return Array.isArray(value) && value.some((entry) => !(PROJECT_ENVIRONMENT_CAPABILITIES as readonly string[]).includes(entry));
 }

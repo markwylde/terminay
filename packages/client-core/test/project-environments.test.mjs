@@ -10,18 +10,34 @@ test('all project environment and extension client operations obey the wire gram
 test('project environment client uses fixed operations and parses safe summaries', async () => {
 	const calls=[];
 	const client=new ProjectEnvironmentsClient({
-		async query(operation,payload){calls.push({kind:'query',operation,payload});return operation===PROJECT_ENVIRONMENT_OPERATIONS.resolveOptions?{options:[{value:'image-1',label:'Debian'}]}:{revision:2,providers:[{providerId:'demo/provider',displayName:'Demo',profileForm:{id:'demo.profile',title:'Demo connection',submitLabel:'Save',sections:[{id:'main',title:'Connection',fields:[{id:'host',label:'Host',type:'text',required:true}]}]}}],environments:[{id:'terminay:this-server',providerId:'terminay:this-server',providerLabel:'This server',name:'This server',endpointSummary:'Local to Test',status:'ready',referencedProjectCount:1,isThisServer:true}]};},
+		async query(operation,payload){calls.push({kind:'query',operation,payload});return operation===PROJECT_ENVIRONMENT_OPERATIONS.resolveOptions?{options:[{value:'image-1',label:'Debian'}]}:{revision:2,providers:[{providerId:'demo/provider',displayName:'Demo',profileForm:{id:'demo.profile',title:'Demo connection',submitLabel:'Save',sections:[{id:'main',title:'Connection',fields:[{id:'host',label:'Host',type:'text',required:true}]}]}}],profiles:[{id:'profile-1',providerId:'demo/provider',name:'Demo',endpointSummary:'example.test',initialValues:{host:'example.test'}}],environments:[{id:'terminay:this-server',providerId:'terminay:this-server',providerLabel:'This server',name:'This server',endpointSummary:'Local to Test',status:'ready',referencedProjectCount:1,isThisServer:true}]};},
 		async command(operation,payload){calls.push({kind:'command',operation,payload});return {operationId:'op-1',state:'succeeded',projectId:'project-1'};},
 	});
 	const snapshot=await client.snapshot();
 	assert.equal(snapshot.environments[0].isThisServer,true);
 	assert.equal(snapshot.providers[0].profileForm.sections[0].fields[0].id,'host');
+	assert.deepEqual(snapshot.profiles[0].initialValues,{host:'example.test'});
 	await client.createProject({environmentId:'ssh:one',viewId:'view-1',root:'/work'});
+	await client.removeEnvironment('ssh:stale');
 	const options=await client.resolveOptions({providerId:'demo/provider',profileId:'profile-1',sourceId:'demo/images',query:'deb',values:{architecture:'amd64'}});
 	assert.equal(options.options[0].label,'Debian');
-	assert.deepEqual(calls.map(call=>call.operation),['project-environments.snapshot','project-environments.create-project','project-environments.resolve-options']);
+	assert.deepEqual(calls.map(call=>call.operation),['project-environments.snapshot','project-environments.create-project','project-environments.remove-connection','project-environments.resolve-options']);
 	assert.equal(calls[1].payload.environmentId,'ssh:one');
-	assert.deepEqual(calls[2].payload,{providerId:'demo/provider',sourceId:'demo/images',profileId:'profile-1',query:'deb',values:{architecture:'amd64'}});
+	assert.deepEqual(calls[2].payload,{environmentId:'ssh:stale'});
+	assert.deepEqual(calls[3].payload,{providerId:'demo/provider',sourceId:'demo/images',profileId:'profile-1',query:'deb',values:{architecture:'amd64'}});
+});
+
+test('project environment client accepts extension status cards without optional facts or actions', async () => {
+	const client=new ProjectEnvironmentsClient({
+		async query(){return {revision:3,providers:[],profiles:[],environments:[{
+			id:'puzed:vm-1',providerId:'puzed',providerLabel:'Puzed',name:'Puzed VM',endpointSummary:'Provisioning',status:'provisioning',referencedProjectCount:0,
+			statusCard:{id:'puzed-provisioning',title:'Puzed VM',summary:'The VM is still provisioning.',tone:'neutral'},
+		}]};},
+		async command(){return null;},
+	});
+	const [environment]=(await client.snapshot()).environments;
+	assert.deepEqual(environment.statusCard?.facts,[]);
+	assert.deepEqual(environment.statusCard?.actions,[]);
 });
 
 test('extension client binds preview confirmation to exact digest and revision', async () => {

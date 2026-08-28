@@ -14,7 +14,7 @@ const npmEnvironment = Object.fromEntries(Object.entries(process.env).filter(([k
 test("activation registers the canonical bounded provider and methods", async () => {
   const root = await mkdtemp(join(tmpdir(), "terminay-ssh-activate-")); const providers = [];
   await extension.activate({ extensionId: EXTENSION_ID, apiVersion: "1.0.0", paths: { configuration: join(root, "config"), data: join(root, "data"), cache: join(root, "cache") }, registerProjectEnvironmentProvider(value) { providers.push(value); } });
-  assert.equal(providers[0].definition.providerId, PROVIDER_ID); assert.deepEqual(providers[0].definition.capabilities, ["terminal", "filesystem", "agent-journal"]); assert.equal(providers[0].definition.profileForm.id, "ssh-profile");
+  assert.equal(providers[0].definition.providerId, PROVIDER_ID); assert.deepEqual(providers[0].definition.capabilities, ["terminal", "filesystem", "git", "agent-journal", "process-observation"]); assert.equal(providers[0].definition.profileForm.id, "ssh-profile");
   for (const callback of ["testProfile", "resolveOptions", "createEnvironment", "resumeOperation", "getStatus", "invokeAction"]) assert.equal(typeof providers[0].runtime[callback], "function");
   assert.deepEqual(await providers[0].runtime.resolveOptions({ sourceId: "unknown", values: {} }, call()), { options: [] });
   assert.equal((await providers[0].runtime.testProfile({ values: {} }, call()))[0].code, "invalid-input"); await extension.deactivate();

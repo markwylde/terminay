@@ -2,10 +2,31 @@ import { defaultTerminalSettings } from '../terminalSettings';
 import type { SidebarPanelId, SidebarSettings } from '../types/settings';
 
 const PROJECT_TAB_COLOR_PALETTE_SIZE = 20;
+const BUSY_ENVIRONMENT_STATUSES = new Set([
+	'connecting',
+	'reconnecting',
+	'provisioning',
+	'starting',
+]);
+
+export function projectTabIsBusy(
+	project: Pick<
+		ProjectTab,
+		'creationStatus' | 'environmentStatus' | 'hydrating'
+	>,
+): boolean {
+	if (project.creationStatus === 'loading' || project.hydrating === true)
+		return true;
+	return (
+		project.environmentStatus !== undefined &&
+		BUSY_ENVIRONMENT_STATUSES.has(project.environmentStatus)
+	);
+}
 
 export type ProjectTab = {
 	creationError?: string;
 	creationStatus?: 'loading' | 'failed';
+	hydrating?: boolean;
 	projectEnvironmentId?: string;
 	environmentRevision?: number;
 	environmentLabel?: string;

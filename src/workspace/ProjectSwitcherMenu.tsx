@@ -5,7 +5,7 @@ import type {
 	PointerEvent as ReactPointerEvent,
 } from 'react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { ProjectTab } from './projectTabModel';
+import { projectTabIsBusy, type ProjectTab } from './projectTabModel';
 import { moveItemByDrop } from './projectTabOverflow';
 
 export function ProjectSwitcherMenu({
@@ -313,11 +313,15 @@ export function ProjectSwitcherMenu({
 									setOpen(false);
 								}}
 							>
-								{project.creationStatus === 'loading' ? (
+								{projectTabIsBusy(project) ? (
 									<span
 										className="project-tab-creation-spinner"
 										role="img"
-										aria-label="Creating project"
+										aria-label={
+											project.creationStatus === 'loading'
+												? 'Creating project'
+												: 'Connecting project'
+										}
 									/>
 								) : (
 									<span

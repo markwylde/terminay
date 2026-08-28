@@ -26,6 +26,18 @@ test('narrow release builds materialize their workspace dependencies through Tur
 	assert.equal(turbo.tasks.build.outputs.includes('dist/**'), true);
 	assert.equal(rootPackage.scripts['build:built-in-extension-workspaces'], 'turbo run compile --filter=terminay-*');
 	assert.equal(rootPackage.scripts['build:workspaces'], 'turbo run build --filter=!terminay-* && turbo run compile --filter=terminay-*');
+	assert.match(
+		rootPackage.scripts['build:dev-desktop'],
+		/vite build --config vite\.server-ui\.config\.ts/u,
+	);
+	assert.equal(
+		turbo.tasks['//#build:dev-desktop'].outputs.includes('dist-web/**'),
+		true,
+	);
+	assert.equal(
+		turbo.tasks['//#build:dev-desktop'].outputs.includes('dist-electron/**'),
+		true,
+	);
 	assert.match(rootPackage.scripts['build:application-graph'], /turbo run compile --filter=terminay-\*/u);
 	assert.match(extensionStaging, /npm\(root, \["run", "build:built-in-extension-workspaces"\]\)/u);
 	assert.match(extensionStaging, /npm\(root, \["run", "test:ci", "--workspace", entry\.packageName\]\)/u);

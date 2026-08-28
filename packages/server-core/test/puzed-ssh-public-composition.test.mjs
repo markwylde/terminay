@@ -28,9 +28,9 @@ test("packed Puzed calls packed SSH only through the public dependency and targe
     async withSecret(id, use) { const source = secrets.get(id); if (!source) throw new Error("missing"); const copy = new Uint8Array(source); try { return await use(copy); } finally { copy.fill(0); } },
   });
   const manager = new ExtensionHostManager({ vault, broker: { async request(request) { externalBrokerCalls.push(request); throw new Error("external broker unavailable"); } } });
-  const sshContribution = { id: "com.terminay.ssh/connection", displayName: "SSH server", capabilities: ["terminal", "filesystem", "agent-journal"], dependencyOperations: ["generate", "bind", "update", "verify", "approve-trust", "service", "remove"].map((name) => ({ name: `managed-binding.${name}` })) };
+  const sshContribution = { id: "com.terminay.ssh/connection", displayName: "SSH server", capabilities: ["terminal", "filesystem", "git", "agent-journal", "process-observation"], dependencyOperations: ["generate", "bind", "update", "verify", "approve-trust", "service", "remove"].map((name) => ({ name: `managed-binding.${name}` })) };
   const sshDescriptor = descriptor(root, ssh, "com.terminay.ssh", [sshContribution], []);
-  const puzedDescriptor = descriptor(root, puzed, "com.puzed.platform", [{ id: "com.puzed.platform/vm", displayName: "Puzed VM", capabilities: ["terminal", "filesystem"] }], [{ extensionId: "com.terminay.ssh", apiRange: "^1.1.0" }]);
+  const puzedDescriptor = descriptor(root, puzed, "com.puzed.platform", [{ id: "com.puzed.platform/vm", displayName: "Puzed VM", capabilities: ["terminal", "filesystem", "git", "process-observation"] }], [{ extensionId: "com.terminay.ssh", apiRange: "^1.1.0" }]);
   try {
     await manager.start(sshDescriptor);
     await manager.start(puzedDescriptor);
@@ -49,9 +49,11 @@ test("packed Puzed calls packed SSH only through the public dependency and targe
     await manager.stop("com.puzed.platform"); await manager.start(puzedDescriptor);
     assert.equal((await manager.invokeProvider({ providerId: "com.puzed.platform/vm", callback: "resumeOperation", expectedRevision: resumed.providerState.sshRevision, request: { environmentId: "env-1", profileId: "profile-1", operationId: created.operationId, providerState: resumed.providerState } })).state, "ready");
     await manager.stop("com.terminay.ssh");
-    await assert.rejects(manager.invokeProvider({ providerId: "com.puzed.platform/vm", callback: "resumeOperation", expectedRevision: resumed.providerState.sshRevision, request: { environmentId: "env-1", profileId: "profile-1", operationId: created.operationId, providerState: resumed.providerState } }), /target is unavailable/);
+    const unavailable = await manager.invokeProvider({ providerId: "com.puzed.platform/vm", callback: "resumeOperation", expectedRevision: resumed.providerState.sshRevision, request: { environmentId: "env-1", profileId: "profile-1", operationId: created.operationId, providerState: resumed.providerState } });
+    assert.equal(unavailable.state, "pending");
+    assert.equal(unavailable.providerState.sshIssue, "unavailable");
     await manager.start(sshDescriptor);
-    assert.equal((await manager.invokeProvider({ providerId: "com.puzed.platform/vm", callback: "resumeOperation", expectedRevision: resumed.providerState.sshRevision, request: { environmentId: "env-1", profileId: "profile-1", operationId: created.operationId, providerState: resumed.providerState } })).state, "ready");
+    assert.equal((await manager.invokeProvider({ providerId: "com.puzed.platform/vm", callback: "resumeOperation", expectedRevision: unavailable.providerState.sshRevision, request: { environmentId: "env-1", profileId: "profile-1", operationId: created.operationId, providerState: unavailable.providerState } })).state, "ready");
     assert.equal(secrets.size, 1, "SSH target stored one private key in the host vault");
     assert.equal(externalBrokerCalls.length, 0, "generic manager routed the declared dependency internally");
     assert.equal(JSON.stringify(manager.statuses()).includes("PRIVATE KEY"), false);

@@ -35,44 +35,77 @@ test('the Desktop renderer build contains no second full-workspace entry', async
 	assert.match(vite, /remote:\s*path\.join\(__dirname,\s*'remote\.html'\)/u);
 });
 
-test('development watches the same generated server workspace used by releases', async () => {
+test('development builds the same generated server workspace used by releases', async () => {
 	const packageJson = JSON.parse(await read('package.json'));
+	const turbo = JSON.parse(await read('turbo.json'));
 	const runner = await read('scripts/run-canonical-development.mjs');
 	const serverUiConfig = await read('vite.server-ui.config.ts');
 	const preloadConfig = await read('vite.server-preload.config.ts');
-	const developmentAliases = await read('scripts/development-workspace-aliases.mjs');
+	const developmentAliases = await read(
+		'scripts/development-workspace-aliases.mjs',
+	);
 	const manifestBuilder = await read('scripts/build-ui-bundle-manifest.mjs');
+	const desktopViteTask = turbo.tasks['//#build:dev-desktop'];
 
-	assert.equal(packageJson.scripts.dev, 'node scripts/run-canonical-development.mjs');
+	assert.equal(
+		packageJson.scripts.dev,
+		'node scripts/run-canonical-development.mjs',
+	);
 	assert.match(
-		runner,
-		/TERMINAY_DEVELOPMENT_SOURCE_WORKSPACES = '1'/u,
-		'development must have Vite transform and watch workspace source directly',
+		packageJson.scripts['build:dev-desktop'],
+		/TERMINAY_DEVELOPMENT_SOURCE_WORKSPACES=1/u,
+		'development must have Vite transform workspace source directly',
+	);
+	assert.match(
+		packageJson.scripts['build:dev-desktop'],
+		/vite build --config vite\.server-ui\.config\.ts/u,
+	);
+	assert.match(
+		packageJson.scripts['build:dev-desktop'],
+		/vite build --config vite\.server-preload\.config\.ts/u,
 	);
 	assert.match(
 		runner,
-		/await runFile\(process\.execPath, \[npmCli, 'run', 'build:shared'\]/u,
-		'a clean worktree must build server-core before extension package tests stage built-ins',
+		/\['run', 'build:dev-desktop'\]/u,
+		'development must compile workspaces and Desktop Vite artifacts through one Turbo graph before Electron starts',
 	);
-	assert.match(runner, /stageSelectedSecureWeriftRuntime\(undefined, \{ reuseValidated: true \}\)/u);
-	assert.match(runner, /Promise\.all\(\[initialBundle, preloadBuild, runtimeStage\]\)/u);
+	assert.equal(typeof desktopViteTask, 'object');
+	assert.equal(desktopViteTask.outputs.includes('dist-web/**'), true);
+	assert.equal(desktopViteTask.outputs.includes('dist-electron/**'), true);
+	assert.equal(desktopViteTask.outputs.includes('dist/**'), true);
+	assert.equal(
+		desktopViteTask.dependsOn.includes('@terminay/server-core#build'),
+		true,
+	);
+	assert.equal(
+		desktopViteTask.dependsOn.includes('terminay-plugin-ssh#compile'),
+		true,
+	);
+	assert.doesNotMatch(
+		runner,
+		/build:\s*\{\s*watch:\s*\{\}\s*\}/u,
+		'development must not start a Vite watcher or HMR server',
+	);
+	assert.doesNotMatch(runner, /vite\.js/u);
+	assert.doesNotMatch(runner, /5173/u);
+	assert.match(runner, /spawn\(electronBinary, \['\.', '--no-sandbox'\]/u);
+	assert.match(
+		runner,
+		/stageSelectedSecureWeriftRuntime\(undefined, \{ reuseValidated: true \}\)/u,
+	);
 	assert.doesNotMatch(
 		packageJson.scripts.dev,
 		/build:application-graph|build:server-postcompile/u,
 		'development must not wait for release-only declarations or evidence before launching',
 	);
 	assert.match(packageJson.scripts['build:app'], /remote\.html/u);
-	assert.match(runner, /configFile:\s*'vite\.server-ui\.config\.ts'/u);
-	assert.match(runner, /build:\s*\{\s*watch:\s*\{\}\s*\}/u);
-	assert.match(runner, /Promise\.all\(\[initialBundle, preloadBuild, runtimeStage\]\)/u);
-	assert.match(runner, /writeBundle\(\)/u);
 	assert.match(serverUiConfig, /writeBundle\(/u);
 	assert.match(serverUiConfig, /buildUiBundleManifest/u);
 	assert.match(serverUiConfig, /manifestPublication\.then/u);
 	assert.match(
 		serverUiConfig,
 		/emptyOutDir:\s*!watching/u,
-		'production server UI builds must empty dist-web; watch rebuilds must not wipe a bundle Electron is verifying',
+		'production server UI builds must empty dist-web; optional watch rebuilds must not wipe a bundle Electron is verifying',
 	);
 	assert.match(serverUiConfig, /includeRelativePaths/u);
 	assert.match(serverUiConfig, /reportCompressedSize:\s*!watching/u);

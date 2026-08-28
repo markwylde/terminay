@@ -109,7 +109,10 @@ The default project root is the configured profile default when present,
 otherwise the remotely discovered account home. `~` expansion occurs only in
 the provider; the persisted root is a verified canonical absolute remote path.
 Users can change an individual project's root through the standard project
-editor/root shortcut, and profile-default changes affect future projects only.
+editor or the working-directory shortcut. The selected server validates that
+cwd on the SSH host, commits the canonical remote path as the project root,
+and rebinds Explorer/Git to it. Profile-default changes affect future
+projects only.
 
 The provider exposes a bounded pre-project remote directory browser and an
 SFTP filesystem adapter for canonical realpath/stat/lstat/list/ranged read,
@@ -122,12 +125,19 @@ conflict, and destructive-confirmation rules continue to apply against the
 remote filesystem. Writes use a random sibling temporary file plus rename when
 the server supports it, with bounded cleanup. Unsupported atomic rename,
 cross-device replacement, partial upload, disk full, and disconnect return
-explicit outcomes.
+explicit outcomes. One SSH connection reuses a single SFTP session across
+listing/stat/read calls; it does not open and wait-close a channel per child
+entry. Directory listings reuse the cached project-root realpath instead of
+repeating it for every list/stat. The cached SFTP session is released before a remote PTY is opened so a
+one-session guest can still accept the terminal channel.
 
 SFTP has no portable watch. SSH v1 advertises filesystem observation as
 unavailable and supplies manual refresh; it never watches the same path string
-on the Terminay Server host. Later bounded provider observation/polling must be
-declared and cannot weaken the UI's no-hidden-unbounded-polling rules.
+on the Terminay Server host. Protocol operations `files.watch.*` and
+`files.folder-size.*` classify as `filesystem-observation`, so a missing
+watch never opens SFTP or shares the remote file catalog's request deadline.
+Later bounded provider observation/polling must be declared and cannot weaken
+the UI's no-hidden-unbounded-polling rules.
 
 Dirty file sessions remain bound to the exact environment/root/revision. A
 disconnect preserves drafts. An outcome-unknown save refreshes canonical
@@ -145,8 +155,11 @@ and launches a trusted provider-generated shell at the canonical project root;
 it does not apply local server shell profiles or accept a renderer-generated
 command string. Additional remote shell discovery is future work.
 
-Remote current-cwd, foreground-process, native PID, and journal observation may
-be unavailable. Cwd presentation may retain the spawn root. Close protection
+Remote current-cwd is observed on POSIX targets by a proof-bound `/proc`
+walk on the same SSH connection as the PTY. The session proof is exported
+into the remote shell before exec, because OpenSSH drops unadvertised
+`SendEnv` values. Foreground-process, native PID, and journal observation may
+still be unavailable. Close protection
 warns only when a non-shell foreground process is known to be running; missing
 remote observation does not inspect the local SSH client process or invent a
 running job. Authoritative agent integration remains unavailable rather than
@@ -174,14 +187,23 @@ provider-owned remote mechanisms:
 - **Git:** an argv-safe bounded SSH exec runner and POSIX path adapter supports
   repository discovery, status, branches, worktrees, diffs, fetch, and reviewed
   Quick Push. Credentials remain target-side or use an explicit scoped provider
-  mechanism; remote paths never enter local Git.
+  mechanism; remote paths never enter local Git. Query results use the same
+  application-protocol shapes as This server, including `projectId` and
+  `worktreeRoot`, so a VM home that is not a repository is an empty Git state
+  rather than a failed load. Unknown `git.*` operations on a remote project
+  fail closed and never fall back to This server Git. Existing VMs created
+  before the provider advertised Git still route Git through the live
+  contribution; a create-time capability snapshot cannot hide a later Git
+  implementation.
 - **Filesystem observation:** a versioned remote watcher/helper, or an explicit
   bounded polling mode where necessary, publishes canonical root-scoped events,
   gap/resync state, and lifecycle. Observation stops when unused and always
   retains manual refresh as a safe fallback.
-- **Cwd and foreground process:** a versioned target helper binds observations
-  to the exact remote terminal session/channel. Stale or unprovable data is
-  labelled unavailable and cannot drive close protection.
+- **Cwd and foreground process:** POSIX cwd is proven on the same SSH
+  connection by matching `TERMINAY_SESSION_PROOF` in `/proc`. The
+  working-directory shortcut uses that live cwd. Foreground-process still
+  requires the versioned target helper; stale or unprovable data is labelled
+  unavailable and cannot drive close protection.
 - **Agents:** the target helper supplies process-to-journal writer proof and
   bounded provider-journal events for the exact session. Raw journal content
   remains server-private; terminal activity remains the fallback when proof or

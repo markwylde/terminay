@@ -18,6 +18,9 @@ tree and rich editor are governed by
   reconciliation poll.
 - Users can open files/folders, drag them to the tab area, create, rename, and
   delete entries, copy paths, and set a root from a terminal working directory.
+  That shortcut uses the selected project's environment: a This-server cwd is
+  validated on this host, and an SSH/Puzed cwd is validated on that remote
+  filesystem. It never treats a remote path as a missing local folder.
   **Reveal in OS** is shown only when the selected server issues an opaque
   reveal token and the client host advertises the matching native capability;
   a canonical or absolute server path is never sent to the client host as a
@@ -59,16 +62,19 @@ large-content safeguards, and explicit destructive actions remain required.
 
 Canonical paths and roots are interpreted only by that environment. A provider
 without filesystem observation presents manual refresh/unavailable observation;
-it never watches the same path on the Terminay Server. Disconnect preserves
-project state and dirty drafts, and ambiguous remote mutations are not blindly
-retried.
+it never watches the same path on the Terminay Server. Missing `files.watch.*`
+does not occupy the Explorer failure banner or block directory listing.
+Disconnect preserves project state and dirty drafts, and ambiguous remote
+mutations are not blindly retried.
 
 The server catalog exposes project-relative, bounded directory pages, filename
 search, non-following folder-size traversal, and create/rename/delete commands.
-Each child is canonicalized again before metadata is returned; escaped
-symlinks are reported as inaccessible metadata and are never traversed or
-mutated. Search and size traversal enforce entry/depth/byte caps, honour
-ignored-directory patterns, and accept cancellation.
+Ordinary files and directories may reuse the environment adapter's contained
+listing metadata so a remote tree does not re-stat every child. Symlink
+children are still canonicalized; escaped symlinks are reported as
+inaccessible metadata and are never traversed or mutated. Search and size
+traversal enforce entry/depth/byte caps, honour ignored-directory patterns,
+and accept cancellation.
 
 The same catalog exposes content-free preview metadata for a canonical file.
 It inspects only a bounded prefix to classify Markdown, images, PDF, text, and

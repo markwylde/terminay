@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { JsonValue } from '@terminay/protocol';
 import { ServerFileAdapter } from '../fileService/adapter.js';
 import { FileCatalog } from '../fileService/catalog.js';
@@ -50,6 +51,12 @@ type RemoteList = {
 	entries: readonly ({ name: string; path: string } & RemoteMetadata)[];
 };
 
+/** SFTP calls must use the in-flight protocol request. Caching the first
+ * invoke's AbortSignal on the shared catalog made later listings inherit a
+ * disposed deadline from `files.watch.start` or the first `files.list`. */
+const invocationContext =
+	new AsyncLocalStorage<ProjectEnvironmentInvocationContext>();
+
 /**
  * Maps the fixed file application protocol onto a provider's bounded
  * filesystem service.  The ordinary catalog/content/session adapters remain
@@ -58,47 +65,90 @@ type RemoteList = {
  */
 export class RemoteFileProtocol {
 	private readonly bundles = new Map<string, Promise<Bundle>>();
-	constructor(private readonly invokeFilesystem: InvokeFilesystem) {}
+	constructor(
+		private readonly invokeFilesystem: InvokeFilesystem,
+		private readonly projectRoot?: (projectId: string) => string | undefined,
+	) {}
+
+	forgetProject(projectId: string): void {
+		for (const key of [...this.bundles.keys()]) {
+			if (key.split('\0')[2] === projectId) this.bundles.delete(key);
+		}
+	}
 
 	async invoke(
 		operation: string,
 		rawInput: unknown,
 		context: ProjectEnvironmentInvocationContext,
 	): Promise<unknown> {
-		const input = protocolInput(rawInput);
-		const bundle = await this.bundle(context, input.request.clientId);
-		const query = bundle.queries[operation];
-		const command = bundle.commands[operation];
-		if (query === undefined && command === undefined)
-			throw new Error('remote file protocol operation is unavailable');
-		const request = protocolRequest(operation, input, context);
-		return query === undefined
-			? command!(request as CommandRequest)
-			: query(request as QueryRequest);
+		return invocationContext.run(context, async () => {
+			try {
+				const input = protocolInput(rawInput);
+				const bundle = await this.bundle(context, input.request.clientId);
+				const query = bundle.queries[operation];
+				const command = bundle.commands[operation];
+				if (query === undefined && command === undefined)
+					throw new Error('remote file protocol operation is unavailable');
+				const request = protocolRequest(operation, input, context);
+				return query === undefined
+					? command!(request as CommandRequest)
+					: query(request as QueryRequest);
+			} catch (error) {
+				// Provider execution is already capability-scoped and extension IPC
+				// bounds failure text. Preserve that bounded reason at the server
+				// protocol boundary: replacing every SFTP/root failure with "query
+				// failed" turns a recoverable connection problem into an impossible
+				// support case.
+				throw remoteFilesystemFailure(error);
+			}
+		});
 	}
 
 	private bundle(
 		context: ProjectEnvironmentInvocationContext,
 		clientId: string,
 	): Promise<Bundle> {
-		const key = `${context.projectEnvironmentId}\0${context.environmentRevision}\0${context.projectId}\0${clientId}`;
-		let value = this.bundles.get(key);
-		if (value === undefined) {
-			value = this.createBundle(context);
-			this.bundles.set(key, value);
-		}
-		return value;
+		const requestedRoot = this.projectRoot?.(context.projectId) ?? '';
+		const key = `${context.projectEnvironmentId}\0${context.environmentRevision}\0${context.projectId}\0${clientId}\0${requestedRoot}`;
+		const existing = this.bundles.get(key);
+		if (existing !== undefined) return existing;
+		let tracked: Promise<Bundle>;
+		tracked = this.createBundle(context).catch((error: unknown) => {
+			if (this.bundles.get(key) === tracked) this.bundles.delete(key);
+			throw error;
+		});
+		this.bundles.set(key, tracked);
+		return tracked;
+	}
+
+	private filesystemCall(
+		operation: string,
+		input: Record<string, unknown>,
+		fallback: ProjectEnvironmentInvocationContext,
+	): Promise<unknown> {
+		return this.invokeFilesystem(
+			operation,
+			input,
+			invocationContext.getStore() ?? fallback,
+		);
 	}
 
 	private async createBundle(
 		context: ProjectEnvironmentInvocationContext,
 	): Promise<Bundle> {
+		const requestedRoot = this.projectRoot?.(context.projectId);
 		const resolved = asRecord(
-			await this.invokeFilesystem('resolveRoot', {}, context),
+			await this.filesystemCall(
+				'resolveRoot',
+				requestedRoot === undefined || requestedRoot.length === 0
+					? {}
+					: { root: requestedRoot },
+				context,
+			),
 		);
 		const root = stringValue(resolved.root, 'remote root');
 		const call = (operation: string, input: Record<string, unknown>) =>
-			this.invokeFilesystem(operation, input, context);
+			this.filesystemCall(operation, { root, ...input }, context);
 		const storage = {
 			realpath: async (path: string) =>
 				stringValue(
@@ -179,6 +229,14 @@ export class RemoteFileProtocol {
 			},
 		};
 	}
+}
+
+function remoteFilesystemFailure(error: unknown): Error & { readonly code: 'unavailable'; readonly retryable: true } {
+	const message = error instanceof Error ? error.message : 'remote filesystem request failed';
+	return Object.assign(
+		new Error(`Remote filesystem is unavailable: ${message.replace(/[\r\n]/gu, ' ').slice(0, 1_000)}`),
+		{ code: 'unavailable' as const, retryable: true as const },
+	);
 }
 
 interface Bundle {

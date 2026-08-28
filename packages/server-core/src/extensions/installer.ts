@@ -247,7 +247,16 @@ export class ExtensionInstaller {
       // while retaining the user's explicit enabled/disabled choice.
       const replacingLegacyBuiltInConflict = resolution.source === "built-in" && persisted !== undefined && persisted.packageName !== receipt.packageName;
       const previous = replacingLegacyBuiltInConflict ? undefined : persisted;
-      if (resolution.source === "built-in" && previous?.slots[slotId] !== undefined) {
+      const activeSlot = previous?.activeSlotId === undefined ? undefined : previous.slots[previous.activeSlotId];
+      const preserveSelection = resolution.source === "built-in" && activeSlot !== undefined && activeSlot.receipt.source !== "built-in";
+      // A release artifact may already be materialized from an earlier
+      // reconciliation while it was pending because the old slot was in use.
+      // Once that use drains, reconciliation must select that existing slot;
+      // returning merely because it exists leaves the host permanently on
+      // stale provider code.  An already-selected floor (or an external
+      // override) remains an idempotent no-op.
+      if (resolution.source === "built-in" && previous?.slots[slotId] !== undefined &&
+        (previous.activeSlotId === slotId || preserveSelection)) {
         await rm(staging, { recursive: true, force: true });
         return state;
       }
@@ -255,12 +264,10 @@ export class ExtensionInstaller {
       const slots = Object.freeze({ ...(previous?.slots ?? {}), [slotId]: slot });
       const refs = await this.references(receipt.extensionId);
       const activeUses = refs.activeUses ?? 0;
-      const activeSlot = previous?.activeSlotId === undefined ? undefined : previous.slots[previous.activeSlotId];
       // A newer bundled inventory must become the live built-in. Preserve the
       // selected slot only when the user has an external override; otherwise
       // development restages and production rebuilds stayed on the first
       // 0.1.0 slot forever while Agents observed stale provider code.
-      const preserveSelection = resolution.source === "built-in" && activeSlot !== undefined && activeSlot.receipt.source !== "built-in";
       const immediateUpdate = !preserveSelection && previous?.activeSlotId !== undefined && activeUses === 0 && previous.activeSlotId !== slotId;
       if (immediateUpdate) {
         const active = previous.slots[previous.activeSlotId];

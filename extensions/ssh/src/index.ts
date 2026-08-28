@@ -3,6 +3,7 @@ import { HostTrustManager } from "./trust.js";
 import { ConnectionPool } from "./pool.js";
 import { RemoteTerminalManager } from "./terminal.js";
 import { SftpFilesystem } from "./filesystem.js";
+import { RemoteGitService } from "./git.js";
 import { profileForm } from "./forms.js";
 import { EXTENSION_ID, PROVIDER_ID } from "./constants.js";
 import { SshProviderError } from "./errors.js";
@@ -36,7 +37,7 @@ interface ProviderState extends Record<string, JsonValue> {
 interface RuntimeDependencies {
   store: ProfileStoreType; trust: HostTrustManager; pool: ConnectionPool; filesystem: SftpFilesystem;
 }
-interface ActiveRuntime extends RuntimeDependencies { terminals: RemoteTerminalManager }
+interface ActiveRuntime extends RuntimeDependencies { terminals: RemoteTerminalManager; git: RemoteGitService }
 interface TestInput { profileId: string; revision: number; authBroker?: AuthenticationBroker }
 interface ProgressStage { id: string; state: "pending" | "active" | "complete" | "failed" }
 
@@ -46,18 +47,20 @@ export async function activate(context: ExtensionContext): Promise<void> {
   if (context.extensionId !== EXTENSION_ID) throw new Error("SSH extension identity mismatch");
   const store = await new ProfileStore(context.paths.configuration, context.paths.data).load();
   const trust = new HostTrustManager(store); const pool = new ConnectionPool({ store, trust });
-  const terminals = new RemoteTerminalManager(pool); const filesystem = new SftpFilesystem(pool);
-  activeRuntime = { store, trust, pool, terminals, filesystem };
+  const filesystem = new SftpFilesystem(pool);
+  const terminals = new RemoteTerminalManager(pool, { beforeSession: (profileId, revision) => filesystem.releaseCached(profileId, revision) });
+  const git = new RemoteGitService(pool);
+  activeRuntime = { store, trust, pool, terminals, filesystem, git };
   const runtime = createProviderRuntime({ store, trust, pool, filesystem });
   const managedBindings = await new ManagedBindingService(context.paths.data, store, runtime).load();
   context.registerProjectEnvironmentProvider({
-    definition: { providerId: PROVIDER_ID, displayName: "SSH server", description: "Open a POSIX project through SSH from this Terminay Server.", icon: "server", capabilities: ["terminal", "filesystem", "agent-journal"], profileForm },
+    definition: { providerId: PROVIDER_ID, displayName: "SSH server", description: "Open a POSIX project through SSH from this Terminay Server.", icon: "server", capabilities: ["terminal", "filesystem", "git", "agent-journal", "process-observation"], profileForm },
     runtime,
     dependencyOperations: managedBindings.handler(),
   });
 }
 
-export async function deactivate(): Promise<void> { if (!activeRuntime) return; activeRuntime.terminals.close(); await activeRuntime.pool.close(); activeRuntime = undefined; }
+export async function deactivate(): Promise<void> { if (!activeRuntime) return; activeRuntime.terminals.close(); await activeRuntime.filesystem.close(); await activeRuntime.pool.close(); activeRuntime = undefined; }
 
 export function createProviderRuntime({ store, trust, pool, filesystem }: RuntimeDependencies): ProviderRuntime { return {
   async testProfile(request: ProfileValuesRequest, call: ProviderCallContext) {
@@ -145,7 +148,13 @@ export function createProviderRuntime({ store, trust, pool, filesystem }: Runtim
       if (request.operation === "rename") return serviceJson(await runtime.filesystem.rename(input as never, signal));
       if (request.operation === "remove") return serviceJson(await runtime.filesystem.remove(input as never, signal));
     }
+    if (request.capability === "git") return serviceJson(await runtime.git.invoke(request.operation, input as never, signal));
     if(request.capability==="agent-journal"&&request.operation==="observe")return serviceJson(await runtime.terminals.observeJournal(input as never,signal));
+    if (request.capability === "process-observation") {
+      if (request.operation === "observe") return serviceJson(runtime.terminals.observeProcess(input as never));
+      if (request.operation === "poll") return serviceJson(await runtime.terminals.pollProcess(input as never, signal));
+      if (request.operation === "stop") return serviceJson(runtime.terminals.stopProcess(input as never));
+    }
     throw new SshProviderError("unsupported", `SSH ${request.capability} operation is unavailable`);
   },
   async updateEnvironment(request: EnvironmentRuntimeRequest & { values: Values }, call: ProviderCallContext) {
@@ -156,7 +165,15 @@ export function createProviderRuntime({ store, trust, pool, filesystem }: Runtim
 
 function serviceInput(value: JsonValue, state: ProviderState, broker: AuthenticationBroker): Record<string, unknown> {
   if (!isRecord(value)) throw new SshProviderError("invalid-input", "SSH service input must be an object");
-  return { ...value, profileId: state.profileId, revision: state.profileRevision, root: state.root, authBroker: broker };
+  return {
+    ...value,
+    profileId: state.profileId,
+    revision: state.profileRevision,
+    root: typeof value.root === "string" && value.root.length > 0 && value.root.length <= 4096 && !value.root.includes("\0")
+      ? value.root
+      : state.root,
+    authBroker: broker,
+  };
 }
 function serviceJson(value: unknown): JsonValue { return JSON.parse(JSON.stringify(value)) as JsonValue; }
 
@@ -198,4 +215,4 @@ function isJsonValue(value: unknown): value is JsonValue { if (value === null ||
 function asAbortSignal(signal: ProviderCallContext["signal"]): AbortSignal { if (!("addEventListener" in signal) || typeof signal.addEventListener !== "function") throw new SshProviderError("cancelled", "Provider cancellation signal is unavailable"); return signal as AbortSignal; }
 
 export default { activate, deactivate };
-export { EXTENSION_ID, PROVIDER_ID, ProfileStore, HostTrustManager, ConnectionPool, RemoteTerminalManager, SftpFilesystem, SshProviderError, profileForm };
+export { EXTENSION_ID, PROVIDER_ID, ProfileStore, HostTrustManager, ConnectionPool, RemoteTerminalManager, SftpFilesystem, RemoteGitService, SshProviderError, profileForm };

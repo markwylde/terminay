@@ -10,7 +10,7 @@ import { readFile } from "node:fs/promises";
 
 const require = createRequire(new URL("../../../package.json", import.meta.url));
 const npmEnvironment = Object.fromEntries(Object.entries(process.env).filter(([key]) => !["INIT_CWD", "npm_config_local_prefix", "npm_config_user_agent", "npm_config_workspace"].includes(key)));
-const projectEnvironmentProviders = [{ id: PROVIDER_ID, displayName: "SSH server", capabilities: ["terminal", "filesystem", "agent-journal"], dependencyOperations: ["generate", "bind", "update", "verify", "approve-trust", "service", "remove"].map((name) => ({ name: `managed-binding.${name}` })) }];
+const projectEnvironmentProviders = [{ id: PROVIDER_ID, displayName: "SSH server", capabilities: ["terminal", "filesystem", "git", "agent-journal", "process-observation"], dependencyOperations: ["generate", "bind", "update", "verify", "approve-trust", "service", "remove"].map((name) => ({ name: `managed-binding.${name}` })) }];
 
 test("packed package activates and all public provider callbacks cross the real host IPC", async () => {
   const root = await mkdtemp(join(tmpdir(), "terminay-ssh-host-")); const repository = new URL("../../../", import.meta.url); const packed = spawnSync("npm", ["pack", "--workspace", "terminay-plugin-ssh", "--pack-destination", root, "--json"], { cwd: repository, encoding: "utf8", env: npmEnvironment }); assert.equal(packed.status, 0, packed.stderr);

@@ -81,6 +81,7 @@ import {
 	ProjectEnvironmentRegistry,
 	ProjectEnvironmentRepository,
 	ProjectEnvironmentRouter,
+	ProjectEnvironmentRouteError,
 } from '../packages/server-core/src/projectEnvironment/index';
 import type { ServerSettingsRepository } from '../packages/server-core/src/settings/repository';
 import type { ServerVaultComposition } from '../packages/server-core/src/settings/vaultComposition';
@@ -106,6 +107,7 @@ import type {
 } from '../packages/server-core/src/types';
 import {
 	createInitialWorkspace,
+	THIS_SERVER_ENVIRONMENT_ID,
 	type WorkspaceCommand,
 	type WorkspaceProject,
 	WorkspaceStore,
@@ -671,6 +673,7 @@ export class ServerTerminalAuthority {
 				registry: projectEnvironmentRegistry,
 				hosts: extensionManagement.hosts,
 				snapshot: () => projectEnvironments.state,
+				workspaceSnapshot: () => this.workspace.state,
 			});
 		const extensionProfiles =
 			options.vault === undefined || extensionManagement === undefined
@@ -1026,10 +1029,21 @@ export class ServerTerminalAuthority {
 	async initializeWorkspace(): Promise<void> {
 		await this.composition.start();
 		// File/Git/query authorities are process-local. Rebuild their bindings for
-		// every persisted project before publishing the restored workspace; PTY
-		// creation is not the only operation that requires a canonical root.
+		// every available persisted project before publishing the restored
+		// workspace; PTY creation is not the only operation that requires a
+		// canonical root. A deleted Local root is a recoverable project condition,
+		// not damaged workspace persistence: preserve the project identity so the
+		// user can repair it, but do not let it prevent the rest of Desktop from
+		// starting.
+		const unavailableProjectIds = new Set<string>();
 		for (const project of Object.values(this.workspace.state.projects)) {
-			await this.registerProjectRoot(project.id, project.root);
+			if (!isHostFilesystemProject(project)) continue;
+			try {
+				await this.registerProjectRoot(project.id, project.root);
+			} catch (error) {
+				if (!isMissingProjectRootError(error)) throw error;
+				unavailableProjectIds.add(project.id);
+			}
 		}
 		if (this.workspaceRepository?.wasCreated === false) {
 			// Local Desktop owns these PTYs. They cannot survive this authority
@@ -1041,13 +1055,23 @@ export class ServerTerminalAuthority {
 				this.workspace.discardStaleLocalTerminalState();
 			}
 			for (const project of this.restoredLocalProjects()) {
+				if (unavailableProjectIds.has(project.id)) continue;
 				if (this.projectHasTerminalPanel(project.id)) continue;
-				await this.create({
-					projectId: project.id,
-					cwd: project.root,
-					cols: 100,
-					rows: 30,
-				});
+				if (isHostFilesystemProject(project)) {
+					await this.create({
+						projectId: project.id,
+						cwd: project.root,
+						cols: 100,
+						rows: 30,
+					});
+					continue;
+				}
+				// Remote SSH/Puzed spawn waits on the target. Do not block the
+				// rest of Desktop behind that handshake; the project tab spins
+				// until the replacement PTY is published. A single attempt
+				// during `connecting` must not be the last: retry until the
+				// environment is ready or the seed deadline elapses.
+				void this.seedRemoteProjectTerminal(project);
 			}
 			return;
 		}
@@ -1108,6 +1132,40 @@ export class ServerTerminalAuthority {
 		return project.panelIds.some(
 			(panelId) => this.workspace.state.panels[panelId]?.type === 'terminal',
 		);
+	}
+
+	private async seedRemoteProjectTerminal(
+		project: WorkspaceProject,
+	): Promise<void> {
+		const deadline = Date.now() + REMOTE_TERMINAL_SEED_DEADLINE_MS;
+		let delayMs = 250;
+		while (Date.now() < deadline) {
+			if (this.projectHasTerminalPanel(project.id)) return;
+			try {
+				await this.create({
+					projectId: project.id,
+					cwd: project.root,
+					cols: 100,
+					rows: 30,
+				});
+				return;
+			} catch (error: unknown) {
+				if (
+					!isRetryableRemoteTerminalSeedError(error) ||
+					Date.now() + delayMs >= deadline
+				) {
+					console.error('[terminay-workspace-terminal-seed]', {
+						message:
+							error instanceof Error
+								? error.message.replace(/[\r\n]/gu, ' ').slice(0, 300)
+								: 'remote terminal seed failed',
+					});
+					return;
+				}
+				await new Promise((resolve) => setTimeout(resolve, delayMs));
+				delayMs = Math.min(delayMs * 2, 2_000);
+			}
+		}
 	}
 
 	private async getFileDiff(
@@ -1291,6 +1349,8 @@ export class ServerTerminalAuthority {
 		projectId: string,
 		root: string,
 	): Promise<void> {
+		const project = this.workspace.state.projects[projectId];
+		if (project !== undefined && !isHostFilesystemProject(project)) return;
 		if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(projectId))
 			throw new TypeError('project id is invalid');
 		if (
@@ -1957,6 +2017,49 @@ export class ServerTerminalAuthority {
 		});
 		if (!result.ok) throw new Error(result.conflict.message);
 	}
+}
+
+/** A Local project root may be deleted while Terminay is not running. Keep
+ * that persisted project visible for its explicit repair flow, while allowing
+ * other projects and workspace chrome to start normally. */
+function isHostFilesystemProject(project: WorkspaceProject): boolean {
+	return project.projectEnvironmentId === THIS_SERVER_ENVIRONMENT_ID;
+}
+
+function isMissingProjectRootError(error: unknown): boolean {
+	return (
+		typeof error === 'object' &&
+		error !== null &&
+		'code' in error &&
+		(error as { readonly code?: unknown }).code === 'path_missing'
+	);
+}
+
+const REMOTE_TERMINAL_SEED_DEADLINE_MS = 60_000;
+const RETRYABLE_TERMINAL_SEED_CODES = new Set([
+	'environment-unavailable',
+	'provider-unavailable',
+	'provider-operation-failed',
+	'operation-timeout',
+	'spawn_failed',
+]);
+
+function isRetryableRemoteTerminalSeedError(error: unknown): boolean {
+	let current: unknown = error;
+	for (let i = 0; i < 8 && current !== undefined && current !== null; i++) {
+		if (current instanceof ProjectEnvironmentRouteError && current.retryable)
+			return true;
+		if (
+			typeof current === 'object' &&
+			current !== null &&
+			'code' in current &&
+			typeof (current as { code: unknown }).code === 'string' &&
+			RETRYABLE_TERMINAL_SEED_CODES.has((current as { code: string }).code)
+		)
+			return true;
+		current = current instanceof Error ? current.cause : undefined;
+	}
+	return false;
 }
 
 /** Electron's main-process MessagePortMain is EventEmitter-based, unlike the
