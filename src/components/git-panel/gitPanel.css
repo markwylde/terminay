@@ -272,16 +272,7 @@
 	color: #ffffff;
 	cursor: pointer;
 	font-size: 13px;
-	transition: background 100ms ease;
 	user-select: none;
-}
-
-.worktrees-panel__worktree-header:hover {
-	background: rgba(255, 255, 255, 0.05);
-}
-
-.worktrees-panel__worktree--deleting .worktrees-panel__worktree-header:hover {
-	background: transparent;
 }
 
 .worktrees-panel__worktree-toggle {
@@ -294,6 +285,11 @@
 	align-items: center;
 	gap: 6px;
 	cursor: pointer;
+}
+
+.worktrees-panel__worktree-toggle:hover {
+	background: transparent;
+	filter: none;
 }
 
 .worktrees-panel__worktree-toggle:focus-visible,

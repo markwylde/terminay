@@ -280,6 +280,14 @@ async function openFileExplorer(page) {
 	await explorer.waitFor({ state: 'visible' });
 }
 
+async function selectSidebarGroup(page, group) {
+	await openFileExplorer(page);
+	const label = group === 'explorer' ? 'Explorer' : group === 'documentation' ? 'Documentation' : 'Agents';
+	const tab = page.locator('.project-workspace--active').getByRole('tab', { name: label });
+	await tab.click();
+	await tab.waitFor({ state: 'visible' });
+}
+
 async function prepareAgentTerminal(page, workspace) {
 	const panels = page.locator('.project-workspace--active .terminal-tab-content:visible');
 	while (await panels.count() > 1) {
@@ -482,6 +490,7 @@ async function run() {
 		// demonstrates the 2x2 layout, while the Docs project is a clean one-pane canvas.
 		await mainWindow.locator('.project-tab').filter({ hasText: 'Docs' }).first().click();
 		await openFileExplorer(mainWindow);
+		await selectSidebarGroup(mainWindow, 'agents');
 		await prepareAgentTerminal(mainWindow, seededWorkspace.workspace);
 		if (useRealCodex) await populateRealAgentsScreenshot(mainWindow);
 		else await populateAgentsScreenshot(mainWindow);
@@ -492,6 +501,7 @@ async function run() {
 			await mainWindow.waitForTimeout(500);
 			await terminal.press('Control+C');
 		}
+		await selectSidebarGroup(mainWindow, 'documentation');
 		const documentationPane = mainWindow.locator('.project-workspace--active .sidebar-pane').filter({
 			has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Documentation' }),
 		});
@@ -503,23 +513,18 @@ async function run() {
 		await documentationPane.getByRole('treeitem', { name: /^Product roadmap, handbook\/roadmap\.md$/i }).evaluate((element) => element.click());
 		await mainWindow.locator('.documentation-editor').waitFor({ state: 'visible', timeout: 30_000 });
 		await mainWindow.getByRole('heading', { name: 'Product roadmap', exact: true }).waitFor({ state: 'visible', timeout: 30_000 });
-		for (const title of ['Explorer', 'Agents', 'Git']) {
-			const pane = mainWindow.locator('.project-workspace--active .sidebar-pane').filter({
-				has: mainWindow.locator('.sidebar-pane__title', { hasText: title }),
-			});
-			if (!(await pane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed')))) {
-				await pane.locator('.sidebar-pane__header').click();
-			}
-		}
 		await mainWindow.evaluate(() => {
 			if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
 		});
 		await capture(app, mainWindow, 'terminay-documentation.png');
 
+		await selectSidebarGroup(mainWindow, 'explorer');
 		const explorerPane = mainWindow.locator('.project-workspace--active .sidebar-pane').filter({
-			has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Explorer' }),
+			has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Files' }),
 		});
-		await explorerPane.locator('.sidebar-pane__header').click();
+		if (await explorerPane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed'))) {
+			await explorerPane.locator('.sidebar-pane__header').click();
+		}
 		const readme = explorerItem(mainWindow, 'README.md');
 		await readme.waitFor({ state: 'visible', timeout: 30_000 });
 		await readme.dblclick();

@@ -1,5 +1,5 @@
 import { defaultTerminalSettings } from '../terminalSettings';
-import type { SidebarPanelId, SidebarSettings } from '../types/settings';
+import type { SidebarGroupId, SidebarPanelId, SidebarSettings } from '../types/settings';
 
 const PROJECT_TAB_COLOR_PALETTE_SIZE = 20;
 const BUSY_ENVIRONMENT_STATUSES = new Set([
@@ -38,6 +38,7 @@ export type ProjectTab = {
 	emoji: string;
 	fileExplorerWidth: number;
 	isFileExplorerOpen: boolean;
+	sidebarActiveGroup: SidebarGroupId;
 	isExplorerPaneCollapsed: boolean;
 	isAgentsPaneCollapsed: boolean;
 	isGitPaneCollapsed: boolean;
@@ -120,6 +121,33 @@ export function withProjectSidebarVisibility(
 		projectVisibility: {
 			...sidebarSettings.projectVisibility,
 			[projectSidebarVisibilityKey(serverId, projectId)]: isOpen,
+		},
+	};
+}
+
+export function sidebarActiveGroupOnDevice(
+	sidebarSettings: SidebarSettings,
+	serverId: string,
+	projectId: string,
+): SidebarGroupId {
+	return (
+		sidebarSettings.projectActiveGroup[
+			projectSidebarVisibilityKey(serverId, projectId)
+		] ?? 'explorer'
+	);
+}
+
+export function withProjectSidebarActiveGroup(
+	sidebarSettings: SidebarSettings,
+	serverId: string,
+	projectId: string,
+	groupId: SidebarGroupId,
+): SidebarSettings {
+	return {
+		...sidebarSettings,
+		projectActiveGroup: {
+			...sidebarSettings.projectActiveGroup,
+			[projectSidebarVisibilityKey(serverId, projectId)]: groupId,
 		},
 	};
 }
@@ -238,6 +266,7 @@ export function createProjectTab(
 		emoji: '',
 		fileExplorerWidth: sidebarDefaults.defaultWidth,
 		isFileExplorerOpen: false,
+		sidebarActiveGroup: 'explorer',
 		isExplorerPaneCollapsed:
 			sidebarDefaults.defaultExplorerState === 'collapsed',
 		isAgentsPaneCollapsed: false,

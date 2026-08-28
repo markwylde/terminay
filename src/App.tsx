@@ -70,6 +70,12 @@ import type { FolderPanelInstanceParams } from './components/folder-viewer';
 import { FolderPanel, FolderTab } from './components/folder-viewer';
 import { WorktreesPanel } from './components/git-panel/WorktreesPanel';
 import { McpInstallModal } from './components/McpInstallModal';
+import { SidebarGroupTabs } from './components/sidebar/SidebarGroupTabs';
+import {
+	applySidebarGroupReorder,
+	panelsInSidebarGroup,
+	resolveVisibleSidebarGroup,
+} from './components/sidebar/sidebarGroups';
 import {
 	SidebarPanelStack,
 	type SidebarPanelStackItem,
@@ -148,7 +154,7 @@ import type {
 } from './types/agentStatus';
 import type { FileViewerMode } from './types/fileViewer';
 import type { MacroDefinition, MacroFieldValue } from './types/macros';
-import type { SidebarPanelId } from './types/settings';
+import type { SidebarGroupId, SidebarPanelId } from './types/settings';
 import type {
 	AiTabMetadataTarget,
 	AppCommand,
@@ -167,6 +173,7 @@ import { ProjectTabList } from './workspace/ProjectTabList';
 import {
 	createProjectTab,
 	type ProjectTab,
+	withProjectSidebarActiveGroup,
 	withProjectSidebarVisibility,
 } from './workspace/projectTabModel';
 import {
@@ -4418,7 +4425,7 @@ const ProjectWorkspace = forwardRef<
 			{
 				explorer: {
 					id: 'explorer',
-					title: 'Explorer',
+					title: 'Files',
 					height: project.sidebarExplorerHeight,
 					collapsed: project.isExplorerPaneCollapsed,
 					onToggleCollapsed: () => {
@@ -4590,7 +4597,20 @@ const ProjectWorkspace = forwardRef<
 		const visibleSidebarPanelIds = project.sidebarPanelOrder.filter(
 			(id) => settings.agentIntegration.enabled || id !== 'agents',
 		);
-		const sidebarPanelItems = visibleSidebarPanelIds.map(
+		const visibleSidebarGroups = (
+			['explorer', 'documentation', 'agents'] as const
+		).filter(
+			(groupId) => settings.agentIntegration.enabled || groupId !== 'agents',
+		);
+		const activeSidebarGroup = resolveVisibleSidebarGroup(
+			project.sidebarActiveGroup,
+			settings.agentIntegration.enabled,
+		);
+		const groupedSidebarPanelIds = panelsInSidebarGroup(
+			activeSidebarGroup,
+			visibleSidebarPanelIds,
+		);
+		const sidebarPanelItems = groupedSidebarPanelIds.map(
 			(id) => sidebarPanelItemsById[id],
 		);
 		const commitSidebarHeights = (
@@ -4666,30 +4686,41 @@ const ProjectWorkspace = forwardRef<
 					navigation={
 						project.isFileExplorerOpen ? (
 							<div className="file-explorer-sidebar">
-								<SidebarPanelStack
-									items={sidebarPanelItems}
-									onHeightsCommit={commitSidebarHeights}
-									onReorder={(orderedIds) => {
-										const reorderedVisibleIds = orderedIds.filter(
-											(id): id is SidebarPanelId =>
-												project.sidebarPanelOrder.includes(
-													id as SidebarPanelId,
-												),
-										);
-										const visibleIds = new Set(reorderedVisibleIds);
-										const orderedIterator =
-											reorderedVisibleIds[Symbol.iterator]();
-										const nextOrder = project.sidebarPanelOrder.map((id) =>
-											visibleIds.has(id)
-												? (orderedIterator.next().value ?? id)
-												: id,
-										);
-										closeGitPushMenu();
+								<SidebarGroupTabs
+									activeGroup={activeSidebarGroup}
+									groups={visibleSidebarGroups}
+									idPrefix={`sidebar-group-${project.id}`}
+									onSelect={(groupId) =>
 										onUpdateProject(project.id, {
-											sidebarPanelOrder: nextOrder,
-										});
-									}}
+											sidebarActiveGroup: groupId,
+										})
+									}
 								/>
+								<div
+									className="file-explorer-sidebar__group"
+									id={`sidebar-group-${project.id}-panel`}
+									role="tabpanel"
+									aria-labelledby={`sidebar-group-${project.id}-tab-${activeSidebarGroup}`}
+								>
+									<SidebarPanelStack
+										items={sidebarPanelItems}
+										onHeightsCommit={commitSidebarHeights}
+										onReorder={(orderedIds) => {
+											const reorderedVisibleIds = orderedIds.filter(
+												(id): id is SidebarPanelId =>
+													groupedSidebarPanelIds.includes(id as SidebarPanelId),
+											);
+											closeGitPushMenu();
+											onUpdateProject(project.id, {
+												sidebarPanelOrder: applySidebarGroupReorder(
+													project.sidebarPanelOrder,
+													activeSidebarGroup,
+													reorderedVisibleIds,
+												),
+											});
+										}}
+									/>
+								</div>
 
 								{gitPushMenuPosition ? (
 									<ContextMenu
@@ -5333,6 +5364,30 @@ function App({
 		},
 		[currentServerId, settingsClient],
 	);
+	const persistProjectSidebarActiveGroup = useCallback(
+		(projectId: string, groupId: SidebarGroupId) => {
+			const nextSettings = {
+				...settingsRef.current,
+				sidebar: withProjectSidebarActiveGroup(
+					settingsRef.current.sidebar,
+					currentServerId,
+					projectId,
+					groupId,
+				),
+			};
+			settingsRef.current = nextSettings;
+			void settingsClient
+				.update<typeof nextSettings>(nextSettings as unknown as JsonValue)
+				.then((updated) => {
+					settingsRef.current = updated;
+				})
+				.catch(() => {
+					// The local presentation already reflects the interaction. A later
+					// device-settings update or reload reconciles a failed persistence.
+				});
+		},
+		[currentServerId, settingsClient],
+	);
 	const connectionFeatureError = useMemo(() => {
 		const failed =
 			macroSettingsError === null
@@ -5395,6 +5450,7 @@ function App({
 		holdActiveProjectIdRef: heldActiveProjectIdRef,
 		isAdoptWindow: false,
 		onProjectSidebarVisibilityChange: persistProjectSidebarVisibility,
+		onProjectSidebarActiveGroupChange: persistProjectSidebarActiveGroup,
 		projectColorScope: currentServerId,
 		sidebarSettings: settings.sidebar,
 		sidebarVisibilityScope: currentServerId,

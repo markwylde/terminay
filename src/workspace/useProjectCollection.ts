@@ -17,6 +17,7 @@ import {
 	projectSidebarPatch,
 	projectSidebarState,
 	projectSidebarVisibilityKey,
+	sidebarActiveGroupOnDevice,
 } from './projectTabModel';
 
 const DEFAULT_AGENTS_PANE_HEIGHT = 200;
@@ -75,6 +76,7 @@ export function useProjectCollection<TTerminal>({
 	projectColorScope,
 	sidebarVisibilityScope,
 	onProjectSidebarVisibilityChange,
+	onProjectSidebarActiveGroupChange,
 	confirmProjectClose,
 	holdProjectOrderRef,
 	holdActiveProjectIdRef,
@@ -94,6 +96,10 @@ export function useProjectCollection<TTerminal>({
 		projectId: string,
 		isOpen: boolean,
 	) => void;
+	onProjectSidebarActiveGroupChange?: (
+		projectId: string,
+		groupId: ProjectTab['sidebarActiveGroup'],
+	) => void;
 	confirmProjectClose?: (projectId: string) => Promise<boolean>;
 	holdProjectOrderRef?: MutableRefObject<string | null>;
 	/** While non-null, keep this renderer selection stable even if a background
@@ -105,6 +111,7 @@ export function useProjectCollection<TTerminal>({
 }) {
 	const sidebarDefaultsRef = useRef(sidebarSettings);
 	const sidebarVisibilityRef = useRef(sidebarSettings.projectVisibility);
+	const sidebarActiveGroupRef = useRef(sidebarSettings.projectActiveGroup);
 	const projectCounterRef = useRef(1);
 	const initialServerSnapshot = workspaceSnapshotStore?.snapshot;
 	const hasServerWorkspace = workspaceSnapshotStore !== undefined;
@@ -137,6 +144,11 @@ export function useProjectCollection<TTerminal>({
 					...base,
 					...projectSidebarState(serverProject.sidebar),
 					isFileExplorerOpen: isProjectSidebarOpenOnDevice(
+						sidebarSettings,
+						sidebarVisibilityScope,
+						serverProject.id,
+					),
+					sidebarActiveGroup: sidebarActiveGroupOnDevice(
 						sidebarSettings,
 						sidebarVisibilityScope,
 						serverProject.id,
@@ -208,10 +220,16 @@ export function useProjectCollection<TTerminal>({
 
 	useEffect(() => {
 		sidebarVisibilityRef.current = sidebarSettings.projectVisibility;
+		sidebarActiveGroupRef.current = sidebarSettings.projectActiveGroup;
 		setProjects((current) =>
 			current.map((project) => ({
 				...project,
 				isFileExplorerOpen: isProjectSidebarOpenOnDevice(
+					sidebarSettings,
+					sidebarVisibilityScope,
+					project.id,
+				),
+				sidebarActiveGroup: sidebarActiveGroupOnDevice(
 					sidebarSettings,
 					sidebarVisibilityScope,
 					project.id,
@@ -266,6 +284,14 @@ export function useProjectCollection<TTerminal>({
 								{
 									...sidebarDefaultsRef.current,
 									projectVisibility: sidebarVisibilityRef.current,
+								},
+								sidebarVisibilityScope,
+								serverProject.id,
+							),
+							sidebarActiveGroup: sidebarActiveGroupOnDevice(
+								{
+									...sidebarDefaultsRef.current,
+									projectActiveGroup: sidebarActiveGroupRef.current,
 								},
 								sidebarVisibilityScope,
 								serverProject.id,
@@ -471,6 +497,7 @@ export function useProjectCollection<TTerminal>({
 			const adopted: ProjectTab = {
 				...project,
 				id,
+				sidebarActiveGroup: project.sidebarActiveGroup ?? 'explorer',
 				isAgentsPaneCollapsed: project.isAgentsPaneCollapsed ?? false,
 				isDocumentationPaneCollapsed:
 					project.isDocumentationPaneCollapsed ?? true,
@@ -611,7 +638,8 @@ export function useProjectCollection<TTerminal>({
 
 	const updateProject = useCallback(
 		(projectId: string, updates: Partial<ProjectTab>) => {
-			const { isFileExplorerOpen, rootFolder, ...localUpdates } = updates;
+			const { isFileExplorerOpen, sidebarActiveGroup, rootFolder, ...localUpdates } =
+				updates;
 			if (isFileExplorerOpen !== undefined) {
 				sidebarVisibilityRef.current = {
 					...sidebarVisibilityRef.current,
@@ -626,6 +654,21 @@ export function useProjectCollection<TTerminal>({
 					),
 				);
 				onProjectSidebarVisibilityChange?.(projectId, isFileExplorerOpen);
+			}
+			if (sidebarActiveGroup !== undefined) {
+				sidebarActiveGroupRef.current = {
+					...sidebarActiveGroupRef.current,
+					[projectSidebarVisibilityKey(sidebarVisibilityScope, projectId)]:
+						sidebarActiveGroup,
+				};
+				setProjects((current) =>
+					current.map((project) =>
+						project.id === projectId
+							? { ...project, sidebarActiveGroup }
+							: project,
+					),
+				);
+				onProjectSidebarActiveGroupChange?.(projectId, sidebarActiveGroup);
 			}
 			const sidebar = projectSidebarPatch(localUpdates);
 			const nonSidebarUpdates = { ...localUpdates };
@@ -666,6 +709,7 @@ export function useProjectCollection<TTerminal>({
 		},
 		[
 			commitProjectSidebar,
+			onProjectSidebarActiveGroupChange,
 			onProjectSidebarVisibilityChange,
 			sidebarVisibilityScope,
 			workspaceSnapshotStore,

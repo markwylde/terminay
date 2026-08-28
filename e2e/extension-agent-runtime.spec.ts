@@ -4,7 +4,7 @@ import path from 'node:path';
 import { _electron as electron } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { typeInVisibleTerminal } from './support/terminal-input';
-import { openFileExplorer } from './support/ui';
+import { selectSidebarGroup } from './support/ui';
 
 test('a real process-bound Codex wrapper retries its delayed rollout, then publishes a root, late child, and live title update', async ({
 	mainWindow,
@@ -35,7 +35,7 @@ test('a real process-bound Codex wrapper retries its delayed rollout, then publi
 	try {
 		const isolatedWindow = await isolatedApp.firstWindow();
 		await appHarness.prepareWindow(isolatedWindow);
-		await openFileExplorer(isolatedWindow);
+		await selectSidebarGroup(isolatedWindow, 'agents');
 		await expect(
 			isolatedWindow.locator('.agents-sidebar__tree-item'),
 		).toHaveCount(0);
@@ -48,7 +48,7 @@ test('a real process-bound Codex wrapper retries its delayed rollout, then publi
 			mainWindow,
 			"node -e \"setTimeout(() => require('node:child_process').spawn('codex', [], { stdio: 'inherit' }), 350); setInterval(() => {}, 1000)\"\n",
 		);
-		await openFileExplorer(mainWindow);
+		await selectSidebarGroup(mainWindow, 'agents');
 		const root = mainWindow
 			.locator('.agents-sidebar__tree-item')
 			.filter({ hasText: 'Native Codex root prompt' });
