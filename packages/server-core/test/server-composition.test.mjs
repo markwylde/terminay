@@ -26,6 +26,15 @@ async function publishAgentLifecycle(agents, identity, events) {
   assert.equal(result.rejectedEventCount, 0);
 }
 
+async function eventually(read, message = "condition did not become true") {
+  const deadline = Date.now() + 2_000;
+  for (;;) {
+    if (await read()) return;
+    if (Date.now() >= deadline) throw new Error(message);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 function createPtyFactory() {
   const processes = [];
   return {
@@ -673,8 +682,8 @@ test("composition resumes pending provider environments during server startup", 
   });
   try {
     await composition.start();
+    await eventually(() => repository.state.operations.create?.state === "succeeded");
     assert.equal(resumes, 1);
-    assert.equal(repository.state.operations.create.state, "succeeded");
     assert.equal(repository.state.environments["env:create"].status, "ready");
   } finally {
     await composition.shutdown();
