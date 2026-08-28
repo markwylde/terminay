@@ -62,26 +62,39 @@
 		--workspace-split-layout-separator-line,
 		rgba(255, 255, 255, 0.08)
 	);
-	transition: background 120ms ease;
+	transition:
+		background 120ms ease,
+		width 120ms ease;
+	transition-delay: 0ms;
 }
 
-.workspace-split-layout__separator:hover::before,
-.workspace-split-layout__separator:active::before {
+.workspace-split-layout__separator:hover::before {
+	width: 4px;
 	background: var(
 		--workspace-split-layout-separator-active-line,
-		rgba(255, 255, 255, 0.18)
+		#ffffff
 	);
+	transition-delay: 100ms;
+}
+
+.workspace-split-layout__separator:active::before,
+.workspace-split-layout__separator:focus-visible::before {
+	width: 4px;
+	background: var(
+		--workspace-split-layout-separator-active-line,
+		#ffffff
+	);
+	transition-delay: 0ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.workspace-split-layout__separator:hover::before {
+		transition-delay: 0ms;
+	}
 }
 
 .workspace-split-layout__separator:focus-visible {
 	outline: none;
-}
-
-.workspace-split-layout__separator:focus-visible::before {
-	background: var(
-		--workspace-split-layout-separator-active-line,
-		rgba(255, 255, 255, 0.18)
-	);
 }
 
 .workspace-split-layout__content {

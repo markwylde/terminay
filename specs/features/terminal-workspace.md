@@ -29,6 +29,9 @@ forwards input, resize, and lifecycle commands through the application protocol.
   in Terminay's temporary clipboard directory and inserts its shell-escaped
   path. Clipboard images and their temporary paths are read and created only by
   Electron; browser clients retain their ordinary exact-origin text paste.
+- Desktop Zoom In, Zoom Out, and Reset Zoom change the terminal font size
+  only. They publish a `terminal.zoom` host event; they do not zoom the
+  surrounding UI.
 - Live xterm surfaces use the WebGL renderer when the host provides WebGL2 so
   box-drawing and block glyphs fill the cell. Missing WebGL, a lost GPU
   context, or an automated driver session falls back to the DOM renderer
