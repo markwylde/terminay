@@ -1,6 +1,6 @@
 import { _electron as electron } from '@playwright/test';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -13,6 +13,13 @@ const screenshotDeviceScaleFactor = 2;
 const settleDelayMs = 3_000;
 const useRealCodex = process.env.TERMINAY_DOCS_REAL_CODEX === '1';
 const execFileAsync = promisify(execFile);
+const agentsPrompt = 'Spawn 3 subagents to solve simple math problems';
+const workspaceCodexPrompts = [
+	'Summarize this repository.',
+	'Explain the current git status.',
+	'What belongs in the handbook?',
+	'What is next on the roadmap?',
+];
 
 async function seedWorkspace() {
 	const root = await mkdtemp(path.join(os.tmpdir(), 'terminay-docs-workspace-'));
@@ -23,16 +30,9 @@ async function seedWorkspace() {
 	await mkdir(path.join(workspace, 'reference'), { recursive: true });
 	await mkdir(path.join(workspace, 'src'), { recursive: true });
 	await mkdir(path.join(workspace, 'bin'), { recursive: true });
-	await writeFile(path.join(workspace, 'bin', 'codex'), [
-		'#!/bin/sh',
-		'printf "\\033[1;36mCodex\\033[0m  GPT-5.6\\n\\n"',
-		'printf "\\033[1m› %s\\033[0m\\n\\n" "$1"',
-		'printf "• Spawning three subagents\\n"',
-		'printf "  ↳ Addition       Solve 128 + 256\\n"',
-		'printf "  ↳ Multiplication Solve 24 × 18\\n"',
-		'printf "  ↳ Division       Solve 1,024 ÷ 16\\n\\n"',
-		'printf "\\033[33mWorking (3 subagents)\\033[0m\\n"',
-	].join('\n'), { mode: 0o755 });
+	const stubDestination = path.join(workspace, 'bin', 'codex');
+	await copyFile(path.resolve(import.meta.dirname, 'docs-screenshot-codex-stub.sh'), stubDestination);
+	await chmod(stubDestination, 0o755);
 	await writeFile(path.join(workspace, 'README.md'), [
 		'# Terminay',
 		'',
@@ -252,26 +252,72 @@ async function createTerminalGrid(page) {
 	await panels.nth(3).waitFor({ state: 'visible', timeout: 30_000 });
 }
 
-async function populateTerminalGrid(page, workspace) {
-	const commands = [
-		'cat README.md',
-		'ls -la handbook',
-		'git status --short && git branch --show-current',
-		'cat handbook/roadmap.md',
-	];
-	const terminals = page.locator('.project-workspace--active .terminal-panel:visible .xterm-helper-textarea');
-	await terminals.nth(3).waitFor({ state: 'visible', timeout: 30_000 });
-	for (const [index, command] of commands.entries()) {
-		const terminal = terminals.nth(index);
-		await terminal.click();
-		await terminal.pressSequentially(`cd '${workspace}' && clear`, { delay: 2 });
+function quoteShell(value) {
+	return `'${String(value).replaceAll("'", `'\\''`)}'`;
+}
+
+async function typeTerminalCommand(terminal, command) {
+	await terminal.click();
+	await terminal.pressSequentially(command, { delay: 2 });
+	await terminal.press('Enter');
+}
+
+async function waitForExecComplete(page) {
+	const timeout = useRealCodex ? 180_000 : 20_000;
+	await page.waitForFunction(() => {
+		const panels = [...document.querySelectorAll('.project-workspace--active .terminal-panel')]
+			.filter((element) => getComputedStyle(element).display !== 'none' && element.offsetParent !== null);
+		return panels.some((element) => {
+			const text = element.textContent ?? '';
+			return text.includes('CODEX_EXEC_DONE') || /tokens used/i.test(text);
+		});
+	}, undefined, { timeout });
+}
+
+async function runCodexExecThenResume(page, index, workspace, prompt) {
+	// Exec creates the session; resume opens the interactive TUI for the screenshot.
+	const terminal = page.locator(
+		'.project-workspace--active .terminal-panel:visible .xterm-helper-textarea',
+	).nth(index);
+	await terminal.click();
+	const stubCodex = path.join(workspace, 'bin', 'codex');
+	const codex = useRealCodex ? 'codex' : quoteShell(stubCodex);
+	const setupCommand = `cd ${quoteShell(workspace)} && clear`;
+	await typeTerminalCommand(terminal, setupCommand);
+	await page.waitForTimeout(250);
+	await typeTerminalCommand(terminal, `${codex} exec --skip-git-repo-check ${quoteShell(prompt)}`);
+	await waitForExecComplete(page);
+	await typeTerminalCommand(terminal, 'clear');
+	await page.waitForTimeout(200);
+	await typeTerminalCommand(terminal, `${codex} resume --last --include-non-interactive`);
+	const panel = page.locator('.project-workspace--active .terminal-panel:visible').nth(index);
+	await page.waitForTimeout(useRealCodex ? 2_000 : 400);
+	if ((await panel.textContent())?.includes('Press enter to continue')) {
 		await terminal.press('Enter');
-		await page.waitForTimeout(250);
-		await terminal.pressSequentially(command, { delay: 2 });
-		await terminal.press('Enter');
-		await page.waitForTimeout(250);
+		await page.waitForTimeout(400);
 	}
 	await page.waitForTimeout(1_000);
+}
+
+async function stopCodexTuis(page, count) {
+	const terminals = page.locator('.project-workspace--active .terminal-panel:visible .xterm-helper-textarea');
+	for (let index = 0; index < count; index += 1) {
+		const terminal = terminals.nth(index);
+		if (await terminal.count() === 0) continue;
+		await terminal.click();
+		await terminal.press('Control+C');
+		await page.waitForTimeout(150);
+		await terminal.press('Control+C');
+	}
+	await page.waitForTimeout(400);
+}
+
+async function populateCodexTerminalGrid(page, workspace) {
+	const terminals = page.locator('.project-workspace--active .terminal-panel:visible .xterm-helper-textarea');
+	await terminals.nth(3).waitFor({ state: 'visible', timeout: 30_000 });
+	for (const [index, prompt] of workspaceCodexPrompts.entries()) {
+		await runCodexExecThenResume(page, index, workspace, prompt);
+	}
 }
 
 async function openFileExplorer(page) {
@@ -290,41 +336,37 @@ async function selectSidebarGroup(page, group) {
 
 async function prepareAgentTerminal(page, workspace) {
 	const panels = page.locator('.project-workspace--active .terminal-tab-content:visible');
-	while (await panels.count() > 1) {
-		await panels.last().click();
+	await panels.first().waitFor({ state: 'visible', timeout: 30_000 });
+	let remaining = await panels.count();
+	while (remaining > 1) {
+		await panels.last().click({ timeout: 5_000 });
 		await invokeMenuCommand(page, 'close-active');
 		await page.waitForTimeout(250);
+		const nextCount = await panels.count();
+		if (nextCount >= remaining) break;
+		remaining = nextCount;
 	}
-	await panels.first().waitFor({ state: 'visible', timeout: 30_000 });
 
-	const terminal = page.locator(
-		'.project-workspace--active .terminal-panel:visible .xterm-helper-textarea',
-	).first();
-	await terminal.click();
-	const setupCommand = useRealCodex
-		? `cd '${workspace}' && clear`
-		: `cd '${workspace}' && export PATH="$PWD/bin:$PATH" && clear`;
-	await terminal.pressSequentially(setupCommand, { delay: 2 });
-	await terminal.press('Enter');
-	if (useRealCodex) {
-		await terminal.pressSequentially('codex', { delay: 100 });
-		await terminal.press('Enter');
-		const panel = page.locator('.project-workspace--active .terminal-panel:visible').first();
-		await page.waitForTimeout(2_000);
-		if ((await panel.textContent())?.includes('Press enter to continue')) {
-			await terminal.press('Enter');
+	await runCodexExecThenResume(page, 0, workspace, agentsPrompt);
+}
+
+async function prepareAgentsPane(page) {
+	for (const title of ['Explorer', 'Documentation', 'Git']) {
+		const pane = page.locator('.project-workspace--active .sidebar-pane').filter({
+			has: page.locator('.sidebar-pane__title', { hasText: title }),
+		});
+		if (await pane.count() === 0) continue;
+		if (!(await pane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed')))) {
+			await pane.locator('.sidebar-pane__header').click();
 		}
-		await terminal.pressSequentially('Spawn 3 subagents to solve simple math problems', { delay: 45 });
-		await terminal.press('Enter');
-		await page.waitForFunction(() => {
-			const activePanel = document.querySelector('.project-workspace--active .terminal-panel:not([style*="display: none"])');
-			return activePanel?.textContent?.includes('Spawn 3 subagents to solve simple math problems');
-		}, undefined, { timeout: 30_000 });
-	} else {
-		await terminal.pressSequentially('codex "Spawn 3 subagents to solve simple math problems"', { delay: 2 });
-		await terminal.press('Enter');
 	}
-	await page.waitForTimeout(500);
+	const agentsPane = page.locator('.project-workspace--active .sidebar-pane').filter({
+		has: page.locator('.sidebar-pane__title', { hasText: 'Agents' }),
+	});
+	if (await agentsPane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed'))) {
+		await agentsPane.locator('.sidebar-pane__header').click();
+	}
+	return agentsPane;
 }
 
 async function populateAgentsScreenshot(page) {
@@ -334,7 +376,7 @@ async function populateAgentsScreenshot(page) {
 		.getAttribute('data-terminay-terminal-session-id');
 	if (!terminalSessionId) throw new Error('The docs terminal session is unavailable.');
 
-	const prompt = 'Spawn 3 subagents to solve simple math problems';
+	const prompt = agentsPrompt;
 	const accepted = await page.evaluate(async ({ sessionId, rootPrompt }) => {
 		if (!window.terminayAgentStatusTest) throw new Error('The agent screenshot seam is unavailable.');
 		return window.terminayAgentStatusTest.publishLifecycle({
@@ -353,20 +395,7 @@ async function populateAgentsScreenshot(page) {
 	}, { rootPrompt: prompt, sessionId: terminalSessionId });
 	if (!accepted) throw new Error('The agent screenshot lifecycle was not accepted.');
 
-	const agentsPane = page.locator('.project-workspace--active .sidebar-pane').filter({
-		has: page.locator('.sidebar-pane__title', { hasText: 'Agents' }),
-	});
-	for (const title of ['Explorer', 'Documentation', 'Git']) {
-		const pane = page.locator('.project-workspace--active .sidebar-pane').filter({
-			has: page.locator('.sidebar-pane__title', { hasText: title }),
-		});
-		if (!(await pane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed')))) {
-			await pane.locator('.sidebar-pane__header').click();
-		}
-	}
-	if (await agentsPane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed'))) {
-		await agentsPane.locator('.sidebar-pane__header').click();
-	}
+	const agentsPane = await prepareAgentsPane(page);
 	await agentsPane.locator('.agents-sidebar__name', { hasText: prompt }).waitFor({ state: 'visible', timeout: 30_000 });
 	await agentsPane.getByRole('button', { name: `Expand 3 subagents for ${prompt}` }).click();
 	await agentsPane.getByRole('button', { name: 'Focus Division terminal' }).waitFor({ state: 'visible' });
@@ -376,21 +405,8 @@ async function populateAgentsScreenshot(page) {
 }
 
 async function populateRealAgentsScreenshot(page) {
-	const prompt = 'Spawn 3 subagents to solve simple math problems';
-	const agentsPane = page.locator('.project-workspace--active .sidebar-pane').filter({
-		has: page.locator('.sidebar-pane__title', { hasText: 'Agents' }),
-	});
-	for (const title of ['Explorer', 'Documentation', 'Git']) {
-		const pane = page.locator('.project-workspace--active .sidebar-pane').filter({
-			has: page.locator('.sidebar-pane__title', { hasText: title }),
-		});
-		if (!(await pane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed')))) {
-			await pane.locator('.sidebar-pane__header').click();
-		}
-	}
-	if (await agentsPane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed'))) {
-		await agentsPane.locator('.sidebar-pane__header').click();
-	}
+	const prompt = agentsPrompt;
+	const agentsPane = await prepareAgentsPane(page);
 	await agentsPane.locator('.agents-sidebar__name', { hasText: prompt }).waitFor({ state: 'visible', timeout: 90_000 });
 	await agentsPane.getByRole('button', { name: `Expand 3 subagents for ${prompt}` }).waitFor({ state: 'visible', timeout: 120_000 });
 	await agentsPane.getByRole('button', { name: `Expand 3 subagents for ${prompt}` }).click();
@@ -480,27 +496,34 @@ async function run() {
 		await installScreenshotWindowControls(mainWindow);
 		await createWorkspaceProjects(mainWindow, seededWorkspace.workspace);
 		await createTerminalGrid(mainWindow);
-		await populateTerminalGrid(mainWindow, seededWorkspace.workspace);
+		await populateCodexTerminalGrid(mainWindow, seededWorkspace.workspace);
 		const terminal = mainWindow.locator('.project-workspace--active .terminal-panel:visible .xterm-helper-textarea').first();
 		await mainWindow.locator('.project-workspace--active .xterm-rows').first().waitFor({ state: 'visible' });
-		await capture(app, mainWindow, 'terminay-hero-workspace.png');
 		await capture(app, mainWindow, 'terminay-workspace.png');
+		await copyFile(
+			path.join(outputDir, 'terminay-workspace.png'),
+			path.join(outputDir, 'terminay-hero-workspace.png'),
+		);
+		await stopCodexTuis(mainWindow, 4);
 
 		// Keep the feature walkthroughs legible: the workspace image above intentionally
 		// demonstrates the 2x2 layout, while the Docs project is a clean one-pane canvas.
 		await mainWindow.locator('.project-tab').filter({ hasText: 'Docs' }).first().click();
+		await mainWindow.locator('.project-tab--active').filter({ hasText: 'Docs' }).waitFor({ state: 'visible', timeout: 15_000 });
 		await openFileExplorer(mainWindow);
 		await selectSidebarGroup(mainWindow, 'agents');
 		await prepareAgentTerminal(mainWindow, seededWorkspace.workspace);
-		if (useRealCodex) await populateRealAgentsScreenshot(mainWindow);
-		else await populateAgentsScreenshot(mainWindow);
-		await capture(app, mainWindow, 'terminay-agents.png');
-		if (useRealCodex) {
-			const terminal = mainWindow.locator('.project-workspace--active .terminal-panel:visible .xterm-helper-textarea').first();
-			await terminal.press('Control+C');
-			await mainWindow.waitForTimeout(500);
-			await terminal.press('Control+C');
+		try {
+			await populateAgentsScreenshot(mainWindow);
+		} catch (error) {
+			if (!String(error?.message ?? error).includes('already owns this terminal session')) throw error;
+			await populateRealAgentsScreenshot(mainWindow);
 		}
+		await capture(app, mainWindow, 'terminay-agents.png');
+		await terminal.press('Control+C');
+		await mainWindow.waitForTimeout(500);
+		await terminal.press('Control+C');
+		await mainWindow.waitForTimeout(400);
 		await selectSidebarGroup(mainWindow, 'documentation');
 		const documentationPane = mainWindow.locator('.project-workspace--active .sidebar-pane').filter({
 			has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Documentation' }),
