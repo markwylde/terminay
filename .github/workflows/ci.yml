@@ -196,14 +196,14 @@ jobs:
           retention-days: 1
 
   e2e-test:
-    name: E2E (${{ matrix.shard }}/5)
+    name: E2E (${{ matrix.shard }}/10)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: e2e-image
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
     steps:
       - name: Check out code
@@ -242,15 +242,15 @@ jobs:
           TERMINAY_E2E_IMAGE: ${{ needs.e2e-image.outputs.image }}
           TERMINAY_E2E_IMAGE_IS_PRELOADED: "1"
           TERMINAY_E2E_PLATFORM: linux/amd64
-          TERMINAY_E2E_ARTIFACT_DIR: ${{ github.workspace }}/.docker-cache/e2e/shard-${{ matrix.shard }}-of-5
-        run: npm run test:e2e -- --shard=${{ matrix.shard }}/5
+          TERMINAY_E2E_ARTIFACT_DIR: ${{ github.workspace }}/.docker-cache/e2e/shard-${{ matrix.shard }}-of-10
+        run: npm run test:e2e -- --shard=${{ matrix.shard }}/10
 
       - name: Upload Playwright artifacts
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: playwright-report-${{ matrix.shard }}-of-5
-          path: .docker-cache/e2e/shard-${{ matrix.shard }}-of-5
+          name: playwright-report-${{ matrix.shard }}-of-10
+          path: .docker-cache/e2e/shard-${{ matrix.shard }}-of-10
           if-no-files-found: ignore
           compression-level: 0
           retention-days: 7

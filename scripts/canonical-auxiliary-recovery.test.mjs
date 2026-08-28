@@ -60,12 +60,24 @@ test('bootstrap and recovery-document races stay contained in the main process',
 	assert.match(main, /recoverFailedDesktopBootstrap/u);
 	assert.match(
 		main,
-		/void app\.whenReady\(\)[\s\S]*?\.catch\(\(error\) => recoverFailedDesktopBootstrap\(error\)\)/u,
+		/void app\s*\.whenReady\(\)[\s\S]*?\.catch\(\(error\) => recoverFailedDesktopBootstrap\(error\)\)/u,
 	);
 	assert.match(main, /app\.relaunch\(\);[\s\S]*?app\.exit\(0\)/u);
 	assert.match(recovery, /await options\.onDiagnostic\(message\)/u);
 	assert.match(recovery, /full or unavailable diagnostics volume/u);
-	assert.match(recovery, /const targetWebContents = options\.window\.webContents/u);
-	assert.match(recovery, /targetWebContents\.off\('will-navigate', retryNavigation\)/u);
-	assert.match(recovery, /Promise\.resolve\(\)[\s\S]*?showCanonicalLaunchRecovery/u);
+	assert.match(
+		recovery,
+		/const targetWebContents = options\.window\.webContents/u,
+	);
+	assert.match(
+		recovery,
+		/targetWebContents\.off\('will-navigate', retryNavigation\)/u,
+	);
+	assert.match(
+		recovery,
+		/Promise\.resolve\(\)[\s\S]*?showCanonicalLaunchRecovery/u,
+	);
+	assert.match(recovery, /settleInFlightNavigation/u);
+	assert.match(recovery, /webContents\.isLoading\(\)/u);
+	assert.match(recovery, /webContents\.stop\(\)/u);
 });

@@ -9,7 +9,7 @@ for (const fault of ['unreadable', 'invalid', 'uncommittable'] as const) {
 		electronApp,
 		userDataDir,
 	}) => {
-		const page = await electronApp.firstWindow();
+		const page = await electronApp.firstWindow({ timeout: 60_000 });
 		const recovery = page.getByRole('alert');
 		await expect(recovery).toBeVisible();
 		await expect(

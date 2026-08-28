@@ -78,8 +78,8 @@ test("provider CI retains its shared-image fan-out and declared runner bounds", 
     assert.match(job(workflow, "e2e-test"), /needs: e2e-image/u);
     assert.equal((workflow.match(/name: Require amd64 Docker host/g) ?? []).length, 2);
     assert.equal((workflow.match(/x86_64\|amd64/g) ?? []).length, 2);
-    assert.match(job(workflow, "e2e-test"), /shard: \[1, 2, 3, 4, 5\]/u);
-    assert.match(job(workflow, "e2e-test"), /name: E2E \(\$\{\{ matrix\.shard \}\}\/5\)/u);
+    assert.match(job(workflow, "e2e-test"), /shard: \[1, 2, 3, 4, 5, 6, 7, 8, 9, 10\]/u);
+    assert.match(job(workflow, "e2e-test"), /name: E2E \(\$\{\{ matrix\.shard \}\}\/10\)/u);
     assert.match(workflow, /group: terminay-ci-\$\{\{ github\.ref \}\}/u);
     assert.match(workflow, /cancel-in-progress: true/u);
   }
@@ -118,7 +118,7 @@ test("each provider uses its compatible shared-image transport", () => {
     assert.match(e2e, /TERMINAY_E2E_IMAGE_IS_PRELOADED: "1"/u);
     assert.match(e2e, /TERMINAY_E2E_PLATFORM: linux\/amd64/u);
     assert.match(e2e, /if: \$\{\{ always\(\) \}\}/u);
-    assert.match(e2e, /name: playwright-report-\$\{\{ matrix\.shard \}\}-of-5/u);
+    assert.match(e2e, /name: playwright-report-\$\{\{ matrix\.shard \}\}-of-10/u);
     assert.match(e2e, /retention-days: 7/u);
   }
 });

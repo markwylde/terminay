@@ -7,14 +7,14 @@ image publication, or deployment evidence on every commit.
 ## Required jobs
 
 Each pull request creates a packaged macOS smoke job, one fast gate, one shared
-E2E-image build, and five Electron Playwright shards:
+E2E-image build, and ten Electron Playwright shards:
 
 1. One `ubuntu-latest` job installs dependencies, lints, builds the application,
    and runs the fast non-E2E test suites.
 2. One `ubuntu-latest` job builds the complete Docker E2E image once and
    hands it to the shards as a compressed workflow artifact.
-3. Five `ubuntu-latest` jobs split the Electron Playwright suite with
-   `--shard=N/5`.
+3. Ten `ubuntu-latest` jobs split the Electron Playwright suite with
+   `--shard=N/10`.
 
 The fast gate is independent. Gitea pull-request CI is the merge gate. It
 runs the packaged macOS smoke on the `xcode-16` Lume runner (darwin arm64):
@@ -33,7 +33,7 @@ for `main` pushes. GitHub-only
 workflows live in `.github/workflows/`; Gitea-only workflows live in
 `.gitea/workflows/`. Gitea gives its own directory precedence and otherwise
 falls back to `.github/workflows/`, so both directories must exist and remain
-provider-exclusive. Each provider's five E2E shards depend only on that
+provider-exclusive. Each provider's ten E2E shards depend only on that
 provider's E2E-image build, then run in parallel.
 
 ## E2E isolation
@@ -69,7 +69,7 @@ and Gitea never resolves artifact-action v4.
   reproduction, and publication stay on the release workflow.
 - The E2E workflow artifact is a CI test fixture, not a released server or web
   image. Its commit-derived local tag exists only to fan out one verified test
-  environment to the five shards.
+  environment to the ten shards.
 - Server and web image publication does not run for pull requests or ordinary
   main pushes. The manual release publishes the web image directly from its
   exact version tag; the standalone web-image workflow is recovery-only.
@@ -80,10 +80,10 @@ and Gitea never resolves artifact-action v4.
 
 - CI cancels an older run for the same pull-request ref when a replacement
   commit arrives.
-- Five Gitea runners can execute the E2E-image build plus the independent fast
-  gates, then all five shards once the image is available. The only intentional
+- Available Gitea runners execute the E2E-image build plus the independent fast
+  gates, then all ten shards once the image is available. The only intentional
   sequencing is the shared-image handoff; adding runners reduces the wait for
-  the five-shard fan-out.
-- The five-shard suite should be balanced from observed durations. If one shard
+  the ten-shard fan-out.
+- The ten-shard suite should be balanced from observed durations. If one shard
   consistently exceeds the target, rebalance the shard count or test grouping
   instead of adding another serial gate.

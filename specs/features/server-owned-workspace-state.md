@@ -281,6 +281,8 @@ and insertion into the intended terminal remain server-authorized operations.
 - A renderer never repairs an empty or malformed server snapshot by inventing
   project, panel, or session identity. Repository initialization or recovery
   either succeeds authoritatively or the client presents a bounded failure.
+  An unreadable snapshot, invalid snapshot, or failed first-run commit all use
+  that same host-owned recovery surface.
 
 ## Non-goals
 

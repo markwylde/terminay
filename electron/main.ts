@@ -1205,16 +1205,16 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 	embeddedStartupWindowForRecovery = embeddedStartupWindow;
 	// Paint a self-contained loading document before any workspace, extension, or
 	// server initialization. The verified server UI replaces it only once its
-	// local session and document endpoint are ready.
-	void embeddedStartupWindow
-		.loadURL(desktopStartupLoadingDocument())
-		.then(() => {
-			if (!embeddedStartupWindow.isDestroyed()) embeddedStartupWindow.show();
-		})
-		.catch((error) => {
-			if (!embeddedStartupWindow.isDestroyed())
-				console.error('[window] startup loading document failed', error);
-		});
+	// local session and document endpoint are ready. Awaiting the paint avoids
+	// overlapping `loadURL` with persistence recovery, which leaves Chromium
+	// pending and Playwright waiting forever for the first window.
+	try {
+		await embeddedStartupWindow.loadURL(desktopStartupLoadingDocument());
+		if (!embeddedStartupWindow.isDestroyed()) embeddedStartupWindow.show();
+	} catch (error) {
+		if (!embeddedStartupWindow.isDestroyed())
+			console.error('[window] startup loading document failed', error);
+	}
 	const embeddedWorkspace = await openEmbeddedWorkspaceWithRecovery(
 		embeddedStartupWindow,
 	);
@@ -3074,7 +3074,6 @@ async function recoverEmbeddedWorkspaceOperation<T>(
 					},
 					onDiagnostic: recordCanonicalRecoveryDiagnostic,
 				});
-				if (!window.isDestroyed()) window.show();
 			};
 			void renderRecovery(initialError);
 		});

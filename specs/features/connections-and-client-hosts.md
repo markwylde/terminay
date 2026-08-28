@@ -192,7 +192,12 @@ status must not be conflated with terminal or agent attention.
   controls never overlap it. At local Desktop startup, a self-contained native
   loading document paints this state immediately after Electron is ready, before
   workspace restoration, extension setup, or server initialization begins. The
-  verified server UI replaces it once its session is ready, and its initial
+  loading document finishes painting, and the native window is shown, before
+  that restoration starts. If workspace persistence cannot be read, validated,
+  or first-run committed, Desktop stops any in-flight loading navigation and
+  replaces the loader with a host-owned recovery document rather than leaving
+  Chromium pending or the window unpainted. The verified server UI replaces the
+  loading document once its session is ready, and its initial
   document paints the same loading state before the renderer bundle evaluates.
   Its dot animation stays in phase through that handoff, so startup never
   presents an empty window or a visibly restarted loader. If the renderer cannot
