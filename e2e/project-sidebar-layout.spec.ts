@@ -86,6 +86,37 @@ async function resetCommandRecords(page: Page): Promise<void> {
 	});
 }
 
+test('sidebar visibility stays local to this device and project', async ({
+	mainWindow,
+}) => {
+	await requireWorkspaceTest(mainWindow);
+	const sidebar = mainWindow.locator(
+		'.project-workspace--active .file-explorer-sidebar',
+	);
+	const toggle = mainWindow.getByLabel('Toggle file explorer');
+
+	await expect(sidebar).not.toBeVisible();
+	await resetCommandRecords(mainWindow);
+	await toggle.click();
+	await expect(sidebar).toBeVisible();
+	await expect
+		.poll(async () =>
+			(await commandRecords(mainWindow)).filter(
+				(record) => record.command?.type === 'project.sidebar.update',
+			).length,
+		)
+		.toBe(0);
+
+	await mainWindow.getByLabel('Create project on This server').click();
+	await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+	await expect(sidebar).not.toBeVisible();
+
+	await mainWindow.locator('.project-tab').first().click();
+	await expect(sidebar).toBeVisible();
+	await mainWindow.reload();
+	await expect(sidebar).toBeVisible();
+});
+
 async function panelGeometry(page: Page, ids: readonly string[]) {
 	return await page.evaluate(
 		(paneIds) => {

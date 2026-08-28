@@ -3016,6 +3016,53 @@ body.project-tabbar-reordering .project-tabbar {
   background: var(--terminal-panel-surface, #111316);
 }
 
+.terminal-paste-progress {
+  position: absolute;
+  z-index: 5;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  color: #e7f4ef;
+  background: color-mix(in srgb, var(--terminal-panel-surface, #111316) 84%, #274f43);
+  border: 1px solid color-mix(in srgb, var(--terminal-note-color, #71d9bb) 55%, transparent);
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 35%);
+  font-family: 'Open Sans', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1;
+  pointer-events: auto;
+}
+
+.terminal-paste-progress progress {
+  inline-size: 56px;
+  block-size: 5px;
+  accent-color: #71d9bb;
+}
+
+.terminal-paste-progress button {
+  appearance: none;
+  border: 1px solid color-mix(in srgb, var(--terminal-note-color, #71d9bb) 72%, transparent);
+  border-radius: 999px;
+  color: inherit;
+  background: rgb(0 0 0 / 18%);
+  padding: 2px 6px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.terminal-paste-progress button:hover {
+  background: rgb(0 0 0 / 35%);
+}
+
+.terminal-paste-progress button:focus-visible {
+  outline: 2px solid #71d9bb;
+  outline-offset: 1px;
+}
+
 /* Server-backed panels never fall back to ambient preload terminal authority
  * after an attachment failure. Keep recovery visible and keyboard reachable. */
 .terminal-panel-connection-error {
