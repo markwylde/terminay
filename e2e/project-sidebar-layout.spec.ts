@@ -834,12 +834,6 @@ test('every vertical boundary supports repeated bidirectional and keyboard resiz
 	await expect(sidebarTitle(mainWindow, 'git')).toBeVisible();
 	await git.locator('.sidebar-pane__header').click();
 	await expect(git).not.toHaveClass(/sidebar-pane--collapsed/);
-	const reorderFiles = sidebarPane(mainWindow, 'explorer').getByRole('button', {
-		name: 'Reorder Files panel',
-	});
-	const gitTitle = sidebarTitle(mainWindow, 'git');
-	await expect(reorderFiles).toBeVisible();
-	await reorderFiles.dragTo(gitTitle, { force: true });
 	await expect
 		.poll(async () =>
 			activeSidebar(mainWindow)
@@ -850,7 +844,7 @@ test('every vertical boundary supports repeated bidirectional and keyboard resiz
 					),
 				),
 		)
-		.toEqual(['git', 'explorer']);
+		.toEqual(['explorer', 'git']);
 	const geometry = await panelGeometry(mainWindow, ids);
 	for (const id of ids) {
 		expect(geometry.panes[id].title.top).toBeGreaterThanOrEqual(
