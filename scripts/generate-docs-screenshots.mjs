@@ -198,6 +198,59 @@ async function capture(app, page, name) {
 	log(`wrote ${name}`);
 }
 
+const heroThemes = [
+	{ name: 'red', hue: 0 },
+	{ name: 'orange', hue: 32 },
+	{ name: 'green', hue: 145 },
+	{ name: 'blue', hue: 210 },
+	{ name: 'purple', hue: 280 },
+];
+
+function hueToProjectHex(hue) {
+	const normalized = hue / 360;
+	const saturation = 0.65;
+	const lightness = 0.6;
+	const hue2rgb = (p, q, t) => {
+		const value = t < 0 ? t + 1 : t > 1 ? t - 1 : t;
+		if (value < 1 / 6) return p + (q - p) * 6 * value;
+		if (value < 1 / 2) return q;
+		if (value < 2 / 3) return p + (q - p) * (2 / 3 - value) * 6;
+		return p;
+	};
+	const q = lightness + saturation - lightness * saturation;
+	const p = 2 * lightness - q;
+	const hex = (value) => Math.round(value * 255).toString(16).padStart(2, '0');
+	return `#${hex(hue2rgb(p, q, normalized + 1 / 3))}${hex(hue2rgb(p, q, normalized))}${hex(hue2rgb(p, q, normalized - 1 / 3))}`;
+}
+
+async function fillProjectHue(page, hue) {
+	const slider = page.getByLabel('Project theme hue');
+	await slider.waitFor({ state: 'visible' });
+	await slider.fill(String(hue));
+}
+
+async function waitForActiveProjectHue(page, previousStyle) {
+	const deadline = Date.now() + 15_000;
+	while (Date.now() < deadline) {
+		const style = await page.locator('.project-tab--active').first().getAttribute('style');
+		if (style && style !== previousStyle) return;
+		await page.waitForTimeout(100);
+	}
+	throw new Error('Project hue did not apply to the active tab.');
+}
+
+async function setActiveProjectHue(page, hue) {
+	const previousStyle = await page.locator('.project-tab--active').first().getAttribute('style');
+	await page.locator('.project-tab--active').evaluate((element) => {
+		element.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, view: window }));
+	});
+	await page.getByRole('heading', { name: 'Edit Project Tab' }).waitFor({ state: 'visible' });
+	await fillProjectHue(page, hue);
+	await page.getByRole('button', { name: 'Save', exact: true }).click();
+	await page.getByRole('heading', { name: 'Edit Project Tab' }).waitFor({ state: 'hidden' });
+	await waitForActiveProjectHue(page, previousStyle);
+}
+
 async function editActiveProject(page, { title, hue, rootFolder }) {
 	await page.locator('.project-tab--active').evaluate((element) => {
 		element.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, view: window }));
@@ -205,12 +258,6 @@ async function editActiveProject(page, { title, hue, rootFolder }) {
 	await page.getByRole('heading', { name: 'Edit Project Tab' }).waitFor({ state: 'visible' });
 	await page.getByPlaceholder('Project name').fill(title);
 	await page.getByLabel('Tab icon').fill('');
-	await page.getByLabel('Project theme hue').evaluate((element, nextHue) => {
-		const input = element;
-		input.value = String(nextHue);
-		input.dispatchEvent(new Event('input', { bubbles: true }));
-		input.dispatchEvent(new Event('change', { bubbles: true }));
-	}, hue);
 	await page.getByPlaceholder('Enter folder path').fill(rootFolder);
 	await page.getByRole('button', { name: 'Save', exact: true }).click();
 	await page.getByRole('heading', { name: 'Edit Project Tab' }).waitFor({ state: 'hidden' });
@@ -529,17 +576,25 @@ async function captureWorkspaceGroup(app, page, workspace) {
 	await createTerminalGrid(page);
 	await populateCodexTerminalGrid(page, workspace);
 	await page.locator('.project-workspace--active .xterm-rows').first().waitFor({ state: 'visible' });
-	await capture(app, page, 'terminay-workspace.png');
-	await copyFile(
-		path.join(outputDir, 'terminay-workspace.png'),
-		path.join(outputDir, 'terminay-hero-workspace.png'),
-	);
-	log('wrote terminay-hero-workspace.png');
-	await setWindowSize(app, page, { width: 390, height: 844 });
-	await page.evaluate(() => document.querySelector('.docs-screenshot-window-controls')?.remove());
-	await capture(app, page, 'terminay-workspace-mobile.png');
-	await setWindowSize(app, page);
-	await installScreenshotWindowControls(page);
+	for (const [index, theme] of heroThemes.entries()) {
+		await setActiveProjectHue(page, theme.hue);
+		const desktopName = `terminay-workspace-${theme.name}.png`;
+		const mobileName = `terminay-workspace-mobile-${theme.name}.png`;
+		await capture(app, page, desktopName);
+		if (index === 0) {
+			await copyFile(path.join(outputDir, desktopName), path.join(outputDir, 'terminay-workspace.png'));
+			await copyFile(path.join(outputDir, desktopName), path.join(outputDir, 'terminay-hero-workspace.png'));
+			log('wrote terminay-hero-workspace.png');
+		}
+		await setWindowSize(app, page, { width: 390, height: 844 });
+		await page.evaluate(() => document.querySelector('.docs-screenshot-window-controls')?.remove());
+		await capture(app, page, mobileName);
+		if (index === 0) {
+			await copyFile(path.join(outputDir, mobileName), path.join(outputDir, 'terminay-workspace-mobile.png'));
+		}
+		await setWindowSize(app, page);
+		await installScreenshotWindowControls(page);
+	}
 	await stopCodexTuis(page, 4);
 }
 
