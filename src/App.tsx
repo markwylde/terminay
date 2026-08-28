@@ -4639,6 +4639,7 @@ const ProjectWorkspace = forwardRef<
 					settings.keyboardShortcuts,
 					'new-terminal',
 				)}
+				style={{ '--project-color': project.color } as CSSProperties}
 			>
 				{errorText ? (
 					<div className="error-banner">Operation failed: {errorText}</div>
@@ -6161,6 +6162,10 @@ function App({
 				!hasTerminal,
 		};
 	});
+	const displayedActiveProject =
+		displayedProjects.find(
+			(project) => project.id === displayedActiveProjectId,
+		) ?? activeProject;
 	const activateDisplayedProject = (projectId: string) => {
 		if (projectId === pendingProjectCreation?.tab.id) return;
 		activateProject(projectId);
@@ -6194,6 +6199,13 @@ function App({
 			data-terminay-server-id={terminalClientContext?.serverId}
 			data-terminay-workspace-revision={
 				terminalClientContext?.workspaceSnapshotStore?.snapshot?.revision
+			}
+			style={
+				displayedActiveProject?.color
+					? ({
+							'--project-color': displayedActiveProject.color,
+						} as CSSProperties)
+					: undefined
 			}
 		>
 			<header
