@@ -516,6 +516,28 @@ test("observation service results are closed, bounded, and state explicit", asyn
   await manager.shutdown();
 });
 
+test("Git service results must match the application protocol including not-repository", async () => {
+  const descriptor = await fixture("example.git-protocol", `export function activate(context) { context.registerProjectEnvironmentProvider({ definition:{providerId:"example.git-protocol/main",displayName:"Git",capabilities:["git"]}, runtime:{
+    async testProfile(){return []},async resolveOptions(){return {options:[]}},async createEnvironment(){throw new Error("unused")},async resumeOperation(){throw new Error("unused")},async getStatus(){return {state:"available",revision:1}},async invokeAction(request){return {state:"complete",providerState:request.providerState,status:{state:"available",revision:1}}},
+    async invokeService(request){
+      const emptyBranch={name:null,detached:false,head:null,upstream:null,upstreamState:"none",ahead:null,behind:null};
+      if(request.operation==="worktrees")return {projectId:"project-1",repositoryId:null,repositoryRoot:null,defaultBranch:null,state:"not-repository",worktrees:[],bounded:false};
+      if(request.operation==="status")return request.input?.incomplete?{state:"not-repository",repositoryRoot:null,repositoryId:null,worktreeId:null,branch:emptyBranch,head:null,entries:[],bounded:false}:{projectId:"project-1",repositoryId:null,repositoryRoot:null,worktreeId:null,worktreeRoot:null,state:"not-repository",branch:emptyBranch,head:null,entries:[],bounded:false};
+      if(request.operation==="branches")return {projectId:"project-1",repositoryId:null,repositoryRoot:null,worktreeId:null,worktreeRoot:null,state:"not-repository",branch:emptyBranch,head:null,entries:[],bounded:false,operation:"branch"};
+      if(request.operation==="diff")return {projectId:"project-1",repositoryId:null,worktreeId:null,state:"not-repository",compareTarget:"HEAD",path:null,files:[],hunks:[],patch:"",binary:false,bounded:false};
+      return {state:"not-repository",repositoryRoot:null,repositoryId:null,worktreeId:null};
+    }
+  }});}`);
+  const manager = new ExtensionHostManager({ broker: { async request() {} } }); await manager.start(descriptor); const providerId="example.git-protocol/main";
+  const base={environmentId:"env",providerState:{},projectId:"project-1",environmentRevision:1,input:{payload:{projectId:"project-1"},request:{clientId:"client",authScope:"read"}}};
+  assert.equal((await manager.invokeProvider({providerId,callback:"invokeService",request:{...base,capability:"git",operation:"worktrees"}})).state,"not-repository");
+  assert.equal((await manager.invokeProvider({providerId,callback:"invokeService",request:{...base,capability:"git",operation:"status"}})).worktreeRoot,null);
+  assert.equal((await manager.invokeProvider({providerId,callback:"invokeService",request:{...base,capability:"git",operation:"branches"}})).operation,"branch");
+  assert.equal((await manager.invokeProvider({providerId,callback:"invokeService",request:{...base,capability:"git",operation:"diff"}})).compareTarget,"HEAD");
+  await assert.rejects(manager.invokeProvider({providerId,callback:"invokeService",request:{...base,capability:"git",operation:"status",input:{...base.input,incomplete:true}}}),/invalid Git service result/);
+  await manager.shutdown();
+});
+
 test("SSH agent broker is explicit, permission-scoped, and child environment stays sterile", async () => {
   const source = `export function activate(context) { context.registerProjectEnvironmentProvider({ definition:{providerId:"example.agent/main",displayName:"Agent",capabilities:["terminal"]}, runtime:{
     async testProfile(request, call) { const identities = await call.sshAgent.listIdentities({profileId:request.profileId,purpose:"ssh-user-authentication"}); return identities.length === 1 && process.env.SSH_AUTH_SOCK === undefined ? [] : [{code:"bad",message:"agent contract failed"}]; },

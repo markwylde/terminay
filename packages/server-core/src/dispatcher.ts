@@ -10,6 +10,9 @@ import {
 } from "@terminay/protocol";
 import { forbiddenError, scopeAllows, unknownOperationError, validateIdentity } from "./auth.js";
 import { FileServiceError } from "./fileService/types.js";
+import { GitServiceError } from "./gitService/types.js";
+import { ProjectEnvironmentCapabilityError } from "./projectEnvironment/registry.js";
+import { ProjectEnvironmentRouteError } from "./projectEnvironment/router.js";
 import { TerminalServiceError } from "./terminalService/errors.js";
 import type {
   CommandHandler,
@@ -178,6 +181,9 @@ function dispatchError(error: unknown, fallback: string): ProtocolError {
   };
   if (error instanceof TerminalServiceError) return terminalServiceError(error);
   if (error instanceof FileServiceError) return fileServiceError(error);
+  if (error instanceof GitServiceError) return gitServiceError(error);
+  if (error instanceof ProjectEnvironmentRouteError) return projectEnvironmentRouteError(error);
+  if (error instanceof ProjectEnvironmentCapabilityError) return { code: "unavailable", message: error.message.slice(0, 4096), retryable: true };
   if (error instanceof Error) return { code: "internal", message: fallback, retryable: false };
   return { code: "internal", message: fallback, retryable: false };
 }
@@ -198,7 +204,18 @@ function terminalServiceError(error: TerminalServiceError): ProtocolError {
     case "invalid_environment":
       return { code: "validation", message: error.message, retryable: false };
     default:
-      return { code: "internal", message: error.message, retryable: false };
+      // TerminalService already bounds its details. Preserve them for the
+      // project-scoped caller so an interactive remote-shell failure remains
+      // diagnosable instead of collapsing every provider failure into the
+      // same generic spawn message.
+      return {
+        code: "internal",
+        message: error.message,
+        retryable: false,
+        ...(error.details === undefined
+          ? {}
+          : { details: { ...error.details } as JsonValue }),
+      };
   }
 }
 
@@ -228,6 +245,54 @@ function fileServiceError(error: FileServiceError): ProtocolError {
     case "read_failed":
     case "write_failed":
       return { code: "internal", message: "file operation could not be completed", retryable: false };
+  }
+}
+
+function gitServiceError(error: GitServiceError): ProtocolError {
+  switch (error.code) {
+    case "cancelled":
+      return { code: "cancelled", message: error.message, retryable: true };
+    case "provider-timeout":
+      return { code: "deadline", message: error.message, retryable: true };
+    case "path-escape":
+      return { code: "forbidden", message: error.message, retryable: false };
+    case "invalid-project":
+    case "invalid-operation":
+    case "invalid-proposal":
+      return { code: "validation", message: error.message, retryable: false };
+    case "worktree-not-found":
+    case "proposal-not-found":
+      return { code: "not_found", message: error.message, retryable: true };
+    case "output-too-large":
+      return { code: "resource", message: error.message, retryable: false };
+    case "stale-revision":
+    case "proposal-stale":
+    case "proposal-replayed":
+    case "repository-mismatch":
+    case "worktree-dirty":
+    case "worktree-locked":
+    case "worktree-bare":
+    case "worktree-main":
+      return { code: "conflict", message: error.message, retryable: true };
+    default:
+      return { code: "internal", message: error.message.slice(0, 4096), retryable: false };
+  }
+}
+
+function projectEnvironmentRouteError(error: ProjectEnvironmentRouteError): ProtocolError {
+  switch (error.code) {
+    case "operation-cancelled":
+      return { code: "cancelled", message: error.message, retryable: true };
+    case "operation-timeout":
+      return { code: "deadline", message: error.message, retryable: true };
+    case "environment-unavailable":
+    case "provider-unavailable":
+    case "provider-operation-failed":
+      return { code: "unavailable", message: error.message, retryable: true };
+    case "environment-revision-mismatch":
+      return { code: "conflict", message: error.message, retryable: true };
+    case "project-unavailable":
+      return { code: "not_found", message: error.message, retryable: false };
   }
 }
 

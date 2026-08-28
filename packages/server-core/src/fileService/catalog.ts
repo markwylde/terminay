@@ -16,6 +16,9 @@ export interface FileDirectoryEntry {
 	readonly isDirectory?: boolean;
 	readonly isFile?: boolean;
 	readonly isSymbolicLink?: boolean;
+	readonly size?: number;
+	readonly mtimeMs?: number;
+	readonly mode?: number;
 }
 
 export interface FileCatalogStorage extends CanonicalPathAdapter {
@@ -270,7 +273,9 @@ export class FileCatalog {
 			const relativePath = root.length === 0 ? name : `${root}/${name}`;
 			if (!options.includeIgnored && this.isIgnored(name, relativePath, []))
 				continue;
-			const entry = await this.describe(relativePath, raw, options.signal);
+			const entry =
+				listingMetadataEntry(relativePath, raw) ??
+				(await this.describe(relativePath, raw, options.signal));
 			if (entry !== undefined) entries.push(entry);
 		}
 		entries.sort(compareEntries);
@@ -832,6 +837,26 @@ function classify(
 	if (stat.isDirectory === true || raw.isDirectory === true) return 'directory';
 	if (stat.isFile === true || raw.isFile === true) return 'file';
 	return 'other';
+}
+
+function listingMetadataEntry(
+	relativePath: string,
+	raw: FileDirectoryEntry,
+): FileCatalogEntry | undefined {
+	if (raw.isSymbolicLink === true) return undefined;
+	if (raw.isDirectory !== true && raw.isFile !== true) return undefined;
+	if (typeof raw.size !== 'number' || !Number.isFinite(raw.size))
+		return undefined;
+	return Object.freeze({
+		name: raw.name,
+		relativePath,
+		kind: raw.isDirectory === true ? 'directory' : 'file',
+		isSymbolicLink: false,
+		accessible: true,
+		size: safeSize(raw.size),
+		...(finite(raw.mtimeMs) ? { mtimeMs: raw.mtimeMs } : {}),
+		...(safeMode(raw.mode) === undefined ? {} : { mode: safeMode(raw.mode) }),
+	});
 }
 
 interface PreviewClassification {

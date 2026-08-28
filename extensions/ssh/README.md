@@ -59,7 +59,9 @@ re-enable it in **Extensions** settings without deleting profiles; a compatible
 npm release may override the bundled floor. Create an SSH environment, enter
 its host and authentication fields, and approve the presented host key.
 
-It requires Extension API 1.1 and Node.js 22+. Remote agent observation also
+It requires Extension API 1.1 and Node.js 22+. POSIX working-directory
+observation uses a proof-bound `/proc` walk on the same SSH connection and
+does not require the helper. Authoritative remote agent observation still
 requires a compatible `terminay-target-helper`; without it the terminal works
 but agent detection fails closed. For failures, verify address, port,
 credential, host approval, helper version, and remote `PATH`. Passwords,

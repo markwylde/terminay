@@ -13,6 +13,7 @@ import {
   createEnvironmentRoutedProjectServices,
   createEnvironmentRoutedPtyFactory,
   filterRemoteTerminalEnvironment,
+  classifyProjectOperation,
   routeProjectOperationRegistries,
 } from '../dist/index.js';
 
@@ -89,6 +90,124 @@ test('routes terminal, filesystem, and Git operations only through the canonical
   assert.equal(calls[1].context.projectEnvironmentId, 'ssh-two');
 });
 
+test('files.watch and folder-size classify as observation, not filesystem listing', () => {
+  assert.deepEqual(classifyProjectOperation('files.watch.start'), { capability: 'filesystem-observation' });
+  assert.deepEqual(classifyProjectOperation('files.watch.read'), { capability: 'filesystem-observation' });
+  assert.deepEqual(classifyProjectOperation('files.folder-size.start'), { capability: 'filesystem-observation' });
+  assert.deepEqual(classifyProjectOperation('files.list'), { capability: 'filesystem' });
+  assert.deepEqual(classifyProjectOperation('files.catalog'), { capability: 'filesystem' });
+});
+
+test('remote files.watch.start fails closed without opening the remote filesystem or This server watch', async () => {
+  const { calls, router } = fixture();
+  let localCalls = 0;
+  const routed = routeProjectOperationRegistries({
+    queries: {
+      'files.list': async () => { localCalls += 1; return { local: true }; },
+    },
+    commands: {
+      'files.watch.start': async () => { localCalls += 1; return { local: true }; },
+    },
+  }, router);
+  const request = (projectId) => ({
+    envelope: { payload: { projectId } }, body: new Uint8Array(),
+    context: { clientId: 'client', connectionId: 'connection', authScope: 'admin', signal: new AbortController().signal },
+  });
+  await assert.rejects(
+    () => routed.commands.get('files.watch.start')(request('default')),
+    ProjectEnvironmentCapabilityError,
+  );
+  assert.equal(localCalls, 0);
+  assert.equal(calls.length, 0);
+  assert.equal(await routed.queries.get('files.list')(request('default')), 'sentinel-one:files.list');
+  assert.deepEqual(calls.map(({ capability, operation }) => [capability, operation]), [['filesystem', 'files.list']]);
+});
+
+test('This server still reaches its local file watch handler', async () => {
+  const { environments, registry, workspace } = fixture();
+  workspace.projects.local = {
+    ...workspace.projects.default,
+    id: 'local',
+    projectEnvironmentId: THIS_SERVER_ENVIRONMENT_ID,
+    environmentRevision: 1,
+  };
+  const router = new ProjectEnvironmentRouter({
+    serverId: 'server-a',
+    workspaceSnapshot: () => workspace,
+    environmentSnapshot: () => environments,
+    registry,
+  });
+  let localCalls = 0;
+  const routed = routeProjectOperationRegistries({
+    commands: {
+      'files.watch.start': async () => { localCalls += 1; return { subscriptionId: 'watch-local' }; },
+    },
+  }, router);
+  const result = await routed.commands.get('files.watch.start')({
+    envelope: { payload: { projectId: 'local' } }, body: new Uint8Array(),
+    context: { clientId: 'client', connectionId: 'connection', authScope: 'admin', signal: new AbortController().signal },
+  });
+  assert.deepEqual(result, { subscriptionId: 'watch-local' });
+  assert.equal(localCalls, 1);
+});
+
+test('unknown git operations on a remote project never fall back to local Git', async () => {
+  const { calls, router } = fixture();
+  let localCalls = 0;
+  const local = async () => { localCalls += 1; return { local: true }; };
+  const routed = routeProjectOperationRegistries({
+    queries: {
+      'git.status': local,
+      'git.invented': local,
+    },
+    commands: {
+      'git.worktree.pull': local,
+      'git.quick-push.propose': local,
+    },
+  }, router);
+  const request = (projectId) => ({
+    envelope: { payload: { projectId } }, body: new Uint8Array(),
+    context: { clientId: 'client', connectionId: 'connection', authScope: 'admin', signal: new AbortController().signal },
+  });
+  assert.equal(await routed.queries.get('git.invented')(request('default')), 'sentinel-one:unsupported');
+  assert.equal(await routed.commands.get('git.worktree.pull')(request('second')), 'sentinel-two:unsupported');
+  assert.equal(await routed.commands.get('git.quick-push.propose')(request('default')), 'sentinel-one:unsupported');
+  assert.equal(localCalls, 0);
+  assert.deepEqual(calls.map(({ capability, operation }) => [capability, operation]), [
+    ['git', 'unsupported'],
+    ['git', 'unsupported'],
+    ['git', 'unsupported'],
+  ]);
+});
+
+test('This server still reaches its local Git handler for host-owned worktree commands', async () => {
+  const { environments, registry, workspace } = fixture();
+  workspace.projects.local = {
+    ...workspace.projects.default,
+    id: 'local',
+    projectEnvironmentId: THIS_SERVER_ENVIRONMENT_ID,
+    environmentRevision: 1,
+  };
+  const router = new ProjectEnvironmentRouter({
+    serverId: 'server-a',
+    workspaceSnapshot: () => workspace,
+    environmentSnapshot: () => environments,
+    registry,
+  });
+  let localCalls = 0;
+  const routed = routeProjectOperationRegistries({
+    commands: {
+      'git.worktree.pull': async () => { localCalls += 1; return { pulled: true }; },
+    },
+  }, router);
+  const result = await routed.commands.get('git.worktree.pull')({
+    envelope: { payload: { projectId: 'local' } }, body: new Uint8Array(),
+    context: { clientId: 'client', connectionId: 'connection', authScope: 'admin', signal: new AbortController().signal },
+  });
+  assert.deepEqual(result, { pulled: true });
+  assert.equal(localCalls, 1);
+});
+
 test('production protocol registries route remote files and Git before local adapters', async () => {
   const { calls, router } = fixture();
   let localCalls = 0;
@@ -103,7 +222,7 @@ test('production protocol registries route remote files and Git before local ada
     context: { clientId: 'client', connectionId: 'connection', authScope: 'admin', signal: new AbortController().signal },
   });
   assert.equal(await routed.queries.get('files.catalog')(request('default')), 'sentinel-one:files.catalog');
-  assert.equal(await routed.queries.get('git.status')(request('second')), 'sentinel-two:git.status');
+  assert.equal(await routed.queries.get('git.status')(request('second')), 'sentinel-two:status');
   assert.equal(localCalls, 0);
   assert.deepEqual(calls.slice(-2).map(({ capability }) => capability), ['filesystem', 'git']);
 });
@@ -155,13 +274,44 @@ test('missing provider and capability fail closed without invoking This server',
   });
   await assert.rejects(() => missingProvider.invoke('default', 'terminal', 'spawn', {}), (error) => error instanceof ProjectEnvironmentRouteError && error.code === 'provider-unavailable');
 
+  const noGitRegistry = new ProjectEnvironmentRegistry();
+  noGitRegistry.register({
+    providerId: 'sentinel-one',
+    capabilities: ['terminal', 'filesystem'],
+    async invoke() { throw new Error('git must not run'); },
+  });
   const noGit = new ProjectEnvironmentRouter({
     serverId: 'server-a', workspaceSnapshot: () => workspace,
     environmentSnapshot: () => ({ ...environments, environments: { ...environments.environments, 'ssh-one': { ...environments.environments['ssh-one'], availableCapabilities: ['terminal'] } } }),
-    registry,
+    registry: noGitRegistry,
   });
   await assert.rejects(() => noGit.invoke('default', 'git', 'status', {}), ProjectEnvironmentCapabilityError);
   assert.equal(localCalls, 0);
+});
+
+test('a ready remote environment can use Git after the live provider gains that capability', async () => {
+  const { environments, workspace } = fixture();
+  const registry = new ProjectEnvironmentRegistry();
+  const calls = [];
+  registry.register({
+    providerId: 'sentinel-one',
+    capabilities: ['terminal', 'filesystem', 'git'],
+    async invoke(_capability, operation) { calls.push(operation); return 'remote-git'; },
+  });
+  const router = new ProjectEnvironmentRouter({
+    serverId: 'server-a',
+    workspaceSnapshot: () => workspace,
+    environmentSnapshot: () => ({
+      ...environments,
+      environments: {
+        ...environments.environments,
+        'ssh-one': { ...environments.environments['ssh-one'], declaredCapabilities: ['terminal', 'filesystem'], availableCapabilities: ['terminal', 'filesystem'] },
+      },
+    }),
+    registry,
+  });
+  assert.equal(await router.invoke('default', 'git', 'worktrees', { payload: { projectId: 'default' } }), 'remote-git');
+  assert.deepEqual(calls, ['worktrees']);
 });
 
 test('long-lived operations retain their immutable environment binding', async () => {

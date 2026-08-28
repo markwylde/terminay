@@ -68,17 +68,29 @@ export function ProjectEnvironmentsWindow({
 		() => initialIntent ?? intentFromLocation(),
 	);
 
-	const refresh = useCallback(async () => {
+	const refresh = useCallback(async (options: Readonly<{ background?: boolean }> = {}) => {
 		if (client === null) {
 			setError(
 				'The selected Terminay Server does not provide an authenticated application client.',
 			);
 			return;
 		}
-		setBusy(true);
+		// The environments window is a management surface.  It must never turn
+		// an unreachable server or a stuck provider recovery into a permanent
+		// "Working…" overlay that hides the inventory.  Transport cancellation is
+		// also important here: a later focus/poll refresh gets a fresh request.
+		const controller = new AbortController();
+		// Health polling is deliberately non-modal. A connection can remain in a
+		// retryable SSH state for a while; repeatedly refreshing that state must
+		// not keep the entire management window labelled "Working" forever.
+		if (!options.background) setBusy(true);
 		setError('');
 		try {
-			const snapshot = await client.snapshot();
+			const snapshot = await withDeadline(
+				client.snapshot({ signal: controller.signal }),
+				controller,
+				8_000,
+			);
 			setEnvironments(snapshot.environments);
 			setProfiles(snapshot.profiles);
 			setProviders(
@@ -96,9 +108,15 @@ export function ProjectEnvironmentsWindow({
 			);
 			setAuthorityLabel(serverName);
 		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : String(cause));
+			setError(
+				controller.signal.aborted
+					? `Project Environments did not respond from ${serverName} within 8 seconds. Retry when that server is available.`
+					: cause instanceof Error
+						? cause.message
+						: String(cause),
+			);
 		} finally {
-			setBusy(false);
+			if (!options.background) setBusy(false);
 		}
 	}, [client, serverName]);
 
@@ -128,48 +146,71 @@ export function ProjectEnvironmentsWindow({
 		setPendingIntent(undefined);
 	}, [pendingIntent, providers]);
 	useEffect(() => {
-		const onFocus = () => { void refresh(); };
+		const onFocus = () => { void refresh({ background: true }); };
 		window.addEventListener('focus', onFocus);
 		return () => window.removeEventListener('focus', onFocus);
 	}, [refresh]);
+	useEffect(() => {
+		// Provisioning is server-owned, but refresh its durable projection while
+		// this window is visible. Snapshot reads are deliberately nonblocking, so
+		// this cannot freeze the chooser behind an SSH readiness attempt.
+		if (!environments.some((environment) =>
+			['provisioning', 'connecting', 'reconnecting', 'starting', 'stopping'].includes(environment.status),
+		)) return;
+		const timer = window.setInterval(() => { void refresh({ background: true }); }, 2_000);
+		return () => window.clearInterval(timer);
+	}, [environments, refresh]);
 
 	const run = useCallback(
-		async (action: () => Promise<unknown>, success: string) => {
+		async (action: (signal: AbortSignal) => Promise<unknown>, success: string) => {
 			setBusy(true);
 			setError('');
 			setAnnouncement('Operation started.');
+			// A provider command can be retried by the server after this request is
+			// cancelled, but the management window must never be held hostage by one
+			// slow command.  The subsequent snapshot reconciles the durable result.
+			const controller = new AbortController();
 			try {
-				await action();
+				await withDeadline(action(controller.signal), controller, 12_000);
 				setAnnouncement(success);
 				await refresh();
 			} catch (cause) {
-				setError(cause instanceof Error ? cause.message : String(cause));
+				setError(
+					controller.signal.aborted
+						? `Project Environments did not complete the request from ${serverName} within 12 seconds. The server may still finish it; the inventory has been refreshed.`
+						: cause instanceof Error
+							? cause.message
+							: String(cause),
+				);
 				setAnnouncement('');
 			} finally {
 				setBusy(false);
 			}
 		},
-		[refresh],
+		[refresh, serverName],
 	);
 	const submitForm = useCallback(
-		async (action: () => Promise<unknown>, success: string) => {
+		async (action: (signal: AbortSignal) => Promise<unknown>, success: string) => {
 			setBusy(true);
 			setError('');
 			setAnnouncement('Operation started.');
+			const controller = new AbortController();
 			try {
-				await action();
+				await withDeadline(action(controller.signal), controller, 12_000);
 				setAnnouncement(success);
 				await refresh();
 			} catch (cause) {
 				setAnnouncement('');
 				// DeclarativeProviderForm owns submit failures so it can keep the
 				// user's values visible and place the error beside the submission.
-				throw cause instanceof Error ? cause : new Error(String(cause));
+				throw controller.signal.aborted
+					? new Error(`Project Environments did not complete the request from ${serverName} within 12 seconds. Retry when the server is available.`)
+					: cause instanceof Error ? cause : new Error(String(cause));
 			} finally {
 				setBusy(false);
 			}
 		},
-		[refresh],
+		[refresh, serverName],
 	);
 
 	return (
@@ -222,14 +263,14 @@ export function ProjectEnvironmentsWindow({
 							}
 						}}
 						onTestProfile={(profileId) =>
-							run(() => client!.testProfile(profileId), 'Provider or connection test completed.')
+							run((signal) => client!.testProfile(profileId, { signal }), 'Provider or connection test completed.')
 						}
 						onRemoveProfile={(profileId) =>
-							run(() => client!.removeProfile(profileId), 'Provider or connection removed.')
+							run((signal) => client!.removeProfile(profileId, { signal }), 'Provider or connection removed.')
 						}
 						onRemoveConnection={(environment) =>
 							run(
-								() => client!.removeEnvironment(environment.id),
+								(signal) => client!.removeEnvironment(environment.id, { signal }),
 								'Connection removed from this Terminay Server.',
 							)
 						}
@@ -243,17 +284,20 @@ export function ProjectEnvironmentsWindow({
 								return;
 							}
 							void run(
-								() =>
+								(signal) =>
 									client!.invokeAction(
 										environment.id,
 										action.id,
 										{},
-										action.confirmation === undefined
-											? {}
-											: {
+										{
+											signal,
+											...(action.confirmation === undefined
+												? {}
+												: {
 													expectedRevision:
 														action.confirmation.expectedRevision,
-												},
+												}),
+										},
 									),
 								`${action.label} completed.`,
 							);
@@ -285,12 +329,12 @@ export function ProjectEnvironmentsWindow({
 								managesProvider;
 							if (formTarget.mode === 'environment' && formTarget.profileId !== undefined) {
 								await submitForm(
-									() => client!.createEnvironment(formTarget.providerId, formTarget.profileId!, values),
+									(signal) => client!.createEnvironment(formTarget.providerId, formTarget.profileId!, values, { signal }),
 									'Environment creation started.',
 								);
 							} else if (formTarget.profileId === undefined) {
 								await submitForm(
-									() => client!.createProfile(formTarget.providerId, values),
+									(signal) => client!.createProfile(formTarget.providerId, values, { signal }),
 									managesProvider ? 'Provider saved.' : 'Connection saved.',
 								);
 								if (
@@ -305,7 +349,7 @@ export function ProjectEnvironmentsWindow({
 								}
 							} else {
 								await submitForm(
-									() => client!.updateProfile(formTarget.profileId!, values),
+									(signal) => client!.updateProfile(formTarget.profileId!, values, { signal }),
 									managesProvider ? 'Provider updated.' : 'Connection updated.',
 								);
 							}
@@ -326,6 +370,28 @@ export function ProjectEnvironmentsWindow({
 				) : null}
 		</div>
 	);
+}
+
+/** A stalled transport may ignore AbortSignal. Settle the UI deadline anyway
+ * while leaving server-side reconciliation free to finish the durable work. */
+function withDeadline<T>(request: Promise<T>, controller: AbortController, timeoutMs: number): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		let settled = false;
+		const settle = (callback: () => void) => {
+			if (settled) return;
+			settled = true;
+			window.clearTimeout(timer);
+			callback();
+		};
+		const timer = window.setTimeout(() => {
+			controller.abort();
+			settle(() => reject(new Error('project environment request timed out')));
+		}, timeoutMs);
+		void request.then(
+			(value) => settle(() => resolve(value)),
+			(cause) => settle(() => reject(cause)),
+		);
+	});
 }
 
 /** A normal in-flow content panel, deliberately separate from form-specific

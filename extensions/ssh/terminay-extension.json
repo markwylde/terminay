@@ -25,7 +25,7 @@
         "displayName": "SSH server",
         "description": "A POSIX host reached directly by the selected Terminay Server.",
         "icon": "server",
-        "capabilities": ["terminal", "filesystem", "agent-journal"],
+        "capabilities": ["terminal", "filesystem", "agent-journal", "process-observation"],
         "dependencyOperations": [
           { "name": "managed-binding.generate" },
           { "name": "managed-binding.bind" },

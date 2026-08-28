@@ -269,10 +269,15 @@ and insertion into the intended terminal remain server-authorized operations.
   Desktop restart does not restore terminal tabs: its PTYs died with the local
   server, so the server removes their stale panels and sessions and creates one
   fresh terminal in each restored project with a valid root before the
-  workspace is shown. A project whose persisted root is missing instead stays
-  represented with its recoverable error until repaired; previous tab counts
-  are not restored. A remote server that remains alive retains its live
-  terminal sessions across reconnect.
+  workspace is shown. A This-server project whose persisted root is missing
+  instead stays represented with its recoverable error until repaired; previous
+  tab counts are not restored. A remote SSH/Puzed project's root is interpreted
+  only by that environment, so a path such as `/home/vms` must not be treated
+  as a missing local folder and must still receive a replacement terminal. A
+  remote seed that fails while the environment is still connecting is retried
+  until the environment is ready; Explorer waits until that terminal exists
+  so SFTP cannot occupy the session channel first. A remote server that
+  remains alive retains its live terminal sessions across reconnect.
 - A renderer never repairs an empty or malformed server snapshot by inventing
   project, panel, or session identity. Repository initialization or recovery
   either succeeds authoritatively or the client presents a bounded failure.
@@ -310,6 +315,8 @@ and insertion into the intended terminal remain server-authorized operations.
   same server boundary locally and remotely.
 - A valid active project enables sidebar feature queries with its canonical
   server/project/environment identity; an unscoped query fails with a typed,
-  actionable state rather than a generic `query failed` projection.
+  actionable state rather than a generic `query failed` projection. Remote
+  project-environment routing failures (cancelled, deadline, unavailable,
+  capability) keep those protocol codes through the dispatcher.
 - A remote client cannot obtain plaintext secrets or widen a project/session
   scope by changing titles, paths, or local state.

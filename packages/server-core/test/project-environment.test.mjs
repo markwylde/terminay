@@ -48,6 +48,33 @@ test('persisted This server registries drop retired mcp-bridge capabilities inst
   assert.equal(commits[0].environments['terminay:this-server'].declaredCapabilities.includes('mcp-bridge'), false);
 });
 
+test('interrupted profile removal forgets only orphaned local connections and persists the repaired registry', async () => {
+  const persisted = createInitialProjectEnvironmentState('desktop-local');
+  const now = Date.now();
+  persisted.environments['puzed:orphan'] = {
+    id: 'puzed:orphan', providerId: 'com.puzed.platform/vm', profileId: 'profile:removed',
+    pinnedRevision: 1, name: 'old-vm', endpointSummary: 'Puzed VM',
+    declaredCapabilities: ['terminal', 'filesystem'], availableCapabilities: [], status: 'connecting',
+    operationReferences: ['operation:orphan'], projectReferenceCount: 0, archived: false, builtIn: false,
+    providerState: { machineId: 'remote-vm-must-not-be-touched' }, providerRevision: 1,
+  };
+  persisted.operations['operation:orphan'] = {
+    id: 'operation:orphan', providerId: 'com.puzed.platform/vm', environmentId: 'puzed:orphan',
+    kind: 'create', state: 'pending', providerState: {}, createdAt: now, updatedAt: now, revision: 1,
+  };
+  const commits = [];
+  const repository = new ProjectEnvironmentRepository({
+    async load() { return structuredClone(persisted); },
+    async commit(state) { commits.push(structuredClone(state)); },
+  }, 'desktop-local');
+  const state = await repository.load();
+  assert.equal(state.environments['puzed:orphan'], undefined);
+  assert.equal(state.operations['operation:orphan'], undefined);
+  assert.ok(state.environments[THIS_SERVER_ENVIRONMENT_ID]);
+  assert.equal(commits.length, 1);
+  assert.equal(JSON.stringify(commits[0]).includes('remote-vm-must-not-be-touched'), false);
+});
+
 test('v1 environment registries migrate provider state and operation storage idempotently', () => {
   const current=createInitialProjectEnvironmentState('server-a');
   const legacy={...current,schemaVersion:1,environments:Object.fromEntries(Object.entries(current.environments).map(([id,{providerState,providerRevision,...environment}])=>[id,environment]))};

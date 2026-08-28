@@ -50,7 +50,19 @@ export class CanonicalProjectPathResolver {
     }
   }
 
+  private rootPromise: Promise<string> | undefined;
+
   async root(): Promise<string> {
+    this.rootPromise ??= this.resolveRoot();
+    try {
+      return await this.rootPromise;
+    } catch (error) {
+      this.rootPromise = undefined;
+      throw error;
+    }
+  }
+
+  private async resolveRoot(): Promise<string> {
     const canonical = await this.canonicalExisting(this.projectRoot, false);
     const stat = await this.adapter.stat(canonical);
     if (stat.isDirectory === false) throw new FileServiceError("not_directory", "project root is not a directory", { canonical });
@@ -66,6 +78,14 @@ export class CanonicalProjectPathResolver {
     if (hasTraversalSegment(requestedPath)) throw new FileServiceError("path_escape", "path traversal is not permitted", { requested: requestedPath });
 
     const root = await this.root();
+    if (
+      !isAbsolutePath(requestedPath) &&
+      (requestedPath === "." || requestedPath === "")
+    ) {
+      if (options.requireFile ?? false)
+        throw new FileServiceError("not_file", "path is not a file", { canonical: root });
+      return root;
+    }
     // For relative requests the project root is the only starting point. An
     // absolute path is accepted only after canonical containment is checked.
     const candidate = isAbsolutePath(requestedPath) ? requestedPath : joinPath(root, requestedPath);

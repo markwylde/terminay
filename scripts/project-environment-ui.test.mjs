@@ -66,6 +66,24 @@ test('failed provider submissions stay in their form with a visible inline error
 	assert.doesNotMatch(surfaces,/await run\(\(\) => client!\.createEnvironment/);
 });
 
+test('background connection polling never leaves the management surface globally busy',()=>{
+	assert.match(surfaces,/const refresh = useCallback\(async \(options: Readonly<\{ background\?: boolean \}> = \{\}\)/);
+	assert.match(surfaces,/if \(!options\.background\) setBusy\(true\)/);
+	assert.match(surfaces,/if \(!options\.background\) setBusy\(false\)/);
+	assert.match(surfaces,/refresh\(\{ background: true \}\)/);
+	assert.match(surfaces,/client\.snapshot\(\{ signal: controller\.signal \}\),\s*\n\s*controller,\s*\n\s*8_000/);
+});
+
+test('provider commands settle their UI deadline even when a transport ignores abort',()=>{
+	assert.match(surfaces,/async \(action: \(signal: AbortSignal\) => Promise<unknown>, success: string\)/);
+	assert.match(surfaces,/function withDeadline<T>\(request: Promise<T>, controller: AbortController, timeoutMs: number\)/);
+	assert.match(surfaces,/controller\.abort\(\);\s*\n\s*settle\(\(\) => reject\(new Error\('project environment request timed out'\)\)\)/);
+	assert.match(surfaces,/await withDeadline\(action\(controller\.signal\), controller, 12_000\)/);
+	assert.match(surfaces,/removeEnvironment\(environment\.id, \{ signal \}\)/);
+	assert.match(surfaces,/removeProfile\(profileId, \{ signal \}\)/);
+	assert.match(surfaces,/createEnvironment\(formTarget\.providerId, formTarget\.profileId!, values, \{ signal \}\)/);
+});
+
 test('dynamic options clear stale dependent selections while retaining the form draft',()=>{
 	assert.match(forms,/setOptionRefresh/);
 	assert.match(forms,/optionRefresh/);

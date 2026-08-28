@@ -104,6 +104,29 @@ export class ConnectionPool {
     return this.status(profileId, revision);
   }
 
+  /**
+   * Discard an idle transport before retrying a session channel. Some managed
+   * SSH endpoints reject a second session on an otherwise authenticated
+   * connection after a transient SFTP channel. This never disrupts a live
+   * terminal: callers must only use it before a terminal is registered.
+   */
+  async refresh(profileId: string, revision: number, signal?: AbortSignal): Promise<void> {
+    const entry = this.#entries.get(key(profileId, revision));
+    if (!entry?.client) return;
+    if (entry.terminals.size > 0) throw new SshProviderError("conflict", "SSH transport has active terminals");
+    const stale = entry.client;
+    entry.client = undefined;
+    entry.status = "disconnected";
+    entry.attempt = 0;
+    this.#emit(entry);
+    // Do not wait for this old socket to close: a server that has exhausted
+    // its per-connection session allowance may never accept another channel
+    // until its transport is retired. The close listener is identity-guarded.
+    stale.end();
+    const lease = await this.acquire(profileId, revision, { signal });
+    lease.release();
+  }
+
   async close(): Promise<void> {
     for (const entry of this.#entries.values()) {
       entry.closed = true;
@@ -126,6 +149,7 @@ export class ConnectionPool {
         entry.status = "ready";
         entry.attempt = 0;
         client.once("close", () => {
+          if (entry.client !== client) return;
           entry.client = undefined;
           if (!entry.closed) {
             entry.status = "reconnecting";

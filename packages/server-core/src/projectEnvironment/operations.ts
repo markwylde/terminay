@@ -60,12 +60,46 @@ export function createProjectEnvironmentOperationHandlers(options: ProjectEnviro
 		mutationTail = result.then(() => undefined, () => undefined);
 		return result;
 	};
-	// Snapshot-driven recovery is a mutation: a provider can advance a durable
-	// provisioning operation while another client is reading it.  Run it through
-	// the same queue as user mutations so a second snapshot cannot make the
-	// first compare-and-swap commit stale after the provider has done work.
+	// Recovery is a mutation: a provider can advance a durable provisioning
+	// operation while another client is reading it. Run it through the same queue
+	// as user mutations so compare-and-swap commits cannot race. Crucially, a UI
+	// snapshot must never wait for network/SSH recovery: that made opening the
+	// chooser appear to hang whenever a VM was still booting or unreachable.
 	const recoverPending = async (context: RequestContext): Promise<void> => serialize(() => resumePendingOperations(options, context));
-	const snapshot = async (context?: RequestContext): Promise<JsonValue> => { if(context!==undefined)await recoverPending(context);const presentations=context===undefined?new Map<string,ProviderEnvironmentStatus>():await refreshRuntimeStatuses(options,context);return snapshotDto(await options.repository.load(),options.workspace,options.providerDefinitions?.()??[],presentations); };
+	let recoveryRunning = false;
+	let presentations = new Map<string, ProviderEnvironmentStatus>();
+	const scheduleRecovery = (requestContext: RequestContext): void => {
+		if (recoveryRunning) return;
+		recoveryRunning = true;
+		// A query transport can abort as soon as its snapshot is sent. Recovery
+		// owns a fresh bounded signal instead of inheriting that renderer request.
+		const controller = new AbortController();
+		const context: RequestContext = {
+			...requestContext,
+			signal: controller.signal,
+			deadline: Date.now() + 8_000,
+			expectedRevision: undefined,
+		};
+		void (async () => {
+			await recoverPending(context);
+			// Provider cards (including the deliberate changed-host-key action) are
+			// obtained off the read path too. A slow SSH verify must never hold the
+			// picker hostage, but its eventual safe projection is retained for the
+			// next lightweight snapshot.
+			presentations = await refreshRuntimeStatuses(options, context);
+		})().catch(() => undefined).finally(() => {
+			recoveryRunning = false;
+		});
+	};
+	const snapshot = async (context?: RequestContext): Promise<JsonValue> => {
+		if (context !== undefined) scheduleRecovery(context);
+		return snapshotDto(
+			await options.repository.load(),
+			options.workspace,
+			options.providerDefinitions?.() ?? [],
+			presentations,
+		);
+	};
 	const commands = {
 		[PROJECT_ENVIRONMENT_OPERATIONS.createProject]: async (request: any) => {
 			permission(request.context, 'environments:manage');
@@ -125,8 +159,11 @@ export function createProjectEnvironmentOperationHandlers(options: ProjectEnviro
 			const id = text(payload, 'profileId', 256); const profile = state.profiles[id]; if (profile === undefined) throw failure('not_found', 'environment profile was not found');
 			const referenced = Object.values(options.workspace.state.projects).filter((project) => state.environments[project.projectEnvironmentId]?.profileId === id);
 			if (referenced.length > 0) throw failure('conflict', 'environment profile is used by a project');
-			if (options.providerRuntime !== undefined) for (const environment of Object.values(state.environments).filter((item) => item.profileId === id)) await runtimeAction(options, environment, 'deleteEnvironment', { environmentId:environment.id, profileId:id, providerState:environment.providerState }, context);
-			else await requiredProvider(options).removeProfile?.(profile, context);
+			// Removing a saved provider is a local registry operation. Its child
+			// connections are local records, so a generic runtime delete here could
+			// destroy a real VM. Best-effort cleanup may release Terminay-owned
+			// profile resources but may never delay or prevent the local removal.
+			void removeProviderResources(options, profile, context);
 			return { ...state, profiles: without(state.profiles, id), environments: Object.fromEntries(Object.entries(state.environments).filter(([, environment]) => environment.profileId !== id)) };
 		}),
 		[PROJECT_ENVIRONMENT_OPERATIONS.removeEnvironment]: async (request: any) => {
@@ -156,7 +193,7 @@ export function createProjectEnvironmentOperationHandlers(options: ProjectEnviro
 			const context=providerContext(request.context,request.envelope.commandId); const actionId=text(payload, 'actionId', 256);
 			if(options.providerRuntime===undefined){await requiredProvider(options).invokeAction?.(environment,actionId,context);return {result:operation(request.envelope.commandId,{environmentId:environment.id}),revision:state.revision};}
 			const outcome=await runtimeAction(options,environment,'invokeAction',{environmentId:environment.id,...(environment.profileId===undefined?{}:{profileId:environment.profileId}),providerState:environment.providerState,actionId,values:(payload.values===undefined?{}:values(payload.values)) as Record<string,JsonValue>},context,request.envelope.commandId,state.revision);
-			const committed=await options.repository.commit(state.revision,current=>applyRuntimeOutcome(current,environment,outcome,request.envelope.commandId,'action',Date.now())); changed(options,committed.revision);
+			const committed=await commitRuntimeActionOutcome(options,state,environment.id,outcome,request.envelope.commandId); changed(options,committed.revision);
 			return {result:operationDto(committed.operations[request.envelope.commandId]),revision:committed.revision};
 		},
 	} satisfies Record<string, any>;
@@ -186,9 +223,32 @@ async function createRuntimeEnvironment(options:ProjectEnvironmentOperationOptio
 }
 async function runtimeCall<T>(options:ProjectEnvironmentOperationOptions,providerId:string,callback:ExtensionProviderInvocation['callback'],request:JsonValue,context:ProviderControlContext):Promise<T>{if(options.providerRuntime===undefined)throw failure('unavailable','project environment provider runtime is unavailable',true);const remaining=context.deadline===undefined?30000:Math.max(1,context.deadline-Date.now());try{return await options.providerRuntime.invokeProvider({providerId,callback,request,deadlineMs:remaining,...(context.idempotencyKey===undefined?{}:{idempotencyKey:context.idempotencyKey}),...(context.expectedRevision===undefined?{}:{expectedRevision:context.expectedRevision}),signal:context.signal}) as T;}catch(error){throw failure('unavailable',publicProviderOperationMessage(providerId,error)??providerOperationMessage(options,providerId,callback),true);}}
 async function runtimeAction(options:ProjectEnvironmentOperationOptions,environment:ProjectEnvironmentRecord,callback:ExtensionProviderInvocation['callback'],request:JsonValue,context:ProviderControlContext,idempotencyKey?:string,expectedRevision?:number):Promise<EnvironmentActionResult>{return runtimeCall(options,environment.providerId,callback,request,{...context,...(idempotencyKey===undefined?{}:{idempotencyKey}),...(expectedRevision===undefined?{}:{expectedRevision})});}
-function applyRuntimeOutcome(state:ProjectEnvironmentState,environment:ProjectEnvironmentRecord,outcome:EnvironmentActionResult,id:string,kind:string,now:number):ProjectEnvironmentState{const operationId=runtimeId(id);if(outcome.state==='complete'){const updated=environmentFromStatus(environment,outcome.providerState,outcome.status,now);const operations=environment.status==='provisioning'&&outcome.status.state==='available'?Object.fromEntries(Object.entries(state.operations).map(([key,operation])=>operation.environmentId===environment.id&&(operation.state==='pending'||operation.state==='running')?[key,{...operation,state:'succeeded' as const,providerState:outcome.providerState,updatedAt:now,revision:operation.revision+1}]:[key,operation])):state.operations;return {...state,environments:{...state.environments,[environment.id]:updated},operations:{...operations,[operationId]:{id:operationId,providerId:environment.providerId,environmentId:environment.id,kind,state:'succeeded',providerState:outcome.providerState,createdAt:now,updatedAt:now,revision:1}}};}return {...state,environments:{...state.environments,[environment.id]:{...environment,status:'provisioning',availableCapabilities:[],providerState:outcome.providerState,operationReferences:[...new Set([...environment.operationReferences,operationId])]}},operations:{...state.operations,[operationId]:{id:operationId,providerId:environment.providerId,environmentId:environment.id,kind,state:'pending',providerOperationId:runtimeId(outcome.operationId),providerState:outcome.providerState,progress:outcome.progress as unknown as JsonValue,createdAt:now,updatedAt:now,revision:1}}};}
-function environmentFromStatus(environment:ProjectEnvironmentRecord,providerState:JsonValue,status:ProviderEnvironmentStatus,now:number):ProjectEnvironmentRecord{return {...environment,providerState,providerRevision:status.revision,status:domainStatus(status),...(status.defaultRoot===undefined?{}:{defaultRoot:status.defaultRoot}),availableCapabilities:status.state==='available'?environment.declaredCapabilities:[],lastSuccessfulCheck:status.state==='available'?now:environment.lastSuccessfulCheck,operationReferences:[]};}
-async function resumePendingOperations(options:ProjectEnvironmentOperationOptions,requestContext:RequestContext):Promise<void>{if(options.providerRuntime===undefined)return;let state=await options.repository.load();for(const pending of Object.values(state.operations).filter(item=>item.state==='pending'||item.state==='running')){const environment=state.environments[pending.environmentId];if(environment===undefined)continue;try{const result=await runtimeCall<ProvisioningResult>(options,pending.providerId,'resumeOperation',{environmentId:environment.id,...(environment.profileId===undefined?{}:{profileId:environment.profileId}),providerState:pending.providerState,operationId:pending.providerOperationId??pending.id},providerContext(requestContext,pending.id));state=await commitResumedOperation(options,state,pending.id,result);changed(options,state.revision);}catch{ /* Durable pending state remains retryable; raw provider errors are not persisted. */ }} }
+async function removeProviderResources(options:ProjectEnvironmentOperationOptions,profile:EnvironmentProfile,context:ProviderControlContext):Promise<void>{
+	try { await options.providers?.removeProfile?.(profile,context); } catch { /* Local removal already committed. */ }
+}
+function applyRuntimeOutcome(state:ProjectEnvironmentState,environment:ProjectEnvironmentRecord,outcome:EnvironmentActionResult,id:string,kind:string,now:number,options:ProjectEnvironmentOperationOptions):ProjectEnvironmentState{const operationId=runtimeId(id);if(outcome.state==='complete'){const updated=environmentFromStatus(environment,outcome.providerState,outcome.status,now,currentDeclaredCapabilities(environment,options));const operations=environment.status==='provisioning'&&outcome.status.state==='available'?Object.fromEntries(Object.entries(state.operations).map(([key,operation])=>operation.environmentId===environment.id&&(operation.state==='pending'||operation.state==='running')?[key,{...operation,state:'succeeded' as const,providerState:outcome.providerState,updatedAt:now,revision:operation.revision+1}]:[key,operation])):state.operations;return {...state,environments:{...state.environments,[environment.id]:updated},operations:{...operations,[operationId]:{id:operationId,providerId:environment.providerId,environmentId:environment.id,kind,state:'succeeded',providerState:outcome.providerState,createdAt:now,updatedAt:now,revision:1}}};}return {...state,environments:{...state.environments,[environment.id]:{...environment,status:'provisioning',availableCapabilities:[],providerState:outcome.providerState,operationReferences:[...new Set([...environment.operationReferences,operationId])]}},operations:{...state.operations,[operationId]:{id:operationId,providerId:environment.providerId,environmentId:environment.id,kind,state:'pending',providerOperationId:runtimeId(outcome.operationId),providerState:outcome.providerState,progress:outcome.progress as unknown as JsonValue,createdAt:now,updatedAt:now,revision:1}}};}
+/** Provider actions can take long enough for asynchronous status recovery to
+ * publish a newer registry revision. Rebase the action result instead of
+ * falsely reporting a conflict to the user after the provider already acted. */
+async function commitRuntimeActionOutcome(options:ProjectEnvironmentOperationOptions,state:ProjectEnvironmentState,environmentId:string,outcome:EnvironmentActionResult,commandId:string):Promise<ProjectEnvironmentState>{
+	for(let attempt=0;attempt<3;attempt++){
+		const environment=state.environments[environmentId];
+		if(environment===undefined)throw failure('not_found','project environment was not found');
+		try{return await options.repository.commit(state.revision,current=>applyRuntimeOutcome(current,environment,outcome,commandId,'action',Date.now(),options));}
+		catch(error){if(attempt===2||!isProjectEnvironmentConflict(error))throw error;state=await options.repository.load();}
+	}
+	return state;
+}
+function environmentFromStatus(environment:ProjectEnvironmentRecord,providerState:JsonValue,status:ProviderEnvironmentStatus,now:number,declaredCapabilities:ProjectEnvironmentRecord['declaredCapabilities']=environment.declaredCapabilities):ProjectEnvironmentRecord{return {...environment,providerState,providerRevision:status.revision,status:domainStatus(status),...(status.defaultRoot===undefined?{}:{defaultRoot:status.defaultRoot}),declaredCapabilities,availableCapabilities:status.state==='available'?declaredCapabilities:[],lastSuccessfulCheck:status.state==='available'?now:environment.lastSuccessfulCheck,operationReferences:[]};}
+function currentDeclaredCapabilities(environment:ProjectEnvironmentRecord,options:ProjectEnvironmentOperationOptions):ProjectEnvironmentRecord['declaredCapabilities']{const definition=options.providerDefinitions?.().find((item)=>item.providerId===environment.providerId);if(definition===undefined)return environment.declaredCapabilities;return definition.capabilities.filter(domainCapability) as ProjectEnvironmentRecord['declaredCapabilities'];}
+/**
+ * Pending operations must not share one deadline.  A historical VM can be
+ * waiting for an unreachable SSH service for its entire bounded attempt; if
+ * that consumed the snapshot recovery budget, newer creations were never even
+ * allowed to ask Puzed whether their job had finished.  Work newest-first and
+ * give each operation its own short, abortable recovery window.
+ */
+async function resumePendingOperations(options:ProjectEnvironmentOperationOptions,requestContext:RequestContext):Promise<void>{if(options.providerRuntime===undefined)return;let state=await options.repository.load();const pendingOperations=Object.values(state.operations).filter(item=>item.state==='pending'||item.state==='running').sort((left,right)=>right.updatedAt-left.updatedAt);for(const pending of pendingOperations){const environment=state.environments[pending.environmentId];if(environment===undefined)continue;const controller=new AbortController();const abort=()=>controller.abort();if(requestContext.signal.aborted)abort();else requestContext.signal.addEventListener('abort',abort,{once:true});const timer=setTimeout(abort,8_000);const context:RequestContext={...requestContext,signal:controller.signal,deadline:Date.now()+8_000,expectedRevision:undefined};try{const result=await runtimeCall<ProvisioningResult>(options,pending.providerId,'resumeOperation',{environmentId:environment.id,...(environment.profileId===undefined?{}:{profileId:environment.profileId}),providerState:pending.providerState,operationId:pending.providerOperationId??pending.id},providerContext(context,pending.id));state=await commitResumedOperation(options,state,pending.id,result);changed(options,state.revision);}catch{ /* Durable pending state remains retryable; raw provider errors are not persisted. */ }finally{clearTimeout(timer);requestContext.signal.removeEventListener('abort',abort);}} }
 
 /** A provider call can take long enough for another server-side mutation to
  * commit.  Its result is still valid for this operation, so rebase it onto the
@@ -198,15 +258,15 @@ async function commitResumedOperation(options:ProjectEnvironmentOperationOptions
 		const pending=state.operations[operationId];const environment=pending===undefined?undefined:state.environments[pending.environmentId];
 		if(pending===undefined||environment===undefined||!(pending.state==='pending'||pending.state==='running'))return state;
 		const now=Date.now();
-		const proposed=result.state==='ready'?{...state,environments:{...state.environments,[environment.id]:environmentFromStatus(environment,result.providerState,result.status,now)},operations:{...state.operations,[pending.id]:{...pending,state:'succeeded' as const,providerState:result.providerState,updatedAt:now,revision:pending.revision+1}}}:{...state,environments:{...state.environments,[environment.id]:{...environment,providerState:result.providerState,status:'provisioning' as const}},operations:{...state.operations,[pending.id]:{...pending,state:'running' as const,providerOperationId:runtimeId(result.operationId),providerState:result.providerState,progress:result.progress as unknown as JsonValue,updatedAt:now,revision:pending.revision+1}}};
+		const proposed=result.state==='ready'?{...state,environments:{...state.environments,[environment.id]:environmentFromStatus(environment,result.providerState,result.status,now,currentDeclaredCapabilities(environment,options))},operations:{...state.operations,[pending.id]:{...pending,state:'succeeded' as const,providerState:result.providerState,updatedAt:now,revision:pending.revision+1}}}:{...state,environments:{...state.environments,[environment.id]:{...environment,providerState:result.providerState,status:'provisioning' as const}},operations:{...state.operations,[pending.id]:{...pending,state:'running' as const,providerOperationId:runtimeId(result.operationId),providerState:result.providerState,progress:result.progress as unknown as JsonValue,updatedAt:now,revision:pending.revision+1}}};
 		try{return await options.repository.commit(state.revision,()=>proposed);}catch(error){if(attempt===2||!isProjectEnvironmentConflict(error))throw error;state=await options.repository.load();}
 	}
 	return state;
 }
 function isProjectEnvironmentConflict(error:unknown):error is ProjectEnvironmentConflictError{return error instanceof ProjectEnvironmentConflictError;}
 async function refreshRuntimeStatuses(options:ProjectEnvironmentOperationOptions,requestContext:RequestContext):Promise<Map<string,ProviderEnvironmentStatus>>{const presentations=new Map<string,ProviderEnvironmentStatus>();if(options.providerRuntime===undefined)return presentations;let state=await options.repository.load();for(const environment of Object.values(state.environments).filter(item=>!item.builtIn)){try{const status=await runtimeCall<ProviderEnvironmentStatus>(options,environment.providerId,'getStatus',{environmentId:environment.id,...(environment.profileId===undefined?{}:{profileId:environment.profileId}),providerState:environment.providerState},providerContext(requestContext));presentations.set(environment.id,status);/* A durable operation remains the lifecycle authority while provisioning.
-   * Its provider may still expose a safe status card (for example host-key
-   * approval) but must not be promoted or demoted by a concurrent refresh. */if(environment.status==='provisioning')continue;const next=environmentFromStatus(environment,environment.providerState,status,Date.now());if(JSON.stringify(next)===JSON.stringify(environment))continue;state=await options.repository.commit(state.revision,current=>({...current,environments:{...current.environments,[environment.id]:next}}));changed(options,state.revision);}catch{/* Existing safe state remains visible while provider is unavailable. */}}return presentations;}
+   * Its provider may still expose a safe status card (for example changed-key
+   * approval) but must not be promoted or demoted by a concurrent refresh. */if(environment.status==='provisioning')continue;const next=environmentFromStatus(environment,environment.providerState,status,Date.now(),currentDeclaredCapabilities(environment,options));if(JSON.stringify(next)===JSON.stringify(environment))continue;state=await options.repository.commit(state.revision,current=>({...current,environments:{...current.environments,[environment.id]:next}}));changed(options,state.revision);}catch{/* Existing safe state remains visible while provider is unavailable. */}}return presentations;}
 function operationDto(value:import('./types.js').ProjectEnvironmentOperationRecord|undefined):JsonValue{if(value===undefined)throw failure('not_found','project environment operation was not found');return {operationId:value.id,state:value.state,...(value.progress===undefined?{}:{stage:progressStage(value.progress),progress:progressFraction(value.progress)}),environmentId:value.environmentId};}
 function progressStage(value:JsonValue):string{if(typeof value==='object'&&value!==null&&!Array.isArray(value)&&Array.isArray(value.stages)){const stages=value.stages as Array<Record<string,unknown>>;const stage=stages.find(item=>item?.state==='active')??stages.at(-1);if(typeof stage?.label==='string')return stage.label.slice(0,256);}return 'working';}
 function progressFraction(value:JsonValue):number{if(typeof value==='object'&&value!==null&&!Array.isArray(value)&&Array.isArray(value.stages)&&value.stages.length>0){const complete=value.stages.filter((item:any)=>item?.state==='complete').length;return Math.max(0,Math.min(1,complete/value.stages.length));}return 0;}

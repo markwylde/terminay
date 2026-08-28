@@ -117,7 +117,15 @@ export function describeFeatureFailure(
 	const code = source instanceof ClientError ? source.code : undefined;
 	const retryable = source instanceof ClientError ? source.retryable : false;
 	const target = `project ${scope.projectId} on server ${scope.serverId}`;
-	if (code === 'disconnected' || code === 'unavailable') {
+	if (code === 'cancelled') {
+		return {
+			title: `${feature} request was cancelled`,
+			detail: `The ${operation === undefined ? 'request' : operation} for ${target} was cancelled.`,
+			retryable: true,
+			...(operation === undefined ? {} : { operation }),
+		};
+	}
+	if (code === 'disconnected' || code === 'unavailable' || code === 'deadline') {
 		return {
 			title: `${feature} is temporarily unavailable`,
 			detail: `Reconnect to ${scope.serverId} and retry${operation === undefined ? '.' : ` ${operation}.`}`,
@@ -162,7 +170,7 @@ export function describeServerFeatureFailure(
 		: error;
 	const code = source instanceof ClientError ? source.code : undefined;
 	const retryable = source instanceof ClientError ? source.retryable : false;
-	if (code === 'disconnected' || code === 'unavailable') {
+	if (code === 'disconnected' || code === 'unavailable' || code === 'deadline') {
 		return {
 			title: `${feature} is temporarily unavailable`,
 			detail: `Reconnect to ${serverId} and retry${operation === undefined ? '.' : ` ${operation}.`}`,
@@ -209,6 +217,44 @@ function missingFeatureClient(context: Omit<TerminalPanelClientContextValue, 'pr
 function readOperation(error: unknown): string | undefined {
 	if (typeof error !== 'object' || error === null || !('operation' in error)) return undefined;
 	return typeof error.operation === 'string' ? error.operation : undefined;
+}
+
+/** A superseded or unmounted query must not occupy the workspace banner. */
+export function isCancelledFeatureFailure(error: unknown): boolean {
+	const source =
+		typeof error === 'object' &&
+		error !== null &&
+		'cause' in error &&
+		error.cause !== undefined
+			? error.cause
+			: error;
+	return source instanceof ClientError && source.code === 'cancelled';
+}
+
+/** SSH/Puzed advertise no portable watch. A missing `files.watch.*` or
+ * `files.folder-size.*` capability is manual refresh, not an Explorer outage. */
+export function isOptionalObservationFailure(error: unknown): boolean {
+	const operation = readOperation(error);
+	if (
+		operation === undefined ||
+		(!operation.startsWith('files.watch') &&
+			!operation.startsWith('files.folder-size'))
+	) {
+		return false;
+	}
+	const source =
+		typeof error === 'object' &&
+		error !== null &&
+		'cause' in error &&
+		error.cause !== undefined
+			? error.cause
+			: error;
+	if (!(source instanceof ClientError)) return false;
+	return (
+		source.code === 'unavailable' ||
+		source.code === 'cancelled' ||
+		source.code === 'deadline'
+	);
 }
 
 function boundedText(value: string): string {

@@ -46,6 +46,12 @@ const electronInput = {
 }
 
 export default defineConfig({
+	// vite-plugin-electron launches Electron against this fixed renderer origin.
+	// Falling back to 5174 starts an app that cannot attach to its renderer.
+	server: {
+		port: 5173,
+		strictPort: true,
+	},
   build: {
     // The desktop bootstrap must execute before any dependency graph work.
     // Vite's preload helper otherwise gates the dynamic renderer import on

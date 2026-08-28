@@ -38,7 +38,7 @@ test('file explorer watches fail closed without global terminal errors', () => {
 	assert.doesNotMatch(controller, /Failed to watch files:/);
 	assert.match(
 		controller,
-		/catch\s*\{\s*if \(!disposed\) scheduleDirectoryRefresh\(path\);/s,
+		/catch\s*\{\s*if \(!disposed && !unavailableWatchFallbacksRef\.current\.has\(path\)\) \{[\s\S]*scheduleDirectoryRefresh\(path\);/s,
 	);
 });
 
