@@ -50,19 +50,7 @@ export class CanonicalProjectPathResolver {
     }
   }
 
-  private rootPromise: Promise<string> | undefined;
-
   async root(): Promise<string> {
-    this.rootPromise ??= this.resolveRoot();
-    try {
-      return await this.rootPromise;
-    } catch (error) {
-      this.rootPromise = undefined;
-      throw error;
-    }
-  }
-
-  private async resolveRoot(): Promise<string> {
     const canonical = await this.canonicalExisting(this.projectRoot, false);
     const stat = await this.adapter.stat(canonical);
     if (stat.isDirectory === false) throw new FileServiceError("not_directory", "project root is not a directory", { canonical });
