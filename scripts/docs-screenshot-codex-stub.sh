@@ -4,6 +4,8 @@ set -eu
 state_file="${TMPDIR:-/tmp}/terminay-docs-codex-stub-${PPID}"
 mode=exec
 prompt=""
+rows=24
+cols=80
 
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -40,17 +42,68 @@ if [ -z "$prompt" ] && [ $# -gt 0 ]; then
 	prompt=$1
 fi
 
+term_size() {
+	size=$(stty size 2>/dev/null || true)
+	stty_rows=${size%% *}
+	stty_cols=${size##* }
+	if [ -n "$stty_rows" ] && [ "$stty_rows" -gt 0 ] 2>/dev/null; then
+		rows=$stty_rows
+	elif [ -n "${LINES:-}" ]; then
+		rows=$LINES
+	else
+		rows=24
+	fi
+	if [ -n "$stty_cols" ] && [ "$stty_cols" -gt 0 ] 2>/dev/null; then
+		cols=$stty_cols
+	elif [ -n "${COLUMNS:-}" ]; then
+		cols=$COLUMNS
+	else
+		cols=80
+	fi
+	if [ "$rows" -lt 12 ]; then
+		rows=12
+	fi
+	if [ "$cols" -lt 40 ]; then
+		cols=40
+	fi
+}
+
+hline() {
+	i=0
+	width=$((cols - 4))
+	if [ "$width" -lt 8 ]; then
+		width=8
+	fi
+	printf '  '
+	while [ "$i" -lt "$width" ]; do
+		printf '─'
+		i=$((i + 1))
+	done
+	printf '\n'
+}
+
 begin_tui() {
+	term_size
 	printf '\033[?1049h\033[2J\033[H\033[?25l'
 	printf '\033[1;36m  gpt-5.6\033[0m  \033[2mhigh · %s\033[0m\n' "$1"
-	printf '\033[2m  ────────────────────────────────────────\033[0m\n\n'
+	printf '\033[2m'
+	hline
+	printf '\033[0m\n'
 	printf '\033[1m  ▌ %s\033[0m\n\n' "$2"
 }
 
 end_tui() {
-	printf '\n\033[2m  ────────────────────────────────────────\033[0m\n'
+	term_size
+	footer_row=$((rows - 2))
+	if [ "$footer_row" -lt 8 ]; then
+		footer_row=8
+	fi
+	printf '\033[%d;1H' "$footer_row"
+	printf '\033[2m'
+	hline
+	printf '\033[0m'
 	printf '  \033[36m›\033[0m \033[2mAsk Codex\033[0m\n'
-	printf '\033[2m    ⏎ send  ⌃J newline  ⌃C quit\033[0m\n'
+	printf '\033[2m    ⏎ send  ⌃J newline  ⌃C quit\033[0m'
 }
 
 hold_math_journals() {
@@ -71,7 +124,6 @@ hold_math_journals() {
 			"{\"timestamp\":\"2026-08-28T18:00:04.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"docs-$id-turn\"}}" \
 			> "$path"
 	done
-	# Keep the journals writable so Terminay's Codex extension can bind this process.
 	exec 3>>"$root"
 	exec 4>>"$dir/rollout-docs-addition.jsonl"
 	exec 5>>"$dir/rollout-docs-multiplication.jsonl"

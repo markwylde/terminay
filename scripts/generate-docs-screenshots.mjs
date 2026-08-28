@@ -106,15 +106,15 @@ async function seedWorkspace() {
 	return { root, workspace };
 }
 
-async function setWindowSize(app, page) {
+async function setWindowSize(app, page, nextSize = size) {
 	const window = await app.browserWindow(page);
-	await window.evaluate((nativeWindow, nextSize) => nativeWindow.setSize(nextSize.width, nextSize.height), size);
+	await window.evaluate((nativeWindow, metrics) => nativeWindow.setSize(metrics.width, metrics.height), nextSize);
 	const cdpSession = await page.context().newCDPSession(page);
 	await cdpSession.send('Emulation.setDeviceMetricsOverride', {
-		width: size.width,
-		height: size.height,
+		width: nextSize.width,
+		height: nextSize.height,
 		deviceScaleFactor: screenshotDeviceScaleFactor,
-		mobile: false,
+		mobile: nextSize.width < 600,
 	});
 }
 
@@ -290,6 +290,21 @@ async function withHeartbeat(label, work) {
 	}
 }
 
+async function withTimeout(label, ms, work) {
+	log(label);
+	let timer;
+	try {
+		return await withHeartbeat(label, () => Promise.race([
+			work(),
+			new Promise((_, reject) => {
+				timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+			}),
+		]));
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
 async function waitForExecComplete(page) {
 	const timeout = useRealCodex ? 180_000 : 20_000;
 	await withHeartbeat('waiting for Codex exec to finish', () => page.waitForFunction(() => {
@@ -365,11 +380,13 @@ async function selectSidebarGroup(page, group) {
 	await tab.waitFor({ state: 'visible' });
 }
 
-async function prepareAgentTerminal(page, workspace) {
+async function ensureSingleTerminal(page) {
 	const panels = page.locator('.project-workspace--active .terminal-tab-content:visible');
 	await panels.first().waitFor({ state: 'visible', timeout: 30_000 });
 	let remaining = await panels.count();
+	log(`agent terminal panes: ${remaining}`);
 	while (remaining > 1) {
+		log(`closing extra terminal pane (${remaining} open)`);
 		await panels.last().click({ timeout: 5_000 });
 		await invokeMenuCommand(page, 'close-active');
 		await page.waitForTimeout(250);
@@ -377,8 +394,6 @@ async function prepareAgentTerminal(page, workspace) {
 		if (nextCount >= remaining) break;
 		remaining = nextCount;
 	}
-
-	await runCodexExecThenResume(page, 0, workspace, agentsPrompt);
 }
 
 async function prepareAgentsPane(page) {
@@ -386,15 +401,18 @@ async function prepareAgentsPane(page) {
 		const pane = page.locator('.project-workspace--active .sidebar-pane').filter({
 			has: page.locator('.sidebar-pane__title', { hasText: title }),
 		});
-		if (await pane.count() === 0) continue;
+		if (await pane.count() === 0 || !(await pane.first().isVisible())) continue;
 		if (!(await pane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed')))) {
+			log(`collapsing ${title} pane`);
 			await pane.locator('.sidebar-pane__header').click();
 		}
 	}
 	const agentsPane = page.locator('.project-workspace--active .sidebar-pane').filter({
 		has: page.locator('.sidebar-pane__title', { hasText: 'Agents' }),
 	});
+	await agentsPane.waitFor({ state: 'visible', timeout: 15_000 });
 	if (await agentsPane.evaluate((element) => element.classList.contains('sidebar-pane--collapsed'))) {
+		log('expanding Agents pane');
 		await agentsPane.locator('.sidebar-pane__header').click();
 	}
 	return agentsPane;
@@ -406,9 +424,10 @@ async function populateAgentsScreenshot(page) {
 		.first()
 		.getAttribute('data-terminay-terminal-session-id');
 	if (!terminalSessionId) throw new Error('The docs terminal session is unavailable.');
+	log(`publishing agent lifecycle for session ${terminalSessionId}`);
 
 	const prompt = agentsPrompt;
-	const accepted = await page.evaluate(async ({ sessionId, rootPrompt }) => {
+	const accepted = await withTimeout('publish agent lifecycle', 10_000, () => page.evaluate(async ({ sessionId, rootPrompt }) => {
 		if (!window.terminayAgentStatusTest) throw new Error('The agent screenshot seam is unavailable.');
 		return window.terminayAgentStatusTest.publishLifecycle({
 			provider: 'com.terminay.agent.codex/cli',
@@ -423,27 +442,32 @@ async function populateAgentsScreenshot(page) {
 				{ kind: 'subagent.started', subagentId: 'division', title: 'Division', promptText: 'Solve 1,024 ÷ 16' },
 			],
 		});
-	}, { rootPrompt: prompt, sessionId: terminalSessionId });
+	}, { rootPrompt: prompt, sessionId: terminalSessionId }));
 	if (!accepted) throw new Error('The agent screenshot lifecycle was not accepted.');
+	log('agent lifecycle accepted');
 
 	const agentsPane = await prepareAgentsPane(page);
-	await agentsPane.locator('.agents-sidebar__name', { hasText: prompt }).waitFor({ state: 'visible', timeout: 30_000 });
+	log('waiting for Agents sidebar rows');
+	await agentsPane.locator('.agents-sidebar__name', { hasText: prompt }).waitFor({ state: 'visible', timeout: 15_000 });
 	await agentsPane.getByRole('button', { name: `Expand 3 subagents for ${prompt}` }).click();
-	await agentsPane.getByRole('button', { name: 'Focus Division terminal' }).waitFor({ state: 'visible' });
+	await agentsPane.getByRole('button', { name: 'Focus Division terminal' }).waitFor({ state: 'visible', timeout: 15_000 });
 	await page.evaluate(() => {
 		if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
 	});
+	log('Agents sidebar is ready');
 }
 
 async function populateRealAgentsScreenshot(page) {
 	const prompt = agentsPrompt;
+	log('waiting for journal-bound Agents sidebar');
 	const agentsPane = await prepareAgentsPane(page);
-	await agentsPane.locator('.agents-sidebar__name', { hasText: prompt }).waitFor({ state: 'visible', timeout: 90_000 });
-	await agentsPane.getByRole('button', { name: `Expand 3 subagents for ${prompt}` }).waitFor({ state: 'visible', timeout: 120_000 });
+	await agentsPane.locator('.agents-sidebar__name', { hasText: prompt }).waitFor({ state: 'visible', timeout: 20_000 });
+	await agentsPane.getByRole('button', { name: `Expand 3 subagents for ${prompt}` }).waitFor({ state: 'visible', timeout: 15_000 });
 	await agentsPane.getByRole('button', { name: `Expand 3 subagents for ${prompt}` }).click();
 	await page.evaluate(() => {
 		if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
 	});
+	log('journal-bound Agents sidebar is ready');
 }
 
 function explorerItem(page, name) {
@@ -511,6 +535,11 @@ async function captureWorkspaceGroup(app, page, workspace) {
 		path.join(outputDir, 'terminay-hero-workspace.png'),
 	);
 	log('wrote terminay-hero-workspace.png');
+	await setWindowSize(app, page, { width: 390, height: 844 });
+	await page.evaluate(() => document.querySelector('.docs-screenshot-window-controls')?.remove());
+	await capture(app, page, 'terminay-workspace-mobile.png');
+	await setWindowSize(app, page);
+	await installScreenshotWindowControls(page);
 	await stopCodexTuis(page, 4);
 }
 
@@ -519,11 +548,22 @@ async function captureAgentsGroup(app, page, workspace) {
 	await openDocsProject(page);
 	await openFileExplorer(page);
 	await selectSidebarGroup(page, 'agents');
-	await prepareAgentTerminal(page, workspace);
+	await ensureSingleTerminal(page);
+	// Publish the sidebar while the PTY is idle. Doing this after `codex resume`
+	// deadlocks the test IPC against the live Codex extension in CI.
+	let injected = false;
 	try {
 		await populateAgentsScreenshot(page);
+		injected = true;
 	} catch (error) {
-		if (!String(error?.message ?? error).includes('already owns this terminal session')) throw error;
+		log(`test lifecycle missed (${error?.message ?? error}); will use journals after the TUI starts`);
+	}
+	await runCodexExecThenResume(page, 0, workspace, agentsPrompt);
+	const agentsPane = page.locator('.project-workspace--active .sidebar-pane').filter({
+		has: page.locator('.sidebar-pane__title', { hasText: 'Agents' }),
+	});
+	if (await agentsPane.locator('.agents-sidebar__name', { hasText: agentsPrompt }).count() === 0) {
+		log(injected ? 'Agents sidebar cleared after TUI start; restoring from journals' : 'filling Agents sidebar from journals');
 		await populateRealAgentsScreenshot(page);
 	}
 	await capture(app, page, 'terminay-agents.png');
