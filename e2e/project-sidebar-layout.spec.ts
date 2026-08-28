@@ -834,13 +834,16 @@ test('every vertical boundary supports repeated bidirectional and keyboard resiz
 	await expect(sidebarTitle(mainWindow, 'git')).toBeVisible();
 	await git.locator('.sidebar-pane__header').click();
 	await expect(git).not.toHaveClass(/sidebar-pane--collapsed/);
-	const reorderGit = activeSidebar(mainWindow).getByRole('button', {
-		name: 'Reorder Git panel',
-	});
-	await expect(reorderGit).toBeVisible();
-	await reorderGit.focus();
-	await expect(reorderGit).toBeFocused();
-	await mainWindow.keyboard.press('ArrowUp');
+	const reorderGit = git.getByRole('button', { name: 'Reorder Git panel' });
+	const explorerTitle = sidebarTitle(mainWindow, 'explorer');
+	const from = await reorderGit.boundingBox();
+	const to = await explorerTitle.boundingBox();
+	if (!from || !to)
+		throw new Error('Explorer/Git reorder handles have no hit box.');
+	await mainWindow.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+	await mainWindow.mouse.down();
+	await mainWindow.mouse.move(to.x + to.width / 2, to.y + 4, { steps: 8 });
+	await mainWindow.mouse.up();
 	await expect
 		.poll(async () =>
 			activeSidebar(mainWindow)
