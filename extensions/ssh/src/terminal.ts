@@ -56,7 +56,7 @@ export class RemoteTerminalManager {
       const sessionProof=randomBytes(32).toString("base64url");
       env.TERMINAY_SESSION_PROOF=sessionProof;
       const shellOptions = { term: input.term ?? "xterm-256color", rows: bounded(input.rows, 1, 1000, 24), cols: bounded(input.cols, 1, 1000, 80), env };
-      let channel;
+      let channel: SshChannel;
       try {
         channel = await openShell(lease.client, shellOptions);
       } catch (error) {
