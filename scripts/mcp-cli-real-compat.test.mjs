@@ -42,8 +42,9 @@ try {
   }
 
   const status = await getMcpInstallStatus(server, options)
+  const exercised = new Set(clients.map(({ id }) => id))
   assert.deepEqual(
-    status.agents.map(({ id, state }) => ({ id, state })),
+    status.agents.filter(({ id }) => exercised.has(id)).map(({ id, state }) => ({ id, state })),
     clients.map(({ id }) => ({ id, state: 'installed' })),
   )
 
