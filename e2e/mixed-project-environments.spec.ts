@@ -17,7 +17,7 @@ async function expectMixedInventory(page: Page): Promise<void> {
 	);
 	await expect(
 		menu.getByRole('menuitem', { name: /CI Puzed VM/u }),
-	).toContainText('puzed-ci:22');
+	).toContainText(/Online|Offline|Access/u);
 	await page.keyboard.press('Escape');
 }
 

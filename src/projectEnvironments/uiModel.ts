@@ -86,3 +86,62 @@ export type DeclarativeFormDto = Readonly<{
 export function statusLabel(status: ProjectEnvironmentStatus): string {
 	return status.replaceAll('-', ' ');
 }
+
+export type ConnectionStateLabel = 'Online' | 'Offline' | 'Access';
+export type StatusDotTone = 'ready' | 'warning' | 'danger';
+
+export function connectionStateLabel(
+	status: ProjectEnvironmentStatus,
+): ConnectionStateLabel {
+	if (
+		status === 'authentication-required' ||
+		status === 'permission-denied' ||
+		status === 'host-key-changed'
+	) {
+		return 'Access';
+	}
+	if (
+		status === 'ready' ||
+		status === 'connecting' ||
+		status === 'reconnecting' ||
+		status === 'provisioning' ||
+		status === 'starting'
+	) {
+		return 'Online';
+	}
+	return 'Offline';
+}
+
+export function statusDotTone(status: ProjectEnvironmentStatus): StatusDotTone {
+	if (status === 'ready') return 'ready';
+	if (
+		status === 'offline' ||
+		status === 'failed' ||
+		status === 'unreachable' ||
+		status === 'stopping' ||
+		status === 'extension-missing' ||
+		status === 'extension-disabled' ||
+		status === 'extension-incompatible'
+	) {
+		return 'danger';
+	}
+	return 'warning';
+}
+
+export function chooserSecondaryText(
+	environment: ProjectEnvironmentSummaryDto,
+): string {
+	if (environment.isThisServer) return environment.endpointSummary;
+	const haystack = [
+		environment.providerId,
+		environment.providerLabel,
+		environment.endpointSummary,
+		environment.name,
+	]
+		.join(' ')
+		.toLocaleLowerCase();
+	if (haystack.includes('puzed')) {
+		return connectionStateLabel(environment.status);
+	}
+	return environment.endpointSummary;
+}
