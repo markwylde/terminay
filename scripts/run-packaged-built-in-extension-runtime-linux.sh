@@ -18,7 +18,14 @@ trap cleanup EXIT HUP INT TERM
 
 if [ "$target" = linux-x64 ]; then
   npm run build:app
-  CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --dir --linux --x64 --publish never
+  attempt=0
+  until CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --dir --linux --x64 --publish never; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge 3 ]; then
+      exit 1
+    fi
+    sleep $((attempt * 8))
+  done
 else
   # A clean arm64 runner has no compiled workspace declarations. Build the
   # server dependency graph before staging its packaged extension payload.
