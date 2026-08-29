@@ -60,7 +60,9 @@ The folder contains:
 
 - timestamped, line-oriented application log segments for the current and
   recent launches;
-- local native crash dumps collected by Electron Crashpad; and
+- local native crash dumps collected by Electron Crashpad;
+- optional Chromium performance traces written only while performance logging
+  is enabled; and
 - a small launch marker used to distinguish a clean exit from an interrupted
   session.
 
@@ -137,6 +139,47 @@ paths, refs, command arguments, and raw Git output. Debug-level tracing, raw Chr
 network logs, protocol frame dumps, request/response bodies, and screenshots
 are not enabled by the always-on collector.
 
+## Opt-in performance logging
+
+Desktop can record a bounded local performance history so a high CPU or energy
+cost can be investigated from the Diagnostics folder without leaving developer
+tools open. The collector is off by default and does no periodic sampling,
+stack collection, or Chromium tracing until it is enabled on this device.
+
+Users enable or disable it from the Desktop Settings **Diagnostics** category
+and from the Help menu **Performance Logging** checkbox. Both surfaces share
+one device-local preference. The preference persists in Desktop userData, is
+not a server setting, and is not synchronized to other clients. Browser hosts
+do not expose the control. Disabling it immediately stops sampling and any
+in-progress trace. Resetting Diagnostics settings turns it off.
+
+While enabled, Desktop main records:
+
+- a periodic sample of every Electron process Electron reports, using only
+  process type, optional service/name labels, CPU percent, idle wakeups,
+  working-set memory, and process-local pids;
+- main-process event-loop delay (min/mean/max and selected percentiles) plus
+  bounded heap/RSS totals;
+- bounded IPC counts since the previous sample, grouped by stable channel
+  class (`server-ui-host`, `file`, `secrets`, `terminal`, `test`, or `other`);
+  raw channel strings, payload bytes, and PTY content are not recorded;
+- a time-bounded JavaScript call stack from each live renderer main frame when
+  a sample shows elevated CPU or event-loop delay, coalesced so one frame is
+  not stacked on every sample; and
+- occasional Chromium traces written as managed artifacts in the Diagnostics
+  folder. Traces use Chromium argument filtering, exclude network logs and
+  screenshots, are time- and size-bounded, and are retained under the same
+  rotation rules as other closed diagnostic artifacts.
+
+Performance logging cannot delay startup, shutdown, or recovery. A tracing or
+stack-collection failure records a bounded outcome and leaves terminals
+running. The always-on hang collector continues to record unresponsive
+renderer stacks independently of this setting.
+
+The default-off collector is not a substitute for an out-of-process profiler.
+Enabling it has its own cost; the sample interval and trace cadence stay
+bounded so the logger cannot itself become an unbounded CPU source.
+
 Intercepting or observing logging must preserve development console output and
 must not install an exception handler that turns a fatal main-process error
 into continued execution in a potentially corrupt state.
@@ -192,9 +235,9 @@ part of the always-on feature.
 - Closed artifacts expire 24 hours after their creation. Cleanup runs before
   normal startup, after a segment closes, after resume from system sleep, and
   periodically while Desktop remains open.
-- A 100 MiB aggregate cap applies to closed application segments and crash
-  artifacts even when they are younger than 24 hours. Oldest closed artifacts
-  are removed first.
+- A 100 MiB aggregate cap applies to closed application segments, crash
+  artifacts, and performance traces even when they are younger than 24 hours.
+  Oldest closed artifacts are removed first.
 - The active segment is never removed underneath its writer. Rotation occurs
   before enforcing the aggregate cap when possible.
 - Cleanup operates only on recognized diagnostic artifacts beneath the
@@ -212,14 +255,16 @@ expires.
 
 ## Access and lifecycle controls
 
-The Desktop Help menu provides **Reveal Diagnostics Folder**. The action opens
+The Desktop Help menu provides **Performance Logging** as a checkbox that
+toggles the opt-in collector without a renderer, workspace, or Local server.
+The same menu provides **Reveal Diagnostics Folder**. The action opens
 the platform file manager at the canonical directory and remains available
 when no workspace or server connection is healthy.
 
 The same menu provides **Clear Diagnostics…** with confirmation. Clearing
-removes closed managed logs and crash artifacts, rotates the current
-application log, and records only that a clear occurred; it does not delete an
-unrecognized file or require a renderer filesystem capability.
+removes closed managed logs, crash artifacts, and performance traces, rotates
+the current application log, and records only that a clear occurred; it does
+not delete an unrecognized file or require a renderer filesystem capability.
 
 Diagnostics are readable after a crash by opening the folder directly or by
 relaunching Terminay and using the Help menu. Terminay does not require a
@@ -267,7 +312,9 @@ raw authority-bearing ids are not diagnostic correlation keys.
   bundle submission.
 - No recording of terminal sessions or user interaction for reproduction.
 - No always-on Chromium network log, packet capture, protocol trace, screenshot,
-  heap snapshot, CPU profile, or verbose Chromium log.
+  heap snapshot, CPU profile, or verbose Chromium log. Opt-in performance
+  logging may write argument-filtered Chromium traces and sampled CPU profiles
+  only while the user has enabled it on this device.
 - No promise that a native crash dump is directly human-readable.
 - No automatic restart or silent renderer reload as a consequence of
   collecting an error.
@@ -326,6 +373,14 @@ raw authority-bearing ids are not diagnostic correlation keys.
   cannot traverse a symlink outside the Diagnostics folder.
 - **Reveal Diagnostics Folder** and confirmed clearing work without a healthy
   renderer workspace or Local server.
+- Performance logging is off after a first launch. Enabling it from Settings or
+  the Help menu writes `diagnostics.performance.enabled`, starts periodic
+  samples, and persists the preference for later launches on this device.
+  Disabling it writes `diagnostics.performance.disabled` and stops sampling
+  without requiring a relaunch.
+- A performance sample records only process type/CPU/memory, event-loop delay,
+  and stable IPC class counts. Renderer stacks and Chromium traces omit PTY
+  bytes, paths, credentials, and screenshots.
 - No diagnostic artifact is transmitted during remote connection, pairing,
   update checks, or ordinary application use.
 

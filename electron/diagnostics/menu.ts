@@ -8,7 +8,15 @@ export interface DiagnosticsHelpMenuOptions {
 	/** Record diagnostics.cleared after the previous history has been removed. */
 	recordCleared: () => Promise<void>;
 	/** Keep menu failures contained when the diagnostic writer itself is degraded. */
-	reportFailure?: (operation: 'reveal' | 'clear', error: unknown) => void;
+	reportFailure?: (
+		operation: 'reveal' | 'clear' | 'performance',
+		error: unknown,
+	) => void;
+	/** Opt-in performance logging; omitted keeps the Help checkbox hidden. */
+	performanceLogging?: {
+		isEnabled: () => boolean;
+		setEnabled: (enabled: boolean) => Promise<boolean> | boolean;
+	};
 }
 
 export interface DiagnosticsMenuNativeDependencies {
@@ -36,7 +44,7 @@ const nativeDependencies: DiagnosticsMenuNativeDependencies = {
 
 function reportMenuFailure(
 	options: DiagnosticsHelpMenuOptions,
-	operation: 'reveal' | 'clear',
+	operation: 'reveal' | 'clear' | 'performance',
 	error: unknown,
 ): void {
 	if (options.reportFailure) {
@@ -73,7 +81,25 @@ export function createDiagnosticsHelpMenuItems(
 	options: DiagnosticsHelpMenuOptions,
 	dependencies: DiagnosticsMenuNativeDependencies = nativeDependencies,
 ): MenuItemConstructorOptions[] {
+	const performanceLogging = options.performanceLogging;
 	return [
+		...(performanceLogging === undefined
+			? []
+			: [
+					{
+						label: 'Performance Logging',
+						type: 'checkbox' as const,
+						checked: performanceLogging.isEnabled(),
+						click: (menuItem: { checked: boolean }) => {
+							void Promise.resolve(
+								performanceLogging.setEnabled(menuItem.checked),
+							).catch((error) =>
+								reportMenuFailure(options, 'performance', error),
+							);
+						},
+					},
+					{ type: 'separator' as const },
+				]),
 		{
 			label: 'Reveal Diagnostics Folder',
 			click: () => {

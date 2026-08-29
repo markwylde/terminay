@@ -197,6 +197,26 @@ export async function updateDeviceTerminalSettings(
 		: null;
 }
 
+export async function setDesktopPerformanceLogging(
+	enabled: boolean,
+): Promise<boolean | null> {
+	const response = await request({
+		type: 'diagnostics.performance-logging.set',
+		enabled,
+	});
+	if (!response.handled) return null;
+	const result = response.result;
+	if (
+		typeof result === 'object' &&
+		result !== null &&
+		!Array.isArray(result) &&
+		typeof (result as { enabled?: unknown }).enabled === 'boolean'
+	) {
+		return (result as { enabled: boolean }).enabled;
+	}
+	return enabled;
+}
+
 export type WorkspaceDragDecision =
 	| Readonly<{ action: 'reorder' }>
 	| Readonly<{ action: 'merge'; targetViewId: string }>
