@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const split=await readFile(new URL('../src/projectEnvironments/ProjectEnvironmentSplitButton.tsx',import.meta.url),'utf8');
+const uiModel=await readFile(new URL('../src/projectEnvironments/uiModel.ts',import.meta.url),'utf8');
 const app=await readFile(new URL('../src/App.tsx',import.meta.url),'utf8');
 const desktop=await readFile(new URL('../electron/main.ts',import.meta.url),'utf8');
 const browser=await readFile(new URL('../src/web/ConnectedWebRendererWorkspace.tsx',import.meta.url),'utf8');
@@ -132,12 +133,14 @@ test('Project Environments use a full auxiliary window rather than an editor dia
 });
 
 test('provider and VM actions open the exact profile or connection journey',()=>{
-	assert.match(app,/projectEnvironmentProviders\.flatMap/);
-	assert.match(app,/New Puzed provider/);
-	assert.match(app,/Create VM in \$\{profile\.name\}/);
-	assert.match(app,/mode: 'profile'/);
-	assert.match(app,/mode: 'environment'/);
-	assert.match(split,/createActions\.map/);
+	assert.match(app,/providers=\{projectEnvironmentProviders\}/);
+	assert.match(app,/profiles=\{projectEnvironmentProfiles\}/);
+	assert.doesNotMatch(app,/New Puzed provider/);
+	assert.match(split,/Create VM in \$\{profile\.name\}/);
+	assert.match(split,/mode: 'profile'/);
+	assert.match(split,/mode: 'environment'/);
+	assert.match(app,/mode: action\.mode/);
+	assert.match(split,/project-environment-menu__add/);
 	assert.match(browser,/params\.set\('auxiliary', 'project-environments'\)/);
 	assert.match(browser,/params\.set\('provider', request\.intent\.providerId\)/);
 	assert.match(browser,/params\.set\('mode', request\.intent\.mode\)/);
@@ -157,10 +160,25 @@ test('management separates Puzed providers from selectable connections',()=>{
 	assert.match(surfaces,/selectionHint/);
 	assert.match(environmentManager,/onSelectionHintHandled/);
 	assert.match(split,/Choose project connection/);
-	assert.match(split,/connectionGroups/);
-	assert.match(split,/connectionOwnerLabels/);
-	assert.match(app,/connectionOwnerLabels=/);
-	assert.match(split,/Providers are managed separately/);
+	assert.match(split,/buildChooserGroups/);
+	assert.match(split,/isProviderInstance/);
+	assert.match(split,/label: profile\.name/);
+	assert.match(app,/providers=\{projectEnvironmentProviders\}/);
+	assert.match(app,/profiles=\{projectEnvironmentProfiles\}/);
+	assert.doesNotMatch(split,/New Puzed provider/);
+	assert.match(split,/project-environment-menu__group-header/);
+	assert.match(split,/hideHeading: true/);
+	assert.match(split,/chooserSecondaryText/);
+	assert.match(split,/project-environment-menu__dot/);
+	assert.match(split,/project-environment-split--open/);
+	assert.match(split,/project-environment-menu--attached/);
+	assert.doesNotMatch(split,/Extensions…/);
+	assert.doesNotMatch(split,/onManageExtensions/);
+	assert.doesNotMatch(app,/onManageExtensions/);
+	assert.match(uiModel,/connectionStateLabel/);
+	assert.match(uiModel,/'Online' \| 'Offline' \| 'Access'/);
+	assert.match(uiModel,/statusDotTone/);
+	assert.match(uiModel,/chooserSecondaryText/);
 });
 
 test('remote project selection invokes the server and never falls back to Local',()=>{

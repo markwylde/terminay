@@ -6328,56 +6328,12 @@ function App({
 					<ProjectEnvironmentSplitButton
 						canCreate={canAddProject && pendingProjectCreation === null}
 						environments={projectEnvironmentChoices}
-						connectionOwnerLabels={Object.fromEntries(
-							projectEnvironmentChoices.flatMap((environment) => {
-								if (environment.profileId === undefined) return [];
-								const profile = projectEnvironmentProfiles.find(
-									(candidate) => candidate.id === environment.profileId,
-								);
-								return profile === undefined
-									? []
-									: [[environment.id, `${profile.name} · ${environment.providerLabel}`]];
-							}),
-						)}
-					createActions={[
-						...projectEnvironmentProviders
-							.filter(
-								(provider) =>
-									provider.profileForm !== undefined &&
-									provider.createForm !== undefined,
-							)
-							.map((provider) => ({
-								providerId: provider.providerId,
-								mode: 'profile' as const,
-								label: provider.displayName.toLocaleLowerCase().includes('puzed')
-									? 'New Puzed provider…'
-									: `New ${provider.displayName} provider…`,
-								description: 'Manage provider credentials and connections.',
-							})),
-						...projectEnvironmentProviders.flatMap((provider) =>
-							projectEnvironmentProfiles
-								.filter(
-									(profile) =>
-										profile.providerId === provider.providerId &&
-										provider.createForm !== undefined,
-								)
-								.map((profile) => ({
-									providerId: provider.providerId,
-									profileId: profile.id,
-									mode: 'environment' as const,
-									label: provider.displayName
-										.toLocaleLowerCase()
-										.includes('puzed')
-										? `Create VM in ${profile.name}…`
-										: `New ${provider.displayName} connection…`,
-									description: profile.name,
-								})),
-						),
-					]}
+						providers={projectEnvironmentProviders}
+						profiles={projectEnvironmentProfiles}
 						onCreateProvider={(action) =>
 							void auxiliaryRouteController.openProjectEnvironments({
 								providerId: action.providerId,
-							mode: action.mode,
+								mode: action.mode,
 								...(action.profileId === undefined
 									? {}
 									: { profileId: action.profileId }),
@@ -6388,9 +6344,6 @@ function App({
 						onOpen={() => void refreshProjectEnvironmentChoices()}
 						onManageEnvironments={() =>
 							void auxiliaryRouteController.openProjectEnvironments()
-						}
-						onManageExtensions={() =>
-							void auxiliaryRouteController.openSettings('extensions')
 						}
 					/>
 				</div>
