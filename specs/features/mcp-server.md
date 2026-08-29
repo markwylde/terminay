@@ -3,7 +3,7 @@
 ## Summary
 
 Terminay provides a local Model Context Protocol server for Claude Code, Codex,
-Cursor CLI, Gemini CLI, and OpenCode processes running inside Terminay
+Cursor CLI, Gemini CLI, Grok, and OpenCode processes running inside Terminay
 terminals. An installed agent can
 inspect and control terminal tabs in its own project without learning about or
 controlling other projects, servers, workspace views, or clients.
@@ -16,15 +16,15 @@ capabilities:
   capability.
 - The Agents sidebar and terminal agent status continue to come from
   process-bound provider journals as specified in
-  [agent-status-and-sidebar.md](./agent-status-and-sidebar.md), including omp.
-  Observing omp does not register an MCP client.
+  [agent-status-and-sidebar.md](./agent-status-and-sidebar.md), including omp
+  and Grok. Observing omp does not register an MCP client.
 - Installing, enabling, disabling, or removing Terminay MCP never installs,
   edits, trusts, invokes, or removes Codex, Claude Code, or omp hooks.
 
 ## Product outcomes
 
 - A user can install or remove the Terminay MCP registration for Claude Code,
-  Codex, Cursor CLI, Gemini CLI, and OpenCode independently.
+  Codex, Cursor CLI, Gemini CLI, Grok, and OpenCode independently.
 - Once installed, an agent launched normally inside a Terminay terminal can use
   Terminay tools without copying a socket path or token.
 - The agent can list and control only terminals belonging to the calling
@@ -108,6 +108,7 @@ is available to agents launched from any Terminay project:
 | Codex | The `[mcp_servers.terminay]` table in `~/.codex/config.toml`, including an `env_vars` whitelist for the inherited `TERMINAY_CONTROL_SOCKET` and `TERMINAY_CONTROL_TOKEN` capability variables. |
 | Cursor CLI | The `terminay` entry in `mcpServers` in `~/.cursor/mcp.json`, shared with Cursor's user-level MCP configuration. |
 | Gemini CLI | The `terminay` entry in `mcpServers` in the user settings file `~/.gemini/settings.json`; the entry retains Gemini's normal per-tool confirmation policy. |
+| Grok | The `[mcp_servers.terminay]` table in `~/.grok/config.toml` (or `$GROK_HOME/config.toml` when that environment variable is set). Grok stdio MCP children inherit the terminal environment, so the entry does not need a Codex-style `env_vars` whitelist. |
 | OpenCode | The `terminay` local server in `mcp` in the active stable user configuration under `~/.config/opencode/`, using a command array and no trust or permission override. |
 
 When a provider supports multiple user configuration filenames, Terminay uses

@@ -1,0 +1,12 @@
+{"ts":"2026-08-05T10:00:00.000Z","type":"mcp_config_resolved","servers":[],"disabled":[]}
+{"ts":"2026-08-05T10:00:01.000Z","type":"turn_started","session_id":"01a04dd9-f9f9-77c0-9ea0-8a8f627ea29c","turn_number":0,"model_id":"grok-4.6","yolo_mode":false,"conversation_message_count":3,"session_relationship":"primary","schema_version":"1.0"}
+{"ts":"2026-08-05T10:00:02.000Z","type":"loop_started","loop_index":0}
+{"ts":"2026-08-05T10:00:03.000Z","type":"phase_changed","phase":"waiting_for_model"}
+{"ts":"2026-08-05T10:00:04.000Z","type":"first_token"}
+{"ts":"2026-08-05T10:00:05.000Z","type":"tool_started","tool_name":"read_file"}
+{"ts":"2026-08-05T10:00:06.000Z","type":"permission_requested","tool_name":"read_file"}
+{"ts":"2026-08-05T10:00:06.100Z","type":"permission_resolved","tool_name":"read_file","decision":"allow","wait_ms":0}
+{"ts":"2026-08-05T10:00:07.000Z","type":"tool_completed","tool_name":"read_file","duration_ms":12,"outcome":"success","tool_call_id":"call-private-1"}
+{"ts":"2026-08-05T10:00:08.000Z","type":"mcp_tool_call_started","server_name":"terminay","tool_name":"list_terminals","call_id":"terminay__list_terminals","timeout_sec":30}
+{"ts":"2026-08-05T10:00:09.000Z","type":"mcp_tool_call_completed","server_name":"terminay","tool_name":"list_terminals","call_id":"terminay__list_terminals","duration_ms":8,"success":true,"is_timeout":false}
+{"ts":"2026-08-05T10:00:10.000Z","type":"turn_ended","outcome":"completed"}

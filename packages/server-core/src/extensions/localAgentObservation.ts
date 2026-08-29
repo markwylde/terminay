@@ -190,7 +190,7 @@ export class ThisServerAgentObservationAdapter {
       const startedAt = safeText(process.startedAt, 128) ? process.startedAt : undefined;
       const cwd = safePath(process.cwd);
       return [{
-        handle: { id: handle.id }, executableName: process.executableName,
+        handle: { id: handle.id }, executableName: process.executableName, pid: process.pid,
         ...(startedAt === undefined ? {} : { startedAt }),
         ...(cwd === undefined ? {} : { cwd }),
       }];
@@ -391,10 +391,13 @@ export class ThisServerAgentObservationAdapter {
 
   private async environmentRelativePath(terminal: ThisServerAgentTerminal, state: TerminalState, payload: JsonValue, signal: AbortSignal): Promise<JsonValue> {
     const request = record(payload); const file = this.fileFor(state, request?.handle); const root = await this.environmentRoot(terminal, request?.environmentVariable, signal);
-    const canonical = root === undefined ? undefined : await this.system.realpath(file.path, signal);
-    if (root === undefined || canonical === undefined || !contained(resolve(root, typeof request?.beneathRelative === "string" && safeRelativePath(request.beneathRelative) ? request.beneathRelative : "."), canonical)) return null;
+    const beneath = typeof request?.beneathRelative === "string" && safeRelativePath(request.beneathRelative) ? request.beneathRelative : undefined;
+    const containedRoot = root === undefined ? undefined : resolve(root, beneath ?? ".");
+    const canonical = containedRoot === undefined ? undefined : await this.system.realpath(file.path, signal);
+    if (root === undefined || containedRoot === undefined || canonical === undefined || !contained(containedRoot, canonical)) return null;
     if ((await this.system.stat(canonical, signal))?.kind !== "file") return null;
-    return relative(root, canonical);
+    const result = relative(containedRoot, canonical);
+    return safeRelativePath(result) ? result : null;
   }
 
   private async environmentRoot(terminal: ThisServerAgentTerminal, name: JsonValue | undefined, signal: AbortSignal): Promise<string | undefined> {

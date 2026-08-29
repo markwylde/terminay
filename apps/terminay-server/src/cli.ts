@@ -364,9 +364,16 @@ async function createServerComposition(
 > {
 	const eventJournal = new OrderedEventJournal();
 	const activity = new TerminalActivityService({ serverId: options.serverId });
+	let extensionHosts:
+		| { agentProviderContributions(): readonly { readonly id: string; readonly displayName: string }[] }
+		| undefined
 	const agents = new AgentStatusService({
 		activity,
 		enabled: options.agentIntegrationEnabled,
+		providerDisplayName: (providerId) =>
+			extensionHosts
+				?.agentProviderContributions()
+				.find((provider) => provider.id === providerId)?.displayName,
 	});
 	const workspaceRepository = await openCanonicalWorkspace({
 		backend: new FileWorkspaceStateBackend(join(options.dataRoot, 'workspace.v3.json')),
@@ -442,6 +449,7 @@ async function createServerComposition(
 		vault,
 		projectEnvironments,
 	});
+	extensionHosts = extensions.hosts;
 	registerActivatedExtensionProjectEnvironmentRuntimes({
 		registry: projectEnvironmentRegistry,
 		hosts: extensions.hosts,

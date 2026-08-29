@@ -11,13 +11,14 @@ const expected = [
   "com.terminay.agent.codex",
   "com.terminay.agent.claude-code",
   "com.terminay.agent.cursor",
+  "com.terminay.agent.grok",
   "com.terminay.agent.omp",
 ].sort();
 
 export async function verifyBuiltInExtensionArtifacts(root) {
   const source = new DirectoryBuiltInExtensionArtifactSource(resolve(root));
   const artifacts = await source.list();
-  assert.deepEqual(artifacts.map((artifact) => artifact.extensionId).sort(), expected, "built-in inventory must contain exactly the six official extensions");
+  assert.deepEqual(artifacts.map((artifact) => artifact.extensionId).sort(), expected, "built-in inventory must contain exactly the seven official extensions");
   const temporary = await mkdtemp(join(tmpdir(), "terminay-built-in-verify-"));
   try {
     for (const artifact of artifacts) await source.materialize(artifact, join(temporary, artifact.extensionId));

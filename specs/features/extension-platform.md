@@ -8,7 +8,7 @@ selected Terminay Server. Desktop and browser clients render bounded declarative
 from the server's matching UI bundle and never load extension code.
 
 The public API supports the capabilities needed by the official SSH, Puzed,
-Codex, Claude Code, Cursor Agent, and omp extensions and leaves themes, editor
+Codex, Claude Code, Cursor Agent, Grok, and omp extensions and leaves themes, editor
 plugins, autocomplete, arbitrary commands, renderer components, and generic
 Server Core operation registration out of scope.
 
@@ -20,7 +20,7 @@ Opening Extensions on a remote server manages that server, not Desktop's
 embedded server.
 
 Terminay ships an official catalogue containing the built-in SSH, Puzed,
-Codex, Claude Code, Cursor Agent, and omp npm packages and their expected
+Codex, Claude Code, Cursor Agent, Grok, and omp npm packages and their expected
 metadata. Verified package artifacts for that exact release are embedded in
 Electron and standalone server distributions, installed without network access,
 and enabled by default. See [built-in extensions](./built-in-extensions.md).
@@ -335,7 +335,7 @@ in a project-editor sheet, a bespoke full-screen modal, or a second list/detail
 application nested inside Settings. Providers use ordinary Settings groups,
 rows, fields, buttons, badges, and disclosure patterns. The section names
 the selected Terminay Server as the authority and shows built-in SSH, Puzed,
-Codex, Claude Code, Cursor Agent, and omp cards, installed and disabled states,
+Codex, Claude Code, Cursor Agent, Grok, and omp cards, installed and disabled states,
 available explicit updates,
 compatibility/failure details, permissions, dependants, and **Install from
 npm…**.

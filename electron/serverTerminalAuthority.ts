@@ -413,7 +413,12 @@ export class ServerTerminalAuthority {
 			process.env.TERMINAY_TEST === '1' ? [] : undefined;
 		this.installWorkspaceCommandTestObserver();
 		this.activity = new TerminalActivityService({ serverId: options.serverId });
-		this.agents = new AgentStatusService({ activity: this.activity });
+		let extensionAgentRuntimeForLabels: ExtensionAgentRuntimeRegistry | undefined;
+		this.agents = new AgentStatusService({
+			activity: this.activity,
+			providerDisplayName: (providerId) =>
+				extensionAgentRuntimeForLabels?.providerDisplayName(providerId),
+		});
 		this.git = new GitService({
 			limits: {
 				maxOutputBytes: 512 * 1024,
@@ -488,6 +493,7 @@ export class ServerTerminalAuthority {
 				agent !== 'codex' &&
 				agent !== 'cursor' &&
 				agent !== 'gemini' &&
+				agent !== 'grok' &&
 				agent !== 'openCode'
 			)
 				throw new TypeError('agent is invalid');
@@ -668,6 +674,7 @@ export class ServerTerminalAuthority {
 			})();
 		const extensionManagement = extensionRuntime.management;
 		const extensionAgentRuntime = extensionRuntime.extensionAgents;
+		extensionAgentRuntimeForLabels = extensionAgentRuntime;
 		if (extensionManagement !== undefined && options.vault !== undefined)
 			registerActivatedExtensionProjectEnvironmentRuntimes({
 				registry: projectEnvironmentRegistry,

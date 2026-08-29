@@ -171,8 +171,8 @@ test("an agent provider may read terminal environment variables through observat
       context.agents.registerProvider("example.agent-environment/cli", {
         mappingVersion: "v1", matchesForeground() { return true; },
         async observe(terminal) {
-          const allowed = await terminal.observation.processes.environment(["CODEX_HOME"], { signal: new AbortController().signal });
-          if (allowed.CODEX_HOME !== "/fixture/codex") throw new Error("environment value was unavailable");
+          const allowed = await terminal.observation.processes.environment(["PROVIDER_HOME"], { signal: new AbortController().signal });
+          if (allowed.PROVIDER_HOME !== "/fixture/provider") throw new Error("environment value was unavailable");
           return { state: "not-bound" };
         },
       });
@@ -184,7 +184,7 @@ test("an agent provider may read terminal environment variables through observat
     displayName: "Fixture agent",
     processMatchers: [{ executableName: "fixture-agent" }],
     requiredEnvironmentCapabilities: ["process-observation"],
-    requiredEnvironmentVariables: ["CODEX_HOME"],
+    requiredEnvironmentVariables: ["PROVIDER_HOME"],
   }];
   const observedNames = [];
   const host = new ExtensionHost(descriptor.extensionId, {
@@ -192,7 +192,7 @@ test("an agent provider may read terminal environment variables through observat
     agents: {
       async observe(request) {
         observedNames.push(request.payload.names);
-        return { CODEX_HOME: "/fixture/codex" };
+        return { PROVIDER_HOME: "/fixture/provider" };
       },
       async publish(request) { return { acceptedEventCount: request.events.length }; },
     },
@@ -207,7 +207,7 @@ test("an agent provider may read terminal environment variables through observat
     },
     observationCapabilities: ["process-observation"],
   });
-  assert.deepEqual(observedNames, [["CODEX_HOME"]]);
+  assert.deepEqual(observedNames, [["PROVIDER_HOME"]]);
 });
 
 test("This-server terminals with a shell pid observe inside the extension child", async (t) => {
@@ -252,7 +252,7 @@ test("This-server terminals with a shell pid observe inside the extension child"
   assert.equal(hostObservations, 0);
 });
 
-test("seeded SSH and Puzed hosts reconcile four late agents and re-admit an existing Codex terminal", async (t) => {
+test("seeded SSH and Puzed hosts reconcile five late agents and re-admit an existing Codex terminal", async (t) => {
   const manager = new ExtensionHostManager({ broker: { async request() {} }, agents: { async observe() { return { name: "codex" }; }, async publish(request) { return { acceptedEventCount: request.events.length }; } } });
   t.after(async () => { await manager.shutdown().catch(() => undefined); });
   const ssh = await fixture("com.terminay.ssh", `export function activate(context) { context.registerProjectEnvironmentProvider({ providerId: "com.terminay.ssh/connection", displayName: "SSH", capabilities: ["terminal"] }); }`);
@@ -273,6 +273,7 @@ test("seeded SSH and Puzed hosts reconcile four late agents and re-admit an exis
     ["com.terminay.agent.codex", "codex", "Codex"],
     ["com.terminay.agent.claude-code", "claude", "Claude Code"],
     ["com.terminay.agent.cursor", "agent", "Cursor Agent"],
+    ["com.terminay.agent.grok", "grok", "Grok"],
     ["com.terminay.agent.omp", "omp", "omp"],
   ];
   for (const [extensionId, executable, displayName] of lateAgents) {
