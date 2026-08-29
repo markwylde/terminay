@@ -42,3 +42,16 @@ export function subscribeDeviceTerminalSettings(
 		}
 	});
 }
+
+export function subscribeDesktopPerformanceLogging(
+	listener: (enabled: boolean) => void,
+): () => void {
+	if (typeof window === 'undefined') return () => undefined;
+	const host = window.terminayHost as unknown as NativeEventBridge | undefined;
+	if (host === undefined) return () => undefined;
+	return host.subscribeEvent((message) => {
+		if (message.event.type === 'diagnostics.performance-logging.changed') {
+			listener(message.event.enabled);
+		}
+	});
+}

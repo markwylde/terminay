@@ -178,6 +178,10 @@ export type TerminayHostEvent = Readonly<{
 		| Readonly<{
 				type: 'device.settings.changed';
 				settings: JsonValue;
+		  }>
+		| Readonly<{
+				type: 'diagnostics.performance-logging.changed';
+				enabled: boolean;
 		  }>;
 }>;
 
@@ -215,9 +219,9 @@ export type TerminayHostAction =
 	| Readonly<{
 			/** A bounded preview payload. The host alone chooses its destination. */
 			type: 'preview.download';
-		filename: string;
-		mimeType: string;
-		bytesBase64: string;
+			filename: string;
+			mimeType: string;
+			bytesBase64: string;
 	  }>
 	| Readonly<{ type: 'os.open-external'; url: string }>
 	| Readonly<{ type: 'os.reveal'; token: string }>
@@ -231,7 +235,11 @@ export type TerminayHostAction =
 				width: number;
 			}>;
 	  }>
-	| Readonly<{ type: 'workspace.drag.end' }>;
+	| Readonly<{ type: 'workspace.drag.end' }>
+	| Readonly<{
+			type: 'diagnostics.performance-logging.set';
+			enabled: boolean;
+	  }>;
 
 export interface TerminayHostActionRequest {
 	readonly schemaVersion: typeof TERMINAY_HOST_CONTEXT_SCHEMA_VERSION;
@@ -327,6 +335,14 @@ export function parseTerminayHostEvent(
 		parsedEvent = Object.freeze({
 			type: 'device.settings.changed',
 			settings: event.settings,
+		});
+	} else if (event.type === 'diagnostics.performance-logging.changed') {
+		exactKeys(event, ['type', 'enabled'], 'host performance logging event');
+		if (typeof event.enabled !== 'boolean')
+			throw new TypeError('host performance logging state is invalid');
+		parsedEvent = Object.freeze({
+			type: 'diagnostics.performance-logging.changed',
+			enabled: event.enabled,
 		});
 	} else {
 		throw new TypeError('host event type is invalid');
@@ -856,7 +872,11 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 			);
 			const filename = boundedText(action.filename, 'preview filename', 128);
 			const mimeType = boundedText(action.mimeType, 'preview MIME type', 128);
-			if (!/^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*\/[A-Za-z0-9!#$&^_.+-]+$/u.test(mimeType))
+			if (
+				!/^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*\/[A-Za-z0-9!#$&^_.+-]+$/u.test(
+					mimeType,
+				)
+			)
 				throw new TypeError('preview MIME type is invalid');
 			if (
 				typeof action.bytesBase64 !== 'string' ||
@@ -916,6 +936,14 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 		case 'workspace.drag.end':
 			exactKeys(action, ['type'], 'workspace drag action');
 			return Object.freeze({ type: 'workspace.drag.end' });
+		case 'diagnostics.performance-logging.set':
+			exactKeys(action, ['type', 'enabled'], 'performance logging action');
+			if (typeof action.enabled !== 'boolean')
+				throw new TypeError('performance logging enabled flag is invalid');
+			return Object.freeze({
+				type: 'diagnostics.performance-logging.set',
+				enabled: action.enabled,
+			});
 		default:
 			throw new TypeError('host action is not allowed');
 	}
@@ -1004,6 +1032,8 @@ export function requiredTerminayHostCapability(
 		case 'workspace.drag.start':
 		case 'workspace.drag.end':
 			return 'nativeWindows';
+		case 'diagnostics.performance-logging.set':
+			return 'nativeMenus';
 	}
 }
 
