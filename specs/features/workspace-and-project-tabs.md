@@ -73,10 +73,9 @@ identity. Project-sidebar sizing and title-visibility behavior is governed by
   failure activates the pending tab and presents its error there.
 - The project-bar split button's primary `+` creates a project on **This
   server** immediately. Its arrow opens an accessible environment chooser with
-  This server, recent SSH/Puzed targets, provider create/browse actions,
-  **Project Environments…**, and **Extensions…**. Project Environments opens or
-  focuses its first-class management window/route; Extensions opens or focuses
-  Settings at the Extensions section. **This server** identifies the selected
+  This server, recent SSH/Puzed targets, provider create/browse actions, and
+  **Project Environments…**. Project Environments opens or focuses its
+  first-class management window/route. **This server** identifies the selected
   Terminay Server because it may be remote from the client.
 - New projects use the selected environment profile's default root or verified
   account home. They never copy an active project root from another

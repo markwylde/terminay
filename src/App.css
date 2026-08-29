@@ -24,7 +24,7 @@
     var(--project-color, var(--tabbar-bg)) 45%,
     var(--tab-bg-active)
   );
-  --panel-tab-strip-height: 38px;
+  --panel-tab-strip-height: 34px;
   --panel-tab-height: 30px;
   --panel-tab-inset: 4px;
   --panel-tab-radius: 4px;

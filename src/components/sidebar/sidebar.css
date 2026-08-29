@@ -2,7 +2,7 @@
 	display: flex;
 	align-items: stretch;
 	flex: 0 0 auto;
-	height: var(--panel-tab-strip-height, 38px);
+	height: var(--panel-tab-strip-height, 34px);
 	gap: var(--panel-tab-inset, 4px);
 	padding: var(--panel-tab-inset, 4px);
 	background: var(--project-chrome);

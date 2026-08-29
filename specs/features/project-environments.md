@@ -223,22 +223,31 @@ continues to show the last successfully authenticated snapshot during transient
 transport recovery. Desktop and browser therefore converge on the same
 server-owned inventory without keeping a renderer-owned copy as authority.
 
-The menu groups selectable connections by their owning provider: **This
-Terminay Server**, recent/favourite SSH connections, and recent Puzed VMs by
-Puzed provider. A Puzed provider itself is never an openable menu item. Direct
-actions distinguish **New Puzed provider…** from **Create VM in
-<provider>…**, followed by **Project
-Environments…**, and **Extensions…**. Large inventories use searchable pickers
-instead of unbounded menus. **This server** includes secondary text such as
-`Local to Production Terminay`.
+The menu groups selectable connections by their owning provider. The **This
+Terminay Server** group has no section heading; **This server** is the first
+chooser row. SSH connections sit under the SSH provider, and Puzed VMs sit
+under each saved Puzed provider. A Puzed provider itself is never an openable
+menu item, and **New Puzed provider…** is not a chooser action. Each provider
+group that can create a connection has a compact **+** in its header: **Create
+VM in <provider>** for a Puzed provider, and **Add SSH connection** for SSH.
+New providers are created from Project Environments. The footer offers
+**Project Environments…**; the chooser does not duplicate **Extensions…**.
+Large inventories use a compact search field instead of an unbounded menu. The
+chooser uses the same compact header-menu treatment as the connection and
+project switcher menus.
+
+When the chooser is open, the project-bar split looks **active** and shares a
+surface with the menu so the `+` trigger and menu read as one connected
+control, with no disconnected gap. Each connection shows a green, amber, or
+red status dot to the left of its title instead of a Ready/status word. **This
+server** keeps secondary text such as `Local to Production Terminay`. Puzed VM
+rows use **Online**, **Offline**, or **Access** as secondary text rather than
+the provider type.
 
 Provider actions are derived from the currently authenticated server snapshot,
-not hardcoded client knowledge. Each saved profile whose provider contributes a
-create form appears as a direct creation action, including **Create new
-Puzed VM…**. Adding new connections is a Project Environments management
-action, not a project-chooser action. Choosing a direct creation action opens
-the same Project Environments window with its sidebar and authority context
-preserved and the requested form already selected.
+not hardcoded client knowledge. Choosing a provider **+** opens the same
+Project Environments window with its sidebar and authority context preserved
+and the requested connection or VM form already selected.
 
 Saving a connection profile does not implicitly create a project environment
 unless its currently activated public provider contribution explicitly declares
