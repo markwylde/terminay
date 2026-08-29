@@ -488,6 +488,7 @@ export class ServerTerminalAuthority {
 				agent !== 'codex' &&
 				agent !== 'cursor' &&
 				agent !== 'gemini' &&
+				agent !== 'grok' &&
 				agent !== 'openCode'
 			)
 				throw new TypeError('agent is invalid');

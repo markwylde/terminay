@@ -56,6 +56,20 @@ test("provider release retires only its exact terminal lifecycle run", async () 
   await agents.stop();
 });
 
+test("releasing then reclaiming the same provider session continues the lifecycle sequence", async () => {
+  const { agents } = await fixture();
+  assert.equal((await agents.ingestExtensionLifecycle(identity, providerId, "1", binding, [{ kind: "session.started", title: "Original" }])).acceptedEventCount, 1);
+  assert.equal(agents.releaseExtensionProvider(identity, providerId), true);
+  assert.equal(agents.claimExtensionProvider(identity, providerId), true);
+  const resumed = await agents.ingestExtensionLifecycle(identity, providerId, "1", binding, [{ kind: "session.started", title: "Resumed" }]);
+  assert.equal(resumed.acceptedEventCount, 1, resumed.failure);
+  const [entry] = Object.values(agents.getSnapshot().entries);
+  assert.equal(entry.active, true);
+  assert.equal(entry.displayName, "Resumed");
+  assert.ok(entry.lastEventSequence > 1);
+  await agents.stop();
+});
+
 test("a resumed native child reuses its exact row and preserves root isolation", async () => {
   const { agents } = await fixture();
   assert.deepEqual(await agents.ingestExtensionLifecycle(identity, providerId, "1", binding, [

@@ -235,7 +235,11 @@ export class ExtensionAgentRuntimeRegistry {
 
   private claimAndAdmit(terminal: TrackedTerminal, contribution: AgentProviderContribution, processName: string): boolean {
     const identity = terminal.identity;
-    if (contribution === undefined || !this.options.agents.claimExtensionProvider(identity, contribution.id)) return false;
+    if (contribution === undefined) return false;
+    let claimed = false;
+    try { claimed = this.options.agents.claimExtensionProvider(identity, contribution.id); }
+    catch { return false; }
+    if (!claimed && terminal.context !== undefined) return false;
     const context: ExtensionAgentTerminalContext = Object.freeze({
       contextId: this.makeContextId(identity, terminal.incarnation),
       serverId: identity.serverId,

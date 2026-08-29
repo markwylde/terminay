@@ -44,7 +44,7 @@ test("generic agent core and renderer contain no provider implementation details
     join(root, "packages/client-core/src/agentStatus.ts"),
     join(root, "src/agentStatusStore.ts"),
   ];
-  const forbidden = /\b(?:codex|claude-code|cursor-agent|oh-my-pi|omp)\b|\.(?:codex|claude|cursor|omp)(?:\/|["'])|\bsession_meta\b|\brollout-[^\s"']*|\boriginator\b\s*===?\s*["']codex-tui["']/iu;
+  const forbidden = /\b(?:codex|claude-code|cursor-agent|oh-my-pi|omp|grok)\b|\.(?:codex|claude|cursor|omp|grok)(?:\/|["'])|\bsession_meta\b|\brollout-[^\s"']*|\boriginator\b\s*===?\s*["']codex-tui["']/iu;
   const violations = [];
   for (const target of targets) {
     const files = extname(target) ? [target] : await sourceFiles(target);

@@ -316,6 +316,36 @@ test("a same-terminal resume re-admits an exited provider when the shell edge wa
   await agents.stop();
 });
 
+test("a same-terminal quit then resume re-admits after an explicit shell return", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
+  const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
+  const admitted = [];
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: {
+      agentProviderContributions: () => [provider],
+      async admitAgentTerminal(value) { admitted.push(value.context.contextId); },
+      async cancelAgentTerminal() { return true; },
+      async drainAgentObservers() {},
+    },
+    contextId: (_identity, incarnation) => `quit-resume-${incarnation}`,
+    reobserveDebounceMs: 0,
+  });
+  registry.register(identity); registry.terminalStarted(identity, 4321);
+  assert.equal(registry.foregroundProcessChanged(identity, "test-agent"), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  const binding = { providerSessionId: "quit-resume-session", mappingVersion: "test-v1", fingerprint: { kind: "fixture", process: { id: "process-1" }, metadata: { source: "test" } } };
+  assert.equal((await agents.ingestExtensionLifecycle(identity, provider.id, "test-v1", binding, [
+    { kind: "session.started", title: "Original session" },
+  ])).acceptedEventCount, 1);
+  assert.equal(registry.foregroundProcessChanged(identity, "zsh", true), false);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(registry.foregroundProcessChanged(identity, "test-agent"), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(admitted, ["quit-resume-1", "quit-resume-2"]);
+  await agents.stop();
+});
+
 test("a throwing unmatched provider does not pin discovery away from a later binder", async () => {
   const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
   const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);

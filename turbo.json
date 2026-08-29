@@ -42,6 +42,11 @@
       "outputs": [],
       "cache": false
     },
+    "terminay-agent-grok#test:ci": {
+      "dependsOn": ["compile", "^build"],
+      "outputs": [],
+      "cache": false
+    },
     "terminay-agent-omp#test:ci": {
       "dependsOn": ["compile", "^build"],
       "outputs": [],
@@ -70,6 +75,7 @@
         "terminay-agent-claude-code#compile",
         "terminay-agent-codex#compile",
         "terminay-agent-cursor#compile",
+        "terminay-agent-grok#compile",
         "terminay-agent-omp#compile",
         "terminay-plugin-puzed#compile",
         "terminay-plugin-ssh#compile"

@@ -318,6 +318,7 @@ async function exercisePackagedHostRuntime(label, artifactRoot) {
         'com.terminay.agent.claude-code/cli',
         CODEX_PROVIDER_ID,
         'com.terminay.agent.cursor/cli',
+        'com.terminay.agent.grok/cli',
         'com.terminay.agent.omp/cli',
       ],
       `${label} must publish all staged agent contributions only after activation`,

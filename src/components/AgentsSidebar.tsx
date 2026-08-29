@@ -52,6 +52,7 @@ const PROVIDER_LABELS: Readonly<Record<string, string>> = {
 	'com.terminay.agent.codex/cli': 'Codex',
 	'com.terminay.agent.claude-code/cli': 'Claude Code',
 	'com.terminay.agent.cursor/cli': 'Cursor',
+	'com.terminay.agent.grok/cli': 'Grok',
 	'com.terminay.agent.omp/cli': 'omp',
 };
 
@@ -169,7 +170,6 @@ function getPresentation(
 			displayName ??
 			customTerminalTitle ??
 			prompt ??
-			terminalTitle ??
 			getEntryName(entry);
 		const metadata = uniqueParts([
 			name === terminalTitle ? undefined : terminalTitle,
