@@ -43,7 +43,8 @@ const isReplayableHostEvent = (
 ): boolean =>
 	event.event.type === 'terminal.zoom' ||
 	event.event.type === 'workspace.drag-state' ||
-	event.event.type === 'device.settings.changed';
+	event.event.type === 'device.settings.changed' ||
+	event.event.type === 'diagnostics.performance-logging.changed';
 let hostEventsSubscribed = false;
 const deliverEvent = (
 	listener: (

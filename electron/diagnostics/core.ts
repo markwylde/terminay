@@ -50,6 +50,14 @@ export const DIAGNOSTIC_EVENT_NAMES = [
 	'diagnostics.retention.completed',
 	'diagnostics.source.suppressed',
 	'diagnostics.cleared',
+	'diagnostics.performance.enabled',
+	'diagnostics.performance.disabled',
+	'diagnostics.performance.sample',
+	'diagnostics.performance.stack-collected',
+	'diagnostics.performance.stack-unavailable',
+	'diagnostics.performance.trace-started',
+	'diagnostics.performance.trace-completed',
+	'diagnostics.performance.trace-failed',
 	'main.ready',
 	'main.stdout',
 	'main.stderr',
@@ -520,9 +528,11 @@ export class DiagnosticSourceRateLimiter {
 const SEGMENT_PATTERN =
 	/^terminay-diagnostics-v1-(\d{13})-([a-zA-Z0-9_-]{1,128})-(\d{4})\.jsonl$/;
 const CRASH_PATTERN = /^terminay-crash-v1-(\d{13})-[a-zA-Z0-9_-]{1,128}\.dmp$/;
+const PERFORMANCE_TRACE_PATTERN =
+	/^terminay-performance-trace-v1-(\d{13})-([a-zA-Z0-9_-]{1,128})\.json$/;
 export const LAUNCH_MARKER_FILENAME = 'terminay-launch-v1.json';
 
-export type ManagedArtifactKind = 'segment' | 'crash';
+export type ManagedArtifactKind = 'segment' | 'crash' | 'performance-trace';
 
 export interface ManagedArtifact {
 	path: string;
@@ -543,6 +553,8 @@ export function recognizeManagedArtifactName(
 	if (segment) return { kind: 'segment', createdAt: Number(segment[1]) };
 	const crash = CRASH_PATTERN.exec(name);
 	if (crash) return { kind: 'crash', createdAt: Number(crash[1]) };
+	const trace = PERFORMANCE_TRACE_PATTERN.exec(name);
+	if (trace) return { kind: 'performance-trace', createdAt: Number(trace[1]) };
 	return undefined;
 }
 

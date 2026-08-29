@@ -183,3 +183,40 @@ test('Help menu actions do not depend on a renderer or local server and contain 
 		await loaded.remove();
 	}
 });
+
+test('Help menu performance logging checkbox toggles without a renderer', async () => {
+	const loaded = await loadMenuModule();
+	try {
+		const enabled = [];
+		const items = loaded.module.createDiagnosticsHelpMenuItems(
+			{
+				directory: '/canonical/diagnostics',
+				clearManagedArtifacts: async () =>
+					assert.fail('must not clear from the performance toggle'),
+				recordCleared: async () =>
+					assert.fail('must not record a clear from the performance toggle'),
+				performanceLogging: {
+					isEnabled: () => enabled.at(-1) === true,
+					setEnabled: async (value) => {
+						enabled.push(value);
+						return value;
+					},
+				},
+			},
+			{
+				openPath: async () => '',
+				confirmClear: async () => false,
+			},
+		);
+		assert.equal(items[0].label, 'Performance Logging');
+		assert.equal(items[0].type, 'checkbox');
+		assert.equal(items[0].checked, false);
+		assert.equal(items[1].type, 'separator');
+		assert.equal(items[2].label, 'Reveal Diagnostics Folder');
+		items[0].click({ checked: true });
+		await new Promise((resolve) => setImmediate(resolve));
+		assert.deepEqual(enabled, [true]);
+	} finally {
+		await loaded.remove();
+	}
+});
