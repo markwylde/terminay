@@ -65,7 +65,7 @@ export interface PerformanceWebContents {
 	readonly id: number;
 	isDestroyed(): boolean;
 	readonly mainFrame?: {
-		collectJavaScriptCallStack(): Promise<string | undefined>;
+		collectJavaScriptCallStack(): Promise<unknown>;
 	};
 	on(
 		event: 'ipc-message' | 'ipc-message-sync' | 'destroyed',
