@@ -252,7 +252,7 @@ test("This-server terminals with a shell pid observe inside the extension child"
   assert.equal(hostObservations, 0);
 });
 
-test("seeded SSH and Puzed hosts reconcile four late agents and re-admit an existing Codex terminal", async (t) => {
+test("seeded SSH and Puzed hosts reconcile five late agents and re-admit an existing Codex terminal", async (t) => {
   const manager = new ExtensionHostManager({ broker: { async request() {} }, agents: { async observe() { return { name: "codex" }; }, async publish(request) { return { acceptedEventCount: request.events.length }; } } });
   t.after(async () => { await manager.shutdown().catch(() => undefined); });
   const ssh = await fixture("com.terminay.ssh", `export function activate(context) { context.registerProjectEnvironmentProvider({ providerId: "com.terminay.ssh/connection", displayName: "SSH", capabilities: ["terminal"] }); }`);
@@ -273,6 +273,7 @@ test("seeded SSH and Puzed hosts reconcile four late agents and re-admit an exis
     ["com.terminay.agent.codex", "codex", "Codex"],
     ["com.terminay.agent.claude-code", "claude", "Claude Code"],
     ["com.terminay.agent.cursor", "agent", "Cursor Agent"],
+    ["com.terminay.agent.grok", "grok", "Grok"],
     ["com.terminay.agent.omp", "omp", "omp"],
   ];
   for (const [extensionId, executable, displayName] of lateAgents) {

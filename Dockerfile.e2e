@@ -19,6 +19,7 @@ COPY --chown=node:node apps/terminay-web/package.json apps/terminay-web/package.
 COPY --chown=node:node extensions/agent-claude-code/package.json extensions/agent-claude-code/package.json
 COPY --chown=node:node extensions/agent-codex/package.json extensions/agent-codex/package.json
 COPY --chown=node:node extensions/agent-cursor/package.json extensions/agent-cursor/package.json
+COPY --chown=node:node extensions/agent-grok/package.json extensions/agent-grok/package.json
 COPY --chown=node:node extensions/agent-omp/package.json extensions/agent-omp/package.json
 COPY --chown=node:node extensions/puzed/package.json extensions/puzed/package.json
 COPY --chown=node:node extensions/ssh/package.json extensions/ssh/package.json

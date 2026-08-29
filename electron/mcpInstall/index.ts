@@ -28,6 +28,13 @@ import {
   uninstallGemini,
 } from './gemini'
 import {
+  getGrokConfigPath,
+  inspectGrokRegistration,
+  installGrok,
+  isGrokInstalled,
+  uninstallGrok,
+} from './grok'
+import {
   getOpenCodeConfigPath,
   inspectOpenCodeRegistration,
   installOpenCode,
@@ -103,6 +110,15 @@ export const MCP_INSTALL_PROVIDERS: readonly McpInstallProvider[] = [
     isInstalled: isGeminiInstalled,
     install: installGemini,
     uninstall: uninstallGemini,
+  },
+  {
+    id: 'grok',
+    label: 'Grok',
+    getConfigPath: getGrokConfigPath,
+    inspect: inspectGrokRegistration,
+    isInstalled: isGrokInstalled,
+    install: installGrok,
+    uninstall: uninstallGrok,
   },
   {
     id: 'openCode',

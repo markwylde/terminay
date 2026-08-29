@@ -207,6 +207,64 @@ test('sidebar filters by project, nests subagents, and keeps unread separate fro
 	);
 });
 
+test('sidebar does not use a generic terminal tab title as the agent name', () => {
+	const grokEntry = {
+		entryId: 'grok-root-entry',
+		kind: 'root',
+		provider: 'com.terminay.agent.grok/cli',
+		agentId: 'grok-root',
+		sessionId: 'grok-session',
+		activationTerminalSessionId: 'grok-terminal',
+		state: 'idle',
+		stateStartedAt: 10,
+		updatedAt: 10,
+		lastEventKind: 'session.started',
+		lastEventSequence: 1,
+		active: true,
+		activeTools: [],
+		unread: false,
+		terminalSessionId: 'grok-terminal',
+		inProcess: false,
+	};
+
+	const untitled = renderToStaticMarkup(
+		React.createElement(AgentsSidebar, {
+			projectId: 'project-a',
+			agents: [
+				{
+					entry: grokEntry,
+					projectId: 'project-a',
+					terminalTitle: 'Terminal 1',
+				},
+			],
+			expandedEntryIds: [],
+			onToggleEntryExpanded: () => {},
+			onActivateTerminal: () => {},
+		}),
+	);
+	assert.match(untitled, />Grok</);
+	assert.doesNotMatch(untitled, /agents-sidebar__name">Terminal 1</);
+
+	const titled = renderToStaticMarkup(
+		React.createElement(AgentsSidebar, {
+			projectId: 'project-a',
+			agents: [
+				{
+					entry: { ...grokEntry, displayName: 'Native Grok chat' },
+					projectId: 'project-a',
+					model: 'grok-4.6',
+					terminalTitle: 'Terminal 1',
+				},
+			],
+			expandedEntryIds: [],
+			onToggleEntryExpanded: () => {},
+			onActivateTerminal: () => {},
+		}),
+	);
+	assert.match(titled, />Native Grok chat</);
+	assert.match(titled, /Grok · grok-4\.6/);
+});
+
 test('sidebar presents omp with its provider display name', () => {
 	const ompEntry = {
 		entryId: 'omp-root-entry',

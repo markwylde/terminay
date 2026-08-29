@@ -32,6 +32,8 @@ export interface FixtureTerminalOptions {
   tty?: AgentTerminalTtyFact;
   /** Bounded foreground/descendant CWD fact; never filesystem authority. */
   cwd?: string;
+  /** Optional OS pid fact for provider live-session registries. */
+  pid?: number;
   /** Values exposed only through `processes.environment(requestedNames)`. */
   environment?: Record<string, string>;
   capabilities?: AgentObservationCapability[];
@@ -195,7 +197,7 @@ export function fixtureTerminal(options: FixtureTerminalOptions): AgentTerminalC
     async bindSession(request: AgentSessionBindingRequest): Promise<AgentSessionBinding> { return { providerSessionId: request.providerSessionId, mappingVersion: request.mappingVersion, journal: request.journal } as unknown as AgentSessionBinding; },
     observation: {
       processes: {
-        async descendants(): Promise<AgentProcessSnapshot[]> { return [{ handle: process, executableName: foreground.executableName, cwd: options.cwd }]; },
+        async descendants(): Promise<AgentProcessSnapshot[]> { return [{ handle: process, executableName: foreground.executableName, cwd: options.cwd, pid: options.pid ?? 4242 }]; },
         async openFiles(): Promise<any[]> { return [...files.keys()].map((path) => ({ handle: fileHandle(path), path, access: "writable" })); },
         async environment(names: readonly string[]): Promise<Record<string, string>> {
           const values = options.environment ?? {};

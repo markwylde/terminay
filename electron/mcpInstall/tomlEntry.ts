@@ -40,12 +40,30 @@ function renderTomlInlineTable(values: Record<string, string>): string {
  * returned string has no trailing newline.
  */
 export function renderCodexBlock(server: McpServerCommand): string {
+  return renderTomlMcpBlock(server, { envVars: [...CODEX_TERMINAY_ENV_VARS] })
+}
+
+/**
+ * Build the `[mcp_servers.terminay]` block for Grok. Grok stdio MCP children
+ * inherit the terminal environment, so the entry does not whitelist capability
+ * variables the way Codex does.
+ */
+export function renderGrokBlock(server: McpServerCommand): string {
+  return renderTomlMcpBlock(server)
+}
+
+function renderTomlMcpBlock(
+  server: McpServerCommand,
+  options: { envVars?: readonly string[] } = {},
+): string {
   const lines = [
     '[mcp_servers.terminay]',
     `command = "${escapeTomlString(server.command)}"`,
     `args = ${renderTomlStringArray(server.args)}`,
-    `env_vars = ${renderTomlStringArray([...CODEX_TERMINAY_ENV_VARS])}`,
   ]
+  if (options.envVars !== undefined) {
+    lines.push(`env_vars = ${renderTomlStringArray([...options.envVars])}`)
+  }
   if (server.env !== undefined) {
     lines.push(`env = ${renderTomlInlineTable(server.env)}`)
   }

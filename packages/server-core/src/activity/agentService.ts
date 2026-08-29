@@ -159,7 +159,6 @@ export class AgentStatusService {
     const binding = this.bindings.get(identity.sessionId);
     if (binding?.provider === providerId) { this.retireBinding(identity, binding, "extension-released"); this.bindings.delete(identity.sessionId); }
     this.extensionProviderBySession.delete(identity.sessionId);
-    this.sequences.get(identity.sessionId)?.delete(providerId);
     return true;
   }
 

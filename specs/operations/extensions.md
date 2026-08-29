@@ -13,7 +13,7 @@ user's current working directory.
 Every supported Terminay Server artifact includes its pinned Node runtime and
 matching pinned npm installer. Operators do not install system Node/npm or a
 compiler. Every release carries verified, packed offline artifacts for SSH,
-Puzed, Codex, Claude Code, Cursor Agent, and omp. On first start Terminay
+Puzed, Codex, Claude Code, Cursor Agent, Grok, and omp. On first start Terminay
 copies those artifacts into ordinary immutable extension slots and enables them
 unless that server already has a recorded enabled/disabled choice. Built-ins
 use the same host and manifest validation as every other extension; they are

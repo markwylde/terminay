@@ -86,13 +86,13 @@ Recording can capture terminal output, typed input, commands, file paths, tokens
 
 ## Agent status and terminal activity
 
-Terminay observes Codex session journals owned by the exact terminal process tree. Terminal tabs use compact RAG indicators: yellow while working, red when waiting for input or blocked, green when done, and neutral when idle. Unread acknowledgement is tracked separately, so viewing an agent never changes the state reported by the provider.
+Terminay observes process-bound Codex, Claude Code, Cursor, Grok, and omp session journals owned by the exact terminal process tree. Terminal tabs use compact RAG indicators: yellow while working, red when waiting for input or blocked, green when done, and neutral when idle. Unread acknowledgement is tracked separately, so viewing an agent never changes the state reported by the provider.
 
 The project sidebar includes an **Agents** pane with root agents and their in-process subagents. It shows only agents belonging to that project. Root rows use a descriptive session title when available and retain their terminal title as context without repeating inherited child metadata. Codex subagents use their structured task name (for example, `math_question_one`) when available, with numbered labels only as a fallback. Prompts stay on one compact line. Subagents are collapsed by default, never auto-expand, and each root remembers its manual expansion state while switching projects. Selecting an agent switches to its exact terminal; selecting a subagent without its own PTY focuses the parent agent's terminal.
 
 Explorer, Agents, and Git can be reordered vertically using the drag handle on each panel header (or the Up/Down arrow keys while that handle is focused). The chosen order is saved for future project tabs.
 
-**Agent status and sidebar** under **Settings → AI → Agents** is enabled by default. It observes process-bound Codex rollout journals without modifying provider configuration. Turning it off stops observation and clears projected status.
+**Agent status and sidebar** under **Settings → AI → Agents** is enabled by default. It observes process-bound provider journals without modifying provider configuration. Turning it off stops observation and clears projected status.
 
 The activity control in the app header shows current working agents plus items that need acknowledgement and provides the same click-to-focus behavior. Agent identity is tied to the exact Terminay terminal session, not a tab title or working directory.
 

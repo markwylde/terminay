@@ -102,6 +102,7 @@ test('Codex and Claude Code registrations launch the same MCP command contract',
       { id: 'codex', installed: true },
       { id: 'cursor', installed: false },
       { id: 'gemini', installed: false },
+      { id: 'grok', installed: false },
       { id: 'openCode', installed: false },
     ],
   )
@@ -193,6 +194,7 @@ test('provider installs refuse to replace user-modified Terminay entries', async
       { id: 'codex', state: 'changed' },
       { id: 'cursor', state: 'not-installed' },
       { id: 'gemini', state: 'not-installed' },
+      { id: 'grok', state: 'not-installed' },
       { id: 'openCode', state: 'not-installed' },
     ],
   )
@@ -213,7 +215,7 @@ test('provider installs refuse to replace user-modified Terminay entries', async
 test('provider registry detects and routes all supported registrations independently', async () => {
   const home = await mkdtemp(join(tmpdir(), 'terminay-mcp-install-registry-'))
   const options = { homeDirectory: home }
-  const agentIds = ['claudeCode', 'codex', 'cursor', 'gemini', 'openCode']
+  const agentIds = ['claudeCode', 'codex', 'cursor', 'gemini', 'grok', 'openCode']
 
   assert.deepEqual(MCP_INSTALL_PROVIDERS.map(({ id }) => id), agentIds)
   assert.deepEqual(

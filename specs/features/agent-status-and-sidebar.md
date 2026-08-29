@@ -37,10 +37,10 @@ sandbox and must not round-trip local `lsof`/`ps` snapshots through host IPC.
 The child inherits a bounded host environment (`PATH`, `HOME`, locale) so the
 same `ps`/`lsof` binaries the Electron process used on main still resolve;
 installer-style sterile `NODE_OPTIONS` is not applied to agent observation.
-Process-name matching is only a prompt: `codex`/`codex-tui` bind Codex, while
-an unmatched `node`/`bun` wrapper tries every capable provider until one
-proves a writer-held journal, the same way main scanned every journal when
-the foreground name did not name a provider. Observation also inspects the
+Process-name matching is only a prompt: `codex`/`codex-tui` bind Codex and
+`grok` binds Grok, while an unmatched `node`/`bun` wrapper tries every capable
+provider until one proves a writer-held journal, the same way main scanned
+every journal when the foreground name did not name a provider. Observation also inspects the
 PTY shell PID itself so an `exec`'d CLI still has its open files examined.
 SSH and other non-local environments cannot use the server host's process tree
 or home directory. They use the environment-routed observation broker when the
@@ -70,7 +70,7 @@ to interrupt the terminal.
 ## Canonical model
 
 Provider ids are namespaced extension contributions rather than a closed core
-union. Terminay bundles enabled-by-default Codex, Claude Code, Cursor Agent,
+union. Terminay bundles enabled-by-default Codex, Claude Code, Cursor Agent, Grok,
 and omp providers. A third-party provider appears through the same validated
 manifest, hosted runtime, canonical event, Settings, and disablement contracts.
 Persisted unknown or disabled provider ids remain bounded metadata and never
@@ -100,10 +100,12 @@ For an environment exposing proven native process observation, Terminay records
 the spawned shell PID for the immutable
 `serverId`/`projectId`/`projectEnvironmentId`/`sessionId` terminal identity.
 When a supported provider becomes the foreground process, that environment's
-privileged host obtains its documented terminal identity evidence. Codex uses
-an eligible writable journal below the exact PTY process tree. Claude Code and
-omp use their provider-specific terminal/session association. Environments
-without the required evidence use the documented terminal-activity fallback.
+privileged host obtains its documented terminal identity evidence. Codex and
+Grok use an eligible writable journal below the exact PTY process tree, or
+Grok's pid-keyed `active_sessions.json` registry for that same process tree.
+Claude Code and omp use their provider-specific terminal/session association.
+Environments without the required evidence use the documented terminal-activity
+fallback.
 
 The terminal/process-tree boundary is immutable for one live provider-process
 incarnation, but its root-session binding is renewable. Provider-native
@@ -420,12 +422,85 @@ incarnation. Provider timestamps are used only when valid. Replayed initial
 windows and repeated records cannot rewind an entry. Tool arguments, tool
 output, assistant text, and reasoning are never projected.
 
+## Grok extension mapping
+
+The `terminay-agent-grok` package owns every Grok executable name, home-root
+rule, process/journal binding rule, mapping version, fixture, and compatibility
+test described here.
+
+Grok sessions live below the effective `GROK_HOME/sessions` root; when
+`GROK_HOME` is unset, the host account's `.grok/sessions` root is used. Each
+session directory is grouped by a URL-encoded working directory and named with
+Grok's session UUID. The lifecycle journal is that directory's `events.jsonl`.
+`chat_history.jsonl`, `updates.jsonl`, `signals.json`, memtrace, and MCP logs
+are not lifecycle sources.
+
+The first supported mapping is `(grok, 0.1)`. It accepts later Grok versions
+until a divergent mapping is added. Grok's event journal has no session-header
+record: the process-bound `events.jsonl` path supplies the stable provider
+session ID after the host canonicalizes the writable handle. Home-relative
+containment is not required for that writer proof: macOS login shells often
+omit `HOME` from process-environment observation, and that must not hide a
+live Grok journal. Grok also writes `$GROK_HOME/active_sessions.json` (or
+`~/.grok/active_sessions.json`) with `{session_id, pid, cwd}` rows for live
+processes. When a descendant of the issued PTY has that exact pid, the
+extension binds the corresponding journal even if the process is not holding
+`events.jsonl` open. CWD in that registry is never identity. A `turn_started.session_id` that does not equal that bound
+id is ignored.
+When one writer holds multiple eligible root journals, such as after resume,
+the most recently modified eligible root is selected. A journal whose first
+`turn_started` record reports a `session_relationship` other than `primary` is
+not an eligible root.
+
+Grok currently persists in-process subagents without a writer-held child
+journal that names a native parent session id. Terminay therefore does not
+project `spawn_subagent` as child agents in mapping `0.1`. The root remains
+`working` while that tool runs.
+
+| Grok record | Canonical result |
+| --- | --- |
+| first eligible `turn_started` with `session_relationship: primary` | root `session.started` / `idle`, then `turn.started` / `working`; model comes from bounded `model_id` |
+| later `turn_started` | corresponding `turn.started` / `working` |
+| bounded `summary.json` `generated_title` or `session_summary` | root title metadata; a rename updates the existing root in place |
+| `tool_started` | corresponding `working` tool start; Grok omits a native call id on start, so the mapping uses a session-local ordinal keyed by `tool_name` |
+| `permission_requested` | corresponding entry `waiting` |
+| `permission_resolved` | finish the wait and resume `working` |
+| `tool_completed` | corresponding tool finish using the matching start ordinal and Grok's `outcome` |
+| `mcp_tool_call_started` / `mcp_tool_call_completed` | corresponding tool start/finish using native `call_id` |
+| `turn_ended` | corresponding entry `done` (`completed` → success; cancel/abort → cancelled; error/fail → error) |
+| later `mcp_*` records after `turn_ended`, including resume/re-init | ignored; they must not return the root to `working` |
+| unknown `type` or `phase` values | ignored |
+
+Replay follows the events journal to the last complete JSONL record. Follow
+chunks stay small enough to fit the extension IPC message cap after JSON
+number-array encoding. A resumed idle TUI whose latest lifecycle record is
+`turn_ended` is `done`, not `working`. Title/model come from the sibling
+`summary.json` while the root is bound: the first document names the row even
+before a native turn, and a later rewrite updates that same row in place. A
+hanging or rotating summary watcher must not stall or abort event replay.
+
+A Docker Electron end-to-end fixture launches a native `grok` process, sends a
+chat turn, quits so the Agents pane clears, resumes the same writer-held journal
+in a new `grok --resume` process, and asserts the pane shows Grok again, working
+then done, and a live title update from `summary.json`.
+
+Sequence numbers come from accepted record order within one binding
+incarnation. Provider timestamps are used only when valid. Replayed initial
+windows and repeated records cannot rewind an entry. Tool arguments, tool
+output, assistant text, reasoning, chat history, and ACP updates are never
+projected. The Grok CLI's `agent` symlink is not a Grok process matcher:
+Cursor already owns the `agent` executable name, so Grok must be launched as
+`grok`.
+
 ## Agents pane and activation
 
 The **Agents** pane is the Agents sidebar group's collapsible pane. It shows
 only roots whose exact activation terminal belongs to the current project and
 nests children beneath them. Rows use stable ordering and existing tree
-geometry. Missing metadata is omitted and prompts are bounded.
+geometry. Missing metadata is omitted and prompts are bounded. A generic
+terminal tab name such as `Terminal 1` is not the agent title: an untitled
+bound root uses the provider label until a provider title, custom terminal
+name, or prompt is available.
 
 Activating a row activates its exact project and terminal panel, focuses the
 terminal, and acknowledges that entry without changing operational state. No
@@ -439,10 +514,11 @@ installs, edits, trusts, or removes provider hooks or configuration.
 
 This setting and observation pipeline are independent from the
 [Terminay MCP server](./mcp-server.md). MCP may register terminal-control tools
-with Codex or Claude Code, but it does not supply agent lifecycle events and it
-does not register omp. MCP installation and enablement never change journal
-discovery or sidebar status, and agent-status enablement never installs or
-configures MCP. Observing `omp` does not require, install, or invoke MCP.
+with Codex, Claude Code, Cursor, Gemini, Grok, or OpenCode, but it does not
+supply agent lifecycle events and it does not register omp. MCP installation
+and enablement never change journal discovery or sidebar status, and
+agent-status enablement never installs or configures MCP. Observing `omp` or
+`grok` does not require, install, or invoke MCP.
 
 Disabling stops watchers, clears live bindings and the reduced snapshot, and
 prevents discovery. Re-enabling discovers subsequently foregrounded providers
