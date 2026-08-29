@@ -152,8 +152,8 @@ export class ExtensionAgentRuntimeRegistry {
       const matched = this.match(processName, identity);
       if (matched === undefined) return true;
       if (matched.id === terminal.context.providerId) {
-        // The shell edge between a short-lived CLI session and `codex resume`
-        // can be missed by process sampling. Preserve a live root (including
+        // The shell edge between a short-lived CLI session and a later resume
+        // can be missed by process sampling. Preserve a live root (including)
         // collaboration topology), but re-admit the same provider once its
         // canonical root has exited so the resumed writer can bind again.
         const activeRoot = Object.values(this.options.agents.getSnapshot().entries).some((entry) =>
