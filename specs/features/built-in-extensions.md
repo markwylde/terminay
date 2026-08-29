@@ -4,7 +4,7 @@
 
 Terminay keeps its official extensions as independently publishable npm
 packages under the repository's top-level `extensions/` directory. SSH, Puzed,
-Codex, Claude Code, Cursor Agent, and omp use only the public
+Codex, Claude Code, Cursor Agent, Grok, and omp use only the public
 `@terminay/extension-api`; none imports Server Core, Electron, renderer code,
 or private workspace modules.
 
@@ -24,7 +24,8 @@ and public-package conformance checks:
 - `extensions/puzed` publishes `terminay-plugin-puzed`;
 - `extensions/agent-codex` publishes `terminay-agent-codex`;
 - `extensions/agent-claude-code` publishes `terminay-agent-claude-code`;
-- `extensions/agent-cursor` publishes `terminay-agent-cursor`; and
+- `extensions/agent-cursor` publishes `terminay-agent-cursor`;
+- `extensions/agent-grok` publishes `terminay-agent-grok`; and
 - `extensions/agent-omp` publishes `terminay-agent-omp`.
 
 The directories participate in the repository's npm workspace graph while
@@ -44,7 +45,7 @@ The package README for every agent extension documents:
 - platform assumptions and environment capabilities; and
 - fixture, compatibility, and real-CLI verification commands.
 
-The four packages are the reference implementations for third-party agent
+The five agent packages are the reference implementations for third-party agent
 integration. Their tests and source use only the installed public SDK surface.
 A repository boundary check fails when a built-in extension imports a private
 Terminay package or reaches a private source path. Public Node.js APIs and
@@ -127,7 +128,7 @@ observation capabilities.
 
 ## Acceptance outcomes
 
-- A clean Electron or standalone-server installation exposes all six built-ins
+- A clean Electron or standalone-server installation exposes all seven built-ins
   without npm or network access and enables them by default.
 - Disabling one built-in persists across restart and release reconciliation.
 - Installing/removing an npm override preserves a verified bundled rollback

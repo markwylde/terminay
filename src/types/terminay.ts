@@ -589,6 +589,7 @@ export type McpAgentId =
 	| 'codex'
 	| 'cursor'
 	| 'gemini'
+	| 'grok'
 	| 'openCode';
 export type McpAgentRegistrationState =
 	| 'not-installed'

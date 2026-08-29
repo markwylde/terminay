@@ -7,12 +7,12 @@ import { stageBuiltInExtensions } from './stage-built-in-extensions.mjs';
 import { copyBuiltInExtensionArtifacts } from './copy-built-in-extension-artifacts.mjs';
 import { verifyBuiltInExtensionArtifacts } from './verify-built-in-extension-artifacts.mjs';
 
-test('all six built-ins stage as verified offline trees and Electron/standalone copies remain byte-identical', async () => {
+test('all seven built-ins stage as verified offline trees and Electron/standalone copies remain byte-identical', async () => {
   const root = await mkdtemp(join(tmpdir(), 'terminay-built-in-artifacts-'));
   try {
     const staged = join(root, 'staged');
     const result = await stageBuiltInExtensions({ outputDirectory: staged, skipChecks: true });
-    assert.equal(result.inventory.artifacts.length, 6);
+    assert.equal(result.inventory.artifacts.length, 7);
     assert.equal(result.inventory.artifacts.some((artifact) => artifact.files.some((file) => file.path.endsWith('/.npmignore'))), false);
     await verifyBuiltInExtensionArtifacts(staged);
     const electron = join(root, 'electron-resource');

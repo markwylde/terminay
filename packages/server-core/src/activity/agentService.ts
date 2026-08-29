@@ -14,6 +14,8 @@ export interface AgentStatusServiceOptions {
   /** Live process identity for Agents snapshots. Generated at construction
    * when omitted; never persisted in user-data. */
   readonly processInstanceId?: string;
+  /** Manifest display name for a provider id. Looked up at ingest time. */
+  readonly providerDisplayName?: (providerId: string) => string | undefined;
 }
 
 interface ProviderBinding {
@@ -48,6 +50,7 @@ export class AgentStatusService {
   private started = false;
   private enabled: boolean;
   private readonly processInstanceId: string;
+  private readonly providerDisplayName?: (providerId: string) => string | undefined;
   private lastInnerSnapshot: AgentStatusSnapshot | undefined;
   private lastStampedSnapshot: AgentStatusSnapshot | undefined;
 
@@ -57,6 +60,7 @@ export class AgentStatusService {
     this.store = options.store ?? new AgentStatusStore();
     this.enabled = options.enabled ?? true;
     this.processInstanceId = options.processInstanceId ?? randomUUID();
+    this.providerDisplayName = options.providerDisplayName;
   }
 
   get processId(): string { return this.processInstanceId; }
@@ -159,7 +163,6 @@ export class AgentStatusService {
     const binding = this.bindings.get(identity.sessionId);
     if (binding?.provider === providerId) { this.retireBinding(identity, binding, "extension-released"); this.bindings.delete(identity.sessionId); }
     this.extensionProviderBySession.delete(identity.sessionId);
-    this.sequences.get(identity.sessionId)?.delete(providerId);
     return true;
   }
 
@@ -253,7 +256,15 @@ export class AgentStatusService {
   private assertExtensionProvider(providerId: string): asserts providerId is AgentProvider { if (!isExtensionAgentProvider(providerId)) throw new Error("extension agent provider id must be a bounded namespaced id"); }
   private assertExtensionClaim(identity: ActivitySessionIdentity, providerId: string): void { this.assertExtensionProvider(providerId); if (this.extensionProviderBySession.get(identity.sessionId) !== providerId) throw new Error("extension agent provider does not own this terminal session"); }
   private toCanonicalExtensionEventAt(identity: ActivitySessionIdentity, provider: AgentProvider, binding: ProviderBinding, event: ExtensionAgentLifecycleEvent, sequence: number): CanonicalAgentLifecycleEvent {
-    const common = { provider, sessionId: binding.providerSessionId, activationTerminalSessionId: identity.sessionId, sequence, occurredAt: this.now() } as const;
+    const providerDisplayName = this.providerDisplayName?.(provider);
+    const common = {
+      provider,
+      sessionId: binding.providerSessionId,
+      activationTerminalSessionId: identity.sessionId,
+      sequence,
+      occurredAt: this.now(),
+      ...(providerDisplayName === undefined ? {} : { providerDisplayName }),
+    } as const;
     switch (event.kind) {
       case "session.started": return { ...common, kind: event.kind, ...(event.title === undefined ? {} : { displayName: event.title }), ...(event.promptText === undefined ? {} : { promptText: event.promptText }), ...(event.model === undefined ? {} : { model: event.model }) };
       case "agent.metadata": return { ...common, kind: event.kind, ...(event.agentId === undefined ? {} : { agentId: event.agentId }), ...(event.title === undefined ? {} : { displayName: event.title }), ...(event.promptText === undefined ? {} : { promptText: event.promptText }), ...(event.model === undefined ? {} : { model: event.model }) };

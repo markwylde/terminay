@@ -631,6 +631,12 @@ export interface AgentProcessSnapshot {
   executableName: string;
   startedAt?: string;
   cwd?: string;
+  /**
+   * Host-observed OS pid for this descendant, when the environment can prove
+   * it. Providers may join it to a provider-owned live-session registry; it is
+   * not a path and does not grant filesystem authority.
+   */
+  pid?: number;
 }
 
 export interface AgentOpenFile {

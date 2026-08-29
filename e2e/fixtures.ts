@@ -123,6 +123,110 @@ async function prepareNativeCodexFixture(
 	return { codexHome, bin };
 }
 
+export const nativeGrokSessionId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee1';
+
+const nativeGrokFixture = String.raw`
+#include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+static const char SESSION_ID[] = "${nativeGrokSessionId}";
+
+static void directories(char *path) {
+  for (char *cursor = path + 1; *cursor; cursor += 1) {
+    if (*cursor == '/') { *cursor = '\0'; mkdir(path, 0700); *cursor = '/'; }
+  }
+  mkdir(path, 0700);
+}
+
+static void write_summary(const char *path, const char *title) {
+  FILE *stream = fopen(path, "w");
+  if (!stream) return;
+  fprintf(stream,
+    "{\"info\":{\"id\":\"%s\"},\"generated_title\":\"%s\",\"session_summary\":\"%s\",\"current_model_id\":\"grok-4.6\"}\n",
+    SESSION_ID, title, title);
+  fflush(stream);
+  fclose(stream);
+}
+
+static int resuming(int argc, char **argv) {
+  for (int index = 1; index < argc; index += 1) {
+    if (strcmp(argv[index], "--resume") == 0 || strcmp(argv[index], "-r") == 0
+      || strcmp(argv[index], "-c") == 0 || strcmp(argv[index], "--continue") == 0) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+int main(int argc, char **argv) {
+  const char *home = getenv("GROK_HOME");
+  if (!home) return 64;
+  char directory[PATH_MAX];
+  char events_path[PATH_MAX];
+  char summary_path[PATH_MAX];
+  snprintf(directory, sizeof(directory), "%s/sessions/e2e-workspace/%s", home, SESSION_ID);
+  directories(directory);
+  snprintf(events_path, sizeof(events_path), "%s/events.jsonl", directory);
+  snprintf(summary_path, sizeof(summary_path), "%s/summary.json", directory);
+  const int resume = resuming(argc, argv);
+  FILE *events = fopen(events_path, resume ? "a" : "w");
+  if (!events) return 65;
+  setvbuf(events, NULL, _IONBF, 0);
+  setvbuf(stdout, NULL, _IONBF, 0);
+  if (resume) {
+    fputs("{\"ts\":\"2026-08-05T10:00:20.000Z\",\"type\":\"session_end\"}\n", events);
+    fputs("{\"ts\":\"2026-08-05T10:00:21.000Z\",\"type\":\"session_start\"}\n", events);
+    fputs("{\"ts\":\"2026-08-05T10:00:22.000Z\",\"type\":\"mcp_config_resolved\",\"servers\":[],\"disabled\":[]}\n", events);
+    fputs("Grok e2e resumed\n", stdout);
+  } else {
+    fputs("{\"ts\":\"2026-08-05T10:00:00.000Z\",\"type\":\"mcp_config_resolved\",\"servers\":[],\"disabled\":[]}\n", events);
+    write_summary(summary_path, "");
+    fputs("Grok e2e ready\n", stdout);
+  }
+  char line[512];
+  int turn = 0;
+  while (fgets(line, sizeof(line), stdin)) {
+    size_t length = strlen(line);
+    while (length > 0 && (line[length - 1] == '\n' || line[length - 1] == '\r')) {
+      line[--length] = '\0';
+    }
+    if (length == 0) continue;
+    if (strcmp(line, "quit") == 0 || strcmp(line, "/quit") == 0 || strcmp(line, "/exit") == 0) {
+      return 0;
+    }
+    turn += 1;
+    fprintf(events,
+      "{\"ts\":\"2026-08-05T10:00:%02d.000Z\",\"type\":\"turn_started\",\"session_id\":\"%s\",\"turn_number\":%d,\"model_id\":\"grok-4.6\",\"session_relationship\":\"primary\"}\n",
+      turn, SESSION_ID, turn - 1);
+    sleep(2);
+    fprintf(events, "{\"ts\":\"2026-08-05T10:00:%02d.500Z\",\"type\":\"turn_ended\",\"outcome\":\"completed\"}\n", turn);
+    write_summary(summary_path, "Native Grok chat");
+    fputs("Grok e2e turn done\n", stdout);
+  }
+  return 0;
+}
+`;
+
+async function prepareNativeGrokFixture(
+	tempDir: string,
+): Promise<{ readonly grokHome: string; readonly bin: string }> {
+	const grokHome = path.join(tempDir, 'native-grok-home');
+	const bin = path.join(tempDir, 'native-grok-bin');
+	const source = path.join(tempDir, 'native-grok.c');
+	const executable = path.join(bin, 'grok');
+	await Promise.all([
+		mkdir(grokHome, { recursive: true }),
+		mkdir(bin, { recursive: true }),
+	]);
+	await writeFile(source, nativeGrokFixture, { mode: 0o600 });
+	await execFileAsync('cc', [source, '-O2', '-o', executable]);
+	return { grokHome, bin };
+}
+
 const contentTypes: Record<string, string> = {
 	'.css': 'text/css',
 	'.html': 'text/html',
@@ -263,9 +367,14 @@ export const test = base.extend<ElectronFixtures>({
 	},
 
 	electronApp: async ({ tempDir, userDataDir }, use, testInfo) => {
+		const specFile = path.basename(testInfo.file);
 		const nativeCodex =
-			path.basename(testInfo.file) === 'extension-agent-runtime.spec.ts'
+			specFile === 'extension-agent-runtime.spec.ts'
 				? await prepareNativeCodexFixture(tempDir)
+				: undefined;
+		const nativeGrok =
+			specFile === 'extension-grok-agent-runtime.spec.ts'
+				? await prepareNativeGrokFixture(tempDir)
 				: undefined;
 		if (path.basename(testInfo.file) === 'mixed-project-environments.spec.ts') {
 			const now = Date.now();
@@ -435,6 +544,9 @@ export const test = base.extend<ElectronFixtures>({
 		const staticServer = await createStaticServer(
 			rendererArtifact.rootDirectory,
 		);
+		const extraPath = [nativeCodex?.bin, nativeGrok?.bin]
+			.filter((value): value is string => value !== undefined)
+			.join(path.delimiter);
 		const electronApp = await electron.launch({
 			args: ['.'],
 			env: {
@@ -447,7 +559,16 @@ export const test = base.extend<ElectronFixtures>({
 					? {}
 					: {
 							CODEX_HOME: nativeCodex.codexHome,
-							PATH: `${nativeCodex.bin}${path.delimiter}${process.env.PATH ?? ''}`,
+						}),
+				...(nativeGrok === undefined
+					? {}
+					: {
+							GROK_HOME: nativeGrok.grokHome,
+						}),
+				...(extraPath.length === 0
+					? {}
+					: {
+							PATH: `${extraPath}${path.delimiter}${process.env.PATH ?? ''}`,
 						}),
 				...(path.basename(testInfo.file) ===
 				'embedded-workspace-persistence-recovery.spec.ts'

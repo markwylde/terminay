@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { build } from 'esbuild'
 import { fileURLToPath } from 'node:url'
 
-const { renderCodexBlock, hasCodexBlock, upsertCodexBlock, removeCodexBlock } =
+const { renderCodexBlock, renderGrokBlock, hasCodexBlock, upsertCodexBlock, removeCodexBlock } =
   await importTransformed('../electron/mcpInstall/tomlEntry.ts')
 const { getClaudeCodeConfigPath, isClaudeCodeInstalled, installClaudeCode, uninstallClaudeCode } =
   await importTransformed('../electron/mcpInstall/claudeCode.ts')
@@ -27,6 +27,15 @@ test('renderCodexBlock renders command, args, static env, and inherited capabili
     /env_vars = \["TERMINAY_CONTROL_SOCKET", "TERMINAY_CONTROL_TOKEN"\]/,
   )
   assert.match(block, /env = \{ ELECTRON_RUN_AS_NODE = "1" \}/)
+})
+
+test('renderGrokBlock inherits the terminal environment and omits Codex env_vars', () => {
+  const block = renderGrokBlock(server)
+  assert.match(block, /^\[mcp_servers\.terminay\]$/m)
+  assert.match(block, /command = "\/Apps\/Terminay"/)
+  assert.match(block, /args = \["\/Apps\/dist-electron\/serverMcpEntry\.js"\]/)
+  assert.match(block, /env = \{ ELECTRON_RUN_AS_NODE = "1" \}/)
+  assert.doesNotMatch(block, /env_vars/)
 })
 
 test('renderCodexBlock escapes quotes and backslashes', () => {

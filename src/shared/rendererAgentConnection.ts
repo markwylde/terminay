@@ -72,7 +72,7 @@ function adaptEntry(value: AgentClientEntry): AgentStatusEntry {
 	const activeTools = adaptTools(record.activeTools)
 	const base = {
 		entryId: string('entryId')!, kind, provider, agentId: string('agentId')!, sessionId: string('sessionId')!, activationTerminalSessionId: string('activationTerminalSessionId')!,
-		...(optionalString(record, 'displayName')), ...(optionalString(record, 'promptText')), ...(optionalModel(record.model)),
+		...(optionalString(record, 'displayName')), ...(optionalString(record, 'providerDisplayName')), ...(optionalString(record, 'promptText')), ...(optionalModel(record.model)),
 		state: state as AgentState, stateStartedAt: integer('stateStartedAt'), updatedAt: integer('updatedAt'), lastEventKind, lastEventSequence: integer('lastEventSequence'),
 		active: record.active, activeTools, ...(optionalString(record, 'currentTurnId')), ...(optionalString(record, 'waitingReason')),
 		...(optionalOutcome(record, 'completionOutcome')), ...(optionalString(record, 'summary')), ...(optionalNumber(record, 'exitCode')), ...(optionalString(record, 'exitSignal')),

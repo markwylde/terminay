@@ -12,7 +12,7 @@ const runFile = promisify(execFile);
 const repository = resolve(new URL("..", import.meta.url).pathname);
 const npmCli = join(repository, "node_modules", "npm", "bin", "npm-cli.js");
 const SDK = "@terminay/extension-api";
-const expectedIds = new Set(["com.terminay.ssh", "com.puzed.platform", "com.terminay.agent.codex", "com.terminay.agent.claude-code", "com.terminay.agent.cursor", "com.terminay.agent.omp"]);
+const expectedIds = new Set(["com.terminay.ssh", "com.puzed.platform", "com.terminay.agent.codex", "com.terminay.agent.claude-code", "com.terminay.agent.cursor", "com.terminay.agent.grok", "com.terminay.agent.omp"]);
 
 /** Build, test, pack, and stage every official extension as a complete
  * offline npm-like tree. Both Electron and standalone copy this exact output;
@@ -144,12 +144,12 @@ async function removeNestedNpmIgnoreFiles(directory) {
 
 async function loadCatalogue(path) {
   const value = JSON.parse(await readFile(path, "utf8"));
-  if (value?.schemaVersion !== 1 || !Array.isArray(value.extensions) || value.extensions.length !== 6) throw new Error("built-in extension catalogue must name exactly six extensions");
+  if (value?.schemaVersion !== 1 || !Array.isArray(value.extensions) || value.extensions.length !== 7) throw new Error("built-in extension catalogue must name exactly seven extensions");
   const entries = value.extensions.map((entry) => {
     if (!entry || typeof entry.directory !== "string" || typeof entry.extensionId !== "string" || typeof entry.packageName !== "string" || !/^[a-z0-9][a-z0-9._-]{0,126}$/u.test(entry.extensionId) || entry.directory.includes("/") || entry.directory.includes("\\") || entry.directory === "." || entry.directory === "..") throw new Error("built-in extension catalogue entry is invalid");
     return Object.freeze({ directory: entry.directory, extensionId: entry.extensionId, packageName: entry.packageName });
   });
-  if (new Set(entries.map((entry) => entry.extensionId)).size !== 6 || new Set(entries.map((entry) => entry.packageName)).size !== 6 || !entries.every((entry) => expectedIds.has(entry.extensionId))) throw new Error("built-in extension catalogue does not match the official inventory");
+  if (new Set(entries.map((entry) => entry.extensionId)).size !== 7 || new Set(entries.map((entry) => entry.packageName)).size !== 7 || !entries.every((entry) => expectedIds.has(entry.extensionId))) throw new Error("built-in extension catalogue does not match the official inventory");
   return entries;
 }
 
