@@ -6,15 +6,10 @@ export interface SharedAgentRouteBodyProps {
   readonly loading?: boolean
 }
 
-const PROVIDER_LABELS: Readonly<Record<string, string>> = {
-	'com.terminay.agent.codex/cli': 'Codex',
-	'com.terminay.agent.claude-code/cli': 'Claude Code',
-	'com.terminay.agent.cursor/cli': 'Cursor',
-	'com.terminay.agent.omp/cli': 'omp',
-}
-
-function providerLabel(provider: AgentClientEntry['provider']): string {
-	return PROVIDER_LABELS[provider] ?? (provider.split('/').at(-1) ?? provider)
+function providerLabel(agent: AgentClientEntry): string {
+	const declared = agent.providerDisplayName
+	if (typeof declared === 'string' && declared.trim()) return declared.trim()
+	return agent.provider.split('/').at(-1) ?? agent.provider
 }
 
 /** Live, server-owned agent projection shared by Desktop and browser hosts. */
@@ -54,7 +49,7 @@ export function SharedAgentRouteBody({ client, loading = false }: SharedAgentRou
         <ul aria-label="Agent activity">
           {agents.map((agent) => (
             <li key={agent.entryId} className="shared-production-route__card">
-              <strong>{providerLabel(agent.provider)} {agent.kind === 'subagent' ? 'subagent' : 'agent'}</strong>
+              <strong>{providerLabel(agent)} {agent.kind === 'subagent' ? 'subagent' : 'agent'}</strong>
               <span>{agentStateLabel(agent.state)}</span>
               {agent.unread && <span>Unread activity</span>}
             </li>

@@ -39,6 +39,8 @@ interface AgentLifecycleEventBase {
   readonly occurredAt: number;
   readonly promptText?: string;
   readonly model?: AgentModelMetadata;
+  /** Manifest `displayName` for this provider. Never a renderer allowlist. */
+  readonly providerDisplayName?: string;
 }
 
 interface TargetedAgentEvent { readonly agentId?: string }
@@ -66,6 +68,7 @@ interface AgentStatusEntryBase {
   readonly sessionId: string;
   readonly activationTerminalSessionId: string;
   readonly displayName?: string;
+  readonly providerDisplayName?: string;
   readonly promptText?: string;
   readonly model?: AgentModelMetadata;
   readonly state: AgentState;

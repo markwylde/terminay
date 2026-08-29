@@ -81,6 +81,9 @@ function rootEntryFor(event: AgentLifecycleEvent): RootAgentStatusEntry {
 		agentId: event.sessionId,
 		sessionId: event.sessionId,
 		activationTerminalSessionId: event.activationTerminalSessionId,
+		...(event.providerDisplayName === undefined
+			? {}
+			: { providerDisplayName: event.providerDisplayName }),
 		terminalSessionId: event.activationTerminalSessionId,
 		inProcess: false,
 		state: 'idle',
@@ -115,6 +118,9 @@ function subagentEntryFor(
 		agentId: event.subagentId,
 		sessionId: event.sessionId,
 		activationTerminalSessionId: event.activationTerminalSessionId,
+		...(event.providerDisplayName === undefined
+			? {}
+			: { providerDisplayName: event.providerDisplayName }),
 		terminalSessionId: null,
 		inProcess: true,
 		parentAgentId,
