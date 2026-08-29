@@ -104,6 +104,10 @@ export class ExtensionAgentRuntimeRegistry {
     this.cancelSchedule = options.cancelSchedule ?? ((timer) => clearTimeout(timer));
   }
 
+  providerDisplayName(providerId: string): string | undefined {
+    return this.options.hosts.agentProviderContributions().find((provider) => provider.id === providerId)?.displayName;
+  }
+
   register(identity: ActivitySessionIdentity): void {
     const current = this.terminals.get(identity.sessionId);
     if (current !== undefined && sameIdentity(current.identity, identity)) return;

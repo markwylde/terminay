@@ -46,6 +46,23 @@ test("agent status service rejects unclaimed, invalid, and native-record input",
   await agents.stop();
 });
 
+test("lifecycle entries stamp the extension contribution display name", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId });
+  activity.register(identity);
+  const agents = new AgentStatusService({
+    activity,
+    now: () => 1_000,
+    providerDisplayName: (id) => id === providerId ? "Fixture Agent" : undefined,
+  });
+  await agents.start();
+  agents.register(identity);
+  assert.equal(agents.claimExtensionProvider(identity, providerId), true);
+  assert.equal((await agents.ingestExtensionLifecycle(identity, providerId, "1", binding, [{ kind: "session.started" }])).acceptedEventCount, 1);
+  const [entry] = Object.values(agents.getSnapshot().entries);
+  assert.equal(entry.providerDisplayName, "Fixture Agent");
+  await agents.stop();
+});
+
 test("provider release retires only its exact terminal lifecycle run", async () => {
   const { agents } = await fixture();
   await agents.ingestExtensionLifecycle(identity, providerId, "1", binding, [{ kind: "session.started" }]);

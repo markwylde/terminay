@@ -499,8 +499,10 @@ only roots whose exact activation terminal belongs to the current project and
 nests children beneath them. Rows use stable ordering and existing tree
 geometry. Missing metadata is omitted and prompts are bounded. A generic
 terminal tab name such as `Terminal 1` is not the agent title: an untitled
-bound root uses the provider label until a provider title, custom terminal
-name, or prompt is available.
+  bound root uses the provider label until a provider title, custom terminal
+  name, or prompt is available. The provider label is the extension
+  contribution `displayName`; the Agents UI does not keep a hardcoded map of
+  provider ids.
 
 Activating a row activates its exact project and terminal panel, focuses the
 terminal, and acknowledges that entry without changing operational state. No

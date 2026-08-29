@@ -55,6 +55,8 @@ type AgentLifecycleEventBase = {
 	promptText?: string;
 	/** Provider-reported model metadata; transport boundaries sanitize and bound it. */
 	model?: AgentModelMetadata;
+	/** Manifest `displayName` for this provider. Never a renderer allowlist. */
+	providerDisplayName?: string;
 };
 
 type TargetedAgentEvent = {
@@ -145,6 +147,7 @@ type AgentStatusEntryBase = {
 	sessionId: string;
 	activationTerminalSessionId: string;
 	displayName?: string;
+	providerDisplayName?: string;
 	promptText?: string;
 	model?: AgentModelMetadata;
 	state: AgentState;

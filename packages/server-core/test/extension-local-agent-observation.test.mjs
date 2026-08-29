@@ -261,19 +261,19 @@ test("file follow detects atomic same-path replacement from a host-private ident
 });
 
 test("environment-relative path facts are relative to the optional contained subdirectory", async () => {
-  const journal = "/data/grok/sessions/e2e-workspace/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee1/events.jsonl";
-  const summary = "/data/grok/sessions/e2e-workspace/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee1/summary.json";
+  const journal = "/data/provider-home/sessions/e2e-workspace/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee1/events.jsonl";
+  const summary = "/data/provider-home/sessions/e2e-workspace/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee1/summary.json";
   const system = fixtureSystem();
   system.files.set(journal, new TextEncoder().encode("{}\n"));
   system.files.set(summary, new TextEncoder().encode("{}\n"));
   const originalStat = system.stat;
   system.stat = async (path) => {
-    if (path === "/data/grok" || path === "/data/grok/sessions") return { kind: "directory", size: 0 };
+    if (path === "/data/provider-home" || path === "/data/provider-home/sessions") return { kind: "directory", size: 0 };
     return originalStat(path);
   };
   system.environment = async (_pid, names) => {
-    assert.deepEqual(names, ["GROK_HOME"]);
-    return { GROK_HOME: "/data/grok" };
+    assert.deepEqual(names, ["PROVIDER_HOME"]);
+    return { PROVIDER_HOME: "/data/provider-home" };
   };
   system.openFiles = async () => [{ path: journal, access: "writable" }];
   const adapter = new ThisServerAgentObservationAdapter({
@@ -281,7 +281,7 @@ test("environment-relative path facts are relative to the optional contained sub
     system,
     resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }),
   });
-  const current = terminal("grok-home");
+  const current = terminal("provider-home");
   const descendants = await adapter.observe(current, "process.descendants", {}, signal);
   const files = await adapter.observe(current, "process.open-files", {
     processes: descendants, options: { access: "writable" },
@@ -289,13 +289,13 @@ test("environment-relative path facts are relative to the optional contained sub
   const handle = files[0].handle;
   assert.equal(
     await adapter.observe(current, "filesystem.environment-relative-path", {
-      handle, environmentVariable: "GROK_HOME", beneathRelative: "sessions",
+      handle, environmentVariable: "PROVIDER_HOME", beneathRelative: "sessions",
     }, signal),
     "e2e-workspace/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee1/events.jsonl",
   );
   const resolved = await adapter.observe(current, "filesystem.resolve-relative-to-environment", {
     relativePath: "sessions/e2e-workspace/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee1/summary.json",
-    environmentVariable: "GROK_HOME",
+    environmentVariable: "PROVIDER_HOME",
     extension: ".json",
   }, signal);
   assert.equal(typeof resolved?.id, "string");
