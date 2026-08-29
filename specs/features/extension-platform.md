@@ -340,9 +340,9 @@ available explicit updates,
 compatibility/failure details, permissions, dependants, and **Install from
 npm…**.
 
-**File → Extensions…**, the Command Bar action, and **Extensions…** in the new
-project environment chooser all open or focus Settings at its **Extensions**
-section. On Desktop this uses the established Settings auxiliary window. In a
+**File → Extensions…** and the Command Bar action open or focus Settings at
+its **Extensions** section. The project-bar environment chooser does not
+duplicate that action. On Desktop this uses the established Settings auxiliary window. In a
 browser it uses the established in-page Settings route and selects the same
 section. Repeated invocation focuses the existing Settings presentation rather
 than stacking another dialog.
