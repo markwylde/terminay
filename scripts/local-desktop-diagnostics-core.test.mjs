@@ -42,6 +42,25 @@ function input(overrides = {}) {
 	};
 }
 
+test('performance traces are recognized managed artifacts and unknown names stay user-owned', () => {
+	assert.deepEqual(
+		recognizeManagedArtifactName(
+			'terminay-performance-trace-v1-1800000000000-launch-id.json',
+		),
+		{ kind: 'performance-trace', createdAt: 1_800_000_000_000 },
+	);
+	assert.equal(
+		recognizeManagedArtifactName('chrome-trace.json'),
+		undefined,
+	);
+	assert.equal(
+		recognizeManagedArtifactName(
+			'terminay-performance-trace-v1-1800000000000-launch-id.jsonl',
+		),
+		undefined,
+	);
+});
+
 test('schema normalization is stable, bounded, cycle-safe, and cannot forge JSONL records', () => {
 	const cyclic = { z: 'last', a: 'first\nforged\u0000line' };
 	cyclic.self = cyclic;

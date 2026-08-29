@@ -29,6 +29,7 @@ import {
 	nativeImage,
 	powerMonitor,
 	safeStorage,
+	contentTracing,
 	screen,
 	shell,
 	webContents,
@@ -106,6 +107,7 @@ import {
 	bindWebContentsDiagnostics,
 } from './diagnostics/electronEvents';
 import { createDiagnosticsHelpMenuItems } from './diagnostics/menu';
+import { DesktopPerformanceLogging } from './diagnostics/performance';
 import {
 	bindFatalProcessDiagnostics,
 	initializeDesktopDiagnostics,
@@ -241,6 +243,17 @@ const unbindFatalProcessDiagnostics =
 const unbindAppChildDiagnostics = bindAppChildDiagnostics({
 	app,
 	diagnostics: desktopDiagnostics,
+});
+const desktopPerformanceLogging = new DesktopPerformanceLogging({
+	app,
+	contentTracing,
+	diagnostics: desktopDiagnostics,
+	listWebContents: () => webContents.getAllWebContents(),
+	onEnabledChange: () => {
+		createAppMenu();
+		broadcastPerformanceLogging();
+	},
+	userDataDirectory: app.getPath('userData'),
 });
 
 export const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL'];
@@ -1796,6 +1809,20 @@ function broadcastDeviceTerminalSettings(): void {
 	}
 }
 
+function sendPerformanceLogging(webContents: Electron.WebContents): void {
+	if (webContents.isDestroyed()) return;
+	webContents.send('server-ui-host:event', {
+		type: 'diagnostics.performance-logging.changed',
+		enabled: desktopPerformanceLogging.isEnabled(),
+	});
+}
+
+function broadcastPerformanceLogging(): void {
+	for (const window of BrowserWindow.getAllWindows()) {
+		sendPerformanceLogging(window.webContents);
+	}
+}
+
 function readMacros(): MacroDefinition[] {
 	const macrosPath = getMacrosPath();
 
@@ -2688,15 +2715,20 @@ function createAppMenu(
 				directory: desktopDiagnostics.directory,
 				clearManagedArtifacts: () => desktopDiagnostics.clearManagedArtifacts(),
 				recordCleared: () => desktopDiagnostics.recordCleared(),
+				performanceLogging: {
+					isEnabled: () => desktopPerformanceLogging.isEnabled(),
+					setEnabled: (enabled) =>
+						desktopPerformanceLogging.setEnabled(enabled),
+				},
 				reportFailure: (operation, error) => {
 					void desktopDiagnostics.record(
 						{
 							component: 'diagnostics',
 							event: 'diagnostics.writer.degraded',
 							fields: { operation },
-							message: error,
 							severity: 'warning',
 							source: 'diagnostics-menu',
+							message: error,
 						},
 						{ channel: 'lifecycle' },
 					);
@@ -3423,6 +3455,12 @@ function createWindow(options?: {
 						return;
 					case 'workspace.drag.end':
 						return endCanonicalProjectDrag();
+					case 'diagnostics.performance-logging.set':
+						return {
+							enabled: await desktopPerformanceLogging.setEnabled(
+								action.enabled,
+							),
+						};
 				}
 			},
 		});
@@ -3763,6 +3801,7 @@ ipcMain.on('server-ui-host:subscribe-events', (event) => {
 	assertBoundServerUiEvent(event);
 	sendTerminalZoom(event.sender);
 	sendDeviceTerminalSettings(event.sender);
+	sendPerformanceLogging(event.sender);
 });
 
 // Cross-window drag tracking with Chrome-style tear-off. While a project tab is
@@ -4461,6 +4500,7 @@ const handleBeforeQuit = createGracefulQuitHandler({
 		} finally {
 			unbindFatalProcessDiagnostics();
 			unbindAppChildDiagnostics();
+			await desktopPerformanceLogging.close();
 			await desktopDiagnostics.close({ clean });
 		}
 	},
@@ -4550,6 +4590,7 @@ async function completeDesktopStartup(): Promise<void> {
 	);
 	ensureNodePtySpawnHelperIsExecutable();
 	setDockIcon();
+	await desktopPerformanceLogging.restore();
 	createAppMenu();
 	try {
 		await applyAgentIntegrationSetting(readTerminalSettings());

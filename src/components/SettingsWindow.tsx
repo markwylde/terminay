@@ -20,6 +20,8 @@ import {
 	type TerminalSettingsClient,
 	useTerminalSettings,
 } from '../hooks/useTerminalSettings';
+import { setDesktopPerformanceLogging } from '../host/nativeActions';
+import { subscribeDesktopPerformanceLogging } from '../host/nativeEvents';
 import {
 	acceleratorFromKeyboardEvent,
 	defaultKeyboardShortcuts,
@@ -34,8 +36,8 @@ import {
 import { type AiTabMetadataClient } from '../services/ai/aiTabMetadataClient';
 import type { RemoteAccessStatusClient } from '../services/remoteAccessStatusClient';
 import { SettingsMutationCoordinator } from '../settingsMutationCoordinator';
-import { SharedSettingsRouteBody } from '../shared/SharedSettingsRouteBody';
 import { RemotePairingModal } from '../shared/RemotePairingModal';
+import { SharedSettingsRouteBody } from '../shared/SharedSettingsRouteBody';
 import type { SettingsFieldDefinition } from '../terminalSettings';
 import {
 	buildTabThemeHueValue,
@@ -83,12 +85,21 @@ import {
 
 type CategoryId =
 	| (typeof terminalSettingsCategories)[number]['id']
-	| 'extensions';
+	| 'extensions'
+	| 'diagnostics';
 
 const extensionSettingsCategory = Object.freeze({
 	id: 'extensions' as const,
 	label: 'Extensions',
 });
+
+const diagnosticsSettingsCategory = Object.freeze({
+	id: 'diagnostics' as const,
+	label: 'Diagnostics',
+});
+
+const DIAGNOSTICS_SEARCH_TERMS =
+	'diagnostics performance logging cpu energy trace stack sample';
 
 type AiModelOption = { id: string; label: string };
 type MicrophoneDeviceOption = { deviceId: string; label: string };
@@ -463,6 +474,14 @@ function getCategoryIcon(id: CategoryId) {
 					<path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z" />
 				</>,
 			);
+		case 'diagnostics':
+			return renderCategoryIcon(
+				'Diagnostics',
+				<>
+					<circle cx="12" cy="12" r="9" />
+					<path d="M12 8v4l2.5 2.5" />
+				</>,
+			);
 		default:
 			return renderCategoryIcon('Category', <circle cx="12" cy="12" r="10" />);
 	}
@@ -520,9 +539,11 @@ export function SettingsWindow({
 	const initialCategoryFromUrl: CategoryId =
 		initialSectionFromUrl === 'extensions'
 			? 'extensions'
-			: (terminalSettingsSections.find(
-					(section) => section.id === initialSectionFromUrl,
-				)?.categoryId ?? 'appearance');
+			: initialSectionFromUrl === 'diagnostics'
+				? 'diagnostics'
+				: (terminalSettingsSections.find(
+						(section) => section.id === initialSectionFromUrl,
+					)?.categoryId ?? 'appearance');
 	const {
 		settings: persistedSettings,
 		isLoading,
@@ -546,6 +567,9 @@ export function SettingsWindow({
 			'',
 	);
 	const [query, setQuery] = useState('');
+	const [diagnosticsAvailable, setDiagnosticsAvailable] = useState(false);
+	const [performanceLoggingEnabled, setPerformanceLoggingEnabled] =
+		useState(false);
 	const [isSaving, setIsSaving] = useState(false);
 	const [saveError, setSaveError] = useState<string | null>(null);
 	const [showPreview, setShowPreview] = useState(true);
@@ -780,6 +804,27 @@ export function SettingsWindow({
 		prevActiveConnectionCountRef.current = current;
 	}, [remoteStatus?.activeConnectionCount, isPairingQrModalOpen]);
 
+	useEffect(() => {
+		const host = window.terminayHost;
+		if (host === undefined) return undefined;
+		let cancelled = false;
+		void host
+			.getContext()
+			.then((context) => {
+				if (!cancelled && context.hostKind === 'desktop')
+					setDiagnosticsAvailable(true);
+			})
+			.catch(() => undefined);
+		const stop = subscribeDesktopPerformanceLogging((enabled) => {
+			setDiagnosticsAvailable(true);
+			setPerformanceLoggingEnabled(enabled);
+		});
+		return () => {
+			cancelled = true;
+			stop();
+		};
+	}, []);
+
 	const normalizedQuery = query.trim().toLowerCase();
 
 	const filteredSections = useMemo(() => {
@@ -802,21 +847,40 @@ export function SettingsWindow({
 		});
 	}, [normalizedQuery]);
 
+	const diagnosticsQueryMatches =
+		normalizedQuery.length > 0 &&
+		DIAGNOSTICS_SEARCH_TERMS.includes(normalizedQuery);
+	const extensionsQueryMatches =
+		'extensions trusted code npm project connection providers'.includes(
+			normalizedQuery,
+		);
+
 	const visibleCategories = useMemo(() => {
-		if (!normalizedQuery)
-			return [...terminalSettingsCategories, extensionSettingsCategory];
+		const extra = [
+			...(diagnosticsAvailable ? [diagnosticsSettingsCategory] : []),
+			extensionSettingsCategory,
+		];
+		if (!normalizedQuery) return [...terminalSettingsCategories, ...extra];
 		const categoryIds = new Set(
 			filteredSections.map((section) => section.categoryId),
 		);
 		const settingsCategories = terminalSettingsCategories.filter((category) =>
 			categoryIds.has(category.id),
 		);
-		return 'extensions trusted code npm project connection providers'.includes(
-			normalizedQuery,
-		)
-			? [...settingsCategories, extensionSettingsCategory]
-			: settingsCategories;
-	}, [filteredSections, normalizedQuery]);
+		return [
+			...settingsCategories,
+			...(diagnosticsAvailable && diagnosticsQueryMatches
+				? [diagnosticsSettingsCategory]
+				: []),
+			...(extensionsQueryMatches ? [extensionSettingsCategory] : []),
+		];
+	}, [
+		diagnosticsAvailable,
+		diagnosticsQueryMatches,
+		extensionsQueryMatches,
+		filteredSections,
+		normalizedQuery,
+	]);
 
 	const displayedCategories = useMemo(() => {
 		if (normalizedQuery) {
@@ -831,6 +895,10 @@ export function SettingsWindow({
 	useEffect(() => {
 		if (activeCategoryId === 'extensions') {
 			if (activeSectionId !== 'extensions') setActiveSectionId('extensions');
+			return;
+		}
+		if (activeCategoryId === 'diagnostics') {
+			if (activeSectionId !== 'diagnostics') setActiveSectionId('diagnostics');
 			return;
 		}
 		const eligibleSections = normalizedQuery
@@ -1076,6 +1144,17 @@ export function SettingsWindow({
 			setQuery('');
 			return saved;
 		});
+	};
+
+	const resetDiagnostics = async () => {
+		if (!confirm('Turn off performance logging?')) return;
+		const enabled = await setDesktopPerformanceLogging(false);
+		if (enabled !== null) setPerformanceLoggingEnabled(enabled);
+	};
+
+	const togglePerformanceLogging = async (enabled: boolean) => {
+		const next = await setDesktopPerformanceLogging(enabled);
+		if (next !== null) setPerformanceLoggingEnabled(next);
 	};
 
 	const saveDictationOpenAiKey = async () => {
@@ -2756,6 +2835,11 @@ export function SettingsWindow({
 					setQuery('');
 					return;
 				}
+				if (categoryId === 'diagnostics') {
+					setActiveSectionId('diagnostics');
+					setQuery('');
+					return;
+				}
 				const firstSection = filteredSections.find(
 					(s) => s.categoryId === categoryId,
 				);
@@ -2766,13 +2850,47 @@ export function SettingsWindow({
 				}
 			}}
 			onResetAll={
-				activeCategoryId === 'extensions' ? undefined : () => void resetAll()
+				activeCategoryId === 'extensions'
+					? undefined
+					: activeCategoryId === 'diagnostics'
+						? () => void resetDiagnostics()
+						: () => void resetAll()
 			}
 			contentRef={contentRef}
 			preview={settingsPreview}
 			collapsedPreview={collapsedSettingsPreview}
 			modal={pairingPinModal}
 		>
+			{displayedCategories.some((category) => category.id === 'diagnostics') ? (
+				<section id="section-diagnostics" className="settings-section">
+					<div className="settings-section-title-row">
+						<h3 className="settings-section-title">Performance logging</h3>
+					</div>
+					<div className="settings-group">
+						<div className="settings-row">
+							<div className="settings-row-info">
+								<span className="settings-row-label">Performance logging</span>
+								<span className="settings-row-description">
+									Record process CPU, memory, event-loop delay, renderer call
+									stacks, and occasional Chromium traces in the Diagnostics
+									folder. Off by default. Logs stay on this device and are never
+									uploaded. Help → Reveal Diagnostics Folder opens the same
+									folder.
+								</span>
+							</div>
+							<div className="settings-row-control">
+								<Switch
+									checked={performanceLoggingEnabled}
+									label="Performance logging"
+									onChange={(enabled) => {
+										void togglePerformanceLogging(enabled);
+									}}
+								/>
+							</div>
+						</div>
+					</div>
+				</section>
+			) : null}
 			{displayedCategories.some((category) => category.id === 'extensions') ? (
 				<ExtensionSettingsSection
 					applicationClient={applicationClient}
@@ -2780,7 +2898,7 @@ export function SettingsWindow({
 				/>
 			) : null}
 			{displayedCategories.map((cat) => {
-				if (cat.id === 'extensions') return null;
+				if (cat.id === 'extensions' || cat.id === 'diagnostics') return null;
 				const sections = filteredSections.filter(
 					(s) => s.categoryId === cat.id,
 				);

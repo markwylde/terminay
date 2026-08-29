@@ -11,6 +11,7 @@ import {
 	parseTerminayHostCompatibilityRequirements,
 	parseTerminayHostContext,
 	parseTerminayHostEvent,
+	requiredTerminayHostCapability,
 } from '../dist/index.js';
 
 const requirements = {
@@ -383,6 +384,39 @@ test('native menu accelerator updates are bounded and immutable', () => {
 				],
 			}),
 		/unique/u,
+	);
+});
+
+test('performance logging is a closed Desktop host action and bound event', () => {
+	assert.deepEqual(parseTerminayHostAction({
+		type: 'diagnostics.performance-logging.set',
+		enabled: true,
+	}), { type: 'diagnostics.performance-logging.set', enabled: true });
+	assert.throws(
+		() => parseTerminayHostAction({
+			type: 'diagnostics.performance-logging.set',
+			enabled: 'true',
+		}),
+		/performance logging/u,
+	);
+	const context = parseTerminayHostContext({
+		schemaVersion: 1, bootstrapVersion: 1, sourceId: 'source-a',
+		windowId: 'window-a', serverId: 'server-a', profileId: 'profile-a',
+		bundleId: 'bundle_12345678', applicationProtocolVersion: '1',
+		hostKind: 'desktop', hostBridgeVersion: 1, byteEndpointVersion: 1,
+		capabilities: { nativeMenus: 1 },
+	});
+	assert.deepEqual(parseTerminayHostEvent({
+		schemaVersion: 1, bridgeVersion: 1, sourceId: 'source-a',
+		windowId: 'window-a', serverId: 'server-a', profileId: 'profile-a',
+		event: { type: 'diagnostics.performance-logging.changed', enabled: false },
+	}, context).event, { type: 'diagnostics.performance-logging.changed', enabled: false });
+	assert.equal(
+		requiredTerminayHostCapability({
+			type: 'diagnostics.performance-logging.set',
+			enabled: false,
+		}),
+		'nativeMenus',
 	);
 });
 

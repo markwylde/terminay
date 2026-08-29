@@ -4,9 +4,9 @@
 
 Settings centralize server, connection-host, and temporary client preferences
 for terminal rendering and input, shell launch, themes, accessibility, sidebar
-and file behaviour, recordings, remote access, agents, MCP, dictation, and AI
-features. The Command Bar and native menu use the same command model and
-configurable keyboard accelerators.
+and file behaviour, recordings, remote access, agents, MCP, dictation, AI
+features, and Desktop diagnostics. The Command Bar and native menu use the same
+command model and configurable keyboard accelerators.
 
 ## Behaviour
 
@@ -23,6 +23,11 @@ configurable keyboard accelerators.
   discovered profile availability, and new-terminal cwd policy; they also
   configure xterm appearance, scrolling, accessibility, paste/cursor behaviour,
   theme and tab hue, file defaults, sidebar defaults, and shortcut bindings.
+  Desktop Settings also expose a **Diagnostics** category whose Performance
+  logging toggle is a device-local Desktop preference, off by default, and
+  writes only to the local Diagnostics folder as specified in
+  [Local Desktop diagnostics](./local-desktop-diagnostics.md). Browser hosts
+  omit that category.
 - The Command Bar searches built-in commands and saved macros. Built-ins honour
   the active panel/project requirement and display user-configured shortcuts.
 - The server-bundled UI requests semantic secondary-route presentation.
