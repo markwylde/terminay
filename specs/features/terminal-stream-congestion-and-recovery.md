@@ -124,13 +124,16 @@ client/peer generation only for true transport failure; it is not a
 terminal-panel error and cannot be repaired by renewing an attachment on the
 retired client.
 
-A checkpoint or attach snapshot without later live PTY events is not a
-successful connection. Congestion recovery still applies when frames arrive
-and overwhelm a presentation lane. It does not apply when the transport has
-gone silent while reporting open.
+A checkpoint or attach snapshot without later live PTY or workspace events is
+not a successful connection. Congestion recovery still applies when frames
+arrive and overwhelm a presentation lane. It does not apply when the
+transport has gone silent while reporting open. Silence after hydrate,
+including missing later PTY and missing later project or terminal events, is
+a transport-generation failure.
 
-The renderer visibly marks mounted terminal panels as reconnecting and rejects
-unsafe mutations promptly while the old client is unusable. Desktop supplies a
+The renderer visibly marks mounted terminal panels and connection chrome as
+reconnecting and rejects unsafe mutations promptly while the old client is
+unusable. Desktop supplies a
 fresh server-scoped MessagePort; the browser session host replaces its complete
 WebRTC transport generation and supplies a fresh opaque endpoint. The client
 never reuses a half-closed connection or obtains raw transport channels.
@@ -200,7 +203,9 @@ endpoint.
   generation. Peer `disconnected`, or ICE `disconnected` while the peer is
   also not `connected`, either resumes delivery inside grace or replaces once.
   The mounted workspace does not stay on a painted checkpoint with no later
-  PTY bytes when the application reader has actually ended.
+  PTY bytes when the application reader has actually ended, a required lane
+  has closed, or the application lane has stalled. Connection chrome shows
+  reconnecting until the replacement hydrates.
 - Application-lane `Blob` frames are decoded in order or fail that generation.
   Chromium loopback happy-path evidence is not sufficient; tests inject ICE
   disconnect and non-`ArrayBuffer` binary delivery.
