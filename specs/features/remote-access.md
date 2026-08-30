@@ -383,11 +383,20 @@ application-protocol reader can still deliver. `RTCDataChannel.readyState`
 remaining `open` is not sufficient. Recoverable peer `disconnected` starts one
 bounded grace period and cancels that timer if the peer is `connected` again.
 Explicit `failed` or `closed` peer/ICE state, required-lane loss,
-application-protocol reader end, or grace expiry replaces the generation
-exactly once. ICE `disconnected` while `connectionState` stays `connected` is
-a consent-check blip on Safari and Firefox; it does not start grace or replace
-the generation. ICE `disconnected` starts grace only when the peer is also not
-`connected`.
+application-protocol reader end, application-lane stall, or grace expiry
+replaces the generation exactly once. ICE `disconnected` while
+`connectionState` stays `connected` is a consent-check blip on Safari and
+Firefox; it does not start grace or replace the generation. ICE
+`disconnected` starts grace only when the peer is also not `connected`.
+
+Required-lane close or failure (`control`, `application`, `terminal`,
+`assets`) fails that generation even while the peer still reports
+`connected`. Handshake-only `api` and `asset` close after handoff does not.
+Host `no-outbound` / `outbound-stalled` and client `no-inbound` /
+`inbound-stalled` are the same class of failure: the generation can no
+longer deliver. The workspace shows reconnecting status, not connected,
+disables input, and replaces the generation. It does not leave a painted
+checkpoint mounted as live.
 
 The session host creates that generation once per connect attempt. Pairing or
 saved-device signaling, bundle install, and the workspace's application
@@ -396,12 +405,14 @@ or ticket for the same attempt. A `closed` event from a retired generation
 cannot start a parallel connect. Automatic recovery, **Retry connection**,
 document resume, and the initial connect share one in-flight attempt.
 
-Live terminal output shares the binary application lane with command results.
-Attach snapshots and later PTY events are the same byte stream. A generation
-that hydrates a checkpoint but cannot decode or deliver later events is failed,
-not connected. Data-channel frames are `ArrayBuffer` bytes before the workspace
-reads them. A `Blob` is decoded in order or fails that generation visibly; it
-is never dropped.
+Live terminal output shares the binary application lane with command results
+and later workspace events. Attach snapshots, later PTY bytes, new projects,
+and new terminals are the same live stream. A generation that hydrates a
+checkpoint but cannot decode or deliver later events is failed, not connected.
+A new project or terminal created after hydrate appears on the remote view
+only while that generation can still deliver. Data-channel frames are
+`ArrayBuffer` bytes before the workspace reads them. A `Blob` is decoded in
+order or fails that generation visibly; it is never dropped.
 
 Framed PWA resume uses the same reconnect operation. Hiding, freezing, or
 restoring the session document does not leave a painted workspace whose
@@ -513,7 +524,8 @@ frames do not produce one log line per frame.
   explicit disconnect.
 - A workspace that has painted a terminal checkpoint but cannot stream later
   PTY or workspace events is a recoverable transport failure. It is not left
-  mounted as connected.
+  mounted as connected. Connection and terminal chrome show reconnecting
+  until the replacement generation hydrates.
 - Returning to a framed PWA session does not stay on the Terminay loading
   surface without a reconnect attempt, timeout, or visible error.
 - Failure never selects another server or terminates server-owned PTYs.
@@ -599,8 +611,12 @@ frames do not produce one log line per frame.
   generation and continues live terminal output. Peer `disconnected`, or ICE
   `disconnected` while the peer is also not `connected`, either recovers
   inside grace or replaces that generation once without a page reload.
+- Application-lane stall or required-lane close while the peer stays
+  `connected` replaces that generation. The browser shows reconnecting, then
+  live PTY and later workspace events again.
 - A framed PWA session that hydrates a terminal still shows subsequent typed
-  PTY output on that same generation.
+  PTY output on that same generation. A new project or terminal created after
+  that hydrate appears while the generation is live.
 - Backgrounding and returning to the installed PWA reconnects the framed
   session, or shows a bounded retryable error, instead of an indefinite
   loading mark.
