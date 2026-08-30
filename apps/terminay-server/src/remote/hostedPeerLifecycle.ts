@@ -4,9 +4,8 @@ export type HostedIceServer = Readonly<{
 	username?: string;
 }>;
 
-export const DEFAULT_HOSTED_ICE_SERVERS: readonly HostedIceServer[] = Object.freeze([
-	{ urls: 'stun:stun.l.google.com:19302' },
-]);
+export const DEFAULT_HOSTED_ICE_SERVERS: readonly HostedIceServer[] =
+	Object.freeze([{ urls: 'stun:stun.l.google.com:19302' }]);
 
 export const DEFAULT_ICE_RECOVERY_GRACE_MS = 5_000;
 
@@ -23,7 +22,9 @@ export function resolveHostedIceServers(
 }
 
 /** Parse Desktop/CLI ICE server config. Empty input uses the default STUN server. */
-export function parseHostedIceServers(value?: string | null): readonly HostedIceServer[] {
+export function parseHostedIceServers(
+	value?: string | null,
+): readonly HostedIceServer[] {
 	const input = String(value ?? '').trim();
 	if (!input) return DEFAULT_HOSTED_ICE_SERVERS;
 	if (input.length > 32 * 1024) {
@@ -37,21 +38,29 @@ export function parseHostedIceServers(value?: string | null): readonly HostedIce
 			throw new Error('WebRTC ICE server JSON is invalid.');
 		}
 		if (!Array.isArray(parsed) || parsed.length < 1 || parsed.length > 8) {
-			throw new Error('WebRTC ICE server JSON must contain between 1 and 8 entries.');
+			throw new Error(
+				'WebRTC ICE server JSON must contain between 1 and 8 entries.',
+			);
 		}
-		return Object.freeze(parsed.map((entry) => normalizeHostedIceServer(entry)));
+		return Object.freeze(
+			parsed.map((entry) => normalizeHostedIceServer(entry)),
+		);
 	}
 	const urls = input
 		.split(',')
 		.map((entry) => entry.trim())
 		.filter(Boolean);
 	if (urls.length < 1 || urls.length > 16) {
-		throw new Error('WebRTC ICE server URL list must contain between 1 and 16 entries.');
+		throw new Error(
+			'WebRTC ICE server URL list must contain between 1 and 16 entries.',
+		);
 	}
-	return Object.freeze(urls.map((url) => {
-		assertHostedIceServerUrl(url);
-		return { urls: url };
-	}));
+	return Object.freeze(
+		urls.map((url) => {
+			assertHostedIceServerUrl(url);
+			return { urls: url };
+		}),
+	);
 }
 
 function normalizeHostedIceServer(value: unknown): HostedIceServer {
@@ -66,11 +75,14 @@ function normalizeHostedIceServer(value: unknown): HostedIceServer {
 	const urls =
 		typeof entry.urls === 'string'
 			? [entry.urls]
-			: Array.isArray(entry.urls) && entry.urls.every((url) => typeof url === 'string')
+			: Array.isArray(entry.urls) &&
+					entry.urls.every((url) => typeof url === 'string')
 				? entry.urls
 				: null;
 	if (!urls || urls.length < 1 || urls.length > 4) {
-		throw new Error('Each WebRTC ICE server entry requires between 1 and 4 URLs.');
+		throw new Error(
+			'Each WebRTC ICE server entry requires between 1 and 4 URLs.',
+		);
 	}
 	for (const url of urls) assertHostedIceServerUrl(url);
 	const hasUsername = Reflect.has(entry, 'username');
@@ -136,7 +148,9 @@ export function isTerminalWebRtcState(
 	return state === 'closed' || state === 'failed';
 }
 
-export function isRecoverableDisconnectState(state: string | undefined): boolean {
+export function isRecoverableDisconnectState(
+	state: string | undefined,
+): boolean {
 	return state === 'disconnected';
 }
 
@@ -151,6 +165,43 @@ export function needsDisconnectGrace(
 ): boolean {
 	if (isRecoverableDisconnectState(peerState)) return true;
 	return isRecoverableDisconnectState(iceState) && peerState !== 'connected';
+}
+
+const REQUIRED_LANES = new Set([
+	'application',
+	'assets',
+	'control',
+	'terminal',
+]);
+
+export type HostedLaneDiagnostic = Readonly<{
+	channel?: string | undefined;
+	channelState?: string | undefined;
+	stallClass?: string | undefined;
+}>;
+
+/** Fail a hydrated generation that can no longer deliver. ICE consent blips
+ * do not belong here; required-lane loss and application-lane silence do. */
+export function applyHostedLaneDiagnostic(
+	lifecycle: HostedPeerLifecycle,
+	event: HostedLaneDiagnostic,
+): void {
+	if (
+		event.stallClass === 'no-outbound' ||
+		event.stallClass === 'outbound-stalled'
+	) {
+		lifecycle.fail(`WebRTC application lane ${event.stallClass}.`);
+		return;
+	}
+	if (
+		event.channel !== undefined &&
+		REQUIRED_LANES.has(event.channel) &&
+		(event.channelState === 'closed' ||
+			event.channelState === 'closing' ||
+			event.channelState === 'failed')
+	) {
+		lifecycle.fail(`WebRTC ${event.channel} lane ${event.channelState}.`);
+	}
 }
 
 export type HostedPeerLifecycleHooks = Readonly<{
@@ -268,7 +319,9 @@ export function hostedPeerConfiguration(
 	iceServers?: readonly HostedIceServer[],
 ): Record<string, unknown> {
 	const loopback =
-		connectHost === '127.0.0.1' || connectHost === 'localhost' || connectHost === '::1';
+		connectHost === '127.0.0.1' ||
+		connectHost === 'localhost' ||
+		connectHost === '::1';
 	return {
 		iceServers: [...resolveHostedIceServers(iceServers)],
 		maxMessageSize: 1024 * 1024,

@@ -585,9 +585,11 @@ credentials are a separate IndexedDB vault, not profile fields.
   the new client, subscriptions, workspace, and mounted terminal attachments
   have hydrated successfully.
 - A framed `app.terminay.com` session that has painted workspace chrome is
-  not treated as connected unless live application events still arrive. Resume
-  from background uses the session origin's reconnect operation, not a second
-  unmanaged signaling join.
+  not treated as connected unless live application events still arrive. Later
+  PTY, new projects, and new terminals are those events. Resume from
+  background uses the session origin's reconnect operation, not a second
+  unmanaged signaling join. While recovery runs, connection chrome shows
+  reconnecting and input stays disabled.
 - Missing or revoked device identity requests a fresh pairing URL.
 - Forget and revoke require confirmation explaining their different scopes.
 - Closing/reloading the host preserves server-side sessions.
