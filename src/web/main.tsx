@@ -22,6 +22,7 @@ import {
 	type DesktopHostBridge,
 } from './desktopByteTransport';
 import {
+	createSessionSilenceWatch,
 	type SessionConnectAttempt,
 	SessionConnectGate,
 } from './sessionConnectAttempt';
@@ -39,8 +40,62 @@ type ConnectedSession = Readonly<{
 	serverId: string;
 }>;
 
-function TerminayMark({ className }: Readonly<{ className: string }>): React.JSX.Element {
-	return <img alt="" aria-hidden="true" className={className} src="./terminay.svg" />;
+function TerminayMark({
+	className,
+}: Readonly<{ className: string }>): React.JSX.Element {
+	return (
+		<img alt="" aria-hidden="true" className={className} src="./terminay.svg" />
+	);
+}
+
+function LoadingDots(): React.JSX.Element {
+	return (
+		<div className="browser-host-shell__loading-dots" aria-hidden="true">
+			{Array.from({ length: 5 }, (_, index) => (
+				<span key={index} />
+			))}
+		</div>
+	);
+}
+
+function tapSessionTransport(
+	transport: ByteTransport,
+	watch: Readonly<{ noteInbound(): void; noteOutbound(): void }>,
+): ByteTransport {
+	return {
+		get state() {
+			return transport.state;
+		},
+		get queuedBytes() {
+			return transport.queuedBytes;
+		},
+		get bufferedBytes() {
+			return transport.bufferedBytes;
+		},
+		incoming: {
+			[Symbol.asyncIterator]: () => {
+				const iterator = transport.incoming[Symbol.asyncIterator]();
+				return {
+					next: async () => {
+						const result = await iterator.next();
+						if (!result.done) watch.noteInbound();
+						return result;
+					},
+					return: iterator.return?.bind(iterator),
+					throw: iterator.throw?.bind(iterator),
+				};
+			},
+		},
+		open: (signal) => transport.open(signal),
+		send: async (frame, options) => {
+			await transport.send(frame, options);
+			watch.noteOutbound();
+		},
+		waitForWritable: (bytes, signal) =>
+			transport.waitForWritable(bytes, signal),
+		close: (reason, options) => transport.close(reason, options),
+		onStateChange: (listener) => transport.onStateChange(listener),
+	};
 }
 
 class WorkspaceErrorBoundary extends Component<
@@ -96,10 +151,14 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 	const startAttemptRef = useRef<
 		(options?: Readonly<{ replaceDesktopEndpoint?: boolean }>) => void
 	>(() => undefined);
+	const connectionRef = useRef<ConnectedSession | undefined>(undefined);
+	const silenceWatchRef = useRef<{ stop(): void } | undefined>(undefined);
 	const [connection, setConnection] = useState<ConnectedSession>();
 	const [desktopContext, setDesktopContext] = useState<TerminayHostContext>();
 	const [error, setError] = useState<string>();
-	const [phase, setPhase] = useState<'connecting' | 'ready'>('connecting');
+	const [phase, setPhase] = useState<'connecting' | 'reconnecting' | 'ready'>(
+		'connecting',
+	);
 
 	const recoverConnection = useCallback(() => {
 		startAttemptRef.current({ replaceDesktopEndpoint: true });
@@ -111,8 +170,9 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 			options: Readonly<{ replaceDesktopEndpoint?: boolean }> = {},
 		) => {
 			setError(undefined);
-			setPhase('connecting');
+			if (connectionRef.current === undefined) setPhase('connecting');
 			await clientRef.current?.close().catch(() => undefined);
+			silenceWatchRef.current?.stop();
 
 			const sessionHost = getSessionTransportHost();
 			let transport: ByteTransport;
@@ -155,6 +215,16 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 				throw new Error('Session transport closed during connect.');
 			}
 
+			const watch = createSessionSilenceWatch({
+				onSilence: (stallClass) => {
+					if (gateRef.current.shouldRecoverFromSilence(attempt, stallClass)) {
+						recoverConnection();
+					}
+				},
+			});
+			silenceWatchRef.current = watch;
+			transport = tapSessionTransport(transport, watch);
+
 			const client = new TerminayClient({
 				transport,
 				clientId: createWebClientId('session'),
@@ -192,19 +262,19 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 					return;
 				}
 				gateRef.current.finish(attempt);
-				setConnection(
-					Object.freeze({
-						context: Object.freeze({
-							...context,
-							connectionLabel: label,
-							retryConnection: () => recoverConnection(),
-							canRetryConnection: () => true,
-						}),
-						label,
-						...(origin === undefined ? {} : { origin }),
-						serverId: hello.serverId,
+				const next = Object.freeze({
+					context: Object.freeze({
+						...context,
+						connectionLabel: label,
+						retryConnection: () => recoverConnection(),
+						canRetryConnection: () => true,
 					}),
-				);
+					label,
+					...(origin === undefined ? {} : { origin }),
+					serverId: hello.serverId,
+				});
+				connectionRef.current = next;
+				setConnection(next);
 				setPhase('ready');
 			} catch (cause) {
 				await client.close().catch(() => undefined);
@@ -218,13 +288,20 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 	startAttemptRef.current = (options) => {
 		const attempt = gateRef.current.begin();
 		if (attempt === undefined) return;
-		setConnection(undefined);
+		const recovering = connectionRef.current !== undefined;
 		setError(undefined);
-		setPhase('connecting');
+		if (recovering) {
+			setPhase('reconnecting');
+		} else {
+			connectionRef.current = undefined;
+			setConnection(undefined);
+			setPhase('connecting');
+		}
 		void gateRef.current
 			.withDeadline(attempt, connectRef.current(attempt, options))
 			.catch((cause) => {
 				if (!gateRef.current.isCurrent(attempt)) return;
+				connectionRef.current = undefined;
 				setConnection(undefined);
 				setError(
 					cause instanceof Error ? cause.message : 'Unable to reconnect.',
@@ -239,6 +316,7 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 	useEffect(() => {
 		startAttemptRef.current();
 		return () => {
+			silenceWatchRef.current?.stop();
 			void clientRef.current?.close().catch(() => undefined);
 		};
 	}, []);
@@ -251,11 +329,11 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 			label: connection.label,
 			origin: connection.origin,
 			serverId: connection.serverId,
-			status: 'connected',
+			status: phase === 'reconnecting' ? 'connecting' : 'connected',
 		});
 		store.select('session-origin');
 		return store;
-	}, [connection]);
+	}, [connection, phase]);
 
 	if (connection !== undefined) {
 		const connectionRoute: Omit<SharedConnectionsRouteBodyProps, 'state'> = {
@@ -274,27 +352,46 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 		};
 		return (
 			<WorkspaceErrorBoundary>
-				<ConnectedWebRendererWorkspace
-					connectionRoute={connectionRoute}
-					hostContext={desktopContext}
-					onBack={() => {
-						if (leaveManagerSession()) return;
-						void clientRef.current?.close().catch(() => undefined);
-					}}
-					subscribeAppCommands={
-						desktopContext === undefined || window.terminayHost === undefined
-							? undefined
-							: (listener: (command: AppCommand) => Promise<void> | void) =>
-									(
-										window.terminayHost as unknown as DesktopHostBridge
-									).subscribeEvent((event) => {
-										if (event.event.type === 'menu.command') {
-											return listener(event.event.command);
-										}
-									})
+				<div
+					className={
+						phase === 'reconnecting'
+							? 'session-workspace session-workspace--reconnecting'
+							: 'session-workspace'
 					}
-					terminalClientContext={connection.context}
-				/>
+				>
+					{phase === 'reconnecting' && (
+						<div
+							className="session-workspace__reconnecting"
+							role="status"
+							aria-live="polite"
+							aria-busy="true"
+						>
+							<LoadingDots />
+							<p>Reconnecting…</p>
+						</div>
+					)}
+					<ConnectedWebRendererWorkspace
+						connectionRoute={connectionRoute}
+						hostContext={desktopContext}
+						onBack={() => {
+							if (leaveManagerSession()) return;
+							void clientRef.current?.close().catch(() => undefined);
+						}}
+						subscribeAppCommands={
+							desktopContext === undefined || window.terminayHost === undefined
+								? undefined
+								: (listener: (command: AppCommand) => Promise<void> | void) =>
+										(
+											window.terminayHost as unknown as DesktopHostBridge
+										).subscribeEvent((event) => {
+											if (event.event.type === 'menu.command') {
+												return listener(event.event.command);
+											}
+										})
+						}
+						terminalClientContext={connection.context}
+					/>
+				</div>
 			</WorkspaceErrorBoundary>
 		);
 	}
@@ -308,28 +405,21 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 			<section
 				className="browser-host-shell__panel browser-host-shell__connection-state"
 				aria-live="polite"
-				aria-busy={phase === 'connecting'}
+				aria-busy={phase === 'connecting' || phase === 'reconnecting'}
 			>
-				{phase === 'connecting' && (
+				{(phase === 'connecting' || phase === 'reconnecting') && (
 					<div className="browser-host-shell__connection-brand">
-						<TerminayMark
-							className="browser-host-shell__connection-logo"
-						/>
-						<div
-							className="browser-host-shell__loading-dots"
-							aria-hidden="true"
-						>
-							{Array.from({ length: 5 }, (_, index) => (
-								<span key={index} />
-							))}
-						</div>
+						<TerminayMark className="browser-host-shell__connection-logo" />
+						<LoadingDots />
 					</div>
 				)}
 				{(phase !== 'connecting' || showConnectingMessage) && (
 					<h1>
 						{phase === 'connecting'
 							? 'Connecting to Terminay…'
-							: 'Connection unavailable'}
+							: phase === 'reconnecting'
+								? 'Reconnecting…'
+								: 'Connection unavailable'}
 					</h1>
 				)}
 				{error !== undefined && <p role="alert">{error}</p>}

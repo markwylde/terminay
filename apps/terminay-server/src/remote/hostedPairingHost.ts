@@ -29,19 +29,21 @@ import {
 import type { ServerPairingHandoff, ServerRemoteExposure } from './serverExposure.js';
 import { bindUiArchiveChannels, safeChannelSend } from './uiArchiveTransfer.js';
 import {
+	applyHostedLaneDiagnostic,
 	createHandshakeJoinQueue,
-	hostedPeerConfiguration,
-	HostedPeerLifecycle,
-	resolveIceRecoveryGraceMs,
 	type HostedIceServer,
+	HostedPeerLifecycle,
+	hostedPeerConfiguration,
+	resolveIceRecoveryGraceMs,
 } from './hostedPeerLifecycle.js';
 import { createHostedStreamDiagnostics, frameByteLength } from './hostedStreamDiagnostics.js';
 
 export {
+	applyHostedLaneDiagnostic,
+	createHandshakeJoinQueue,
 	DEFAULT_HOSTED_ICE_SERVERS,
 	DEFAULT_ICE_RECOVERY_GRACE_MS,
 	HostedPeerLifecycle,
-	createHandshakeJoinQueue,
 	hostedPeerConfiguration,
 	parseHostedIceServers,
 	resolveHostedIceServers,
@@ -731,10 +733,14 @@ async function startPeer(
 		),
 	);
 	const session: { connection?: ServerConnectionLike; peer?: HostedConnectedPeer } = {};
+	let lifecycle: HostedPeerLifecycle;
 	const stream = createHostedStreamDiagnostics({
-		emit: (event) => context.options.onDiagnostic?.(event),
+		emit: (event) => {
+			context.options.onDiagnostic?.(event);
+			applyHostedLaneDiagnostic(lifecycle, event);
+		},
 	});
-	const lifecycle = new HostedPeerLifecycle(
+	lifecycle = new HostedPeerLifecycle(
 		native,
 		resolveIceRecoveryGraceMs(context.options.iceRecoveryGraceMs),
 		(reason) => {
@@ -768,7 +774,13 @@ async function startPeer(
 	});
 	for (const label of CHANNELS) {
 		const channel = channels[label]!;
-		const emitState = () => stream.channelState(label, channel.readyState);
+		const emitState = () => {
+			stream.channelState(label, channel.readyState);
+			applyHostedLaneDiagnostic(lifecycle, {
+				channel: label,
+				channelState: channel.readyState,
+			});
+		};
 		channel.addEventListener('open', emitState);
 		channel.addEventListener('close', emitState);
 		channel.addEventListener('error', emitState);

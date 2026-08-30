@@ -46,6 +46,16 @@ export class SessionConnectGate {
 		return this.isCurrent(attempt) && this.inFlightGeneration === undefined;
 	}
 
+	shouldRecoverFromSilence(
+		attempt: SessionConnectAttempt,
+		stallClass?: 'inbound-stalled' | 'no-inbound',
+	): boolean {
+		if (stallClass !== 'inbound-stalled' && stallClass !== 'no-inbound') {
+			return false;
+		}
+		return this.shouldRecoverFromClose(attempt);
+	}
+
 	finish(attempt: SessionConnectAttempt): void {
 		if (this.inFlightGeneration === attempt.generation) {
 			this.inFlightGeneration = undefined;
@@ -57,20 +67,21 @@ export class SessionConnectGate {
 		operation: Promise<Value>,
 		clock: SessionConnectClock = defaultClock,
 	): Promise<Value> {
-		const timeoutMs = positiveDelay(clock.attemptTimeoutMs, DEFAULT_ATTEMPT_TIMEOUT_MS);
+		const timeoutMs = positiveDelay(
+			clock.attemptTimeoutMs,
+			DEFAULT_ATTEMPT_TIMEOUT_MS,
+		);
 		return new Promise<Value>((resolve, reject) => {
 			const timer = clock.setTimeout(() => {
-				reject(
-					new Error(
-						`Session connect timed out after ${timeoutMs}ms.`,
-					),
-				);
+				reject(new Error(`Session connect timed out after ${timeoutMs}ms.`));
 			}, timeoutMs);
 			operation.then(
 				(value) => {
 					clock.clearTimeout(timer);
 					if (!this.isCurrent(attempt)) {
-						reject(new Error('Session connect belongs to a retired generation.'));
+						reject(
+							new Error('Session connect belongs to a retired generation.'),
+						);
 						return;
 					}
 					resolve(value);
@@ -82,6 +93,110 @@ export class SessionConnectGate {
 			);
 		});
 	}
+}
+
+export const SESSION_APPLICATION_STALL_MS = 3_000;
+
+export type SessionApplicationStallClass = 'inbound-stalled' | 'no-inbound';
+
+export function classifySessionApplicationSilence(
+	input: Readonly<{
+		inboundFrames: number;
+		outboundFrames: number;
+		lastInboundAt: number | null;
+		lastOutboundAt: number | null;
+		now: number;
+		stallMs?: number;
+	}>,
+): SessionApplicationStallClass | undefined {
+	const stallMs = input.stallMs ?? SESSION_APPLICATION_STALL_MS;
+	if (input.outboundFrames < 1) return undefined;
+	if (input.inboundFrames < 1) {
+		if (
+			input.lastOutboundAt === null ||
+			input.now - input.lastOutboundAt < stallMs
+		) {
+			return undefined;
+		}
+		return 'no-inbound';
+	}
+	if (input.lastInboundAt === null || input.lastOutboundAt === null)
+		return undefined;
+	if (input.now - input.lastInboundAt < stallMs) return undefined;
+	if (input.lastOutboundAt <= input.lastInboundAt) return undefined;
+	return 'inbound-stalled';
+}
+
+export function createSessionSilenceWatch(
+	options: Readonly<{
+		onSilence: (stallClass: SessionApplicationStallClass) => void;
+		now?: () => number;
+		setTimeout?: (callback: () => void, delayMs: number) => unknown;
+		clearTimeout?: (handle: unknown) => void;
+		stallMs?: number;
+	}>,
+): Readonly<{
+	noteInbound(): void;
+	noteOutbound(): void;
+	stop(): void;
+}> {
+	const now = options.now ?? Date.now;
+	const stallMs = options.stallMs ?? SESSION_APPLICATION_STALL_MS;
+	const setTimer =
+		options.setTimeout ??
+		((callback, delayMs) => globalThis.setTimeout(callback, delayMs));
+	const clearTimer =
+		options.clearTimeout ??
+		((handle) => globalThis.clearTimeout(handle as number));
+	let inboundFrames = 0;
+	let outboundFrames = 0;
+	let lastInboundAt: number | null = null;
+	let lastOutboundAt: number | null = null;
+	let timer: unknown;
+	let stopped = false;
+	let notified = false;
+
+	const check = (): void => {
+		if (stopped || notified) return;
+		const stallClass = classifySessionApplicationSilence({
+			inboundFrames,
+			outboundFrames,
+			lastInboundAt,
+			lastOutboundAt,
+			now: now(),
+			stallMs,
+		});
+		if (stallClass === undefined) return;
+		notified = true;
+		options.onSilence(stallClass);
+	};
+
+	const arm = (): void => {
+		if (stopped || notified) return;
+		if (timer !== undefined) clearTimer(timer);
+		timer = setTimer(check, stallMs);
+	};
+
+	return {
+		noteInbound() {
+			if (stopped || notified) return;
+			inboundFrames += 1;
+			lastInboundAt = now();
+			arm();
+		},
+		noteOutbound() {
+			if (stopped || notified) return;
+			outboundFrames += 1;
+			lastOutboundAt = now();
+			arm();
+		},
+		stop() {
+			if (stopped) return;
+			stopped = true;
+			if (timer !== undefined) clearTimer(timer);
+			timer = undefined;
+		},
+	};
 }
 
 function positiveDelay(value: number | undefined, fallback: number): number {
