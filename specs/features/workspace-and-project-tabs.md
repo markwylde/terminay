@@ -95,9 +95,9 @@ identity. Project-sidebar sizing and title-visibility behavior is governed by
   working directory, including terminals on SSH/Puzed environments. Closing the
   final panel closes the project; closing the first project does not
   unexpectedly quit the app.
-- New terminals open in the active project. Tabs can split the active layout
-  horizontally or vertically, be reordered, moved to another project, or moved
-  into another workspace view.
+- New terminals open in the active project of that presentation. Tabs can split
+  the active layout horizontally or vertically, be reordered, moved to another
+  project, or moved into another workspace view.
 - Dropping a terminal, file, or folder tab at a new position commits that panel
   order to canonical workspace state in both desktop and web clients; a later
   workspace refresh or reconnect preserves the dropped order.
@@ -166,13 +166,18 @@ identity. Project-sidebar sizing and title-visibility behavior is governed by
 ## Boundaries and persistence
 
 Project identity, immutable environment binding, layout, panel membership,
-project-local sidebar layout, and logical workspace views are canonical server state under
-[server-owned workspace state](./server-owned-workspace-state.md). Desktop
-windows and browser views retain their own per-project sidebar visibility. A project is a
-navigation and authorization boundary, while the immutable server terminal
-session id remains the identity used by services. Remote and MCP scopes derive
-from authenticated server/project/session identities, never from tab labels or
-client focus.
+project-local sidebar layout, and logical workspace views are canonical server
+state under
+[server-owned workspace state](./server-owned-workspace-state.md). The ordered
+project list in a view and the ordered panels in a project are broadcast to
+every connected presentation. Which project tab is active, and which terminal
+or panel is active inside that project, is local to that presentation: a
+desktop window and a web client on the same server can show different active
+tabs. Desktop windows and browser views also retain their own per-project
+sidebar visibility. A project is a navigation and authorization boundary, while
+the immutable server terminal session id remains the identity used by services.
+Remote and MCP scopes derive from authenticated server/project/session
+identities, never from tab labels or client focus.
 
 ## Acceptance outcomes
 
@@ -180,7 +185,8 @@ client focus.
   state changes. Reloading restores the current device's sidebar visibility and
   selected sidebar group for each project; reconnecting restores each project's
   pane order, dimensions, collapse choices, and supported pane navigation state
-  without changing a different device's visibility or selected group.
+  without changing a different device's visibility, selected group, or active
+  project tab.
 - Resizing a project sidebar previews locally and commits once when the
   interaction finishes. The sidebar tab bar switches Explorer, Documentation,
   and Agents. Every visible pane title in the active group remains on-screen,
@@ -213,6 +219,11 @@ client focus.
   secondary to the active chip.
 - Reconnecting from a fresh client restores project and panel identity from
   server state without recreating live terminals.
+- Two connected presentations of the same server keep independent active
+  project tabs and independent active terminals. Creating, reordering, or
+  closing a project still appears in every client's list; activating a tab on
+  one client does not change another client's selection. When a locally
+  selected project or panel disappears, that presentation falls back locally.
 - Sequentially closing every canonical terminal while another local panel stays
   visible removes each terminal exactly once and leaves workspace reconciliation
   current; the final removal cannot strand an exited terminal presentation.

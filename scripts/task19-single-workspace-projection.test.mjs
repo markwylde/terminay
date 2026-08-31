@@ -10,7 +10,7 @@ test('Task 19 shared workspace selection uses only the connection-owned snapshot
 	])
 
 	assert.match(controller, /useWorkspaceSelectionController\(workspaceSnapshotStore: WorkspaceSnapshotStore\)/u)
-	assert.match(controller, /workspaceSnapshotStore\.activatePanel\(/u)
+	assert.doesNotMatch(controller, /workspaceSnapshotStore\.activatePanel\(/u)
 	assert.doesNotMatch(controller, /new WorkspaceClient\(/u)
 	assert.doesNotMatch(controller, /workspace\.snapshot\(/u)
 	assert.doesNotMatch(controller, /window\.setInterval/u)
