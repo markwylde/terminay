@@ -36,9 +36,33 @@ export const WERIFT_LICENSE_SHA256 =
   'b83683f3f71b5971e6c2e33a8b894a49d752fd24c11b8ae08b53ca20f594fca5'
 export const WERIFT_TURN_REFRESH_PATCH_SHA256 =
   '34ea60bd991256adb2cd50bfe0ef9011cfc79054aff686b9ec35ef4703de4211'
-const WERIFT_TURN_REFRESH_PATCH = fileURLToPath(
-  new URL('./patches/werift-0.24.1-abort-turn-refresh.patch', import.meta.url),
-)
+export const WERIFT_ZERO_WINDOW_PROBE_PATCH_SHA256 =
+  '298aa1ebb0f0eb45c673dd24907e7e8110bfef499524993d8203fd74ecaa6b2b'
+
+/**
+ * Governed patches, applied in this exact order. Each is pinned by hash and
+ * attested in provenance; the order matters because later hunks are located
+ * against the output of the earlier ones.
+ */
+export const WERIFT_PATCHES = Object.freeze([
+  Object.freeze({
+    path: 'scripts/patches/werift-0.24.1-abort-turn-refresh.patch',
+    sha256: WERIFT_TURN_REFRESH_PATCH_SHA256,
+    purpose: 'Abort the pending TURN allocation refresh timer during peer close.',
+    name: 'Terminay abortable TURN refresh patch',
+  }),
+  Object.freeze({
+    path: 'scripts/patches/werift-0.24.1-sctp-zero-window-probe.patch',
+    sha256: WERIFT_ZERO_WINDOW_PROBE_PATCH_SHA256,
+    purpose:
+      'Probe a zero receive window and serialize data-channel flush so outbound delivery cannot deadlock.',
+    name: 'Terminay SCTP zero-window probe patch',
+  }),
+])
+
+function patchFile(patch) {
+  return fileURLToPath(new URL(`../${patch.path}`, import.meta.url))
+}
 
 export const DIRECT_RUNTIME_DEPENDENCIES = {
   '@fidm/x509': '1.2.1',
@@ -375,11 +399,11 @@ function createDeterministicProvenance(subjects) {
             name: 'werift source correspondence',
             uri: `git+https://github.com/shinyoshiaki/werift-webrtc@${WERIFT_GIT_HEAD}`,
           },
-          {
-            digest: { sha256: WERIFT_TURN_REFRESH_PATCH_SHA256 },
-            name: 'Terminay abortable TURN refresh patch',
-            uri: 'terminay:scripts/patches/werift-0.24.1-abort-turn-refresh.patch',
-          },
+          ...WERIFT_PATCHES.map((patch) => ({
+            digest: { sha256: patch.sha256 },
+            name: patch.name,
+            uri: `terminay:${patch.path}`,
+          })),
           ...Object.entries(RETAINED_RUNTIME_PACKAGES)
             .sort(([left], [right]) => left.localeCompare(right))
             .map(([installPath, [version, integrity]]) => ({
@@ -556,18 +580,18 @@ export async function buildSecureWeriftCandidate(workRoot, { sourceMirror } = {}
   const extracted = await run('tar', ['-xzf', tarballPath, '-C', upstreamRoot])
   assert.equal(extracted.signal, null)
   assert.equal(extracted.code, 0, extracted.stderr || extracted.stdout)
-  const patchBytes = await readFile(WERIFT_TURN_REFRESH_PATCH)
-  assert.equal(
-    createHash('sha256').update(patchBytes).digest('hex'),
-    WERIFT_TURN_REFRESH_PATCH_SHA256,
-  )
-  const patched = await run(
-    'patch',
-    ['--batch', '--forward', '--fuzz=0', '-p1', '--input', WERIFT_TURN_REFRESH_PATCH],
-    { cwd: path.join(upstreamRoot, 'package') },
-  )
-  assert.equal(patched.signal, null)
-  assert.equal(patched.code, 0, patched.stderr || patched.stdout)
+  for (const patch of WERIFT_PATCHES) {
+    const patchPath = patchFile(patch)
+    const patchBytes = await readFile(patchPath)
+    assert.equal(createHash('sha256').update(patchBytes).digest('hex'), patch.sha256)
+    const patched = await run(
+      'patch',
+      ['--batch', '--forward', '--fuzz=0', '-p1', '--input', patchPath],
+      { cwd: path.join(upstreamRoot, 'package') },
+    )
+    assert.equal(patched.signal, null)
+    assert.equal(patched.code, 0, patched.stderr || patched.stdout)
+  }
 
   const upstreamLicense = mirror
     ? mirror.license
@@ -687,11 +711,11 @@ export async function buildSecureWeriftCandidate(workRoot, { sourceMirror } = {}
         npmPackage: `werift@${WERIFT_VERSION}`,
         tarballSha512: WERIFT_TARBALL_SHA512,
       },
-      patches: [{
-        path: 'scripts/patches/werift-0.24.1-abort-turn-refresh.patch',
-        sha256: WERIFT_TURN_REFRESH_PATCH_SHA256,
-        purpose: 'Abort the pending TURN allocation refresh timer during peer close.',
-      }],
+      patches: WERIFT_PATCHES.map((patch) => ({
+        path: patch.path,
+        sha256: patch.sha256,
+        purpose: patch.purpose,
+      })),
     }, null, 2)}\n`,
   )
   await writeFile(
