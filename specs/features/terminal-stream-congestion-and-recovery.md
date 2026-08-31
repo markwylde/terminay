@@ -203,9 +203,8 @@ endpoint.
   generation. Peer `disconnected`, or ICE `disconnected` while the peer is
   also not `connected`, either resumes delivery inside grace or replaces once.
   The mounted workspace does not stay on a painted checkpoint with no later
-  PTY bytes when the application reader has actually ended, a required lane
-  has closed, or the application lane has stalled. Connection chrome shows
-  reconnecting until the replacement hydrates.
+  PTY bytes when the application reader has actually ended or a required lane
+  has closed. Application-lane stall is logged and does not hang up the peer.
 - Application-lane `Blob` frames are decoded in order or fail that generation.
   Chromium loopback happy-path evidence is not sufficient; tests inject ICE
   disconnect and non-`ArrayBuffer` binary delivery.
