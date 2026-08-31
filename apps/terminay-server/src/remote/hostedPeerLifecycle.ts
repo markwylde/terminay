@@ -208,6 +208,9 @@ export function requiredLaneClosed(
 export type HostedLivePeer = Readonly<{
 	peer: { close(): void };
 	connection?: { close(): Promise<void> | void };
+	/** Reported to the host when this peer is retired, so a replaced connection
+	 * leaves the live list without depending on a native close event firing. */
+	connectionId?: string;
 }>;
 
 /**
