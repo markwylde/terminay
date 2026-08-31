@@ -58,6 +58,23 @@ const settle = async (turns = 25) => {
   for (let index = 0; index < turns; index += 1) await new Promise((resolve) => setTimeout(resolve, 0));
 };
 
+/**
+ * Wait for a condition instead of for a fixed number of event-loop turns.
+ *
+ * Recovery crosses real timers - a fresh presentation waits for the checkpoint
+ * drain within a deadline - so counting turns measures how loaded the machine
+ * is rather than whether the terminal recovered. Returns false on timeout so
+ * the caller can assert with a useful message.
+ */
+const waitUntil = async (predicate, timeoutMs = 15_000) => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  return predicate();
+};
+
 async function harness() {
   const pty = createPtyFactory();
   const checkpoints = new TerminalPresentationCheckpointAuthority();
@@ -121,6 +138,7 @@ test("a congested terminal streams again once the client re-attaches", async () 
 
     const rendered = [];
     let skips = 0;
+    let recovered = false;
     // A renderer acknowledges what it has painted. `stalled` models the moment
     // it stops painting - hydrating a checkpoint, a hidden tab, a slow frame.
     let stalled = false;
@@ -141,7 +159,10 @@ test("a congested terminal streams again once the client re-attaches", async () 
               fromPosition: 0,
               freshPresentation: true,
             }).catch(() => undefined);
-            if (replacement !== undefined) observe(replacement);
+            if (replacement !== undefined) {
+              observe(replacement);
+              recovered = true;
+            }
           })();
         }
       });
@@ -149,8 +170,11 @@ test("a congested terminal streams again once the client re-attaches", async () 
     observe(attachment);
 
     h.pty.processes[0].emitData("BEFORE\n");
-    await settle();
-    assert.equal(rendered.join("").includes("BEFORE"), true, "the attachment streams before congestion");
+    assert.equal(
+      await waitUntil(() => rendered.join("").includes("BEFORE")),
+      true,
+      "the attachment streams before congestion",
+    );
 
     // Push past the unconfirmed budget without acknowledging, exactly as a
     // renderer that has briefly stopped rendering does.
@@ -158,24 +182,102 @@ test("a congested terminal streams again once the client re-attaches", async () 
     stalled = true;
     // Past the 256 KiB unconfirmed-bytes bound the pump enforces by default.
     for (let index = 0; index < 400; index += 1) h.pty.processes[0].emitData("x".repeat(1024));
-    await settle(120);
-
-    assert.equal(h.congestion.length > 0, true, "the lane congests once the unconfirmed budget is exceeded");
+    assert.equal(
+      await waitUntil(() => h.congestion.length > 0),
+      true,
+      "the lane congests once the unconfirmed budget is exceeded",
+    );
 
     // The renderer catches up and acknowledges everything it has, which is all
     // a real client can do once no further output arrives.
     stalled = false;
-    await settle(60);
+    // Recovery is asynchronous: the skip only starts it, and the replacement
+    // attach waits for the checkpoint drain within a deadline. Wait for the
+    // replacement to be in place, or this asserts against the gap in between.
+    assert.equal(await waitUntil(() => recovered), true, "the client re-attaches after congestion");
 
     h.pty.processes[0].emitData("AFTER-CONGESTION\n");
-    await settle(60);
 
     assert.equal(
-      rendered.join("").includes("AFTER-CONGESTION"),
+      await waitUntil(() => rendered.join("").includes("AFTER-CONGESTION")),
       true,
       `a congested attachment must stream again; it stayed muted (skips=${skips}, frames=${rendered.length}, before=${before})`,
     );
   } finally {
+    await h.client.close().catch(() => undefined);
+    await h.task;
+    await h.service.shutdown();
+  }
+});
+
+/**
+ * The real workload: a terminal that never falls silent.
+ *
+ * Recovery has to complete while the producer is still writing. Every attempt
+ * hydrates from a checkpoint that the PTY has already moved past, so if
+ * catching up were unbounded - or if a hydration boundary counted as a reason
+ * to hydrate again - the terminal would chase the head forever and never paint
+ * another byte. It must converge instead.
+ */
+test("a terminal that never stops producing still converges after congestion", async () => {
+  const h = await harness();
+  let ticker;
+  try {
+    const attachment = await h.terminal.attach({
+      ...h.identity,
+      clientId: "device-web",
+      fromPosition: 0,
+    });
+
+    const rendered = [];
+    let stalled = false;
+    let recoveries = 0;
+    const observe = (target) => {
+      target.onEvent((event) => {
+        if (event.type === "output") {
+          rendered.push(new TextDecoder().decode(event.bytes));
+          if (!stalled) void target.ack(event.nextPosition).catch(() => undefined);
+        }
+        // A hydration boundary is not a reason to hydrate again; only a live
+        // display that fell behind recovers.
+        if (event.type === "skip" && event.reason !== "hydration") {
+          recoveries += 1;
+          if (recoveries > 25) return;
+          void h.terminal
+            .attach({ ...h.identity, clientId: "device-web", fromPosition: 0, freshPresentation: true })
+            .then((replacement) => { if (replacement !== undefined) observe(replacement); })
+            .catch(() => undefined);
+        }
+      });
+    };
+    observe(attachment);
+
+    ticker = setInterval(() => h.pty.processes[0].emitData("y".repeat(4096)), 2);
+
+    stalled = true;
+    assert.equal(await waitUntil(() => h.congestion.length > 0), true, "the lane congests");
+    stalled = false;
+    assert.equal(await waitUntil(() => recoveries > 0), true, "the client begins recovering");
+
+    // Keep producing right through recovery, which is when a checkpoint chase
+    // would show up as a terminal that never catches its own tail. Waiting for
+    // repeated recoveries exercises that far more reliably than sleeping for a
+    // fixed period does on a loaded machine.
+    await waitUntil(() => recoveries >= 3, 5_000);
+
+    clearInterval(ticker);
+    ticker = undefined;
+    await settle(20);
+    h.pty.processes[0].emitData("CONVERGED\n");
+
+    assert.equal(
+      await waitUntil(() => rendered.join("").includes("CONVERGED")),
+      true,
+      `a continuously producing terminal must converge (recoveries=${recoveries})`,
+    );
+    assert.equal(recoveries < 25, true, `recovery must be bounded (recoveries=${recoveries})`);
+  } finally {
+    if (ticker !== undefined) clearInterval(ticker);
     await h.client.close().catch(() => undefined);
     await h.task;
     await h.service.shutdown();
