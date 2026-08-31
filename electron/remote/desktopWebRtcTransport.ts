@@ -7,14 +7,34 @@ import {
 } from '@terminay/server-core/remote'
 import {
   createNodeDataChannelRuntimeAdapter,
-  loadNodeDataChannelRuntimeModule,
   type NodeDataChannelRuntimeModule,
 } from '../../apps/terminay-server/src/remote/nodeDataChannelRuntime'
+import { createSecureWeriftCompatibilityModule } from '../../apps/terminay-server/src/remote/secureWeriftPeer'
+import { loadSelectedSecureWeriftRuntime } from '../../apps/terminay-server/src/remote/secureWeriftRuntime'
 import {
   createNodeDataChannelOpenChannels,
   type NodeDataChannelSignaling,
 } from '../../apps/terminay-server/src/remote/nodeDataChannelPeer'
 import type { DesktopArchiveAssetLane, DesktopAuthenticatedAssetLane } from '../../apps/terminay-desktop/src/main/serverBundleHost'
+
+/**
+ * Load the one selected WebRTC runtime and present it through the hardened
+ * peer boundary. Verification of the artifact happens before any executable
+ * code is imported; an unavailable runtime fails with an actionable error
+ * rather than silently leaving Desktop unable to connect outward.
+ */
+async function loadSelectedWeriftModule(
+  runtimeRoot: string | undefined,
+): Promise<NodeDataChannelRuntimeModule> {
+  if (runtimeRoot === undefined) {
+    throw new Error(
+      'The selected WebRTC runtime directory is unavailable, so Desktop cannot open a remote connection. Package the runtime, or set TERMINAY_WEBRTC_RUNTIME_ROOT in development.',
+    )
+  }
+  return createSecureWeriftCompatibilityModule(
+    await loadSelectedSecureWeriftRuntime(runtimeRoot),
+  )
+}
 
 const textEncoder = new TextEncoder()
 const textDecoder = new TextDecoder('utf-8', { fatal: true })
@@ -46,6 +66,7 @@ export async function createDesktopWebRtcTransport(options: Readonly<{
   readonly iceServers?: readonly Record<string, unknown>[]
   readonly signal?: AbortSignal
   readonly loadModule?: () => Promise<NodeDataChannelRuntimeModule>
+  readonly webrtcRuntimeRoot?: string
   readonly timeoutMs?: number
   /** Bounded framed-transport limits, primarily host policy and test seams. */
   readonly transportOptions?: HeadlessChannelTransportOptions
@@ -71,6 +92,8 @@ export async function createDesktopWebRtcConnection(options: Readonly<{
   readonly iceServers?: readonly Record<string, unknown>[]
   readonly signal?: AbortSignal
   readonly loadModule?: () => Promise<NodeDataChannelRuntimeModule>
+  /** Packaged directory holding the selected WebRTC runtime and its manifest. */
+  readonly webrtcRuntimeRoot?: string
   readonly timeoutMs?: number
   readonly transportOptions?: HeadlessChannelTransportOptions
 }>): Promise<DesktopWebRtcConnection> {
@@ -81,7 +104,12 @@ export async function createDesktopWebRtcConnection(options: Readonly<{
 
   try {
     const runtime = createNodeDataChannelRuntimeAdapter({
-      loadModule: options.loadModule ?? (() => loadNodeDataChannelRuntimeModule()),
+      // The selected, integrity-verified Secure-Werift artifact is the only
+      // production WebRTC runtime. Defaulting to `node-datachannel` here meant
+      // Desktop's outbound client tried to import a package this repository
+      // does not depend on, so it could never establish a runtime at all.
+      runtime: 'werift',
+      loadModule: options.loadModule ?? (() => loadSelectedWeriftModule(options.webrtcRuntimeRoot)),
       openChannels: createNodeDataChannelOpenChannels({
         signaling: options.signaling,
         role: 'offerer',

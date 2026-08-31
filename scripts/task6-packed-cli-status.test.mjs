@@ -122,7 +122,6 @@ test('the extracted standalone artifact executes its redacted status command wit
 			roomId: null,
 			expiresAt: null,
 			connectedPeers: 0,
-			headlessSessions: 0,
 		});
 		const serialized = JSON.stringify(status);
 		for (const privateValue of [
