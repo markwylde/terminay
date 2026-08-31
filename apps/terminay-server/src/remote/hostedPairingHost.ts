@@ -245,7 +245,16 @@ export async function startHostedPairingHost(
 		// teardown cannot reach the new session's terminals.
 		if (scope.kind === 'device') {
 			const replaced = await livePeers.close(scope.deviceId);
-			if (replaced !== undefined) diagnose({ type: 'peer-closed', reasonClass: 'replaced-by-rejoin' });
+			if (replaced !== undefined) {
+				diagnose({ type: 'peer-closed', reasonClass: 'replaced-by-rejoin' });
+				// Report the retirement here rather than relying on the native
+				// datachannel emitting `close` before its peer is torn down. That
+				// event is not guaranteed to arrive, and a missed one would leave a
+				// replaced connection listed as live for the rest of the session.
+				if (replaced.connectionId !== undefined) {
+					options.onPeerDisconnected?.(replaced.connectionId);
+				}
+			}
 		}
 		const generation = ++handshakeGeneration;
 		if (handshake) {
@@ -268,7 +277,7 @@ export async function startHostedPairingHost(
 					diagnose({ type: 'peer-closed', reasonClass: 'replaced-by-rejoin' });
 					return;
 				}
-				livePeers.set(peer.deviceId, { peer: next, connection });
+				livePeers.set(peer.deviceId, { peer: next, connection, connectionId: peer.connectionId });
 				handshake = undefined;
 				options.onPeerConnected?.(peer);
 				if (scope.kind === 'pairing') {

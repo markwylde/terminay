@@ -139,3 +139,19 @@ test('the production hosted pairing host owns ICE servers, grace, and one handsh
 	assert.match(cli, /TERMINAY_WEBRTC_ICE_SERVERS/u);
 	assert.match(cli, /parseHostedIceServers/u);
 });
+
+test('a replaced peer is reported as disconnected without waiting for a native close event', async () => {
+	const registry = new HostedLivePeerRegistry();
+	const disconnected = []
+	// A native datachannel is not guaranteed to emit `close` before its peer is
+	// torn down. The replacement path must not depend on that event, or a
+	// superseded connection stays listed as live for the rest of the session.
+	registry.set('device-a', {
+		peer: { close: () => undefined },
+		connection: { close: () => undefined },
+		connectionId: 'connection-superseded',
+	});
+	const replaced = await registry.close('device-a');
+	if (replaced?.connectionId !== undefined) disconnected.push(replaced.connectionId);
+	assert.deepEqual(disconnected, ['connection-superseded']);
+});
