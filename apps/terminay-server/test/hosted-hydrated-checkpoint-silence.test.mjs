@@ -6,10 +6,7 @@ import {
 	HostedPeerLifecycle,
 	shouldFailHostedStall,
 } from '../src/remote/hostedPeerLifecycle.ts';
-import {
-	classifyPeerCloseReason,
-	createHostedStreamDiagnostics,
-} from '../src/remote/hostedStreamDiagnostics.ts';
+import { createHostedStreamDiagnostics } from '../src/remote/hostedStreamDiagnostics.ts';
 
 function livePeer() {
 	return { connectionState: 'connected', iceConnectionState: 'connected' };
@@ -60,15 +57,17 @@ test('handshake inbound after a checkpoint dump does not fail a generation on a 
 	assert.equal(shouldFailHostedStall(stall), false);
 });
 
-test('outbound-stalled fails the generation only after hydrate grace', () => {
+test('five seconds of outbound silence does not close the peer', () => {
 	const reasons = [];
 	const peer = livePeer();
 	const lifecycle = new HostedPeerLifecycle(peer, 5_000, (reason) =>
 		reasons.push(reason),
 	);
 	let now = 0;
+	const events = [];
 	const stream = createHostedStreamDiagnostics({
 		emit(event) {
+			events.push(event);
 			applyHostedLaneDiagnostic(lifecycle, event);
 		},
 		now: () => now,
@@ -82,16 +81,16 @@ test('outbound-stalled fails the generation only after hydrate grace', () => {
 	now = 1_000;
 	stream.noteInbound(new Uint8Array(477));
 	stream.noteOutbound(363);
-	now = 1_000 + APPLICATION_STALL_FAIL_GRACE_MS;
+	now = 6_000;
 	stream.noteInbound(new Uint8Array(10));
 
-	assert.equal(peer.connectionState, 'connected');
-	assert.notEqual(reasons.length, 0);
-	assert.match(String(reasons[0]), /outbound-stalled/u);
 	assert.equal(
-		classifyPeerCloseReason(String(reasons[0])),
-		'outbound-stalled',
+		events.some((event) => event.stallClass === 'outbound-stalled'),
+		true,
 	);
+	assert.equal(peer.connectionState, 'connected');
+	assert.deepEqual(reasons, []);
+	assert.equal(shouldFailHostedStall({ stallClass: 'outbound-stalled' }), false);
 });
 
 test('required application lane close while the peer stays connected fails the generation', () => {
