@@ -231,8 +231,9 @@ test('hosted remote pairing diagnostics are named events without pairing URLs', 
 	);
 	assert.doesNotMatch(mapper, /pairingUrl|qrSecret|relayJoinToken/u);
 	assert.match(host, /createHostedStreamDiagnostics/u);
-	assert.match(mapper, /stallClass: event\.stallClass/u);
-	assert.match(mapper, /stallIgnored: event\.stallIgnored/u);
+	// Liveness is proven by the connection heartbeat, so the mapper carries
+	// observation counters and close reasons but no stall classification.
+	assert.doesNotMatch(mapper, /stallClass|stallIgnored/u);
 	assert.match(mapper, /liveGenerationCount: event\.liveGenerationCount/u);
 	assert.match(mapper, /firstOutboundAgeMs: event\.firstOutboundAgeMs/u);
 	assert.match(mapper, /hangup: event\.hangup/u);
