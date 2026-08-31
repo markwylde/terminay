@@ -283,6 +283,36 @@ New pinned invariants:
    used only by the pull-subscription enqueue path, so it was kept and
    converted to emit a skip.
 
+## Follow-up: the hydration recovery loop (post-deploy)
+
+Deploying the change above surfaced a defect it introduced. A fresh
+presentation whose checkpoint trailed the live head was delivered with a skip
+describing the difference, and the panel treats a skip as "re-hydrate". That
+skip arrives inside the attach's own initial events, so hydrating triggered
+another hydration, whose checkpoint trailed by the same amount. The terminal
+painted once and never again while its connection stayed busy and healthy -
+inbound frames and bytes climbing the whole time, which is exactly what made it
+look like a dead stream rather than a loop.
+
+Two things were wrong, and both are fixed:
+
+1. **A gap established during hydration was indistinguishable from falling
+   behind.** `TerminalSkipReason` now has a third value, `hydration`, and
+   `isRecoverableSkip` (client-core, shared with the panel) is the single place
+   that decides what re-hydrates. Re-attaching cannot repair a boundary that
+   re-attaching reproduces.
+2. **The checkpoint was routinely stale.** Output reaches the checkpoint
+   authority through a bounded drain, and only `readPresentation` waited for
+   it; `prepare` did not. Every fresh presentation therefore pinned a screen
+   that was behind by whatever was still queued - about 280 KB under sustained
+   output. `TerminalService.settlePresentation` now lets that drain catch up
+   before a checkpoint is pinned, so the common case hydrates with no gap at
+   all. It is bounded by a deadline: a terminal that never falls silent must
+   not be able to stall an attach, and when the deadline is reached the
+   existing bounded skip still applies.
+
+The catch-up skip is now a genuine last resort rather than the routine path.
+
 ## Open questions and risks
 
 1. **Permanent overload behaviour.** A producer that outruns the client

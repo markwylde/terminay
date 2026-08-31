@@ -203,7 +203,7 @@ export interface ServerTerminalRendererEvent {
 	readonly signal?: number | null;
 	readonly fromPosition?: number;
 	readonly toPosition?: number;
-	readonly reason?: 'congestion' | 'attachment_closed';
+	readonly reason?: 'congestion' | 'attachment_closed' | 'hydration';
 }
 
 /**

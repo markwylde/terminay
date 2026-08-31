@@ -63,11 +63,20 @@ what reached the wire. Reconnects state the position the display actually
 rendered, or request a fresh presentation; no component substitutes a
 remembered cursor of its own.
 
-A prepared checkpoint may lag the live head, because feeding the checkpoint
-authority is itself bounded work. When that catch-up is larger than a
-presentation lane can carry, the stream begins at the live head and the
-intervening range is stated as a skip: recovery that can congest the lane it is
-recovering never converges.
+Feeding the checkpoint authority is itself bounded work, so under sustained
+output it trails the live head. A fresh presentation waits for it to catch up
+before pinning a checkpoint, within a deadline that a terminal which never
+falls silent cannot exceed. If it still trails by more than a presentation lane
+can carry, the stream begins at the live head and the intervening range is
+stated as a skip: recovery that can congest the lane it is recovering never
+converges.
+
+A gap established while a display is attaching is not a signal to attach again.
+It is already covered by the position that attachment starts from, and
+re-attaching reproduces the same boundary, so treating it as recovery makes
+hydration re-arm itself and the terminal never paints again while its
+connection stays busy and healthy. Only a live display that fell behind
+re-hydrates.
 
 The checkpoint-to-live transition is contiguous and ordered. Output and resize
 events arriving during rehydration are bounded, and any second overflow repeats
@@ -251,6 +260,10 @@ endpoint.
   replacement attachment attaches, even while the producer never goes idle.
 - An injected server-side ordering fault surfaces on the client as an explicit
   recoverable failure rather than a terminal that silently stops updating.
+- A fresh presentation taken while a terminal is producing continuously pins a
+  current checkpoint, hydrates without a gap, and attaches exactly once.
+- A terminal observed by several devices streams to all of them; holding the
+  presentation lease governs who may write, never who receives output.
 - Application-lane `Blob` frames are decoded in order or fail that generation.
   Chromium loopback happy-path evidence is not sufficient; tests inject ICE
   disconnect and non-`ArrayBuffer` binary delivery.

@@ -380,6 +380,13 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     // A blank xterm needs canonical emulator state, not an arbitrary suffix of
     // its PTY transcript. A parser-safe checkpoint supplies serialized state C
     // and a raw C→H tail through a binary query; the stream itself begins at H.
+    // Pin the checkpoint only once the authority has caught up with the PTY.
+    // Preparing while its drain is still behind yields a checkpoint that is
+    // stale by however much output is queued, so a fresh display would paint
+    // an old screen and then need a gap to reach live output.
+    if (freshPresentation && options.checkpoints !== undefined) {
+      await options.service.settlePresentation(identity);
+    }
     const preparedCheckpoint = freshPresentation && options.checkpoints !== undefined
       ? await options.checkpoints.prepare(identity, { clientId })
       : undefined;
@@ -444,7 +451,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
         ...identity,
         fromPosition: preparedCheckpoint.headPosition,
         toPosition: liveHead,
-        reason: "congestion",
+        reason: "hydration",
       }));
     }
     let pendingOutput: PendingTerminalOutput | undefined;
