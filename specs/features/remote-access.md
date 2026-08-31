@@ -399,13 +399,12 @@ exactly once. Application-lane stall does not. ICE `disconnected` while
 Firefox; it does not start grace or replace the generation. ICE
 `disconnected` starts grace only when the peer is also not `connected`.
 
-Required-lane close or failure (`control`, `application`, `terminal`,
-`assets`) fails that generation even while the peer still reports
-`connected`. Handshake-only `api` and `asset` close after handoff does not.
-Host `no-outbound` / `outbound-stalled` is logged and does not close the
-peer. A few seconds of quiet output is not a disconnect. The host closes a
-peer only when the user disconnects, a required lane is gone, or WebRTC
-itself is `failed` or `closed`. A stalled application lane logs
+A datachannel `close` on `control`, `assets`, `terminal`, `application`,
+or handshake `api`/`asset` is logged with that channel name and does not
+hang up the peer while ICE stays connected. Host `no-outbound` /
+`outbound-stalled` is logged and does not close the peer. A few seconds of
+quiet output is not a disconnect. The host closes a peer only when the user
+disconnects or WebRTC itself is `failed` or `closed`. A stalled application lane logs
 `[terminay-workspace]` counters in the session. Host diagnostics include
 live generation count, first-frame age, and `stallIgnored`. Peer-closed
 diagnostics name required-lane loss and ICE/peer failure instead of
@@ -635,9 +634,10 @@ frames do not produce one log line per frame.
   `disconnected` while the peer is also not `connected`, either recovers
   inside grace or replaces that generation once without a page reload.
 - Five seconds of application-lane silence while the peer stays `connected`
-  does not close that peer. Required-lane close still replaces the
-  generation. A checkpoint dump whose handshake inbound continues during a
-  few-second outbound pause does not replace the generation.
+  does not close that peer. A `control` or `assets` datachannel close while
+  ICE stays connected does not close that peer. Diagnostics name the channel
+  and `hangup: false`. A checkpoint dump whose handshake inbound continues
+  during a few-second outbound pause does not replace the generation.
 - A framed PWA session that hydrates a terminal still shows subsequent typed
   PTY output on that same generation. A new project or terminal created after
   that hydrate appears while the generation is live.

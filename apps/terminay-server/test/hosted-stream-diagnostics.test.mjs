@@ -137,6 +137,24 @@ test('Desktop mapper keeps stream events payload-free and namespaced', () => {
 	assert.equal('pairingUrl' in mapped.fields, false);
 });
 
+test('control channel close is a warning with hangup false', () => {
+	const events = [];
+	const stream = createHostedStreamDiagnostics({
+		emit: (event) => events.push(event),
+		setIntervalFn: () => 1,
+		clearIntervalFn: () => undefined,
+	});
+	stream.peerState('connected', 'connected');
+	stream.channelState('control', 'closed');
+	const closed = events.find((event) => event.channel === 'control');
+	assert.equal(closed.hangup, false);
+	assert.equal(closed.channelState, 'closed');
+	const mapped = hostedPairingDiagnosticEvent(closed);
+	assert.equal(mapped.severity, 'warning');
+	assert.equal(mapped.fields.hangup, false);
+	assert.equal(mapped.fields.channel, 'control');
+});
+
 test('standalone logger writes JSON lines to stderr without pairing URLs', async () => {
 	const directory = await mkdtemp(join(tmpdir(), 'terminay-hosted-log-'));
 	const sink = join(directory, 'server.jsonl');
