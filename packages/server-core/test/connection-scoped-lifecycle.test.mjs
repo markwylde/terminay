@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { TerminayClient } from "@terminay/client-core";
+import { createInMemoryTransportPair } from "@terminay/protocol-conformance";
 import {
   createOperationDispatcher,
+  createServerCore,
   createTerminalOperationRegistry,
   OrderedEventJournal,
   TerminalPresentationLeaseAuthority,
@@ -259,4 +262,91 @@ test("closing a connection releases exactly the attachments it created", async (
   ));
   assert.equal(reused.ok, false, "the closing connection's own attachment is released");
   assert.equal(service.getSession(identity).status, "running", "the server-owned PTY is untouched");
+});
+
+async function connectHeartbeatClient(core, capabilities) {
+  const pair = createInMemoryTransportPair();
+  const connection = core.accept(pair.server);
+  const task = connection.start().catch(() => undefined);
+  const client = new TerminayClient({ transport: pair.client, clientId: "device-x", capabilities });
+  await pair.open();
+  await client.connect();
+  return { client, connection, task };
+}
+
+test("the connection answers its own liveness probe", async () => {
+  const core = createServerCore({
+    serverId: "heartbeat-server",
+    serverVersion: "test",
+    capabilities: [],
+    authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: "read" }),
+  });
+  const session = await connectHeartbeatClient(core, ["connection.heartbeat"]);
+  try {
+    const sentAt = 1_234;
+    const pong = await session.client.query("connection.ping", { sentAt });
+    assert.equal(pong.ok, true);
+    assert.equal(pong.result.sentAt, sentAt, "the probe is echoed so the client can measure round trip");
+    assert.equal(typeof pong.result.serverTime, "number");
+  } finally {
+    await session.client.close().catch(() => undefined);
+    await session.task;
+  }
+});
+
+test("a heartbeat client that goes silent is reaped; a client that never promised one is not", async () => {
+  const reaped = [];
+  const core = createServerCore({
+    serverId: "heartbeat-reaper",
+    serverVersion: "test",
+    capabilities: [],
+    // A tight bound keeps the test deterministic; production uses 60s.
+    heartbeatTimeoutMs: 60,
+    authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: "read" }),
+    onConnectionClosed: (connectionId) => reaped.push(connectionId),
+  });
+
+  // A client that never advertised the heartbeat may idle indefinitely: Local
+  // Desktop and MCP connections make no liveness promise.
+  const quiet = await connectHeartbeatClient(core, []);
+  // A client that promised to prove liveness and then went silent is a frozen
+  // transport, even though nothing ever reported a close.
+  const promised = await connectHeartbeatClient(core, ["connection.heartbeat"]);
+
+  await new Promise((resolve) => setTimeout(resolve, 250));
+
+  assert.deepEqual(reaped, [promised.connection.connectionId],
+    "only the connection that promised a heartbeat is reaped for silence");
+  assert.equal(quiet.connection.state, "open");
+
+  await quiet.client.close().catch(() => undefined);
+  await promised.client.close().catch(() => undefined);
+  await Promise.all([quiet.task, promised.task]);
+});
+
+test("a heartbeat keeps an idle connection alive indefinitely", async () => {
+  const reaped = [];
+  const core = createServerCore({
+    serverId: "heartbeat-idle",
+    serverVersion: "test",
+    capabilities: [],
+    heartbeatTimeoutMs: 120,
+    authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: "read" }),
+    onConnectionClosed: (connectionId) => reaped.push(connectionId),
+  });
+  const session = await connectHeartbeatClient(core, ["connection.heartbeat"]);
+  try {
+    // No terminal output, no workspace events: a quiet workspace stays connected
+    // on pings alone, which traffic inference could never distinguish from death.
+    for (let beat = 0; beat < 6; beat += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      const pong = await session.client.query("connection.ping", { sentAt: Date.now() });
+      assert.equal(pong.ok, true);
+    }
+    assert.deepEqual(reaped, []);
+    assert.equal(session.connection.state, "open");
+  } finally {
+    await session.client.close().catch(() => undefined);
+    await session.task;
+  }
 });

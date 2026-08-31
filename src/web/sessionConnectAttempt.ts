@@ -46,16 +46,6 @@ export class SessionConnectGate {
 		return this.isCurrent(attempt) && this.inFlightGeneration === undefined;
 	}
 
-	shouldRecoverFromSilence(
-		attempt: SessionConnectAttempt,
-		stallClass?: 'inbound-stalled' | 'no-inbound',
-	): boolean {
-		if (stallClass !== 'inbound-stalled' && stallClass !== 'no-inbound') {
-			return false;
-		}
-		return this.shouldRecoverFromClose(attempt);
-	}
-
 	finish(attempt: SessionConnectAttempt): void {
 		if (this.inFlightGeneration === attempt.generation) {
 			this.inFlightGeneration = undefined;
@@ -95,158 +85,100 @@ export class SessionConnectGate {
 	}
 }
 
-export const SESSION_APPLICATION_STALL_MS = 3_000;
+export const SESSION_HEARTBEAT_INTERVAL_MS = 10_000;
+/** Two consecutive missed responses retire the generation. */
+export const SESSION_HEARTBEAT_MISS_LIMIT = 2;
 
-export type SessionApplicationStallClass = 'inbound-stalled' | 'no-inbound';
-
-export function classifySessionApplicationSilence(
-	input: Readonly<{
-		inboundFrames: number;
-		outboundFrames: number;
-		lastInboundAt: number | null;
-		lastOutboundAt: number | null;
-		now: number;
-		stallMs?: number;
-	}>,
-): SessionApplicationStallClass | undefined {
-	const stallMs = input.stallMs ?? SESSION_APPLICATION_STALL_MS;
-	if (input.outboundFrames < 1) return undefined;
-	if (input.inboundFrames < 1) {
-		if (
-			input.lastOutboundAt === null ||
-			input.now - input.lastOutboundAt < stallMs
-		) {
-			return undefined;
-		}
-		return 'no-inbound';
-	}
-	if (input.lastInboundAt === null || input.lastOutboundAt === null)
-		return undefined;
-	if (input.now - input.lastInboundAt < stallMs) return undefined;
-	if (input.lastOutboundAt <= input.lastInboundAt) return undefined;
-	return 'inbound-stalled';
-}
-
-export const SESSION_APPLICATION_SAMPLE_MS = 10_000;
-
-export type SessionLaneSnapshot = Readonly<{
-	inboundFrames: number;
-	lastInboundAgeMs: number | null;
-	lastOutboundAgeMs: number | null;
-	outboundFrames: number;
-	stallClass?: SessionApplicationStallClass;
+export type SessionHeartbeatSnapshot = Readonly<{
+	sent: number;
+	missed: number;
+	lastRoundTripMs: number | null;
 }>;
 
 export function logSessionLane(
 	event: string,
-	snapshot: SessionLaneSnapshot,
+	snapshot: SessionHeartbeatSnapshot,
 ): void {
 	console.warn('[terminay-workspace]', event, snapshot);
 }
 
-export function createSessionSilenceWatch(
+/**
+ * Prove the connection is alive by asking it, not by watching traffic.
+ *
+ * A WebRTC generation can stop delivering while every lane still reports
+ * `open`. Quiet output is indistinguishable from a dead transport unless the
+ * client asks a question and requires an answer, so that is all this does.
+ */
+export function createSessionHeartbeat(
 	options: Readonly<{
-		onSilence: (
-			stallClass: SessionApplicationStallClass,
-			snapshot: SessionLaneSnapshot,
-		) => void;
-		onSample?: (snapshot: SessionLaneSnapshot) => void;
+		ping: (signal: AbortSignal) => Promise<unknown>;
+		onLost: (snapshot: SessionHeartbeatSnapshot) => void;
+		onSample?: (snapshot: SessionHeartbeatSnapshot) => void;
+		intervalMs?: number;
+		missLimit?: number;
 		now?: () => number;
 		setTimeout?: (callback: () => void, delayMs: number) => unknown;
 		clearTimeout?: (handle: unknown) => void;
-		stallMs?: number;
-		sampleMs?: number;
 	}>,
-): Readonly<{
-	noteInbound(): void;
-	noteOutbound(): void;
-	snapshot(): SessionLaneSnapshot;
-	stop(): void;
-}> {
+): Readonly<{ start(): void; stop(): void; snapshot(): SessionHeartbeatSnapshot }> {
+	const intervalMs = options.intervalMs ?? SESSION_HEARTBEAT_INTERVAL_MS;
+	const missLimit = options.missLimit ?? SESSION_HEARTBEAT_MISS_LIMIT;
 	const now = options.now ?? Date.now;
-	const stallMs = options.stallMs ?? SESSION_APPLICATION_STALL_MS;
-	const sampleMs = options.sampleMs ?? SESSION_APPLICATION_SAMPLE_MS;
 	const setTimer =
 		options.setTimeout ??
 		((callback, delayMs) => globalThis.setTimeout(callback, delayMs));
 	const clearTimer =
 		options.clearTimeout ??
 		((handle) => globalThis.clearTimeout(handle as number));
-	let inboundFrames = 0;
-	let outboundFrames = 0;
-	let lastInboundAt: number | null = null;
-	let lastOutboundAt: number | null = null;
 	let timer: unknown;
-	let sampleTimer: unknown;
 	let stopped = false;
-	let notified = false;
+	let lost = false;
+	let sent = 0;
+	let missed = 0;
+	let lastRoundTripMs: number | null = null;
 
-	const snapshot = (): SessionLaneSnapshot => {
-		const current = now();
-		const stallClass = classifySessionApplicationSilence({
-			inboundFrames,
-			outboundFrames,
-			lastInboundAt,
-			lastOutboundAt,
-			now: current,
-			stallMs,
-		});
-		return {
-			inboundFrames,
-			outboundFrames,
-			lastInboundAgeMs:
-				lastInboundAt === null ? null : Math.max(0, current - lastInboundAt),
-			lastOutboundAgeMs:
-				lastOutboundAt === null ? null : Math.max(0, current - lastOutboundAt),
-			...(stallClass === undefined ? {} : { stallClass }),
-		};
-	};
+	const snapshot = (): SessionHeartbeatSnapshot =>
+		Object.freeze({ sent, missed, lastRoundTripMs });
 
-	const check = (): void => {
-		if (stopped || notified) return;
-		const next = snapshot();
-		if (next.stallClass === undefined) return;
-		notified = true;
-		options.onSilence(next.stallClass, next);
-	};
-
-	const sample = (): void => {
-		if (stopped) return;
-		options.onSample?.(snapshot());
-		sampleTimer = setTimer(sample, sampleMs);
-	};
-
-	const arm = (): void => {
-		if (stopped || notified) return;
-		if (timer !== undefined) clearTimer(timer);
-		timer = setTimer(check, stallMs);
-		if (sampleTimer === undefined && options.onSample !== undefined) {
-			sampleTimer = setTimer(sample, sampleMs);
+	const beat = async (): Promise<void> => {
+		if (stopped || lost) return;
+		sent += 1;
+		const startedAt = now();
+		// The interval doubles as the response deadline: a probe that has not
+		// answered by the time the next one is due has already missed.
+		const controller = new AbortController();
+		const deadline = setTimer(() => controller.abort(), intervalMs);
+		try {
+			await options.ping(controller.signal);
+			missed = 0;
+			lastRoundTripMs = now() - startedAt;
+		} catch {
+			missed += 1;
+		} finally {
+			clearTimer(deadline);
 		}
+		if (stopped || lost) return;
+		options.onSample?.(snapshot());
+		if (missed >= missLimit) {
+			lost = true;
+			options.onLost(snapshot());
+			return;
+		}
+		timer = setTimer(() => void beat(), intervalMs);
 	};
 
 	return {
-		noteInbound() {
-			if (stopped || notified) return;
-			inboundFrames += 1;
-			lastInboundAt = now();
-			arm();
+		start() {
+			if (stopped || timer !== undefined) return;
+			timer = setTimer(() => void beat(), intervalMs);
 		},
-		noteOutbound() {
-			if (stopped || notified) return;
-			outboundFrames += 1;
-			lastOutboundAt = now();
-			arm();
-		},
-		snapshot,
 		stop() {
 			if (stopped) return;
 			stopped = true;
 			if (timer !== undefined) clearTimer(timer);
-			if (sampleTimer !== undefined) clearTimer(sampleTimer);
 			timer = undefined;
-			sampleTimer = undefined;
 		},
+		snapshot,
 	};
 }
 
