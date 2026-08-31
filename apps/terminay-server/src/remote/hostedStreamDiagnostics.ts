@@ -100,6 +100,14 @@ export function createHostedStreamDiagnostics(options: {
 	let sendFailures = 0;
 	let lastPeerState: string | undefined;
 	let lastIceState: string | undefined;
+	let lastClosedChannel:
+		| 'api'
+		| 'asset'
+		| 'assets'
+		| 'application'
+		| 'control'
+		| 'terminal'
+		| undefined;
 	let lastStallAt = 0;
 	let lastStallClass: HostedStallClass | undefined;
 	let stopped = false;
@@ -190,18 +198,25 @@ export function createHostedStreamDiagnostics(options: {
 		},
 		channelState(channel: string, channelState: string | undefined): void {
 			if (!CHANNEL_LABELS.has(channel)) return;
+			const label = channel as
+				| 'api'
+				| 'asset'
+				| 'assets'
+				| 'application'
+				| 'control'
+				| 'terminal';
+			const closed =
+				channelState === 'closed' ||
+				channelState === 'closing' ||
+				channelState === 'failed';
+			if (closed) lastClosedChannel = label;
 			emit({
 				type: 'channel-state',
-				channel: channel as
-					| 'api'
-					| 'asset'
-					| 'assets'
-					| 'application'
-					| 'control'
-					| 'terminal',
+				channel: label,
 				channelState,
 				peerState: lastPeerState,
 				iceState: lastIceState,
+				...(closed ? { hangup: false } : {}),
 			});
 		},
 		noteInbound(value: unknown): void {
@@ -246,6 +261,10 @@ export function createHostedStreamDiagnostics(options: {
 				outboundBytes,
 				droppedFrames,
 				sendFailures,
+				hangup: true,
+				...(lastClosedChannel === undefined
+					? {}
+					: { channel: lastClosedChannel }),
 			});
 			stop();
 		},

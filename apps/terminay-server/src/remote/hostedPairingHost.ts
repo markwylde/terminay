@@ -167,6 +167,7 @@ export type HostedPairingDiagnostic = Readonly<{
 	readonly firstOutboundAgeMs?: number | null;
 	readonly liveGenerationCount?: number;
 	readonly stallIgnored?: boolean;
+	readonly hangup?: boolean;
 	readonly inboundKind?: 'bytes' | 'blob' | 'string' | 'empty' | 'other' | undefined;
 	readonly droppedFrames?: number;
 	readonly droppedClass?: 'bytes' | 'blob' | 'string' | 'empty' | 'other';
