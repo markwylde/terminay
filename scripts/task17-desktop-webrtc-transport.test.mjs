@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -73,8 +73,8 @@ test('Desktop native offerer establishes four isolated lanes and exposes the fra
     send(message) {
       if (message.type === 'offer') queueMicrotask(() => signalListener({ type: 'answer', sdp: 'answer-sdp' }))
     },
-    sign(message) { return message },
-    verify(message) { return message },
+    encode: (signal) => signal,
+    decode: (message) => message,
   }
   const transport = await createDesktopWebRtcTransport({
     peerId: 'desktop-peer',
@@ -97,7 +97,7 @@ test('Desktop authenticated assets lane requests one archive and reassembles bin
   const signaling = {
     onMessage(listener) { signalListener = listener; return () => { signalListener = () => {} } },
     send(message) { if (message.type === 'offer') queueMicrotask(() => signalListener({ type: 'answer', sdp: 'answer-sdp' })) },
-    sign(message) { return message }, verify(message) { return message },
+    encode: (signal) => signal, decode: (message) => message,
   }
   const connection = await createDesktopWebRtcConnection({ peerId: 'desktop-assets', ...identity, signaling, loadModule: async () => ({ PeerConnection: Peer }) })
   const assets = Peer.instance.channels.get('assets')
@@ -126,8 +126,8 @@ test('Desktop close discards application frames queued behind a stalled consumer
     send(message) {
       if (message.type === 'offer') queueMicrotask(() => signalListener({ type: 'answer', sdp: 'answer-sdp' }))
     },
-    sign(message) { return message },
-    verify(message) { return message },
+    encode: (signal) => signal,
+    decode: (message) => message,
   }
   const transport = await createDesktopWebRtcTransport({
     peerId: 'desktop-stalled-consumer',
@@ -163,15 +163,17 @@ test('Desktop native offerer rejects cross-server authenticated signaling and re
         queueMicrotask(() => signalListener({ serverId: 'other-server', signal: { type: 'answer', sdp: 'answer-sdp' } }))
       }
     },
-    sign(message) { return { serverId: 'expected-server', signal: message } },
-    verify(message) { return message.serverId === 'expected-server' ? message.signal : null },
+    // A relay message that does not carry this server's identity decodes to
+    // null, which the peer must treat as an authentication failure.
+    encode: (signal) => ({ serverId: 'expected-server', signal }),
+    decode: (message) => (message.serverId === 'expected-server' ? message.signal : null),
   }
   await assert.rejects(createDesktopWebRtcTransport({
     peerId: 'desktop-cross-server',
     ...identity,
     signaling,
     loadModule: async () => ({ PeerConnection: Peer }),
-  }), /authentication failed/u)
+  }), /relay binding failed/u)
   assert.ok([...Peer.instance.channels.values()].every(channel => channel.closed))
 })
 
@@ -186,8 +188,8 @@ test('Desktop native offerer rejects a replayed remote description before exposi
         signalListener(answer)
       })
     },
-    sign(message) { return message },
-    verify(message) { return message },
+    encode: (signal) => signal,
+    decode: (message) => message,
   }
   await assert.rejects(createDesktopWebRtcTransport({
     peerId: 'desktop-replay',
@@ -205,8 +207,8 @@ test('Desktop application lane fails closed when a slow native channel remains b
     send(message) {
       if (message.type === 'offer') queueMicrotask(() => signalListener({ type: 'answer', sdp: 'answer-sdp' }))
     },
-    sign(message) { return message },
-    verify(message) { return message },
+    encode: (signal) => signal,
+    decode: (message) => message,
   }
   const transport = await createDesktopWebRtcTransport({
     peerId: 'desktop-slow-channel',
@@ -229,8 +231,8 @@ test('Desktop closes the complete authenticated transport when an ancillary lane
     send(message) {
       if (message.type === 'offer') queueMicrotask(() => signalListener({ type: 'answer', sdp: 'answer-sdp' }))
     },
-    sign(message) { return message },
-    verify(message) { return message },
+    encode: (signal) => signal,
+    decode: (message) => message,
   }
   const transport = await createDesktopWebRtcTransport({
     peerId: 'desktop-ancillary-close',
@@ -254,8 +256,8 @@ test('Desktop abort after connection retires every WebRTC lane', async () => {
     send(message) {
       if (message.type === 'offer') queueMicrotask(() => signalListener({ type: 'answer', sdp: 'answer-sdp' }))
     },
-    sign(message) { return message },
-    verify(message) { return message },
+    encode: (signal) => signal,
+    decode: (message) => message,
   }
   const controller = new AbortController()
   const transport = await createDesktopWebRtcTransport({
@@ -272,4 +274,36 @@ test('Desktop abort after connection retires every WebRTC lane', async () => {
 
   assert.equal(transport.state, 'closed')
   assert.ok([...Peer.instance.channels.values()].every(channel => channel.closed))
+})
+
+test('Desktop uses the selected Werift runtime and never the blocked node-datachannel package', async () => {
+  const source = await readFile(
+    new URL('../electron/remote/desktopWebRtcTransport.ts', import.meta.url),
+    'utf8',
+  )
+  // node-datachannel is not a dependency of this repository. Defaulting to it
+  // meant Desktop's outbound client could never load a runtime at all, so the
+  // selected, integrity-verified Secure-Werift artifact is the only default.
+  assert.doesNotMatch(source, /loadNodeDataChannelRuntimeModule/u)
+  assert.match(source, /createSecureWeriftCompatibilityModule/u)
+  assert.match(source, /loadSelectedSecureWeriftRuntime/u)
+  assert.match(source, /runtime: 'werift'/u)
+})
+
+test('Desktop reports an actionable error when the selected runtime is unavailable', async () => {
+  let signalListener = () => {}
+  const signaling = {
+    onMessage(listener) { signalListener = listener; return () => { signalListener = () => {} } },
+    send(message) {
+      if (message.type === 'offer') queueMicrotask(() => signalListener({ type: 'answer', sdp: 'answer-sdp' }))
+    },
+    encode: (signal) => signal,
+    decode: (message) => message,
+  }
+  // Without a packaged runtime directory there is nothing to verify or load.
+  // That must name the missing runtime rather than surfacing a module-not-found.
+  await assert.rejects(
+    createDesktopWebRtcTransport({ peerId: 'desktop-no-runtime', ...identity, signaling }),
+    /selected WebRTC runtime directory is unavailable/u,
+  )
 })

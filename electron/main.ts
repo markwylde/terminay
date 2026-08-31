@@ -2836,9 +2836,17 @@ async function presentCanonicalAuxiliaryRoute(
 						serverUiTransport: connected.transport,
 					});
 				} else {
+					const remoteWebRtcRuntimeRoot = resolveDesktopWebRtcRuntimeRoot({
+						isPackaged: app.isPackaged,
+						resourcesPath: process.resourcesPath,
+						environment: process.env,
+					});
 					const webRtc = await createDesktopBootstrappedWebRtcConnection({
 						bootstrap: connected.signalingBootstrap,
 						expectedOrigin: profile.origin,
+						...(remoteWebRtcRuntimeRoot === undefined
+							? {}
+							: { webrtcRuntimeRoot: remoteWebRtcRuntimeRoot }),
 					});
 					await connected.transport.close({ code: 'normal' });
 					const launch = await remoteServerUiBundleHost.prepareRemote({
