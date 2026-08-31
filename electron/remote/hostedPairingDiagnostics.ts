@@ -34,7 +34,9 @@ export function hostedPairingDiagnosticEvent(
 		event.type === 'peer-closed' ||
 		event.stallClass !== undefined ||
 		event.stallIgnored === true ||
-		event.sendFailure === true;
+		event.sendFailure === true ||
+		event.channelState === 'closed' ||
+		event.channelState === 'failed';
 	return {
 		component: 'local-server',
 		event: EVENT_NAMES[event.type],
@@ -48,6 +50,7 @@ export function hostedPairingDiagnosticEvent(
 			closeReasonClass: event.closeReasonClass,
 			droppedClass: event.droppedClass,
 			droppedFrames: event.droppedFrames,
+			hangup: event.hangup,
 			first: event.first,
 			firstInboundAgeMs: event.firstInboundAgeMs,
 			firstOutboundAgeMs: event.firstOutboundAgeMs,

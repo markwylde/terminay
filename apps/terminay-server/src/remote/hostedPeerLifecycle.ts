@@ -178,12 +178,15 @@ export function needsDisconnectGrace(
 	return isRecoverableDisconnectState(iceState) && peerState !== 'connected';
 }
 
-const REQUIRED_LANES = new Set([
-	'application',
-	'assets',
-	'control',
-	'terminal',
-]);
+/** A single datachannel close does not hang up the peer. */
+export function laneCloseHangsUp(
+	_channel?: string,
+	channelState?: string,
+): boolean {
+	void _channel;
+	void channelState;
+	return false;
+}
 
 export type HostedLaneDiagnostic = Readonly<{
 	channel?: string | undefined;
@@ -201,8 +204,7 @@ export function shouldFailHostedStall(event: HostedLaneDiagnostic): boolean {
 	return false;
 }
 
-/** Fail only when a required lane is gone. ICE consent blips and send
- * pauses do not hang up the peer. */
+/** Stall and datachannel close are logged. They do not hang up the peer. */
 export function applyHostedLaneDiagnostic(
 	lifecycle: HostedPeerLifecycle,
 	event: HostedLaneDiagnostic,
@@ -211,13 +213,7 @@ export function applyHostedLaneDiagnostic(
 		lifecycle.fail(`WebRTC application lane ${event.stallClass}.`);
 		return;
 	}
-	if (
-		event.channel !== undefined &&
-		REQUIRED_LANES.has(event.channel) &&
-		(event.channelState === 'closed' ||
-			event.channelState === 'closing' ||
-			event.channelState === 'failed')
-	) {
+	if (laneCloseHangsUp(event.channel, event.channelState)) {
 		lifecycle.fail(`WebRTC ${event.channel} lane ${event.channelState}.`);
 	}
 }
