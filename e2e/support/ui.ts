@@ -1,5 +1,15 @@
-import type { Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 import { expect } from '../fixtures'
+
+export async function longPress(locator: Locator, durationMs = 600): Promise<void> {
+  const box = await locator.boundingBox()
+  if (!box) throw new Error('Expected a layout box for long-press')
+  const page = locator.page()
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.down()
+  await page.waitForTimeout(durationMs)
+  await page.mouse.up()
+}
 
 async function closeEditWindowWithButton(editWindow: Page, label: 'Save' | 'Cancel'): Promise<void> {
   const editor = editWindow.getByRole('dialog').filter({
