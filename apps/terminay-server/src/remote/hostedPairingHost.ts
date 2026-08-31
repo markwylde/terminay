@@ -258,10 +258,18 @@ export async function startHostedPairingHost(
 			scope,
 			context,
 			(connection, peer) => {
-				if (handshake?.peer === next) {
-					livePeers.set(peer.deviceId, { peer: next, connection });
-					handshake = undefined;
+				// A newer join replaced this handshake, or the host stopped, while
+				// this one was authenticating. Retire it rather than leaving an
+				// untracked live connection for the device: nothing would close it,
+				// and it is exactly the superseded generation this design removes.
+				if (handshake?.peer !== next || closed) {
+					void connection.close();
+					next.close();
+					diagnose({ type: 'peer-closed', reasonClass: 'replaced-by-rejoin' });
+					return;
 				}
+				livePeers.set(peer.deviceId, { peer: next, connection });
+				handshake = undefined;
 				options.onPeerConnected?.(peer);
 				if (scope.kind === 'pairing') {
 					clearTimeout(pairingRefreshTimer);
