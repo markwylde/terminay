@@ -47,12 +47,27 @@ When an attachment's presentation lane reaches its limit, the server:
 
 1. stops admitting further raw output to that lane;
 2. discards only that attachment's pending presentation frames;
-3. records the exact last presentation position confirmed by the client;
-4. schedules a bounded `resync_required` notification on the control lane;
+3. states the discarded byte range as one ordered `skip` marker carried in that
+   lane's own stream, bounded by what the transport actually accepted;
+4. suppresses further output for that attachment until it is replaced;
 5. keeps the PTY, connection, workspace subscriptions, and other attachments
    alive; and
 6. rehydrates that display from an authoritative parser-safe checkpoint before
    resuming live output.
+
+A discontinuity is always in band. A client's stream position advances only by
+delivered output or by a skip naming the range it replaces, so a client never
+reconciles an advisory computed against a position it has already passed.
+Exactly one component may drop presentation bytes: the delivery lane that knows
+what reached the wire. Reconnects state the position the display actually
+rendered, or request a fresh presentation; no component substitutes a
+remembered cursor of its own.
+
+A prepared checkpoint may lag the live head, because feeding the checkpoint
+authority is itself bounded work. When that catch-up is larger than a
+presentation lane can carry, the stream begins at the live head and the
+intervening range is stated as a skip: recovery that can congest the lane it is
+recovering never converges.
 
 The checkpoint-to-live transition is contiguous and ordered. Output and resize
 events arriving during rehydration are bounded, and any second overflow repeats
@@ -138,11 +153,17 @@ attachments, leases, and checkpoints. Another connection authenticated by the
 same device — including the replacement created by a reconnect — is
 unaffected by the old connection's teardown, whenever it happens. When the
 server detaches an attachment for any reason other than the client's own
-detach request, it delivers an explicit attachment-closed resynchronization
-event on the control lane; a stream never ends silently while its connection
-remains open. Congestion suppression and pending-resynchronization state end
-when the replacement attachment attaches; they are bounded recovery states,
-never permanent latches.
+detach request, it delivers an explicit attachment-closed skip; a stream never
+ends silently while its connection remains open. Congestion suppression ends
+when the replacement attachment attaches, and only then. It is never ended by
+an acknowledgement: no output is published while suppression holds, so the
+client cannot produce the acknowledgement that would lift it, and an
+acknowledgement-gated exit is a latch that never opens.
+
+No terminal-stream component may discard a positioning fault silently. A gap
+that reaches a client is reported and recovered from, never swallowed into a
+value nothing reads again, so a stream that has stopped is observable rather
+than indistinguishable from an idle terminal.
 
 The renderer visibly marks mounted terminal panels and connection chrome as
 reconnecting and rejects unsafe mutations promptly while the old client is
@@ -168,8 +189,8 @@ endpoint.
 
 ## Resource and security boundaries
 
-- Presentation-lane bytes, frames, age, and resynchronization frequency have
-  named hard limits and metadata-only diagnostics.
+- Presentation-lane bytes, frames, age, and skip frequency have named hard
+  limits and metadata-only diagnostics.
 - Control capacity is bounded and reserved; hostile terminal output cannot
   allocate it.
 - Scheduling is fair across terminal attachments and cannot be influenced by
@@ -222,9 +243,14 @@ endpoint.
   time. A superseded connection failing afterwards releases only its own
   attachments; the replacement connection's live stream, leases, and
   checkpoints are provably unaffected.
-- A lane that congests, resynchronizes, and congests again recovers each time
-  on the same connection; no suppression or pending-resynchronization state
-  persists after the replacement attachment attaches.
+- A lane that congests, skips, and congests again recovers each time on the
+  same connection; no suppression persists after the replacement attachment
+  attaches, and an acknowledgement alone never lifts it.
+- A renderer that stops acknowledging under sustained output produces exactly
+  one bounded congestion and one skip, then streams again as soon as its
+  replacement attachment attaches, even while the producer never goes idle.
+- An injected server-side ordering fault surfaces on the client as an explicit
+  recoverable failure rather than a terminal that silently stops updating.
 - Application-lane `Blob` frames are decoded in order or fail that generation.
   Chromium loopback happy-path evidence is not sufficient; tests inject ICE
   disconnect and non-`ArrayBuffer` binary delivery.

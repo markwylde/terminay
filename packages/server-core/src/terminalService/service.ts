@@ -209,21 +209,24 @@ export class TerminalSubscription {
   /** @internal */
   closeForOverflow(): void {
     if (this.closedValue) return;
-    const event = resyncEvent(this.session);
+    const event = skipEvent(this.session, this.cursorValue);
     this.closedValue = true;
-    this.closeReasonValue = "resync_required";
+    this.closeReasonValue = "skip";
     this.session.subscribers.delete(this);
     this.queue = this.listener === undefined ? [event] : [];
     this.queuedBytesValue = 0;
     if (this.listener !== undefined) {
       try { this.listener(copyEvent(event)); } catch { /* observer cannot affect PTY supervision */ }
     }
-    this.service.emitSubscriptionClosed(this, "resync_required");
+    this.service.emitSubscriptionClosed(this, "skip");
   }
 
   private deliver(event: TerminalEvent): void {
+    // A listener cannot be allowed to break PTY supervision, but it also must
+    // not be able to fail invisibly: a stream fault swallowed here is
+    // indistinguishable from an idle terminal for the rest of its life.
     try { this.listener?.(copyEvent(event)); }
-    catch { /* client listeners cannot break PTY supervision */ }
+    catch (cause) { this.service.reportListenerFault(this, cause); }
     if (event.type === "output") this.cursorValue = Math.max(this.cursorValue, event.nextPosition);
   }
 
@@ -833,6 +836,15 @@ export class TerminalService {
   interruptAll(at = this.now()): readonly TerminalExitEvent[] { return this.markInterrupted(at); }
 
   /** @internal */
+  /** @internal Observable by design; see `deliver`. */
+  reportListenerFault(subscription: TerminalSubscription, cause: unknown): void {
+    console.warn("[terminay-terminal] subscription listener fault", {
+      sessionId: subscription.sessionId,
+      position: subscription.position,
+      message: cause instanceof Error ? cause.message : String(cause),
+    });
+  }
+
   emitSubscriptionClosed(_subscription: TerminalSubscription, _reason: TerminalCloseReason): void {
     // Kept as a hook point for a transport adapter; closure itself is local to
     // the subscription and intentionally does not affect PTY lifetime.
@@ -1238,13 +1250,13 @@ function exitEvent(session: MutableSession): TerminalExitEvent {
   return Object.freeze({ type: "exit", ...session.identity, metadata: session.exit, exitCode: session.exit.exitCode, signal: session.exit.signal });
 }
 
-function resyncEvent(session: MutableSession): TerminalEvent {
+function skipEvent(session: MutableSession, fromPosition: number): TerminalEvent {
   return Object.freeze({
-    type: "resync_required",
+    type: "skip",
     ...session.identity,
-    fromPosition: session.replayFrom,
-    replayFrom: session.replayFrom,
-    outputPosition: session.outputPosition,
+    fromPosition,
+    toPosition: session.outputPosition,
+    reason: "congestion",
   });
 }
 

@@ -103,9 +103,9 @@ export function SharedTerminalRouteBody({
 				boundedOutput(`${current}\n[terminal exited ${event.exitCode}]`),
 			),
 		);
-		const removeResync = attachment.onResync((event) =>
+		const removeResync = attachment.onSkip((event) =>
 			setOutput((current) =>
-				boundedOutput(`${current}\n[replay resumes at ${event.replayFrom}]`),
+				boundedOutput(`${current}\n[replay resumes at ${event.toPosition}]`),
 			),
 		);
 		return () => {

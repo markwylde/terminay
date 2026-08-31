@@ -32,6 +32,15 @@ const MAX_INITIAL_REPLAY_BYTES = 32 * 1024;
 // node-pty commonly reports one kernel read as many small callbacks. Keep a
 // live frame below half the default header limit so the base64 fallback for a
 // legacy client remains a valid protocol envelope as well.
+/**
+ * How far a prepared checkpoint may lag the live head before hydration stops
+ * trying to replay the difference through the presentation lane.
+ *
+ * It is deliberately below the lane's own unconfirmed-bytes bound: a recovery
+ * that can congest the lane it is recovering never converges.
+ */
+const MAX_CHECKPOINT_CATCHUP_BYTES = 128 * 1024;
+
 const MAX_LIVE_OUTPUT_BODY_BYTES = 32 * 1024;
 const TERMINAL_EVENT = "terminal";
 export const TERMINAL_PRESENTATION_CHECKPOINT_OPERATION = "terminal.presentation-checkpoint";
@@ -381,8 +390,22 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       requestedFromPosition < snapshot.replayFrom ||
       ((freshPresentation || requestedFromPosition === 0) && snapshot.outputPosition > maxInitialReplayBytes)
     );
+    // The service throttles how fast it feeds the checkpoint authority, so
+    // under sustained output a prepared checkpoint's head H can sit far behind
+    // the live head. Replaying H->live through the presentation lane is what
+    // makes recovery re-congest immediately and never converge, so when that
+    // catch-up is larger than a lane can carry, the stream starts at the live
+    // head and the discarded range is stated as an ordered skip instead.
+    const liveHead = options.service.getSession(identity)?.outputPosition;
+    const checkpointCatchUp =
+      preparedCheckpoint === undefined || liveHead === undefined
+        ? 0
+        : Math.max(0, liveHead - preparedCheckpoint.headPosition);
+    const skipCheckpointCatchUp = checkpointCatchUp > MAX_CHECKPOINT_CATCHUP_BYTES;
     const fromPosition = preparedCheckpoint !== undefined
-      ? preparedCheckpoint.headPosition
+      ? skipCheckpointCatchUp && liveHead !== undefined
+        ? liveHead
+        : preparedCheckpoint.headPosition
       : presentationUnavailable && snapshot !== undefined
       ? snapshot.outputPosition
       : requestedFromPosition;
@@ -413,9 +436,22 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     let attachmentId: string | undefined;
     let checkpointPublishing = preparedCheckpoint === undefined;
     const queuedCheckpointEvents: TerminalEvent[] = [];
+    // Ordered ahead of every live event so the client learns the boundary
+    // before it sees output that would otherwise look like a gap.
+    if (skipCheckpointCatchUp && preparedCheckpoint !== undefined && liveHead !== undefined) {
+      queuedCheckpointEvents.push(Object.freeze({
+        type: "skip",
+        ...identity,
+        fromPosition: preparedCheckpoint.headPosition,
+        toPosition: liveHead,
+        reason: "congestion",
+      }));
+    }
     let pendingOutput: PendingTerminalOutput | undefined;
     let pendingOutputTimer: ReturnType<typeof setTimeout> | undefined;
     let notifyOnClose = true;
+    /** End of the last output this attachment published. */
+    let publishedPosition: number | undefined;
     const discardPendingOutput = (): void => {
       if (pendingOutputTimer !== undefined) clearTimeout(pendingOutputTimer);
       pendingOutputTimer = undefined;
@@ -424,6 +460,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     const publishOutput = (event: Extract<TerminalEvent, { readonly type: "output" }>): void => {
       if (attachmentId === undefined) return;
       if (protocolAttachments.get(attachmentId)?.outputSuppressed === true) return;
+      publishedPosition = event.nextPosition;
       options.eventJournal.publishTransient(
         TERMINAL_EVENT,
         terminalOutputMetadataPayload(event, attachmentId, clientId),
@@ -496,8 +533,8 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       },
       // A stream that ends while its connection is still open must say so.
       // Without this the client keeps a painted checkpoint mounted and waits
-      // forever for output that can no longer arrive. `resync_required` is the
-      // established recovery signal: the panel re-attaches from a fresh
+      // forever for output that can no longer arrive. The client reacts to
+      // this exactly as it reacts to congestion: re-attach from a fresh
       // checkpoint, which also retires the superseded delivery lane.
       onClose: () => {
         if (!notifyOnClose || attachmentId === undefined) return;
@@ -506,11 +543,11 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
         options.eventJournal.append(TERMINAL_EVENT, {
           clientId,
           attachmentId,
-          type: "resync_required",
+          type: "skip",
           ...identity,
-          fromPosition: head,
-          replayFrom: head,
-          outputPosition: head,
+          fromPosition: publishedPosition ?? head,
+          toPosition: head,
+          reason: "attachment_closed",
         });
       },
       });
@@ -605,13 +642,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
   async function acknowledge(request: CommandRequest): Promise<JsonValue> {
     const value = attachmentFor(request, "read");
     const positionValue = position(objectPayload(request.envelope.payload).position ?? -1);
-    const deliveredPosition = value.attachment.position;
     value.attachment.ack(positionValue);
-    // Suppression after congestion is a bounded recovery state. No output is
-    // published while it holds, so the delivered position cannot advance: an
-    // acknowledgement that reaches it proves the client is caught up and this
-    // attachment must start publishing live output again.
-    if (value.outputSuppressed && positionValue >= deliveredPosition) value.outputSuppressed = false;
     return { attachmentId: value.attachment.attachmentId, position: positionValue };
   }
 
@@ -940,7 +971,7 @@ function parseSource(value: JsonValue): TerminalInputSource {
 function terminalEventPayload(event: TerminalEvent, attachmentId: string, clientId: string): JsonValue {
   if (event.type === "output") return { clientId, attachmentId, type: "output", serverId: event.serverId, projectId: event.projectId, sessionId: event.sessionId, position: event.position, nextPosition: event.nextPosition, replay: event.replay, bytes: encodeBase64(event.bytes) };
   if (event.type === "exit") return { clientId, attachmentId, type: "exit", serverId: event.serverId, projectId: event.projectId, sessionId: event.sessionId, exitCode: event.exitCode, signal: event.signal, reason: event.metadata.reason, at: event.metadata.at };
-  return { clientId, attachmentId, type: "resync_required", serverId: event.serverId, projectId: event.projectId, sessionId: event.sessionId, fromPosition: event.fromPosition, replayFrom: event.replayFrom, outputPosition: event.outputPosition };
+  return { clientId, attachmentId, type: "skip", serverId: event.serverId, projectId: event.projectId, sessionId: event.sessionId, fromPosition: event.fromPosition, toPosition: event.toPosition, reason: event.reason };
 }
 
 function terminalOutputMetadataPayload(event: Extract<TerminalEvent, { readonly type: "output" }>, attachmentId: string, clientId: string): JsonValue {

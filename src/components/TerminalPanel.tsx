@@ -8,7 +8,7 @@ import type {
 	TerminalPanelAttachment,
 	TerminalPresentationState,
 	TerminalStreamEvent,
-	TerminalStreamResyncEvent,
+	TerminalStreamSkipEvent,
 	TerminayClient,
 	TerminayGitClient,
 } from '@terminay/client-core';
@@ -878,8 +878,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				durationMs?: number;
 				fromPosition?: number;
 				outputPosition?: number;
-				reason?: 'congestion' | 'attach-error' | 'deadline';
-				replayFrom?: number;
+				reason?: 'congestion' | 'attachment_closed' | 'attach-error' | 'deadline';
+				toPosition?: number;
 			} = {},
 		) => {
 			recordRendererDiagnostic({
@@ -1529,7 +1529,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 										setServerTerminalError(
 											'Terminal presentation is unavailable because a complete safe recovery boundary is no longer retained.',
 										);
-									} else if (event.type === 'resync_required') {
+									} else if (event.type === 'skip') {
 										beginTerminalResync(event);
 									}
 								})
@@ -1556,7 +1556,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 						for (const event of attachment.initialEvents) {
 							renderServerEvent(event);
 							if (
-								event.type === 'resync_required' ||
+								event.type === 'skip' ||
 								event.type === 'presentation_unavailable'
 							)
 								break;
@@ -1636,7 +1636,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 						);
 					});
 			};
-			const beginTerminalResync = (_event: TerminalStreamResyncEvent) => {
+			const beginTerminalResync = (_event: TerminalStreamSkipEvent) => {
 				if (dataReplayDisposed || resyncing || serverAttachmentFailed) return;
 				resyncing = true;
 				if (panelResizeTimer !== null) {
@@ -1666,9 +1666,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				recoveryAttempt += 1;
 				reportTerminalRecovery(recoveryAttempt === 1 ? 'started' : 'retrying', {
 					fromPosition: _event.fromPosition,
-					replayFrom: _event.replayFrom,
-					outputPosition: _event.outputPosition,
-					reason: 'congestion',
+					toPosition: _event.toPosition,
+					reason: _event.reason,
 				});
 				// A progress display may never become idle. Keep the last completed
 				// presentation visible and retry from a current bounded checkpoint.

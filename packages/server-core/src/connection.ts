@@ -78,7 +78,6 @@ export class ServerConnection implements ServerConnectionLike {
   private readonly abortController = new AbortController();
   private readonly inFlightRequests = new Map<string, InFlightRequest>();
   private readonly eventSubscriptions = new Map<string, () => void>();
-  private readonly terminalOutputPositions = new Map<string, number>();
   private connectionCleaned = false;
 	private heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
 	private readonly heartbeatTimeoutMs: number;
@@ -437,7 +436,6 @@ export class ServerConnection implements ServerConnectionLike {
 			const replaced = objectPayload(result.result).replacedAttachmentId;
 			if (isSafeId(replaced)) {
 				this.outbound.releaseTerminal(replaced);
-				this.terminalOutputPositions.delete(replaced);
 			}
 			return;
 		}
@@ -450,7 +448,6 @@ export class ServerConnection implements ServerConnectionLike {
 				this.outbound.acknowledgeTerminal(attachmentId, position);
 		} else if (command.operation === "terminal.detach") {
 			this.outbound.releaseTerminal(attachmentId);
-			this.terminalOutputPositions.delete(attachmentId);
 		}
 	}
 
@@ -485,17 +482,10 @@ export class ServerConnection implements ServerConnectionLike {
 			binaryBody,
 			useBinaryBody,
 		);
-		// Event subscriptions are intentionally independent, so overlapping
-		// selectors may project the same journal event more than once. Terminal
-		// output is different: every copy targets one attachment delivery lane.
-		// Admit each byte range once per connection/attachment or duplicate
-		// subscriptions would double its queued bytes and advance the lane twice.
-		// Raw output is live-only and deliberately does not advance the generic
-		// journal revision, so its attachment-owned position is the authority.
-		const deliveredPosition = this.terminalOutputPositions.get(output.attachmentId);
-		if (deliveredPosition !== undefined && output.nextPosition <= deliveredPosition)
-			return;
-		this.terminalOutputPositions.set(output.attachmentId, output.nextPosition);
+		// Overlapping subscriptions may project the same byte range more than
+		// once. The delivery lane drops those duplicates itself: it is the only
+		// component that knows what already reached the wire, and a second
+		// tracker here could disagree with it.
 		await this.outbound.sendTerminal(
 			encodeFrame(
 				terminalEnvelope,
@@ -506,20 +496,20 @@ export class ServerConnection implements ServerConnectionLike {
 				laneId: output.attachmentId,
 				position: output.position,
 				nextPosition: output.nextPosition,
-				createResyncFrame: ({ confirmedPosition, headPosition }) =>
+				createSkipFrame: ({ fromPosition, toPosition }) =>
 					encodeFrame(
 						eventEnvelope(subscriptionId, {
 							...event,
 							payload: {
 								clientId: output.clientId,
 								attachmentId: output.attachmentId,
-								type: "resync_required",
+								type: "skip",
 								serverId: output.serverId,
 								projectId: output.projectId,
 								sessionId: output.sessionId,
-								fromPosition: confirmedPosition,
-								replayFrom: headPosition,
-								outputPosition: headPosition,
+								fromPosition,
+								toPosition,
+								reason: "congestion",
 							},
 						}),
 						new Uint8Array(),
@@ -597,7 +587,6 @@ export class ServerConnection implements ServerConnectionLike {
     this.heartbeatTimer = undefined;
     for (const unsubscribe of this.eventSubscriptions.values()) unsubscribe();
     this.eventSubscriptions.clear();
-		this.terminalOutputPositions.clear();
     const clientId = this.authenticatedClient?.clientId;
     if (clientId !== undefined) this.options.onConnectionClosed?.(this.connectionId, clientId);
 		this.onClosed?.();
