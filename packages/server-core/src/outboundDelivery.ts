@@ -23,8 +23,11 @@ interface PendingDelivery {
 	readonly frame: Uint8Array;
 	readonly resolve: () => void;
 	readonly reject: (reason: OutboundDeliveryError) => void;
-	readonly trafficClass: 'control' | 'state' | 'state_resync' | 'terminal' | 'terminal_resync';
+	readonly trafficClass: 'control' | 'state' | 'state_resync' | 'terminal' | 'terminal_skip';
 	readonly terminalLaneId?: string;
+	/** End of this terminal frame's byte range, used to advance `sentPosition`
+	 * once the transport has actually accepted it. */
+	readonly nextPosition?: number;
 	readonly stateLaneId?: string;
 	readonly stateKey?: string;
 }
@@ -42,9 +45,12 @@ export interface TerminalDeliveryAdmission {
 	readonly laneId: string;
 	readonly position: number;
 	readonly nextPosition: number;
-	readonly createResyncFrame: (boundary: {
-		readonly confirmedPosition: number;
-		readonly headPosition: number;
+	/** Build the in-band marker for a byte range this lane will never deliver.
+	 * It is enqueued in the lane's own FIFO, in the position the skipped bytes
+	 * would have occupied, so the client cannot observe the gap out of order. */
+	readonly createSkipFrame: (gap: {
+		readonly fromPosition: number;
+		readonly toPosition: number;
 	}) => Uint8Array;
 }
 
@@ -59,10 +65,17 @@ export interface TerminalDeliveryCongestion {
 interface TerminalLane {
 	readonly queue: PendingDelivery[];
 	queuedBytes: number;
-	resyncPending: boolean;
+	/** Set after one skip is emitted. Exits only when the attachment is
+	 * released, never on an acknowledgement: a congested client is precisely
+	 * the client that cannot acknowledge the bytes it was denied. */
+	suppressed: boolean;
 	releasePending: boolean;
 	confirmedPosition: number;
+	/** End of the last frame admitted or skipped. */
 	headPosition: number;
+	/** End of the last frame the transport actually accepted. This lane is the
+	 * only component that knows it, and the only one allowed to drop bytes. */
+	sentPosition: number;
 	unconfirmedSince: number | undefined;
 }
 
@@ -264,16 +277,20 @@ export class OutboundDeliveryPump {
 			lane = {
 				queue: [],
 				queuedBytes: 0,
-				resyncPending: false,
+				suppressed: false,
 				releasePending: false,
 				confirmedPosition: admission.position,
 				headPosition: admission.position,
+				sentPosition: admission.position,
 				unconfirmedSince: undefined,
 			};
 			this.terminalLanes.set(admission.laneId, lane);
 		}
 		if (lane.releasePending) return Promise.resolve();
-		if (lane.resyncPending) return Promise.resolve();
+		if (lane.suppressed) return Promise.resolve();
+		// Duplicate delivery from overlapping subscriptions. The bytes are
+		// already accounted for on this lane, so dropping them is not a gap.
+		if (admission.nextPosition <= lane.headPosition) return Promise.resolve();
 		if (admission.position !== lane.headPosition) {
 			this.congestTerminalLane(admission.laneId, lane, admission);
 			this.start();
@@ -302,6 +319,7 @@ export class OutboundDeliveryPump {
 				reject,
 				trafficClass: "terminal",
 				terminalLaneId: admission.laneId,
+				nextPosition: admission.nextPosition,
 			});
 			lane.queuedBytes += copy.byteLength;
 			this.terminalQueuedByteCount += copy.byteLength;
@@ -323,10 +341,6 @@ export class OutboundDeliveryPump {
 		) return;
 		lane.confirmedPosition = position;
 		lane.unconfirmedSince = position >= lane.headPosition ? undefined : this.now();
-		// Congestion recovery is a bounded state, not a permanent latch. Once the
-		// client confirms it has rendered through the resynchronization boundary,
-		// this lane is caught up and must start admitting live output again.
-		if (lane.resyncPending && position >= lane.headPosition) lane.resyncPending = false;
 	}
 
 	/** Release scheduler state after the authoritative attachment is detached.
@@ -437,6 +451,8 @@ export class OutboundDeliveryPump {
 		lane.queue.shift();
 		lane.queuedBytes -= pending.frame.byteLength;
 		this.terminalQueuedByteCount -= pending.frame.byteLength;
+		if (pending.nextPosition !== undefined)
+			lane.sentPosition = Math.max(lane.sentPosition, pending.nextPosition);
 		if (lane.queue.length === 0 && lane.releasePending)
 			this.terminalLanes.delete(laneId);
 	}
@@ -458,6 +474,14 @@ export class OutboundDeliveryPump {
 		lane.resyncPending = true;
 	}
 
+	/**
+	 * Stop delivering this attachment and represent the loss in band.
+	 *
+	 * The discarded range is bounded by what actually reached the wire, not by
+	 * a position sampled elsewhere and consumed later: the marker is enqueued in
+	 * the same ordered FIFO as the bytes it replaces, so there is no window in
+	 * which the client's position and the server's can disagree.
+	 */
 	private congestTerminalLane(
 		laneId: string,
 		lane: TerminalLane,
@@ -482,13 +506,16 @@ export class OutboundDeliveryPump {
 		}
 		if (retained !== undefined) lane.queue.push(retained);
 		lane.headPosition = Math.max(lane.headPosition, admission.nextPosition);
-		const copy = admission.createResyncFrame({
-			confirmedPosition: lane.confirmedPosition,
-			headPosition: lane.headPosition,
-		}).slice();
-		if (
-			this.terminalQueuedByteCount + copy.byteLength > this.maxQueuedBytes
-		) {
+		// A frame already handed to the transport still arrives, so the gap
+		// starts after it rather than after the last completed delivery.
+		const fromPosition = Math.max(
+			lane.sentPosition,
+			retained?.nextPosition ?? lane.sentPosition,
+		);
+		const copy = admission
+			.createSkipFrame({ fromPosition, toPosition: lane.headPosition })
+			.slice();
+		if (this.terminalQueuedByteCount + copy.byteLength > this.maxQueuedBytes) {
 			this.fail({
 				code: 'resource',
 				message: 'terminal resynchronization capacity exhausted',
@@ -499,12 +526,12 @@ export class OutboundDeliveryPump {
 			frame: copy,
 			resolve: () => undefined,
 			reject: () => undefined,
-			trafficClass: 'terminal_resync',
+			trafficClass: 'terminal_skip',
 			terminalLaneId: laneId,
 		});
 		lane.queuedBytes += copy.byteLength;
 		this.terminalQueuedByteCount += copy.byteLength;
-		lane.resyncPending = true;
+		lane.suppressed = true;
 		try {
 			this.onTerminalCongestion?.(snapshot);
 		} catch {

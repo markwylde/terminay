@@ -140,7 +140,7 @@ test('terminal congestion supersedes only its lane and preserves control deliver
 		laneId: 'attachment-a',
 		position,
 		nextPosition,
-		createResyncFrame: () => new Uint8Array([7]),
+		createSkipFrame: () => new Uint8Array([7]),
 	});
 	const admitted = [
 		pump.sendTerminal(new Uint8Array([1]), lane(0, 1)),
@@ -152,7 +152,7 @@ test('terminal congestion supersedes only its lane and preserves control deliver
 		laneId: 'attachment-b',
 		position: 0,
 		nextPosition: 1,
-		createResyncFrame: () => new Uint8Array([8]),
+		createSkipFrame: () => new Uint8Array([8]),
 	});
 
 	await immediate();
@@ -201,13 +201,13 @@ test('many congested terminal lanes cannot consume reserved control capacity', a
 			laneId,
 			position: 0,
 			nextPosition: 1,
-			createResyncFrame: () => new Uint8Array([128 + index]),
+			createSkipFrame: () => new Uint8Array([128 + index]),
 		}));
 		deliveries.push(pump.sendTerminal(new Uint8Array([index]), {
 			laneId,
 			position: 1,
 			nextPosition: 2,
-			createResyncFrame: () => new Uint8Array([128 + index]),
+			createSkipFrame: () => new Uint8Array([128 + index]),
 		}));
 	}
 	const controls = [
@@ -241,7 +241,7 @@ test('transport acceptance does not advance the terminal presentation watermark'
 		laneId: 'attachment-a',
 		position,
 		nextPosition,
-		createResyncFrame: () => new Uint8Array([7]),
+		createSkipFrame: () => new Uint8Array([7]),
 	});
 
 	await pump.sendTerminal(new Uint8Array([1]), admission(0, 1));
@@ -257,7 +257,7 @@ test('transport acceptance does not advance the terminal presentation watermark'
 		laneId: 'attachment-b',
 		position: 3,
 		nextPosition: 4,
-		createResyncFrame: () => new Uint8Array([8]),
+		createSkipFrame: () => new Uint8Array([8]),
 	});
 	assert.deepEqual(transport.sent.at(-1), new Uint8Array([4]));
 });
@@ -282,7 +282,7 @@ test('an unacknowledged trickle resynchronizes after the presentation age limit'
 		laneId: 'attachment-aged',
 		position,
 		nextPosition,
-		createResyncFrame: () => new Uint8Array([7]),
+		createSkipFrame: () => new Uint8Array([7]),
 	});
 
 	await pump.sendTerminal(new Uint8Array([1]), admission(0, 1));
@@ -306,7 +306,7 @@ test('detaching a lane blocked in transport drops later output and releases sche
 		laneId: 'attachment-detached',
 		position,
 		nextPosition,
-		createResyncFrame: () => new Uint8Array([7]),
+		createSkipFrame: () => new Uint8Array([7]),
 	});
 	const active = pump.sendTerminal(new Uint8Array([1]), admission(0, 1));
 	await immediate();
@@ -336,7 +336,7 @@ test('sustained terminal output remains live while rendered acknowledgements adv
 		laneId: 'attachment-a',
 		position,
 		nextPosition,
-		createResyncFrame: () => new Uint8Array([7]),
+		createSkipFrame: () => new Uint8Array([7]),
 	});
 
 	for (let position = 0; position < 100; position += 1) {
@@ -373,13 +373,13 @@ test('a stalled renderer stays bounded while another terminal and workspace cont
 		laneId: 'terminal-stalled',
 		position,
 		nextPosition: position + 1,
-		createResyncFrame: () => new Uint8Array([200]),
+		createSkipFrame: () => new Uint8Array([200]),
 	});
 	const interactive = (position) => ({
 		laneId: 'terminal-interactive',
 		position,
 		nextPosition: position + 1,
-		createResyncFrame: () => new Uint8Array([201]),
+		createSkipFrame: () => new Uint8Array([201]),
 	});
 	let maximumQueuedBytes = 0;
 	let maximumQueuedFrames = 0;
@@ -577,7 +577,7 @@ test('a 200 MiB terminal producer resynchronizes its attachment without closing 
 				const envelope = decodeFrame(frame).envelope;
 				return envelope.type === 'event' &&
 					envelope.event === 'terminal' &&
-					envelope.payload.type === 'resync_required';
+					envelope.payload.type === 'skip';
 			}),
 		);
 		await waitFor(() =>
@@ -845,7 +845,7 @@ test('a legacy terminal subscriber receives a base64 fallback for a raw live bod
 	}
 });
 
-test('a congested terminal lane resumes after the client confirms the resync boundary', async () => {
+test('a congested terminal lane resumes when its attachment is replaced', async () => {
 	const transport = new ControlledTransport();
 	await transport.open();
 	transport.blockWrites = true;
@@ -862,40 +862,46 @@ test('a congested terminal lane resumes after the client confirms the resync bou
 		(error) => failures.push(error),
 		(value) => congestion.push(value),
 	);
-	const lane = (position, nextPosition) => ({
-		laneId: 'attachment-a',
+	const lane = (laneId, position, nextPosition) => ({
+		laneId,
 		position,
 		nextPosition,
-		createResyncFrame: () => new Uint8Array([7]),
+		createSkipFrame: () => new Uint8Array([7]),
 	});
 	const admitted = [
-		pump.sendTerminal(new Uint8Array([1]), lane(0, 1)),
-		pump.sendTerminal(new Uint8Array([2]), lane(1, 2)),
-		pump.sendTerminal(new Uint8Array([3]), lane(2, 3)),
+		pump.sendTerminal(new Uint8Array([1]), lane('attachment-a', 0, 1)),
+		pump.sendTerminal(new Uint8Array([2]), lane('attachment-a', 1, 2)),
+		pump.sendTerminal(new Uint8Array([3]), lane('attachment-a', 2, 3)),
 	];
 	await immediate();
-	assert.equal(congestion.length, 1, 'the lane enters one bounded resync state');
+	assert.equal(congestion.length, 1, 'the lane enters one bounded suppressed state');
 
 	transport.releaseWrites();
 	await Promise.all(admitted);
 	await waitFor(() => pump.snapshot.queuedFrames === 0);
 	const sentBeforeRecovery = transport.sent.length;
 
-	// While the client has not confirmed the discarded boundary, obsolete output
-	// stays superseded rather than queueing behind a stale cursor.
-	await pump.sendTerminal(new Uint8Array([4]), lane(3, 4));
-	await waitFor(() => pump.snapshot.queuedFrames === 0);
-	assert.equal(transport.sent.length, sentBeforeRecovery, 'an unconfirmed lane admits nothing');
-
-	// Confirming the resynchronization boundary ends the recovery state. The
-	// lane is a bounded state, never a permanent mute.
+	// A congested client is exactly the client that cannot acknowledge the bytes
+	// it was denied, so an acknowledgement must not be able to unmute the lane.
+	// Only replacing the attachment can, and that is what recovery does.
 	pump.acknowledgeTerminal('attachment-a', 3);
-	await pump.sendTerminal(new Uint8Array([5]), lane(3, 4));
+	await pump.sendTerminal(new Uint8Array([4]), lane('attachment-a', 3, 4));
+	await waitFor(() => pump.snapshot.queuedFrames === 0);
+	assert.equal(
+		transport.sent.length,
+		sentBeforeRecovery,
+		'a suppressed lane admits nothing, acknowledged or not',
+	);
+
+	// The renderer re-attaches, which releases the superseded lane and opens a
+	// fresh one for the replacement attachment.
+	pump.releaseTerminal('attachment-a');
+	await pump.sendTerminal(new Uint8Array([5]), lane('attachment-b', 3, 4));
 	await waitFor(() => pump.snapshot.queuedFrames === 0);
 	assert.deepEqual(
 		transport.sent.slice(sentBeforeRecovery).map((frame) => [...frame]),
 		[[5]],
-		'the acknowledged lane streams live output again',
+		'the replacement attachment streams live output again',
 	);
 	assert.deepEqual(failures, []);
 });

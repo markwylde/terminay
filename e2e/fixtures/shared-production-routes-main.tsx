@@ -945,7 +945,7 @@ const panelClient = {
 			closed: false,
 			onOutput: () => () => undefined,
 			onExit: () => () => undefined,
-			onResync: () => () => undefined,
+			onSkip: () => () => undefined,
 			ack: async (position: number) => {
 				terminalActions.push(`ack:${position}`);
 			},

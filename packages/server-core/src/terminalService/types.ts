@@ -224,20 +224,31 @@ export interface TerminalExitEvent extends TerminalIdentity {
   readonly signal: number | null;
 }
 
-export interface TerminalResyncEvent extends TerminalIdentity {
-  readonly type: "resync_required";
+/**
+ * A byte range this attachment will never receive.
+ *
+ * It travels in the delivery lane's own FIFO, in the place the bytes would
+ * have occupied, so a client can act on it in order rather than reconciling
+ * an advisory that was computed against a position it has already passed.
+ * `fromPosition` lets the client tell a server-initiated skip apart from a
+ * genuinely corrupted stream.
+ */
+export interface TerminalSkipEvent extends TerminalIdentity {
+  readonly type: "skip";
   readonly fromPosition: number;
-  readonly replayFrom: number;
-  readonly outputPosition: number;
+  readonly toPosition: number;
+  readonly reason: TerminalSkipReason;
 }
 
-export type TerminalEvent = TerminalOutputEvent | TerminalExitEvent | TerminalResyncEvent;
+export type TerminalSkipReason = "congestion" | "attachment_closed";
+
+export type TerminalEvent = TerminalOutputEvent | TerminalExitEvent | TerminalSkipEvent;
 export type TerminalEventListener = (event: TerminalEvent) => void;
 export type TerminalInputListener = (
   identity: TerminalIdentity,
   bytes: Uint8Array,
 ) => void;
-export type TerminalCloseReason = "client" | "slow_consumer" | "service_shutdown" | "resync_required";
+export type TerminalCloseReason = "client" | "slow_consumer" | "service_shutdown" | "skip";
 
 export interface TerminalSubscriptionOptions {
   readonly authorization?: TerminalAuthorization;
