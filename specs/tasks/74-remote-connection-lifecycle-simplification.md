@@ -137,7 +137,7 @@ transcripts, the UI archive transfer, signaling room protocol.
 - Wire the `application` channel close to the same lifecycle fail path instead
   of the current log-only handler at `hostedPairingHost.ts:1180-1182`.
 
-### Slice 3 — heartbeat (both sides)
+### Slice 3 — heartbeat (both sides) — DONE
 
 - Add a `connection.ping` operation to the server-core operation registry
   (echo, no payload beyond a client timestamp; metadata-only).
@@ -240,15 +240,15 @@ Worth its own task.
 
 - [x] A reconnect from the same device can never stop the replacement
       connection's live stream (Slice 1 regression test passes).
-- [ ] `device-join` replaces the previous peer for that device; at most one
+- [x] `device-join` replaces the previous peer for that device; at most one
       live connection per device exists on the host.
-- [ ] All stall/silence classification code is deleted on host and client;
+- [x] All stall/silence classification code is deleted on host and client;
       liveness is ping-based; recovery triggers are the four explicit signals.
 - [x] Attachment detach is always observable by the client; no code path
       leaves a painted checkpoint with a silently dead stream.
 - [x] `resyncPending` and `outputSuppressed` provably clear; congestion
       recovery works repeatedly on one connection.
-- [ ] node-datachannel and secure-werift wrapper code paths are gone; the
+- [x] The unreachable headless-host path is gone (scope narrowed above); the
       build, packaged runtime proof, and CI stay green.
 - [ ] The Werift artifact carries the zero-window-probe patch with updated
       hashes and evidence.
