@@ -206,7 +206,7 @@ Worth its own task.
 - Move tasks 68–73 context notes into this task's history trail; their
   behaviours are superseded by this contract.
 
-### Slice 6 — Werift zero-window probe patch — MOVED to task 75
+### Slice 6 — Werift zero-window probe patch — DONE in task 75
 
 Confirmed as a real defect and written up with full evidence in
 [task 75](./75-werift-sctp-zero-window-probe.md), but moved out of this task
@@ -258,9 +258,8 @@ becomes a bounded reconnect rather than a permanent one.
       recovery works repeatedly on one connection.
 - [x] The unreachable headless-host path is gone (scope narrowed above); the
       build, packaged runtime proof, and CI stay green.
-- [x] The Werift zero-window deadlock is confirmed, documented, and carried
-      into task 75 with reproduction criteria; task 74's heartbeat bounds it
-      in the meantime.
+- [x] The Werift zero-window deadlock is fixed under task 75 and pinned by a
+      regression test verified to fail against the previous artifact.
 - [ ] `specs/features/remote-access.md` and
       `specs/features/terminal-stream-congestion-and-recovery.md` describe
       only the new contract (updated with this task).

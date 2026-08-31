@@ -1,4 +1,4 @@
-# 75 — Werift SCTP zero-window probe
+# 75 — Werift SCTP zero-window probe — DONE
 
 ## Goal
 
@@ -39,7 +39,30 @@ window. Werift implements no such probe.
 A receiver reaches a zero window when its application stops draining — a
 backgrounded phone tab, or a renderer briefly outpaced by a large PTY burst.
 
-## Why this is separate from task 74
+## Outcome
+
+Both defects are fixed in
+`scripts/patches/werift-0.24.1-sctp-zero-window-probe.patch`, applied by the
+governed build after the TURN-refresh patch and pinned by hash in
+`selection.json`, the build script's provenance, `secureWeriftRuntime.ts`, and
+`release-readiness.mjs` — all of which now take an ordered patch list instead
+of asserting exactly one patch.
+
+Verified against the artifact the server actually loads: the unpatched runtime
+sends nothing and arms no timer from a zero window with an empty flight, while
+the rebuilt artifact sends exactly one probe and arms T3.
+`scripts/secure-werift-sctp-recovery.test.mjs` pins both that and the flush
+serialization, and was confirmed to fail against the previous artifact. Two
+independent rebuilds produced identical archive and file hashes.
+
+The determinism proof itself had rotted: `prove-secure-werift-offline-rebuild.mjs`
+was wired to no workflow and no npm script, and its test asserted CI steps that
+no longer existed (it also read `.github/workflows/ci.yml` while this repository
+runs Gitea Actions). The proof now runs in the release workflow, where the
+runtime is already staged and the cost belongs, and the whole selection suite
+is wired into `test:release-evidence` so it cannot silently rot again.
+
+## Why this was separate from task 74
 
 Task 74 fixed the reported frozen-checkpoint loop, whose cause was
 connection-scoped teardown keyed on a shared device id. That is a different

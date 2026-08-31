@@ -477,6 +477,16 @@ jobs:
           VERSION="${TAG#v}"
           node scripts/sync-package-version.mjs "$VERSION"
 
+      - name: Prepare integrity-pinned Secure Werift source mirror
+        run: |
+          node scripts/prove-secure-werift-offline-rebuild.mjs --prepare-mirror "$RUNNER_TEMP/secure-werift-source-mirror"
+
+      - name: Prove clean network-independent Secure Werift rebuild
+        env:
+          npm_config_offline: "true"
+        run: |
+          node scripts/prove-secure-werift-offline-rebuild.mjs --prove-mirror "$RUNNER_TEMP/secure-werift-source-mirror"
+
       - name: Build and pack exact standalone server artifact
         env:
           TAG: ${{ needs.release.outputs.tag }}
