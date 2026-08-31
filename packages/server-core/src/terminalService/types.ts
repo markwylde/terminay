@@ -240,7 +240,13 @@ export interface TerminalSkipEvent extends TerminalIdentity {
   readonly reason: TerminalSkipReason;
 }
 
-export type TerminalSkipReason = "congestion" | "attachment_closed";
+/**
+ * `hydration` is a gap established while a display is being attached: the
+ * bytes are already accounted for by the position it starts from. It is not a
+ * signal to recover, because re-attaching produces the same boundary again.
+ * The other two mean a live display fell behind and must re-hydrate.
+ */
+export type TerminalSkipReason = "congestion" | "attachment_closed" | "hydration";
 
 export type TerminalEvent = TerminalOutputEvent | TerminalExitEvent | TerminalSkipEvent;
 export type TerminalEventListener = (event: TerminalEvent) => void;

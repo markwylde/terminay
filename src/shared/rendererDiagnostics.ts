@@ -9,7 +9,7 @@ export type RendererDiagnostic =
 			readonly phase: 'started' | 'retrying' | 'recovered' | 'failed';
 			readonly attempt: number;
 			readonly durationMs?: number;
-			readonly reason?: 'congestion' | 'attachment_closed' | 'attach-error' | 'deadline';
+			readonly reason?: 'congestion' | 'attachment_closed' | 'hydration' | 'attach-error' | 'deadline';
 	  };
 
 type RendererDiagnosticObserver = (

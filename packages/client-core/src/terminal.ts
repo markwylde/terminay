@@ -164,7 +164,7 @@ export interface TerminalWireSkipEvent extends TerminalClientIdentity {
 	readonly reason: TerminalSkipReason;
 }
 
-export type TerminalSkipReason = 'congestion' | 'attachment_closed';
+export type TerminalSkipReason = 'congestion' | 'attachment_closed' | 'hydration';
 
 export interface TerminalStreamOutputEvent extends TerminalClientIdentity {
 	readonly type: 'output';
@@ -1469,8 +1469,8 @@ function decodeEvent(
 			'terminal skip position',
 		);
 		const reason: TerminalSkipReason =
-			candidate.reason === 'attachment_closed'
-				? 'attachment_closed'
+			candidate.reason === 'attachment_closed' || candidate.reason === 'hydration'
+				? candidate.reason
 				: 'congestion';
 		return Object.freeze({
 			...identity,
@@ -1519,6 +1519,19 @@ function tryDecodeEvent(
  * which left the terminal silent for the rest of its life on an otherwise
  * healthy connection; the caller now has to handle every verdict explicitly.
  */
+/**
+ * Whether a skip means this display must re-hydrate.
+ *
+ * A gap established while attaching is already covered by the position the
+ * attachment starts from, and re-attaching reproduces the same boundary, so
+ * treating it as a recovery signal makes hydration re-arm itself: the terminal
+ * never paints again while its connection stays busy and healthy. Only a live
+ * display that fell behind has anything to recover.
+ */
+export function isRecoverableSkip(event: TerminalStreamEvent): boolean {
+	return event.type === 'skip' && event.reason !== 'hydration';
+}
+
 /**
  * Turn a server-side ordering fault into an explicit local skip.
  *
