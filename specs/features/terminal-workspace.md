@@ -57,8 +57,9 @@ forwards input, resize, and lifecycle commands through the application protocol.
   root and inserts the resulting server paths. Browser clients never receive
   or infer a local absolute path.
 - A tab can be renamed and styled manually with colour, emoji, terminal-theme
-  controls, and an optional note. Tab context actions expose terminal-specific
-  actions such as recording and moving it to another project.
+  controls, and an optional note. Double-clicking the tab or long-pressing it
+  opens that editor. Tab context actions expose terminal-specific actions such
+  as recording and moving it to another project.
 - The Command Bar exposes terminal and workspace actions; terminal commands
   report an inline failure rather than silently targeting a different panel.
 - PTY output fans out in Terminay Server to authorized clients and recording,

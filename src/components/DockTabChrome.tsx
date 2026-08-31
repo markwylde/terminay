@@ -1,4 +1,6 @@
 import type { CSSProperties, MouseEvent, ReactNode } from 'react';
+import { useRef } from 'react';
+import { useLongPress } from '../hooks/useLongPress';
 import type { AgentState } from '../types/agentStatus';
 import { AgentStatusIndicator } from './AgentStatusIndicator';
 
@@ -43,18 +45,40 @@ export function DockTabChrome({
 	beforeTitle,
 	afterTitle,
 }: DockTabChromeProps) {
+	const rootRef = useRef<HTMLDivElement>(null);
+	const longPress = useLongPress(
+		() => {
+			const target = rootRef.current;
+			if (!target || !onDoubleClick) return;
+			onDoubleClick({
+				currentTarget: target,
+				preventDefault() {},
+				stopPropagation() {},
+			} as MouseEvent<HTMLDivElement>);
+		},
+		{ disabled: onDoubleClick === undefined },
+	);
 	const resolvedTitle = title ?? 'Untitled';
 
 	return (
 		<div
+			ref={rootRef}
 			className={`terminal-tab-content${isActive ? ' terminal-tab-content--active' : ''}`}
 			data-panel-id={panelId}
 			data-has-color={hasCustomColor}
 			data-terminal-activity={activityState}
 			title={titleAttribute ?? resolvedTitle}
 			style={style}
-			onClick={onClick}
-			onContextMenu={onContextMenu}
+			onPointerDown={longPress.onPointerDown}
+			onPointerMove={longPress.onPointerMove}
+			onPointerUp={longPress.onPointerUp}
+			onPointerCancel={longPress.onPointerCancel}
+			onClick={longPress.bindClick(onClick)}
+			onContextMenu={(event) => {
+				longPress.onContextMenu(event);
+				if (event.defaultPrevented) return;
+				onContextMenu?.(event);
+			}}
 			onDoubleClick={onDoubleClick}
 		>
 			{leading}
@@ -72,6 +96,7 @@ export function DockTabChrome({
 				type="button"
 				className="terminal-tab-close"
 				onClick={onClose}
+				onPointerDown={(event) => event.stopPropagation()}
 				onDoubleClick={(event) => event.stopPropagation()}
 				aria-label={closeAriaLabel}
 			>
