@@ -525,10 +525,11 @@ pairing fragment or private key.
   edit-tab routes may use modal project-editor chrome. The web host presents
   the same routes in-page with equivalent open, focus, save, cancel, and close
   semantics.
-- Project-tab and terminal-tab double-click editing is a shared command. On
-  Desktop it may open the native modal edit window. In web it opens the
-  in-page edit-tab surface and returns focus to the edited project or terminal
-  after save/cancel without depending on popup windows.
+- Project-tab and terminal-tab editing is a shared command. Double-click and
+  long-press open the same editor. On Desktop it may open the native modal
+  edit window. In web it opens the in-page edit-tab surface and returns focus
+  to the edited project or terminal after save/cancel without depending on
+  popup windows.
 - Browser hosts expose an in-page application menu bar for the shared
   workspace. It contains File, Edit, View, and Help menus with the same
   command vocabulary as the Desktop native menu where the browser has an

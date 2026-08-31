@@ -1030,6 +1030,9 @@
 .project-switcher-button {
   all: unset;
   box-sizing: border-box;
+  -webkit-touch-callout: none;
+  user-select: none;
+  touch-action: manipulation;
   min-width: 76px;
   max-width: 180px;
   padding: 0 8px 0 10px;
@@ -1231,6 +1234,8 @@
   cursor: pointer;
   display: inline-flex;
   align-items: center;
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 
 .project-switcher-menu__grip {
@@ -1275,6 +1280,7 @@ body.project-tabbar-reordering .project-tabbar {
   gap: 8px;
   font-size: 13px;
   font-weight: 500;
+  touch-action: manipulation;
 }
 
 .project-switcher-menu__title {
@@ -1417,6 +1423,9 @@ body.project-tabbar-reordering .project-tabbar {
   transition: background-color 150ms ease, color 150ms ease;
   min-width: 120px;
   max-width: 220px;
+  -webkit-touch-callout: none;
+  user-select: none;
+  touch-action: manipulation;
 }
 
 .terminal-tab-content[data-has-color='true'] {

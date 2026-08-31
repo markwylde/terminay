@@ -552,6 +552,7 @@ export function TerminalTab(
 			ref={macroMenuRef}
 			className={`terminal-tab-macro-menu${isMacroMenuOpen ? ' terminal-tab-macro-menu--open' : ''}`}
 			onClick={(event) => event.stopPropagation()}
+			onPointerDown={(event) => event.stopPropagation()}
 			onDoubleClick={(event) => event.stopPropagation()}
 		>
 			<button
@@ -605,7 +606,7 @@ export function TerminalTab(
 				agentState={displayedAgentState}
 				agentNeedsAttention={displayedAgentNeedsAttention}
 				agentStatusLabel={displayedAgentStatusLabel}
-				titleAttribute="Double-click to edit tab"
+				titleAttribute="Double-click or long-press to edit tab"
 				style={style}
 				onClick={onClick}
 				onDoubleClick={onDoubleClick}
@@ -659,6 +660,7 @@ export function TerminalTab(
 							role="menu"
 							aria-label="Macro queue"
 							onClick={(event) => event.stopPropagation()}
+							onPointerDown={(event) => event.stopPropagation()}
 							onDoubleClick={(event) => event.stopPropagation()}
 						>
 							<div className="terminal-tab-macro-popover__header">
