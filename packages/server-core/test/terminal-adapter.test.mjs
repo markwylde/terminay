@@ -51,7 +51,7 @@ function textEvents(events) {
   }));
 }
 
-test("terminal adapter keeps reconnect watermarks while honoring a fresh display replay cursor", async () => {
+test("terminal adapter resumes only from a stated cursor and keeps no watermark memory", async () => {
   const pty = fakePty();
   const service = new TerminalService({ serverId: "server-a", ptyFactory: pty, maxReplayBytes: 64 });
   const session = await service.createSession({ projectId: "project-a", sessionId: "session-a", cols: 80, rows: 24 });
@@ -101,13 +101,30 @@ test("terminal adapter keeps reconnect watermarks while honoring a fresh display
   assert.deepEqual(textEvents(otherEvents).at(-1), { position: 6, nextPosition: 7, text: "g", replay: false });
   resumed.detach();
   other.detach();
+  // A reconnect states the position it actually rendered. The adapter keeps no
+  // cursor of its own: resuming from a remembered watermark can start a stream
+  // at a position this display never reached, which is precisely the gap it
+  // has no way to detect.
   const reconnect = adapter.resume(
     { clientId: "client-a", identity, authorization: read },
     { onEvent: () => {} },
   );
-  assert.equal(reconnect.snapshot().fromPosition, 7);
-  assert.deepEqual(reconnect.initialEvents, []);
+  assert.equal(reconnect.snapshot().fromPosition, 0,
+    "an omitted cursor means the start of retained replay, never an invented one");
+  assert.equal(
+    textEvents(reconnect.initialEvents).map((event) => event.text).join(""),
+    "abcdefg",
+    "retained replay is delivered in full rather than silently skipped",
+  );
   reconnect.detach();
+
+  const exact = adapter.resume(
+    { clientId: "client-a", identity, authorization: read, fromPosition: 7 },
+    { onEvent: () => {} },
+  );
+  assert.equal(exact.snapshot().fromPosition, 7);
+  assert.deepEqual(exact.initialEvents, []);
+  exact.detach();
   assert.equal(adapter.size, 0);
   assert.equal(session.status, "running");
 });

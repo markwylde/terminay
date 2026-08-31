@@ -86,11 +86,11 @@ test("terminal panel adapter preserves raw bytes and routes input, resize, kill,
   const resyncs = [];
   panel.onOutput((event) => outputs.push([...event.bytes]));
   panel.onExit((event) => exits.push(event.exitCode));
-  panel.onResync((event) => resyncs.push(event.replayFrom));
+  panel.onSkip((event) => resyncs.push(event.toPosition));
 
   source.emit({ ...output(3, new Uint8Array([0x00, 0xc3, 0xa9])) });
   source.emit({ ...identity, type: "exit", exitCode: 0, signal: null });
-  source.emit({ ...identity, type: "resync_required", fromPosition: 0, replayFrom: 3, outputPosition: 8 });
+  source.emit({ ...identity, type: "skip", fromPosition: 6, toPosition: 3, reason: "congestion" });
   assert.deepEqual(outputs, [[0, 0xc3, 0xa9]]);
   assert.deepEqual(exits, [0]);
   assert.deepEqual(resyncs, [3]);
@@ -178,16 +178,16 @@ test("terminal panel forwards raw replay and filters output, exit, and resync li
   panel.onEvent((event) => events.push(event));
   panel.onOutput((event) => outputs.push({ bytes: [...event.bytes], position: event.position }));
   panel.onExit((event) => exits.push({ exitCode: event.exitCode, signal: event.signal }));
-  panel.onResync((event) => resyncs.push({ replayFrom: event.replayFrom, outputPosition: event.outputPosition }));
+  panel.onSkip((event) => resyncs.push({ fromPosition: event.fromPosition, toPosition: event.toPosition }));
 
   source.emit(output(3, new Uint8Array([0x00, 0xc3, 0xa9])));
   source.emit({ ...identity, type: "exit", exitCode: 7, signal: 15 });
-  source.emit({ ...identity, type: "resync_required", fromPosition: 6, replayFrom: 9, outputPosition: 12 });
+  source.emit({ ...identity, type: "skip", fromPosition: 6, toPosition: 12, reason: "congestion" });
   source.emit({ ...identity, type: "dimensions", cols: 44, rows: 16 });
 
   assert.deepEqual(outputs, [{ bytes: [0x00, 0xc3, 0xa9], position: 3 }]);
   assert.deepEqual(exits, [{ exitCode: 7, signal: 15 }]);
-  assert.deepEqual(resyncs, [{ replayFrom: 9, outputPosition: 12 }]);
+  assert.deepEqual(resyncs, [{ fromPosition: 6, toPosition: 12 }]);
   assert.deepEqual(events.at(-1), { ...identity, type: "dimensions", cols: 44, rows: 16 });
   await panel.detach();
 });
@@ -299,7 +299,7 @@ test("terminal panel resume honors an explicit stale display cursor", async () =
   await resumed.detach();
 });
 
-test("terminal panel retry resumes from the retained replay boundary after resync", async () => {
+test("terminal panel retry resumes from the position the display actually reached", async () => {
   const calls = [];
   const listeners = new Set();
   const source = {
@@ -310,7 +310,7 @@ test("terminal panel retry resumes from the retained replay boundary after resyn
           attachmentId: "resync-attachment",
           fromPosition: payload.fromPosition,
           position: 900,
-          events: [{ ...identity, type: "resync_required", fromPosition: payload.fromPosition, replayFrom: 500, outputPosition: 900 }],
+          events: [{ ...identity, type: "skip", fromPosition: payload.fromPosition, toPosition: 500, reason: "congestion" }],
         };
       }
       if (operation === "terminal.resume") {
@@ -324,36 +324,20 @@ test("terminal panel retry resumes from the retained replay boundary after resyn
   const first = await client.attach({ ...identity, clientId: "panel-client" });
   assert.equal(first.position, 500);
   await first.detach();
-  await client.resume({ ...identity, clientId: "panel-client" });
+  await client.resume({ ...identity, clientId: "panel-client", fromPosition: first.position });
   assert.equal(calls.filter(([operation]) => operation === "terminal.resume").at(-1)[1].fromPosition, 500);
 });
 
-test("fresh-surface resync cannot lower the shared reconnect watermark", async () => {
+test("an omitted reconnect cursor replays from the start rather than an invented one", async () => {
   const calls = [];
   let attachment = 0;
   const source = {
     async command(operation, payload) {
       calls.push([operation, payload]);
-      if (operation === "terminal.attach") {
-        return {
-          attachmentId: `attachment-${++attachment}`,
-          fromPosition: 0,
-          position: 900,
-          events: [output(0, new Uint8Array(900), true)],
-        };
-      }
-      if (operation === "terminal.resume" && payload.fromPosition === 0) {
-        return {
-          attachmentId: `attachment-${++attachment}`,
-          fromPosition: 0,
-          position: 900,
-          events: [{ ...identity, type: "resync_required", fromPosition: 0, replayFrom: 500, outputPosition: 900 }],
-        };
-      }
       return {
         attachmentId: `attachment-${++attachment}`,
-        fromPosition: payload.fromPosition,
-        position: payload.fromPosition,
+        fromPosition: payload.fromPosition ?? 0,
+        position: payload.fromPosition ?? 0,
         events: [],
       };
     },
@@ -362,14 +346,17 @@ test("fresh-surface resync cannot lower the shared reconnect watermark", async (
     },
   };
   const client = new TerminayTerminalClient(source);
-  const first = await client.attach({ ...identity, clientId: "panel-client" });
+  const first = await client.attach({ ...identity, clientId: "panel-client", fromPosition: 900 });
   assert.equal(first.position, 900);
   await first.detach();
 
-  const moved = await client.resume({ ...identity, clientId: "panel-client", fromPosition: 0 });
-  assert.equal(moved.position, 500);
-  await moved.detach();
-
+  // The client keeps no cursor memory. Resuming from a remembered watermark
+  // could start the stream at a position this display never rendered, and a
+  // gap introduced that way is one the client cannot detect.
   await client.resume({ ...identity, clientId: "panel-client" });
-  assert.equal(calls.filter(([operation]) => operation === "terminal.resume").at(-1)[1].fromPosition, 900);
+  assert.equal(
+    calls.filter(([operation]) => operation === "terminal.resume").at(-1)[1].fromPosition,
+    0,
+    "an omitted cursor means the start of retained replay",
+  );
 });

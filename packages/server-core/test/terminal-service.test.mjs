@@ -618,8 +618,8 @@ test("TerminalService splits output into bounded chunks, retains bounded replay,
   assert.equal(slow.queuedBytes, 3);
   process.emitData("de");
   assert.equal(slow.closed, true);
-  assert.equal(slow.closeReason, "resync_required");
-  assert.deepEqual(slow.drain().map((event) => event.type), ["resync_required"]);
+  assert.equal(slow.closeReason, "skip");
+  assert.deepEqual(slow.drain().map((event) => event.type), ["skip"]);
 });
 
 test("interrupt publishes one terminal event and shutdown marks remaining sessions interrupted", async () => {
