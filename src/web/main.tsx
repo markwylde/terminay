@@ -22,7 +22,7 @@ import {
 	type DesktopHostBridge,
 } from './desktopByteTransport';
 import {
-	createSessionSilenceWatch,
+	createSessionHeartbeat,
 	logSessionLane,
 	type SessionConnectAttempt,
 	SessionConnectGate,
@@ -57,46 +57,6 @@ function LoadingDots(): React.JSX.Element {
 			))}
 		</div>
 	);
-}
-
-function tapSessionTransport(
-	transport: ByteTransport,
-	watch: Readonly<{ noteInbound(): void; noteOutbound(): void }>,
-): ByteTransport {
-	return {
-		get state() {
-			return transport.state;
-		},
-		get queuedBytes() {
-			return transport.queuedBytes;
-		},
-		get bufferedBytes() {
-			return transport.bufferedBytes;
-		},
-		incoming: {
-			[Symbol.asyncIterator]: () => {
-				const iterator = transport.incoming[Symbol.asyncIterator]();
-				return {
-					next: async () => {
-						const result = await iterator.next();
-						if (!result.done) watch.noteInbound();
-						return result;
-					},
-					return: iterator.return?.bind(iterator),
-					throw: iterator.throw?.bind(iterator),
-				};
-			},
-		},
-		open: (signal) => transport.open(signal),
-		send: async (frame, options) => {
-			await transport.send(frame, options);
-			watch.noteOutbound();
-		},
-		waitForWritable: (bytes, signal) =>
-			transport.waitForWritable(bytes, signal),
-		close: (reason, options) => transport.close(reason, options),
-		onStateChange: (listener) => transport.onStateChange(listener),
-	};
 }
 
 class WorkspaceErrorBoundary extends Component<
@@ -153,7 +113,7 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 		(options?: Readonly<{ replaceDesktopEndpoint?: boolean }>) => void
 	>(() => undefined);
 	const connectionRef = useRef<ConnectedSession | undefined>(undefined);
-	const silenceWatchRef = useRef<{ stop(): void } | undefined>(undefined);
+	const heartbeatRef = useRef<{ stop(): void } | undefined>(undefined);
 	const [connection, setConnection] = useState<ConnectedSession>();
 	const [desktopContext, setDesktopContext] = useState<TerminayHostContext>();
 	const [error, setError] = useState<string>();
@@ -173,7 +133,7 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 			setError(undefined);
 			if (connectionRef.current === undefined) setPhase('connecting');
 			await clientRef.current?.close().catch(() => undefined);
-			silenceWatchRef.current?.stop();
+			heartbeatRef.current?.stop();
 
 			const sessionHost = getSessionTransportHost();
 			let transport: ByteTransport;
@@ -216,21 +176,6 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 				throw new Error('Session transport closed during connect.');
 			}
 
-			const watch = createSessionSilenceWatch({
-				onSilence: (stallClass, snapshot) => {
-					logSessionLane('application-lane-stalled', snapshot);
-					setError('Terminal stream stalled. Reconnecting…');
-					if (gateRef.current.shouldRecoverFromSilence(attempt, stallClass)) {
-						recoverConnection();
-					}
-				},
-				onSample: (snapshot) => {
-					logSessionLane('application-lane', snapshot);
-				},
-			});
-			silenceWatchRef.current = watch;
-			transport = tapSessionTransport(transport, watch);
-
 			const client = new TerminayClient({
 				transport,
 				clientId: createWebClientId('session'),
@@ -241,6 +186,9 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 					'workspace',
 					'files',
 					'agents',
+					// This client promises to prove liveness on an interval, which
+					// also arms the server's inbound-silence reaper for it.
+					'connection.heartbeat',
 				],
 			});
 			clientRef.current = client;
@@ -268,6 +216,20 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 					return;
 				}
 				gateRef.current.finish(attempt);
+				// Liveness is proven by asking, not by watching traffic: a WebRTC
+				// generation can stop delivering while every lane still reports open.
+				const heartbeat = createSessionHeartbeat({
+					ping: (signal) =>
+						client.query('connection.ping', { sentAt: Date.now() }, { signal }),
+					onLost: (snapshot) => {
+						logSessionLane('connection-heartbeat-lost', snapshot);
+						setError('Connection lost. Reconnecting…');
+						if (gateRef.current.shouldRecoverFromClose(attempt)) recoverConnection();
+					},
+				});
+				heartbeatRef.current?.stop();
+				heartbeatRef.current = heartbeat;
+				heartbeat.start();
 				const next = Object.freeze({
 					context: Object.freeze({
 						...context,
@@ -322,7 +284,7 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 	useEffect(() => {
 		startAttemptRef.current();
 		return () => {
-			silenceWatchRef.current?.stop();
+			heartbeatRef.current?.stop();
 			void clientRef.current?.close().catch(() => undefined);
 		};
 	}, []);

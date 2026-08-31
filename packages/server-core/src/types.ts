@@ -134,6 +134,9 @@ export interface ServerCoreOptions extends ServerIdentity, OperationRegistries {
   readonly authenticate?: AuthenticateClient;
   readonly eventJournal?: OrderedEventJournalLike;
   readonly maxConnections?: number;
+  /** Inbound silence a heartbeat client may show before the server reaps it.
+   * Applies only to clients advertising `connection.heartbeat`. */
+  readonly heartbeatTimeoutMs?: number;
   readonly defaultQueryScope?: AuthScope;
   readonly defaultCommandScope?: AuthScope;
   /** Optional server-owned projection applied immediately before a journal
