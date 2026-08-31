@@ -9,6 +9,17 @@ export const DEFAULT_HOSTED_ICE_SERVERS: readonly HostedIceServer[] =
 
 export const DEFAULT_ICE_RECOVERY_GRACE_MS = 5_000;
 
+export const DEVICE_HOST_AVAILABILITY_MS = 25 * 60 * 1000;
+export const DEVICE_REFRESH_LEAD_MS = 5 * 60 * 1000;
+
+export function deviceHostRefreshDelayMs(
+	expiresAt: number,
+	now: number,
+	leadMs = DEVICE_REFRESH_LEAD_MS,
+): number {
+	return Math.max(1_000, expiresAt - now - leadMs);
+}
+
 type PeerLike = Readonly<{
 	connectionState?: string;
 	iceConnectionState?: string;
@@ -178,7 +189,22 @@ export type HostedLaneDiagnostic = Readonly<{
 	channel?: string | undefined;
 	channelState?: string | undefined;
 	stallClass?: string | undefined;
+	firstInboundAgeMs?: number | null | undefined;
+	firstOutboundAgeMs?: number | null | undefined;
 }>;
+
+export const APPLICATION_STALL_FAIL_GRACE_MS = 15_000;
+
+/** Handshake inbound overlapping a short outbound pause is not a failed generation. */
+export function shouldFailHostedStall(event: HostedLaneDiagnostic): boolean {
+	if (event.stallClass === 'no-outbound') {
+		return (event.firstInboundAgeMs ?? 0) >= APPLICATION_STALL_FAIL_GRACE_MS;
+	}
+	if (event.stallClass === 'outbound-stalled') {
+		return (event.firstOutboundAgeMs ?? 0) >= APPLICATION_STALL_FAIL_GRACE_MS;
+	}
+	return false;
+}
 
 /** Fail a hydrated generation that can no longer deliver. ICE consent blips
  * do not belong here; required-lane loss and application-lane silence do. */
@@ -186,10 +212,7 @@ export function applyHostedLaneDiagnostic(
 	lifecycle: HostedPeerLifecycle,
 	event: HostedLaneDiagnostic,
 ): void {
-	if (
-		event.stallClass === 'no-outbound' ||
-		event.stallClass === 'outbound-stalled'
-	) {
+	if (shouldFailHostedStall(event)) {
 		lifecycle.fail(`WebRTC application lane ${event.stallClass}.`);
 		return;
 	}
@@ -201,6 +224,43 @@ export function applyHostedLaneDiagnostic(
 			event.channelState === 'failed')
 	) {
 		lifecycle.fail(`WebRTC ${event.channel} lane ${event.channelState}.`);
+	}
+}
+
+export type HostedTrackedGeneration = Readonly<{
+	peer: { close(): void };
+	connection?: { close(): Promise<void> | void };
+}>;
+
+/** Live remote generations only. Retired peers must leave this set or later
+ * hydrates keep a painted checkpoint while PTY is sent into dead Werift sockets. */
+export class HostedGenerationSet {
+	private readonly generations: HostedTrackedGeneration[] = [];
+
+	get size(): number {
+		return this.generations.length;
+	}
+
+	add(generation: HostedTrackedGeneration): void {
+		this.generations.push(generation);
+	}
+
+	drop(peer: HostedTrackedGeneration['peer']): HostedTrackedGeneration | undefined {
+		const index = this.generations.findIndex((entry) => entry.peer === peer);
+		if (index < 0) return undefined;
+		return this.generations.splice(index, 1)[0];
+	}
+
+	closeAll(): void {
+		const snapshot = this.generations.splice(0);
+		for (const entry of snapshot) {
+			try {
+				entry.peer.close();
+			} catch {
+				/* Best effort while dropping a poisoned generation. */
+			}
+			void entry.connection?.close();
+		}
 	}
 }
 

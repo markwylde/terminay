@@ -92,6 +92,14 @@ test('peer-closed classifies ICE grace expiry without echoing the raw reason', (
 		),
 		'ice-grace-expired',
 	);
+	assert.equal(
+		classifyPeerCloseReason('WebRTC application lane outbound-stalled.'),
+		'outbound-stalled',
+	);
+	assert.equal(
+		classifyPeerCloseReason('WebRTC application lane closed.'),
+		'required-lane-closed',
+	);
 	const events = [];
 	const stream = createHostedStreamDiagnostics({
 		emit: (event) => events.push(event),
@@ -114,10 +122,17 @@ test('Desktop mapper keeps stream events payload-free and namespaced', () => {
 		outboundFrames: 0,
 		inboundKind: 'bytes',
 		stallClass: 'no-outbound',
+		firstInboundAgeMs: 4_000,
+		firstOutboundAgeMs: null,
+		liveGenerationCount: 3,
+		stallIgnored: true,
 	});
 	assert.equal(mapped.event, 'local-server.remote-webrtc.application-lane');
 	assert.equal(mapped.source, 'remote-webrtc');
 	assert.equal(mapped.fields.stallClass, 'no-outbound');
+	assert.equal(mapped.fields.stallIgnored, true);
+	assert.equal(mapped.fields.liveGenerationCount, 3);
+	assert.equal(mapped.fields.firstInboundAgeMs, 4_000);
 	assert.equal(mapped.severity, 'warning');
 	assert.equal('pairingUrl' in mapped.fields, false);
 });

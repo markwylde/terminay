@@ -23,6 +23,7 @@ import {
 } from './desktopByteTransport';
 import {
 	createSessionSilenceWatch,
+	logSessionLane,
 	type SessionConnectAttempt,
 	SessionConnectGate,
 } from './sessionConnectAttempt';
@@ -216,10 +217,15 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 			}
 
 			const watch = createSessionSilenceWatch({
-				onSilence: (stallClass) => {
+				onSilence: (stallClass, snapshot) => {
+					logSessionLane('application-lane-stalled', snapshot);
+					setError('Terminal stream stalled. Reconnecting…');
 					if (gateRef.current.shouldRecoverFromSilence(attempt, stallClass)) {
 						recoverConnection();
 					}
+				},
+				onSample: (snapshot) => {
+					logSessionLane('application-lane', snapshot);
 				},
 			});
 			silenceWatchRef.current = watch;
@@ -367,7 +373,9 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 							aria-busy="true"
 						>
 							<LoadingDots />
-							<p>Reconnecting…</p>
+							<p>
+								{error ?? 'Terminal stream stalled. Reconnecting…'}
+							</p>
 						</div>
 					)}
 					<ConnectedWebRendererWorkspace
