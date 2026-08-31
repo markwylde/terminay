@@ -32,8 +32,6 @@ export function hostedPairingDiagnosticEvent(
 		event.type === 'failed' ||
 		event.type === 'signaling-closed' ||
 		event.type === 'peer-closed' ||
-		event.stallClass !== undefined ||
-		event.stallIgnored === true ||
 		event.sendFailure === true ||
 		event.channelState === 'closed' ||
 		event.channelState === 'failed';
@@ -71,8 +69,6 @@ export function hostedPairingDiagnosticEvent(
 			sendFailure: event.sendFailure,
 			sendFailures: event.sendFailures,
 			signalingHostClass: event.signalingHostClass,
-			stallClass: event.stallClass,
-			stallIgnored: event.stallIgnored,
 			summary: event.summary,
 		},
 		severity: warning ? 'warning' : 'info',
