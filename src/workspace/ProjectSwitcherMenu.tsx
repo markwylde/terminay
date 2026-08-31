@@ -4,9 +4,77 @@ import type {
 	KeyboardEvent,
 	PointerEvent as ReactPointerEvent,
 } from 'react';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { projectTabIsBusy, type ProjectTab } from './projectTabModel';
+import {
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useRef,
+	useState,
+} from 'react';
+import { useLongPress } from '../hooks/useLongPress';
+import { type ProjectTab, projectTabIsBusy } from './projectTabModel';
 import { moveItemByDrop } from './projectTabOverflow';
+
+function ProjectSwitcherItemButton({
+	disabled,
+	isActive,
+	onActivate,
+	onEdit,
+	project,
+}: {
+	disabled: boolean;
+	isActive: boolean;
+	onActivate: () => void;
+	onEdit: () => void;
+	project: ProjectTab;
+}) {
+	const longPress = useLongPress(onEdit, {
+		disabled: project.creationStatus !== undefined,
+	});
+	return (
+		<button
+			type="button"
+			className="project-switcher-menu__item"
+			data-project-switcher-item={project.id}
+			role="menuitem"
+			onPointerDown={longPress.onPointerDown}
+			onPointerMove={longPress.onPointerMove}
+			onPointerUp={longPress.onPointerUp}
+			onPointerCancel={longPress.onPointerCancel}
+			onContextMenu={longPress.onContextMenu}
+			onClick={longPress.bindClick(() => {
+				if (disabled) return;
+				onActivate();
+			})}
+			title="Long-press to edit project"
+		>
+			{projectTabIsBusy(project) ? (
+				<span
+					className="project-tab-creation-spinner"
+					role="img"
+					aria-label={
+						project.creationStatus === 'loading'
+							? 'Creating project'
+							: 'Connecting project'
+					}
+				/>
+			) : (
+				<span className="project-switcher-menu__swatch" aria-hidden="true" />
+			)}
+			{project.creationStatus === undefined && project.emoji ? (
+				<span className="project-switcher-menu__emoji" aria-hidden="true">
+					{project.emoji}
+				</span>
+			) : null}
+			<span className="project-switcher-menu__title">{project.title}</span>
+			{isActive ? (
+				<span className="project-switcher-menu__check" aria-hidden="true">
+					✓
+				</span>
+			) : null}
+		</button>
+	);
+}
 
 export function ProjectSwitcherMenu({
 	activeProjectId,
@@ -16,6 +84,7 @@ export function ProjectSwitcherMenu({
 	onActivate,
 	onClose,
 	onCreateProject,
+	onEdit,
 	onOpen,
 	onReorder,
 	onReorderCommit,
@@ -28,6 +97,7 @@ export function ProjectSwitcherMenu({
 	onActivate: (projectId: string) => void;
 	onClose: (projectId: string) => void;
 	onCreateProject?: () => void;
+	onEdit: (projectId: string) => void | Promise<void>;
 	onOpen?: () => void;
 	onReorder: (projects: ProjectTab[]) => void;
 	onReorderCommit?: (movedId: string) => void;
@@ -75,7 +145,8 @@ export function ProjectSwitcherMenu({
 		if (!open || !compact) return;
 		const root = rootRef.current;
 		const menu = root?.querySelector('.project-switcher-menu');
-		if (!(root instanceof HTMLElement) || !(menu instanceof HTMLElement)) return;
+		if (!(root instanceof HTMLElement) || !(menu instanceof HTMLElement))
+			return;
 		const place = () => {
 			const tabbar = root.closest('.project-tabbar');
 			const rect = (
@@ -198,6 +269,17 @@ export function ProjectSwitcherMenu({
 		});
 	};
 
+	const longPress = useLongPress(
+		() => {
+			if (active === undefined || active.creationStatus !== undefined) return;
+			setOpen(false);
+			void onEdit(active.id);
+		},
+		{
+			disabled: active === undefined || active.creationStatus !== undefined,
+		},
+	);
+
 	const handleMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
 		const items = [
 			...(rootRef.current?.querySelectorAll<HTMLButtonElement>(
@@ -245,8 +327,13 @@ export function ProjectSwitcherMenu({
 			<button
 				type="button"
 				className="project-switcher-button"
-				onClick={toggle}
-				title={buttonState}
+				onPointerDown={longPress.onPointerDown}
+				onPointerMove={longPress.onPointerMove}
+				onPointerUp={longPress.onPointerUp}
+				onPointerCancel={longPress.onPointerCancel}
+				onContextMenu={longPress.onContextMenu}
+				onClick={longPress.bindClick(toggle)}
+				title={`${buttonState}. Long-press to edit project`}
 				aria-label={buttonState}
 				aria-haspopup="menu"
 				aria-expanded={open}
@@ -302,53 +389,20 @@ export function ProjectSwitcherMenu({
 							>
 								<GripVertical size={12} aria-hidden="true" />
 							</button>
-							<button
-								type="button"
-								className="project-switcher-menu__item"
-								data-project-switcher-item={project.id}
-								role="menuitem"
-								onClick={() => {
-									if (project.creationStatus === 'loading') return;
+							<ProjectSwitcherItemButton
+								disabled={project.creationStatus === 'loading'}
+								isActive={project.id === activeProjectId}
+								onActivate={() => {
 									onActivate(project.id);
 									setOpen(false);
 								}}
-							>
-								{projectTabIsBusy(project) ? (
-									<span
-										className="project-tab-creation-spinner"
-										role="img"
-										aria-label={
-											project.creationStatus === 'loading'
-												? 'Creating project'
-												: 'Connecting project'
-										}
-									/>
-								) : (
-									<span
-										className="project-switcher-menu__swatch"
-										aria-hidden="true"
-									/>
-								)}
-								{project.creationStatus === undefined && project.emoji ? (
-									<span
-										className="project-switcher-menu__emoji"
-										aria-hidden="true"
-									>
-										{project.emoji}
-									</span>
-								) : null}
-								<span className="project-switcher-menu__title">
-									{project.title}
-								</span>
-								{project.id === activeProjectId ? (
-									<span
-										className="project-switcher-menu__check"
-										aria-hidden="true"
-									>
-										✓
-									</span>
-								) : null}
-							</button>
+								onEdit={() => {
+									if (project.creationStatus !== undefined) return;
+									setOpen(false);
+									void onEdit(project.id);
+								}}
+								project={project}
+							/>
 							<button
 								type="button"
 								className="project-switcher-menu__close"
