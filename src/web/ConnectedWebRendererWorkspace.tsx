@@ -426,7 +426,7 @@ export function ConnectedWebRendererWorkspace({
 		if (snapshot === null || snapshot === undefined) return undefined;
 		const viewId = snapshot.viewOrder[0];
 		const view = viewId === undefined ? undefined : snapshot.views[viewId];
-		return view?.activeProjectId ?? view?.projectIds[0];
+		return view?.projectIds[0];
 	}, [terminalClientContext.workspaceSnapshotStore?.snapshot]);
 	const sharedRouteContent = (() => {
 		switch (requestedView) {

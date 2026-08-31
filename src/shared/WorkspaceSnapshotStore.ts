@@ -211,8 +211,8 @@ export class WorkspaceSnapshotStore {
 		console.warn('workspace reconciliation failed', normalized.name)
 	}
 
-	/** Keep the only presentation mutation on the same authenticated workspace
-	 * authority as snapshot reconciliation. */
+	/** Named workspace command for callers that still persist a default
+	 * identity. Live tab and terminal selection is client-local. */
 	async activatePanel(request: PanelActivationRequest, options: WorkspaceCommandOptions = {}): Promise<void> {
 		if (this.closed) throw new Error('workspace snapshot store is closed')
 		await this.workspace.activatePanel(request, options)

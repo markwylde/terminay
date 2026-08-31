@@ -168,9 +168,9 @@ export class WorkspaceClient {
 	}
 
 	/**
-	 * Presentation selection is the only workspace mutation the shared route
-	 * controller may issue directly. Keep the operation name and its authority
-	 * payload here instead of allowing a renderer to construct a raw
+	 * Optional persisted default identity. Live project-tab and terminal
+	 * selection is client-local and must not be issued from presentation
+	 * chrome; keep this named operation so callers cannot construct a raw
 	 * `workspace.command` envelope.
 	 */
 	async activatePanel(

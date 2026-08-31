@@ -90,8 +90,9 @@ export type ServerWorkspaceDelta = Readonly<{
 
 /**
  * Keep presentation selection constrained to the latest authenticated server
- * snapshot. A closed/moved panel therefore cannot leave a browser pointing at
- * an invented terminal identity.
+ * snapshot. A still-valid local project or panel is preserved when another
+ * client changes snapshot active ids. A closed/moved panel therefore cannot
+ * leave a browser pointing at an invented terminal identity.
  */
 export function reconcileServerWorkspaceSelection(
 	snapshot: ServerWorkspaceSnapshot,
