@@ -33,6 +33,7 @@ export function hostedPairingDiagnosticEvent(
 		event.type === 'signaling-closed' ||
 		event.type === 'peer-closed' ||
 		event.stallClass !== undefined ||
+		event.stallIgnored === true ||
 		event.sendFailure === true;
 	return {
 		component: 'local-server',
@@ -48,6 +49,8 @@ export function hostedPairingDiagnosticEvent(
 			droppedClass: event.droppedClass,
 			droppedFrames: event.droppedFrames,
 			first: event.first,
+			firstInboundAgeMs: event.firstInboundAgeMs,
+			firstOutboundAgeMs: event.firstOutboundAgeMs,
 			iceGracePhase: event.iceGracePhase,
 			iceState: event.iceState,
 			inboundBytes: event.inboundBytes,
@@ -55,6 +58,7 @@ export function hostedPairingDiagnosticEvent(
 			inboundKind: event.inboundKind,
 			lastInboundAgeMs: event.lastInboundAgeMs,
 			lastOutboundAgeMs: event.lastOutboundAgeMs,
+			liveGenerationCount: event.liveGenerationCount,
 			outboundBytes: event.outboundBytes,
 			outboundFrames: event.outboundFrames,
 			peerState: event.peerState,
@@ -65,6 +69,7 @@ export function hostedPairingDiagnosticEvent(
 			sendFailures: event.sendFailures,
 			signalingHostClass: event.signalingHostClass,
 			stallClass: event.stallClass,
+			stallIgnored: event.stallIgnored,
 			summary: event.summary,
 		},
 		severity: warning ? 'warning' : 'info',

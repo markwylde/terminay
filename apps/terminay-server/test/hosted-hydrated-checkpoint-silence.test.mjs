@@ -1,16 +1,21 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+	APPLICATION_STALL_FAIL_GRACE_MS,
 	applyHostedLaneDiagnostic,
 	HostedPeerLifecycle,
+	shouldFailHostedStall,
 } from '../src/remote/hostedPeerLifecycle.ts';
-import { createHostedStreamDiagnostics } from '../src/remote/hostedStreamDiagnostics.ts';
+import {
+	classifyPeerCloseReason,
+	createHostedStreamDiagnostics,
+} from '../src/remote/hostedStreamDiagnostics.ts';
 
 function livePeer() {
 	return { connectionState: 'connected', iceConnectionState: 'connected' };
 }
 
-test('outbound-stalled after checkpoint hydrate fails the generation while the peer stays connected', () => {
+test('handshake inbound after a checkpoint dump does not fail a generation on a 4s outbound pause', () => {
 	const reasons = [];
 	const peer = livePeer();
 	const lifecycle = new HostedPeerLifecycle(peer, 5_000, (reason) =>
@@ -34,16 +39,59 @@ test('outbound-stalled after checkpoint hydrate fails the generation while the p
 	now = 1_000;
 	stream.noteInbound(new Uint8Array(477));
 	stream.noteOutbound(363);
-	now = 5_000;
+	for (let i = 0; i < 184; i += 1) stream.noteOutbound(3_000);
+	now = 5_134;
 	stream.noteInbound(new Uint8Array(10));
 
 	assert.equal(
 		events.some((event) => event.stallClass === 'outbound-stalled'),
 		true,
 	);
+	assert.equal(
+		events.some(
+			(event) =>
+				event.stallClass === 'outbound-stalled' &&
+				(event.firstOutboundAgeMs ?? 0) < APPLICATION_STALL_FAIL_GRACE_MS,
+		),
+		true,
+	);
+	assert.deepEqual(reasons, []);
+	const stall = events.find((event) => event.stallClass === 'outbound-stalled');
+	assert.equal(shouldFailHostedStall(stall), false);
+});
+
+test('outbound-stalled fails the generation only after hydrate grace', () => {
+	const reasons = [];
+	const peer = livePeer();
+	const lifecycle = new HostedPeerLifecycle(peer, 5_000, (reason) =>
+		reasons.push(reason),
+	);
+	let now = 0;
+	const stream = createHostedStreamDiagnostics({
+		emit(event) {
+			applyHostedLaneDiagnostic(lifecycle, event);
+		},
+		now: () => now,
+		stallMs: 3_000,
+		summaryMs: 60_000,
+		setIntervalFn: () => 1,
+		clearIntervalFn: () => undefined,
+	});
+
+	stream.peerState('connected', 'connected');
+	now = 1_000;
+	stream.noteInbound(new Uint8Array(477));
+	stream.noteOutbound(363);
+	now = 1_000 + APPLICATION_STALL_FAIL_GRACE_MS;
+	stream.noteInbound(new Uint8Array(10));
+
 	assert.equal(peer.connectionState, 'connected');
 	assert.notEqual(reasons.length, 0);
-	assert.match(String(reasons[0]), /stall|application lane|outbound/iu);
+	assert.match(String(reasons[0]), /outbound-stalled/u);
+	assert.equal(
+		classifyPeerCloseReason(String(reasons[0])),
+		'outbound-stalled',
+	);
 });
 
 test('required application lane close while the peer stays connected fails the generation', () => {

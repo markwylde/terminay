@@ -392,11 +392,16 @@ Firefox; it does not start grace or replace the generation. ICE
 Required-lane close or failure (`control`, `application`, `terminal`,
 `assets`) fails that generation even while the peer still reports
 `connected`. Handshake-only `api` and `asset` close after handoff does not.
-Host `no-outbound` / `outbound-stalled` and client `no-inbound` /
-`inbound-stalled` are the same class of failure: the generation can no
-longer deliver. The workspace shows reconnecting status, not connected,
-disables input, and replaces the generation. It does not leave a painted
-checkpoint mounted as live.
+Host `no-outbound` / `outbound-stalled` after hydrate grace, and client
+`no-inbound` / `inbound-stalled`, are the same class of failure: the
+generation can no longer deliver. Attach and checkpoint handshake inbound
+overlapping a short outbound pause is not that failure. The workspace shows
+reconnecting status, not connected, disables input, and replaces the
+generation. It does not leave a painted checkpoint mounted as live.
+A stalled application lane logs `[terminay-workspace]` counters in the session.
+Host diagnostics include live generation count, first-frame age, and whether
+a stall was ignored during hydrate grace. Peer-closed diagnostics name stall,
+required-lane loss, and ICE/peer failure instead of `other`.
 
 The session host creates that generation once per connect attempt. Pairing or
 saved-device signaling, bundle install, and the workspace's application
@@ -404,6 +409,10 @@ saved-device signaling, bundle install, and the workspace's application
 or ticket for the same attempt. A `closed` event from a retired generation
 cannot start a parallel connect. Automatic recovery, **Retry connection**,
 document resume, and the initial connect share one in-flight attempt.
+Retired host generations leave the live peer set. They do not stay subscribed
+to PTY or hold Werift sockets after the application lane closes. Device
+signaling reregister keeps live generations and does not accumulate closed
+ones. A later connect still hydrates a checkpoint and then streams later PTY.
 
 Live terminal output shares the binary application lane with command results
 and later workspace events. Attach snapshots, later PTY bytes, new projects,
@@ -611,9 +620,11 @@ frames do not produce one log line per frame.
   generation and continues live terminal output. Peer `disconnected`, or ICE
   `disconnected` while the peer is also not `connected`, either recovers
   inside grace or replaces that generation once without a page reload.
-- Application-lane stall or required-lane close while the peer stays
-  `connected` replaces that generation. The browser shows reconnecting, then
-  live PTY and later workspace events again.
+- Application-lane stall after hydrate grace, or required-lane close, while
+  the peer stays `connected` replaces that generation. The browser shows
+  reconnecting, then live PTY and later workspace events again. A checkpoint
+  dump whose handshake inbound continues during a few-second outbound pause
+  does not replace the generation.
 - A framed PWA session that hydrates a terminal still shows subsequent typed
   PTY output on that same generation. A new project or terminal created after
   that hydrate appears while the generation is live.
