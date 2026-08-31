@@ -20,6 +20,7 @@ test('the production hosted pairing host owns ICE servers, grace, and one handsh
 	assert.doesNotMatch(host, /iceServers: \[\]/u);
 	assert.match(host, /createHandshakeJoinQueue/u);
 	assert.match(host, /new HostedPeerLifecycle/u);
+	assert.match(host, /collectHostIceAddresses\(networkInterfaces\(\)\)/u);
 	assert.match(host, /applyHostedLaneDiagnostic/u);
 	assert.match(host, /HostedGenerationSet/u);
 	assert.match(host, /generations\.drop/u);

@@ -1,3 +1,4 @@
+import { networkInterfaces } from 'node:os';
 import { gzipSync } from 'node:zlib';
 import { createPrivateKey, randomBytes, sign, timingSafeEqual } from 'node:crypto';
 import { WebSocket } from 'ws';
@@ -30,6 +31,7 @@ import type { ServerPairingHandoff, ServerRemoteExposure } from './serverExposur
 import { bindUiArchiveChannels, safeChannelSend } from './uiArchiveTransfer.js';
 import {
 	applyHostedLaneDiagnostic,
+	collectHostIceAddresses,
 	createHandshakeJoinQueue,
 	DEVICE_HOST_AVAILABILITY_MS,
 	deviceHostRefreshDelayMs,
@@ -44,6 +46,7 @@ import { createHostedStreamDiagnostics, frameByteLength } from './hostedStreamDi
 
 export {
 	applyHostedLaneDiagnostic,
+	collectHostIceAddresses,
 	createHandshakeJoinQueue,
 	DEFAULT_HOSTED_ICE_SERVERS,
 	DEFAULT_ICE_RECOVERY_GRACE_MS,
@@ -748,6 +751,7 @@ async function startPeer(
 		hostedPeerConfiguration(
 			context.options.signal?.connectHost,
 			context.options.resolveIceServers?.() ?? context.options.iceServers,
+			collectHostIceAddresses(networkInterfaces()),
 		),
 	);
 	const session: { connection?: ServerConnectionLike; peer?: HostedConnectedPeer } = {};
