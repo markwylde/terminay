@@ -108,7 +108,7 @@ export class TerminalServiceAdapter {
           ...identity,
           fromPosition: deliveredPosition,
           toPosition: event.position,
-          reason: "congestion",
+          reason: "hydration",
         }));
         deliveredPosition = event.position;
       }

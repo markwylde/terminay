@@ -13,6 +13,7 @@ import type {
 	TerminayGitClient,
 } from '@terminay/client-core';
 import {
+	isRecoverableSkip,
 	TerminayTerminalClient,
 	TerminayTerminalPanelClient,
 } from '@terminay/client-core';
@@ -878,7 +879,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				durationMs?: number;
 				fromPosition?: number;
 				outputPosition?: number;
-				reason?: 'congestion' | 'attachment_closed' | 'attach-error' | 'deadline';
+				reason?: 'congestion' | 'attachment_closed' | 'hydration' | 'attach-error' | 'deadline';
 				toPosition?: number;
 			} = {},
 		) => {
@@ -1529,7 +1530,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 										setServerTerminalError(
 											'Terminal presentation is unavailable because a complete safe recovery boundary is no longer retained.',
 										);
-									} else if (event.type === 'skip') {
+									} else if (isRecoverableSkip(event)) {
 										beginTerminalResync(event);
 									}
 								})
@@ -1556,7 +1557,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 						for (const event of attachment.initialEvents) {
 							renderServerEvent(event);
 							if (
-								event.type === 'skip' ||
+								isRecoverableSkip(event) ||
 								event.type === 'presentation_unavailable'
 							)
 								break;

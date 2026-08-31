@@ -42,6 +42,8 @@ const DEFAULT_MAX_SESSIONS = 256;
 const DEFAULT_MAX_INPUT_BYTES = 64 * 1024;
 const DEFAULT_MAX_OUTPUT_CHUNK_BYTES = 64 * 1024;
 const CHECKPOINT_PAUSE_BYTES = 256 * 1024;
+/** How long a fresh presentation waits for the checkpoint drain to catch up. */
+const CHECKPOINT_SETTLE_DEADLINE_MS = 250;
 const CHECKPOINT_RESUME_BYTES = 128 * 1024;
 const DEFAULT_MAX_REPLAY_BYTES = 1024 * 1024;
 const DEFAULT_MAX_QUEUED_OUTPUT_BYTES = 256 * 1024;
@@ -679,6 +681,42 @@ export class TerminalService {
       droppedBytes: historyLost ? mutable.replayFrom - requestedFromPosition : 0,
       hasMore: nextPosition < mutable.outputPosition,
       bytes,
+    });
+  }
+
+  /**
+   * Let the checkpoint authority catch up with the PTY.
+   *
+   * Output reaches that authority through a bounded drain, so under sustained
+   * load it trails the live head by up to the pause threshold. A checkpoint
+   * prepared without waiting is that far out of date, which makes every
+   * "fresh" presentation hydrate a stale screen and then need a gap to reach
+   * live. Callers that are about to pin a checkpoint wait for this first.
+   */
+  settlePresentation(
+    session: string | TerminalIdentity,
+    deadlineMs = CHECKPOINT_SETTLE_DEADLINE_MS,
+  ): Promise<void> {
+    if (this.presentationCheckpoints === undefined) return Promise.resolve();
+    const sessionId = typeof session === "string" ? session : session.sessionId;
+    const mutable = typeof sessionId === "string" ? this.sessionsById.get(sessionId) : undefined;
+    if (mutable === undefined) return Promise.resolve();
+    // A terminal that never falls silent must not be able to stall an attach.
+    // Waiting is an optimisation that removes the common hydration gap; when
+    // it cannot be had in time, the caller still has a bounded skip.
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (): void => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+      const timer = setTimeout(finish, deadlineMs);
+      timer.unref?.();
+      void this.waitForPresentationDrain(mutable).then(() => {
+        clearTimeout(timer);
+        finish();
+      });
     });
   }
 
