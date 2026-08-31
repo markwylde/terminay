@@ -1,7 +1,12 @@
 import type { ElectronApplication, Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { typeInVisibleTerminal } from './support/terminal-input';
-import { openProjectEditWindow, submitEditWindow } from './support/ui';
+import {
+	cancelEditWindow,
+	longPress,
+	openProjectEditWindow,
+	submitEditWindow,
+} from './support/ui';
 
 async function readCssVariableFromStyle(
 	locator: Locator,
@@ -583,5 +588,59 @@ test.describe('project tabs', () => {
 			lastTitle,
 		);
 		await expect(menu).toBeVisible();
+	});
+
+	test('long-pressing the compact project switcher opens project editing', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		const nativeWindow = await electronApp.browserWindow(mainWindow);
+		await nativeWindow.evaluate((window) => {
+			window.setBounds({ x: 40, y: 40, width: 390, height: 740 });
+		});
+		await expect(mainWindow.locator('.project-tabbar-projects')).toHaveAttribute(
+			'data-project-tab-layout',
+			'compact',
+		);
+		await longPress(mainWindow.locator('.project-switcher-button'));
+		await expect(
+			mainWindow.getByRole('heading', { name: 'Edit Project Tab' }),
+		).toBeVisible();
+		await cancelEditWindow(mainWindow);
+		await expect(mainWindow.locator('.project-switcher-menu')).toHaveCount(0);
+		await mainWindow.locator('.project-switcher-button').click();
+		await expect(mainWindow.locator('.project-switcher-menu')).toBeVisible();
+	});
+
+	test('long-pressing a project switcher row opens that project editor', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		await mainWindow.getByLabel('Create project on This server').click();
+		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
+		const nativeWindow = await electronApp.browserWindow(mainWindow);
+		await nativeWindow.evaluate((window) => {
+			window.setBounds({ x: 40, y: 40, width: 390, height: 740 });
+		});
+		await expect(mainWindow.locator('.project-tabbar-projects')).toHaveAttribute(
+			'data-project-tab-layout',
+			'compact',
+		);
+		await mainWindow.locator('.project-switcher-button').click();
+		const menu = mainWindow.locator('.project-switcher-menu');
+		await expect(menu).toBeVisible();
+		const otherItem = menu
+			.locator('[data-project-switcher-item]')
+			.filter({ hasNotText: 'New project' })
+			.last();
+		const otherTitle = (await otherItem.locator('.project-switcher-menu__title').textContent())?.trim();
+		if (!otherTitle) throw new Error('Expected a project row to edit');
+		await longPress(otherItem);
+		await expect(
+			mainWindow.getByRole('heading', { name: 'Edit Project Tab' }),
+		).toBeVisible();
+		await expect(mainWindow.getByPlaceholder('Project name')).toHaveValue(
+			otherTitle,
+		);
 	});
 });

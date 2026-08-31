@@ -130,6 +130,10 @@ identity. Project-sidebar sizing and title-visibility behavior is governed by
   auxiliary-route presentation. Desktop may use a native modal window; web uses
   an in-page edit-tab surface. Saving updates the server-owned project name,
   root, colour, and icon; cancel leaves project state unchanged.
+- Long-pressing the project switcher pill edits the active project. Long-pressing
+  a project row in that menu edits that project. A short press still opens the
+  menu or activates the project. Long-press does not toggle the menu, switch
+  projects, or start a reorder.
 - Files and folders opened from project navigation become dockable panels in the
   relevant project. Closing a panel must dispose only that panel's resources;
   terminal termination is explicit terminal lifecycle behaviour.

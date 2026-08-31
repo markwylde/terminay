@@ -139,9 +139,9 @@ forwarding paths, provider messages, or plaintext.
   transcription belong to the selected Terminay Server. The renderer may use
   the browser media API to capture microphone audio, but Desktop exposes no
   feature-aware AI or dictation preload global and owns no provider fallback.
-- Web menu actions and tab/project double-click editing open the in-page
-  settings, macros, recordings, or edit-tab route instead of no-oping when
-  native windows are unavailable.
+- Web menu actions and tab/project double-click or long-press editing open the
+  in-page settings, macros, recordings, or edit-tab route instead of no-oping
+  when native windows are unavailable.
 - A Desktop workspace has one native application menu and no in-page
   File/Edit/View/Help bar. The equivalent browser workspace has the in-page
   menu and no native-only commands.

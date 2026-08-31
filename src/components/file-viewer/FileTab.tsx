@@ -38,7 +38,7 @@ export function FileTab(props: IDockviewPanelHeaderProps<FilePanelInstanceParams
       panelId={props.api.id}
       isActive={isFocused}
       hasCustomColor={hasCustomColor}
-      titleAttribute="Double-click to edit tab"
+      titleAttribute="Double-click or long-press to edit tab"
       style={style}
       onDoubleClick={onDoubleClick}
       closeAriaLabel="Close file tab"
