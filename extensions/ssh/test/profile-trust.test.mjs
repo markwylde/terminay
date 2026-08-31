@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ProfileStore, HostTrustManager, SshProviderError } from "../dist/index.js";
+import { ProfileStore, HostTrustManager } from "../dist/index.js";
 
 const input = { id: "prod", displayName: "Production", hostname: "prod.example.test", port: 22, username: "mark", auth: { mode: "private-key", privateKeySecretRef: "ssh-key" }, defaultRoot: "~", hostVerification: "strict", timeouts: { connectMs: 2000, handshakeMs: 2000, keepaliveMs: 2000 } };
 

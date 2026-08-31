@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { realpath, rm } from 'node:fs/promises'
+import { rm } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import { expect, test } from './fixtures'
 import {
@@ -704,7 +704,6 @@ test('git sidebar pane refreshes after setting project root from terminal cwd', 
     },
   })
   const linkedWorktree = await createWorkspace({ name: 'git-pane-linked-worktree' })
-  const expectedRoot = await realpath(linkedWorktree.rootDir)
   const sessionId = await getActiveSessionId(mainWindow)
 
   await rm(linkedWorktree.rootDir, { recursive: true, force: true })
@@ -764,7 +763,6 @@ test('git sidebar pane refreshes after keyboard sidebar open and keyboard root u
       },
     },
   })
-  const expectedRoot = await realpath(repo.rootDir)
   const sessionId = await getActiveSessionId(mainWindow)
   const modifier = process.platform === 'darwin' ? 'Meta' : 'Control'
 
