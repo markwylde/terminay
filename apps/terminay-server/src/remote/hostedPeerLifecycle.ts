@@ -178,80 +178,103 @@ export function needsDisconnectGrace(
 	return isRecoverableDisconnectState(iceState) && peerState !== 'connected';
 }
 
-/** A single datachannel close does not hang up the peer. */
-export function laneCloseHangsUp(
-	_channel?: string,
-	channelState?: string,
+/**
+ * The lanes a live session cannot deliver without. `api` and `asset` are
+ * bootstrap lanes: they carry the host context and the UI archive, and closing
+ * after that transfer is normal.
+ */
+export const REQUIRED_LANES: ReadonlySet<string> = Object.freeze(
+	new Set(['control', 'application', 'terminal', 'assets']),
+) as ReadonlySet<string>;
+
+/**
+ * A required lane leaving `open` is a generation failure — the peer can no
+ * longer deliver, whatever ICE reports.
+ *
+ * A lane that has never opened is still negotiating. Handshake ordering is not
+ * a delivery failure, and treating it as one was the false positive that made
+ * earlier builds tear down healthy sessions mid-connect.
+ */
+export function requiredLaneClosed(
+	channel: string | undefined,
+	channelState: string | undefined,
+	everOpened: boolean,
 ): boolean {
-	void _channel;
-	void channelState;
-	return false;
+	if (channel === undefined || !REQUIRED_LANES.has(channel)) return false;
+	if (!everOpened) return false;
+	return channelState === 'closed' || channelState === 'closing' || channelState === 'failed';
 }
 
-export type HostedLaneDiagnostic = Readonly<{
-	channel?: string | undefined;
-	channelState?: string | undefined;
-	stallClass?: string | undefined;
-	firstInboundAgeMs?: number | null | undefined;
-	firstOutboundAgeMs?: number | null | undefined;
-}>;
-
-export const APPLICATION_STALL_FAIL_GRACE_MS = 15_000;
-
-/** Application-lane stall is logged. It does not hang up a live peer. */
-export function shouldFailHostedStall(event: HostedLaneDiagnostic): boolean {
-	void event;
-	return false;
-}
-
-/** Stall and datachannel close are logged. They do not hang up the peer. */
-export function applyHostedLaneDiagnostic(
-	lifecycle: HostedPeerLifecycle,
-	event: HostedLaneDiagnostic,
-): void {
-	if (shouldFailHostedStall(event)) {
-		lifecycle.fail(`WebRTC application lane ${event.stallClass}.`);
-		return;
-	}
-	if (laneCloseHangsUp(event.channel, event.channelState)) {
-		lifecycle.fail(`WebRTC ${event.channel} lane ${event.channelState}.`);
-	}
-}
-
-export type HostedTrackedGeneration = Readonly<{
+export type HostedLivePeer = Readonly<{
 	peer: { close(): void };
 	connection?: { close(): Promise<void> | void };
+	/** Reported to the host when this peer is retired, so a replaced connection
+	 * leaves the live list without depending on a native close event firing. */
+	connectionId?: string;
 }>;
 
-/** Live remote generations only. Retired peers must leave this set or later
- * hydrates keep a painted checkpoint while PTY is sent into dead Werift sockets. */
-export class HostedGenerationSet {
-	private readonly generations: HostedTrackedGeneration[] = [];
+/**
+ * At most one live peer per device.
+ *
+ * A reconnect must retire the connection it replaces at join time. Letting a
+ * superseded peer linger until its own transport finally gives up is what
+ * produced two live server connections for one device, and the later of the
+ * two teardowns then stopped the live session's stream.
+ */
+export class HostedLivePeerRegistry {
+	private readonly peers = new Map<string, HostedLivePeer>();
 
 	get size(): number {
-		return this.generations.length;
+		return this.peers.size;
 	}
 
-	add(generation: HostedTrackedGeneration): void {
-		this.generations.push(generation);
+	get(deviceId: string): HostedLivePeer | undefined {
+		return this.peers.get(deviceId);
 	}
 
-	drop(peer: HostedTrackedGeneration['peer']): HostedTrackedGeneration | undefined {
-		const index = this.generations.findIndex((entry) => entry.peer === peer);
-		if (index < 0) return undefined;
-		return this.generations.splice(index, 1)[0];
+	set(deviceId: string, live: HostedLivePeer): void {
+		this.peers.set(deviceId, live);
 	}
 
-	closeAll(): void {
-		const snapshot = this.generations.splice(0);
-		for (const entry of snapshot) {
-			try {
-				entry.peer.close();
-			} catch {
-				/* Best effort while dropping a poisoned generation. */
-			}
-			void entry.connection?.close();
-		}
+	/** Drop the entry only when it still describes this exact peer, so a late
+	 * teardown from a superseded generation cannot evict its replacement. */
+	drop(deviceId: string, peer: HostedLivePeer['peer']): HostedLivePeer | undefined {
+		const existing = this.peers.get(deviceId);
+		if (existing === undefined || existing.peer !== peer) return undefined;
+		this.peers.delete(deviceId);
+		return existing;
+	}
+
+	/** Close and forget one device's live peer, awaiting its server-side
+	 * connection cleanup so the replacement never overlaps with it. */
+	async close(deviceId: string): Promise<HostedLivePeer | undefined> {
+		const existing = this.peers.get(deviceId);
+		if (existing === undefined) return undefined;
+		this.peers.delete(deviceId);
+		await closeLivePeer(existing);
+		return existing;
+	}
+
+	async closeAll(): Promise<void> {
+		const snapshot = [...this.peers.values()];
+		this.peers.clear();
+		for (const entry of snapshot) await closeLivePeer(entry);
+	}
+}
+
+async function closeLivePeer(entry: HostedLivePeer): Promise<void> {
+	// Release the server-owned connection first: its cleanup is what frees the
+	// device's attachments and leases, and it must complete before a
+	// replacement peer for the same device is accepted.
+	try {
+		await entry.connection?.close();
+	} catch {
+		/* A connection that already failed needs no further teardown. */
+	}
+	try {
+		entry.peer.close();
+	} catch {
+		/* Best effort while dropping a retired generation. */
 	}
 }
 

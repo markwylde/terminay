@@ -17,6 +17,11 @@
       "path": "scripts/patches/werift-0.24.1-abort-turn-refresh.patch",
       "sha256": "34ea60bd991256adb2cd50bfe0ef9011cfc79054aff686b9ec35ef4703de4211",
       "purpose": "Abort the pending TURN allocation refresh timer during peer close."
+    },
+    {
+      "path": "scripts/patches/werift-0.24.1-sctp-zero-window-probe.patch",
+      "sha256": "298aa1ebb0f0eb45c673dd24907e7e8110bfef499524993d8203fd74ecaa6b2b",
+      "purpose": "Probe a zero receive window and serialize data-channel flush so outbound delivery cannot deadlock."
     }
   ],
   "integrity": {

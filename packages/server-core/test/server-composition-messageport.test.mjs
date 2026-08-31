@@ -180,7 +180,7 @@ test("server-core composition dispatches terminal operations through a MessagePo
   const { terminal, terminalOperations, operations, eventJournal } = composition;
 
   assert.ok(terminal instanceof TerminalService);
-  assert.equal(typeof terminalOperations.closeClient, "function");
+  assert.equal(typeof terminalOperations.closeConnection, "function");
   assert.ok(getOperation(terminalOperations.operations.commands, "terminal.attach"));
   assert.ok(getOperation(terminalOperations.operations.queries, "terminal.list"));
   for (const operation of [

@@ -51,12 +51,12 @@ function tar(entries) {
 		header.write(path, 0, 100, 'utf8');
 		header.write('0000644\0', 100, 'ascii');
 		header.write('0000000\0', 108, 'ascii'); header.write('0000000\0', 116, 'ascii');
-		header.write(body.length.toString(8).padStart(11, '0') + '\0', 124, 'ascii');
+		header.write(`${body.length.toString(8).padStart(11, '0')}\0`, 124, 'ascii');
 		header.write('00000000000\0', 136, 'ascii');
 		Buffer.alloc(8, 0x20).copy(header, 148); header.write(type, 156, 'ascii');
 		header.write('ustar\0', 257, 'ascii'); header.write('00', 263, 'ascii');
 		let sum = 0; for (const byte of header) sum += byte;
-		header.write(sum.toString(8).padStart(6, '0') + '\0 ', 148, 'ascii');
+		header.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148, 'ascii');
 		records.push(header, body, Buffer.alloc((512 - (body.length % 512)) % 512));
 	}
 	return Buffer.concat([...records, Buffer.alloc(1024)]);

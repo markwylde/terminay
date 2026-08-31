@@ -114,7 +114,7 @@ test("TerminalService close observation is session-scoped, bounded, and capabili
   const service = new TerminalService({ serverId: "server-a", ptyFactory: pty });
   const idle = await service.createSession({ projectId: "project-a", sessionId: "idle", cols: 80, rows: 24 });
   const noisy = await service.createSession({ projectId: "project-a", sessionId: "noisy", cols: 80, rows: 24 });
-  const other = await service.createSession({ projectId: "project-b", sessionId: "other", cols: 80, rows: 24 });
+  const _other = await service.createSession({ projectId: "project-b", sessionId: "other", cols: 80, rows: 24 });
   const auth = (sessionId, projectId = "project-a") => ({
     serverId: "server-a", projectId, sessionId, scope: "read",
   });

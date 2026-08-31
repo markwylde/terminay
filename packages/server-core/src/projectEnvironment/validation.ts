@@ -79,14 +79,14 @@ function environment(id: string, input: unknown, profiles: Readonly<Record<strin
 }
 
 function operation(id: string, input: unknown, environments: Readonly<Record<string, ProjectEnvironmentRecord>>): import('./types.js').ProjectEnvironmentOperationRecord {
-	if (!record(input) || input.id !== id || !identifier(id) || !providerIdentifier(input.providerId) || !identifier(input.environmentId) || environments[input.environmentId]?.providerId !== input.providerId || !text(input.kind,128) || !['pending','running','succeeded','failed','cancelled'].includes(input.state) || !json(input.providerState) || !timestamp(input.createdAt) || !timestamp(input.updatedAt) || input.updatedAt < input.createdAt || !positiveRevision(input.revision)) throw new TypeError(`invalid project environment operation ${id}`);
+	if (!record(input) || input.id !== id || !identifier(id) || !providerIdentifier(input.providerId) || !identifier(input.environmentId) || environments[input.environmentId]?.providerId !== input.providerId || !text(input.kind,128) || !['pending','running','succeeded','failed','cancelled'].includes(input.state as string) || !json(input.providerState) || !timestamp(input.createdAt) || !timestamp(input.updatedAt) || input.updatedAt < input.createdAt || !positiveRevision(input.revision)) throw new TypeError(`invalid project environment operation ${id}`);
 	if (input.providerOperationId !== undefined && !identifier(input.providerOperationId)) throw new TypeError(`invalid provider operation identity ${id}`);
 	if (input.progress !== undefined && !json(input.progress)) throw new TypeError(`invalid provider operation progress ${id}`);
 	if (JSON.stringify(input.providerState).length > 262144 || (input.progress !== undefined && JSON.stringify(input.progress).length > 262144)) throw new TypeError(`project environment operation ${id} is too large`);
-	return structuredClone(input) as import('./types.js').ProjectEnvironmentOperationRecord;
+	return structuredClone(input) as unknown as import('./types.js').ProjectEnvironmentOperationRecord;
 }
 
-function record(value: unknown): value is Record<string, any> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
+function record(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
 function identifier(value: unknown): value is string { return typeof value === 'string' && ID.test(value); }
 function providerIdentifier(value: unknown): value is string { return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,126}\/[A-Za-z0-9][A-Za-z0-9._:-]{0,126}$/.test(value) || identifier(value); }
 function revision(value: unknown): value is number { return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0; }
@@ -124,6 +124,7 @@ export function projectEnvironmentRegistryHasOrphanedProfileRecords(input: unkno
 	return Object.values(input.environments).some((environment) =>
 		record(environment)
 			&& typeof environment.profileId === 'string'
+			&& record(input.profiles)
 			&& input.profiles[environment.profileId] === undefined,
 	);
 }

@@ -6196,8 +6196,7 @@ function App({
 		);
 		const serverProject = workspaceSnapshot?.projects[project.id];
 		const hasTerminal =
-			serverProject !== undefined &&
-			serverProject.panelIds.some(
+			serverProject?.panelIds.some(
 				(panelId) => workspaceSnapshot?.panels[panelId]?.type === 'terminal',
 			);
 		const remote =

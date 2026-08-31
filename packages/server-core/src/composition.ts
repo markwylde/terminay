@@ -180,7 +180,7 @@ export interface ServerCoreCompositionOptions
   /** Shared ordered journal used by terminal events and ServerConnection. */
   readonly eventJournal?: OrderedEventJournalLike;
   /** Host observer invoked after terminal connection cleanup is performed. */
-  readonly onConnectionClosed?: (clientId: string) => void;
+  readonly onConnectionClosed?: (connectionId: string, clientId: string) => void;
 }
 
 /**
@@ -519,11 +519,11 @@ export function createServerCoreComposition(
     routedOperations,
     terminalOperations.operations,
   );
-  const onConnectionClosed = (clientId: string): void => {
-    terminalOperations.closeClient(clientId);
-    macroOperations?.closeClient(clientId);
-    options.fileObservations?.closeClient(clientId);
-    options.onConnectionClosed?.(clientId);
+  const onConnectionClosed = (connectionId: string, clientId: string): void => {
+    terminalOperations.closeConnection(connectionId);
+    macroOperations?.closeConnection(connectionId);
+    options.fileObservations?.closeConnection(connectionId);
+    options.onConnectionClosed?.(connectionId, clientId);
   };
   const coreOptions: ServerCoreOptions = {
     serverId: options.serverId,
@@ -540,9 +540,9 @@ export function createServerCoreComposition(
     ...optionalCoreOptions(options),
     ...completeOperations,
     onConnectionClosed,
-		onTerminalCongestion: (attachmentId, clientId) => {
-			terminalOperations.suppressOutput(attachmentId, clientId);
-			options.onTerminalCongestion?.(attachmentId, clientId);
+		onTerminalCongestion: (attachmentId, clientId, connectionId) => {
+			terminalOperations.suppressOutput(attachmentId, connectionId);
+			options.onTerminalCongestion?.(attachmentId, clientId, connectionId);
 		},
   };
   const baseCore = createServerCore(coreOptions);

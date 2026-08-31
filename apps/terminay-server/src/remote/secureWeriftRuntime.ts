@@ -5,8 +5,21 @@ import { pathToFileURL } from 'node:url';
 
 const SELECTED_PACKAGE_NAME = '@terminay/werift-runtime-proof';
 const SELECTED_PACKAGE_VERSION = '0.24.1-candidate.1';
-const SELECTED_PATCH_SHA256 =
-	'34ea60bd991256adb2cd50bfe0ef9011cfc79054aff686b9ec35ef4703de4211';
+/** The governed patch set, in the exact order the build applies it. */
+const SELECTED_PATCHES = [
+	{
+		path: 'scripts/patches/werift-0.24.1-abort-turn-refresh.patch',
+		sha256: '34ea60bd991256adb2cd50bfe0ef9011cfc79054aff686b9ec35ef4703de4211',
+		purpose:
+			'Abort the pending TURN allocation refresh timer during peer close.',
+	},
+	{
+		path: 'scripts/patches/werift-0.24.1-sctp-zero-window-probe.patch',
+		sha256: '298aa1ebb0f0eb45c673dd24907e7e8110bfef499524993d8203fd74ecaa6b2b',
+		purpose:
+			'Probe a zero receive window and serialize data-channel flush so outbound delivery cannot deadlock.',
+	},
+] as const;
 const HASH_PATTERN = /^[a-f0-9]{64}$/u;
 
 export interface SecureWeriftRuntimeModule {
@@ -23,13 +36,11 @@ export interface SecureWeriftSelection {
 		name: typeof SELECTED_PACKAGE_NAME;
 		version: typeof SELECTED_PACKAGE_VERSION;
 	}>;
-	readonly patches: readonly [
-		Readonly<{
-			path: 'scripts/patches/werift-0.24.1-abort-turn-refresh.patch';
-			sha256: typeof SELECTED_PATCH_SHA256;
-			purpose: 'Abort the pending TURN allocation refresh timer during peer close.';
-		}>,
-	];
+	readonly patches: readonly Readonly<{
+		path: string;
+		sha256: string;
+		purpose: string;
+	}>[];
 	readonly integrity: Readonly<{
 		payloadManifest: 'SHA256SUMS';
 		rejectExtraFiles: true;
@@ -105,6 +116,20 @@ export async function verifySelectedSecureWeriftRuntime(
 	return { artifactRoot, selection };
 }
 
+/** Every governed patch, in order, with no additions or substitutions. */
+function matchesSelectedPatches(value: unknown): boolean {
+	if (!Array.isArray(value) || value.length !== SELECTED_PATCHES.length) return false;
+	return SELECTED_PATCHES.every((expected, index) => {
+		const actual = value[index] as Partial<(typeof SELECTED_PATCHES)[number]> | undefined;
+		return (
+			actual?.path === expected.path &&
+			actual.sha256 === expected.sha256 &&
+			actual.purpose === expected.purpose &&
+			HASH_PATTERN.test(expected.sha256)
+		);
+	});
+}
+
 function validateSelection(value: unknown): SecureWeriftSelection {
 	if (typeof value !== 'object' || value === null || Array.isArray(value)) {
 		throw new TypeError('selected WebRTC runtime manifest is invalid');
@@ -116,12 +141,7 @@ function validateSelection(value: unknown): SecureWeriftSelection {
 		selection.artifactFormat !== 'terminay-secure-werift-v1' ||
 		selection.package?.name !== SELECTED_PACKAGE_NAME ||
 		selection.package.version !== SELECTED_PACKAGE_VERSION ||
-		selection.patches?.length !== 1 ||
-		selection.patches[0]?.path !==
-			'scripts/patches/werift-0.24.1-abort-turn-refresh.patch' ||
-		selection.patches[0].sha256 !== SELECTED_PATCH_SHA256 ||
-		selection.patches[0].purpose !==
-			'Abort the pending TURN allocation refresh timer during peer close.' ||
+		!matchesSelectedPatches(selection.patches) ||
 		selection.integrity?.payloadManifest !== 'SHA256SUMS' ||
 		selection.integrity.rejectExtraFiles !== true ||
 		selection.integrity.rejectSymlinks !== true ||

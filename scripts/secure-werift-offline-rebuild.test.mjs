@@ -39,7 +39,12 @@ test('candidate.1 source acquisition pins ranged transitive runtime dependencies
 test('candidate.1 offline rebuild gate separates mirror acquisition from the network-free proof', async () => {
   const builder = await readFile(new URL('./build-secure-werift-candidate.mjs', import.meta.url), 'utf8')
   const proof = await readFile(new URL('./prove-secure-werift-offline-rebuild.mjs', import.meta.url), 'utf8')
-  const workflow = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')
+  // The determinism proof is a release gate: it rebuilds the candidate twice
+  // from a pinned mirror, which is far too expensive for every pull request.
+  const workflow = await readFile(
+    new URL('../.github/workflows/trigger-release.yml', import.meta.url),
+    'utf8',
+  )
 
   assert.match(builder, /npm_config_offline: 'true'/u)
   assert.equal(

@@ -34,6 +34,7 @@ export async function createDesktopBootstrappedWebRtcTransport(options: {
 	readonly now?: () => number;
 	readonly openSocket?: (url: string, origin: string) => Socket;
 	readonly socketOpenTimeoutMs?: number;
+	readonly webrtcRuntimeRoot?: string;
 	readonly createTransport?: typeof createDesktopWebRtcTransport;
 }): Promise<ByteTransport> {
 	return (await createDesktopBootstrappedWebRtcConnection({
@@ -54,6 +55,8 @@ export async function createDesktopBootstrappedWebRtcConnection(options: {
 	readonly now?: () => number;
 	readonly openSocket?: (url: string, origin: string) => Socket;
 	readonly socketOpenTimeoutMs?: number;
+	/** Packaged directory holding the selected WebRTC runtime and its manifest. */
+	readonly webrtcRuntimeRoot?: string;
 	readonly createConnection?: typeof createDesktopWebRtcConnection;
 }): Promise<DesktopWebRtcConnection> {
 	const now = options.now ?? Date.now;
@@ -87,6 +90,9 @@ export async function createDesktopBootstrappedWebRtcConnection(options: {
 			serverId: bootstrap.serverId,
 			sessionOrigin: bootstrap.sessionOrigin,
 			signaling,
+			...(options.webrtcRuntimeRoot === undefined
+				? {}
+				: { webrtcRuntimeRoot: options.webrtcRuntimeRoot }),
 		});
 		connection.transport.onStateChange((state) => {
 			if (state === 'closed' || state === 'failed') signaling.close();

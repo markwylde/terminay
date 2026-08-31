@@ -3,7 +3,6 @@ import {
   jsonlSession,
   safeAgentString,
   type AgentFileHandle,
-  type AgentLifecyclePublisher,
   type AgentRecordContext,
   type AgentTerminalContext,
 } from "@terminay/extension-api";
@@ -119,7 +118,6 @@ export const ompAgentProvider = defineAgentProvider({
 });
 
 async function bindFromBreadcrumb(terminal: AgentTerminalContext) {
-  const files = terminal.observation.files;
   const terminalId = terminal.tty?.deviceId;
   if (!terminalId) return undefined;
   if (!terminalId || !/^[A-Za-z0-9._-]{1,256}$/u.test(terminalId)) return undefined;

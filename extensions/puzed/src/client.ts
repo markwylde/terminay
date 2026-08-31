@@ -126,7 +126,7 @@ export class PuzedClient {
           });
         } finally { secret.fill(0); }
       });
-    } catch (error) {
+    } catch (_error) {
       if (signal.aborted) throw new PuzedApiError("request_timeout", "Puzed did not respond before the request deadline.", 504, true);
       throw new PuzedApiError("network_error", "Puzed Platform could not be reached.", 503, true);
     }

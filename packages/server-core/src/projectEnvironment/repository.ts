@@ -44,10 +44,10 @@ export class ProjectEnvironmentRepository {
 
 export function migrateProjectEnvironmentState(input: unknown, serverId: string): ProjectEnvironmentState {
 	if (typeof input !== 'object' || input === null || Array.isArray(input)) throw new TypeError('project environment registry must be an object');
-	const value = input as Record<string, any>;
+	const value = input as Record<string, unknown>;
 	if (value.schemaVersion === PROJECT_ENVIRONMENT_SCHEMA_VERSION) return canonicalizeProjectEnvironmentState(dropOrphanedProfileRecords(value), serverId);
 	if (value.schemaVersion !== 1 || typeof value.environments !== 'object' || value.environments === null) throw new TypeError('unsupported project environment registry schema');
-	const environments = Object.fromEntries(Object.entries(value.environments as Record<string, any>).map(([id, environment]) => [id, { ...environment, providerState: null, providerRevision: 1 }]));
+	const environments = Object.fromEntries(Object.entries(value.environments as Record<string, Record<string, unknown>>).map(([id, environment]) => [id, { ...environment, providerState: null, providerRevision: 1 }]));
 	return canonicalizeProjectEnvironmentState({ ...value, schemaVersion: PROJECT_ENVIRONMENT_SCHEMA_VERSION, environments, operations: {} }, serverId);
 }
 
@@ -55,7 +55,7 @@ export function migrateProjectEnvironmentState(input: unknown, serverId: string)
  * not a generic corruption repair: malformed fields continue to fail loudly.
  * Dropping these local records never reaches a provider, so it cannot delete or
  * power off a remote VM that remains in the Puzed account. */
-function dropOrphanedProfileRecords(input: Record<string, any>): Record<string, any> {
+function dropOrphanedProfileRecords(input: Record<string, unknown>): Record<string, unknown> {
 	if (!projectEnvironmentRegistryHasOrphanedProfileRecords(input)) return input;
 	const profiles = input.profiles as Record<string, unknown>;
 	const environments = input.environments as Record<string, unknown>;
