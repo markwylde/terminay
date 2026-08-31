@@ -59,8 +59,9 @@ export class MacroRunner {
     return true;
   }
 
-  /** Apply each run's documented policy when its launching client disconnects. */
-  clientDisconnected(launcherId: string): void {
+  /** Apply each run's documented policy when its launching connection
+   * disconnects. Another live connection's runs are unaffected. */
+  launcherDisconnected(launcherId: string): void {
     for (const run of this.activeRuns.values()) {
       if (run.launcherId === launcherId && run.disconnectPolicy === "cancel") run.controller.abort();
     }

@@ -151,23 +151,23 @@ test("macro runner uses the server inactivity wait and bounds output and concurr
   await handle.promise;
 });
 
-test("macro runner applies cancel or continue policy when the launching client disconnects", async () => {
+test("macro runner applies cancel or continue policy when the launching connection disconnects", async () => {
   const wait = normalizeMacro({ id: "disconnect", steps: [{ type: "wait_time", durationSeconds: "5" }] });
   const runner = new MacroRunner({ maxDelayMs: 10_000 });
   const cancelHandle = runner.start(wait, { target, write() {} }, {
     authorization: { target, scope: "write" },
-    launcherId: "client-cancel",
+    launcherId: "connection-cancel",
     disconnectPolicy: "cancel",
   });
-  runner.clientDisconnected("client-cancel");
+  runner.launcherDisconnected("connection-cancel");
   assert.equal((await cancelHandle.promise).status, "canceled");
 
   const continueMacro = normalizeMacro({ id: "continue", steps: [{ type: "type", content: "done" }] });
   const continueHandle = runner.start(continueMacro, { target, write() {} }, {
     authorization: { target, scope: "write" },
-    launcherId: "client-continue",
+    launcherId: "connection-continue",
     disconnectPolicy: "continue",
   });
-  runner.clientDisconnected("client-continue");
+  runner.launcherDisconnected("connection-continue");
   assert.equal((await continueHandle.promise).status, "completed");
 });
