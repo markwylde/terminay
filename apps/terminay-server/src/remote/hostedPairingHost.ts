@@ -39,7 +39,6 @@ import {
 	HostedGenerationSet,
 	HostedPeerLifecycle,
 	hostedPeerConfiguration,
-	laneCloseHangsUp,
 	resolveIceRecoveryGraceMs,
 	shouldFailHostedStall,
 } from './hostedPeerLifecycle.js';
@@ -57,7 +56,6 @@ export {
 	HostedGenerationSet,
 	HostedPeerLifecycle,
 	hostedPeerConfiguration,
-	laneCloseHangsUp,
 	parseHostedIceServers,
 	resolveHostedIceServers,
 	resolveIceRecoveryGraceMs,
