@@ -58,6 +58,23 @@ const settle = async (turns = 25) => {
   for (let index = 0; index < turns; index += 1) await new Promise((resolve) => setTimeout(resolve, 0));
 };
 
+/**
+ * Wait for a condition instead of for a fixed number of event-loop turns.
+ *
+ * Recovery crosses real timers - a fresh presentation waits for the checkpoint
+ * drain within a deadline - so counting turns measures how loaded the machine
+ * is rather than whether the terminal recovered. Returns false on timeout so
+ * the caller can assert with a useful message.
+ */
+const waitUntil = async (predicate, timeoutMs = 15_000) => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  return predicate();
+};
+
 async function harness() {
   const pty = createPtyFactory();
   const checkpoints = new TerminalPresentationCheckpointAuthority();
@@ -184,14 +201,13 @@ test("hydrating a stale checkpoint does not re-trigger its own recovery", async 
     );
 
     h.pty.processes[0].emitData("LIVE-AFTER-HYDRATION\n");
-    await settle(120);
 
-    assert.equal(attaches, 1, `hydration must not re-arm itself (attaches=${attaches})`);
     assert.equal(
-      rendered.join("").includes("LIVE-AFTER-HYDRATION"),
+      await waitUntil(() => rendered.join("").includes("LIVE-AFTER-HYDRATION")),
       true,
       "a hydrated terminal must stream live output",
     );
+    assert.equal(attaches, 1, `hydration must not re-arm itself (attaches=${attaches})`);
   } finally {
     await h.client.close().catch(() => undefined);
     await h.task;
