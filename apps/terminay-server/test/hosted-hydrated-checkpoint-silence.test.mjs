@@ -93,21 +93,7 @@ test('five seconds of outbound silence does not close the peer', () => {
 	assert.equal(shouldFailHostedStall({ stallClass: 'outbound-stalled' }), false);
 });
 
-test('required application lane close while the peer stays connected fails the generation', () => {
-	const reasons = [];
-	const peer = livePeer();
-	const lifecycle = new HostedPeerLifecycle(peer, 5_000, (reason) =>
-		reasons.push(reason),
-	);
-	applyHostedLaneDiagnostic(lifecycle, {
-		channel: 'application',
-		channelState: 'closed',
-	});
-	assert.notEqual(reasons.length, 0);
-	assert.match(String(reasons[0]), /application|lane/iu);
-});
-
-test('required control lane close while the peer stays connected fails the generation', () => {
+test('control channel close while the peer stays connected does not hang up', () => {
 	const reasons = [];
 	const peer = livePeer();
 	const lifecycle = new HostedPeerLifecycle(peer, 5_000, (reason) =>
@@ -117,7 +103,24 @@ test('required control lane close while the peer stays connected fails the gener
 		channel: 'control',
 		channelState: 'closed',
 	});
-	assert.notEqual(reasons.length, 0);
+	applyHostedLaneDiagnostic(lifecycle, {
+		channel: 'assets',
+		channelState: 'closed',
+	});
+	assert.deepEqual(reasons, []);
+});
+
+test('application channel close while ICE stays connected does not hang up', () => {
+	const reasons = [];
+	const peer = livePeer();
+	const lifecycle = new HostedPeerLifecycle(peer, 5_000, (reason) =>
+		reasons.push(reason),
+	);
+	applyHostedLaneDiagnostic(lifecycle, {
+		channel: 'application',
+		channelState: 'closed',
+	});
+	assert.deepEqual(reasons, []);
 });
 
 test('handshake-only api and asset channel close does not fail a live generation', () => {
