@@ -119,7 +119,7 @@ transcripts, the UI archive transfer, signaling room protocol.
   (device X) attaches the same terminal; A's transport fails; B continues to
   receive live PTY events and keeps its lease.
 
-### Slice 2 — join-replaces and simplified peer lifecycle (hosted host)
+### Slice 2 — join-replaces and simplified peer lifecycle (hosted host) — DONE
 
 - Track live peers as `Map<deviceId, PeerHandle>` (pairing joins key on the
   enrolling room until a device id exists). On `device-join` for device X:
@@ -170,17 +170,35 @@ transcripts, the UI archive transfer, signaling room protocol.
   it now fails only the offending connection and the client recovers via
   heartbeat/close, so it is a correct last-resort bound.
 
-### Slice 5 — deletions (dead code and superseded tests)
+### Slice 5 — deletions (dead code and superseded tests) — DONE
 
-- Delete `apps/terminay-server/src/remote/nodeDataChannelHost.ts`,
-  `nodeDataChannelPeer.ts`, `nodeDataChannelRuntime.ts`,
-  `secureWeriftHost.ts`, `secureWeriftPeer.ts`, their exports in
-  `apps/terminay-server/src/index.ts`, and the optional headless-host wiring
-  in `serverExposure.ts`.
-- In `packages/server-core/src/remote/headless.ts`, delete
-  `RemoteHeadlessWebRtcFactory` / `RemoteHeadlessSession` and the adapter
-  types; keep `HeadlessDataChannel` (+ state type), which the live transport
-  uses.
+Scope narrowed during implementation, with evidence:
+
+- Deleted `apps/terminay-server/src/remote/nodeDataChannelHost.ts` and
+  `secureWeriftHost.ts` plus the optional headless-host wiring in
+  `serverExposure.ts`. That wiring was unreachable — neither `cli.ts` nor
+  `electron/remote/serverOwnedExposure.ts` ever passed `nodeDataChannel` or
+  `createHeadlessHost`, so `nodeDataChannelHost` was permanently `undefined`
+  and `connectHeadless` always threw. Their only consumers were tests,
+  including the orphaned `scripts/task20-outage-signaling.test.mjs` (not
+  referenced by any CI script), which is deleted with them.
+- **Kept** `nodeDataChannelPeer.ts`, `nodeDataChannelRuntime.ts`, and
+  `secureWeriftPeer.ts`: `electron/remote/desktopWebRtcTransport.ts` and
+  `desktopWebRtcBootstrap.ts` import them for the Desktop→remote-server
+  client, so they are live code, not dead weight.
+- **Kept** `packages/server-core/src/remote/headless.ts`. `exposure.ts` types
+  its injectable host seam against `RemoteHeadlessSessionHost`, and the module
+  also defines `HeadlessDataChannel`, which the live WebRTC transport uses.
+  Removing the factory would be a large refactor unrelated to this failure.
+
+Pre-existing defect found while tracing this and deliberately left alone —
+it is a different failure from the one this task fixes, and fixing it here
+would widen the change: `desktopWebRtcTransport.ts` defaults to
+`loadNodeDataChannelRuntimeModule()`, which imports `node-datachannel`. That
+package is not a dependency of this repo, so Desktop's outbound WebRTC client
+to a remote server cannot start a runtime. `createSecureWeriftCompatibilityModule`
+in `secureWeriftPeer.ts` is the Werift-backed adapter that path should use.
+Worth its own task.
 - Delete superseded tests: `hosted-generation-set.test.mjs`,
   `hosted-hydrated-checkpoint-silence.test.mjs`,
   `scripts/web-session-silent-pty-reconnect.test.mjs`, and the

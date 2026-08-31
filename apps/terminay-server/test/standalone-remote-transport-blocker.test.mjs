@@ -31,12 +31,12 @@ test("standalone pairing is not reported as a live transport endpoint", async ()
 test("standalone CLI delegates framed stream ownership to LocalUiServer without owning signaling", async () => {
 	const cli = await readFile(new URL("../src/cli.ts", import.meta.url), "utf8");
 	const exposure = await readFile(new URL("../src/remote/serverExposure.ts", import.meta.url), "utf8");
-	const host = await readFile(new URL("../src/remote/nodeDataChannelHost.ts", import.meta.url), "utf8");
 
 	assert.match(cli, /createLocalUiServer/u);
 	assert.match(cli, /protocolCore:\s*composition\.core/u);
 	assert.doesNotMatch(cli, /WebSocketServer/u);
   assert.match(exposure, /connectHeadless/u);
-  assert.match(host, /createSignaling/u);
-  assert.match(host, /signaling factory is required/u);
+  // The selected WebRTC runtime is the verified Secure-Werift artifact. The
+  // blocked node-datachannel implementation is gone, not merely unreferenced.
+  assert.doesNotMatch(exposure, /NodeDataChannel/u);
 });

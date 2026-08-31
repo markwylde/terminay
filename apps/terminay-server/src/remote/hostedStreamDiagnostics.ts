@@ -1,8 +1,6 @@
 import type { HostedPairingDiagnostic } from './hostedPairingHost.js';
 
-export const APPLICATION_STALL_MS = 3_000;
 export const APPLICATION_SUMMARY_MS = 10_000;
-export const APPLICATION_STALL_REPEAT_MS = 15_000;
 
 const CHANNEL_LABELS = new Set([
 	'api',
@@ -14,7 +12,6 @@ const CHANNEL_LABELS = new Set([
 ]);
 
 export type HostedInboundKind = 'bytes' | 'blob' | 'string' | 'empty' | 'other';
-export type HostedStallClass = 'no-outbound' | 'outbound-stalled';
 export type HostedIceGracePhase = 'started' | 'cleared' | 'expired';
 
 export function inboundKind(value: unknown): HostedInboundKind {
@@ -43,9 +40,9 @@ export function classifyPeerCloseReason(reason: string): string {
 	if (text.includes('peer connection failed') || text.includes('peer connection closed')) {
 		return 'peer-failed';
 	}
+	if (text.includes('replaced')) return 'replaced-by-rejoin';
+	if (text.includes('heartbeat')) return 'heartbeat-timeout';
 	if (text.includes('disconnected')) return 'disconnected';
-	if (text.includes('outbound-stalled')) return 'outbound-stalled';
-	if (text.includes('no-outbound')) return 'no-outbound';
 	if (text.includes('lane closed') || text.includes('lane closing') || text.includes('lane failed')) {
 		return 'required-lane-closed';
 	}
@@ -53,37 +50,14 @@ export function classifyPeerCloseReason(reason: string): string {
 	return 'other';
 }
 
-export function stallClass(input: {
-	readonly inboundFrames: number;
-	readonly outboundFrames: number;
-	readonly firstInboundAt: number | null;
-	readonly lastInboundAt: number | null;
-	readonly lastOutboundAt: number | null;
-	readonly now: number;
-	readonly stallMs: number;
-}): HostedStallClass | undefined {
-	if (input.inboundFrames < 1) return undefined;
-	if (input.outboundFrames < 1) {
-		if (input.firstInboundAt === null) return undefined;
-		if (input.now - input.firstInboundAt < input.stallMs) return undefined;
-		return 'no-outbound';
-	}
-	if (input.lastOutboundAt === null || input.lastInboundAt === null) return undefined;
-	if (input.now - input.lastOutboundAt < input.stallMs) return undefined;
-	if (input.lastInboundAt <= input.lastOutboundAt) return undefined;
-	return 'outbound-stalled';
-}
-
 export function createHostedStreamDiagnostics(options: {
 	readonly emit: (event: HostedPairingDiagnostic) => void;
 	readonly now?: () => number;
-	readonly stallMs?: number;
 	readonly summaryMs?: number;
 	readonly setIntervalFn?: typeof setInterval;
 	readonly clearIntervalFn?: typeof clearInterval;
 }) {
 	const now = options.now ?? Date.now;
-	const stallMs = options.stallMs ?? APPLICATION_STALL_MS;
 	const summaryMs = options.summaryMs ?? APPLICATION_SUMMARY_MS;
 	const setIntervalFn = options.setIntervalFn ?? setInterval;
 	const clearIntervalFn = options.clearIntervalFn ?? clearInterval;
@@ -108,8 +82,6 @@ export function createHostedStreamDiagnostics(options: {
 		| 'control'
 		| 'terminal'
 		| undefined;
-	let lastStallAt = 0;
-	let lastStallClass: HostedStallClass | undefined;
 	let stopped = false;
 	let summaryTimer: ReturnType<typeof setInterval> | undefined;
 
@@ -143,28 +115,10 @@ export function createHostedStreamDiagnostics(options: {
 		};
 	}
 
-	function maybeStall(): void {
-		const next = stallClass({
-			inboundFrames,
-			outboundFrames,
-			firstInboundAt,
-			lastInboundAt,
-			lastOutboundAt,
-			now: now(),
-			stallMs,
-		});
-		if (!next) return;
-		if (next === lastStallClass && now() - lastStallAt < APPLICATION_STALL_REPEAT_MS) return;
-		lastStallClass = next;
-		lastStallAt = now();
-		emit(laneFields({ stallClass: next }));
-	}
-
 	function startSummary(): void {
 		if (summaryTimer !== undefined) return;
 		summaryTimer = setIntervalFn(() => {
 			if (stopped) return;
-			maybeStall();
 			emit(laneFields({ summary: true }));
 		}, summaryMs);
 		summaryTimer.unref?.();
@@ -196,7 +150,7 @@ export function createHostedStreamDiagnostics(options: {
 			lastIceState = iceState;
 			emit({ type: 'ice-grace', iceGracePhase: phase, peerState, iceState });
 		},
-		channelState(channel: string, channelState: string | undefined): void {
+		channelState(channel: string, channelState: string | undefined, hangup = false): void {
 			if (!CHANNEL_LABELS.has(channel)) return;
 			const label = channel as
 				| 'api'
@@ -216,7 +170,7 @@ export function createHostedStreamDiagnostics(options: {
 				channelState,
 				peerState: lastPeerState,
 				iceState: lastIceState,
-				...(closed ? { hangup: false } : {}),
+				...(closed ? { hangup } : {}),
 			});
 		},
 		noteInbound(value: unknown): void {
@@ -233,7 +187,6 @@ export function createHostedStreamDiagnostics(options: {
 			firstInboundAt ??= at;
 			lastInboundAt = at;
 			if (inboundFrames === 1) emit(laneFields({ first: 'inbound' }));
-			maybeStall();
 		},
 		noteOutbound(byteLength: number, ok = true): void {
 			if (!ok) {
