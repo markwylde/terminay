@@ -432,7 +432,11 @@ a cache-only `/remote-app/` entry that cannot authenticate. Vault
 `credential.get` completes or fails visibly inside the host timeout.
 
 The exposing host uses the same STUN/TURN configuration advertised to
-browsers. Signaling admits one handshake at a time for a pairing room or
+browsers. It also advertises ICE host candidates for every usable local
+address, including loopback, LAN, and VPN overlay addresses. It does not
+bind ICE to a single interface except when signaling itself is loopback.
+Link-local addresses are omitted. Diagnostics never include those candidate
+addresses. Signaling admits one handshake at a time for a pairing room or
 device session. A second `client-join` or `device-join` retires an incomplete
 handshake; it does not close an already-authenticated live peer or mix ICE
 across two offers.
@@ -616,6 +620,8 @@ frames do not produce one log line per frame.
   observe the same workspace and terminal sessions.
 - Network interruption reconnects without duplicating PTYs or workspace
   mutations.
+- A phone on the same VPN overlay as Desktop can connect using host ICE
+  candidates without TURN. Loopback signaling still uses only 127.0.0.1.
 - ICE `disconnected` while the peer still reports `connected` keeps that
   generation and continues live terminal output. Peer `disconnected`, or ICE
   `disconnected` while the peer is also not `connected`, either recovers
