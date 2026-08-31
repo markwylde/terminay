@@ -71,7 +71,6 @@ export function useWorkspaceSelectionController(workspaceSnapshotStore: Workspac
 		activateProject: (projectId) => { selectionRef.current = { ...selectionRef.current, projectId, panelId: null }; setSelectedProjectId(projectId); setSelectedPanelId(null); setError(null) },
 		activatePanel: (panel) => {
 			selectionRef.current = { ...selectionRef.current, panelId: panel.id }; setSelectedPanelId(panel.id); setError(null)
-			void workspaceSnapshotStore.activatePanel({ projectId: panel.projectId, panelId: panel.id }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Unable to activate this panel on the server.'))
 		},
 	}
 }

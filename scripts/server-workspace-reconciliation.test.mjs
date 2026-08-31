@@ -31,6 +31,7 @@ function snapshot({
 	projectIds = ['project-a'],
 	panelIds = ['panel-a'],
 	activePanelId = 'panel-a',
+	activeProjectId = projectIds[0],
 } = {}) {
 	const sidebar = () => ({
 		fileExplorerWidth: 280, isFileExplorerOpen: false, isExplorerPaneCollapsed: false,
@@ -51,7 +52,7 @@ function snapshot({
 				serverId: 'server-a',
 				name: 'Workspace',
 				projectIds,
-				activeProjectId: projectIds[0],
+				activeProjectId,
 			},
 		},
 		projects: Object.fromEntries(
@@ -113,6 +114,26 @@ test('reconciles a closed selection to the active server panel', () => {
 			panelId: 'panel-a',
 		}),
 		{ viewId: 'view-a', projectId: 'project-a', panelId: 'panel-b' },
+	);
+});
+
+test('keeps a still-valid local project and panel when snapshot active ids change', () => {
+	const state = parseServerWorkspaceSnapshot(
+		snapshot({
+			projectIds: ['project-a', 'project-b'],
+			panelIds: ['panel-a', 'panel-b'],
+			activeProjectId: 'project-b',
+			activePanelId: 'panel-b',
+		}),
+		'server-a',
+	);
+	assert.deepEqual(
+		reconcileServerWorkspaceSelection(state, {
+			viewId: 'view-a',
+			projectId: 'project-a',
+			panelId: 'panel-a',
+		}),
+		{ viewId: 'view-a', projectId: 'project-a', panelId: 'panel-a' },
 	);
 });
 

@@ -102,8 +102,8 @@ export function useProjectCollection<TTerminal>({
 	) => void;
 	confirmProjectClose?: (projectId: string) => Promise<boolean>;
 	holdProjectOrderRef?: MutableRefObject<string | null>;
-	/** While non-null, keep this renderer selection stable even if a background
-	 * project creation temporarily changes the server's canonical selection. */
+	/** While non-null, keep this presentation's selection stable during a
+	 * background project-creation journey. */
 	holdActiveProjectIdRef?: MutableRefObject<string | null>;
 	sidebarSettings: SidebarSettings;
 	workspaceSnapshotStore?: WorkspaceSnapshotStore;
@@ -327,17 +327,15 @@ export function useProjectCollection<TTerminal>({
 				return next;
 			});
 			const heldActiveProjectId = holdActiveProjectIdRef?.current;
-			const nextActiveId =
-				heldActiveProjectId !== null &&
-				heldActiveProjectId !== undefined &&
-				orderedServerProjects.some(
-					(project) => project.id === heldActiveProjectId,
-				)
+			const preferredId =
+				heldActiveProjectId !== null && heldActiveProjectId !== undefined
 					? heldActiveProjectId
-					: (view?.activeProjectId ??
-						view?.projectIds[0] ??
-						orderedServerProjects[0]?.id ??
-						'');
+					: activeProjectIdRef.current;
+			const nextActiveId =
+				preferredId.length > 0 &&
+				orderedServerProjects.some((project) => project.id === preferredId)
+					? preferredId
+					: (view?.projectIds[0] ?? orderedServerProjects[0]?.id ?? '');
 			activeProjectIdRef.current = nextActiveId;
 			setActiveProjectId(nextActiveId);
 		});
@@ -454,11 +452,6 @@ export function useProjectCollection<TTerminal>({
 					.closeProject(projectId)
 					.then(() => {
 						setProjectCreationError(null);
-						if (nextId.length > 0) {
-							void workspaceSnapshotStore
-								.activateProject({ projectId: nextId })
-								.catch(() => undefined);
-						}
 					})
 					.catch((error) => {
 						setProjectCreationError(
@@ -726,12 +719,8 @@ export function useProjectCollection<TTerminal>({
 			}
 			activeProjectIdRef.current = projectId;
 			setActiveProjectId(projectId);
-			if (workspaceSnapshotStore === undefined) return;
-			void workspaceSnapshotStore.activateProject({ projectId }).catch(() => {
-				void workspaceSnapshotStore.refresh().catch(() => undefined);
-			});
 		},
-		[holdActiveProjectIdRef, workspaceSnapshotStore],
+		[holdActiveProjectIdRef],
 	);
 
 	return {
