@@ -306,7 +306,7 @@ export function ProjectTabList({
 								handleTabKeyDown(event, project.id);
 							}}
 							whileDrag={{ scale: 1.05, zIndex: 50 }}
-							title="Double-click to edit tab"
+							title="Double-click or long-press to edit tab"
 						>
 							<span className="project-tab-main">
 								{project.creationStatus === 'failed' ? (
@@ -419,6 +419,7 @@ export function ProjectTabList({
 					onActivate={onActivate}
 					onClose={onClose}
 					onCreateProject={onCreateProject}
+					onEdit={onEdit}
 					onOpen={onSwitcherOpen}
 					onReorder={onReorder}
 					onReorderCommit={onReorderCommit}

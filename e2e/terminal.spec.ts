@@ -5,6 +5,7 @@ import { typeInVisibleTerminal } from './support/terminal-input';
 import {
 	cancelEditWindow,
 	contextMenuItem,
+	longPress,
 	openTerminalEditWindow,
 	setProjectRoot,
 	submitEditWindow,
@@ -770,6 +771,20 @@ test.describe('terminal behavior', () => {
 			.toBe(windowCountBeforeEdit);
 
 		await cancelEditWindow(editWindow);
+	});
+
+	test('long-pressing a terminal tab opens the in-page editor', async ({
+		mainWindow,
+	}) => {
+		const activeTerminalTab = mainWindow
+			.locator('.project-workspace--active .terminal-tab-content--active')
+			.first();
+		await expect(activeTerminalTab).toBeVisible();
+		await longPress(activeTerminalTab);
+		await expect(
+			mainWindow.getByRole('heading', { name: 'Edit Terminal Tab' }),
+		).toBeVisible();
+		await cancelEditWindow(mainWindow);
 	});
 
 	test('opens terminal search and navigates between matches', async ({
