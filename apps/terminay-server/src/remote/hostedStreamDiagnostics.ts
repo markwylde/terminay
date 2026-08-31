@@ -44,6 +44,11 @@ export function classifyPeerCloseReason(reason: string): string {
 		return 'peer-failed';
 	}
 	if (text.includes('disconnected')) return 'disconnected';
+	if (text.includes('outbound-stalled')) return 'outbound-stalled';
+	if (text.includes('no-outbound')) return 'no-outbound';
+	if (text.includes('lane closed') || text.includes('lane closing') || text.includes('lane failed')) {
+		return 'required-lane-closed';
+	}
 	if (!text.trim()) return 'empty';
 	return 'other';
 }
@@ -87,6 +92,7 @@ export function createHostedStreamDiagnostics(options: {
 	let inboundBytes = 0;
 	let outboundBytes = 0;
 	let firstInboundAt: number | null = null;
+	let firstOutboundAt: number | null = null;
 	let lastInboundAt: number | null = null;
 	let lastOutboundAt: number | null = null;
 	let lastInboundKind: HostedInboundKind | undefined;
@@ -116,6 +122,10 @@ export function createHostedStreamDiagnostics(options: {
 			lastInboundAgeMs: lastInboundAt === null ? null : Math.max(0, current - lastInboundAt),
 			lastOutboundAgeMs:
 				lastOutboundAt === null ? null : Math.max(0, current - lastOutboundAt),
+			firstInboundAgeMs:
+				firstInboundAt === null ? null : Math.max(0, current - firstInboundAt),
+			firstOutboundAgeMs:
+				firstOutboundAt === null ? null : Math.max(0, current - firstOutboundAt),
 			inboundKind: lastInboundKind,
 			droppedFrames,
 			sendFailures,
@@ -218,7 +228,9 @@ export function createHostedStreamDiagnostics(options: {
 			}
 			outboundFrames += 1;
 			outboundBytes += byteLength;
-			lastOutboundAt = now();
+			const at = now();
+			firstOutboundAt ??= at;
+			lastOutboundAt = at;
 			if (outboundFrames === 1) emit(laneFields({ first: 'outbound' }));
 		},
 		peerClosed(reason: string): void {

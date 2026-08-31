@@ -31,10 +31,14 @@ import { bindUiArchiveChannels, safeChannelSend } from './uiArchiveTransfer.js';
 import {
 	applyHostedLaneDiagnostic,
 	createHandshakeJoinQueue,
+	DEVICE_HOST_AVAILABILITY_MS,
+	deviceHostRefreshDelayMs,
 	type HostedIceServer,
+	HostedGenerationSet,
 	HostedPeerLifecycle,
 	hostedPeerConfiguration,
 	resolveIceRecoveryGraceMs,
+	shouldFailHostedStall,
 } from './hostedPeerLifecycle.js';
 import { createHostedStreamDiagnostics, frameByteLength } from './hostedStreamDiagnostics.js';
 
@@ -43,6 +47,10 @@ export {
 	createHandshakeJoinQueue,
 	DEFAULT_HOSTED_ICE_SERVERS,
 	DEFAULT_ICE_RECOVERY_GRACE_MS,
+	DEVICE_HOST_AVAILABILITY_MS,
+	DEVICE_REFRESH_LEAD_MS,
+	deviceHostRefreshDelayMs,
+	HostedGenerationSet,
 	HostedPeerLifecycle,
 	hostedPeerConfiguration,
 	parseHostedIceServers,
@@ -152,6 +160,10 @@ export type HostedPairingDiagnostic = Readonly<{
 	readonly outboundBytes?: number;
 	readonly lastInboundAgeMs?: number | null;
 	readonly lastOutboundAgeMs?: number | null;
+	readonly firstInboundAgeMs?: number | null;
+	readonly firstOutboundAgeMs?: number | null;
+	readonly liveGenerationCount?: number;
+	readonly stallIgnored?: boolean;
 	readonly inboundKind?: 'bytes' | 'blob' | 'string' | 'empty' | 'other' | undefined;
 	readonly droppedFrames?: number;
 	readonly droppedClass?: 'bytes' | 'blob' | 'string' | 'empty' | 'other';
@@ -170,8 +182,6 @@ export interface HostedPairingHost {
 	readonly mintPairing: () => Promise<void>;
 }
 
-const DEVICE_HOST_AVAILABILITY_MS = 25 * 60 * 1000;
-const DEVICE_REFRESH_LEAD_MS = 5 * 60 * 1000;
 const PAIRING_REFRESH_LEAD_MS = 15_000;
 const PAIRING_CONSUMED_ROTATE_MS = 3_000;
 const REFRESH_RETRY_MS = 2_000;
@@ -190,9 +200,8 @@ export async function startHostedPairingHost(
 	const archive = options.getUiArchive
 		? await options.getUiArchive()
 		: createMinimalUiArchive();
-	const context = { archive, options };
-	const connectedPeers: WeriftPeer[] = [];
-	const connectedConnections: ServerConnectionLike[] = [];
+	const generations = new HostedGenerationSet();
+	const context = { archive, options, generations };
 	const joinQueue = createHandshakeJoinQueue();
 	let handshakeGeneration = 0;
 	let handshake:
@@ -221,8 +230,7 @@ export async function startHostedPairingHost(
 		clearTimeout(pairingRefreshTimer);
 		clearTimeout(deviceRefreshTimer);
 		handshake?.peer.close();
-		for (const peer of connectedPeers) peer.close();
-		for (const connection of connectedConnections) void connection.close();
+		generations.closeAll();
 		pairingGeneration += 1;
 		deviceGeneration += 1;
 		closeSocket(pairingSocket);
@@ -231,25 +239,33 @@ export async function startHostedPairingHost(
 
 	async function addHandshakePeer(socket: WebSocket, scope: SignalScope): Promise<void> {
 		const generation = ++handshakeGeneration;
-		if (handshake && !connectedPeers.includes(handshake.peer)) {
+		if (handshake) {
 			handshake.peer.close();
 		}
 		handshake = undefined;
-		const next = await startPeer(Peer, socket, scope, context, (connection, peer) => {
-			connectedConnections.push(connection);
-			if (handshake?.peer === next) {
-				connectedPeers.push(next);
-				handshake = undefined;
-			}
-			options.onPeerConnected?.(peer);
-			if (scope.kind === 'pairing') {
-				clearTimeout(pairingRefreshTimer);
-				pairingRefreshTimer = setTimeout(() => {
-					void refreshPairing('consumed');
-				}, PAIRING_CONSUMED_ROTATE_MS);
-				pairingRefreshTimer.unref?.();
-			}
-		});
+		const next = await startPeer(
+			Peer,
+			socket,
+			scope,
+			context,
+			(connection, peer) => {
+				if (handshake?.peer === next) {
+					generations.add({ peer: next, connection });
+					handshake = undefined;
+				}
+				options.onPeerConnected?.(peer);
+				if (scope.kind === 'pairing') {
+					clearTimeout(pairingRefreshTimer);
+					pairingRefreshTimer = setTimeout(() => {
+						void refreshPairing('consumed');
+					}, PAIRING_CONSUMED_ROTATE_MS);
+					pairingRefreshTimer.unref?.();
+				}
+			},
+			(retired) => {
+				generations.drop(retired);
+			},
+		);
 		if (closed || generation !== handshakeGeneration) {
 			next.close();
 			return;
@@ -491,7 +507,7 @@ export async function startHostedPairingHost(
 
 	function scheduleDeviceRefresh(): void {
 		clearTimeout(deviceRefreshTimer);
-		const delay = Math.max(1_000, deviceExpiresAt - Date.now() - DEVICE_REFRESH_LEAD_MS);
+		const delay = deviceHostRefreshDelayMs(deviceExpiresAt, Date.now());
 		deviceRefreshTimer = setTimeout(() => {
 			void refreshDevice('expiry');
 		}, delay);
@@ -722,9 +738,11 @@ async function startPeer(
 	scope: SignalScope,
 	context: Readonly<{
 		archive: MinimalArchive;
+		generations: HostedGenerationSet;
 		options: HostedPairingHostOptions;
 	}>,
 	onApplication: (connection: ServerConnectionLike, peer: HostedConnectedPeer) => void,
+	onRetire: (peer: WeriftPeer) => void,
 ): Promise<WeriftPeer> {
 	const native = new Peer(
 		hostedPeerConfiguration(
@@ -734,10 +752,18 @@ async function startPeer(
 	);
 	const session: { connection?: ServerConnectionLike; peer?: HostedConnectedPeer } = {};
 	let lifecycle: HostedPeerLifecycle;
+	let wrapped: WeriftPeer;
 	const stream = createHostedStreamDiagnostics({
 		emit: (event) => {
-			context.options.onDiagnostic?.(event);
-			applyHostedLaneDiagnostic(lifecycle, event);
+			const enriched = {
+				...event,
+				liveGenerationCount: context.generations.size,
+				...(event.stallClass === undefined
+					? {}
+					: { stallIgnored: !shouldFailHostedStall(event) }),
+			};
+			context.options.onDiagnostic?.(enriched);
+			applyHostedLaneDiagnostic(lifecycle, enriched);
 		},
 	});
 	lifecycle = new HostedPeerLifecycle(
@@ -746,6 +772,7 @@ async function startPeer(
 		(reason) => {
 			stream.peerClosed(reason);
 			const connectionId = session.peer?.connectionId;
+			onRetire(wrapped);
 			void session.connection?.close();
 			try {
 				native.close();
@@ -760,7 +787,8 @@ async function startPeer(
 			},
 		},
 	);
-	const peer = wrapPeer(native, lifecycle);
+	wrapped = wrapPeer(native, lifecycle);
+	const peer = wrapped;
 	const channels = Object.fromEntries(
 		CHANNELS.map((label) => [label, peer.createDataChannel(label, { ordered: true })]),
 	) as Record<(typeof CHANNELS)[number], WeriftDataChannel>;

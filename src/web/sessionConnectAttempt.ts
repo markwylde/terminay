@@ -127,21 +127,45 @@ export function classifySessionApplicationSilence(
 	return 'inbound-stalled';
 }
 
+export const SESSION_APPLICATION_SAMPLE_MS = 10_000;
+
+export type SessionLaneSnapshot = Readonly<{
+	inboundFrames: number;
+	lastInboundAgeMs: number | null;
+	lastOutboundAgeMs: number | null;
+	outboundFrames: number;
+	stallClass?: SessionApplicationStallClass;
+}>;
+
+export function logSessionLane(
+	event: string,
+	snapshot: SessionLaneSnapshot,
+): void {
+	console.warn('[terminay-workspace]', event, snapshot);
+}
+
 export function createSessionSilenceWatch(
 	options: Readonly<{
-		onSilence: (stallClass: SessionApplicationStallClass) => void;
+		onSilence: (
+			stallClass: SessionApplicationStallClass,
+			snapshot: SessionLaneSnapshot,
+		) => void;
+		onSample?: (snapshot: SessionLaneSnapshot) => void;
 		now?: () => number;
 		setTimeout?: (callback: () => void, delayMs: number) => unknown;
 		clearTimeout?: (handle: unknown) => void;
 		stallMs?: number;
+		sampleMs?: number;
 	}>,
 ): Readonly<{
 	noteInbound(): void;
 	noteOutbound(): void;
+	snapshot(): SessionLaneSnapshot;
 	stop(): void;
 }> {
 	const now = options.now ?? Date.now;
 	const stallMs = options.stallMs ?? SESSION_APPLICATION_STALL_MS;
+	const sampleMs = options.sampleMs ?? SESSION_APPLICATION_SAMPLE_MS;
 	const setTimer =
 		options.setTimeout ??
 		((callback, delayMs) => globalThis.setTimeout(callback, delayMs));
@@ -153,28 +177,52 @@ export function createSessionSilenceWatch(
 	let lastInboundAt: number | null = null;
 	let lastOutboundAt: number | null = null;
 	let timer: unknown;
+	let sampleTimer: unknown;
 	let stopped = false;
 	let notified = false;
 
-	const check = (): void => {
-		if (stopped || notified) return;
+	const snapshot = (): SessionLaneSnapshot => {
+		const current = now();
 		const stallClass = classifySessionApplicationSilence({
 			inboundFrames,
 			outboundFrames,
 			lastInboundAt,
 			lastOutboundAt,
-			now: now(),
+			now: current,
 			stallMs,
 		});
-		if (stallClass === undefined) return;
+		return {
+			inboundFrames,
+			outboundFrames,
+			lastInboundAgeMs:
+				lastInboundAt === null ? null : Math.max(0, current - lastInboundAt),
+			lastOutboundAgeMs:
+				lastOutboundAt === null ? null : Math.max(0, current - lastOutboundAt),
+			...(stallClass === undefined ? {} : { stallClass }),
+		};
+	};
+
+	const check = (): void => {
+		if (stopped || notified) return;
+		const next = snapshot();
+		if (next.stallClass === undefined) return;
 		notified = true;
-		options.onSilence(stallClass);
+		options.onSilence(next.stallClass, next);
+	};
+
+	const sample = (): void => {
+		if (stopped) return;
+		options.onSample?.(snapshot());
+		sampleTimer = setTimer(sample, sampleMs);
 	};
 
 	const arm = (): void => {
 		if (stopped || notified) return;
 		if (timer !== undefined) clearTimer(timer);
 		timer = setTimer(check, stallMs);
+		if (sampleTimer === undefined && options.onSample !== undefined) {
+			sampleTimer = setTimer(sample, sampleMs);
+		}
 	};
 
 	return {
@@ -190,11 +238,14 @@ export function createSessionSilenceWatch(
 			lastOutboundAt = now();
 			arm();
 		},
+		snapshot,
 		stop() {
 			if (stopped) return;
 			stopped = true;
 			if (timer !== undefined) clearTimer(timer);
+			if (sampleTimer !== undefined) clearTimer(sampleTimer);
 			timer = undefined;
+			sampleTimer = undefined;
 		},
 	};
 }

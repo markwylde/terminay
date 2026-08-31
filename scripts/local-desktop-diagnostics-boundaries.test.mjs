@@ -232,6 +232,9 @@ test('hosted remote pairing diagnostics are named events without pairing URLs', 
 	assert.doesNotMatch(mapper, /pairingUrl|qrSecret|relayJoinToken/u);
 	assert.match(host, /createHostedStreamDiagnostics/u);
 	assert.match(mapper, /stallClass: event\.stallClass/u);
+	assert.match(mapper, /stallIgnored: event\.stallIgnored/u);
+	assert.match(mapper, /liveGenerationCount: event\.liveGenerationCount/u);
+	assert.match(mapper, /firstOutboundAgeMs: event\.firstOutboundAgeMs/u);
 	assert.match(mapper, /source: stream \? 'remote-webrtc' : 'remote-pairing'/u);
 });
 
