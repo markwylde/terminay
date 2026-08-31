@@ -69,7 +69,6 @@ export interface RuntimeDiagnostics {
     readonly roomId: ProtocolId | null;
     readonly expiresAt: string | null;
     readonly connectedPeers: number;
-    readonly headlessSessions: number;
   };
   readonly terminal?: {
     readonly sessions: number;
@@ -187,7 +186,6 @@ export class ServerRuntime {
           roomId: remoteStatus.exposure.roomId ?? null,
           expiresAt: remoteStatus.exposure.expiresAt === undefined ? null : new Date(remoteStatus.exposure.expiresAt).toISOString(),
           connectedPeers: remoteStatus.peers.filter((peer) => peer.state === "connected").length,
-          headlessSessions: remoteStatus.sessions.length,
         };
     const terminalSessions = this.services.terminal?.listSessions();
     const terminal = terminalSessions === undefined

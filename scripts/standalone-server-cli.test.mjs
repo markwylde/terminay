@@ -28,7 +28,6 @@ test('standalone server CLI has deterministic version and redacted status entry 
 		roomId: null,
 		expiresAt: null,
 		connectedPeers: 0,
-		headlessSessions: 0,
 	});
 	assert.equal(JSON.stringify(status).includes('pairingUrl'), false);
 });

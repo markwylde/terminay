@@ -1,9 +1,31 @@
 import type {
 	HeadlessDataChannel,
-	HeadlessWebRtcRuntimeAdapter,
-	HeadlessWebRtcRuntimeContext,
 	RemoteTrafficChannel,
 } from '@terminay/server-core/remote';
+
+/**
+ * What a peer opener is told about the connection it is establishing.
+ *
+ * server-core no longer owns a headless-runtime abstraction; this contract now
+ * lives with the privileged edge that actually implements it.
+ */
+export interface HeadlessWebRtcRuntimeContext {
+	readonly peerId: string;
+	readonly deviceId: string;
+	readonly serverId: string;
+	readonly sessionOrigin: string;
+	readonly channels: readonly RemoteTrafficChannel[];
+	readonly maxFrameBytes: number;
+	readonly maxBufferedBytes: number;
+	readonly signal: AbortSignal;
+}
+
+export interface HeadlessWebRtcRuntimeAdapter {
+	readonly runtime: 'node-datachannel' | 'werift';
+	connect(
+		context: HeadlessWebRtcRuntimeContext,
+	): Promise<ReadonlyMap<RemoteTrafficChannel, HeadlessDataChannel>>;
+}
 
 /** Minimal node-datachannel surface kept at the privileged application edge. */
 export interface NodeDataChannelLike {

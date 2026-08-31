@@ -1,15 +1,34 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  RemoteConnectionManager,
-  RemoteHeadlessWebRtcFactory,
-} from "@terminay/server-core";
+import { HeadlessChannelTransport } from "@terminay/server-core/remote";
 import {
   createNodeDataChannelRuntimeAdapter,
   loadNodeDataChannelRuntimeModule,
 } from "../dist/index.js";
 
 const CHANNELS = ["control", "application", "terminal", "assets"];
+
+/**
+ * Establish one adapted channel set.
+ *
+ * These tests own the privileged native boundary: the adapter is what turns an
+ * untrusted native channel into a bounded HeadlessDataChannel, and that is
+ * what Desktop's outbound client depends on. They exercise it directly rather
+ * than through a session factory.
+ */
+function connect(adapter, overrides = {}) {
+  return adapter.connect({
+    channels: CHANNELS,
+    deviceId: "device-a",
+    maxBufferedBytes: 1024 * 1024,
+    maxFrameBytes: 16,
+    peerId: "peer-a",
+    serverId: "server-a",
+    sessionOrigin: "https://session.example.test",
+    signal: new AbortController().signal,
+    ...overrides,
+  });
+}
 
 class FakeNativeChannel {
   constructor(label) {
@@ -45,16 +64,6 @@ function fakeModule() {
   return { PeerConnection: class PeerConnection {} };
 }
 
-function proof(deviceId, ticketId = `${deviceId}-ticket`) {
-  return {
-    ticketId,
-    serverId: "server-a",
-    sessionOrigin: "https://session.example.test",
-    deviceId,
-    expiresAt: 900,
-    authenticated: true,
-  };
-}
 
 test("loader validates an optional native module without importing it into server-core", async () => {
   const loaded = await loadNodeDataChannelRuntimeModule(
@@ -86,36 +95,27 @@ test("node-datachannel adapter maps native channels into server-owned lifecycle"
       return channels;
     },
   });
-
-  const manager = new RemoteConnectionManager({
-    serverId: "server-a",
-    sessionOrigin: "https://session.example.test",
-    now: () => 100,
-    maxFrameBytes: 16,
-  });
-  manager.expose(1_000);
-  const factory = new RemoteHeadlessWebRtcFactory({
-    manager,
-    maxFrameBytes: 16,
-    runtimes: [adapter],
-  });
-  const session = await factory.connect("node-datachannel", proof("device-a"));
+  const channels = await connect(adapter);
   assert.equal(loadCount, 1);
-  const firstAssets = nativeByLabel.get("assets");
   const firstControl = nativeByLabel.get("control");
   const firstTerminal = nativeByLabel.get("terminal");
-  const second = await factory.connect("node-datachannel", proof("device-a-2"));
+  const firstAssets = nativeByLabel.get("assets");
+  // A second connection reuses the loaded module and allocates its own lanes.
+  await connect(adapter, { deviceId: "device-a-2", peerId: "peer-a-2" });
   assert.equal(loadCount, 1, "the optional native module is loaded once per adapter");
-  await second.close();
-  session.send("control", new Uint8Array([1, 2]));
-  assert.deepEqual([...firstControl.sent[0]], [1, 2]);
-  firstTerminal.emit(new Uint8Array([3, 4]));
-  assert.deepEqual([...session.drain("terminal")[0]], [3, 4]);
 
+  channels.get("control").send(new Uint8Array([1, 2]));
+  assert.deepEqual([...firstControl.sent[0]], [1, 2]);
+
+  const received = [];
+  channels.get("terminal").onMessage((frame) => received.push([...frame]));
+  firstTerminal.emit(new Uint8Array([3, 4]));
+  assert.deepEqual(received, [[3, 4]]);
+
+  // A native close reaches the adapted lane's observable state.
   firstAssets.close();
-  assert.equal(session.state, "closed");
-  assert.equal(manager.snapshot().peers.length, 0);
-  await factory.closeAll();
+  assert.equal(channels.get("assets").readyState, "closed");
+  for (const channel of channels.values()) channel.close();
 });
 
 test("native send rejection immediately closes the authenticated peer", async () => {
@@ -125,15 +125,11 @@ test("native send rejection immediately closes the authenticated peer", async ()
     module: fakeModule(),
     openChannels: () => new Map(CHANNELS.map((label) => [label, label === "control" ? channel : new FakeNativeChannel(label)])),
   });
-  const manager = new RemoteConnectionManager({ serverId: "server-a", sessionOrigin: "https://session.example.test", now: () => 100 });
-	manager.expose(1_000);
-	const factory = new RemoteHeadlessWebRtcFactory({ manager, runtimes: [adapter] });
-	const session = await factory.connect("node-datachannel", proof("device-b"));
-	assert.throws(() => session.send("control", new Uint8Array([1])), /rejected/);
+	const channels = await connect(adapter);
+	assert.throws(() => channels.get("control").send(new Uint8Array([1])), /rejected/);
 	await new Promise((resolve) => setImmediate(resolve));
 	assert.equal(channel.closeCalls, 1);
-	assert.equal(session.state, "closed");
-	assert.equal(manager.snapshot().peers.length, 0);
+	assert.equal(channels.get("control").readyState, "closed");
 });
 
 test("native send exceptions immediately close the authenticated peer", async () => {
@@ -143,16 +139,12 @@ test("native send exceptions immediately close the authenticated peer", async ()
 		module: fakeModule(),
 		openChannels: () => new Map(CHANNELS.map((label) => [label, label === "control" ? channel : new FakeNativeChannel(label)])),
 	});
-	const manager = new RemoteConnectionManager({ serverId: "server-a", sessionOrigin: "https://session.example.test", now: () => 100 });
-	manager.expose(1_000);
-	const factory = new RemoteHeadlessWebRtcFactory({ manager, runtimes: [adapter] });
-	const session = await factory.connect("node-datachannel", proof("device-throwing-send"));
+	const channels = await connect(adapter);
 
-	assert.throws(() => session.send("control", new Uint8Array([1])), /rejected/);
+	assert.throws(() => channels.get("control").send(new Uint8Array([1])), /rejected/);
 	await new Promise((resolve) => setImmediate(resolve));
 	assert.equal(channel.closeCalls, 1);
-	assert.equal(session.state, "closed");
-	assert.equal(manager.snapshot().peers.length, 0);
+	assert.equal(channels.get("control").readyState, "closed");
 });
 
 test("non-binary native messages fail closed", async () => {
@@ -161,16 +153,12 @@ test("non-binary native messages fail closed", async () => {
 		module: fakeModule(),
 		openChannels: () => new Map(CHANNELS.map((label) => [label, label === "control" ? channel : new FakeNativeChannel(label)])),
 	});
-	const manager = new RemoteConnectionManager({ serverId: "server-a", sessionOrigin: "https://session.example.test", now: () => 100 });
-	manager.expose(1_000);
-	const factory = new RemoteHeadlessWebRtcFactory({ manager, runtimes: [adapter] });
-	const session = await factory.connect("node-datachannel", proof("device-non-binary"));
+	const channels = await connect(adapter);
 
 	channel.emit("not-binary");
 
 	assert.equal(channel.closeCalls, 1);
-	assert.equal(session.state, "closed");
-	assert.equal(manager.snapshot().peers.length, 0);
+	assert.equal(channels.get("control").readyState, "closed");
 });
 
 test("an inbound transport handler exception fails closed at the native boundary", async () => {
@@ -258,21 +246,12 @@ test("oversized native frames fail closed before they are copied into the transp
     module: fakeModule(),
     openChannels: () => new Map(CHANNELS.map((label) => [label, label === "control" ? channel : new FakeNativeChannel(label)])),
   });
-  const manager = new RemoteConnectionManager({
-    serverId: "server-a",
-    sessionOrigin: "https://session.example.test",
-    now: () => 100,
-    maxFrameBytes: 16,
-  });
-  manager.expose(1_000);
-  const factory = new RemoteHeadlessWebRtcFactory({ manager, maxFrameBytes: 16, runtimes: [adapter] });
-  const session = await factory.connect("node-datachannel", proof("device-oversized-frame"));
+  const channels = await connect(adapter);
 
   channel.emit(new Uint8Array(17));
 
   assert.equal(channel.closeCalls, 1);
-  assert.equal(session.state, "closed");
-  assert.equal(manager.snapshot().peers.length, 0);
+  assert.equal(channels.get("control").readyState, "closed");
 });
 
 test("a frame received after native closure fails closed instead of entering the transport", async () => {
@@ -281,50 +260,57 @@ test("a frame received after native closure fails closed instead of entering the
     module: fakeModule(),
     openChannels: () => new Map(CHANNELS.map((label) => [label, label === "control" ? channel : new FakeNativeChannel(label)])),
   });
-  const manager = new RemoteConnectionManager({
-    serverId: "server-a",
-    sessionOrigin: "https://session.example.test",
-    now: () => 100,
-    maxFrameBytes: 16,
-  });
-  manager.expose(1_000);
-  const factory = new RemoteHeadlessWebRtcFactory({ manager, maxFrameBytes: 16, runtimes: [adapter] });
-  const session = await factory.connect("node-datachannel", proof("device-stale-native-frame"));
+  const channels = await connect(adapter);
 
   // Model a native close transition whose callback is delayed. A valid frame
   // must not cross that lifecycle boundary into the server-owned queue.
   channel.open = false;
+  const received = [];
+  channels.get("control").onMessage((frame) => received.push(frame));
   channel.emit(new Uint8Array([7, 8]));
 
-  assert.throws(() => session.drain("control"), /remote session is closed/);
+  assert.deepEqual(received, [], "a frame past the lifecycle boundary is never delivered");
   assert.equal(channel.closeCalls, 1);
-  assert.equal(session.state, "closed");
-  assert.equal(manager.snapshot().peers.length, 0);
+  assert.equal(channels.get("control").readyState, "closed");
 });
 
-test("invalid native buffered amounts fail closed and release the authenticated peer", async () => {
+test("an invalid native buffered amount fails the lane closed instead of being trusted", async () => {
   const channel = new FakeNativeChannel("control");
   const adapter = createNodeDataChannelRuntimeAdapter({
     module: fakeModule(),
     openChannels: () => new Map(CHANNELS.map((label) => [label, label === "control" ? channel : new FakeNativeChannel(label)])),
   });
-  const manager = new RemoteConnectionManager({
-    serverId: "server-a",
-    sessionOrigin: "https://session.example.test",
-    now: () => 100,
-    maxFrameBytes: 16,
+  const channels = await connect(adapter);
+  const wrapped = channels.get("control");
+
+  // A native counter is untrusted input. Passing a negative value up to the
+  // transport would reject one send while leaving the native peer alive, so
+  // the boundary fails the lane closed instead.
+  channel.buffered = -1;
+  assert.equal(Number.isNaN(wrapped.bufferedAmount), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(channel.closeCalls, 1);
+  assert.equal(wrapped.readyState, "closed");
+});
+
+test("a transport over an adapted lane reports its bounded queue without trusting the native counter", async () => {
+  const channel = new FakeNativeChannel("control");
+  const adapter = createNodeDataChannelRuntimeAdapter({
+    module: fakeModule(),
+    openChannels: () => new Map(CHANNELS.map((label) => [label, label === "control" ? channel : new FakeNativeChannel(label)])),
   });
-  manager.expose(1_000);
-  const factory = new RemoteHeadlessWebRtcFactory({ manager, maxFrameBytes: 16, runtimes: [adapter] });
-  const session = await factory.connect("node-datachannel", proof("device-invalid-buffer"));
+  const channels = await connect(adapter);
+  const transport = new HeadlessChannelTransport(channels.get("control"), { maxFrameBytes: 16 });
+  await transport.open();
+  await transport.send(new Uint8Array([1, 2]));
+  assert.deepEqual([...channel.sent[0]], [1, 2]);
 
   channel.buffered = -1;
-  assert.throws(() => session.send("control", new Uint8Array([1])), /buffered amount is invalid/);
+  // The poisoned counter is contained: the read API stays total and the lane
+  // is failed closed rather than reporting nonsense upward.
+  assert.equal(transport.queuedBytes, 0);
   await new Promise((resolve) => setImmediate(resolve));
-
-  assert.equal(channel.closeCalls, 1);
-  assert.equal(session.state, "closed");
-  assert.equal(manager.snapshot().peers.length, 0);
+  assert.equal(channels.get("control").readyState, "closed");
 });
 
 test("a malformed native channel set closes every allocated native channel before rejecting", async () => {
@@ -334,17 +320,8 @@ test("a malformed native channel set closes every allocated native channel befor
     module: fakeModule(),
     openChannels: () => nativeByLabel,
   });
-  const manager = new RemoteConnectionManager({
-    serverId: "server-a",
-    sessionOrigin: "https://session.example.test",
-    now: () => 100,
-  });
-  manager.expose(1_000);
-  const factory = new RemoteHeadlessWebRtcFactory({ manager, runtimes: [adapter] });
 
-  await assert.rejects(factory.connect("node-datachannel", proof("device-malformed")), /invalid/);
-  assert.equal(manager.snapshot().peers.length, 0);
-  for (const channel of nativeByLabel.values()) {
+  await assert.rejects(connect(adapter), /invalid/);  for (const channel of nativeByLabel.values()) {
     assert.equal(channel.open, false, `${channel.label} must be closed`);
     assert.equal(channel.closeCalls, 1, `${channel.label} must be closed exactly once`);
   }
@@ -390,21 +367,8 @@ test("a native channel cannot be allocated to multiple isolated traffic labels",
     module: fakeModule(),
     openChannels: () => nativeByLabel,
   });
-  const manager = new RemoteConnectionManager({
-    serverId: "server-a",
-    sessionOrigin: "https://session.example.test",
-    now: () => 100,
-  });
-  manager.expose(1_000);
-  const factory = new RemoteHeadlessWebRtcFactory({ manager, runtimes: [adapter] });
 
-  await assert.rejects(
-    factory.connect("node-datachannel", proof("device-duplicate-native-channel")),
-    /allocation is not isolated/,
-  );
-
-  assert.equal(manager.snapshot().peers.length, 0);
-  assert.equal(shared.closeCalls, 1, "the reused native channel is closed once");
+  await assert.rejects(connect(adapter), /allocation is not isolated/);  assert.equal(shared.closeCalls, 1, "the reused native channel is closed once");
   assert.equal(terminal.closeCalls, 1);
   assert.equal(assets.closeCalls, 1);
 });
@@ -416,18 +380,8 @@ test("a native channel already closed during admission rejects and cleans up the
     module: fakeModule(),
     openChannels: () => nativeByLabel,
   });
-  const manager = new RemoteConnectionManager({
-    serverId: "server-a",
-    sessionOrigin: "https://session.example.test",
-    now: () => 100,
-  });
-  manager.expose(1_000);
-  const factory = new RemoteHeadlessWebRtcFactory({ manager, runtimes: [adapter] });
 
-  await assert.rejects(factory.connect("node-datachannel", proof("device-closed-at-admission")), /not open during admission/);
-
-  assert.equal(manager.snapshot().peers.length, 0);
-  for (const channel of nativeByLabel.values()) {
+  await assert.rejects(connect(adapter), /not open during admission/);  for (const channel of nativeByLabel.values()) {
     assert.equal(channel.closeCalls, 1, `${channel.label} must be closed exactly once`);
   }
 });
@@ -477,21 +431,8 @@ test("a native channel that closes while listeners are registered is never admit
     module: fakeModule(),
     openChannels: () => nativeByLabel,
   });
-  const manager = new RemoteConnectionManager({
-    serverId: "server-a",
-    sessionOrigin: "https://session.example.test",
-    now: () => 100,
-  });
-  manager.expose(1_000);
-  const factory = new RemoteHeadlessWebRtcFactory({ manager, runtimes: [adapter] });
 
-  await assert.rejects(
-    factory.connect("node-datachannel", proof("device-closed-during-listener-registration")),
-    /closed during listener registration/,
-  );
-
-  assert.equal(manager.snapshot().peers.length, 0);
-  for (const channel of nativeByLabel.values()) {
+  await assert.rejects(connect(adapter), /closed during listener registration/);  for (const channel of nativeByLabel.values()) {
     assert.equal(channel.closeCalls, 1, `${channel.label} must be closed exactly once`);
   }
 });
@@ -503,21 +444,8 @@ test("a native listener-registration failure rejects before authenticated admiss
     module: fakeModule(),
     openChannels: () => nativeByLabel,
   });
-  const manager = new RemoteConnectionManager({
-    serverId: "server-a",
-    sessionOrigin: "https://session.example.test",
-    now: () => 100,
-  });
-  manager.expose(1_000);
-  const factory = new RemoteHeadlessWebRtcFactory({ manager, runtimes: [adapter] });
 
-  await assert.rejects(
-    factory.connect("node-datachannel", proof("device-listener-registration-throw")),
-    /listener registration failed/,
-  );
-
-  assert.equal(manager.snapshot().peers.length, 0);
-  for (const channel of nativeByLabel.values()) {
+  await assert.rejects(connect(adapter), /listener registration failed/);  for (const channel of nativeByLabel.values()) {
     assert.equal(channel.closeCalls, 1, `${channel.label} must be closed exactly once`);
   }
 });
@@ -534,21 +462,8 @@ test("a close reported during lifecycle registration is not closed twice when re
     module: fakeModule(),
     openChannels: () => nativeByLabel,
   });
-  const manager = new RemoteConnectionManager({
-    serverId: "server-a",
-    sessionOrigin: "https://session.example.test",
-    now: () => 100,
-  });
-  manager.expose(1_000);
-  const factory = new RemoteHeadlessWebRtcFactory({ manager, runtimes: [adapter] });
 
-  await assert.rejects(
-    factory.connect("node-datachannel", proof("device-close-then-registration-throw")),
-    /listener registration failed/,
-  );
-
-  assert.equal(manager.snapshot().peers.length, 0);
-  for (const channel of nativeByLabel.values()) {
+  await assert.rejects(connect(adapter), /listener registration failed/);  for (const channel of nativeByLabel.values()) {
     assert.equal(channel.closeCalls, 1, `${channel.label} must be closed exactly once`);
   }
 });
@@ -561,21 +476,8 @@ test("a throwing native label getter rejects before admission and cleans up the 
     module: fakeModule(),
     openChannels: () => nativeByLabel,
   });
-  const manager = new RemoteConnectionManager({
-    serverId: "server-a",
-    sessionOrigin: "https://session.example.test",
-    now: () => 100,
-  });
-  manager.expose(1_000);
-  const factory = new RemoteHeadlessWebRtcFactory({ manager, runtimes: [adapter] });
 
-  await assert.rejects(
-    factory.connect("node-datachannel", proof("device-throwing-label-getter")),
-    /channel is invalid/,
-  );
-
-  assert.equal(manager.snapshot().peers.length, 0);
-  for (const channel of nativeByLabel.values()) {
+  await assert.rejects(connect(adapter), /channel is invalid/);  for (const channel of nativeByLabel.values()) {
     assert.equal(channel.closeCalls, 1, "every native lane must close exactly once");
   }
 });

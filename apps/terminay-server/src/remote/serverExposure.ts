@@ -3,14 +3,11 @@ import { hostname as osHostname } from 'node:os';
 import type {
 	RemoteAuditLog,
 	RemoteAuditLogOptions,
-	RemoteAuthProof,
 	RemoteCleanupReport,
 	RemoteConnectionManagerOptions,
 	RemoteDeviceAuthenticationOptions,
 	RemoteExposureController,
 	RemoteExposureStatus,
-	RemoteHeadlessSession,
-	RemotePairingAttempt,
 	RemotePairingHandoff,
 	RemoteRateLimiterOptions,
 } from '@terminay/server-core/remote';
@@ -253,17 +250,6 @@ export class ServerRemoteExposure {
 		const status = this.controller.stopExposure();
 		this.activePairingHandoff = undefined;
 		return status;
-	}
-
-	async connectHeadless(
-		attempt: RemotePairingAttempt,
-		proof: RemoteAuthProof,
-		signal?: AbortSignal,
-	): Promise<RemoteHeadlessSession> {
-		const device = this.devices.get(proof.deviceId);
-		if (device === undefined) throw new Error('remote device is not registered');
-		if (device.revokedAt !== null) throw new Error('remote device is revoked');
-		return this.controller.connectHeadless('werift', attempt, proof, signal);
 	}
 
 	/** Enroll a durable public device key after the one-time pairing admission. */
