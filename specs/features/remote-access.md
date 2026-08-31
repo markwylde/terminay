@@ -383,8 +383,8 @@ application-protocol reader can still deliver. `RTCDataChannel.readyState`
 remaining `open` is not sufficient. Recoverable peer `disconnected` starts one
 bounded grace period and cancels that timer if the peer is `connected` again.
 Explicit `failed` or `closed` peer/ICE state, required-lane loss,
-application-protocol reader end, application-lane stall, or grace expiry
-replaces the generation exactly once. ICE `disconnected` while
+application-protocol reader end, or grace expiry replaces the generation
+exactly once. Application-lane stall does not. ICE `disconnected` while
 `connectionState` stays `connected` is a consent-check blip on Safari and
 Firefox; it does not start grace or replace the generation. ICE
 `disconnected` starts grace only when the peer is also not `connected`.
@@ -392,16 +392,14 @@ Firefox; it does not start grace or replace the generation. ICE
 Required-lane close or failure (`control`, `application`, `terminal`,
 `assets`) fails that generation even while the peer still reports
 `connected`. Handshake-only `api` and `asset` close after handoff does not.
-Host `no-outbound` / `outbound-stalled` after hydrate grace, and client
-`no-inbound` / `inbound-stalled`, are the same class of failure: the
-generation can no longer deliver. Attach and checkpoint handshake inbound
-overlapping a short outbound pause is not that failure. The workspace shows
-reconnecting status, not connected, disables input, and replaces the
-generation. It does not leave a painted checkpoint mounted as live.
-A stalled application lane logs `[terminay-workspace]` counters in the session.
-Host diagnostics include live generation count, first-frame age, and whether
-a stall was ignored during hydrate grace. Peer-closed diagnostics name stall,
-required-lane loss, and ICE/peer failure instead of `other`.
+Host `no-outbound` / `outbound-stalled` is logged and does not close the
+peer. A few seconds of quiet output is not a disconnect. The host closes a
+peer only when the user disconnects, a required lane is gone, or WebRTC
+itself is `failed` or `closed`. A stalled application lane logs
+`[terminay-workspace]` counters in the session. Host diagnostics include
+live generation count, first-frame age, and `stallIgnored`. Peer-closed
+diagnostics name required-lane loss and ICE/peer failure instead of
+`other`.
 
 The session host creates that generation once per connect attempt. Pairing or
 saved-device signaling, bundle install, and the workspace's application
@@ -626,11 +624,10 @@ frames do not produce one log line per frame.
   generation and continues live terminal output. Peer `disconnected`, or ICE
   `disconnected` while the peer is also not `connected`, either recovers
   inside grace or replaces that generation once without a page reload.
-- Application-lane stall after hydrate grace, or required-lane close, while
-  the peer stays `connected` replaces that generation. The browser shows
-  reconnecting, then live PTY and later workspace events again. A checkpoint
-  dump whose handshake inbound continues during a few-second outbound pause
-  does not replace the generation.
+- Five seconds of application-lane silence while the peer stays `connected`
+  does not close that peer. Required-lane close still replaces the
+  generation. A checkpoint dump whose handshake inbound continues during a
+  few-second outbound pause does not replace the generation.
 - A framed PWA session that hydrates a terminal still shows subsequent typed
   PTY output on that same generation. A new project or terminal created after
   that hydrate appears while the generation is live.
