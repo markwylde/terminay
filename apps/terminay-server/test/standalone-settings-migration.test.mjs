@@ -68,6 +68,8 @@ test('standalone settings migration preserves the raw source and safely retries 
 	}
 });
 
+const READINESS_TIMEOUT_MS = 30_000;
+
 async function readiness(child) {
 	let stdout = '';
 	let stderr = '';
@@ -77,9 +79,17 @@ async function readiness(child) {
 		stderr += chunk;
 	});
 	return new Promise((resolve, reject) => {
+		// Spawning the standalone CLI competes with every other test file in
+		// this workspace, so this budget covers a slow cold start rather than
+		// timing one. It still fails a genuine hang, just not a loaded machine.
 		const timeout = setTimeout(
-			() => reject(new Error(`CLI readiness timed out: ${stderr}`)),
-			5_000,
+			() =>
+				reject(
+					new Error(
+						`CLI readiness timed out after ${READINESS_TIMEOUT_MS}ms; stdout=${stdout.trim()}; stderr=${stderr.trim()}`,
+					),
+				),
+			READINESS_TIMEOUT_MS,
 		);
 		child.stdout.on('data', (chunk) => {
 			stdout += chunk;
