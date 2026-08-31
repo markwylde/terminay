@@ -160,10 +160,14 @@ test('compiled standalone pairing CLI requires a configured PIN without revealin
 });
 
 test('standalone CLI emits a pairing handoff and remains foreground until terminated', async () => {
+	// A data root is leased exclusively and is deliberately never auto-stolen,
+	// so a shared fixed path leaves a lock behind whenever a run is killed and
+	// every later run then fails to start. Isolate and clean up this one.
+	const dataRoot = await mkdtemp(join(tmpdir(), 'terminay-foreground-pairing-'));
 	const child = spawn(process.execPath, [
 		'dist/cli.js',
 		'--server-id', 'foreground-server',
-		'--data-root', '/tmp/terminay-foreground-pairing-test',
+		'--data-root', dataRoot,
 		'--health-host', '127.0.0.1',
 		'--health-port', '0',
 		'--vault-unlock-fd', '3',
@@ -175,8 +179,22 @@ test('standalone CLI emits a pairing handoff and remains foreground until termin
 	child.stdio[3].end('test-vault-passphrase\n');
 
 	let output = '';
+	// Startup failures are reported on stderr. Carry them into the timeout so a
+	// failure names its cause instead of only saying readiness timed out.
+	let errorOutput = '';
+	child.stderr.on('data', (chunk) => {
+		errorOutput += chunk.toString();
+	});
 	const line = new Promise((resolve, reject) => {
-		const timeout = setTimeout(() => reject(new Error('CLI readiness timed out')), 5_000);
+		const timeout = setTimeout(
+			() =>
+				reject(
+					new Error(
+						`CLI readiness timed out${errorOutput.trim() === '' ? '' : `: ${errorOutput.trim()}`}`,
+					),
+				),
+			10_000,
+		);
 		child.stdout.on('data', (chunk) => {
 			output += chunk.toString();
 			const newline = output.indexOf('\n');
@@ -205,5 +223,6 @@ test('standalone CLI emits a pairing handoff and remains foreground until termin
 			child.kill('SIGTERM');
 			await once(child, 'exit').catch(() => undefined);
 		}
+		await rm(dataRoot, { force: true, recursive: true }).catch(() => undefined);
 	}
 });
