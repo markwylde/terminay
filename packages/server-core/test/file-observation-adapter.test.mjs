@@ -51,11 +51,39 @@ test("file observations are project scoped, ordered, idempotent, and cancelled w
   assert.throws(() => start(command(FILE_OBSERVATION_OPERATIONS.watchStart, {
     projectId: "project-b", resource: "",
   })), /authenticated project/u);
-  adapter.closeClient("client-a");
+  adapter.closeConnection("connection-client-a");
   assert.equal(watcher.signal.aborted, true);
   await assert.rejects(() => read(query(FILE_OBSERVATION_OPERATIONS.watchRead, {
     subscriptionId: handle.subscriptionId,
   })), /unavailable/u);
+});
+
+test("closing one connection keeps a watch its sibling connection still consumes", async () => {
+  const journal = new OrderedEventJournal();
+  let watcher;
+  const host = {
+    watch(input) { watcher = input; },
+    async calculateFolderSize() { return { bytes: 0, files: 0, directories: 0 }; },
+  };
+  const adapter = new ServerFileObservationAdapter({ serverId: "server-a", host, eventJournal: journal });
+  const start = adapter.operations.commands[FILE_OBSERVATION_OPERATIONS.watchStart];
+  const read = adapter.operations.queries[FILE_OBSERVATION_OPERATIONS.watchRead];
+  // One device, two live connections: the reconnect replacement and the
+  // superseded original both consume the same deduplicated watch.
+  const first = { ...context(), connectionId: "connection-first" };
+  const second = { ...context(), connectionId: "connection-second" };
+  const handle = await start(command(FILE_OBSERVATION_OPERATIONS.watchStart, { projectId: "project-a", resource: "" }, first));
+  const shared = await start(command(FILE_OBSERVATION_OPERATIONS.watchStart, { projectId: "project-a", resource: "" }, second));
+  assert.equal(shared.subscriptionId, handle.subscriptionId);
+
+  adapter.closeConnection("connection-first");
+  assert.equal(watcher.signal.aborted, false, "the surviving connection keeps the watch open");
+  watcher.publish({ resource: "docs/readme.md", kind: "changed" });
+  const batch = await read(query(FILE_OBSERVATION_OPERATIONS.watchRead, { subscriptionId: handle.subscriptionId }, second));
+  assert.equal(batch.events[0].resource, "docs/readme.md");
+
+  adapter.closeConnection("connection-second");
+  assert.equal(watcher.signal.aborted, true, "the last consumer releases the watch");
 });
 
 test("folder-size progress is bounded and cancellation aborts host work", async () => {

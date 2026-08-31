@@ -388,38 +388,48 @@ workspace. Network loss keeps server-owned PTYs and work running. The browser
 shows reconnecting state, creates a fresh authenticated generation, restores
 subscriptions, and enables input only after hydration completes.
 
-A generation is live only while its peer, required data lanes, and
-application-protocol reader can still deliver. `RTCDataChannel.readyState`
-remaining `open` is not sufficient. Recoverable peer `disconnected` starts one
-bounded grace period and cancels that timer if the peer is `connected` again.
-Explicit `failed` or `closed` peer/ICE state, required-lane loss,
-application-protocol reader end, or grace expiry replaces the generation
-exactly once. Application-lane stall does not. ICE `disconnected` while
-`connectionState` stays `connected` is a consent-check blip on Safari and
-Firefox; it does not start grace or replace the generation. ICE
-`disconnected` starts grace only when the peer is also not `connected`.
+The server holds at most one live connection per device. A successful pairing
+or `device-join` for a device replaces that device's existing peer: the host
+closes the previous peer and completes its server-side connection cleanup
+before it accepts the replacement. A superseded connection can never outlive,
+mute, or tear down the resources of the connection that replaced it. Closing a
+connection releases only what that exact connection owns — its terminal
+attachments, subscriptions, leases, and checkpoints — never state belonging to
+another connection from the same device. Device identity governs
+authentication, permissions, and revocation; it does not govern connection
+lifetime.
 
-A datachannel `close` on `control`, `assets`, `terminal`, `application`,
-or handshake `api`/`asset` is logged with that channel name and does not
-hang up the peer while ICE stays connected. Host `no-outbound` /
-`outbound-stalled` is logged and does not close the peer. A few seconds of
-quiet output is not a disconnect. The host closes a peer only when the user
-disconnects or WebRTC itself is `failed` or `closed`. A stalled application lane logs
-`[terminay-workspace]` counters in the session. Host diagnostics include
-live generation count, first-frame age, and `stallIgnored`. Peer-closed
-diagnostics name required-lane loss and ICE/peer failure instead of
-`other`.
+Generation liveness uses explicit signals only. A generation fails, exactly
+once, when:
 
-The session host creates that generation once per connect attempt. Pairing or
+- the peer or ICE connection reports `failed` or `closed`;
+- the ICE `disconnected` grace period expires (grace starts only when the
+  peer is also not `connected`; ICE `disconnected` while `connectionState`
+  stays `connected` is a consent-check blip on Safari and Firefox and is
+  ignored);
+- a required lane (`control`, `application`, `terminal`, `assets`) leaves
+  `open` after the handshake;
+- the application-protocol reader ends; or
+- the heartbeat bound is exceeded.
+
+Traffic patterns are not a liveness signal. Quiet PTY output, hydration
+bursts, and outbound pauses are never classified, inferred from, or acted on.
+
+Liveness is proven by a heartbeat. The workspace client sends an
+application-protocol ping every 10 seconds on the live generation; the server
+answers on the same lane. Two consecutive missed responses retire the
+generation and start recovery. The server closes any connection with no
+inbound application frames for 60 seconds, so a half-open transport that
+never fires a close event is still reaped. A healthy but idle workspace stays
+connected on pings alone.
+
+The session host creates one generation per connect attempt. Pairing or
 saved-device signaling, bundle install, and the workspace's application
 `connect` share it. The workspace does not start a second signaling join, peer,
 or ticket for the same attempt. A `closed` event from a retired generation
 cannot start a parallel connect. Automatic recovery, **Retry connection**,
 document resume, and the initial connect share one in-flight attempt.
-Retired host generations leave the live peer set. They do not stay subscribed
-to PTY or hold Werift sockets after the application lane closes. Device
-signaling reregister keeps live generations and does not accumulate closed
-ones. A later connect still hydrates a checkpoint and then streams later PTY.
+A later connect hydrates a checkpoint and then streams later PTY.
 
 Live terminal output shares the binary application lane with command results
 and later workspace events. Attach snapshots, later PTY bytes, new projects,
@@ -512,9 +522,7 @@ These traces include only:
   buffered amount on the application lane;
 - inbound kind class (`bytes`, `blob`, `string`, `empty`, `other`) and send
   failure class; and
-- stall class (`no-outbound` when the host has received application frames
-  but has not sent any, or `outbound-stalled` when outbound was live and then
-  stopped while inbound continued).
+- peer close reasons, including `replaced-by-rejoin` and `heartbeat-timeout`.
 
 They never include PTY bytes, typed input, SDP, ICE candidate addresses,
 pairing URLs, PINs, tickets, session ids, or hostnames. High-frequency PTY
@@ -633,14 +641,19 @@ frames do not produce one log line per frame.
   generation and continues live terminal output. Peer `disconnected`, or ICE
   `disconnected` while the peer is also not `connected`, either recovers
   inside grace or replaces that generation once without a page reload.
-- Five seconds of application-lane silence while the peer stays `connected`
-  does not close that peer. A `control` or `assets` datachannel close while
-  ICE stays connected does not close that peer. Diagnostics name the channel
-  and `hangup: false`. A checkpoint dump whose handshake inbound continues
-  during a few-second outbound pause does not replace the generation.
+- Reconnecting from the same device replaces the previous connection at join
+  time. A superseded connection that fails afterwards — however late — has no
+  effect on the replacement's live stream, leases, or checkpoints.
+- Minutes of idle terminal output keep the connection alive through the
+  heartbeat alone. A transport that stops delivering is detected by a missed
+  ping and recovered within the heartbeat bound, without any traffic-pattern
+  inference.
 - A framed PWA session that hydrates a terminal still shows subsequent typed
   PTY output on that same generation. A new project or terminal created after
   that hydrate appears while the generation is live.
+- Sustained reconnect cycles (at least three in a row during continuous PTY
+  output) each hydrate a checkpoint and then stream new output within the
+  heartbeat bound.
 - Backgrounding and returning to the installed PWA reconnects the framed
   session, or shows a bounded retryable error, instead of an indefinite
   loading mark.

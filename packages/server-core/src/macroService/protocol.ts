@@ -42,7 +42,9 @@ export interface MacroOperationRegistryOptions {
 export interface MacroOperationRegistry {
   readonly operations: OperationRegistries;
   readonly runner: MacroRunner;
-  readonly closeClient: (clientId: string) => void;
+  /** Cancel the disconnect-scoped runs launched by one connection. A run
+   * launched by another live connection of the same client keeps running. */
+  readonly closeConnection: (connectionId: string) => void;
 }
 
 /** Bind revisioned macro editing and server-side execution to the canonical
@@ -81,7 +83,7 @@ export function createMacroOperationRegistry(options: MacroOperationRegistryOpti
   return {
     operations,
     runner,
-    closeClient: (clientId) => runner.clientDisconnected(clientId),
+    closeConnection: (connectionId) => runner.launcherDisconnected(connectionId),
   };
 
   async function get(_request: QueryRequest): Promise<JsonValue> {
@@ -144,7 +146,7 @@ export function createMacroOperationRegistry(options: MacroOperationRegistryOpti
       const handle = runner.start(macro, environment, {
         authorization: { target, scope: request.context.authScope === "admin" ? "admin" : "write" },
         values,
-        launcherId: request.context.clientId,
+        launcherId: request.context.connectionId,
         disconnectPolicy,
       });
       owners.set(handle.runId, request.context.clientId);

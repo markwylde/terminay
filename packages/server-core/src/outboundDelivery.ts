@@ -323,6 +323,10 @@ export class OutboundDeliveryPump {
 		) return;
 		lane.confirmedPosition = position;
 		lane.unconfirmedSince = position >= lane.headPosition ? undefined : this.now();
+		// Congestion recovery is a bounded state, not a permanent latch. Once the
+		// client confirms it has rendered through the resynchronization boundary,
+		// this lane is caught up and must start admitting live output again.
+		if (lane.resyncPending && position >= lane.headPosition) lane.resyncPending = false;
 	}
 
 	/** Release scheduler state after the authoritative attachment is detached.

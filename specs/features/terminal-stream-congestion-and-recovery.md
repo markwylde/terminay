@@ -126,10 +126,23 @@ retired client.
 
 A checkpoint or attach snapshot without later live PTY or workspace events is
 not a successful connection. Congestion recovery still applies when frames
-arrive and overwhelm a presentation lane. It does not apply when the
-transport has gone silent while reporting open. Silence after hydrate,
-including missing later PTY and missing later project or terminal events, is
-a transport-generation failure.
+arrive and overwhelm a presentation lane. A transport that has gone silent
+while reporting open is detected by the connection heartbeat — a periodic
+application-protocol ping with a bounded response deadline — not by
+inference from PTY quietness or traffic patterns. A missed heartbeat is a
+transport-generation failure; an idle but responsive connection is healthy.
+
+Attachment lifetime is scoped to the exact connection that created the
+attachment. Closing one connection releases only that connection's
+attachments, leases, and checkpoints. Another connection authenticated by the
+same device — including the replacement created by a reconnect — is
+unaffected by the old connection's teardown, whenever it happens. When the
+server detaches an attachment for any reason other than the client's own
+detach request, it delivers an explicit attachment-closed resynchronization
+event on the control lane; a stream never ends silently while its connection
+remains open. Congestion suppression and pending-resynchronization state end
+when the replacement attachment attaches; they are bounded recovery states,
+never permanent latches.
 
 The renderer visibly marks mounted terminal panels and connection chrome as
 reconnecting and rejects unsafe mutations promptly while the old client is
@@ -202,9 +215,16 @@ endpoint.
 - ICE `disconnected` while the peer stays `connected` does not replace the
   generation. Peer `disconnected`, or ICE `disconnected` while the peer is
   also not `connected`, either resumes delivery inside grace or replaces once.
-  The mounted workspace does not stay on a painted checkpoint with no later
-  PTY bytes when the application reader has actually ended or a required lane
-  has closed. Application-lane stall is logged and does not hang up the peer.
+  The mounted workspace never stays on a painted checkpoint with no later PTY
+  bytes: reader end, required-lane close, and heartbeat miss each replace the
+  generation within their bound.
+- A reconnect from the same device replaces the prior connection at join
+  time. A superseded connection failing afterwards releases only its own
+  attachments; the replacement connection's live stream, leases, and
+  checkpoints are provably unaffected.
+- A lane that congests, resynchronizes, and congests again recovers each time
+  on the same connection; no suppression or pending-resynchronization state
+  persists after the replacement attachment attaches.
 - Application-lane `Blob` frames are decoded in order or fail that generation.
   Chromium loopback happy-path evidence is not sufficient; tests inject ICE
   disconnect and non-`ArrayBuffer` binary delivery.
