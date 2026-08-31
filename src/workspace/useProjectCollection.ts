@@ -21,6 +21,55 @@ import {
 } from './projectTabModel';
 
 const DEFAULT_AGENTS_PANE_HEIGHT = 200;
+const WORKSPACE_SELECTION_STORAGE_PREFIX = 'terminay.workspace-selection.v1:';
+
+function readPresentationActiveProject(
+	serverId: string,
+	viewId: string | null,
+): string | null {
+	if (viewId === null || typeof sessionStorage === 'undefined') return null;
+	try {
+		const value = sessionStorage.getItem(
+			`${WORKSPACE_SELECTION_STORAGE_PREFIX}${serverId}:${viewId}`,
+		);
+		return value !== null && value.length > 0 ? value : null;
+	} catch {
+		return null;
+	}
+}
+
+function writePresentationActiveProject(
+	serverId: string,
+	viewId: string | null,
+	projectId: string,
+): void {
+	if (
+		viewId === null ||
+		projectId.length === 0 ||
+		typeof sessionStorage === 'undefined'
+	)
+		return;
+	try {
+		sessionStorage.setItem(
+			`${WORKSPACE_SELECTION_STORAGE_PREFIX}${serverId}:${viewId}`,
+			projectId,
+		);
+	} catch {
+		// Presentation selection is best-effort local state.
+	}
+}
+
+function pickLocalActiveProjectId(
+	candidateIds: readonly string[],
+	...preferred: Array<string | null | undefined>
+): string {
+	const available = new Set(candidateIds);
+	for (const id of preferred) {
+		if (id !== null && id !== undefined && id.length > 0 && available.has(id))
+			return id;
+	}
+	return candidateIds[0] ?? '';
+}
 
 type PendingSidebarCommit = Readonly<{
 	sequence: number;
@@ -185,15 +234,24 @@ export function useProjectCollection<TTerminal>({
 		];
 	});
 	const projectsRef = useRef(projects);
-	const [activeProjectId, setActiveProjectId] = useState(
-		isAdoptWindow
-			? ''
-			: hasServerWorkspace && initialServerSnapshot === null
+	const [activeProjectId, setActiveProjectId] = useState(() => {
+		if (isAdoptWindow) return '';
+		if (hasServerWorkspace && initialServerSnapshot === null) return '';
+		const storedId = readPresentationActiveProject(
+			projectColorScope,
+			initialViewId,
+		);
+		const localId = pickLocalActiveProjectId(
+			initialServerProjects.map((project) => project.id),
+			storedId,
+			initialServerView?.activeProjectId,
+		);
+		return localId.length > 0
+			? localId
+			: hasServerWorkspace
 				? ''
-				: (initialServerView?.activeProjectId ??
-					initialServerProjects[0]?.id ??
-					(hasServerWorkspace ? '' : 'project-1')),
-	);
+				: 'project-1';
+	});
 	const activeProjectIdRef = useRef(activeProjectId);
 	const reservedProjectColorsRef = useRef(new Set<string>());
 	const [projectCreationError, setProjectCreationError] = useState<
@@ -244,7 +302,12 @@ export function useProjectCollection<TTerminal>({
 
 	useEffect(() => {
 		activeProjectIdRef.current = activeProjectId;
-	}, [activeProjectId]);
+		writePresentationActiveProject(
+			projectColorScope,
+			workspaceViewId,
+			activeProjectId,
+		);
+	}, [activeProjectId, projectColorScope, workspaceViewId]);
 
 	useEffect(() => {
 		if (workspaceSnapshotStore === undefined) return;
@@ -327,15 +390,12 @@ export function useProjectCollection<TTerminal>({
 				return next;
 			});
 			const heldActiveProjectId = holdActiveProjectIdRef?.current;
-			const preferredId =
-				heldActiveProjectId !== null && heldActiveProjectId !== undefined
-					? heldActiveProjectId
-					: activeProjectIdRef.current;
-			const nextActiveId =
-				preferredId.length > 0 &&
-				orderedServerProjects.some((project) => project.id === preferredId)
-					? preferredId
-					: (view?.projectIds[0] ?? orderedServerProjects[0]?.id ?? '');
+			const nextActiveId = pickLocalActiveProjectId(
+				orderedServerProjects.map((project) => project.id),
+				heldActiveProjectId,
+				activeProjectIdRef.current,
+				readPresentationActiveProject(projectColorScope, viewId ?? null),
+			);
 			activeProjectIdRef.current = nextActiveId;
 			setActiveProjectId(nextActiveId);
 		});
