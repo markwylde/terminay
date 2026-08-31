@@ -190,7 +190,7 @@ test("an attachment taken over by another connection is told its stream ended", 
 
   const notified = [];
   const unsubscribe = journal.subscribe((event) => {
-    if (event.event !== "terminal" || event.payload.type !== "resync_required") return;
+    if (event.event !== "terminal" || event.payload.type !== "skip") return;
     notified.push(event.payload.attachmentId);
   });
 
@@ -225,7 +225,7 @@ test("a client's own detach does not raise a spurious recovery event", async () 
 
   const notified = [];
   const unsubscribe = journal.subscribe((event) => {
-    if (event.event === "terminal" && event.payload.type === "resync_required") notified.push(event.payload.attachmentId);
+    if (event.event === "terminal" && event.payload.type === "skip") notified.push(event.payload.attachmentId);
   });
   const detached = await dispatcher.command(request(
     "terminal.detach",

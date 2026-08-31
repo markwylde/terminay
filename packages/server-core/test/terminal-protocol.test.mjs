@@ -160,17 +160,33 @@ test("congestion suppression stops publishing raw output without stopping the PT
     assert.equal(input.ok, true, JSON.stringify(input));
     assert.equal(new TextDecoder().decode(pty.processes[0].writes.at(-1)), "ok");
 
-    // Suppression is bounded: acknowledging the rendered boundary resumes the
-    // live stream on this same attachment instead of muting it permanently.
+    // Suppression is bounded by the attachment, not by an acknowledgement. No
+    // output is published while it holds, so this client can never produce an
+    // acknowledgement that advances past the discarded range: an ack-gated
+    // exit is an exit that never runs, and the terminal stays silent forever.
     const acknowledged = await dispatcher.command(request(
       "terminal.ack",
       { clientId: "client-a", identity, attachmentId, position: service.getSession(identity).outputPosition },
       "ack-after-suppression",
     ));
     assert.equal(acknowledged.ok, true, JSON.stringify(acknowledged));
+    pty.processes[0].emitData("still-muted");
+    await nextTurn();
+    assert.equal(published.length, 1, "an acknowledgement cannot unmute a suppressed attachment");
+
+    // Replacing the attachment is what recovery actually does, and it is the
+    // only thing that resumes the stream.
+    const replacement = await dispatcher.command(request(
+      "terminal.attach",
+      { clientId: "client-a", identity, fromPosition: service.getSession(identity).outputPosition },
+      "attach-replacement",
+    ));
+    assert.equal(replacement.ok, true, JSON.stringify(replacement));
+    assert.equal(replacement.result.replacedAttachmentId, attachmentId,
+      "the superseded attachment is named so its delivery lane can be retired");
     pty.processes[0].emitData("resumed");
     await nextTurn();
-    assert.equal(published.length, 2, "an acknowledged attachment resumes publishing live output");
+    assert.equal(published.length, 2, "the replacement attachment streams live output again");
     unsubscribe();
   } finally {
     await service.shutdown();

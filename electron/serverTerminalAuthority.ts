@@ -196,14 +196,14 @@ export interface ServerTerminalAuthoritySession {
 }
 
 export interface ServerTerminalRendererEvent {
-	readonly type: 'output' | 'exit' | 'resync_required';
+	readonly type: 'output' | 'exit' | 'skip';
 	readonly id: string;
 	readonly data?: string;
 	readonly exitCode?: number;
 	readonly signal?: number | null;
 	readonly fromPosition?: number;
-	readonly replayFrom?: number;
-	readonly outputPosition?: number;
+	readonly toPosition?: number;
+	readonly reason?: 'congestion' | 'attachment_closed';
 }
 
 /**
@@ -2324,11 +2324,11 @@ function toRendererEvent(event: TerminalEvent): ServerTerminalRendererEvent {
 		};
 	}
 	return {
-		type: 'resync_required',
+		type: 'skip',
 		id: event.sessionId,
 		fromPosition: event.fromPosition,
-		replayFrom: event.replayFrom,
-		outputPosition: event.outputPosition,
+		toPosition: event.toPosition,
+		reason: event.reason,
 	};
 }
 

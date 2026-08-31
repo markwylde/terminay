@@ -6,7 +6,7 @@ import {
   type TerminalStreamEvent,
   type TerminalStreamExitEvent,
   type TerminalStreamOutputEvent,
-  type TerminalStreamResyncEvent,
+  type TerminalStreamSkipEvent,
   type TerminalPresentationState,
   TerminayTerminalClient,
 } from "./terminal.js";
@@ -27,7 +27,7 @@ export interface TerminalPanelAttachment {
   readonly onEvent: (listener: (event: TerminalStreamEvent) => void) => () => void;
   readonly onOutput: (listener: (event: TerminalStreamOutputEvent) => void) => () => void;
   readonly onExit: (listener: (event: TerminalStreamExitEvent) => void) => () => void;
-  readonly onResync: (listener: (event: TerminalStreamResyncEvent) => void) => () => void;
+  readonly onSkip: (listener: (event: TerminalStreamSkipEvent) => void) => () => void;
   readonly ack: (position: number, options?: CommandOptions) => Promise<void>;
   readonly write: (data: Uint8Array | string, options?: CommandOptions) => Promise<void>;
   readonly resize: (dimensions: TerminalDimensions, options?: CommandOptions) => Promise<void>;
@@ -102,10 +102,10 @@ class PanelAttachmentView implements TerminalPanelAttachment {
     });
   }
 
-  onResync(listener: (event: TerminalStreamResyncEvent) => void): () => void {
-    if (typeof listener !== "function") throw new TypeError("terminal resync listener must be a function");
+  onSkip(listener: (event: TerminalStreamSkipEvent) => void): () => void {
+    if (typeof listener !== "function") throw new TypeError("terminal skip listener must be a function");
     return this.attachment.onEvent((event) => {
-      if (event.type === "resync_required") listener(event);
+      if (event.type === "skip") listener(event);
     });
   }
 
