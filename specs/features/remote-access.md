@@ -462,6 +462,12 @@ Automatic recovery and **Retry connection** use the same reconnect operation.
 Expired or revoked device identity stops recovery and requests pairing. Closing
 one browser tab or Desktop window affects only that client connection.
 
+A browser device identity is shared by every tab at its session origin, so
+opening the workspace again in a second tab is a reconnect by that same
+device: it takes the connection over, and the first tab shows reconnecting.
+Two tabs of one device do not hold two live workspace connections. Separate
+devices, Desktop windows, and Local connections are unaffected.
+
 Detailed ordering, congestion, and terminal resynchronization are governed by
 [terminal stream congestion and recovery](./terminal-stream-congestion-and-recovery.md).
 The hosted session-origin bootstrap and framed PWA host follow
