@@ -20,7 +20,7 @@ import { createOperationDispatcher, type OperationDispatcher } from "./dispatche
 import { OrderedEventJournal } from "./events.js";
 import {
   OutboundDeliveryPump,
-  type OutboundDeliveryError,
+  OutboundDeliveryError,
   type OutboundDeliverySnapshot,
 	type TerminalDeliveryCongestion,
 } from "./outboundDelivery.js";
@@ -36,6 +36,19 @@ import type {
 } from "./types.js";
 
 type State = "new" | "handshaking" | "open" | "closing" | "closed";
+
+/** The application-protocol liveness probe. A client that advertises
+ * `connection.heartbeat` promises to issue this query on an interval. */
+export const CONNECTION_PING_OPERATION = "connection.ping";
+export const CONNECTION_HEARTBEAT_CAPABILITY = "connection.heartbeat";
+/**
+ * How long a heartbeat client may be silent before the server reaps it.
+ *
+ * A transport can stop delivering while every datachannel still reports
+ * `open`, and no close event ever arrives. Inbound silence is the only
+ * evidence the server gets, so it is the signal — six missed 10s pings.
+ */
+export const DEFAULT_HEARTBEAT_TIMEOUT_MS = 60_000;
 
 interface InFlightRequest {
   readonly controller: AbortController;
@@ -67,6 +80,8 @@ export class ServerConnection implements ServerConnectionLike {
   private readonly eventSubscriptions = new Map<string, () => void>();
   private readonly terminalOutputPositions = new Map<string, number>();
   private connectionCleaned = false;
+	private heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
+	private readonly heartbeatTimeoutMs: number;
 	private readonly onClosed: (() => void) | undefined;
 	private readonly onDeliveryDiagnostic: ConnectionOptions["onDeliveryDiagnostic"];
 	private closeTask: Promise<void> | undefined;
@@ -78,6 +93,7 @@ export class ServerConnection implements ServerConnectionLike {
     this.journal = options.eventJournal ?? new OrderedEventJournal();
     this.authenticate = options.authenticate ?? ((context) => ({ clientId: context.hello.clientId, authScope: "none" }));
     this.transportAuthenticatedClient = connectionOptions.authenticatedClient;
+    this.heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? DEFAULT_HEARTBEAT_TIMEOUT_MS;
     this.dispatcher = createOperationDispatcher(options);
 		this.onClosed = connectionOptions.onClosed;
 		this.onDeliveryDiagnostic = connectionOptions.onDeliveryDiagnostic;
@@ -152,6 +168,7 @@ export class ServerConnection implements ServerConnectionLike {
         // Keep the handshake ordered, then let the transport close reach the
         // connection abort signal while a long-running command is in flight.
         // Request correlation ids preserve response ownership after this point.
+        this.noteInboundFrame();
         if (this.currentState === "handshaking") {
           await this.process(frame);
           continue;
@@ -215,9 +232,43 @@ export class ServerConnection implements ServerConnectionLike {
     };
     await this.send(server);
     this.currentState = "open";
+    // Capabilities are only known once the hello is processed, so the silence
+    // deadline for a heartbeat client starts here rather than on its own frame.
+    this.noteInboundFrame();
+  }
+
+  /**
+   * Restart the inbound-silence deadline.
+   *
+   * Only a client that advertised `connection.heartbeat` is reaped: it has
+   * promised to keep proving liveness. A Local Desktop, MCP, or test client
+   * that makes no such promise may idle indefinitely.
+   */
+  private noteInboundFrame(): void {
+    if (!this.clientCapabilities.has(CONNECTION_HEARTBEAT_CAPABILITY)) return;
+    if (this.heartbeatTimer !== undefined) clearTimeout(this.heartbeatTimer);
+    this.heartbeatTimer = globalThis.setTimeout(() => {
+      this.heartbeatTimer = undefined;
+      if (this.currentState !== "open") return;
+      void this.failConnection(
+        new OutboundDeliveryError({ code: "timeout", message: "application heartbeat timed out" }),
+      ).catch(() => undefined);
+    }, this.heartbeatTimeoutMs);
+    this.heartbeatTimer.unref?.();
   }
 
   private async handleQuery(query: QueryEnvelope, body: Uint8Array): Promise<void> {
+    if (query.operation === CONNECTION_PING_OPERATION) {
+      // Liveness is answered by the connection itself, so a busy or misconfigured
+      // operation registry can never make a live connection look dead.
+      await this.send({
+        type: "query_result",
+        queryId: query.queryId,
+        ok: true,
+        result: { sentAt: pingSentAt(query.payload), serverTime: Date.now() },
+      });
+      return;
+    }
     const request = this.beginRequest(query.queryId);
     if (request === undefined) {
       await this.send({ type: "query_result", queryId: query.queryId, ok: false, error: duplicateRequestError() });
@@ -379,6 +430,17 @@ export class ServerConnection implements ServerConnectionLike {
 		result: CommandResultEnvelope,
 	): void {
 		if (!result.ok) return;
+		if (command.operation === "terminal.attach" || command.operation === "terminal.resume") {
+			// A replaced attachment's lane keeps its congestion and resynchronization
+			// state. Retire it with the attachment so the replacement starts on a
+			// clean scheduler and the superseded lane cannot leak.
+			const replaced = objectPayload(result.result).replacedAttachmentId;
+			if (isSafeId(replaced)) {
+				this.outbound.releaseTerminal(replaced);
+				this.terminalOutputPositions.delete(replaced);
+			}
+			return;
+		}
 		const payload = objectPayload(command.payload);
 		const attachmentId = payload.attachmentId;
 		if (!isSafeId(attachmentId)) return;
@@ -471,7 +533,7 @@ export class ServerConnection implements ServerConnectionLike {
 		const clientId = this.authenticatedClient?.clientId;
 		if (clientId !== undefined) {
 			try {
-				this.options.onTerminalCongestion?.(congestion.laneId, clientId);
+				this.options.onTerminalCongestion?.(congestion.laneId, clientId, this.connectionId);
 			} catch {
 				/* Output suppression cannot affect connection delivery. */
 			}
@@ -531,11 +593,13 @@ export class ServerConnection implements ServerConnectionLike {
       request.detachConnectionAbort();
     }
     this.inFlightRequests.clear();
+    if (this.heartbeatTimer !== undefined) clearTimeout(this.heartbeatTimer);
+    this.heartbeatTimer = undefined;
     for (const unsubscribe of this.eventSubscriptions.values()) unsubscribe();
     this.eventSubscriptions.clear();
 		this.terminalOutputPositions.clear();
     const clientId = this.authenticatedClient?.clientId;
-    if (clientId !== undefined) this.options.onConnectionClosed?.(clientId);
+    if (clientId !== undefined) this.options.onConnectionClosed?.(this.connectionId, clientId);
 		this.onClosed?.();
   }
 }
@@ -567,6 +631,11 @@ export function createServerCore(options: ServerCoreOptions): ServerCore {
 			});
 		},
 	};
+}
+
+function pingSentAt(payload: unknown): number | null {
+  const value = objectPayload(payload).sentAt;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function objectPayload(value: unknown): Readonly<Record<string, unknown>> {

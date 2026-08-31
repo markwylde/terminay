@@ -845,6 +845,61 @@ test('a legacy terminal subscriber receives a base64 fallback for a raw live bod
 	}
 });
 
+test('a congested terminal lane resumes after the client confirms the resync boundary', async () => {
+	const transport = new ControlledTransport();
+	await transport.open();
+	transport.blockWrites = true;
+	const failures = [];
+	const congestion = [];
+	const pump = new OutboundDeliveryPump(
+		transport,
+		{
+			maxQueuedBytes: 64,
+			maxQueuedFrames: 8,
+			maxTerminalQueuedBytes: 8,
+			maxTerminalQueuedFrames: 2,
+		},
+		(error) => failures.push(error),
+		(value) => congestion.push(value),
+	);
+	const lane = (position, nextPosition) => ({
+		laneId: 'attachment-a',
+		position,
+		nextPosition,
+		createResyncFrame: () => new Uint8Array([7]),
+	});
+	const admitted = [
+		pump.sendTerminal(new Uint8Array([1]), lane(0, 1)),
+		pump.sendTerminal(new Uint8Array([2]), lane(1, 2)),
+		pump.sendTerminal(new Uint8Array([3]), lane(2, 3)),
+	];
+	await immediate();
+	assert.equal(congestion.length, 1, 'the lane enters one bounded resync state');
+
+	transport.releaseWrites();
+	await Promise.all(admitted);
+	await waitFor(() => pump.snapshot.queuedFrames === 0);
+	const sentBeforeRecovery = transport.sent.length;
+
+	// While the client has not confirmed the discarded boundary, obsolete output
+	// stays superseded rather than queueing behind a stale cursor.
+	await pump.sendTerminal(new Uint8Array([4]), lane(3, 4));
+	await waitFor(() => pump.snapshot.queuedFrames === 0);
+	assert.equal(transport.sent.length, sentBeforeRecovery, 'an unconfirmed lane admits nothing');
+
+	// Confirming the resynchronization boundary ends the recovery state. The
+	// lane is a bounded state, never a permanent mute.
+	pump.acknowledgeTerminal('attachment-a', 3);
+	await pump.sendTerminal(new Uint8Array([5]), lane(3, 4));
+	await waitFor(() => pump.snapshot.queuedFrames === 0);
+	assert.deepEqual(
+		transport.sent.slice(sentBeforeRecovery).map((frame) => [...frame]),
+		[[5]],
+		'the acknowledged lane streams live output again',
+	);
+	assert.deepEqual(failures, []);
+});
+
 class ControlledTransport {
 	state = 'opening';
 	queuedBytes = 0;

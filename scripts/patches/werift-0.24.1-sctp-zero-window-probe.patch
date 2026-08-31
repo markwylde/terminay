@@ -1,0 +1,63 @@
+--- a/lib/index.mjs
++++ b/lib/index.mjs
+@@ -13120,6 +13120,21 @@
+         this.timer3Start();
+       }
+     }
++    if (this.outboundQueue.length > 0 && this.flightSize === 0 && this.peerRwnd === 0) {
++      const probe = this.outboundQueue.shift();
++      if (probe) {
++        this.sentQueue.push(probe);
++        this.flightSizeIncrease(probe);
++        probe.sentCount++;
++        probe.sentTime = Date.now() / 1e3;
++        await this.sendChunk(probe).catch((err5) => {
++          log30("send zero window probe failed", err5.message);
++        });
++        if (!this.timer3Handle) {
++          this.timer3Start();
++        }
++      }
++    }
+     if (!this.outboundQueue.length) {
+       this.outboundQueue = [];
+     }
+@@ -13626,6 +13641,8 @@
+   dataChannels = {};
+   remoteMaxMessageSize = DEFAULT_MAX_MESSAGE_SIZE;
+   dataChannelQueue = [];
++  dataChannelFlushing = false;
++  dataChannelFlushRequested = false;
+   dataChannelId;
+   eventDisposer = [];
+   get transport() {
+@@ -13822,6 +13839,21 @@
+   }
+   async dataChannelFlush() {
+     if (this.sctp.associationState != 4 /* ESTABLISHED */) return;
++    if (this.dataChannelFlushing) {
++      this.dataChannelFlushRequested = true;
++      return;
++    }
++    this.dataChannelFlushing = true;
++    try {
++      do {
++        this.dataChannelFlushRequested = false;
++        await this.dataChannelFlushOnce();
++      } while (this.dataChannelFlushRequested);
++    } finally {
++      this.dataChannelFlushing = false;
++    }
++  }
++  async dataChannelFlushOnce() {
+     while (this.dataChannelQueue.length > 0) {
+       const [channel, protocol, userData] = this.dataChannelQueue.shift();
+       let streamId = channel.id;
+@@ -13847,7 +13879,6 @@
+         channel.addBufferedAmount(-userData.length);
+       }
+     }
+-    this.dataChannelQueue = [];
+   }
+   assertSendableMessageSize(size) {
+     if (this.remoteMaxMessageSize !== 0 && size > this.remoteMaxMessageSize) {

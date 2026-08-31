@@ -134,18 +134,27 @@ export interface ServerCoreOptions extends ServerIdentity, OperationRegistries {
   readonly authenticate?: AuthenticateClient;
   readonly eventJournal?: OrderedEventJournalLike;
   readonly maxConnections?: number;
+  /** Inbound silence a heartbeat client may show before the server reaps it.
+   * Applies only to clients advertising `connection.heartbeat`. */
+  readonly heartbeatTimeoutMs?: number;
   readonly defaultQueryScope?: AuthScope;
   readonly defaultCommandScope?: AuthScope;
   /** Optional server-owned projection applied immediately before a journal
    * event is replayed or sent to an authenticated client. */
   readonly projectEvent?: (event: OrderedEvent, client: AuthenticatedClient | undefined) => OrderedEvent | undefined;
-  /** Host-owned cleanup for connection-scoped protocol adapters. */
-  readonly onConnectionClosed?: (clientId: ProtocolId) => void;
+  /** Host-owned cleanup for connection-scoped protocol adapters. Teardown is
+   * scoped to the exact connection: another live connection authenticated by
+   * the same client keeps its attachments, leases, and subscriptions. */
+  readonly onConnectionClosed?: (
+    connectionId: ProtocolId,
+    clientId: ProtocolId,
+  ) => void;
 	/** Internal attachment-owned output suppression after presentation
 	 * congestion. The PTY and canonical checkpoint remain live. */
 	readonly onTerminalCongestion?: (
 		attachmentId: ProtocolId,
 		clientId: ProtocolId,
+		connectionId: ProtocolId,
 	) => void;
 }
 

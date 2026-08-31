@@ -1,5 +1,5 @@
 import { safeAgentString } from "@terminay/extension-api";
-import type { AgentLifecyclePublisher, AgentRecordContext } from "@terminay/extension-api";
+import type { AgentRecordContext } from "@terminay/extension-api";
 
 type JsonObject = Record<string, unknown>;
 

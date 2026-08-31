@@ -9,7 +9,6 @@ import {
 	classifyPeerCloseReason,
 	createHostedStreamDiagnostics,
 	inboundKind,
-	stallClass,
 } from '../src/remote/hostedStreamDiagnostics.ts';
 
 test('inbound kind classifies bytes, blobs, and empty frames without reading payloads', () => {
@@ -19,52 +18,12 @@ test('inbound kind classifies bytes, blobs, and empty frames without reading pay
 	assert.equal(inboundKind('echo secret'), 'string');
 });
 
-test('host stall class uses first inbound time so later keys cannot hide a silent PTY', () => {
-	assert.equal(
-		stallClass({
-			inboundFrames: 4,
-			outboundFrames: 0,
-			firstInboundAt: 1_000,
-			lastInboundAt: 8_000,
-			lastOutboundAt: null,
-			now: 4_500,
-			stallMs: 3_000,
-		}),
-		'no-outbound',
-	);
-	assert.equal(
-		stallClass({
-			inboundFrames: 4,
-			outboundFrames: 2,
-			firstInboundAt: 1_000,
-			lastInboundAt: 8_000,
-			lastOutboundAt: 2_000,
-			now: 8_000,
-			stallMs: 3_000,
-		}),
-		'outbound-stalled',
-	);
-	assert.equal(
-		stallClass({
-			inboundFrames: 1,
-			outboundFrames: 0,
-			firstInboundAt: 1_000,
-			lastInboundAt: 1_000,
-			lastOutboundAt: null,
-			now: 2_000,
-			stallMs: 3_000,
-		}),
-		undefined,
-	);
-});
-
-test('application-lane events carry counters and stall class, never frame bytes', () => {
+test('application-lane events carry counters, never frame bytes', () => {
 	let now = 1_000;
 	const events = [];
 	const stream = createHostedStreamDiagnostics({
 		emit: (event) => events.push(event),
 		now: () => now,
-		stallMs: 3_000,
 		summaryMs: 60_000,
 		setIntervalFn: () => 1,
 		clearIntervalFn: () => undefined,
@@ -74,14 +33,15 @@ test('application-lane events carry counters and stall class, never frame bytes'
 	stream.noteInbound(new Uint8Array([5, 6]));
 	now = 5_000;
 	stream.noteInbound(new Uint8Array([7]));
-	const stall = events.filter((event) => event.stallClass === 'no-outbound');
-	assert.equal(stall.length, 1);
-	assert.equal(stall[0].inboundFrames, 3);
-	assert.equal(stall[0].outboundFrames, 0);
-	assert.equal(stall[0].inboundKind, 'bytes');
+	const lane = events.filter((event) => event.type === 'application-lane');
+	assert.equal(lane.length, 1, 'only the first inbound frame reports a lane transition');
+	assert.equal(lane[0].inboundFrames, 1);
+	assert.equal(lane[0].inboundKind, 'bytes');
 	assert.doesNotMatch(JSON.stringify(events), /1,2,3,4/u);
-	assert.equal('payload' in stall[0], false);
-	assert.equal('data' in stall[0], false);
+	assert.equal('payload' in lane[0], false);
+	assert.equal('data' in lane[0], false);
+	// Quiet output is not a liveness signal. Nothing classifies a stall.
+	assert.equal(events.some((event) => 'stallClass' in event), false);
 	stream.stop();
 });
 
@@ -93,8 +53,12 @@ test('peer-closed classifies ICE grace expiry without echoing the raw reason', (
 		'ice-grace-expired',
 	);
 	assert.equal(
-		classifyPeerCloseReason('WebRTC application lane outbound-stalled.'),
-		'outbound-stalled',
+		classifyPeerCloseReason('WebRTC peer replaced by a device rejoin.'),
+		'replaced-by-rejoin',
+	);
+	assert.equal(
+		classifyPeerCloseReason('WebRTC application heartbeat timed out.'),
+		'heartbeat-timeout',
 	);
 	assert.equal(
 		classifyPeerCloseReason('WebRTC application lane closed.'),
@@ -121,23 +85,23 @@ test('Desktop mapper keeps stream events payload-free and namespaced', () => {
 		inboundFrames: 3,
 		outboundFrames: 0,
 		inboundKind: 'bytes',
-		stallClass: 'no-outbound',
 		firstInboundAgeMs: 4_000,
 		firstOutboundAgeMs: null,
-		liveGenerationCount: 3,
-		stallIgnored: true,
+		liveGenerationCount: 1,
 	});
 	assert.equal(mapped.event, 'local-server.remote-webrtc.application-lane');
 	assert.equal(mapped.source, 'remote-webrtc');
-	assert.equal(mapped.fields.stallClass, 'no-outbound');
-	assert.equal(mapped.fields.stallIgnored, true);
-	assert.equal(mapped.fields.liveGenerationCount, 3);
+	assert.equal(mapped.fields.liveGenerationCount, 1);
 	assert.equal(mapped.fields.firstInboundAgeMs, 4_000);
-	assert.equal(mapped.severity, 'warning');
+	// Lane counters are observation, not a fault: quiet output is normal and no
+	// longer reported as a warning.
+	assert.equal(mapped.severity, 'info');
 	assert.equal('pairingUrl' in mapped.fields, false);
+	assert.equal('stallClass' in mapped.fields, false);
+	assert.equal('stallIgnored' in mapped.fields, false);
 });
 
-test('control channel close is a warning with hangup false', () => {
+test('a required lane closing after it opened is reported as a hangup', () => {
 	const events = [];
 	const stream = createHostedStreamDiagnostics({
 		emit: (event) => events.push(event),
@@ -145,14 +109,19 @@ test('control channel close is a warning with hangup false', () => {
 		clearIntervalFn: () => undefined,
 	});
 	stream.peerState('connected', 'connected');
-	stream.channelState('control', 'closed');
+	stream.channelState('control', 'closed', true);
 	const closed = events.find((event) => event.channel === 'control');
-	assert.equal(closed.hangup, false);
+	assert.equal(closed.hangup, true);
 	assert.equal(closed.channelState, 'closed');
 	const mapped = hostedPairingDiagnosticEvent(closed);
 	assert.equal(mapped.severity, 'warning');
-	assert.equal(mapped.fields.hangup, false);
+	assert.equal(mapped.fields.hangup, true);
 	assert.equal(mapped.fields.channel, 'control');
+
+	// A bootstrap lane closing after its transfer is normal and never a hangup.
+	stream.channelState('asset', 'closed', false);
+	const bootstrap = events.find((event) => event.channel === 'asset');
+	assert.equal(bootstrap.hangup, false);
 });
 
 test('standalone logger writes JSON lines to stderr without pairing URLs', async () => {
@@ -170,12 +139,11 @@ test('standalone logger writes JSON lines to stderr without pairing URLs', async
 			type: 'application-lane',
 			inboundFrames: 2,
 			outboundFrames: 0,
-			stallClass: 'no-outbound',
 			inboundKind: 'blob',
 		});
 		const body = lines.join('');
 		assert.match(body, /"component":"hosted-remote"/u);
-		assert.match(body, /"stallClass":"no-outbound"/u);
+		assert.match(body, /"inboundKind":"blob"/u);
 		assert.doesNotMatch(body, /pairing\.terminay|wss:\/\//u);
 		await readFile(sink, 'utf8').catch(() => '');
 	} finally {

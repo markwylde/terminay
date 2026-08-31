@@ -18,7 +18,7 @@ test("pool shares only exact revision, bounds channels, and exposes reconnect st
 });
 
 test("profile revisions never share a transport and retry remains explicit", async () => {
-  let connections = 0; const revisionStore = { ...store, get: (id, revision) => ({ ...profile, revision }) };
+  let connections = 0; const revisionStore = { ...store, get: (_id, revision) => ({ ...profile, revision }) };
   const pool = new ConnectionPool({ store: revisionStore, trust: {}, broker: {}, connect: async () => { connections++; return new FakeClient(); } });
   const one = await pool.acquire("p", 1), two = await pool.acquire("p", 2); assert.equal(connections, 2); one.release(); two.release();
 });
