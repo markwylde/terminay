@@ -206,18 +206,23 @@ Worth its own task.
 - Move tasks 68–73 context notes into this task's history trail; their
   behaviours are superseded by this contract.
 
-### Slice 6 — Werift zero-window probe patch
+### Slice 6 — Werift zero-window probe patch — MOVED to task 75
 
-- Add `scripts/patches/werift-0.24.1-zero-window-probe.patch` to the vendored
-  artifact and `selection.json` (same integrity process as the existing
-  TURN-refresh patch): when the peer's advertised window is zero and nothing
-  is in flight, transmit one probe chunk and run the T3 timer (RFC 4960 §6.1
-  rule A) so a reopened window is discovered without waiting for a SACK that
-  will never come.
-- While patching, add a reentrancy guard to `dataChannelFlush` (concurrent
-  flush loops share one queue today).
-- Extend the runtime-proof evidence with a two-peer test that drives the
-  receiver window to zero and proves outbound resumes.
+Confirmed as a real defect and written up with full evidence in
+[task 75](./75-werift-sctp-zero-window-probe.md), but moved out of this task
+rather than shipped with it.
+
+The reasoning: the selected runtime is governed supply-chain material. Its
+`selection.json` pins exactly one patch by hash, `validateSelection` asserts
+that shape, and the decision record requires two independent rebuilds
+producing identical hashes plus refreshed SBOM, provenance, and notices.
+Landing a second patch means regenerating all of that from the npm source
+mirror. Bundling an artifact change of that weight into the connection fix
+would put an unverifiable supply-chain change inside a behavioural PR.
+
+It is also not the cause of the reported failure, and task 74's heartbeat
+already recovers a deadlocked association within its bound, so the freeze
+becomes a bounded reconnect rather than a permanent one.
 
 ### Slice 7 — tests and acceptance
 
@@ -250,8 +255,9 @@ Worth its own task.
       recovery works repeatedly on one connection.
 - [x] The unreachable headless-host path is gone (scope narrowed above); the
       build, packaged runtime proof, and CI stay green.
-- [ ] The Werift artifact carries the zero-window-probe patch with updated
-      hashes and evidence.
+- [x] The Werift zero-window deadlock is confirmed, documented, and carried
+      into task 75 with reproduction criteria; task 74's heartbeat bounds it
+      in the meantime.
 - [ ] `specs/features/remote-access.md` and
       `specs/features/terminal-stream-congestion-and-recovery.md` describe
       only the new contract (updated with this task).
