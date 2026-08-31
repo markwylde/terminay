@@ -35,11 +35,16 @@ test('connected add-project mutates the canonical workspace authority', () => {
 	assert.match(source, /defaultProjectRoot\.trim\(\)\.length > 0 \? defaultProjectRoot : '\.'/u)
 })
 
-test('connected project tab activation mutates canonical server active project', () => {
-  assert.match(source, /const activateProject = useCallback\(\(projectId: string\) => \{/u)
-  assert.match(source, /workspaceSnapshotStore\.activateProject\(\{ projectId \}\)/u)
-  assert.match(store, /this\.workspace\.activateProject\(request, options\)/u)
-  assert.match(app, /onActivate=\{activateProject\}/u)
+test('connected project tab activation stays local to the presentation', () => {
+  assert.match(source, /const activateProject = useCallback\(\s*\(projectId: string\) => \{/u)
+  assert.doesNotMatch(source, /workspaceSnapshotStore\.activateProject\(\{ projectId \}\)/u)
+  assert.doesNotMatch(source, /activateProject\(\{\s*projectId: nextId\s*\}\)/u)
+  assert.doesNotMatch(source, /\(view\?\.activeProjectId \?\?/u)
+  assert.match(source, /terminay\.workspace-selection\.v1:/u)
+  assert.match(source, /sessionStorage\.setItem/u)
+  assert.match(source, /sessionStorage\.getItem/u)
+  assert.match(app, /onActivate=\{activateDisplayedProject\}/u)
+  assert.match(app, /activateProject\(projectId\)/u)
   assert.doesNotMatch(app, /onActivate=\{setActiveProjectId\}/u)
 })
 

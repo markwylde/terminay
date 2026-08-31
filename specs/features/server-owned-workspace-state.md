@@ -42,10 +42,10 @@ workspace view are separate actions.
 
 The server persists and publishes:
 
-- ordered workspace views and their active project;
+- ordered workspace views and their project membership;
 - projects, roots, names, colours, icons, default shell-profile references,
   immutable environment references, and sidebar layout configuration;
-- logical panel layout, active panel, splits, order, notes, and appearance;
+- logical panel layout, splits, order, notes, and appearance;
 - terminal identity, lifecycle, metadata, bounded output position, activity,
   and recording state;
 - file/folder navigation and modes where they are part of the shared workspace;
@@ -57,8 +57,9 @@ The server persists and publishes:
 - schema and revision metadata needed for safe migration and resync.
 
 The persistence contract does not include unbounded terminal scrollback, live
-PTY serialization, transient search text, open modal state, hover state, or
-in-progress drag geometry.
+PTY serialization, transient search text, open modal state, hover state,
+in-progress drag geometry, or which project tab or terminal/panel is active in
+a connected presentation.
 
 ## Client-owned state
 
@@ -68,7 +69,8 @@ device:
 - remembered server labels and non-secret connection metadata;
 - encrypted device keys and reconnect credentials;
 - native window geometry and the mapping from local windows to server/view ids;
-- browser-tab choice when it is not intended to change shared active state;
+- which project tab and which terminal or panel is active in each connected
+  presentation (a desktop window or browser client);
 - sidebar visibility for each selected server/project pair;
 - transient dialogs, menus, selection, drag previews, and optimistic UI state;
 - hardware and host capabilities such as microphone permission; and
@@ -305,9 +307,12 @@ and insertion into the intended terminal remain server-authorized operations.
 - Closing or reloading the owning Electron window does not kill its PTYs.
 - Two connected clients receive one ordered result for each committed workspace
   command and recover cleanly from a revision conflict.
-- When either client creates, closes, moves, or activates a panel, the other
-  client reaches the same workspace revision and panel/session identities
-  without polling, reload, or an independently manufactured renderer panel.
+- When either client creates, closes, or moves a panel, the other client
+  reaches the same workspace revision and panel/session identities without
+  polling, reload, or an independently manufactured renderer panel.
+- Activating a project tab or terminal is local to that presentation. Two
+  clients of the same server can show different active projects and terminals
+  while still sharing the ordered project and panel lists.
 - A malformed, stale, or incompatible delta cannot partially mutate a client
   projection; the client reports stale state and recovers from a complete
   authorized snapshot.
