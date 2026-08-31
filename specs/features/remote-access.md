@@ -353,6 +353,16 @@ the device, obtains the selected server bundle through the WebRTC asset lane,
 validates its declared contract and resource bounds, and launches it under that
 same origin.
 
+The session-origin connecting surface keeps the five-dot loading indicator
+visible while signaling and archive transfer run. Once the archive start
+record names `compressedBytes`, it shows a progress bar for total compressed
+megabytes, bytes already cached for that exact bundle, bytes received on this
+transfer, and percent complete. A complete cached archive for the same
+`bundleId` is reused; the bar then reports the cached size instead of
+repeating the download. Pairing PIN entry and connection errors hide the
+spinner and bar.
+
+
 `/api/host-context` is a closed host-context schema. Display names travel on
 the pairing URL and session-host `hostName`, never as extra host-context
 fields.
