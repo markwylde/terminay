@@ -30,22 +30,20 @@ import {
 import type { ServerPairingHandoff, ServerRemoteExposure } from './serverExposure.js';
 import { bindUiArchiveChannels, safeChannelSend } from './uiArchiveTransfer.js';
 import {
-	applyHostedLaneDiagnostic,
 	collectHostIceAddresses,
 	createHandshakeJoinQueue,
 	DEVICE_HOST_AVAILABILITY_MS,
 	deviceHostRefreshDelayMs,
 	type HostedIceServer,
-	HostedGenerationSet,
+	HostedLivePeerRegistry,
 	HostedPeerLifecycle,
 	hostedPeerConfiguration,
+	requiredLaneClosed,
 	resolveIceRecoveryGraceMs,
-	shouldFailHostedStall,
 } from './hostedPeerLifecycle.js';
 import { createHostedStreamDiagnostics, frameByteLength } from './hostedStreamDiagnostics.js';
 
 export {
-	applyHostedLaneDiagnostic,
 	collectHostIceAddresses,
 	createHandshakeJoinQueue,
 	DEFAULT_HOSTED_ICE_SERVERS,
@@ -53,10 +51,12 @@ export {
 	DEVICE_HOST_AVAILABILITY_MS,
 	DEVICE_REFRESH_LEAD_MS,
 	deviceHostRefreshDelayMs,
-	HostedGenerationSet,
+	HostedLivePeerRegistry,
 	HostedPeerLifecycle,
 	hostedPeerConfiguration,
 	parseHostedIceServers,
+	REQUIRED_LANES,
+	requiredLaneClosed,
 	resolveHostedIceServers,
 	resolveIceRecoveryGraceMs,
 } from './hostedPeerLifecycle.js';
@@ -166,14 +166,12 @@ export type HostedPairingDiagnostic = Readonly<{
 	readonly firstInboundAgeMs?: number | null;
 	readonly firstOutboundAgeMs?: number | null;
 	readonly liveGenerationCount?: number;
-	readonly stallIgnored?: boolean;
 	readonly hangup?: boolean;
 	readonly inboundKind?: 'bytes' | 'blob' | 'string' | 'empty' | 'other' | undefined;
 	readonly droppedFrames?: number;
 	readonly droppedClass?: 'bytes' | 'blob' | 'string' | 'empty' | 'other';
 	readonly sendFailures?: number;
 	readonly sendFailure?: boolean;
-	readonly stallClass?: 'no-outbound' | 'outbound-stalled';
 	readonly first?: 'inbound' | 'outbound';
 	readonly summary?: boolean;
 	readonly reasonClass?: string;
@@ -204,8 +202,8 @@ export async function startHostedPairingHost(
 	const archive = options.getUiArchive
 		? await options.getUiArchive()
 		: createMinimalUiArchive();
-	const generations = new HostedGenerationSet();
-	const context = { archive, options, generations };
+	const livePeers = new HostedLivePeerRegistry();
+	const context = { archive, options, livePeers };
 	const joinQueue = createHandshakeJoinQueue();
 	let handshakeGeneration = 0;
 	let handshake:
@@ -234,7 +232,7 @@ export async function startHostedPairingHost(
 		clearTimeout(pairingRefreshTimer);
 		clearTimeout(deviceRefreshTimer);
 		handshake?.peer.close();
-		generations.closeAll();
+		await livePeers.closeAll();
 		pairingGeneration += 1;
 		deviceGeneration += 1;
 		closeSocket(pairingSocket);
@@ -242,6 +240,13 @@ export async function startHostedPairingHost(
 	};
 
 	async function addHandshakePeer(socket: WebSocket, scope: SignalScope): Promise<void> {
+		// A device gets one live peer. Retire the connection this join replaces
+		// before its replacement exists, so the two never overlap and a late
+		// teardown cannot reach the new session's terminals.
+		if (scope.kind === 'device') {
+			const replaced = await livePeers.close(scope.deviceId);
+			if (replaced !== undefined) diagnose({ type: 'peer-closed', reasonClass: 'replaced-by-rejoin' });
+		}
 		const generation = ++handshakeGeneration;
 		if (handshake) {
 			handshake.peer.close();
@@ -254,7 +259,7 @@ export async function startHostedPairingHost(
 			context,
 			(connection, peer) => {
 				if (handshake?.peer === next) {
-					generations.add({ peer: next, connection });
+					livePeers.set(peer.deviceId, { peer: next, connection });
 					handshake = undefined;
 				}
 				options.onPeerConnected?.(peer);
@@ -266,8 +271,8 @@ export async function startHostedPairingHost(
 					pairingRefreshTimer.unref?.();
 				}
 			},
-			(retired) => {
-				generations.drop(retired);
+			(deviceId, retired) => {
+				if (deviceId !== undefined) livePeers.drop(deviceId, retired);
 			},
 		);
 		if (closed || generation !== handshakeGeneration) {
@@ -742,11 +747,11 @@ async function startPeer(
 	scope: SignalScope,
 	context: Readonly<{
 		archive: MinimalArchive;
-		generations: HostedGenerationSet;
+		livePeers: HostedLivePeerRegistry;
 		options: HostedPairingHostOptions;
 	}>,
 	onApplication: (connection: ServerConnectionLike, peer: HostedConnectedPeer) => void,
-	onRetire: (peer: WeriftPeer) => void,
+	onRetire: (deviceId: string | undefined, peer: WeriftPeer) => void,
 ): Promise<WeriftPeer> {
 	const native = new Peer(
 		hostedPeerConfiguration(
@@ -760,15 +765,10 @@ async function startPeer(
 	let wrapped: WeriftPeer;
 	const stream = createHostedStreamDiagnostics({
 		emit: (event) => {
-			const enriched = {
+			context.options.onDiagnostic?.({
 				...event,
-				liveGenerationCount: context.generations.size,
-				...(event.stallClass === undefined
-					? {}
-					: { stallIgnored: !shouldFailHostedStall(event) }),
-			};
-			context.options.onDiagnostic?.(enriched);
-			applyHostedLaneDiagnostic(lifecycle, enriched);
+				liveGenerationCount: context.livePeers.size,
+			});
 		},
 	});
 	lifecycle = new HostedPeerLifecycle(
@@ -777,7 +777,7 @@ async function startPeer(
 		(reason) => {
 			stream.peerClosed(reason);
 			const connectionId = session.peer?.connectionId;
-			onRetire(wrapped);
+			onRetire(session.peer?.deviceId, wrapped);
 			void session.connection?.close();
 			try {
 				native.close();
@@ -807,12 +807,14 @@ async function startPeer(
 	});
 	for (const label of CHANNELS) {
 		const channel = channels[label]!;
+		// A lane that never opened is still negotiating; only a lane that has
+		// carried traffic and then left `open` proves this peer cannot deliver.
+		let everOpened = false;
 		const emitState = () => {
-			stream.channelState(label, channel.readyState);
-			applyHostedLaneDiagnostic(lifecycle, {
-				channel: label,
-				channelState: channel.readyState,
-			});
+			if (channel.readyState === 'open') everOpened = true;
+			const hangup = requiredLaneClosed(label, channel.readyState, everOpened);
+			stream.channelState(label, channel.readyState, hangup);
+			if (hangup) lifecycle.fail(`WebRTC ${label} lane ${channel.readyState}.`);
 		};
 		channel.addEventListener('open', emitState);
 		channel.addEventListener('close', emitState);
@@ -1177,7 +1179,11 @@ function bindControl(
 				deviceName: device?.deviceName?.trim() || 'Browser',
 			});
 			onApplication(connection, peer);
+			// The application lane closing ends this generation. Releasing the
+			// server connection here frees exactly this connection's attachments;
+			// the peer-level required-lane handler retires the peer itself.
 			application.addEventListener('close', () => {
+				void connection.close();
 				context.options.onPeerDisconnected?.(peer.connectionId);
 			});
 			void connection.start().catch((error) => {

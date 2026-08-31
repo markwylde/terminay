@@ -23,11 +23,6 @@ import {
 	RemoteRateLimiter,
 } from '@terminay/server-core/remote';
 import {
-	NodeDataChannelHeadlessHost,
-	type NodeDataChannelHeadlessHostOptions,
-	type NodeDataChannelHostEvent,
-} from './nodeDataChannelHost.js';
-import {
 	formatHostedPairingUrl,
 	managerOriginFromSessionOrigin,
 } from '@terminay/protocol';
@@ -60,14 +55,6 @@ export interface ServerRemoteExposureOptions {
 	readonly deviceAuthenticationRateLimit?: RemoteRateLimiterOptions;
 	readonly audit?: RemoteAuditLog;
 	readonly auditSink?: RemoteAuditLogOptions['sink'];
-	readonly nodeDataChannel?: Omit<
-		NodeDataChannelHeadlessHostOptions,
-		'manager' | 'onEvent'
-	>;
-	readonly createHeadlessHost?: (
-		manager: RemoteConnectionManager,
-		onEvent: (event: NodeDataChannelHostEvent) => void,
-	) => NodeDataChannelHeadlessHost;
 	readonly cleanupIntervalMs?: number;
 	/** Hosted QR links are advertised on the manager origin; Local HTTP uses named fragment fields. */
 	readonly pairingUrlFormat?:
@@ -81,8 +68,6 @@ export interface ServerRemoteExposureOptions {
 export interface ServerRemoteCleanupReport extends RemoteCleanupReport {
 	readonly deviceAuthenticationRecords: number;
 	readonly deviceAuthenticationRateLimitWindows: number;
-	readonly headlessRuntime: 'node-datachannel' | 'werift' | null;
-	readonly headlessRateLimitWindows: number;
 }
 
 /**
@@ -108,7 +93,6 @@ export class ServerRemoteExposure {
 	readonly devices: RemoteDeviceAuthentication;
 	readonly audit: RemoteAuditLog;
 	readonly controller: RemoteExposureController;
-	readonly nodeDataChannelHost: NodeDataChannelHeadlessHost | undefined;
 	private readonly deviceAuthenticationRateLimiter: RemoteRateLimiter;
 	private readonly cleanupTimer: ReturnType<typeof setInterval> | undefined;
 	private shutdownPromise: Promise<void> | undefined;
@@ -163,36 +147,9 @@ export class ServerRemoteExposure {
 			now,
 			...options.deviceAuthenticationRateLimit,
 		});
-		if (
-			options.nodeDataChannel !== undefined &&
-			options.createHeadlessHost !== undefined
-		) {
-			throw new TypeError(
-				'remote exposure headless host options are mutually exclusive',
-			);
-		}
-		this.nodeDataChannelHost =
-			options.createHeadlessHost !== undefined
-				? options.createHeadlessHost(this.manager, (event) =>
-						this.onHostEvent(event),
-					)
-				: options.nodeDataChannel === undefined
-					? undefined
-					: new NodeDataChannelHeadlessHost({
-						...options.nodeDataChannel,
-						// The exposure owns lifecycle time. Pairing, device authentication, and
-						// native setup rate limits must use one clock or cleanup can report
-						// an expired server ledger while the native host retains it.
-						now,
-						manager: this.manager,
-						onEvent: (event) => this.onHostEvent(event),
-					});
 		this.controller = new ExposureController({
 			manager: this.manager,
 			pairing: this.pairing,
-			...(this.nodeDataChannelHost === undefined
-				? {}
-				: { headless: this.nodeDataChannelHost }),
 			now,
 			...(options.defaultLifetimeMs === undefined
 				? {}
@@ -306,12 +263,7 @@ export class ServerRemoteExposure {
 		const device = this.devices.get(proof.deviceId);
 		if (device === undefined) throw new Error('remote device is not registered');
 		if (device.revokedAt !== null) throw new Error('remote device is revoked');
-		return this.controller.connectHeadless(
-			this.nodeDataChannelHost?.runtimeId ?? 'node-datachannel',
-			attempt,
-			proof,
-			signal,
-		);
+		return this.controller.connectHeadless('werift', attempt, proof, signal);
 	}
 
 	/** Enroll a durable public device key after the one-time pairing admission. */
@@ -369,19 +321,11 @@ export class ServerRemoteExposure {
 
 	cleanup(): ServerRemoteCleanupReport {
 		const exposure = this.controller.cleanup();
-		const headlessCleanup = this.nodeDataChannelHost?.cleanup();
 		return Object.freeze({
 			...exposure,
 			deviceAuthenticationRecords: this.devices.cleanup(),
 			deviceAuthenticationRateLimitWindows:
 				this.deviceAuthenticationRateLimiter.cleanup(),
-			// The node-datachannel host owns a distinct authenticated setup limiter.
-			// It must participate in the server-owned timer/manual cleanup path;
-			// otherwise an idle exposed server would retain per-device admission
-			// metadata until a caller happened to inspect the native host directly.
-			headlessRuntime: headlessCleanup?.runtime ?? null,
-			headlessRateLimitWindows:
-				headlessCleanup?.connectionRateLimitWindows ?? 0,
 		});
 	}
 
@@ -390,19 +334,8 @@ export class ServerRemoteExposure {
 		if (this.cleanupTimer !== undefined) clearInterval(this.cleanupTimer);
 		this.shutdownPromise = (async () => {
 			await this.controller.shutdown();
-			await this.nodeDataChannelHost?.shutdown();
 		})();
 		return this.shutdownPromise;
-	}
-
-	private onHostEvent(event: NodeDataChannelHostEvent): void {
-		if (event.type === 'session-closed') {
-			this.audit.record({
-				action: 'peer-closed',
-				peerId: event.peerId,
-				deviceId: event.deviceId,
-			});
-		}
 	}
 
 	private rememberHandoff(

@@ -1,7 +1,5 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { RemoteConnectionManager } from '@terminay/server-core';
-import { createSecureWeriftHeadlessHost } from '../dist/remote/secureWeriftHost.js';
 import { createSecureWeriftCompatibilityModule } from '../dist/remote/secureWeriftPeer.js';
 
 class FakeWeriftChannel {
@@ -118,33 +116,4 @@ test('selected Werift answerer and binary channel preserve exact response identi
 	channels[0].onMessage((frame) => frames.push(frame));
 	native.listeners.get('message')({ data: Uint8Array.of(1, 2, 3).buffer });
 	assert.deepEqual([...frames[0]], [1, 2, 3]);
-});
-
-test('production host admits only the formally selected Werift runtime identity', async () => {
-	const manager = new RemoteConnectionManager({
-		serverId: 'server-a',
-		sessionOrigin: 'https://session.example.test',
-		now: () => 100,
-	});
-	manager.expose(1_000);
-	const host = createSecureWeriftHeadlessHost({
-		runtimeRoot: '/selected/runtime',
-		manager,
-		createSignaling: () => {
-			throw new Error('must not allocate signaling for a foreign runtime');
-		},
-	});
-	await assert.rejects(
-		host.connect('node-datachannel', {
-			ticketId: 'foreign-ticket',
-			serverId: 'server-a',
-			sessionOrigin: 'https://session.example.test',
-			deviceId: 'device-a',
-			expiresAt: 900,
-			authenticated: true,
-		}),
-		/runtime node-datachannel is unavailable/u,
-	);
-	assert.equal(host.snapshot.connectAttempts, 0);
-	await host.shutdown();
 });
