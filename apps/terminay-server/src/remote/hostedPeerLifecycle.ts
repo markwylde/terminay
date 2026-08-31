@@ -195,19 +195,14 @@ export type HostedLaneDiagnostic = Readonly<{
 
 export const APPLICATION_STALL_FAIL_GRACE_MS = 15_000;
 
-/** Handshake inbound overlapping a short outbound pause is not a failed generation. */
+/** Application-lane stall is logged. It does not hang up a live peer. */
 export function shouldFailHostedStall(event: HostedLaneDiagnostic): boolean {
-	if (event.stallClass === 'no-outbound') {
-		return (event.firstInboundAgeMs ?? 0) >= APPLICATION_STALL_FAIL_GRACE_MS;
-	}
-	if (event.stallClass === 'outbound-stalled') {
-		return (event.firstOutboundAgeMs ?? 0) >= APPLICATION_STALL_FAIL_GRACE_MS;
-	}
+	void event;
 	return false;
 }
 
-/** Fail a hydrated generation that can no longer deliver. ICE consent blips
- * do not belong here; required-lane loss and application-lane silence do. */
+/** Fail only when a required lane is gone. ICE consent blips and send
+ * pauses do not hang up the peer. */
 export function applyHostedLaneDiagnostic(
 	lifecycle: HostedPeerLifecycle,
 	event: HostedLaneDiagnostic,
