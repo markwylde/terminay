@@ -2,6 +2,7 @@ import type { JsonValue } from '@terminay/protocol';
 import { TerminayClientFacade } from '@terminay/client-core';
 import type { TerminayClient } from '@terminay/client-core';
 import type { RemotePairingPinClient } from '../remotePairingPin';
+import type { TerminalSettings } from '../types/settings';
 import type {
 	McpAgentId,
 	McpInstallActionResult,
@@ -38,9 +39,15 @@ export function createServerRemoteAccessClients(client: TerminayClient): {
 	return {
 		status,
 		pairingPin: {
-			getTerminalSettings: () => transport.query('settings.get').then((value: any) => value.settings),
+			getTerminalSettings: () =>
+				transport
+					.query('settings.get')
+					.then((value) => (value as { settings: TerminalSettings }).settings),
 			isRemoteAccessPairingPinConfigured: () => transport.query('remote-access.pairing-pin-status') as Promise<boolean>,
-			setRemoteAccessPairingPin: (pin: string) => transport.command('remote-access.set-pairing-pin', { pin }) as any,
+			setRemoteAccessPairingPin: (pin: string) =>
+				transport.command('remote-access.set-pairing-pin', {
+					pin,
+				}) as Promise<TerminalSettings>,
 		},
 	};
 }

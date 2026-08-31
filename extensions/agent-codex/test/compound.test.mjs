@@ -61,7 +61,7 @@ function terminalFor(files) {
         async stat(handle) { return { handle, kind: "file", size: 1, modifiedAt: files[handle.id].modifiedAt }; },
         async follow(handle) {
           const configured = files[handle.id].chunks;
-          const chunks = configured ?? [{ type: "append", bytes: new TextEncoder().encode(files[handle.id].records.map(JSON.stringify).join("\n") + "\n") }];
+          const chunks = configured ?? [{ type: "append", bytes: new TextEncoder().encode(`${files[handle.id].records.map(JSON.stringify).join("\n")}\n`) }];
           return { async *[Symbol.asyncIterator]() { for (const chunk of chunks) yield chunk; }, dispose() {} };
         },
       },

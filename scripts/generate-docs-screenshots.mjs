@@ -206,22 +206,6 @@ const heroThemes = [
 	{ name: 'purple', hue: 280 },
 ];
 
-function hueToProjectHex(hue) {
-	const normalized = hue / 360;
-	const saturation = 0.65;
-	const lightness = 0.6;
-	const hue2rgb = (p, q, t) => {
-		const value = t < 0 ? t + 1 : t > 1 ? t - 1 : t;
-		if (value < 1 / 6) return p + (q - p) * 6 * value;
-		if (value < 1 / 2) return q;
-		if (value < 2 / 3) return p + (q - p) * (2 / 3 - value) * 6;
-		return p;
-	};
-	const q = lightness + saturation - lightness * saturation;
-	const p = 2 * lightness - q;
-	const hex = (value) => Math.round(value * 255).toString(16).padStart(2, '0');
-	return `#${hex(hue2rgb(p, q, normalized + 1 / 3))}${hex(hue2rgb(p, q, normalized))}${hex(hue2rgb(p, q, normalized - 1 / 3))}`;
-}
 
 async function fillProjectHue(page, hue) {
 	const slider = page.getByLabel('Project theme hue');
@@ -251,7 +235,7 @@ async function setActiveProjectHue(page, hue) {
 	await waitForActiveProjectHue(page, previousStyle);
 }
 
-async function editActiveProject(page, { title, hue, rootFolder }) {
+async function editActiveProject(page, { title, rootFolder }) {
 	await page.locator('.project-tab--active').evaluate((element) => {
 		element.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, view: window }));
 	});

@@ -37,7 +37,7 @@ export class PuzedEventSubscription {
         const response = await this.client.openEventStream(await this.cursorStore.load(this.profileId), signal);
         await consumeEventStream(response, this.invalidate, (cursor) => this.cursorStore.save(this.profileId, cursor));
         delay = 250;
-      } catch (error) {
+      } catch (_error) {
         if (signal.aborted) return;
         await new Promise<void>((resolve) => { const timer = setTimeout(resolve, delay); signal.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true }); });
         delay = Math.min(delay * 2, 10_000);

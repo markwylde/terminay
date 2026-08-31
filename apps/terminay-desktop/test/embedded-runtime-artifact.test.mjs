@@ -46,26 +46,6 @@ function run(command, args, options = {}) {
   });
 }
 
-function runFailure(command, args, options = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd,
-      env: options.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
-    child.once("error", reject);
-    child.once("close", (code) => {
-      if (code !== 0) resolve({ code, stdout, stderr });
-      else reject(new Error(`${command} ${args.join(" ")} unexpectedly succeeded`));
-    });
-  });
-}
 
 function startForeground(command, args, options = {}) {
   const child = spawn(command, args, {

@@ -17,7 +17,9 @@ const SCRIPT = [
   "for environ in /proc/[0-9]*/environ; do",
   "  n=$((n+1))",
   '  if [ "$n" -gt 4096 ]; then break; fi',
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: POSIX parameter expansion inside a shell script, not a JavaScript template.
   "  pid=${environ#/proc/}",
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: POSIX parameter expansion inside a shell script, not a JavaScript template.
   "  pid=${pid%/environ}",
   "  case $pid in ''|*[!0-9]*) continue ;; esac",
   '  if ! tr "\\0" "\\n" < "$environ" 2>/dev/null | grep -Fxq "$needle"; then continue; fi',
@@ -25,11 +27,13 @@ const SCRIPT = [
   "  case $cwd in /*) ;; *) continue ;; esac",
   '  if [ -z "$first_cwd" ]; then first_cwd=$cwd; fi',
   '  stat=$(cat "/proc/$pid/stat" 2>/dev/null) || continue',
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: POSIX parameter expansion inside a shell script, not a JavaScript template.
   "  rest=${stat##*) }",
   "  set -- $rest",
   "  session=$4",
   '  if [ "$pid" = "$session" ]; then leader_cwd=$cwd; fi',
   "done",
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: POSIX parameter expansion inside a shell script, not a JavaScript template.
   "cwd=${leader_cwd:-$first_cwd}",
   'if [ -z "$cwd" ]; then printf "%s\\n" unavailable; exit 0; fi',
   'printf "%s\\n%s\\n" available "$cwd"',
@@ -85,7 +89,7 @@ function collect(channel: SshChannel, proof: string, signal?: AbortSignal): Prom
     const chunks: Buffer[] = [];
     let bytes = 0;
     let settled = false;
-    const finish = (callback: (value: any) => void, value: any): void => {
+    const finish = <Value>(callback: (value: Value) => void, value: Value): void => {
       if (settled) return;
       settled = true;
       signal?.removeEventListener("abort", abort);

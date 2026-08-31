@@ -27,7 +27,7 @@ export async function observeCodexJournal(client:SshClient,request:AgentJournalR
 
 function collectBounded(channel:SshChannel,signal?:AbortSignal):Promise<string>{return new Promise((resolve,reject)=>{
   const chunks:Buffer[]=[];let bytes=0;let settled=false;
-  const finish=(callback:(value:any)=>void,value:any)=>{if(settled)return;settled=true;signal?.removeEventListener("abort",abort);callback(value);};
+  const finish=<Value>(callback:(value:Value)=>void,value:Value)=>{if(settled)return;settled=true;signal?.removeEventListener("abort",abort);callback(value);};
   const abort=()=>{try{channel.end();}finally{finish(reject,new SshProviderError("cancelled","Remote agent observation was cancelled"));}};
   signal?.addEventListener("abort",abort,{once:true});
   channel.on("data",(chunk)=>{if(settled)return;const part=Buffer.from(chunk);bytes+=part.length;if(bytes>MAX_RESPONSE_BYTES){try{channel.end();}finally{finish(reject,new SshProviderError("invalid-input","Target helper response exceeded its bound"));}return;}chunks.push(part);});

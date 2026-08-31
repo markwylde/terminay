@@ -8,12 +8,10 @@ import {
   type AgentFileWatchChunk,
   type AgentFileWatcher,
   type AgentForegroundProcess,
-  type AgentJsonlSession,
   type AgentModelMetadata,
   type AgentObservationResult,
   type AgentProviderDefinition,
   type AgentRecordContext,
-  type AgentTerminalContext,
 } from "@terminay/extension-api";
 
 const MAPPING_VERSION = "0.1";
@@ -331,7 +329,7 @@ class CursorSessionWatcher implements AgentFileWatcher {
 
   private async nextTranscriptChunk(): Promise<AgentFileWatchChunk | undefined> {
     const current = await stat(this.files.transcriptPath).catch(() => undefined);
-    if (!current || !current.isFile()) return undefined;
+    if (!current?.isFile()) return undefined;
     const replaced = this.transcriptModified !== 0 && current.mtimeMs !== this.transcriptModified && current.size < this.transcriptOffset;
     const truncated = current.size < this.transcriptOffset;
     const changed = current.size !== this.transcriptOffset || current.mtimeMs !== this.transcriptModified;
