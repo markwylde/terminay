@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 import {
+	collectHostIceAddresses,
 	createHandshakeJoinQueue,
 	DEFAULT_HOSTED_ICE_SERVERS,
 	hostedPeerConfiguration,
@@ -16,6 +17,44 @@ test('empty ICE server config uses the default STUN server', () => {
 	assert.deepEqual(hostedPeerConfiguration('example.terminay.com').iceServers, [
 		...DEFAULT_HOSTED_ICE_SERVERS,
 	]);
+});
+
+test('host ICE addresses include LAN and VPN overlays and omit link-local', () => {
+	assert.deepEqual(
+		collectHostIceAddresses({
+			lo0: [{ address: '127.0.0.1', family: 'IPv4', internal: true }],
+			en0: [{ address: '192.168.1.20', family: 'IPv4', internal: false }],
+			utun4: [{ address: '100.101.102.103', family: 'IPv4', internal: false }],
+			awdl0: [{ address: 'fe80::1', family: 'IPv6', internal: false }],
+			en1: [{ address: '169.254.1.1', family: 'IPv4', internal: false }],
+			utun5: [{ address: 'fd7a:115c:a1e0::1', family: 'IPv6', internal: false }],
+		}),
+		['127.0.0.1', '192.168.1.20', '100.101.102.103', 'fd7a:115c:a1e0::1'],
+	);
+});
+
+test('non-loopback host peer configuration advertises every usable local address', () => {
+	const config = hostedPeerConfiguration('example.terminay.com', undefined, [
+		'192.168.1.20',
+		'100.101.102.103',
+		'169.254.1.1',
+	]);
+	assert.deepEqual(config.iceAdditionalHostAddresses, [
+		'192.168.1.20',
+		'100.101.102.103',
+	]);
+	assert.equal(config.iceUseIpv4, true);
+	assert.equal(config.iceUseIpv6, true);
+	assert.equal('iceInterfaceAddresses' in config, false);
+});
+
+test('loopback signaling still pins ICE to 127.0.0.1', () => {
+	const config = hostedPeerConfiguration('127.0.0.1', undefined, [
+		'192.168.1.20',
+		'100.101.102.103',
+	]);
+	assert.deepEqual(config.iceAdditionalHostAddresses, ['127.0.0.1']);
+	assert.deepEqual(config.iceInterfaceAddresses, { udp4: '127.0.0.1' });
 });
 
 test('host peer configuration uses the advertised ICE servers', () => {

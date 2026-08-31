@@ -374,14 +374,53 @@ export function createHandshakeJoinQueue(): {
 	};
 }
 
+export type HostIceAddressFamily = 'IPv4' | 'IPv6' | 4 | 6;
+
+export type HostIceNetworkAddress = Readonly<{
+	address: string;
+	family: HostIceAddressFamily | string;
+	internal?: boolean;
+}>;
+
+export function isUsableHostIceAddress(address: string): boolean {
+	const value = address.trim().toLowerCase();
+	if (!value) return false;
+	if (value.startsWith('169.254.')) return false;
+	if (value === '::' || value.startsWith('fe80:')) return false;
+	return true;
+}
+
+export function collectHostIceAddresses(
+	nics: Readonly<Record<string, readonly HostIceNetworkAddress[] | undefined>> = {},
+): readonly string[] {
+	const addresses = new Set<string>();
+	for (const entries of Object.values(nics)) {
+		for (const entry of entries ?? []) {
+			const family = entry.family;
+			if (family !== 'IPv4' && family !== 'IPv6' && family !== 4 && family !== 6) {
+				continue;
+			}
+			if (!isUsableHostIceAddress(entry.address)) continue;
+			addresses.add(entry.address);
+		}
+	}
+	return Object.freeze([...addresses]);
+}
+
 export function hostedPeerConfiguration(
 	connectHost: string | undefined,
 	iceServers?: readonly HostedIceServer[],
+	hostAddresses?: readonly string[],
 ): Record<string, unknown> {
 	const loopback =
 		connectHost === '127.0.0.1' ||
 		connectHost === 'localhost' ||
 		connectHost === '::1';
+	const additional = [
+		...new Set(
+			(hostAddresses ?? []).filter((address) => isUsableHostIceAddress(address)),
+		),
+	];
 	return {
 		iceServers: [...resolveHostedIceServers(iceServers)],
 		maxMessageSize: 1024 * 1024,
@@ -392,6 +431,12 @@ export function hostedPeerConfiguration(
 					iceUseIpv4: false,
 					iceUseIpv6: false,
 				}
-			: {}),
+			: {
+					iceUseIpv4: true,
+					iceUseIpv6: true,
+					...(additional.length === 0
+						? {}
+						: { iceAdditionalHostAddresses: additional }),
+				}),
 	};
 }
