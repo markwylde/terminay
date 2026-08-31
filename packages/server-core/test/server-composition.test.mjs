@@ -223,7 +223,7 @@ test("the composed core serves terminal operations through its transport-neutral
     capabilities: ["desktop"],
     ptyFactory: pty,
     authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: "write" }),
-    onConnectionClosed: (clientId) => closedClients.push(clientId),
+    onConnectionClosed: (connectionId, clientId) => closedClients.push({ connectionId, clientId }),
   });
   const identity = {
     serverId: "message-port-server",
@@ -274,7 +274,9 @@ test("the composed core serves terminal operations through its transport-neutral
     await composition.shutdown();
   }
 
-  assert.deepEqual(closedClients, ["desktop-client"]);
+  assert.equal(closedClients.length, 1);
+  assert.equal(closedClients[0].clientId, "desktop-client");
+  assert.equal(closedClients[0].connectionId, connection.connectionId);
   assert.equal(composition.terminal.getSession(identity).status, "interrupted");
 });
 

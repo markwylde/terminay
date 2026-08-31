@@ -58,20 +58,30 @@ export interface TerminalOperationRegistryOptions {
 
 export interface TerminalOperationRegistry {
   readonly operations: OperationRegistries;
-  /** Detach all protocol attachments for a client without touching the PTY. */
-  readonly closeClient: (clientId: string) => void;
+  /**
+   * Detach the protocol attachments owned by one connection without touching
+   * the PTY. Another live connection authenticated by the same client keeps
+   * its own attachments, leases, and checkpoints.
+   */
+  readonly closeConnection: (connectionId: string) => void;
 	/** Stop publishing obsolete raw output for one congested presentation. */
-	readonly suppressOutput: (attachmentId: string, clientId: string) => void;
+	readonly suppressOutput: (attachmentId: string, connectionId: string) => void;
 }
 
 interface ProtocolAttachment {
   readonly clientId: string;
+  /** The exact connection that created this attachment and owns its lifetime. */
+  readonly connectionId: string;
   readonly identity: TerminalIdentity;
   readonly attachment: TerminalAttachment;
 	readonly canWrite: boolean;
 	outputSuppressed: boolean;
 	/** Drop a not-yet-published live-output batch on attachment teardown. */
 	readonly discardPendingOutput: () => void;
+	/** Suppress the attachment-closed notification for a teardown the client
+	 * already knows about: its own `terminal.detach`, or its own connection
+	 * closing. Every other detach must remain observable. */
+	readonly suppressCloseNotification: () => void;
 }
 
 interface PendingTerminalOutput {
@@ -82,6 +92,7 @@ interface PendingTerminalOutput {
 
 interface InitialPresentationReservation {
   readonly clientId: string;
+  readonly connectionId: string;
   readonly identity: TerminalIdentity;
   readonly timeout: ReturnType<typeof setTimeout>;
 }
@@ -144,30 +155,49 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
         "terminal.detach": { scope: "read" },
       },
     },
-    closeClient: (clientId) => {
-      const releasedIdentities = new Map<string, TerminalIdentity>();
+    closeConnection: (connectionId) => {
+      const released: ProtocolAttachment[] = [];
       for (const [id, value] of protocolAttachments) {
-        if (value.clientId !== clientId) continue;
-        releasedIdentities.set(sessionKey(value.clientId, value.identity), value.identity);
+        if (value.connectionId !== connectionId) continue;
+        released.push(value);
 			value.discardPendingOutput();
+			// The owning connection is gone; there is nobody left to notify.
+			value.suppressCloseNotification();
         attachments.detach(id);
         protocolAttachments.delete(id);
         if (byClientSession.get(sessionKey(value.clientId, value.identity)) === id) byClientSession.delete(sessionKey(value.clientId, value.identity));
       }
-      // A disconnected client must not keep the viewport lease alive until its
-      // timeout.  Detaching the stream and releasing dimensions are separate
-      // concerns, but both are consequences of the same authenticated client
-      // lifecycle event; neither affects the server-owned PTY.
-      for (const identity of releasedIdentities.values()) inputSources.releaseClient(identity, clientId);
-      for (const identity of releasedIdentities.values()) presentations.releaseClient(identity, clientId);
-      options.checkpoints?.releaseClient(clientId);
+      // A disconnected connection must not keep the viewport lease alive until
+      // its timeout. Every release below is attachment-scoped: a second live
+      // connection authenticated by the same client keeps its own lease,
+      // checkpoints, and input authority, and the server-owned PTY is never
+      // affected by either.
+      for (const value of released) {
+        const scope = { ...value.identity, clientId: value.clientId, attachmentId: value.attachment.attachmentId };
+        presentations.releaseAttachment(scope);
+        options.checkpoints?.releaseAttachment(scope);
+      }
+      // Input authority is client-scoped rather than attachment-scoped, so it
+      // may be released only once this client has no attachment left on that
+      // exact session through any other connection.
+      for (const value of released) {
+        if (hasClientAttachment(value.clientId, value.identity)) continue;
+        inputSources.releaseClient(value.identity, value.clientId);
+      }
+      // A checkpoint prepared but never bound to an attachment is client-owned.
+      // Release it only once this client holds no attachment at all, so a live
+      // replacement connection keeps its own pending recovery.
+      for (const clientId of new Set(released.map((value) => value.clientId))) {
+        if (hasAnyClientAttachment(clientId)) continue;
+        options.checkpoints?.releaseClient(clientId);
+      }
       for (const reservation of [...initialPresentationReservations.values()]) {
-        if (reservation.clientId === clientId) releaseInitialPresentationReservation(reservation.identity, true);
+        if (reservation.connectionId === connectionId) releaseInitialPresentationReservation(reservation.identity, true);
       }
     },
-		suppressOutput: (attachmentId, clientId) => {
+		suppressOutput: (attachmentId, connectionId) => {
 			const value = protocolAttachments.get(attachmentId);
-			if (value?.clientId === clientId) {
+			if (value?.connectionId === connectionId) {
 				value.discardPendingOutput();
 				value.outputSuppressed = true;
 			}
@@ -276,7 +306,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
           rows,
         }));
     const snapshot = session.snapshot();
-    reserveInitialPresentation(snapshot, request.context.clientId);
+    reserveInitialPresentation(snapshot, request.context.clientId, request.context.connectionId);
     try {
       options.onSessionCreated?.(snapshot);
     } catch (error) {
@@ -372,6 +402,11 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       if (prior !== undefined && !priorHeldLease) presentations.releaseAttachment({ ...prior.identity, clientId: prior.clientId, attachmentId: prior.attachment.attachmentId });
       if (prior !== undefined) options.checkpoints?.releaseAttachment({ ...prior.identity, clientId: prior.clientId, attachmentId: prior.attachment.attachmentId });
 		if (prior !== undefined) prior.discardPendingOutput();
+		// This attach is the replacement the client asked for, so the eviction
+		// needs no notification when the same connection owns both. A different
+		// live connection's attachment is being taken over and must be told.
+		if (prior !== undefined && prior.connectionId === request.context.connectionId)
+			prior.suppressCloseNotification();
       attachments.detach(priorId);
       protocolAttachments.delete(priorId);
     }
@@ -380,6 +415,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     const queuedCheckpointEvents: TerminalEvent[] = [];
     let pendingOutput: PendingTerminalOutput | undefined;
     let pendingOutputTimer: ReturnType<typeof setTimeout> | undefined;
+    let notifyOnClose = true;
     const discardPendingOutput = (): void => {
       if (pendingOutputTimer !== undefined) clearTimeout(pendingOutputTimer);
       pendingOutputTimer = undefined;
@@ -458,6 +494,25 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
         }
         publishTerminalEvent(event);
       },
+      // A stream that ends while its connection is still open must say so.
+      // Without this the client keeps a painted checkpoint mounted and waits
+      // forever for output that can no longer arrive. `resync_required` is the
+      // established recovery signal: the panel re-attaches from a fresh
+      // checkpoint, which also retires the superseded delivery lane.
+      onClose: () => {
+        if (!notifyOnClose || attachmentId === undefined) return;
+        discardPendingOutput();
+        const head = options.service.getSession(identity)?.outputPosition ?? 0;
+        options.eventJournal.append(TERMINAL_EVENT, {
+          clientId,
+          attachmentId,
+          type: "resync_required",
+          ...identity,
+          fromPosition: head,
+          replayFrom: head,
+          outputPosition: head,
+        });
+      },
       });
     } catch (error) {
       if (preparedCheckpoint !== undefined) options.checkpoints?.release(preparedCheckpoint.checkpointId, { ...identity, clientId });
@@ -485,11 +540,13 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     const canWrite = request.context.authScope === "write" || request.context.authScope === "admin";
     protocolAttachments.set(attachment.attachmentId, {
 			clientId,
+			connectionId: request.context.connectionId,
 			identity,
 			attachment,
 			canWrite,
 			outputSuppressed: false,
 			discardPendingOutput,
+			suppressCloseNotification: () => { notifyOnClose = false; },
 		});
     byClientSession.set(key, attachment.attachmentId);
     // The first write-authorized surface is the natural presentation owner.
@@ -525,6 +582,11 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     }
     return {
       attachmentId: attachment.attachmentId,
+      // The superseded attachment owns a delivery lane on the connection that
+      // created it. Naming it here lets that connection retire the lane, so a
+      // lane that congested before the replacement cannot leak or mute the
+      // replacement's own scheduler state.
+      ...(priorId === undefined ? {} : { replacedAttachmentId: priorId }),
       fromPosition: checkpoint?.headPosition ?? attachment.snapshot().fromPosition,
       position: checkpoint?.headPosition ?? attachment.snapshot().fromPosition,
       events: [
@@ -543,7 +605,13 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
   async function acknowledge(request: CommandRequest): Promise<JsonValue> {
     const value = attachmentFor(request, "read");
     const positionValue = position(objectPayload(request.envelope.payload).position ?? -1);
+    const deliveredPosition = value.attachment.position;
     value.attachment.ack(positionValue);
+    // Suppression after congestion is a bounded recovery state. No output is
+    // published while it holds, so the delivered position cannot advance: an
+    // acknowledgement that reaches it proves the client is caught up and this
+    // attachment must start publishing live output again.
+    if (value.outputSuppressed && positionValue >= deliveredPosition) value.outputSuppressed = false;
     return { attachmentId: value.attachment.attachmentId, position: positionValue };
   }
 
@@ -629,6 +697,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
   async function detach(request: CommandRequest): Promise<JsonValue> {
     const value = attachmentFor(request, "read");
 		value.discardPendingOutput();
+		value.suppressCloseNotification();
     attachments.detach(value.attachment);
     protocolAttachments.delete(value.attachment.attachmentId);
     const key = sessionKey(value.clientId, value.identity);
@@ -672,11 +741,11 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     };
   }
 
-  function reserveInitialPresentation(identity: TerminalIdentity, clientId: string): void {
+  function reserveInitialPresentation(identity: TerminalIdentity, clientId: string, connectionId: string): void {
     releaseInitialPresentationReservation(identity, false);
     const timeout = setTimeout(() => releaseInitialPresentationReservation(identity, true), INITIAL_PRESENTATION_RESERVATION_MS);
     timeout.unref?.();
-    initialPresentationReservations.set(identityKey(identity), { clientId, identity: { ...identity }, timeout });
+    initialPresentationReservations.set(identityKey(identity), { clientId, connectionId, identity: { ...identity }, timeout });
   }
 
   function releaseInitialPresentationReservation(identity: TerminalIdentity, electFallback: boolean): void {
@@ -696,6 +765,22 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
         attachmentId: fallback.attachment.attachmentId,
       });
     }
+  }
+
+  /** Does this client still hold an attachment on that session, through any
+   * connection? Client-scoped authority survives while one of them is live. */
+  function hasClientAttachment(clientId: string, identity: TerminalIdentity): boolean {
+    for (const value of protocolAttachments.values()) {
+      if (value.clientId === clientId && sameIdentity(value.identity, identity)) return true;
+    }
+    return false;
+  }
+
+  function hasAnyClientAttachment(clientId: string): boolean {
+    for (const value of protocolAttachments.values()) {
+      if (value.clientId === clientId) return true;
+    }
+    return false;
   }
 
   function attachmentFor(request: CommandRequest, required: "read" | "write"): ProtocolAttachment {

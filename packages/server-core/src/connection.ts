@@ -379,6 +379,17 @@ export class ServerConnection implements ServerConnectionLike {
 		result: CommandResultEnvelope,
 	): void {
 		if (!result.ok) return;
+		if (command.operation === "terminal.attach" || command.operation === "terminal.resume") {
+			// A replaced attachment's lane keeps its congestion and resynchronization
+			// state. Retire it with the attachment so the replacement starts on a
+			// clean scheduler and the superseded lane cannot leak.
+			const replaced = objectPayload(result.result).replacedAttachmentId;
+			if (isSafeId(replaced)) {
+				this.outbound.releaseTerminal(replaced);
+				this.terminalOutputPositions.delete(replaced);
+			}
+			return;
+		}
 		const payload = objectPayload(command.payload);
 		const attachmentId = payload.attachmentId;
 		if (!isSafeId(attachmentId)) return;
@@ -471,7 +482,7 @@ export class ServerConnection implements ServerConnectionLike {
 		const clientId = this.authenticatedClient?.clientId;
 		if (clientId !== undefined) {
 			try {
-				this.options.onTerminalCongestion?.(congestion.laneId, clientId);
+				this.options.onTerminalCongestion?.(congestion.laneId, clientId, this.connectionId);
 			} catch {
 				/* Output suppression cannot affect connection delivery. */
 			}
@@ -535,7 +546,7 @@ export class ServerConnection implements ServerConnectionLike {
     this.eventSubscriptions.clear();
 		this.terminalOutputPositions.clear();
     const clientId = this.authenticatedClient?.clientId;
-    if (clientId !== undefined) this.options.onConnectionClosed?.(clientId);
+    if (clientId !== undefined) this.options.onConnectionClosed?.(this.connectionId, clientId);
 		this.onClosed?.();
   }
 }
