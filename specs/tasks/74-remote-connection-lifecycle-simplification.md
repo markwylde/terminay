@@ -224,7 +224,7 @@ It is also not the cause of the reported failure, and task 74's heartbeat
 already recovers a deadlocked association within its bound, so the freeze
 becomes a bounded reconnect rather than a permanent one.
 
-### Slice 7 — tests and acceptance
+### Slice 7 — tests and acceptance — DONE
 
 - Server-core: the Slice 1 regression test (two connections, one device, old
   one fails late) — this is the exact production bug and must be the first
@@ -237,9 +237,12 @@ becomes a bounded reconnect rather than a permanent one.
   output for minutes) stays connected through pings alone.
 - Terminal lane: congest → explicit resync event → re-attach → live stream
   resumes, on one connection, twice in a row (proves latches clear).
-- E2E (real Chromium client against the hosted host): reconnect during
-  sustained PTY output; the replacement hydrates a checkpoint and then shows
-  new output within the heartbeat bound; repeat three cycles.
+- E2E (`e2e/connection-reconnect-cycles.spec.ts`, real Electron in the
+  container): three reconnect cycles each hydrate and then stream new output,
+  and a reconnect during sustained PTY output resumes streaming. A Local
+  transport closes promptly, so it does not reliably reproduce the two-live-
+  connection overlap; the server-core suite owns that proof, and this owns the
+  observable symptom end to end.
 
 ## Definition of done
 
