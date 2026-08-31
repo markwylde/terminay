@@ -97,7 +97,7 @@ export interface TerminalClientListResult {
 export type TerminalWireEvent =
 	| TerminalWireOutputEvent
 	| TerminalWireExitEvent
-	| TerminalWireResyncEvent
+	| TerminalWireSkipEvent
 	| TerminalWireDimensionsEvent
 	| TerminalWirePresentationEvent
 	| TerminalWirePresentationUnavailableEvent;
@@ -157,12 +157,14 @@ export interface TerminalWireExitEvent extends TerminalClientIdentity {
 	readonly at?: number;
 }
 
-export interface TerminalWireResyncEvent extends TerminalClientIdentity {
-	readonly type: 'resync_required';
+export interface TerminalWireSkipEvent extends TerminalClientIdentity {
+	readonly type: 'skip';
 	readonly fromPosition: number;
-	readonly replayFrom: number;
-	readonly outputPosition: number;
+	readonly toPosition: number;
+	readonly reason: TerminalSkipReason;
 }
+
+export type TerminalSkipReason = 'congestion' | 'attachment_closed';
 
 export interface TerminalStreamOutputEvent extends TerminalClientIdentity {
 	readonly type: 'output';
@@ -180,11 +182,17 @@ export interface TerminalStreamExitEvent extends TerminalClientIdentity {
 	readonly at?: number;
 }
 
-export interface TerminalStreamResyncEvent extends TerminalClientIdentity {
-	readonly type: 'resync_required';
+/**
+ * A byte range this attachment will never receive, stated by the server in the
+ * same ordered stream as the bytes it replaces. The client advances past it
+ * rather than treating it as a fault: the display then re-hydrates from a
+ * fresh checkpoint.
+ */
+export interface TerminalStreamSkipEvent extends TerminalClientIdentity {
+	readonly type: 'skip';
 	readonly fromPosition: number;
-	readonly replayFrom: number;
-	readonly outputPosition: number;
+	readonly toPosition: number;
+	readonly reason: TerminalSkipReason;
 }
 
 /**
@@ -209,7 +217,7 @@ export type TerminalStreamEvent =
 	| TerminalStreamCheckpointResizeEvent
 	| TerminalStreamOutputEvent
 	| TerminalStreamExitEvent
-	| TerminalStreamResyncEvent
+	| TerminalStreamSkipEvent
 	| TerminalWireDimensionsEvent
 	| TerminalWirePresentationEvent
 	| TerminalWirePresentationUnavailableEvent;
@@ -314,7 +322,6 @@ interface MutableAttachment {
  */
 export class TerminayTerminalClient {
 	private readonly attachments = new Map<string, MutableAttachment>();
-	private readonly highWatermarks = new Map<string, number>();
 	private readonly openingAttachments = new Map<string, Promise<void>>();
 
 	constructor(private readonly transport: TerminalClientTransport) {}
@@ -580,13 +587,12 @@ export class TerminayTerminalClient {
 	): Promise<TerminalClientAttachment> {
 		const prior = this.attachments.get(key);
 		if (prior !== undefined) await this.detachMutable(prior);
-		const highWatermark = this.highWatermarks.get(key) ?? 0;
-		// An omitted cursor means transport reconnect and resumes from the shared
-		// delivery watermark. An explicit cursor belongs to this display surface:
-		// a newly-created xterm may deliberately request retained replay from 0
-		// without lowering the reconnect/acknowledgement watermark.
+		// A reconnect states the position it actually rendered, or asks for a
+		// fresh presentation. There is deliberately no remembered watermark to
+		// fall back on: resuming from a cursor this display never reached is
+		// precisely the gap it has no way to detect.
 		if (request.freshPresentation === true && request.fromPosition !== undefined && request.fromPosition !== 0) throw new TypeError('a fresh terminal presentation must start at position zero');
-		const fromPosition = request.freshPresentation === true ? 0 : request.fromPosition ?? highWatermark;
+		const fromPosition = request.freshPresentation === true ? 0 : request.fromPosition ?? 0;
 		validatePosition(fromPosition);
 		// Establish the identity-scoped journal subscription before allocating the
 		// opaque attachment. PTY output can begin as soon as terminal.attach runs;
@@ -674,23 +680,19 @@ export class TerminayTerminalClient {
 		// replay budget. Decode replay relative to that authoritative boundary,
 		// while retaining the independently tracked reconnect high-water mark.
 		let position = checkpoint?.headPosition ?? result.fromPosition;
-		let replayBoundary: number | undefined;
+		let skipped = false;
 		let hydrationBytes = 0;
 		for (const wireEvent of result.events ?? []) {
 			const event = tryDecodeEvent(wireEvent, request, undefined);
 			if (event === undefined) continue;
-			if (!acceptEvent(event, this.highWatermarks, key, position)) continue;
+			if (classifyEvent(event, position) === 'duplicate') continue;
 			if (event.type === 'output') position = event.nextPosition;
-			if (event.type === 'resync_required') {
-				// The server has discarded bytes before replayFrom. Preserve that
-				// boundary as the reconnect cursor; result.position is the producer
-				// head, not output this client has rendered.
-				replayBoundary = event.replayFrom;
-				position = event.replayFrom;
-				this.highWatermarks.set(
-					key,
-					Math.max(this.highWatermarks.get(key) ?? 0, position),
-				);
+			if (event.type === 'skip') {
+				// The server states what it discarded. Advance past it rather than
+				// trusting result.position, which is the producer head and not
+				// output this display has rendered.
+				skipped = true;
+				position = Math.max(position, event.toPosition);
 			}
 			initialEvents.push(event);
 			if (checkpoint !== undefined && event.type === 'output') {
@@ -698,16 +700,8 @@ export class TerminayTerminalClient {
 				assertHydrationQueueBytes(hydrationBytes);
 			}
 		}
-		position =
-			replayBoundary === undefined
-				? checkpoint === undefined
-					? Math.max(position, result.position)
-					: position
-				: replayBoundary;
-		this.highWatermarks.set(
-			key,
-			Math.max(this.highWatermarks.get(key) ?? 0, position),
-		);
+		if (!skipped && checkpoint === undefined)
+			position = Math.max(position, result.position);
 
 		const mutable: MutableAttachment = {
 			id: result.attachmentId,
@@ -739,38 +733,38 @@ export class TerminayTerminalClient {
 				event.body,
 			);
 			if (decoded === undefined) return;
-			try {
-				if (!acceptEvent(decoded, this.highWatermarks, key, mutable.position))
-					return;
-			} catch (error) {
-				hydrationFailure = error instanceof Error ? error : new Error('terminal output delivery failed');
-				return;
-			}
-			if (decoded.type === 'output') mutable.position = decoded.nextPosition;
-			if (decoded.type === 'resync_required') {
-				mutable.position = decoded.replayFrom;
-				// A resync invalidates any rendered-but-unconfirmed tail. Collapse a
+			const verdict = classifyEvent(decoded, mutable.position);
+			if (verdict === 'duplicate') return;
+			// A gap in live output means the server advanced the stream without
+			// saying so. That is a server fault, but it must never be the end of
+			// this terminal: state the loss locally so the display recovers the
+			// same way it recovers from congestion, and make it visible.
+			const streamEvent: TerminalStreamEvent =
+				verdict === 'gap'
+					? reportStreamGap(mutable, decoded as TerminalStreamOutputEvent)
+					: decoded;
+			if (streamEvent.type === 'output') mutable.position = streamEvent.nextPosition;
+			if (streamEvent.type === 'skip') {
+				mutable.position = Math.max(mutable.position, streamEvent.toPosition);
+				// A skip invalidates any rendered-but-unconfirmed tail. Collapse a
 				// queued cumulative acknowledgement to the retained safe boundary so
 				// detach cannot publish a position the server has superseded.
 				mutable.pendingAcknowledgementPosition = Math.min(
 					mutable.pendingAcknowledgementPosition,
-					decoded.replayFrom,
+					streamEvent.fromPosition,
 				);
 				for (const waiter of mutable.acknowledgementWaiters) {
-					waiter.position = Math.min(waiter.position, decoded.replayFrom);
+					waiter.position = Math.min(waiter.position, streamEvent.fromPosition);
 				}
-				this.highWatermarks.set(
-					key,
-					Math.max(this.highWatermarks.get(key) ?? 0, decoded.replayFrom),
-				);
 			}
-			if (decoded.type === 'presentation') mutable.presentation = copyPresentation(decoded);
+			const decodedEvent = streamEvent;
+			if (decodedEvent.type === 'presentation') mutable.presentation = copyPresentation(decodedEvent);
 			if (mutable.listeners.size === 0) {
 				// The transport subscription is necessarily live before open() can
 				// return its attachment. Preserve that handoff window as replayable
 				// initial events so fast shell output cannot disappear.
-				if (checkpoint !== undefined && decoded.type === 'output') {
-					hydrationBytes += decoded.bytes.byteLength;
+				if (checkpoint !== undefined && decodedEvent.type === 'output') {
+					hydrationBytes += decodedEvent.bytes.byteLength;
 					try {
 						assertHydrationQueueBytes(hydrationBytes);
 					} catch (error) {
@@ -778,9 +772,9 @@ export class TerminayTerminalClient {
 						return;
 					}
 				}
-				mutable.initialEvents.push(copyEvent(decoded));
+				mutable.initialEvents.push(copyEvent(decodedEvent));
 			} else {
-				for (const listener of mutable.listeners) listener(copyEvent(decoded));
+				for (const listener of mutable.listeners) listener(copyEvent(decodedEvent));
 			}
 		};
 		receiveSubscriptionEvent = processSubscriptionEvent;
@@ -1465,25 +1459,25 @@ function decodeEvent(
 			...(typeof candidate.at === 'number' ? { at: candidate.at } : {}),
 		});
 	}
-	if (type === 'resync_required') {
+	if (type === 'skip') {
 		const fromPosition = safePosition(
 			candidate.fromPosition,
-			'terminal resync position',
+			'terminal skip position',
 		);
-		const replayFrom = safePosition(
-			candidate.replayFrom,
-			'terminal resync position',
+		const toPosition = safePosition(
+			candidate.toPosition,
+			'terminal skip position',
 		);
-		const outputPosition = safePosition(
-			candidate.outputPosition,
-			'terminal resync position',
-		);
+		const reason: TerminalSkipReason =
+			candidate.reason === 'attachment_closed'
+				? 'attachment_closed'
+				: 'congestion';
 		return Object.freeze({
 			...identity,
-			type: 'resync_required',
+			type: 'skip',
 			fromPosition,
-			replayFrom,
-			outputPosition,
+			toPosition,
+			reason,
 		});
 	}
 	if (type === 'dimensions') {
@@ -1518,21 +1512,47 @@ function tryDecodeEvent(
 	}
 }
 
-function acceptEvent(
+/**
+ * Classify one event against the position this display has actually reached.
+ *
+ * This never throws. A gap used to raise here and be swallowed by the caller,
+ * which left the terminal silent for the rest of its life on an otherwise
+ * healthy connection; the caller now has to handle every verdict explicitly.
+ */
+/**
+ * Turn a server-side ordering fault into an explicit local skip.
+ *
+ * The previous behaviour raised here, and the raise was captured into a
+ * variable that nothing read again once the attachment was open, so a single
+ * gap silenced the terminal permanently while every layer still reported
+ * healthy. Recovery must be the loud path, not the swallowed one.
+ */
+function reportStreamGap(
+	mutable: { readonly id: string; readonly position: number },
+	event: TerminalStreamOutputEvent,
+): TerminalStreamSkipEvent {
+	console.warn('[terminay-terminal] terminal output stream gap', {
+		attachmentId: mutable.id,
+		expected: mutable.position,
+		received: event.position,
+	});
+	return Object.freeze({
+		...copyIdentity(event),
+		type: 'skip',
+		fromPosition: mutable.position,
+		toPosition: Math.max(mutable.position, event.nextPosition),
+		reason: 'attachment_closed',
+	});
+}
+
+function classifyEvent(
 	event: TerminalStreamEvent,
-	marks: Map<string, number>,
-	key: string,
 	position: number,
-): boolean {
-	if (event.type !== 'output') return true;
-	const known = position;
-	if (event.nextPosition <= known) return false;
-	if (event.position < known)
-		throw new Error('terminal output overlaps an acknowledged position');
-	if (event.position > known)
-		throw new Error('terminal output has a retained replay gap');
-	marks.set(key, Math.max(marks.get(key) ?? 0, event.nextPosition));
-	return true;
+): 'accept' | 'duplicate' | 'gap' {
+	if (event.type !== 'output') return 'accept';
+	if (event.nextPosition <= position) return 'duplicate';
+	if (event.position !== position) return 'gap';
+	return 'accept';
 }
 
 function pendingOutputByteLength(
