@@ -150,9 +150,7 @@ function assertSelectedWebRtcRuntime(selection) {
     selection.package?.version !== '0.24.1-candidate.1' ||
     selection.upstream?.npmPackage !== 'werift@0.24.1' ||
     selection.upstream?.gitHead !== '243fd7e24c39fbe03fb855928daddd793fc8d4fa' ||
-    selection.patches?.length !== 1 ||
-    selection.patches[0]?.sha256 !==
-      '34ea60bd991256adb2cd50bfe0ef9011cfc79054aff686b9ec35ef4703de4211' ||
+    !hasExactGovernedPatches(selection.patches) ||
     selection.integrity?.payloadManifest !== 'SHA256SUMS' ||
     selection.integrity?.rejectSymlinks !== true ||
     selection.integrity?.rejectExtraFiles !== true ||
@@ -161,6 +159,20 @@ function assertSelectedWebRtcRuntime(selection) {
   ) {
     throw new Error('selected WebRTC runtime manifest is invalid')
   }
+}
+
+/** The governed patch set, pinned by hash and by the order it is applied. */
+const GOVERNED_WEBRTC_PATCH_SHA256 = Object.freeze([
+  '34ea60bd991256adb2cd50bfe0ef9011cfc79054aff686b9ec35ef4703de4211',
+  '298aa1ebb0f0eb45c673dd24907e7e8110bfef499524993d8203fd74ecaa6b2b',
+])
+
+function hasExactGovernedPatches(patches) {
+  return (
+    Array.isArray(patches) &&
+    patches.length === GOVERNED_WEBRTC_PATCH_SHA256.length &&
+    GOVERNED_WEBRTC_PATCH_SHA256.every((sha256, index) => patches[index]?.sha256 === sha256)
+  )
 }
 
 export async function writeReleaseEvidence(root = process.cwd(), outputDir = join(root, '.release')) {
