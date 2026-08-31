@@ -121,7 +121,7 @@ function tar(entries) {
 		header.write('0000000\0', 108, 'ascii');
 		header.write('0000000\0', 116, 'ascii');
 		header.write(
-			body.length.toString(8).padStart(11, '0') + '\0',
+			`${body.length.toString(8).padStart(11, '0')}\0`,
 			124,
 			'ascii',
 		);
@@ -132,7 +132,7 @@ function tar(entries) {
 		header.write('00', 263, 'ascii');
 		let sum = 0;
 		for (const byte of header) sum += byte;
-		header.write(sum.toString(8).padStart(6, '0') + '\0 ', 148, 'ascii');
+		header.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148, 'ascii');
 		records.push(header, body, Buffer.alloc((512 - (body.length % 512)) % 512));
 	}
 	return Buffer.concat([...records, Buffer.alloc(1024)]);

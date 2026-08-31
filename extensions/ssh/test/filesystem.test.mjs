@@ -11,14 +11,14 @@ class FakeSftp {
   stat(path, cb) { const actual = this.links.get(path) ?? path; const node = this.nodes.get(actual); cb(node ? null : code("ENOENT"), node?.attrs); }
   lstat(path, cb) { if (this.links.has(path)) return cb(null, new Attrs("symlink")); this.stat(path, cb); }
   readdir(path, cb) { if (path !== "/home/u/project") return cb(code("ENOTDIR")); cb(null, [{ filename: "a.txt", attrs: this.nodes.get("/home/u/project/a.txt").attrs }, { filename: "escape", attrs: new Attrs("symlink") }]); }
-  open(path, flags, cb) { cb(this.nodes.has(path) ? null : code("ENOENT"), path); }
+  open(path, _flags, cb) { cb(this.nodes.has(path) ? null : code("ENOENT"), path); }
   read(handle, buffer, offset, length, position, cb) { const data = this.nodes.get(handle).data.subarray(position, position + length); data.copy(buffer, offset); cb(null, data.length); }
-  close(handle, cb) { cb(null); }
-  writeFile(path, data, options, cb) { this.nodes.set(path, { attrs: new Attrs("file", data.length, 20), data: Buffer.from(data) }); cb(null); }
+  close(_handle, cb) { cb(null); }
+  writeFile(path, data, _options, cb) { this.nodes.set(path, { attrs: new Attrs("file", data.length, 20), data: Buffer.from(data) }); cb(null); }
   ext_openssh_rename(from, to, cb) { this.renames.push([from, to]); this.nodes.set(to, this.nodes.get(from)); this.nodes.delete(from); cb(null); }
   rename(from, to, cb) { this.ext_openssh_rename(from, to, cb); }
   unlink(path, cb) { const found = this.nodes.delete(path); cb(found ? null : code("ENOENT")); }
-  mkdir(path, options, cb) { if (this.nodes.has(path)) return cb(code("EEXIST")); this.nodes.set(path, { attrs: new Attrs("directory") }); cb(null); }
+  mkdir(path, _options, cb) { if (this.nodes.has(path)) return cb(code("EEXIST")); this.nodes.set(path, { attrs: new Attrs("directory") }); cb(null); }
   rmdir(path, cb) { this.unlink(path, cb); }
 }
 function code(value) { return Object.assign(new Error(value), { code: value }); }
@@ -71,6 +71,6 @@ test("same profile with different roots is isolated on every operation", async (
 });
 
 test("disconnect after mutation begins reports outcome unknown and requires reconciliation", async () => {
-  const { fs, sftp } = setup(); sftp.ext_openssh_rename = (from, to, cb) => cb(code("ECONNRESET"));
+  const { fs, sftp } = setup(); sftp.ext_openssh_rename = (_from, _to, cb) => cb(code("ECONNRESET"));
   await assert.rejects(() => fs.write({ ...base, path: "uncertain.txt", data: "maybe" }), (e) => e.code === "outcome-unknown" && e.details.reconciliationRequired === true);
 });

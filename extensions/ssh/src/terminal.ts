@@ -78,7 +78,7 @@ export class RemoteTerminalManager {
           throw retryError;
         }
       }
-      const command = `export TERMINAY_SESSION_PROOF=${quotePosix(sessionProof)}\ncd -- ${quotePosix(root)} && exec \"\${SHELL:-/bin/sh}\" -l\n`;
+      const command = `export TERMINAY_SESSION_PROOF=${quotePosix(sessionProof)}\ncd -- ${quotePosix(root)} && exec "\${SHELL:-/bin/sh}" -l\n`;
       channel.write(command);
       const session = new RemoteTerminalSession(input.sessionId, sessionProof, channel, lease, this.#maxBufferedBytes);
       this.#sessions.set(input.sessionId, session); lease.trackTerminal(session);

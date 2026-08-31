@@ -6,7 +6,7 @@ import { promisify } from 'node:util'
 import { runProductionAudit } from './production-dependency-audit.mjs'
 import { checkWorkspace } from './check-workspace-boundaries.mjs'
 
-const execFileAsync = promisify(execFile)
+const _execFileAsync = promisify(execFile)
 
 export async function inspectReleaseInputs(root = process.cwd()) {
   const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
