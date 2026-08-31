@@ -27,6 +27,8 @@ test('web workspace reconnects and surfaces an error on application silence, not
 		/shouldRecoverFromSilence\([\s\S]*recoverConnection\(\)/u,
 	);
 	assert.match(source, /setError\(/u);
+	assert.match(source, /Terminal stream stalled/u);
+	assert.match(source, /logSessionLane/u);
 	assert.match(source, /Reconnecting/u);
 	assert.match(source, /session-workspace--reconnecting/u);
 });
@@ -83,11 +85,38 @@ test('silence watch notifies once after outbound continues without inbound', () 
 	});
 	watch.noteOutbound();
 	now = 3_000;
-	assert.equal(timers.length, 1);
-	timers.at(-1)?.callback();
+	assert.ok(timers.length >= 1);
+	for (const timer of [...timers]) timer.callback();
 	assert.deepEqual(stalls, ['no-inbound']);
 	watch.noteOutbound();
 	assert.deepEqual(stalls, ['no-inbound']);
+	watch.stop();
+});
+
+test('silence watch samples application-lane counters while the session stays open', () => {
+	const samples = [];
+	let now = 0;
+	const timers = [];
+	const watch = createSessionSilenceWatch({
+		onSilence: () => undefined,
+		onSample: (snapshot) => samples.push(snapshot),
+		now: () => now,
+		stallMs: 30_000,
+		sampleMs: 10_000,
+		setTimeout: (callback, delayMs) => {
+			timers.push({ callback, delayMs });
+			return timers.length;
+		},
+		clearTimeout: () => undefined,
+	});
+	watch.noteInbound();
+	watch.noteOutbound();
+	now = 10_000;
+	const sample = timers.find((timer) => timer.delayMs === 10_000);
+	sample?.callback();
+	assert.equal(samples.length, 1);
+	assert.equal(samples[0]?.inboundFrames, 1);
+	assert.equal(samples[0]?.outboundFrames, 1);
 	watch.stop();
 });
 
