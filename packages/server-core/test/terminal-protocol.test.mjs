@@ -100,7 +100,7 @@ test("terminal operation registry binds the client contract to one server-owned 
   const spoofed = await dispatcher.command(request("terminal.input", { clientId: "client-b", identity, attachmentId: attachment.attachmentId, dataBase64: "eA==" }, "spoof-1"));
   assert.equal(spoofed.ok, false);
   assert.equal(service.getSession(identity).status, "running");
-  registry.closeClient("client-a");
+  registry.closeConnection("connection-client-a");
   unsubscribe();
   assert.equal(service.getSession(identity).status, "running");
 });
@@ -135,11 +135,21 @@ test("congestion suppression stops publishing raw output without stopping the PT
     assert.equal(attached.ok, true, JSON.stringify(attached));
     const attachmentId = attached.result.attachmentId;
 
+    // Raw output is published transiently, so the journal revision never moves
+    // for it. Observe the published stream itself instead.
+    const published = [];
+    const unsubscribe = journal.subscribe((event) => {
+      if (event.event === "terminal" && event.payload.type === "output") published.push(event.payload.nextPosition);
+    });
+
     pty.processes[0].emitData("published");
-    const revisionBeforeSuppression = journal.revision;
-    registry.suppressOutput(attachmentId, "client-a");
+    await nextTurn();
+    assert.equal(published.length, 1, "live output is published before suppression");
+
+    registry.suppressOutput(attachmentId, "connection-client-a");
     pty.processes[0].emitData(new Uint8Array(64 * 1024));
-    assert.equal(journal.revision, revisionBeforeSuppression, "suppressed output never enters the shared event journal");
+    await nextTurn();
+    assert.equal(published.length, 1, "suppressed output never reaches the shared event journal");
     assert.equal(service.getSession(identity).outputPosition, 64 * 1024 + 9, "the server-owned PTY stream continues advancing");
 
     const input = await dispatcher.command(request(
@@ -149,6 +159,19 @@ test("congestion suppression stops publishing raw output without stopping the PT
     ));
     assert.equal(input.ok, true, JSON.stringify(input));
     assert.equal(new TextDecoder().decode(pty.processes[0].writes.at(-1)), "ok");
+
+    // Suppression is bounded: acknowledging the rendered boundary resumes the
+    // live stream on this same attachment instead of muting it permanently.
+    const acknowledged = await dispatcher.command(request(
+      "terminal.ack",
+      { clientId: "client-a", identity, attachmentId, position: service.getSession(identity).outputPosition },
+      "ack-after-suppression",
+    ));
+    assert.equal(acknowledged.ok, true, JSON.stringify(acknowledged));
+    pty.processes[0].emitData("resumed");
+    await nextTurn();
+    assert.equal(published.length, 2, "an acknowledged attachment resumes publishing live output");
+    unsubscribe();
   } finally {
     await service.shutdown();
   }
@@ -452,7 +475,7 @@ test("framed terminal attach keeps an overstated fragmented replay inside the pr
     authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: "write" }),
     eventJournal: journal,
     ...registry.operations,
-    onConnectionClosed: registry.closeClient,
+    onConnectionClosed: (connectionId) => registry.closeConnection(connectionId),
   }).accept(pair.server);
   const serverTask = server.start();
   const protocolClient = new TerminayClient({ transport: pair.client, clientId: "client-a", capabilities: ["terminal"] });
@@ -510,7 +533,7 @@ test("protocol client close releases its resize lease without terminating the se
     }, "resize-owner"));
     assert.equal(firstResize.ok, true);
 
-    registry.closeClient("client-a");
+    registry.closeConnection("connection-client-a");
     assert.equal(service.getSession(identity).status, "running");
 
     const secondAttachment = await dispatcher.command(request("terminal.attach", { clientId: "client-b", identity, fromPosition: 0 }, "attach-replacement", "write", "client-b"));
@@ -594,7 +617,7 @@ test("framed ServerConnection exposes server-owned terminal operations through t
     authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: "write" }),
     eventJournal: journal,
     ...registry.operations,
-    onConnectionClosed: registry.closeClient,
+    onConnectionClosed: (connectionId) => registry.closeConnection(connectionId),
   }).accept(pair.server);
   const serverTask = server.start();
   const protocolClient = new TerminayClient({ transport: pair.client, clientId: "client-framed", capabilities: ["terminal"] });

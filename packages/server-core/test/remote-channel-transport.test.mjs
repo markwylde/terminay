@@ -4,8 +4,6 @@ import { TerminayClient } from "@terminay/client-core";
 import { createInMemoryTransportPair } from "@terminay/protocol-conformance";
 import {
 	HeadlessChannelTransport,
-	RemoteConnectionManager,
-	RemoteHeadlessWebRtcFactory,
 	ServerConnection,
 } from "../dist/index.js";
 
@@ -248,97 +246,6 @@ test("the canonical client protocol runs over a headless application channel", a
 	await client.close();
 	await serverTask;
 	assert.equal(server.state, "closed");
-});
-
-test("session transport consumers prevent application frames from duplicating into the manager queue", async () => {
-	const channels = new Map();
-	const manager = new RemoteConnectionManager({ serverId: "server-a", sessionOrigin: "https://session.example.test" });
-	manager.expose(Date.now() + 60_000);
-	const factory = new RemoteHeadlessWebRtcFactory({
-		manager,
-		runtimes: [{
-			runtime: "custom",
-			connect: () => {
-				const result = new Map();
-				for (const label of ["control", "application", "terminal", "assets"]) {
-					const channel = new FakeChannel();
-					channel.label = label;
-					channel.open();
-					channels.set(label, channel);
-					result.set(label, channel);
-				}
-				return result;
-			},
-		}],
-	});
-	const session = await factory.connect("custom", {
-		ticketId: "ticket-a",
-		serverId: "server-a",
-		sessionOrigin: "https://session.example.test",
-		deviceId: "device-a",
-		expiresAt: Date.now() + 60_000,
-		authenticated: true,
-	});
-	const transport = session.createTransport("application", { maxFrameBytes: 8 });
-	await transport.open();
-	channels.get("application").emit(new Uint8Array([6, 7]));
-	const next = await transport.incoming[Symbol.asyncIterator]().next();
-	assert.deepEqual([...next.value], [6, 7]);
-	assert.equal(manager.snapshot().peers[0].queuedBytes, 0);
-	await session.close();
-});
-
-test("each authenticated channel has one protocol transport owner until it closes", async () => {
-	const channels = new Map();
-	const manager = new RemoteConnectionManager({ serverId: "server-owner", sessionOrigin: "https://session.example.test" });
-	manager.expose(Date.now() + 60_000);
-	const factory = new RemoteHeadlessWebRtcFactory({
-		manager,
-		runtimes: [{
-			runtime: "custom",
-			connect: () => {
-				const result = new Map();
-				for (const label of ["control", "application", "terminal", "assets"]) {
-					const channel = new FakeChannel();
-					channel.label = label;
-					channel.open();
-					channels.set(label, channel);
-					result.set(label, channel);
-				}
-				return result;
-			},
-		}],
-	});
-	const session = await factory.connect("custom", {
-		ticketId: "ticket-owner",
-		serverId: "server-owner",
-		sessionOrigin: "https://session.example.test",
-		deviceId: "device-owner",
-		expiresAt: Date.now() + 60_000,
-		authenticated: true,
-	});
-
-	const first = session.createTransport("application");
-	await first.open();
-	assert.throws(() => session.createTransport("application"), /already attached/);
-	channels.get("application").emit(new Uint8Array([9]));
-	assert.deepEqual([...(await first.incoming[Symbol.asyncIterator]().next()).value], [9]);
-
-	await first.close();
-	assert.equal(session.state, "closed");
-	const replacementSession = await factory.connect("custom", {
-		ticketId: "ticket-owner-reconnect",
-		serverId: "server-owner",
-		sessionOrigin: "https://session.example.test",
-		deviceId: "device-owner",
-		expiresAt: Date.now() + 60_000,
-		authenticated: true,
-	});
-	const replacement = replacementSession.createTransport("application");
-	await replacement.open();
-	channels.get("application").emit(new Uint8Array([10]));
-	assert.deepEqual([...(await replacement.incoming[Symbol.asyncIterator]().next()).value], [10]);
-	await replacementSession.close();
 });
 
 test("Local and headless remote transports share one client/server application protocol suite", async () => {

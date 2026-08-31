@@ -12,7 +12,7 @@ import {
 } from "./validation.js";
 import type {
   AgentFileHandle, AgentFileWatcher, AgentForegroundProcess, AgentLifecycleEvent, AgentLifecyclePublisher,
-  AgentObservationCapability, AgentProcessHandle, AgentProcessSnapshot, AgentProjectHandle, AgentProviderRegistration,
+  AgentObservationCapability, AgentOpenFile, AgentProcessHandle, AgentProcessSnapshot, AgentProjectHandle, AgentProviderRegistration,
   AgentProviderRuntime, AgentRecordContext, AgentSessionBinding, AgentSessionBindingRequest, AgentTerminalContext,
   AgentTerminalHandle, AgentTerminalTtyFact, CancellationSignal, ExtensionContext, TerminayExtension,
 } from "./types.js";
@@ -101,7 +101,7 @@ export function createProviderVaultHarness(): ProviderVaultBroker {
   };
   const entryFor = (binding: ProviderVaultBinding): FixtureVaultEntry => {
     const entry = entriesByBinding.get(binding.bindingRef);
-    if (!entry || entry.state !== "active") return unavailable();
+    if (entry?.state !== "active") return unavailable();
     return entry;
   };
 
@@ -192,13 +192,13 @@ export function fixtureTerminal(options: FixtureTerminalOptions): AgentTerminalC
   return {
     terminal: { id: "fixture-terminal" } as unknown as AgentTerminalHandle,
     project: { id: "fixture-project" } as unknown as AgentProjectHandle,
-    environment: { id: "fixture-environment" } as any, process, foreground, tty: options.tty,
+    environment: { id: "fixture-environment" } as AgentTerminalContext["environment"], process, foreground, tty: options.tty,
     capabilities: new Set(options.capabilities ?? ["process-observation", "filesystem-observation", "agent-journal"]), signal: notCancelled,
     async bindSession(request: AgentSessionBindingRequest): Promise<AgentSessionBinding> { return { providerSessionId: request.providerSessionId, mappingVersion: request.mappingVersion, journal: request.journal } as unknown as AgentSessionBinding; },
     observation: {
       processes: {
         async descendants(): Promise<AgentProcessSnapshot[]> { return [{ handle: process, executableName: foreground.executableName, cwd: options.cwd, pid: options.pid ?? 4242 }]; },
-        async openFiles(): Promise<any[]> { return [...files.keys()].map((path) => ({ handle: fileHandle(path), path, access: "writable" })); },
+        async openFiles(): Promise<AgentOpenFile[]> { return [...files.keys()].map((path) => ({ handle: fileHandle(path), path, access: "writable" })); },
         async environment(names: readonly string[]): Promise<Record<string, string>> {
           const values = options.environment ?? {};
           return Object.fromEntries(names.flatMap((name) => values[name] === undefined ? [] : [[name, values[name]] as const]));

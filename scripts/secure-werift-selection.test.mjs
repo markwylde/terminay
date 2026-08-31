@@ -15,6 +15,8 @@ test('release evidence binds the exact fail-closed Secure-Werift selection', asy
 	assert.equal(selection.runtime, 'secure-werift');
 	assert.equal(selection.upstream.npmPackage, 'werift@0.24.1');
 	assert.equal(selection.package.version, '0.24.1-candidate.1');
+	// Every governed patch, in the order the build applies it. Order matters:
+	// later hunks are located against the output of the earlier ones.
 	assert.deepEqual(selection.patches, [
 		{
 			path: 'scripts/patches/werift-0.24.1-abort-turn-refresh.patch',
@@ -22,6 +24,13 @@ test('release evidence binds the exact fail-closed Secure-Werift selection', asy
 				'Abort the pending TURN allocation refresh timer during peer close.',
 			sha256:
 				'34ea60bd991256adb2cd50bfe0ef9011cfc79054aff686b9ec35ef4703de4211',
+		},
+		{
+			path: 'scripts/patches/werift-0.24.1-sctp-zero-window-probe.patch',
+			purpose:
+				'Probe a zero receive window and serialize data-channel flush so outbound delivery cannot deadlock.',
+			sha256:
+				'298aa1ebb0f0eb45c673dd24907e7e8110bfef499524993d8203fd74ecaa6b2b',
 		},
 	]);
 	assert.equal(selection.runtimePolicy.fallback, 'disabled');
@@ -43,16 +52,15 @@ test('opt-in Chromium integration proof imports the staged selected artifact lay
 		'scripts/production-headless-webrtc-secure-werift.test.mjs',
 		'utf8',
 	);
-	const browser = await readFile(
-		'e2e/webrtc-headless-node-host.spec.ts',
-		'utf8',
-	);
+	// The browser-side proof moved into the compatibility runner when the
+	// canonical pairing/reconnect flow replaced the standalone Playwright spec.
+	const browser = await readFile('scripts/webrtc-compatibility-proof.mjs', 'utf8');
 	assert.match(proof, /staged-selected-runtime/u);
 	assert.match(proof, /TERMINAY_WEBRTC_STAGED_RUNTIME_ROOT/u);
 	assert.match(proof, /TERMINAY_RUN_SIBLING_WEBRTC_BRIDGE_PROOF/u);
 	assert.match(proof, /sibling peer-owner canonical browser bridge proof/u);
 	assert.match(browser, /TERMINAY_WEBRTC_STAGED_RUNTIME_ROOT/u);
-	assert.match(browser, /stagedWeriftRuntimeRoot \?\? path\.join/u);
+	assert.match(browser, /TERMINAY_WEBRTC_SELECTED_RUNTIME_ROOT/u);
 });
 
 test(

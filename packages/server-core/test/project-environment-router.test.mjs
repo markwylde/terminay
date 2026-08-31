@@ -340,7 +340,7 @@ test('provider exceptions are normalized and cancellation is bounded', async () 
     async invoke(_capability, operation, _input, context) {
       if (operation === 'fail') throw new Error('provider secret detail');
       if (operation === 'ignore-abort') return new Promise(() => {});
-      await new Promise((resolve, reject) => context.signal.addEventListener('abort', () => reject(context.signal.reason), { once: true }));
+      await new Promise((_resolve, reject) => context.signal.addEventListener('abort', () => reject(context.signal.reason), { once: true }));
     },
   });
   const router = new ProjectEnvironmentRouter({ serverId: 'server-a', workspaceSnapshot: () => workspace, environmentSnapshot: () => environments, registry });

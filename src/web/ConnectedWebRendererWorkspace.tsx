@@ -521,7 +521,7 @@ export function ConnectedWebRendererWorkspace({
 	return (
 		<div className="connected-web-renderer-workspace">
 			<TerminalSettingsClientProvider client={serverSettingsClient}>
-				<>
+				
 					{hasNativeMenus ? null : (
 						<ConnectedBrowserMenuBar
 							onBack={onBack}
@@ -529,7 +529,7 @@ export function ConnectedWebRendererWorkspace({
 						/>
 					)}
 					{workspaceContent}
-				</>
+				
 			</TerminalSettingsClientProvider>
 			{auxiliaryRoute === null ? null : (
 				<ConnectedBrowserAuxiliaryDialog

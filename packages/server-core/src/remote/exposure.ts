@@ -1,7 +1,6 @@
 import type { ProtocolId } from "@terminay/protocol";
 import {
   RemoteConnectionManager,
-  type RemoteAuthProof,
   type RemoteExposure,
   type RemotePeerSnapshot,
 } from "./transport.js";
@@ -12,18 +11,11 @@ import {
   type RemotePairingRoom,
   type RemotePairingRoomMetadata,
 } from "./pairing.js";
-import {
-	type RemoteHeadlessSessionHost,
-	type HeadlessWebRtcRuntime,
-  type RemoteHeadlessSession,
-  type RemoteHeadlessSessionSnapshot,
-} from "./headless.js";
 import { RemoteAuditLog, RemoteRateLimiter } from "./lifecycle.js";
 
 export interface RemoteExposureControllerOptions {
 	readonly manager: RemoteConnectionManager;
 	readonly pairing: RemotePairingStore;
-  readonly headless?: RemoteHeadlessSessionHost;
   readonly now?: () => number;
   readonly defaultLifetimeMs?: number;
   readonly audit?: RemoteAuditLog;
@@ -55,7 +47,6 @@ export interface RemoteExposureStatus {
   readonly exposure: RemoteExposure;
   readonly pairing: RemotePairingRoomMetadata | undefined;
   readonly peers: readonly RemotePeerSnapshot[];
-  readonly sessions: readonly RemoteHeadlessSessionSnapshot[];
 }
 
 /**
@@ -68,7 +59,6 @@ export interface RemoteExposureStatus {
 export class RemoteExposureController {
   private readonly manager: RemoteConnectionManager;
   private readonly pairing: RemotePairingStore;
-	private readonly headless: RemoteHeadlessSessionHost | undefined;
   private readonly now: () => number;
   private readonly defaultLifetimeMs: number;
 	private readonly audit: RemoteAuditLog;
@@ -77,7 +67,6 @@ export class RemoteExposureController {
   constructor(options: RemoteExposureControllerOptions) {
     this.manager = options.manager;
     this.pairing = options.pairing;
-    this.headless = options.headless;
     this.now = options.now ?? (() => Date.now());
     this.defaultLifetimeMs = positive(options.defaultLifetimeMs ?? 5 * 60 * 1000, "defaultLifetimeMs");
 	this.audit = options.audit ?? new RemoteAuditLog({ serverId: this.manager.serverId, now: this.now });
@@ -99,7 +88,6 @@ export class RemoteExposureController {
       exposure,
       pairing,
       peers: this.manager.snapshot().peers,
-		sessions: this.headless?.listSessions() ?? [],
     });
   }
 
@@ -158,32 +146,8 @@ export class RemoteExposureController {
 	}
   }
 
-  /** Consume the one-time room and then establish all isolated headless
-   * channels. Application-level authentication remains in the gateway. */
-  async connectHeadless(
-    runtime: HeadlessWebRtcRuntime,
-    attempt: RemotePairingAttempt,
-    proof: RemoteAuthProof,
-    signal?: AbortSignal,
-  ): Promise<RemoteHeadlessSession> {
-    if (this.manager.exposure.state !== "exposed") throw new Error("remote exposure is not active");
-    if (this.headless === undefined) throw new Error("headless WebRTC runtime is unavailable");
-    this.consumePairing(attempt);
-	this.audit.record({ action: "peer-connect-started", deviceId: proof.deviceId });
-	try {
-		const session = await this.headless.connect(runtime, proof, signal);
-		this.audit.record({ action: "peer-connected", peerId: session.peerId, deviceId: session.deviceId });
-		return session;
-	} catch (error) {
-		this.audit.record({ action: "peer-connect-failed", deviceId: proof.deviceId, reason: "transport" });
-		throw error;
-	}
-  }
-
 	async revokeDevice(deviceId: ProtocolId): Promise<number> {
-		const count = this.headless === undefined
-			? this.manager.revokeDevice(deviceId)
-			: await this.headless.revokeDevice(deviceId);
+		const count = this.manager.revokeDevice(deviceId);
 		this.audit.record({ action: "device-revoked", deviceId });
 		return count;
 	}
@@ -192,10 +156,6 @@ export class RemoteExposureController {
    * remain connected so Local/server-owned work is not interrupted. */
   stopExposure(): RemoteExposureStatus {
     const wasExposed = this.manager.exposure.state === "exposed";
-		// A half-negotiated peer has consumed admission but is not an established
-		// remote session. Fence it while preserving existing sessions, which remain
-		// usable until disconnect, revocation, or shutdown.
-		this.headless?.abortPendingConnections();
     this.manager.stopExposure();
     this.pairing.disable();
     if (wasExposed) this.audit.record({ action: "exposure-stopped" });
@@ -212,9 +172,8 @@ export class RemoteExposureController {
 		return Object.freeze(report);
 	}
 
-  /** Full host shutdown, including live headless channels. */
+  /** Full host shutdown. */
 	async shutdown(): Promise<void> {
-		await this.headless?.closeAll();
 		this.stopExposure();
 	}
 }

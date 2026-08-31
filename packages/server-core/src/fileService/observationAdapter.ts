@@ -36,8 +36,11 @@ export interface FileObservationAdapterOptions {
   readonly maxFolderSizeJobs?: number;
 }
 
-interface WatchState { readonly projectId: string; readonly clientId: string; readonly controller: AbortController; consumers: number; }
-interface SizeJob { readonly projectId: string; readonly clientId: string; readonly controller: AbortController; }
+/** One shared watch may be consumed by several connections of the same client.
+ * Consumers are counted per connection so a closing connection releases only
+ * its own share and a live sibling connection keeps the subscription open. */
+interface WatchState { readonly projectId: string; readonly clientId: string; readonly controller: AbortController; readonly consumersByConnection: Map<string, number>; }
+interface SizeJob { readonly projectId: string; readonly clientId: string; readonly connectionId: string; readonly controller: AbortController; }
 
 /** Canonical project-scoped directory observation and cancellable folder-size
  * authority. Host filesystem APIs stay behind FileObservationHost; clients see
@@ -73,9 +76,12 @@ export class ServerFileObservationAdapter {
     };
   }
 
-  closeClient(clientId: string): void {
-    for (const [id, state] of this.watchStates) if (state.clientId === clientId) this.closeWatch(id, state);
-    for (const [id, job] of this.jobs) if (job.clientId === clientId) this.closeJob(id, job);
+  closeConnection(connectionId: string): void {
+    for (const [id, state] of this.watchStates) {
+      if (!state.consumersByConnection.delete(connectionId)) continue;
+      if (state.consumersByConnection.size === 0) this.closeWatch(id, state);
+    }
+    for (const [id, job] of this.jobs) if (job.connectionId === connectionId) this.closeJob(id, job);
   }
 
   close(): void {
@@ -91,11 +97,11 @@ export class ServerFileObservationAdapter {
     const subscription = this.watches.subscribe({ clientId: request.context.clientId, projectId, resource });
     const existing = this.watchStates.get(subscription.subscriptionId);
     if (existing !== undefined) {
-      existing.consumers += 1;
+      addConsumer(existing, request.context.connectionId);
       return { subscriptionId: subscription.subscriptionId, projectId, resource, cursor: this.watches.sequence };
     }
     const controller = new AbortController();
-    const state = { projectId, clientId: request.context.clientId, controller, consumers: 1 };
+    const state: WatchState = { projectId, clientId: request.context.clientId, controller, consumersByConnection: new Map([[request.context.connectionId, 1]]) };
     this.watchStates.set(subscription.subscriptionId, state);
     void Promise.resolve(this.options.host.watch({
       projectId, resource, signal: controller.signal,
@@ -143,8 +149,7 @@ export class ServerFileObservationAdapter {
     const id = text(payload.subscriptionId, "subscriptionId", 128);
     const state = this.requireWatch(id, request.context.clientId);
     this.project(request, state.projectId);
-    state.consumers -= 1;
-    if (state.consumers === 0) this.closeWatch(id, state);
+    if (removeConsumer(state, request.context.connectionId) === 0) this.closeWatch(id, state);
     return null;
   }
 
@@ -155,7 +160,7 @@ export class ServerFileObservationAdapter {
     const resource = relativeResource(payload.resource);
     const jobId = `size-${(++this.jobSequence).toString(36)}`;
     const controller = new AbortController();
-    const job = { projectId, clientId: request.context.clientId, controller };
+    const job = { projectId, clientId: request.context.clientId, connectionId: request.context.connectionId, controller };
     this.jobs.set(jobId, job);
     const emit = (phase: "progress" | "completed" | "cancelled" | "failed", value?: { readonly bytes: number; readonly files: number; readonly directories: number }): void => {
       this.options.eventJournal.append(FILE_OBSERVATION_OPERATIONS.folderSizeEvent, {
@@ -196,6 +201,20 @@ export class ServerFileObservationAdapter {
   }
   private closeWatch(id: string, state: WatchState): void { state.controller.abort(); this.watches.unsubscribe(id); this.watchStates.delete(id); }
   private closeJob(id: string, job: SizeJob): void { job.controller.abort(); this.jobs.delete(id); }
+}
+
+function addConsumer(state: WatchState, connectionId: string): void {
+  state.consumersByConnection.set(connectionId, (state.consumersByConnection.get(connectionId) ?? 0) + 1);
+}
+
+/** Release one consumer held by this connection and report the remaining total. */
+function removeConsumer(state: WatchState, connectionId: string): number {
+  const held = state.consumersByConnection.get(connectionId) ?? 0;
+  if (held <= 1) state.consumersByConnection.delete(connectionId);
+  else state.consumersByConnection.set(connectionId, held - 1);
+  let total = 0;
+  for (const count of state.consumersByConnection.values()) total += count;
+  return total;
 }
 
 function objectPayload(value: unknown): Record<string, unknown> { if (typeof value !== "object" || value === null || Array.isArray(value)) throw new TypeError("file observation payload is invalid"); return value as Record<string, unknown>; }

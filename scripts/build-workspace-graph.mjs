@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, } from 'node:path';
 
 const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 

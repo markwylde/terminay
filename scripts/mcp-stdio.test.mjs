@@ -48,7 +48,7 @@ test('MCP stdio adapter registers every tool and round-trips operations through 
     capabilities,
     dispatch: async (request, scope) => {
       seen.push({ scope, op: request.op, params: request.params })
-      const { op, params } = request
+      const { op } = request
       if (op === 'list_terminals') {
         return {
           ok: true,
