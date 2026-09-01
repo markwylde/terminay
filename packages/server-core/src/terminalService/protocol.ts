@@ -22,6 +22,9 @@ import type {
   QueryRequest,
 } from "../types.js";
 import type { OrderedEventJournalLike } from "../types.js";
+import {
+	recordStreamDiagnostic,
+} from '../streamDiagnostics.js';
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const MAX_INPUT_BYTES = 1024 * 1024;
@@ -547,6 +550,14 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
         if (!notifyOnClose || attachmentId === undefined) return;
         discardPendingOutput();
         const head = options.service.getSession(identity)?.outputPosition ?? 0;
+        recordStreamDiagnostic('attach', 'stream_closed', {
+          clientId,
+          projectId: identity.projectId,
+          sessionId: identity.sessionId,
+          attachmentId,
+          fromPosition: publishedPosition ?? head,
+          toPosition: head,
+        });
         options.eventJournal.append(TERMINAL_EVENT, {
           clientId,
           attachmentId,
@@ -563,6 +574,25 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       throw error;
     }
     attachmentId = attachment.attachmentId;
+    // The one record that ties a panel to a shell: which client, which project
+    // and session, which attachment id the delivery lane will be keyed by, and
+    // where in the byte stream this display is starting from.
+    recordStreamDiagnostic('attach', 'attached', {
+      connectionId: request.context.connectionId,
+      clientId,
+      projectId: identity.projectId,
+      sessionId: identity.sessionId,
+      attachmentId,
+      replacedAttachmentId: priorId,
+      freshPresentation,
+      fromPosition,
+      requestedFromPosition,
+      liveHead,
+      checkpointHead: preparedCheckpoint?.headPosition,
+      checkpointCatchUp,
+      skipCheckpointCatchUp,
+      presentationUnavailable,
+    });
     let checkpoint: TerminalPresentationCheckpointMetadata | undefined;
     if (preparedCheckpoint !== undefined) {
       try {
