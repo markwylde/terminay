@@ -4,13 +4,12 @@ import path from 'node:path';
 import type { Page } from '@playwright/test';
 import { _electron as electron } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { settledTerminalSessionId } from './support/terminal-session';
 import { sendAppCommand } from './support/app';
 import { openFileExplorer, selectSidebarGroup } from './support/ui';
 
 async function getActiveSessionId(page: Page): Promise<string> {
-	const sessionId = await page.locator('.terminal-panel:visible').first().getAttribute('data-terminay-terminal-session-id');
-	if (!sessionId) throw new Error('Active terminal session id is unavailable');
-	return sessionId;
+	return await settledTerminalSessionId(page.locator('.terminal-panel:visible').first());
 }
 
 async function getActiveProjectId(page: Page): Promise<string> {
