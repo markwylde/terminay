@@ -1,3 +1,4 @@
+export * from "./channelFragments.js";
 export * from "./errors.js";
 export * from "./frame.js";
 export * from "./host.js";
