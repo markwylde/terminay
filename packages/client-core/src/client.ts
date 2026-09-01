@@ -264,10 +264,16 @@ export class TerminayClient {
       unsubscribe,
       onEvent: (listener) => {
         if (state.overflow !== undefined) throw state.overflow;
-        if (state.resync !== undefined) return () => undefined;
         state.listeners.add(listener as unknown as (event: ClientEvent) => void);
-        const buffered = state.buffered.splice(0).sort((left, right) => left.revision - right.revision);
-        for (const queued of buffered) listener(queued as ClientEvent<T>);
+        // Buffered events predate an outstanding resync and are superseded by
+        // the snapshot the consumer is about to refetch. Returning a phantom
+        // disposer instead of registering, as this did, is what made a terminal
+        // panel's re-attach silent: it subscribed and was never wired up.
+        const buffered = state.buffered.splice(0);
+        if (state.resync === undefined) {
+          buffered.sort((left, right) => left.revision - right.revision);
+          for (const queued of buffered) listener(queued as ClientEvent<T>);
+        }
         return () => state.listeners.delete(listener as unknown as (event: ClientEvent) => void);
       },
       onResync: (listener) => {
@@ -396,7 +402,11 @@ export class TerminayClient {
       }
       const subscription = this.events.get(envelope.subscriptionId);
       if (subscription === undefined) return;
-      if (subscription.resync !== undefined) return;
+      // A resync notice reports a hole in history, not the end of the stream.
+      // Withholding live events past it left subscriptions permanently deaf:
+      // the workspace refreshed once and then never saw another change, so a
+      // terminal created afterwards never appeared, while the connection still
+      // reported itself connected. Consumers reconcile by revision.
 			const event: ClientEvent =
 				body.byteLength === 0 ? envelope : { ...envelope, body };
       if (subscription.listeners.size === 0) {
@@ -414,7 +424,8 @@ export class TerminayClient {
     if (envelope.type === "event_resync") {
       const subscription = this.events.get(envelope.subscriptionId);
       if (subscription === undefined) return;
-      if (subscription.resync !== undefined) return;
+      // Each notice is a distinct hole. Ignoring later ones because an earlier
+      // one was seen leaves the consumer unaware that it is stale again.
       this.setState("connected", { revision: envelope.revision, cursor: envelope.cursor, stale: true });
       const resync = { subscriptionId: envelope.subscriptionId, revision: envelope.revision, cursor: envelope.cursor, ...(envelope.snapshot === undefined ? {} : { snapshot: envelope.snapshot }) };
       subscription.resync = resync;
