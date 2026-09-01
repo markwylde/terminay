@@ -338,14 +338,70 @@ test("subscription exposes an explicit bounded-replay resync signal", async () =
   const late = [];
   subscription.onResync((resync) => late.push(resync));
   assert.deepEqual(late, [{ subscriptionId: "agent-resync", revision: 8, cursor: "8" }]);
+  // A resync notice reports a hole in history. It is not the end of the
+  // stream, and a listener registered after one is a real listener.
+  //
+  // This previously asserted the opposite: that events stopped and later
+  // notices were ignored. No consumer ever honoured the re-subscribe contract
+  // that would have made silence safe, so in practice one congested projection
+  // lane left a subscription permanently deaf while the connection still
+  // reported itself connected.
   const events = [];
   subscription.onEvent((event) => events.push(event.revision));
   transport.push({ type: "event", subscriptionId: "agent-resync", revision: 9, cursor: "9", event: "agent", payload: { revision: 9 } });
   transport.push({ type: "event_resync", subscriptionId: "agent-resync", revision: 10, cursor: "10" });
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(events, []);
-  assert.deepEqual(received, [{ subscriptionId: "agent-resync", revision: 8, cursor: "8" }]);
+  assert.deepEqual(events, [9], "live events continue past a resync notice");
+  assert.deepEqual(received, [
+    { subscriptionId: "agent-resync", revision: 8, cursor: "8" },
+    { subscriptionId: "agent-resync", revision: 10, cursor: "10" },
+  ], "every hole is reported, not only the first");
   remove();
+  await client.close();
+});
+
+/**
+ * The freeze this pins.
+ *
+ * One congested projection lane made the server replace a backlog with a single
+ * `event_resync` marker. The client latched on that marker and never cleared
+ * it, which silently disabled the subscription three ways at once: live events
+ * were dropped, later markers were ignored, and `onEvent` returned a phantom
+ * disposer without registering the listener.
+ *
+ * The workspace therefore refreshed exactly once and then never saw another
+ * change, so a terminal created afterwards never appeared; and a terminal panel
+ * that correctly detected congestion and re-attached wired its listener into
+ * nothing. The connection reported itself connected throughout, because nothing
+ * had failed. Only a reload recovered it.
+ */
+test("a resynchronized subscription keeps delivering to listeners registered afterwards", async () => {
+  const { client, transport } = await connectedClient();
+  const subscribing = client.subscribe("workspace.changed", { subscriptionId: "resync-liveness" });
+  const subscribeFrame = transport.frames.find(({ envelope }) => envelope.type === "command" && envelope.operation === "events.subscribe");
+  assert.ok(subscribeFrame);
+  transport.push({ type: "command_result", commandId: subscribeFrame.envelope.commandId, correlationId: subscribeFrame.envelope.correlationId, ok: true, result: { subscriptionId: "resync-liveness" } });
+  const subscription = await subscribing;
+
+  transport.push({ type: "event_resync", subscriptionId: "resync-liveness", revision: 4, cursor: "4" });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  // The panel re-attaching after congestion registers here. It must be wired up.
+  const seen = [];
+  const remove = subscription.onEvent((event) => seen.push(event.revision));
+  assert.equal(typeof remove, "function");
+
+  transport.push({ type: "event", subscriptionId: "resync-liveness", revision: 5, cursor: "5", event: "workspace.changed", payload: { revision: 5 } });
+  transport.push({ type: "event", subscriptionId: "resync-liveness", revision: 6, cursor: "6", event: "workspace.changed", payload: { revision: 6 } });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(seen, [5, 6], "a subscription is never permanently deafened by a resync");
+
+  // And the disposer is real, not a no-op standing in for a registration that
+  // never happened.
+  remove();
+  transport.push({ type: "event", subscriptionId: "resync-liveness", revision: 7, cursor: "7", event: "workspace.changed", payload: { revision: 7 } });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(seen, [5, 6]);
   await client.close();
 });
 
