@@ -76,6 +76,54 @@ test('outbound delivery fails atomically with one typed reason', async () => {
 	);
 });
 
+test('a control frame the open transport refuses fails only that sender', async () => {
+	// A WebRTC lane refuses one oversized message while the association stays
+	// live: the request that produced it fails, the connection keeps serving.
+	const transport = new ControlledTransport((frame) => frame.byteLength > 2);
+	await transport.open();
+	const failures = [];
+	const pump = new OutboundDeliveryPump(
+		transport,
+		{ maxQueuedBytes: 64, maxQueuedFrames: 8 },
+		(error) => failures.push(error),
+	);
+
+	const refused = pump.send(new Uint8Array([1, 2, 3, 4]));
+	await assert.rejects(refused, (error) => {
+		assert.ok(error instanceof OutboundDeliveryError);
+		assert.equal(error.reason.code, 'resource');
+		return true;
+	});
+
+	assert.deepEqual(failures, []);
+	await pump.send(new Uint8Array([9]));
+	assert.deepEqual(transport.sent.map((frame) => [...frame]), [[9]]);
+	assert.equal(pump.snapshot.queuedFrames, 0);
+});
+
+test('a refused terminal frame stays terminal for the connection', async () => {
+	// Terminal frames carry stream positions, so dropping one silently would
+	// desync a client that is never told. That failure stays connection-wide.
+	const transport = new ControlledTransport((frame) => frame.byteLength > 2);
+	await transport.open();
+	const failures = [];
+	const pump = new OutboundDeliveryPump(
+		transport,
+		{ maxQueuedBytes: 64, maxQueuedFrames: 8 },
+		(error) => failures.push(error),
+	);
+
+	await assert.rejects(pump.sendTerminal(new Uint8Array([1, 2, 3, 4]), {
+		laneId: 'terminal-a',
+		position: 0,
+		nextPosition: 4,
+		createSkipFrame: () => new Uint8Array([0]),
+	}));
+
+	assert.equal(failures.length, 1);
+	await assert.rejects(pump.send(new Uint8Array([9])), (error) => error === failures[0]);
+});
+
 test('latest-value state coalesces under backpressure without consuming control capacity', async () => {
 	const transport = new ControlledTransport();
 	await transport.open();
