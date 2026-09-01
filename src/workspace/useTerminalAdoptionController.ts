@@ -4,6 +4,7 @@ import {
 	type MutableRefObject,
 	type SetStateAction,
 	useCallback,
+	useRef,
 } from 'react';
 import type {
 	TerminalContextReader,
@@ -85,6 +86,18 @@ export function useTerminalAdoptionController({
 	terminalServerIdentity,
 }: UseTerminalAdoptionControllerOptions) {
 	/**
+	 * The tab this device was on, read once and consumed once.
+	 *
+	 * It cannot be re-read per adoption. Restoring a workspace adopts terminals
+	 * one at a time, and the first one activates itself because nothing is
+	 * selected yet — which records *it* as this device's choice and erases the
+	 * very session being restored, before that session's panel is adopted. The
+	 * memory has to be taken before any of that happens.
+	 *
+	 * `null` means not yet read; `undefined` means read and nothing remembered.
+	 */
+	const rememberedSessionRef = useRef<string | null | undefined>(null);
+	/**
 	 * Adopt a terminal into this project's Dockview.
 	 *
 	 * `activate` is what separates a workspace fact from a view decision. A tab
@@ -119,12 +132,19 @@ export function useTerminalAdoptionController({
 
 			// Dockview activates a newly added panel unless told otherwise, so
 			// declining to call setActive() below is not enough on its own.
+			if (rememberedSessionRef.current === null)
+				rememberedSessionRef.current = recallActiveSession(project.id);
+			const rememberedSessionId = rememberedSessionRef.current ?? undefined;
 			const activatePanel = shouldActivateAdoptedTerminal({
 				requestedLocally: activate,
 				hasActivePanel: api.activePanel !== undefined,
-				rememberedSessionId: recallActiveSession(project.id),
+				rememberedSessionId,
 				sessionId: movedTerminal.sessionId,
 			});
+			// Spent once. A restored selection must not be able to pull focus back
+			// from a terminal the user has since chosen.
+			if (rememberedSessionId === movedTerminal.sessionId)
+				rememberedSessionRef.current = undefined;
 			recordBootstrapDiagnostic('app.workspace.adopt.before-add-panel');
 			const panel = api.addPanel<TerminalPanelParams>({
 				component: 'terminal',
