@@ -372,10 +372,27 @@ size. The UI archive is transferred as acknowledged binary chunks of at most
 64 KiB on the `asset` and `assets` lanes, with at most four unacknowledged
 chunks in flight. Archive transfer failures send typed JSON
 `asset:bundle-error` (`cancelled`, `timeout`, `unavailable`, `invalid-request`,
-or `internal`) and do not take down the host process. The application protocol
-frame budget is separate from this SCTP limit; a send that would exceed the
-negotiated SCTP maximum fails that channel with a visible error instead of
-aborting Electron.
+or `internal`) and do not take down the host process.
+
+The application protocol frame budget is larger than the SCTP limit, so an
+application frame above the negotiated maximum message size travels as ordered
+fragments that the receiving peer reassembles into the original frame before
+any feature sees it. A fragment carries its own `TRMF` magic, format version,
+transfer id, index, and count; frames that already fit are never fragmented.
+A receiver reassembles at most four concurrent transfers and evicts the oldest
+when a newer one starts, so a transfer a sender abandoned mid-frame cannot
+accumulate. It never buffers more than its frame limit for one transfer, and
+fails the lane closed on a fragment that is out of order, over budget, or of an
+unsupported version. Folder task
+scans, Git diffs, and other large query answers therefore complete over a
+remote session exactly as they do locally.
+
+A send the channel still refuses fails only the request that produced it: the
+server answers that query with a `resource` error and the session, its
+subscriptions, and its terminals stay live. Terminal and state lanes carry
+stream positions and event revisions, so a refused frame there stays terminal
+for the connection rather than silently desynchronising a client. A send that
+would exceed the negotiated SCTP maximum never aborts Electron.
 
 `app.terminay.com` contains the connection manager only. Desktop and browser
 hosts do not supply another workspace implementation or interpret feature-level

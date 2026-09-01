@@ -2,6 +2,7 @@ import type {
 	HeadlessDataChannel,
 	RemoteTrafficChannel,
 } from '@terminay/server-core/remote';
+import { DEFAULT_SCTP_MAX_MESSAGE_BYTES } from './uiArchiveTransfer.js';
 
 /**
  * What a peer opener is told about the connection it is establishing.
@@ -16,6 +17,9 @@ export interface HeadlessWebRtcRuntimeContext {
 	readonly sessionOrigin: string;
 	readonly channels: readonly RemoteTrafficChannel[];
 	readonly maxFrameBytes: number;
+	/** Largest single native message a lane accepts. Frames above it are sent
+	 * as fragments the peer reassembles. Defaults to the SCTP-safe bound. */
+	readonly maxMessageBytes?: number;
 	readonly maxBufferedBytes: number;
 	readonly signal: AbortSignal;
 }
@@ -178,6 +182,7 @@ export function createNodeDataChannelRuntimeAdapter(
 							label,
 							context.maxFrameBytes,
 							nativeCloseAttempted,
+							context.maxMessageBytes ?? DEFAULT_SCTP_MAX_MESSAGE_BYTES,
 						),
 					);
 				}
@@ -252,9 +257,12 @@ function wrapNodeDataChannel(
 	label: string,
 	maxFrameBytes: number,
 	nativeCloseAttempted: Set<NodeDataChannelLike>,
+	maxMessageBytes: number,
 ): HeadlessDataChannel {
 	if (!Number.isSafeInteger(maxFrameBytes) || maxFrameBytes <= 0)
 		throw new TypeError('node-datachannel frame limit is invalid');
+	if (!Number.isSafeInteger(maxMessageBytes) || maxMessageBytes <= 0)
+		throw new TypeError('node-datachannel message limit is invalid');
 	if (
 		typeof nativeChannel !== 'object' ||
 		nativeChannel === null ||
@@ -406,6 +414,9 @@ function wrapNodeDataChannel(
 	}
 	return {
 		label,
+		// Native SCTP rejects a message above this bound, so the transport
+		// fragments larger frames rather than losing the lane to one send.
+		maxMessageBytes,
 		get readyState() {
 			if (closed) return 'closed';
 			if (isNativeChannelOpen()) return 'open';
