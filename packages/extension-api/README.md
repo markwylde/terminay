@@ -14,14 +14,15 @@ Extensions are trusted code running with the selected Terminay Server account's
 authority. The extension host provides lifecycle and crash isolation, not an OS
 security sandbox.
 
-Start with the complete [author guide](docs/author-guide.md), then use the
-[API reference](docs/api-reference.md), [manifest reference](docs/manifest.md), [provider and UI guide](docs/provider-ui.md),
-and [permissions/security reference](docs/permissions-and-security.md). A small
+Start with the [developer documentation](https://terminay.com/developers/),
+including the [extension quickstart](https://terminay.com/developers/extensions/quickstart),
+[manifest reference](https://terminay.com/developers/reference/manifest),
+[permissions](https://terminay.com/developers/reference/permissions), and
+[packaging](https://terminay.com/developers/extensions/packaging) guides. A small
 working provider lives in [`examples/basic-provider`](examples/basic-provider).
-The [publishing guide](docs/publishing.md) and reusable workflow template cover
-packing, conformance, SBOM/license evidence, npm trusted publishing, and
-post-publication integrity checks for repositories maintained separately from
-Terminay.
+The reusable workflow template covers packing, conformance, SBOM/license
+evidence, npm trusted publishing, and post-publication integrity checks for
+repositories maintained separately from Terminay.
 
 Provider callbacks receive host-owned brokers through `ProviderCallContext`.
 `profiles.get(profileId)` returns only non-secret values after provider
@@ -42,5 +43,6 @@ Provider dependency targets receive a separate `ProviderDependencyTargetContext`
 Its only target-owned broker is the generic atomic `vault`: `put`, local-callback
 `withSecret`, and `remove`. Bindings are durable opaque `{ bindingRef }` values
 scoped to the target provider and installation. The public surface has no
-read/list/export API and never returns raw secret bytes. See the [API reference](docs/api-reference.md#target-vault)
+read/list/export API and never returns raw secret bytes. See the
+[scoped brokers reference](https://terminay.com/developers/reference/scoped-brokers)
 for cancellation, zeroization, pending removal, and crash-cleanup obligations.
