@@ -28,7 +28,12 @@ import {
 	hostedSignalingUrl,
 } from './hostedPairingSecrets.js';
 import type { ServerPairingHandoff, ServerRemoteExposure } from './serverExposure.js';
-import { bindUiArchiveChannels, safeChannelSend } from './uiArchiveTransfer.js';
+import {
+	bindUiArchiveChannels,
+	readSctpMaxMessageBytes,
+	safeChannelSend,
+	type UiArchiveDataChannel,
+} from './uiArchiveTransfer.js';
 import {
 	collectHostIceAddresses,
 	createHandshakeJoinQueue,
@@ -1241,6 +1246,11 @@ function asHeadlessChannel(
 		},
 		get bufferedAmount() {
 			return typeof channel.bufferedAmount === 'number' ? channel.bufferedAmount : 0;
+		},
+		// The transport fragments to exactly what this lane accepts, so a large
+		// query result never reaches `safeChannelSend` as one oversized message.
+		get maxMessageBytes() {
+			return readSctpMaxMessageBytes(channel as unknown as UiArchiveDataChannel);
 		},
 		send(frame) {
 			try {
