@@ -3938,6 +3938,7 @@ const ProjectWorkspace = forwardRef<
 			markTerminalActivityViewed,
 			movingTerminalSessionIdsRef,
 			panelSessionMapRef,
+			projectId: project.id,
 			publishTerminalActivityOverview,
 			setFocusedSessionId,
 			setIsDockviewReady,

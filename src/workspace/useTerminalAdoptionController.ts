@@ -13,6 +13,10 @@ import type {
 } from '../components/TerminalTab';
 import { recordBootstrapDiagnostic } from '../shared/rendererDiagnostics';
 import {
+	recallActiveSession,
+	shouldActivateAdoptedTerminal,
+} from './localViewState';
+import {
 	getServerTerminalPresentationTitle,
 	type MovedTerminalTab,
 } from './terminalTransferOrchestration';
@@ -80,8 +84,18 @@ export function useTerminalAdoptionController({
 	terminalCounterRef,
 	terminalServerIdentity,
 }: UseTerminalAdoptionControllerOptions) {
+	/**
+	 * Adopt a terminal into this project's Dockview.
+	 *
+	 * `activate` is what separates a workspace fact from a view decision. A tab
+	 * dragged here by this user is a local action and should land focused. A
+	 * terminal that merely appeared because another device created it is not:
+	 * stealing the active tab for it drags this device off whatever it was
+	 * reading. The device that created a terminal focuses it itself, through
+	 * the creation controller, once the panel exists.
+	 */
 	const acceptMovedTerminal = useCallback(
-		(movedTerminal: MovedTerminalTab) => {
+		(movedTerminal: MovedTerminalTab, { activate = true } = {}) => {
 			recordBootstrapDiagnostic('app.workspace.adopt.begin');
 			const api = apiRef.current;
 			if (
@@ -103,10 +117,19 @@ export function useTerminalAdoptionController({
 				: (movedTerminal.color ?? project.color);
 			const macroRuns = movedTerminal.macroRuns ?? [];
 
+			// Dockview activates a newly added panel unless told otherwise, so
+			// declining to call setActive() below is not enough on its own.
+			const activatePanel = shouldActivateAdoptedTerminal({
+				requestedLocally: activate,
+				hasActivePanel: api.activePanel !== undefined,
+				rememberedSessionId: recallActiveSession(project.id),
+				sessionId: movedTerminal.sessionId,
+			});
 			recordBootstrapDiagnostic('app.workspace.adopt.before-add-panel');
 			const panel = api.addPanel<TerminalPanelParams>({
 				component: 'terminal',
 				id: panelId,
+				inactive: !activatePanel,
 				params: {
 					activityIndicatorsEnabled:
 						movedTerminal.activityIndicatorsEnabled !== false,
@@ -166,9 +189,11 @@ export function useTerminalAdoptionController({
 				replaceMacroRuns(movedTerminal.sessionId, macroRuns);
 			}
 			hydrateRecording(movedTerminal.sessionId);
-			recordBootstrapDiagnostic('app.workspace.adopt.before-activate');
-			panel.api.setActive();
-			setFocusedSessionId(movedTerminal.sessionId);
+			if (activatePanel) {
+				recordBootstrapDiagnostic('app.workspace.adopt.before-activate');
+				panel.api.setActive();
+				setFocusedSessionId(movedTerminal.sessionId);
+			}
 			onError(null);
 			syncPanelFocusState();
 			window.requestAnimationFrame(publishActivityOverview);
@@ -237,7 +262,7 @@ export function useTerminalAdoptionController({
 					title,
 					terminalCounterRef.current + 1,
 				),
-			});
+			}, { activate: false });
 		},
 		[acceptMovedTerminal, panelSessionsRef, project.id, terminalCounterRef],
 	);
