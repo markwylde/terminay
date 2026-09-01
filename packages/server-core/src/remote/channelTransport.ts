@@ -1,6 +1,11 @@
 import {
 	abortIfSignalled,
+	ChannelFragmentReassembler,
 	DEFAULT_PROTOCOL_LIMITS,
+	encodeChannelFragments,
+	FRAGMENT_HEADER_BYTES,
+	MIN_FRAGMENT_PAYLOAD_BYTES,
+	nextChannelTransferId,
 	validateTransportFrame,
 	type ByteTransport,
 	type TransportCloseReason,
@@ -14,6 +19,12 @@ const DEFAULT_MAX_WRITABLE_WAIT_MS = 30_000;
 
 export interface HeadlessChannelTransportOptions {
 	readonly maxFrameBytes?: number;
+	/**
+	 * Largest single message the channel accepts. Frames above it are sent as
+	 * fragments. Defaults to the channel's own declared limit, and to no
+	 * fragmentation when neither is known.
+	 */
+	readonly maxMessageBytes?: number;
 	readonly maxBufferedBytes?: number;
 	readonly maxInboundBytes?: number;
 	/** Maximum time a send may wait for channel backpressure to drain. */
@@ -36,6 +47,9 @@ export class HeadlessChannelTransport implements ByteTransport {
 	private readonly maxBufferedBytes: number;
 	private readonly maxInboundBytes: number;
 	private readonly maxWritableWaitMs: number;
+	private readonly maxMessageBytes: number | undefined;
+	private readonly reassembler: ChannelFragmentReassembler;
+	private transferId = 0;
 	private readonly inbound: Uint8Array[] = [];
 	private inboundBytes = 0;
 	private inboundEnded = false;
@@ -55,6 +69,14 @@ export class HeadlessChannelTransport implements ByteTransport {
 		this.maxBufferedBytes = positive(options.maxBufferedBytes ?? DEFAULT_BUFFERED_BYTES, "maxBufferedBytes");
 		this.maxInboundBytes = positive(options.maxInboundBytes ?? this.maxBufferedBytes, "maxInboundBytes");
 		this.maxWritableWaitMs = positive(options.maxWritableWaitMs ?? DEFAULT_MAX_WRITABLE_WAIT_MS, "maxWritableWaitMs");
+		const messageLimit = options.maxMessageBytes ?? channel.maxMessageBytes;
+		// A limit too small to carry a useful payload is treated as unknown: the
+		// frame goes to the channel whole and the channel decides.
+		this.maxMessageBytes =
+			messageLimit === undefined || !Number.isSafeInteger(messageLimit) || messageLimit <= FRAGMENT_HEADER_BYTES + MIN_FRAGMENT_PAYLOAD_BYTES
+				? undefined
+				: messageLimit;
+		this.reassembler = new ChannelFragmentReassembler({ maxFrameBytes: this.maxFrameBytes });
 		this.removeListeners.push(subscribe((frame) => this.enqueueIncoming(frame)));
 		this.removeListeners.push(channel.onStateChange((state) => this.onChannelState(state)));
 		this.onChannelState(channel.readyState);
@@ -125,14 +147,31 @@ export class HeadlessChannelTransport implements ByteTransport {
 	async send(frame: Uint8Array, options: { readonly signal?: AbortSignal } = {}): Promise<void> {
 		abortIfSignalled(options.signal);
 		validateTransportFrame(frame, this.maxFrameBytes);
-		await this.waitForWritable(frame.byteLength, options.signal);
-		if (this.currentState !== "open") throw transportError(this.currentState);
-		try {
-			this.channel.send(frame.slice());
-		} catch (error) {
-			this.fail({ code: "unavailable", message: "headless data channel send failed", cause: error });
-			throw error;
+		// The lane carries bounded messages (a WebRTC channel negotiates far less
+		// than one protocol frame), so anything larger travels as fragments the
+		// peer reassembles.
+		const messages =
+			this.maxMessageBytes === undefined || frame.byteLength <= this.maxMessageBytes
+				? [frame]
+				: encodeChannelFragments(frame, this.maxMessageBytes, this.takeTransferId());
+		for (const message of messages) {
+			await this.waitForWritable(message.byteLength, options.signal);
+			if (this.currentState !== "open") throw transportError(this.currentState);
+			try {
+				this.channel.send(message.slice());
+			} catch (error) {
+				// One rejected message is this caller's failure, not the session's:
+				// the request layer answers with an error while every other
+				// subscription, terminal, and pending query stays live. A channel
+				// that genuinely died reports it through its own state instead.
+				throw new Error("headless data channel send failed", { cause: error });
+			}
 		}
+	}
+
+	private takeTransferId(): number {
+		this.transferId = nextChannelTransferId(this.transferId);
+		return this.transferId;
 	}
 
 	async waitForWritable(requiredBytes = 1, signal?: AbortSignal): Promise<void> {
@@ -192,9 +231,20 @@ export class HeadlessChannelTransport implements ByteTransport {
 		return new Promise<IteratorResult<Uint8Array>>((resolve, reject) => this.incomingWaiters.push({ resolve, reject }));
 	}
 
-	private enqueueIncoming(frame: Uint8Array): void {
+	private enqueueIncoming(message: Uint8Array): void {
 		if (this.inboundEnded || this.currentState === "closed" || this.currentState === "failed") return;
+		let frame: Uint8Array;
 		try {
+			validateTransportFrame(message, this.maxFrameBytes);
+			const admitted = this.reassembler.accept(message);
+			if (admitted.kind === "partial") {
+				if (this.inboundBytes + this.reassembler.bufferedBytes > this.maxInboundBytes) {
+					this.reassembler.reset();
+					this.fail({ code: "resource", message: "headless data channel inbound queue limit reached" });
+				}
+				return;
+			}
+			frame = admitted.frame;
 			validateTransportFrame(frame, this.maxFrameBytes);
 		} catch (error) {
 			this.fail({ code: "protocol_error", message: "headless data channel frame is invalid", cause: error });
@@ -264,6 +314,7 @@ export class HeadlessChannelTransport implements ByteTransport {
 		if (this.inboundEnded) return;
 		this.inboundEnded = true;
 		this.inboundFailure = error;
+		this.reassembler.reset();
 		// A closed/failed authenticated channel must not retain a stalled
 		// consumer's queued application frames or expose them to a later iterator.
 		this.inbound.splice(0);
