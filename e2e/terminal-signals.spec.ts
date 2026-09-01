@@ -1,5 +1,6 @@
 import type { Locator, Page } from '@playwright/test'
 import { expect, test } from './fixtures'
+import { settledTerminalSessionId } from './support/terminal-session'
 import { sendAppCommand } from './support/app'
 import { submitTerminalCommand } from './support/terminal'
 
@@ -8,13 +9,7 @@ async function getActiveSessionId(page: Page): Promise<string> {
     '.project-workspace--active .terminal-panel:visible',
   )
   await expect(activePresentation).toHaveCount(1)
-  const sessionId = await activePresentation.getAttribute(
-    'data-terminay-terminal-session-id',
-  )
-
-  if (!sessionId) {
-    throw new Error('Active terminal session id is unavailable')
-  }
+  const sessionId = await settledTerminalSessionId(activePresentation)
 
   return sessionId
 }

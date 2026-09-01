@@ -1,5 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { settledTerminalSessionId } from './support/terminal-session';
 import {
 	cancelEditWindow,
 	openProjectEditWindow,
@@ -71,11 +72,9 @@ test.describe('shell profiles', () => {
 		appHarness,
 		mainWindow,
 	}) => {
-		const originalSessionId = await mainWindow
-			.locator('.terminal-panel')
-			.first()
-			.getAttribute('data-terminay-terminal-session-id');
-		expect(originalSessionId).toBeTruthy();
+		const originalSessionId = await settledTerminalSessionId(
+			mainWindow.locator('.terminal-panel').first(),
+		);
 
 		const settingsWindow = await openShellSettings(appHarness, mainWindow);
 		await expect(
