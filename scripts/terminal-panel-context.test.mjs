@@ -49,7 +49,10 @@ test('terminal retry reattaches this panel instead of replacing the workspace tr
 })
 
 test('congestion resync queues Take back control and does not detach first', () => {
-  const resyncStart = panel.indexOf('const beginTerminalResync')
+  // Recovery spans prepareRecovery (tear the display down), requestRecoveryAttach
+  // (re-attach, or decline to a newer attachment), and beginTerminalResync (hand
+  // the skip to the controller that decides whether one is already pending).
+  const resyncStart = panel.indexOf('prepareRecovery = () => {')
   const resyncEnd = panel.indexOf('retryServerAttachmentRef.current = () => {', resyncStart)
   assert.notEqual(resyncStart, -1)
   assert.notEqual(resyncEnd, -1)
@@ -58,6 +61,11 @@ test('congestion resync queues Take back control and does not detach first', () 
   assert.match(resync, /queuedPresentationAction =/)
   assert.match(resync, /'takeover'/)
   assert.doesNotMatch(resync, /\.detach\(/)
+  // The gate is the controller, never a flag the panel owns. A boolean here is
+  // what froze terminals: a retry timer could return with it still set, after
+  // which every later skip was dropped for the life of the component.
+  assert.match(resync, /recoveryController\.noteEvent\(event\)/)
+  assert.doesNotMatch(resync, /resyncing/)
 })
 
 test('replacement context reports mounted attachment hydration only after rendering initial events', () => {
