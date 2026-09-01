@@ -478,8 +478,33 @@ export class OutboundDeliveryPump {
 				const pending = this.nextDelivery();
 				if (pending === undefined) return;
 				this.activeDelivery = pending;
-				await this.transport.waitForWritable(pending.frame.byteLength);
-				await this.transport.send(pending.frame);
+				try {
+					await this.transport.waitForWritable(pending.frame.byteLength);
+					await this.transport.send(pending.frame);
+				} catch (cause) {
+					// A transport that is still open rejected this one frame — an
+					// unsendable request/response message. Fail its sender, which
+					// answers that request with an error, and keep the connection and
+					// every other lane alive. Terminal and state lanes stay terminal:
+					// their frames carry stream positions and event revisions, so a
+					// silently dropped frame would desync a client that is never told.
+					if (this.transport.state !== 'open' || pending.trafficClass !== 'control') throw cause;
+					recordStreamDiagnostic('delivery', 'control_frame_rejected', {
+						connection: this.diagnosticLabel,
+						frameBytes: pending.frame.byteLength,
+						message: cause instanceof Error ? cause.message : String(cause),
+					});
+					this.completeDelivery(pending);
+					pending.reject(
+						new OutboundDeliveryError({
+							code: 'resource',
+							message: 'connection frame could not be delivered',
+							cause,
+						}),
+					);
+					this.activeDelivery = undefined;
+					continue;
+				}
 				this.completeDelivery(pending);
 				pending.resolve();
 				this.activeDelivery = undefined;
