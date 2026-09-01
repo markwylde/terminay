@@ -1,13 +1,10 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { settledTerminalSessionId } from './support/terminal-session';
 import { submitTerminalCommand } from './support/terminal';
 
 async function activeSessionId(page: Page): Promise<string> {
-	const sessionId = await page
-		.locator('.terminal-panel:visible')
-		.getAttribute('data-terminay-terminal-session-id');
-	if (!sessionId) throw new Error('The active terminal session id is unavailable');
-	return sessionId;
+	return await settledTerminalSessionId(page.locator('.terminal-panel:visible'));
 }
 
 async function writeToSession(page: Page, sessionId: string, data: string): Promise<void> {

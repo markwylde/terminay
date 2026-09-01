@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { settledTerminalSessionId } from './support/terminal-session';
 
 // A recovered Desktop connection rebuilds its bounded application bootstrap
 // (handshake plus workspace subscriptions). That bootstrap permits 15 seconds,
@@ -7,11 +8,7 @@ import { expect, test } from './fixtures';
 const LOCAL_RECOVERY_TIMEOUT_MS = 20_000;
 
 async function activeSessionId(page: Page): Promise<string> {
-	const sessionId = await page
-		.locator('.terminal-panel:visible')
-		.getAttribute('data-terminay-terminal-session-id');
-	if (!sessionId) throw new Error('The active terminal session id is unavailable');
-	return sessionId;
+	return await settledTerminalSessionId(page.locator('.terminal-panel:visible'));
 }
 
 test('a Local application transport loss recovers without replacing the terminal session', async ({
