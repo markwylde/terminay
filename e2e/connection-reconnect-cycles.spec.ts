@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { settledTerminalSessionId } from './support/terminal-session';
 
 /**
  * Repeated reconnects on one client identity keep streaming.
@@ -23,11 +24,7 @@ import { expect, test } from './fixtures';
 const RECOVERY_TIMEOUT_MS = 20_000;
 
 async function activeSessionId(page: Page): Promise<string> {
-	const sessionId = await page
-		.locator('.terminal-panel:visible')
-		.getAttribute('data-terminay-terminal-session-id');
-	if (!sessionId) throw new Error('The active terminal session id is unavailable');
-	return sessionId;
+	return await settledTerminalSessionId(page.locator('.terminal-panel:visible'));
 }
 
 async function waitForConnected(page: Page): Promise<void> {

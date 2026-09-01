@@ -1,5 +1,6 @@
 import type { ElectronApplication, Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { settledTerminalSessionId } from './support/terminal-session';
 import { typeInVisibleTerminal } from './support/terminal-input';
 import {
 	cancelEditWindow,
@@ -129,11 +130,9 @@ test.describe('project tabs', () => {
 		if (!projectId) throw new Error('Expected the moved project identity');
 		const activeWorkspace = mainWindow.locator('.project-workspace--active');
 		await expect(activeWorkspace.locator('.terminal-panel')).toHaveCount(1);
-		const sessionId = await mainWindow
-			.locator('.project-workspace--active .terminal-panel')
-			.first()
-			.getAttribute('data-terminay-terminal-session-id');
-		if (!sessionId) throw new Error('Expected the moved terminal identity');
+		const sessionId = await settledTerminalSessionId(
+			mainWindow.locator('.project-workspace--active .terminal-panel').first(),
+		);
 
 		const projectBox = await draggedProject.boundingBox();
 		if (!projectBox)
@@ -213,10 +212,9 @@ test.describe('project tabs', () => {
 		await mainWindow.mouse.move(centerX, centerY + 180, { steps: 12 });
 		await mainWindow.mouse.up();
 		const popoutWindow = await waitForWorkspacePopout(electronApp, mainWindow);
-		const sessionId = await popoutWindow
-			.locator('.project-workspace--active .terminal-panel')
-			.getAttribute('data-terminay-terminal-session-id');
-		if (!sessionId) throw new Error('Expected the popout terminal');
+		const sessionId = await settledTerminalSessionId(
+			popoutWindow.locator('.project-workspace--active .terminal-panel'),
+		);
 		const foregroundStarted = `foreground-started-${Date.now()}`;
 
 		await electronApp.evaluate(({ dialog }) => {
