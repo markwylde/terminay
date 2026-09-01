@@ -19,7 +19,7 @@
   "bin": {
     "terminay-extension-conformance": "./dist/conformance.js"
   },
-  "files": ["dist", "fixtures", "docs", "examples", "templates", "scripts", "README.md"],
+  "files": ["dist", "fixtures", "examples", "templates", "scripts", "README.md"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
