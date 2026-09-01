@@ -36,6 +36,7 @@ import type {
   Unsubscribe,
 } from "./types.js";
 import { TERMINAL_CLOSE_OBSERVATION_TIMEOUT_MS } from "./types.js";
+import { recordStreamDiagnostic } from '../streamDiagnostics.js';
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const DEFAULT_MAX_SESSIONS = 256;
@@ -212,6 +213,12 @@ export class TerminalSubscription {
   closeForOverflow(): void {
     if (this.closedValue) return;
     const event = skipEvent(this.session, this.cursorValue);
+    recordStreamDiagnostic('pty', 'subscription_overflow', {
+      sessionId: this.session.identity.sessionId,
+      projectId: this.session.identity.projectId,
+      cursor: this.cursorValue,
+      outputPosition: this.session.outputPosition,
+    });
     this.closedValue = true;
     this.closeReasonValue = "skip";
     this.session.subscribers.delete(this);
@@ -511,6 +518,11 @@ export class TerminalService {
       mutable.process = process;
       if (typeof process.pid === "number" && Number.isSafeInteger(process.pid) && process.pid > 0) {
         mutable.pid = process.pid;
+        recordStreamDiagnostic('pty', 'shell_started', {
+          projectId: identity.projectId,
+          sessionId: identity.sessionId,
+          pid: process.pid,
+        });
         try { this.sessionLifecycle?.terminalStarted?.(identity, process.pid); } catch { /* observers cannot fail PTY creation */ }
       }
       this.attachProcess(mutable, process);
@@ -580,6 +592,11 @@ export class TerminalService {
       mutable.process = process;
       if (typeof process.pid === "number" && Number.isSafeInteger(process.pid) && process.pid > 0) {
         mutable.pid = process.pid;
+        recordStreamDiagnostic('pty', 'shell_started', {
+          projectId: identity.projectId,
+          sessionId: identity.sessionId,
+          pid: process.pid,
+        });
         try { this.sessionLifecycle?.terminalStarted?.(identity, process.pid); } catch { /* observers cannot fail PTY creation */ }
       }
       this.sessionsById.set(identity.sessionId, mutable);
@@ -876,11 +893,13 @@ export class TerminalService {
   /** @internal */
   /** @internal Observable by design; see `deliver`. */
   reportListenerFault(subscription: TerminalSubscription, cause: unknown): void {
-    console.warn("[terminay-terminal] subscription listener fault", {
+    const detail = {
       sessionId: subscription.sessionId,
       position: subscription.position,
       message: cause instanceof Error ? cause.message : String(cause),
-    });
+    };
+    recordStreamDiagnostic('pty', 'listener_fault', detail);
+    console.warn("[terminay-terminal] subscription listener fault", detail);
   }
 
   emitSubscriptionClosed(_subscription: TerminalSubscription, _reason: TerminalCloseReason): void {

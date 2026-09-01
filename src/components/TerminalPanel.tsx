@@ -12,8 +12,10 @@ import type {
 	TerminayClient,
 	TerminayGitClient,
 } from '@terminay/client-core';
+import type { TerminalRecoveryAttemptOutcome } from '@terminay/client-core';
 import {
 	isRecoverableSkip,
+	TerminalRecoveryController,
 	TerminayTerminalClient,
 	TerminayTerminalPanelClient,
 } from '@terminay/client-core';
@@ -864,10 +866,16 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		const bindingFence = new TerminalPanelBindingFence();
 		let activeBinding: TerminalPanelBinding | null = null;
 		let presentationRenewTimer: number | null = null;
-		let recoveryRetryTimer: number | null = null;
 		let recoveryDeadlineTimer: number | null = null;
-		let recoveryAttempt = 0;
 		let recoveryStartedAt = 0;
+		// Set once the server-terminal branch below is entered. Recovery is
+		// scheduled out here so transport failures can stand it down, but only
+		// that branch knows how to tear a live attachment down and re-attach.
+		let requestRecoveryAttach:
+			| (() => TerminalRecoveryAttemptOutcome)
+			| null = null;
+		let prepareRecovery: ((event: TerminalStreamSkipEvent) => void) | null =
+			null;
 		let recoveryFailureReason: 'attach-error' | 'deadline' = 'attach-error';
 		let pendingPanelResize: { cols: number; rows: number } | null = null;
 		let panelResizeTimer: number | null = null;
@@ -886,27 +894,60 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			recordRendererDiagnostic({
 				kind: 'terminal-recovery',
 				phase,
-				attempt: Math.max(1, recoveryAttempt),
+				attempt: Math.max(1, recoveryController.attempt),
 				...(fields.durationMs === undefined
 					? {}
 					: { durationMs: fields.durationMs }),
 				...(fields.reason === undefined ? {} : { reason: fields.reason }),
 			});
 		};
+		/**
+		 * Owns the one question that used to be a boolean: is a re-attach already
+		 * pending for the gap this display just learned about?
+		 *
+		 * The boolean it replaces could be left set by a retry timer that declined
+		 * to run, after which every later skip was dropped and the terminal was
+		 * frozen for the life of the component while still connected and still
+		 * accepting keystrokes. The controller has no such exit.
+		 */
+		const recoveryController = new TerminalRecoveryController({
+			retryDelayMs: TERMINAL_RECOVERY_RETRY_DELAY_MS,
+			schedule: (run, delayMs) => {
+				const timer = window.setTimeout(run, delayMs);
+				return () => window.clearTimeout(timer);
+			},
+			reattach: () => requestRecoveryAttach?.() ?? 'declined',
+			onRecoveryStarted: (attempt, event) => {
+				if (attempt === 1) recoveryStartedAt = Date.now();
+				prepareRecovery?.(event);
+				reportTerminalRecovery(attempt === 1 ? 'started' : 'retrying', {
+					fromPosition: event.fromPosition,
+					toPosition: event.toPosition,
+					reason: event.reason,
+				});
+			},
+			onRecovered: (_attempt, durationMs) => {
+				reportTerminalRecovery('recovered', {
+					durationMs,
+					outputPosition: renderedPositionRef.current ?? undefined,
+				});
+				recoveryStartedAt = 0;
+				recoveryFailureReason = 'attach-error';
+			},
+		});
 		const failServerTransport = (error: unknown, binding = activeBinding) => {
 			if (binding === null || !bindingFence.isCurrent(binding)) return;
 			if (serverAttachmentFailed || dataReplayDisposed) return;
 			serverAttachmentFailed = true;
-			if (recoveryRetryTimer !== null) window.clearTimeout(recoveryRetryTimer);
-			recoveryRetryTimer = null;
 			if (recoveryDeadlineTimer !== null)
 				window.clearTimeout(recoveryDeadlineTimer);
 			recoveryDeadlineTimer = null;
-			if (recoveryAttempt > 0)
+			if (recoveryController.attempt > 0)
 				reportTerminalRecovery('failed', {
 					durationMs: Math.max(0, Date.now() - recoveryStartedAt),
 					reason: recoveryFailureReason,
 				});
+			recoveryController.reset();
 			serverInputQueue?.close();
 			panelEventDisposer?.();
 			panelEventDisposer = null;
@@ -1293,7 +1334,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				clientId: panelClientId,
 				maxInitialReplayBytes: MAX_INITIAL_SERVER_TERMINAL_REPLAY_BYTES,
 			};
-			let resyncing = false;
 			let queuedPresentationAction: 'acquire' | 'takeover' | null = null;
 			let latestPresentation: TerminalPresentationState | undefined;
 			const attachServerTerminal = ({
@@ -1568,7 +1608,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 								dataReplayDisposed ||
 								panelAttachment !== attachment ||
 								serverAttachmentFailed ||
-								resyncing ||
 								!bindingFence.isCurrent(binding)
 							)
 								return;
@@ -1578,15 +1617,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 							terminalPanelConnectionContext?.reportConnectionHydrated?.();
 							reportTerminalRebindDiagnostic(sessionId, 'attached');
 
-							if (recoveryAttempt > 0) {
-								reportTerminalRecovery('recovered', {
-									durationMs: Math.max(0, Date.now() - recoveryStartedAt),
-									outputPosition: renderedPositionRef.current ?? undefined,
-								});
-								recoveryAttempt = 0;
-								recoveryStartedAt = 0;
-								recoveryFailureReason = 'attach-error';
-							}
+							// A hydrated display is the definition of a completed recovery,
+							// and the only thing that returns the controller to streaming.
+							recoveryController.noteAttached();
 
 							serverInputQueue?.attach(attachment);
 							// Checkpoint restoration must use its saved grid, but that grid is
@@ -1611,7 +1644,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 								terminal.focus();
 								announceTerminalFocus();
 							}
-							resyncing = false;
 						});
 					})
 					.catch((error: unknown) => {
@@ -1637,9 +1669,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 						);
 					});
 			};
-			const beginTerminalResync = (_event: TerminalStreamSkipEvent) => {
-				if (dataReplayDisposed || resyncing || serverAttachmentFailed) return;
-				resyncing = true;
+			// Invoked by the controller when, and only when, a skip actually starts
+			// a recovery. Tearing the display down here rather than at the call
+			// site keeps the "is one already pending?" decision in one place.
+			prepareRecovery = () => {
 				if (panelResizeTimer !== null) {
 					window.clearTimeout(panelResizeTimer);
 					panelResizeTimer = null;
@@ -1663,27 +1696,27 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				// Leave the server attachment in place until resume replaces it.
 				// Detaching here drops a just-taken lease and makes Take back
 				// control target a dead attachment while the checkpoint loads.
-				if (recoveryAttempt === 0) recoveryStartedAt = Date.now();
-				recoveryAttempt += 1;
-				reportTerminalRecovery(recoveryAttempt === 1 ? 'started' : 'retrying', {
-					fromPosition: _event.fromPosition,
-					toPosition: _event.toPosition,
-					reason: _event.reason,
+			};
+			// A progress display may never become idle. Keep the last completed
+			// presentation visible and retry from a current bounded checkpoint.
+			//
+			// Declining is a real outcome, not a dead end: a newer attachment has
+			// already taken this display over, and its own hydration ends the
+			// recovery. The controller returns to streaming either way, so a later
+			// skip is still honoured.
+			requestRecoveryAttach = () => {
+				if (dataReplayDisposed || panelAttachment !== null) return 'declined';
+				attachServerTerminal({
+					fromPosition: 0,
+					freshPresentation: true,
+					forceResume: true,
+					recovery: true,
 				});
-				// A progress display may never become idle. Keep the last completed
-				// presentation visible and retry from a current bounded checkpoint.
-				recoveryRetryTimer = window.setTimeout(() => {
-					recoveryRetryTimer = null;
-					if (dataReplayDisposed || !resyncing || panelAttachment !== null)
-						return;
-					resyncing = false;
-					attachServerTerminal({
-						fromPosition: 0,
-						freshPresentation: true,
-						forceResume: true,
-						recovery: true,
-					});
-				}, TERMINAL_RECOVERY_RETRY_DELAY_MS);
+				return 'attaching';
+			};
+			const beginTerminalResync = (event: TerminalStreamSkipEvent) => {
+				if (dataReplayDisposed || serverAttachmentFailed) return;
+				recoveryController.noteEvent(event);
 			};
 			// The first attachment hydrates the newly created emulator. Later
 			// reconnects use the exact cursor xterm has already rendered.
@@ -1693,8 +1726,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				// connection is dead. Recovering the host transport remounts every
 				// terminal and can leave live shells unattached. Retry this panel.
 				serverAttachmentFailed = false;
-				resyncing = false;
-				recoveryAttempt = 0;
+				recoveryController.reset();
 				recoveryStartedAt = 0;
 				recoveryFailureReason = 'attach-error';
 				serverInputQueue?.close();
@@ -1715,7 +1747,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				if (dataReplayDisposed) return;
 				reportTerminalRebindDiagnostic(sessionId, 'started');
 				serverAttachmentFailed = false;
-				resyncing = false;
+				recoveryController.reset();
 				if (presentationRenewTimer !== null)
 					window.clearTimeout(presentationRenewTimer);
 				presentationRenewTimer = null;
@@ -2207,7 +2239,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			if (presentationRenewTimer !== null)
 				window.clearTimeout(presentationRenewTimer);
 			if (panelResizeTimer !== null) window.clearTimeout(panelResizeTimer);
-			if (recoveryRetryTimer !== null) window.clearTimeout(recoveryRetryTimer);
+			recoveryController.dispose();
 			if (recoveryDeadlineTimer !== null)
 				window.clearTimeout(recoveryDeadlineTimer);
 			dataReplayDisposed = true;
