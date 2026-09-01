@@ -2,6 +2,11 @@ import {
 	type ByteTransport,
 	type TransportCloseReason,
 } from '@terminay/protocol';
+import {
+	recordStreamDiagnostic,
+	recordVerboseStreamDiagnostic,
+	registerStreamStateProvider,
+} from './streamDiagnostics.js';
 
 export interface OutboundDeliveryLimits {
 	readonly maxQueuedBytes: number;
@@ -105,6 +110,22 @@ export class OutboundDeliveryError extends Error {
 }
 
 /**
+ * Live pumps, so a diagnostic snapshot can read lane state directly instead of
+ * relying on whatever happened to still be in the record history. A frozen
+ * terminal is diagnosed by what its lane looks like now.
+ */
+const livePumps = new Set<OutboundDeliveryPump>();
+let deliveryProviderRegistered = false;
+
+function ensureDeliveryProvider(): void {
+	if (deliveryProviderRegistered) return;
+	deliveryProviderRegistered = true;
+	registerStreamStateProvider('delivery', () =>
+		[...livePumps].map((pump) => pump.diagnosticState()),
+	);
+}
+
+/**
  * A bounded, connection-owned FIFO admission and delivery boundary.
  *
  * Frames are copied at admission and only this pump calls the transport's
@@ -132,6 +153,8 @@ export class OutboundDeliveryPump {
 	private stateLaneCursor = 0;
 	private consecutiveControlDeliveries = 0;
 	private terminalError: OutboundDeliveryError | undefined;
+	private diagnosticLabel = 'unlabelled';
+	private suppressedDrops = 0;
 
 	constructor(
 		private readonly transport: ByteTransport,
@@ -173,6 +196,39 @@ export class OutboundDeliveryPump {
 		);
 		this.maxStateQueuedBytes = positiveInteger(limits.maxStateQueuedBytes ?? DEFAULT_MAX_STATE_QUEUED_BYTES, 'maxStateQueuedBytes');
 		this.maxStateQueuedFrames = positiveInteger(limits.maxStateQueuedFrames ?? DEFAULT_MAX_STATE_QUEUED_FRAMES, 'maxStateQueuedFrames');
+		ensureDeliveryProvider();
+		livePumps.add(this);
+	}
+
+	/** Label this pump with its connection so a snapshot can be read against the
+	 * client that owns it. Terminal lanes are opaque attachment ids otherwise. */
+	setDiagnosticLabel(label: string): void {
+		this.diagnosticLabel = label;
+	}
+
+	/** Live lane state. Read at snapshot time, never cached, because the whole
+	 * point is to answer what a stuck lane looks like right now. */
+	diagnosticState(): Readonly<Record<string, unknown>> {
+		return {
+			connection: this.diagnosticLabel,
+			failed: this.terminalError?.reason.code,
+			running: this.running,
+			queuedBytes: this.snapshot.queuedBytes,
+			terminalLanes: [...this.terminalLanes].map(([laneId, lane]) => ({
+				laneId,
+				suppressed: lane.suppressed,
+				releasePending: lane.releasePending,
+				queuedFrames: lane.queue.length,
+				queuedBytes: lane.queuedBytes,
+				confirmedPosition: lane.confirmedPosition,
+				sentPosition: lane.sentPosition,
+				headPosition: lane.headPosition,
+				unconfirmedFor:
+					lane.unconfirmedSince === undefined
+						? undefined
+						: this.now() - lane.unconfirmedSince,
+			})),
+		};
 	}
 
 	get snapshot(): OutboundDeliverySnapshot {
@@ -285,13 +341,36 @@ export class OutboundDeliveryPump {
 				unconfirmedSince: undefined,
 			};
 			this.terminalLanes.set(admission.laneId, lane);
+			recordStreamDiagnostic('delivery', 'lane_opened', {
+				connection: this.diagnosticLabel,
+				laneId: admission.laneId,
+				position: admission.position,
+			});
 		}
 		if (lane.releasePending) return Promise.resolve();
-		if (lane.suppressed) return Promise.resolve();
+		if (lane.suppressed) {
+			// Every byte dropped here is output the user will never see unless the
+			// attachment is replaced. The count is the size of the silence.
+			this.suppressedDrops += 1;
+			recordVerboseStreamDiagnostic('delivery', 'suppressed_drop', () => ({
+				connection: this.diagnosticLabel,
+				laneId: admission.laneId,
+				drops: this.suppressedDrops,
+				bytes: admission.nextPosition - admission.position,
+				headPosition: lane.headPosition,
+			}));
+			return Promise.resolve();
+		}
 		// Duplicate delivery from overlapping subscriptions. The bytes are
 		// already accounted for on this lane, so dropping them is not a gap.
 		if (admission.nextPosition <= lane.headPosition) return Promise.resolve();
 		if (admission.position !== lane.headPosition) {
+			recordStreamDiagnostic('delivery', 'admit_out_of_order', {
+				connection: this.diagnosticLabel,
+				laneId: admission.laneId,
+				position: admission.position,
+				headPosition: lane.headPosition,
+			});
 			this.congestTerminalLane(admission.laneId, lane, admission);
 			this.start();
 			return Promise.resolve();
@@ -341,6 +420,12 @@ export class OutboundDeliveryPump {
 		) return;
 		lane.confirmedPosition = position;
 		lane.unconfirmedSince = position >= lane.headPosition ? undefined : this.now();
+		recordVerboseStreamDiagnostic('delivery', 'ack', () => ({
+			connection: this.diagnosticLabel,
+			laneId,
+			confirmedPosition: position,
+			headPosition: lane.headPosition,
+		}));
 	}
 
 	/** Release scheduler state after the authoritative attachment is detached.
@@ -348,6 +433,14 @@ export class OutboundDeliveryPump {
 	releaseTerminal(laneId: string): void {
 		const lane = this.terminalLanes.get(laneId);
 		if (lane === undefined) return;
+		recordStreamDiagnostic('delivery', 'lane_released', {
+			connection: this.diagnosticLabel,
+			laneId,
+			suppressed: lane.suppressed,
+			suppressedDrops: this.suppressedDrops,
+			confirmedPosition: lane.confirmedPosition,
+			headPosition: lane.headPosition,
+		});
 		lane.releasePending = true;
 		const retained =
 			this.activeDelivery?.terminalLaneId === laneId
@@ -453,6 +546,19 @@ export class OutboundDeliveryPump {
 		this.terminalQueuedByteCount -= pending.frame.byteLength;
 		if (pending.nextPosition !== undefined)
 			lane.sentPosition = Math.max(lane.sentPosition, pending.nextPosition);
+		if (pending.trafficClass === 'terminal_skip')
+			recordStreamDiagnostic('delivery', 'skip_sent', {
+				connection: this.diagnosticLabel,
+				laneId,
+				sentPosition: lane.sentPosition,
+			});
+		else
+			recordVerboseStreamDiagnostic('delivery', 'sent', () => ({
+				connection: this.diagnosticLabel,
+				laneId,
+				sentPosition: lane.sentPosition,
+				queuedFrames: lane.queue.length,
+			}));
 		if (lane.queue.length === 0 && lane.releasePending)
 			this.terminalLanes.delete(laneId);
 	}
@@ -516,6 +622,10 @@ export class OutboundDeliveryPump {
 			.createSkipFrame({ fromPosition, toPosition: lane.headPosition })
 			.slice();
 		if (this.terminalQueuedByteCount + copy.byteLength > this.maxQueuedBytes) {
+			recordStreamDiagnostic('delivery', 'skip_capacity_exhausted', {
+				connection: this.diagnosticLabel,
+				laneId,
+			});
 			this.fail({
 				code: 'resource',
 				message: 'terminal resynchronization capacity exhausted',
@@ -532,6 +642,23 @@ export class OutboundDeliveryPump {
 		lane.queuedBytes += copy.byteLength;
 		this.terminalQueuedByteCount += copy.byteLength;
 		lane.suppressed = true;
+		// The latch opens only when this attachment is replaced. From here the
+		// stream is silent until the queued skip reaches the client and it
+		// re-attaches, so this record is the start of every freeze.
+		recordStreamDiagnostic('delivery', 'lane_suppressed', {
+			connection: this.diagnosticLabel,
+			laneId,
+			fromPosition,
+			toPosition: lane.headPosition,
+			queuedBytes: snapshot.queuedBytes,
+			queuedFrames: snapshot.queuedFrames,
+			confirmedPosition: lane.confirmedPosition,
+			sentPosition: lane.sentPosition,
+			unconfirmedFor:
+				lane.unconfirmedSince === undefined
+					? undefined
+					: this.now() - lane.unconfirmedSince,
+		});
 		try {
 			this.onTerminalCongestion?.(snapshot);
 		} catch {
@@ -556,6 +683,13 @@ export class OutboundDeliveryPump {
 		this.controlQueuedByteCount = 0;
 		this.stateQueuedByteCount = 0;
 		this.terminalQueuedByteCount = 0;
+		livePumps.delete(this);
+		recordStreamDiagnostic('delivery', 'pump_closed', {
+			connection: this.diagnosticLabel,
+			code: reason.code,
+			message: reason.message,
+			notified: notify,
+		});
 		if (notify) {
 			try {
 				this.onFailure(error, snapshot);

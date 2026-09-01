@@ -1,4 +1,9 @@
 import type { JsonValue } from '@terminay/protocol';
+import {
+	recordTerminalStreamDiagnostic,
+	recordVerboseTerminalStreamDiagnostic,
+	registerTerminalStreamStateProvider,
+} from './streamDiagnostics.js';
 import type {
 	ClientBinaryQueryResult,
 	ClientCommandResult,
@@ -324,7 +329,26 @@ export class TerminayTerminalClient {
 	private readonly attachments = new Map<string, MutableAttachment>();
 	private readonly openingAttachments = new Map<string, Promise<void>>();
 
-	constructor(private readonly transport: TerminalClientTransport) {}
+	constructor(private readonly transport: TerminalClientTransport) {
+		// Live attachment state, read at snapshot time. For a frozen terminal the
+		// decisive question is whether this display still believes it is attached
+		// and how far behind its acknowledged position has fallen.
+		registerTerminalStreamStateProvider('attachments', () =>
+			[...this.attachments.values()].map((attachment) => ({
+				attachmentId: attachment.id,
+				projectId: attachment.identity.projectId,
+				sessionId: attachment.identity.sessionId,
+				clientId: attachment.clientId,
+				closed: attachment.closed,
+				detaching: attachment.detached !== undefined,
+				role: attachment.presentation.role,
+				position: attachment.position,
+				acknowledgedPosition: attachment.acknowledgedPosition,
+				pendingAcknowledgementPosition:
+					attachment.pendingAcknowledgementPosition,
+			})),
+		);
+	}
 
 	async create(
 		request: TerminalClientCreateRequest,
@@ -721,6 +745,19 @@ export class TerminayTerminalClient {
 			acknowledgementInFlight: undefined,
 			acknowledgementWaiters: [],
 		};
+		recordTerminalStreamDiagnostic('attached', {
+			attachmentId: mutable.id,
+			projectId: mutable.identity.projectId,
+			sessionId: mutable.identity.sessionId,
+			clientId: mutable.clientId,
+			role: mutable.presentation.role,
+			fromPosition: result.fromPosition,
+			position,
+			serverPosition: result.position,
+			checkpointHead: checkpoint?.headPosition,
+			hydrationSkipped: skipped,
+			initialEvents: initialEvents.length,
+		});
 		let hydrationFailure: Error | undefined;
 		const processSubscriptionEvent = (
 			event: ClientEvent<TerminalWireEvent>,
@@ -743,8 +780,26 @@ export class TerminayTerminalClient {
 				verdict === 'gap'
 					? reportStreamGap(mutable, decoded as TerminalStreamOutputEvent)
 					: decoded;
-			if (streamEvent.type === 'output') mutable.position = streamEvent.nextPosition;
+			if (streamEvent.type === 'output') {
+				mutable.position = streamEvent.nextPosition;
+				recordVerboseTerminalStreamDiagnostic('output', () => ({
+					attachmentId: mutable.id,
+					position: streamEvent.position,
+					nextPosition: streamEvent.nextPosition,
+					bytes: streamEvent.bytes.byteLength,
+				}));
+			}
 			if (streamEvent.type === 'skip') {
+				// Whether this skip is recoverable decides whether the panel
+				// re-attaches or sits still, so both facts belong in one record.
+				recordTerminalStreamDiagnostic('skip', {
+					attachmentId: mutable.id,
+					sessionId: mutable.identity.sessionId,
+					reason: streamEvent.reason,
+					fromPosition: streamEvent.fromPosition,
+					toPosition: streamEvent.toPosition,
+					recoverable: isRecoverableSkip(streamEvent),
+				});
 				mutable.position = Math.max(mutable.position, streamEvent.toPosition);
 				// A skip invalidates any rendered-but-unconfirmed tail. Collapse a
 				// queued cumulative acknowledgement to the retained safe boundary so
@@ -870,6 +925,12 @@ export class TerminayTerminalClient {
 			// Detach supersedes delivery progress. Pending callers already receive
 			// an acknowledgement failure; cleanup must still release the attachment.
 			await this.flushAcknowledgement(mutable).catch(() => undefined);
+			recordTerminalStreamDiagnostic('detached', {
+				attachmentId: mutable.id,
+				sessionId: mutable.identity.sessionId,
+				position: mutable.position,
+				acknowledgedPosition: mutable.acknowledgedPosition,
+			});
 			mutable.closed = true;
 			mutable.unsubscribeEvent();
 			try {
@@ -1544,11 +1605,13 @@ function reportStreamGap(
 	mutable: { readonly id: string; readonly position: number },
 	event: TerminalStreamOutputEvent,
 ): TerminalStreamSkipEvent {
-	console.warn('[terminay-terminal] terminal output stream gap', {
+	const detail = {
 		attachmentId: mutable.id,
 		expected: mutable.position,
 		received: event.position,
-	});
+	};
+	recordTerminalStreamDiagnostic('stream_gap', detail);
+	console.warn('[terminay-terminal] terminal output stream gap', detail);
 	return Object.freeze({
 		...copyIdentity(event),
 		type: 'skip',

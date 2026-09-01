@@ -6,6 +6,7 @@ import type {
   TerminalIdentity,
 } from "./types.js";
 import { TerminalSubscription, type TerminalService } from "./service.js";
+import { recordStreamDiagnostic } from '../streamDiagnostics.js';
 
 /** A sink used by a transport adapter to forward one attached terminal. */
 export interface TerminalAttachmentSink {
@@ -117,6 +118,13 @@ export class TerminalServiceAdapter {
       // attachment instead: the client sees an explicit attachment_closed skip
       // and re-attaches from a fresh checkpoint.
       if (event.position !== deliveredPosition) {
+        recordStreamDiagnostic('adapter', 'ordering_fault', {
+          attachmentId: id,
+          projectId: identity.projectId,
+          sessionId: identity.sessionId,
+          eventPosition: event.position,
+          deliveredPosition,
+        });
         if (mutable !== undefined) queueMicrotask(() => this.closeAttachment(id, "slow_consumer"));
         return;
       }
@@ -175,6 +183,12 @@ export class TerminalServiceAdapter {
   closeAttachment(id: string, reason: TerminalCloseReason): void {
     const mutable = this.attachments.get(id);
     if (mutable === undefined) return;
+    recordStreamDiagnostic('adapter', 'attachment_closed', {
+      attachmentId: id,
+      sessionId: mutable.identity.sessionId,
+      position: mutable.position,
+      reason,
+    });
     mutable.closed = true;
     this.attachments.delete(id);
     if (this.byClientSession.get(mutable.key) === id) this.byClientSession.delete(mutable.key);
