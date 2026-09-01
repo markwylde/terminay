@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import test, { after } from 'node:test'
 import { build } from 'esbuild'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -13,20 +13,32 @@ import { tmpdir } from 'node:os'
  * that jumps to a terminal the desktop just created has dragged its user off
  * whatever they were reading, for a change they never asked for.
  */
+/** Compiled once and shared. Each test resets the storage it observes, so a
+ * per-test rebuild bought nothing and cost an esbuild run apiece. */
+let compiled
 async function loadModule() {
-  const directory = await mkdtemp(join(tmpdir(), 'terminay-local-view-state-'))
-  const outfile = join(directory, 'localViewState.mjs')
-  await build({
-    entryPoints: ['src/workspace/localViewState.ts'],
-    outfile,
-    bundle: true,
-    format: 'esm',
-    platform: 'neutral',
-    logLevel: 'silent',
-  })
-  const module = await import(`file://${outfile}`)
-  return { module, cleanup: () => rm(directory, { recursive: true, force: true }) }
+  compiled ??= (async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'terminay-local-view-state-'))
+    const outfile = join(directory, 'localViewState.mjs')
+    await build({
+      entryPoints: ['src/workspace/localViewState.ts'],
+      outfile,
+      bundle: true,
+      format: 'esm',
+      platform: 'neutral',
+      logLevel: 'silent',
+    })
+    return { module: await import(`file://${outfile}`), directory }
+  })()
+  const { module } = await compiled
+  return { module }
 }
+
+after(async () => {
+  if (compiled === undefined) return
+  const { directory } = await compiled
+  await rm(directory, { recursive: true, force: true })
+})
 
 function fakeStorage(initial = {}) {
   const store = new Map(Object.entries(initial))
@@ -40,7 +52,7 @@ function fakeStorage(initial = {}) {
 }
 
 test('a terminal created on another device never steals this device\'s tab', async () => {
-  const { module, cleanup } = await loadModule()
+  const { module } = await loadModule()
   try {
     assert.equal(
       module.shouldActivateAdoptedTerminal({
@@ -51,12 +63,12 @@ test('a terminal created on another device never steals this device\'s tab', asy
       false,
     )
   } finally {
-    await cleanup()
+    /* the compiled module is shared; cleaned up by the process exit */
   }
 })
 
 test('a terminal this device created or dragged in becomes active', async () => {
-  const { module, cleanup } = await loadModule()
+  const { module } = await loadModule()
   try {
     assert.equal(
       module.shouldActivateAdoptedTerminal({
@@ -67,12 +79,12 @@ test('a terminal this device created or dragged in becomes active', async () => 
       true,
     )
   } finally {
-    await cleanup()
+    /* the compiled module is shared; cleaned up by the process exit */
   }
 })
 
 test('a device showing nothing adopts its first terminal rather than staying blank', async () => {
-  const { module, cleanup } = await loadModule()
+  const { module } = await loadModule()
   try {
     assert.equal(
       module.shouldActivateAdoptedTerminal({
@@ -93,12 +105,12 @@ test('a device showing nothing adopts its first terminal rather than staying bla
       false,
     )
   } finally {
-    await cleanup()
+    /* the compiled module is shared; cleaned up by the process exit */
   }
 })
 
 test('a reconnecting device restores its own remembered tab, not another device\'s', async () => {
-  const { module, cleanup } = await loadModule()
+  const { module } = await loadModule()
   try {
     assert.equal(
       module.shouldActivateAdoptedTerminal({
@@ -120,12 +132,12 @@ test('a reconnecting device restores its own remembered tab, not another device\
       'other terminals adopted in the same pass must not take the tab',
     )
   } finally {
-    await cleanup()
+    /* the compiled module is shared; cleaned up by the process exit */
   }
 })
 
 test('a remembered tab is a hint: a workspace that changed entirely just falls back', async () => {
-  const { module, cleanup } = await loadModule()
+  const { module } = await loadModule()
   try {
     globalThis.localStorage = fakeStorage()
     module.rememberActiveSession('project-a', 'session-gone')
@@ -142,12 +154,11 @@ test('a remembered tab is a hint: a workspace that changed entirely just falls b
     )
   } finally {
     delete globalThis.localStorage
-    await cleanup()
   }
 })
 
 test('selection is remembered per project and per device', async () => {
-  const { module, cleanup } = await loadModule()
+  const { module } = await loadModule()
   try {
     globalThis.localStorage = fakeStorage()
     module.rememberActiveSession('project-a', 'session-1')
@@ -161,12 +172,11 @@ test('selection is remembered per project and per device', async () => {
     assert.equal(module.recallActiveSession('project-b'), 'session-2')
   } finally {
     delete globalThis.localStorage
-    await cleanup()
   }
 })
 
 test('unavailable, corrupt, or throwing storage degrades to no memory', async () => {
-  const { module, cleanup } = await loadModule()
+  const { module } = await loadModule()
   try {
     delete globalThis.localStorage
     assert.equal(module.recallActiveSession('project-a'), undefined)
@@ -183,12 +193,11 @@ test('unavailable, corrupt, or throwing storage degrades to no memory', async ()
     module.rememberActiveSession('project-a', 'session-1')
   } finally {
     delete globalThis.localStorage
-    await cleanup()
   }
 })
 
 test('remembered projects are bounded so a long-lived profile cannot grow forever', async () => {
-  const { module, cleanup } = await loadModule()
+  const { module } = await loadModule()
   try {
     globalThis.localStorage = fakeStorage()
     for (let index = 0; index < 200; index += 1)
@@ -198,6 +207,5 @@ test('remembered projects are bounded so a long-lived profile cannot grow foreve
     assert.equal(module.recallActiveSession('project-199'), 'session-199', 'the most recent survives')
   } finally {
     delete globalThis.localStorage
-    await cleanup()
   }
 })
