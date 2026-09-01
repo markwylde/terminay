@@ -7,6 +7,7 @@ import {
 	useEffect,
 	useRef,
 } from 'react';
+import { rememberActiveSession } from './localViewState';
 
 type LifecycleOptions = {
 	apiRef: MutableRefObject<DockviewApi | null>;
@@ -21,6 +22,8 @@ type LifecycleOptions = {
 	markTerminalActivityViewed: (sessionId: string) => void;
 	movingTerminalSessionIdsRef: MutableRefObject<Set<string>>;
 	panelSessionMapRef: MutableRefObject<Map<string, string>>;
+	/** Scopes this device's remembered tab to the project it belongs to. */
+	projectId: string;
 	publishTerminalActivityOverview: () => void;
 	setFocusedSessionId: Dispatch<SetStateAction<string | null>>;
 	setIsDockviewReady: Dispatch<SetStateAction<boolean>>;
@@ -109,6 +112,9 @@ export function useDockviewPanelLifecycle(options: LifecycleOptions) {
 				latest.focusedSessionIdRef.current = sessionId;
 				latest.setFocusedSessionId(sessionId);
 				latest.markTerminalActivityViewed(sessionId);
+				// This device's own choice, kept on this device so a reconnect
+				// restores the tab this user was on rather than another device's.
+				rememberActiveSession(latest.projectId, sessionId);
 			}
 		});
 

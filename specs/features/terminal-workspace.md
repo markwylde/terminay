@@ -361,3 +361,29 @@ query and injecting duplicate control responses.
   weaken these protected emulator capabilities.
 - Modifier-clicking a detected `http://` or `https://` terminal link, including
   OSC-8 hyperlinks, opens that credential-free URL in the system browser.
+
+## Shared workspace, local view
+
+A workspace's contents are shared; each device's view of them is its own. Two
+devices attached to one workspace are two people reading the same book at
+different pages.
+
+Workspace facts sync to every device: a terminal existing, its title, its
+project, its shell, its output, its removal. Closing a terminal removes it
+everywhere, because the terminal is gone.
+
+View state never syncs: which terminal tab is selected, which project tab is
+selected, split layout and pane sizes, scroll position, and focus. A terminal
+created on one device appears everywhere and is selected only on the device
+that created it. A device reading one terminal is never moved to another
+because a second device made or selected something.
+
+Each device remembers its own selection per project and restores it on
+reconnect. That memory is a hint, not an instruction: a device may reconnect to
+a workspace whose projects and terminals have changed entirely, so a remembered
+selection is validated against what exists and otherwise discarded. Storage that
+is unavailable, full, or disabled means the device starts fresh rather than
+failing. A device with nothing selected takes the first terminal it adopts, so
+it lands somewhere of its own choosing rather than on a blank workspace or on
+another device's page. When the selected terminal is closed anywhere, each
+device independently selects a neighbour.

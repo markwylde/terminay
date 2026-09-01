@@ -78,6 +78,20 @@ hydration re-arm itself and the terminal never paints again while its
 connection stays busy and healthy. Only a live display that fell behind
 re-hydrates.
 
+A display can always recover. Whether a re-attach is already pending for a gap
+is state a recovery controller owns, and every path out of recovery either
+starts that re-attach or returns the display to streaming, where the next skip
+is honoured. Declining an attempt because a newer attachment has taken the
+display over ends that attempt, never the display's ability to recover; so does
+an attach that fails or throws. No sequence of skips, attach completions, and
+retry timers leaves a display that ignores skips with no re-attach pending.
+
+This is a hard contract because its violation is silent. A display latched out
+of recovery keeps its connection, keeps accepting keystrokes, keeps its painted
+screen, and reports no error, because nothing has failed. It simply never
+paints again until it is reloaded, and every layer beneath it still measures
+itself as healthy.
+
 The checkpoint-to-live transition is contiguous and ordered. Output and resize
 events arriving during rehydration are bounded, and any second overflow repeats
 the same attachment-scoped recovery rather than widening memory limits or
