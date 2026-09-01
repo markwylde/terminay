@@ -1,5 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { activeTerminalSessionId, createTerminal } from './support/terminal-session';
 import { sendAppCommand } from './support/app';
 import { typeInVisibleTerminal } from './support/terminal-input';
 import {
@@ -12,15 +13,7 @@ import {
 } from './support/ui';
 
 async function getActiveSessionId(page: Page): Promise<string> {
-	const sessionId = await page
-		.locator('.project-workspace--active .terminal-panel:visible')
-		.getAttribute('data-terminay-terminal-session-id');
-
-	if (!sessionId) {
-		throw new Error('Active terminal session id is unavailable');
-	}
-
-	return sessionId;
+	return await activeTerminalSessionId(page);
 }
 
 async function requireBoundingBox(locator: Locator, label: string) {
@@ -37,8 +30,11 @@ async function requireBoundingBox(locator: Locator, label: string) {
 }
 
 async function writeToTerminal(page: Page, data: string): Promise<void> {
-	const sessionId = await getActiveSessionId(page);
-	await writeToTerminalSession(page, sessionId, data);
+	// Resolve the presented panel at the point of use. Snapshotting its session
+	// id first and typing into that id races the Dockview swap: the id read is
+	// the outgoing terminal, whose panel is detached moments later, so the write
+	// either lands in the terminal the test just left or finds no panel at all.
+	await typeInVisibleTerminal(page, data);
 }
 
 async function writeToTerminalSession(
@@ -421,7 +417,7 @@ test.describe('terminal behavior', () => {
 	}) => {
 		const marker = 'terminay-colorterm-truecolor';
 
-		await sendAppCommand(mainWindow, 'new-terminal');
+		await createTerminal(mainWindow);
 		await expect(mainWindow.locator('.terminal-tab-content')).toHaveCount(2);
 		await writeToTerminal(
 			mainWindow,
@@ -1297,7 +1293,7 @@ test.describe('terminal behavior', () => {
 		);
 		await settingsWindow.close();
 
-		await sendAppCommand(mainWindow, 'new-terminal');
+		await createTerminal(mainWindow);
 		await expect(mainWindow.locator('.terminal-tab-content')).toHaveCount(2);
 
 		await writeToTerminal(mainWindow, 'exit\r');
