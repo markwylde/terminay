@@ -3,6 +3,7 @@ import { realpath } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { settledTerminalSessionId } from './support/terminal-session';
 import {
 	fileExplorerItem,
 	openFileExplorer,
@@ -13,17 +14,11 @@ import {
 const execFileAsync = promisify(execFile);
 
 async function getActiveSessionId(page: Page): Promise<string> {
-	const sessionId = await page
-		.locator(
+	return await settledTerminalSessionId(
+		page.locator(
 			'.project-workspace--active .terminal-panel:has(.xterm-helper-textarea:focus)',
-		)
-		.getAttribute('data-terminay-terminal-session-id');
-
-	if (!sessionId) {
-		throw new Error('Active terminal session id is unavailable');
-	}
-
-	return sessionId;
+		),
+	);
 }
 
 async function writeToActiveTerminal(

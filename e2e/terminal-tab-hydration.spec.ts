@@ -1,6 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
-import { sendAppCommand } from './support/app';
+import { createTerminal } from './support/terminal-session';
 import { activateDockTab } from './support/ui';
 
 async function activeTerminalPanel(page: Page): Promise<Locator> {
@@ -58,18 +58,15 @@ async function monitorTerminalGridDuringTabSwitch(
 test('switching a tabbed terminal never claims its detached zero-width grid', async ({
 	mainWindow,
 }) => {
-	await sendAppCommand(mainWindow, 'new-terminal');
+	// Reading the presented session id straight after the command returns the
+	// terminal being replaced, whose root Dockview then detaches — leaving the
+	// monitor below with nothing to observe.
+	const secondSessionId = await createTerminal(mainWindow);
 	await expect(
 		mainWindow.locator('.project-workspace--active .terminal-tab-content'),
 	).toHaveCount(2);
 
-	const secondPanel = await activeTerminalPanel(mainWindow);
-	const secondSessionId = await secondPanel.getAttribute(
-		'data-terminay-terminal-session-id',
-	);
-	if (!secondSessionId)
-		throw new Error('The second terminal session is unavailable.');
-	await expectHydratedViewportGrid(secondPanel);
+	await expectHydratedViewportGrid(await activeTerminalPanel(mainWindow));
 
 	// Dockview detaches inactive content while retaining its xterm. Observe the
 	// detached root itself: a zero-width observation must not turn into xterm's
