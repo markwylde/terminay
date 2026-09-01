@@ -3,6 +3,7 @@ export * from "./host.js";
 export * from "./client.js";
 export * from "./webSocketByteTransport.js";
 export * from "./streamDiagnostics.js";
+export * from "./terminalRecovery.js";
 export * from "./workspace.js";
 export * from "./optimistic.js";
 export * from "./connections.js";
