@@ -24,5 +24,6 @@ try {
   assert.equal(definitions.length, 1);
   assert.equal(definitions[0].definition.providerId, "com.puzed.platform/vm");
   assert.equal(definitions[0].definition.profileForm.sections[0].fields.some((field) => field.id === "api-key" && field.type === "secret"), true);
+  assert.equal(definitions[0].definition.browseForm.title, "Browse Terminay VMs");
   console.log("Packed extension activation passed.");
 } finally { await rm(directory, { recursive: true, force: true }); }

@@ -54,3 +54,13 @@ export function toInventoryItem(machine: Machine, profileId: string, baseUrl: UR
     ...(ssh ? { ssh } : {}),
   };
 }
+
+export function inventoryOption(item: PuzedMachineInventoryItem): { value: string; label: string; description: string; disabledReason?: string } {
+  const state = `${item.managementState.charAt(0).toUpperCase()}${item.managementState.slice(1)}`;
+  return {
+    value: item.machine.id,
+    label: item.machine.name,
+    description: item.ssh === undefined ? state : `${state} · ${item.ssh.host}`,
+    ...(item.openable ? {} : { disabledReason: item.disabledReason ?? "This VM cannot be selected." }),
+  };
+}

@@ -435,12 +435,12 @@ export function validateDeclarativeForm(value: unknown): ValidationResult<Declar
 export function validateProviderDefinition(value: unknown): ValidationResult<ProviderDefinition> {
   const out: SchemaIssue[] = [];
   if (!record(value)) return invalidObject();
-  closed(value, new Set(["providerId", "displayName", "description", "icon", "capabilities", "profileForm", "createForm"]), "$", out);
+  closed(value, new Set(["providerId", "displayName", "description", "icon", "capabilities", "profileForm", "createForm", "browseForm"]), "$", out);
   string(value.providerId, "$.providerId", out, EXTENSION_LIMITS.providerIdLength);
   string(value.displayName, "$.displayName", out, EXTENSION_LIMITS.displayNameLength);
   if (value.description !== undefined) string(value.description, "$.description", out, EXTENSION_LIMITS.descriptionLength);
   if (!Array.isArray(value.capabilities) || value.capabilities.length === 0 || value.capabilities.some((item) => !capabilities.has(String(item)))) out.push({ path: "$.capabilities", code: "invalid_capabilities", message: "Expected supported capabilities" });
-  for (const key of ["profileForm", "createForm"] as const) if (value[key] !== undefined) {
+  for (const key of ["profileForm", "createForm", "browseForm"] as const) if (value[key] !== undefined) {
     const result = validateDeclarativeForm(value[key]);
     if (!result.ok) out.push(...result.issues.map((issue) => ({ ...issue, path: `$.${key}${issue.path.slice(1)}` })));
   }

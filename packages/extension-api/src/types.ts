@@ -258,6 +258,8 @@ export interface ProviderDefinition {
   capabilities: EnvironmentCapability[];
   profileForm?: DeclarativeForm;
   createForm?: DeclarativeForm;
+  /** Provider-scoped inventory selection, distinct from VM provisioning. */
+  browseForm?: DeclarativeForm;
 }
 
 export interface ProviderCallContext {

@@ -185,3 +185,35 @@ test('remote project selection invokes the server and never falls back to Local'
 	assert.match(app,/projectEnvironmentsClient\.createProject/);
 	assert.doesNotMatch(app,/environment\.isThisServer[\s\S]{0,600}catch[\s\S]{0,300}addProject\(\)/);
 });
+
+test('Puzed provider detail exposes Create VM and Browse Terminay VMs without combining those journeys',()=>{
+	assert.match(environmentManager,/Create VM…/);
+	assert.match(environmentManager,/Browse Terminay VMs…/);
+	assert.match(environmentManager,/onBrowseVms/);
+	assert.match(environmentManager,/hasBrowseForm/);
+	assert.match(environmentManager,/Test provider/);
+	assert.match(environmentManager,/Edit provider/);
+	assert.match(surfaces,/mode: 'browse'/);
+	assert.match(surfaces,/provider\.browseForm/);
+	assert.match(surfaces,/onBrowseVms=/);
+	assert.match(surfaces,/setFormTarget\(null\)/);
+	assert.match(surfaces,/Connection added or updated/);
+	assert.doesNotMatch(environmentManager,/New Puzed project/);
+});
+
+test('owner-scoped cancel and save keep the selected provider or edited item',()=>{
+	assert.match(environmentManager,/selectionHint\.profileId/);
+	assert.match(surfaces,/setSelectionHint\(\{ providerId, profileId/);
+	assert.match(surfaces,/onCancel=\{\(\) => setFormTarget\(null\)\}/);
+	assert.match(surfaces,/createdProvider &&/);
+	assert.match(surfaces,/setSelectionHint\(\{\s*providerId: formTarget\.providerId,/);
+});
+
+test('chooser groups connections by owner and never offers a provider as a project target',()=>{
+	assert.match(split,/isProviderInstance/);
+	assert.match(split,/ownedConnections/);
+	assert.match(split,/hideHeading: true/);
+	assert.doesNotMatch(split,/New Puzed provider/);
+	assert.match(app,/projectEnvironmentsClient\.createProject/);
+	assert.match(app,/environmentId/);
+});

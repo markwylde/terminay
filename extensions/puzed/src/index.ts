@@ -1,5 +1,8 @@
+import { join } from "node:path";
 import { defineExtension, type ExtensionContext, type JsonValue, type ProviderCallContext, type ProviderRuntime } from "@terminay/extension-api";
 import { PuzedApiError, PuzedClient } from "./client.js";
+import { inventoryOption, toInventoryItem, type RetainedVmBinding } from "./inventory.js";
+import { PuzedStateRepository } from "./state.js";
 export * from "./api-types.js";
 export * from "./client.js";
 export * from "./events.js";
@@ -9,7 +12,10 @@ export * from "./provider.js";
 export * from "./reconciler.js";
 export * from "./state.js";
 
+let vmStore = memoryVmStore();
+
 export function activate(context: ExtensionContext): void {
+    vmStore = fileVmStore(context.paths.data);
     context.registerProjectEnvironmentProvider({
       definition: {
         providerId: "com.puzed.platform/vm",
@@ -45,9 +51,17 @@ export function activate(context: ExtensionContext): void {
             ] },
           ],
         },
+        browseForm: {
+          id: "puzed-browse-vms", title: "Browse Terminay VMs",
+          description: "Lists this provider's tagged Terminay VMs. Selecting one adds or updates only that VM connection.",
+          submitLabel: "Add or update connection",
+          sections: [{ id: "inventory", title: "Tagged VMs", disclosure: "always", fields: [
+            { id: "machine-id", type: "select", label: "Terminay VM", required: true, searchable: true, optionSource: "com.puzed.platform/vm/inventory", description: "Only VMs tagged system:Terminay for this provider are listed." },
+          ] }],
+        },
       },
       runtime: puzedRuntime,
-    });
+    } as Parameters<ExtensionContext["registerProjectEnvironmentProvider"]>[0]);
 }
 
 interface PuzedEnvironmentState extends Record<string, JsonValue> {
@@ -104,6 +118,20 @@ const puzedRuntime: ProviderRuntime = {
       const suggestion = await platform.suggestMachineName();
       return { options: [{ value: suggestion.name, label: suggestion.name, default: true }] };
     }
+    if (request.sourceId === "com.puzed.platform/vm/inventory") {
+      const query = (request.query ?? "").trim().toLowerCase();
+      const machines = await platform.listAllTerminayMachines();
+      const options = [];
+      for (const machine of machines) {
+        if (!machine.tags?.includes("system:Terminay")) continue;
+        if (query.length > 0 && !machine.name.toLowerCase().includes(query) && !machine.id.toLowerCase().includes(query)) continue;
+        const binding = await vmStore.get(profileId, machine.id);
+        const item = toInventoryItem(machine, profileId, platform.baseUrl, binding, binding?.addressOverride ?? await vmStore.address(profileId, machine.id));
+        options.push(inventoryOption(item));
+        if (options.length >= 256) break;
+      }
+      return { options };
+    }
     throw new Error("Puzed option source is unavailable");
   },
   async createEnvironment(request, call) {
@@ -117,13 +145,17 @@ const puzedRuntime: ProviderRuntime = {
       ? await profileValues(profileId, request.values, call)
       : request.values;
     if (typeof values["image-id"] === "string") return createVm(request, profileId, values, call);
-    const machineId = required(values.machineId, "machineId");
+    const machineId = required(values["machine-id"] ?? values.machineId, "machineId");
+    if (typeof values.host !== "string") return attachTaggedVm(request, profileId, values, machineId, call);
     const generated = typeof values.bindingId === "string" ? undefined : record(await dependency(call, "managed-binding.generate", { ownerProfileId: profileId, operationId: required(values.operationId ?? call.idempotencyKey, "operationId"), logicalHostIdentityHint: `puzed:${profileId}:${machineId}` }));
     const bindingId = typeof values.bindingId === "string" ? required(values.bindingId, "bindingId") : required(generated?.bindingId, "bindingId");
+    const username = required(values.username ?? values["default-ssh-username"] ?? values.defaultSshUsername ?? "vms", "username");
+    const root = values.root ?? values["default-root"] ?? values.defaultRoot ?? "~";
+    await retainBinding({ platformProfileId: profileId, machineId, sshBindingId: bindingId, sshUsername: username, ...(typeof values.host === "string" ? { addressOverride: required(values.host, "host") } : {}), ...(typeof root === "string" ? { defaultRoot: required(root, "root") } : {}) });
     const ssh = await dependency(call, "managed-binding.bind", {
       bindingId, machineId, logicalHostIdentity: `puzed:${profileId}:${machineId}`,
       host: required(values.host, "host"), port: number(values.port ?? 22, "port"),
-      username: required(values.username ?? values["default-ssh-username"] ?? values.defaultSshUsername ?? "vms", "username"), root: values.root ?? values["default-root"] ?? values.defaultRoot ?? "~",
+      username, root,
     });
     const verified = record(await dependency(call, "managed-binding.verify", { bindingId }, number(record(ssh).revision, "revision")));
     if (verified.state !== "ready") { const operationId = `puzed-ssh:${machineId}`; const providerState = state(request.displayName, profileId, machineId, bindingId, number(record(ssh).revision, "revision"), values); providerState.trustChallenge = verified; return { state: "pending", operationId, providerState, progress: waitingProgress(operationId), pollAfterMs: 2_000 }; }
@@ -134,7 +166,10 @@ const puzedRuntime: ProviderRuntime = {
   async resumeOperation(request, call) {
     const current = parseState(request.providerState);
     if (current.jobId !== undefined) return resumeCreatedVm(request, current, call);
-    return verifySshReadiness(current, request.operationId, call);
+    if (current.sshRevision > 0 || trustRequired(current.trustChallenge) || current.sshIssue === "unavailable") {
+      return verifySshReadiness(current, request.operationId, call);
+    }
+    return bindAndVerify(current, request.operationId, call);
   },
   async getStatus(request, _call) {
     const current = parseState(request.providerState);
@@ -173,6 +208,80 @@ const puzedRuntime: ProviderRuntime = {
   },
 };
 
+
+interface VmStore {
+  get(profileId: string, machineId: string): Promise<RetainedVmBinding | undefined>;
+  saveBinding(binding: RetainedVmBinding): Promise<void>;
+  address(profileId: string, machineId: string): Promise<string | undefined>;
+  saveAddress(profileId: string, machineId: string, address: string): Promise<void>;
+}
+function memoryVmStore(): VmStore {
+  const bindings = new Map<string, RetainedVmBinding>();
+  const addresses = new Map<string, string>();
+  const key = (profileId: string, machineId: string) => `${profileId}:${machineId}`;
+  return {
+    get: async (profileId, machineId) => bindings.get(key(profileId, machineId)),
+    saveBinding: async (binding) => { bindings.set(key(binding.platformProfileId, binding.machineId), binding); },
+    address: async (profileId, machineId) => addresses.get(key(profileId, machineId)),
+    saveAddress: async (profileId, machineId, address) => { addresses.set(key(profileId, machineId), address); },
+  };
+}
+function fileVmStore(dataRoot: string): VmStore {
+  let opened: Promise<PuzedStateRepository> | undefined;
+  const repo = () => (opened ??= PuzedStateRepository.open(join(dataRoot, "puzed-state.v1.json")));
+  return {
+    get: async (profileId, machineId) => (await repo()).get(profileId, machineId),
+    saveBinding: async (binding) => { await (await repo()).saveBinding(binding); },
+    address: async (profileId, machineId) => (await repo()).address(profileId, machineId),
+    saveAddress: async (profileId, machineId, address) => { await (await repo()).saveAddress(profileId, machineId, address); },
+  };
+}
+async function retainBinding(binding: RetainedVmBinding): Promise<void> {
+  await vmStore.saveBinding(binding);
+  if (binding.addressOverride !== undefined) await vmStore.saveAddress(binding.platformProfileId, binding.machineId, binding.addressOverride);
+}
+async function attachTaggedVm(request: Parameters<ProviderRuntime["createEnvironment"]>[0], profileId: string, values: Record<string, JsonValue>, machineId: string, call: ProviderCallContext) {
+  const platform = client(profileId, await profileValues(profileId, values, call), call);
+  const machine = (await platform.getMachine(machineId)).machine;
+  if (!machine.tags?.includes("system:Terminay")) throw new Error("Only system:Terminay machines may enter Puzed inventory.");
+  const binding = await vmStore.get(profileId, machineId);
+  if (binding?.sshBindingId === undefined) throw new Error("This Terminay Server does not have the SSH binding retained when the VM was created.");
+  const host = binding.addressOverride ?? (await platform.getMachineInterfaces(machineId)).items?.find((item) => typeof item.observed_ip === "string")?.observed_ip;
+  const username = binding.sshUsername;
+  const root = binding.defaultRoot ?? "~";
+  const providerState = state(machine.name || request.displayName, profileId, machineId, binding.sshBindingId, 0, { ...values, username, root, "base-url": platform.baseUrl.toString() });
+  if (host === undefined) {
+    const operationId = `puzed-ssh:${machineId}`;
+    return { state: "pending" as const, operationId, providerState, progress: waitingProgress(operationId), pollAfterMs: 2_000 };
+  }
+  await vmStore.saveAddress(profileId, machineId, host);
+  const ssh = record(await dependency(call, "managed-binding.bind", {
+    bindingId: binding.sshBindingId, machineId, logicalHostIdentity: `puzed:${profileId}:${machineId}`,
+    host, port: binding.sshPort ?? 22, username, root,
+  }));
+  const verified = record(await dependency(call, "managed-binding.verify", { bindingId: binding.sshBindingId }, number(record(ssh).revision, "revision")));
+  providerState.sshRevision = number(verified.revision ?? record(ssh).revision, "revision");
+  if (verified.state !== "ready") {
+    const operationId = `puzed-ssh:${machineId}`;
+    providerState.trustChallenge = verified;
+    return { state: "pending" as const, operationId, providerState, progress: waitingProgress(operationId), pollAfterMs: 2_000 };
+  }
+  providerState.root = canonicalRoot(verified, root);
+  return { state: "ready" as const, providerState, status: available(providerState, providerState.root) };
+}
+async function bindAndVerify(current: PuzedEnvironmentState, operationId: string, call: ProviderCallContext) {
+  const platform = client(current.profileId, await profileValues(current.profileId, {}, call), call);
+  const host = (await platform.getMachineInterfaces(current.machineId)).items?.find((item) => typeof item.observed_ip === "string")?.observed_ip;
+  if (host === undefined) return { state: "pending" as const, operationId, providerState: current, progress: waitingProgress(operationId), pollAfterMs: 2_000 };
+  await vmStore.saveAddress(current.profileId, current.machineId, host);
+  const ssh = record(await dependency(call, "managed-binding.bind", {
+    bindingId: current.bindingId, machineId: current.machineId, logicalHostIdentity: `puzed:${current.profileId}:${current.machineId}`,
+    host, port: 22, username: current.username ?? "vms", root: current.root ?? "~",
+  }));
+  current.sshRevision = number(ssh.revision, "revision");
+  return verifySshReadiness(current, operationId, call);
+}
+
 function dependency(call: ProviderCallContext, operation: string, payload: JsonValue, expectedRevision?: number): Promise<JsonValue> { return call.dependencies.call({ providerId: "com.terminay.ssh/connection", operation, payload }, { deadlineAt: call.deadlineAt, signal: call.signal, ...(call.idempotencyKey ? { idempotencyKey: call.idempotencyKey } : {}), ...(expectedRevision === undefined ? {} : { expectedRevision }) }); }
 async function createVm(request: Parameters<ProviderRuntime["createEnvironment"]>[0], profileId: string, values: Record<string, JsonValue>, call: ProviderCallContext) {
   const platform = client(profileId, values, call); const settings = (await platform.getSettings()).settings;
@@ -199,6 +308,8 @@ async function createVm(request: Parameters<ProviderRuntime["createEnvironment"]
     }
     throw error;
   }
+  const username = required(values.username ?? "vms", "username");
+  await retainBinding({ platformProfileId: profileId, machineId: created.machine.id, sshBindingId: bindingId, sshUsername: username, ...(typeof values.root === "string" ? { defaultRoot: required(values.root, "root") } : {}), provisioningJobId: created.job_id });
   const providerState = state(request.displayName, profileId, created.machine.id, bindingId, 0, values);
   providerState.jobId = created.job_id; providerState.managementState = "provisioning";
   // Terminay generated this VM's dedicated SSH key and submitted its public
@@ -216,6 +327,7 @@ async function resumeCreatedVm(request: Parameters<ProviderRuntime["resumeOperat
   const interfaces = await platform.getMachineInterfaces(current.machineId);
   const host = (interfaces.items ?? []).find((item) => typeof item.observed_ip === "string")?.observed_ip;
   if (host === undefined) return { state: "pending" as const, operationId: current.jobId!, providerState: current, progress: waitingProgress(current.jobId!), pollAfterMs: 2_000 };
+  await vmStore.saveAddress(current.profileId, current.machineId, host);
   const ssh = record(await dependency(call, "managed-binding.bind", { bindingId: current.bindingId, machineId: current.machineId, logicalHostIdentity: `puzed:${current.profileId}:${current.machineId}`, host, port: 22, username: current.username ?? "vms", root: current.root ?? "~" }));
   current.sshRevision = number(ssh.revision, "revision"); delete current.jobId; current.managementState = "running";
   return verifySshReadiness(current, request.operationId, call);
