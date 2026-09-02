@@ -581,11 +581,16 @@
 }
 
 @media (max-width: 900px) {
-	.documentation-editor {
+	.documentation-editor--with-preview {
 		grid-template-columns: 1fr;
+		grid-template-rows: minmax(360px, 1fr) minmax(280px, 1fr);
+	}
+
+	.documentation-editor--with-preview.documentation-editor--with-status {
 		grid-template-rows: auto minmax(360px, 1fr) minmax(280px, 1fr);
 	}
-	.documentation-editor__surface {
+
+	.documentation-editor--with-preview .documentation-editor__surface {
 		border-right: 0;
 		border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 	}
