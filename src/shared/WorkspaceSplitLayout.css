@@ -157,6 +157,8 @@
 		width: auto;
 		max-width: none;
 		overflow: hidden;
+		isolation: isolate;
+		background: var(--tab-bg-active, #0d1014);
 	}
 
 	.workspace-split-layout[data-navigation-visible="true"]
