@@ -73,7 +73,7 @@ async function firstRecords(observed, count) {
 
 function publisher(events) {
   const emit = (event) => events.push(event);
-  const kinds = { sessionStarted: "session.started", metadataChanged: "agent.metadata", turnStarted: "turn.started", toolStarted: "tool.started", toolFinished: "tool.finished", waitStarted: "wait.started", waitFinished: "wait.finished", done: "agent.done", exited: "agent.exited", subagentStarted: "subagent.started", subagentDone: "subagent.done" };
+  const kinds = { sessionStarted: "session.started", metadataChanged: "agent.metadata", turnStarted: "turn.started", toolStarted: "tool.started", toolFinished: "tool.finished", waitStarted: "wait.started", waitFinished: "wait.finished", done: "agent.done", exited: "agent.exited", subagentStarted: "subagent.started", sessionStopped: "session.stopped", subagentDone: "subagent.done" };
   return new Proxy({ publish: emit }, { get(target, name) { return name in target ? target[name] : (event) => emit({ kind: kinds[name], ...event }); } });
 }
 
