@@ -443,7 +443,6 @@ export function useProjectCollection<TTerminal>({
 					projectId,
 					viewId,
 					root: serverRoot,
-					name: `Project ${Object.keys(snapshot.projects).length + 1}`,
 					color: presentation.color,
 					icon: presentation.emoji,
 					sidebar: {
