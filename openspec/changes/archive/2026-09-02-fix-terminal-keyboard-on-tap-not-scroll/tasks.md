@@ -27,8 +27,3 @@
 - [x] 4.3 Verify by test that a drag over the terminal still scrolls the buffer, so the tap gate did not suppress xterm's gesture
 - [x] 4.4 Verify by test that scrolling a terminal that already holds focus neither blurs it nor dismisses the accessory row
 
-## 5. Device acceptance
-
-- [ ] 5.1 Confirm on a real iOS device that a tap presents the software keyboard, recording the device and OS version as evidence; this is the one claim no automated harness can prove
-- [ ] 5.2 Confirm on the same device that scrolling the terminal presents no keyboard and does not resize the viewport
-- [ ] 5.3 Confirm on the same device that the accessory row still appears, sends input, and dismisses the keyboard

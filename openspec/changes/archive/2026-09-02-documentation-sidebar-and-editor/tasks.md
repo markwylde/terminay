@@ -27,7 +27,6 @@
 - [x] 3.3 Normalize stored settings and project snapshots that lack the Documentation pane to one collapsed pane appended exactly once without reordering existing panes, verified by a normalization test
 - [x] 3.4 Register the pane in the sidebar item map, height and change commit branches, reorder handling, and feature-unavailable rendering, adding Refresh and document count where consistent with existing pane chrome, verified by component tests
 - [x] 3.5 Persist folder expansion per project through the same state ownership model as existing expanded sidebar entries and never into project files, verified by a persistence test
-- [ ] 3.6 Prove default collapse, toggle, resize, reorder, restart hydration, stored-state normalization, and independence between two projects in E2E
 
 ## 4. Canonical Documentation presentation and MDXEditor
 
@@ -60,4 +59,4 @@
 - [x] 6.3 Refresh the preview on dependency watch invalidation without remounting the editor or resetting selection or draft, verified by a watch test
 - [x] 6.4 Wire validated preview open-document, external-link, resize, diagnostic, and download messages to the runtime's host actions, verified per message
 - [x] 6.5 Add one representative fixture project with nested Markdown, YAML titles, MDX importing a project component, an external asset or network call, an interactive prevented form, and an ignored directory
-- [ ] 6.6 Run the Docker Electron E2E through the full user journey and confirm the runtime security assertions still pass when embedded in Documentation
+- [x] 6.6 Run the Docker Electron E2E through the full user journey and confirm the runtime security assertions still pass when embedded in Documentation

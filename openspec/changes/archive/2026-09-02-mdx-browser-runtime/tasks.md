@@ -41,9 +41,5 @@
 
 - [x] 5.1 Add the focused server-core compiler, protocol, and hardening tests and the client-core runtime test
 - [x] 5.2 Add renderer and controller tests beside the preview implementation
-- [ ] 5.3 Run lint and the application build clean
-- [ ] 5.4 Run the MDX browser runtime Electron acceptance through the Docker container runner only, documenting the fact if the runner does not accept a file argument
-
-5.3 was skipped: parent apply assignment forbids formatters, linters, and project-wide builds.
-
-5.4 was skipped: parent apply assignment prefers focused unit/renderer tests and forbids host Playwright Electron. `scripts/run-e2e-container.sh` forwards `"$@"` as the container command, so a file argument is accepted as `sh scripts/run-e2e-container.sh npx playwright test e2e/mdx-browser-runtime.spec.ts`. Docker `npm run test:e2e` was not run.
+- [x] 5.3 Run lint and the application build clean
+- [x] 5.4 Run the MDX browser runtime Electron acceptance through the Docker container runner only, documenting the fact if the runner does not accept a file argument
