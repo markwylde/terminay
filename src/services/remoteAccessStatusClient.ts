@@ -7,10 +7,16 @@ export type RemoteAccessStatusClient = Pick<
 		subscribe(listener: (status: import('../types/terminay').RemoteAccessStatus) => void): () => void;
 		toggleServer(): Promise<import('../types/terminay').RemoteAccessStatus>;
 		createPairingLink(): Promise<import('../types/terminay').RemoteAccessStatus>;
+		approveDevice(approvalId: string): Promise<import('../types/terminay').RemoteAccessStatus>;
+		denyDevice(approvalId: string): Promise<import('../types/terminay').RemoteAccessStatus>;
+		resetIdentity(): Promise<import('../types/terminay').RemoteAccessStatus>;
 	},
+	| 'approveDevice'
 	| 'closeConnection'
 	| 'createPairingLink'
+	| 'denyDevice'
 	| 'getStatus'
+	| 'resetIdentity'
 	| 'revokeDevice'
 	| 'subscribe'
 	| 'toggleServer'

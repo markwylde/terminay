@@ -1,7 +1,9 @@
 import { resolve } from "node:path";
 
 export interface ServerCliOptions {
-  readonly command: "start" | "status" | "pairing" | "mcp" | "help" | "version";
+  readonly command: "start" | "status" | "pairing" | "mcp" | "help" | "version" | "approve" | "deny" | "approvals" | "reset-identity";
+  /** Pending approval id for the approve and deny commands. */
+  readonly approvalId?: string;
   readonly serverId: string;
   /** True only when the operator provided --server-id or TERMINAY_SERVER_ID.
    * Implicit ids are resolved from the leased data root before startup. */
@@ -15,8 +17,6 @@ export interface ServerCliOptions {
   /** Whether the remote origin was explicitly configured rather than derived
    * from the server authority. */
   readonly remoteOriginExplicit: boolean;
-  /** Exact six-digit pairing PIN kept in the operator's protected environment. */
-  readonly remotePairingPin?: string;
   readonly publicOrigin?: string;
   readonly httpHost?: string;
   readonly httpPort?: number;
@@ -47,12 +47,15 @@ export function allowedWebOrigins(webOrigin: string): readonly string[] {
 }
 
 export function parseServerCliOptions(argv: readonly string[], env: Readonly<Record<string, string | undefined>>): ServerCliOptions {
-  const command = argv.includes("--help") ? "help" : argv.includes("--version") ? "version" : argv.includes("--status") ? "status" : argv.includes("--pairing") ? "pairing" : argv[0] === "mcp" ? "mcp" : "start";
+  const command = argv.includes("--help") ? "help" : argv.includes("--version") ? "version" : argv.includes("--status") ? "status" : argv.includes("--pairing") ? "pairing" : argv[0] === "mcp" ? "mcp" : argv[0] === "approve" || argv[0] === "deny" || argv[0] === "approvals" || argv[0] === "reset-identity" ? argv[0] : "start";
+  const approvalId = command === "approve" || command === "deny" ? parseApprovalId(argv[1]) : undefined;
+  if (env.TERMINAY_REMOTE_PAIRING_PIN !== undefined) {
+    throw new Error("TERMINAY_REMOTE_PAIRING_PIN is no longer used: remote pairing is approved on the host with a match code. Remove the variable.");
+  }
   const configuredServerId = value(argv, "--server-id") ?? env.TERMINAY_SERVER_ID;
   const serverId = configuredServerId ?? "local-server";
   const configuredRemoteOrigin = value(argv, "--remote-origin") ?? env.TERMINAY_REMOTE_ORIGIN;
   const remoteOrigin = configuredRemoteOrigin ?? defaultRemoteOrigin(serverId);
-  const remotePairingPin = env.TERMINAY_REMOTE_PAIRING_PIN;
   const publicOrigin = value(argv, "--public-origin") ?? env.TERMINAY_PUBLIC_ORIGIN;
   const logSink = value(argv, "--log-sink") ?? env.TERMINAY_LOG_SINK;
   const uiBundle = value(argv, "--ui-bundle") ?? env.TERMINAY_UI_BUNDLE;
@@ -74,7 +77,7 @@ export function parseServerCliOptions(argv: readonly string[], env: Readonly<Rec
     endpoint: value(argv, "--endpoint") ?? env.TERMINAY_ENDPOINT ?? "loopback",
     remoteOrigin,
     remoteOriginExplicit: configuredRemoteOrigin !== undefined,
-    ...(remotePairingPin === undefined ? {} : { remotePairingPin }),
+    ...(approvalId === undefined ? {} : { approvalId }),
     ...(publicOrigin === undefined ? {} : { publicOrigin: normalizePublicOrigin(publicOrigin) }),
     ...(httpHost === undefined ? {} : { httpHost }),
     ...(httpPortValue === undefined ? {} : { httpPort: parsePort(httpPortValue, "--http-port") }),
@@ -101,7 +104,6 @@ export function formatServerHelp(): string {
     "  --http-port PORT   authenticated HTTP port; 0 selects one (TERMINAY_HTTP_PORT)",
     "  --public-origin URL advertised browser URL for the authenticated HTTP server (TERMINAY_PUBLIC_ORIGIN)",
     "  --remote-origin URL remote WebRTC session origin (TERMINAY_REMOTE_ORIGIN)",
-    "  TERMINAY_REMOTE_PAIRING_PIN  required six-digit PIN for remote pairing; keep it in a protected environment file",
     "  --log-sink PATH    structured log destination (TERMINAY_LOG_SINK)",
     "  --ui-bundle PATH   matching workspace bundle (TERMINAY_UI_BUNDLE)",
     "  --agent-integration MODE  observe supported agent session journals: enabled or disabled (TERMINAY_AGENT_INTEGRATION)",
@@ -110,10 +112,21 @@ export function formatServerHelp(): string {
     "  --health-port PORT unauthenticated liveness/readiness port (TERMINAY_HEALTH_PORT)",
     "  --vault-unlock-fd FD  consume vault passphrase from inherited FD >= 3; otherwise use an echo-disabled controlling terminal",
     "  --pairing          print a short-lived pairing handoff record",
+    "  approvals          list devices waiting for pairing approval on the running server",
+    "  approve ID         approve a pending device by its approval id after comparing the match code",
+    "  deny ID            deny a pending device by its approval id",
+    "  reset-identity     rotate the server host key and revoke every paired device",
     "  --status           print redacted runtime configuration",
     "  --version          print the server version",
     "  mcp                run the headless MCP stdio adapter (requires inherited control environment)",
   ].join("\n")}\n`;
+}
+
+function parseApprovalId(value: string | undefined): string {
+  if (value === undefined || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value)) {
+    throw new Error("approve and deny require the approval id shown for the pending device");
+  }
+  return value;
 }
 
 function parseInheritedFd(value: string): number {

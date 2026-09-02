@@ -382,3 +382,23 @@
 		grid-column: auto;
 	}
 }
+
+.shared-connections__match-code {
+	margin-top: 12px;
+	padding: 12px 16px;
+	border-radius: 8px;
+	background: rgba(127, 127, 127, 0.12);
+	text-align: center;
+}
+
+.shared-connections__match-code p {
+	margin: 0 0 6px;
+}
+
+.shared-connections__match-code-value {
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 2rem;
+	font-weight: 600;
+	letter-spacing: 0.3em;
+	padding-left: 0.3em;
+}

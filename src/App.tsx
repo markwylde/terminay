@@ -5484,30 +5484,25 @@ function App({
 		workspaceViewId: boundWorkspaceViewId,
 	});
 	const {
-		closePinModal: closePairingPinModal,
+		approveDevice: approvePairingDevice,
+		busyApprovalId: busyPairingApprovalId,
 		closePairingModal,
+		denyDevice: denyPairingDevice,
 		isMenuOpen: isRemoteMenuOpen,
 		isPairingModalOpen,
-		isPinModalOpen: isPairingPinModalOpen,
-		isSavingPin: isSavingPairingPin,
 		isToggling: isTogglingRemoteAccess,
 		menuRef: remoteMenuRef,
 		openPairingQr,
 		pairingExpiresAt: selectedPairingExpiresAt,
 		pairingOutcome,
 		pairingUrl: selectedPairingUrl,
-		pinError: pairingPinError,
-		pinInput: pairingPinInput,
+		pendingApproval: pendingPairingApproval,
 		setIsMenuOpen: setIsRemoteMenuOpen,
-		setPinError: setPairingPinError,
-		setPinInput: setPairingPinInput,
 		status: remoteStatus,
-		submitPin: submitPairingPin,
 		toggleExposure: toggleRemoteAccess,
 		tone: remoteButtonTone,
 		visibleQrCodeDataUrl: visiblePairingQrCodeDataUrl,
 	} = useRemoteAccessController(
-		remoteAccessClients?.pairingPin,
 		remoteAccessClients?.status,
 		auxiliaryRouteController.openSettings,
 	);
@@ -6495,65 +6490,6 @@ function App({
 				))}
 			</div>
 
-			{isPairingPinModalOpen ? (
-				<ModalBackdrop onClose={() => closePairingPinModal(false)}>
-					<form
-						className="project-edit-modal remote-pin-modal"
-						onSubmit={submitPairingPin}
-						onClick={(event) => event.stopPropagation()}
-						role="dialog"
-						aria-modal="true"
-						aria-labelledby="remote-pin-modal-title"
-					>
-						<ModalTitlebar
-							title="Remote Pairing PIN"
-							titleId="remote-pin-modal-title"
-							onClose={() => closePairingPinModal(false)}
-						/>
-						<p className="file-explorer-name-modal-description">
-							Choose a 6-digit PIN. Your browser will use this after scanning a
-							Remote Access QR code.
-						</p>
-						<label>
-							<span>Pairing PIN</span>
-							<input
-								type="password"
-								value={pairingPinInput}
-								onChange={(event) => {
-									setPairingPinInput(
-										event.target.value.replace(/\D/g, '').slice(0, 6),
-									);
-									setPairingPinError(null);
-								}}
-								inputMode="numeric"
-								pattern="[0-9]{6}"
-								autoComplete="off"
-								spellCheck={false}
-								autoFocus
-							/>
-						</label>
-						{pairingPinError ? (
-							<p className="remote-pin-modal__error">{pairingPinError}</p>
-						) : null}
-						<div className="project-edit-actions">
-							<button
-								type="button"
-								onClick={() => closePairingPinModal(false)}
-								disabled={isSavingPairingPin}
-							>
-								Cancel
-							</button>
-							<button
-								type="submit"
-								disabled={isSavingPairingPin || pairingPinInput.length !== 6}
-							>
-								{isSavingPairingPin ? 'Saving...' : 'Save PIN'}
-							</button>
-						</div>
-					</form>
-				</ModalBackdrop>
-			) : null}
-
 			{isPairingModalOpen ? (
 				<RemotePairingModal
 					dialogRef={(element) => {
@@ -6561,9 +6497,13 @@ function App({
 					}}
 					dialogStyle={pairingModal.modalStyle}
 					expiresAt={selectedPairingExpiresAt}
+					busy={busyPairingApprovalId !== null}
+					onApprove={(approvalId) => void approvePairingDevice(approvalId)}
 					onClose={closePairingModal}
+					onDeny={(approvalId) => void denyPairingDevice(approvalId)}
 					onTitleMouseDown={pairingModal.handleTitlebarPointerDown}
 					pairingUrl={selectedPairingUrl}
+					pendingApproval={pendingPairingApproval}
 					qrCodeDataUrl={visiblePairingQrCodeDataUrl}
 					statusMessage={remoteStatus?.webRtcStatusMessage}
 					success={pairingOutcome === 'success'}

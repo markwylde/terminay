@@ -311,3 +311,67 @@
 	text-transform: uppercase;
 	letter-spacing: 0.05em;
 }
+
+.remote-pairing-modal__approval {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 8px;
+	padding: 24px 16px;
+	text-align: center;
+}
+
+.remote-pairing-modal__approval-kicker {
+	margin: 0;
+	font-size: 0.72rem;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	opacity: 0.7;
+}
+
+.remote-pairing-modal__approval-device {
+	margin: 0;
+	font-size: 1.1rem;
+	font-weight: 600;
+}
+
+.remote-pairing-modal__match-code {
+	margin: 8px 0;
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 2.4rem;
+	font-weight: 600;
+	letter-spacing: 0.3em;
+	padding-left: 0.3em;
+}
+
+.remote-pairing-modal__approval-actions {
+	display: flex;
+	gap: 12px;
+}
+
+.remote-pairing-modal__approve-btn,
+.remote-pairing-modal__deny-btn {
+	min-width: 112px;
+	padding: 8px 16px;
+	border-radius: 6px;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.remote-pairing-modal__approve-btn {
+	border: 1px solid transparent;
+	background: var(--accent, #3b82f6);
+	color: var(--accent-contrast, #fff);
+}
+
+.remote-pairing-modal__deny-btn {
+	border: 1px solid var(--border, rgba(127, 127, 127, 0.4));
+	background: transparent;
+	color: inherit;
+}
+
+.remote-pairing-modal__approve-btn:disabled,
+.remote-pairing-modal__deny-btn:disabled {
+	opacity: 0.6;
+	cursor: default;
+}

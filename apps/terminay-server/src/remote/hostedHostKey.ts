@@ -6,7 +6,7 @@ import {
 	type KeyObject,
 } from 'node:crypto';
 import { AUTHENTICATED_WEBRTC_TRANSPORT_VERSION } from '@terminay/protocol';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 /** Must stay identical to the hosted signaling relay's device-host proof payload. */
@@ -65,6 +65,119 @@ export function loadOrCreateHostedHostKey(file: string): HostedHostKey {
 	} catch (error) {
 		if (!isMissingFile(error)) throw error;
 	}
+	const key = createHostedHostKey();
+	mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+	const temporary = `${file}.tmp`;
+	writeFileSync(temporary, serializeHostedHostKey(key), {
+		encoding: 'utf8',
+		mode: 0o600,
+	});
+	renameSync(temporary, file);
+	return key;
+}
+
+/**
+ * Where the private host key lives. The standalone server keeps an owner-only
+ * file inside its data root; Desktop wraps the same bytes in OS-protected
+ * storage so the key that every paired device pins is never plaintext there.
+ */
+export interface HostKeyStore {
+	readonly loadOrCreate: () => HostedHostKey;
+	/** Replace the key. Callers revoke every device first: rotation is a trust
+	 * reset, never silent. */
+	readonly rotate: () => HostedHostKey;
+}
+
+export function createFileHostKeyStore(file: string): HostKeyStore {
+	return Object.freeze({
+		loadOrCreate: () => loadOrCreateHostedHostKey(file),
+		rotate: () => rotateHostedHostKey(file),
+	});
+}
+
+export interface ProtectedHostKeyCodec {
+	readonly isAvailable: () => boolean;
+	readonly encrypt: (plainText: string) => Buffer;
+	readonly decrypt: (encrypted: Buffer) => string;
+}
+
+/**
+ * OS-protected host key. An existing plaintext key is migrated once and the
+ * plaintext removed. Without protected storage the store refuses rather than
+ * writing plaintext, so exposure fails closed with a visible reason.
+ */
+export function createProtectedHostKeyStore(options: {
+	readonly file: string;
+	readonly legacyPlaintextFile?: string;
+	readonly codec: ProtectedHostKeyCodec;
+}): HostKeyStore {
+	const requireCodec = () => {
+		if (!options.codec.isAvailable()) {
+			throw new Error(
+				'OS-protected storage is unavailable, so the server host key cannot be stored safely. Remote access stays off.',
+			);
+		}
+	};
+	const write = (key: HostedHostKey) => {
+		mkdirSync(dirname(options.file), { recursive: true, mode: 0o700 });
+		const envelope = `${JSON.stringify({
+			schemaVersion: 2,
+			encrypted: options.codec.encrypt(serializeHostedHostKey(key)).toString('base64'),
+		})}\n`;
+		const temporary = `${options.file}.tmp`;
+		writeFileSync(temporary, envelope, { encoding: 'utf8', mode: 0o600 });
+		renameSync(temporary, options.file);
+	};
+	const readProtected = (): HostedHostKey | undefined => {
+		let raw: string;
+		try {
+			raw = readFileSync(options.file, 'utf8');
+		} catch (error) {
+			if (isMissingFile(error)) return undefined;
+			throw error;
+		}
+		const envelope = JSON.parse(raw) as Record<string, unknown>;
+		if (envelope.schemaVersion !== 2 || typeof envelope.encrypted !== 'string') {
+			throw new Error('Protected host key record is invalid.');
+		}
+		return parseHostedHostKey(
+			JSON.parse(options.codec.decrypt(Buffer.from(envelope.encrypted, 'base64'))),
+		);
+	};
+	return Object.freeze({
+		loadOrCreate: () => {
+			requireCodec();
+			const existing = readProtected();
+			if (existing !== undefined) return existing;
+			if (options.legacyPlaintextFile !== undefined) {
+				try {
+					const legacy = parseHostedHostKey(
+						JSON.parse(readFileSync(options.legacyPlaintextFile, 'utf8')),
+					);
+					write(legacy);
+					rmSync(options.legacyPlaintextFile, { force: true });
+					return legacy;
+				} catch (error) {
+					if (!isMissingFile(error)) throw error;
+				}
+			}
+			const key = createHostedHostKey();
+			write(key);
+			return key;
+		},
+		rotate: () => {
+			requireCodec();
+			const key = createHostedHostKey();
+			write(key);
+			if (options.legacyPlaintextFile !== undefined) rmSync(options.legacyPlaintextFile, { force: true });
+			return key;
+		},
+	});
+}
+
+/** Replace the host key on disk. Callers revoke every device first: the old
+ * pin is a trust reset, never a silent rotation. */
+export function rotateHostedHostKey(file: string): HostedHostKey {
 	const key = createHostedHostKey();
 	mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
 	const temporary = `${file}.tmp`;

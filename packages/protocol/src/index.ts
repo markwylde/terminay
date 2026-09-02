@@ -7,6 +7,7 @@ export * from "./limits.js";
 export * from "./hostedPairingUrl.js";
 export * from "./managerOrigins.js";
 export * from "./negotiation.js";
+export * from "./pairingApproval.js";
 export * from "./signalingBootstrap.js";
 export * from "./transport.js";
 export * from "./transportAuthentication.js";

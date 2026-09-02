@@ -13,6 +13,11 @@ export type RemoteAuditAction =
 	| 'peer-closed'
 	| 'device-registered'
 	| 'device-revoked'
+	| 'approval-requested'
+	| 'approval-approved'
+	| 'approval-denied'
+	| 'approval-expired'
+	| 'identity-reset'
 	| 'cleanup';
 
 /** Reasons are intentionally a closed set so relay failures never become a
@@ -195,6 +200,11 @@ const AUDIT_ACTIONS: ReadonlySet<RemoteAuditAction> = new Set([
 	'peer-closed',
 	'device-registered',
 	'device-revoked',
+	'approval-requested',
+	'approval-approved',
+	'approval-denied',
+	'approval-expired',
+	'identity-reset',
 	'cleanup',
 ]);
 

@@ -1,16 +1,20 @@
 import { networkInterfaces } from 'node:os';
 import { gzipSync } from 'node:zlib';
-import { createPrivateKey, randomBytes, sign, timingSafeEqual } from 'node:crypto';
+import { constants, createPrivateKey, randomBytes, sign, verify } from 'node:crypto';
 import { WebSocket } from 'ws';
 import {
 	AUTHENTICATED_WEBRTC_TRANSPORT_VERSION,
 	createAuthenticatedWebRtcPairingAuthenticator,
 	createAuthenticatedWebRtcTransportTranscript,
+	deriveMatchCode,
+	deviceJoinProofPayload,
 	extractAuthenticatedWebRtcFingerprints,
+	isDeviceJoinProof,
 	serializeAuthenticatedWebRtcTransportTranscript,
 	sha256Base64Url,
 	type AuthenticatedWebRtcTransportScope,
 	type ByteTransport,
+	type EnrollmentPushMessage,
 } from '@terminay/protocol';
 import type {
 	AuthenticatedClient,
@@ -40,6 +44,7 @@ import {
 	DEVICE_HOST_AVAILABILITY_MS,
 	deviceHostRefreshDelayMs,
 	type HostedIceServer,
+	type HostedLivePeer,
 	HostedLivePeerRegistry,
 	HostedPeerLifecycle,
 	hostedPeerConfiguration,
@@ -117,14 +122,12 @@ export interface HostedPairingHostOptions {
 	readonly handoff: ServerPairingHandoff;
 	readonly hostKey: HostedHostKey;
 	readonly persistDevices: (devices: ReturnType<ServerRemoteExposure['devices']['list']>) => void;
-	readonly pin?: string;
 	readonly remote: ServerRemoteExposure;
 	readonly serverId: string;
 	readonly signal?: Readonly<{
 		readonly connectHost?: string;
 		readonly insecureTls?: boolean;
 	}>;
-	readonly verifyPairingPin?: (pin: string) => boolean;
 	readonly webrtcRuntimeRoot: string;
 	readonly iceServers?: readonly HostedIceServer[];
 	readonly resolveIceServers?: () => readonly HostedIceServer[];
@@ -149,8 +152,14 @@ export type HostedPairingDiagnostic = Readonly<{
 		| 'ice-grace'
 		| 'channel-state'
 		| 'application-lane'
-		| 'peer-closed';
+		| 'peer-closed'
+		| 'approval-pending';
 	readonly scope?: 'pairing' | 'device';
+	/** Pending approval metadata: the code is shown on both devices, never secret. */
+	readonly approvalId?: string;
+	readonly deviceName?: string;
+	readonly matchCode?: string;
+	readonly expiresAt?: string;
 	readonly advertisedUrlClass?: 'manager' | 'session' | 'loopback' | 'other';
 	readonly signalingHostClass?: 'terminay-session' | 'loopback' | 'other';
 	readonly closeCode?: number;
@@ -193,6 +202,20 @@ const PAIRING_REFRESH_LEAD_MS = 15_000;
 const PAIRING_CONSUMED_ROTATE_MS = 3_000;
 const REFRESH_RETRY_MS = 2_000;
 const INITIAL_REGISTER_TIMEOUT_MS = 10_000;
+/** In-progress handshakes across every room and device session. */
+export const MAX_CONCURRENT_HANDSHAKES = 4;
+/** A handshake that has not consumed a ticket by then is closed. */
+export const HANDSHAKE_TIMEOUT_MS = 60_000;
+const DEVICE_JOIN_NONCE_LIFETIME_MS = 2 * 60_000;
+
+type HandshakeEntry = {
+	readonly key: string;
+	readonly generation: number;
+	readonly peerId: string;
+	peer: WeriftPeer | undefined;
+	timer: ReturnType<typeof setTimeout> | undefined;
+	retired: boolean;
+};
 
 export async function startHostedPairingHost(
 	options: HostedPairingHostOptions,
@@ -208,12 +231,12 @@ export async function startHostedPairingHost(
 		? await options.getUiArchive()
 		: createMinimalUiArchive();
 	const livePeers = new HostedLivePeerRegistry();
-	const context = { archive, options, livePeers };
 	const joinQueue = createHandshakeJoinQueue();
+	const apiChannelsByPeer = new Map<string, WeriftDataChannel>();
+	const context = { archive, options, livePeers, apiChannelsByPeer, serialize: joinQueue.enqueue };
 	let handshakeGeneration = 0;
-	let handshake:
-		| Readonly<{ generation: number; peer: WeriftPeer }>
-		| undefined;
+	const handshakes = new Map<string, HandshakeEntry>();
+	const seenDeviceJoinNonces = new Map<string, number>();
 	let pairingSocket: WebSocket | undefined;
 	let deviceSocket: WebSocket | undefined;
 	let pairingGeneration = 0;
@@ -231,12 +254,53 @@ export async function startHostedPairingHost(
 		options.onDiagnostic?.(event);
 	};
 
+	// Approval decisions arrive from the exposure surface, not from the peer.
+	// Push the outcome to the peer that asked, and only to that peer.
+	const stopApprovalPush = options.remote.onApprovalResolved((resolution) => {
+		const channel = apiChannelsByPeer.get(resolution.approval.peerId);
+		if (resolution.outcome === 'approved') {
+			options.persistDevices(options.remote.devices.list());
+		}
+		if (channel === undefined) return;
+		const message: EnrollmentPushMessage =
+			resolution.outcome === 'approved'
+				? {
+						type: 'enrollment-approved',
+						approvalId: resolution.approval.approvalId,
+						deviceId: resolution.deviceId,
+						deviceName: resolution.deviceName,
+						ticket: resolution.ticket,
+					}
+				: { type: 'enrollment-denied', approvalId: resolution.approval.approvalId, reason: resolution.outcome };
+		try {
+			safeChannelSend(channel, JSON.stringify(message));
+		} catch (error) {
+			logHostError(error);
+		}
+	});
+
+	const retireHandshake = (entry: HandshakeEntry, reasonClass: string) => {
+		if (entry.retired) return;
+		entry.retired = true;
+		clearTimeout(entry.timer);
+		if (handshakes.get(entry.key) === entry) handshakes.delete(entry.key);
+		options.remote.cancelPendingApprovalsForPeer(entry.peerId);
+		apiChannelsByPeer.delete(entry.peerId);
+		try {
+			entry.peer?.close();
+		} catch {
+			/* Best effort while dropping an unfinished handshake. */
+		}
+		diagnose({ type: 'peer-closed', reasonClass });
+	};
+
 	const close = async () => {
 		if (closed) return;
 		closed = true;
+		stopApprovalPush();
 		clearTimeout(pairingRefreshTimer);
 		clearTimeout(deviceRefreshTimer);
-		handshake?.peer.close();
+		for (const entry of [...handshakes.values()]) retireHandshake(entry, 'host-stopped');
 		await livePeers.closeAll();
 		pairingGeneration += 1;
 		deviceGeneration += 1;
@@ -245,63 +309,106 @@ export async function startHostedPairingHost(
 	};
 
 	async function addHandshakePeer(socket: WebSocket, scope: SignalScope): Promise<void> {
-		// A device gets one live peer. Retire the connection this join replaces
-		// before its replacement exists, so the two never overlap and a late
-		// teardown cannot reach the new session's terminals.
-		if (scope.kind === 'device') {
-			const replaced = await livePeers.close(scope.deviceId);
-			if (replaced !== undefined) {
-				diagnose({ type: 'peer-closed', reasonClass: 'replaced-by-rejoin' });
-				// Report the retirement here rather than relying on the native
-				// datachannel emitting `close` before its peer is torn down. That
-				// event is not guaranteed to arrive, and a missed one would leave a
-				// replaced connection listed as live for the rest of the session.
-				if (replaced.connectionId !== undefined) {
-					options.onPeerDisconnected?.(replaced.connectionId);
-				}
-			}
-		}
-		const generation = ++handshakeGeneration;
-		if (handshake) {
-			handshake.peer.close();
-		}
-		handshake = undefined;
-		const next = await startPeer(
-			Peer,
-			socket,
-			scope,
-			context,
-			(connection, peer) => {
-				// A newer join replaced this handshake, or the host stopped, while
-				// this one was authenticating. Retire it rather than leaving an
-				// untracked live connection for the device: nothing would close it,
-				// and it is exactly the superseded generation this design removes.
-				if (handshake?.peer !== next || closed) {
-					void connection.close();
-					next.close();
-					diagnose({ type: 'peer-closed', reasonClass: 'replaced-by-rejoin' });
-					return;
-				}
-				livePeers.set(peer.deviceId, { peer: next, connection, connectionId: peer.connectionId });
-				handshake = undefined;
-				options.onPeerConnected?.(peer);
-				if (scope.kind === 'pairing') {
-					clearTimeout(pairingRefreshTimer);
-					pairingRefreshTimer = setTimeout(() => {
-						void refreshPairing('consumed');
-					}, PAIRING_CONSUMED_ROTATE_MS);
-					pairingRefreshTimer.unref?.();
-				}
-			},
-			(deviceId, retired) => {
-				if (deviceId !== undefined) livePeers.drop(deviceId, retired);
-			},
-		);
-		if (closed || generation !== handshakeGeneration) {
-			next.close();
+		// A join holds only a handshake slot for its own room or device session.
+		// The device's live peer, if any, stays untouched until this joiner has
+		// consumed a valid ticket: an unauthenticated `device-join` must never
+		// be able to disconnect a paired device.
+		const key = handshakeKey(scope);
+		const previous = handshakes.get(key);
+		if (previous !== undefined) retireHandshake(previous, 'replaced-by-rejoin');
+		if (handshakes.size >= MAX_CONCURRENT_HANDSHAKES) {
+			diagnose({ type: 'failed', scope: scope.kind, cause: 'handshake-limit' });
 			return;
 		}
-		handshake = { generation, peer: next };
+		const generation = ++handshakeGeneration;
+		const entry: HandshakeEntry = {
+			key,
+			generation,
+			peerId: `peer-${randomBytes(12).toString('base64url')}`,
+			peer: undefined,
+			timer: undefined,
+			retired: false,
+		};
+		handshakes.set(key, entry);
+		entry.timer = setTimeout(() => retireHandshake(entry, 'handshake-timeout'), HANDSHAKE_TIMEOUT_MS);
+		entry.timer.unref?.();
+		let next: WeriftPeer;
+		try {
+			next = await startPeer(
+				Peer,
+				socket,
+				scope,
+				entry.peerId,
+				context,
+				async (connection, peer, replaced) => {
+					// The host stopped, or this handshake was retired, while the
+					// device was authenticating. Retire it rather than leaving an
+					// untracked live connection: nothing else would close it.
+					if (entry.retired || closed) {
+						void connection.close();
+						next.close();
+						diagnose({ type: 'peer-closed', reasonClass: closed ? 'host-stopped' : 'retired-during-authentication' });
+						return;
+					}
+					clearTimeout(entry.timer);
+					entry.timer = undefined;
+					handshakes.delete(key);
+					if (replaced !== undefined) {
+						diagnose({ type: 'peer-closed', reasonClass: 'replaced-by-rejoin' });
+						// Report the retirement here rather than relying on the native
+						// datachannel emitting `close` before its peer is torn down.
+						if (replaced.connectionId !== undefined) {
+							options.onPeerDisconnected?.(replaced.connectionId);
+						}
+					}
+					livePeers.set(peer.deviceId, { peer: next, connection, connectionId: peer.connectionId });
+					options.onPeerConnected?.(peer);
+					if (scope.kind === 'pairing') {
+						clearTimeout(pairingRefreshTimer);
+						pairingRefreshTimer = setTimeout(() => {
+							void refreshPairing('consumed');
+						}, PAIRING_CONSUMED_ROTATE_MS);
+						pairingRefreshTimer.unref?.();
+					}
+				},
+				(deviceId, retired) => {
+					if (deviceId !== undefined) livePeers.drop(deviceId, retired);
+					if (!entry.retired && handshakes.get(key) === entry) retireHandshake(entry, 'peer-failed');
+					apiChannelsByPeer.delete(entry.peerId);
+					options.remote.cancelPendingApprovalsForPeer(entry.peerId);
+				},
+			);
+		} catch (error) {
+			retireHandshake(entry, 'offer-failed');
+			throw error;
+		}
+		entry.peer = next;
+		if (closed || entry.retired) {
+			retireHandshake(entry, 'replaced-by-rejoin');
+			next.close();
+		}
+	}
+
+	function verifyDeviceJoinProof(deviceId: string, clientNonce: string, proof: unknown): void {
+		if (!isDeviceJoinProof(proof)) throw new Error('Hosted signaling device join proof is invalid.');
+		const device = options.remote.devices.get(deviceId);
+		if (device === undefined || device.revokedAt !== null) {
+			throw new Error('Hosted signaling device join names an unknown or revoked device.');
+		}
+		const now = Date.now();
+		for (const [nonce, expiresAt] of seenDeviceJoinNonces) {
+			if (expiresAt <= now) seenDeviceJoinNonces.delete(nonce);
+		}
+		if (seenDeviceJoinNonces.has(clientNonce)) throw new Error('Hosted signaling device join was replayed.');
+		const valid = verify(
+			'sha256',
+			Buffer.from(deviceJoinProofPayload({ sessionId, clientNonce })),
+			{ key: device.publicKeyPem, padding: constants.RSA_PKCS1_PSS_PADDING, saltLength: 32 },
+			Buffer.from(proof, 'base64url'),
+		);
+		if (!valid) throw new Error('Hosted signaling device join proof does not verify.');
+		if (seenDeviceJoinNonces.size >= 1_024) seenDeviceJoinNonces.clear();
+		seenDeviceJoinNonces.set(clientNonce, now + DEVICE_JOIN_NONCE_LIFETIME_MS);
 	}
 
 	async function handlePairingSignal(
@@ -326,7 +433,7 @@ export async function startHostedPairingHost(
 			return;
 		}
 		if (message.type === 'answer' || message.type === 'ice') {
-			await joinQueue.enqueue(() => applyHandshakeSignal(message));
+			await joinQueue.enqueue(() => applyHandshakeSignal(message, `pairing:${derived.pairingRoomId}`));
 		}
 	}
 
@@ -341,13 +448,17 @@ export async function startHostedPairingHost(
 			diagnose({ type: 'client-join', scope: 'device' });
 			const clientNonce = parseClientNonce(message.clientNonce);
 			const deviceId = parseDeviceId(message.deviceId);
+			// The relay stays data-blind, so the server is the party that checks a
+			// device-join actually comes from the device key it names.
+			verifyDeviceJoinProof(deviceId, clientNonce, message.deviceProof);
 			await joinQueue.enqueue(() =>
 				addHandshakePeer(socket, { kind: 'device', sessionId, deviceId, clientNonce }),
 			);
 			return;
 		}
 		if (message.type === 'device-answer' || message.type === 'device-ice') {
-			await joinQueue.enqueue(() => applyHandshakeSignal(message));
+			const deviceId = typeof message.deviceId === 'string' ? message.deviceId : '';
+			await joinQueue.enqueue(() => applyHandshakeSignal(message, `device:${deviceId}`));
 		}
 	}
 
@@ -579,17 +690,20 @@ export async function startHostedPairingHost(
 		mintPairing: () => refreshPairing('mint'),
 	};
 
-	async function applyHandshakeSignal(message: Record<string, unknown>): Promise<void> {
-		const current = handshake;
-		if (!current || current.generation !== handshakeGeneration) return;
+	async function applyHandshakeSignal(message: Record<string, unknown>, key: string): Promise<void> {
+		// Answers and ICE are applied only to the handshake for their own room or
+		// session, so two offers can never have candidates mixed across them.
+		const current = handshakes.get(key);
+		if (!current || current.retired || current.peer === undefined) return;
+		const peer = current.peer;
 		try {
 			if (message.type === 'answer' || message.type === 'device-answer') {
 				const description = asSessionDescription(message.sdp);
-				if (description) await current.peer.setRemoteDescription(description);
+				if (description) await peer.setRemoteDescription(description);
 				return;
 			}
 			const candidate = asIceCandidate(message.candidate);
-			if (candidate) await current.peer.addIceCandidate(candidate);
+			if (candidate) await peer.addIceCandidate(candidate);
 		} catch (error) {
 			logHostError(error);
 		}
@@ -695,6 +809,25 @@ type SignalScope =
 			readonly clientNonce: string;
 	  };
 
+function handshakeKey(scope: SignalScope): string {
+	return scope.kind === 'pairing' ? `pairing:${scope.roomId}` : `device:${scope.deviceId}`;
+}
+
+type HostContext = Readonly<{
+	archive: MinimalArchive;
+	livePeers: HostedLivePeerRegistry;
+	options: HostedPairingHostOptions;
+	apiChannelsByPeer: Map<string, WeriftDataChannel>;
+	serialize: (task: () => Promise<void>) => Promise<void>;
+}>;
+
+/** Per-peer authentication state shared by the api and control lanes. */
+type PeerAuthState = {
+	readonly peerId: string;
+	readonly scope: SignalScope;
+	authenticated: boolean;
+};
+
 function formatConnectHost(host: string, port: string): string {
 	return port ? `${host}:${port}` : host;
 }
@@ -767,12 +900,13 @@ async function startPeer(
 	Peer: new (configuration?: Record<string, unknown>) => WeriftPeer,
 	socket: WebSocket,
 	scope: SignalScope,
-	context: Readonly<{
-		archive: MinimalArchive;
-		livePeers: HostedLivePeerRegistry;
-		options: HostedPairingHostOptions;
-	}>,
-	onApplication: (connection: ServerConnectionLike, peer: HostedConnectedPeer) => void,
+	peerId: string,
+	context: HostContext,
+	onApplication: (
+		connection: ServerConnectionLike,
+		peer: HostedConnectedPeer,
+		replaced: HostedLivePeer | undefined,
+	) => void | Promise<void>,
 	onRetire: (deviceId: string | undefined, peer: WeriftPeer) => void,
 ): Promise<WeriftPeer> {
 	const native = new Peer(
@@ -848,13 +982,16 @@ async function startPeer(
 		if (!candidate || socket.readyState !== WebSocket.OPEN) return;
 		socket.send(JSON.stringify(signalMessage(scope, 'ice', { candidate })));
 	});
-	bindApi(channels.api!, context);
-	bindControl(channels.control!, channels.application!, context, stream, (connection, connected) => {
+	const auth: PeerAuthState = { peerId, scope, authenticated: false };
+	bindApi(channels.api!, auth, context);
+	bindControl(channels.control!, channels.application!, auth, context, stream, (connection, connected, replaced) => {
 		session.connection = connection;
 		session.peer = connected;
-		onApplication(connection, connected);
+		// Host context and the UI archive are served only to a peer that has
+		// consumed a ticket. Bind the archive lanes now, not at peer creation.
+		bindUiArchiveChannels([channels.asset!, channels.assets!], context.archive);
+		return onApplication(connection, connected, replaced);
 	});
-	bindUiArchiveChannels([channels.asset!, channels.assets!], context.archive);
 
 	const offer = await peer.createOffer();
 	if (typeof offer.sdp !== 'string' || typeof offer.type !== 'string') {
@@ -1040,11 +1177,13 @@ function asIceCandidate(
 
 function bindApi(
 	channel: WeriftDataChannel,
-	context: Readonly<{
-		archive: MinimalArchive;
-		options: HostedPairingHostOptions;
-	}>,
+	auth: PeerAuthState,
+	context: HostContext,
 ): void {
+	context.apiChannelsByPeer.set(auth.peerId, channel);
+	channel.addEventListener('close', () => {
+		if (context.apiChannelsByPeer.get(auth.peerId) === channel) context.apiChannelsByPeer.delete(auth.peerId);
+	});
 	channel.addEventListener('message', (event) => {
 		void (async () => {
 			let request: Record<string, unknown>;
@@ -1055,7 +1194,7 @@ function bindApi(
 			}
 			if (request.type !== 'api-request' || typeof request.id !== 'string') return;
 			try {
-				const body = await handleApi(request.pathname, request.body, context);
+				const body = await handleApi(request.pathname, request.body, auth, context);
 				safeChannelSend(channel, JSON.stringify({ body, id: request.id, ok: true, type: 'api-response' }));
 			} catch (error) {
 				safeChannelSend(
@@ -1077,13 +1216,12 @@ function bindApi(
 async function handleApi(
 	pathname: unknown,
 	body: unknown,
-	context: Readonly<{
-		archive: MinimalArchive;
-		options: HostedPairingHostOptions;
-	}>,
+	auth: PeerAuthState,
+	context: HostContext,
 ): Promise<unknown> {
 	const request = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
 	if (pathname === '/api/host-context') {
+		if (!auth.authenticated) throw new Error('Terminay requires an authenticated device before host context.');
 		const sessionId =
 			new URL(context.options.handoff.sessionOrigin).hostname.split('.')[0] ?? 'session';
 		return {
@@ -1102,25 +1240,36 @@ async function handleApi(
 		};
 	}
 	if (pathname === '/api/devices/enroll') {
-		if (!pairingPinMatches(String(request.pairingPin ?? ''), context.options)) {
-			throw new Error('pairing authority is invalid');
-		}
-		const device = context.options.remote.enrollDevice({
+		// Enrollment only ever parks a request. The device is registered when
+		// the administrator approves the match code on the exposing host, and
+		// the outcome is pushed back on this same lane.
+		if (auth.scope.kind !== 'pairing') throw new Error('pairing authority is invalid');
+		const publicKeyPem = String(request.publicKeyPem ?? '');
+		const matchCode = await deriveMatchCode({
+			pairingSecret: auth.scope.pairingSecret,
+			clientNonce: auth.scope.clientNonce,
+			hostPublicKey: context.options.hostKey.publicKey,
+			devicePublicKeyPem: publicKeyPem,
+		});
+		const pending = context.options.remote.requestEnrollment({
 			deviceName: String(request.deviceName ?? 'Browser'),
 			pairingSessionId: String(request.pairingSessionId ?? ''),
 			pairingToken: String(request.pairingToken ?? ''),
-			publicKeyPem: String(request.publicKeyPem ?? ''),
+			publicKeyPem,
+			matchCode,
+			peerId: auth.peerId,
 		});
-		context.options.persistDevices(context.options.remote.devices.list());
-		const ticket = context.options.remote.issueConnectionTicket(device.deviceId);
-		return { deviceId: device.deviceId, deviceName: device.deviceName, ticket: ticket.ticket };
+		return { status: 'pending', approvalId: pending.approvalId, expiresAt: pending.expiresAt };
 	}
 	if (pathname === '/api/devices/challenge') {
 		const pending = context.options.remote.createDeviceChallenge(String(request.deviceId ?? ''));
+		const expiresAt = new Date(pending.challenge.expiresAt).toISOString();
 		return {
 			challenge: {
+				challengeId: pending.challenge.challengeId,
 				deviceId: pending.challenge.deviceId,
-				expiry: new Date(pending.challenge.expiresAt).toISOString(),
+				expiresAt,
+				expiry: expiresAt,
 				nonce: pending.challenge.nonce,
 				origin: pending.challenge.sessionOrigin,
 				serverId: pending.challenge.serverId,
@@ -1134,6 +1283,7 @@ async function handleApi(
 			challengeId: String(request.challengeId ?? ''),
 			deviceId: String(request.deviceId ?? ''),
 			deviceSignature: String(request.deviceSignature ?? ''),
+			peerId: auth.peerId,
 		});
 		return { ticket: ticket.ticket };
 	}
@@ -1143,9 +1293,14 @@ async function handleApi(
 function bindControl(
 	channel: WeriftDataChannel,
 	application: WeriftDataChannel,
-	context: Readonly<{ options: HostedPairingHostOptions }>,
+	auth: PeerAuthState,
+	context: HostContext,
 	stream: ReturnType<typeof createHostedStreamDiagnostics>,
-	onApplication: (connection: ServerConnectionLike, peer: HostedConnectedPeer) => void,
+	onApplication: (
+		connection: ServerConnectionLike,
+		peer: HostedConnectedPeer,
+		replaced: HostedLivePeer | undefined,
+	) => void | Promise<void>,
 ): void {
 	channel.addEventListener('message', (event) => {
 		let request: Record<string, unknown>;
@@ -1155,30 +1310,50 @@ function bindControl(
 			return;
 		}
 		if (request.type !== 'application-auth' || typeof request.id !== 'string') return;
-		let ticket: ReturnType<ServerRemoteExposure['consumeConnectionTicket']> | undefined;
-		try {
-			ticket = context.options.remote.consumeConnectionTicket(String(request.ticket ?? ''));
-		} catch {
-			ticket = undefined;
-		}
-		const ok = ticket !== undefined;
-		try {
-			safeChannelSend(
-				channel,
-				JSON.stringify({
-					error: ok ? undefined : 'Terminay rejected the workspace.',
-					id: request.id,
-					ok,
-					type: 'application-authenticated',
-				}),
-			);
-		} catch (error) {
+		// Ticket consumption and live-peer replacement are serialized with joins
+		// so two peers for one device can never interleave their takeover.
+		void context.serialize(async () => {
+			let ticket: ReturnType<ServerRemoteExposure['consumeConnectionTicket']> | undefined;
+			try {
+				ticket = context.options.remote.consumeConnectionTicket(String(request.ticket ?? ''), auth.peerId);
+			} catch {
+				ticket = undefined;
+			}
+			// An already-authenticated peer still spends whatever it presented, but
+			// never opens a second application connection for itself.
+			const ok = ticket !== undefined && !auth.authenticated;
+			if (ok) auth.authenticated = true;
+			try {
+				safeChannelSend(
+					channel,
+					JSON.stringify({
+						error: ok ? undefined : 'Terminay rejected the workspace.',
+						id: request.id,
+						ok,
+						type: 'application-authenticated',
+					}),
+				);
+			} catch (error) {
+				console.error(error instanceof Error ? error.message : error);
+				return;
+			}
+			if (!ok || !ticket || context.options.acceptApplication === undefined) return;
+			// Only now, with a consumed ticket for this device, does the previous
+			// live peer for the device get retired, and its server-side cleanup
+			// completes before the replacement attaches to the workspace.
+			const replaced = await context.livePeers.close(ticket.deviceId);
+			await acceptAuthenticatedApplication(ticket, replaced);
+		}).catch((error) => {
 			console.error(error instanceof Error ? error.message : error);
-			return;
-		}
-		if (!ok || !ticket || context.options.acceptApplication === undefined) return;
+		});
+	});
+
+	async function acceptAuthenticatedApplication(
+		ticket: ReturnType<ServerRemoteExposure['consumeConnectionTicket']>,
+		replaced: HostedLivePeer | undefined,
+	): Promise<void> {
 		try {
-			const connection = context.options.acceptApplication(
+			const connection = context.options.acceptApplication!(
 				new HeadlessChannelTransport(asHeadlessChannel(application, stream)),
 				{
 					authScope: 'admin',
@@ -1200,7 +1375,7 @@ function bindControl(
 				deviceId: ticket.deviceId,
 				deviceName: device?.deviceName?.trim() || 'Browser',
 			});
-			onApplication(connection, peer);
+			await onApplication(connection, peer, replaced);
 			// The application lane closing ends this generation. Releasing the
 			// server connection here frees exactly this connection's attachments;
 			// the peer-level required-lane handler retires the peer itself.
@@ -1215,14 +1390,7 @@ function bindControl(
 		} catch (error) {
 			console.error(error instanceof Error ? error.message : error);
 		}
-	});
-}
-
-function pairingPinMatches(received: string, options: HostedPairingHostOptions): boolean {
-	if (options.verifyPairingPin) return options.verifyPairingPin(received);
-	const expected = options.pin ?? '';
-	if (!/^\d{6}$/u.test(received) || !/^\d{6}$/u.test(expected)) return false;
-	return timingSafeEqual(Buffer.from(received), Buffer.from(expected));
+	}
 }
 
 function asHeadlessChannel(

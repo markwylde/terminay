@@ -25,7 +25,6 @@ option uses the documented default:
 | Structured log destination | `--log-sink PATH` | `TERMINAY_LOG_SINK` | host-selected |
 | Matching server UI bundle | `--ui-bundle PATH` | `TERMINAY_UI_BUNDLE` | host-selected |
 | Reported server version | *(none)* | `TERMINAY_SERVER_VERSION` | `0.0.0` |
-| Remote pairing PIN | *(none)* | `TERMINAY_REMOTE_PAIRING_PIN` | required for pairing/exposure |
 
 The data root is the server's authority boundary. Keep it on a local disk
 with owner-only permissions, back it up as one unit, and do not put it below a
@@ -50,10 +49,23 @@ terminay-server --pairing --server-id workstation-a --endpoint loopback
 terminay-server --data-root /var/lib/terminay --log-sink /var/log/terminay/server.jsonl
 ```
 
-`--pairing` requires `TERMINAY_REMOTE_PAIRING_PIN` to be configured as exactly
-six digits in a protected environment file. It emits a short-lived handoff
-record and never prints that PIN, a private key, durable browser credential,
-or application token.
+`--pairing` emits a short-lived handoff record and never prints a private
+key, durable browser credential, or application token. Each device that scans
+the link must then be approved on this server: the foreground process logs an
+`approval-pending` line with the device name, a five-character match code, and
+an approval id, and the operator compares the code with the one on the device
+and runs one of:
+
+```sh
+terminay-server approvals --data-root /var/lib/terminay
+terminay-server approve <approval-id> --data-root /var/lib/terminay
+terminay-server deny <approval-id> --data-root /var/lib/terminay
+```
+
+These commands talk to the running server through an owner-only socket inside
+the data root, so anyone who can approve a device already owns the data root.
+`terminay-server reset-identity` (with the server stopped) rotates the host
+key and revokes every paired device; each one must pair again.
 
 Stop the foreground process with `SIGTERM` for a bounded graceful shutdown.
 `SIGINT` is equivalent for an interactive terminal. A supervisor must not
@@ -69,8 +81,9 @@ encrypted transport traffic; they do not grant access by themselves. Keep
 STUN/TURN credentials in the server vault or deployment secret store, never in
 the connection-manager profile or a public unit file.
 
-Pairing requires the one-time room secret, the configured PIN, and a new device
-key. Revocation is server-side: revoke the device or
+Pairing requires the one-time room secret, a new device key, and the
+operator's approval of the match code shown on both the device and this
+server. Revocation is server-side: revoke the device or
 stop exposure in the remote-access administration surface. Forgetting a local
 profile only removes client metadata and is not revocation. See
 [remote access](../features/remote-access.md) for credential lifetimes,
@@ -80,9 +93,9 @@ Standalone vault unlock is an operator action at startup or through the
 configured headless-vault integration. Secret values must only be available to
 the provider callback while unlocked. A vault key, browser credential, or
 provider credential must not be placed in `TERMINAY_*` environment variables,
-service-manager arguments, logs, or support bundles. The sole exception is
-`TERMINAY_REMOTE_PAIRING_PIN`, which must be set only in a protected operator
-environment file and never passed as a command-line argument.
+service-manager arguments, logs, or support bundles. There is no pairing PIN;
+a leftover `TERMINAY_REMOTE_PAIRING_PIN` variable makes the server refuse to
+start until it is removed.
 
 ## Service-manager examples
 
@@ -101,7 +114,6 @@ TERMINAY_SERVER_VERSION=1.2.3
 TERMINAY_DATA_ROOT=/var/lib/terminay
 TERMINAY_LOG_SINK=journal
 TERMINAY_ENDPOINT=loopback
-TERMINAY_REMOTE_PAIRING_PIN=736941
 ```
 
 `/etc/systemd/system/terminay-server.service`:
