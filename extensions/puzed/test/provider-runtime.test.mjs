@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { validateProviderEnvironmentStatus } from "@terminay/extension-api";
+import { validateProviderDefinition, validateProviderEnvironmentStatus } from "@terminay/extension-api";
 import { activate } from "../dist/index.js";
 
 function runtimeFixture() {
@@ -30,7 +30,8 @@ test("Puzed exposes a create form and tests a saved profile with its vault-bound
   assert.equal(f.definition.createForm?.submitLabel, "Create VM and open project");
   assert.equal(f.definition.createForm?.sections[0]?.fields.some((field) => field.id === "image-id"), true);
   assert.equal(f.definition.browseForm?.title, "Browse Terminay VMs");
-  assert.equal(f.definition.browseForm?.sections[0]?.fields.some((field) => field.id === "machineId" && field.optionSource === "com.puzed.platform/vm/inventory"), true);
+  assert.equal(f.definition.browseForm?.sections[0]?.fields.some((field) => field.id === "machine-id" && field.optionSource === "com.puzed.platform/vm/inventory"), true);
+  assert.equal(validateProviderDefinition(f.definition).ok, true);
   const fetch = globalThis.fetch; const requests = [];
   globalThis.fetch = async (url, init) => {
     requests.push({ url: String(url), init });
@@ -335,7 +336,7 @@ test("selecting a tagged VM reuses the retained SSH binding and never generates 
     throw new Error(`unexpected ${path}`);
   };
   try {
-    const selected = await f.runtime.createEnvironment({ environmentId: "env-2", profileId: "profile-1", displayName: "Dev VM", values: { machineId: "machine-1" } }, f.call);
+    const selected = await f.runtime.createEnvironment({ environmentId: "env-2", profileId: "profile-1", displayName: "Dev VM", values: { "machine-id": "machine-1" } }, f.call);
     assert.equal(selected.state, "ready");
     assert.equal(selected.providerState.machineId, "machine-1");
     assert.equal(selected.providerState.bindingId, "binding-1");
@@ -355,8 +356,8 @@ test("browse selection refuses untagged VMs and missing retained bindings", asyn
     throw new Error(`unexpected ${path}`);
   };
   try {
-    await assert.rejects(() => f.runtime.createEnvironment({ environmentId: "env-x", profileId: "profile-1", displayName: "X", values: { machineId: "untagged" } }, f.call), /system:Terminay/);
-    await assert.rejects(() => f.runtime.createEnvironment({ environmentId: "env-y", profileId: "profile-1", displayName: "Y", values: { machineId: "machine-2" } }, f.call), /SSH binding/);
+    await assert.rejects(() => f.runtime.createEnvironment({ environmentId: "env-x", profileId: "profile-1", displayName: "X", values: { "machine-id": "untagged" } }, f.call), /system:Terminay/);
+    await assert.rejects(() => f.runtime.createEnvironment({ environmentId: "env-y", profileId: "profile-1", displayName: "Y", values: { "machine-id": "machine-2" } }, f.call), /SSH binding/);
   } finally {
     globalThis.fetch = fetch;
   }

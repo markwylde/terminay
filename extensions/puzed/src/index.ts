@@ -56,7 +56,7 @@ export function activate(context: ExtensionContext): void {
           description: "Lists this provider's tagged Terminay VMs. Selecting one adds or updates only that VM connection.",
           submitLabel: "Add or update connection",
           sections: [{ id: "inventory", title: "Tagged VMs", disclosure: "always", fields: [
-            { id: "machineId", type: "select", label: "Terminay VM", required: true, searchable: true, optionSource: "com.puzed.platform/vm/inventory", description: "Only VMs tagged system:Terminay for this provider are listed." },
+            { id: "machine-id", type: "select", label: "Terminay VM", required: true, searchable: true, optionSource: "com.puzed.platform/vm/inventory", description: "Only VMs tagged system:Terminay for this provider are listed." },
           ] }],
         },
       },
@@ -145,7 +145,7 @@ const puzedRuntime: ProviderRuntime = {
       ? await profileValues(profileId, request.values, call)
       : request.values;
     if (typeof values["image-id"] === "string") return createVm(request, profileId, values, call);
-    const machineId = required(values.machineId, "machineId");
+    const machineId = required(values["machine-id"] ?? values.machineId, "machineId");
     if (typeof values.host !== "string") return attachTaggedVm(request, profileId, values, machineId, call);
     const generated = typeof values.bindingId === "string" ? undefined : record(await dependency(call, "managed-binding.generate", { ownerProfileId: profileId, operationId: required(values.operationId ?? call.idempotencyKey, "operationId"), logicalHostIdentityHint: `puzed:${profileId}:${machineId}` }));
     const bindingId = typeof values.bindingId === "string" ? required(values.bindingId, "bindingId") : required(generated?.bindingId, "bindingId");
