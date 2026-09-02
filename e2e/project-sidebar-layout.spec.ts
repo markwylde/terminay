@@ -1,5 +1,9 @@
 import { expect, type Locator, type Page, test } from './fixtures';
-import { openFileExplorer, selectSidebarGroup, setProjectRoot } from './support/ui';
+import {
+	openFileExplorer,
+	selectSidebarGroup,
+	setProjectRoot,
+} from './support/ui';
 
 type WorkspaceCommandRecord = Readonly<{
 	operation: string;
@@ -134,10 +138,11 @@ test('sidebar visibility stays local to this device and project', async ({
 	await toggle.click();
 	await expect(sidebar).toBeVisible();
 	await expect
-		.poll(async () =>
-			(await commandRecords(mainWindow)).filter(
-				(record) => record.command?.type === 'project.sidebar.update',
-			).length,
+		.poll(
+			async () =>
+				(await commandRecords(mainWindow)).filter(
+					(record) => record.command?.type === 'project.sidebar.update',
+				).length,
 		)
 		.toBe(0);
 
@@ -1005,6 +1010,70 @@ test('committed pane sizes remain project-local through project switching and re
 				(await panelGeometry(mainWindow, ids)).panes.explorer.body.height,
 		)
 		.toBeCloseTo(firstHeight, 0);
+});
+
+test('narrow mobile viewport opens navigation as a full-height drawer', async ({
+	mainWindow,
+}) => {
+	await mainWindow.setViewportSize({ width: 390, height: 844 });
+	await openFileExplorer(mainWindow);
+	const geometry = await mainWindow.evaluate(() => {
+		const layout = document.querySelector(
+			'.project-workspace--active [data-shared-ui="workspace-split-layout"]',
+		);
+		const navigation = document.querySelector(
+			'.project-workspace--active [data-shared-ui="workspace-navigation"]',
+		);
+		if (!layout || !navigation) {
+			throw new Error('Workspace split layout is missing.');
+		}
+		const layoutRect = layout.getBoundingClientRect();
+		const navigationRect = navigation.getBoundingClientRect();
+		return {
+			layoutHeight: layoutRect.height,
+			navigationHeight: navigationRect.height,
+			navigationTop: navigationRect.top,
+			layoutTop: layoutRect.top,
+			drawer: layout.getAttribute('data-navigation-drawer'),
+		};
+	});
+	expect(geometry.drawer).toBe('true');
+	expect(geometry.navigationHeight).toBe(geometry.layoutHeight);
+	expect(geometry.navigationTop).toBe(geometry.layoutTop);
+});
+
+test('dismissing the narrow drawer restores a full-height terminal', async ({
+	mainWindow,
+}) => {
+	await mainWindow.setViewportSize({ width: 390, height: 844 });
+	const content = mainWindow.locator(
+		'.project-workspace--active [data-shared-ui="workspace-content"]',
+	);
+	await expect(content).toBeVisible();
+	const closedHeight = await content.evaluate(
+		(element) => element.getBoundingClientRect().height,
+	);
+	await openFileExplorer(mainWindow);
+	const openHeight = await content.evaluate(
+		(element) => element.getBoundingClientRect().height,
+	);
+	expect(openHeight).toBe(closedHeight);
+	await mainWindow.getByLabel('Toggle file explorer').click();
+	await expect(
+		mainWindow.locator('.project-workspace--active .file-explorer-sidebar'),
+	).toHaveCount(0);
+	const restoredHeight = await content.evaluate(
+		(element) => element.getBoundingClientRect().height,
+	);
+	expect(restoredHeight).toBe(closedHeight);
+	const layout = mainWindow.locator(
+		'.project-workspace--active [data-shared-ui="workspace-split-layout"]',
+	);
+	await expect(layout).toHaveAttribute('data-navigation-drawer', 'false');
+	const layoutHeight = await layout.evaluate(
+		(element) => element.getBoundingClientRect().height,
+	);
+	expect(restoredHeight).toBe(layoutHeight);
 });
 
 async function pageMouseDragPreview(

@@ -16,8 +16,26 @@ const maximumNavigationWidthRatio = 0.8;
 const maximumPersistedNavigationWidth = 2_000;
 const navigationResizeStep = 16;
 
+/** Must match `@media (max-width: 720px)` in WorkspaceSplitLayout.css. */
+export const NARROW_LAYOUT_MEDIA_QUERY = '(max-width: 720px)';
+
+const drawerFocusableSelector =
+	'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])';
+
 function getInitialRootWidth(): number | null {
 	return typeof window === 'undefined' ? null : window.innerWidth;
+}
+
+function getInitialNarrowLayout(): boolean {
+	return typeof window === 'undefined'
+		? false
+		: window.matchMedia(NARROW_LAYOUT_MEDIA_QUERY).matches;
+}
+
+function getVisibleFocusableElements(root: HTMLElement): HTMLElement[] {
+	return [
+		...root.querySelectorAll<HTMLElement>(drawerFocusableSelector),
+	].filter((element) => element.offsetParent !== null);
 }
 
 export interface WorkspaceSplitLayoutProps {
@@ -36,6 +54,8 @@ export interface WorkspaceSplitLayoutProps {
 	readonly onNavigationWidthChange?: (width: number) => void;
 	/** Preferred committed callback for canonical width persistence. */
 	readonly onNavigationWidthCommit?: (width: number) => void;
+	/** Called when a narrow-layout drawer is dismissed via Escape or the scrim. */
+	readonly onNavigationDismiss?: () => void;
 }
 
 /**
@@ -52,6 +72,7 @@ export function WorkspaceSplitLayout({
 	maximumNavigationWidth: controlledMaximumNavigationWidth,
 	onNavigationWidthChange,
 	onNavigationWidthCommit,
+	onNavigationDismiss,
 }: WorkspaceSplitLayoutProps) {
 	const navigationId = useId();
 	const [uncontrolledNavigationWidth, setUncontrolledNavigationWidth] =
@@ -67,6 +88,12 @@ export function WorkspaceSplitLayout({
 		getInitialRootWidth,
 	);
 	const rootRef = useRef<HTMLDivElement | null>(null);
+	const [isNarrowLayout, setIsNarrowLayout] = useState(getInitialNarrowLayout);
+	const navigationRef = useRef<HTMLElement | null>(null);
+	const restoreFocusRef = useRef<HTMLElement | null>(null);
+	const onNavigationDismissRef = useRef(onNavigationDismiss);
+	onNavigationDismissRef.current = onNavigationDismiss;
+	const isDrawerOpen = isNarrowLayout && isNavigationVisible;
 	const dragStateRef = useRef<{
 		pointerId: number;
 		separator: HTMLElement;
@@ -281,6 +308,75 @@ export function WorkspaceSplitLayout({
 	}, []);
 
 	useEffect(() => {
+		if (typeof window === 'undefined') return;
+		const media = window.matchMedia(NARROW_LAYOUT_MEDIA_QUERY);
+		const update = () => {
+			setIsNarrowLayout(media.matches);
+		};
+		update();
+		media.addEventListener('change', update);
+		return () => {
+			media.removeEventListener('change', update);
+		};
+	}, []);
+
+	useEffect(() => {
+		if (!isDrawerOpen) return;
+		const navigationElement = navigationRef.current;
+		const ownerDocument = navigationElement?.ownerDocument;
+		if (navigationElement == null || ownerDocument === undefined) return;
+		const previouslyFocused = ownerDocument.activeElement;
+		restoreFocusRef.current =
+			previouslyFocused instanceof HTMLElement ? previouslyFocused : null;
+		const ownerWindow = ownerDocument.defaultView;
+		const focusFrame = ownerWindow?.requestAnimationFrame(() => {
+			const focusable = getVisibleFocusableElements(navigationElement);
+			(focusable[0] ?? navigationElement).focus();
+		});
+		const onKeyDown = (event: globalThis.KeyboardEvent) => {
+			if (event.key === 'Escape') {
+				event.preventDefault();
+				onNavigationDismissRef.current?.();
+				return;
+			}
+			if (event.key !== 'Tab') return;
+			const focusable = getVisibleFocusableElements(navigationElement);
+			if (focusable.length === 0) {
+				event.preventDefault();
+				navigationElement.focus();
+				return;
+			}
+			const first = focusable[0]!;
+			const last = focusable[focusable.length - 1]!;
+			if (event.shiftKey && ownerDocument.activeElement === first) {
+				event.preventDefault();
+				last.focus();
+			} else if (!event.shiftKey && ownerDocument.activeElement === last) {
+				event.preventDefault();
+				first.focus();
+			}
+		};
+		ownerWindow?.addEventListener('keydown', onKeyDown);
+		return () => {
+			if (focusFrame !== undefined) {
+				ownerWindow?.cancelAnimationFrame(focusFrame);
+			}
+			ownerWindow?.removeEventListener('keydown', onKeyDown);
+			const target = restoreFocusRef.current;
+			restoreFocusRef.current = null;
+			ownerWindow?.requestAnimationFrame(() => {
+				if (
+					target?.isConnected === true &&
+					target.offsetParent !== null &&
+					target.closest('[aria-hidden="true"], [inert]') === null
+				) {
+					target.focus();
+				}
+			});
+		};
+	}, [isDrawerOpen]);
+
+	useEffect(() => {
 		if (
 			dragStateRef.current !== null ||
 			localNavigationWidth === null ||
@@ -310,6 +406,8 @@ export function WorkspaceSplitLayout({
 				.join(' ')}
 			data-shared-ui="workspace-split-layout"
 			data-navigation-visible={isNavigationVisible ? 'true' : 'false'}
+			data-narrow-layout={isNarrowLayout ? 'true' : 'false'}
+			data-navigation-drawer={isDrawerOpen ? 'true' : 'false'}
 			style={
 				{
 					'--workspace-navigation-width': `${renderedNavigationWidth}px`,
@@ -317,13 +415,24 @@ export function WorkspaceSplitLayout({
 			}
 		>
 			<aside
+				ref={navigationRef}
 				id={navigationId}
 				className="workspace-split-layout__navigation"
 				aria-label="Workspace navigation"
 				data-shared-ui="workspace-navigation"
+				tabIndex={isDrawerOpen ? -1 : undefined}
 			>
 				{navigation}
 			</aside>
+			{isNavigationVisible ? (
+				<button
+					type="button"
+					className="workspace-split-layout__scrim"
+					aria-label="Dismiss workspace navigation"
+					tabIndex={-1}
+					onClick={() => onNavigationDismissRef.current?.()}
+				/>
+			) : null}
 			<hr
 				className="workspace-split-layout__separator"
 				tabIndex={0}
@@ -344,6 +453,7 @@ export function WorkspaceSplitLayout({
 				className="workspace-split-layout__content"
 				aria-label="Workspace content"
 				data-shared-ui="workspace-content"
+				inert={isDrawerOpen ? true : undefined}
 			>
 				{content}
 			</section>

@@ -423,6 +423,9 @@ test('locally emulated touch-mobile Chromium creates, selects, moves, and closes
 	});
 	await workspace.getByRole('button', { name: 'Create project' }).tap();
 	await workspace.getByRole('button', { name: 'Mobile project' }).tap();
+	await workspace
+		.getByRole('button', { name: 'Toggle workspace navigation' })
+		.tap();
 	await workspace.getByRole('button', { name: 'Create panel' }).tap();
 	await workspace.getByRole('button', { name: 'README.md' }).tap();
 	await workspace.getByRole('button', { name: 'Move panel' }).tap();
