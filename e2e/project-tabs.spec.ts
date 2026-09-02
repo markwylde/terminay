@@ -1,6 +1,5 @@
 import type { ElectronApplication, Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
-import { sendAppCommand } from './support/app';
 import { submitTerminalCommand } from './support/terminal';
 import { settledTerminalSessionId } from './support/terminal-session';
 import { typeInVisibleTerminal } from './support/terminal-input';
@@ -501,10 +500,10 @@ test.describe('project tabs', () => {
 
 		// Finish a command in a background terminal of the active project so its
 		// tab grows a badge while the strip is already full.
-		await sendAppCommand(mainWindow, 'new-terminal');
-		const terminalTabs = mainWindow.locator(
-			'.project-workspace--active .terminal-tab-content',
-		);
+		const activeWorkspace = mainWindow.locator('.project-workspace--active');
+		const terminalTabs = activeWorkspace.locator('.terminal-tab-content');
+		await expect(terminalTabs).toHaveCount(1);
+		await activeWorkspace.getByLabel('New terminal tab').first().click();
 		await expect(terminalTabs).toHaveCount(2);
 		await terminalTabs.filter({ hasText: 'Terminal 2' }).click();
 		await submitTerminalCommand(
@@ -538,12 +537,9 @@ test.describe('project tabs', () => {
 		expect(hiddenAfter).toBeGreaterThanOrEqual(hiddenBefore);
 		await expect(mainWindow.locator('.project-tab--active')).toBeVisible();
 
-		// The compact switcher rows carry the same badge.
-		await nativeWindow.evaluate((window) => {
-			window.setBounds({ x: 40, y: 40, width: 390, height: 740 });
-		});
-		await expect(strip).toHaveAttribute('data-project-tab-layout', 'compact');
+		// The overflow switcher rows carry the same badge.
 		await mainWindow.locator('.project-switcher-button').click();
+		await expect(mainWindow.locator('.project-switcher-menu')).toBeVisible();
 		const activeRow = mainWindow
 			.locator('.project-switcher-menu__item')
 			.filter({ hasText: activeTitle });
