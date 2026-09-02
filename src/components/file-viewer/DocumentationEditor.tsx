@@ -1,36 +1,6 @@
 import {
-	AdmonitionDirectiveDescriptor,
-	BlockTypeSelect,
-	BoldItalicUnderlineToggles,
-	CodeToggle,
-	CreateLink,
-	codeBlockPlugin,
-	codeMirrorPlugin,
-	DiffSourceToggleWrapper,
-	diffSourcePlugin,
-	directivesPlugin,
-	frontmatterPlugin,
-	headingsPlugin,
-	InsertAdmonition,
-	InsertCodeBlock,
-	InsertFrontmatter,
-	InsertImage,
-	InsertTable,
-	InsertThematicBreak,
-	imagePlugin,
-	jsxPlugin,
-	ListsToggle,
-	linkPlugin,
-	listsPlugin,
 	MDXEditor,
 	type MDXEditorMethods,
-	markdownShortcutPlugin,
-	lexicalTheme as mdxEditorLexicalTheme,
-	quotePlugin,
-	tablePlugin,
-	thematicBreakPlugin,
-	toolbarPlugin,
-	UndoRedo,
 } from '@mdxeditor/editor';
 import type { MdxRuntimeClient } from '@terminay/client-core';
 import {
@@ -45,80 +15,27 @@ import {
 } from 'react';
 import { openExternalUrl, savePreviewDownload } from '../../host/nativeActions';
 import { MdxPreview } from '../mdx-preview/MdxPreview';
-import { DocumentationAutosaveController } from './DocumentationAutosaveController';
+import {
+	DocumentationAutosaveController,
+	type DocumentationAutosaveSession,
+} from './DocumentationAutosaveController';
+import {
+	documentationEditorPlugins,
+	documentationLexicalTheme,
+} from './documentationEditorPlugins';
 import '@fontsource/open-sans/latin-400.css';
 import '@fontsource/open-sans/latin-600.css';
 import '@fontsource/open-sans/latin-700.css';
 import '@mdxeditor/editor/style.css';
 
-const documentationLexicalTheme = {
-	...mdxEditorLexicalTheme,
-	admonition: {
-		caution:
-			'documentation-editor__admonition documentation-editor__admonition--caution',
-		danger:
-			'documentation-editor__admonition documentation-editor__admonition--danger',
-		info: 'documentation-editor__admonition documentation-editor__admonition--info',
-		note: 'documentation-editor__admonition documentation-editor__admonition--note',
-		tip: 'documentation-editor__admonition documentation-editor__admonition--tip',
-	},
-};
 
-const editorPlugins = [
-	headingsPlugin(),
-	listsPlugin(),
-	quotePlugin(),
-	thematicBreakPlugin(),
-	linkPlugin(),
-	imagePlugin(),
-	tablePlugin(),
-	codeBlockPlugin(),
-	codeMirrorPlugin({
-		codeBlockLanguages: {
-			'': 'Plain text',
-			bash: 'Shell',
-			css: 'CSS',
-			html: 'HTML',
-			javascript: 'JavaScript',
-			json: 'JSON',
-			jsx: 'JavaScript (React)',
-			markdown: 'Markdown',
-			tsx: 'TypeScript (React)',
-			typescript: 'TypeScript',
-			yaml: 'YAML',
-		},
-	}),
-	frontmatterPlugin(),
-	directivesPlugin({
-		directiveDescriptors: [AdmonitionDirectiveDescriptor],
-	}),
-	jsxPlugin(),
-	markdownShortcutPlugin(),
-	diffSourcePlugin({ viewMode: 'rich-text' }),
-	toolbarPlugin({
-		toolbarContents: () => (
-			<DiffSourceToggleWrapper>
-				<UndoRedo />
-				<BlockTypeSelect />
-				<BoldItalicUnderlineToggles />
-				<CodeToggle />
-				<ListsToggle />
-				<CreateLink />
-				<InsertImage />
-				<InsertTable />
-				<InsertCodeBlock />
-				<InsertAdmonition />
-				<InsertFrontmatter />
-				<InsertThematicBreak />
-			</DiffSourceToggleWrapper>
-		),
-	}),
-];
 
 type DocumentationEditorProps = Readonly<{
 	markdown: string;
 	onChange: (value: string) => void;
-	onFlush: () => Promise<void>;
+	autosaveSession: DocumentationAutosaveSession;
+	draftRevision?: number;
+	diskRevision?: number;
 	path: string;
 	projectId: string;
 	serverId: string;
@@ -164,7 +81,9 @@ class DocumentationEditorBoundary extends Component<
 function DocumentationEditorSurface({
 	markdown,
 	onChange,
-	onFlush,
+	autosaveSession,
+	draftRevision = 0,
+	diskRevision = 0,
 	path,
 	projectId,
 	serverId,
@@ -177,14 +96,15 @@ function DocumentationEditorSurface({
 	const [compiled, setCompiled] = useState<
 		{ runtimeId: string; code: Uint8Array } | undefined
 	>(undefined);
+	const [previewHeight, setPreviewHeight] = useState<number | undefined>(
+		undefined,
+	);
 	const [previewGeneration, setPreviewGeneration] = useState(0);
 	const [downloadInFlight, setDownloadInFlight] = useState(false);
 	const valueRef = useRef(markdown);
 	const editorRef = useRef<MDXEditorMethods>(null);
 	const suppressModeChangeRef = useRef(false);
 	const suppressModeChangeTimerRef = useRef<number | undefined>(undefined);
-	const flushRef = useRef(onFlush);
-	flushRef.current = onFlush;
 	const autosaveRef = useRef<DocumentationAutosaveController | undefined>(
 		undefined,
 	);
@@ -193,21 +113,23 @@ function DocumentationEditorSurface({
 	const resourceUrlsRef = useRef<string[]>([]);
 	if (autosaveRef.current === undefined)
 		autosaveRef.current = new DocumentationAutosaveController(
-			async () => flushRef.current(),
+			autosaveSession,
 			(next, error) => {
 				setState(next);
 				if (error !== undefined)
 					setMessage(error instanceof Error ? error.message : String(error));
-				else if (next === 'saved') setMessage(undefined);
+				else if (next === 'saved' || next === 'idle') setMessage(undefined);
 			},
+			draftRevision,
+			diskRevision,
 		);
 	const handleChange = useCallback(
 		(next: string, initial: boolean) => {
-			if (initial || suppressModeChangeRef.current || next === valueRef.current)
+			if (suppressModeChangeRef.current || next === valueRef.current)
 				return;
 			valueRef.current = next;
 			onChange(next);
-			autosaveRef.current?.changed();
+			autosaveRef.current?.changed(next, initial);
 		},
 		[onChange],
 	);
@@ -355,6 +277,7 @@ function DocumentationEditorSurface({
 					onMessage={(event) => {
 						if (event.kind === 'diagnostic')
 							setMessage(`Preview: ${event.message}`);
+						if (event.kind === 'resize') setPreviewHeight(event.height);
 						if (event.kind === 'open-document')
 							window.dispatchEvent(
 								new CustomEvent('terminay-documentation-open', {
@@ -413,6 +336,11 @@ function DocumentationEditorSurface({
 							Restart preview
 						</button>
 					) : null}
+					{state === 'failed' || state === 'conflict' ? (
+						<button type="button" onClick={() => void autosaveRef.current?.flush()}>
+							Retry save
+						</button>
+					) : null}
 				</div>
 			) : null}
 			<MDXEditor
@@ -422,7 +350,7 @@ function DocumentationEditorSurface({
 				className="documentation-editor__surface mdxeditor-full-height"
 				contentEditableClassName="documentation-editor__content"
 				lexicalTheme={documentationLexicalTheme}
-				plugins={editorPlugins}
+				plugins={documentationEditorPlugins}
 				onChange={handleChange}
 				onError={(error) => setMessage(`Editor parser error: ${error.error}`)}
 			/>
@@ -430,6 +358,11 @@ function DocumentationEditorSurface({
 				<section
 					className="documentation-editor__preview"
 					aria-label="Live MDX preview"
+					style={
+						previewHeight === undefined
+							? undefined
+							: { minHeight: previewHeight }
+					}
 				>
 					{preview}
 				</section>

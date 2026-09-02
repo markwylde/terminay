@@ -31,6 +31,7 @@ export interface FilePanel extends PanelBase {
 	readonly type: 'file';
 	readonly path: string;
 	readonly mode?: string;
+	readonly presentation?: 'file-viewer' | 'documentation';
 }
 export interface FolderPanel extends PanelBase {
 	readonly type: 'folder';
@@ -218,6 +219,9 @@ export function canonicalizeWorkspaceState(
 				type: 'file',
 				path: panel.path,
 				...(panel.mode === undefined ? {} : { mode: panel.mode }),
+				...(panel.presentation === 'documentation' || panel.presentation === 'file-viewer'
+					? { presentation: panel.presentation }
+					: {}),
 			};
 		else
 			panels[id] = {

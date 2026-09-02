@@ -53,6 +53,7 @@ export interface PanelUpdateRequest {
 		color?: string;
 		inheritsProjectColor?: boolean;
 		activityIndicatorsEnabled?: boolean;
+		presentation?: 'file-viewer' | 'documentation';
 	}>;
 }
 export interface ProjectCreateRequest {
@@ -91,6 +92,7 @@ export interface PanelCreateRequest {
 		path: string;
 		createdAt: number;
 		title?: string;
+		presentation?: 'file-viewer' | 'documentation';
 	}>;
 }
 export interface PanelMoveRequest {
@@ -386,6 +388,12 @@ export class WorkspaceClient {
 				patch[key] = value;
 			}
 		}
+		if (
+			request.patch.presentation === 'file-viewer' ||
+			request.patch.presentation === 'documentation'
+		)
+			patch.presentation = request.patch.presentation;
+
 		if (Object.keys(patch).length === 0)
 			throw new TypeError('panel update patch is empty');
 		await this.client.command(
