@@ -14,7 +14,7 @@ test('fixture project has nested Markdown, YAML titles, MDX import, asset, form,
 	const nested = await readFile(path.join(root, 'docs/nested/deep.md'), 'utf8');
 	const callout = await readFile(path.join(root, 'components/Callout.tsx'), 'utf8');
 	const logo = await readFile(path.join(root, 'assets/logo.svg'), 'utf8');
-	const ignored = await readFile(path.join(root, 'node_modules/ignored.md'), 'utf8');
+	const ignored = await readFile(path.join(root, 'release/ignored.md'), 'utf8');
 	assert.match(readme, /title: Documentation Fixture/);
 	assert.match(guide, /title: Getting Started/);
 	assert.match(guide, /import \{ Callout \}/);
