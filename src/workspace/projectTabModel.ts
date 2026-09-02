@@ -238,7 +238,7 @@ export function projectTabHueDistance(left: number, right: number): number {
 export function getRandomProjectTabColor(
 	usedColors: Iterable<string> = [],
 ): string {
-	return getDeterministicProjectTabColor('project-default', usedColors);
+	return getProjectTabColor('project-default', usedColors);
 }
 
 function stableProjectColorIndex(identity: string, size: number): number {
@@ -252,16 +252,27 @@ function stableProjectColorIndex(identity: string, size: number): number {
 
 /** Pick the palette color furthest from the colors already in use, so a new
  * project reads as a different color family rather than a neighbouring shade.
- * Ties resolve from project identity. Persisted and explicitly selected project
- * colors bypass this path. */
-export function getDeterministicProjectTabColor(
+ * Ties resolve from project identity, so a color stays reproducible against
+ * whatever is already on screen. The first color in a workspace has nothing to
+ * agree with and every entry is equally correct, so it is drawn at random rather
+ * than pinned to a hash. Persisted and explicitly selected project colors bypass
+ * this path. */
+export function getProjectTabColor(
 	identity: string,
 	usedColors: Iterable<string> = [],
+	randomSource: () => number = Math.random,
 ): string {
 	const usedHues: number[] = [];
 	for (const color of usedColors) {
 		const hue = projectTabColorHue(color);
 		if (hue !== null) usedHues.push(hue);
+	}
+	if (usedHues.length === 0) {
+		const index = Math.min(
+			DEFAULT_PROJECT_TAB_COLORS.length - 1,
+			Math.max(0, Math.floor(randomSource() * DEFAULT_PROJECT_TAB_COLORS.length)),
+		);
+		return DEFAULT_PROJECT_TAB_COLORS[index] ?? hueToProjectTabColor(0);
 	}
 	let bestDistance = -1;
 	let furthest: string[] = [];
@@ -269,8 +280,6 @@ export function getDeterministicProjectTabColor(
 		const color = DEFAULT_PROJECT_TAB_COLORS[index];
 		const hue = PROJECT_TAB_COLOR_PALETTE_HUES[index];
 		if (color === undefined || hue === undefined) continue;
-		// An unused palette scores Infinity, so every entry ties and identity alone
-		// decides - the first project in a view keeps its identity-seeded color.
 		let nearest = Number.POSITIVE_INFINITY;
 		for (const usedHue of usedHues) {
 			nearest = Math.min(nearest, projectTabHueDistance(hue, usedHue));
@@ -303,7 +312,7 @@ export function createProjectTab(
 		environmentStatus: 'ready',
 		id,
 		title: `Project ${index}`,
-		color: getDeterministicProjectTabColor(`${colorScope}:${id}`, usedColors),
+		color: getProjectTabColor(`${colorScope}:${id}`, usedColors),
 		emoji: '',
 		fileExplorerWidth: sidebarDefaults.defaultWidth,
 		isFileExplorerOpen: false,
