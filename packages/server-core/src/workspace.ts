@@ -1417,13 +1417,15 @@ export class WorkspaceStore {
 }
 
 /** Lowest `Project N` no project holds. Derived here, inside the applied command,
- * so concurrent creations reading the same stale snapshot cannot collide. */
+ * so concurrent creations reading the same stale snapshot cannot collide. The
+ * seeded default project is named plain `Project` and holds the first slot, so
+ * the first project a user creates is `Project 2`. */
 function nextDefaultProjectName(state: WorkspaceState): string {
 	const taken = new Set<number>();
 	for (const project of Object.values(state.projects)) {
-		const digits = /^Project (\d+)$/.exec(project.name ?? '')?.[1];
-		if (digits === undefined) continue;
-		taken.add(Number.parseInt(digits, 10));
+		const match = /^Project(?: (\d+))?$/.exec(project.name ?? '');
+		if (match === null) continue;
+		taken.add(match[1] === undefined ? 1 : Number.parseInt(match[1], 10));
 	}
 	let candidate = 1;
 	while (taken.has(candidate)) candidate += 1;

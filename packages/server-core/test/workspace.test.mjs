@@ -290,13 +290,26 @@ test("ten successive creations produce ten distinct default names", () => {
   assert.equal(new Set(names).size, 10, `Expected ten distinct names, got ${names.join(", ")}.`);
 });
 
+test("the seeded default project holds the first number", () => {
+  const store = new WorkspaceStore(createInitialWorkspace("server-a"));
+  const view = store.state.viewOrder[0];
+  // Hydration seeds a project named plain "Project"; it occupies slot 1, so the
+  // first project a user creates is "Project 2".
+  assert.equal(store.apply({ commandId: "seed", command: { type: "project.create", projectId: "default", viewId: view, root: "/tmp", name: "Project" } }).ok, true);
+  assert.equal(store.apply({ commandId: "c1", command: { type: "project.create", projectId: "p1", viewId: view, root: "/tmp" } }).ok, true);
+  assert.equal(store.state.projects["p1"].name, "Project 2");
+  assert.equal(store.apply({ commandId: "c2", command: { type: "project.create", projectId: "p2", viewId: view, root: "/tmp" } }).ok, true);
+  assert.equal(store.state.projects["p2"].name, "Project 3");
+});
+
 test("supplied project names are stored as given and non-numeric names reserve nothing", () => {
   const store = new WorkspaceStore(createInitialWorkspace("server-a"));
   const view = store.state.viewOrder[0];
   assert.equal(store.apply({ commandId: "c1", command: { type: "project.create", projectId: "p1", viewId: view, root: "/tmp", name: "Project Apollo" } }).ok, true);
   assert.equal(store.state.projects["p1"].name, "Project Apollo");
 
-  // "Project Apollo" carries no number, so the next default still starts at 1.
+  // "Project Apollo" is not the bare seed name and carries no number, so it
+  // reserves nothing and the next default still starts at 1.
   assert.equal(store.apply({ commandId: "c2", command: { type: "project.create", projectId: "p2", viewId: view, root: "/tmp" } }).ok, true);
   assert.equal(store.state.projects["p2"].name, "Project 1");
 
