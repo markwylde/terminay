@@ -545,6 +545,9 @@ async function createServerComposition(
 			'ai.dictation',
 		],
 		eventJournal,
+		onConnectionClosed: (_connectionId, clientId) => {
+			files.mdxRuntime.closeClient(clientId);
+		},
 		authenticate: ({ hello }) => ({
 			clientId: hello.clientId,
 			authScope: 'admin',
@@ -932,6 +935,10 @@ function createDefaultProjectFileServices(
 		sessionProjects,
 		storage,
 	);
+	const mdxRuntime = new ServerMdxRuntimeAdapter({
+		serverId,
+		projects: mdxRuntimeProjects,
+	});
 	return {
 		session: new ServerFileAdapter({
 			serverId,
@@ -946,7 +953,7 @@ function createDefaultProjectFileServices(
 			projects: catalogProjects,
 		}),
 		documentation: new ServerDocumentationCatalogAdapter({ serverId, projects: documentationProjects }),
-		mdxRuntime: new ServerMdxRuntimeAdapter({ serverId, projects: mdxRuntimeProjects }),
+		mdxRuntime,
 		observations: new ServerFileObservationAdapter({
 			serverId,
 			host: observationHost,
@@ -963,6 +970,7 @@ function createDefaultProjectFileServices(
 			return Object.freeze({
 				canonicalRoot,
 				commit: () => {
+					mdxRuntime.disposeProject(projectId);
 					sessionProjects.set(projectId, {
 						projectId,
 						resolver: nextResolver,

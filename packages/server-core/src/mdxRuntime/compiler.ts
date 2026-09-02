@@ -6,13 +6,16 @@ import type { FileCatalogStorage } from '../fileService/catalog.js';
 import { CanonicalProjectPathResolver } from '../fileService/pathResolver.js';
 import { FileServiceError } from '../fileService/types.js';
 
+/** Terminay-owned compiler bounds. Project Vite/Webpack/Babel/tsconfig are never loaded. */
 export const MDX_COMPILER_LIMITS = Object.freeze({
 	maxSourceBytes: 2 * 1024 * 1024,
 	maxOutputBytes: 8 * 1024 * 1024,
 	maxDependencies: 256,
 	maxDepth: 32,
 	timeoutMs: 15_000,
+	maxConcurrent: 2,
 });
+
 export interface MdxCompileResource {
 	readonly resourceId: string;
 	readonly mimeType: string;
@@ -24,6 +27,8 @@ export interface MdxCompileResult {
 	readonly dependencies: readonly string[];
 	readonly resources: readonly MdxCompileResource[];
 }
+
+const compileGate = { active: 0, waiters: [] as Array<() => void> };
 
 /** Config-free compiler. Every project read is resolved by the environment's
  * canonical resolver; server Node never evaluates the generated bundle. */
@@ -39,6 +44,17 @@ export class MdxCompiler {
 		configurePackagedEsbuildBinary();
 		if (!validPath(entryPath))
 			throw new FileServiceError('invalid_path', 'MDX entry path is invalid.');
+		await acquireCompileSlot(signal);
+		try {
+			return await this.compileHeld(entryPath, signal);
+		} finally {
+			releaseCompileSlot();
+		}
+	}
+	private async compileHeld(
+		entryPath: string,
+		signal?: AbortSignal,
+	): Promise<MdxCompileResult> {
 		const dependencies = new Set<string>();
 		const resources = new Map<string, MdxCompileResource>();
 		const depthByModule = new Map<string, number>();
@@ -94,12 +110,31 @@ export class MdxCompiler {
 									return {
 										errors: [{ text: 'MDX compilation was cancelled.' }],
 									};
+								if (args.kind === 'dynamic-import')
+									return {
+										errors: [
+											{
+												text: 'Unsupported dynamic import in MDX compilation.',
+											},
+										],
+									};
+								if (/^https?:\/\//iu.test(args.path))
+									return { path: args.path, external: true };
 								if (isBlockedImport(args.path))
 									return {
 										errors: [
 											{
 												text: `Node/Electron imports are blocked: ${args.path}`,
 											},
+										],
+									};
+								if (
+									args.path.startsWith('/') ||
+									/^[A-Za-z]:[\\/]/u.test(args.path)
+								)
+									return {
+										errors: [
+											{ text: 'Absolute host paths are blocked in MDX imports.' },
 										],
 									};
 								try {
@@ -115,7 +150,7 @@ export class MdxCompiler {
 										? await this.resolve(
 												normalizeRelativeImport(base, args.path),
 											)
-										: await this.resolvePackage(args.path);
+										: await this.resolvePackage(args.path, signal);
 									const depth =
 										args.importer === '<stdin>'
 											? 1
@@ -200,7 +235,9 @@ export class MdxCompiler {
 				],
 			}),
 			signal,
-		);
+		).catch((error: unknown) => {
+			throw mapCompileError(error);
+		});
 		const code = result.outputFiles.find(
 			(file) => !file.path.endsWith('.css'),
 		)?.contents;
@@ -247,7 +284,10 @@ export class MdxCompiler {
 			'Imported MDX module does not exist.',
 		);
 	}
-	private async resolvePackage(specifier: string): Promise<string> {
+	private async resolvePackage(
+		specifier: string,
+		signal?: AbortSignal,
+	): Promise<string> {
 		if (
 			!/^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)(?:\/[a-z0-9][a-z0-9._/-]*)?$/iu.test(
 				specifier,
@@ -268,7 +308,7 @@ export class MdxCompiler {
 			{ requireFile: true },
 		);
 		const manifest = JSON.parse(
-			new TextDecoder().decode(await this.read(manifestPath)),
+			new TextDecoder().decode(await this.read(manifestPath, signal)),
 		) as Record<string, unknown>;
 		const entry =
 			typeof manifest.browser === 'string'
@@ -286,6 +326,7 @@ export class MdxCompiler {
 		return this.resolve(`${packageRoot}/${entry}`);
 	}
 	private async read(path: string, signal?: AbortSignal): Promise<Uint8Array> {
+		throwIfAborted(signal);
 		if (this.storage.readRange === undefined)
 			throw new FileServiceError(
 				'invalid_path',
@@ -297,6 +338,7 @@ export class MdxCompiler {
 			MDX_COMPILER_LIMITS.maxSourceBytes + 1,
 			signal,
 		);
+		throwIfAborted(signal);
 		if (bytes.byteLength > MDX_COMPILER_LIMITS.maxSourceBytes)
 			throw new FileServiceError(
 				'invalid_path',
@@ -304,6 +346,38 @@ export class MdxCompiler {
 			);
 		return bytes;
 	}
+}
+
+function acquireCompileSlot(signal?: AbortSignal): Promise<void> {
+	throwIfAborted(signal);
+	if (compileGate.active < MDX_COMPILER_LIMITS.maxConcurrent) {
+		compileGate.active += 1;
+		return Promise.resolve();
+	}
+	return new Promise((resolve, reject) => {
+		const waiter = (): void => {
+			signal?.removeEventListener('abort', onAbort);
+			if (signal?.aborted) {
+				reject(abortError(signal));
+				return;
+			}
+			compileGate.active += 1;
+			resolve();
+		};
+		const onAbort = (): void => {
+			const index = compileGate.waiters.indexOf(waiter);
+			if (index >= 0) compileGate.waiters.splice(index, 1);
+			reject(abortError(signal));
+		};
+		compileGate.waiters.push(waiter);
+		signal?.addEventListener('abort', onAbort, { once: true });
+	});
+}
+
+function releaseCompileSlot(): void {
+	compileGate.active = Math.max(0, compileGate.active - 1);
+	const next = compileGate.waiters.shift();
+	next?.();
 }
 
 function configurePackagedEsbuildBinary(): void {
@@ -437,16 +511,13 @@ async function withTimeout<T>(
 	const aborted =
 		signal === undefined
 			? undefined
-			: new Promise<never>((_, reject) =>
+			: new Promise<never>((_, reject) => {
 					signal.addEventListener(
 						'abort',
-						() =>
-							reject(
-								signal.reason ?? new DOMException('Aborted', 'AbortError'),
-							),
+						() => reject(abortError(signal)),
 						{ once: true },
-					),
-				);
+					);
+				});
 	try {
 		return await Promise.race([
 			operation,
@@ -454,8 +525,25 @@ async function withTimeout<T>(
 			...(aborted === undefined ? [] : [aborted]),
 		]);
 	} finally {
-		if (timer !== undefined) clearTimeout(timer);
+		clearTimeout(timer);
 	}
+}
+function mapCompileError(error: unknown): Error {
+	if (error instanceof FileServiceError || error instanceof DOMException)
+		return error;
+	let message = error instanceof Error ? error.message : 'MDX compilation failed.';
+	if (typeof error === 'object' && error !== null && 'errors' in error) {
+		const errors = error.errors;
+		if (Array.isArray(errors) && typeof errors[0]?.text === 'string')
+			message = errors[0].text;
+	}
+	const code =
+		/escape|outside the project|Absolute host|blocked/u.test(message)
+			? 'path_escape'
+			: /does not exist|missing/u.test(message)
+				? 'path_missing'
+				: 'invalid_path';
+	return new FileServiceError(code, message);
 }
 function validPath(value: string): boolean {
 	return (
@@ -465,4 +553,12 @@ function validPath(value: string): boolean {
 		!value.includes('\\') &&
 		!value.split('/').some((part) => !part || part === '.' || part === '..')
 	);
+}
+function throwIfAborted(signal?: AbortSignal): void {
+	if (signal?.aborted === true) throw abortError(signal);
+}
+function abortError(signal?: AbortSignal): Error {
+	return signal?.reason instanceof Error
+		? signal.reason
+		: new DOMException('The operation was aborted', 'AbortError');
 }
