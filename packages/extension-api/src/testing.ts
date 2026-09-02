@@ -501,8 +501,14 @@ function applyLifecycle(projection: {
       projection.working = true;
       return;
     case "agent.done":
+      projection.done = true;
+      projection.working = false;
+      projection.waiting = false;
+      projection.activeToolIds = [];
+      return;
     case "session.stopped":
     case "agent.exited":
+      projection.sessionStarted = false;
       projection.done = true;
       projection.working = false;
       projection.waiting = false;
@@ -568,6 +574,14 @@ export async function createAgentExtensionHarness(
   }
   return {
     async observe(terminal) {
+      // Topology replacement re-observes a new writer on the same harness.
+      projectionState.sessionStarted = false;
+      projectionState.working = false;
+      projectionState.waiting = false;
+      projectionState.done = false;
+      projectionState.activeToolIds = [];
+      projectionState.title = undefined;
+      projectionState.model = undefined;
       const missing = requiredCapabilities.filter((capability) => !terminal.capabilities.has(capability));
       for (const runtime of registrations.values()) {
         if (!runtime.matchesForeground(terminal.foreground)) continue;
