@@ -181,6 +181,10 @@ import {
 	RemoteAccessConnectionMenu,
 } from './workspace/RemoteAccessConnectionMenu';
 import {
+	type ActivityCountBadge,
+	summarizeActivityBadge,
+} from './workspace/activityCountBadge';
+import {
 	buildTerminalActivityOverview,
 	TerminalActivityOverview,
 	type TerminalActivityOverviewItem,
@@ -6090,6 +6094,17 @@ function App({
 
 	const hasTerminalActivityOverview = terminalActivityItems.items.length > 0;
 
+	const activityBadgesByProject = useMemo(() => {
+		const badges: Record<string, ActivityCountBadge> = {};
+		for (const [projectId, items] of Object.entries(
+			terminalActivityItemsByProject,
+		)) {
+			const badge = summarizeActivityBadge(items.map((item) => item.state));
+			if (badge) badges[projectId] = badge;
+		}
+		return badges;
+	}, [terminalActivityItemsByProject]);
+
 	const activateTerminalFromOverview = useCallback(
 		(item: TerminalActivityOverviewItem) => {
 			setIsActivityMenuOpen(false);
@@ -6301,6 +6316,7 @@ function App({
 				</div>
 				<ProjectTabList
 					activeProjectId={displayedActiveProjectId}
+					activityBadgesByProject={activityBadgesByProject}
 					draggingProjectId={draggingProjectId}
 					dropPreview={dropPreview}
 					isDraggingTabTornOff={isDraggingTabTornOff}
