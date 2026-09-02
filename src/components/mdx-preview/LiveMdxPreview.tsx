@@ -107,7 +107,17 @@ export function LiveMdxPreview({
 				downloadAbortRef.current = undefined;
 		});
 	}, []);
-	if (!compiled) return null;
+	if (!compiled) {
+		return (
+			<div className="mdx-live-preview">
+				<iframe
+					title="MDX preview"
+					sandbox="allow-scripts"
+					referrerPolicy="no-referrer"
+				/>
+			</div>
+		);
+	}
 	return (
 		<div className="mdx-live-preview">
 			<MdxPreview
