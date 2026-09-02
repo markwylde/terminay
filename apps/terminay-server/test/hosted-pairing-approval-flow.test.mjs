@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { constants, generateKeyPairSync, randomBytes, sign } from 'node:crypto';
 import { once } from 'node:events';
+import { existsSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { resolve } from 'node:path';
 import test from 'node:test';
@@ -34,7 +35,10 @@ const RUNTIME_ROOT = process.env.TERMINAY_WEBRTC_RUNTIME_ROOT
 	? resolve(process.env.TERMINAY_WEBRTC_RUNTIME_ROOT)
 	: fileURLToPath(new URL('../../../build/webrtc-runtime', import.meta.url));
 const SESSION_ID = 'server123';
-const { RTCPeerConnection } = await loadSelectedSecureWeriftRuntime(RUNTIME_ROOT);
+// The selected runtime artifact is staged for release and e2e lanes, not
+// tracked. Without it this proof cannot run; say so instead of failing.
+const runtimeStaged = existsSync(resolve(RUNTIME_ROOT, 'artifact', 'lib', 'index.mjs'));
+const { RTCPeerConnection } = runtimeStaged ? await loadSelectedSecureWeriftRuntime(RUNTIME_ROOT) : { RTCPeerConnection: undefined };
 const LOOPBACK_PEER = {
 	iceServers: [],
 	iceAdditionalHostAddresses: ['127.0.0.1'],
@@ -262,7 +266,7 @@ async function connectClient(relay, options) {
 	return api;
 }
 
-test('a device pairs only after the host approves its match code, and the ticket unlocks host context on that peer only', { timeout: 180_000 }, async (t) => {
+test('a device pairs only after the host approves its match code, and the ticket unlocks host context on that peer only', { skip: runtimeStaged ? false : `selected WebRTC runtime is not staged at ${RUNTIME_ROOT}`, timeout: 180_000 }, async (t) => {
 	const relay = await startRelay();
 	const sessionOrigin = `http://${SESSION_ID}.localhost:${relay.port}`;
 	const exposure = createServerRemoteExposure({ serverId: 'server-a', sessionOrigin, pairingUrlFormat: 'hosted-compact', cleanupIntervalMs: 0 });
