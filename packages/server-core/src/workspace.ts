@@ -313,7 +313,8 @@ export type WorkspaceCommand =
 			readonly environmentRevision?: number;
 			readonly root: string;
 			readonly rootOrigin?: Exclude<ProjectRootOrigin, 'legacy-unverified'>;
-			readonly name: string;
+			/** Absent or blank means the server assigns the next unique default. */
+			readonly name?: string;
 			readonly color?: string;
 			readonly icon?: string;
 			readonly sidebar?: WorkspaceSidebarState;
@@ -1030,7 +1031,10 @@ export class WorkspaceStore {
 					environmentRevision: command.environmentRevision ?? 1,
 					root: boundedPath(command.root),
 					rootOrigin: command.rootOrigin ?? 'explicit',
-					name: boundedName(command.name),
+					name:
+						command.name === undefined || command.name.trim().length === 0
+							? nextDefaultProjectName(state)
+							: boundedName(command.name),
 					sidebar: normalizeWorkspaceSidebarState(command.sidebar),
 					panelIds: [],
 					layout: stack([]),
@@ -1410,6 +1414,22 @@ export class WorkspaceStore {
 			}
 		}
 	}
+}
+
+/** Lowest `Project N` no project holds. Derived here, inside the applied command,
+ * so concurrent creations reading the same stale snapshot cannot collide. The
+ * seeded default project is named plain `Project` and holds the first slot, so
+ * the first project a user creates is `Project 2`. */
+function nextDefaultProjectName(state: WorkspaceState): string {
+	const taken = new Set<number>();
+	for (const project of Object.values(state.projects)) {
+		const match = /^Project(?: (\d+))?$/.exec(project.name ?? '');
+		if (match === null) continue;
+		taken.add(match[1] === undefined ? 1 : Number.parseInt(match[1], 10));
+	}
+	let candidate = 1;
+	while (taken.has(candidate)) candidate += 1;
+	return `Project ${candidate}`;
 }
 
 function boundedName(value: string): string {

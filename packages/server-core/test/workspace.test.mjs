@@ -262,3 +262,62 @@ test("canonical persistence strips transient renderer fields and terminal conten
   assert.equal("search" in canonical.views[viewId], false);
   validateWorkspace(canonical);
 });
+
+test("project creation assigns unique default names and reuses freed numbers", () => {
+  const store = new WorkspaceStore(createInitialWorkspace("server-a"));
+  const view = store.state.viewOrder[0];
+  const create = (projectId) =>
+    store.apply({ commandId: `create-${projectId}`, command: { type: "project.create", projectId, viewId: view, root: "/tmp" } });
+
+  for (const id of ["p1", "p2", "p3"]) assert.equal(create(id).ok, true);
+  assert.deepEqual(["p1", "p2", "p3"].map((id) => store.state.projects[id].name), ["Project 1", "Project 2", "Project 3"]);
+
+  assert.equal(store.apply({ commandId: "close-p2", command: { type: "project.close", projectId: "p2" } }).ok, true);
+  assert.equal(create("p4").ok, true);
+  assert.equal(store.state.projects["p4"].name, "Project 2", "Expected the freed number to be reused.");
+
+  const names = Object.values(store.state.projects).map((project) => project.name);
+  assert.equal(new Set(names).size, names.length, `Expected unique names, got ${names.join(", ")}.`);
+});
+
+test("ten successive creations produce ten distinct default names", () => {
+  const store = new WorkspaceStore(createInitialWorkspace("server-a"));
+  const view = store.state.viewOrder[0];
+  for (let index = 0; index < 10; index += 1)
+    assert.equal(store.apply({ commandId: `create-${index}`, command: { type: "project.create", projectId: `p${index}`, viewId: view, root: "/tmp" } }).ok, true);
+  const names = Object.values(store.state.projects).map((project) => project.name);
+  assert.equal(names.length, 10);
+  assert.equal(new Set(names).size, 10, `Expected ten distinct names, got ${names.join(", ")}.`);
+});
+
+test("the seeded default project holds the first number", () => {
+  const store = new WorkspaceStore(createInitialWorkspace("server-a"));
+  const view = store.state.viewOrder[0];
+  // Hydration seeds a project named plain "Project"; it occupies slot 1, so the
+  // first project a user creates is "Project 2".
+  assert.equal(store.apply({ commandId: "seed", command: { type: "project.create", projectId: "default", viewId: view, root: "/tmp", name: "Project" } }).ok, true);
+  assert.equal(store.apply({ commandId: "c1", command: { type: "project.create", projectId: "p1", viewId: view, root: "/tmp" } }).ok, true);
+  assert.equal(store.state.projects["p1"].name, "Project 2");
+  assert.equal(store.apply({ commandId: "c2", command: { type: "project.create", projectId: "p2", viewId: view, root: "/tmp" } }).ok, true);
+  assert.equal(store.state.projects["p2"].name, "Project 3");
+});
+
+test("supplied project names are stored as given and non-numeric names reserve nothing", () => {
+  const store = new WorkspaceStore(createInitialWorkspace("server-a"));
+  const view = store.state.viewOrder[0];
+  assert.equal(store.apply({ commandId: "c1", command: { type: "project.create", projectId: "p1", viewId: view, root: "/tmp", name: "Project Apollo" } }).ok, true);
+  assert.equal(store.state.projects["p1"].name, "Project Apollo");
+
+  // "Project Apollo" is not the bare seed name and carries no number, so it
+  // reserves nothing and the next default still starts at 1.
+  assert.equal(store.apply({ commandId: "c2", command: { type: "project.create", projectId: "p2", viewId: view, root: "/tmp" } }).ok, true);
+  assert.equal(store.state.projects["p2"].name, "Project 1");
+
+  // A blank name falls back to the derived default rather than being rejected.
+  assert.equal(store.apply({ commandId: "c3", command: { type: "project.create", projectId: "p3", viewId: view, root: "/tmp", name: "   " } }).ok, true);
+  assert.equal(store.state.projects["p3"].name, "Project 2");
+
+  // A user may rename onto a duplicate; uniqueness governs the default only.
+  assert.equal(store.apply({ commandId: "r1", command: { type: "project.rename", projectId: "p3", name: "Project 1" } }).ok, true);
+  assert.equal(store.state.projects["p3"].name, "Project 1");
+});
