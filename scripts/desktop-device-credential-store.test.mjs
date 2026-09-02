@@ -42,6 +42,20 @@ test('Desktop stores one protected device signing key for its exact origin', asy
   assert.equal(raw.includes('reconnect'), false)
 })
 
+test('Desktop stores the verified host pin beside the device credential and requires it after restart', async () => {
+  const root = join(directory, 'host-pin')
+  const store = new DesktopDeviceCredentialStore({ directory: root, codec: codec() })
+  const key = store.createDeviceKey('https://server.example')
+  const hostPin = { algorithm: 'ed25519', publicKey: 'A'.repeat(43) }
+  await store.saveDeviceIdentity({
+    origin: 'https://server.example', deviceId: 'device-a', deviceName: 'Terminay Desktop', privateKey: key.keyRef, hostPin,
+  })
+  const restarted = new DesktopDeviceCredentialStore({ directory: root, codec: codec() })
+  assert.deepEqual(await restarted.loadPinnedHostKey('https://server.example'), hostPin)
+  await restarted.pinHostKey('https://server.example', hostPin)
+  assert.deepEqual(await restarted.loadPinnedHostKey('https://server.example'), hostPin)
+})
+
 test('Desktop rejects an old credential schema and does not cross origin boundaries', async () => {
   const store = new DesktopDeviceCredentialStore({ directory: join(directory, 'boundaries'), codec: codec() })
   const key = store.createDeviceKey('https://one.example')
