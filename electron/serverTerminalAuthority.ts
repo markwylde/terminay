@@ -772,6 +772,9 @@ export class ServerTerminalAuthority {
 		this.composition = createServerCoreComposition({
 			serverId: options.serverId,
 			serverVersion: 'desktop',
+			onConnectionClosed: (_connectionId, clientId) => {
+				mdxRuntimeAdapter.closeClient(clientId);
+			},
 			...(options.terminalService !== undefined &&
 			options.shellProfiles === undefined
 				? { allowUnresolvedTestSessions: true }
@@ -1444,6 +1447,7 @@ export class ServerTerminalAuthority {
 		return Object.freeze({
 			canonicalRoot,
 			commit: async () => {
+				this.mdxRuntimeProjects.get(projectId)?.runtime.disposeAll();
 				this.fileProjectRoots.set(projectId, canonicalRoot);
 				this.fileCatalogProjects.set(projectId, context);
 				this.documentationProjects.set(projectId, documentationContext);

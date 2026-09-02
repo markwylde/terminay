@@ -1,7 +1,11 @@
 import { expect, test } from './fixtures';
-import { selectSidebarGroup, setProjectRoot } from './support/ui';
+import {
+	fileExplorerItem,
+	openFileExplorer,
+	setProjectRoot,
+} from './support/ui';
 
-test('Documentation opens MDX through the isolated preview surface', async ({
+test('File explorer opens MDX through the isolated preview surface', async ({
 	createWorkspace,
 	mainWindow,
 }) => {
@@ -21,23 +25,15 @@ test('Documentation opens MDX through the isolated preview surface', async ({
 		},
 	});
 	await setProjectRoot(mainWindow, workspace.rootDir);
-	await selectSidebarGroup(mainWindow, 'documentation');
-	const documentationPane = mainWindow
-		.locator('.project-workspace--active .sidebar-pane')
-		.filter({
-			has: mainWindow.locator('.sidebar-pane__title', {
-				hasText: 'Documentation',
-			}),
-		});
-	if (
-		await documentationPane.evaluate((element) =>
-			element.classList.contains('sidebar-pane--collapsed'),
-		)
-	) {
-		await documentationPane.locator('.sidebar-pane__header').click();
-	}
-	await mainWindow
-		.getByRole('treeitem', { name: /^Guide, guide\.mdx$/i })
-		.click();
-	await expect(mainWindow.locator('iframe[title="MDX preview"]')).toBeVisible();
+	await openFileExplorer(mainWindow);
+	await fileExplorerItem(mainWindow, 'guide.mdx').dblclick();
+	await expect(mainWindow.locator('.file-panel')).toBeVisible();
+	const previewTab = mainWindow
+		.locator('.file-panel')
+		.getByRole('tab', { name: 'Preview' });
+	await expect(previewTab).toBeVisible();
+	await previewTab.click();
+	await expect(mainWindow.locator('iframe[title="MDX preview"]')).toBeVisible({
+		timeout: 30_000,
+	});
 });

@@ -271,6 +271,7 @@ export async function createConnectedServerClientContext(
 				candidateActivityClient.close();
 				candidateAgentStatusClient.close();
 				removeStateListener();
+				await mdxRuntimeClient.disposeAll().catch(() => undefined);
 				await client.close().catch(() => undefined);
 			})();
 			return disposePromise;

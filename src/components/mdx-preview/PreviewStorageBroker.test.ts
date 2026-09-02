@@ -18,4 +18,6 @@ test('preview storage is scoped by canonical project key and validates mutations
 	broker.persist('server-a:project-a', { cookie: 'color=blue', entries: { theme: 'dark', invalid: 4 } });
 	assert.deepEqual(broker.snapshot('server-a:project-a'), { cookie: 'color=blue', entries: { theme: 'dark' } });
 	assert.deepEqual(broker.snapshot('server-a:project-b'), { cookie: '', entries: {} });
+	broker.clear('server-a:project-a');
+	assert.deepEqual(broker.snapshot('server-a:project-a'), { cookie: '', entries: {} });
 });
