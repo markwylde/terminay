@@ -194,7 +194,6 @@ test("extracted Desktop package starts the extracted shared embedded server runt
       cwd: desktopRoot,
       env: {
         ...process.env,
-        TERMINAY_REMOTE_PAIRING_PIN: "123456",
         TERMINAY_SERVER_VERSION: serverPackage.version,
       },
     });
@@ -268,7 +267,6 @@ test("extracted Desktop package starts the extracted shared embedded server runt
         ...process.env,
         HOME: foregroundHome,
         SHELL: "/bin/sh",
-        TERMINAY_REMOTE_PAIRING_PIN: "123456",
         TERMINAY_SERVER_VERSION: serverPackage.version,
       },
     });
