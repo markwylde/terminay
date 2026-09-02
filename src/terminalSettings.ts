@@ -3,14 +3,14 @@ import {
 	appCommandMetadata,
 	defaultKeyboardShortcuts,
 	normalizeAccelerator,
-} from './keyboardShortcuts';
+} from './keyboardShortcuts.ts';
 import {
 	SIDEBAR_GROUP_IDS,
 	SIDEBAR_PANEL_IDS,
 	type SidebarGroupId,
 	type SidebarPanelId,
 	type TerminalSettings,
-} from './types/settings';
+} from './types/settings.ts';
 
 type SettingsInputKind =
 	| 'boolean'
