@@ -38,6 +38,14 @@ test("GitHub and Gitea discover separate provider-specific CI workflows", () => 
   assert.match(job(giteaCi, "packaged-macos-smoke"), /packaged-macos-pr-smoke\.sh/u);
   assert.doesNotMatch(job(giteaCi, "packaged-macos-smoke"), /setup-node/u);
   assert.doesNotMatch(job(giteaCi, "packaged-macos-smoke"), /unavailable macOS runner|Gitea has no macOS runners/u);
+  assert.match(job(githubCi, "packaged-macos-smoke"), /Require the native supported macOS arm64 architecture/u);
+  assert.match(job(githubCi, "packaged-macos-smoke"), /test "\$\(node -p 'process\.arch'\)" = arm64/u);
+  assert.match(job(githubCi, "packaged-macos-smoke"), /test "\$\(uname -m\)" = arm64/u);
+  assert.match(job(githubCi, "packaged-macos-smoke"), /test:packaged-built-in-extension-runtime/u);
+  assert.match(job(giteaCi, "packaged-macos-smoke"), /Require the native supported macOS arm64 architecture/u);
+  assert.match(job(giteaCi, "packaged-macos-smoke"), /test "\$\(node -p 'process\.arch'\)" = arm64/u);
+  assert.match(job(giteaCi, "packaged-macos-smoke"), /test "\$\(uname -m\)" = arm64/u);
+  assert.match(job(giteaCi, "packaged-macos-smoke"), /test:packaged-built-in-extension-runtime/u);
   const packagedLinux = job(githubCi, "packaged-linux-built-in-lifecycle");
   assert.match(packagedLinux, /target: linux-x64/u);
   assert.match(packagedLinux, /target: linux-arm64/u);

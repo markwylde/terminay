@@ -140,7 +140,7 @@ export interface ServerCoreCompositionOptions
   readonly agents?: AgentStatusService;
   /** Optional extension-backed agent admission authority. It claims an exact
    * terminal incarnation before an installed provider can publish sidebar
-   * lifecycle state; legacy journal drivers remain the fallback. */
+   * lifecycle state; generic terminal activity remains the fallback. */
   readonly extensionAgentRuntime?: ExtensionAgentRuntimeRegistry;
   /** Other server-owned operation handlers to merge with terminal handlers. */
   readonly operations?: OperationRegistries;
