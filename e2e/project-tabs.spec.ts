@@ -1,7 +1,9 @@
 import type { ElectronApplication, Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
-import { settledTerminalSessionId } from './support/terminal-session';
+import { sendAppCommand } from './support/app';
+import { submitTerminalCommand } from './support/terminal';
 import { typeInVisibleTerminal } from './support/terminal-input';
+import { settledTerminalSessionId } from './support/terminal-session';
 import {
 	cancelEditWindow,
 	longPress,
@@ -43,21 +45,23 @@ async function waitForWorkspacePopout(
 ): Promise<Page> {
 	let popout: Page | undefined;
 	await expect
-		.poll(async () => {
-			popout = electronApp
-				.windows()
-				.find(
-					(page) =>
-						page !== mainWindow &&
-						!page.isClosed() &&
-						!page.url().startsWith('about:blank') &&
-						!page.url().startsWith('data:'),
-				);
-			return popout === undefined
-				? false
-				: (await popout.locator('[data-terminay-app-component]').count()) >
-						0;
-		}, { timeout: 20_000 })
+		.poll(
+			async () => {
+				popout = electronApp
+					.windows()
+					.find(
+						(page) =>
+							page !== mainWindow &&
+							!page.isClosed() &&
+							!page.url().startsWith('about:blank') &&
+							!page.url().startsWith('data:'),
+					);
+				return popout === undefined
+					? false
+					: (await popout.locator('[data-terminay-app-component]').count()) > 0;
+			},
+			{ timeout: 20_000 },
+		)
 		.toBe(true);
 	if (popout === undefined)
 		throw new Error('Expected the project popout window');
@@ -114,7 +118,9 @@ test.describe('project tabs', () => {
 	}) => {
 		await mainWindow.getByLabel('Create project on This server').click();
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
-		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
+		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
+			0,
+		);
 
 		const editWindow = await openProjectEditWindow(mainWindow);
 		await editWindow
@@ -200,7 +206,9 @@ test.describe('project tabs', () => {
 	}) => {
 		await mainWindow.getByLabel('Create project on This server').click();
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
-		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
+		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
+			0,
+		);
 		const draggedProject = mainWindow.locator('.project-tab').last();
 		const projectBox = await draggedProject.boundingBox();
 		if (!projectBox)
@@ -271,7 +279,9 @@ test.describe('project tabs', () => {
 
 		await mainWindow.getByLabel('Create project on This server').click();
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
-		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
+		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
+			0,
+		);
 		await expect(mainWindow.locator('.project-tab--active')).toContainText(
 			'Project 2',
 		);
@@ -417,7 +427,8 @@ test.describe('project tabs', () => {
 				.last()
 				.textContent()
 		)?.trim();
-		if (!overflowedTitle) throw new Error('Expected an overflowed project title');
+		if (!overflowedTitle)
+			throw new Error('Expected an overflowed project title');
 
 		await mainWindow.locator('.project-switcher-button').click();
 		await mainWindow.getByRole('menuitem', { name: overflowedTitle }).click();
@@ -428,10 +439,9 @@ test.describe('project tabs', () => {
 		await nativeWindow.evaluate((window) => {
 			window.setBounds({ x: 40, y: 40, width: 390, height: 740 });
 		});
-		await expect(mainWindow.locator('.project-tabbar-projects')).toHaveAttribute(
-			'data-project-tab-layout',
-			'compact',
-		);
+		await expect(
+			mainWindow.locator('.project-tabbar-projects'),
+		).toHaveAttribute('data-project-tab-layout', 'compact');
 		await expect(mainWindow.locator('.remote-access-button')).toBeVisible();
 		await expect(mainWindow.locator('.project-switcher-button')).toContainText(
 			overflowedTitle,
@@ -468,6 +478,122 @@ test.describe('project tabs', () => {
 		).toBeLessThan(28);
 	});
 
+	test('project tab activity badges keep the overflow strip measured and reach the switcher rows', async ({
+		mainWindow,
+		electronApp,
+	}) => {
+		const addProjectButton = mainWindow.getByLabel(
+			'Create project on This server',
+		);
+		for (let index = 0; index < 11; index += 1) {
+			await addProjectButton.click();
+		}
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(12);
+		// Every tab must finish creating before we pick the active project, or
+		// the last one activates mid-test and moves the badge.
+		await expect(
+			mainWindow.locator('.project-tab[data-project-id]'),
+		).toHaveCount(12);
+		await expect(
+			mainWindow.locator('.project-tab--creation-loading'),
+		).toHaveCount(0);
+
+		const nativeWindow = await electronApp.browserWindow(mainWindow);
+		await nativeWindow.evaluate((window) => {
+			window.setBounds({ x: 40, y: 40, width: 720, height: 700 });
+		});
+		const strip = mainWindow.locator('.project-tabbar-projects');
+		await expect(strip).toHaveClass(/project-tabbar-projects--overflow/);
+		const hiddenBefore = Number(
+			await strip.getAttribute('data-project-tab-hidden-count'),
+		);
+		expect(hiddenBefore).toBeGreaterThan(0);
+
+		// Finish a command in a background terminal of the active project so its
+		// tab grows a badge while the strip is already full.
+		const activeWorkspace = mainWindow.locator('.project-workspace--active');
+		const terminalTabs = activeWorkspace.locator('.terminal-tab-content');
+		await expect(terminalTabs).toHaveCount(1);
+		await expect(
+			activeWorkspace.locator('.terminal-panel:visible'),
+		).toHaveCount(1);
+		await sendAppCommand(mainWindow, 'new-terminal');
+		await expect(terminalTabs).toHaveCount(2);
+		await terminalTabs.filter({ hasText: 'Terminal 2' }).click();
+		await submitTerminalCommand(
+			mainWindow,
+			"sleep 1.1; printf '\\033]133;C\\007'; printf '\\033]133;D;0\\007'\r",
+		);
+		await terminalTabs.filter({ hasText: 'Terminal 1' }).click();
+
+		const badge = mainWindow.locator(
+			'.project-tab--active .project-tab-activity-badge',
+		);
+		await expect(badge).toHaveText('1');
+		await expect(badge).toHaveClass(/project-tab-activity-badge--unviewed/);
+		const activeTitle = (
+			await mainWindow
+				.locator('.project-tab--active .project-tab-title')
+				.textContent()
+		)?.trim();
+		if (!activeTitle) throw new Error('Expected an active project title');
+
+		// The overflow layout re-ran: trailing chrome stays visible and the strip
+		// still meets the new-project control.
+		const add = mainWindow.locator('.project-tab-add-box');
+		await expect(add).toBeVisible();
+		await expect(mainWindow.locator('.remote-access-button')).toBeVisible();
+		await expect
+			.poll(async () => {
+				const stripBox = await strip.boundingBox();
+				const addBox = await add.boundingBox();
+				if (!stripBox || !addBox) return Number.POSITIVE_INFINITY;
+				return addBox.x - (stripBox.x + stripBox.width);
+			})
+			.toBeLessThan(8);
+		const hiddenAfter = Number(
+			await strip.getAttribute('data-project-tab-hidden-count'),
+		);
+		expect(hiddenAfter).toBeGreaterThanOrEqual(hiddenBefore);
+		await expect(mainWindow.locator('.project-tab--active')).toBeVisible();
+
+		// The overflow switcher rows carry the same badge.
+		await mainWindow.locator('.project-switcher-button').click();
+		await expect(mainWindow.locator('.project-switcher-menu')).toBeVisible();
+		const activeRow = mainWindow
+			.locator('.project-switcher-menu__item')
+			.filter({ hasText: activeTitle });
+		const rowBadge = activeRow.locator('.project-tab-activity-badge');
+		try {
+			await expect(rowBadge).toHaveText('1');
+			await expect(rowBadge).toHaveClass(
+				/project-tab-activity-badge--unviewed/,
+			);
+			await expect(
+				mainWindow.locator(
+					'.project-switcher-menu__item .project-tab-activity-badge',
+				),
+			).toHaveCount(1);
+		} catch (error) {
+			// Gitea does not retain Playwright artifacts, so surface the DOM in
+			// the job log when the switcher rows disagree with the tab badge.
+			console.log(
+				'[badge-debug] active title:',
+				activeTitle,
+				'\n[badge-debug] tab strip:',
+				await mainWindow
+					.locator('.project-tabbar')
+					.evaluate((el) => el.outerHTML),
+				'\n[badge-debug] switcher menu:',
+				await mainWindow
+					.locator('.project-switcher-menu')
+					.evaluate((el) => el.outerHTML)
+					.catch(() => '(menu not found)'),
+			);
+			throw error;
+		}
+	});
+
 	test('reorders visible project tabs when one is dragged along the strip', async ({
 		mainWindow,
 	}) => {
@@ -476,7 +602,9 @@ test.describe('project tabs', () => {
 			'.project-tab:not(.project-tab--overflowed)',
 		);
 		await expect(tabs).toHaveCount(2);
-		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
+		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
+			0,
+		);
 		await expect(mainWindow.locator('.project-tab-title')).toHaveText([
 			'Project',
 			'Project 2',
@@ -509,7 +637,9 @@ test.describe('project tabs', () => {
 	}) => {
 		await mainWindow.getByLabel('Create project on This server').click();
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
-		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
+		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
+			0,
+		);
 		await expect(mainWindow.locator('.project-tab--active')).toContainText(
 			'Project 2',
 		);
@@ -519,7 +649,9 @@ test.describe('project tabs', () => {
 	test('the new-project control stays after the last project tab', async ({
 		mainWindow,
 	}) => {
-		const lastTab = mainWindow.locator('.project-tab:not(.project-tab--overflowed)').last();
+		const lastTab = mainWindow
+			.locator('.project-tab:not(.project-tab--overflowed)')
+			.last();
 		const add = mainWindow.locator('.project-tab-add-box');
 		const local = mainWindow.locator('.remote-access-button');
 		await expect(lastTab).toBeVisible();
@@ -596,10 +728,9 @@ test.describe('project tabs', () => {
 		await nativeWindow.evaluate((window) => {
 			window.setBounds({ x: 40, y: 40, width: 390, height: 740 });
 		});
-		await expect(mainWindow.locator('.project-tabbar-projects')).toHaveAttribute(
-			'data-project-tab-layout',
-			'compact',
-		);
+		await expect(
+			mainWindow.locator('.project-tabbar-projects'),
+		).toHaveAttribute('data-project-tab-layout', 'compact');
 		await longPress(mainWindow.locator('.project-switcher-button'));
 		await expect(
 			mainWindow.getByRole('heading', { name: 'Edit Project Tab' }),
@@ -615,15 +746,16 @@ test.describe('project tabs', () => {
 		mainWindow,
 	}) => {
 		await mainWindow.getByLabel('Create project on This server').click();
-		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
+		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
+			0,
+		);
 		const nativeWindow = await electronApp.browserWindow(mainWindow);
 		await nativeWindow.evaluate((window) => {
 			window.setBounds({ x: 40, y: 40, width: 390, height: 740 });
 		});
-		await expect(mainWindow.locator('.project-tabbar-projects')).toHaveAttribute(
-			'data-project-tab-layout',
-			'compact',
-		);
+		await expect(
+			mainWindow.locator('.project-tabbar-projects'),
+		).toHaveAttribute('data-project-tab-layout', 'compact');
 		await mainWindow.locator('.project-switcher-button').click();
 		const menu = mainWindow.locator('.project-switcher-menu');
 		await expect(menu).toBeVisible();
@@ -631,7 +763,9 @@ test.describe('project tabs', () => {
 			.locator('[data-project-switcher-item]')
 			.filter({ hasNotText: 'New project' })
 			.last();
-		const otherTitle = (await otherItem.locator('.project-switcher-menu__title').textContent())?.trim();
+		const otherTitle = (
+			await otherItem.locator('.project-switcher-menu__title').textContent()
+		)?.trim();
 		if (!otherTitle) throw new Error('Expected a project row to edit');
 		await longPress(otherItem);
 		await expect(

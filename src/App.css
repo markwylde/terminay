@@ -166,32 +166,65 @@
   color: var(--tab-text-selected);
 }
 
-.terminal-activity-pill {
-  min-width: 20px;
+/* Activity count badges are true circles of one fixed size. The number is
+   centred and the font steps down by digit count so the circle never widens.
+   The header pill and the project tab badge share this geometry but keep
+   separate class names so each surface can be located independently. */
+.terminal-activity-pill,
+.project-tab-activity-badge {
+  width: 18px;
   height: 18px;
-  padding: 0 6px;
-  border-radius: 999px;
+  padding: 0;
+  border-radius: 50%;
   box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   color: #101318;
   font-size: 11px;
   font-weight: 800;
   line-height: 1;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
-.terminal-activity-pill--unviewed {
+/* Digits have no descenders, so the line box's descent space sits the ink a
+   little low. A bottom inset scaled to the font size re-centres the glyphs
+   (measured against the system font's actual ink bounds). */
+.terminal-activity-pill[data-digits="1"],
+.project-tab-activity-badge[data-digits="1"] {
+  padding-bottom: 1px;
+}
+
+.terminal-activity-pill[data-digits="2"],
+.project-tab-activity-badge[data-digits="2"] {
+  font-size: 9px;
+  padding-bottom: 0.5px;
+}
+
+.terminal-activity-pill[data-digits="3"],
+.project-tab-activity-badge[data-digits="3"] {
+  font-size: 7px;
+}
+
+.terminal-activity-pill--unviewed,
+.project-tab-activity-badge--unviewed {
   background: #4fd17a;
   box-shadow: 0 0 0 3px rgba(79, 209, 122, 0.12);
 }
 
-.terminal-activity-pill--recent {
+.terminal-activity-pill--recent,
+.project-tab-activity-badge--recent {
   background: #f6c343;
   box-shadow: 0 0 0 3px rgba(246, 195, 67, 0.12);
 }
 
-.terminal-activity-pill--attention {
+.terminal-activity-pill--attention,
+.project-tab-activity-badge--attention {
   background: #ff6b5e;
   box-shadow: 0 0 0 3px rgba(255, 107, 94, 0.16);
 }
@@ -913,6 +946,16 @@
   box-sizing: border-box;
   transition: all 120ms ease;
   flex-shrink: 0;
+}
+
+.project-tab-activity-badge {
+  position: relative;
+  z-index: 1;
+  margin: 0 0 0 -2px;
+}
+
+.project-switcher-menu__item .project-tab-activity-badge {
+  margin: 0;
 }
 
 .project-tab-close {
