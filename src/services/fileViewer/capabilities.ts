@@ -12,7 +12,7 @@ export const LARGE_FILE_THRESHOLD_BYTES = 100 * 1024 * 1024
  */
 export const MAX_MONACO_FILE_BYTES = 128 * 1024 * 1024
 
-const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown', '.mdown', '.mkd'])
+const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown', '.mdown', '.mkd', '.mdx'])
 const IMAGE_EXTENSIONS = new Set([
   '.apng',
   '.avif',
@@ -48,6 +48,7 @@ const TEXT_EXTENSIONS = new Set([
   '.log',
   '.md',
   '.markdown',
+  '.mdx',
   '.mjs',
   '.py',
   '.rb',

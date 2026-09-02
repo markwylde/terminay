@@ -258,6 +258,8 @@ export interface ProviderDefinition {
   capabilities: EnvironmentCapability[];
   profileForm?: DeclarativeForm;
   createForm?: DeclarativeForm;
+  /** Provider-scoped inventory selection, distinct from VM provisioning. */
+  browseForm?: DeclarativeForm;
 }
 
 export interface ProviderCallContext {
@@ -587,6 +589,12 @@ export interface TerminayExtension {
   deactivate?(): void | Promise<void>;
 }
 
+/**
+ * Authoring entry: default-export the value returned by `defineExtension`.
+ * There is no global Terminay singleton. Every grant arrives on `context`
+ * or a callback argument. Node APIs may be used for ordinary work on the
+ * Terminay Server account; terminal-scoped evidence must use `observation`.
+ */
 export function defineExtension(extension: TerminayExtension): TerminayExtension {
   return extension;
 }
@@ -972,7 +980,6 @@ export type AgentLifecycleEvent =
   | { kind: "subagent.done"; subagentId: string; outcome: AgentCompletionOutcome; summary?: string; occurredAt?: string };
 
 export interface AgentLifecyclePublisher {
-  publish(event: AgentLifecycleEvent): void | Promise<void>;
   sessionStarted(event: Omit<Extract<AgentLifecycleEvent, { kind: "session.started" }>, "kind">): void | Promise<void>;
   metadataChanged(event: Omit<Extract<AgentLifecycleEvent, { kind: "agent.metadata" }>, "kind">): void | Promise<void>;
   turnStarted(event: Omit<Extract<AgentLifecycleEvent, { kind: "turn.started" }>, "kind">): void | Promise<void>;
@@ -982,6 +989,7 @@ export interface AgentLifecyclePublisher {
   waitFinished(event: Omit<Extract<AgentLifecycleEvent, { kind: "wait.finished" }>, "kind">): void | Promise<void>;
   done(event: Omit<Extract<AgentLifecycleEvent, { kind: "agent.done" }>, "kind">): void | Promise<void>;
   exited(event: Omit<Extract<AgentLifecycleEvent, { kind: "agent.exited" }>, "kind">): void | Promise<void>;
+  sessionStopped(event: Omit<Extract<AgentLifecycleEvent, { kind: "session.stopped" }>, "kind">): void | Promise<void>;
   subagentStarted(event: Omit<Extract<AgentLifecycleEvent, { kind: "subagent.started" }>, "kind">): void | Promise<void>;
   subagentDone(event: Omit<Extract<AgentLifecycleEvent, { kind: "subagent.done" }>, "kind">): void | Promise<void>;
 }

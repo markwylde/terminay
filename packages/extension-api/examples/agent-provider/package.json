@@ -4,6 +4,9 @@
   "type": "module",
   "license": "MIT",
   "exports": { ".": "./extension.js" },
+  "scripts": {
+    "test": "node --test test.mjs"
+  },
   "peerDependencies": {
     "@terminay/extension-api": "^1.1.0"
   },

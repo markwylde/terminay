@@ -40,7 +40,22 @@ interface PendingDelivery {
 const DEFAULT_MAX_QUEUED_FRAMES = 1_024;
 const DEFAULT_MAX_TERMINAL_QUEUED_BYTES = 4 * 1024 * 1024;
 const DEFAULT_MAX_TERMINAL_QUEUED_FRAMES = 256;
-const DEFAULT_MAX_TERMINAL_UNCONFIRMED_BYTES = 256 * 1024;
+export const DEFAULT_MAX_TERMINAL_UNCONFIRMED_BYTES = 256 * 1024;
+
+/**
+ * How far a prepared checkpoint may lag the live head before hydration
+ * stops replaying that difference through the presentation lane.
+ *
+ * Half the connection's unconfirmed-bytes bound: a recovery that can
+ * congest the lane it is recovering never converges. Hosts that lower
+ * the lane limit therefore also lower this catch-up.
+ */
+export function checkpointCatchupBytes(
+	maxTerminalUnconfirmedBytes: number = DEFAULT_MAX_TERMINAL_UNCONFIRMED_BYTES,
+): number {
+	return Math.floor(maxTerminalUnconfirmedBytes / 2);
+}
+
 const DEFAULT_MAX_TERMINAL_UNCONFIRMED_AGE_MS = 5_000;
 const DEFAULT_MAX_STATE_QUEUED_BYTES = 1024 * 1024;
 const DEFAULT_MAX_STATE_QUEUED_FRAMES = 256;
