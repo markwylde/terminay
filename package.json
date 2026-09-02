@@ -129,6 +129,7 @@
 		"test:agents": "npm run test:agent-status && npm run test:agent-runtime && npm run test:agent-extension-compat && npm run test:agent-extension-packages && npm run test:agent-ui",
 		"test:project-tab-drag": "node --test scripts/project-tab-drag.test.mjs",
 		"test:project-tab-overflow": "node --test --experimental-strip-types scripts/project-tab-overflow.test.mjs",
+		"test:activity-count-badge": "node --test --experimental-strip-types scripts/activity-count-badge.test.mjs",
 		"test:project-environment-ui": "npm run build --workspace @terminay/client-core && node --test packages/client-core/test/project-environments.test.mjs scripts/project-environment-ui.test.mjs",
 		"test:git-worktree-status": "node --test scripts/git-worktree-status.test.mjs",
 		"test:file-viewer-diff": "node --test scripts/file-viewer-diff.test.mjs",

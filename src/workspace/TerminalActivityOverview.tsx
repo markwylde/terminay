@@ -3,6 +3,7 @@ import type { CSSProperties, RefObject } from 'react';
 import { AgentStatusIndicator } from '../components/AgentStatusIndicator';
 import type { TerminalActivityState } from '../components/TerminalTab';
 import type { AgentState } from '../types/agentStatus';
+import { activityCountDigits, formatActivityCount } from './activityCountBadge';
 
 export type TerminalPresentationActivityState = Extract<
 	TerminalActivityState,
@@ -65,6 +66,24 @@ export function buildTerminalActivityOverview(
 	};
 }
 
+function ActivityCountPill({
+	count,
+	state,
+}: {
+	count: number;
+	state: 'attention' | 'recent' | 'unviewed';
+}) {
+	const label = formatActivityCount(count);
+	return (
+		<span
+			className={`terminal-activity-pill terminal-activity-pill--${state}`}
+			data-digits={activityCountDigits(label)}
+		>
+			{label}
+		</span>
+	);
+}
+
 export function TerminalActivityOverview({
 	activityMenuRef,
 	attentionCount,
@@ -99,9 +118,9 @@ export function TerminalActivityOverview({
 				aria-haspopup="menu"
 				aria-expanded={isOpen}
 			>
-				{attentionCount > 0 ? <span className="terminal-activity-pill terminal-activity-pill--attention">{attentionCount}</span> : null}
-				{unviewedCount > 0 ? <span className="terminal-activity-pill terminal-activity-pill--unviewed">{unviewedCount}</span> : null}
-				{recentCount > 0 ? <span className="terminal-activity-pill terminal-activity-pill--recent">{recentCount}</span> : null}
+				{attentionCount > 0 ? <ActivityCountPill count={attentionCount} state="attention" /> : null}
+				{unviewedCount > 0 ? <ActivityCountPill count={unviewedCount} state="unviewed" /> : null}
+				{recentCount > 0 ? <ActivityCountPill count={recentCount} state="recent" /> : null}
 				<ChevronDown className="terminal-activity-button__chevron" size={12} aria-hidden="true" />
 			</button>
 			{isOpen ? (

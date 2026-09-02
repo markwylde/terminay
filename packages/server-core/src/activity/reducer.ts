@@ -39,6 +39,10 @@ interface MutableSession {
   foregroundObservation: ForegroundObservationState;
   foregroundProcess?: string;
   explicitSeen: boolean;
+  /** True once the user (or a structured command/progress marker) has asked
+   * this shell to do something. Until then, start-up noise such as rc files,
+   * version managers, or a late prompt paint must never read as "finished". */
+  settled: boolean;
   rawActivityAt?: number;
   lastUserInputAt?: number;
   inputQuietDeadline?: number;
@@ -153,6 +157,7 @@ export class TerminalActivityReducer {
         } else {
           session.progressBusy = true;
           session.progressDeadline = at + this.progressStaleMs;
+          session.settled = true;
           if (!recentInput(session, at)) session.acknowledged = false;
         }
         break;
@@ -162,6 +167,7 @@ export class TerminalActivityReducer {
         session.explicitSeen = true;
         if (signal.phase === "executing") {
           session.commandExecuting = true;
+          session.settled = true;
           if (!recentInput(session, at)) session.acknowledged = false;
         } else if (signal.phase === "finished") {
           // D directly after B is an aborted command and its exit code does
@@ -171,8 +177,9 @@ export class TerminalActivityReducer {
           }
           // Some shell integrations omit C but still emit D when the prompt
           // returns. Preserve the direct B -> D suppression above while
-          // treating a delayed marker as genuine finished activity.
-          if (session.commandExecuting || !recentInput(session, at)) {
+          // treating a delayed marker as genuine finished activity. A lone D
+          // at the very first prompt of an unsettled session is start-up noise.
+          if (session.commandExecuting || (session.settled && !recentInput(session, at))) {
             session.acknowledged = false;
           }
           session.commandExecuting = false;
@@ -192,6 +199,7 @@ export class TerminalActivityReducer {
         if (
           session.foregroundBusy &&
           !signal.busy &&
+          session.settled &&
           !recentInput(session, at)
         ) {
           session.acknowledged = false;
@@ -209,6 +217,7 @@ export class TerminalActivityReducer {
         break;
       case "userInput":
         session.source = "structured:user-input";
+        session.settled = true;
         session.lastUserInputAt = at;
         session.inputQuietDeadline = at + INPUT_QUIET_COMPLETION_MS;
         session.attention = false;
@@ -236,7 +245,7 @@ export class TerminalActivityReducer {
     session.authority = "raw";
     session.source = "raw:output";
     session.rawActivityAt = at;
-    if (!recentInput(session, at)) session.acknowledged = false;
+    if (session.settled && !recentInput(session, at)) session.acknowledged = false;
     derive(session, at, this.rawActivityMs);
     return this.commitIfChanged(session, before);
   }
@@ -540,6 +549,7 @@ function createSession(sessionId: string, projectId: string | undefined, at: num
     foregroundBusy: false,
     foregroundObservation: "available",
     explicitSeen: false,
+    settled: false,
   };
 }
 

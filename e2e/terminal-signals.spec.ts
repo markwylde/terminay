@@ -71,6 +71,11 @@ test.describe('terminal activity signals', () => {
 
     await expect(tab).toHaveAttribute('data-terminal-activity', 'unviewed')
     await expect(mainWindow.locator('.terminal-activity-pill--unviewed')).toHaveText('1')
+
+    // The active project tab counts its own finished terminal.
+    const projectBadge = mainWindow.locator('.project-tab--active .project-tab-activity-badge')
+    await expect(projectBadge).toHaveText('1')
+    await expect(projectBadge).toHaveClass(/project-tab-activity-badge--unviewed/)
   })
 
   test('OSC 133 command lifecycle shows finished with no trailing flicker', async ({
@@ -99,8 +104,15 @@ test.describe('terminal activity signals', () => {
     await expect(tab).toHaveAttribute('data-terminal-activity', 'attention')
     await expect(mainWindow.locator('.terminal-activity-pill--attention')).toHaveText('1')
 
+    // Attention wins the project badge colour and the badge hides once viewed.
+    const projectBadge = mainWindow.locator('.project-tab--active .project-tab-activity-badge')
+    await expect(projectBadge).toHaveText('1')
+    await expect(projectBadge).toHaveClass(/project-tab-activity-badge--attention/)
+    await expect(projectBadge).toHaveAttribute('aria-label', '1 terminal, needs attention')
+
     // Viewing the tab acknowledges the attention request.
     await tab.click()
     await expect(tab).toHaveAttribute('data-terminal-activity', 'viewed')
+    await expect(projectBadge).toHaveCount(0)
   })
 })

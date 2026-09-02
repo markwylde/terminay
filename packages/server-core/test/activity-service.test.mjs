@@ -44,6 +44,10 @@ test("server-owned deadlines publish raw/progress idle transitions and clean up 
   const events = [];
   service.subscribe((event) => events.push(event));
 
+  // Only a settled session (one the user has typed into) can become unread.
+  service.ingestSignal(identity(), { kind: "userInput" });
+  clock.advance(2_000);
+
   service.ingestPtyOutput(identity(), "raw");
   assert.equal(service.get(identity()).status, "working");
   assert.equal(clock.size, 1);
@@ -114,9 +118,11 @@ test("raw shell echo before an explicit completion cannot pin a claimed session 
   let now = 1;
   const service = new TerminalActivityService({ serverId: "server-a", now: () => now });
   service.register(identity());
+  service.ingestSignal(identity(), { kind: "userInput" });
+  now = 1_500;
   service.ingestPtyOutput(identity(), "printf command echo");
   assert.equal(service.get(identity()).status, "working");
-  now = 2;
+  now = 1_502;
   service.ingestPtyOutput(identity(), "\u001b]9;4;0;\u0007");
   assert.equal(service.get(identity()).status, "idle");
   assert.equal(service.get(identity()).claimed, true);
