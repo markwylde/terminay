@@ -14,6 +14,7 @@ function publisher(events) {
     toolFinished: (event) => emit({ kind: "tool.finished", ...event }),
     done: (event) => emit({ kind: "agent.done", ...event }),
     subagentStarted: (event) => emit({ kind: "subagent.started", ...event }),
+    sessionStopped: (event) => emit({ kind: "session.stopped", ...event }),
     subagentDone: (event) => emit({ kind: "subagent.done", ...event }),
   };
 }

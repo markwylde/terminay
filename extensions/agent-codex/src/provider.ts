@@ -507,7 +507,7 @@ export function mapCodexRecord(record: unknown, context: AgentRecordContext, sta
   }
   if (eventType === "turn_aborted") { publish.done({ outcome: "cancelled", ...(occurredAt ? { occurredAt } : {}) }); return; }
   if (eventType === "error") { publish.done({ outcome: "error", ...(occurredAt ? { occurredAt } : {}) }); return; }
-  if (eventType === "shutdown_complete") { publish.publish({ kind: "session.stopped", reason: "shutdown", ...(occurredAt ? { occurredAt } : {}) }); return; }
+  if (eventType === "shutdown_complete") { publish.sessionStopped({ reason: "shutdown", ...(occurredAt ? { occurredAt } : {}) }); return; }
   if (isWaitEvent(eventType)) {
     const waitId = bounded(LIMITS.toolId, payload.request_id, payload.call_id, payload.id) ?? `codex:${eventType}`;
     state.activeWait = waitId;

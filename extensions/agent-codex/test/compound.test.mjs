@@ -12,7 +12,7 @@ function publisher(events) {
   return new Proxy({ publish: (event) => events.push(event) }, {
     get(target, name) {
       if (name in target) return target[name];
-      const kinds = { sessionStarted: "session.started", metadataChanged: "agent.metadata", turnStarted: "turn.started", toolStarted: "tool.started", toolFinished: "tool.finished", waitStarted: "wait.started", waitFinished: "wait.finished", done: "agent.done", exited: "agent.exited", subagentStarted: "subagent.started", subagentDone: "subagent.done" };
+      const kinds = { sessionStarted: "session.started", metadataChanged: "agent.metadata", turnStarted: "turn.started", toolStarted: "tool.started", toolFinished: "tool.finished", waitStarted: "wait.started", waitFinished: "wait.finished", done: "agent.done", exited: "agent.exited", subagentStarted: "subagent.started", sessionStopped: "session.stopped", subagentDone: "subagent.done" };
       return (event) => events.push({ kind: kinds[name], ...event });
     },
   });

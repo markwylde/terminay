@@ -58,4 +58,4 @@ Non-Goals:
 
 ## Open Questions
 
-- Whether the harness should also assert that a package's mapping produces no events for a fixture whose environment lacks each declared required capability, or whether that stays the author's own test.
+- ~~Whether the harness should also assert that a package's mapping produces no events for a fixture whose environment lacks each declared required capability, or whether that stays the author's own test.~~ **Adopted:** the public harness asserts that a mapping produces no events when a fixture is missing any declared required environment capability. A provider that still publishes is a harness failure. The example package covers the adopted check.
