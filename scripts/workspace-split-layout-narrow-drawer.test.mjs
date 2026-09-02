@@ -71,6 +71,7 @@ async function measureGeometry(page) {
 			navigationPosition: navigationStyle.position,
 			navigationOverflowY: navigationStyle.overflowY,
 			navigationMaxBlockSize: navigationStyle.maxBlockSize,
+			navigationBackgroundColor: navigationStyle.backgroundColor,
 			contentTop: contentRect.top,
 			contentBottom: contentRect.bottom,
 			contentHeight: contentRect.height,
@@ -231,6 +232,7 @@ test('narrow navigation overlays the full workspace height instead of a 24rem ca
 	await withPage(phoneViewport, async (page) => {
 		await page.setContent(`
 			<style>
+				:root { --terminal-panel-surface: tabThemeHue:10; }
 				${documentStyles}
 				${css}
 			</style>
@@ -247,6 +249,9 @@ test('narrow navigation overlays the full workspace height instead of a 24rem ca
 		assert.equal(geometry.navigationBottom, geometry.contentBottom);
 		assert.equal(geometry.navigationPosition, 'absolute');
 		assert.equal(geometry.scrimDisplay, 'block');
+		assert.notEqual(geometry.navigationBackgroundColor, 'rgba(0, 0, 0, 0)');
+		assert.notEqual(geometry.navigationBackgroundColor, 'transparent');
+		assert.match(geometry.navigationBackgroundColor, /^rgb\(/u);
 		assert.equal(geometry.separatorDisplay, 'none');
 		assert.equal(geometry.navigationOverflowY, 'hidden');
 		assert.notEqual(geometry.navigationMaxBlockSize, '384px');
@@ -332,11 +337,9 @@ test('narrow drawer closes from the navigation control, Escape, and the scrim', 
 
 		await control.click();
 		await page.waitForSelector('[data-navigation-drawer="true"]');
-		await page
-			.locator('.workspace-split-layout__scrim')
-			.evaluate((element) => {
-				element.click();
-			});
+		await page.locator('.workspace-split-layout__scrim').evaluate((element) => {
+			element.click();
+		});
 		await page.waitForSelector('[data-navigation-drawer="false"]');
 	});
 });
