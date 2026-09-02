@@ -70,20 +70,14 @@
 
 .workspace-split-layout__separator:hover::before {
 	width: 4px;
-	background: var(
-		--workspace-split-layout-separator-active-line,
-		#ffffff
-	);
+	background: var(--workspace-split-layout-separator-active-line, #ffffff);
 	transition-delay: 100ms;
 }
 
 .workspace-split-layout__separator:active::before,
 .workspace-split-layout__separator:focus-visible::before {
 	width: 4px;
-	background: var(
-		--workspace-split-layout-separator-active-line,
-		#ffffff
-	);
+	background: var(--workspace-split-layout-separator-active-line, #ffffff);
 	transition-delay: 0ms;
 }
 
@@ -128,23 +122,45 @@
 	grid-column: 1;
 }
 
+.workspace-split-layout__scrim {
+	display: none;
+	appearance: none;
+	position: absolute;
+	inset: 0;
+	z-index: 15;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	background: rgba(0, 0, 0, 0.45);
+	cursor: pointer;
+}
+
 @media (max-width: 720px) {
 	.workspace-split-layout.workspace-split-layout {
 		grid-template-columns: minmax(0, 1fr);
-		grid-template-rows: minmax(0, min(40dvh, 24rem)) minmax(12rem, 1fr);
+		grid-template-rows: minmax(0, 1fr);
 	}
 
 	.workspace-split-layout__separator {
 		display: none;
 	}
 
-	.workspace-split-layout__navigation {
-		max-width: 100%;
-		max-block-size: min(40dvh, 24rem);
-		overflow: auto;
+	.workspace-split-layout__content {
+		grid-column: 1;
+		grid-row: 1;
 	}
 
-	.workspace-split-layout[data-navigation-visible="false"] {
-		grid-template-rows: minmax(0, 1fr);
+	.workspace-split-layout__navigation {
+		position: absolute;
+		z-index: 20;
+		inset: 0;
+		width: auto;
+		max-width: none;
+		overflow: hidden;
+	}
+
+	.workspace-split-layout[data-navigation-visible="true"]
+		.workspace-split-layout__scrim {
+		display: block;
 	}
 }
