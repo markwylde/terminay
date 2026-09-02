@@ -187,7 +187,6 @@ function normalizeValue(value: unknown, fallback: JsonValue | undefined, path: s
 
 function boundedNumber(path: string, value: number): number {
   const limits: Array<[string, number, number]> = [
-    ["pinFailureLimit", 1, 100],
     ["scrollback", 0, 1_000_000],
     ["maxSteps", 1, 4096],
     ["maxFields", 1, 256],
