@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -24,6 +25,7 @@ const RUNTIME_ROOT = process.env.TERMINAY_WEBRTC_RUNTIME_ROOT
 	? resolve(process.env.TERMINAY_WEBRTC_RUNTIME_ROOT)
 	: fileURLToPath(new URL('../build/webrtc-runtime', import.meta.url));
 const SESSION_ID = 'server123';
+const runtimeStaged = existsSync(resolve(RUNTIME_ROOT, 'artifact', 'lib', 'index.mjs'));
 const directory = await mkdtemp(join(tmpdir(), 'terminay-desktop-hosted-'));
 const hostedOut = join(directory, 'desktopHostedConnection.mjs');
 const storeOut = join(directory, 'deviceCredentialStore.mjs');
@@ -43,7 +45,7 @@ function codec() {
 	};
 }
 
-test('Desktop pairs over the authenticated channel, pins the host key, and reconnects with the device-join proof', { timeout: 180_000 }, async (t) => {
+test('Desktop pairs over the authenticated channel, pins the host key, and reconnects with the device-join proof', { skip: runtimeStaged ? false : `selected WebRTC runtime is not staged at ${RUNTIME_ROOT}`, timeout: 180_000 }, async (t) => {
 	const relay = await startHostedLoopbackRelay();
 	const sessionOrigin = `http://${SESSION_ID}.localhost:${relay.port}`;
 	const exposure = createServerRemoteExposure({ serverId: 'server-a', sessionOrigin, pairingUrlFormat: 'hosted-compact', cleanupIntervalMs: 0 });
