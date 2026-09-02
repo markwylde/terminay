@@ -47,5 +47,5 @@
 - [x] 8.1 Run the reproduction and the stalled-renderer bound simultaneously, and run congest, skip, and recover twice on one connection; verify no latch survives attachment replacement
 - [x] 8.2 Pin the new invariants — skip exactness, suppressed-lane silence, hydration contiguity, repeated recovery within the retry bound without exhausting checkpoint pins, and no silent death under an injected ordering violation
 - [x] 8.3 Verify `e2e/connection-reconnect-cycles.spec.ts` stays green
-- [ ] 8.4 Load-test a maximal-rate producer on a slow link and record the skip and recover cadence and checkpoint pin churn under permanent overload; verify the cycle converges at the retry cadence rather than exhausting pins
-- [ ] 8.5 Decide whether the checkpoint catch-up bound should be derived from the connection's configured lane limits; verify by proving a host that lowers the unconfirmed-bytes limit below the constant cannot hydrate into congestion
+- [x] 8.4 Load-test a maximal-rate producer on a slow link and record the skip and recover cadence and checkpoint pin churn under permanent overload; verify the cycle converges at the retry cadence rather than exhausting pins
+- [x] 8.5 Decide whether the checkpoint catch-up bound should be derived from the connection's configured lane limits; verify by proving a host that lowers the unconfirmed-bytes limit below the constant cannot hydrate into congestion

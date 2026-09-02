@@ -318,6 +318,9 @@ export function createServerCoreComposition(
     ...(presentationCheckpoints === undefined ? {} : { checkpoints: presentationCheckpoints }),
     ...(terminalLaunchResolver === undefined ? {} : { launchResolver: terminalLaunchResolver }),
 		...(options.allowUnresolvedTestSessions === true ? { allowUnresolvedTestSessions: true } : {}),
+    ...(options.maxTerminalUnconfirmedBytes === undefined
+      ? {}
+      : { maxTerminalUnconfirmedBytes: options.maxTerminalUnconfirmedBytes }),
     ...(options.workspace === undefined
       ? {}
       : {
@@ -805,6 +808,7 @@ function optionalCoreOptions(
   | "authenticate"
   | "limits"
   | "maxConnections"
+  | "maxTerminalUnconfirmedBytes"
   | "defaultQueryScope"
   | "defaultCommandScope"
 > {
@@ -812,6 +816,9 @@ function optionalCoreOptions(
     ...(options.authenticate === undefined ? {} : { authenticate: options.authenticate }),
     ...(options.limits === undefined ? {} : { limits: options.limits }),
     ...(options.maxConnections === undefined ? {} : { maxConnections: options.maxConnections }),
+    ...(options.maxTerminalUnconfirmedBytes === undefined
+      ? {}
+      : { maxTerminalUnconfirmedBytes: options.maxTerminalUnconfirmedBytes }),
     ...(options.defaultQueryScope === undefined
       ? {}
       : { defaultQueryScope: options.defaultQueryScope }),
