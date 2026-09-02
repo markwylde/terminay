@@ -1,7 +1,13 @@
 import { Reorder } from 'framer-motion';
 import type { CSSProperties, KeyboardEvent } from 'react';
 import { useLayoutEffect, useRef, useState } from 'react';
+import {
+	type ActivityCountBadge,
+	formatActivityCount,
+} from './activityCountBadge';
 import { ProjectSwitcherMenu } from './ProjectSwitcherMenu';
+import { ProjectTabActivityBadge } from './ProjectTabActivityBadge';
+import { type ProjectTab, projectTabIsBusy } from './projectTabModel';
 import {
 	fitProjectTabOverflow,
 	insertVisibleIdByClientX,
@@ -13,7 +19,6 @@ import {
 	projectTabStripAvailableWidth,
 	sameIdList,
 } from './projectTabOverflow';
-import { projectTabIsBusy, type ProjectTab } from './projectTabModel';
 
 export type ProjectTabDropPreview = {
 	index: number;
@@ -22,6 +27,7 @@ export type ProjectTabDropPreview = {
 
 type ProjectTabListProps = {
 	activeProjectId: string;
+	activityBadgesByProject?: Record<string, ActivityCountBadge>;
 	draggingProjectId: string | null;
 	dropPreview: ProjectTabDropPreview | null;
 	isDraggingTabTornOff: boolean;
@@ -61,8 +67,20 @@ function ProjectTabPreview({
 	);
 }
 
+export function activityBadgeLayoutKey(
+	badges: Record<string, ActivityCountBadge> | undefined,
+): string {
+	if (!badges) return '';
+	return Object.entries(badges)
+		.filter(([, badge]) => badge.count > 0)
+		.map(([id, badge]) => `${id}:${formatActivityCount(badge.count)}`)
+		.sort()
+		.join('|');
+}
+
 export function ProjectTabList({
 	activeProjectId,
+	activityBadgesByProject,
 	draggingProjectId,
 	dropPreview,
 	isDraggingTabTornOff,
@@ -94,8 +112,13 @@ export function ProjectTabList({
 		visibleIds,
 	});
 	dropStateRef.current = { hiddenIds, onReorder, projects, visibleIds };
+	// A badge appearing, vanishing, or changing digit count changes a tab's
+	// width without resizing the observed containers, so the overflow layout
+	// must re-measure whenever this key changes.
+	const badgeLayoutKey = activityBadgeLayoutKey(activityBadgesByProject);
 
 	useLayoutEffect(() => {
+		void badgeLayoutKey;
 		const root = rootRef.current;
 		const list = listRef.current;
 		if (!root || !list) return;
@@ -167,7 +190,7 @@ export function ProjectTabList({
 			observer.disconnect();
 			document.body.classList.remove('project-tabbar-reordering');
 		};
-	}, [activeProjectId, draggingProjectId, projects]);
+	}, [activeProjectId, badgeLayoutKey, draggingProjectId, projects]);
 
 	const handleTabKeyDown = (
 		event: KeyboardEvent<HTMLElement>,
@@ -211,7 +234,9 @@ export function ProjectTabList({
 		} = dropStateRef.current;
 		if (!list) return;
 		const centers = [...list.querySelectorAll<HTMLElement>('[data-project-id]')]
-			.filter((element) => !element.classList.contains('project-tab--overflowed'))
+			.filter(
+				(element) => !element.classList.contains('project-tab--overflowed'),
+			)
 			.flatMap((element) => {
 				const id = element.dataset.projectId;
 				if (!id) return [];
@@ -292,10 +317,12 @@ export function ProjectTabList({
 								void onDragEnd(project.id);
 							}}
 							onClick={() => {
-								if (project.creationStatus !== 'loading') onActivate(project.id);
+								if (project.creationStatus !== 'loading')
+									onActivate(project.id);
 							}}
 							onDoubleClick={() => {
-								if (project.creationStatus === undefined) void onEdit(project.id);
+								if (project.creationStatus === undefined)
+									void onEdit(project.id);
 							}}
 							onKeyDown={(event) => {
 								if (event.key === 'Enter' || event.key === ' ') {
@@ -328,7 +355,7 @@ export function ProjectTabList({
 										}
 									/>
 								) : project.projectEnvironmentId &&
-								project.projectEnvironmentId !== 'terminay:this-server' ? (
+									project.projectEnvironmentId !== 'terminay:this-server' ? (
 									<span
 										className={`project-tab-environment project-tab-environment--${project.environmentStatus ?? 'ready'}`}
 										role="img"
@@ -345,6 +372,9 @@ export function ProjectTabList({
 								) : null}
 								<span className="project-tab-title">{project.title}</span>
 							</span>
+							<ProjectTabActivityBadge
+								badge={activityBadgesByProject?.[project.id]}
+							/>
 							<button
 								type="button"
 								disabled={project.creationStatus === 'loading'}
@@ -407,12 +437,16 @@ export function ProjectTabList({
 								) : null}
 								<span className="project-tab-title">{project.title}</span>
 							</span>
+							<ProjectTabActivityBadge
+								badge={activityBadgesByProject?.[project.id]}
+							/>
 						</div>
 					))}
 			</div>
 			{compact || hiddenIds.length > 0 ? (
 				<ProjectSwitcherMenu
 					activeProjectId={activeProjectId}
+					activityBadgesByProject={activityBadgesByProject}
 					canCreate={canCreateProject}
 					compact={compact}
 					hiddenCount={hiddenIds.length}
