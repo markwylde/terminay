@@ -39,7 +39,7 @@ export async function completePreviewDownload(
 	}) => Promise<'saved' | 'cancelled'>,
 	signal?: AbortSignal,
 ): Promise<'saved' | 'cancelled'> {
-	if (signal?.aborted === true) return 'cancelled';
+	if (signal?.aborted) return 'cancelled';
 	assertPreviewDownloadSize(request.bytes.byteLength);
 	const filename = sanitizePreviewFilename(request.filename);
 	const result = await save({
@@ -47,6 +47,6 @@ export async function completePreviewDownload(
 		filename,
 		mimeType: request.mimeType || 'application/octet-stream',
 	});
-	if (signal?.aborted === true) return 'cancelled';
+	if (signal?.aborted) return 'cancelled';
 	return result;
 }

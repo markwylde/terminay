@@ -17,7 +17,7 @@ test('4.1 and 4.2 sanitize filenames, bound size, expose cancel, and write nothi
 		async () => 'cancelled',
 	);
 	assert.equal(cancelled, 'cancelled');
-	assert.deepEqual(written, []);
+	assert.equal(written.length, 0);
 	const saved = await completePreviewDownload(
 		{ bytes: new Uint8Array([1, 2, 3]), filename: 'diagram.png', mimeType: 'image/png' },
 		async (input) => {
