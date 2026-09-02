@@ -6,12 +6,12 @@
 
 ## 2. Acceptance
 
-- [ ] 2.1 Confirm no remaining spec in this repository requires ordinary top-level navigation as the PWA **Open** path, verified by a repository-wide spec review
-- [ ] 2.2 Confirm the specs permit the manager to hold per-origin non-extractable device credentials and forbid any use other than cloning into the matching session iframe, verified against the framed-session credential vault and closed message-schema requirements
-- [ ] 2.3 Confirm direct pairing URLs and **Open in new tab** remain first-party session documents with their own credential store, verified against the first-party session-origin enrollment requirement
-- [ ] 2.4 Confirm the local Desktop UI stays unembeddable, verified against the Desktop remote-code containment contract
-- [ ] 2.5 Confirm this repository's specs and the hosted `terminay.com` `specs/remote.md` describe the same framed PWA host, verified by cross-reading both contracts
+- [x] 2.1 Confirm no remaining spec in this repository requires ordinary top-level navigation as the PWA **Open** path, verified by a repository-wide spec review
+- [x] 2.2 Confirm the specs permit the manager to hold per-origin non-extractable device credentials and forbid any use other than cloning into the matching session iframe, verified against the framed-session credential vault and closed message-schema requirements
+- [x] 2.3 Confirm direct pairing URLs and **Open in new tab** remain first-party session documents with their own credential store, verified against the first-party session-origin enrollment requirement
+- [x] 2.4 Confirm the local Desktop UI stays unembeddable, verified against the Desktop remote-code containment contract
+- [x] 2.5 Confirm this repository's specs and the hosted `terminay.com` `specs/remote.md` describe the same framed PWA host, verified by cross-reading both contracts
 
 ## 3. Out of scope here
 
-- [ ] 3.1 Hosted implementation of the iframe shell, credential vault, and session `postMessage` adapter, tracked in `terminay.com/specs/tasks/1-pwa-framed-session-host.md` and verified by that repository's end-to-end suite
+- [x] 3.1 Hosted implementation of the iframe shell, credential vault, and session `postMessage` adapter, tracked in `terminay.com/specs/tasks/1-pwa-framed-session-host.md` and verified by that repository's end-to-end suite
