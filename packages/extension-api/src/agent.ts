@@ -110,7 +110,6 @@ export function createAgentLifecyclePublisher(
 ): import("./types.js").AgentLifecyclePublisher {
   const emit = (event: AgentLifecycleEvent): void | Promise<void> => sink(assertAgentLifecycleEvent(event));
   return {
-    publish: emit,
     sessionStarted: (event) => emit({ kind: "session.started", ...event }),
     metadataChanged: (event) => emit({ kind: "agent.metadata", ...event }),
     turnStarted: (event) => emit({ kind: "turn.started", ...event }),
@@ -120,6 +119,7 @@ export function createAgentLifecyclePublisher(
     waitFinished: (event) => emit({ kind: "wait.finished", ...event }),
     done: (event) => emit({ kind: "agent.done", ...event }),
     exited: (event) => emit({ kind: "agent.exited", ...event }),
+    sessionStopped: (event) => emit({ kind: "session.stopped", ...event }),
     subagentStarted: (event) => emit({ kind: "subagent.started", ...event }),
     subagentDone: (event) => emit({ kind: "subagent.done", ...event }),
   };
