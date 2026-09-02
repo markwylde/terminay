@@ -10,12 +10,13 @@ test('all project environment and extension client operations obey the wire gram
 test('project environment client uses fixed operations and parses safe summaries', async () => {
 	const calls=[];
 	const client=new ProjectEnvironmentsClient({
-		async query(operation,payload){calls.push({kind:'query',operation,payload});return operation===PROJECT_ENVIRONMENT_OPERATIONS.resolveOptions?{options:[{value:'image-1',label:'Debian'}]}:{revision:2,providers:[{providerId:'demo/provider',displayName:'Demo',profileForm:{id:'demo.profile',title:'Demo connection',submitLabel:'Save',sections:[{id:'main',title:'Connection',fields:[{id:'host',label:'Host',type:'text',required:true}]}]}}],profiles:[{id:'profile-1',providerId:'demo/provider',name:'Demo',endpointSummary:'example.test',initialValues:{host:'example.test'}}],environments:[{id:'terminay:this-server',providerId:'terminay:this-server',providerLabel:'This server',name:'This server',endpointSummary:'Local to Test',status:'ready',referencedProjectCount:1,isThisServer:true}]};},
+		async query(operation,payload){calls.push({kind:'query',operation,payload});return operation===PROJECT_ENVIRONMENT_OPERATIONS.resolveOptions?{options:[{value:'image-1',label:'Debian'}]}:{revision:2,providers:[{providerId:'demo/provider',displayName:'Demo',profileForm:{id:'demo.profile',title:'Demo connection',submitLabel:'Save',sections:[{id:'main',title:'Connection',fields:[{id:'host',label:'Host',type:'text',required:true}]}]},browseForm:{id:'demo.browse',title:'Browse Terminay VMs',submitLabel:'Add',sections:[{id:'vms',title:'VMs',fields:[{id:'machineId',label:'VM',type:'select',required:true}]}]}}],profiles:[{id:'profile-1',providerId:'demo/provider',name:'Demo',endpointSummary:'example.test',initialValues:{host:'example.test'}}],environments:[{id:'terminay:this-server',providerId:'terminay:this-server',providerLabel:'This server',name:'This server',endpointSummary:'Local to Test',status:'ready',referencedProjectCount:1,isThisServer:true}]};},
 		async command(operation,payload){calls.push({kind:'command',operation,payload});return {operationId:'op-1',state:'succeeded',projectId:'project-1'};},
 	});
 	const snapshot=await client.snapshot();
 	assert.equal(snapshot.environments[0].isThisServer,true);
 	assert.equal(snapshot.providers[0].profileForm.sections[0].fields[0].id,'host');
+	assert.equal(snapshot.providers[0].browseForm.title,'Browse Terminay VMs');
 	assert.deepEqual(snapshot.profiles[0].initialValues,{host:'example.test'});
 	await client.createProject({environmentId:'ssh:one',viewId:'view-1',root:'/work'});
 	await client.removeEnvironment('ssh:stale');
