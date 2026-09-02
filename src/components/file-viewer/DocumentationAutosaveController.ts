@@ -162,7 +162,7 @@ export class DocumentationAutosaveController {
 			const edited = await this.session.edit(text, this.draftRevision);
 			this.draftRevision = edited.draftRevision;
 			this.diskRevision = edited.diskRevision;
-			const saved = await this.session.save(edited.draftRevision, edited.diskRevision);
+			const saved = await this.session.save(edited.draftRevision, this.diskRevision);
 			this.draftRevision = saved.draftRevision;
 			this.diskRevision = saved.diskRevision;
 			return true;
