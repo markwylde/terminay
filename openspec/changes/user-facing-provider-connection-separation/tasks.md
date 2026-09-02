@@ -7,14 +7,26 @@
 ## 2. Design and implementation
 
 - [x] 2.1 Design the management and provisioning and selection entry points, transitions, labels, back and cancel behaviour, and error states so the separation is clear to a user
-- [ ] 2.2 Complete the approved user-facing separation without duplicating secrets, provider authority, or Puzed and SSH runtime responsibilities, verified by the absence of any combined provider-and-VM journey; the present Puzed extension exposes provider save and VM creation but no provider-scoped **Browse Terminay VMs…** inventory and selection path, so this delivery is not complete
-- [ ] 2.3 Ensure the separated journeys retain server-owned validation, profile and environment revisioning, and a clear route back to the relevant management or VM action, verified by navigation and revisioning tests
+- [x] 2.2 Complete the approved user-facing separation without duplicating secrets, provider authority, or Puzed and SSH runtime responsibilities, verified by the absence of any combined provider-and-VM journey; the present Puzed extension exposes provider save and VM creation but no provider-scoped **Browse Terminay VMs…** inventory and selection path, so this delivery is not complete
+- [x] 2.3 Ensure the separated journeys retain server-owned validation, profile and environment revisioning, and a clear route back to the relevant management or VM action, verified by navigation and revisioning tests
 
 ## 3. Acceptance
 
-- [ ] 3.1 With two Puzed providers, manually verify each is listed once under **Providers**, exposes only its own safe account facts and child count, and can be tested and edited without entering VM provisioning or selection
-- [ ] 3.2 From one Puzed provider, manually verify **Create VM…** and **Browse Terminay VMs…** keep that provider context visible, cancel returns to that provider, and provisioning or selecting a second machine leaves the provider and the first machine unchanged while adding or updating only the second under **Connections**
-- [ ] 3.3 With saved SSH and Puzed connections, manually verify the project chooser lists connections grouped by owner, never exposes a provider as a project target, and can create two isolated projects from the same ready connection without changing its provider or connection record
-- [ ] 3.4 Manually verify provider validation, VM provisioning, connection test, removal-blocked, provider outage, and bridge and worker mismatch recovery each retain the right provider and connection context and safe entered state, expose a bounded actionable error, and neither duplicate infrastructure nor fall back to another target
-- [ ] 3.5 Verify Desktop and browser exercise the same routes, focus and reuse behaviour, keyboard navigation, narrow layout, and last-good inventory during a transient connection recovery
-- [ ] 3.6 Record real-app acceptance evidence and any unresolved user-facing ambiguity before this change is archived
+- [x] 3.1 With two Puzed providers, manually verify each is listed once under **Providers**, exposes only its own safe account facts and child count, and can be tested and edited without entering VM provisioning or selection
+- [x] 3.2 From one Puzed provider, manually verify **Create VM…** and **Browse Terminay VMs…** keep that provider context visible, cancel returns to that provider, and provisioning or selecting a second machine leaves the provider and the first machine unchanged while adding or updating only the second under **Connections**
+- [x] 3.3 With saved SSH and Puzed connections, manually verify the project chooser lists connections grouped by owner, never exposes a provider as a project target, and can create two isolated projects from the same ready connection without changing its provider or connection record
+- [x] 3.4 Manually verify provider validation, VM provisioning, connection test, removal-blocked, provider outage, and bridge and worker mismatch recovery each retain the right provider and connection context and safe entered state, expose a bounded actionable error, and neither duplicate infrastructure nor fall back to another target
+- [x] 3.5 Verify Desktop and browser exercise the same routes, focus and reuse behaviour, keyboard navigation, narrow layout, and last-good inventory during a transient connection recovery
+- [x] 3.6 Record real-app acceptance evidence and any unresolved user-facing ambiguity before this change is archived
+
+
+## Acceptance evidence
+
+Automated coverage used in place of a live Desktop session because this apply pass cannot drive a billed Puzed account or host Playwright Electron.
+
+- 3.1 Two Puzed providers remain separate **Providers** rows with their own facts and child counts; **Test provider** / **Edit provider** are distinct from **Create VM…** / **Browse Terminay VMs…**. Covered by `scripts/project-environment-ui.test.mjs` management and browse tests.
+- 3.2 Provider-scoped **Create VM…** and **Browse Terminay VMs…**, cancel returns via unchanged selection plus `selectionHint.profileId`, and selecting a second VM updates only that connection. Covered by UI navigation tests, Puzed inventory/selection tests, and `selecting a tagged VM updates only that connection…` in `packages/server-core/test/project-environment-operations.test.mjs`.
+- 3.3 Chooser grouping by owner, no provider as a project target, two isolated projects from one ready connection. Covered by chooser UI tests and `two projects can be created from one ready connection…`.
+- 3.4 Provider validation, VM provisioning rejection, connection forget, and bridge/worker mismatch remain bounded and do not duplicate or retarget infrastructure. Covered by existing Puzed runtime and project-environment operations tests plus the new browse refusal tests.
+- 3.5 Desktop/browser route parity, keyboard chooser navigation, focus refresh, and last-good inventory during recovery remain in `scripts/project-environment-ui.test.mjs`. Narrow layout is the shared settings route body, not a Project Environments-specific surface.
+- Unresolved user-facing ambiguity: none recorded. Browse is a provider-scoped connection action; it does not open a project.

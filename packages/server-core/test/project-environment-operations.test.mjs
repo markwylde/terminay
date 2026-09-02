@@ -302,3 +302,62 @@ test('Puzed VM creation preserves its bounded public rejection instead of a gene
   await assert.rejects(() => operations.commands['project-environments.create'](request), /Puzed rejected VM creation \(HTTP 409, bridge_worker_mismatch\)\./);
   assert.deepEqual(subject.repository.state,before);
 });
+
+test('snapshot projects a provider-scoped browse form without executable code', async () => {
+  const subject=fixture();
+  const operations=createProjectEnvironmentOperationHandlers({repository:subject.repository,workspace:subject.workspace,thisServerRoot:()=>'/home/server',providerDefinitions:()=>[{providerId:'com.puzed.platform/vm',displayName:'Puzed VM',capabilities:['terminal','filesystem'],createForm:{id:'create',title:'Create',sections:[],submitLabel:'Create'},browseForm:{id:'browse',title:'Browse Terminay VMs',sections:[],submitLabel:'Add or update connection'}}]});
+  const response=await operations.queries['project-environments.snapshot']({envelope:{type:'query',queryId:'q',operation:'project-environments.snapshot',payload:{}},body:new Uint8Array(),context:{connectionId:'c',clientId:'client-a',authScope:'admin',permissions:['environments:read'],signal:new AbortController().signal}});
+  assert.equal(response.providers[1].browseForm.title,'Browse Terminay VMs');
+  assert.equal(JSON.stringify(response).includes('entrypoint'),false);
+});
+
+test('selecting a tagged VM updates only that connection and leaves the provider and siblings unchanged', async () => {
+  const subject=fixture(); await subject.repository.load();
+  const now=Date.now();
+  await subject.repository.commit(0,(state)=>({
+    ...state,
+    profiles:{...state.profiles,'profile-a':{id:'profile-a',providerId:'com.puzed.platform/vm',name:'Home lab',endpointSummary:'https://platform.test',activeRevision:1,recommendedRevision:1,revisions:{'1':{revision:1,createdAt:now,configuration:{'base-url':'https://platform.test'},secretReferences:[]}},archived:false}},
+    environments:{...state.environments,
+      'puzed:one':{id:'puzed:one',providerId:'com.puzed.platform/vm',profileId:'profile-a',pinnedRevision:1,name:'first-vm',endpointSummary:'Puzed VM',declaredCapabilities:['terminal','filesystem'],availableCapabilities:['terminal','filesystem'],status:'ready',operationReferences:[],projectReferenceCount:0,archived:false,builtIn:false,providerState:{machineId:'vm-1',displayName:'first-vm'},providerRevision:1},
+      'puzed:two':{id:'puzed:two',providerId:'com.puzed.platform/vm',profileId:'profile-a',pinnedRevision:1,name:'second-vm',endpointSummary:'Puzed VM',declaredCapabilities:['terminal','filesystem'],availableCapabilities:['terminal','filesystem'],status:'ready',operationReferences:[],projectReferenceCount:0,archived:false,builtIn:false,providerState:{machineId:'vm-2',displayName:'second-vm'},providerRevision:1},
+    },
+  }));
+  const sibling=structuredClone(subject.repository.state.environments['puzed:two']);
+  const profile=structuredClone(subject.repository.state.profiles['profile-a']);
+  const providerRuntime={async invokeProvider(invocation){
+    if(invocation.callback==='testProfile')return [];
+    if(invocation.callback==='createEnvironment')return {state:'ready',providerState:{machineId:invocation.request.values.machineId,displayName:'first-vm-updated',bindingId:'binding-1'},status:{state:'available',defaultRoot:'/work',revision:4}};
+    throw new Error(`unexpected ${invocation.callback}`);
+  }};
+  const operations=createProjectEnvironmentOperationHandlers({repository:subject.repository,workspace:subject.workspace,thisServerRoot:()=>'/home/server',providerDefinitions:()=>[{providerId:'com.puzed.platform/vm',displayName:'Puzed VM',capabilities:['terminal','filesystem'],createForm:{id:'create',title:'Create',sections:[],submitLabel:'Create'},browseForm:{id:'browse',title:'Browse Terminay VMs',sections:[],submitLabel:'Add'}}],providerRuntime});
+  await operations.commands['project-environments.create']({envelope:{type:'command',commandId:'select-vm-1',correlationId:'select-vm-1',operation:'project-environments.create',payload:{providerId:'com.puzed.platform/vm',profileId:'profile-a',values:{machineId:'vm-1'}}},body:new Uint8Array(),context:{connectionId:'c',clientId:'client-a',authScope:'admin',permissions:['environments:manage'],signal:new AbortController().signal,expectedRevision:1}});
+  assert.equal(subject.repository.state.environments['puzed:one'].name,'first-vm-updated');
+  assert.equal(subject.repository.state.environments['puzed:one'].id,'puzed:one');
+  assert.equal(subject.repository.state.environments['puzed:one'].pinnedRevision,1);
+  assert.deepEqual(subject.repository.state.environments['puzed:two'],sibling);
+  assert.deepEqual(subject.repository.state.profiles['profile-a'],profile);
+  assert.equal(Object.keys(subject.repository.state.environments).filter((id)=>id!=='terminay:this-server').length,2);
+});
+
+test('two projects can be created from one ready connection without changing the provider or connection', async () => {
+  const subject=fixture(); await subject.repository.load();
+  const now=Date.now();
+  await subject.repository.commit(0,(state)=>({
+    ...state,
+    profiles:{...state.profiles,'profile-a':{id:'profile-a',providerId:'com.puzed.platform/vm',name:'Home lab',endpointSummary:'https://platform.test',activeRevision:1,recommendedRevision:1,revisions:{'1':{revision:1,createdAt:now,configuration:{},secretReferences:[]}},archived:false}},
+    environments:{...state.environments,'puzed:one':{id:'puzed:one',providerId:'com.puzed.platform/vm',profileId:'profile-a',pinnedRevision:1,name:'first-vm',endpointSummary:'Puzed VM',declaredCapabilities:['terminal','filesystem'],availableCapabilities:['terminal','filesystem'],status:'ready',operationReferences:[],projectReferenceCount:0,archived:false,builtIn:false,providerState:{machineId:'vm-1'},providerRevision:1}},
+  }));
+  const before=structuredClone(subject.repository.state.environments['puzed:one']);
+  const profile=structuredClone(subject.repository.state.profiles['profile-a']);
+  const operations=createProjectEnvironmentOperationHandlers({repository:subject.repository,workspace:subject.workspace,thisServerRoot:()=>'/home/server',providers:{ async validateRoot() { return '/work'; } }});
+  const context={connectionId:'c',clientId:'client-a',authScope:'admin',permissions:['environments:manage','workspace:write'],signal:new AbortController().signal};
+  const viewId=subject.workspace.state.viewOrder[0];
+  const command=(commandId)=>operations.commands['project-environments.create-project']({envelope:{type:'command',commandId,correlationId:commandId,operation:'project-environments.create-project',payload:{environmentId:'puzed:one',viewId}},body:new Uint8Array(),context});
+  const first=await command('project-a');
+  const second=await command('project-b');
+  assert.notEqual(first.result.projectId,second.result.projectId);
+  assert.equal(subject.workspace.state.projects[first.result.projectId].projectEnvironmentId,'puzed:one');
+  assert.equal(subject.workspace.state.projects[second.result.projectId].projectEnvironmentId,'puzed:one');
+  assert.deepEqual(subject.repository.state.environments['puzed:one'],before);
+  assert.deepEqual(subject.repository.state.profiles['profile-a'],profile);
+});
