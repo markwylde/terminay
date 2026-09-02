@@ -89,6 +89,48 @@ A discontinuity SHALL always be in band. A client's stream position SHALL advanc
 - **WHEN** a display reconnects
 - **THEN** it states the position it actually rendered or requests a fresh presentation, and no component substitutes a remembered cursor
 
+### Requirement: Single lane dedupe and ordering enforcement
+
+The delivery lane SHALL be the sole place where duplicate terminal frames are dropped. A frame whose end position is at or before the lane head SHALL be dropped as a duplicate. A frame whose start position is beyond the lane head SHALL be treated as a server-side ordering violation and SHALL congest the lane with a skip rather than being dropped silently. No connection-level map of delivered terminal positions SHALL exist alongside the lane.
+
+#### Scenario: Duplicate frame admitted
+
+- **WHEN** a terminal frame ends at or before the lane head
+- **THEN** the lane drops it as a duplicate and no other component deduplicates terminal positions
+
+#### Scenario: Frame beyond the lane head
+
+- **WHEN** a terminal frame starts beyond the lane head
+- **THEN** the lane congests and states the intervening range as a skip rather than dropping the frame silently
+
+### Requirement: Skip ordering is monotonic while output is contiguous
+
+Strict contiguity SHALL be enforced on delivered output, where corruption is observable. A skip SHALL be required only to be monotonic with the client's position, because an attachment-closed skip travels the state lane and MAY overtake terminal-lane output. A skip that names a range the client has already passed SHALL advance nothing and SHALL NOT be reported as a fault.
+
+#### Scenario: Attachment-closed skip overtakes output
+
+- **WHEN** an attachment-closed skip reaches the client ahead of terminal-lane output it describes
+- **THEN** the client advances monotonically and reports no fault
+
+#### Scenario: Output arrives out of order
+
+- **WHEN** delivered output does not continue from the client's position
+- **THEN** the attachment closes with an observable stream-failure event rather than continuing
+
+### Requirement: Skip exactness at the transmitted boundary
+
+A skip's `fromPosition` SHALL be the end of the last terminal byte actually transmitted for that attachment, including the case where an in-flight delivery is retained across the discard, and its `toPosition` SHALL be the lane head. Its reason SHALL distinguish congestion, attachment closure, and a gap established while attaching.
+
+#### Scenario: Discard with a retained in-flight delivery
+
+- **WHEN** a lane discards its backlog while one delivery is still in flight
+- **THEN** the emitted skip starts at the retained delivery's end position, not at the lane head at discard time
+
+#### Scenario: Reason distinguishes the cause
+
+- **WHEN** a skip is delivered
+- **THEN** its reason states whether it arose from congestion, attachment closure, or a gap established during attach
+
 ### Requirement: Bounded checkpoint catch-up
 
 Feeding the checkpoint authority SHALL be bounded work that trails the live head under sustained output. A fresh presentation SHALL wait for it to catch up before pinning a checkpoint, within a deadline that a terminal which never falls silent cannot exceed. If it still trails by more than a presentation lane can carry, the stream SHALL begin at the live head and the intervening range SHALL be stated as a skip.
