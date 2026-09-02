@@ -94,3 +94,72 @@ export function shouldFocusTerminalForTouchStart(
 ): boolean {
 	return !supportsPointerEvents;
 }
+
+export type TerminalTapPointerLike = {
+	clientX: number;
+	clientY: number;
+	pointerId: number;
+};
+
+export type TerminalTapSession = {
+	dispose: () => void;
+	pointerCancel: (event: Pick<TerminalTapPointerLike, 'pointerId'>) => void;
+	pointerDown: (event: TerminalTapPointerLike) => void;
+	pointerMove: (event: TerminalTapPointerLike) => void;
+	pointerUp: (event: Pick<TerminalTapPointerLike, 'pointerId'>) => boolean;
+};
+
+/**
+ * Single-pointer tap vs scroll session. Arms on down, disarms past the shared
+ * tap-versus-drag movement threshold or on cancel, and reports whether a
+ * release should claim terminal focus. A still finger is a tap regardless of
+ * how long it rests before lifting.
+ */
+export function createTerminalTapSession({
+	moveThresholdPx,
+}: {
+	moveThresholdPx: number;
+}): TerminalTapSession {
+	let armed = false;
+	let pointerId: number | null = null;
+	let startX = 0;
+	let startY = 0;
+
+	const reset = () => {
+		armed = false;
+		pointerId = null;
+	};
+
+	return {
+		pointerDown(event) {
+			if (pointerId !== null && event.pointerId !== pointerId) return;
+			pointerId = event.pointerId;
+			startX = event.clientX;
+			startY = event.clientY;
+			armed = true;
+		},
+		pointerMove(event) {
+			if (event.pointerId !== pointerId || !armed) return;
+			if (
+				Math.hypot(event.clientX - startX, event.clientY - startY) <
+				moveThresholdPx
+			) {
+				return;
+			}
+			armed = false;
+		},
+		pointerUp(event) {
+			if (event.pointerId !== pointerId) return false;
+			const shouldClaim = armed;
+			reset();
+			return shouldClaim;
+		},
+		pointerCancel(event) {
+			if (event.pointerId !== pointerId) return;
+			reset();
+		},
+		dispose() {
+			reset();
+		},
+	};
+}
