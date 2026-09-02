@@ -45,6 +45,12 @@ import {
 } from '../TerminalPanel';
 import { LiveMdxPreview } from '../mdx-preview/LiveMdxPreview';
 import { DocumentationEditor } from './DocumentationEditor';
+import { documentDisplayTitle } from '../documentTitle';
+import {
+	documentationDocumentReason,
+	documentationUnsupportedMessage,
+} from './documentationDocumentState';
+import type { DocumentationAutosaveSession } from './DocumentationAutosaveController';
 import { FileAuthorityUnavailableState } from './FileAuthorityUnavailableState';
 import { FileConflictBanner } from './FileConflictBanner';
 import { FileLargeFileChooser } from './FileLargeFileChooser';
@@ -704,6 +710,75 @@ function CanonicalFilePanel(
 			throw error;
 		}
 	}, [fileGateway, fileViewerClient, projectRoot, terminalClientContext.projectId]);
+	const documentationAutosaveSession = useMemo<DocumentationAutosaveSession>(
+		() => ({
+			async edit(text, expectedDraftRevision) {
+				if (conflictRef.current)
+					throw new Error('Choose Reload from disk or Keep local edits before saving.');
+				const currentInfo = fileInfoRef.current;
+				if (!currentInfo) throw new Error('The document is no longer available.');
+				const relativePath = toProjectRelativePath(projectRoot, currentInfo.path);
+				let session = documentationSessionRef.current;
+				if (session === undefined) {
+					const opened = await fileViewerClient.openFile(
+						relativePath,
+						terminalClientContext.projectId,
+					);
+					session = {
+						sessionId: opened.sessionId,
+						diskRevision: opened.metadata.diskRevision,
+						draftRevision: opened.metadata.draftRevision,
+					};
+					documentationSessionRef.current = session;
+				}
+				draftBufferRef.current.setText(text);
+				const edited = mutationState(
+					await fileViewerClient.editSession(
+						session.sessionId,
+						text,
+						expectedDraftRevision,
+					),
+				);
+				if (!edited.ok) throw new Error(edited.message);
+				session.draftRevision = edited.draftRevision;
+				session.diskRevision = edited.diskRevision;
+				return edited;
+			},
+			async save(expectedDraftRevision, expectedDiskRevision) {
+				const session = documentationSessionRef.current;
+				if (session === undefined)
+					throw new Error('The document is no longer available.');
+				const saved = mutationState(
+					await fileViewerClient.saveSession(
+						session.sessionId,
+						expectedDiskRevision,
+						expectedDraftRevision,
+					),
+				);
+				if (!saved.ok) {
+					conflictRef.current = true;
+					setConflict(true);
+					throw new Error(saved.message);
+				}
+				session.draftRevision = saved.draftRevision;
+				session.diskRevision = saved.diskRevision;
+				const currentInfo = fileInfoRef.current;
+				if (currentInfo) {
+					const nextInfo = await fileGateway.getFileInfo(currentInfo.path);
+					setFileInfo(nextInfo);
+					sessionStoreRef.current?.setFile(nextInfo);
+				}
+				setIsDirty(false);
+				sessionStoreRef.current?.setDirty(false);
+				conflictRef.current = false;
+				setConflict(false);
+				sessionStoreRef.current?.setConflict({ kind: 'none' });
+				return saved;
+			},
+		}),
+		[fileGateway, fileViewerClient, projectRoot, terminalClientContext.projectId],
+	);
+
 
 	useFilePanelSaveRegistration(props.api.id, presentation === 'documentation' ? saveDocumentationDraft : saveCurrentFile);
 
@@ -1212,7 +1287,15 @@ function CanonicalFilePanel(
 			</div> : null}
 
 			<div className="file-panel__body">
-				{isDocumentation ? (!/\.mdx?$/iu.test(fileInfo.name) || fileInfo.isBinary || fileInfo.size > LARGE_FILE_THRESHOLD_BYTES ? <div className="file-preview-unsupported">Documentation mode requires a bounded UTF-8 Markdown or MDX document. Open this file in the normal File Viewer.</div> : <DocumentationEditor key={fileInfo.path} markdown={draftText} onChange={handleDocumentationChange} onFlush={async () => { await saveDocumentationDraft(); }} path={toProjectRelativePath(projectRoot, fileInfo.path)} projectId={terminalClientContext.projectId} serverId={terminalClientContext.serverId} runtimeClient={terminalClientContext.mdxRuntimeClient} />) : null}
+				{isDocumentation ? renderDocumentationSurface(
+					fileInfo,
+					draftText,
+					handleDocumentationChange,
+					documentationAutosaveSession,
+					documentationSessionRef.current,
+					projectRoot,
+					terminalClientContext,
+				) : null}
 				{isMdxPreview ? (
 					<LiveMdxPreview
 						path={toProjectRelativePath(projectRoot, fileInfo.path)}
@@ -1338,13 +1421,44 @@ function CanonicalFilePanel(
 	);
 }
 
-function documentDisplayTitle(markdown: string, filePath: string): string {
-	const match = /^(?:---\r?\n)[\s\S]{0,32768}?^title\s*:\s*['"]?([^\r\n'"]+)['"]?\s*$/mu.exec(markdown);
-	const title = match?.[1]?.trim();
-	if (title) return title;
-	const name = filePath.split(/[\\/]/u).at(-1)?.replace(/\.mdx?$/iu, '') ?? filePath;
-	return name.replace(/([A-Z]+)([A-Z][a-z])/gu, '$1 $2').replace(/([a-z\d])([A-Z])/gu, '$1 $2').replace(/[_\-.]+/gu, ' ').trim().split(/\s+/u).filter(Boolean).map((word) => word.slice(0, 1).toLocaleUpperCase() + word.slice(1).toLocaleLowerCase()).join(' ');
+function renderDocumentationSurface(
+	fileInfo: FileInfo,
+	draftText: string,
+	onChange: (value: string) => void,
+	autosaveSession: DocumentationAutosaveSession,
+	session: { readonly draftRevision: number; readonly diskRevision: number } | undefined,
+	projectRoot: string,
+	terminalClientContext: TerminalPanelClientContextValue,
+) {
+	const reason = documentationDocumentReason({
+		path: fileInfo.name,
+		size: fileInfo.size,
+		isBinary: fileInfo.isBinary,
+		authorityAvailable: terminalClientContext.fileViewerClient !== undefined,
+	});
+	if (reason !== 'ready') {
+		return (
+			<div className="file-preview-unsupported" role="alert">
+				{documentationUnsupportedMessage(reason)}
+			</div>
+		);
+	}
+	return (
+		<DocumentationEditor
+			key={fileInfo.path}
+			markdown={draftText}
+			onChange={onChange}
+			autosaveSession={autosaveSession}
+			draftRevision={session?.draftRevision}
+			diskRevision={session?.diskRevision}
+			path={toProjectRelativePath(projectRoot, fileInfo.path)}
+			projectId={terminalClientContext.projectId}
+			serverId={terminalClientContext.serverId}
+			runtimeClient={terminalClientContext.mdxRuntimeClient}
+		/>
+	);
 }
+
 
 function mutationState(value: unknown): { readonly ok: true; readonly diskRevision: number; readonly draftRevision: number } | { readonly ok: false; readonly message: string } {
 	if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('The file session returned an invalid save result.');

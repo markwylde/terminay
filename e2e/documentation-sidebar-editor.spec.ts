@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, test } from './fixtures';
-import { selectSidebarGroup, setProjectRoot } from './support/ui';
+import { openDocumentationSidebar, setProjectRoot } from './support/ui';
 
 test('Documentation groups Markdown by folder and opens the rich document surface', async ({
 	createWorkspace,
@@ -19,27 +19,12 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 		},
 	});
 	await setProjectRoot(mainWindow, workspace.rootDir);
-	await selectSidebarGroup(mainWindow, 'documentation');
-	const documentationPane = mainWindow
-		.locator('.project-workspace--active .sidebar-pane')
-		.filter({
-			has: mainWindow.locator('.sidebar-pane__title', {
-				hasText: 'Documentation',
-			}),
-		});
-	if (
-		await documentationPane.evaluate((element) =>
-			element.classList.contains('sidebar-pane--collapsed'),
-		)
-	) {
-		await documentationPane.locator('.sidebar-pane__header').click();
-	}
-	await expect(mainWindow.getByRole('tree')).toBeVisible();
+	await openDocumentationSidebar(mainWindow);
 	await expect(
-		mainWindow.getByRole('treeitem', { name: /^Readme, README\.md$/i }),
+		mainWindow.getByRole('treeitem', { name: /^Readme$/i }),
 	).toBeVisible();
-	await mainWindow.getByRole('treeitem', { name: /docs/ }).click();
-	await mainWindow.getByRole('treeitem', { name: /guides/ }).click();
+	await mainWindow.getByRole('treeitem', { name: /docs/i }).click();
+	await mainWindow.getByRole('treeitem', { name: /guides/i }).click();
 	await mainWindow.getByRole('treeitem', { name: /Getting Started/ }).click();
 	const editor = mainWindow.locator('.documentation-editor');
 	await expect(editor).toBeVisible();
@@ -206,23 +191,9 @@ test('Documentation autosave does not report its own root-file write as an exter
 		},
 	});
 	await setProjectRoot(mainWindow, workspace.rootDir);
-	await selectSidebarGroup(mainWindow, 'documentation');
-	const documentationPane = mainWindow
-		.locator('.project-workspace--active .sidebar-pane')
-		.filter({
-			has: mainWindow.locator('.sidebar-pane__title', {
-				hasText: 'Documentation',
-			}),
-		});
-	if (
-		await documentationPane.evaluate((element) =>
-			element.classList.contains('sidebar-pane--collapsed'),
-		)
-	) {
-		await documentationPane.locator('.sidebar-pane__header').click();
-	}
+	await openDocumentationSidebar(mainWindow);
 	await mainWindow
-		.getByRole('treeitem', { name: /^Agents, AGENTS\.md$/i })
+		.getByRole('treeitem', { name: /^Agents$/i })
 		.click();
 
 	const editor = mainWindow.locator('.documentation-editor');
@@ -273,23 +244,9 @@ test('repeated AGENTS.md autosaves do not conflict with their own filesystem eve
 		},
 	});
 	await setProjectRoot(mainWindow, workspace.rootDir);
-	await selectSidebarGroup(mainWindow, 'documentation');
-	const documentationPane = mainWindow
-		.locator('.project-workspace--active .sidebar-pane')
-		.filter({
-			has: mainWindow.locator('.sidebar-pane__title', {
-				hasText: 'Documentation',
-			}),
-		});
-	if (
-		await documentationPane.evaluate((element) =>
-			element.classList.contains('sidebar-pane--collapsed'),
-		)
-	) {
-		await documentationPane.locator('.sidebar-pane__header').click();
-	}
+	await openDocumentationSidebar(mainWindow);
 	await mainWindow
-		.getByRole('treeitem', { name: /^Agents, AGENTS\.md$/i })
+		.getByRole('treeitem', { name: /^Agents$/i })
 		.click();
 
 	const editor = mainWindow.locator('.documentation-editor');
@@ -339,23 +296,9 @@ test('a task checkbox autosave does not conflict with the next document edit', a
 		},
 	});
 	await setProjectRoot(mainWindow, workspace.rootDir);
-	await selectSidebarGroup(mainWindow, 'documentation');
-	const documentationPane = mainWindow
-		.locator('.project-workspace--active .sidebar-pane')
-		.filter({
-			has: mainWindow.locator('.sidebar-pane__title', {
-				hasText: 'Documentation',
-			}),
-		});
-	if (
-		await documentationPane.evaluate((element) =>
-			element.classList.contains('sidebar-pane--collapsed'),
-		)
-	) {
-		await documentationPane.locator('.sidebar-pane__header').click();
-	}
+	await openDocumentationSidebar(mainWindow);
 	await mainWindow
-		.getByRole('treeitem', { name: /^Agents, AGENTS\.md$/i })
+		.getByRole('treeitem', { name: /^Agents$/i })
 		.click();
 	const editor = mainWindow.locator('.documentation-editor');
 	const taskCheckbox = editor.getByRole('checkbox').first();
