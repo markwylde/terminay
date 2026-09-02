@@ -8,6 +8,7 @@ type ProviderSummary = Readonly<{
 	displayName: string;
 	hasProfileForm: boolean;
 	hasCreateForm: boolean;
+	hasBrowseForm: boolean;
 }>;
 
 type ProviderProfile = Readonly<{
@@ -25,13 +26,14 @@ type ConnectionItem = Readonly<{ kind: 'connection'; id: string; environment: Pr
 type ManagementItem = ProviderItem | ConnectionItem;
 export type ProjectEnvironmentSelectionHint = Readonly<{
 	providerId: string;
-	providerName: string;
+	providerName?: string;
+	profileId?: string;
 }>;
 
 /** Presents server-owned providers separately from selectable project connections. */
 export function ProjectEnvironmentManager({
 	environments, profiles, providers, serverName, onCreateProfile,
-	onCreateEnvironment, onEditProfile, onTestProfile, onRemoveProfile, onRemoveConnection, onAction, detail,
+	onCreateEnvironment, onBrowseVms, onEditProfile, onTestProfile, onRemoveProfile, onRemoveConnection, onAction, detail,
 	selectionHint, onSelectionHintHandled, operationNotice,
 }: Readonly<{
 	environments: readonly ProjectEnvironmentSummaryDto[];
@@ -40,6 +42,7 @@ export function ProjectEnvironmentManager({
 	serverName: string;
 	onCreateProfile: (providerId: string) => void;
 	onCreateEnvironment: (providerId: string, profileId: string) => void;
+	onBrowseVms: (providerId: string, profileId: string) => void;
 	onEditProfile: (profile: ProviderProfile) => void;
 	onTestProfile: (profileId: string) => void;
 	onRemoveProfile: (profileId: string) => void;
@@ -91,8 +94,10 @@ export function ProjectEnvironmentManager({
 	useEffect(() => {
 		if (selectionHint === null || selectionHint === undefined) return;
 		const provider = providerItems.find((item) =>
-			item.profile.providerId === selectionHint.providerId &&
-			item.profile.name === selectionHint.providerName,
+			selectionHint.profileId !== undefined
+				? item.profile.id === selectionHint.profileId
+				: item.profile.providerId === selectionHint.providerId &&
+					item.profile.name === selectionHint.providerName,
 		);
 		if (provider === undefined) return;
 		setSelectedId(provider.id);
@@ -122,18 +127,18 @@ export function ProjectEnvironmentManager({
 	>
 		{operationNotice}
 		{detail ?? (selected === undefined ? <div className="settings-empty-hero"><h2>No matching providers or connections</h2><p>Change your search or add a provider or connection.</p></div>
-			: selected.kind === 'provider' ? <ProviderDetail item={selected} connections={selectedProviderConnections} onCreateConnection={() => onCreateEnvironment(selected.provider.providerId, selected.profile.id)} onBrowseConnection={(connection) => setSelectedId(connection.id)} onForgetConnection={(connection) => onRemoveConnection(connection.environment)} onEdit={() => onEditProfile(selected.profile)} onTest={() => onTestProfile(selected.profile.id)} onRemove={() => onRemoveProfile(selected.profile.id)} />
+			: selected.kind === 'provider' ? <ProviderDetail item={selected} connections={selectedProviderConnections} onCreateConnection={() => onCreateEnvironment(selected.provider.providerId, selected.profile.id)} onBrowseVms={() => onBrowseVms(selected.provider.providerId, selected.profile.id)} onBrowseConnection={(connection) => setSelectedId(connection.id)} onForgetConnection={(connection) => onRemoveConnection(connection.environment)} onEdit={() => onEditProfile(selected.profile)} onTest={() => onTestProfile(selected.profile.id)} onRemove={() => onRemoveProfile(selected.profile.id)} />
 			: <ConnectionDetail item={selected} onAction={onAction} onEditProfile={onEditProfile} onTestProfile={onTestProfile} onRemoveProfile={onRemoveProfile} onRemoveConnection={onRemoveConnection} />)}
 	</SharedSettingsRouteBody>;
 }
 
-function ProviderDetail({ item, connections, onCreateConnection, onBrowseConnection, onForgetConnection, onEdit, onTest, onRemove }: Readonly<{
-	item: ProviderItem; connections: readonly ConnectionItem[]; onCreateConnection: () => void;
+function ProviderDetail({ item, connections, onCreateConnection, onBrowseVms, onBrowseConnection, onForgetConnection, onEdit, onTest, onRemove }: Readonly<{
+	item: ProviderItem; connections: readonly ConnectionItem[]; onCreateConnection: () => void; onBrowseVms: () => void;
 	onBrowseConnection: (connection: ConnectionItem) => void; onForgetConnection: (connection: ConnectionItem) => void; onEdit: () => void; onTest: () => void; onRemove: () => void;
 }>) {
 	const isPuzed = item.provider.displayName.toLowerCase().includes('puzed');
 	return <>
-		<div className="settings-category-header environment-category-header"><div><h2>{item.profile.name}</h2><p>{item.provider.displayName.replace(/ VM$/i, '')} provider · {item.profile.endpointSummary}</p></div><div className="settings-inline-actions"><button type="button" className="settings-primary-button" onClick={onCreateConnection}>{isPuzed ? 'Create VM…' : 'Add connection…'}</button></div></div>
+		<div className="settings-category-header environment-category-header"><div><h2>{item.profile.name}</h2><p>{item.provider.displayName.replace(/ VM$/i, '')} provider · {item.profile.endpointSummary}</p></div><div className="settings-inline-actions"><button type="button" className="settings-primary-button" onClick={onCreateConnection}>{isPuzed ? 'Create VM…' : 'Add connection…'}</button>{item.provider.hasBrowseForm ? <button type="button" className="settings-secondary-button" onClick={onBrowseVms}>Browse Terminay VMs…</button> : null}</div></div>
 		<section className="settings-section"><h3 className="settings-section-title">Provider</h3><div className="settings-group"><EnvironmentRow label="Service" value={item.provider.displayName.replace(/ VM$/i, '')} /><EnvironmentRow label="Endpoint" value={item.profile.endpointSummary} /><EnvironmentRow label="Connections" value={String(item.connectionCount)} /><div className="settings-group-footer"><div className="settings-inline-actions"><button type="button" className="settings-secondary-button" onClick={onTest}>Test provider</button><button type="button" className="settings-secondary-button" onClick={onEdit}>Edit provider</button><button type="button" className="settings-danger-button" onClick={() => { if (item.connectionCount === 0 || window.confirm(`Remove ${item.profile.name} and forget its ${item.connectionCount} local connection${item.connectionCount === 1 ? '' : 's'}? This will not delete or stop any remote VM.`)) onRemove(); }}>Remove provider</button></div></div></div></section>
 		<section className="settings-section"><h3 className="settings-section-title">Connections</h3><div className="settings-group">{connections.length === 0 ? <div className="settings-row settings-row--stacked"><span className="settings-row-description">No Terminay VM connections yet. Creating a VM keeps this provider selected.</span></div> : connections.map((connection) => <div className="settings-row" key={connection.id}><div className="settings-row-info"><span className="settings-row-label">{connection.environment.name}</span><span className="settings-row-description">{connection.environment.endpointSummary} · {statusLabel(connection.environment.status)}</span></div><div className="settings-row-control settings-inline-actions"><button type="button" className="settings-secondary-button" onClick={() => onBrowseConnection(connection)}>{isPuzed ? 'View VM' : 'View connection'}</button><button type="button" className="settings-danger-button" disabled={connection.environment.referencedProjectCount > 0} onClick={() => onForgetConnection(connection)}>Remove connection</button></div></div>)}</div></section>
 	</>;
