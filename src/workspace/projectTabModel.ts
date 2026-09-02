@@ -1,4 +1,4 @@
-import { defaultTerminalSettings } from '../terminalSettings';
+import { defaultTerminalSettings } from '../terminalSettings.ts';
 import type { SidebarGroupId, SidebarPanelId, SidebarSettings } from '../types/settings';
 
 const PROJECT_TAB_COLOR_PALETTE_SIZE = 20;
@@ -199,11 +199,41 @@ function hueToProjectTabColor(hue: number): string {
 	return `#${toHex(hue2rgb(p, q, normalizedHue + 1 / 3))}${toHex(hue2rgb(p, q, normalizedHue))}${toHex(hue2rgb(p, q, normalizedHue - 1 / 3))}`;
 }
 
-const DEFAULT_PROJECT_TAB_COLORS = Array.from(
+const PROJECT_TAB_COLOR_PALETTE_HUES = Array.from(
 	{ length: PROJECT_TAB_COLOR_PALETTE_SIZE },
-	(_, index) =>
-		hueToProjectTabColor((360 / PROJECT_TAB_COLOR_PALETTE_SIZE) * index),
+	(_, index) => (360 / PROJECT_TAB_COLOR_PALETTE_SIZE) * index,
+) as readonly number[];
+
+const DEFAULT_PROJECT_TAB_COLORS = PROJECT_TAB_COLOR_PALETTE_HUES.map(
+	hueToProjectTabColor,
 ) as readonly string[];
+
+/** Read the hue back out of a `#rrggbb` color. Returns null for anything that is
+ * not one, and for greys, which carry no hue to keep away from. */
+export function projectTabColorHue(color: string): number | null {
+	const digits = /^#([0-9a-f]{6})$/i.exec(color.trim())?.[1];
+	if (digits === undefined) return null;
+	const packed = Number.parseInt(digits, 16);
+	const red = ((packed >> 16) & 0xff) / 255;
+	const green = ((packed >> 8) & 0xff) / 255;
+	const blue = (packed & 0xff) / 255;
+	const max = Math.max(red, green, blue);
+	const chroma = max - Math.min(red, green, blue);
+	if (chroma === 0) return null;
+	const sextant =
+		max === red
+			? (green - blue) / chroma
+			: max === green
+				? (blue - red) / chroma + 2
+				: (red - green) / chroma + 4;
+	return (((sextant * 60) % 360) + 360) % 360;
+}
+
+/** Shortest arc between two hues, 0-180. */
+export function projectTabHueDistance(left: number, right: number): number {
+	const delta = Math.abs(left - right) % 360;
+	return delta > 180 ? 360 - delta : delta;
+}
 
 export function getRandomProjectTabColor(
 	usedColors: Iterable<string> = [],
@@ -220,31 +250,42 @@ function stableProjectColorIndex(identity: string, size: number): number {
 	return (hash >>> 0) % size;
 }
 
-/** Pick a stable default from project identity while avoiding colors already in
- * use. Persisted and explicitly selected project colors bypass this path. */
+/** Pick the palette color furthest from the colors already in use, so a new
+ * project reads as a different color family rather than a neighbouring shade.
+ * Ties resolve from project identity. Persisted and explicitly selected project
+ * colors bypass this path. */
 export function getDeterministicProjectTabColor(
 	identity: string,
 	usedColors: Iterable<string> = [],
 ): string {
-	const used = new Set(
-		Array.from(usedColors, (color) => color.trim().toLowerCase()),
-	);
-	const start = stableProjectColorIndex(
-		identity,
-		DEFAULT_PROJECT_TAB_COLORS.length,
-	);
-	for (
-		let offset = 0;
-		offset < DEFAULT_PROJECT_TAB_COLORS.length;
-		offset += 1
-	) {
-		const color =
-			DEFAULT_PROJECT_TAB_COLORS[
-				(start + offset) % DEFAULT_PROJECT_TAB_COLORS.length
-			];
-		if (color !== undefined && !used.has(color.toLowerCase())) return color;
+	const usedHues: number[] = [];
+	for (const color of usedColors) {
+		const hue = projectTabColorHue(color);
+		if (hue !== null) usedHues.push(hue);
 	}
-	return hueToProjectTabColor(stableProjectColorIndex(identity, 360));
+	let bestDistance = -1;
+	let furthest: string[] = [];
+	for (let index = 0; index < DEFAULT_PROJECT_TAB_COLORS.length; index += 1) {
+		const color = DEFAULT_PROJECT_TAB_COLORS[index];
+		const hue = PROJECT_TAB_COLOR_PALETTE_HUES[index];
+		if (color === undefined || hue === undefined) continue;
+		// An unused palette scores Infinity, so every entry ties and identity alone
+		// decides - the first project in a view keeps its identity-seeded color.
+		let nearest = Number.POSITIVE_INFINITY;
+		for (const usedHue of usedHues) {
+			nearest = Math.min(nearest, projectTabHueDistance(hue, usedHue));
+		}
+		if (nearest > bestDistance) {
+			bestDistance = nearest;
+			furthest = [color];
+		} else if (nearest === bestDistance) {
+			furthest.push(color);
+		}
+	}
+	return (
+		furthest[stableProjectColorIndex(identity, furthest.length)] ??
+		hueToProjectTabColor(0)
+	);
 }
 
 export function createProjectTab(
