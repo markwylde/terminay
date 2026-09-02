@@ -8,7 +8,7 @@ const [githubCi, giteaCi, serverImage, triggerRelease, decision, packageJson, pa
   read(".gitea/workflows/ci.yml"),
   read(".github/workflows/server-image.yml"),
   read(".github/workflows/trigger-release.yml"),
-  read("specs/decisions/provider-portable-parallel-ci.md"),
+  read("openspec/adr/0010-provider-portable-parallel-pull-request-ci.md"),
   read("package.json"),
   read("scripts/run-packaged-built-in-extension-runtime-linux.sh"),
 ]);
