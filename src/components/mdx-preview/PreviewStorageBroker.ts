@@ -18,6 +18,9 @@ export class PreviewStorageBroker {
 		try { this.storage.setItem(`${PREFIX}${projectKey}`, JSON.stringify(normalize(value))); }
 		catch { /* Quota failures leave the current isolated preview usable. */ }
 	}
+	clear(projectKey: string): void {
+		this.storage.removeItem(`${PREFIX}${projectKey}`);
+	}
 }
 
 function normalize(value: unknown): PreviewStorageSnapshot {
