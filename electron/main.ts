@@ -138,7 +138,7 @@ import {
 } from './mcpInstall';
 import { TerminalRecordingService } from './recording/service';
 import { establishDesktopDevicePairing } from './remote/desktopPairing';
-import { createDesktopReconnectTransport } from './remote/desktopReconnect';
+import { createDesktopReconnectTransport, type DesktopReconnectTransport } from './remote/desktopReconnect';
 import { createDesktopBootstrappedWebRtcConnection } from './remote/desktopWebRtcBootstrap';
 import { resolveDesktopWebRtcRuntimeRoot } from './remote/desktopWebRtcRuntimeRoot';
 import {
@@ -2844,6 +2844,7 @@ async function presentCanonicalAuxiliaryRoute(
 					const webRtc = await createDesktopBootstrappedWebRtcConnection({
 						bootstrap: connected.signalingBootstrap,
 						expectedOrigin: profile.origin,
+						transportAuth: desktopWebRtcReconnectAuth(connected),
 						...(remoteWebRtcRuntimeRoot === undefined
 							? {}
 							: { webrtcRuntimeRoot: remoteWebRtcRuntimeRoot }),
@@ -2941,6 +2942,7 @@ async function presentCanonicalAuxiliaryRoute(
 				const webRtc = await createDesktopBootstrappedWebRtcConnection({
 					bootstrap: connected.signalingBootstrap,
 					expectedOrigin: profile.origin,
+					transportAuth: desktopWebRtcReconnectAuth(connected),
 				});
 				await connected.transport.close({ code: 'normal' });
 				const launch = await remoteServerUiBundleHost.prepareRemote({
@@ -3688,6 +3690,17 @@ async function enrollPairedDesktopRemoteProfile(
 	});
 }
 
+function desktopWebRtcReconnectAuth(connected: DesktopReconnectTransport) {
+	if (connected.pinnedHostKey === undefined) {
+		throw new Error('Server host identity is not pinned; explicit re-pairing is required.');
+	}
+	return Object.freeze({
+		scope: 'reconnect' as const,
+		pinnedHostKey: connected.pinnedHostKey,
+		scopeId: connected.deviceId,
+	});
+}
+
 /** Prepare one authenticated remote lane and its verified server bundle for a
  * Desktop document. This is shared by initial pairing, auxiliary windows and
  * reconnection; the renderer never sees enrollment or reconnect material. */
@@ -3717,6 +3730,7 @@ async function prepareCanonicalDesktopRemoteConnection(
 		const webRtc = await createDesktopBootstrappedWebRtcConnection({
 			bootstrap: connected.signalingBootstrap,
 			expectedOrigin: profile.origin,
+			transportAuth: desktopWebRtcReconnectAuth(connected),
 		});
 		await connected.transport.close({ code: 'normal' });
 		return Object.freeze({
@@ -3754,6 +3768,7 @@ async function reconnectCanonicalDesktopRemoteTransport(
 		const webRtc = await createDesktopBootstrappedWebRtcConnection({
 			bootstrap: connected.signalingBootstrap,
 			expectedOrigin: profile.origin,
+			transportAuth: desktopWebRtcReconnectAuth(connected),
 		});
 		await connected.transport.close({ code: 'normal' });
 		return webRtc.transport;
