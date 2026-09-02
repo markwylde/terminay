@@ -88,7 +88,7 @@ test('autosave calls edit then save with the returned draft and current disk rev
 		() => {},
 		2,
 		4,
-		{ delayMs: 0, setTimeoutFn: (callback) => (callback(), 1), clearTimeoutFn() {} },
+		{ delayMs: 0, setTimeoutFn: (callback) => { callback(); return 1; }, clearTimeoutFn() {} },
 	);
 	controller.changed('next');
 	await Promise.resolve();
@@ -145,7 +145,7 @@ test('an older completion never marks a newer draft saved', async () => {
 		(state) => states.push(state),
 		0,
 		1,
-		{ delayMs: 0, setTimeoutFn: (callback) => (callback(), 1), clearTimeoutFn() {} },
+		{ delayMs: 0, setTimeoutFn: (callback) => { callback(); return 1; }, clearTimeoutFn() {} },
 	);
 	controller.changed('old');
 	await Promise.resolve();
@@ -192,7 +192,7 @@ test('unmount cancels timers without closing the shared file session', async () 
 	const timers = new FakeTimers();
 	let saved = false;
 	const controller = new DocumentationAutosaveController(
-		session(async (text, draft) => {
+		session(async (_text, draft) => {
 			saved = true;
 			return { draftRevision: draft + 1, diskRevision: 1 };
 		}),
@@ -241,7 +241,7 @@ test('autosave uses the real file-session edit and save operations', async () =>
 		() => {},
 		fileSession.draftRevision,
 		fileSession.diskRevision,
-		{ delayMs: 0, setTimeoutFn: (callback) => (callback(), 1), clearTimeoutFn() {} },
+		{ delayMs: 0, setTimeoutFn: (callback) => { callback(); return 1; }, clearTimeoutFn() {} },
 	);
 	controller.changed('# Hello world');
 	assert.equal(await controller.flush(), true);
