@@ -349,6 +349,9 @@ function DocumentationEditorSurface({
 					runtimeId={compiled.runtimeId}
 					bundle={compiled.code}
 					storageKey={`${serverId}:${projectId}`}
+					onExternalUrl={(url) => {
+						void openExternalUrl(url);
+					}}
 					onMessage={(event) => {
 						if (event.kind === 'diagnostic')
 							setMessage(`Preview: ${event.message}`);
@@ -358,7 +361,6 @@ function DocumentationEditorSurface({
 									detail: { path: event.path },
 								}),
 							);
-						if (event.kind === 'open-external') void openExternalUrl(event.url);
 						if (event.kind === 'download')
 							startDownload(event.url, event.filename);
 					}}

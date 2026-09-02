@@ -43,6 +43,7 @@ import {
 	TerminalPanelClientContext,
 	type TerminalPanelClientContextValue,
 } from '../TerminalPanel';
+import { LiveMdxPreview } from '../mdx-preview/LiveMdxPreview';
 import { DocumentationEditor } from './DocumentationEditor';
 import { FileAuthorityUnavailableState } from './FileAuthorityUnavailableState';
 import { FileConflictBanner } from './FileConflictBanner';
@@ -798,11 +799,12 @@ function CanonicalFilePanel(
 				if (!isMounted) {
 					return;
 				}
-				const defaultMode =
-					getCustomDefaultMode(
-						info,
-						currentSettings.fileViewer.customFileExtensions,
-					) ?? capabilities.defaultMode;
+				const defaultMode = /\.mdx$/iu.test(info.name)
+					? 'preview'
+					: getCustomDefaultMode(
+							info,
+							currentSettings.fileViewer.customFileExtensions,
+						) ?? capabilities.defaultMode;
 				hasAppliedDefaultModeRef.current = true;
 				setMode(defaultMode);
 			}
@@ -1138,6 +1140,10 @@ function CanonicalFilePanel(
 			? capabilities.fallbackMode
 		: resolveFileViewerMode(capabilities, mode);
 	const isDocumentation = presentation === 'documentation';
+	const isMdxPreview =
+		!isDocumentation &&
+		effectiveMode === 'preview' &&
+		/\.mdx$/iu.test(fileInfo.name);
 
 	return (
 		<div
@@ -1207,7 +1213,14 @@ function CanonicalFilePanel(
 
 			<div className="file-panel__body">
 				{isDocumentation ? (!/\.mdx?$/iu.test(fileInfo.name) || fileInfo.isBinary || fileInfo.size > LARGE_FILE_THRESHOLD_BYTES ? <div className="file-preview-unsupported">Documentation mode requires a bounded UTF-8 Markdown or MDX document. Open this file in the normal File Viewer.</div> : <DocumentationEditor key={fileInfo.path} markdown={draftText} onChange={handleDocumentationChange} onFlush={async () => { await saveDocumentationDraft(); }} path={toProjectRelativePath(projectRoot, fileInfo.path)} projectId={terminalClientContext.projectId} serverId={terminalClientContext.serverId} runtimeClient={terminalClientContext.mdxRuntimeClient} />) : null}
-				{!isDocumentation && effectiveMode === 'preview' ? (
+				{isMdxPreview ? (
+					<LiveMdxPreview
+						path={toProjectRelativePath(projectRoot, fileInfo.path)}
+						projectId={terminalClientContext.projectId}
+						serverId={terminalClientContext.serverId}
+						runtimeClient={terminalClientContext.mdxRuntimeClient}
+					/>
+				) : !isDocumentation && effectiveMode === 'preview' ? (
 					<PreviewViewer
 						file={fileInfo}
 						previewSourceUrl={previewSourceUrl}

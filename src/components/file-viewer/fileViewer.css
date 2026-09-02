@@ -47,6 +47,22 @@
 	display: flex;
 }
 
+.mdx-live-preview {
+	flex: 1;
+	min-width: 0;
+	min-height: 0;
+	width: 100%;
+	background: #fff;
+}
+
+.mdx-live-preview iframe {
+	display: block;
+	width: 100%;
+	height: 100%;
+	min-height: 240px;
+	border: 0;
+}
+
 .documentation-editor {
 	display: grid;
 	grid-template-columns: minmax(0, 1fr);
