@@ -3,7 +3,6 @@ import test from 'node:test';
 import {
 	CanonicalProjectPathResolver,
 	DocumentationCatalog,
-	FileServiceError,
 	frontmatterTitle,
 	titleCase,
 } from '../dist/index.js';

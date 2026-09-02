@@ -124,7 +124,7 @@ test('stale catalog responses are rejected', async () => {
 			}
 			return catalog([document('fresh.md')], { revision: 'fresh' });
 		},
-	} as DocumentationClient;
+	} as unknown as DocumentationClient;
 	const controller = new DocumentationCatalogController({
 		client,
 		projectId: 'project-a',
@@ -164,7 +164,7 @@ test('dispose cancels timers and watch subscriptions', async () => {
 		observationClient,
 		projectId: 'project-a',
 		scopeKey: '/project',
-		setTimeoutFn: (callback) => {
+		setTimeoutFn: (_callback) => {
 			timeoutId = 7;
 			return 7;
 		},
