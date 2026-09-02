@@ -1,5 +1,7 @@
 import type { ElectronApplication, Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { sendAppCommand } from './support/app';
+import { submitTerminalCommand } from './support/terminal';
 import { settledTerminalSessionId } from './support/terminal-session';
 import { typeInVisibleTerminal } from './support/terminal-input';
 import {
@@ -466,6 +468,93 @@ test.describe('project tabs', () => {
 				compactSwitcherBox.width -
 				(countBox.x + countBox.width),
 		).toBeLessThan(28);
+	});
+
+	test('project tab activity badges keep the overflow strip measured and reach the switcher rows', async ({
+		mainWindow,
+		electronApp,
+	}) => {
+		const addProjectButton = mainWindow.getByLabel(
+			'Create project on This server',
+		);
+		for (let index = 0; index < 11; index += 1) {
+			await addProjectButton.click();
+		}
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(12);
+
+		const nativeWindow = await electronApp.browserWindow(mainWindow);
+		await nativeWindow.evaluate((window) => {
+			window.setBounds({ x: 40, y: 40, width: 720, height: 700 });
+		});
+		const strip = mainWindow.locator('.project-tabbar-projects');
+		await expect(strip).toHaveClass(/project-tabbar-projects--overflow/);
+		const activeTitle = (
+			await mainWindow
+				.locator('.project-tab--active .project-tab-title')
+				.textContent()
+		)?.trim();
+		if (!activeTitle) throw new Error('Expected an active project title');
+		const hiddenBefore = Number(
+			await strip.getAttribute('data-project-tab-hidden-count'),
+		);
+		expect(hiddenBefore).toBeGreaterThan(0);
+
+		// Finish a command in a background terminal of the active project so its
+		// tab grows a badge while the strip is already full.
+		await sendAppCommand(mainWindow, 'new-terminal');
+		const terminalTabs = mainWindow.locator(
+			'.project-workspace--active .terminal-tab-content',
+		);
+		await expect(terminalTabs).toHaveCount(2);
+		await terminalTabs.filter({ hasText: 'Terminal 2' }).click();
+		await submitTerminalCommand(
+			mainWindow,
+			"sleep 1.1; printf '\\033]133;C\\007'; printf '\\033]133;D;0\\007'\r",
+		);
+		await terminalTabs.filter({ hasText: 'Terminal 1' }).click();
+
+		const badge = mainWindow.locator(
+			'.project-tab--active .project-tab-activity-badge',
+		);
+		await expect(badge).toHaveText('1');
+		await expect(badge).toHaveClass(/project-tab-activity-badge--unviewed/);
+
+		// The overflow layout re-ran: trailing chrome stays visible and the strip
+		// still meets the new-project control.
+		const add = mainWindow.locator('.project-tab-add-box');
+		await expect(add).toBeVisible();
+		await expect(mainWindow.locator('.remote-access-button')).toBeVisible();
+		await expect
+			.poll(async () => {
+				const stripBox = await strip.boundingBox();
+				const addBox = await add.boundingBox();
+				if (!stripBox || !addBox) return Number.POSITIVE_INFINITY;
+				return addBox.x - (stripBox.x + stripBox.width);
+			})
+			.toBeLessThan(8);
+		const hiddenAfter = Number(
+			await strip.getAttribute('data-project-tab-hidden-count'),
+		);
+		expect(hiddenAfter).toBeGreaterThanOrEqual(hiddenBefore);
+		await expect(mainWindow.locator('.project-tab--active')).toBeVisible();
+
+		// The compact switcher rows carry the same badge.
+		await nativeWindow.evaluate((window) => {
+			window.setBounds({ x: 40, y: 40, width: 390, height: 740 });
+		});
+		await expect(strip).toHaveAttribute('data-project-tab-layout', 'compact');
+		await mainWindow.locator('.project-switcher-button').click();
+		const activeRow = mainWindow
+			.locator('.project-switcher-menu__item')
+			.filter({ hasText: activeTitle });
+		const rowBadge = activeRow.locator('.project-tab-activity-badge');
+		await expect(rowBadge).toHaveText('1');
+		await expect(rowBadge).toHaveClass(/project-tab-activity-badge--unviewed/);
+		await expect(
+			mainWindow.locator(
+				'.project-switcher-menu__item .project-tab-activity-badge',
+			),
+		).toHaveCount(1);
 	});
 
 	test('reorders visible project tabs when one is dragged along the strip', async ({

@@ -165,3 +165,60 @@ test("raw PTY throughput refreshes expiry without publishing timestamp-only tran
   assert.equal(idle[0].snapshot.status, "idle");
   assert.equal(idle[0].snapshot.updatedAt, 2_010);
 });
+
+test("shell start-up noise never reads as finished before the session settles", () => {
+  const reducer = createTerminalActivityReducer({ rawActivityMs: 10, now: () => 0 });
+  reducer.register("session-a", "project-a", 0);
+
+  // rc files spawn children, the prompt paints late: all before any input.
+  const busy = reducer.applySignal("session-a", { kind: "foreground", busy: true, processName: "node" }, { now: 1 });
+  assert.equal(busy.snapshot.foregroundBusy, true);
+  const idle = reducer.applySignal("session-a", { kind: "foreground", busy: false, processName: "zsh" }, { now: 2 });
+  assert.equal(idle.snapshot.acknowledged, true);
+  const prompt = reducer.applyRawOutput("session-a", { now: 30 });
+  assert.equal(prompt.snapshot.status, "working");
+  assert.equal(prompt.snapshot.acknowledged, true);
+  reducer.tick(41);
+  const settledPrompt = reducer.snapshot().sessions["session-a"];
+  assert.equal(settledPrompt.status, "idle");
+  assert.equal(settledPrompt.acknowledged, true);
+
+  // A lone finished marker at the first prompt is start-up noise too.
+  const loneFinished = reducer.applySignal("session-a", { kind: "command", phase: "finished", exitCode: 0 }, { now: 60 });
+  assert.equal(loneFinished.snapshot.acknowledged, true);
+
+  // A bell is an explicit request and still raises attention.
+  const bell = reducer.applySignal("session-a", { kind: "bell" }, { now: 70 });
+  assert.equal(bell.snapshot.attention, true);
+  assert.equal(bell.snapshot.acknowledged, false);
+});
+
+test("typing settles a session so later output stops as finished", () => {
+  const reducer = createTerminalActivityReducer({ rawActivityMs: 10, now: () => 0 });
+  reducer.applySignal("session-a", { kind: "userInput" }, { now: 1 });
+  reducer.applyRawOutput("session-a", { now: 2_000 });
+  reducer.tick(2_011);
+  const finished = reducer.snapshot().sessions["session-a"];
+  assert.equal(finished.status, "idle");
+  assert.equal(finished.acknowledged, false);
+});
+
+test("a structured executing marker settles a session without typing", () => {
+  const reducer = createTerminalActivityReducer({ now: () => 0 });
+  reducer.applySignal("session-a", { kind: "command", phase: "executing" }, { now: 1 });
+  const finished = reducer.applySignal("session-a", { kind: "command", phase: "finished", exitCode: 0 }, { now: 5_000 });
+  assert.equal(finished.snapshot.status, "idle");
+  assert.equal(finished.snapshot.acknowledged, false);
+  assert.equal(finished.snapshot.exitCode, 0);
+
+  const progressReducer = createTerminalActivityReducer({ now: () => 0 });
+  progressReducer.applySignal("session-b", { kind: "progress", state: 3 }, { now: 1 });
+  const done = progressReducer.applySignal("session-b", { kind: "progress", state: 0 }, { now: 5_000 });
+  assert.equal(done.snapshot.acknowledged, false);
+
+  const foregroundReducer = createTerminalActivityReducer({ now: () => 0 });
+  foregroundReducer.applySignal("session-c", { kind: "userInput" }, { now: 1 });
+  foregroundReducer.applySignal("session-c", { kind: "foreground", busy: true, processName: "sleep" }, { now: 2 });
+  const shell = foregroundReducer.applySignal("session-c", { kind: "foreground", busy: false, processName: "zsh" }, { now: 5_000 });
+  assert.equal(shell.snapshot.acknowledged, false);
+});
