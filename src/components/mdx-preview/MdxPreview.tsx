@@ -87,6 +87,13 @@ export function MdxPreview({
 			title="MDX preview"
 			sandbox="allow-scripts"
 			referrerPolicy="no-referrer"
+			style={{
+				display: 'block',
+				width: '100%',
+				height: '100%',
+				minHeight: 240,
+				border: 0,
+			}}
 		/>
 	);
 }
