@@ -1,8 +1,11 @@
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
-import { activeTerminalSessionId, createTerminal } from './support/terminal-session';
 import { sendAppCommand } from './support/app';
 import { typeInVisibleTerminal } from './support/terminal-input';
+import {
+	activeTerminalSessionId,
+	createTerminal,
+} from './support/terminal-session';
 import {
 	cancelEditWindow,
 	contextMenuItem,
@@ -71,6 +74,77 @@ async function expectTerminalInputFocused(page: Page): Promise<void> {
 			),
 		)
 		.toBe(true);
+}
+
+const TERMINAL_TAP_DRAG_PX = 40;
+
+function visibleTerminalRoot(page: Page) {
+	return page.locator(
+		'.project-workspace--active .terminal-panel:visible .terminal-panel-root',
+	);
+}
+
+async function blurTerminalInput(page: Page): Promise<void> {
+	await page.evaluate(() => {
+		const active = document.activeElement;
+		if (active instanceof HTMLElement) active.blur();
+	});
+	await expect
+		.poll(async () =>
+			page.evaluate(
+				() =>
+					document.activeElement?.classList.contains('xterm-helper-textarea') ??
+					false,
+			),
+		)
+		.toBe(false);
+}
+
+async function dispatchTerminalTouchPointer(
+	page: Page,
+	type: 'pointerdown' | 'pointermove' | 'pointerup' | 'pointercancel',
+	point: { x: number; y: number },
+): Promise<void> {
+	await visibleTerminalRoot(page).evaluate(
+		(root, payload) => {
+			root.dispatchEvent(
+				new PointerEvent(payload.type, {
+					bubbles: true,
+					cancelable: true,
+					clientX: payload.x,
+					clientY: payload.y,
+					composed: true,
+					isPrimary: true,
+					pointerId: 1,
+					pointerType: 'touch',
+				}),
+			);
+		},
+		{ type, x: point.x, y: point.y },
+	);
+}
+
+async function terminalRootPoint(page: Page, offsetY = 0) {
+	const box = await visibleTerminalRoot(page).boundingBox();
+	if (!box) throw new Error('Terminal surface geometry is unavailable');
+	return {
+		x: box.x + box.width / 2,
+		y: box.y + Math.min(box.height / 2 + offsetY, box.height - 4),
+	};
+}
+
+async function tapTerminalSurface(page: Page): Promise<void> {
+	const point = await terminalRootPoint(page);
+	await dispatchTerminalTouchPointer(page, 'pointerdown', point);
+	await dispatchTerminalTouchPointer(page, 'pointerup', point);
+}
+
+async function dragTerminalSurface(page: Page): Promise<void> {
+	const start = await terminalRootPoint(page, -20);
+	const end = { x: start.x, y: start.y + TERMINAL_TAP_DRAG_PX };
+	await dispatchTerminalTouchPointer(page, 'pointerdown', start);
+	await dispatchTerminalTouchPointer(page, 'pointermove', end);
+	await dispatchTerminalTouchPointer(page, 'pointerup', end);
 }
 
 async function expectNoRenderedTerminalSelection(page: Page): Promise<void> {
@@ -173,15 +247,19 @@ test.describe('terminal behavior', () => {
 		);
 		await terminal.evaluate((element) => {
 			const file = (
-				document.querySelector('#terminal-native-drop-source') as HTMLInputElement
+				document.querySelector(
+					'#terminal-native-drop-source',
+				) as HTMLInputElement
 			).files?.[0];
-			if (!file) throw new Error('The native screenshot fixture is unavailable.');
+			if (!file)
+				throw new Error('The native screenshot fixture is unavailable.');
 
 			// The Desktop path bridge must resolve a native File before the renderer
 			// attempts a browser upload. This recreates the observed failure mode:
 			// native Finder drops cannot be uploaded, but their paths remain valid.
 			Object.defineProperty(file, 'arrayBuffer', {
-				value: () => Promise.reject(new Error('native file bytes are unavailable')),
+				value: () =>
+					Promise.reject(new Error('native file bytes are unavailable')),
 			});
 			const transfer = new DataTransfer();
 			transfer.items.add(file);
@@ -482,12 +560,16 @@ test.describe('terminal behavior', () => {
 			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL9WQAAAABJRU5ErkJggg==';
 
 		await electronApp.evaluate(({ clipboard, nativeImage }, png) => {
-			clipboard.writeImage(nativeImage.createFromBuffer(Buffer.from(png, 'base64')));
+			clipboard.writeImage(
+				nativeImage.createFromBuffer(Buffer.from(png, 'base64')),
+			);
 		}, imagePng);
 
 		await writeToTerminal(mainWindow, 'test -f ');
 		await mainWindow.keyboard.press('Control+Shift+V');
-		await mainWindow.keyboard.type(" && printf 'terminay-clipboard-image-paste\\n'");
+		await mainWindow.keyboard.type(
+			" && printf 'terminay-clipboard-image-paste\\n'",
+		);
 		await mainWindow.keyboard.press('Enter');
 
 		await expect(
@@ -1351,5 +1433,112 @@ test.describe('terminal behavior', () => {
 		await expect(remaining.locator('.xterm-rows')).toContainText(marker, {
 			timeout: 8_000,
 		});
+	});
+
+	test('tapping the xterm surface focuses the helper textarea', async ({
+		mainWindow,
+	}) => {
+		await expect(visibleTerminalRoot(mainWindow)).toBeVisible();
+		await blurTerminalInput(mainWindow);
+		await tapTerminalSurface(mainWindow);
+		await expectTerminalInputFocused(mainWindow);
+	});
+
+	test('dragging across the xterm surface does not focus the helper textarea', async ({
+		mainWindow,
+	}) => {
+		await expect(visibleTerminalRoot(mainWindow)).toBeVisible();
+		await blurTerminalInput(mainWindow);
+		await dragTerminalSurface(mainWindow);
+		await expect
+			.poll(async () =>
+				mainWindow.evaluate(
+					() =>
+						document.activeElement?.classList.contains(
+							'xterm-helper-textarea',
+						) ?? false,
+				),
+			)
+			.toBe(false);
+	});
+
+	test('dragging the terminal does not suppress buffer scrolling', async ({
+		mainWindow,
+	}) => {
+		const panel = mainWindow.locator(
+			'.project-workspace--active .terminal-panel:visible',
+		);
+		const rows = panel.locator('.xterm-rows');
+		await writeToTerminal(
+			mainWindow,
+			'seq 1 80 | while read line; do printf \'scroll-line-%s\\n\' "$line"; done\r',
+		);
+		await expect(rows).toContainText('scroll-line-80', { timeout: 10_000 });
+
+		const before = await rows.locator('div').first().innerText();
+		await dragTerminalSurface(mainWindow);
+		const dragDidNotCancel = await visibleTerminalRoot(mainWindow).evaluate(
+			(root) => {
+				let prevented = false;
+				const onMove = (event: Event) => {
+					prevented = event.defaultPrevented;
+				};
+				root.addEventListener('pointermove', onMove);
+				root.dispatchEvent(
+					new PointerEvent('pointermove', {
+						bubbles: true,
+						cancelable: true,
+						clientX: 20,
+						clientY: 80,
+						isPrimary: true,
+						pointerId: 1,
+						pointerType: 'touch',
+					}),
+				);
+				root.removeEventListener('pointermove', onMove);
+				return !prevented;
+			},
+		);
+		expect(dragDidNotCancel).toBe(true);
+
+		await visibleTerminalRoot(mainWindow).hover();
+		await mainWindow.mouse.wheel(0, -1200);
+		await expect
+			.poll(async () => rows.locator('div').first().innerText())
+			.not.toBe(before);
+	});
+
+	test('scrolling a focused terminal neither blurs it nor dismisses the accessory row', async ({
+		mainWindow,
+	}) => {
+		await expectTerminalInputFocused(mainWindow);
+		const accessoryShown = await mainWindow.evaluate(() => {
+			const viewport = window.visualViewport;
+			if (viewport === null) return false;
+			try {
+				const reduced = Math.max(120, viewport.height - 240);
+				Object.defineProperty(viewport, 'height', {
+					configurable: true,
+					get: () => reduced,
+				});
+				viewport.dispatchEvent(new Event('resize'));
+				return true;
+			} catch {
+				return false;
+			}
+		});
+		if (accessoryShown) {
+			await expect(
+				mainWindow.locator('.terminal-mobile-keyboard-accessory'),
+			).toHaveCount(1);
+		}
+
+		await dragTerminalSurface(mainWindow);
+		await expectTerminalInputFocused(mainWindow);
+		if (accessoryShown) {
+			await expect(
+				mainWindow.locator('.terminal-mobile-keyboard-accessory'),
+			).toHaveCount(1);
+		}
 	});
 });

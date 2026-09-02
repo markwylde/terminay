@@ -7,12 +7,12 @@ import type {
 	TerminalClientIdentity,
 	TerminalPanelAttachment,
 	TerminalPresentationState,
+	TerminalRecoveryAttemptOutcome,
 	TerminalStreamEvent,
 	TerminalStreamSkipEvent,
 	TerminayClient,
 	TerminayGitClient,
 } from '@terminay/client-core';
-import type { TerminalRecoveryAttemptOutcome } from '@terminay/client-core';
 import {
 	isRecoverableSkip,
 	TerminalRecoveryController,
@@ -38,6 +38,7 @@ import {
 	useRef,
 	useState,
 } from 'react';
+import { LONG_PRESS_MOVE_THRESHOLD_PX } from '../hooks/useLongPress';
 import { useTerminalSettings } from '../hooks/useTerminalSettings';
 import {
 	canReadTerminalClipboard,
@@ -80,18 +81,19 @@ import {
 	shouldRestoreTerminalFocusAfterWindowActivation,
 } from './terminalFocusInteraction';
 import { createTerminalLinkInteraction } from './terminalLinkInteraction';
-import { shouldInsertTerminalMultilineNewline } from './terminalMultilineInteraction';
-import { shouldReturnFocusToTerminalFromNote } from './terminalNoteInteraction';
 import {
 	applyTerminalMobileModifiers,
+	createTerminalTapSession,
 	EMPTY_TERMINAL_MOBILE_MODIFIERS,
 	hasTerminalMobileModifier,
 	shouldFocusTerminalForTouchPointer,
 	shouldFocusTerminalForTouchStart,
-	toggleTerminalMobileModifier,
 	type TerminalMobileModifier,
 	type TerminalMobileModifiers,
+	toggleTerminalMobileModifier,
 } from './terminalMobileKeyboardInteraction';
+import { shouldInsertTerminalMultilineNewline } from './terminalMultilineInteraction';
+import { shouldReturnFocusToTerminalFromNote } from './terminalNoteInteraction';
 import {
 	isTerminalRetryActionable,
 	type TerminalPanelBinding,
@@ -531,9 +533,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	const [isRemoteSizeOverrideActive, setIsRemoteSizeOverrideActive] =
 		useState(false);
 	const [isTerminalHydrating, setIsTerminalHydrating] = useState(true);
-	const [terminalPasteProgress, setTerminalPasteProgress] = useState<
-		Pick<TerminalPasteProgress, 'completedBytes' | 'totalBytes'> | null
-	>(null);
+	const [terminalPasteProgress, setTerminalPasteProgress] = useState<Pick<
+		TerminalPasteProgress,
+		'completedBytes' | 'totalBytes'
+	> | null>(null);
 	const [serverTerminalError, setServerTerminalError] = useState<string | null>(
 		null,
 	);
@@ -641,7 +644,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			const widthChanged =
 				mobileKeyboardViewportWidthRef.current !== 0 &&
 				Math.abs(viewport.width - mobileKeyboardViewportWidthRef.current) > 80;
-			if (widthChanged || viewport.height > mobileKeyboardViewportMaximumRef.current) {
+			if (
+				widthChanged ||
+				viewport.height > mobileKeyboardViewportMaximumRef.current
+			) {
 				mobileKeyboardViewportMaximumRef.current = viewport.height;
 			}
 			mobileKeyboardViewportWidthRef.current = viewport.width;
@@ -871,9 +877,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		// Set once the server-terminal branch below is entered. Recovery is
 		// scheduled out here so transport failures can stand it down, but only
 		// that branch knows how to tear a live attachment down and re-attach.
-		let requestRecoveryAttach:
-			| (() => TerminalRecoveryAttemptOutcome)
-			| null = null;
+		let requestRecoveryAttach: (() => TerminalRecoveryAttemptOutcome) | null =
+			null;
 		let prepareRecovery: ((event: TerminalStreamSkipEvent) => void) | null =
 			null;
 		let recoveryFailureReason: 'attach-error' | 'deadline' = 'attach-error';
@@ -887,7 +892,12 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				durationMs?: number;
 				fromPosition?: number;
 				outputPosition?: number;
-				reason?: 'congestion' | 'attachment_closed' | 'hydration' | 'attach-error' | 'deadline';
+				reason?:
+					| 'congestion'
+					| 'attachment_closed'
+					| 'hydration'
+					| 'attach-error'
+					| 'deadline';
 				toPosition?: number;
 			} = {},
 		) => {
@@ -1361,8 +1371,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 							window.requestAnimationFrame(() => resolve()),
 						),
 				);
-				cancelTerminalPasteRef.current = () =>
-					serverInputQueue?.cancelPaste();
+				cancelTerminalPasteRef.current = () => serverInputQueue?.cancelPaste();
 				const attachmentClient = client ?? panelClient;
 				const nextRequest = {
 					...request,
@@ -1685,9 +1694,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				panelEventDisposer = null;
 				terminalPresentationActionRef.current = async () => {
 					queuedPresentationAction =
-						latestPresentation?.holder === undefined
-							? 'acquire'
-							: 'takeover';
+						latestPresentation?.holder === undefined ? 'acquire' : 'takeover';
 				};
 				panelAttachment = null;
 				if (activeBinding !== null) bindingFence.retire(activeBinding);
@@ -1865,22 +1872,66 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
 		// xterm 6.1 owns touch panning, but its gesture listener cancels the
 		// compatibility mousedown that normally focuses its helper textarea.
-		// Focus while the trusted touch event is still in flight so iOS may show
-		// the software keyboard; do not cancel or stop the event, since xterm
-		// must still receive it for native scrolling and TUI input.
+		// Arm a tap session on down and claim focus on a still release while
+		// that trusted event is still in flight so iOS may show the software
+		// keyboard. Do not cancel or stop the event: xterm must still receive
+		// it for native scrolling and TUI input.
+		const tapSession = createTerminalTapSession({
+			moveThresholdPx: LONG_PRESS_MOVE_THRESHOLD_PX,
+		});
 		const focusTerminalFromTouch = () => {
 			terminal.focus();
 			announceTerminalFocus();
 		};
+		const legacyTouchPoint = (event: TouchEvent) => {
+			const touch = event.changedTouches.item(0);
+			if (touch === null) return null;
+			return {
+				clientX: touch.clientX,
+				clientY: touch.clientY,
+				pointerId: touch.identifier,
+			};
+		};
 
 		const handleTouchPointerDown = (event: PointerEvent) => {
 			if (!shouldFocusTerminalForTouchPointer(event.pointerType)) return;
+			tapSession.pointerDown(event);
+		};
+		const handleTouchPointerMove = (event: PointerEvent) => {
+			tapSession.pointerMove(event);
+		};
+		const handleTouchPointerUp = (event: PointerEvent) => {
+			if (!tapSession.pointerUp(event)) return;
 			focusTerminalFromTouch();
 		};
+		const handleTouchPointerCancel = (event: PointerEvent) => {
+			tapSession.pointerCancel(event);
+		};
 
-		const handleTouchStart = () => {
+		const handleTouchStart = (event: TouchEvent) => {
 			if (!shouldFocusTerminalForTouchStart('PointerEvent' in window)) return;
+			const point = legacyTouchPoint(event);
+			if (point === null) return;
+			tapSession.pointerDown(point);
+		};
+		const handleTouchMove = (event: TouchEvent) => {
+			if (!shouldFocusTerminalForTouchStart('PointerEvent' in window)) return;
+			const point = legacyTouchPoint(event);
+			if (point === null) return;
+			tapSession.pointerMove(point);
+		};
+		const handleTouchEnd = (event: TouchEvent) => {
+			if (!shouldFocusTerminalForTouchStart('PointerEvent' in window)) return;
+			const point = legacyTouchPoint(event);
+			if (point === null) return;
+			if (!tapSession.pointerUp(point)) return;
 			focusTerminalFromTouch();
+		};
+		const handleTouchCancel = (event: TouchEvent) => {
+			if (!shouldFocusTerminalForTouchStart('PointerEvent' in window)) return;
+			const point = legacyTouchPoint(event);
+			if (point === null) return;
+			tapSession.pointerCancel(point);
 		};
 
 		const reassertTerminalFocus = () => {
@@ -2159,7 +2210,13 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		root.addEventListener('pointerdown', announceTerminalUserInput);
 		root.addEventListener('pointerdown', markPointerDownInside);
 		root.addEventListener('pointerdown', handleTouchPointerDown);
+		root.addEventListener('pointermove', handleTouchPointerMove);
+		root.addEventListener('pointerup', handleTouchPointerUp);
+		root.addEventListener('pointercancel', handleTouchPointerCancel);
 		root.addEventListener('touchstart', handleTouchStart);
+		root.addEventListener('touchmove', handleTouchMove);
+		root.addEventListener('touchend', handleTouchEnd);
+		root.addEventListener('touchcancel', handleTouchCancel);
 		window.addEventListener('focus', handleWindowRefocus);
 		window.addEventListener('focus', repaintTerminalOnWindowFocus);
 		window.addEventListener('terminay-focus-terminal', focusTerminal);
@@ -2204,7 +2261,14 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			root.removeEventListener('pointerdown', announceTerminalUserInput);
 			root.removeEventListener('pointerdown', markPointerDownInside);
 			root.removeEventListener('pointerdown', handleTouchPointerDown);
+			root.removeEventListener('pointermove', handleTouchPointerMove);
+			root.removeEventListener('pointerup', handleTouchPointerUp);
+			root.removeEventListener('pointercancel', handleTouchPointerCancel);
 			root.removeEventListener('touchstart', handleTouchStart);
+			root.removeEventListener('touchmove', handleTouchMove);
+			root.removeEventListener('touchend', handleTouchEnd);
+			root.removeEventListener('touchcancel', handleTouchCancel);
+			tapSession.dispose();
 			window.removeEventListener('focus', handleWindowRefocus);
 			window.removeEventListener('focus', repaintTerminalOnWindowFocus);
 			if (refocusFrame !== null) {
@@ -2660,9 +2724,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			) : null}
 			<div className="terminal-panel-root" ref={xtermRootRef} />
 			{terminalPasteProgress ? (
-				<div
-					className="terminal-paste-progress"
-				>
+				<div className="terminal-paste-progress">
 					<span
 						role="status"
 						aria-live="polite"
