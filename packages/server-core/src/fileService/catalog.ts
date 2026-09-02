@@ -880,7 +880,8 @@ function classifyPreview(
 		extension === 'md' ||
 		extension === 'markdown' ||
 		extension === 'mdown' ||
-		extension === 'mkd';
+		extension === 'mkd' ||
+		extension === 'mdx';
 	const utf8 = decodeUtf8(sample);
 	const hasNul = sample.includes(0);
 	const knownText =
@@ -969,6 +970,7 @@ function mimeTypeFor(
 		markdown: 'text/markdown',
 		mdown: 'text/markdown',
 		mkd: 'text/markdown',
+		mdx: 'text/markdown',
 		txt: 'text/plain',
 		text: 'text/plain',
 		json: 'application/json',
