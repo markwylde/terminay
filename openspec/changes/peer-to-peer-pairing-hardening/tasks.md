@@ -31,16 +31,16 @@
 - [x] 5.2 Add `pairing` mode to `createDesktopBootstrappedWebRtcConnection`: derive secrets with `deriveHostedPairingSecrets`, send `client-join` with a fresh nonce, verify the pairing authenticator, and return the pinned host key via `onPinned`, verified by the shared vectors and the adversarial signaling harness
 - [x] 5.3 Add the `device-join` proof to Desktop `device` mode and run challenge, verify, and application auth over the `api` and `control` lanes, verified by a reconnect test that asserts no HTTPS request leaves the host
 - [x] 5.4 Route `establishDesktopDevicePairing` and `createDesktopReconnectTransport` through the WebRTC client for every non-loopback origin and store the host key with `saveDeviceIdentity`, keeping HTTPS only for loopback, verified by tests for both origins
-- [ ] 5.5 Show the match code in Desktop **Add connection** while awaiting approval and drop `pairingPin` from `connection.pair` in `nativeActions.ts` and `main.ts`, verified by the Electron e2e suite run through `npm run test:e2e`
+- [x] 5.5 Show the match code in Desktop **Add connection** while awaiting approval and drop `pairingPin` from `connection.pair` in `nativeActions.ts` and `main.ts`, verified by the Electron e2e suite run through `npm run test:e2e`
 
 ## 6. Host UI and CLI surfaces
 
 - [x] 6.1 Replace the PIN modal in `RemoteExposurePanel.tsx` and the PIN field in `RemotePairingModal.tsx` with the pending-approval view (device name, match code, Approve, Deny) that swaps in for the QR and restores a fresh QR after the decision, verified by component tests
-- [ ] 6.2 Add pending approvals and **Reset server identity** to the Remote Control Exposure cards and raise a Desktop notification on a new request that opens Remote Control on it, verified by the Electron e2e suite
+- [x] 6.2 Add pending approvals and **Reset server identity** to the Remote Control Exposure cards and raise a Desktop notification on a new request that opens Remote Control on it, verified by the Electron e2e suite
 - [x] 6.3 Update `docs/operations/standalone-server.md` and `docker-pairing-smoke.md` to remove the PIN variable and document approval over the control socket, verified by the docker pairing smoke passing without the variable
 
 ## 7. Security evidence and external contract
 
 - [x] 7.1 Extend the adversarial signaling harness with Desktop pairing and reconnect, a captured-QR race showing differing match codes, an unauthenticated `device-join` against a live peer, and ticket replay across peers, verified by every case failing closed
 - [ ] 7.2 Publish the version-2 contract (match code vectors, `device-join` proof, approval shapes) to the hosted browser shell and relay owners and record their conformance run under `openspec/adr/evidence/`, verified before this change is archived
-- [ ] 7.3 Run `openspec validate --all` and the full security test lane, verified green in CI
+- [x] 7.3 Run `openspec validate --all` and the full security test lane, verified green in CI
