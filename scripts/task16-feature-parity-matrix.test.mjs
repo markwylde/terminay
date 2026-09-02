@@ -1,18 +1,25 @@
 import assert from 'node:assert/strict'
-import { readdir, readFile } from 'node:fs/promises'
+import { access, readdir, readFile } from 'node:fs/promises'
 import test from 'node:test'
 
-const featureDirectory = new URL('../specs/features/', import.meta.url)
-const matrix = await readFile(new URL('../specs/decisions/evidence/task16-feature-parity-matrix.md', import.meta.url), 'utf8')
+const capabilityDirectory = new URL('../openspec/specs/', import.meta.url)
+const matrix = await readFile(new URL('../openspec/adr/evidence/task16-feature-parity-matrix.md', import.meta.url), 'utf8')
 
-test('Task 16 feature parity matrix covers every canonical feature spec', async () => {
-	const features = (await readdir(featureDirectory))
-		.filter(name => name.endsWith('.md') && name !== 'AGENTS.md')
-		.sort()
+// The matrix is frozen Task 16-era evidence naming the 17 feature specs that
+// existed when it was written. Every row must still resolve to a canonical
+// OpenSpec capability; capabilities added after Task 16 are out of its scope.
+const matrixCapabilities = [...matrix.matchAll(/^\| `([a-z0-9-]+)\.md` \|/gmu)].map(match => match[1])
 
-	assert.equal(features.length, 17)
-	for (const feature of features) {
-		assert.ok(matrix.includes(`\`${feature}\``), `matrix is missing ${feature}`)
+test('Task 16 feature parity matrix names only canonical OpenSpec capabilities', async () => {
+	assert.equal(matrixCapabilities.length, 17)
+	const capabilities = new Set(
+		(await readdir(capabilityDirectory, { withFileTypes: true }))
+			.filter(entry => entry.isDirectory())
+			.map(entry => entry.name),
+	)
+	for (const capability of matrixCapabilities) {
+		assert.ok(capabilities.has(capability), `matrix names a missing capability: ${capability}`)
+		await access(new URL(`${capability}/spec.md`, capabilityDirectory))
 	}
 })
 

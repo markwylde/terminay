@@ -1,0 +1,2 @@
+architectural-decision-records
+openspec-git-discipline

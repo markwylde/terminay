@@ -1,0 +1,59 @@
+schema: spec-driven-with-adr
+
+context: |
+  Terminay is a local-first, server-backed terminal workspace for software
+  projects: native shell sessions, project-aware tabs, file and Git tools,
+  automation, AI-agent awareness, recording, and secure remote access.
+
+  Repository layout:
+    apps/terminay-server/  Terminay Server (workspace, PTY, protocol, extensions)
+    electron/              Terminay Desktop privileged main process
+    src/                   Shared responsive workspace UI bundled by the server
+    extensions/            Official project-environment extensions (SSH, Puzed)
+    packages/              Shared libraries
+    e2e/                   Playwright end-to-end suites
+    scripts/               Build, release, and supply-chain governance scripts
+    docs/product-overview.md  Product purpose, core model, architecture boundaries
+    docs/operations/       Operator runbooks
+    openspec/adr/          Durable architecture decision records (+ evidence/)
+
+  Tech stack: TypeScript, Electron, React, Vite, Node.js, Playwright, Vitest,
+  Biome, Turbo, WebRTC (vendored secure-werift runtime), Docker.
+
+  Architecture boundaries that specs must respect:
+    - Terminay Server owns terminal-session lifecycle, workspace state,
+      persistence, project-environment routing, extensions, filesystem and Git
+      authorization, recordings, agents, MCP, automation, server-scoped
+      settings and secrets, device trust, and remote exposure.
+    - Desktop and browser hosts are protocol-blind connection hosts around the
+      server-bundled workspace UI. They never install project-environment
+      extensions nor hold their credentials.
+    - Renderer and client code is untrusted at every privileged boundary. It
+      gets no Node access and no ambient Electron IPC.
+    - Project/window and terminal-session boundaries are security boundaries for
+      remote access, MCP, recordings, and agent status. Titles, focus, and
+      client-supplied paths never define authority.
+    - Hosted services are data-blind: terminal, filesystem, workspace,
+      recording, setting, and secret data never become hosted application data.
+
+  Conventions: conventional commits; Electron end-to-end tests run through
+  `npm run test:e2e`, which isolates Electron, Chromium, and Xvfb in Docker —
+  never run Playwright's Electron suite directly on the host.
+
+rules:
+  specs:
+    - Describe required product behaviour in present tense, as though the
+      specified behaviour has always been the product.
+    - Never describe legacy, deprecated, removed, replaced, transitional,
+      migration, cleanup, or backwards-compatibility behaviour in a main spec —
+      not even to say it no longer exists. That belongs in a change.
+    - Keep implementation detail only where it protects an architectural or
+      security boundary, or makes the contract testable.
+    - Every requirement needs at least one scenario. Scenarios use exactly four
+      hashes and WHEN/THEN bullets.
+  proposal:
+    - State the user-visible problem before the technical one.
+  design:
+    - Name the security or architectural boundary any decision crosses.
+  tasks:
+    - Every task states how its completion is verified.

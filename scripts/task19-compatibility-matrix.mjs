@@ -1,5 +1,5 @@
-import { access } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { access, readdir } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 
 export const TASK19_SURFACES = Object.freeze([
 	'local-desktop',
@@ -17,7 +17,7 @@ export const TASK19_ARCHITECTURE_EVIDENCE = Object.freeze([
 const featureRows = [
 	{
 		id: 'server-runtime-and-local-lifecycle',
-		spec: 'specs/tasks_completed/6-standalone-and-embedded-server-runtime.md',
+		spec: 'openspec/changes/archive/2026-08-01-standalone-and-embedded-server-runtime/tasks.md',
 		evidence: [
 			'apps/terminay-server/test/runtime-composition.test.mjs',
 			'apps/terminay-desktop/test/local-server.test.mjs',
@@ -32,14 +32,18 @@ const featureRows = [
 	},
 	{
 		id: 'server-mcp-control',
-		spec: 'specs/tasks_completed/10-server-mcp-control.md',
+		// The Task 10 change plan was deleted before the OpenSpec migration, so
+		// the canonical `mcp-server` capability spec is its surviving normative
+		// record. Its deleted server/e2e/client-core suites are likewise replaced
+		// by the MCP control and stdio suites that still exist.
+		spec: 'openspec/specs/mcp-server/spec.md',
 		evidence: [
-			'apps/terminay-server/test/mcp-server-owned.test.mjs',
+			'scripts/task9-mcp-control-environment.test.mjs',
 			'packages/responsive-ui/test/ui.test.mjs',
-			'e2e/mcp-server.spec.ts',
-			'packages/client-core/test/mcp-server-control.test.mjs',
+			'scripts/mcp-stdio.test.mjs',
+			'scripts/mcp-install-providers.test.mjs',
 			'e2e/shared-production-routes.spec.ts',
-			'specs/decisions/evidence/task19-mobile-chromium-mcp.md',
+			'openspec/adr/evidence/task19-mobile-chromium-mcp.md',
 		],
 		status: {
 			'local-desktop': 'contract',
@@ -51,7 +55,7 @@ const featureRows = [
 	},
 	{
 		id: 'shared-responsive-shell',
-		spec: 'specs/tasks_completed/16-shared-responsive-server-ui.md',
+		spec: 'openspec/changes/archive/2026-07-27-shared-responsive-server-ui/tasks.md',
 		evidence: [
 			'packages/responsive-ui/test/ui.test.mjs',
 			'scripts/canonical-workspace-production-graph.test.mjs',
@@ -69,7 +73,7 @@ const featureRows = [
 	},
 	{
 		id: 'workspace',
-		spec: 'specs/tasks_completed/5-server-owned-workspace-model.md',
+		spec: 'openspec/changes/archive/2026-07-27-server-owned-workspace-model/tasks.md',
 		evidence: [
 			'packages/server-core/test/repository.test.mjs',
 			'packages/client-core/test/workspace.test.mjs',
@@ -86,12 +90,12 @@ const featureRows = [
 	},
 	{
 		id: 'terminal',
-		spec: 'specs/tasks_completed/8-server-terminal-service.md',
+		spec: 'openspec/changes/archive/2026-08-01-server-terminal-service/tasks.md',
 		evidence: [
 			'packages/server-core/test/terminal-protocol.test.mjs',
 			'packages/responsive-ui/test/ui.test.mjs',
 			'e2e/shared-production-routes.spec.ts',
-			'specs/decisions/evidence/task19-mobile-chromium-terminal.md',
+			'openspec/adr/evidence/task19-mobile-chromium-terminal.md',
 		],
 		status: {
 			'local-desktop': 'contract',
@@ -103,7 +107,7 @@ const featureRows = [
 	},
 	{
 		id: 'activity-and-agents',
-		spec: 'specs/tasks_completed/9-server-activity-and-agent-services.md',
+		spec: 'openspec/changes/archive/2026-08-01-server-activity-and-agent-services/tasks.md',
 		evidence: [
 			'packages/server-core/test/agent-service.test.mjs',
 			'packages/client-core/test/agent-status.test.mjs',
@@ -122,7 +126,7 @@ const featureRows = [
 	},
 	{
 		id: 'files-and-file-viewer',
-		spec: 'specs/tasks_completed/11-server-files-and-file-viewer.md',
+		spec: 'openspec/changes/archive/2026-07-27-server-files-and-file-viewer/tasks.md',
 		evidence: [
 			'packages/server-core/test/file-viewer-client-e2e.test.mjs',
 			'scripts/shared-client-path.test.mjs',
@@ -131,7 +135,7 @@ const featureRows = [
 			'e2e/file-viewer-conflicts-large-files.spec.ts',
 			'e2e/file-viewer-modes.spec.ts',
 			'e2e/shared-production-routes.spec.ts',
-			'specs/decisions/evidence/task19-mobile-chromium-files.md',
+			'openspec/adr/evidence/task19-mobile-chromium-files.md',
 		],
 		status: {
 			'local-desktop': 'contract',
@@ -143,7 +147,7 @@ const featureRows = [
 	},
 	{
 		id: 'git-and-worktrees',
-		spec: 'specs/tasks_completed/12-server-git-worktrees-and-quick-push.md',
+		spec: 'openspec/changes/archive/2026-07-27-server-git-worktrees-and-quick-push/tasks.md',
 		evidence: [
 			'packages/server-core/test/git-framed-client.test.mjs',
 			'packages/server-core/test/git-remote-service.test.mjs',
@@ -160,7 +164,7 @@ const featureRows = [
 	},
 	{
 		id: 'recordings',
-		spec: 'specs/tasks_completed/13-server-recordings.md',
+		spec: 'openspec/changes/archive/2026-07-27-server-recordings/tasks.md',
 		evidence: [
 			'packages/client-core/test/recordings.test.mjs',
 			'packages/server-core/test/recordingService.test.mjs',
@@ -177,7 +181,7 @@ const featureRows = [
 	},
 	{
 		id: 'settings-and-macros',
-		spec: 'specs/tasks_completed/14-server-settings-secrets-and-macros.md',
+		spec: 'openspec/changes/archive/2026-07-27-server-settings-secrets-and-macros/tasks.md',
 		evidence: [
 			'packages/server-core/test/macro-protocol.test.mjs',
 			'scripts/task14-settings-client-path.test.mjs',
@@ -185,7 +189,7 @@ const featureRows = [
 			'e2e/settings.spec.ts',
 			'e2e/macros.spec.ts',
 			'e2e/shared-production-routes.spec.ts',
-			'specs/decisions/evidence/task19-mobile-chromium-settings.md',
+			'openspec/adr/evidence/task19-mobile-chromium-settings.md',
 		],
 		status: {
 			'local-desktop': 'contract',
@@ -197,7 +201,7 @@ const featureRows = [
 	},
 	{
 		id: 'ai-and-dictation',
-		spec: 'specs/tasks_completed/15-server-ai-and-dictation.md',
+		spec: 'openspec/changes/archive/2026-07-27-server-ai-and-dictation/tasks.md',
 		evidence: [
 			'packages/server-core/test/ai-protocol.test.mjs',
 			'packages/client-core/test/dictation.test.mjs',
@@ -205,7 +209,7 @@ const featureRows = [
 			'packages/responsive-ui/test/ui.test.mjs',
 			'e2e/ai-tab-metadata.spec.ts',
 			'e2e/mobile-dictation.spec.ts',
-			'specs/decisions/evidence/task19-mobile-chromium-dictation.md',
+			'openspec/adr/evidence/task19-mobile-chromium-dictation.md',
 		],
 		status: {
 			'local-desktop': 'contract',
@@ -217,7 +221,7 @@ const featureRows = [
 	},
 	{
 		id: 'connections-and-hosts',
-		spec: 'specs/tasks_completed/18-connection-menu-and-web-host.md',
+		spec: 'openspec/changes/archive/2026-08-01-connection-menu-and-web-host/tasks.md',
 		evidence: [
 			'packages/responsive-ui/test/ui.test.mjs',
 			'apps/terminay-desktop/test/connection-host.test.mjs',
@@ -233,7 +237,7 @@ const featureRows = [
 	},
 	{
 		id: 'device-pairing-and-authentication',
-		spec: 'specs/tasks/1-canonical-remote-pairing-and-pwa-manager.md',
+		spec: 'openspec/changes/archive/2026-08-15-canonical-remote-pairing-and-pwa-manager/tasks.md',
 		evidence: [
 			'packages/server-core/test/remote-device-authentication.test.mjs',
 			'apps/terminay-server/test/server-device-authentication.test.mjs',
@@ -278,16 +282,36 @@ export function summarizeTask19FeatureMatrix(matrix = TASK19_FEATURE_MATRIX) {
 	});
 }
 
+const ACTIVE_CHANGE_PREFIX = 'openspec/changes/';
+const ARCHIVED_CHANGE_PREFIX = 'openspec/changes/archive/';
+
+/**
+ * Resolve a change plan that may have been archived since the matrix was
+ * written. Archived changes keep their slug behind a `YYYY-MM-DD-` prefix, so
+ * an active `openspec/changes/<slug>/tasks.md` reference stays valid once the
+ * change moves to `openspec/changes/archive/<date>-<slug>/tasks.md`.
+ */
 async function accessTaskSpec(root, spec) {
 	const configuredPath = join(root, spec);
 	try {
 		await access(configuredPath);
 		return;
 	} catch (error) {
-		if (error?.code !== 'ENOENT' || !spec.startsWith('specs/tasks/'))
+		if (
+			error?.code !== 'ENOENT' ||
+			!spec.startsWith(ACTIVE_CHANGE_PREFIX) ||
+			spec.startsWith(ARCHIVED_CHANGE_PREFIX)
+		)
 			throw error;
 	}
-	await access(join(root, 'specs/tasks_completed', basename(spec)));
+	const slug = basename(dirname(spec));
+	const archiveRoot = join(root, ARCHIVED_CHANGE_PREFIX);
+	const archived = (await readdir(archiveRoot)).find((entry) =>
+		new RegExp(`^\\d{4}-\\d{2}-\\d{2}-${slug}$`, 'u').test(entry),
+	);
+	if (archived === undefined)
+		throw new Error(`ENOENT: no archived change for ${spec}`);
+	await access(join(archiveRoot, archived, basename(spec)));
 }
 
 /**
