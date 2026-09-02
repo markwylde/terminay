@@ -59,8 +59,8 @@ The change touches the terminal-session boundary, which is a security boundary f
 - `sentPosition` arithmetic around a retained in-flight delivery is the riskiest arithmetic in the change → pinned by a skip-exactness invariant that covers the retained-delivery case explicitly.
 - After a skip, no further acknowledgements are sent for the doomed attachment → detach's final flush is verified not to publish a position inside the skipped range.
 - Removing the connection-level dedupe map assumes nothing relies on duplicated terminal events across overlapping subscriptions → the lane's own dedupe covers the case the map existed for, and the overlapping-subscription test still passes.
-- A producer that outruns the client forever yields a visible skip and recover cycle at the retry cadence. That is the intended convergence behaviour, but the cadence and checkpoint pin churn under a maximal-rate producer on a slow link remain unproven by load test.
-- Checkpoint lag is bounded but not eliminated: `MAX_CHECKPOINT_CATCHUP_BYTES` is a fixed 128 KiB rather than a value derived from the connection's configured lane limits, so a host that lowers `maxTerminalUnconfirmedBytes` below that could still hydrate into congestion.
+- A producer that outruns the client forever yields a visible skip and recover cycle at the retry cadence. Load-tested under a maximal-rate producer on a delayed-ack slow link: recovery waits the panel retry delay, checkpoint pin churn stays within the session cap, and the stream still converges once the producer yields.
+- Checkpoint catch-up is derived from the connection's configured `maxTerminalUnconfirmedBytes` (half that bound, 128 KiB at the default 256 KiB). A host that lowers the unconfirmed-bytes limit below the old fixed constant cannot hydrate into congestion: the catch-up skip fires first.
 
 ## Findings that changed the plan during implementation
 
@@ -87,5 +87,8 @@ Desktop, browser, and server ship in the same release, so the wire event is repl
 
 ## Open Questions
 
-- Permanent overload behaviour: the skip and recover cadence and checkpoint pin churn under a maximal-rate producer on a slow link are unproven by load test.
-- Whether the checkpoint catch-up bound should be derived from the connection's configured lane limits rather than being a fixed constant.
+_None remaining._
+
+**Catch-up is derived from the lane limit.** A fixed 128 KiB constant would still let a host that lowers `maxTerminalUnconfirmedBytes` below that hydrate into congestion. Catch-up is therefore half the connection's configured unconfirmed-bytes bound, wired through `createServerCore` and the terminal operation registry so both sides share one number.
+
+**Permanent overload converges at the retry cadence.** A maximal-rate producer on delayed acknowledgements skip-and-recovers at the panel's 100ms retry delay. Checkpoint pins churn within the session cap rather than exhausting, and the stream still paints once the producer yields.

@@ -139,6 +139,11 @@ export interface ServerCoreOptions extends ServerIdentity, OperationRegistries {
   readonly heartbeatTimeoutMs?: number;
   readonly defaultQueryScope?: AuthScope;
   readonly defaultCommandScope?: AuthScope;
+  /** Presentation-lane unconfirmed-bytes bound. Catch-up on a fresh
+   * presentation is derived from this so a lowered host limit cannot
+   * hydrate into congestion. */
+  readonly maxTerminalUnconfirmedBytes?: number;
+
   /** Optional server-owned projection applied immediately before a journal
    * event is replayed or sent to an authenticated client. */
   readonly projectEvent?: (event: OrderedEvent, client: AuthenticatedClient | undefined) => OrderedEvent | undefined;

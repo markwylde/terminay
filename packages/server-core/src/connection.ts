@@ -98,7 +98,12 @@ export class ServerConnection implements ServerConnectionLike {
 		this.onDeliveryDiagnostic = connectionOptions.onDeliveryDiagnostic;
 		this.outbound = new OutboundDeliveryPump(
 			transport,
-			{ maxQueuedBytes: options.limits?.maxQueuedBytes ?? DEFAULT_PROTOCOL_LIMITS.maxQueuedBytes },
+			{
+				maxQueuedBytes: options.limits?.maxQueuedBytes ?? DEFAULT_PROTOCOL_LIMITS.maxQueuedBytes,
+				...(options.maxTerminalUnconfirmedBytes === undefined
+					? {}
+					: { maxTerminalUnconfirmedBytes: options.maxTerminalUnconfirmedBytes }),
+			},
 			(error, snapshot) => this.handleOutboundFailure(error, snapshot),
 			(congestion) => this.handleTerminalCongestion(congestion),
 		);
