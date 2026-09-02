@@ -1899,3 +1899,16 @@
     width: 100%;
   }
 }
+
+.settings-remote-approval-actions {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+}
+
+.settings-remote-match-code {
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 1.05em;
+	font-weight: 600;
+	letter-spacing: 0.2em;
+}

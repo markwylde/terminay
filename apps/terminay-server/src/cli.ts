@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import {
 	mkdirSync,
 	readFileSync,
@@ -95,7 +95,12 @@ import { resolveTerminalProcessCwd } from './processCwd.js';
 import { parseHostedIceServers, startHostedPairingHost } from './remote/hostedPairingHost.js';
 import { createHostedDiagnosticLogger } from './remote/hostedDiagnosticLog.js';
 import { loadHostedUiArchive } from './remote/hostedUiArchive.js';
-import { loadOrCreateHostedHostKey } from './remote/hostedHostKey.js';
+import { loadOrCreateHostedHostKey, rotateHostedHostKey } from './remote/hostedHostKey.js';
+import {
+	approvalSocketPath,
+	sendApprovalSocketRequest,
+	startApprovalSocket,
+} from './remote/approvalSocket.js';
 import { assertStandaloneReleaseIntegrity } from './releaseIntegrity.js';
 
 declare const process: {
@@ -145,9 +150,6 @@ else {
 			throw error;
 		}
 	}
-	const remotePairingPin = requiresRemotePairingPin(options)
-		? requiredRemotePairingPin(options)
-		: undefined;
 	const devicePersistence = createRemoteDevicePersistence(
 		options.dataRoot,
 	);
@@ -157,7 +159,11 @@ else {
 		devicePersistence.load(),
 	);
 	let protocolReady = false;
-	if (options.command === 'status') {
+	if (options.command === 'approve' || options.command === 'deny' || options.command === 'approvals') {
+		await runApprovalCommand(options);
+	} else if (options.command === 'reset-identity') {
+		await runResetIdentityCommand(options, remote, devicePersistence);
+	} else if (options.command === 'status') {
 		const runtime = createRuntime(options, remote);
 		process.stdout.write(`${JSON.stringify(runtime.diagnostics())}\n`);
 	} else if (options.command === 'pairing') {
@@ -179,12 +185,24 @@ else {
 		const composition = serverComposition.core;
 		let runtime: StandaloneRuntime | undefined;
 		let hostedPairingHost: { close(): Promise<void> } | undefined;
+		let approvalSocket: { close(): Promise<void> } | undefined;
+		// Pending devices are announced as metadata-only lines so a headless
+		// operator can compare the match code and run `terminay-server approve`.
+		const announceApproval = createHostedDiagnosticLogger(options.logSink);
+		remote.onApprovalRequested((pending) => {
+			announceApproval({
+				type: 'approval-pending',
+				approvalId: pending.approvalId,
+				deviceName: pending.deviceName,
+				matchCode: pending.matchCode,
+				expiresAt: new Date(pending.expiresAt).toISOString(),
+			});
+		});
 		const uiServer =
 			options.endpoint === 'disabled'
 				? undefined
 				: createProtocolServer(
 						options,
-						remotePairingPin!,
 						handoff.pairingToken,
 						handoff.expiresAt,
 						composition,
@@ -221,10 +239,15 @@ else {
 				if (serverComposition.workspaceWasCreated)
 					await ensureDefaultTerminalSession(composition);
 				await waitForProtocolEndpoint(uiServer);
+				approvalSocket = await startApprovalSocket({
+					socketPath: approvalSocketPath(options.dataRoot),
+					authority: {
+						listPendingApprovals: () => remote.listPendingApprovals(),
+						approveEnrollment: (approvalId) => remote.approveEnrollment(approvalId),
+						denyEnrollment: (approvalId) => remote.denyEnrollment(approvalId),
+					},
+				});
 				if (pairingUrlFormatForOrigin(options.remoteOrigin) === 'hosted-compact') {
-					if (remotePairingPin === undefined) {
-						throw new Error('TERMINAY_REMOTE_PAIRING_PIN is required for hosted pairing.');
-					}
 					const rendererDirectory = process.env.TERMINAY_UI_RENDERER_DIRECTORY;
 					hostedPairingHost = await startHostedPairingHost({
 						acceptApplication: (transport, authenticatedClient) =>
@@ -235,7 +258,6 @@ else {
 						),
 						onDiagnostic: createHostedDiagnosticLogger(options.logSink),
 						persistDevices: devicePersistence.save,
-						pin: remotePairingPin,
 						remote,
 						serverId: options.serverId,
 						signal: hostedSignalOptions(process.env),
@@ -269,6 +291,7 @@ else {
 			} catch (error) {
 				clearInterval(foregroundLease);
 				await hostedPairingHost?.close().catch(() => undefined);
+				await approvalSocket?.close().catch(() => undefined);
 				await runtime!.stop().catch(() => undefined);
 				await composition.shutdown().catch(() => undefined);
 				await healthServer?.stop().catch(() => undefined);
@@ -291,6 +314,7 @@ else {
 				// terminal and hook authority. They must be stopped in this order,
 				// never concurrently, to avoid double-stopping a PTY or hook server.
 				await hostedPairingHost?.close().catch(() => undefined);
+				await approvalSocket?.close().catch(() => undefined);
 				await runtime!.stop();
 				await composition.shutdown();
 				await healthServer?.stop();
@@ -1137,7 +1161,6 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
 
 function createProtocolServer(
 	options: ServerCliOptions,
-	expectedPairingPin: string,
 	authToken: string,
 	handoffExpiresAt: number,
 	composition: ServerCoreComposition,
@@ -1168,8 +1191,10 @@ function createProtocolServer(
 			],
 		}),
 		deviceAuthentication: {
-			enroll: ({ pairingSessionId, pairingToken, pairingExpiresAt, pairingPin, deviceName, publicKeyPem }) => {
-				if (!validPairingExpiry(pairingExpiresAt) || !matchesPairingPin(pairingPin, expectedPairingPin))
+			enroll: ({ pairingSessionId, pairingToken, pairingExpiresAt, deviceName, publicKeyPem }) => {
+				// Loopback HTTP enrollment is same-machine: the one-time fragment is
+				// the whole authority there, so no approval step applies.
+				if (!validPairingExpiry(pairingExpiresAt))
 					throw new Error('pairing authority is invalid');
 				const device = remote.enrollDevice({
 					pairingSessionId,
@@ -1279,23 +1304,30 @@ function validPairingExpiry(value: string): boolean {
 	return Number.isSafeInteger(parsed) && parsed > Date.now() - 60_000;
 }
 
-function requiresRemotePairingPin(options: ServerCliOptions): boolean {
-	return options.command === 'start' || options.command === 'pairing';
+async function runApprovalCommand(options: ServerCliOptions): Promise<void> {
+	const socketPath = approvalSocketPath(options.dataRoot);
+	const request =
+		options.command === 'approvals'
+			? ({ op: 'list' } as const)
+			: ({ op: options.command === 'approve' ? 'approve' : 'deny', approvalId: options.approvalId! } as const);
+	const response = await sendApprovalSocketRequest(socketPath, request);
+	process.stdout.write(`${JSON.stringify(response)}\n`);
+	if (!response.ok) process.exitCode = 1;
 }
 
-function requiredRemotePairingPin(options: ServerCliOptions): string {
-	const pin = options.remotePairingPin;
-	if (!/^\d{6}$/u.test(pin ?? '')) {
-		throw new Error(
-			'TERMINAY_REMOTE_PAIRING_PIN must be configured as exactly six digits before remote pairing is available.',
-		);
-	}
-	return pin!;
-}
-
-function matchesPairingPin(received: string, expected: string): boolean {
-	if (!/^\d{6}$/u.test(received) || !/^\d{6}$/u.test(expected)) return false;
-	return timingSafeEqual(Buffer.from(received), Buffer.from(expected));
+/** Rotate the host key and revoke every device. Requires a stopped server so
+ * the live host cannot keep advertising the retired key. */
+async function runResetIdentityCommand(
+	options: ServerCliOptions,
+	remote: ServerRemoteExposure,
+	devicePersistence: RemoteDevicePersistence,
+): Promise<void> {
+	const revoked = await remote.revokeAllDevices();
+	devicePersistence.save(remote.devices.list());
+	const key = rotateHostedHostKey(join(options.dataRoot, 'remote-host-key.v1.json'));
+	process.stdout.write(
+		`${JSON.stringify({ serverId: options.serverId, identityReset: true, revokedDevices: revoked, hostPublicKey: key.publicKey })}\n`,
+	);
 }
 
 async function ensureDefaultTerminalSession(

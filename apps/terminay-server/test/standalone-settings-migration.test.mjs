@@ -41,7 +41,7 @@ test('standalone settings migration preserves the raw source and safely retries 
 			],
 			{
 				cwd: new URL('../', import.meta.url),
-				env: { ...process.env, HOME: root, TERMINAY_REMOTE_PAIRING_PIN: '736941', TERMINAY_SERVER_VERSION: 'test' },
+				env: { ...process.env, HOME: root, TERMINAY_SERVER_VERSION: 'test' },
 				stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
 			},
 		);

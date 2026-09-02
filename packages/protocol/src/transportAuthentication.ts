@@ -1,6 +1,6 @@
 import { encodeCanonicalJson } from './json.js';
 
-export const AUTHENTICATED_WEBRTC_TRANSPORT_VERSION = 1 as const;
+export const AUTHENTICATED_WEBRTC_TRANSPORT_VERSION = 2 as const;
 export const AUTHENTICATED_WEBRTC_TRANSPORT_DOMAIN =
 	'terminay:v1:authenticated-webrtc-transport' as const;
 export const AUTHENTICATED_WEBRTC_PAIRING_HKDF_LABEL =
@@ -239,7 +239,8 @@ function exactOrigin(value: unknown): string {
 	if (typeof value !== 'string') throw new TypeError('WebRTC transcript origin is invalid.');
 	let parsed: URL;
 	try { parsed = new URL(value); } catch { throw new TypeError('WebRTC transcript origin is invalid.'); }
-	const local = parsed.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname);
+	const local = parsed.protocol === 'http:' &&
+		(['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname) || parsed.hostname.endsWith('.localhost'));
 	if ((parsed.protocol !== 'https:' && !local) || parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) {
 		throw new TypeError('WebRTC transcript origin must be exact HTTPS or loopback HTTP.');
 	}

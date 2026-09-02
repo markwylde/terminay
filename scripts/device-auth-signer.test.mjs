@@ -18,20 +18,25 @@ test('device authentication accepts an opaque signer and never requires a render
     api: {
       async postJson(path, body) {
         calls.push([path, body])
-        if (path === '/api/auth/options') return { deviceChallenge: { challengeId: 'challenge-a' }, signingInput: 'server-input' }
-        return { ticket: 'ticket-a', websocketUrl: 'wss://server.example/socket' }
+        if (path === '/api/devices/challenge') {
+          return {
+            challenge: { challengeId: 'challenge-a', deviceId: 'device-a', expiresAt: '2030-01-01T00:00:00.000Z', nonce: 'nonce-a', origin: 'https://server.example', serverId: 'server-a' },
+            signingInput: 'server-input',
+          }
+        }
+        return { ticket: 'ticket-a' }
       },
     },
     deviceId: 'device-a',
-    pairingPin: '123456',
+    origin: 'https://server.example',
     async signChallenge(value) {
       assert.equal(value, 'server-input')
       return 'main-process-signature'
     },
   })
-  assert.deepEqual(result, { ticket: 'ticket-a', websocketUrl: 'wss://server.example/socket' })
+  assert.deepEqual(result, { ticket: 'ticket-a' })
   assert.deepEqual(calls, [
-    ['/api/auth/options', { deviceId: 'device-a' }],
-    ['/api/auth/verify', { challengeId: 'challenge-a', deviceId: 'device-a', deviceSignature: 'main-process-signature', pairingPin: '123456' }],
+    ['/api/devices/challenge', { deviceId: 'device-a' }],
+    ['/api/devices/verify', { challengeId: 'challenge-a', deviceId: 'device-a', deviceSignature: 'main-process-signature' }],
   ])
 })

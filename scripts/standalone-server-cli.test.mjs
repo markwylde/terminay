@@ -38,7 +38,7 @@ test('standalone server CLI exposes help and explicit pairing handoff without se
 	const pairing = JSON.parse(
 		runWithEnv(
 			['--pairing', '--server-id', 'server-pair', '--endpoint', 'loopback'],
-			{ TERMINAY_REMOTE_PAIRING_PIN: '736941' },
+			{},
 		),
 	);
 	assert.equal(pairing.serverId, 'server-pair');
@@ -122,7 +122,6 @@ test('clean foreground startup emits bounded readiness and responds to SIGTERM',
 		{
 			env: {
 				...process.env,
-				TERMINAY_REMOTE_PAIRING_PIN: '736941',
 				TERMINAY_SERVER_VERSION: '1.2.3',
 			},
 			stdio: ['ignore', 'pipe', 'pipe'],

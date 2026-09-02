@@ -882,10 +882,6 @@ export class ServerTerminalAuthority {
 						: {
 								'remote-access.status': async () =>
 									(await remoteAccess.getStatus()) as unknown as JsonValue,
-								'remote-access.pairing-pin-status': async () =>
-									(await remoteAccess.command(
-										'pairing-pin-status',
-									)) as JsonValue,
 							}),
 					...dictationOperations?.queries,
 					...(options.aiMetadata === undefined
@@ -929,8 +925,12 @@ export class ServerTerminalAuthority {
 									remoteCommand(request, 'revoke-device', 'deviceId'),
 								'remote-access.close-connection': (request: CommandRequest) =>
 									remoteCommand(request, 'close-connection', 'connectionId'),
-								'remote-access.set-pairing-pin': (request: CommandRequest) =>
-									remoteCommand(request, 'set-pairing-pin', 'pin'),
+								'remote-access.approve-device': (request: CommandRequest) =>
+									remoteCommand(request, 'approve-device', 'approvalId'),
+								'remote-access.deny-device': (request: CommandRequest) =>
+									remoteCommand(request, 'deny-device', 'approvalId'),
+								'remote-access.reset-identity': (request: CommandRequest) =>
+									remoteCommand(request, 'reset-identity'),
 							}),
 					...dictationOperations?.commands,
 					...fileSessionOperations.commands,

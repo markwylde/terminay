@@ -122,8 +122,12 @@ test('the production hosted pairing host owns ICE servers, grace, and one handsh
 	assert.match(host, /new HostedPeerLifecycle/u);
 	assert.match(host, /collectHostIceAddresses\(networkInterfaces\(\)\)/u);
 	assert.match(host, /HostedLivePeerRegistry/u);
-	// A device join retires the peer it replaces before creating its successor.
-	assert.match(host, /await livePeers\.close\(scope\.deviceId\)/u);
+	// A device's live peer is replaced only after the joiner consumed a ticket:
+	// an unauthenticated device-join never touches it.
+	assert.doesNotMatch(host, /await livePeers\.close\(scope\.deviceId\)/u);
+	assert.match(host, /const replaced = await context\.livePeers\.close\(ticket\.deviceId\)/u);
+	assert.match(host, /verifyDeviceJoinProof\(deviceId, clientNonce, message\.deviceProof\)/u);
+	assert.match(host, /MAX_CONCURRENT_HANDSHAKES/u);
 	assert.match(host, /deviceHostRefreshDelayMs/u);
 	assert.match(host, /iceconnectionstatechange/u);
 	assert.match(host, /handshakeGeneration/u);
