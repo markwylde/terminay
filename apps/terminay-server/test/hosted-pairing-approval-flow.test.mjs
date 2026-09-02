@@ -4,6 +4,7 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { resolve } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 import {
 	assertAuthenticatedWebRtcTransportTranscript,
@@ -27,7 +28,11 @@ import { loadSelectedSecureWeriftRuntime } from '../dist/remote/secureWeriftRunt
  * device-join proof checks against the production host code.
  */
 
-const RUNTIME_ROOT = resolve(process.cwd(), 'build/webrtc-runtime');
+// Resolve from this file, not the cwd: turbo runs the workspace suite from
+// apps/terminay-server while the staged runtime lives at the repository root.
+const RUNTIME_ROOT = process.env.TERMINAY_WEBRTC_RUNTIME_ROOT
+	? resolve(process.env.TERMINAY_WEBRTC_RUNTIME_ROOT)
+	: fileURLToPath(new URL('../../../build/webrtc-runtime', import.meta.url));
 const SESSION_ID = 'server123';
 const { RTCPeerConnection } = await loadSelectedSecureWeriftRuntime(RUNTIME_ROOT);
 const LOOPBACK_PEER = {
