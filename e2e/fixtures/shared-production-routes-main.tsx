@@ -591,6 +591,7 @@ const mobileWorkspaceActions: string[] = [];
 ).__mobileWorkspaceActions = mobileWorkspaceActions;
 
 function MobileWorkspaceWorkflow() {
+	const [navigationVisible, setNavigationVisible] = useState(true);
 	const [projectCreated, setProjectCreated] = useState(false);
 	const [projectSelected, setProjectSelected] = useState(false);
 	const [panelCreated, setPanelCreated] = useState(false);
@@ -612,108 +613,118 @@ function MobileWorkspaceWorkflow() {
 	);
 	return (
 		<section aria-label="Mobile workspace workflow">
-			<WorkspaceSplitLayout
-				navigation={
-					<nav aria-label="Mobile projects">
-						<button
-							type="button"
-							onClick={() =>
-								void client
-									.createProject({
-										projectId: 'project:mobile',
-										viewId: 'view:mobile',
-										root: '/workspace/mobile',
-										name: 'Mobile project',
-									})
-									.then(() => setProjectCreated(true))
-							}
-						>
-							Create project
-						</button>
-						{projectCreated ? (
-							<button
-								type="button"
-								aria-pressed={projectSelected}
-								onClick={() => {
-									mobileWorkspaceActions.push('project.select');
-									setProjectSelected(true);
-								}}
-							>
-								Mobile project
-							</button>
-						) : null}
-					</nav>
-				}
-				content={
-					<section aria-label="Mobile panels">
-						{projectSelected ? (
+			<button
+				type="button"
+				onClick={() => setNavigationVisible((visible) => !visible)}
+			>
+				Toggle workspace navigation
+			</button>
+			<div style={{ height: 480, minWidth: 0 }}>
+				<WorkspaceSplitLayout
+					isNavigationVisible={navigationVisible}
+					onNavigationDismiss={() => setNavigationVisible(false)}
+					navigation={
+						<nav aria-label="Mobile projects">
 							<button
 								type="button"
 								onClick={() =>
 									void client
-										.createPanel({
-											panel: {
-												id: 'panel:mobile',
-												projectId: 'project:mobile',
-												type: 'file',
-												path: 'README.md',
-												createdAt: 1,
-											},
-										})
-										.then(() => setPanelCreated(true))
-								}
-							>
-								Create panel
-							</button>
-						) : null}
-						{panelCreated && !panelClosed ? (
-							<button
-								type="button"
-								aria-pressed={panelSelected}
-								onClick={() =>
-									void client
-										.activatePanel({
+										.createProject({
 											projectId: 'project:mobile',
-											panelId: 'panel:mobile',
+											viewId: 'view:mobile',
+											root: '/workspace/mobile',
+											name: 'Mobile project',
 										})
-										.then(() => setPanelSelected(true))
+										.then(() => setProjectCreated(true))
 								}
 							>
-								README.md
+								Create project
 							</button>
-						) : null}
-						{panelSelected && !panelMoved ? (
-							<button
-								type="button"
-								onClick={() =>
-									void client
-										.movePanel({
-											panelId: 'panel:mobile',
-											targetProjectId: 'project:archive',
-											index: 0,
-										})
-										.then(() => setPanelMoved(true))
-								}
-							>
-								Move panel
-							</button>
-						) : null}
-						{panelMoved && !panelClosed ? (
-							<button
-								type="button"
-								onClick={() =>
-									void client
-										.closePanel('panel:mobile')
-										.then(() => setPanelClosed(true))
-								}
-							>
-								Close panel
-							</button>
-						) : null}
-						{panelClosed ? <p>Panel closed.</p> : null}
-					</section>
-				}
-			/>
+							{projectCreated ? (
+								<button
+									type="button"
+									aria-pressed={projectSelected}
+									onClick={() => {
+										mobileWorkspaceActions.push('project.select');
+										setProjectSelected(true);
+									}}
+								>
+									Mobile project
+								</button>
+							) : null}
+						</nav>
+					}
+					content={
+						<section aria-label="Mobile panels">
+							{projectSelected ? (
+								<button
+									type="button"
+									onClick={() =>
+										void client
+											.createPanel({
+												panel: {
+													id: 'panel:mobile',
+													projectId: 'project:mobile',
+													type: 'file',
+													path: 'README.md',
+													createdAt: 1,
+												},
+											})
+											.then(() => setPanelCreated(true))
+									}
+								>
+									Create panel
+								</button>
+							) : null}
+							{panelCreated && !panelClosed ? (
+								<button
+									type="button"
+									aria-pressed={panelSelected}
+									onClick={() =>
+										void client
+											.activatePanel({
+												projectId: 'project:mobile',
+												panelId: 'panel:mobile',
+											})
+											.then(() => setPanelSelected(true))
+									}
+								>
+									README.md
+								</button>
+							) : null}
+							{panelSelected && !panelMoved ? (
+								<button
+									type="button"
+									onClick={() =>
+										void client
+											.movePanel({
+												panelId: 'panel:mobile',
+												targetProjectId: 'project:archive',
+												index: 0,
+											})
+											.then(() => setPanelMoved(true))
+									}
+								>
+									Move panel
+								</button>
+							) : null}
+							{panelMoved && !panelClosed ? (
+								<button
+									type="button"
+									onClick={() =>
+										void client
+											.closePanel('panel:mobile')
+											.then(() => setPanelClosed(true))
+									}
+								>
+									Close panel
+								</button>
+							) : null}
+							{panelClosed ? <p>Panel closed.</p> : null}
+						</section>
+					}
+				/>
+			</div>
 		</section>
 	);
 }

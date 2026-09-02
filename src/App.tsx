@@ -4669,6 +4669,9 @@ const ProjectWorkspace = forwardRef<
 				<WorkspaceSplitLayout
 					className="project-workspace-body"
 					isNavigationVisible={project.isFileExplorerOpen}
+					onNavigationDismiss={() => {
+						onUpdateProject(project.id, { isFileExplorerOpen: false });
+					}}
 					navigationWidth={project.fileExplorerWidth}
 					onNavigationWidthCommit={(width) => {
 						void onCommitProjectSidebar(project.id, {

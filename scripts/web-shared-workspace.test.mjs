@@ -95,6 +95,13 @@ test('browser and Desktop share the host-neutral production workspace split layo
 		splitStyle,
 		/grid-template-columns:[^;]*(?:0\.75rem|12px)/u,
 	);
+	assert.match(splitStyle, /workspace-split-layout__scrim/u);
+	assert.doesNotMatch(splitStyle, /40dvh|24rem/u);
+	assert.match(
+		splitLayout,
+		/NARROW_LAYOUT_MEDIA_QUERY\s*=\s*'\(max-width: 720px\)'/u,
+	);
+	assert.match(splitLayout, /onNavigationDismiss/u);
 });
 
 test('command launcher scroll stays bounded and non-animated', () => {
