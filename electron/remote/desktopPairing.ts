@@ -2,7 +2,7 @@ import { parseHostedPairingUrl } from '@terminay/protocol'
 import { deriveHostedPairingSecrets } from '../../apps/terminay-server/src/remote/hostedPairingSecrets'
 import { establishDevicePairing } from '../../src/remote/services/devicePairingFlow'
 import { parsePairingBootstrap } from '../../src/remote/services/pairing'
-import type { DesktopDeviceCredentialStore } from './deviceCredentialStore'
+import type { DesktopDeviceCredentialStore, PinnedDesktopHostKey } from './deviceCredentialStore'
 
 type FetchResponse = Readonly<{
   ok: boolean
@@ -115,6 +115,7 @@ export async function establishDesktopDevicePairing(options: Readonly<{
    * Desktop connection dialog in an indeterminate Connecting state. */
   pairingRequestTimeoutMs?: number
   store: DesktopDeviceCredentialStore
+  hostPin?: PinnedDesktopHostKey
 }>): Promise<Readonly<{ deviceId: string; deviceName: string; label: string; origin: string }>> {
   const target = resolveDesktopPairingTarget(options.pairingUrl)
   assertUsableDesktopPairingBootstrap(target.bootstrap)
@@ -149,7 +150,14 @@ export async function establishDesktopDevicePairing(options: Readonly<{
       },
     },
     bootstrap,
-    credentials: options.store,
+    credentials: {
+      saveDeviceIdentity: async (identity) => {
+        await options.store.saveDeviceIdentity({
+          ...identity,
+          ...(options.hostPin === undefined ? {} : { hostPin: options.hostPin }),
+        })
+      },
+    },
     deviceName: options.deviceName,
     generateKeyPair: async () => {
       const key = options.store.createDeviceKey(origin)

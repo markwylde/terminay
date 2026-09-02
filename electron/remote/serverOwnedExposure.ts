@@ -1,4 +1,4 @@
-import type { ByteTransport } from '@terminay/protocol';
+import { AUTHENTICATED_WEBRTC_TRANSPORT_VERSION, type ByteTransport } from '@terminay/protocol';
 import type {
 	AuthenticatedClient,
 	ServerConnectionLike,
@@ -16,6 +16,7 @@ import {
 	type ServerRemoteExposure,
 } from '../../apps/terminay-server/src/remote/serverExposure';
 import type { RemoteAccessStatus } from '../../src/types/terminay';
+import { assertAuthenticatedRemoteAccessContract } from './desktopAuthenticatedWebRtc';
 
 export interface DesktopServerOwnedExposureOptions {
 	readonly acceptApplication?: (
@@ -249,6 +250,10 @@ export class DesktopServerOwnedExposure {
 	}
 
 	private async register(exposure: ServerRemoteExposure) {
+		assertAuthenticatedRemoteAccessContract(
+			AUTHENTICATED_WEBRTC_TRANSPORT_VERSION,
+			AUTHENTICATED_WEBRTC_TRANSPORT_VERSION,
+		);
 		const handoff = exposure.pairingHandoff;
 		if (handoff === undefined)
 			throw new Error('Server exposure did not create a pairing handoff.');

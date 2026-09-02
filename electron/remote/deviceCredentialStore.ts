@@ -40,13 +40,19 @@ export function createEphemeralTestProtectedValueCodec(): ProtectedValueCodec {
   })
 }
 
+export type PinnedDesktopHostKey = Readonly<{
+  algorithm: 'ed25519'
+  publicKey: string
+}>
+
 type StoredDeviceCredential = Readonly<{
   deviceId: string
   deviceName: string
   origin: string
   privateKeyPem: string
   publicKeyPem: string
-  schema: 2
+  schema: 2 | 3
+  hostPin?: PinnedDesktopHostKey
 }>
 
 type PendingKey = Readonly<{
@@ -65,7 +71,8 @@ export type PublicDesktopDeviceCredential = Readonly<{
 /**
  * Main-process shape consumed by the transport-neutral device pairing flow.
  * The private key is an opaque pending-key handle; it never crosses a preload
- * or renderer boundary.
+ * or renderer boundary. The verified host pin is stored in the same encrypted
+ * record as the device key.
  */
 export type EstablishedDesktopDevicePairing = Readonly<{
 	pairing: Readonly<{
@@ -73,12 +80,14 @@ export type EstablishedDesktopDevicePairing = Readonly<{
 		deviceName: string
 		origin: string
 		privateKey: DesktopDeviceKeyRef
+		hostPin?: PinnedDesktopHostKey
 	}>
 }>
 
 const ORIGIN_PATTERN = /^(https:|http:)$/
 const PEM_MAX_LENGTH = 32_768
 const SECRET_MAX_LENGTH = 65_536
+const HOST_PIN_KEY = /^[A-Za-z0-9_-]{43}$/u
 
 function normalizeOrigin(value: unknown): string {
   if (typeof value !== 'string') throw new TypeError('Remote credential origin is invalid.')
@@ -102,25 +111,53 @@ function recordPath(directory: string, origin: string): string {
   return join(directory, `remote-device-${createHash('sha256').update(origin).digest('hex')}.json`)
 }
 
+function parseHostPin(value: unknown): PinnedDesktopHostKey {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('Remote host pin is invalid.')
+  }
+  const input = value as Record<string, unknown>
+  if (
+    Object.keys(input).length !== 2 ||
+    input.algorithm !== 'ed25519' ||
+    typeof input.publicKey !== 'string' ||
+    !HOST_PIN_KEY.test(input.publicKey)
+  ) {
+    throw new TypeError('Remote host pin is invalid.')
+  }
+  return Object.freeze({ algorithm: 'ed25519', publicKey: input.publicKey })
+}
+
 function parseRecord(value: unknown, expectedOrigin: string): StoredDeviceCredential {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new TypeError('Remote credential record is invalid.')
   const input = value as Record<string, unknown>
-  const allowed = new Set(['schema', 'origin', 'deviceId', 'deviceName', 'publicKeyPem', 'privateKeyPem'])
+  const allowed = new Set(['schema', 'origin', 'deviceId', 'deviceName', 'publicKeyPem', 'privateKeyPem', 'hostPin'])
   if (Object.keys(input).some((key) => !allowed.has(key))) throw new TypeError('Remote credential record contains an unknown field.')
-  if (input.schema !== 2) throw new TypeError('Remote credential record schema is invalid.')
+  if (input.schema !== 2 && input.schema !== 3) throw new TypeError('Remote credential record schema is invalid.')
   const origin = normalizeOrigin(input.origin)
   if (origin !== expectedOrigin) throw new TypeError('Remote credential record belongs to another origin.')
   assertText(input.deviceId, 'Remote device id', 256)
   assertText(input.deviceName, 'Remote device name', 256)
   assertText(input.publicKeyPem, 'Remote public key', PEM_MAX_LENGTH)
   assertText(input.privateKeyPem, 'Remote private key', PEM_MAX_LENGTH)
+  if (input.schema === 2) {
+    if (input.hostPin !== undefined) throw new TypeError('Remote credential record schema is invalid.')
+    return Object.freeze({
+      schema: 2 as const,
+      origin,
+      deviceId: input.deviceId,
+      deviceName: input.deviceName,
+      publicKeyPem: input.publicKeyPem,
+      privateKeyPem: input.privateKeyPem,
+    })
+  }
   return Object.freeze({
-    schema: 2,
+    schema: 3 as const,
     origin,
     deviceId: input.deviceId,
     deviceName: input.deviceName,
     publicKeyPem: input.publicKeyPem,
     privateKeyPem: input.privateKeyPem,
+    hostPin: parseHostPin(input.hostPin),
   })
 }
 
@@ -143,7 +180,7 @@ export class DesktopDeviceCredentialStore {
     return Object.freeze({ keyRef: Object.freeze({ keyId }), publicKeyPem: pair.publicKey })
   }
 
-	/** Persist the device key and public registration in one encrypted record. */
+	/** Persist the device key, public registration, and verified host pin in one encrypted record. */
 	async saveDeviceIdentity(input: EstablishedDesktopDevicePairing['pairing']): Promise<void> {
 		this.assertAvailable()
 		const origin = normalizeOrigin(input.origin)
@@ -153,16 +190,44 @@ export class DesktopDeviceCredentialStore {
 		}
 		assertText(input.deviceId, 'Remote device id', 256)
 		assertText(input.deviceName, 'Remote device name', 256)
+		const hostPin = input.hostPin === undefined ? undefined : parseHostPin(input.hostPin)
 		await this.write(Object.freeze({
-			schema: 2,
+			schema: hostPin === undefined ? 2 : 3,
 			origin,
 			deviceId: input.deviceId,
 			deviceName: input.deviceName,
 			publicKeyPem: pending.publicKeyPem,
 			privateKeyPem: pending.privateKeyPem,
+			...(hostPin === undefined ? {} : { hostPin }),
 		}))
 		this.pendingKeys.delete(input.privateKey.keyId)
 	}
+
+  /**
+   * Atomically rewrite the origin's credential with the verified host pin.
+   * A changed pin is an explicit server identity change, not a silent rotation.
+   */
+  async pinHostKey(originInput: string, hostPin: PinnedDesktopHostKey): Promise<void> {
+    this.assertAvailable()
+    const origin = normalizeOrigin(originInput)
+    const pin = parseHostPin(hostPin)
+    const credential = await this.readRequired(origin)
+    if (credential.hostPin !== undefined &&
+      (credential.hostPin.algorithm !== pin.algorithm || credential.hostPin.publicKey !== pin.publicKey)) {
+      throw new Error('Server host identity changed; explicit re-pairing is required.')
+    }
+    await this.write(Object.freeze({
+      ...credential,
+      schema: 3 as const,
+      hostPin: pin,
+    }))
+  }
+
+  async loadPinnedHostKey(originInput: string): Promise<PinnedDesktopHostKey | null> {
+    const credential = await this.read(normalizeOrigin(originInput))
+    if (credential === null) return null
+    return credential.hostPin === undefined ? null : credential.hostPin
+  }
 
   async loadDevice(originInput: string): Promise<PublicDesktopDeviceCredential | null> {
     const credential = await this.read(normalizeOrigin(originInput))
