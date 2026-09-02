@@ -92,6 +92,7 @@ import {
 	type TerminalMobileModifiers,
 	toggleTerminalMobileModifier,
 } from './terminalMobileKeyboardInteraction';
+import { suppressNonFiniteMouseReportCoords } from './terminalMouseReportCoords';
 import { shouldInsertTerminalMultilineNewline } from './terminalMultilineInteraction';
 import { shouldReturnFocusToTerminalFromNote } from './terminalNoteInteraction';
 import {
@@ -802,6 +803,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		);
 		terminal.unicode.activeVersion = '11';
 		terminal.open(root);
+		const restoreMouseReportCoords =
+			suppressNonFiniteMouseReportCoords(terminal);
 		const webglRenderer = attachTerminalWebglRenderer(
 			terminal,
 			() =>
@@ -2337,6 +2340,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			terminalRef.current = null;
 			renderedPositionRef.current = null;
 			hoveredLinkRef.current = null;
+			restoreMouseReportCoords();
 			terminal.dispose();
 		};
 	}, [
