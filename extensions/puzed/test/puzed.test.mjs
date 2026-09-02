@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { consumeEventStream, missingRequiredScopes, normalizeBaseUrl, PuzedApiError, PuzedClient, PuzedEventStreamRegistry, PuzedProvider, toInventoryItem, validateMe } from "../dist/index.js";
+import { consumeEventStream, missingRequiredScopes, normalizeBaseUrl, PuzedApiError, PuzedClient, PuzedEventStreamRegistry, PuzedProvider, inventoryOption, toInventoryItem, validateMe } from "../dist/index.js";
 
 const machine = (overrides = {}) => ({
   id: "machine-1", name: "dev", status: "running", state_stale: false,
@@ -160,4 +160,14 @@ test("event registry shares one stream for a profile and organization", async ()
   assert.equal(first.completion, second.completion); assert.equal(runs, 1); assert.equal(registry.active("profile", "org"), true);
   first.release(); assert.equal(registry.active("profile", "org"), true);
   second.release(); release(); await first.completion; assert.equal(registry.active("profile", "org"), false);
+});
+
+test("inventoryOption disables VMs without a retained binding", () => {
+  const base = new URL("https://platform.test");
+  const openable = inventoryOption(toInventoryItem(machine(), "profile-1", base, { platformProfileId: "profile-1", machineId: "machine-1", sshUsername: "vms", sshBindingId: "binding-ref" }, "10.0.0.2"));
+  assert.equal(openable.value, "machine-1");
+  assert.match(openable.description, /Running/);
+  assert.equal(openable.disabledReason, undefined);
+  const blocked = inventoryOption(toInventoryItem(machine(), "profile-1", base, { platformProfileId: "profile-1", machineId: "machine-1", sshUsername: "vms" }, "10.0.0.2"));
+  assert.match(blocked.disabledReason, /SSH binding/);
 });
