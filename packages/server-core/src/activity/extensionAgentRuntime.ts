@@ -75,8 +75,8 @@ const MAX_NOT_BOUND_DISCOVERY_RETRIES = 10;
  * Process matching is merely a prompt to attempt provider observation. The
  * provider is made authoritative only after `AgentStatusService` records an
  * exact terminal claim, then receives a host-issued incarnation context. A
- * failed admission releases that claim and returns the legacy journal path to
- * service, preserving current behaviour during the migration.
+ * failed admission releases that claim so generic terminal activity remains
+ * the fallback.
  */
 export class ExtensionAgentRuntimeRegistry {
   private readonly terminals = new Map<string, TrackedTerminal>();
@@ -120,8 +120,8 @@ export class ExtensionAgentRuntimeRegistry {
   }
 
   /** Claims a matching local terminal synchronously, then performs the child
-   * IPC admission in the background. Returning true means legacy foreground
-   * and journal mutations are now suppressed by AgentStatusService. */
+   * IPC admission in the background. Returning true means generic foreground
+   * activity is now suppressed by AgentStatusService for this provider. */
   foregroundProcessChanged(identity: ActivitySessionIdentity, processName: string, shellForeground = false): boolean {
     const terminal = this.requireTerminal(identity);
     if (terminal.environmentBinding === undefined) terminal.environmentBinding = this.bindEnvironment(identity);
