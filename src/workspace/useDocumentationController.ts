@@ -1,16 +1,13 @@
-import type {
-	DocumentationCatalog,
-	DocumentationClient,
-	FileObservationClient,
-	FileWatchHandle,
-} from '@terminay/client-core';
+import type { DocumentationClient, FileObservationClient } from '@terminay/client-core';
 import { useCallback, useEffect, useRef, useState } from 'react';
-
-const REFRESH_DELAY_MS = 150;
+import {
+	DocumentationCatalogController,
+	type DocumentationCatalogSnapshot,
+} from './DocumentationCatalogController';
 
 /** Keeps the Markdown catalog server-owned while retaining the last good tree
- * during file-system churn.  It deliberately watches the project root rather
- * than expanding Explorer folders in the renderer. */
+ * during file-system churn. It watches the project root rather than expanding
+ * Explorer folders in the renderer. */
 export function useDocumentationController(options: {
 	readonly enabled: boolean;
 	readonly client?: DocumentationClient;
@@ -29,123 +26,67 @@ export function useDocumentationController(options: {
 		expandedFolderIds,
 		onExpandedFolderIdsChange,
 	} = options;
-	const [catalog, setCatalog] = useState<DocumentationCatalog | undefined>(
+	const [snapshot, setSnapshot] = useState<DocumentationCatalogSnapshot>({
+		loading: false,
+		partial: false,
+		expandedFolders: new Set(expandedFolderIds),
+	});
+	const controllerRef = useRef<DocumentationCatalogController | undefined>(
 		undefined,
 	);
-	const [error, setError] = useState<string | undefined>(undefined);
-	const [loading, setLoading] = useState(false);
-	const [expandedFolders, setExpandedFolders] = useState<ReadonlySet<string>>(
-		() => new Set(expandedFolderIds),
-	);
-	const requestRef = useRef(0);
-	const timerRef = useRef<number | undefined>(undefined);
-	const catalogRef = useRef<DocumentationCatalog | undefined>(undefined);
-	catalogRef.current = catalog;
-	const refresh = useCallback(
-		(immediate = true) => {
-			if (!enabled || client === undefined) return;
-			const run = () => {
-				const request = ++requestRef.current;
-				setLoading(true);
-				void client
-					.catalog(projectId, catalogRef.current?.revision)
-					.then((next) => {
-						if (request !== requestRef.current) return;
-						setCatalog(next);
-						setError(undefined);
-					})
-					.catch((reason: unknown) => {
-						if (request !== requestRef.current) return;
-						setError(reason instanceof Error ? reason.message : String(reason));
-					})
-					.finally(() => {
-						if (request === requestRef.current) setLoading(false);
-					});
-			};
-			if (immediate) {
-				run();
-				return;
-			}
-			if (timerRef.current !== undefined) window.clearTimeout(timerRef.current);
-			timerRef.current = window.setTimeout(() => {
-				timerRef.current = undefined;
-				run();
-			}, REFRESH_DELAY_MS);
-		},
-		[client, enabled, projectId, scopeKey],
-	);
+	const onExpandedFolderIdsChangeRef = useRef(onExpandedFolderIdsChange);
+	onExpandedFolderIdsChangeRef.current = onExpandedFolderIdsChange;
+
 	useEffect(() => {
-		setCatalog(undefined);
-		setError(undefined);
-		if (enabled) refresh();
-	}, [enabled, projectId, scopeKey, refresh]);
-	useEffect(
-		() => setExpandedFolders(new Set(expandedFolderIds)),
-		[expandedFolderIds],
-	);
-	useEffect(() => {
-		if (!enabled || observationClient === undefined || client === undefined)
-			return;
-		let disposed = false;
-		let handle: FileWatchHandle | undefined;
-		let unsubscribe: (() => void) | undefined;
-		void observationClient
-			.startWatch(projectId, '')
-			.then(async (next) => {
-				if (disposed) {
-					await observationClient.stopWatch(next.subscriptionId);
-					return;
-				}
-				handle = next;
-				const batch = await observationClient.readWatch(next);
-				if (batch.resyncRequired || batch.events.length) refresh(false);
-				unsubscribe = await observationClient.subscribeWatch(
-					next,
-					() => {
-						window.dispatchEvent(
-							new CustomEvent('terminay-documentation-change', {
-								detail: { projectId },
-							}),
-						);
-						refresh(false);
-					},
-					() => {
-						window.dispatchEvent(
-							new CustomEvent('terminay-documentation-change', {
-								detail: { projectId },
-							}),
-						);
-						refresh(false);
-					},
-				);
-			})
-			.catch(() => {
-				// Missing filesystem observation is an expected remote limit.
-				// Catalog listing still owns the visible documentation tree.
+		if (!enabled || client === undefined) {
+			controllerRef.current?.dispose();
+			controllerRef.current = undefined;
+			setSnapshot({
+				loading: false,
+				partial: false,
+				expandedFolders: new Set(expandedFolderIds),
 			});
+			return;
+		}
+		const controller = new DocumentationCatalogController({
+			client,
+			observationClient,
+			projectId,
+			scopeKey,
+			expandedFolderIds,
+			onExpandedFolderIdsChange: (ids) =>
+				onExpandedFolderIdsChangeRef.current(ids),
+		});
+		controllerRef.current = controller;
+		const unsubscribe = controller.subscribe(() =>
+			setSnapshot(controller.snapshot),
+		);
+		setSnapshot(controller.snapshot);
+		void controller.start();
 		return () => {
-			disposed = true;
-			if (timerRef.current !== undefined) window.clearTimeout(timerRef.current);
-			unsubscribe?.();
-			if (handle) void observationClient.stopWatch(handle.subscriptionId);
+			unsubscribe();
+			controller.dispose();
+			if (controllerRef.current === controller)
+				controllerRef.current = undefined;
 		};
-	}, [client, enabled, observationClient, projectId, scopeKey, refresh]);
-	const toggleFolder = useCallback(
-		(path: string) =>
-			setExpandedFolders((current) => {
-				const next = new Set(current);
-				next.has(path) ? next.delete(path) : next.add(path);
-				onExpandedFolderIdsChange([...next].sort());
-				return next;
-			}),
-		[onExpandedFolderIdsChange],
-	);
+		// Expansion callback identity is not a catalog lifetime. Parent renders
+		// must not abort an in-flight docs.catalog query.
+	}, [client, enabled, observationClient, projectId, scopeKey]);
+
+	useEffect(() => {
+		controllerRef.current?.setExpandedFolderIds(expandedFolderIds);
+	}, [expandedFolderIds]);
+
+	const toggleFolder = useCallback((path: string) => {
+		controllerRef.current?.toggleFolder(path);
+	}, []);
+
 	return {
-		catalog,
-		error,
-		expandedFolders,
-		loading,
-		refresh: () => refresh(true),
+		catalog: snapshot.catalog,
+		error: snapshot.error,
+		expandedFolders: snapshot.expandedFolders,
+		loading: snapshot.loading,
+		refresh: () => controllerRef.current?.refresh('fresh'),
 		toggleFolder,
 	} as const;
 }

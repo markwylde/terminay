@@ -4,6 +4,7 @@ import type {
 } from '@terminay/client-core';
 import { ChevronRight, FileText, Folder } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { documentTreeAccessibleName, titleCase } from './documentTitle';
 
 export function DocumentationTree({
 	catalog,
@@ -12,6 +13,7 @@ export function DocumentationTree({
 	loading,
 	onOpen,
 	onToggleFolder,
+	selectedPath,
 }: {
 	readonly catalog?: DocumentationCatalog;
 	readonly error?: string;
@@ -19,6 +21,7 @@ export function DocumentationTree({
 	readonly loading: boolean;
 	readonly onOpen: (path: string) => void;
 	readonly onToggleFolder: (path: string) => void;
+	readonly selectedPath?: string;
 }) {
 	if (loading && catalog === undefined)
 		return (
@@ -40,17 +43,22 @@ export function DocumentationTree({
 	for (const document of catalog.documents) insert(root, document);
 	return (
 		<div className="documentation-tree" role="tree">
-			{render(root, '', expandedFolders, onToggleFolder, onOpen)}
+			{render(root, '', expandedFolders, onToggleFolder, onOpen, selectedPath)}
 			{catalog.partial ? (
 				<div role="status">Showing a partial document catalog.</div>
+			) : null}
+			{error !== undefined ? (
+				<div role="alert">Documentation refresh failed: {error}</div>
 			) : null}
 		</div>
 	);
 }
+
 type Node = {
 	readonly folders: Map<string, Node>;
 	readonly documents: DocumentationDocument[];
 };
+
 function insert(root: Node, document: DocumentationDocument): void {
 	const parts = document.relativePath.split('/');
 	const name = parts.pop();
@@ -68,75 +76,78 @@ function insert(root: Node, document: DocumentationDocument): void {
 	}
 	node.documents.push(document);
 }
+
 function render(
 	node: Node,
 	path: string,
 	expanded: ReadonlySet<string>,
 	toggle: (path: string) => void,
 	open: (path: string) => void,
+	selectedPath?: string,
 ): ReactNode {
+	const folders = [...node.folders.entries()].sort(([left], [right]) =>
+		titleCase(left).localeCompare(titleCase(right), undefined, {
+			sensitivity: 'base',
+			numeric: true,
+		}),
+	);
+	const documents = node.documents.slice().sort(
+		(left, right) =>
+			left.title.localeCompare(right.title, undefined, {
+				sensitivity: 'base',
+				numeric: true,
+			}) || left.relativePath.localeCompare(right.relativePath),
+	);
 	return (
 		<>
-			{[...node.folders.entries()]
-				.sort(([a], [b]) => a.localeCompare(b))
-				.map(([name, child]) => {
-					const childPath = path ? `${path}/${name}` : name;
-					const isExpanded = expanded.has(childPath);
-					return (
-						<div key={childPath} className="documentation-tree__folder">
-							<button
-								type="button"
-								className="documentation-tree__row"
-								role="treeitem"
-								aria-expanded={isExpanded}
-								onClick={() => toggle(childPath)}
-							>
-								<ChevronRight
-									className="documentation-tree__chevron"
-									data-expanded={isExpanded}
-									size={14}
-									aria-hidden="true"
-								/>
-								<Folder size={15} aria-hidden="true" />
-								<span>{name}</span>
-							</button>
-							{isExpanded ? (
-								<fieldset className="documentation-tree__group">
-									{render(child, childPath, expanded, toggle, open)}
-								</fieldset>
-							) : null}
-						</div>
-					);
-				})}
-			{node.documents
-				.slice()
-				.sort(
-					(a, b) =>
-						a.title.localeCompare(b.title) ||
-						a.relativePath.localeCompare(b.relativePath),
-				)
-				.map((document) => (
-					<button
-						key={document.relativePath}
-						type="button"
-						role="treeitem"
-						className="documentation-tree__row documentation-tree__document"
-						title={document.relativePath}
-						aria-label={
-							document.title ===
-							document.relativePath
-								.replace(/^.*\//u, '')
-								.replace(/\.mdx?$/iu, '')
-								? document.title
-								: `${document.title}, ${document.relativePath}`
-						}
-						onClick={() => open(document.relativePath)}
-					>
-						<span className="documentation-tree__spacer" />
-						<FileText size={15} aria-hidden="true" />
-						<span>{document.title}</span>
-					</button>
-				))}
+			{folders.map(([name, child]) => {
+				const childPath = path ? `${path}/${name}` : name;
+				const isExpanded = expanded.has(childPath);
+				return (
+					<div key={childPath} className="documentation-tree__folder">
+						<button
+							type="button"
+							className="documentation-tree__row"
+							role="treeitem"
+							aria-expanded={isExpanded}
+							onClick={() => toggle(childPath)}
+						>
+							<ChevronRight
+								className="documentation-tree__chevron"
+								data-expanded={isExpanded}
+								size={14}
+								aria-hidden="true"
+							/>
+							<Folder size={15} aria-hidden="true" />
+							<span>{titleCase(name)}</span>
+						</button>
+						{isExpanded ? (
+							<fieldset className="documentation-tree__group">
+								{render(child, childPath, expanded, toggle, open, selectedPath)}
+							</fieldset>
+						) : null}
+					</div>
+				);
+			})}
+			{documents.map((document) => (
+				<button
+					key={document.relativePath}
+					type="button"
+					role="treeitem"
+					aria-selected={document.relativePath === selectedPath}
+					className="documentation-tree__row documentation-tree__document"
+					title={document.relativePath}
+					aria-label={documentTreeAccessibleName(
+						document.title,
+						document.relativePath,
+					)}
+					onClick={() => open(document.relativePath)}
+				>
+					<span className="documentation-tree__spacer" />
+					<FileText size={15} aria-hidden="true" />
+					<span>{document.title}</span>
+				</button>
+			))}
 		</>
 	);
 }
