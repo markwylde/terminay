@@ -111,7 +111,9 @@ migrate so they cannot mask a newly materialized bundled floor.
 
 ## Open Questions
 
-- The packaged-runtime activation gate on the full supported-architecture matrix,
-  the offline Electron and standalone first-run/restart/override/rollback artifact
-  tests, and the manual two-instance real-app acceptance remain open; none of them
-  may be inferred from the merged consolidation branch or a released tag.
+_None. The two-instance real-app acceptance is recorded from
+`e2e/extension-agent-runtime.spec.ts`: a second isolated Electron profile
+with its own `TERMINAY_USER_DATA_DIR` stays empty in the Agents tree while
+the owning instance admits the Codex root, late child, and live title
+update. Every other gate is checked in `tasks.md` rather than inferred
+from a merged branch or a released tag._
