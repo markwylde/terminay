@@ -25,7 +25,6 @@ export type SessionTransportHost = Readonly<{
 		options: Readonly<{
 			onStateChange: (state: 'closed' | 'connecting' | 'live') => void;
 			origin: string;
-			pairingPin?: string;
 		}>,
 	): Promise<ByteTransport>;
 }>;
