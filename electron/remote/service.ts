@@ -17,7 +17,6 @@ import { AuditStore } from './auditStore';
 import { ConnectionStore, type RemoteConnectionPeer } from './connectionStore';
 import { DeviceStore } from './deviceStore';
 import { PairingManager } from './pairing';
-import { assertPairingPin, PairingPinFailureLimitError } from './pinGuard';
 import { WebRtcPairingManager } from './webrtc';
 import {
 	parseSignalingMessage,
@@ -373,6 +372,7 @@ export class RemoteAccessService {
 
 		return {
 			activeConnectionCount: this.connectionStore.count(),
+			pendingApprovals: [],
 			pendingWebRtcConnectionCount: this.getPendingWebRtcConnectionCount(),
 			auditEvents: this.auditStore.listRecent(),
 			connections: this.connectionStore.list().map((connection) => {
@@ -589,12 +589,6 @@ export class RemoteAccessService {
 		this.errorMessage = null;
 
 		try {
-			const settings = this.getRemoteAccessSettings();
-			if (!settings.pairingPinHash.trim()) {
-				throw new Error(
-					'Set a Remote Access PIN before starting Remote Access.',
-				);
-			}
 			await this.deviceStore.load();
 			await this.auditStore.load();
 			await this.rotateWebRtcPairingCode();
@@ -659,11 +653,6 @@ export class RemoteAccessService {
 			this.webRtcStatus = 'registering';
 			this.webRtcStatusMessage =
 				'WebRTC relay room is registering. Keep Terminay open while the browser connects.';
-			if (!settings.pairingPinHash.trim()) {
-				throw new Error(
-					'Set a Remote Access PIN before generating a WebRTC QR code.',
-				);
-			}
 			const payload = this.webRtcPairingManager.create({
 				hostedDomain: settings.webRtcHostedDomain,
 				sessionId: this.webRtcSessionId ?? undefined,
@@ -1000,38 +989,6 @@ export class RemoteAccessService {
 		}
 	}
 
-	private getPinFailureLimit(): number {
-		const value = this.getRemoteAccessSettings().pinFailureLimit;
-		return typeof value === 'number' && Number.isFinite(value)
-			? Math.min(10, Math.max(1, Math.floor(value)))
-			: 3;
-	}
-
-	private async assertPairingPinForSession(options: {
-		origin: string;
-		pairingPin: string | undefined;
-		pairingSessionId: string;
-	}): Promise<void> {
-		try {
-			assertPairingPin(this.getRemoteAccessSettings(), options.pairingPin, {
-				contextKey: `pairing:${options.origin}:${options.pairingSessionId}`,
-				failureLimit: this.getPinFailureLimit(),
-				requireConfigured: true,
-			});
-		} catch (error) {
-			if (!(error instanceof PairingPinFailureLimitError)) {
-				throw error;
-			}
-
-			this.pairingManager.invalidateSession(options.pairingSessionId);
-			await this.rotateWebRtcPairingCode();
-			this.emitStatus();
-			throw new Error(
-				'Too many incorrect PIN attempts. Scan a fresh QR code to pair again.',
-			);
-		}
-	}
-
 	getWebRtcHostConfig(webContentsId: number): WebRtcHostConfig | null {
 		return this.webRtcHostConfigByWebContentsId.get(webContentsId) ?? null;
 	}
@@ -1078,11 +1035,6 @@ export class RemoteAccessService {
 		}
 
 		if (pathname === '/api/devices/enroll') {
-			await this.assertPairingPinForSession({
-				origin,
-				pairingPin: String(body.pairingPin ?? ''),
-				pairingSessionId: String(body.pairingSessionId ?? ''),
-			});
 			const registration = this.pairingManager.startRegistration({
 				deviceName: String(body.deviceName ?? ''),
 				origin,

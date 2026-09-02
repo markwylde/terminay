@@ -87,6 +87,7 @@ export const DIAGNOSTIC_EVENT_NAMES = [
 	'local-server.remote-pairing.registered',
 	'local-server.remote-pairing.signaling-closed',
 	'local-server.remote-pairing.rotated',
+	'local-server.remote-pairing.approval-pending',
 	'local-server.remote-pairing.reregistered',
 	'local-server.remote-pairing.client-join',
 	'local-server.remote-pairing.failed',

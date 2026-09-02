@@ -182,6 +182,14 @@ export type TerminayHostEvent = Readonly<{
 		| Readonly<{
 				type: 'diagnostics.performance-logging.changed';
 				enabled: boolean;
+		  }>
+		| Readonly<{
+				/** Desktop pairing is waiting for the exposing host to approve the
+				 * match code shown here. The code is displayed on both devices. */
+				type: 'connection.pairing-approval';
+				deviceName: string;
+				matchCode: string;
+				expiresAt: string;
 		  }>;
 }>;
 
@@ -191,7 +199,6 @@ export type TerminayHostAction =
 			 * host. No pairing secret or durable credential returns to the
 			 * renderer. */
 			type: 'connection.pair';
-			pairingPin: string;
 			pairingUrl: string;
 	  }>
 	| Readonly<{
@@ -343,6 +350,28 @@ export function parseTerminayHostEvent(
 		parsedEvent = Object.freeze({
 			type: 'diagnostics.performance-logging.changed',
 			enabled: event.enabled,
+		});
+	} else if (event.type === 'connection.pairing-approval') {
+		exactKeys(
+			event,
+			['type', 'deviceName', 'matchCode', 'expiresAt'],
+			'host pairing approval event',
+		);
+		if (
+			typeof event.deviceName !== 'string' ||
+			event.deviceName.length === 0 ||
+			event.deviceName.length > 128 ||
+			typeof event.matchCode !== 'string' ||
+			!/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{5}$/u.test(event.matchCode) ||
+			typeof event.expiresAt !== 'string' ||
+			!Number.isFinite(Date.parse(event.expiresAt))
+		)
+			throw new TypeError('host pairing approval event is invalid');
+		parsedEvent = Object.freeze({
+			type: 'connection.pairing-approval',
+			deviceName: event.deviceName,
+			matchCode: event.matchCode,
+			expiresAt: event.expiresAt,
 		});
 	} else {
 		throw new TypeError('host event type is invalid');
@@ -704,22 +733,15 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 	const action = record(value, 'host action');
 	switch (action.type) {
 		case 'connection.pair':
-			exactKeys(
-				action,
-				['type', 'pairingPin', 'pairingUrl'],
-				'connection pairing action',
-			);
+			exactKeys(action, ['type', 'pairingUrl'], 'connection pairing action');
 			if (
 				typeof action.pairingUrl !== 'string' ||
 				action.pairingUrl.length === 0 ||
-				action.pairingUrl.length > 16_384 ||
-				typeof action.pairingPin !== 'string' ||
-				!/^\d{6}$/u.test(action.pairingPin)
+				action.pairingUrl.length > 16_384
 			)
 				throw new TypeError('connection pairing URL is invalid');
 			return Object.freeze({
 				type: 'connection.pair',
-				pairingPin: action.pairingPin,
 				pairingUrl: action.pairingUrl,
 			});
 		case 'route.present': {

@@ -12,6 +12,7 @@ import {
 } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
+import { subscribePairingApproval } from '../host/nativeEvents';
 import { pairDesktopConnection } from '../host/nativeActions';
 import { createConnectedServerClientContext } from '../shared/rendererServerClient';
 import type { SharedConnectionsRouteBodyProps } from '../shared/SharedConnectionsRouteBody';
@@ -116,6 +117,10 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 	const heartbeatRef = useRef<{ stop(): void } | undefined>(undefined);
 	const [connection, setConnection] = useState<ConnectedSession>();
 	const [desktopContext, setDesktopContext] = useState<TerminayHostContext>();
+	const [desktopPairingApproval, setDesktopPairingApproval] = useState<
+		Readonly<{ deviceName: string; matchCode: string; expiresAt: string }> | null
+	>(null);
+	useEffect(() => subscribePairingApproval(setDesktopPairingApproval), []);
 	const [error, setError] = useState<string>();
 	const [phase, setPhase] = useState<'connecting' | 'reconnecting' | 'ready'>(
 		'connecting',
@@ -309,11 +314,17 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 				? {}
 				: {
 						canPair: true,
-						onPairingHandoff: async ({ pairingPin, pairingUrl }) => {
-							if (!(await pairDesktopConnection(pairingUrl, pairingPin)))
-								throw new Error(
-									'Desktop pairing is unavailable in this session.',
-								);
+						pairingApproval: desktopPairingApproval,
+						onPairingHandoff: async ({ pairingUrl }) => {
+							setDesktopPairingApproval(null);
+							try {
+								if (!(await pairDesktopConnection(pairingUrl)))
+									throw new Error(
+										'Desktop pairing is unavailable in this session.',
+									);
+							} finally {
+								setDesktopPairingApproval(null);
+							}
 						},
 					}),
 			profileStore: profiles,

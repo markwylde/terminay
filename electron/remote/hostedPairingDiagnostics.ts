@@ -14,6 +14,7 @@ const EVENT_NAMES = {
 	'channel-state': 'local-server.remote-webrtc.channel-state',
 	'application-lane': 'local-server.remote-webrtc.application-lane',
 	'peer-closed': 'local-server.remote-webrtc.peer-closed',
+	'approval-pending': 'local-server.remote-pairing.approval-pending',
 } as const;
 
 const STREAM_TYPES = new Set([

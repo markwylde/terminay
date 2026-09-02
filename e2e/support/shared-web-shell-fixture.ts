@@ -31,7 +31,7 @@ export async function installSessionTransportHostStub(
 			enumerable: false,
 			writable: false,
 			value: Object.freeze({
-				authenticatedTransportVersion: 1,
+				authenticatedTransportVersion: 2,
 				version: 1,
 				sessionId: 'e2e-browser-session',
 				origin: window.location.origin,

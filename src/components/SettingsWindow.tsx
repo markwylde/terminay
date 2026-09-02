@@ -9,7 +9,6 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
 import type { ReactNode } from 'react';
 import {
-	type FormEvent,
 	useCallback,
 	useEffect,
 	useMemo,
@@ -28,11 +27,6 @@ import {
 	getCommandShortcutLabel,
 	normalizeAccelerator,
 } from '../keyboardShortcuts';
-import {
-	isRemoteAccessPairingPinConfigured,
-	PAIRING_PIN_PATTERN,
-	saveRemoteAccessPairingPin,
-} from '../remotePairingPin';
 import { type AiTabMetadataClient } from '../services/ai/aiTabMetadataClient';
 import type { RemoteAccessStatusClient } from '../services/remoteAccessStatusClient';
 import { SettingsMutationCoordinator } from '../settingsMutationCoordinator';
@@ -492,7 +486,6 @@ export function SettingsWindow({
 	aiTabMetadataClient: aiTabMetadataClientOverride,
 	initialSectionId,
 	remoteAccessStatusClient,
-	remotePairingPinClient,
 	settingsClient: settingsClientOverride,
 	shellProfilesClient,
 	serverIdentity = 'Connected server',
@@ -502,7 +495,6 @@ export function SettingsWindow({
 	aiTabMetadataClient?: AiTabMetadataClient;
 	initialSectionId?: string;
 	remoteAccessStatusClient: RemoteAccessStatusClient;
-	remotePairingPinClient: import('../remotePairingPin').RemotePairingPinClient;
 	settingsClient?: TerminalSettingsClient;
 	shellProfilesClient?: ShellProfilesClient;
 	serverIdentity?: string;
@@ -581,10 +573,6 @@ export function SettingsWindow({
 		null,
 	);
 	const [isTogglingRemoteAccess, setIsTogglingRemoteAccess] = useState(false);
-	const [isPairingPinModalOpen, setIsPairingPinModalOpen] = useState(false);
-	const [pairingPinInput, setPairingPinInput] = useState('');
-	const [pairingPinError, setPairingPinError] = useState<string | null>(null);
-	const [isSavingPairingPin, setIsSavingPairingPin] = useState(false);
 	const [isUpdatingRemoteDevices, setIsUpdatingRemoteDevices] = useState(false);
 	const [selectedDevicesToRevoke, setSelectedDevicesToRevoke] = useState<
 		Set<string>
@@ -647,9 +635,6 @@ export function SettingsWindow({
 	};
 
 	const contentRef = useRef<HTMLDivElement>(null);
-	const pairingPinRequestRef = useRef<((configured: boolean) => void) | null>(
-		null,
-	);
 
 	const loadDictationMicrophones = useCallback(
 		async (requestPermission = false) => {
@@ -2048,57 +2033,6 @@ export function SettingsWindow({
 		};
 	}, [listeningShortcutKey, updateShortcut]);
 
-	const closePairingPinModal = useCallback((configured: boolean) => {
-		pairingPinRequestRef.current?.(configured);
-		pairingPinRequestRef.current = null;
-		setIsPairingPinModalOpen(false);
-		setPairingPinInput('');
-		setPairingPinError(null);
-		setIsSavingPairingPin(false);
-	}, []);
-
-	const ensureRemoteAccessPairingPin = useCallback(async () => {
-		if (await isRemoteAccessPairingPinConfigured(remotePairingPinClient)) {
-			return true;
-		}
-
-		setPairingPinInput('');
-		setPairingPinError(null);
-		setIsPairingPinModalOpen(true);
-
-		return new Promise<boolean>((resolve) => {
-			pairingPinRequestRef.current = resolve;
-		});
-	}, []);
-
-	const submitPairingPin = useCallback(
-		async (event: FormEvent<HTMLFormElement>) => {
-			event.preventDefault();
-			const pin = pairingPinInput.trim();
-
-			if (!PAIRING_PIN_PATTERN.test(pin)) {
-				setPairingPinError('Pairing PIN must be exactly 6 digits.');
-				return;
-			}
-
-			setIsSavingPairingPin(true);
-			setPairingPinError(null);
-
-			try {
-				await saveRemoteAccessPairingPin(remotePairingPinClient, pin);
-				closePairingPinModal(true);
-			} catch (error) {
-				setPairingPinError(
-					error instanceof Error
-						? error.message
-						: 'Could not save the pairing PIN.',
-				);
-				setIsSavingPairingPin(false);
-			}
-		},
-		[closePairingPinModal, pairingPinInput],
-	);
-
 	const toggleRemoteAccess = async () => {
 		setIsTogglingRemoteAccess(true);
 		setRemoteActionError(null);
@@ -2108,10 +2042,6 @@ export function SettingsWindow({
 				setActiveCategoryId('remote');
 				setActiveSectionId('remote-access-host');
 				scrollToSection('remote-access-host');
-				return;
-			}
-
-			if (!remoteStatus?.isRunning && !(await ensureRemoteAccessPairingPin())) {
 				return;
 			}
 
@@ -2739,75 +2669,6 @@ export function SettingsWindow({
 			</div>
 		) : undefined;
 
-	const pairingPinModal = isPairingPinModalOpen ? (
-		<div
-			className="settings-modal-backdrop"
-			onMouseDown={() => closePairingPinModal(false)}
-		>
-			<form
-				className="settings-pin-modal"
-				onSubmit={submitPairingPin}
-				onMouseDown={(event) => event.stopPropagation()}
-				role="dialog"
-				aria-modal="true"
-				aria-labelledby="settings-pin-modal-title"
-			>
-				<div className="settings-pin-modal-header">
-					<h2 id="settings-pin-modal-title">Remote Pairing PIN</h2>
-					<button
-						type="button"
-						onClick={() => closePairingPinModal(false)}
-						aria-label="Close Remote Pairing PIN"
-					>
-						x
-					</button>
-				</div>
-				<p>
-					Choose a 6-digit PIN. Your browser will use this after scanning a
-					Remote Access QR code.
-				</p>
-				<label className="settings-pin-modal-field">
-					<span>Pairing PIN</span>
-					<input
-						className="settings-input-text"
-						type="password"
-						value={pairingPinInput}
-						onChange={(event) => {
-							setPairingPinInput(
-								event.target.value.replace(/\D/g, '').slice(0, 6),
-							);
-							setPairingPinError(null);
-						}}
-						inputMode="numeric"
-						pattern="[0-9]{6}"
-						autoComplete="off"
-						spellCheck={false}
-						autoFocus
-					/>
-				</label>
-				{pairingPinError ? (
-					<p className="settings-pin-modal-error">{pairingPinError}</p>
-				) : null}
-				<div className="settings-pin-modal-actions">
-					<button
-						type="button"
-						className="settings-secondary-button"
-						onClick={() => closePairingPinModal(false)}
-						disabled={isSavingPairingPin}
-					>
-						Cancel
-					</button>
-					<button
-						type="submit"
-						className="settings-primary-button"
-						disabled={isSavingPairingPin || pairingPinInput.length !== 6}
-					>
-						{isSavingPairingPin ? 'Saving...' : 'Save PIN'}
-					</button>
-				</div>
-			</form>
-		</div>
-	) : undefined;
 
 	return (
 		<SharedSettingsRouteBody
@@ -2859,7 +2720,6 @@ export function SettingsWindow({
 			contentRef={contentRef}
 			preview={settingsPreview}
 			collapsedPreview={collapsedSettingsPreview}
-			modal={pairingPinModal}
 		>
 			{displayedCategories.some((category) => category.id === 'diagnostics') ? (
 				<section id="section-diagnostics" className="settings-section">
