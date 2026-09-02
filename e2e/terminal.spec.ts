@@ -1192,6 +1192,69 @@ test.describe('terminal behavior', () => {
 			mainWindow.locator('.terminal-activity-pill--recent'),
 		).toHaveCount(0);
 
+		// The header pill is a true circle with the count centred inside it.
+		const headerPill = mainWindow.locator('.terminal-activity-pill--unviewed');
+		await expect(headerPill).toHaveAttribute('data-digits', '1');
+		const headerPillBox = await headerPill.boundingBox();
+		if (!headerPillBox) throw new Error('Expected header pill geometry');
+		expect(Math.abs(headerPillBox.width - headerPillBox.height)).toBeLessThan(
+			1,
+		);
+
+		// The background project tab carries a single per-project badge; the
+		// active project has nothing pending so it shows none.
+		const backgroundProjectTab = mainWindow.locator(
+			'.project-tab:not(.project-tab--active)',
+		);
+		const projectBadge = backgroundProjectTab.locator(
+			'.project-tab-activity-badge',
+		);
+		await expect(projectBadge).toHaveText('1');
+		await expect(projectBadge).toHaveClass(
+			/project-tab-activity-badge--unviewed/,
+		);
+		await expect(projectBadge).toHaveAttribute(
+			'aria-label',
+			'1 terminal, finished',
+		);
+		await expect(
+			mainWindow.locator('.project-tab--active .project-tab-activity-badge'),
+		).toHaveCount(0);
+		const projectBadgeBox = await projectBadge.boundingBox();
+		if (!projectBadgeBox) throw new Error('Expected project badge geometry');
+		expect(
+			Math.abs(projectBadgeBox.width - projectBadgeBox.height),
+		).toBeLessThan(1);
+		expect(Math.abs(projectBadgeBox.width - headerPillBox.width)).toBeLessThan(
+			1,
+		);
+		const closeBox = await backgroundProjectTab
+			.locator('.project-tab-close')
+			.boundingBox();
+		if (!closeBox) throw new Error('Expected project close geometry');
+		expect(projectBadgeBox.x + projectBadgeBox.width).toBeLessThanOrEqual(
+			closeBox.x + 1,
+		);
+
+		// The badge is inert: pressing it activates the project like the tab.
+		await projectBadge.click();
+		await expect(mainWindow.locator('.project-tab--active')).toContainText(
+			'Project',
+		);
+		await expect(mainWindow.locator('.project-tab--active')).not.toContainText(
+			'Project 2',
+		);
+		await expect(
+			mainWindow.locator('.project-tab--active .project-tab-activity-badge'),
+		).toHaveText('1');
+		await mainWindow
+			.locator('.project-tab:not(.project-tab--active)')
+			.filter({ hasText: 'Project 2' })
+			.click();
+		await expect(mainWindow.locator('.project-tab--active')).toContainText(
+			'Project 2',
+		);
+
 		await activityButton.click();
 		const activityMenu = mainWindow.getByRole('menu', {
 			name: 'Terminal activity menu',

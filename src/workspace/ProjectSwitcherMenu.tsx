@@ -12,16 +12,20 @@ import {
 	useState,
 } from 'react';
 import { useLongPress } from '../hooks/useLongPress';
+import type { ActivityCountBadge } from './activityCountBadge';
+import { ProjectTabActivityBadge } from './ProjectTabActivityBadge';
 import { type ProjectTab, projectTabIsBusy } from './projectTabModel';
 import { moveItemByDrop } from './projectTabOverflow';
 
 function ProjectSwitcherItemButton({
+	badge,
 	disabled,
 	isActive,
 	onActivate,
 	onEdit,
 	project,
 }: {
+	badge: ActivityCountBadge | undefined;
 	disabled: boolean;
 	isActive: boolean;
 	onActivate: () => void;
@@ -67,6 +71,7 @@ function ProjectSwitcherItemButton({
 				</span>
 			) : null}
 			<span className="project-switcher-menu__title">{project.title}</span>
+			<ProjectTabActivityBadge badge={badge} />
 			{isActive ? (
 				<span className="project-switcher-menu__check" aria-hidden="true">
 					✓
@@ -78,6 +83,7 @@ function ProjectSwitcherItemButton({
 
 export function ProjectSwitcherMenu({
 	activeProjectId,
+	activityBadgesByProject,
 	canCreate = true,
 	compact,
 	hiddenCount,
@@ -91,6 +97,7 @@ export function ProjectSwitcherMenu({
 	projects,
 }: {
 	activeProjectId: string;
+	activityBadgesByProject?: Record<string, ActivityCountBadge>;
 	canCreate?: boolean;
 	compact: boolean;
 	hiddenCount: number;
@@ -390,6 +397,7 @@ export function ProjectSwitcherMenu({
 								<GripVertical size={12} aria-hidden="true" />
 							</button>
 							<ProjectSwitcherItemButton
+								badge={activityBadgesByProject?.[project.id]}
 								disabled={project.creationStatus === 'loading'}
 								isActive={project.id === activeProjectId}
 								onActivate={() => {
