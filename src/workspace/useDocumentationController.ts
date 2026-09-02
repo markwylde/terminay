@@ -31,7 +31,11 @@ export function useDocumentationController(options: {
 		partial: false,
 		expandedFolders: new Set(expandedFolderIds),
 	});
-	const controllerRef = useRef<DocumentationCatalogController | undefined>(undefined);
+	const controllerRef = useRef<DocumentationCatalogController | undefined>(
+		undefined,
+	);
+	const onExpandedFolderIdsChangeRef = useRef(onExpandedFolderIdsChange);
+	onExpandedFolderIdsChangeRef.current = onExpandedFolderIdsChange;
 
 	useEffect(() => {
 		if (!enabled || client === undefined) {
@@ -50,18 +54,24 @@ export function useDocumentationController(options: {
 			projectId,
 			scopeKey,
 			expandedFolderIds,
-			onExpandedFolderIdsChange,
+			onExpandedFolderIdsChange: (ids) =>
+				onExpandedFolderIdsChangeRef.current(ids),
 		});
 		controllerRef.current = controller;
-		const unsubscribe = controller.subscribe(() => setSnapshot(controller.snapshot));
+		const unsubscribe = controller.subscribe(() =>
+			setSnapshot(controller.snapshot),
+		);
 		setSnapshot(controller.snapshot);
 		void controller.start();
 		return () => {
 			unsubscribe();
 			controller.dispose();
-			if (controllerRef.current === controller) controllerRef.current = undefined;
+			if (controllerRef.current === controller)
+				controllerRef.current = undefined;
 		};
-	}, [client, enabled, observationClient, onExpandedFolderIdsChange, projectId, scopeKey]);
+		// Expansion callback identity is not a catalog lifetime. Parent renders
+		// must not abort an in-flight docs.catalog query.
+	}, [client, enabled, observationClient, projectId, scopeKey]);
 
 	useEffect(() => {
 		controllerRef.current?.setExpandedFolderIds(expandedFolderIds);

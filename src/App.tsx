@@ -1320,7 +1320,7 @@ const ProjectWorkspace = forwardRef<
 			useTerminalSettings(serverSettingsClient);
 		const serverFileViewerClient = featureAuthority?.fileViewerClient;
 		const documentation = useDocumentationController({
-			enabled: !project.isDocumentationPaneCollapsed,
+			enabled: true,
 			client: featureAuthority?.documentationClient,
 			observationClient: featureAuthority?.fileObservationClient,
 			projectId: project.id,

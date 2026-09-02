@@ -83,6 +83,29 @@ export async function selectSidebarGroup(
   await expect(tab).toHaveAttribute('aria-selected', 'true')
 }
 
+export async function openDocumentationSidebar(page: Page): Promise<Locator> {
+  await selectSidebarGroup(page, 'documentation')
+  const pane = page
+    .locator('.project-workspace--active .sidebar-pane')
+    .filter({
+      has: page.locator('.sidebar-pane__title', { hasText: 'Documentation' }),
+    })
+  await expect(pane).toBeVisible()
+  if (
+    await pane.evaluate((element) =>
+      element.classList.contains('sidebar-pane--collapsed'),
+    )
+  ) {
+    await pane.locator('.sidebar-pane__header').click()
+  }
+  await expect(pane).not.toHaveClass(/sidebar-pane--collapsed/)
+  await expect(pane.locator('.documentation-tree')).toBeVisible({
+    timeout: 15_000,
+  })
+  await expect(pane.getByRole('tree')).toBeVisible({ timeout: 15_000 })
+  return pane
+}
+
 export function fileExplorerItem(page: Page, name: string) {
   return page.locator('.file-explorer-tree-item').filter({ hasText: name }).first()
 }
