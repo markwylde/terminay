@@ -11,15 +11,19 @@ import {
 	writeProgressArtifacts,
 } from './generate-spec-progress.mjs';
 
+const activeChange = ['openspec', 'changes', 'active-change'];
+const archivedChange = ['openspec', 'changes', 'archive', '2026-01-01-done'];
+const capability = ['openspec', 'specs', 'one'];
+
 function fixture(task = '- [ ] one\n') {
 	const root = mkdtempSync(join(tmpdir(), 'terminay-spec-progress-'));
-	for (const directory of ['tasks', 'tasks_completed', 'features'])
-		mkdirSync(join(root, 'specs', directory), { recursive: true });
-	writeFileSync(join(root, 'specs', 'tasks', 'active.md'), task);
-	writeFileSync(join(root, 'specs', 'features', 'one.md'), '# One\n');
+	for (const directory of [activeChange, archivedChange, capability])
+		mkdirSync(join(root, ...directory), { recursive: true });
+	writeFileSync(join(root, ...activeChange, 'tasks.md'), task);
+	writeFileSync(join(root, ...capability, 'spec.md'), '# One\n');
 	writeFileSync(
 		join(root, 'README.md'),
-		'[![Specification progress](docs/spec-progress.svg)](specs/README.md)\n',
+		'[![Specification progress](docs/spec-progress.svg)](openspec/)\n',
 	);
 	return root;
 }
@@ -35,11 +39,8 @@ test('parseChecklist counts tasks and ignores fenced examples', () => {
 
 test('collectSpecStats combines active and archived task plans', () => {
 	const root = fixture('- [ ] one\n- [x] two\n');
-	writeFileSync(
-		join(root, 'specs', 'tasks_completed', 'done.md'),
-		'- [x] three\n',
-	);
-	writeFileSync(join(root, 'specs', 'tasks', 'AGENTS.md'), '- [ ] ignored\n');
+	writeFileSync(join(root, ...archivedChange, 'tasks.md'), '- [x] three\n');
+	writeFileSync(join(root, ...activeChange, 'proposal.md'), '- [ ] ignored\n');
 	assert.deepEqual(collectSpecStats(root), {
 		checked: 2,
 		remaining: 1,
@@ -106,7 +107,7 @@ test('artifact generation adds and preserves a cache key on no-op runs', () => {
 test('progress changes refresh the SVG and README cache key', () => {
 	const root = fixture();
 	writeProgressArtifacts({ root, timestamp: 1784978870, updateReadme: true });
-	writeFileSync(join(root, 'specs', 'tasks', 'active.md'), '- [x] one\n');
+	writeFileSync(join(root, ...activeChange, 'tasks.md'), '- [x] one\n');
 	const result = writeProgressArtifacts({
 		root,
 		timestamp: 1784978999,

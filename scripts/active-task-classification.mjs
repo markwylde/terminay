@@ -17,14 +17,15 @@ export function classifyUncheckedItem(text) {
 }
 
 export async function auditActiveTaskClassifications(root = process.cwd()) {
-  const taskDirectory = join(root, 'specs/tasks')
-  const taskFiles = (await readdir(taskDirectory))
-    .filter((name) => name.endsWith('.md'))
+  const changesDirectory = join(root, 'openspec/changes')
+  const taskFiles = (await readdir(changesDirectory, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory() && entry.name !== 'archive')
+    .map((entry) => `${entry.name}/tasks.md`)
     .sort()
   const violations = []
 
   for (const file of taskFiles) {
-    const text = await readFile(join(taskDirectory, file), 'utf8')
+    const text = await readFile(join(changesDirectory, file), 'utf8')
     const lines = text.split(/\r?\n/u)
     for (let index = 0; index < lines.length; index += 1) {
       const match = /^\s*-\s+\[\s\]\s+(.+)$/u.exec(lines[index])
@@ -33,7 +34,7 @@ export async function auditActiveTaskClassifications(root = process.cwd()) {
       const classification = classifyUncheckedItem(itemText)
       if (!classification.operationalOnly) continue
       violations.push(Object.freeze({
-        file: `specs/tasks/${file}`,
+        file: `openspec/changes/${file}`,
         line: index + 1,
         text: itemText,
         pattern: classification.pattern,
@@ -42,7 +43,7 @@ export async function auditActiveTaskClassifications(root = process.cwd()) {
   }
 
   return Object.freeze({
-    taskFiles: Object.freeze(taskFiles.map((file) => `specs/tasks/${file}`)),
+    taskFiles: Object.freeze(taskFiles.map((file) => `openspec/changes/${file}`)),
     violations: Object.freeze(violations),
   })
 }
