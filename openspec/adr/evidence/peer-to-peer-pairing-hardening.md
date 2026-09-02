@@ -62,4 +62,9 @@ their conformance run is recorded here when it completes.
   `application-auth` consumed a ticket on that peer.
 - There is no PIN field anywhere in the shell.
 
-Conformance run: **pending** (external repository).
+Conformance run: terminay.com PR 87 (`feat/pairing-approval-v2`) implements
+this contract in the relay and session shell while keeping version-1 servers
+working, and its CI (relay specs, shared match-code vector, pairing and
+reconnect e2e) passes. The version-2 pairing and reconnect e2e against a
+server from this change runs once terminay.com is deployed and this change
+merges; until then the loopback proofs above stand in for it.
