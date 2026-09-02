@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { deriveMatchCode } from '../packages/protocol/dist/index.js';
 import { createHostedHostKey } from '../apps/terminay-server/dist/remote/hostedHostKey.js';
@@ -20,7 +20,9 @@ import { startHostedLoopbackRelay } from './support/hostedLoopbackRelay.mjs';
  * pinned beside the device key, and that reconnect uses the device-join proof.
  */
 
-const RUNTIME_ROOT = resolve(process.cwd(), 'build/webrtc-runtime');
+const RUNTIME_ROOT = process.env.TERMINAY_WEBRTC_RUNTIME_ROOT
+	? resolve(process.env.TERMINAY_WEBRTC_RUNTIME_ROOT)
+	: fileURLToPath(new URL('../build/webrtc-runtime', import.meta.url));
 const SESSION_ID = 'server123';
 const directory = await mkdtemp(join(tmpdir(), 'terminay-desktop-hosted-'));
 const hostedOut = join(directory, 'desktopHostedConnection.mjs');
