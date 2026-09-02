@@ -1,6 +1,12 @@
 import { CanonicalProjectPathResolver } from "./pathResolver.js";
 import { FileServiceError } from "./types.js";
 import type { FileCatalogStorage, FileDirectoryEntry } from "./catalog.js";
+import {
+  DEFAULT_IGNORED_DIRECTORIES,
+  isIgnoredPath,
+  validIgnorePattern,
+} from "./ignore.js";
+
 
 /** A checkbox task discovered in a project-relative Markdown file. */
 export interface MarkdownTaskItem {
@@ -80,9 +86,6 @@ const DEFAULT_MAX_BYTES = 16 * 1024 * 1024;
 const DEFAULT_MAX_FILE_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_TASKS = 10_000;
 const DEFAULT_MAX_TASK_LABEL_LENGTH = 4_096;
-const DEFAULT_IGNORED_DIRECTORIES = Object.freeze([
-  ".git", ".hg", ".svn", ".next", ".turbo", ".vite", "coverage", "dist", "dist-electron", "node_modules", "release",
-]);
 
 const MARKDOWN_EXTENSIONS = new Set(["md", "markdown", "mdown", "mkd"]);
 const HEADING_PATTERN = /^(#{1,6})\s+(.*\S)\s*$/u;
@@ -132,7 +135,7 @@ export async function aggregateMarkdownTasks(
   const maxTasks = positive(options.maxTasks ?? DEFAULT_MAX_TASKS, "maxTasks");
   const maxFileBytes = positive(options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES, "maxFileBytes");
   const maxTaskLabelLength = positive(options.maxTaskLabelLength ?? DEFAULT_MAX_TASK_LABEL_LENGTH, "maxTaskLabelLength");
-  const ignored = (options.ignoredDirectories ?? DEFAULT_IGNORED_DIRECTORIES).map(validPattern);
+  const ignored = (options.ignoredDirectories ?? DEFAULT_IGNORED_DIRECTORIES).map(validIgnorePattern);
   const canonical = await resolver.resolve(root || ".");
   const rootStat = await storage.stat(canonical);
   const files: MarkdownTaskFile[] = [];
@@ -425,11 +428,8 @@ function statsForStats(direct: MarkdownTaskStats, children: readonly MarkdownTas
   return Object.freeze({ total, completed, remaining: total - completed });
 }
 function isMarkdownPath(path: string): boolean { const name = basename(path).toLocaleLowerCase(); const dot = name.lastIndexOf("."); return dot > 0 && MARKDOWN_EXTENSIONS.has(name.slice(dot + 1)); }
-function isIgnoredPath(path: string, patterns: readonly string[]): boolean { return path.split("/").some((part) => patterns.some((pattern) => wildcard(pattern, part))); }
-function wildcard(pattern: string, value: string): boolean { let p = 0; let v = 0; let star = -1; let match = 0; while (v < value.length) { if (p < pattern.length && (pattern[p] === "?" || pattern[p] === value[v])) { p += 1; v += 1; continue; } if (p < pattern.length && pattern[p] === "*") { star = p; match = v; p += 1; continue; } if (star >= 0) { p = star + 1; match += 1; v = match; continue; } return false; } while (p < pattern.length && pattern[p] === "*") p += 1; return p === pattern.length; }
 function normalizeRelative(value: string): string { if (typeof value !== "string" || value.includes("\0") || value.includes("\\") || value.startsWith("/")) throw new FileServiceError("invalid_path", "project-relative path is invalid", { requested: value }); if (value === "" || value === ".") return ""; const parts = value.split("/"); if (parts.some((part) => part.length === 0 || part === "." || part === "..")) throw new FileServiceError("path_escape", "project-relative path is not canonical", { requested: value }); return parts.join("/"); }
 function validEntryName(name: string): string { if (typeof name !== "string" || name.length === 0 || name.length > 4096 || name.includes("\0") || name.includes("/") || name.includes("\\") || name === "." || name === "..") throw new FileServiceError("invalid_path", "directory entry name is invalid"); return name; }
-function validPattern(pattern: string): string { if (typeof pattern !== "string" || pattern.length === 0 || pattern.length > 256 || pattern.includes("\0") || pattern.includes("/")) throw new TypeError("ignore pattern is invalid"); return pattern; }
 function indentWidth(indent: string): number { let width = 0; for (const character of indent) width += character === "\t" ? 2 : 1; return width; }
 function safeSize(value: number | undefined): number { return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0; }
 function finite(value: number | undefined): value is number { return typeof value === "number" && Number.isFinite(value) && value >= 0; }

@@ -10,6 +10,12 @@ import {
 	type MaybePromise,
 	type PathStat,
 } from './types.js';
+import {
+	DEFAULT_IGNORED_DIRECTORIES,
+	isIgnoredDirectoryName,
+	validIgnorePattern,
+} from './ignore.js';
+
 
 export interface FileDirectoryEntry {
 	readonly name: string;
@@ -172,19 +178,6 @@ const DEFAULT_MAX_WRITE_BYTES = 100 * 1024 * 1024;
 const DEFAULT_MAX_PREVIEW_INSPECTION_BYTES = 8 * 1024;
 const DEFAULT_MAX_PREVIEW_BYTES = 8 * 1024 * 1024;
 const LARGE_FILE_BYTES = 100 * 1024 * 1024;
-const DEFAULT_IGNORED_DIRECTORIES = Object.freeze([
-	'.git',
-	'.hg',
-	'.svn',
-	'.next',
-	'.turbo',
-	'.vite',
-	'coverage',
-	'dist',
-	'dist-electron',
-	'node_modules',
-	'release',
-]);
 
 /**
  * Bounded, project-relative directory/search/size operations. The adapter is
@@ -240,7 +233,7 @@ export class FileCatalog {
 		);
 		this.ignoredDirectories = Object.freeze(
 			(options.ignoredDirectories ?? DEFAULT_IGNORED_DIRECTORIES).map(
-				(pattern) => validPattern(pattern),
+				(pattern) => validIgnorePattern(pattern),
 			),
 		);
 	}
@@ -324,7 +317,7 @@ export class FileCatalog {
 			'maxDepth',
 		);
 		const ignored = (options.ignoredDirectories ?? this.ignoredDirectories).map(
-			(pattern) => validPattern(pattern),
+			(pattern) => validIgnorePattern(pattern),
 		);
 		const includeDirectories = options.includeDirectories ?? true;
 		const results: FileCatalogSearchResult[] = [];
@@ -363,7 +356,7 @@ export class FileCatalog {
 					break;
 				}
 				const name = validEntryName(raw.name);
-				if (isIgnoredName(name, ignored)) continue;
+				if (isIgnoredDirectoryName(name, ignored)) continue;
 				const relativePath =
 					current.relativePath.length === 0
 						? name
@@ -433,7 +426,7 @@ export class FileCatalog {
 			'maxBytes',
 		);
 		const ignored = (options.ignoredDirectories ?? this.ignoredDirectories).map(
-			(pattern) => validPattern(pattern),
+			(pattern) => validIgnorePattern(pattern),
 		);
 		const pending: Array<{
 			readonly relativePath: string;
@@ -467,7 +460,7 @@ export class FileCatalog {
 					break;
 				}
 				const name = validEntryName(raw.name);
-				if (isIgnoredName(name, ignored) || raw.isSymbolicLink === true)
+				if (isIgnoredDirectoryName(name, ignored) || raw.isSymbolicLink === true)
 					continue;
 				const relativePath =
 					current.relativePath.length === 0
@@ -822,10 +815,10 @@ export class FileCatalog {
 		extra: readonly string[],
 	): boolean {
 		return (
-			isIgnoredName(name, [...extra, ...this.ignoredDirectories]) ||
+			isIgnoredDirectoryName(name, [...extra, ...this.ignoredDirectories]) ||
 			relativePath
 				.split('/')
-				.some((part) => isIgnoredName(part, this.ignoredDirectories))
+				.some((part) => isIgnoredDirectoryName(part, this.ignoredDirectories))
 		);
 	}
 }
@@ -1135,50 +1128,6 @@ function isMissingPathError(error: unknown): boolean {
 	);
 }
 
-function validPattern(pattern: string): string {
-	if (
-		typeof pattern !== 'string' ||
-		pattern.length === 0 ||
-		pattern.length > 256 ||
-		pattern.includes('\0') ||
-		pattern.includes('/')
-	)
-		throw new TypeError('ignore pattern is invalid');
-	return pattern;
-}
-
-function isIgnoredName(name: string, patterns: readonly string[]): boolean {
-	return patterns.some((pattern) => wildcard(pattern, name));
-}
-
-function wildcard(pattern: string, value: string): boolean {
-	let p = 0;
-	let v = 0;
-	let star = -1;
-	let match = 0;
-	while (v < value.length) {
-		if (p < pattern.length && (pattern[p] === '?' || pattern[p] === value[v])) {
-			p += 1;
-			v += 1;
-			continue;
-		}
-		if (p < pattern.length && pattern[p] === '*') {
-			star = p;
-			match = v;
-			p += 1;
-			continue;
-		}
-		if (star >= 0) {
-			p = star + 1;
-			match += 1;
-			v = match;
-			continue;
-		}
-		return false;
-	}
-	while (p < pattern.length && pattern[p] === '*') p += 1;
-	return p === pattern.length;
-}
 
 function normalizeQuery(value: string, max: number): string {
 	if (typeof value !== 'string' || value.length > max)
