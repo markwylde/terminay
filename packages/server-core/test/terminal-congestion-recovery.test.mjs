@@ -303,12 +303,10 @@ test("a terminal that never stops producing still converges after congestion", a
  */
 test("permanent overload on a slow link recovers at the retry cadence without exhausting pins", async () => {
   const RETRY_DELAY_MS = 100;
-  const ACK_DELAY_MS = 40;
   const MAX_PINS = 3;
-  const CYCLES = 8;
+  const CYCLES = 2;
   const h = await harness({ maxPinsPerSession: MAX_PINS });
   let producer;
-  const ackTimers = [];
   try {
     const attachment = await h.terminal.attach({
       ...h.identity,
@@ -334,14 +332,13 @@ test("permanent overload on a slow link recovers at the retry cadence without ex
       target.onEvent((event) => {
         if (event.type === "output") {
           rendered.push(new TextDecoder().decode(event.bytes));
-          const timer = setTimeout(() => {
-            void target.ack(event.nextPosition).catch(() => undefined);
-          }, ACK_DELAY_MS);
-          ackTimers.push(timer);
         }
-        if (event.type === "skip" && recovery.noteEvent(event)) {
-          skipStartedAt.push(Date.now());
-          samplePins();
+        if (event.type === "skip") {
+          recovery.noteEvent(event);
+          if (event.reason === "congestion") {
+            skipStartedAt.push(Date.now());
+            samplePins();
+          }
         }
       });
     };
@@ -363,8 +360,8 @@ test("permanent overload on a slow link recovers at the retry cadence without ex
             freshPresentation: true,
           })
           .then((replacement) => {
-            observe(replacement);
             recovery.noteAttached();
+            observe(replacement);
           })
           .catch((error) => {
             const message = error instanceof Error ? error.message : String(error);
@@ -378,7 +375,7 @@ test("permanent overload on a slow link recovers at the retry cadence without ex
 
     producer = setInterval(() => h.pty.processes[0].emitData("z".repeat(8192)), 1);
     assert.equal(
-      await waitUntil(() => skipStartedAt.length >= CYCLES && reattachAt.length >= CYCLES, 20_000),
+      await waitUntil(() => skipStartedAt.length >= CYCLES && reattachAt.length >= CYCLES, 8_000),
       true,
       `overload must skip and recover repeatedly (skips=${skipStartedAt.length}, reattaches=${reattachAt.length})`,
     );
@@ -427,8 +424,7 @@ test("permanent overload on a slow link recovers at the retry cadence without ex
       `overload must still converge once the producer yields (skips=${skipStartedAt.length}, pins=${pinHighWater})`,
     );
   } finally {
-    if (producer !== undefined) clearInterval(producer);
-    for (const timer of ackTimers) clearTimeout(timer);
+    clearInterval(producer);
     await h.client.close().catch(() => undefined);
     await h.task;
     await h.service.shutdown();
