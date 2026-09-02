@@ -129,7 +129,7 @@ export function createProjectEnvironmentOperationHandlers(options: ProjectEnviro
 				}
 			}
 			const canonicalRoot = prepared?.canonicalRoot ?? boundedRoot(root);
-			const result = options.workspace.apply({ commandId: `env:${request.envelope.commandId}`.slice(0, 128), expectedRevision: request.context.expectedRevision, command: { type: 'project.create', projectId, viewId: text(payload, 'viewId', 256), root: canonicalRoot, rootOrigin: payload.root === undefined ? 'environment-default' : 'explicit', name: `Project ${Object.keys(options.workspace.state.projects).length + 1}`, projectEnvironmentId: environment.id, environmentRevision: environment.pinnedRevision } });
+			const result = options.workspace.apply({ commandId: `env:${request.envelope.commandId}`.slice(0, 128), expectedRevision: request.context.expectedRevision, command: { type: 'project.create', projectId, viewId: text(payload, 'viewId', 256), root: canonicalRoot, rootOrigin: payload.root === undefined ? 'environment-default' : 'explicit', projectEnvironmentId: environment.id, environmentRevision: environment.pinnedRevision } });
 			if (!result.ok) throw failure('conflict', result.conflict.message);
 			await prepared?.commit();
 			changed(options, state.revision);

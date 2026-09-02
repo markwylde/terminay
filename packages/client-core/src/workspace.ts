@@ -60,7 +60,8 @@ export interface ProjectCreateRequest {
 	readonly projectId: string;
 	readonly viewId: string;
 	readonly root: string;
-	readonly name: string;
+	/** Absent means the server assigns the next unique default name. */
+	readonly name?: string;
 	readonly color?: string;
 	readonly icon?: string;
 	readonly sidebar?: ProjectSidebarState;
@@ -245,7 +246,7 @@ export class WorkspaceClient {
 			!isBoundedId(request.projectId) ||
 			!isBoundedId(request.viewId) ||
 			!boundedPath(request.root) ||
-			!boundedLabel(request.name) ||
+			(request.name !== undefined && !boundedLabel(request.name)) ||
 			(request.color !== undefined && !boundedLabel(request.color)) ||
 			(request.icon !== undefined &&
 				(typeof request.icon !== 'string' ||
