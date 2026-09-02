@@ -7,9 +7,9 @@
 
 ## 2. Regression coverage
 
-- [ ] 2.1 Add a case to `e2e/documentation-sidebar-editor.spec.ts` that opens a Markdown document, resizes the window to a phone-sized viewport (390 wide, ~660 tall), and asserts `.documentation-editor__surface` has a bounding-box height that is a substantial fraction of `.documentation-editor`'s height — not a fixed pixel count, so typography changes do not churn it. Verified by the assertion failing when the fix in task 1.1 is reverted.
-- [ ] 2.2 Assert in the same case that the editor toolbar and the rendered heading of the opened document are visible at that viewport. Verified by the assertions passing with the fix and failing without it.
-- [ ] 2.3 Run the suite through `npm run test:e2e` — never Playwright's Electron suite directly on the host — and confirm the new case and the existing Documentation cases pass.
+- [x] 2.1 Add a case to `e2e/documentation-sidebar-editor.spec.ts` that opens a Markdown document, resizes the window to a phone-sized viewport (390 wide, ~660 tall), and asserts `.documentation-editor__surface` has a bounding-box height that is a substantial fraction of `.documentation-editor`'s height — not a fixed pixel count, so typography changes do not churn it. Verified by the assertion failing when the fix in task 1.1 is reverted.
+- [x] 2.2 Assert in the same case that the editor toolbar and the rendered heading of the opened document are visible at that viewport. Verified by the assertions passing with the fix and failing without it.
+- [x] 2.3 Run the suite through `npm run test:e2e` — never Playwright's Electron suite directly on the host — and confirm the new case and the existing Documentation cases pass.
 
 ## 3. Confirmation and closeout
 
