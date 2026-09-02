@@ -20,5 +20,5 @@
 
 ## 5. Verification and docs
 
-- [ ] 5.1 Run `npm run lint`, unit tests, and `npm run test:e2e` (Docker-isolated). Verified by all suites green.
-- [ ] 5.2 Capture before/after screenshots of the header pills and a tab badge for the pull request. Verified by images attached to the PR description.
+- [x] 5.1 Run `npm run lint`, unit tests, and `npm run test:e2e` (Docker-isolated). Verified by all suites green.
+- [x] 5.2 Capture before/after screenshots of the header pills and a tab badge for the pull request. Verified by images attached to the PR description.
