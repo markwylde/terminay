@@ -166,6 +166,7 @@ function publisherFor(events) {
     done: (event) => publish({ kind: "agent.done", ...event }),
     exited: (event) => publish({ kind: "agent.exited", ...event }),
     subagentStarted: (event) => publish({ kind: "subagent.started", ...event }),
+    sessionStopped: (event) => publish({ kind: "session.stopped", ...event }),
     subagentDone: (event) => publish({ kind: "subagent.done", ...event }),
   };
 }

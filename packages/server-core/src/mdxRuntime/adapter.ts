@@ -1,25 +1,219 @@
 import { scopeAllows } from '../auth.js';
 import type { AuthScope, JsonValue } from '@terminay/protocol';
-import type { BinaryQueryHandlerResult, CommandHandler, QueryHandler, QueryRequest, CommandRequest } from '../types.js';
+import type {
+	BinaryQueryHandlerResult,
+	CommandHandler,
+	QueryHandler,
+	QueryRequest,
+	CommandRequest,
+} from '../types.js';
 import { FileServiceError } from '../fileService/types.js';
-import { MdxRuntime } from './runtime.js';
+import type { MdxRuntime } from './runtime.js';
 
-export const MDX_RUNTIME_OPERATIONS = Object.freeze({ compile: 'mdx.compile', resource: 'mdx.resource', dispose: 'mdx.dispose' } as const);
-export interface MdxRuntimeProjectContext { readonly projectId: string; readonly runtime: MdxRuntime; }
-export interface MdxRuntimeAdapterOptions { readonly serverId: string; readonly projects: ReadonlyMap<string, MdxRuntimeProjectContext>; }
-export class ServerMdxRuntimeAdapter {
-	private readonly owners = new Map<string, { readonly clientId: string; readonly projectId: string }>();
-	constructor(private readonly options: MdxRuntimeAdapterOptions) {}
-	operations(): { readonly queries: Readonly<Record<string, QueryHandler>>; readonly commands: Readonly<Record<string, CommandHandler>> } { return { queries: { [MDX_RUNTIME_OPERATIONS.compile]: (request) => this.compile(request), [MDX_RUNTIME_OPERATIONS.resource]: (request) => this.resource(request) }, commands: { [MDX_RUNTIME_OPERATIONS.dispose]: (request) => this.dispose(request) } }; }
-	private async compile(request: QueryRequest): Promise<BinaryQueryHandlerResult> { const payload = object(request.envelope.payload); const project = this.project(request, text(payload.projectId, 'projectId')); const result = await project.runtime.compile(path(payload.path), request.context.signal); this.owners.set(result.runtimeId, { clientId: request.context.clientId, projectId: project.projectId }); return binary({ runtimeId: result.runtimeId, revision: result.revision, entryResourceId: 'entry', entryPath: result.entryPath, dependencies: [...result.dependencies], resources: result.resources.map((resource) => ({ resourceId: resource.resourceId, mimeType: resource.mimeType, totalLength: resource.totalLength })) }, result.code); }
-	private async resource(request: QueryRequest): Promise<BinaryQueryHandlerResult> { const payload = object(request.envelope.payload); const project = this.project(request, text(payload.projectId, 'projectId')); const runtimeId = text(payload.runtimeId, 'runtimeId'); this.owner(request, runtimeId, project.projectId); const item = await project.runtime.resource(runtimeId, text(payload.resourceId, 'resourceId'), number(payload.offset, 'offset'), number(payload.length, 'length'), request.context.signal); return binary({ runtimeId, resourceId: text(payload.resourceId, 'resourceId'), offset: item.offset, totalLength: item.totalLength, mimeType: item.mimeType }, item.bytes); }
-	private dispose(request: CommandRequest): null { const payload = object(request.envelope.payload); const project = this.project(request, text(payload.projectId, 'projectId')); const runtimeId = text(payload.runtimeId, 'runtimeId'); this.owner(request, runtimeId, project.projectId); project.runtime.dispose(runtimeId); this.owners.delete(runtimeId); return null; }
-	private project(request: QueryRequest | CommandRequest, projectId: string): MdxRuntimeProjectContext { if (!scopeAllows(request.context.authScope as AuthScope, 'read')) throw new FileServiceError('path_escape', 'MDX requires read access.'); const claim = claimsProject(request.context.claims); if (claim !== undefined && claim !== projectId) throw new FileServiceError('path_escape', 'MDX project is outside authorization.'); const project = this.options.projects.get(projectId); if (project === undefined) throw new FileServiceError('path_escape', 'MDX project is unavailable.'); return project; }
-	private owner(request: QueryRequest | CommandRequest, runtimeId: string, projectId: string): void { const owner = this.owners.get(runtimeId); if (owner === undefined || owner.clientId !== request.context.clientId || owner.projectId !== projectId) throw new FileServiceError('path_escape', 'MDX runtime is not owned by this client/project.'); }
+export const MDX_RUNTIME_OPERATIONS = Object.freeze({
+	compile: 'mdx.compile',
+	resource: 'mdx.resource',
+	dispose: 'mdx.dispose',
+} as const);
+export interface MdxRuntimeProjectContext {
+	readonly projectId: string;
+	readonly runtime: MdxRuntime;
 }
-function binary(result: Record<string, JsonValue>, body: Uint8Array): BinaryQueryHandlerResult { return { result: { ...result, contentType: 'application/javascript', bodyLength: body.byteLength }, body }; }
-function object(value: unknown): Record<string, unknown> { if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new TypeError('MDX payload is invalid'); return value as Record<string, unknown>; }
-function text(value: unknown, name: string): string { if (typeof value !== 'string' || !value || value.length > 4096) throw new TypeError(`${name} is invalid`); return value; }
-function path(value: unknown): string { const result = text(value, 'path'); if (result.startsWith('/') || result.includes('\\') || result.split('/').some((part) => !part || part === '.' || part === '..')) throw new TypeError('MDX path is invalid'); return result; }
-function number(value: unknown, name: string): number { if (!Number.isSafeInteger(value) || (value as number) < 0) throw new TypeError(`${name} is invalid`); return value as number; }
-function claimsProject(value: unknown): string | undefined { return typeof value === 'object' && value !== null && typeof (value as Record<string, unknown>).projectId === 'string' ? (value as Record<string, string>).projectId : undefined; }
+export interface MdxRuntimeAdapterOptions {
+	readonly serverId: string;
+	readonly projects: ReadonlyMap<string, MdxRuntimeProjectContext>;
+}
+export class ServerMdxRuntimeAdapter {
+	private readonly owners = new Map<
+		string,
+		{ readonly clientId: string; readonly projectId: string }
+	>();
+	constructor(private readonly options: MdxRuntimeAdapterOptions) {}
+	operations(): {
+		readonly queries: Readonly<Record<string, QueryHandler>>;
+		readonly commands: Readonly<Record<string, CommandHandler>>;
+	} {
+		return {
+			queries: {
+				[MDX_RUNTIME_OPERATIONS.compile]: (request) => this.compile(request),
+				[MDX_RUNTIME_OPERATIONS.resource]: (request) => this.resource(request),
+			},
+			commands: {
+				[MDX_RUNTIME_OPERATIONS.dispose]: (request) => this.dispose(request),
+			},
+		};
+	}
+	closeClient(clientId: string): void {
+		for (const [runtimeId, owner] of [...this.owners]) {
+			if (owner.clientId !== clientId) continue;
+			this.options.projects.get(owner.projectId)?.runtime.dispose(runtimeId);
+			this.owners.delete(runtimeId);
+		}
+	}
+	disposeProject(projectId: string): void {
+		this.options.projects.get(projectId)?.runtime.disposeAll();
+		for (const [runtimeId, owner] of [...this.owners]) {
+			if (owner.projectId === projectId) this.owners.delete(runtimeId);
+		}
+	}
+	disposeAll(): void {
+		for (const project of this.options.projects.values())
+			project.runtime.disposeAll();
+		this.owners.clear();
+	}
+	private async compile(
+		request: QueryRequest,
+	): Promise<BinaryQueryHandlerResult> {
+		const payload = object(request.envelope.payload);
+		const project = this.project(request, text(payload.projectId, 'projectId'));
+		const result = await project.runtime.compile(
+			path(payload.path),
+			request.context.signal,
+		);
+		this.owners.set(result.runtimeId, {
+			clientId: request.context.clientId,
+			projectId: project.projectId,
+		});
+		return binary(
+			{
+				runtimeId: result.runtimeId,
+				revision: result.revision,
+				entryResourceId: 'entry',
+				entryPath: result.entryPath,
+				dependencies: [...result.dependencies],
+				resources: result.resources.map((resource) => ({
+					resourceId: resource.resourceId,
+					mimeType: resource.mimeType,
+					totalLength: resource.totalLength,
+				})),
+			},
+			result.code,
+		);
+	}
+	private async resource(
+		request: QueryRequest,
+	): Promise<BinaryQueryHandlerResult> {
+		const payload = object(request.envelope.payload);
+		const project = this.project(request, text(payload.projectId, 'projectId'));
+		const runtimeId = text(payload.runtimeId, 'runtimeId');
+		this.owner(request, runtimeId, project.projectId);
+		const item = await project.runtime.resource(
+			runtimeId,
+			resourceId(payload.resourceId),
+			number(payload.offset, 'offset'),
+			number(payload.length, 'length'),
+			request.context.signal,
+		);
+		return binary(
+			{
+				runtimeId,
+				resourceId: resourceId(payload.resourceId),
+				offset: item.offset,
+				totalLength: item.totalLength,
+				mimeType: item.mimeType,
+			},
+			item.bytes,
+		);
+	}
+	private dispose(request: CommandRequest): null {
+		const payload = object(request.envelope.payload);
+		const project = this.project(request, text(payload.projectId, 'projectId'));
+		const runtimeId = text(payload.runtimeId, 'runtimeId');
+		this.owner(request, runtimeId, project.projectId);
+		project.runtime.dispose(runtimeId);
+		this.owners.delete(runtimeId);
+		return null;
+	}
+	private project(
+		request: QueryRequest | CommandRequest,
+		projectId: string,
+	): MdxRuntimeProjectContext {
+		if (!scopeAllows(request.context.authScope as AuthScope, 'read'))
+			throw new FileServiceError('path_escape', 'MDX requires read access.');
+		const claim = claimsProject(request.context.claims);
+		if (claim === undefined || claim !== projectId)
+			throw new FileServiceError(
+				'path_escape',
+				'MDX project identity in the payload grants no authority.',
+			);
+		const project = this.options.projects.get(projectId);
+		if (project === undefined)
+			throw new FileServiceError('path_escape', 'MDX project is unavailable.');
+		return project;
+	}
+	private owner(
+		request: QueryRequest | CommandRequest,
+		runtimeId: string,
+		projectId: string,
+	): void {
+		const owner = this.owners.get(runtimeId);
+		if (
+			owner === undefined ||
+			owner.clientId !== request.context.clientId ||
+			owner.projectId !== projectId
+		)
+			throw new FileServiceError(
+				'path_escape',
+				'MDX runtime is not owned by this client/project.',
+			);
+	}
+}
+function binary(
+	result: Record<string, JsonValue>,
+	body: Uint8Array,
+): BinaryQueryHandlerResult {
+	return {
+		result: {
+			...result,
+			contentType: 'application/javascript',
+			bodyLength: body.byteLength,
+		},
+		body,
+	};
+}
+function object(value: unknown): Record<string, unknown> {
+	if (typeof value !== 'object' || value === null || Array.isArray(value))
+		throw new TypeError('MDX payload is invalid');
+	return value as Record<string, unknown>;
+}
+function text(value: unknown, name: string): string {
+	if (typeof value !== 'string' || !value || value.length > 4096)
+		throw new TypeError(`${name} is invalid`);
+	return value;
+}
+function path(value: unknown): string {
+	const result = text(value, 'path');
+	if (
+		result.startsWith('/') ||
+		result.includes('\\') ||
+		result.split('/').some((part) => !part || part === '.' || part === '..')
+	)
+		throw new TypeError('MDX path is invalid');
+	return result;
+}
+function resourceId(value: unknown): string {
+	const result = text(value, 'resourceId');
+	if (
+		result.includes('/') ||
+		result.includes('\\') ||
+		result.includes('..') ||
+		result.startsWith('.')
+	)
+		throw new FileServiceError(
+			'invalid_path',
+			'MDX resource requests cannot use a filesystem path.',
+		);
+	return result;
+}
+function number(value: unknown, name: string): number {
+	if (!Number.isSafeInteger(value) || (value as number) < 0)
+		throw new TypeError(`${name} is invalid`);
+	return value as number;
+}
+function claimsProject(value: unknown): string | undefined {
+	return typeof value === 'object' &&
+		value !== null &&
+		typeof (value as Record<string, unknown>).projectId === 'string'
+		? (value as Record<string, string>).projectId
+		: undefined;
+}

@@ -1,5 +1,7 @@
 import { defineAgentProvider, jsonlSession } from "@terminay/extension-api";
 
+const REQUIRED_CAPABILITIES = ["filesystem-observation", "agent-journal"];
+
 export const exampleAgentProvider = defineAgentProvider({
   mappingVersion: "0.1",
 
@@ -8,8 +10,10 @@ export const exampleAgentProvider = defineAgentProvider({
   },
 
   async observe(terminal) {
-    if (!terminal.capabilities.has("agent-journal")) {
-      return { state: "unavailable", reason: "environment-capability-missing" };
+    for (const capability of REQUIRED_CAPABILITIES) {
+      if (!terminal.capabilities.has(capability)) {
+        return { state: "unavailable", reason: "environment-capability-missing" };
+      }
     }
 
     // terminal.tty is an optional host fact, never a path or file capability.
@@ -17,9 +21,9 @@ export const exampleAgentProvider = defineAgentProvider({
     const journal = await terminal.observation.files.resolveHomeRelative(
       ".example-agent/sessions/current.jsonl",
       {
-      beneath: { homeRelative: ".example-agent/sessions" },
-      extension: ".jsonl",
-      signal: terminal.signal,
+        beneath: { homeRelative: ".example-agent/sessions" },
+        extension: ".jsonl",
+        signal: terminal.signal,
       },
     );
     if (!journal) return { state: "not-bound" };
@@ -62,15 +66,34 @@ function mapRecord(record, session) {
 
   if (record.type === "session" || record.type === "session_started") {
     session.publish.sessionStarted({ title: boundedString(record.title, 200) });
+  } else if (record.type === "metadata") {
+    const title = boundedString(record.title, 200);
+    const model = modelMetadata(record.model);
+    if (!title && !model) return;
+    session.publish.metadataChanged({
+      ...(title ? { title } : {}),
+      ...(model ? { model } : {}),
+    });
   } else if (record.type === "user_message") {
     const turnId = requiredId(record.turnId);
     if (turnId) session.publish.turnStarted({ turnId, promptText: boundedString(record.text, 4_000) });
   } else if (record.type === "tool_started") {
     const toolId = requiredId(record.toolId);
     if (toolId) session.publish.toolStarted({ toolId, name: boundedString(record.toolName, 200) ?? "Tool" });
+  } else if (record.type === "tool_finished") {
+    const toolId = requiredId(record.toolId);
+    if (toolId) session.publish.toolFinished({ toolId, outcome: "success" });
   } else if (record.type === "approval_requested") {
     const waitId = requiredId(record.requestId);
     if (waitId) session.publish.waitStarted({ waitId, state: "waiting", reason: "Approval requested" });
+  } else if (record.type === "subagent_started") {
+    const subagentId = requiredId(record.childId);
+    if (!subagentId) return;
+    session.publish.subagentStarted({ subagentId, title: boundedString(record.title, 200) });
+  } else if (record.type === "subagent_done") {
+    const subagentId = requiredId(record.childId);
+    if (!subagentId) return;
+    session.publish.subagentDone({ subagentId, outcome: "success" });
   } else if (record.type === "turn_completed") {
     session.publish.done({ outcome: "success" });
   }
@@ -87,4 +110,9 @@ function boundedString(value, maximum) {
 function requiredId(value) {
   const id = boundedString(value, 200);
   return id && id.length > 0 ? id : undefined;
+}
+
+function modelMetadata(value) {
+  if (!isRecord(value) || typeof value.id !== "string" || value.id.length === 0) return undefined;
+  return { id: value.id, ...(boundedString(value.displayName, 200) ? { displayName: boundedString(value.displayName, 200) } : {}) };
 }

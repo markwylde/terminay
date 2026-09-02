@@ -518,7 +518,7 @@ function validateProviders(value: unknown, extensionId: string, descriptor: Exte
     if (provider === undefined || !validation.ok || typeof provider.providerId !== "string" || !isNamespacedId(provider.providerId, extensionId) || seen.has(provider.providerId)) throw new Error("extension returned invalid provider registrations");
     const contribution = descriptor.projectEnvironmentProviders?.find((candidate) => candidate.id === provider.providerId);
     if (descriptor.projectEnvironmentProviders !== undefined && (contribution === undefined || contribution.displayName !== provider.displayName || !sameValues(contribution.capabilities, provider.capabilities as string[]))) throw new Error("extension provider registration does not match its manifest contribution");
-    for (const form of [provider.profileForm, provider.createForm]) {
+    for (const form of [provider.profileForm, provider.createForm, provider.browseForm]) {
       if (form !== undefined && !validateDeclarativeForm(form).ok) throw new Error("extension returned an invalid declarative form");
     }
     seen.add(provider.providerId);

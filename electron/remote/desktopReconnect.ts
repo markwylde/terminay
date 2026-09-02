@@ -1,7 +1,7 @@
 import WebSocket from 'ws'
 import type { ByteTransport } from '@terminay/protocol'
 import { createRemoteStreamTransport } from '../../src/shared/remoteStreamTransport'
-import type { DesktopDeviceCredentialStore } from './deviceCredentialStore'
+import type { DesktopDeviceCredentialStore, PinnedDesktopHostKey } from './deviceCredentialStore'
 import { parseDesktopSignalingBootstrap, type DesktopSignalingBootstrap } from './desktopSignalingBootstrap'
 
 type FetchResponse = Readonly<{ ok: boolean; json: () => Promise<unknown> }>
@@ -17,11 +17,14 @@ const TOKEN = /^[A-Za-z0-9_-]{16,512}$/u
 export interface DesktopReconnectTransport {
   /** Exact server origin; no credential material is represented here. */
   readonly origin: string
+  readonly deviceId: string
   /** Short-lived application ticket expiry, for host retry diagnostics only. */
   readonly expiresAt: number
   readonly transport: ByteTransport
   /** Present only when a compatible hosted service supplies native signaling bootstrap. */
   readonly signalingBootstrap?: DesktopSignalingBootstrap
+  /** Verified host pin required before any Desktop WebRTC remote description. */
+  readonly pinnedHostKey?: PinnedDesktopHostKey
 }
 
 /**
@@ -44,6 +47,7 @@ export async function createDesktopReconnectTransport(options: Readonly<{
   }
   const device = await options.store.loadDevice(origin)
   if (device === null) throw new Error('No paired device exists for this server origin.')
+  const pinnedHostKey = await options.store.loadPinnedHostKey(origin)
   const challenge = await postJson(fetchImplementation, origin, '/api/devices/challenge', {
     deviceId: device.deviceId,
   }, timeoutMs)
@@ -55,6 +59,9 @@ export async function createDesktopReconnectTransport(options: Readonly<{
     deviceSignature,
   }, timeoutMs)
   const ticket = parseTicket(completion, origin)
+  if (ticket.signalingBootstrap !== undefined && pinnedHostKey === null) {
+    throw new Error('Server host identity is not pinned; explicit re-pairing is required.')
+  }
   // createRemoteStreamTransport deliberately parses the fragment in memory and
   // sends the short-lived ticket in the WebSocket subprotocol header. It is not
   // stored and it is not appended to the stream URL.
@@ -63,9 +70,11 @@ export async function createDesktopReconnectTransport(options: Readonly<{
   })
   return Object.freeze({
     origin,
+    deviceId: device.deviceId,
     expiresAt: ticket.expiresAt,
     transport,
     ...(ticket.signalingBootstrap === undefined ? {} : { signalingBootstrap: ticket.signalingBootstrap }),
+    ...(pinnedHostKey === null ? {} : { pinnedHostKey }),
   })
 }
 
