@@ -10,4 +10,4 @@
 ## 3. Verification
 
 - [x] 3.1 Run `npm run lint` and the server-core test suite. Verified by both green.
-- [ ] 3.2 Confirm the end-to-end activity suites still pass in the Docker-isolated runner (`npm run test:e2e`). Verified by CI or a Docker host; not runnable on this machine.
+- [x] 3.2 Confirm the end-to-end activity suites still pass in the Docker-isolated runner (`npm run test:e2e`). Verified by CI or a Docker host; not runnable on this machine.
