@@ -61,8 +61,8 @@ test('Task 19 rejects contract cells whose row loses evidence or parity semantic
 })
 
 test('Task 19 records completed task evidence at its canonical completed path', async () => {
-	const completedTask = TASK19_FEATURE_MATRIX.find((feature) => feature.id === 'server-mcp-control')
-	assert.equal(completedTask.spec, 'specs/tasks_completed/10-server-mcp-control.md')
+	const completedTask = TASK19_FEATURE_MATRIX.find((feature) => feature.id === 'connections-and-hosts')
+	assert.equal(completedTask.spec, 'openspec/changes/archive/2026-08-01-connection-menu-and-web-host/tasks.md')
 	const report = await validateTask19FeatureMatrix()
-	assert.ok(report.features.some((feature) => feature.id === 'server-mcp-control'))
+	assert.ok(report.features.some((feature) => feature.id === 'connections-and-hosts'))
 })

@@ -51,9 +51,9 @@ test('code-level build, test, and workflow contracts remain valid checklist work
 test('wrapped operational-only checkbox titles fail with their source location', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'terminay-active-task-classification-'))
   t.after(() => rm(root, { recursive: true, force: true }))
-  await mkdir(join(root, 'specs/tasks'), { recursive: true })
+  await mkdir(join(root, 'openspec/changes/example'), { recursive: true })
   await writeFile(
-    join(root, 'specs/tasks/example.md'),
+    join(root, 'openspec/changes/example/tasks.md'),
     '- [ ] Publish signed Desktop artifacts for every supported\n  release architecture.\n',
   )
 
@@ -61,7 +61,7 @@ test('wrapped operational-only checkbox titles fail with their source location',
   assert.deepEqual(
     report.violations.map(({ file, line, text }) => ({ file, line, text })),
     [{
-      file: 'specs/tasks/example.md',
+      file: 'openspec/changes/example/tasks.md',
       line: 1,
       text: 'Publish signed Desktop artifacts for every supported release architecture.',
     }],

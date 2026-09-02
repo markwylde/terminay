@@ -44,7 +44,7 @@ test('release evidence writes an SBOM and manifest without timestamps or secrets
 })
 
 test('standalone operations runbook documents paths, network trust, recovery, and foreground supervisors', async () => {
-  const runbook = await readFile(join(process.cwd(), 'specs/operations/standalone-server.md'), 'utf8')
+  const runbook = await readFile(join(process.cwd(), 'docs/operations/standalone-server.md'), 'utf8')
   assert.match(runbook, /configuration and paths/i)
   assert.match(runbook, /TERMINAY_DATA_ROOT/)
   assert.match(runbook, /TERMINAY_LOG_SINK/)
