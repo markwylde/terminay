@@ -230,6 +230,7 @@ export function useProjectCollection<TTerminal>({
 				[],
 				sidebarSettings,
 				projectColorScope,
+				Math.random,
 			),
 		];
 	});
@@ -436,6 +437,7 @@ export function useProjectCollection<TTerminal>({
 				],
 				sidebarDefaultsRef.current,
 				projectColorScope,
+				Math.random,
 			);
 			reservedProjectColorsRef.current.add(presentation.color);
 			void workspaceSnapshotStore
@@ -469,6 +471,7 @@ export function useProjectCollection<TTerminal>({
 				current.map((project) => project.color),
 				sidebarDefaultsRef.current,
 				projectColorScope,
+				Math.random,
 			),
 		]);
 		setActiveProjectId(`project-${index}`);
