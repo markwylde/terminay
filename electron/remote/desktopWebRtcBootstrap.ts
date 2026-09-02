@@ -41,6 +41,7 @@ export type DesktopBootstrappedWebRtcAuth = Omit<
 > &
 	Readonly<{
 		readonly clientNonce?: string;
+		readonly now?: () => number;
 		readonly scopeId?: string;
 		readonly pinnedHostKey?: PinnedServerHostKey;
 	}>;
