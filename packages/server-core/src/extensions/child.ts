@@ -202,7 +202,6 @@ function createAgentTerminalContext(context: Record<string, unknown>, capabiliti
   });
   let rootSessionStarted = false;
   const publisher = Object.freeze({
-    publish(event: unknown) { return publish(undefined, [event]); },
     sessionStarted(event: unknown) {
       const payload = object(event) ?? {};
       if (rootSessionStarted) return publish(undefined, [{ kind: "agent.metadata", ...payload }]);
@@ -217,6 +216,7 @@ function createAgentTerminalContext(context: Record<string, unknown>, capabiliti
     waitFinished(event: unknown) { return publish(undefined, [{ kind: "wait.finished", ...(object(event) ?? {}) }]); },
     done(event: unknown) { return publish(undefined, [{ kind: "agent.done", ...(object(event) ?? {}) }]); },
     exited(event: unknown) { return publish(undefined, [{ kind: "agent.exited", ...(object(event) ?? {}) }]); },
+    sessionStopped(event: unknown) { return publish(undefined, [{ kind: "session.stopped", ...(object(event) ?? {}) }]); },
     subagentStarted(event: unknown) { return publish(undefined, [{ kind: "subagent.started", ...(object(event) ?? {}) }]); },
     subagentDone(event: unknown) { return publish(undefined, [{ kind: "subagent.done", ...(object(event) ?? {}) }]); },
   });

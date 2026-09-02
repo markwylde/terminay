@@ -20,6 +20,11 @@ including the [extension quickstart](https://terminay.com/developers/extensions/
 [permissions](https://terminay.com/developers/reference/permissions), and
 [packaging](https://terminay.com/developers/extensions/packaging) guides. A small
 working provider lives in [`examples/basic-provider`](examples/basic-provider).
+The agent-provider authoring surface — default-exported `activate(context)`,
+manifest-bound registration, terminal-scoped observation, named lifecycle
+publisher, and `@terminay/extension-api/testing` — is the worked example in
+[`examples/agent-provider`](examples/agent-provider). Node APIs reach only the
+Terminay Server account; terminal evidence must use `terminal.observation`.
 The reusable workflow template covers packing, conformance, SBOM/license
 evidence, npm trusted publishing, and post-publication integrity checks for
 repositories maintained separately from Terminay.
