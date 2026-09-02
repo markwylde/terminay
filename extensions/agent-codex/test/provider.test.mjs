@@ -50,6 +50,7 @@ test("maps titles, collaboration children, completion and privacy allowlists", (
     done: (event) => events.push({ kind: "agent.done", ...event }),
     exited: (event) => events.push({ kind: "agent.exited", ...event }),
     subagentStarted: (event) => events.push({ kind: "subagent.started", ...event }),
+    sessionStopped: (event) => events.push({ kind: "session.stopped", ...event }),
     subagentDone: (event) => events.push({ kind: "subagent.done", ...event }),
   };
   const context = { binding: { providerSessionId: "root" }, publish };
