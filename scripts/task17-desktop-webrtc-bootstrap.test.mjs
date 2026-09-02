@@ -95,20 +95,28 @@ test('relay-bound bootstrap selects WebRTC and owns signaling cleanup', async ()
 		async createTransport(options) {
 			receivedOptions = options;
 			const encoded = await options.signaling.encode({
-				type: 'answer',
-				sdp: 'answer-sdp',
+				type: 'ice',
+				candidate: 'candidate:1',
+				mid: '0',
 			});
 			assert.deepEqual(await options.signaling.decode(encoded), {
-				type: 'answer',
-				sdp: 'answer-sdp',
+				type: 'ice',
+				candidate: 'candidate:1',
+				mid: '0',
 			});
-			assert.throws(() => options.signaling.decode(encoded), /replay/u);
-			const widened = await options.signaling.encode({
-				type: 'answer',
-				sdp: 'answer-sdp',
-				extra: 'signed-but-not-allowed',
-			});
-			assert.throws(() => options.signaling.decode(widened), /invalid fields/u);
+			await assert.rejects(options.signaling.decode(encoded), /replay/u);
+			await assert.rejects(
+				options.signaling.decode({
+					deviceId: 'device-a',
+					nonce: 'nonce-unauthenticated-answer',
+					peerId: 'peer-a',
+					sdp: 'answer-sdp',
+					serverId: 'server-a',
+					sessionOrigin: 'https://session.example',
+					type: 'answer',
+				}),
+				/invalid fields|transport authentication/,
+			);
 			await options.signaling.send(encoded);
 			return fakeTransport();
 		},

@@ -1,5 +1,6 @@
 import {
 	assertAuthenticatedWebRtcTransportTranscript,
+	sha256Base64Url,
 	validateAuthenticatedWebRtcTransportTranscript,
 	verifyAuthenticatedWebRtcHostSignature,
 	verifyAuthenticatedWebRtcPairingAuthenticator,
@@ -90,6 +91,9 @@ export class AuthenticatedWebRtcOfferVerifier {
 			sdp: options.sdp,
 			...(options.now === undefined ? {} : { now: options.now }),
 		});
+		if (transcript.sdpSha256 !== await sha256Base64Url(options.sdp)) {
+			throw new Error('WebRTC offer does not match its authenticated transcript.');
+		}
 		if (this.seenOfferIds.has(transcript.offerId)) throw new Error('Authenticated WebRTC offer was replayed.');
 		if (this.seenOfferIds.size >= this.maximumSeenOfferIds) throw new Error('Authenticated WebRTC offer replay window is full.');
 		return transcript;

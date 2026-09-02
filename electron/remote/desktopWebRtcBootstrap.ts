@@ -4,6 +4,13 @@ import type {
 	NodeDataChannelSignal,
 	NodeDataChannelSignaling,
 } from '../../apps/terminay-server/src/remote/nodeDataChannelPeer';
+import type { PinnedServerHostKey } from '../../src/remote/services/authenticatedWebRtcTransport';
+import {
+	createDesktopAuthenticatedOfferGate,
+	createDesktopClientNonce,
+	type DesktopAuthenticatedOfferGate,
+	type DesktopAuthenticatedWebRtcAuth,
+} from './desktopAuthenticatedWebRtc';
 import {
 	type DesktopSignalingBootstrap,
 	parseDesktopSignalingBootstrap,
@@ -28,6 +35,16 @@ type Socket = {
 	send(data: string): void;
 };
 
+export type DesktopBootstrappedWebRtcAuth = Omit<
+	DesktopAuthenticatedWebRtcAuth,
+	'clientNonce' | 'now' | 'scopeId' | 'sessionOrigin' | 'serverId'
+> &
+	Readonly<{
+		readonly clientNonce?: string;
+		readonly scopeId?: string;
+		readonly pinnedHostKey?: PinnedServerHostKey;
+	}>;
+
 export async function createDesktopBootstrappedWebRtcTransport(options: {
 	readonly bootstrap: DesktopSignalingBootstrap;
 	readonly expectedOrigin: string;
@@ -36,6 +53,7 @@ export async function createDesktopBootstrappedWebRtcTransport(options: {
 	readonly socketOpenTimeoutMs?: number;
 	readonly webrtcRuntimeRoot?: string;
 	readonly createTransport?: typeof createDesktopWebRtcTransport;
+	readonly transportAuth?: DesktopBootstrappedWebRtcAuth;
 }): Promise<ByteTransport> {
 	return (await createDesktopBootstrappedWebRtcConnection({
 		...options,
@@ -58,6 +76,7 @@ export async function createDesktopBootstrappedWebRtcConnection(options: {
 	/** Packaged directory holding the selected WebRTC runtime and its manifest. */
 	readonly webrtcRuntimeRoot?: string;
 	readonly createConnection?: typeof createDesktopWebRtcConnection;
+	readonly transportAuth?: DesktopBootstrappedWebRtcAuth;
 }): Promise<DesktopWebRtcConnection> {
 	const now = options.now ?? Date.now;
 	const bootstrap = parseDesktopSignalingBootstrap(
@@ -70,6 +89,7 @@ export async function createDesktopBootstrappedWebRtcConnection(options: {
 		openSocket: options.openSocket,
 		socketOpenTimeoutMs:
 			options.socketOpenTimeoutMs ?? DEFAULT_SOCKET_OPEN_TIMEOUT_MS,
+		transportAuth: options.transportAuth,
 	});
 	try {
 		const connection = await (
@@ -110,6 +130,7 @@ async function openAuthenticatedSignaling(
 		readonly now: () => number;
 		readonly openSocket?: (url: string, origin: string) => Socket;
 		readonly socketOpenTimeoutMs: number;
+		readonly transportAuth?: DesktopBootstrappedWebRtcAuth;
 	},
 ): Promise<NodeDataChannelSignaling & { close(): void }> {
 	if (
@@ -120,6 +141,17 @@ async function openAuthenticatedSignaling(
 		throw new RangeError(
 			'Desktop WebRTC signaling open timeout must be between 1ms and 30 seconds.',
 		);
+	const clientNonce = options.transportAuth?.clientNonce ?? createDesktopClientNonce();
+	const gate = options.transportAuth === undefined
+		? undefined
+		: createDesktopAuthenticatedOfferGate({
+			...options.transportAuth,
+			clientNonce,
+			now: options.transportAuth.now ?? options.now,
+			scopeId: options.transportAuth.scopeId ?? bootstrap.deviceId,
+			sessionOrigin: bootstrap.sessionOrigin,
+			serverId: bootstrap.serverId,
+		});
 	const socket =
 		options.openSocket?.(bootstrap.signalingUrl, bootstrap.sessionOrigin) ??
 		(new (await import('ws')).default(bootstrap.signalingUrl, {
@@ -213,7 +245,7 @@ async function openAuthenticatedSignaling(
 		},
 		encode: (signal) => encodeEnvelope(signal, bootstrap),
 		decode: (message) =>
-			decodeEnvelope(message, bootstrap, seen, options.now()),
+			decodeEnvelope(message, bootstrap, seen, options.now(), gate),
 	};
 }
 
@@ -231,12 +263,13 @@ function encodeEnvelope(
 	};
 }
 
-function decodeEnvelope(
+async function decodeEnvelope(
 	value: unknown,
 	bootstrap: DesktopSignalingBootstrap,
 	seen: Set<string>,
 	now: number,
-): NodeDataChannelSignal {
+	gate: DesktopAuthenticatedOfferGate | undefined,
+): Promise<NodeDataChannelSignal> {
 	if (now >= bootstrap.expiresAt)
 		throw new Error('Desktop WebRTC signaling bootstrap expired.');
 	if (typeof value !== 'object' || value === null || Array.isArray(value))
@@ -245,6 +278,7 @@ function decodeEnvelope(
 	const allowed =
 		input.type === 'offer' || input.type === 'answer'
 			? new Set([
+					'authenticatedTransport',
 					'deviceId',
 					'nonce',
 					'peerId',
@@ -290,8 +324,13 @@ function decodeEnvelope(
 	if (
 		(input.type === 'offer' || input.type === 'answer') &&
 		typeof input.sdp === 'string'
-	)
+	) {
+		if (gate === undefined) {
+			throw new Error('Desktop WebRTC remote description arrived before transport authentication.');
+		}
+		await gate.verifyRemoteDescription(input.sdp, input.authenticatedTransport);
 		return { type: input.type, sdp: input.sdp };
+	}
 	if (
 		input.type === 'ice' &&
 		typeof input.candidate === 'string' &&
