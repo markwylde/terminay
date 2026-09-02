@@ -84,21 +84,25 @@ export class PreviewController {
 	}
 	async attach(frame: {
 		srcdoc: string;
-		sandbox: string;
 		contentWindow: Window | null;
+		setAttribute(name: string, value: string): void;
 	}): Promise<void> {
 		if (this.state === 'unavailable' || !this.options.host.capability.available) {
 			this.state = 'unavailable';
 			return;
 		}
 		if (this.destroyed) return;
-		frame.sandbox = this.options.host.capability.sandbox;
+		frame.setAttribute('sandbox', this.options.host.capability.sandbox);
 		const bundle = await this.materialize();
 		if (this.destroyed) return;
 		const createObjectURL =
 			this.options.createObjectURL ?? ((blob) => URL.createObjectURL(blob));
+		const copy = bundle.buffer.slice(
+			bundle.byteOffset,
+			bundle.byteOffset + bundle.byteLength,
+		) as ArrayBuffer;
 		const sourceUrl = createObjectURL(
-			new Blob([bundle], { type: 'text/javascript' }),
+			new Blob([copy], { type: 'text/javascript' }),
 		);
 		this.objectUrls.push(sourceUrl);
 		frame.srcdoc = previewGuestDocument(
