@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { defaultTerminalSettings } from '../terminalSettings.ts';
 import {
-	getDeterministicProjectTabColor,
+	getProjectTabColor,
 	isProjectSidebarOpenOnDevice,
 	projectSidebarPatch,
 	projectSidebarVisibilityKey,
@@ -77,7 +77,7 @@ test('color hue parsing reads primaries and rejects non-colors', () => {
 });
 
 test('assigned colors sit on the palette hues', () => {
-	const hue = assignedHue(getDeterministicProjectTabColor('project-a'));
+	const hue = assignedHue(getProjectTabColor('project-a', [], () => 0));
 	assert.equal(
 		Math.abs(hue - Math.round(hue / 18) * 18) < 1,
 		true,
@@ -94,8 +94,8 @@ test('hue distance takes the shortest arc', () => {
 });
 
 test('a second project lands far from the first', () => {
-	const first = getDeterministicProjectTabColor('desktop-local:project-1');
-	const second = getDeterministicProjectTabColor('desktop-local:project-2', [
+	const first = getProjectTabColor('desktop-local:project-1', [], () => 0);
+	const second = getProjectTabColor('desktop-local:project-2', [
 		first,
 	]);
 	assert.equal(
@@ -109,7 +109,7 @@ test('successive projects spread across the wheel', () => {
 	const assigned: string[] = [];
 	for (let index = 1; index <= 6; index += 1) {
 		assigned.push(
-			getDeterministicProjectTabColor(`desktop-local:project-${index}`, [
+			getProjectTabColor(`desktop-local:project-${index}`, [
 				...assigned,
 			]),
 		);
@@ -138,13 +138,13 @@ test('an exhausted palette still assigns a palette color', () => {
 	const assigned: string[] = [];
 	for (let index = 1; index <= 20; index += 1) {
 		assigned.push(
-			getDeterministicProjectTabColor(`desktop-local:project-${index}`, [
+			getProjectTabColor(`desktop-local:project-${index}`, [
 				...assigned,
 			]),
 		);
 	}
 	assert.equal(new Set(assigned).size, 20, 'Expected all twenty palette hues.');
-	const extra = getDeterministicProjectTabColor(
+	const extra = getProjectTabColor(
 		'desktop-local:project-21',
 		assigned,
 	);
@@ -155,21 +155,66 @@ test('an exhausted palette still assigns a palette color', () => {
 	);
 });
 
-test('assignment is deterministic and varies by identity', () => {
+test('assignment against colors in use is reproducible', () => {
 	const used = ['#e6994d'];
 	assert.equal(
-		getDeterministicProjectTabColor('project-a', used),
-		getDeterministicProjectTabColor('project-a', used),
+		getProjectTabColor('project-a', used),
+		getProjectTabColor('project-a', used),
+	);
+	// Two opposite colors in use leave two equally distant candidates, which is
+	// the only situation where identity decides. A single color in use has one
+	// unique furthest hue, so identity never comes into it.
+	const tied = ['#db5757', '#57dbdb'];
+	const picked = new Set(
+		Array.from({ length: 50 }, (_, index) =>
+			getProjectTabColor(`project-${index}`, tied),
+		),
+	);
+	assert.equal(
+		picked.size,
+		2,
+		`Expected identity to reach both tied candidates, got ${[...picked].join(', ')}.`,
+	);
+});
+
+test('the first color in a workspace is drawn at random', () => {
+	// A pinned source indexes the palette directly, so the whole wheel is
+	// reachable and the caller can still fix the sequence.
+	assert.equal(
+		assignedHue(getProjectTabColor('project-a', [], () => 0)),
+		0,
 	);
 	assert.notEqual(
-		getDeterministicProjectTabColor('desktop-local:project-1'),
-		getDeterministicProjectTabColor('server-7:project-4'),
+		getProjectTabColor('project-a', [], () => 0),
+		getProjectTabColor('project-a', [], () => 0.5),
+	);
+	// A source returning just under 1 must stay inside the palette.
+	assert.notEqual(projectTabColorHue(getProjectTabColor('a', [], () => 0.999)), null);
+});
+
+test('randomness applies only to the first color', () => {
+	const used = ['#db5757'];
+	assert.equal(
+		getProjectTabColor('project-a', used, () => 0),
+		getProjectTabColor('project-a', used, () => 0.75),
+		'Expected the random source to be ignored once a color is in use.',
+	);
+});
+
+test('the default random source varies the first color', () => {
+	const seen = new Set<string>();
+	for (let attempt = 0; attempt < 200; attempt += 1)
+		seen.add(getProjectTabColor('project-a'));
+	assert.equal(
+		seen.size > 1,
+		true,
+		`Expected varied first colors, always got ${[...seen].join(', ')}.`,
 	);
 });
 
 test('a user-chosen color off the palette still repels the next project', () => {
 	const chosen = '#ff3366';
-	const next = getDeterministicProjectTabColor('desktop-local:project-2', [
+	const next = getProjectTabColor('desktop-local:project-2', [
 		chosen,
 	]);
 	assert.equal(
