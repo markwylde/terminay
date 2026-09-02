@@ -70,7 +70,7 @@ test('stale, future, malformed, and non-positive activation windows cannot steal
 	);
 });
 
-test('touch pointerdown bridges iOS focus without taking over xterm gestures', () => {
+test('touch tap bridges iOS focus without taking over xterm gestures', () => {
 	assert.doesNotMatch(terminalPanelSource, /activatePanelFromPointer/u);
 	assert.doesNotMatch(
 		terminalPanelSource,
@@ -81,11 +81,132 @@ test('touch pointerdown bridges iOS focus without taking over xterm gestures', (
 		/root\.addEventListener\('pointerdown', activatePanelFromPointer\)/u,
 	);
 	assert.doesNotMatch(terminalPanelSource, /pointerFocusGesture/u);
-	assert.match(terminalPanelSource, /shouldFocusTerminalForTouchPointer\(event\.pointerType\)/u);
-	assert.match(terminalPanelSource, /root\.addEventListener\('pointerdown', handleTouchPointerDown\)/u);
-	assert.match(terminalPanelSource, /root\.addEventListener\(\s*'touchstart',\s*handleTouchStart/u);
-	assert.doesNotMatch(terminalPanelSource, /handleTouchPointerDown[\s\S]{0,280}preventDefault/u);
-	assert.doesNotMatch(terminalPanelSource, /handleTouchPointerDown[\s\S]{0,280}stopPropagation/u);
+	assert.match(
+		terminalPanelSource,
+		/shouldFocusTerminalForTouchPointer\(event\.pointerType\)/u,
+	);
+	assert.match(
+		terminalPanelSource,
+		/root\.addEventListener\('pointerdown', handleTouchPointerDown\)/u,
+	);
+	assert.match(
+		terminalPanelSource,
+		/root\.addEventListener\('pointermove', handleTouchPointerMove\)/u,
+	);
+	assert.match(
+		terminalPanelSource,
+		/root\.addEventListener\('pointerup', handleTouchPointerUp\)/u,
+	);
+	assert.match(
+		terminalPanelSource,
+		/root\.addEventListener\('pointercancel', handleTouchPointerCancel\)/u,
+	);
+	assert.match(
+		terminalPanelSource,
+		/root\.addEventListener\(\s*'touchstart',\s*handleTouchStart/u,
+	);
+	assert.match(
+		terminalPanelSource,
+		/root\.addEventListener\(\s*'touchmove',\s*handleTouchMove/u,
+	);
+	assert.match(
+		terminalPanelSource,
+		/root\.addEventListener\(\s*'touchend',\s*handleTouchEnd/u,
+	);
+	assert.match(
+		terminalPanelSource,
+		/root\.addEventListener\(\s*'touchcancel',\s*handleTouchCancel/u,
+	);
+
+	const handlerBody = (name) => {
+		const match = terminalPanelSource.match(
+			new RegExp(
+				`const ${name} = \\([^)]*\\) => \\{([\\s\\S]*?)\\n\\t\\t\\};`,
+				'u',
+			),
+		);
+		assert.ok(match, `missing ${name}`);
+		return match[1];
+	};
+
+	const tapHandlers = [
+		'handleTouchPointerDown',
+		'handleTouchPointerMove',
+		'handleTouchPointerUp',
+		'handleTouchPointerCancel',
+		'handleTouchStart',
+		'handleTouchMove',
+		'handleTouchEnd',
+		'handleTouchCancel',
+	];
+	for (const name of tapHandlers) {
+		const body = handlerBody(name);
+		assert.doesNotMatch(body, /preventDefault/u);
+		assert.doesNotMatch(body, /stopPropagation/u);
+	}
+
+	const pointerUpBody = handlerBody('handleTouchPointerUp');
+	assert.match(pointerUpBody, /tapSession\.pointerUp\(event\)/u);
+	assert.match(pointerUpBody, /focusTerminalFromTouch\(\)/u);
+	assert.doesNotMatch(
+		pointerUpBody,
+		/setTimeout|queueMicrotask|requestAnimationFrame|Promise/u,
+	);
+	const touchEndBody = handlerBody('handleTouchEnd');
+	assert.match(touchEndBody, /tapSession\.pointerUp\(point\)/u);
+	assert.match(touchEndBody, /focusTerminalFromTouch\(\)/u);
+	assert.doesNotMatch(
+		touchEndBody,
+		/setTimeout|queueMicrotask|requestAnimationFrame|Promise/u,
+	);
+
+	assert.doesNotMatch(
+		handlerBody('handleTouchPointerDown'),
+		/focusTerminalFromTouch/u,
+	);
+	assert.doesNotMatch(
+		handlerBody('handleTouchPointerMove'),
+		/focusTerminalFromTouch/u,
+	);
+	assert.doesNotMatch(
+		handlerBody('handleTouchPointerCancel'),
+		/focusTerminalFromTouch/u,
+	);
+	assert.doesNotMatch(
+		handlerBody('handleTouchStart'),
+		/focusTerminalFromTouch/u,
+	);
+	assert.doesNotMatch(
+		handlerBody('handleTouchMove'),
+		/focusTerminalFromTouch/u,
+	);
+	assert.doesNotMatch(
+		handlerBody('handleTouchCancel'),
+		/focusTerminalFromTouch/u,
+	);
+	assert.match(
+		handlerBody('handleTouchStart'),
+		/shouldFocusTerminalForTouchStart/u,
+	);
+	assert.match(
+		handlerBody('handleTouchMove'),
+		/shouldFocusTerminalForTouchStart/u,
+	);
+	assert.match(
+		handlerBody('handleTouchEnd'),
+		/shouldFocusTerminalForTouchStart/u,
+	);
+	assert.match(
+		handlerBody('handleTouchCancel'),
+		/shouldFocusTerminalForTouchStart/u,
+	);
+
+	const focusFromTouch = handlerBody('focusTerminalFromTouch');
+	assert.match(focusFromTouch, /terminal\.focus\(\)/u);
+	assert.match(focusFromTouch, /announceTerminalFocus\(\)/u);
+	for (const name of tapHandlers) {
+		assert.doesNotMatch(handlerBody(name), /announceTerminalFocus/u);
+	}
 });
 
 test('created terminals reclaim focus from project and terminal creation chrome', () => {
