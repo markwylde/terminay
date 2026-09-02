@@ -324,3 +324,46 @@ test('a task checkbox autosave does not conflict with the next document edit', a
 	).toHaveCount(0);
 	await expect(editor.locator('.documentation-editor__status')).toHaveCount(0);
 });
+
+test('a Documentation panel without a preview fills the panel at a phone viewport', async ({
+	createWorkspace,
+	mainWindow,
+}) => {
+	const workspace = await createWorkspace({
+		name: 'documentation-phone-viewport',
+		seed: {
+			files: {
+				'AGENTS.md':
+					'# Phone heading\n\nA paragraph that must remain readable on a phone.\n',
+			},
+		},
+	});
+	await setProjectRoot(mainWindow, workspace.rootDir);
+	await openDocumentationSidebar(mainWindow);
+	await mainWindow.getByRole('treeitem', { name: /^Agents$/i }).click();
+	const editor = mainWindow.locator('.documentation-editor');
+	await expect(editor).toBeVisible();
+
+	// A phone-sized viewport crosses the narrow Documentation breakpoint. With
+	// no live preview the editing surface is the panel's only child, so it must
+	// receive the panel's full height rather than whatever remains after rows
+	// reserved for surfaces that are not rendered.
+	await mainWindow.setViewportSize({ width: 390, height: 660 });
+	const surface = editor.locator('.documentation-editor__surface');
+	await expect
+		.poll(() =>
+			editor.evaluate((element) => {
+				const panel = element.getBoundingClientRect().height;
+				const inner =
+					element
+						.querySelector('.documentation-editor__surface')
+						?.getBoundingClientRect().height ?? 0;
+				return panel > 0 ? inner / panel : 0;
+			}),
+		)
+		.toBeGreaterThan(0.8);
+
+	await expect(editor.locator('.mdxeditor-toolbar')).toBeVisible();
+	await expect(editor.getByText('Phone heading', { exact: true })).toBeVisible();
+	await expect(surface).toHaveCSS('border-bottom-width', '0px');
+});
