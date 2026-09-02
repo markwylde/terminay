@@ -13,17 +13,13 @@ const repositoryRoot = resolve(scriptDirectory, '..');
 const progressImagePattern = /docs\/spec-progress\.svg(?:\?v=(\d+))?/;
 const progressVersionPattern = /\sdata-cache-version="(\d+)"/;
 
-function markdownFiles(directory) {
+function subdirectoryFiles(directory, fileName, { exclude = [] } = {}) {
 	if (!existsSync(directory)) return [];
 	return readdirSync(directory, { withFileTypes: true })
 		.flatMap((entry) => {
-			const path = join(directory, entry.name);
-			if (entry.isDirectory()) return markdownFiles(path);
-			return entry.isFile() &&
-				entry.name.endsWith('.md') &&
-				entry.name !== 'AGENTS.md'
-				? [path]
-				: [];
+			if (!entry.isDirectory() || exclude.includes(entry.name)) return [];
+			const path = join(directory, entry.name, fileName);
+			return existsSync(path) ? [path] : [];
 		})
 		.sort((left, right) => left.localeCompare(right, 'en'));
 }
@@ -53,11 +49,18 @@ export function parseChecklist(markdown) {
 }
 
 export function collectSpecStats(root = repositoryRoot) {
-	const activeTaskFiles = markdownFiles(join(root, 'specs', 'tasks'));
-	const archivedTaskFiles = markdownFiles(
-		join(root, 'specs', 'tasks_completed'),
+	const changesRoot = join(root, 'openspec', 'changes');
+	const activeTaskFiles = subdirectoryFiles(changesRoot, 'tasks.md', {
+		exclude: ['archive'],
+	});
+	const archivedTaskFiles = subdirectoryFiles(
+		join(changesRoot, 'archive'),
+		'tasks.md',
 	);
-	const featureFiles = markdownFiles(join(root, 'specs', 'features'));
+	const featureFiles = subdirectoryFiles(
+		join(root, 'openspec', 'specs'),
+		'spec.md',
+	);
 	const checklist = [...activeTaskFiles, ...archivedTaskFiles].reduce(
 		(total, file) => {
 			const parsed = parseChecklist(readFileSync(file, 'utf8'));
@@ -134,7 +137,7 @@ export function generateProgressSvg(stats, { cacheVersion } = {}) {
     <text y="26" text-anchor="middle" fill="#8b949e" font-size="10" font-weight="700" letter-spacing="1.5">COMPLETE</text>
   </g>
   <text x="164" y="31" fill="#f0f6fc" font-size="16" font-weight="750">Specification progress</text>
-  <text x="344" y="31" fill="#6e7681" font-size="12">generated from specs/tasks</text>
+  <text x="344" y="31" fill="#6e7681" font-size="12">generated from openspec/changes</text>
   ${cards}
   <g filter="url(#shadow)"><rect x="164" y="164" width="1080" height="12" rx="6" fill="#1b2128"/><rect x="164" y="164" width="${completedWidth}" height="12" rx="6" fill="url(#progress)"/></g>
   <text x="164" y="204" fill="#8b949e" font-size="12">${stats.checked} of ${stats.total} checklist items complete</text>
