@@ -252,22 +252,25 @@ function stableProjectColorIndex(identity: string, size: number): number {
 
 /** Pick the palette color furthest from the colors already in use, so a new
  * project reads as a different color family rather than a neighbouring shade.
- * Ties resolve from project identity, so a color stays reproducible against
- * whatever is already on screen. The first color in a workspace has nothing to
- * agree with and every entry is equally correct, so it is drawn at random rather
- * than pinned to a hash. Persisted and explicitly selected project colors bypass
- * this path. */
+ * Ties resolve from project identity, which keeps the result reproducible for a
+ * given project and workspace state - reconciliation re-derives a color for any
+ * project the server holds without one, and that must not change under it.
+ *
+ * Pass `randomSource` only where a project is genuinely being created. With no
+ * color in use every entry is equally correct, and a caller that is assigning a
+ * brand new color may spend that freedom on variety. Persisted and explicitly
+ * selected project colors bypass this path. */
 export function getProjectTabColor(
 	identity: string,
 	usedColors: Iterable<string> = [],
-	randomSource: () => number = Math.random,
+	randomSource?: () => number,
 ): string {
 	const usedHues: number[] = [];
 	for (const color of usedColors) {
 		const hue = projectTabColorHue(color);
 		if (hue !== null) usedHues.push(hue);
 	}
-	if (usedHues.length === 0) {
+	if (usedHues.length === 0 && randomSource !== undefined) {
 		const index = Math.min(
 			DEFAULT_PROJECT_TAB_COLORS.length - 1,
 			Math.max(0, Math.floor(randomSource() * DEFAULT_PROJECT_TAB_COLORS.length)),
@@ -303,6 +306,7 @@ export function createProjectTab(
 	usedColors: Iterable<string> = [],
 	sidebarDefaults: SidebarSettings = defaultTerminalSettings.sidebar,
 	colorScope = 'desktop-local',
+	randomSource?: () => number,
 ): ProjectTab {
 	const id = `project-${index}`;
 	return {
@@ -312,7 +316,7 @@ export function createProjectTab(
 		environmentStatus: 'ready',
 		id,
 		title: `Project ${index}`,
-		color: getProjectTabColor(`${colorScope}:${id}`, usedColors),
+		color: getProjectTabColor(`${colorScope}:${id}`, usedColors, randomSource),
 		emoji: '',
 		fileExplorerWidth: sidebarDefaults.defaultWidth,
 		isFileExplorerOpen: false,

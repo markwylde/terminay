@@ -201,14 +201,32 @@ test('randomness applies only to the first color', () => {
 	);
 });
 
-test('the default random source varies the first color', () => {
+test('Math.random as the source varies the first color', () => {
 	const seen = new Set<string>();
 	for (let attempt = 0; attempt < 200; attempt += 1)
-		seen.add(getProjectTabColor('project-a'));
+		seen.add(getProjectTabColor('project-a', [], Math.random));
 	assert.equal(
 		seen.size > 1,
 		true,
 		`Expected varied first colors, always got ${[...seen].join(', ')}.`,
+	);
+});
+
+test('without a random source the first color is stable', () => {
+	// Reconciliation re-derives a color for any server project stored without
+	// one, on every snapshot update. If that drew randomly the tab would change
+	// colour whenever anything in the workspace changed.
+	const derived = Array.from({ length: 20 }, () =>
+		getProjectTabColor('desktop-local:project-1'),
+	);
+	assert.equal(
+		new Set(derived).size,
+		1,
+		`Expected one stable derived color, got ${[...new Set(derived)].join(', ')}.`,
+	);
+	assert.notEqual(
+		getProjectTabColor('desktop-local:project-1'),
+		getProjectTabColor('server-7:project-9'),
 	);
 });
 
