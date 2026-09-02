@@ -546,8 +546,14 @@ on a project, SHALL NEVER be reassigned by this selection.
 A newly created project SHALL receive a default name that no existing project on
 the server already holds. The default SHALL be `Project N` for the lowest
 positive integer N not currently in use, so a number freed by closing a project
-is reused before a higher one. A name supplied explicitly by a user SHALL be
-honoured as given, including when it duplicates another project's name.
+is reused before a higher one. The workspace's seeded default project, named
+plain `Project`, SHALL hold the first number, so the first project a user creates
+is `Project 2`. A name supplied explicitly by a user SHALL be honoured as given,
+including when it duplicates another project's name.
+
+#### Scenario: First user-created project alongside the seeded default
+- **WHEN** a workspace holds only its seeded default project named "Project" and the user creates a project
+- **THEN** the new project is named "Project 2"
 
 #### Scenario: Creating after closing a project
 - **WHEN** a workspace holds "Project 1", "Project 2", and "Project 3", the user closes "Project 2", and then creates a project
