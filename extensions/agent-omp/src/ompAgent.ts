@@ -382,7 +382,7 @@ export function createOmpRecordMapper(options: { title?: string; childAgentId?: 
       const data = asRecord(envelope.data);
       if (!data) return;
       if (agentId) await session.publish.subagentDone({ subagentId: agentId, outcome: ompExitOutcome(data) });
-      else await session.publish.publish({ kind: "session.stopped", reason: hasPendingTools(data) ? "interrupted" : "session_exit" });
+      else await session.publish.sessionStopped({ reason: hasPendingTools(data) ? "interrupted" : "session_exit" });
     }
   };
 }

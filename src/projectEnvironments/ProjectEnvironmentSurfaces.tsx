@@ -19,6 +19,7 @@ type ProviderSummary = Readonly<{
 	description?: string;
 	profileForm?: DeclarativeFormDto;
 	createForm?: DeclarativeFormDto;
+	browseForm?: DeclarativeFormDto;
 }>;
 
 type FormTarget = Readonly<{
@@ -27,7 +28,7 @@ type FormTarget = Readonly<{
 	form: DeclarativeFormDto;
 	/** Safe, non-secret values from the persisted profile. */
 	initialValues?: Readonly<Record<string, string | boolean>>;
-	mode?: 'profile' | 'environment';
+	mode?: 'profile' | 'environment' | 'browse';
 }>;
 
 export function ProjectEnvironmentsWindow({
@@ -104,6 +105,10 @@ export function ProjectEnvironmentsWindow({
 						provider.createForm === undefined
 							? undefined
 							: toUiForm(provider.createForm),
+					browseForm:
+						provider.browseForm === undefined
+							? undefined
+							: toUiForm(provider.browseForm),
 				})),
 			);
 			setAuthorityLabel(serverName);
@@ -143,8 +148,18 @@ export function ProjectEnvironmentsWindow({
 				? {}
 				: { profileId: pendingIntent.profileId }),
 		});
+		if (pendingIntent.profileId !== undefined) {
+			const profile = profiles.find((item) => item.id === pendingIntent.profileId);
+			if (profile !== undefined) {
+				setSelectionHint({
+					providerId: pendingIntent.providerId,
+					profileId: profile.id,
+					providerName: profile.name,
+				});
+			}
+		}
 		setPendingIntent(undefined);
-	}, [pendingIntent, providers]);
+	}, [pendingIntent, profiles, providers]);
 	useEffect(() => {
 		const onFocus = () => { void refresh({ background: true }); };
 		window.addEventListener('focus', onFocus);
@@ -223,6 +238,7 @@ export function ProjectEnvironmentsWindow({
 							displayName: provider.displayName,
 							hasProfileForm: provider.profileForm !== undefined,
 							hasCreateForm: provider.createForm !== undefined,
+							hasBrowseForm: provider.browseForm !== undefined,
 						}))}
 						serverName={authorityLabel}
 						selectionHint={selectionHint}
@@ -243,7 +259,19 @@ export function ProjectEnvironmentsWindow({
 						}}
 						onCreateEnvironment={(providerId, profileId) => {
 							const provider = providers.find((candidate) => candidate.providerId === providerId);
-							if (provider?.createForm !== undefined) setFormTarget({ providerId, profileId, form: provider.createForm, mode: 'environment' });
+							const profile = profiles.find((candidate) => candidate.id === profileId);
+							if (provider?.createForm !== undefined) {
+								setSelectionHint({ providerId, profileId, ...(profile === undefined ? {} : { providerName: profile.name }) });
+								setFormTarget({ providerId, profileId, form: provider.createForm, mode: 'environment' });
+							}
+						}}
+						onBrowseVms={(providerId, profileId) => {
+							const provider = providers.find((candidate) => candidate.providerId === providerId);
+							const profile = profiles.find((candidate) => candidate.id === profileId);
+							if (provider?.browseForm !== undefined) {
+								setSelectionHint({ providerId, profileId, ...(profile === undefined ? {} : { providerName: profile.name }) });
+								setFormTarget({ providerId, profileId, form: provider.browseForm, mode: 'browse' });
+							}
 						}}
 						onEditProfile={(profile) => {
 							const provider = providers.find(
@@ -327,10 +355,10 @@ export function ProjectEnvironmentsWindow({
 								formTarget.mode !== 'environment' &&
 								formTarget.profileId === undefined &&
 								managesProvider;
-							if (formTarget.mode === 'environment' && formTarget.profileId !== undefined) {
+							if ((formTarget.mode === 'environment' || formTarget.mode === 'browse') && formTarget.profileId !== undefined) {
 								await submitForm(
 									(signal) => client!.createEnvironment(formTarget.providerId, formTarget.profileId!, values, { signal }),
-									'Environment creation started.',
+									formTarget.mode === 'browse' ? 'Connection added or updated.' : 'Environment creation started.',
 								);
 							} else if (formTarget.profileId === undefined) {
 								await submitForm(

@@ -25,6 +25,10 @@ import type { OrderedEventJournalLike } from "../types.js";
 import {
 	recordStreamDiagnostic,
 } from '../streamDiagnostics.js';
+import {
+	checkpointCatchupBytes,
+	DEFAULT_MAX_TERMINAL_UNCONFIRMED_BYTES,
+} from '../outboundDelivery.js';
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const MAX_INPUT_BYTES = 1024 * 1024;
@@ -35,15 +39,6 @@ const MAX_INITIAL_REPLAY_BYTES = 32 * 1024;
 // node-pty commonly reports one kernel read as many small callbacks. Keep a
 // live frame below half the default header limit so the base64 fallback for a
 // legacy client remains a valid protocol envelope as well.
-/**
- * How far a prepared checkpoint may lag the live head before hydration stops
- * trying to replay the difference through the presentation lane.
- *
- * It is deliberately below the lane's own unconfirmed-bytes bound: a recovery
- * that can congest the lane it is recovering never converges.
- */
-const MAX_CHECKPOINT_CATCHUP_BYTES = 128 * 1024;
-
 const MAX_LIVE_OUTPUT_BODY_BYTES = 32 * 1024;
 const TERMINAL_EVENT = "terminal";
 export const TERMINAL_PRESENTATION_CHECKPOINT_OPERATION = "terminal.presentation-checkpoint";
@@ -63,6 +58,8 @@ export interface TerminalOperationRegistryOptions {
   readonly checkpoints?: TerminalPresentationCheckpointAuthority;
   /** The journal must also be installed on the transport's server core. */
   readonly eventJournal: OrderedEventJournalLike;
+  /** Presentation-lane unconfirmed-bytes bound. Catch-up is half of this. */
+  readonly maxTerminalUnconfirmedBytes?: number;
   /** Reconcile a newly-created PTY with other server-owned authorities before
    * its identity is returned to the client. */
   readonly onSessionCreated?: (snapshot: TerminalSessionSnapshot) => void;
@@ -122,6 +119,10 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
   if (!(options.service instanceof TerminalService)) throw new TypeError("terminal service is required");
   const attachments = options.attachments ?? new TerminalServiceAdapter(options.service);
   const inputSources = options.inputSources ?? new TerminalInputSourceAdapter(options.service);
+  const maxCheckpointCatchupBytes = checkpointCatchupBytes(
+    options.maxTerminalUnconfirmedBytes ?? DEFAULT_MAX_TERMINAL_UNCONFIRMED_BYTES,
+  );
+
   const protocolAttachments = new Map<string, ProtocolAttachment>();
   const byClientSession = new Map<string, string>();
   const initialPresentationReservations = new Map<string, InitialPresentationReservation>();
@@ -411,7 +412,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       preparedCheckpoint === undefined || liveHead === undefined
         ? 0
         : Math.max(0, liveHead - preparedCheckpoint.headPosition);
-    const skipCheckpointCatchUp = checkpointCatchUp > MAX_CHECKPOINT_CATCHUP_BYTES;
+    const skipCheckpointCatchUp = checkpointCatchUp > maxCheckpointCatchupBytes;
     const fromPosition = preparedCheckpoint !== undefined
       ? skipCheckpointCatchUp && liveHead !== undefined
         ? liveHead

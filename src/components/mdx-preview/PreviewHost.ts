@@ -1,10 +1,10 @@
-/** A rendering host intentionally receives bytes and opaque runtime identity,
- * never a project path or a privileged renderer capability.  Desktop can
- * replace this with a dedicated Electron webContents; browsers use the same
- * capability contract through a sandboxed frame. */
 export type PreviewHostCapability = Readonly<{
+	available: boolean;
+	dedicatedOrigin: boolean;
 	persistentStorage: boolean;
 	governedDownloads: boolean;
+	isolatedExecution: boolean;
+	sandbox: string;
 }>;
 
 export interface PreviewHost {
@@ -13,14 +13,66 @@ export interface PreviewHost {
 	destroy(): void;
 }
 
+export function previewCapabilityForOrigin(
+	origin: string | null,
+): PreviewHostCapability {
+	if (origin === null)
+		return Object.freeze({
+			available: true,
+			dedicatedOrigin: false,
+			persistentStorage: true,
+			governedDownloads: true,
+			isolatedExecution: true,
+			sandbox: 'allow-scripts',
+		});
+	return Object.freeze({
+		available: true,
+		dedicatedOrigin: true,
+		persistentStorage: true,
+		governedDownloads: true,
+		isolatedExecution: true,
+		sandbox: 'allow-scripts allow-same-origin',
+	});
+}
+
+export function unavailablePreviewCapability(): PreviewHostCapability {
+	return Object.freeze({
+		available: false,
+		dedicatedOrigin: false,
+		persistentStorage: false,
+		governedDownloads: false,
+		isolatedExecution: false,
+		sandbox: '',
+	});
+}
+
+export function previewCombinesScriptsAndSameOriginOn(
+	capability: PreviewHostCapability,
+	applicationOrigin: string,
+	previewOrigin: string | null,
+): boolean {
+	if (!capability.available) return false;
+	const sandbox = capability.sandbox;
+	const scripts = /(?:^|\s)allow-scripts(?:\s|$)/u.test(sandbox);
+	const sameOrigin = /(?:^|\s)allow-same-origin(?:\s|$)/u.test(sandbox);
+	if (!scripts || !sameOrigin) return false;
+	return previewOrigin === applicationOrigin;
+}
+
 /** Web keeps the opaque sandbox rather than weakening it with
  * allow-same-origin. Project-scoped component storage is brokered by the
  * parent; browser downloads use a Blob flow after the host fetches bytes. */
 export class SandboxedWebPreviewHost implements PreviewHost {
 	readonly kind = 'web' as const;
-	readonly capability = Object.freeze({ persistentStorage: true, governedDownloads: true });
-	constructor(private readonly frame: HTMLIFrameElement) {}
-	destroy(): void { this.frame.src = 'about:blank'; }
+	readonly capability: PreviewHostCapability;
+	private readonly frame: { src: string };
+	constructor(frame: { src: string }, origin: string | null = null) {
+		this.frame = frame;
+		this.capability = previewCapabilityForOrigin(origin);
+	}
+	destroy(): void {
+		this.frame.src = 'about:blank';
+	}
 }
 
 /** Desktop currently renders the same opaque hosted bundle. Storage mutations
@@ -29,7 +81,22 @@ export class SandboxedWebPreviewHost implements PreviewHost {
  * callers. */
 export class DesktopPreviewHost implements PreviewHost {
 	readonly kind = 'desktop' as const;
-	readonly capability = Object.freeze({ persistentStorage: true, governedDownloads: true });
-	constructor(private readonly frame: HTMLIFrameElement) {}
-	destroy(): void { this.frame.src = 'about:blank'; }
+	readonly capability: PreviewHostCapability;
+	private readonly frame: { src: string };
+	constructor(frame: { src: string }, origin: string | null = null) {
+		this.frame = frame;
+		this.capability = previewCapabilityForOrigin(origin);
+	}
+	destroy(): void {
+		this.frame.src = 'about:blank';
+	}
+}
+
+export class UnavailablePreviewHost implements PreviewHost {
+	readonly kind: 'desktop' | 'web';
+	readonly capability = unavailablePreviewCapability();
+	constructor(kind: 'desktop' | 'web' = 'web') {
+		this.kind = kind;
+	}
+	destroy(): void {}
 }
