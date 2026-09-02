@@ -52,6 +52,18 @@ jobs:
           npm run build:app
           CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --dir --mac --arm64 --publish never
 
+      - name: Require the native supported macOS arm64 architecture
+        run: |
+          test "$(node -p 'process.platform')" = darwin
+          test "$(node -p 'process.arch')" = arm64
+          test "$(uname -m)" = arm64
+
+      - name: Verify packaged built-in extension lifecycle
+        env:
+          TERMINAY_ELECTRON_BUILT_INS: release/0.0.0/mac-arm64/Terminay.app/Contents/Resources/built-in-extensions
+          TERMINAY_STANDALONE_BUILT_INS: apps/terminay-server/dist/built-in-extensions
+        run: npm run test:packaged-built-in-extension-runtime
+
       - name: Boot packaged application from a read-only DMG copy
         env:
           TERMINAY_RELEASE_DIAGNOSTICS_DIR: ${{ runner.temp }}/terminay-packaged-smoke

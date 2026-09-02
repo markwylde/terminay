@@ -55,3 +55,25 @@ test("generic agent core and renderer contain no provider implementation details
   }
   assert.deepEqual(violations, [], "provider CLI names, journal schemas, roots, and mappings belong in extensions only");
 });
+
+test("production source has no leftover hard-coded agent drivers or private SSH/Puzed composition", async () => {
+  const productionRoots = [
+    join(root, "packages/server-core/src"),
+    join(root, "packages/client-core/src"),
+    join(root, "electron"),
+    join(root, "src"),
+    join(root, "apps/terminay-server/src"),
+    join(root, "apps/terminay-desktop/src"),
+  ];
+  const forbiddenNames = new Set(["agentDrivers.ts", "agentJournal.ts", "ptyAgentBridge.ts", "ptyAgent.ts"]);
+  const forbidden = /findProcessBoundCodexRollout|agentDriverRegistry|legacyPtyAgent|puzedSshComposition|composePuzedWithSsh/u;
+  const violations = [];
+  for (const directory of productionRoots) {
+    for (const file of await sourceFiles(directory)) {
+      if (forbiddenNames.has(file.split(/[\\/]/u).pop())) violations.push(relative(root, file));
+      const source = await readFile(file, "utf8");
+      if (forbidden.test(source)) violations.push(relative(root, file));
+    }
+  }
+  assert.deepEqual(violations, [], "hard-coded agent drivers, journal sources, and private SSH/Puzed composition must not remain in production source");
+});
