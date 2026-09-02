@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
+import { mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { validateProviderEnvironmentStatus } from "@terminay/extension-api";
+import { validateProviderDefinition, validateProviderEnvironmentStatus } from "@terminay/extension-api";
 import { activate } from "../dist/index.js";
 
 function runtimeFixture() {
   const registrations = [];
-  activate({ extensionId: "com.puzed.platform", apiVersion: "1.1.0", paths: { configuration: "/tmp/config", data: "/tmp/data", cache: "/tmp/cache" }, registerProjectEnvironmentProvider(value) { registrations.push(value); } });
+  const data = join(tmpdir(), `puzed-runtime-${process.hrtime.bigint().toString()}`);
+  mkdirSync(data, { recursive: true });
+  activate({ extensionId: "com.puzed.platform", apiVersion: "1.1.0", paths: { configuration: data, data, cache: data }, registerProjectEnvironmentProvider(value) { registrations.push(value); } });
   const calls = [];
   const call = {
     deadlineAt: new Date(Date.now() + 60_000).toISOString(), idempotencyKey: "open-machine", expectedRevision: undefined,
@@ -24,6 +29,9 @@ test("Puzed exposes a create form and tests a saved profile with its vault-bound
 	assert.equal(f.definition.profileForm?.submitLabel, "Test and save provider");
   assert.equal(f.definition.createForm?.submitLabel, "Create VM and open project");
   assert.equal(f.definition.createForm?.sections[0]?.fields.some((field) => field.id === "image-id"), true);
+  assert.equal(f.definition.browseForm?.title, "Browse Terminay VMs");
+  assert.equal(f.definition.browseForm?.sections[0]?.fields.some((field) => field.id === "machine-id" && field.optionSource === "com.puzed.platform/vm/inventory"), true);
+  assert.equal(validateProviderDefinition(f.definition).ok, true);
   const fetch = globalThis.fetch; const requests = [];
   globalThis.fetch = async (url, init) => {
     requests.push({ url: String(url), init });
@@ -285,4 +293,72 @@ test("Puzed status snapshots do not open an SSH channel", async () => {
   assert.equal(providerState.root, "~");
   assert.equal(providerState.sshRevision, 3);
   assert.deepEqual(f.calls, []);
+});
+
+function machinePayload(overrides = {}) {
+  return {
+    id: "machine-1", name: "dev", status: "running", state_stale: false,
+    tags: ["system:Terminay"], resource_version: 7, worker_id: "worker-1",
+    vcpus: 2, memory_bytes: 2_000_000_000, firmware: "uefi",
+    guest_agent: true, guest_login_mode: "ssh_key_only", guest_password_available: false,
+    routing_slug: "dev", serial_enabled: true, video_model: "virtio", vnc_enabled: false,
+    created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
+test("Puzed browse inventory is provider-scoped and excludes untagged VMs", async () => {
+  const f = runtimeFixture();
+  const fetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const path = new URL(String(url)).pathname;
+    if (path === "/api/v1/machines") return Response.json({ items: [machinePayload(), machinePayload({ id: "other", name: "prod", tags: ["production"] })] });
+    throw new Error(`unexpected ${path}`);
+  };
+  try {
+    const result = await f.runtime.resolveOptions({ sourceId: "com.puzed.platform/vm/inventory", profileId: "profile-1", values: {}, query: "dev" }, f.call);
+    assert.deepEqual(result.options.map((option) => option.value), ["machine-1"]);
+    assert.match(result.options[0].disabledReason ?? "", /SSH binding/);
+  } finally {
+    globalThis.fetch = fetch;
+  }
+});
+
+test("selecting a tagged VM reuses the retained SSH binding and never generates a new key", async () => {
+  const f = runtimeFixture();
+  await f.runtime.createEnvironment({ environmentId: "env-1", profileId: "profile-1", displayName: "Dev VM", values: { baseUrl: "https://platform.test", machineId: "machine-1", bindingId: "binding-1", host: "192.0.2.4", username: "vms", root: "/srv/project" } }, f.call);
+  f.calls.length = 0;
+  const fetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const path = new URL(String(url)).pathname;
+    if (path === "/api/v1/machines/machine-1") return Response.json({ machine: machinePayload() });
+    if (path === "/api/v1/machines/machine-1/interfaces") return Response.json({ items: [{ observed_ip: "192.0.2.4" }] });
+    throw new Error(`unexpected ${path}`);
+  };
+  try {
+    const selected = await f.runtime.createEnvironment({ environmentId: "env-2", profileId: "profile-1", displayName: "Dev VM", values: { "machine-id": "machine-1" } }, f.call);
+    assert.equal(selected.state, "ready");
+    assert.equal(selected.providerState.machineId, "machine-1");
+    assert.equal(selected.providerState.bindingId, "binding-1");
+    assert.deepEqual(f.calls.map((item) => item.operation), ["managed-binding.bind", "managed-binding.verify"]);
+  } finally {
+    globalThis.fetch = fetch;
+  }
+});
+
+test("browse selection refuses untagged VMs and missing retained bindings", async () => {
+  const f = runtimeFixture();
+  const fetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const path = new URL(String(url)).pathname;
+    if (path.endsWith("/machines/untagged")) return Response.json({ machine: machinePayload({ id: "untagged", tags: ["production"] }) });
+    if (path.endsWith("/machines/machine-2")) return Response.json({ machine: machinePayload({ id: "machine-2", name: "lost-key" }) });
+    throw new Error(`unexpected ${path}`);
+  };
+  try {
+    await assert.rejects(() => f.runtime.createEnvironment({ environmentId: "env-x", profileId: "profile-1", displayName: "X", values: { "machine-id": "untagged" } }, f.call), /system:Terminay/);
+    await assert.rejects(() => f.runtime.createEnvironment({ environmentId: "env-y", profileId: "profile-1", displayName: "Y", values: { "machine-id": "machine-2" } }, f.call), /SSH binding/);
+  } finally {
+    globalThis.fetch = fetch;
+  }
 });
