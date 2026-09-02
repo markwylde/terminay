@@ -5708,6 +5708,7 @@ function App({
 					projectsRef.current.map((project) => project.color),
 					settings.sidebar,
 					currentServerId,
+					Math.random,
 				),
 				creationStatus: 'loading',
 				environmentLabel: environment.name,
