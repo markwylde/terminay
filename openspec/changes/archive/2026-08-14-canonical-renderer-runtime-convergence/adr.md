@@ -1,0 +1,20 @@
+# ADR Review
+
+## In-force ADRs reviewed
+
+- ADR-0008 — Ship the workspace UI from the server and keep Desktop and browser
+  hosts protocol-blind.
+- ADR-0002 — Use SQLite through `node:sqlite` for the server state repository.
+- ADR-0005 — Load server UI in a sandboxed, origin-bound partition in both
+  Desktop and browser hosts.
+- ADR-0001 — Pin the Node runtime, toolchain, and compile targets across every
+  lane.
+- ADR-0004 — Keep `node-pty` with one supervised child per PTY, and declare a
+  bounded distribution matrix.
+- ADR-0011 — Adopt an explicit trust-boundary model as the security contract
+  for release review.
+
+## Decisions recorded
+
+_No durable architectural decisions were introduced by this change; it
+completes the cutover required by ADR-0008._

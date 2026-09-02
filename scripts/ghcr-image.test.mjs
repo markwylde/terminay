@@ -19,7 +19,7 @@ const releaseWorkflow = await readFile(
 	'utf8',
 );
 const operatorGuide = await readFile(
-	new URL('../specs/operations/docker-image-release.md', import.meta.url),
+	new URL('../docs/operations/docker-image-release.md', import.meta.url),
 	'utf8',
 );
 const workflows = new Map(

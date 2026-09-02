@@ -7,7 +7,7 @@ const settingsHook = await readFile('src/hooks/useTerminalSettings.ts', 'utf8')
 const app = await readFile('src/App.tsx', 'utf8')
 const remoteAccessController = await readFile('src/workspace/useRemoteAccessController.ts', 'utf8')
 const macrosWindow = await readFile('src/components/MacrosWindow.tsx', 'utf8')
-const task14 = await readFile('specs/tasks_completed/14-server-settings-secrets-and-macros.md', 'utf8')
+const task14 = await readFile('openspec/changes/archive/2026-07-27-server-settings-secrets-and-macros/tasks.md', 'utf8')
 
 test('production settings editor persists through the shared SettingsClient', () => {
   assert.match(settingsHook, /return \{ settings, isLoading, setSettings, settingsClient \}/)
@@ -15,7 +15,7 @@ test('production settings editor persists through the shared SettingsClient', ()
   assert.match(settingsWindow, /settingsClient\.reset<TerminalSettings>/)
   assert.doesNotMatch(settingsWindow, /window\.terminay\.updateTerminalSettings/)
   assert.doesNotMatch(settingsWindow, /window\.terminay\.resetTerminalSettings/)
-  assert.match(task14, /\[x\] Route the production settings editor's persisted updates and reset/)
+  assert.match(task14, /\[x\] 4\.5 Route the production settings editor's persisted updates and reset/)
 })
 
 test('workspace sidebar uses SettingsClient while Desktop pairing remains compatibility-host owned', () => {

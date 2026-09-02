@@ -7,13 +7,13 @@ const read = (path) => readFile(new URL(path, root), 'utf8');
 
 test('Task 39 correction keeps sanitizer evidence distinct from executable browser migration', async () => {
 	const [correction, task18, task19Audit, task39] = await Promise.all([
-		read('specs/decisions/evidence/task39-browser-manager-drift-correction.md'),
-		read('specs/tasks_completed/18-connection-menu-and-web-host.md'),
-		read('specs/decisions/evidence/task19-20-release-migration-audit.md'),
-		read('specs/tasks/39-browser-connection-manager-drift-recovery.md'),
+		read('openspec/adr/evidence/task39-browser-manager-drift-correction.md'),
+		read('openspec/changes/archive/2026-08-01-connection-menu-and-web-host/tasks.md'),
+		read('openspec/adr/evidence/task19-20-release-migration-audit.md'),
+		read('openspec/changes/archive/2026-08-09-browser-connection-manager-drift-recovery/tasks.md'),
 	]);
 
-	assert.match(task18, /Define migration\/redirect/u);
+	assert.match(task18, /Define migration and redirect/u);
 	assert.match(task19Audit, /sanitized manager metadata/u);
 	assert.match(correction, /data-contract\/design milestone/u);
 	assert.match(correction, /no evidence for:/u);
@@ -24,22 +24,22 @@ test('Task 39 correction keeps sanitizer evidence distinct from executable brows
 	);
 	assert.match(
 		correction,
-		/\.\.\/\.\.\/tasks\/39-browser-connection-manager-drift-recovery\.md/u,
+		/\.\.\/\.\.\/changes\/archive\/2026-08-09-browser-connection-manager-drift-recovery\//u,
 	);
-	assert.match(task39, /Preserve the old task files as history/u);
+	assert.match(task39, /preserving the old task files as history/u);
 });
 
 test('Task 39 retains explicit executable migration and public evidence gates', async () => {
 	const task39 = await read(
-		'specs/tasks/39-browser-connection-manager-drift-recovery.md',
+		'openspec/changes/archive/2026-08-09-browser-connection-manager-drift-recovery/tasks.md',
 	);
 
 	for (const required of [
-		'Implement an actual bounded legacy page',
-		'consume the handoff once',
+		'Implement a bounded legacy page',
+		'Consume the handoff once',
 		'cleanup only after acknowledgement',
-		'Add a migration E2E',
-		'Run the public verifier only after deployment',
+		'Add a migration end-to-end test',
+		'Extend the verifier to identify the expected release revision or image',
 	])
 		assert.match(task39, new RegExp(required, 'u'), required);
 });
