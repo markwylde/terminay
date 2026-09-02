@@ -326,11 +326,11 @@ test('selecting a tagged VM updates only that connection and leaves the provider
   const profile=structuredClone(subject.repository.state.profiles['profile-a']);
   const providerRuntime={async invokeProvider(invocation){
     if(invocation.callback==='testProfile')return [];
-    if(invocation.callback==='createEnvironment')return {state:'ready',providerState:{machineId:invocation.request.values.machineId,displayName:'first-vm-updated',bindingId:'binding-1'},status:{state:'available',defaultRoot:'/work',revision:4}};
+    if(invocation.callback==='createEnvironment')return {state:'ready',providerState:{machineId:invocation.request.values['machine-id'],displayName:'first-vm-updated',bindingId:'binding-1'},status:{state:'available',defaultRoot:'/work',revision:4}};
     throw new Error(`unexpected ${invocation.callback}`);
   }};
   const operations=createProjectEnvironmentOperationHandlers({repository:subject.repository,workspace:subject.workspace,thisServerRoot:()=>'/home/server',providerDefinitions:()=>[{providerId:'com.puzed.platform/vm',displayName:'Puzed VM',capabilities:['terminal','filesystem'],createForm:{id:'create',title:'Create',sections:[],submitLabel:'Create'},browseForm:{id:'browse',title:'Browse Terminay VMs',sections:[],submitLabel:'Add'}}],providerRuntime});
-  await operations.commands['project-environments.create']({envelope:{type:'command',commandId:'select-vm-1',correlationId:'select-vm-1',operation:'project-environments.create',payload:{providerId:'com.puzed.platform/vm',profileId:'profile-a',values:{machineId:'vm-1'}}},body:new Uint8Array(),context:{connectionId:'c',clientId:'client-a',authScope:'admin',permissions:['environments:manage'],signal:new AbortController().signal,expectedRevision:1}});
+  await operations.commands['project-environments.create']({envelope:{type:'command',commandId:'select-vm-1',correlationId:'select-vm-1',operation:'project-environments.create',payload:{providerId:'com.puzed.platform/vm',profileId:'profile-a',values:{'machine-id':'vm-1'}}},body:new Uint8Array(),context:{connectionId:'c',clientId:'client-a',authScope:'admin',permissions:['environments:manage'],signal:new AbortController().signal,expectedRevision:1}});
   assert.equal(subject.repository.state.environments['puzed:one'].name,'first-vm-updated');
   assert.equal(subject.repository.state.environments['puzed:one'].id,'puzed:one');
   assert.equal(subject.repository.state.environments['puzed:one'].pinnedRevision,1);
