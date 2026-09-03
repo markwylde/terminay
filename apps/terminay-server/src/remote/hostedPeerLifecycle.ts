@@ -372,6 +372,43 @@ export class HostedPeerLifecycle {
 	}
 }
 
+/**
+ * Ordering for one device's takeover, and nothing else.
+ *
+ * A replacement peer must not attach before the peer it replaces has been
+ * retired and cleaned up. That ordering only matters between two peers for the
+ * same device, so it gets its own chain per device: sharing the handshake join
+ * queue made an authenticated peer's `application-auth` reply wait behind
+ * `addIceCandidate` for unrelated handshakes, which starved it past the
+ * client's timeout.
+ */
+export function createDeviceReplacementChain(): {
+	run<T>(deviceId: string, task: () => Promise<T>): Promise<T>;
+	readonly size: number;
+} {
+	const chains = new Map<string, Promise<unknown>>();
+	return {
+		get size() {
+			return chains.size;
+		},
+		run(deviceId, task) {
+			const previous = chains.get(deviceId) ?? Promise.resolve();
+			const run = previous.then(task, task);
+			const settled = run.then(
+				() => undefined,
+				() => undefined,
+			);
+			chains.set(deviceId, settled);
+			// Drop the entry once it drains so a long-lived host does not retain
+			// one promise per device id it has ever seen.
+			void settled.then(() => {
+				if (chains.get(deviceId) === settled) chains.delete(deviceId);
+			});
+			return run;
+		},
+	};
+}
+
 export function createHandshakeJoinQueue(): {
 	enqueue(start: () => Promise<void>): Promise<void>;
 } {
