@@ -23,20 +23,20 @@ const { assertAuthenticatedRemoteAccessContract } = await import(pathToFileURL(o
 test.after(async () => rm(directory, { force: true, recursive: true }));
 
 test('a build cannot advertise remote access without the authenticated transport contract version', () => {
-	assert.equal(AUTHENTICATED_WEBRTC_TRANSPORT_VERSION, 1);
-	assertAuthenticatedRemoteAccessContract(1, 1);
-	assert.throws(() => assertAuthenticatedRemoteAccessContract(2, 1), /cannot be advertised/);
+	assert.equal(AUTHENTICATED_WEBRTC_TRANSPORT_VERSION, 2);
+	assertAuthenticatedRemoteAccessContract(2, 2);
 	assert.throws(() => assertAuthenticatedRemoteAccessContract(1, 2), /cannot be advertised/);
-	assert.throws(() => assertAuthenticatedRemoteAccessContract(undefined, 1), /cannot be advertised/);
+	assert.throws(() => assertAuthenticatedRemoteAccessContract(2, 1), /cannot be advertised/);
+	assert.throws(() => assertAuthenticatedRemoteAccessContract(undefined, 2), /cannot be advertised/);
 });
 
-test('client and server both require authenticated transport contract version 1', async () => {
+test('client and server both require the shared authenticated transport contract version', async () => {
 	const [sessionHost, pairingHost, exposure] = await Promise.all([
 		readFile('src/web/sessionTransportHost.ts', 'utf8'),
 		readFile('apps/terminay-server/src/remote/hostedPairingHost.ts', 'utf8'),
 		readFile('electron/remote/serverOwnedExposure.ts', 'utf8'),
 	]);
-	assert.match(sessionHost, /authenticatedTransportVersion !== 1/);
+	assert.match(sessionHost, /authenticatedTransportVersion !== AUTHENTICATED_WEBRTC_TRANSPORT_VERSION/);
 	assert.match(pairingHost, /AUTHENTICATED_WEBRTC_TRANSPORT_VERSION/);
 	assert.match(exposure, /assertAuthenticatedRemoteAccessContract/);
 });

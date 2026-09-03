@@ -57,7 +57,6 @@ export const DEFAULT_SERVER_SETTINGS: SettingsObject = {
 		disconnectPolicy: 'cancel',
 	},
 	remoteAccess: {
-		pinFailureLimit: 3,
 		webRtcHostedDomain: 'terminay.com',
 		webRtcIceServers: 'stun:stun.l.google.com:19302',
 	},

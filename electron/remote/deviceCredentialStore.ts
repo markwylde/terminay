@@ -93,7 +93,8 @@ function normalizeOrigin(value: unknown): string {
   if (typeof value !== 'string') throw new TypeError('Remote credential origin is invalid.')
   let parsed: URL
   try { parsed = new URL(value) } catch { throw new TypeError('Remote credential origin is invalid.') }
-  const loopback = parsed.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname)
+  const loopback = parsed.protocol === 'http:' &&
+    (['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname) || parsed.hostname.toLowerCase().endsWith('.localhost'))
   if (!ORIGIN_PATTERN.test(parsed.protocol) || (parsed.protocol !== 'https:' && !loopback)) {
     throw new TypeError('Remote credential origin must use HTTPS or loopback HTTP.')
   }

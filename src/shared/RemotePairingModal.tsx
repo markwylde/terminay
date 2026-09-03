@@ -9,23 +9,39 @@ import {
 import { writeClipboardText } from '../host/nativeActions';
 import './RemotePairingModal.css';
 
+export type PendingPairingApproval = Readonly<{
+	approvalId: string;
+	deviceName: string;
+	matchCode: string;
+	expiresAt: string;
+}>;
+
 export function RemotePairingModal({
+	busy = false,
 	dialogRef,
 	dialogStyle,
 	expiresAt,
+	onApprove,
 	onClose,
+	onDeny,
 	onTitleMouseDown,
 	pairingUrl,
+	pendingApproval = null,
 	qrCodeDataUrl,
 	statusMessage,
 	success = false,
 }: Readonly<{
+	busy?: boolean;
 	dialogRef?: (element: HTMLDivElement | null) => void;
 	dialogStyle?: CSSProperties;
 	expiresAt?: string | null;
+	onApprove?: (approvalId: string) => void;
 	onClose: () => void;
+	onDeny?: (approvalId: string) => void;
 	onTitleMouseDown?: (event: MouseEvent<HTMLDivElement>) => void;
 	pairingUrl?: string | null;
+	/** A device asked to pair: its name and code replace the QR until decided. */
+	pendingApproval?: PendingPairingApproval | null;
 	qrCodeDataUrl?: string | null;
 	statusMessage?: string | null;
 	success?: boolean;
@@ -61,7 +77,53 @@ export function RemotePairingModal({
 	}, [pairingUrl, qrCodeDataUrl]);
 	const visibleQr = qrCodeDataUrl ?? generatedQr;
 	let body: ReactNode;
-	if (visibleQr) {
+	if (pendingApproval !== null && !success) {
+		body = (
+			<div className="remote-pairing-modal__content">
+				<section
+					className="remote-pairing-modal__approval"
+					aria-label="Device waiting for approval"
+				>
+					<p className="remote-pairing-modal__approval-kicker">
+						Waiting for your approval
+					</p>
+					<p className="remote-pairing-modal__approval-device">
+						{pendingApproval.deviceName}
+					</p>
+					<p className="remote-pairing-modal__copy">
+						Approve only if the device shows this code.
+					</p>
+					<p
+						className="remote-pairing-modal__match-code"
+					>
+						{pendingApproval.matchCode}
+					</p>
+					<div className="remote-pairing-modal__approval-actions">
+						<button
+							type="button"
+							className="remote-pairing-modal__approve-btn"
+							disabled={busy}
+							onClick={() => onApprove?.(pendingApproval.approvalId)}
+						>
+							Approve
+						</button>
+						<button
+							type="button"
+							className="remote-pairing-modal__deny-btn"
+							disabled={busy}
+							onClick={() => onDeny?.(pendingApproval.approvalId)}
+						>
+							Deny
+						</button>
+					</div>
+					<p className="remote-pairing-modal__expires-text">
+						This request expires{' '}
+						{new Date(pendingApproval.expiresAt).toLocaleTimeString()}.
+					</p>
+				</section>
+			</div>
+		);
+	} else if (visibleQr) {
 		body = (
 			<div className="remote-pairing-modal__content">
 				<div

@@ -75,7 +75,6 @@ export interface LocalUiServerOptions {
 			readonly pairingSessionId: string;
 			readonly pairingToken: string;
 			readonly pairingExpiresAt: string;
-			readonly pairingPin: string;
 			readonly deviceName: string;
 			readonly publicKeyPem: string;
 		}) =>
@@ -539,7 +538,7 @@ export class LocalUiServer {
 		try {
 			if (kind === 'enroll') {
 				const allowed = new Set([
-					'pairingSessionId', 'pairingToken', 'pairingExpiresAt', 'pairingPin',
+					'pairingSessionId', 'pairingToken', 'pairingExpiresAt',
 					'deviceName', 'publicKeyPem',
 				]);
 				if (
@@ -550,7 +549,7 @@ export class LocalUiServer {
 					throw new TypeError('device enrollment is invalid');
 				const result = await deviceAuthentication.enroll(value as {
 					pairingSessionId: string; pairingToken: string; pairingExpiresAt: string;
-					pairingPin: string; deviceName: string; publicKeyPem: string;
+					deviceName: string; publicKeyPem: string;
 				});
 				if (!isSafeId(result.deviceId)) throw new TypeError('device enrollment is invalid');
 				sendJson(response, 200, result);

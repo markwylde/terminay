@@ -1,8 +1,12 @@
 import { parseHostedPairingUrl } from '@terminay/protocol'
-import { deriveHostedPairingSecrets } from '../../apps/terminay-server/src/remote/hostedPairingSecrets'
 import { establishDevicePairing } from '../../src/remote/services/devicePairingFlow'
 import { parsePairingBootstrap } from '../../src/remote/services/pairing'
 import type { DesktopDeviceCredentialStore, PinnedDesktopHostKey } from './deviceCredentialStore'
+import {
+  type DesktopHostedSignalOptions,
+  pairDesktopHostedDevice,
+} from './desktopHostedConnection'
+import type { HostedIceServer } from '../../apps/terminay-server/src/remote/hostedPeerLifecycle'
 
 type FetchResponse = Readonly<{
   ok: boolean
@@ -23,52 +27,42 @@ export type DesktopPairingFetch = (
 
 const DEFAULT_PAIRING_REQUEST_TIMEOUT_MS = 15_000
 
+export type DesktopPairingTarget =
+  | Readonly<{ kind: 'hosted'; label: string; origin: string }>
+  | Readonly<{
+      kind: 'loopback'
+      bootstrap: ReturnType<typeof parsePairingBootstrap>
+      label: string
+      origin: string
+    }>
+
 /**
  * Desktop receives pairing URLs from an untrusted clipboard/renderer input.
- * Do this validation before the pairing flow can issue either network request:
- * a pairing bootstrap identifies a server origin, not an arbitrary endpoint.
- * Hosted links are advertised on app.terminay.com; the session subdomain is
- * the peer.
+ * Classify before anything else can run: a hosted link (app.terminay.com or a
+ * session origin) pairs only over the transport-authenticated data channels;
+ * a loopback embedded-server link keeps its same-machine HTTP enrollment.
  */
-function resolveDesktopPairingTarget(pairingUrl: string): Readonly<{
-  bootstrap: ReturnType<typeof parsePairingBootstrap>
-  label: string
-  origin: string
-}> {
+export function resolveDesktopPairingTarget(pairingUrl: string): DesktopPairingTarget {
   try {
     const hosted = parseHostedPairingUrl(pairingUrl)
-    const derived = deriveHostedPairingSecrets(hosted.fragment)
-    const pairingExpiresAt = hosted.pairingExpiresAt || new Date(Date.now() + 10 * 60 * 1000).toISOString()
-    return Object.freeze({
-      bootstrap: Object.freeze({
-        pairingExpiresAt,
-        pairingSessionId: derived.pairingRoomId,
-        pairingToken: derived.pairingToken,
-      }),
-      label: hosted.label,
-      origin: hosted.origin,
-    })
+    const loopback = new URL(hosted.origin)
+    const isLoopbackHttp = loopback.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(loopback.hostname)
+    if (!isLoopbackHttp) {
+      return Object.freeze({ kind: 'hosted', label: hosted.label, origin: hosted.origin })
+    }
   } catch (hostedError) {
     if (!(hostedError instanceof TypeError)) throw hostedError
   }
   const url = new URL(pairingUrl)
   const isLoopbackHttp = url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
-  if ((url.protocol !== 'https:' && !isLoopbackHttp) || url.username || url.password || url.pathname !== '/' || url.search) {
-    throw new TypeError('Desktop pairing URL must be an exact HTTPS or loopback HTTP origin with a fragment.')
+  if (!isLoopbackHttp || url.username || url.password || url.pathname !== '/' || url.search) {
+    throw new TypeError('Desktop pairing URL must be a Terminay pairing link or a loopback embedded-server link.')
   }
   const bootstrap = parsePairingBootstrap(pairingUrl)
-  return Object.freeze({
-    bootstrap,
-    label: url.host,
-    origin: url.origin,
-  })
-}
-
-function assertUsableDesktopPairingBootstrap(bootstrap: Readonly<{ pairingExpiresAt: string }>): void {
-  const expiresAt = Date.parse(bootstrap.pairingExpiresAt)
-  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+  if (!(Date.parse(bootstrap.pairingExpiresAt) > Date.now())) {
     throw new Error('Desktop pairing URL is expired or has an invalid expiry.')
   }
+  return Object.freeze({ kind: 'loopback', bootstrap, label: url.host, origin: url.origin })
 }
 
 async function postWithTimeout(
@@ -92,33 +86,51 @@ async function postWithTimeout(
     ])
   } finally {
     if (timeout !== undefined) clearTimeout(timeout)
-    // A custom test/host fetch implementation may ignore AbortSignal. Attach a
-    // handler so a later rejection cannot become an unhandled promise after we
-    // have already failed the explicitly bounded pairing operation.
     void request.catch(() => undefined)
   }
 }
 
 /**
- * Execute the same one-time device pairing transaction used by the browser,
- * but keep the Desktop private key inside the main-process encrypted credential
- * store. The pairing URL is deliberately only used for
- * this transaction; callers must not reinterpret its fragment token as an
- * application-protocol bearer credential.
+ * Pair Desktop with a server. Hosted links run entirely on the verified
+ * WebRTC data channels and pin the host key beside the device key; loopback
+ * embedded-server links use same-machine HTTP where the one-time fragment is
+ * the whole authority. No pairing material is ever sent to a hosted origin
+ * over HTTP.
  */
 export async function establishDesktopDevicePairing(options: Readonly<{
   deviceName: string
   fetch?: DesktopPairingFetch
-  pairingPin: string
   pairingUrl: string
-  /** Bounds each start/complete request; a stalled server must not leave the
-   * Desktop connection dialog in an indeterminate Connecting state. */
   pairingRequestTimeoutMs?: number
   store: DesktopDeviceCredentialStore
   hostPin?: PinnedDesktopHostKey
-}>): Promise<Readonly<{ deviceId: string; deviceName: string; label: string; origin: string }>> {
+  hosted?: Readonly<{
+    webrtcRuntimeRoot: string | undefined
+    iceServers?: readonly HostedIceServer[]
+    signal?: DesktopHostedSignalOptions
+    abort?: AbortSignal
+    onMatchCode?: (code: Readonly<{ matchCode: string; expiresAt: number }>) => void
+  }>
+}>): Promise<Readonly<{ deviceId: string; deviceName: string; label: string; origin: string; serverId?: string }>> {
   const target = resolveDesktopPairingTarget(options.pairingUrl)
-  assertUsableDesktopPairingBootstrap(target.bootstrap)
+  if (target.kind === 'hosted') {
+    const runtimeRoot = options.hosted?.webrtcRuntimeRoot
+    if (runtimeRoot === undefined) {
+      throw new Error(
+        'The selected WebRTC runtime directory is unavailable, so Desktop cannot pair with a hosted server. Package the runtime, or set TERMINAY_WEBRTC_RUNTIME_ROOT in development.',
+      )
+    }
+    return pairDesktopHostedDevice({
+      pairingUrl: options.pairingUrl,
+      deviceName: options.deviceName,
+      store: options.store,
+      webrtcRuntimeRoot: runtimeRoot,
+      ...(options.hosted?.iceServers === undefined ? {} : { iceServers: options.hosted.iceServers }),
+      ...(options.hosted?.signal === undefined ? {} : { signal: options.hosted.signal }),
+      ...(options.hosted?.abort === undefined ? {} : { abort: options.hosted.abort }),
+      ...(options.hosted?.onMatchCode === undefined ? {} : { onMatchCode: options.hosted.onMatchCode }),
+    })
+  }
   const fetchImplementation = options.fetch ?? (globalThis.fetch as unknown as DesktopPairingFetch)
   if (typeof fetchImplementation !== 'function') throw new Error('Desktop pairing requires a network fetch implementation.')
   const pairingRequestTimeoutMs = options.pairingRequestTimeoutMs ?? DEFAULT_PAIRING_REQUEST_TIMEOUT_MS
@@ -126,8 +138,6 @@ export async function establishDesktopDevicePairing(options: Readonly<{
     throw new RangeError('Desktop pairing request timeout must be between 1 and 30 seconds.')
   }
   const origin = target.origin
-  const bootstrap = target.bootstrap
-
   const result = await establishDevicePairing({
     api: {
       async postJson<TResponse>(pathname: string, body: unknown): Promise<TResponse> {
@@ -149,7 +159,7 @@ export async function establishDesktopDevicePairing(options: Readonly<{
         return payload as TResponse
       },
     },
-    bootstrap,
+    bootstrap: target.bootstrap,
     credentials: {
       saveDeviceIdentity: async (identity) => {
         await options.store.saveDeviceIdentity({
@@ -164,7 +174,6 @@ export async function establishDesktopDevicePairing(options: Readonly<{
       return Object.freeze({ privateKey: key.keyRef, publicKeyPem: key.publicKeyPem })
     },
     origin,
-    pairingPin: options.pairingPin,
   })
   return Object.freeze({ deviceId: result.deviceId, deviceName: result.deviceName, label: target.label, origin })
 }

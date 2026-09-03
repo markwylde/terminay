@@ -1,16 +1,9 @@
-import type { FormEvent, RefObject } from 'react';
+import type { RefObject } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-	isRemoteAccessPairingPinConfigured,
-	PAIRING_PIN_PATTERN,
-	type RemotePairingPinClient,
-	saveRemoteAccessPairingPin,
-} from '../remotePairingPin';
 import type { RemoteAccessStatusClient } from '../services/remoteAccessStatusClient';
 import type { RemoteAccessStatus } from '../types/terminay';
 
 export function useRemoteAccessController(
-	pairingPinClient: RemotePairingPinClient | undefined,
 	statusClient: RemoteAccessStatusClient | undefined,
 	openSettings: (sectionId: string) => Promise<void>,
 ) {
@@ -21,14 +14,11 @@ export function useRemoteAccessController(
 	const [pairingOutcome, setPairingOutcome] = useState<'idle' | 'success'>(
 		'idle',
 	);
-	const [isPinModalOpen, setIsPinModalOpen] = useState(false);
-	const [pinInput, setPinInput] = useState('');
-	const [pinError, setPinError] = useState<string | null>(null);
-	const [isSavingPin, setIsSavingPin] = useState(false);
+	const [busyApprovalId, setBusyApprovalId] = useState<string | null>(null);
+	const [isResettingIdentity, setIsResettingIdentity] = useState(false);
 	const [isLinkCopied, setIsLinkCopied] = useState(false);
 	const [isMenuOpen, setIsMenuOpen] = useState(false);
 	const menuRef = useRef<HTMLDivElement | null>(null);
-	const pinRequestRef = useRef<((configured: boolean) => void) | null>(null);
 
 	const closeMenu = useCallback(() => setIsMenuOpen(false), []);
 
@@ -91,57 +81,6 @@ export function useRemoteAccessController(
 		status?.pairedDeviceCount,
 	]);
 
-	const closePinModal = useCallback((configured: boolean) => {
-		pinRequestRef.current?.(configured);
-		pinRequestRef.current = null;
-		setIsPinModalOpen(false);
-		setPinInput('');
-		setPinError(null);
-		setIsSavingPin(false);
-	}, []);
-
-	const ensurePin = useCallback(async () => {
-		if (pairingPinClient === undefined) {
-			setActionError('Remote access pairing is unavailable in this host.');
-			return false;
-		}
-		if (await isRemoteAccessPairingPinConfigured(pairingPinClient)) return true;
-		setPinInput('');
-		setPinError(null);
-		setIsPinModalOpen(true);
-		return new Promise<boolean>((resolve) => {
-			pinRequestRef.current = resolve;
-		});
-	}, [pairingPinClient]);
-
-	const submitPin = useCallback(
-		async (event: FormEvent<HTMLFormElement>) => {
-			event.preventDefault();
-			const pin = pinInput.trim();
-			if (!PAIRING_PIN_PATTERN.test(pin)) {
-				setPinError('Pairing PIN must be exactly 6 digits.');
-				return;
-			}
-			setIsSavingPin(true);
-			setPinError(null);
-			try {
-				if (pairingPinClient === undefined) {
-					throw new Error('Remote access pairing is unavailable in this host.');
-				}
-				await saveRemoteAccessPairingPin(pairingPinClient, pin);
-				closePinModal(true);
-			} catch (error) {
-				setPinError(
-					error instanceof Error
-						? error.message
-						: 'Could not save the pairing PIN.',
-				);
-				setIsSavingPin(false);
-			}
-		},
-		[closePinModal, pairingPinClient, pinInput],
-	);
-
 	const recordFailure = useCallback((error: unknown) => {
 		const message =
 			error instanceof Error
@@ -170,7 +109,6 @@ export function useRemoteAccessController(
 				await openSettings('remote-access-host');
 				return;
 			}
-			if (!status?.isRunning && !(await ensurePin())) return;
 			const next = await statusClient.toggleServer();
 			setStatus(next);
 			setActionError(next.errorMessage);
@@ -180,7 +118,6 @@ export function useRemoteAccessController(
 			setIsToggling(false);
 		}
 	}, [
-		ensurePin,
 		openSettings,
 		recordFailure,
 		status?.configurationIssue,
@@ -228,6 +165,63 @@ export function useRemoteAccessController(
 		[recordFailure, statusClient],
 	);
 
+	/** Approve or deny exactly the pending request whose code the administrator
+	 * compared. A request that expired meanwhile reports that instead of
+	 * approving whatever replaced it. */
+	const decideApproval = useCallback(
+		async (approvalId: string, decision: 'approve' | 'deny') => {
+			if (statusClient === undefined) {
+				recordFailure(
+					new Error('Remote access controls are unavailable in this host.'),
+				);
+				return;
+			}
+			setBusyApprovalId(approvalId);
+			setActionError(null);
+			try {
+				const next =
+					decision === 'approve'
+						? await statusClient.approveDevice(approvalId)
+						: await statusClient.denyDevice(approvalId);
+				setStatus(next);
+				setActionError(next.errorMessage);
+			} catch (error) {
+				recordFailure(error);
+			} finally {
+				setBusyApprovalId(null);
+			}
+		},
+		[recordFailure, statusClient],
+	);
+	const approveDevice = useCallback(
+		(approvalId: string) => decideApproval(approvalId, 'approve'),
+		[decideApproval],
+	);
+	const denyDevice = useCallback(
+		(approvalId: string) => decideApproval(approvalId, 'deny'),
+		[decideApproval],
+	);
+
+	const resetIdentity = useCallback(async () => {
+		if (statusClient === undefined) {
+			recordFailure(
+				new Error('Remote access controls are unavailable in this host.'),
+			);
+			return;
+		}
+		setIsResettingIdentity(true);
+		setActionError(null);
+		try {
+			const next = await statusClient.resetIdentity();
+			setStatus(next);
+			setActionError(next.errorMessage);
+		} catch (error) {
+			recordFailure(error);
+		} finally {
+			setIsResettingIdentity(false);
+		}
+	}, [recordFailure, statusClient]);
+
 	const openPairingQr = useCallback(async () => {
 		setActionError(null);
 		try {
@@ -245,25 +239,15 @@ export function useRemoteAccessController(
 				return;
 			}
 			let next = status;
-			if (!next?.isRunning) {
-				if (!(await ensurePin())) return;
-				setIsToggling(true);
-				try {
-					next = await statusClient.toggleServer();
-					setStatus(next);
-					setActionError(next.errorMessage);
-				} finally {
-					setIsToggling(false);
-				}
-			} else {
-				setIsToggling(true);
-				try {
-					next = await statusClient.createPairingLink();
-					setStatus(next);
-					setActionError(next.errorMessage);
-				} finally {
-					setIsToggling(false);
-				}
+			setIsToggling(true);
+			try {
+				next = next?.isRunning
+					? await statusClient.createPairingLink()
+					: await statusClient.toggleServer();
+				setStatus(next);
+				setActionError(next.errorMessage);
+			} finally {
+				setIsToggling(false);
 			}
 			if (next?.webRtcPairingUrl || next?.webRtcPairingQrCodeDataUrl) {
 				setPairingOutcome('idle');
@@ -272,7 +256,7 @@ export function useRemoteAccessController(
 		} catch (error) {
 			recordFailure(error);
 		}
-	}, [ensurePin, openSettings, recordFailure, status, statusClient]);
+	}, [openSettings, recordFailure, status, statusClient]);
 
 	const pairingUrl = status?.webRtcPairingUrl;
 	const pairingQrCodeDataUrl = status?.webRtcPairingQrCodeDataUrl;
@@ -357,39 +341,40 @@ export function useRemoteAccessController(
 		: status?.webRtcStatus === 'pairing-ready'
 			? liveQrCodeDataUrl
 			: null;
+	const pendingApprovals = status?.pendingApprovals ?? [];
 
 	return {
 		actionError,
+		approveDevice,
+		busyApprovalId,
 		closeMenu,
 		closePairingModal,
-		closePinModal,
 		closeConnection,
+		denyDevice,
 		isLinkCopied,
 		isMenuOpen,
 		isPairingModalOpen,
-		isPinModalOpen,
-		isSavingPin,
+		isResettingIdentity,
 		isToggling,
 		menuRef: menuRef as RefObject<HTMLDivElement>,
 		openPairingQr,
 		pairingExpiresAt,
 		pairingOutcome,
 		pairingUrl,
-		pinError,
-		pinInput,
+		pendingApprovals,
+		/** The request currently shown in place of the QR, if any. */
+		pendingApproval: pendingApprovals[0] ?? null,
+		resetIdentity,
 		revokeDevice,
 		setIsLinkCopied,
 		setIsMenuOpen,
 		setIsPairingModalOpen,
-		setPinError,
-		setPinInput,
 		status,
 		statusMessage:
 			actionError ??
 			status?.errorMessage ??
 			status?.webRtcStatusMessage ??
 			null,
-		submitPin,
 		toggleExposure,
 		tone: status?.isRunning
 			? 'remote-access-button--active'

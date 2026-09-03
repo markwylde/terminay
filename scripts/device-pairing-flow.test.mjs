@@ -37,7 +37,6 @@ test('enrollment stores exactly one origin-bound device identity and keeps its t
     deviceName: 'Browser',
     async generateKeyPair() { return { privateKey, publicKeyPem: 'PUBLIC-KEY' } },
     origin: 'https://server.example',
-    pairingPin: '123456',
   })
 
   assert.deepEqual(calls, [[
@@ -45,7 +44,6 @@ test('enrollment stores exactly one origin-bound device identity and keeps its t
     {
       deviceName: 'Browser',
       pairingExpiresAt: bootstrap.pairingExpiresAt,
-      pairingPin: '123456',
       pairingSessionId: bootstrap.pairingSessionId,
       pairingToken: bootstrap.pairingToken,
       publicKeyPem: 'PUBLIC-KEY',
@@ -78,11 +76,67 @@ test('enrollment rejects a non-canonical origin before allocating a key or conta
       deviceName: 'Browser',
       async generateKeyPair() { generated += 1; return { privateKey: {}, publicKeyPem: 'PUBLIC-KEY' } },
       origin,
-      pairingPin: '123456',
     }), /exact HTTPS origin/)
     assert.equal(generated, 0)
     assert.equal(calls, 0)
   }
+})
+
+test('an authenticated lane parks enrollment, shows the match code, and completes only on approval', async () => {
+  const { generateKeyPairSync } = await import('node:crypto')
+  const { deriveMatchCode } = await import('../packages/protocol/dist/index.js')
+  const key = generateKeyPairSync('rsa', { modulusLength: 2048, publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } })
+  const secret = Buffer.alloc(32, 0x22).toString('base64url')
+  const nonce = Buffer.alloc(32, 0x55).toString('base64url')
+  const hostKey = Buffer.alloc(32, 0x11).toString('base64url')
+  const shown = []
+  const stored = []
+  let waited
+  const paired = await establishDevicePairing({
+    api: {
+      async postJson(pathname) {
+        assert.equal(pathname, '/api/devices/enroll')
+        return { status: 'pending', approvalId: 'approval-1', expiresAt: Date.now() + 120_000 }
+      },
+      async waitForEnrollmentDecision(approvalId, options) {
+        waited = { approvalId, expiresAt: options.expiresAt }
+        return { type: 'enrollment-approved', approvalId, deviceId: 'device-b', deviceName: 'Phone', ticket: 'T'.repeat(43) }
+      },
+    },
+    bootstrap,
+    credentials: { async saveDeviceIdentity(identity) { stored.push(identity) } },
+    deviceName: 'Phone',
+    async generateKeyPair() { return { privateKey: {}, publicKeyPem: key.publicKey } },
+    origin: 'https://server.example',
+    matchCode: { pairingSecret: secret, clientNonce: nonce, hostPublicKey: hostKey },
+    onMatchCode: (code) => shown.push(code.matchCode),
+  })
+  assert.equal(waited.approvalId, 'approval-1')
+  assert.deepEqual(shown, [await deriveMatchCode({ pairingSecret: secret, clientNonce: nonce, hostPublicKey: hostKey, devicePublicKeyPem: key.publicKey })])
+  assert.equal(stored.length, 1, 'the credential is stored only after approval')
+  assert.equal(paired.deviceId, 'device-b')
+
+  await assert.rejects(() => establishDevicePairing({
+    api: {
+      async postJson() { return { status: 'pending', approvalId: 'approval-2', expiresAt: Date.now() + 120_000 } },
+      async waitForEnrollmentDecision(approvalId) { return { type: 'enrollment-denied', approvalId, reason: 'denied' } },
+    },
+    bootstrap,
+    credentials: { async saveDeviceIdentity() { throw new Error('must not store') } },
+    deviceName: 'Phone',
+    async generateKeyPair() { return { privateKey: {}, publicKeyPem: key.publicKey } },
+    origin: 'https://server.example',
+    matchCode: { pairingSecret: secret, clientNonce: nonce, hostPublicKey: hostKey },
+  }), /denied this device/u)
+
+  await assert.rejects(() => establishDevicePairing({
+    api: { async postJson() { return { status: 'pending', approvalId: 'approval-3', expiresAt: Date.now() + 120_000 } } },
+    bootstrap,
+    credentials: { async saveDeviceIdentity() { throw new Error('must not store') } },
+    deviceName: 'Phone',
+    async generateKeyPair() { return { privateKey: {}, publicKeyPem: key.publicKey } },
+    origin: 'https://server.example',
+  }), /cannot wait for pairing approval/u)
 })
 
 test('reconnect signs the server challenge then exchanges it for one connection ticket', async () => {
