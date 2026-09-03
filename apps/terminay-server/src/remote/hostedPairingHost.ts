@@ -21,7 +21,10 @@ import type {
 	ServerConnectionLike,
 } from '@terminay/server-core';
 import { HeadlessChannelTransport, type HeadlessDataChannel } from '@terminay/server-core/remote';
-import { loadSelectedSecureWeriftRuntime } from './secureWeriftRuntime.js';
+import {
+	loadSelectedSecureWeriftRuntime,
+	type SecureWeriftRuntimeModule,
+} from './secureWeriftRuntime.js';
 import {
 	createDeviceHostReadyMessage,
 	type HostedHostKey,
@@ -40,6 +43,7 @@ import {
 } from './uiArchiveTransfer.js';
 import {
 	collectHostIceAddresses,
+	createDeviceReplacementChain,
 	createHandshakeJoinQueue,
 	DEVICE_HOST_AVAILABILITY_MS,
 	deviceHostRefreshDelayMs,
@@ -129,6 +133,9 @@ export interface HostedPairingHostOptions {
 		readonly insecureTls?: boolean;
 	}>;
 	readonly webrtcRuntimeRoot: string;
+	/** Test seam only. Production leaves this unset so the selected,
+	 * integrity-verified artifact is the only runtime that can be loaded. */
+	readonly loadRuntime?: (runtimeRoot: string) => Promise<SecureWeriftRuntimeModule>;
 	readonly iceServers?: readonly HostedIceServer[];
 	readonly resolveIceServers?: () => readonly HostedIceServer[];
 	readonly iceRecoveryGraceMs?: number;
@@ -223,7 +230,9 @@ export async function startHostedPairingHost(
 	const sessionId = hostedSessionId(options.handoff.sessionOrigin);
 	const signalingUrl = hostedSignalingUrl(options.handoff.sessionOrigin);
 	const signalingHostClass = classifySignalingHost(options.handoff.sessionOrigin);
-	const runtime = await loadSelectedSecureWeriftRuntime(options.webrtcRuntimeRoot);
+	const runtime = await (options.loadRuntime ?? loadSelectedSecureWeriftRuntime)(
+		options.webrtcRuntimeRoot,
+	);
 	const Peer = runtime.RTCPeerConnection as unknown as new (
 		configuration?: Record<string, unknown>,
 	) => WeriftPeer;
@@ -232,8 +241,15 @@ export async function startHostedPairingHost(
 		: createMinimalUiArchive();
 	const livePeers = new HostedLivePeerRegistry();
 	const joinQueue = createHandshakeJoinQueue();
+	const deviceReplacements = createDeviceReplacementChain();
 	const apiChannelsByPeer = new Map<string, WeriftDataChannel>();
-	const context = { archive, options, livePeers, apiChannelsByPeer, serialize: joinQueue.enqueue };
+	const context = {
+		archive,
+		options,
+		livePeers,
+		apiChannelsByPeer,
+		replaceDevicePeer: deviceReplacements.run,
+	};
 	let handshakeGeneration = 0;
 	const handshakes = new Map<string, HandshakeEntry>();
 	const seenDeviceJoinNonces = new Map<string, number>();
@@ -818,7 +834,8 @@ type HostContext = Readonly<{
 	livePeers: HostedLivePeerRegistry;
 	options: HostedPairingHostOptions;
 	apiChannelsByPeer: Map<string, WeriftDataChannel>;
-	serialize: (task: () => Promise<void>) => Promise<void>;
+	/** Orders one device's takeover; never shared with handshake signaling. */
+	replaceDevicePeer: (deviceId: string, task: () => Promise<void>) => Promise<void>;
 }>;
 
 /** Per-peer authentication state shared by the api and control lanes. */
@@ -1310,39 +1327,42 @@ function bindControl(
 			return;
 		}
 		if (request.type !== 'application-auth' || typeof request.id !== 'string') return;
-		// Ticket consumption and live-peer replacement are serialized with joins
-		// so two peers for one device can never interleave their takeover.
-		void context.serialize(async () => {
-			let ticket: ReturnType<ServerRemoteExposure['consumeConnectionTicket']> | undefined;
-			try {
-				ticket = context.options.remote.consumeConnectionTicket(String(request.ticket ?? ''), auth.peerId);
-			} catch {
-				ticket = undefined;
-			}
-			// An already-authenticated peer still spends whatever it presented, but
-			// never opens a second application connection for itself.
-			const ok = ticket !== undefined && !auth.authenticated;
-			if (ok) auth.authenticated = true;
-			try {
-				safeChannelSend(
-					channel,
-					JSON.stringify({
-						error: ok ? undefined : 'Terminay rejected the workspace.',
-						id: request.id,
-						ok,
-						type: 'application-authenticated',
-					}),
-				);
-			} catch (error) {
-				console.error(error instanceof Error ? error.message : error);
-				return;
-			}
-			if (!ok || !ticket || context.options.acceptApplication === undefined) return;
-			// Only now, with a consumed ticket for this device, does the previous
-			// live peer for the device get retired, and its server-side cleanup
-			// completes before the replacement attaches to the workspace.
-			const replaced = await context.livePeers.close(ticket.deviceId);
-			await acceptAuthenticatedApplication(ticket, replaced);
+		// Consume and answer inline. Nothing a waiting client depends on may sit
+		// behind handshake signaling: an `addIceCandidate` for any peer can take
+		// seconds or never settle, and this reply has a client-side deadline.
+		let ticket: ReturnType<ServerRemoteExposure['consumeConnectionTicket']> | undefined;
+		try {
+			ticket = context.options.remote.consumeConnectionTicket(String(request.ticket ?? ''), auth.peerId);
+		} catch {
+			ticket = undefined;
+		}
+		// An already-authenticated peer still spends whatever it presented, but
+		// never opens a second application connection for itself.
+		const ok = ticket !== undefined && !auth.authenticated;
+		if (ok) auth.authenticated = true;
+		try {
+			safeChannelSend(
+				channel,
+				JSON.stringify({
+					error: ok ? undefined : 'Terminay rejected the workspace.',
+					id: request.id,
+					ok,
+					type: 'application-authenticated',
+				}),
+			);
+		} catch (error) {
+			console.error(error instanceof Error ? error.message : error);
+			return;
+		}
+		if (!ok || !ticket || context.options.acceptApplication === undefined) return;
+		const authenticated = ticket;
+		// Only now, with a consumed ticket for this device, does the previous
+		// live peer for the device get retired, and its server-side cleanup
+		// completes before the replacement attaches to the workspace. Ordering
+		// is per device, so another device's takeover never waits on this one.
+		void context.replaceDevicePeer(authenticated.deviceId, async () => {
+			const replaced = await context.livePeers.close(authenticated.deviceId);
+			await acceptAuthenticatedApplication(authenticated, replaced);
 		}).catch((error) => {
 			console.error(error instanceof Error ? error.message : error);
 		});
