@@ -26,10 +26,15 @@ export interface SharedConnectionsRouteBodyProps {
 	readonly onExpose?: (profile: ConnectionProfile) => Promise<void> | void;
 	readonly onPairingHandoff?: (
 		input: Readonly<{
-			pairingPin: string;
 			pairingUrl: string;
 		}>,
 	) => Promise<void> | void;
+	/** Desktop is waiting for the exposing computer to approve this code. */
+	readonly pairingApproval?: Readonly<{
+		deviceName: string;
+		matchCode: string;
+		expiresAt: string;
+	}> | null;
 	readonly onRename?: (
 		profile: ConnectionProfile,
 		label: string,
@@ -55,6 +60,7 @@ export function SharedConnectionsRouteBody({
 	onRevoke,
 	onExpose,
 	onPairingHandoff,
+	pairingApproval = null,
 	onRename,
 	onForget,
 	embedded = false,
@@ -72,7 +78,6 @@ export function SharedConnectionsRouteBody({
 	const [rename, setRename] = useState<ConnectionProfile>();
 	const [renameLabel, setRenameLabel] = useState('');
 	const [showPair, setShowPair] = useState(false);
-	const [pairingPin, setPairingPin] = useState('');
 	const [pairingUrl, setPairingUrl] = useState('');
 	const [inspectId, setInspectId] = useState<string>();
 	const exposureId = '__exposure__';
@@ -422,22 +427,14 @@ export function SharedConnectionsRouteBody({
 					onSubmit={(event) => {
 						event.preventDefault();
 						const value = pairingUrl;
-						if (!/^\d{6}$/u.test(pairingPin)) {
-							setMessage('Enter the six-digit pairing PIN.');
-							return;
-						}
 						void mutate(
 							'pair',
 							async () => {
-								await onPairingHandoff?.({
-									pairingPin,
-									pairingUrl: value,
-								});
+								await onPairingHandoff?.({ pairingUrl: value });
 								setPairingUrl('');
-								setPairingPin('');
 								setShowPair(false);
 							},
-							'Opening pairing…',
+							'Waiting for approval on the exposing computer…',
 						);
 					}}
 				>
@@ -454,22 +451,24 @@ export function SharedConnectionsRouteBody({
 								required
 							/>
 						</label>
-						<label>
-							Pairing PIN
-							<input
-								type="password"
-								inputMode="numeric"
-								maxLength={6}
-								value={pairingPin}
-								onChange={(event) =>
-									setPairingPin(event.target.value)
-								}
-								placeholder="000000"
-								autoComplete="one-time-code"
-								required
-							/>
-						</label>
 					</div>
+					{pairingApproval ? (
+						<div
+							className="shared-connections__match-code"
+							role="status"
+							aria-live="polite"
+						>
+							<p>
+								Confirm this code on the exposing computer to finish pairing{' '}
+								<strong>{pairingApproval.deviceName}</strong>.
+							</p>
+							<p
+								className="shared-connections__match-code-value"
+							>
+								{pairingApproval.matchCode}
+							</p>
+						</div>
+					) : null}
 					<div className="shared-connections__action-panel-actions">
 						<button type="submit">Continue pairing</button>
 						<button

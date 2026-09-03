@@ -6,6 +6,7 @@ import {
 	mkdirSync,
 	readFileSync,
 	renameSync,
+	rmSync,
 	writeFileSync,
 } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
@@ -51,7 +52,7 @@ import {
 	type LocalControlEndpoint,
 	type TerminalControlAdapter,
 } from '../apps/terminay-server/src/index';
-import { loadOrCreateHostedHostKey } from '../apps/terminay-server/src/remote/hostedHostKey';
+import { createProtectedHostKeyStore } from '../apps/terminay-server/src/remote/hostedHostKey';
 import { parseHostedIceServers } from '../apps/terminay-server/src/remote/hostedPeerLifecycle';
 import type { AgentLifecycleEvent } from '../packages/extension-api/src/index';
 import { ParakeetRuntime } from '../packages/server-core/src/aiService/parakeetRuntime';
@@ -138,6 +139,11 @@ import {
 } from './mcpInstall';
 import { TerminalRecordingService } from './recording/service';
 import { establishDesktopDevicePairing } from './remote/desktopPairing';
+import {
+	connectDesktopHostedRemote,
+	isHostedDesktopOrigin,
+	type DesktopHostedSignalOptions,
+} from './remote/desktopHostedConnection';
 import { createDesktopReconnectTransport, type DesktopReconnectTransport } from './remote/desktopReconnect';
 import { createDesktopBootstrappedWebRtcConnection } from './remote/desktopWebRtcBootstrap';
 import { resolveDesktopWebRtcRuntimeRoot } from './remote/desktopWebRtcRuntimeRoot';
@@ -146,7 +152,6 @@ import {
 	DesktopDeviceCredentialStore,
 } from './remote/deviceCredentialStore';
 import { hostedPairingDiagnosticEvent } from './remote/hostedPairingDiagnostics';
-import { createPairingPinHash, verifyPairingPin } from './remote/pin';
 import { DesktopServerOwnedExposure } from './remote/serverOwnedExposure';
 import { buildServerUiArchive } from './remote/serverUiArchive';
 import {
@@ -647,6 +652,8 @@ type RememberedRemoteConnection = {
 	kind: 'device' | 'standalone';
 	label: string;
 	origin: string;
+	/** Server identity learned from the authenticated pairing transcript. */
+	serverId?: string;
 };
 
 const rememberedRemoteConnections = new Map<
@@ -701,6 +708,10 @@ function loadRememberedRemoteConnections(): void {
 				kind: value.kind,
 				label: value.label,
 				origin: origin.origin,
+				...(typeof value.serverId === 'string' &&
+				/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value.serverId)
+					? { serverId: value.serverId }
+					: {}),
 			});
 		}
 	} catch {
@@ -1014,13 +1025,10 @@ const embeddedServerSettings = new ServerSettingsRepository({
 function readEmbeddedRemoteAccessSettings(): TerminalSettings['remoteAccess'] {
 	const serverSettings =
 		embeddedServerSettings.settings as Partial<TerminalSettings>;
-	return {
-		...normalizeTerminalSettings({
-			...defaultTerminalSettings,
-			...serverSettings,
-		}).remoteAccess,
-		pairingPinHash: readRemotePairingPinVerifier(),
-	};
+	return normalizeTerminalSettings({
+		...defaultTerminalSettings,
+		...serverSettings,
+	}).remoteAccess;
 }
 
 function loadEmbeddedRemoteDevices(dataRoot: string) {
@@ -1268,11 +1276,6 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 				getStatus: () => currentRemoteAccessStatus(),
 				command: async (operation, value) => {
 					switch (operation) {
-						case 'pairing-pin-status':
-							return (
-								readTerminalSettings().remoteAccess.pairingPinHash.trim()
-									.length > 0
-							);
 						case 'toggle-server':
 							return toggleRemoteServer();
 						case 'create-pairing-link':
@@ -1281,8 +1284,12 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 							return revokeRemoteDevice(value ?? '');
 						case 'close-connection':
 							return closeRemoteConnection(value ?? '');
-						case 'set-pairing-pin':
-							return setRemotePairingPin(value ?? '');
+						case 'approve-device':
+							return desktopRemoteExposure.approveDevice(value ?? '');
+						case 'deny-device':
+							return desktopRemoteExposure.denyDevice(value ?? '');
+						case 'reset-identity':
+							return desktopRemoteExposure.resetIdentity();
 						default:
 							throw new Error('Remote access operation is unavailable.');
 					}
@@ -1425,22 +1432,34 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		environment: process.env,
 	});
 	const dataRoot = app.getPath('userData');
+	// The pairing PIN is gone: any verifier left by an earlier build is dead
+	// material and is removed rather than read.
+	rmSync(getRemotePairingPinVerifierPath(), { force: true });
 	desktopRemoteExposure = new DesktopServerOwnedExposure({
 		serverId: authority.service.serverId,
-		hostKey: loadOrCreateHostedHostKey(
-			path.join(dataRoot, 'remote-host-key.v1.json'),
-		),
+		hostKeyStore: createProtectedHostKeyStore({
+			file: path.join(dataRoot, 'remote-host-key.v2.protected.json'),
+			legacyPlaintextFile: path.join(dataRoot, 'remote-host-key.v1.json'),
+			codec: {
+				isAvailable: () =>
+					safeStorage.isEncryptionAvailable() &&
+					selectedSafeStorageBackend() !== 'basic_text',
+				encrypt: (plainText) => safeStorage.encryptString(plainText),
+				decrypt: (encrypted) => safeStorage.decryptString(encrypted),
+			},
+		}),
 		initialDevices: loadEmbeddedRemoteDevices(dataRoot),
 		persistDevices: (devices) => saveEmbeddedRemoteDevices(dataRoot, devices),
-		requirePairingPin: () => {
-			if (!readEmbeddedRemoteAccessSettings().pairingPinHash.trim()) {
-				throw new Error(
-					'Set a Remote Access PIN before generating a WebRTC QR code.',
-				);
-			}
+		onApprovalRequested: (approval) => {
+			const notification = new Notification({
+				title: `${approval.deviceName} wants to pair`,
+				body: `Match code ${approval.matchCode}. Open Remote Control to approve or deny.`,
+			});
+			notification.on('click', () => {
+				sendCommandToFocusedWindow('open-remote-control');
+			});
+			notification.show();
 		},
-		verifyPairingPin: (pin) =>
-			verifyPairingPin(readEmbeddedRemoteAccessSettings().pairingPinHash, pin),
 		resolveIceServers: () =>
 			parseHostedIceServers(
 				readEmbeddedRemoteAccessSettings().webRtcIceServers,
@@ -1703,26 +1722,6 @@ function getRemoteAccessSettingsPath(): string {
 	return path.join(app.getPath('userData'), 'remote-access-settings.json');
 }
 
-function readRemotePairingPinVerifier(): string {
-	try {
-		const verifier = readFileSync(
-			getRemotePairingPinVerifierPath(),
-			'utf8',
-		).trim();
-		return /^scrypt-v1:[A-Za-z0-9_-]{8,}:[A-Za-z0-9_-]{32,}$/u.test(verifier)
-			? verifier
-			: '';
-	} catch {
-		return '';
-	}
-}
-
-function writeRemotePairingPinVerifier(verifier: string): void {
-	const verifierPath = getRemotePairingPinVerifierPath();
-	mkdirSync(path.dirname(verifierPath), { recursive: true });
-	writeFileSync(verifierPath, `${verifier}\n`, { mode: 0o600 });
-}
-
 function readRemoteAccessSettings(): TerminalSettings['remoteAccess'] {
 	let candidate: unknown;
 	try {
@@ -1738,9 +1737,8 @@ function writeRemoteAccessSettings(
 	settings: TerminalSettings['remoteAccess'],
 ): void {
 	const settingsPath = getRemoteAccessSettingsPath();
-	const { pairingPinHash: _pairingPinHash, ...nonSecretSettings } = settings;
 	mkdirSync(path.dirname(settingsPath), { recursive: true });
-	writeFileSync(settingsPath, JSON.stringify(nonSecretSettings, null, 2), {
+	writeFileSync(settingsPath, JSON.stringify(settings, null, 2), {
 		mode: 0o600,
 	});
 }
@@ -1755,10 +1753,7 @@ function getSecretsPath(): string {
 
 function readTerminalSettings(): TerminalSettings {
 	const settingsPath = getTerminalSettingsPath();
-	const remoteAccess = {
-		...readRemoteAccessSettings(),
-		pairingPinHash: readRemotePairingPinVerifier(),
-	};
+	const remoteAccess = readRemoteAccessSettings();
 
 	try {
 		if (!existsSync(settingsPath)) {
@@ -2819,12 +2814,9 @@ async function presentCanonicalAuxiliaryRoute(
 			const profile = rememberedRemoteConnections.get(context.profileId);
 			if (profile === undefined)
 				throw new Error('The selected remote profile is no longer available.');
-			const connected = await createDesktopReconnectTransport({
-				origin: profile.origin,
-				store: createDesktopDeviceCredentialStore(),
-			});
+			const lanes = await openDesktopRemoteLanes(profile);
 			try {
-				if (connected.signalingBootstrap === undefined) {
+				if (lanes.kind === 'http') {
 					const launch = await prepareCanonicalHttpRemoteLaunch(
 						profile.origin,
 						profile,
@@ -2833,39 +2825,25 @@ async function presentCanonicalAuxiliaryRoute(
 						bounds: { x, y },
 						workspaceViewId,
 						serverUiLaunch: launch,
-						serverUiTransport: connected.transport,
+						serverUiTransport: lanes.transport,
 					});
 				} else {
-					const remoteWebRtcRuntimeRoot = resolveDesktopWebRtcRuntimeRoot({
-						isPackaged: app.isPackaged,
-						resourcesPath: process.resourcesPath,
-						environment: process.env,
-					});
-					const webRtc = await createDesktopBootstrappedWebRtcConnection({
-						bootstrap: connected.signalingBootstrap,
-						expectedOrigin: profile.origin,
-						transportAuth: desktopWebRtcReconnectAuth(connected),
-						...(remoteWebRtcRuntimeRoot === undefined
-							? {}
-							: { webrtcRuntimeRoot: remoteWebRtcRuntimeRoot }),
-					});
-					await connected.transport.close({ code: 'normal' });
 					const launch = await remoteServerUiBundleHost.prepareRemote({
-						lane: webRtc.assets,
+						lane: lanes.webRtc.assets,
 						origin: profile.origin,
 						profileId: profile.id,
-						serverId: webRtc.serverId,
+						serverId: lanes.webRtc.serverId,
 						windowId: `window-${randomUUID()}`,
 					});
 					workspaceWindow = createWindow({
 						bounds: { x, y },
 						workspaceViewId,
 						serverUiLaunch: launch,
-						serverUiTransport: webRtc.transport,
+						serverUiTransport: lanes.webRtc.transport,
 					});
 				}
 			} catch (error) {
-				await connected.transport.close({ code: 'normal' });
+				await lanes.transport.close({ code: 'normal' }).catch(() => undefined);
 				throw error;
 			}
 			if (workspaceWindow !== null) {
@@ -2923,11 +2901,8 @@ async function presentCanonicalAuxiliaryRoute(
 		const profile = rememberedRemoteConnections.get(context.profileId);
 		if (profile === undefined)
 			throw new Error('The selected remote profile is no longer available.');
-		const connected = await createDesktopReconnectTransport({
-			origin: profile.origin,
-			store: createDesktopDeviceCredentialStore(),
-		});
-		if (connected.signalingBootstrap === undefined) {
+		const lanes = await openDesktopRemoteLanes(profile);
+		if (lanes.kind === 'http') {
 			const launch = await prepareCanonicalHttpRemoteLaunch(
 				profile.origin,
 				profile,
@@ -2935,30 +2910,24 @@ async function presentCanonicalAuxiliaryRoute(
 			auxiliaryWindow = createWindow({
 				auxiliary: { ...auxiliary, presentationId },
 				serverUiLaunch: launch,
-				serverUiTransport: connected.transport,
+				serverUiTransport: lanes.transport,
 			});
 		} else {
 			try {
-				const webRtc = await createDesktopBootstrappedWebRtcConnection({
-					bootstrap: connected.signalingBootstrap,
-					expectedOrigin: profile.origin,
-					transportAuth: desktopWebRtcReconnectAuth(connected),
-				});
-				await connected.transport.close({ code: 'normal' });
 				const launch = await remoteServerUiBundleHost.prepareRemote({
-					lane: webRtc.assets,
+					lane: lanes.webRtc.assets,
 					origin: profile.origin,
 					profileId: profile.id,
-					serverId: webRtc.serverId,
+					serverId: lanes.webRtc.serverId,
 					windowId: `window-${randomUUID()}`,
 				});
 				auxiliaryWindow = createWindow({
 					auxiliary: { ...auxiliary, presentationId },
 					serverUiLaunch: launch,
-					serverUiTransport: webRtc.transport,
+					serverUiTransport: lanes.webRtc.transport,
 				});
 			} catch (error) {
-				await connected.transport.close({ code: 'normal' });
+				await lanes.transport.close({ code: 'normal' }).catch(() => undefined);
 				throw error;
 			}
 		}
@@ -3307,10 +3276,7 @@ function createWindow(options?: {
 	// before any workspace renderer executes. A successful Desktop pairing can
 	// replace this window's selected server, so the same mounting transaction is
 	// reusable without returning credentials to the renderer.
-	let switchToPairedDesktopServer: (
-		pairingUrl: string,
-		pairingPin: string,
-	) => Promise<void>;
+	let switchToPairedDesktopServer: (pairingUrl: string) => Promise<void>;
 	const mountCanonicalLaunch = async (
 		launch: DesktopBundleLaunch,
 		transport?: ByteTransport,
@@ -3372,10 +3338,7 @@ function createWindow(options?: {
 				const action = request.action;
 				switch (action.type) {
 					case 'connection.pair':
-						await switchToPairedDesktopServer(
-							action.pairingUrl,
-							action.pairingPin,
-						);
+						await switchToPairedDesktopServer(action.pairingUrl);
 						return;
 					case 'clipboard.write':
 						clipboard.writeText(action.text);
@@ -3521,10 +3484,20 @@ function createWindow(options?: {
 		if (options?.deferCanonicalLaunch === true && !window.isDestroyed())
 			window.show();
 	};
-	switchToPairedDesktopServer = async (pairingUrl, pairingPin) => {
+	switchToPairedDesktopServer = async (pairingUrl) => {
 		const profile = await enrollPairedDesktopRemoteProfile(
 			pairingUrl,
-			pairingPin,
+			(approval) => {
+				// The renderer shows the code so the user can compare it with the
+				// exposing computer. It never sees the fragment or the device key.
+				if (window.isDestroyed()) return;
+				window.webContents.send('server-ui-host:event', {
+					type: 'connection.pairing-approval',
+					deviceName: approval.deviceName,
+					matchCode: approval.matchCode,
+					expiresAt: new Date(approval.expiresAt).toISOString(),
+				});
+			},
 		);
 		// Keep the profile available for transport recovery during the first load,
 		// but do not serialize metadata until the verified bundle is mounted.
@@ -3669,13 +3642,25 @@ async function prepareCanonicalHttpRemoteLaunch(
  * inside DesktopDeviceCredentialStore. */
 async function enrollPairedDesktopRemoteProfile(
 	pairingUrl: string,
-	pairingPin: string,
+	onMatchCode: (approval: Readonly<{ deviceName: string; matchCode: string; expiresAt: number }>) => void,
 ): Promise<RememberedRemoteConnection> {
+	const deviceName = 'Terminay Desktop';
 	const enrolled = await establishDesktopDevicePairing({
-		deviceName: 'Terminay Desktop',
-		pairingPin,
+		deviceName,
 		pairingUrl,
 		store: createDesktopDeviceCredentialStore(),
+		hosted: {
+			webrtcRuntimeRoot: resolveDesktopWebRtcRuntimeRoot({
+				isPackaged: app.isPackaged,
+				resourcesPath: process.resourcesPath,
+				environment: process.env,
+			}),
+			iceServers: parseHostedIceServers(
+				readEmbeddedRemoteAccessSettings().webRtcIceServers,
+			),
+			signal: desktopHostedSignalOptions(),
+			onMatchCode: (code) => onMatchCode({ deviceName, ...code }),
+		},
 	});
 	const origin = enrolled.origin;
 	loadRememberedRemoteConnections();
@@ -3687,7 +3672,92 @@ async function enrollPairedDesktopRemoteProfile(
 		kind: 'standalone',
 		label: existing?.label ?? enrolled.label ?? new URL(origin).host,
 		origin,
+		...(enrolled.serverId === undefined ? {} : { serverId: enrolled.serverId }),
 	});
+}
+
+type DesktopRemoteLanes =
+	| Readonly<{ kind: 'http'; transport: ByteTransport }>
+	| Readonly<{
+			kind: 'webrtc';
+			transport: ByteTransport;
+			webRtc: Readonly<{
+				transport: ByteTransport;
+				assets: DesktopAuthenticatedAssetLane;
+				serverId: string;
+			}>;
+	  }>;
+
+/** Hosted signaling overrides for development relays; production uses none. */
+function desktopHostedSignalOptions(): DesktopHostedSignalOptions | undefined {
+	const connectHost = process.env.TERMINAY_SIGNAL_CONNECT_HOST?.trim();
+	const insecureTls = process.env.TERMINAY_SIGNAL_INSECURE_TLS === '1';
+	if (!connectHost && !insecureTls) return undefined;
+	return Object.freeze({
+		...(connectHost ? { connectHost } : {}),
+		...(insecureTls ? { insecureTls: true } : {}),
+	});
+}
+
+/**
+ * Open the authenticated lanes for a remembered remote profile. A hosted
+ * origin runs the device challenge and ticket on the transcript-verified
+ * WebRTC peer; only a loopback embedded server still uses local HTTP.
+ */
+async function openDesktopRemoteLanes(
+	profile: RememberedRemoteConnection,
+): Promise<DesktopRemoteLanes> {
+	if (isHostedDesktopOrigin(profile.origin)) {
+		const webrtcRuntimeRoot = resolveDesktopWebRtcRuntimeRoot({
+			isPackaged: app.isPackaged,
+			resourcesPath: process.resourcesPath,
+			environment: process.env,
+		});
+		if (webrtcRuntimeRoot === undefined) {
+			throw new Error(
+				'The selected WebRTC runtime directory is unavailable, so Desktop cannot open a remote connection. Package the runtime, or set TERMINAY_WEBRTC_RUNTIME_ROOT in development.',
+			);
+		}
+		const signal = desktopHostedSignalOptions();
+		const webRtc = await connectDesktopHostedRemote({
+			origin: profile.origin,
+			store: createDesktopDeviceCredentialStore(),
+			webrtcRuntimeRoot,
+			iceServers: parseHostedIceServers(
+				readEmbeddedRemoteAccessSettings().webRtcIceServers,
+			),
+			...(profile.serverId === undefined ? {} : { expectedServerId: profile.serverId }),
+			...(signal === undefined ? {} : { signal }),
+		});
+		return Object.freeze({ kind: 'webrtc', transport: webRtc.transport, webRtc });
+	}
+	const connected = await createDesktopReconnectTransport({
+		origin: profile.origin,
+		store: createDesktopDeviceCredentialStore(),
+	});
+	if (connected.signalingBootstrap === undefined) {
+		return Object.freeze({ kind: 'http', transport: connected.transport });
+	}
+	try {
+		const remoteWebRtcRuntimeRoot = resolveDesktopWebRtcRuntimeRoot({
+			isPackaged: app.isPackaged,
+			resourcesPath: process.resourcesPath,
+			environment: process.env,
+		});
+		const webRtc = await createDesktopBootstrappedWebRtcConnection({
+			bootstrap: connected.signalingBootstrap,
+			expectedOrigin: profile.origin,
+			transportAuth: desktopWebRtcReconnectAuth(connected),
+			...(remoteWebRtcRuntimeRoot === undefined
+				? {}
+				: { webrtcRuntimeRoot: remoteWebRtcRuntimeRoot }),
+		});
+		await connected.transport.close({ code: 'normal' });
+		return Object.freeze({ kind: 'webrtc', transport: webRtc.transport, webRtc });
+	} catch (error) {
+		await connected.transport.close({ code: 'normal' }).catch(() => undefined);
+		throw error;
+	}
 }
 
 function desktopWebRtcReconnectAuth(connected: DesktopReconnectTransport) {
@@ -3709,42 +3779,33 @@ async function prepareCanonicalDesktopRemoteConnection(
 ): Promise<
 	Readonly<{ launch: DesktopBundleLaunch; transport: ByteTransport }>
 > {
-	const connected = await createDesktopReconnectTransport({
-		origin: profile.origin,
-		store: createDesktopDeviceCredentialStore(),
-	});
-	if (connected.signalingBootstrap === undefined) {
+	const lanes = await openDesktopRemoteLanes(profile);
+	if (lanes.kind === 'http') {
 		try {
 			return Object.freeze({
 				launch: await prepareCanonicalHttpRemoteLaunch(profile.origin, profile),
-				transport: connected.transport,
+				transport: lanes.transport,
 			});
 		} catch (error) {
-			await connected.transport
+			await lanes.transport
 				.close({ code: 'normal' })
 				.catch(() => undefined);
 			throw error;
 		}
 	}
 	try {
-		const webRtc = await createDesktopBootstrappedWebRtcConnection({
-			bootstrap: connected.signalingBootstrap,
-			expectedOrigin: profile.origin,
-			transportAuth: desktopWebRtcReconnectAuth(connected),
-		});
-		await connected.transport.close({ code: 'normal' });
 		return Object.freeze({
 			launch: await remoteServerUiBundleHost.prepareRemote({
-				lane: webRtc.assets,
+				lane: lanes.webRtc.assets,
 				origin: profile.origin,
 				profileId: profile.id,
-				serverId: webRtc.serverId,
+				serverId: lanes.webRtc.serverId,
 				windowId: `window-${randomUUID()}`,
 			}),
-			transport: webRtc.transport,
+			transport: lanes.webRtc.transport,
 		});
 	} catch (error) {
-		await connected.transport.close({ code: 'normal' }).catch(() => undefined);
+		await lanes.transport.close({ code: 'normal' }).catch(() => undefined);
 		throw error;
 	}
 }
@@ -3759,23 +3820,7 @@ async function reconnectCanonicalDesktopRemoteTransport(
 	const profile = rememberedRemoteConnections.get(profileId);
 	if (profile === undefined)
 		throw new Error('The selected remote profile is no longer available.');
-	const connected = await createDesktopReconnectTransport({
-		origin: profile.origin,
-		store: createDesktopDeviceCredentialStore(),
-	});
-	if (connected.signalingBootstrap === undefined) return connected.transport;
-	try {
-		const webRtc = await createDesktopBootstrappedWebRtcConnection({
-			bootstrap: connected.signalingBootstrap,
-			expectedOrigin: profile.origin,
-			transportAuth: desktopWebRtcReconnectAuth(connected),
-		});
-		await connected.transport.close({ code: 'normal' });
-		return webRtc.transport;
-	} catch (error) {
-		await connected.transport.close({ code: 'normal' });
-		throw error;
-	}
+	return (await openDesktopRemoteLanes(profile)).transport;
 }
 
 function setDockIcon(): void {
@@ -4096,17 +4141,6 @@ async function closeRemoteConnection(
 	return desktopRemoteExposure.closeConnection(connectionId);
 }
 
-function setRemotePairingPin(pin: string): TerminalSettings {
-	const currentSettings = readTerminalSettings();
-	const pairingPinHash = createPairingPinHash(pin);
-	writeRemotePairingPinVerifier(pairingPinHash);
-	const settings = writeTerminalSettings({
-		...currentSettings,
-		remoteAccess: { ...currentSettings.remoteAccess, pairingPinHash },
-	});
-	createAppMenu(settings);
-	return settings;
-}
 
 if (process.env.TERMINAY_TEST === '1') {
 	ipcMain.handle(

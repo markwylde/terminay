@@ -43,6 +43,9 @@ export interface RemoteDeviceConnectionTicket {
 	readonly sessionOrigin: string;
 	readonly deviceId: ProtocolId;
 	readonly expiresAt: number;
+	/** The transport peer this ticket was issued on. A ticket presented by any
+	 * other peer is spent without granting anything. */
+	readonly peerId: ProtocolId | null;
 }
 
 interface PendingChallenge {
@@ -209,6 +212,7 @@ export class RemoteDeviceAuthentication {
 		readonly deviceId: ProtocolId;
 		readonly challengeId: ProtocolId;
 		readonly deviceSignature: string;
+		readonly peerId?: ProtocolId;
 	}): RemoteDeviceConnectionTicket {
 		this.cleanup();
 		const pending = this.challenges.get(input.challengeId);
@@ -234,13 +238,14 @@ export class RemoteDeviceAuthentication {
 		);
 		if (!valid) throw new Error('remote device signature is invalid');
 		this.challenges.delete(input.challengeId);
-		return this.issueConnectionTicket(device.deviceId);
+		return this.issueConnectionTicket(device.deviceId, input.peerId);
 	}
 
 	/** Mint a one-use application ticket after pairing enrollment or a signed challenge. */
-	issueConnectionTicket(deviceId: ProtocolId): RemoteDeviceConnectionTicket {
+	issueConnectionTicket(deviceId: ProtocolId, peerId?: ProtocolId): RemoteDeviceConnectionTicket {
 		this.cleanup();
 		const device = this.requireActiveDevice(deviceId);
+		if (peerId !== undefined && !validId(peerId)) throw new TypeError('remote peer identity is invalid');
 		const expiresAt = this.currentTime() + this.ticketTtlMs;
 		const ticket: RemoteDeviceConnectionTicket = Object.freeze({
 			ticket: this.token(32),
@@ -249,6 +254,7 @@ export class RemoteDeviceAuthentication {
 			sessionOrigin: this.options.sessionOrigin,
 			deviceId: device.deviceId,
 			expiresAt,
+			peerId: peerId ?? null,
 		});
 		this.tickets.set(ticket.ticket, { ticket, used: false });
 		this.devices.set(device.deviceId, {
@@ -258,14 +264,18 @@ export class RemoteDeviceAuthentication {
 		return ticket;
 	}
 
-	consumeTicket(token: string): RemoteDeviceConnectionTicket {
+	consumeTicket(token: string, peerId?: ProtocolId): RemoteDeviceConnectionTicket {
 		this.cleanup();
 		const record = this.tickets.get(token);
 		if (record === undefined || record.used)
 			throw new Error('remote ticket is invalid or already used');
-		const device = this.requireActiveDevice(record.ticket.deviceId);
+		// A ticket bound to a peer is spent by any presentation, including a
+		// wrong one: replay across peers must not leave a second chance behind.
 		record.used = true;
 		this.tickets.delete(token);
+		if (record.ticket.peerId !== null && record.ticket.peerId !== peerId)
+			throw new Error('remote ticket belongs to another peer');
+		const device = this.requireActiveDevice(record.ticket.deviceId);
 		this.devices.set(device.deviceId, { ...device, lastSeenAt: this.currentTime() });
 		return record.ticket;
 	}

@@ -51,7 +51,7 @@ test('desktop settings route consumes the shared settings route body', async () 
   assert.match(source, /<SharedSettingsRouteBody[\s\S]*query=\{query\}/)
   assert.match(source, /categories=\{visibleCategories\.map/)
   assert.match(source, /preview=\{settingsPreview\}/)
-  assert.match(source, /modal=\{pairingPinModal\}/)
+  assert.doesNotMatch(source, /pairingPinModal|Remote Pairing PIN/u)
 
   assert.equal(
     /<div className="settings-shell"/.test(source),

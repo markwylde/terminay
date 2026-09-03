@@ -1,28 +1,23 @@
 import { useState } from 'react';
-import type { RemotePairingPinClient } from '../remotePairingPin';
 import type { RemoteAccessStatusClient } from '../services/remoteAccessStatusClient';
 import { useRemoteAccessController } from '../workspace/useRemoteAccessController';
 import { RemotePairingModal } from './RemotePairingModal';
 
 export function RemoteExposurePanel({
 	openSettings,
-	pairingPinClient,
 	statusClient,
 }: Readonly<{
 	openSettings: (sectionId: string) => Promise<void>;
-	pairingPinClient?: RemotePairingPinClient;
 	statusClient?: RemoteAccessStatusClient;
 }>) {
-	const remote = useRemoteAccessController(
-		pairingPinClient,
-		statusClient,
-		openSettings,
-	);
+	const remote = useRemoteAccessController(statusClient, openSettings);
+	const [confirmReset, setConfirmReset] = useState(false);
 	const [busyDeviceId, setBusyDeviceId] = useState<string>();
 	const [busyConnectionId, setBusyConnectionId] = useState<string>();
 	const status = remote.status;
 	const pairedDevices = status?.pairedDevices ?? [];
 	const activeConnections = status?.connections ?? [];
+	const pendingApprovals = remote.pendingApprovals;
 	const webRtcUnavailable =
 		!status?.isRunning && status?.webRtcStatus === 'error';
 	const summary = status?.isRunning
@@ -31,7 +26,7 @@ export function RemoteExposurePanel({
 			? 'Remote access could not start.'
 			: 'Remote access is ready.';
 	const description = status?.isRunning
-		? 'Create a pairing link for a new browser or Desktop, then manage trusted devices here.'
+		? 'Create a pairing link for a new browser or Desktop, approve its match code here, then manage trusted devices.'
 		: webRtcUnavailable
 			? (status?.errorMessage ??
 				'WebRTC exposure is unavailable. Check Remote Access settings.')
@@ -125,6 +120,63 @@ export function RemoteExposurePanel({
 						) : null}
 					</div>
 				</section>
+				{pendingApprovals.length > 0 ? (
+					<section
+						className="settings-remote-card settings-remote-card--list"
+						aria-label="Devices waiting for approval"
+					>
+						<header className="settings-remote-card-header">
+							<div>
+								<span className="settings-remote-card-label">
+									Waiting for approval
+								</span>
+								<p className="settings-remote-card-subtitle">
+									Approve only when the code on the device matches the code
+									shown here.
+								</p>
+							</div>
+						</header>
+						<div className="settings-remote-list">
+							{pendingApprovals.map((approval) => (
+								<div
+									key={approval.approvalId}
+									className="settings-remote-device settings-remote-approval"
+								>
+									<div className="settings-remote-device-main">
+										<div className="settings-remote-device-title-row">
+											<strong>{approval.deviceName}</strong>
+										</div>
+										<p className="settings-remote-device-details">
+											Match code{' '}
+											<code className="settings-remote-match-code">
+												{approval.matchCode}
+											</code>
+											{' · '}expires {formatSeen(approval.expiresAt)}
+										</p>
+									</div>
+									<div className="settings-remote-approval-actions">
+										<button
+											type="button"
+											className="settings-primary-button"
+											disabled={remote.busyApprovalId === approval.approvalId}
+											onClick={() => void remote.approveDevice(approval.approvalId)}
+										>
+											Approve
+										</button>
+										<button
+											type="button"
+											className="settings-danger-button"
+											disabled={remote.busyApprovalId === approval.approvalId}
+											onClick={() => void remote.denyDevice(approval.approvalId)}
+										>
+											Deny
+										</button>
+									</div>
+								</div>
+							))}
+						</div>
+					</section>
+				) : null}
 				<section className="settings-remote-card settings-remote-card--list">
 					<header className="settings-remote-card-header">
 						<div>
@@ -201,75 +253,72 @@ export function RemoteExposurePanel({
 						)}
 					</div>
 				</section>
+				<section
+					className="settings-remote-card settings-remote-card--list"
+					aria-label="Server identity"
+				>
+					<header className="settings-remote-card-header">
+						<div>
+							<span className="settings-remote-card-label">Server identity</span>
+							<p className="settings-remote-card-subtitle">
+								Resetting creates a new server key, revokes every paired
+								device, and requires each one to pair again.
+							</p>
+						</div>
+					</header>
+					<div className="settings-remote-exposure-actions">
+						{confirmReset ? (
+							<>
+								<p className="settings-remote-device-details" role="status">
+									{pairedDevices.length}{' '}
+									{pairedDevices.length === 1 ? 'device' : 'devices'} will lose
+									trust and must pair again.
+								</p>
+								<button
+									type="button"
+									className="settings-danger-button"
+									disabled={remote.isResettingIdentity}
+									onClick={() => {
+										setConfirmReset(false);
+										void remote.resetIdentity();
+									}}
+								>
+									{remote.isResettingIdentity ? 'Resetting…' : 'Confirm reset'}
+								</button>
+								<button
+									type="button"
+									className="settings-secondary-button"
+									onClick={() => setConfirmReset(false)}
+								>
+									Cancel
+								</button>
+							</>
+						) : (
+							<button
+								type="button"
+								className="settings-secondary-button"
+								disabled={remote.isResettingIdentity}
+								onClick={() => setConfirmReset(true)}
+							>
+								Reset server identity…
+							</button>
+						)}
+					</div>
+				</section>
 			</div>
 			{remote.isPairingModalOpen ? (
 				<RemotePairingModal
+					busy={remote.busyApprovalId !== null}
 					expiresAt={remote.pairingExpiresAt}
+					onApprove={(approvalId) => void remote.approveDevice(approvalId)}
 					onClose={remote.closePairingModal}
+					onDeny={(approvalId) => void remote.denyDevice(approvalId)}
 					pairingUrl={remote.pairingUrl}
+					pendingApproval={remote.pendingApproval}
 					qrCodeDataUrl={remote.visibleQrCodeDataUrl}
 					statusMessage={remote.status?.webRtcStatusMessage}
 					success={remote.pairingOutcome === 'success'}
 				/>
-			) : null}
-			{remote.isPinModalOpen ? (
-				<div
-					className="settings-modal-backdrop"
-					onMouseDown={() => remote.closePinModal(false)}
-				>
-					<form
-						className="settings-pin-modal"
-						onSubmit={remote.submitPin}
-						onMouseDown={(event) => event.stopPropagation()}
-						role="dialog"
-						aria-modal="true"
-						aria-labelledby="remote-exposure-pin-title"
-					>
-						<div className="settings-pin-modal-header">
-							<h2 id="remote-exposure-pin-title">Remote Pairing PIN</h2>
-							<button
-								type="button"
-								onClick={() => remote.closePinModal(false)}
-								aria-label="Close Remote Pairing PIN"
-							>
-								x
-							</button>
-						</div>
-						<p>
-							Choose a 6-digit PIN. Your browser will use this after scanning a
-							pairing link.
-						</p>
-						<label className="settings-pin-modal-field">
-							<span>Pairing PIN</span>
-							<input
-								className="settings-input-text"
-								type="password"
-								value={remote.pinInput}
-								onChange={(event) => {
-									remote.setPinInput(
-										event.target.value.replace(/\D/g, '').slice(0, 6),
-									);
-									remote.setPinError(null);
-								}}
-								inputMode="numeric"
-								pattern="[0-9]{6}"
-								autoComplete="off"
-								spellCheck={false}
-								autoFocus
-							/>
-						</label>
-						{remote.pinError ? (
-							<p className="settings-pin-modal-error">{remote.pinError}</p>
-						) : null}
-						<button
-							type="submit"
-							className="settings-primary-button"
-							disabled={remote.isSavingPin || remote.pinInput.length !== 6}
-						>
-							{remote.isSavingPin ? 'Saving…' : 'Save PIN'}
-						</button>
-					</form>
-				</div>
 			) : null}
 		</section>
 	);

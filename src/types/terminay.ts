@@ -207,6 +207,13 @@ export type MacrosChangeMessage = {
 
 export type RemoteAccessStatus = {
 	activeConnectionCount: number;
+	/** Devices waiting for the administrator to confirm their match code. */
+	pendingApprovals: Array<{
+		approvalId: string;
+		deviceName: string;
+		matchCode: string;
+		expiresAt: string;
+	}>;
 	pendingWebRtcConnectionCount: number;
 	auditEvents: Array<{
 		action:

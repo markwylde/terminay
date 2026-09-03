@@ -1,3 +1,4 @@
+import { deriveMatchCode } from '@terminay/protocol'
 import { pairDevice } from './auth'
 import { normalizeSessionOrigin } from './sessionOrigin'
 import type { PairingBootstrap } from './pairing'
@@ -27,6 +28,15 @@ export type EstablishedDevicePairing = Readonly<{
   ticket: string
 }>
 
+/** Inputs both ends hold once the transport transcript verified. The device
+ * derives the same code the exposing host shows, from the fragment the relay
+ * never sees. */
+export type MatchCodeInputs = Readonly<{
+  pairingSecret: string
+  clientNonce: string
+  hostPublicKey: string
+}>
+
 export async function establishDevicePairing<KeyRef = CryptoKey>(options: Readonly<{
   api: RemoteApiTransport
   bootstrap: PairingBootstrap
@@ -34,16 +44,26 @@ export async function establishDevicePairing<KeyRef = CryptoKey>(options: Readon
   deviceName: string
   generateKeyPair: DevicePairingKeyGenerator<KeyRef>
   origin: string
-  pairingPin: string
+  /** Present whenever the lane is transport-authenticated; absent on loopback HTTP. */
+  matchCode?: MatchCodeInputs
+  onMatchCode?: (code: Readonly<{ matchCode: string; expiresAt: number }>) => void
+  signal?: AbortSignal
 }>): Promise<EstablishedDevicePairing> {
   const origin = normalizeSessionOrigin(options.origin)
   const keyPair = await options.generateKeyPair()
+  const matchCode = options.matchCode === undefined
+    ? undefined
+    : await deriveMatchCode({ ...options.matchCode, devicePublicKeyPem: keyPair.publicKeyPem })
   const paired = await pairDevice({
     api: options.api,
     bootstrap: options.bootstrap,
     deviceName: options.deviceName,
-    pairingPin: options.pairingPin,
     publicKeyPem: keyPair.publicKeyPem,
+    onPending: (pending) => {
+      if (matchCode === undefined) throw new Error('Pairing approval needs an authenticated transport.')
+      options.onMatchCode?.({ matchCode, expiresAt: pending.expiresAt })
+    },
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
   })
   await options.credentials.saveDeviceIdentity({
     deviceId: paired.deviceId,

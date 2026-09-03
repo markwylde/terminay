@@ -76,7 +76,7 @@ test('standalone server crash loops release the listener and recover the same da
         '--endpoint', 'disabled',
         '--health-port', '0',
       ], {
-        env: { ...process.env, TERMINAY_REMOTE_PAIRING_PIN: '736941' },
+        env: { ...process.env },
         stdio: ['ignore', 'pipe', 'pipe'],
       })
       children.push(child)

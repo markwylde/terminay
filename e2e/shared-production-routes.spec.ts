@@ -489,10 +489,9 @@ for (const viewport of [
 		await pairing
 			.getByLabel('Pairing URL')
 			.fill('https://terminay.example/pair#one-time-secret');
-		await pairing.getByLabel('Pairing PIN').fill('123456');
 		await pairing.getByRole('button', { name: 'Continue pairing' }).click();
 		await expect(connections.getByRole('status')).toContainText(
-			'Opening pairing…',
+			'Waiting for approval on the exposing computer…',
 		);
 		await expect
 			.poll(() =>

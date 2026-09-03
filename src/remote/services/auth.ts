@@ -1,3 +1,4 @@
+import { parsePendingEnrollmentResponse } from '@terminay/protocol'
 import { normalizeSessionOrigin } from './sessionOrigin'
 import type { PairingBootstrap } from './pairing'
 import type { RemoteApiTransport } from './transport'
@@ -11,21 +12,48 @@ export type DeviceChallenge = Readonly<{
   serverId: string
 }>
 
+export type PairedDevice = Readonly<{ deviceId: string; deviceName: string; ticket: string }>
+
+/**
+ * Enroll a device. Over a transport-authenticated lane the server parks the
+ * request until the administrator approves the match code, and the decision
+ * arrives as a push on the same lane. Loopback HTTP answers immediately: the
+ * one-time fragment is the whole authority on the same machine.
+ */
 export async function pairDevice(options: Readonly<{
   api: RemoteApiTransport
   bootstrap: PairingBootstrap
   deviceName: string
-  pairingPin: string
   publicKeyPem: string
-}>): Promise<Readonly<{ deviceId: string; deviceName: string; ticket: string }>> {
+  /** Called once the request is pending so the device can show its code. */
+  onPending?: (pending: Readonly<{ approvalId: string; expiresAt: number }>) => void
+  signal?: AbortSignal
+}>): Promise<PairedDevice> {
   const enrolled = await options.api.postJson<unknown>('/api/devices/enroll', {
     deviceName: options.deviceName,
     pairingExpiresAt: options.bootstrap.pairingExpiresAt,
-    pairingPin: options.pairingPin,
     pairingSessionId: options.bootstrap.pairingSessionId,
     pairingToken: options.bootstrap.pairingToken,
     publicKeyPem: options.publicKeyPem,
   })
+  if (readField(enrolled, 'status') === 'pending') {
+    const pending = parsePendingEnrollmentResponse(enrolled)
+    if (options.api.waitForEnrollmentDecision === undefined) {
+      throw new Error('This connection cannot wait for pairing approval.')
+    }
+    options.onPending?.(pending)
+    const decision = await options.api.waitForEnrollmentDecision(pending.approvalId, {
+      expiresAt: pending.expiresAt,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    })
+    if (decision.approvalId !== pending.approvalId) {
+      throw new Error('The server answered a different pairing request.')
+    }
+    if (decision.type === 'enrollment-denied') {
+      throw new Error(denialMessage(decision.reason))
+    }
+    return Object.freeze({ deviceId: decision.deviceId, deviceName: decision.deviceName, ticket: decision.ticket })
+  }
   return validateEnrollment(enrolled)
 }
 
@@ -56,7 +84,20 @@ export async function authenticateDevice(options: Readonly<{
   return Object.freeze({ ticket })
 }
 
-function validateEnrollment(value: unknown): Readonly<{ deviceId: string; deviceName: string; ticket: string }> {
+function denialMessage(reason: 'denied' | 'expired' | 'replaced' | 'closed'): string {
+  switch (reason) {
+    case 'denied':
+      return 'The exposing computer denied this device.'
+    case 'expired':
+      return 'The pairing request expired before it was approved. Scan a fresh QR code.'
+    case 'replaced':
+      return 'The pairing link was replaced before this device was approved. Scan the new QR code.'
+    default:
+      return 'The connection closed before this device was approved.'
+  }
+}
+
+function validateEnrollment(value: unknown): PairedDevice {
   const deviceId = readField(value, 'deviceId')
   const deviceName = readField(value, 'deviceName')
   const ticket = readField(value, 'ticket')
