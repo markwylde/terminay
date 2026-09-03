@@ -1,8 +1,6 @@
 import type { JsonValue } from '@terminay/protocol';
 import { TerminayClientFacade } from '@terminay/client-core';
 import type { TerminayClient } from '@terminay/client-core';
-import type { RemotePairingPinClient } from '../remotePairingPin';
-import type { TerminalSettings } from '../types/settings';
 import type {
 	McpAgentId,
 	McpInstallActionResult,
@@ -15,7 +13,6 @@ const REMOTE_EVENT = 'remote-access.changed';
 
 export function createServerRemoteAccessClients(client: TerminayClient): {
 	status: RemoteAccessStatusClient;
-	pairingPin: RemotePairingPinClient;
 } {
 	const transport = new TerminayClientFacade(client);
 	const status = {
@@ -24,6 +21,9 @@ export function createServerRemoteAccessClients(client: TerminayClient): {
 		createPairingLink: () => transport.command('remote-access.create-pairing-link') as Promise<RemoteAccessStatus>,
 		revokeDevice: (deviceId: string) => transport.command('remote-access.revoke-device', { deviceId }) as Promise<RemoteAccessStatus>,
 		closeConnection: (connectionId: string) => transport.command('remote-access.close-connection', { connectionId }) as Promise<RemoteAccessStatus>,
+		approveDevice: (approvalId: string) => transport.command('remote-access.approve-device', { approvalId }) as Promise<RemoteAccessStatus>,
+		denyDevice: (approvalId: string) => transport.command('remote-access.deny-device', { approvalId }) as Promise<RemoteAccessStatus>,
+		resetIdentity: () => transport.command('remote-access.reset-identity') as Promise<RemoteAccessStatus>,
 		subscribe(listener: (value: RemoteAccessStatus) => void) {
 			let disposed = false;
 			let stop: (() => void) | undefined;
@@ -36,20 +36,7 @@ export function createServerRemoteAccessClients(client: TerminayClient): {
 			return () => { disposed = true; stop?.(); void unsubscribe?.(); };
 		},
 	} satisfies RemoteAccessStatusClient;
-	return {
-		status,
-		pairingPin: {
-			getTerminalSettings: () =>
-				transport
-					.query('settings.get')
-					.then((value) => (value as { settings: TerminalSettings }).settings),
-			isRemoteAccessPairingPinConfigured: () => transport.query('remote-access.pairing-pin-status') as Promise<boolean>,
-			setRemoteAccessPairingPin: (pin: string) =>
-				transport.command('remote-access.set-pairing-pin', {
-					pin,
-				}) as Promise<TerminalSettings>,
-		},
-	};
+	return { status };
 }
 
 export type McpInstallClient = Readonly<{

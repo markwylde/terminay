@@ -360,7 +360,7 @@ test('App delegates remote access menu rendering', () => {
 test('the remote access controller owns exposure and pairing lifecycle', () => {
 	assert.match(
 		app,
-		/useRemoteAccessController\(\s*remoteAccessClients\?\.pairingPin,\s*remoteAccessClients\?\.status,/,
+		/useRemoteAccessController\(\s*remoteAccessClients\?\.status,/,
 	);
 	assert.doesNotMatch(
 		app,
@@ -369,7 +369,10 @@ test('the remote access controller owns exposure and pairing lifecycle', () => {
 	assert.doesNotMatch(app, /isRemoteAccessPairingPinConfigured\(/);
 	assert.doesNotMatch(app, /saveRemoteAccessPairingPin\(/);
 	assert.doesNotMatch(app, /import\('qrcode'\)/);
-	assert.match(remoteAccessController, /pairingPinClient/);
+	assert.doesNotMatch(remoteAccessController, /pairingPinClient|PIN/u);
+	assert.match(remoteAccessController, /statusClient\.approveDevice\(/);
+	assert.match(remoteAccessController, /statusClient\.denyDevice\(/);
+	assert.match(remoteAccessController, /statusClient\.resetIdentity\(/);
 	assert.doesNotMatch(
 		remoteAccessController,
 		/terminayTerminalSettingsCompatibilityHost/,
@@ -383,8 +386,6 @@ test('the remote access controller owns exposure and pairing lifecycle', () => {
 		remoteAccessController,
 		/window\.terminayRemoteAccessStatusHost/,
 	);
-	assert.match(remoteAccessController, /isRemoteAccessPairingPinConfigured\(/);
-	assert.match(remoteAccessController, /saveRemoteAccessPairingPin\(/);
 	assert.match(remoteAccessController, /import\('qrcode'\)/);
 });
 

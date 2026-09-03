@@ -4,7 +4,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { build } from 'esbuild'
-import { generateKeyPairSync, scryptSync, sign } from 'node:crypto'
+import { generateKeyPairSync, sign } from 'node:crypto'
 
 const {
   createWebRtcSignalingSocketOptions,
@@ -80,8 +80,7 @@ test('RemoteAccessService creates and rotates WebRTC pairing rooms without a loc
 
 test('RemoteAccessService enrolls once and reconnects with only the paired device key', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'terminay-device-key-test-'))
-  const pin = '123456'
-  const service = createTestService({ pairingPinHash: createTestPairingPinHash(pin), tempDir })
+  const service = createTestService({ tempDir })
   const appOrigin = 'https://session123.remote.example.com'
   const pairingSessionId = 'pairing-session'
   const pairingToken = 'pairing-token'
@@ -98,13 +97,13 @@ test('RemoteAccessService enrolls once and reconnects with only the paired devic
   })
 
   const enrolled = await service.handleWebRtcApiRequest('/api/devices/enroll', {
-    deviceName: 'Browser', pairingPin: pin, pairingSessionId, pairingToken, publicKeyPem: publicKey,
+    deviceName: 'Browser', pairingSessionId, pairingToken, publicKeyPem: publicKey,
   }, appOrigin)
   assert.equal(typeof enrolled.ticket, 'string')
   assert.equal(service.deviceStore.listActive().length, 1)
   await assert.rejects(
     service.handleWebRtcApiRequest('/api/devices/enroll', {
-      deviceName: 'Browser', pairingPin: pin, pairingSessionId, pairingToken, publicKeyPem: publicKey,
+      deviceName: 'Browser', pairingSessionId, pairingToken, publicKeyPem: publicKey,
     }, appOrigin),
     /no longer valid/,
   )
@@ -137,7 +136,7 @@ test('RemoteAccessService caches one server UI archive for browser clients', asy
   assert.equal(context.hostKind, 'browser')
 })
 
-function createTestService({ hostWindows = [], pairingPinHash = 'configured-pin-hash', tempDir, serverId = 'remote-service-test-server' }) {
+function createTestService({ hostWindows = [], tempDir, serverId = 'remote-service-test-server' }) {
   return new RemoteAccessService({
     userDataPath: tempDir,
     serverId,
@@ -157,8 +156,6 @@ function createTestService({ hostWindows = [], pairingPinHash = 'configured-pin-
     },
     getControllableSession: () => null,
     getRemoteAccessSettings: () => ({
-      pairingPinHash,
-      pinFailureLimit: 3,
       webRtcHostedDomain: 'remote.example.com',
       webRtcIceServers: '',
     }),
@@ -169,11 +166,6 @@ function createTestService({ hostWindows = [], pairingPinHash = 'configured-pin-
   })
 }
 
-function createTestPairingPinHash(pin) {
-  const salt = 'terminay-test-salt'
-  const key = scryptSync(pin, salt, 32).toString('base64url')
-  return `scrypt-v1:${salt}:${key}`
-}
 
 async function waitFor(predicate, timeoutMs = 5_000) {
   const startedAt = Date.now()

@@ -167,7 +167,7 @@ export async function createDesktopWebRtcConnection(options: Readonly<{
   }
 }
 
-class DesktopWebRtcAssetLane implements DesktopArchiveAssetLane {
+export class DesktopWebRtcAssetLane implements DesktopArchiveAssetLane {
   private sequence = 0
   private pending: {
     readonly id: string

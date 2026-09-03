@@ -445,8 +445,6 @@ export const defaultTerminalSettings: TerminalSettings = {
 		sensitiveInputPolicy: 'drop',
 	},
 	remoteAccess: {
-		pinFailureLimit: 3,
-		pairingPinHash: '',
 		webRtcHostedDomain: 'terminay.com',
 		webRtcIceServers: 'stun:stun.l.google.com:19302',
 	},
@@ -991,29 +989,8 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 		categoryId: 'remote',
 		title: 'Remote exposure',
 		description:
-			'Configure WebRTC signaling and the pairing policy for this server.',
+			'Configure WebRTC signaling for this server. Pairing is approved on this computer with a match code.',
 		fields: [
-			makeField({
-				key: 'remoteAccess.pinFailureLimit',
-				label: 'Incorrect PIN limit',
-				description:
-					'Number of wrong PIN attempts before Terminay revokes the remote pairing or browser.',
-				sectionId: 'remote-access-host',
-				categoryId: 'remote',
-				input: 'number',
-				min: 1,
-				max: 10,
-				step: 1,
-				keywords: [
-					'remote',
-					'pin',
-					'failures',
-					'attempts',
-					'limit',
-					'revoke',
-					'security',
-				],
-			}),
 			makeField({
 				key: 'remoteAccess.webRtcHostedDomain',
 				label: 'WebRTC hosted domain',
@@ -2659,18 +2636,6 @@ export function normalizeTerminalSettings(
 					: defaultTerminalSettings.recording.sensitiveInputPolicy,
 		},
 		remoteAccess: {
-			pinFailureLimit:
-				typeof remoteAccessInput.pinFailureLimit === 'number' &&
-				Number.isFinite(remoteAccessInput.pinFailureLimit)
-					? Math.min(
-							10,
-							Math.max(1, Math.floor(remoteAccessInput.pinFailureLimit)),
-						)
-					: defaultTerminalSettings.remoteAccess.pinFailureLimit,
-			pairingPinHash:
-				typeof remoteAccessInput.pairingPinHash === 'string'
-					? remoteAccessInput.pairingPinHash
-					: defaultTerminalSettings.remoteAccess.pairingPinHash,
 			webRtcHostedDomain:
 				typeof remoteAccessInput.webRtcHostedDomain === 'string' &&
 				remoteAccessInput.webRtcHostedDomain.trim().length > 0

@@ -1,9 +1,12 @@
-import type { ByteTransport } from '@terminay/protocol';
+import {
+	AUTHENTICATED_WEBRTC_TRANSPORT_VERSION,
+	type ByteTransport,
+} from '@terminay/protocol';
 import type { OpaqueBrowserByteEndpoint } from '@terminay/web';
 
 export type SessionTransportHost = Readonly<{
 	version: 1;
-	authenticatedTransportVersion: 1;
+	authenticatedTransportVersion: typeof AUTHENTICATED_WEBRTC_TRANSPORT_VERSION;
 	sessionId: string;
 	origin: string;
 	hostName?: string;
@@ -22,7 +25,6 @@ export type SessionTransportHost = Readonly<{
 		options: Readonly<{
 			onStateChange: (state: 'closed' | 'connecting' | 'live') => void;
 			origin: string;
-			pairingPin?: string;
 		}>,
 	): Promise<ByteTransport>;
 }>;
@@ -84,7 +86,7 @@ export function installHostedBrowserSession(
 	return installSessionTransportHost(
 		Object.freeze({
 			...lifecycle,
-			authenticatedTransportVersion: 1,
+			authenticatedTransportVersion: AUTHENTICATED_WEBRTC_TRANSPORT_VERSION,
 			version: 1,
 			prepareWorkspace: async () =>
 				Object.freeze({
@@ -101,7 +103,7 @@ export function getSessionTransportHost(): SessionTransportHost | undefined {
 	const value = window.__TERMINAY_SESSION_TRANSPORT__;
 	if (value === undefined) return undefined;
 	if (!isRecord(value) || value.version !== 1) fail('version');
-	if (value.authenticatedTransportVersion !== 1)
+	if (value.authenticatedTransportVersion !== AUTHENTICATED_WEBRTC_TRANSPORT_VERSION)
 		fail('authenticated transport version');
 	for (const name of ['sessionId', 'origin'] as const) {
 		if (typeof value[name] !== 'string' || value[name].length === 0) fail(name);
@@ -138,7 +140,7 @@ function isHostedBrowserSessionAuthority(
 	value: unknown,
 ): value is HostedBrowserSessionAuthority {
 	if (!isRecord(value)) return false;
-	if (value.authenticatedTransportVersion !== 1) return false;
+	if (value.authenticatedTransportVersion !== AUTHENTICATED_WEBRTC_TRANSPORT_VERSION) return false;
 	for (const name of ['sessionId', 'origin', 'serverId'] as const) {
 		if (typeof value[name] !== 'string' || value[name].length === 0)
 			return false;

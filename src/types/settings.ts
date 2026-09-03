@@ -38,8 +38,6 @@ export type ShellSettings = {
 };
 
 export type RemoteAccessSettings = {
-	pinFailureLimit: number;
-	pairingPinHash: string;
 	webRtcHostedDomain: string;
 	webRtcIceServers: string;
 };

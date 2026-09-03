@@ -315,7 +315,6 @@ export function ConnectedWebRendererWorkspace({
 						exposurePanel: (
 							<RemoteExposurePanel
 								openSettings={auxiliaryRoutes.openSettings}
-								pairingPinClient={remoteAccessClients.pairingPin}
 								statusClient={remoteAccessClients.status}
 							/>
 						),
@@ -404,7 +403,6 @@ export function ConnectedWebRendererWorkspace({
 							void auxiliaryRoutes.openRemoteControl()
 						}
 						remoteAccessStatusClient={remoteAccessStatusClient}
-						remotePairingPinClient={remoteAccessClients!.pairingPin}
 						settingsClient={serverSettingsClient}
 						shellProfilesClient={shellProfilesClient}
 						serverIdentity={
@@ -947,6 +945,7 @@ function getAuxiliaryRouteTitle(route: AuxiliaryRouteRequest): string {
 function createUnavailableRemoteAccessClient(): RemoteAccessStatusClient {
 	const status: RemoteAccessStatus = {
 		activeConnectionCount: 0,
+		pendingApprovals: [],
 		pendingWebRtcConnectionCount: 0,
 		auditEvents: [],
 		connections: [],
@@ -965,9 +964,12 @@ function createUnavailableRemoteAccessClient(): RemoteAccessStatusClient {
 	};
 	const getStatus = async () => status;
 	return Object.freeze({
+		approveDevice: getStatus,
 		closeConnection: getStatus,
 		createPairingLink: getStatus,
+		denyDevice: getStatus,
 		getStatus,
+		resetIdentity: getStatus,
 		revokeDevice: getStatus,
 		subscribe: () => () => undefined,
 		toggleServer: getStatus,

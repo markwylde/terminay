@@ -138,7 +138,7 @@ async function installDirectBrowserSession(
 				enumerable: false,
 				writable: false,
 				value: Object.freeze({
-					authenticatedTransportVersion: 1,
+					authenticatedTransportVersion: 2,
 					version: 1,
 					sessionId: 'e2e-direct-browser-session',
 					origin: window.location.origin,
@@ -197,7 +197,7 @@ async function installHostedSessionAuthority(
 				enumerable: false,
 				writable: false,
 				value: Object.freeze({
-					authenticatedTransportVersion: 1,
+					authenticatedTransportVersion: 2,
 					sessionId: 'e2e-hosted-session',
 					origin: window.location.origin,
 					managerUrl: 'https://app.terminay.com/',
