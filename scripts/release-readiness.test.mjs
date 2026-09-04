@@ -91,5 +91,5 @@ test('release workflow keeps readiness, artifact builds, and hosted publication 
   assert.match(evidence, /test:standalone-artifact/)
   assert.match(evidence, /test:security-fuzz/)
   assert.match(evidence, /test:security-boundaries/)
-  assert.match(evidence, /node scripts\/production-dependency-audit\.mjs/)
+  assert.match(evidence, /node scripts\/task20-supply-chain-audit\.mjs/)
 })

@@ -34,7 +34,7 @@ test("packed tarball contains precompiled ESM and activates without repository s
   const files = await recursive(join(root, "package")); assert.equal(files.some((file) => file.endsWith(".node") || file.endsWith("binding.gyp")), false); assert.equal(files.some((file) => file.includes("/test/") || file.includes("/scripts/")), false);
   const api = spawnSync("npm", ["pack", "--workspace", "@terminay/extension-api", "--pack-destination", root, "--json"], { cwd: repository, encoding: "utf8", env: npmEnvironment }); assert.equal(api.status, 0, api.stderr);
   const apiFilename = packedFilename(api.stdout);
-  const installed = spawnSync("npm", ["install", "--ignore-scripts", "--omit=dev", join(root, apiFilename)], { cwd: join(root, "package"), encoding: "utf8", env: npmEnvironment }); assert.equal(installed.status, 0, installed.stderr);
+  const installed = spawnSync("npm", ["install", "--ignore-scripts", "--omit=dev", "--audit=false", "--fund=false", join(root, apiFilename)], { cwd: join(root, "package"), encoding: "utf8", env: npmEnvironment }); assert.equal(installed.status, 0, installed.stderr);
   const imported = await import(`${pathToFileURL(join(root, "package", "dist", "index.js")).href}?packed=1`); assert.equal(typeof imported.activate, "function");
 });
 
