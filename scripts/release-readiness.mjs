@@ -3,7 +3,6 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { runProductionAudit } from './production-dependency-audit.mjs'
 import { checkWorkspace } from './check-workspace-boundaries.mjs'
 
 const _execFileAsync = promisify(execFile)
@@ -185,10 +184,6 @@ export async function writeReleaseEvidence(root = process.cwd(), outputDir = joi
   return { inputs, sbom, manifest, outputDir: resolve(outputDir) }
 }
 
-export async function runOptionalAudit(root = process.cwd()) {
-  return (await runProductionAudit(root)).counts
-}
-
 export function sha256(value) {
   return createHash('sha256').update(value).digest('hex')
 }
@@ -196,6 +191,5 @@ export function sha256(value) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const root = process.cwd()
   const evidence = await writeReleaseEvidence(root, process.env.TERMINAY_RELEASE_EVIDENCE_DIR ?? join(root, '.release'))
-  if (process.argv.includes('--audit')) await runOptionalAudit(root)
   console.log(JSON.stringify({ outputDir: evidence.outputDir, workspacePackages: evidence.inputs.workspaces.length, nativePackages: evidence.inputs.nativePackages.length, sbomSha256: evidence.manifest.sbomSha256 }))
 }

@@ -1,10 +1,7 @@
 import { createHash } from 'node:crypto'
-import { execFile } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { promisify } from 'node:util'
 
-const execFileAsync = promisify(execFile)
 const NATIVE_NAME = /(?:^|[-/@])(electron|node-pty|node-datachannel|wrtc|werift|esbuild)(?:$|[-/@])/iu
 const INTEGRITY = /^(sha256|sha384|sha512)-[A-Za-z0-9+/=]+$/u
 
@@ -46,7 +43,6 @@ export async function auditSupplyChain(root = process.cwd(), options = {}) {
 
   entries.sort((left, right) => left.path.localeCompare(right.path))
   native.sort((left, right) => `${left.name}@${left.version}`.localeCompare(`${right.name}@${right.version}`))
-  const npmAudit = options.runNpmAudit === true ? await runNpmAudit(root) : null
   const report = {
     schemaVersion: 1,
     product: packageJson.name,
@@ -56,19 +52,15 @@ export async function auditSupplyChain(root = process.cwd(), options = {}) {
     downloadedDependencyCount: entries.filter((entry) => entry.source === 'registry').length,
     unresolved,
     native,
-    npmAudit,
     sbom: createSpdx(entries, packageJson.name),
     limitations: [
-      'npm audit covers the JavaScript dependency graph and does not prove safety of statically linked native libraries',
+      'dependency vulnerability advisories are tracked by Dependabot, not by this report',
       'native package metadata records npm provenance but does not establish signed binary provenance or ABI execution on every release architecture',
       'license declarations are package metadata; release publication still needs the corresponding license texts and notices',
     ],
   }
   if (options.failOnUnresolved !== false && (unresolved.integrity.length > 0 || unresolved.license.length > 0)) {
     throw new Error(`supply-chain metadata is incomplete: ${JSON.stringify(unresolved)}`)
-  }
-  if (options.failOnHigh === true && npmAudit !== null && (npmAudit.high > 0 || npmAudit.critical > 0)) {
-    throw new Error(`npm audit found high or critical vulnerabilities: ${JSON.stringify(npmAudit)}`)
   }
   return report
 }
@@ -151,22 +143,9 @@ function assertRoot(packageJson, lockfile) {
   if (lockfile.packages?.['']?.version !== packageJson.version) throw new Error('lockfile root version does not match package.json')
 }
 
-async function runNpmAudit(root) {
-  let stdout = ''
-  try {
-    ({ stdout } = await execFileAsync('npm', ['audit', '--omit=dev', '--json'], { cwd: root, maxBuffer: 8 * 1024 * 1024 }))
-  } catch (error) {
-    stdout = error?.stdout ?? ''
-    if (stdout.length === 0) throw error
-  }
-  const report = JSON.parse(stdout)
-  const vulnerabilities = report.metadata?.vulnerabilities ?? {}
-  return { info: vulnerabilities.info ?? 0, low: vulnerabilities.low ?? 0, moderate: vulnerabilities.moderate ?? 0, high: vulnerabilities.high ?? 0, critical: vulnerabilities.critical ?? 0, total: vulnerabilities.total ?? 0 }
-}
-
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const output = await auditSupplyChain(process.cwd(), { runNpmAudit: process.argv.includes('--npm-audit') })
+  const output = await auditSupplyChain(process.cwd())
   const outputPath = process.env.TERMINAY_SUPPLY_CHAIN_REPORT
   if (outputPath) await writeFile(resolve(outputPath), `${JSON.stringify(output, null, 2)}\n`)
-  console.log(JSON.stringify({ product: output.product, version: output.version, dependencyCount: output.dependencyCount, nativeCount: output.native.length, npmAudit: output.npmAudit }))
+  console.log(JSON.stringify({ product: output.product, version: output.version, dependencyCount: output.dependencyCount, nativeCount: output.native.length }))
 }
