@@ -345,8 +345,17 @@ test('a device pairs only after the host approves its match code, and the ticket
 	assert.equal(exposure.devices.list().length, 1);
 	assert.deepEqual(persisted, [1]);
 
+	// A browser keeps trickling candidates after its lanes open. The reply to
+	// application-auth must not wait behind that signaling work.
+	client.socket.send(JSON.stringify({
+		candidate: { candidate: 'candidate:9 1 udp 1 127.0.0.1 9 typ host', sdpMid: '0' },
+		roomId: secrets.pairingRoomId,
+		type: 'ice',
+	}));
 	// The ticket is bound to this peer; consuming it opens the application and host context.
+	const authenticatedAt = Date.now();
 	assert.equal(await client.authenticate(approved.ticket), true);
+	assert.ok(Date.now() - authenticatedAt < 5_000, 'application auth is answered without waiting on signaling');
 	await waitFor(() => connections.length === 1, 'application accepted');
 	const context = await client.request('/api/host-context', {});
 	assert.equal(context.serverId, 'server-a');
