@@ -176,116 +176,116 @@ test("embedded Local stays loopback-only and unexposed until an explicit exposur
 });
 
 test("embedded Local composes the shared runtime with public UI assets and authenticated protocol access", async () => {
-  const root = await mkdtemp(join(tmpdir(), "terminay-embedded-ui-"));
-  const port = await reserveLoopbackPort();
-  const index = Buffer.from("<!doctype html><title>Embedded Terminay</title>");
-  const hash = createHash("sha256").update(index).digest("base64url");
-  const provisional = [{ path: "/remote-app/provisional/index.html", contentType: "text/html; charset=utf-8", hash, size: index.byteLength }];
-  const bundleId = deriveUiBundleId(provisional, "provisional");
-  await writeFile(join(root, "index.html"), index);
-  await writeFile(join(root, "manifest.json"), JSON.stringify({
-    schemaVersion: 1,
-    bundleId,
-    serverVersion: "1.0.0",
-    protocolVersion: "1",
-    entryPath: `/remote-app/${bundleId}/index.html`,
-    assets: provisional.map((asset) => ({ ...asset, path: asset.path.replace("provisional", bundleId) })),
-  }));
-  const origin = `http://127.0.0.1:${port}`;
-  const bootstrap = createEmbeddedBootstrap({
-    serverId: "embedded-ui",
-    serverVersion: "1.0.0",
-    dataRoot: root,
-    allocator: {
-      choose: () => ({ origin, endpoint: `127.0.0.1:${port}` }),
-      claim: () => undefined,
-      release: () => undefined,
-    },
-    dataRootLease: { acquire: () => undefined, release: () => undefined },
-    createUiServer: ({ bootstrapCredential, endpoint, serverId, serverVersion }) => createLocalUiServer({
-      rootDirectory: root,
-      serverId,
-      serverVersion,
-      authToken: bootstrapCredential,
-      host: "127.0.0.1",
-      port: Number(new URL(endpoint.origin).port),
-    }),
+  await withReservedLoopbackPort(async (port, origin) => {
+    const root = await mkdtemp(join(tmpdir(), "terminay-embedded-ui-"));
+    const index = Buffer.from("<!doctype html><title>Embedded Terminay</title>");
+    const hash = createHash("sha256").update(index).digest("base64url");
+    const provisional = [{ path: "/remote-app/provisional/index.html", contentType: "text/html; charset=utf-8", hash, size: index.byteLength }];
+    const bundleId = deriveUiBundleId(provisional, "provisional");
+    await writeFile(join(root, "index.html"), index);
+    await writeFile(join(root, "manifest.json"), JSON.stringify({
+      schemaVersion: 1,
+      bundleId,
+      serverVersion: "1.0.0",
+      protocolVersion: "1",
+      entryPath: `/remote-app/${bundleId}/index.html`,
+      assets: provisional.map((asset) => ({ ...asset, path: asset.path.replace("provisional", bundleId) })),
+    }));
+    const bootstrap = createEmbeddedBootstrap({
+      serverId: "embedded-ui",
+      serverVersion: "1.0.0",
+      dataRoot: root,
+      allocator: {
+        choose: () => ({ origin, endpoint: `127.0.0.1:${port}` }),
+        claim: () => undefined,
+        release: () => undefined,
+      },
+      dataRootLease: { acquire: () => undefined, release: () => undefined },
+      createUiServer: ({ bootstrapCredential, endpoint, serverId, serverVersion }) => createLocalUiServer({
+        rootDirectory: root,
+        serverId,
+        serverVersion,
+        authToken: bootstrapCredential,
+        host: "127.0.0.1",
+        port: Number(new URL(endpoint.origin).port),
+      }),
+    });
+    try {
+      const ready = await bootstrap.start();
+      assert.equal(bootstrap.runtime.config.runtimeMode, "embedded");
+      assert.equal(ready.origin, origin);
+      const unauthenticatedManifest = await fetch(`${origin}/manifest.json`);
+      assert.equal(unauthenticatedManifest.status, 200);
+      assert.equal((await unauthenticatedManifest.json()).bundleId, bundleId);
+      const unauthenticatedProtocol = await fetch(`${origin}/protocol/stream`);
+      assert.equal(unauthenticatedProtocol.status, 401);
+      assert.equal(unauthenticatedProtocol.headers.get("www-authenticate"), "Bearer");
+      const manifest = await fetch(`${origin}/manifest.json`, {
+        headers: { Authorization: `Bearer ${ready.bootstrapCredential}` },
+      });
+      assert.equal(manifest.status, 200);
+      assert.equal((await manifest.json()).bundleId, bundleId);
+      const asset = await fetch(`${origin}/remote-app/${bundleId}/index.html`, {
+        headers: { Authorization: `Bearer ${ready.bootstrapCredential}` },
+      });
+      assert.deepEqual(Buffer.from(await asset.arrayBuffer()), index);
+    } finally {
+      await bootstrap.stop();
+      await rm(root, { recursive: true, force: true });
+    }
   });
-  try {
-    const ready = await bootstrap.start();
-    assert.equal(bootstrap.runtime.config.runtimeMode, "embedded");
-    assert.equal(ready.origin, origin);
-    const unauthenticatedManifest = await fetch(`${origin}/manifest.json`);
-    assert.equal(unauthenticatedManifest.status, 200);
-    assert.equal((await unauthenticatedManifest.json()).bundleId, bundleId);
-    const unauthenticatedProtocol = await fetch(`${origin}/protocol/stream`);
-    assert.equal(unauthenticatedProtocol.status, 401);
-    assert.equal(unauthenticatedProtocol.headers.get("www-authenticate"), "Bearer");
-    const manifest = await fetch(`${origin}/manifest.json`, {
-      headers: { Authorization: `Bearer ${ready.bootstrapCredential}` },
-    });
-    assert.equal(manifest.status, 200);
-    assert.equal((await manifest.json()).bundleId, bundleId);
-    const asset = await fetch(`${origin}/remote-app/${bundleId}/index.html`, {
-      headers: { Authorization: `Bearer ${ready.bootstrapCredential}` },
-    });
-    assert.deepEqual(Buffer.from(await asset.arrayBuffer()), index);
-  } finally {
-    await bootstrap.stop();
-    await rm(root, { recursive: true, force: true });
-  }
 });
 
 test("embedded readiness publication failure tears down the authenticated listener and server services", async () => {
-  const root = await mkdtemp(join(tmpdir(), "terminay-embedded-publish-failure-"));
-  const port = await reserveLoopbackPort();
-  const index = Buffer.from("<!doctype html><title>rollback</title>");
-  const hash = createHash("sha256").update(index).digest("base64url");
-  const provisional = [{ path: "/remote-app/provisional/index.html", contentType: "text/html; charset=utf-8", hash, size: index.byteLength }];
-  const bundleId = deriveUiBundleId(provisional, "provisional");
-  await writeFile(join(root, "index.html"), index);
-  await writeFile(join(root, "manifest.json"), JSON.stringify({
-    schemaVersion: 1,
-    bundleId,
-    serverVersion: "1.0.0",
-    protocolVersion: "1",
-    entryPath: `/remote-app/${bundleId}/index.html`,
-    assets: provisional.map((asset) => ({ ...asset, path: asset.path.replace("provisional", bundleId) })),
-  }));
-  const origin = `http://127.0.0.1:${port}`;
-  let released = 0;
-  let stoppedServices = 0;
-  const bootstrap = createEmbeddedBootstrap({
-    serverId: "embedded-publish-failure",
-    serverVersion: "1.0.0",
-    dataRoot: root,
-    allocator: {
-      choose: () => ({ origin, endpoint: `127.0.0.1:${port}` }),
-      claim: () => undefined,
-      release: () => { released += 1; },
-    },
-    dataRootLease: { acquire: () => undefined, release: () => undefined },
-    hooks: { stopServices: () => { stoppedServices += 1; } },
-    createUiServer: ({ bootstrapCredential, endpoint, serverId, serverVersion }) => createLocalUiServer({
-      rootDirectory: root,
-      serverId,
-      serverVersion,
-      authToken: bootstrapCredential,
-      host: "127.0.0.1",
-      port: Number(new URL(endpoint.origin).port),
-    }),
-    publishReady: () => { throw new Error("parent disappeared before readiness"); },
+  await withReservedLoopbackPort(async (port, origin) => {
+    const root = await mkdtemp(join(tmpdir(), "terminay-embedded-publish-failure-"));
+    const index = Buffer.from("<!doctype html><title>rollback</title>");
+    const hash = createHash("sha256").update(index).digest("base64url");
+    const provisional = [{ path: "/remote-app/provisional/index.html", contentType: "text/html; charset=utf-8", hash, size: index.byteLength }];
+    const bundleId = deriveUiBundleId(provisional, "provisional");
+    await writeFile(join(root, "index.html"), index);
+    await writeFile(join(root, "manifest.json"), JSON.stringify({
+      schemaVersion: 1,
+      bundleId,
+      serverVersion: "1.0.0",
+      protocolVersion: "1",
+      entryPath: `/remote-app/${bundleId}/index.html`,
+      assets: provisional.map((asset) => ({ ...asset, path: asset.path.replace("provisional", bundleId) })),
+    }));
+    let released = 0;
+    let stoppedServices = 0;
+    const bootstrap = createEmbeddedBootstrap({
+      serverId: "embedded-publish-failure",
+      serverVersion: "1.0.0",
+      dataRoot: root,
+      allocator: {
+        choose: () => ({ origin, endpoint: `127.0.0.1:${port}` }),
+        claim: () => undefined,
+        release: () => { released += 1; },
+      },
+      dataRootLease: { acquire: () => undefined, release: () => undefined },
+      hooks: { stopServices: () => { stoppedServices += 1; } },
+      createUiServer: ({ bootstrapCredential, endpoint, serverId, serverVersion }) => createLocalUiServer({
+        rootDirectory: root,
+        serverId,
+        serverVersion,
+        authToken: bootstrapCredential,
+        host: "127.0.0.1",
+        port: Number(new URL(endpoint.origin).port),
+      }),
+      publishReady: () => { throw new Error("parent disappeared before readiness"); },
+    });
+    try {
+      await assert.rejects(bootstrap.start(), /parent disappeared before readiness/);
+      assert.equal(bootstrap.phase, "failed");
+      assert.equal(released, 1);
+      assert.equal(stoppedServices, 1);
+      await assert.rejects(fetch(`${origin}/manifest.json`), /fetch failed|ECONNREFUSED/u);
+    } finally {
+      await bootstrap.stop();
+      await rm(root, { recursive: true, force: true });
+    }
   });
-  try {
-    await assert.rejects(bootstrap.start(), /parent disappeared before readiness/);
-    assert.equal(bootstrap.phase, "failed");
-    assert.equal(released, 1);
-    assert.equal(stoppedServices, 1);
-    await assert.rejects(fetch(`${origin}/manifest.json`), /fetch failed|ECONNREFUSED/u);
-  } finally {
-    await bootstrap.stop();
-    await rm(root, { recursive: true, force: true });
-  }
 });
 
 test("embedded bootstrap rejects a non-loopback origin before claiming it", async () => {
@@ -329,6 +329,37 @@ test("file data-root lease prevents a second authority and releases atomically",
     await rm(root, { recursive: true, force: true });
   }
 });
+
+/**
+ * Another process can take a reserved loopback port between the reservation
+ * closing its probe socket and the code under test binding it. Retrying with a
+ * fresh port keeps every assertion below unchanged.
+ */
+async function withReservedLoopbackPort(run, attempts = 5) {
+  for (let attempt = 1; ; attempt += 1) {
+    const port = await reserveLoopbackPort();
+    try {
+      return await run(port, `http://127.0.0.1:${port}`);
+    } catch (error) {
+      if (attempt >= attempts || !isAddressInUse(error)) throw error;
+    }
+  }
+}
+
+function isAddressInUse(error) {
+  // A stolen port can surface directly, wrapped in a cause chain, or as the
+  // `actual` error of an assert.rejects whose message no longer matches.
+  const seen = new Set();
+  const queue = [error];
+  while (queue.length > 0) {
+    const current = queue.pop();
+    if (current === null || typeof current !== "object" || seen.has(current)) continue;
+    seen.add(current);
+    if (current.code === "EADDRINUSE") return true;
+    queue.push(current.cause, current.actual);
+  }
+  return false;
+}
 
 async function reserveLoopbackPort() {
   const listener = createServer();
