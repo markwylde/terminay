@@ -22,7 +22,7 @@ test("packed host grants agent broker only to agent profiles", async () => {
     const root = await mkdtemp(join(tmpdir(), "terminay-ssh-agent-host-")); const repository = new URL("../../../../", import.meta.url); const packed = run("npm", ["pack", "--workspace", "terminay-plugin-ssh", "--pack-destination", root, "--json"], repository); assert.equal(packed.status, 0, packed.stderr);
     assert.equal(run("tar", ["-xzf", join(root, packedFilename(packed.stdout)), "-C", root]).status, 0);
     const api = run("npm", ["pack", "--workspace", "@terminay/extension-api", "--pack-destination", root, "--json"], repository); assert.equal(api.status, 0, api.stderr);
-    const packageRoot = join(root, "package"); assert.equal(run("npm", ["install", "--ignore-scripts", "--omit=dev", join(root, packedFilename(api.stdout))], packageRoot).status, 0);
+    const packageRoot = join(root, "package"); assert.equal(run("npm", ["install", "--ignore-scripts", "--omit=dev", "--audit=false", "--fund=false", join(root, packedFilename(api.stdout))], packageRoot).status, 0);
     const dirs = { configDirectory: join(root, "config"), dataDirectory: join(root, "data"), cacheDirectory: join(root, "cache") }; await Promise.all(Object.values(dirs).map((path) => mkdir(path)));
     const profiles = new Map([
       ["agent", { "display-name": "Agent", hostname: "127.0.0.1", port, username: "terminay", "auth-mode": "agent", "default-root": "~", hostVerification: "unsafe", connectMs: 5000, handshakeMs: 5000, keepaliveMs: 1000 }],

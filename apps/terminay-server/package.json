@@ -19,10 +19,13 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "build:postcompile": "node ../../scripts/bundled-npm-evidence.mjs dist/bundled-npm-evidence.json && node ../../scripts/stage-built-in-extensions.mjs && node ../../scripts/copy-built-in-extension-artifacts.mjs ../../build/built-in-extensions dist/built-in-extensions && node ./scripts/write-release-integrity-manifest.mjs",
+    "build:postcompile": "npm run build:postcompile:evidence && node ../../scripts/stage-built-in-extensions.mjs && npm run build:postcompile:package",
+    "build:postcompile:reuse-extension-tests": "npm run build:postcompile:evidence && node ../../scripts/stage-built-in-extensions.mjs --skip-checks && npm run build:postcompile:package",
+    "build:postcompile:evidence": "node ../../scripts/bundled-npm-evidence.mjs dist/bundled-npm-evidence.json",
+    "build:postcompile:package": "node ../../scripts/copy-built-in-extension-artifacts.mjs ../../build/built-in-extensions dist/built-in-extensions && node ./scripts/write-release-integrity-manifest.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/cli.js",
     "test": "npm run build && npm run build --workspace @terminay/client-core && node --test test/*.test.mjs",
-    "test:ci": "npm run build:postcompile && node --test test/*.test.mjs"
+    "test:ci": "npm run build:postcompile:reuse-extension-tests && node --test test/*.test.mjs"
   }
 }
