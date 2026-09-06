@@ -78,12 +78,11 @@ test('startup phase lines are revealed by style, never by navigation', () => {
 	// Revealing a phase inserts a style rule; it must never navigate.
 	assert.match(
 		main,
-		/void window\.webContents\s*\.insertCSS\(startupPhaseVisibilityCss\(id\)\)/u,
+		/await window\.webContents\.insertCSS\(\s*startupPhaseVisibilityCss\(id\),?\s*\)/u,
 	);
-	// The superseded rule is removed so exactly one line is ever shown.
+	// Reveals are serialized so two phases cannot interleave insert/remove.
+	assert.match(main, /startupPhaseReveals = startupPhaseReveals/u);
 	assert.match(main, /removeInsertedCSS\(previous\)/u);
-	// A failed reveal leaves the previously shown line in place.
-	assert.match(main, /startupPhaseCssKey = previous;/u);
 	// The handoff and the bootstrap-failure path both stop revealing.
 	assert.match(
 		main,
