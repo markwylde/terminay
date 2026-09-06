@@ -190,6 +190,55 @@ test('maps titles, waits, MCP tools, completion and privacy allowlists', () => {
 	assert.equal(JSON.stringify(events).includes('private assistant'), false);
 });
 
+test('a later turn after turn_ended starts working again on the same root', () => {
+	const events = [];
+	const publish = {
+		publish: (event) => events.push(event),
+		sessionStarted: (event) =>
+			events.push({ kind: 'session.started', ...event }),
+		metadataChanged: (event) =>
+			events.push({ kind: 'agent.metadata', ...event }),
+		turnStarted: (event) => events.push({ kind: 'turn.started', ...event }),
+		toolStarted: (event) => events.push({ kind: 'tool.started', ...event }),
+		toolFinished: (event) => events.push({ kind: 'tool.finished', ...event }),
+		waitStarted: (event) => events.push({ kind: 'wait.started', ...event }),
+		waitFinished: (event) => events.push({ kind: 'wait.finished', ...event }),
+		done: (event) => events.push({ kind: 'agent.done', ...event }),
+	};
+	const context = {
+		binding: { providerSessionId: sessionId },
+		journal: { role: 'root' },
+		publish,
+	};
+	const map = createGrokRecordMapper();
+	map(
+		{
+			type: 'turn_started',
+			session_id: sessionId,
+			turn_number: 0,
+			session_relationship: 'primary',
+			model_id: 'grok-4.6',
+		},
+		context,
+	);
+	map({ type: 'turn_ended', outcome: 'completed' }, context);
+	map(
+		{
+			type: 'turn_started',
+			session_id: sessionId,
+			turn_number: 1,
+			session_relationship: 'primary',
+			model_id: 'grok-4.6',
+		},
+		context,
+	);
+	assert.deepEqual(
+		events.map((event) => event.kind),
+		['session.started', 'turn.started', 'agent.done', 'turn.started'],
+	);
+	assert.equal(events.at(-1)?.turnId, 'grok-turn-1');
+});
+
 test('a completed turn followed by resume MCP records stays done, not working', () => {
 	const events = [];
 	const publish = {
@@ -261,23 +310,15 @@ test('recognizes Grok executables and honors GROK_HOME', () => {
 	);
 });
 
-function grokRestoreTerminal(arguments_) {
+function grokRegistryTerminal(options) {
+	const cwd = options.cwd;
 	const registryPath = '/home/test/.grok/active_sessions.json';
 	const registry = { id: registryPath };
-	const events = { id: journal };
-	const files = {
-		[registryPath]: [
-			{
-				session_id: sessionId,
-				pid: 4242,
-				cwd: '/workspace',
-				opened_at: '2026-09-06T11:00:00.000Z',
-			},
-		],
-		[journal]: [
+	const journals = options.journals ?? {
+		[options.sessionId]: [
 			{
 				type: 'turn_started',
-				session_id: sessionId,
+				session_id: options.sessionId,
 				turn_number: 0,
 				model_id: 'grok-4.6',
 				session_relationship: 'primary',
@@ -285,9 +326,23 @@ function grokRestoreTerminal(arguments_) {
 			{ type: 'turn_ended', outcome: 'completed' },
 		],
 	};
+	const files = {
+		[registryPath]: options.registry.map((entry) => ({
+			session_id: entry.session_id,
+			pid: entry.pid,
+			cwd: entry.cwd,
+			opened_at: '2026-09-06T11:00:00.000Z',
+		})),
+	};
+	const handles = { [registryPath]: registry };
+	for (const [id, records] of Object.entries(journals)) {
+		const path = `/home/test/.grok/sessions/${encodeURIComponent(options.registry.find((entry) => entry.session_id === id)?.cwd ?? cwd)}/${id}/events.jsonl`;
+		handles[path] = { id: path };
+		files[path] = records;
+	}
 	let binding;
 	return {
-		foreground: { executableName: 'grok', arguments: arguments_ },
+		foreground: { executableName: 'grok', arguments: options.arguments ?? [] },
 		capabilities: new Set([
 			'process-observation',
 			'filesystem-observation',
@@ -310,11 +365,12 @@ function grokRestoreTerminal(arguments_) {
 				async descendants() {
 					return [
 						{
-							handle: { id: 'grok' },
+							handle: { id: `grok-${options.pid}` },
 							executableName: 'grok',
-							pid: 4242,
-							cwd: '/workspace',
+							pid: options.pid,
+							cwd,
 						},
+						...(options.extraDescendants ?? []),
 					];
 				},
 				async openFiles() {
@@ -330,12 +386,14 @@ function grokRestoreTerminal(arguments_) {
 				},
 				async resolveHomeRelative(relative) {
 					if (relative === '.grok/active_sessions.json') return registry;
+					const prefix = `.grok/sessions/`;
 					if (
-						relative ===
-						`.grok/sessions/%2Fworkspace/${sessionId}/events.jsonl`
+						!relative.startsWith(prefix) ||
+						!relative.endsWith('/events.jsonl')
 					)
-						return events;
-					return undefined;
+						return undefined;
+					const path = `/home/test/.grok/sessions/${relative.slice(prefix.length)}`;
+					return handles[path];
 				},
 				async resolveRelativeToEnvironment() {
 					return undefined;
@@ -349,7 +407,11 @@ function grokRestoreTerminal(arguments_) {
 					);
 				},
 				async stat() {
-					return { kind: 'file', size: 1 };
+					return {
+						kind: 'file',
+						size: 1,
+						modifiedAt: '2026-09-06T11:00:00.000Z',
+					};
 				},
 				async follow() {
 					return {
@@ -362,6 +424,16 @@ function grokRestoreTerminal(arguments_) {
 	};
 }
 
+function grokRestoreTerminal(arguments_) {
+	return grokRegistryTerminal({
+		arguments: arguments_,
+		pid: 4242,
+		sessionId,
+		cwd: '/workspace',
+		registry: [{ session_id: sessionId, pid: 4242, cwd: '/workspace' }],
+	});
+}
+
 test('grok --continue binds through active_sessions.json without a writable journal', async () => {
 	const terminal = grokRestoreTerminal(['--continue']);
 	const result = await grokAgentProvider.observe(terminal);
@@ -371,6 +443,78 @@ test('grok --continue binds through active_sessions.json without a writable jour
 
 test('grok --resume with no id binds through active_sessions.json without a writable journal', async () => {
 	const terminal = grokRestoreTerminal(['--resume']);
+	const result = await grokAgentProvider.observe(terminal);
+	assert.equal(result.state, 'bound');
+	assert.equal(result.binding.providerSessionId, sessionId);
+});
+
+test('two Grok PTYs bind independent roots from one shared active_sessions.json', async () => {
+	const leftId = '01a0783a-6fec-76b1-ab14-3091be8aa032';
+	const rightId = '01a0785e-4001-7570-b63f-9f397b1662a6';
+	const registry = [
+		{ session_id: leftId, pid: 19049, cwd: '/left' },
+		{ session_id: rightId, pid: 44903, cwd: '/right' },
+	];
+	const left = grokRegistryTerminal({
+		pid: 19049,
+		sessionId: leftId,
+		cwd: '/left',
+		registry,
+	});
+	const right = grokRegistryTerminal({
+		pid: 44903,
+		sessionId: rightId,
+		cwd: '/right',
+		registry,
+	});
+	const [leftResult, rightResult] = await Promise.all([
+		grokAgentProvider.observe(left),
+		grokAgentProvider.observe(right),
+	]);
+	assert.equal(leftResult.state, 'bound');
+	assert.equal(rightResult.state, 'bound');
+	assert.equal(leftResult.binding.providerSessionId, leftId);
+	assert.equal(rightResult.binding.providerSessionId, rightId);
+});
+
+test('a PTY with two live Grok pids in active_sessions.json still binds the primary journal', async () => {
+	const helperId = '01a07859-e6a3-7be2-a0d5-5df0a9722dfc';
+	const terminal = grokRegistryTerminal({
+		pid: 44903,
+		sessionId,
+		cwd: '/workspace',
+		registry: [
+			{ session_id: helperId, pid: 13221, cwd: '/workspace' },
+			{ session_id: sessionId, pid: 44903, cwd: '/workspace' },
+		],
+		extraDescendants: [
+			{
+				handle: { id: 'helper' },
+				executableName: 'grok',
+				pid: 13221,
+				cwd: '/workspace',
+			},
+		],
+		journals: {
+			[sessionId]: [
+				{
+					type: 'turn_started',
+					session_id: sessionId,
+					turn_number: 1,
+					model_id: 'grok-4.6',
+					session_relationship: 'primary',
+				},
+			],
+			[helperId]: [
+				{
+					type: 'turn_started',
+					session_id: helperId,
+					turn_number: 0,
+					session_relationship: 'subagent',
+				},
+			],
+		},
+	});
 	const result = await grokAgentProvider.observe(terminal);
 	assert.equal(result.state, 'bound');
 	assert.equal(result.binding.providerSessionId, sessionId);
