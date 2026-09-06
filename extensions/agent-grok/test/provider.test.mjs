@@ -260,3 +260,118 @@ test('recognizes Grok executables and honors GROK_HOME', () => {
 		/\/custom\/grok$/u,
 	);
 });
+
+function grokRestoreTerminal(arguments_) {
+	const registryPath = '/home/test/.grok/active_sessions.json';
+	const registry = { id: registryPath };
+	const events = { id: journal };
+	const files = {
+		[registryPath]: [
+			{
+				session_id: sessionId,
+				pid: 4242,
+				cwd: '/workspace',
+				opened_at: '2026-09-06T11:00:00.000Z',
+			},
+		],
+		[journal]: [
+			{
+				type: 'turn_started',
+				session_id: sessionId,
+				turn_number: 0,
+				model_id: 'grok-4.6',
+				session_relationship: 'primary',
+			},
+			{ type: 'turn_ended', outcome: 'completed' },
+		],
+	};
+	let binding;
+	return {
+		foreground: { executableName: 'grok', arguments: arguments_ },
+		capabilities: new Set([
+			'process-observation',
+			'filesystem-observation',
+			'agent-journal',
+		]),
+		signal: { aborted: false, throwIfAborted() {} },
+		async bindSession(request) {
+			binding = request;
+			return {
+				providerSessionId: request.providerSessionId,
+				mappingVersion: request.mappingVersion,
+				journal: request.journal,
+			};
+		},
+		get binding() {
+			return binding;
+		},
+		observation: {
+			processes: {
+				async descendants() {
+					return [
+						{
+							handle: { id: 'grok' },
+							executableName: 'grok',
+							pid: 4242,
+							cwd: '/workspace',
+						},
+					];
+				},
+				async openFiles() {
+					return [];
+				},
+				async environment() {
+					return {};
+				},
+			},
+			files: {
+				async canonicalFile() {
+					return undefined;
+				},
+				async resolveHomeRelative(relative) {
+					if (relative === '.grok/active_sessions.json') return registry;
+					if (
+						relative ===
+						`.grok/sessions/%2Fworkspace/${sessionId}/events.jsonl`
+					)
+						return events;
+					return undefined;
+				},
+				async resolveRelativeToEnvironment() {
+					return undefined;
+				},
+				async read(handle) {
+					const value = files[handle.id];
+					if (handle.id === registryPath)
+						return new TextEncoder().encode(`${JSON.stringify(value)}\n`);
+					return new TextEncoder().encode(
+						`${value.map((record) => JSON.stringify(record)).join('\n')}\n`,
+					);
+				},
+				async stat() {
+					return { kind: 'file', size: 1 };
+				},
+				async follow() {
+					return {
+						async *[Symbol.asyncIterator]() {},
+						dispose() {},
+					};
+				},
+			},
+		},
+	};
+}
+
+test('grok --continue binds through active_sessions.json without a writable journal', async () => {
+	const terminal = grokRestoreTerminal(['--continue']);
+	const result = await grokAgentProvider.observe(terminal);
+	assert.equal(result.state, 'bound');
+	assert.equal(result.binding.providerSessionId, sessionId);
+});
+
+test('grok --resume with no id binds through active_sessions.json without a writable journal', async () => {
+	const terminal = grokRestoreTerminal(['--resume']);
+	const result = await grokAgentProvider.observe(terminal);
+	assert.equal(result.state, 'bound');
+	assert.equal(result.binding.providerSessionId, sessionId);
+});

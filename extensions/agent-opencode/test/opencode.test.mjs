@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -8,6 +8,7 @@ import {
 	createOpenCodeRecordMapper,
 	effectiveOpenCodeRoot,
 	isOpenCodeForeground,
+	openCodeProvider,
 	OpenCodeStore,
 	safeStorePath,
 	storePathFor,
@@ -446,6 +447,116 @@ test('a store is never opened for writing', () => {
 			['r'],
 		);
 		reopened.close();
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
+function openCodeObserveTerminal(storePath, dataHome, cwd, arguments_) {
+	const storeHandle = { id: 'store' };
+	const controller = new AbortController();
+	let binding;
+	return {
+		foreground: { executableName: 'opencode', arguments: arguments_ },
+		capabilities: new Set([
+			'process-observation',
+			'filesystem-observation',
+			'agent-journal',
+		]),
+		signal: controller.signal,
+		async bindSession(request) {
+			binding = request;
+			return {
+				providerSessionId: request.providerSessionId,
+				mappingVersion: request.mappingVersion,
+			};
+		},
+		get binding() {
+			return binding;
+		},
+		observation: {
+			processes: {
+				async descendants() {
+					return [
+						{
+							handle: { id: 'opencode' },
+							executableName: 'opencode',
+							cwd,
+						},
+					];
+				},
+				async openFiles() {
+					return [
+						{ handle: storeHandle, path: storePath, access: 'writable' },
+					];
+				},
+				async environment() {
+					return { XDG_DATA_HOME: dataHome };
+				},
+			},
+			files: {
+				async canonicalFile(handle) {
+					return handle === storeHandle ? handle : undefined;
+				},
+			},
+		},
+		abort() {
+			controller.abort();
+		},
+	};
+}
+
+test('opencode --continue binds the writable store for this cwd', async () => {
+	const directory = mkdtempSync(join(tmpdir(), 'opencode-continue-'));
+	const dataHome = directory;
+	const dataRoot = join(dataHome, 'opencode');
+	mkdirSync(dataRoot);
+	const path = join(dataRoot, 'opencode.db');
+	try {
+		const database = new DatabaseSync(path);
+		database.exec(`
+			CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT, slug TEXT, title TEXT, directory TEXT, time_created INTEGER, time_updated INTEGER);
+			CREATE TABLE event (id TEXT PRIMARY KEY, aggregate_id TEXT, seq INTEGER, type TEXT, data TEXT);
+			INSERT INTO session VALUES ('${rootId}','p',NULL,'curious-eagle','','/work',1,10);
+		`);
+		database.close();
+		const terminal = openCodeObserveTerminal(path, dataHome, '/work', [
+			'--continue',
+		]);
+		const observed = await openCodeProvider.observe(terminal);
+		terminal.abort();
+		assert.equal(observed.state, 'bound');
+		assert.equal(observed.binding.providerSessionId, rootId);
+		await observed.source.dispose();
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
+test('opencode --session <id> binds that root on the writable store', async () => {
+	const directory = mkdtempSync(join(tmpdir(), 'opencode-session-'));
+	const dataHome = directory;
+	const dataRoot = join(dataHome, 'opencode');
+	mkdirSync(dataRoot);
+	const path = join(dataRoot, 'opencode.db');
+	try {
+		const database = new DatabaseSync(path);
+		database.exec(`
+			CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT, slug TEXT, title TEXT, directory TEXT, time_created INTEGER, time_updated INTEGER);
+			CREATE TABLE event (id TEXT PRIMARY KEY, aggregate_id TEXT, seq INTEGER, type TEXT, data TEXT);
+			INSERT INTO session VALUES ('ses_old','p',NULL,'old','Old','/work',1,10);
+			INSERT INTO session VALUES ('${rootId}','p',NULL,'curious-eagle','','/work',1,5);
+		`);
+		database.close();
+		const terminal = openCodeObserveTerminal(path, dataHome, '/work', [
+			'--session',
+			rootId,
+		]);
+		const observed = await openCodeProvider.observe(terminal);
+		terminal.abort();
+		assert.equal(observed.state, 'bound');
+		assert.equal(observed.binding.providerSessionId, rootId);
+		await observed.source.dispose();
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
 	}

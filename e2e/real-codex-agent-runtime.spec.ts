@@ -44,4 +44,12 @@ test('a real authenticated Codex CLI appears in the Agents pane', async ({
 	await expect(expand).toBeVisible({ timeout: 90_000 });
 	await expand.click();
 	await mainWindow.screenshot({ path: testInfo.outputPath('real-codex-agent-runtime.png') });
+	await typeInVisibleTerminal(mainWindow, '/quit\n');
+	await expect(root).toHaveCount(0, { timeout: 60_000 });
+	await typeInVisibleTerminal(
+		mainWindow,
+		'codex resume --last\n',
+	);
+	await expect(root).toBeVisible({ timeout: 90_000 });
+	await expect(root.locator('.agents-sidebar__metadata')).toContainText('Codex');
 });

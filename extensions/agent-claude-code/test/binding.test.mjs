@@ -299,6 +299,71 @@ test('a journal in another project directory is not admitted', async () => {
 	}
 });
 
+test('claude --resume with no UUID binds once the restored journal is appended', async () => {
+	const harness = await createAgentExtensionHarness(extension);
+	const journal = `${projects}/${sessionId}.jsonl`;
+	try {
+		await harness.observe(
+			claudeTerminal({
+				arguments: ['--resume'],
+				files: { [journal]: [header(sessionId)] },
+				fileCreatedAt: { [journal]: '2026-09-01T20:22:07.000Z' },
+				fileModifiedAt: { [journal]: '2026-09-06T10:00:00.000Z' },
+			}),
+		);
+		assert.deepEqual(harness.events(), [], 'untouched journal does not bind');
+		await harness.observe(
+			claudeTerminal({
+				arguments: ['--resume'],
+				files: { [journal]: [header(sessionId)] },
+				fileCreatedAt: { [journal]: '2026-09-01T20:22:07.000Z' },
+				fileModifiedAt: { [journal]: '2026-09-06T11:00:09.000Z' },
+			}),
+		);
+		assert.equal(harness.observation()?.binding.providerSessionId, sessionId);
+	} finally {
+		await harness.dispose();
+	}
+});
+
+test('claude --continue binds the journal appended after process start', async () => {
+	const harness = await createAgentExtensionHarness(extension);
+	try {
+		await harness.observe(
+			claudeTerminal({
+				arguments: ['--continue'],
+				files: { [`${projects}/${sessionId}.jsonl`]: [header(sessionId)] },
+				fileCreatedAt: {
+					[`${projects}/${sessionId}.jsonl`]: '2026-09-01T20:22:07.000Z',
+				},
+				fileModifiedAt: {
+					[`${projects}/${sessionId}.jsonl`]: '2026-09-06T11:00:09.000Z',
+				},
+			}),
+		);
+		assert.equal(harness.observation()?.binding.providerSessionId, sessionId);
+	} finally {
+		await harness.dispose();
+	}
+});
+
+test('claude --resume picker does not admit a journal in another project directory', async () => {
+	const harness = await createAgentExtensionHarness(extension);
+	try {
+		const elsewhere = `/home/test/.claude/projects/-other/${sessionId}.jsonl`;
+		await harness.observe(
+			claudeTerminal({
+				arguments: ['--resume'],
+				files: { [elsewhere]: [header(sessionId)] },
+				fileModifiedAt: { [elsewhere]: '2026-09-06T11:00:04.000Z' },
+			}),
+		);
+		assert.deepEqual(harness.events(), []);
+	} finally {
+		await harness.dispose();
+	}
+});
+
 test('a journal written after a first unbound observation binds on the next one', async () => {
 	// The host retries `not-bound` through its discovery window and then keeps
 	// discovery armed by topology polling, so a `claude` process that has not yet

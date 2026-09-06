@@ -89,8 +89,11 @@ const descriptor = {
 		harness.pty.write(ESCAPE);
 		harness.pty.send('/exit');
 	},
-	resume(harness) {
-		harness.pty.send('claude --continue');
+	async resume(harness) {
+		harness.pty.send('claude --resume');
+		const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+		await pause(800);
+		harness.pty.write('\r');
 	},
 };
 
