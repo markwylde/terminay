@@ -4,13 +4,31 @@ import extension, { PROVIDER_ID } from "../dist/index.js";
 import { createAgentExtensionHarness, fixtureTerminal } from "@terminay/extension-api/testing";
 
 const sessionId = "5f2aff08-eab3-4852-96eb-48235fc7f471";
-const journal = `/fixture/.claude/projects/-workspace/${sessionId}.jsonl`;
+const projects = "/home/test/.claude/projects/-workspace";
+const journal = `${projects}/${sessionId}.jsonl`;
+const startedAt = "2026-09-06T11:00:00.000Z";
+
+/**
+ * The evidence a real Claude Code CLI presents: the journal exists on disk and
+ * the process holds no writable handle, because Claude Code appends and closes.
+ * Only the test that exercises the open-handle fallback overrides this.
+ */
+function claudeFixture(options) {
+  const files = options.files ?? {};
+  return fixtureTerminal({
+    startedAt,
+    openFilePaths: [],
+    fileCreatedAt: Object.fromEntries(Object.keys(files).map((path) => [path, "2026-09-06T11:00:04.000Z"])),
+    cwd: "/workspace",
+    ...options,
+  });
+}
 
 test("Claude Code registers its public provider and maps root lifecycle facts", async () => {
   assert.equal(PROVIDER_ID, "com.terminay.agent.claude-code/cli");
   const harness = await createAgentExtensionHarness(extension);
   try {
-    await harness.observe(fixtureTerminal({
+    await harness.observe(claudeFixture({
       foregroundExecutable: "claude",
       files: {
         [journal]: [
@@ -49,7 +67,7 @@ test("Claude Code registers its public provider and maps root lifecycle facts", 
 test("Claude Code rejects sidechains and injected command metadata", async () => {
   const harness = await createAgentExtensionHarness(extension);
   try {
-    await harness.observe(fixtureTerminal({
+    await harness.observe(claudeFixture({
       foregroundExecutable: "claude",
       files: {
         [journal]: [
@@ -62,15 +80,19 @@ test("Claude Code rejects sidechains and injected command metadata", async () =>
   } finally { await harness.dispose(); }
 });
 
-test("Claude Code refuses ambiguous root journals rather than choosing history by filename or time", async () => {
+test("Claude Code refuses concurrently appended root journals rather than choosing by filename or time", async () => {
   const otherSession = "bf0b34e1-4afc-4b93-8389-80caa0b589a4";
   const harness = await createAgentExtensionHarness(extension);
   try {
-    await harness.observe(fixtureTerminal({
+    await harness.observe(claudeFixture({
       foregroundExecutable: "claude",
       files: {
         [journal]: [{ type: "permission-mode", sessionId }],
-        [`/fixture/.claude/projects/-other/${otherSession}.jsonl`]: [{ type: "permission-mode", sessionId: otherSession }],
+        [`${projects}/${otherSession}.jsonl`]: [{ type: "permission-mode", sessionId: otherSession }],
+      },
+      fileModifiedAt: {
+        [journal]: "2026-09-06T12:00:00.000Z",
+        [`${projects}/${otherSession}.jsonl`]: "2026-09-06T12:00:00.000Z",
       },
     }));
     assert.deepEqual(harness.events(), []);
@@ -111,7 +133,7 @@ test("Claude Code rejects a resume path whose root header does not prove the req
 test("Claude Code reports an unavailable environment instead of using local paths", async () => {
   const harness = await createAgentExtensionHarness(extension);
   try {
-    await harness.observe(fixtureTerminal({ foregroundExecutable: "claude", capabilities: ["agent-journal"], files: { [journal]: [{ type: "permission-mode", sessionId }] } }));
+    await harness.observe(claudeFixture({ foregroundExecutable: "claude", capabilities: ["agent-journal"], files: { [journal]: [{ type: "permission-mode", sessionId }] } }));
     assert.deepEqual(harness.events(), []);
   } finally { await harness.dispose(); }
 });
