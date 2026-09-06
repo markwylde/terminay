@@ -56,6 +56,19 @@ export function subscribeDesktopPerformanceLogging(
 	});
 }
 
+export function subscribeDesktopPerformanceSnapshot(
+	listener: (snapshot: import('@terminay/protocol').JsonValue) => void,
+): () => void {
+	if (typeof window === 'undefined') return () => undefined;
+	const host = window.terminayHost as unknown as NativeEventBridge | undefined;
+	if (host === undefined) return () => undefined;
+	return host.subscribeEvent((message) => {
+		if (message.event.type === 'diagnostics.performance-snapshot.changed') {
+			listener(message.event.snapshot);
+		}
+	});
+}
+
 /** Desktop is waiting for the exposing computer to approve the match code it
  * shows here. Browser hosts never receive this event: their session shell
  * renders the code itself. */
