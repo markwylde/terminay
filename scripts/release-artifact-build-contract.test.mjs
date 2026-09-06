@@ -57,6 +57,34 @@ test('narrow release builds materialize their workspace dependencies through Tur
 	}
 });
 
+test('skipped agent conformance tests do not require a built server-core', async () => {
+	const harness = await readFile(resolve(root, 'tests/agent-conformance/harness.mjs'), 'utf8');
+	assert.doesNotMatch(
+		harness,
+		/^import[\s\S]*?from\s+['"]@terminay\/server-core\/agent-child['"]/mu,
+	);
+	assert.match(harness, /import\(\s*['"]@terminay\/server-core\/agent-child['"]\s*\)/u);
+
+	const conformanceTests = [
+		'extensions/agent-claude-code/test/conformance.test.mjs',
+		'extensions/agent-codex/test/conformance.test.mjs',
+		'extensions/agent-grok/test/conformance.test.mjs',
+		'extensions/agent-opencode/test/conformance.test.mjs',
+	];
+	for (const file of conformanceTests) {
+		const source = await readFile(resolve(root, file), 'utf8');
+		assert.match(source, /conformanceGate/u, `${file} is gated`);
+		const packageJson = JSON.parse(
+			await readFile(resolve(root, file.replace(/test\/conformance\.test\.mjs$/u, 'package.json')), 'utf8'),
+		);
+		assert.match(
+			packageJson.scripts['test:ci'],
+			/test\/\*\.test\.mjs/u,
+			`${packageJson.name} test:ci still discovers the gated conformance file`,
+		);
+	}
+});
+
 test('release pack consumers accept npm 12 single-object metadata', async () => {
 	const workflow = await readFile(resolve(root, '.github/workflows/trigger-release.yml'), 'utf8');
 	const secureRuntimeBuilder = await readFile(
