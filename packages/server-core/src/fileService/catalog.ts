@@ -1,3 +1,8 @@
+import {
+	DEFAULT_IGNORED_DIRECTORIES,
+	isIgnoredDirectoryName,
+	validIgnorePattern,
+} from './ignore.js';
 import { CanonicalProjectPathResolver } from './pathResolver.js';
 import {
 	aggregateMarkdownTasks,
@@ -10,12 +15,6 @@ import {
 	type MaybePromise,
 	type PathStat,
 } from './types.js';
-import {
-	DEFAULT_IGNORED_DIRECTORIES,
-	isIgnoredDirectoryName,
-	validIgnorePattern,
-} from './ignore.js';
-
 
 export interface FileDirectoryEntry {
 	readonly name: string;
@@ -460,7 +459,10 @@ export class FileCatalog {
 					break;
 				}
 				const name = validEntryName(raw.name);
-				if (isIgnoredDirectoryName(name, ignored) || raw.isSymbolicLink === true)
+				if (
+					isIgnoredDirectoryName(name, ignored) ||
+					raw.isSymbolicLink === true
+				)
 					continue;
 				const relativePath =
 					current.relativePath.length === 0
@@ -1115,7 +1117,10 @@ function validEntryName(name: string): string {
 function directoryReadFailure(error: unknown): FileServiceError {
 	if (error instanceof FileServiceError) return error;
 	if (isMissingPathError(error))
-		return new FileServiceError('path_missing', 'folder is no longer available');
+		return new FileServiceError(
+			'path_missing',
+			'folder is no longer available',
+		);
 	return new FileServiceError('read_failed', 'folder could not be read');
 }
 
@@ -1127,7 +1132,6 @@ function isMissingPathError(error: unknown): boolean {
 			(error as { readonly code?: unknown }).code === 'ENOTDIR')
 	);
 }
-
 
 function normalizeQuery(value: string, max: number): string {
 	if (typeof value !== 'string' || value.length > max)

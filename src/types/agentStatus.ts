@@ -107,6 +107,7 @@ export type AgentLifecycleEvent =
 				kind: 'wait.started';
 				state: 'waiting' | 'blocked';
 				reason?: string;
+				inferred?: boolean;
 			})
 	| (AgentLifecycleEventBase &
 			TargetedAgentEvent & {
@@ -159,6 +160,8 @@ type AgentStatusEntryBase = {
 	activeTools: readonly AgentToolStatus[];
 	currentTurnId?: string;
 	waitingReason?: string;
+	/** True when the current state was derived from a journal rather than read from an explicit record. */
+	inferred?: boolean;
 	completionOutcome?: AgentCompletionOutcome;
 	summary?: string;
 	exitCode?: number;
@@ -207,8 +210,11 @@ export type AgentStatusSnapshot = {
 export type AgentStatusListener = (snapshot: AgentStatusSnapshot) => void;
 
 export function isAgentProvider(value: unknown): value is AgentProvider {
-	return typeof value === 'string' && value.length <= 192 &&
-		/^[a-z0-9](?:[a-z0-9.-]{1,126}[a-z0-9])?\/[a-z][a-z0-9-]{0,63}$/.test(value);
+	return (
+		typeof value === 'string' &&
+		value.length <= 192 &&
+		/^[a-z0-9](?:[a-z0-9.-]{1,126}[a-z0-9])?\/[a-z][a-z0-9-]{0,63}$/.test(value)
+	);
 }
 
 export function isAgentState(value: unknown): value is AgentState {

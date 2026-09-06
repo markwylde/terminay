@@ -157,7 +157,8 @@ export class RemotePairingStore {
 		this.pruneTerminalRooms();
 		if (this.rooms.size >= this.maxRooms)
 			throw new Error('pairing room limit reached');
-		if (!validId(input.roomId)) throw new TypeError('pairing room id is invalid');
+		if (!validId(input.roomId))
+			throw new TypeError('pairing room id is invalid');
 		if (
 			typeof input.secret !== 'string' ||
 			input.secret.length < 16 ||
@@ -165,7 +166,8 @@ export class RemotePairingStore {
 		) {
 			throw new TypeError('pairing secret is invalid');
 		}
-		if (this.rooms.has(input.roomId)) throw new Error('pairing room already exists');
+		if (this.rooms.has(input.roomId))
+			throw new Error('pairing room already exists');
 		const state: PairingRoomState = {
 			roomId: input.roomId,
 			serverId: this.options.serverId,

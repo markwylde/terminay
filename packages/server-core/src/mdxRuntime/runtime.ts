@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { MdxCompiler } from './compiler.js';
 import type { FileCatalogStorage } from '../fileService/catalog.js';
 import { CanonicalProjectPathResolver } from '../fileService/pathResolver.js';
 import { FileServiceError } from '../fileService/types.js';
+import { MdxCompiler } from './compiler.js';
 
 export const MDX_RESOURCE_MAX_BYTES = 1024 * 1024;
 export interface MdxRuntimeProject {
