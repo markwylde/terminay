@@ -67,9 +67,9 @@ row.
 - [A helper pid whose journal looks primary could win on mtime] → Non-primary
   `session_relationship` still excludes subagent journals. Remaining collisions
   are the same class as one writer holding two roots.
-- [Electron e2e is the only proof two projects stay bound in the app] → The
-  native Grok stub now mints a pid-keyed session id so two stubs do not share
-  one journal. The suite still runs in Docker (`npm run test:e2e`).
+- [A second Electron spec driving two live Grok PTYs is flaky in Docker] →
+  Concurrent binding is proven by provider and host unit tests on the merge
+  gate. The existing single-CLI Electron spec remains.
 
 ## Migration Plan
 
