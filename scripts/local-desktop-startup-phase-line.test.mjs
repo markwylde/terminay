@@ -67,9 +67,15 @@ describe('the phase line never overlaps the dots or the mark', async () => {
 		});
 
 		assert.ok(layout.logo.bottom <= layout.dots.top, 'mark sits above dots');
+		// The line is pinned near the bottom of the window, well clear of the
+		// indicator rather than crowding it.
 		assert.ok(
-			layout.dots.bottom <= layout.phase.top,
-			'the phase line sits below the dots, never over them',
+			layout.phase.top - layout.dots.bottom > 120,
+			`the phase line crowds the dots (gap ${layout.phase.top - layout.dots.bottom}px)`,
+		);
+		assert.ok(
+			layout.phase.bottom < 700,
+			'the phase line stays inside the viewport',
 		);
 	} finally {
 		await browser.close();
