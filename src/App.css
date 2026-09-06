@@ -69,6 +69,17 @@
   flex-shrink: 0;
 }
 
+/* Leading chrome, like the sidebar toggle beside it: never a project tab, so
+ * it cannot be dragged, reordered, or pushed out by an overflowing tab bar. */
+.project-tab-home-box {
+  display: flex;
+  align-items: stretch;
+  padding: 5px 6px 5px 0;
+  -webkit-app-region: no-drag;
+  height: 100%;
+  flex-shrink: 0;
+}
+
 .project-tab-add-box {
   display: flex;
   align-items: stretch;
@@ -937,6 +948,7 @@
 .terminal-tab-close,
 .project-tab-add,
 .project-tab-sidebar-toggle,
+.project-tab-home,
 .terminay-add-tab-button {
   all: unset;
   display: inline-flex;
@@ -1032,6 +1044,26 @@
 .project-tab-sidebar-toggle:disabled {
   opacity: 0.35;
   cursor: default;
+}
+
+.project-tab-home {
+  height: 100%;
+  aspect-ratio: 1;
+  padding: 0;
+  border-radius: 4px;
+  color: rgba(220, 226, 240, 0.55);
+  background: transparent;
+  -webkit-app-region: no-drag;
+}
+
+.project-tab-home:hover {
+  color: #dce2f0;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.project-tab-home--active {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.13);
 }
 
 .project-switcher {
