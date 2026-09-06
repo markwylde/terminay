@@ -185,9 +185,9 @@ measurement SHALL be recorded with it.
 
 Replay SHALL follow the events journal to the last complete JSONL record, and follow chunks SHALL stay small enough to fit the extension IPC message cap after JSON number-array encoding. A resumed idle TUI whose latest lifecycle record is `turn_ended` SHALL be `done` rather than `working`. Title and model SHALL come from the sibling `summary.json` while the root is bound: the first document names the row even before a native turn, and a later rewrite updates that same row in place. A hanging or rotating summary watcher SHALL NOT stall or abort event replay.
 
-Grok records subagents as child sessions in the ordinary sessions tree, with per-subagent metadata under the root session's `subagents/` directory. A child SHALL be attached to the bound root only because that root's own `subagents/` metadata names it; a session's presence in the sessions tree SHALL NOT make it a child, and timestamp, path proximity, and display text SHALL NOT establish the relationship. The extension SHALL follow that bounded, root-scoped metadata directory while the root is bound so children created after the root binds are admitted live.
+Grok records per-child lifecycle in the bound root's own events journal. A `subagent_progress` record SHALL enumerate that child beneath the root, labelled from the bounded agent label Grok records for it, and a `subagent_finished` record SHALL complete it with its outcome. A child SHALL be attached only because a record on the bound root's own journal names it; a session elsewhere in the sessions tree SHALL NOT become a child, and timestamp, path proximity, and display text SHALL NOT establish the relationship.
 
-Each child SHALL carry its own state from Grok's own per-child records: `subagent_progress` SHALL keep that child `working`, and `subagent_finished` SHALL complete it with its outcome. A child completing SHALL NOT complete its root, and the root SHALL remain `working` while any child is working. Child prompts, tool arguments, tool output, and reasoning SHALL never be projected.
+A completion for a child whose progress was never observed SHALL still land beneath the root rather than being dropped. A child completing SHALL NOT complete its root, and the root SHALL remain `working` while any child is working. Child prompts, tool arguments, tool output, and reasoning SHALL never be projected.
 
 #### Scenario: Resumed idle session
 
@@ -206,7 +206,7 @@ Each child SHALL carry its own state from Grok's own per-child records: `subagen
 
 #### Scenario: Grok subagent spawn
 
-- **WHEN** Grok starts a subagent and its metadata appears under the bound root's `subagents/` directory
+- **WHEN** Grok records `subagent_progress` for a child on the bound root's journal
 - **THEN** a named child is admitted beneath that root and the root remains `working`
 
 #### Scenario: Grok subagent progress and completion
@@ -216,7 +216,7 @@ Each child SHALL carry its own state from Grok's own per-child records: `subagen
 
 #### Scenario: Unrelated session in the sessions tree
 
-- **WHEN** a session exists in the sessions tree that the bound root's `subagents/` metadata does not name
+- **WHEN** a session exists in the sessions tree that no record on the bound root's journal names
 - **THEN** it is not attached as a child
 
 #### Scenario: Resuming a Grok journal in a new process
@@ -258,23 +258,23 @@ Terminay SHALL read only lifecycle and bounded display metadata from the OpenCod
 
 ### Requirement: OpenCode record mapping
 
-The first supported mapping SHALL be `(opencode, 0.1)` and SHALL accept later OpenCode versions until a divergent mapping is added. It SHALL follow the store's append-only `event` log, ordered by `aggregate_id` and `seq`, and SHALL map records as follows: a `session.created` for the bound root produces root `session.started` and `idle`; the session's `slug` seeds the root label and a non-empty `title` replaces it in place on the existing root without creating a second root or changing state; the first user-facing message on the bound session starts a turn as `working`; a tool part beginning produces a `working` tool start keyed by the native part id and its completion finishes that tool; a recorded permission request produces `waiting` and its resolution finishes the wait and resumes `working`; assistant completion with no unanswered tool produces `done`, with error and cancellation carried as the completion outcome; a `session` row whose `parent_id` equals the bound root id produces a named child that starts and completes beneath that root without creating a second root binding; and unknown event types are ignored so additive OpenCode changes remain compatible.
+The first supported mapping SHALL be `(opencode, 0.1)` and SHALL accept later OpenCode versions until a divergent mapping is added. It SHALL follow the store's append-only `event` log, ordered by `aggregate_id` and `seq`, and SHALL map records as follows: a `session.created` or first `session.updated` for the bound root produces root `session.started` and `idle`; the session's `slug` seeds the root label and a non-empty `title` replaces it in place on the existing root without creating a second root or changing state; a message record whose role is `user` starts a turn as `working`; a tool part recorded `pending` produces `waiting`, its transition to `running` finishes that wait and produces a `working` tool start keyed by the native `callID`, and `completed` or `error` finishes that tool with the corresponding outcome; a `task` tool part is a named child rather than an ordinary tool, starting and completing beneath the root without completing it; an assistant message carrying a completion produces `done` with its outcome; and unknown event types are ignored so additive OpenCode changes remain compatible.
 
-OpenCode records no explicitly blocking condition, so `blocked` SHALL be derived under the journal-derived inference rules: a recorded session or assistant error that halts a turn with no completion event following SHALL make the entry `blocked`, while an error on a completed turn SHALL be `done` with an error outcome.
+OpenCode records no explicitly blocking condition, so `blocked` SHALL be derived under the journal-derived inference rules: an assistant message recording an error with no completion SHALL make the entry `blocked`, while an error on a completed message SHALL be `done` with an error outcome.
 
 #### Scenario: Turn runs to completion
 
-- **WHEN** OpenCode records a user message and later an assistant completion with no unanswered tool
+- **WHEN** OpenCode records a user message and later an assistant completion
 - **THEN** the root is `working` and then `done`
 
 #### Scenario: Permission request
 
-- **WHEN** OpenCode records a permission request and later its resolution
+- **WHEN** a tool part is recorded `pending` and later `running`
 - **THEN** the root is `waiting` and then resumes `working`
 
 #### Scenario: Child session
 
-- **WHEN** a `session` row declares the bound root as its `parent_id`
+- **WHEN** a `task` tool part starts and completes
 - **THEN** a named child starts and completes beneath that root and no second root binds
 
 #### Scenario: Unknown event type
