@@ -184,22 +184,21 @@ test('Help menu actions do not depend on a renderer or local server and contain 
 	}
 });
 
-test('Help menu performance logging checkbox toggles without a renderer', async () => {
+test('Help menu opens the Performance Log window', async () => {
 	const loaded = await loadMenuModule();
 	try {
-		const enabled = [];
+		const opened = [];
 		const items = loaded.module.createDiagnosticsHelpMenuItems(
 			{
 				directory: '/canonical/diagnostics',
 				clearManagedArtifacts: async () =>
-					assert.fail('must not clear from the performance toggle'),
+					assert.fail('must not clear from the Performance Log item'),
 				recordCleared: async () =>
-					assert.fail('must not record a clear from the performance toggle'),
-				performanceLogging: {
-					isEnabled: () => enabled.at(-1) === true,
-					setEnabled: async (value) => {
-						enabled.push(value);
-						return value;
+					assert.fail('must not record a clear from the Performance Log item'),
+				performanceLog: {
+					canOpen: () => true,
+					open: async () => {
+						opened.push('performance-log');
 					},
 				},
 			},
@@ -208,14 +207,78 @@ test('Help menu performance logging checkbox toggles without a renderer', async 
 				confirmClear: async () => false,
 			},
 		);
-		assert.equal(items[0].label, 'Performance Logging');
-		assert.equal(items[0].type, 'checkbox');
-		assert.equal(items[0].checked, false);
+		assert.equal(items[0].label, 'Performance Log');
+		assert.equal(items[0].enabled, true);
+		// It is an action, not a state toggle: the opt-in collector's control
+		// lives only in Settings now.
+		assert.equal(items[0].type, undefined);
+		assert.equal(items[0].checked, undefined);
 		assert.equal(items[1].type, 'separator');
 		assert.equal(items[2].label, 'Reveal Diagnostics Folder');
-		items[0].click({ checked: true });
+		items[0].click();
 		await new Promise((resolve) => setImmediate(resolve));
-		assert.deepEqual(enabled, [true]);
+		assert.deepEqual(opened, ['performance-log']);
+	} finally {
+		await loaded.remove();
+	}
+});
+
+test('no Help item toggles performance logging any more', async () => {
+	const loaded = await loadMenuModule();
+	try {
+		const items = loaded.module.createDiagnosticsHelpMenuItems(
+			{
+				directory: '/canonical/diagnostics',
+				clearManagedArtifacts: async () => undefined,
+				recordCleared: async () => undefined,
+				performanceLog: { canOpen: () => true, open: () => undefined },
+			},
+			{ openPath: async () => '', confirmClear: async () => false },
+		);
+		for (const item of items) {
+			assert.notEqual(item.label, 'Performance Logging');
+			assert.notEqual(item.type, 'checkbox');
+		}
+	} finally {
+		await loaded.remove();
+	}
+});
+
+test('Performance Log is unavailable with no window while reveal and clear work', async () => {
+	const loaded = await loadMenuModule();
+	try {
+		const revealed = [];
+		let cleared = false;
+		const items = loaded.module.createDiagnosticsHelpMenuItems(
+			{
+				directory: '/canonical/diagnostics',
+				clearManagedArtifacts: async () => {
+					cleared = true;
+				},
+				recordCleared: async () => undefined,
+				performanceLog: {
+					canOpen: () => false,
+					open: () => assert.fail('must not open without a window'),
+				},
+			},
+			{
+				openPath: async (path) => {
+					revealed.push(path);
+					return '';
+				},
+				confirmClear: async () => true,
+			},
+		);
+		assert.equal(items[0].label, 'Performance Log');
+		assert.equal(items[0].enabled, false);
+
+		items[2].click();
+		await new Promise((resolve) => setImmediate(resolve));
+		assert.deepEqual(revealed, ['/canonical/diagnostics']);
+
+		items[3].click();
+		await new Promise((resolve) => setImmediate(resolve));
+		assert.equal(cleared, true);
 	} finally {
 		await loaded.remove();
 	}

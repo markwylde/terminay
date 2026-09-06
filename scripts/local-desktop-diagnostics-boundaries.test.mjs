@@ -65,10 +65,53 @@ test('diagnostics initialize before Electron readiness, recovery window, and Loc
 		main,
 		/await embeddedStartupWindow\.loadURL\(desktopStartupLoadingDocument\(\)\)/u,
 	);
-	assert.doesNotMatch(
-		main,
-		/void embeddedStartupWindow[\s\S]{0,80}loadURL\(desktopStartupLoadingDocument\(\)\)/u,
+	// The loading document is navigated exactly once. Any second navigation
+	// would destroy the renderer's execution context mid-startup.
+	assert.equal(
+		main.split('loadURL(desktopStartupLoadingDocument').length - 1,
+		1,
 	);
+});
+
+test('startup phase lines are revealed by style, never by navigation', () => {
+	// Revealing a phase inserts a style rule; it must never navigate.
+	assert.match(
+		main,
+		/await window\.webContents\.insertCSS\(\s*startupPhaseVisibilityCss\(id\),?\s*\)/u,
+	);
+	// Reveals are serialized so two phases cannot interleave insert/remove.
+	assert.match(main, /startupPhaseReveals = startupPhaseReveals/u);
+	assert.match(main, /removeInsertedCSS\(previous\)/u);
+	// The handoff and the bootstrap-failure path both stop revealing.
+	assert.match(
+		main,
+		/stopStartupPhasePainting\(\);\s*await launchDeferredCanonicalWindow/u,
+	);
+	assert.match(
+		main,
+		/desktopStartupTimeline\.fail\([^)]*\);\s*stopStartupPhasePainting\(\);/u,
+	);
+});
+
+test('the startup timeline never becomes a diagnostics artifact', async () => {
+	const timeline = await readFile(
+		new URL('../electron/diagnostics/startupTimeline.ts', import.meta.url),
+		'utf8',
+	);
+	for (const forbidden of [
+		'node:fs',
+		'diagnostics/service',
+		'./service',
+		'record(',
+		'writeFile',
+		'app.getPath',
+	]) {
+		assert.ok(
+			!timeline.includes(forbidden),
+			`startupTimeline.ts must not reference ${forbidden}`,
+		);
+	}
+	assert.doesNotMatch(timeline, /^import /mu);
 });
 
 test('the pre-server Desktop loading document is self-contained and branded', () => {
