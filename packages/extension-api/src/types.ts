@@ -659,6 +659,8 @@ export interface AgentFileStat {
   kind: "file";
   size: number;
   modifiedAt?: string;
+  /** File creation time where the environment can prove one. */
+  createdAt?: string;
 }
 
 export interface AgentCanonicalFileOptions {
@@ -714,6 +716,13 @@ export interface AgentDiscoveredFile {
   relativePath: string;
   size: number;
   modifiedAt?: string;
+  /**
+   * File creation time, where the environment can prove one. Providers compare
+   * it against a descendant process `startedAt` to admit a journal the provider
+   * wrote for that process. It is provider-documented association, not a
+   * nearest-file heuristic: `modifiedAt` remains unusable for selection.
+   */
+  createdAt?: string;
 }
 
 /** Explicit caller limits for a provider's journal discovery. */

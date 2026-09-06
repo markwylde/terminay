@@ -65,6 +65,24 @@ export interface FixtureTerminalOptions {
   environment?: Record<string, string>;
   capabilities?: AgentObservationCapability[];
   files?: Record<string, unknown[]>;
+  /**
+   * Creation times per fixture file path, so a provider's post-process-start
+   * admission rule can be exercised. Files without an entry carry none.
+   */
+  fileCreatedAt?: Record<string, string>;
+  /** Descendant process start time, compared against `fileCreatedAt`. */
+  startedAt?: string;
+  /**
+   * Extra descendant processes beyond the foreground one, for providers that
+   * inspect a process tree. Each may carry its own executable, cwd and pid.
+   */
+  descendants?: Array<{ executableName: string; cwd?: string; pid?: number; startedAt?: string; id?: string }>;
+  /**
+   * Paths the fixture process holds open. Defaults to every fixture file, which
+   * is only realistic for a CLI that keeps its journal open; a provider whose
+   * real CLI closes its journal between writes should pass `[]`.
+   */
+  openFilePaths?: readonly string[];
   /** Opaque handle namespace; two fixtures never share provenance. */
   terminalId?: string;
   /**
@@ -296,14 +314,30 @@ export function fixtureTerminal(options: FixtureTerminalOptions): AgentTerminalC
         async descendants(): Promise<AgentProcessSnapshot[]> {
           requireCapability("process-observation");
           signal.throwIfAborted();
-          return [{ handle: process, executableName: foreground.executableName, cwd: options.cwd, pid: options.pid ?? 4242 }];
+          return [
+            {
+              handle: process,
+              executableName: foreground.executableName,
+              cwd: options.cwd,
+              pid: options.pid ?? 4242,
+              ...(options.startedAt === undefined ? {} : { startedAt: options.startedAt }),
+            },
+            ...(options.descendants ?? []).map((child, index) => ({
+              handle: issue<AgentProcessHandle>("process", child.id ?? `descendant-${index}`),
+              executableName: child.executableName,
+              ...(child.cwd === undefined ? {} : { cwd: child.cwd }),
+              ...(child.pid === undefined ? {} : { pid: child.pid }),
+              ...(child.startedAt === undefined ? {} : { startedAt: child.startedAt }),
+            })),
+          ];
         },
         async openFiles(processes, request): Promise<AgentOpenFile[]> {
           requireCapability("process-observation");
           signal.throwIfAborted();
           for (const item of processes) pathOf(processHandleOf(item), "process", "agent process handle");
           const access = request.access;
-          return [...files.keys()].map((path) => ({ handle: fileHandle(path), path, access }));
+          const open = options.openFilePaths ?? [...files.keys()];
+          return open.filter((path) => files.has(path)).map((path) => ({ handle: fileHandle(path), path, access }));
         },
         async environment(names: readonly string[]): Promise<Record<string, string>> {
           requireCapability("process-observation");
@@ -337,7 +371,9 @@ export function fixtureTerminal(options: FixtureTerminalOptions): AgentTerminalC
             if (!relativePath || relativePath.split("/").length - 1 > request.maxDepth || !request.extensions.some((extension) => relativePath.endsWith(extension))) continue;
             const data = files.get(path)!;
             if (entries.length >= request.maxEntries || bytes + data.byteLength > request.maxBytes) { truncated = true; break; }
-            bytes += data.byteLength; entries.push({ handle: fileHandle(path), relativePath, size: data.byteLength });
+            bytes += data.byteLength;
+            const createdAt = options.fileCreatedAt?.[path];
+            entries.push({ handle: fileHandle(path), relativePath, size: data.byteLength, ...(createdAt === undefined ? {} : { createdAt }) });
           }
           return { entries, truncated };
         },
@@ -401,7 +437,9 @@ export function fixtureTerminal(options: FixtureTerminalOptions): AgentTerminalC
           requireCapability("filesystem-observation");
           signal.throwIfAborted();
           const path = pathOf(handle, "file", "agent file handle");
-          return files.has(path) ? { handle, kind: "file" as const, size: lookup(handle).byteLength } : undefined;
+          if (!files.has(path)) return undefined;
+          const createdAt = options.fileCreatedAt?.[path];
+          return { handle, kind: "file" as const, size: lookup(handle).byteLength, ...(createdAt === undefined ? {} : { createdAt }) };
         },
         async read(handle: AgentFileHandle, request: { maxBytes: number }) {
           requireCapability("filesystem-observation");
