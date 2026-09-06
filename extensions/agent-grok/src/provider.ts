@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
 import { basename, resolve } from 'node:path';
 import {
+	type AgentDirectoryHandle,
 	type AgentFileHandle,
 	type AgentFileWatchChunk,
 	type AgentFileWatcher,
@@ -13,6 +14,7 @@ import {
 	jsonlSession,
 } from '@terminay/extension-api';
 import { LIMITS, MAPPING_VERSION, SESSION_TITLE_RECORD } from './constants.js';
+import { followSubagents, SUBAGENT_RECORD } from './subagents.js';
 
 type JsonObject = Record<string, unknown>;
 type CompletionOutcome = 'success' | 'error' | 'cancelled';
@@ -119,6 +121,7 @@ export const grokAgentProvider = defineAgentProvider({
 				terminal,
 				events: root.journal,
 				summary: await findSummary(terminal, root),
+				subagents: await findSubagents(terminal, root),
 				sessionId: root.sessionId,
 			}),
 			mapRecord: createGrokRecordMapper(),
@@ -475,6 +478,59 @@ async function summaryFromHome(
 	}
 }
 
+/** Resolves the bound root's own `subagents/` directory, never another's. */
+async function findSubagents(
+	terminal: AgentTerminalContext,
+	root: Omit<GrokRoot, 'modifiedAt'>,
+): Promise<AgentDirectoryHandle | undefined> {
+	for (const scope of ['environment', 'home'] as const) {
+		try {
+			const relative =
+				scope === 'environment'
+					? await terminal.observation.files.environmentRelativePath(
+							root.journal,
+							{
+								environmentVariable: 'GROK_HOME',
+								beneathRelative: 'sessions',
+								signal: terminal.signal,
+							},
+						)
+					: await terminal.observation.files.homeRelativePath(root.journal, {
+							beneath: { homeRelative: '.grok/sessions' },
+							signal: terminal.signal,
+						});
+			const directory = subagentsRelativePath(relative);
+			if (!directory) continue;
+			const handle =
+				scope === 'environment'
+					? await terminal.observation.files.resolveDirectoryRelativeToEnvironment(
+							`sessions/${directory}`,
+							{ environmentVariable: 'GROK_HOME', signal: terminal.signal },
+						)
+					: await terminal.observation.files.resolveHomeDirectory(
+							`.grok/sessions/${directory}`,
+							{
+								beneath: { homeRelative: '.grok/sessions' },
+								signal: terminal.signal,
+							},
+						);
+			if (handle) return handle;
+		} catch {
+			// A missing subagents directory is ordinary: the session simply has no
+			// children yet, and the root's own binding is unaffected.
+		}
+	}
+	return undefined;
+}
+
+function subagentsRelativePath(
+	relative: string | undefined,
+): string | undefined {
+	return relative?.endsWith('/events.jsonl')
+		? `${relative.slice(0, -'/events.jsonl'.length)}/subagents`
+		: undefined;
+}
+
 function summaryRelativePath(relative: string | undefined): string | undefined {
 	return relative?.endsWith('/events.jsonl')
 		? `${relative.slice(0, -'/events.jsonl'.length)}/summary.json`
@@ -495,6 +551,7 @@ class GrokSessionWatcher implements AgentFileWatcher {
 			terminal: AgentTerminalContext;
 			events: AgentFileHandle;
 			summary?: AgentFileHandle;
+			subagents?: AgentDirectoryHandle;
 			sessionId: string;
 		},
 	) {}
@@ -508,7 +565,7 @@ class GrokSessionWatcher implements AgentFileWatcher {
 	}
 
 	private async *followedChunks(): AsyncGenerator<AgentFileWatchChunk> {
-		const { terminal, events, summary, sessionId } = this.options;
+		const { terminal, events, summary, subagents, sessionId } = this.options;
 		const watchOptions = {
 			signal: terminal.signal,
 			maxChunkBytes: LIMITS.followChunkBytes,
@@ -551,6 +608,16 @@ class GrokSessionWatcher implements AgentFileWatcher {
 				sources.push({
 					iterator: summaryWatcher[Symbol.asyncIterator](),
 					title: true,
+				});
+			}
+			if (subagents !== undefined) {
+				// Child state arrives as already-complete synthetic lines, so it
+				// joins the events lane rather than the title lane.
+				sources.push({
+					iterator: followSubagents(terminal, subagents, LIMITS.subagentPollMs)[
+						Symbol.asyncIterator
+					](),
+					title: false,
 				});
 			}
 			for (const source of sources) scheduleNext(source);
@@ -820,49 +887,28 @@ export function mapGrokRecord(
 		});
 		return;
 	}
-	if (type === 'subagent_progress') {
-		const childId = bounded(
-			LIMITS.sessionId,
-			envelope.subagent_id,
-			envelope.agent_id,
-		);
-		if (!childId) return;
+	if (type === SUBAGENT_RECORD) {
+		const childId = bounded(LIMITS.sessionId, envelope.subagentId);
+		const parent = bounded(LIMITS.sessionId, envelope.parentSessionId);
+		// Parentage is Grok's own explicit `parent_session_id`, never proximity.
+		if (!childId || parent !== context.binding.providerSessionId) return;
 		ensureStarted(publish, state, at);
-		if (state.children.has(childId)) return;
-		state.children.add(childId);
-		const title = bounded(
-			LIMITS.title,
-			envelope.current_agent_label,
-			envelope.monitor_description,
-		);
-		publish.subagentStarted({
-			subagentId: childId,
-			parentAgentId: context.binding.providerSessionId,
-			...(title ? { title } : {}),
-			...at,
-		});
-		return;
-	}
-	if (type === 'subagent_finished') {
-		const childId = bounded(
-			LIMITS.sessionId,
-			envelope.subagent_id,
-			envelope.agent_id,
-		);
-		if (!childId) return;
-		ensureStarted(publish, state, at);
+		const status = bounded(64, envelope.status);
 		if (!state.children.has(childId)) {
-			// A child whose progress was never seen still completes beneath the root.
+			state.children.add(childId);
+			const title = bounded(LIMITS.title, envelope.description);
 			publish.subagentStarted({
 				subagentId: childId,
 				parentAgentId: context.binding.providerSessionId,
+				...(title ? { title } : {}),
 				...at,
 			});
 		}
+		if (status === 'running' || status === undefined) return;
 		state.children.delete(childId);
 		publish.subagentDone({
 			subagentId: childId,
-			outcome: outcome(envelope.outcome ?? envelope.error_kind),
+			outcome: outcome(status),
 			...at,
 		});
 		return;
