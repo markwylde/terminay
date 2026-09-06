@@ -45,7 +45,7 @@ None.
   and two-pid PTY coverage; later-turn mapping.
 - `packages/server-core/test/extension-agent-runtime.test.mjs`: two terminals
   of one provider keep independent active roots.
-- `e2e/extension-grok-agent-runtime.spec.ts` and the native Grok stub: two
-  projects, a later turn, and resume while the other Grok is live.
+- `e2e/fixtures.ts`: pid-keyed native Grok stub sessions so two processes do
+  not share one journal. The existing single-CLI Electron spec stays.
 - No protocol, host-API, or client change. Observation stays inside the public
   Extension API.
