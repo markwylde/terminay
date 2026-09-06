@@ -1871,6 +1871,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
 		const markPointerDownInside = () => {
 			pointerDownInsideAt = Date.now();
+			announceTerminalUserInput();
 		};
 
 		// xterm 6.1 owns touch panning, but its gesture listener cancels the

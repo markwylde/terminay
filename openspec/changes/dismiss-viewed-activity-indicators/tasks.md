@@ -5,8 +5,8 @@
 
 ## 2. Server-backed fold-back
 
-- [x] 2.1 In `src/App.tsx`, acknowledge a focused session that is not working even when the snapshot is claimed, and keep applying working snapshots so amber remains. Verified by reading the fold-back: claimed idle or attention on the focused panel calls `markTerminalActivityViewed`, and a focused `status === 'working'` snapshot is not acknowledged away.
-- [x] 2.2 Keep tab-selection `markViewed` as the path that acknowledges both fallback activity and bound agents. Verified by `useDockviewPanelLifecycle` still calling `markTerminalActivityViewed` on `onDidActivePanelChange`.
+- [x] 2.1 In `src/App.tsx`, acknowledge a claimed finished or attention session only when the user has clicked or typed in that terminal this visit, and keep applying working snapshots so amber remains. Verified by `shouldAcknowledgeInteractedActivity` tests: no interaction does not ack, interaction on idle does, working does not.
+- [x] 2.2 Do not acknowledge from Dockview `onDidActivePanelChange` or project activation focus. Tab click, xterm click, and typing call `markTerminalActivityViewed`. Verified by reading those call sites.
 
 ## 3. Tab RAG presentation
 
@@ -14,7 +14,7 @@
 
 ## 4. End-to-end coverage
 
-- [x] 4.1 Keep `e2e/terminal-signals.spec.ts` cases for focusing a finished tab (clears tab, project count, and header) and for structured completion on an already-focused tab (no finished indicator). Verified by those tests existing with those assertions.
+- [x] 4.1 Keep `e2e/terminal-signals.spec.ts` cases for clicking a finished tab, completion while already interacting, and activating a project without dismissing until the terminal is clicked. Verified by those tests existing with those assertions.
 - [x] 4.2 Replace `active terminal tabs show only the finished activity status dot by default` in `e2e/terminal.spec.ts` so it no longer requires green on the focused tab after OSC 9;4 completion. Verified by that test file no longer asserting `data-terminal-activity` `unviewed` on the active tab after structured completion.
 - [x] 4.3 Confirm a focused working terminal still shows amber (and an amber project count when it is the only activity). Verified by an e2e or unit assertion that focused `recent` / working remains visible.
 
