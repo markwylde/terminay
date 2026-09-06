@@ -113,6 +113,34 @@ test('pulling a worktree from origin fast-forwards its current branch', async ()
   }
 })
 
+test('force-removing a locked worktree deletes it', async () => {
+  const { GitDiffService } = await importBundled('../electron/fileViewer/gitDiffService.ts')
+  const root = await mkdtemp(join(tmpdir(), 'terminay-git-worktree-remove-locked-test-'))
+  const main = join(root, 'project')
+  const locked = join(root, 'project-locked')
+
+  try {
+    await mkdir(main)
+    await git(['init', '-b', 'main'], main)
+    await git(['config', 'user.email', 'test@example.invalid'], main)
+    await git(['config', 'user.name', 'Terminay Test'], main)
+    await writeFile(join(main, 'shared.txt'), 'base\n')
+    await git(['add', 'shared.txt'], main)
+    await git(['commit', '-m', 'initial commit'], main)
+    await git(['worktree', 'add', locked, '-b', 'locked'], main)
+    await writeFile(join(locked, 'untracked.txt'), 'discard me\n')
+    await git(['worktree', 'lock', locked], main)
+
+    const service = new GitDiffService(fileBufferStub)
+    await service.removeWorktree(main, locked, true)
+
+    assert.equal((await fileBufferStub.getFileInfo(locked)).exists, false)
+    assert.equal((await git(['worktree', 'list', '--porcelain'], main)).includes(locked), false)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('force-removing a worktree recovers when its .git file is missing', async () => {
   const { GitDiffService } = await importBundled('../electron/fileViewer/gitDiffService.ts')
   const root = await mkdtemp(join(tmpdir(), 'terminay-git-worktree-remove-test-'))
