@@ -28,6 +28,7 @@ import { createPortal } from 'react-dom';
 import type { AgentState } from '../types/agentStatus';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { DockTabChrome } from './DockTabChrome';
+import { visibleTerminalTabAgentState } from './terminalTabAgentPresentation';
 
 export type TerminalTabMacroRunStep = {
 	id: string;
@@ -144,10 +145,16 @@ export function TerminalTab(
 				: displayedActivityState === 'attention'
 					? 'blocked'
 					: undefined;
-	const displayedAgentState = params?.agentState ?? fallbackAgentState;
+	const displayedAgentState =
+		params?.agentState !== undefined
+			? visibleTerminalTabAgentState(
+					params.agentState,
+					params.agentUnread === true,
+				)
+			: fallbackAgentState;
 	const displayedAgentNeedsAttention =
 		params?.agentState !== undefined
-			? params.agentNeedsAttention === true
+			? params.agentNeedsAttention === true && params.agentUnread === true
 			: displayedActivityState === 'attention';
 	const displayedAgentStatusLabel =
 		params?.agentState !== undefined || displayedAgentState === undefined

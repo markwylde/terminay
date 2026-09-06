@@ -1397,7 +1397,7 @@ test.describe('terminal behavior', () => {
 		).toHaveCount(0);
 	});
 
-	test('active terminal tabs show only the finished activity status dot by default', async ({
+	test('active terminal tabs do not keep a finished indicator after structured completion', async ({
 		mainWindow,
 	}) => {
 		const activeTab = mainWindow
@@ -1413,15 +1413,9 @@ test.describe('terminal behavior', () => {
 
 		await expect(activeTab).toHaveAttribute('data-terminal-activity', 'viewed');
 		await expect(finishedIndicator).toHaveCount(0);
-
-		await expect(activeTab).toHaveAttribute(
-			'data-terminal-activity',
-			'unviewed',
-		);
-		await expect(finishedIndicator).toHaveAttribute(
-			'aria-label',
-			'Terminal finished',
-		);
+		await expect(
+			mainWindow.locator('.project-tab--active .project-tab-activity-badge'),
+		).toHaveCount(0);
 	});
 
 	test('auto-closes a terminal tab on successful exit when enabled', async ({

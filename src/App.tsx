@@ -1955,10 +1955,14 @@ const ProjectWorkspace = forwardRef<
 						isActive &&
 						dockviewApiRef.current?.activePanel?.params?.sessionId ===
 							snapshot.sessionId;
-					if (isFocusedSession && !snapshot.acknowledged && !snapshot.claimed) {
-						// PTY output can arrive after the tab-selection acknowledgement.
-						// While this project and panel remain visibly active, fold it back
-						// into canonical acknowledgement instead of showing a phantom item.
+					if (
+						isFocusedSession &&
+						!snapshot.acknowledged &&
+						snapshot.status !== 'working'
+					) {
+						// Finished or attention on the tab the user is already viewing is
+						// acknowledgement, including claimed structured and provider
+						// sessions. Working stays live so the amber indicator remains.
 						applyTerminalActivityEvaluation(snapshot.sessionId, {
 							state: 'viewed',
 							nextDeadline: null,
