@@ -5,12 +5,12 @@
 
 ## 2. Claude Code binding fix
 
-- [ ] 2.1 Add a primary discovery path to `extensions/agent-claude-code/src/provider.ts`: resolve the provider-encoded project directory from the exact descendant `claude` process CWD via `resolveHomeDirectory`, and admit the single `.jsonl` root whose `createdAt` is after that process's `startedAt`. Reuse `claudeProjectJournalPath`'s encoding. Verified by a new unit test that binds with `openFiles` returning `[]`.
-- [ ] 2.2 Order discovery as: explicit `--resume` identity, then the post-process-start rule, then the existing open-writable fallback. Verified by a test asserting the fallback is not consulted when the primary rule binds, and is consulted when it finds nothing.
-- [ ] 2.3 Keep ambiguity unbound: two eligible post-start roots for one process bind nothing. Verified by a test asserting no events are emitted for two eligible roots, and that neither mtime nor filename breaks the tie.
-- [ ] 2.4 Exclude `subagents/` journals and any candidate whose header fails `rootSessionId` from the primary path, matching the existing fallback's checks. Verified by a test offering a sidechain journal as the only post-start candidate and asserting no binding.
+- [x] 2.1 Add a primary discovery path to `extensions/agent-claude-code/src/provider.ts`: resolve the provider-encoded project directory from the exact descendant `claude` process CWD via `resolveHomeDirectory`, and admit the single `.jsonl` root whose `createdAt` is after that process's `startedAt`. Reuse `claudeProjectJournalPath`'s encoding. Verified by a new unit test that binds with `openFiles` returning `[]`.
+- [x] 2.2 Order discovery as: explicit `--resume` identity, then the post-process-start rule, then the existing open-writable fallback. Verified by a test asserting the fallback is not consulted when the primary rule binds, and is consulted when it finds nothing.
+- [x] 2.3 Keep ambiguity unbound: two eligible post-start roots for one process bind nothing. Verified by a test asserting no events are emitted for two eligible roots, and that neither mtime nor filename breaks the tie.
+- [x] 2.4 Exclude `subagents/` journals and any candidate whose header fails `rootSessionId` from the primary path, matching the existing fallback's checks. Verified by a test offering a sidechain journal as the only post-start candidate and asserting no binding.
 - [ ] 2.5 Admit a journal live via `watchDirectory` when it appears after discovery starts, so a `claude` process that has not yet written its journal binds on the first write rather than on the next foreground change. Verified by a test that starts observation against an empty project directory and then creates the journal.
-- [ ] 2.6 Replace the `openFiles`-supplying fixtures in `extensions/agent-claude-code/test/claude-code.test.mjs` with fixtures that reproduce real Claude Code evidence — a journal on disk and no open writable handle. Verified by the suite passing with every `openFiles` stub returning `[]` except the one test that explicitly exercises the fallback.
+- [x] 2.6 Replace the `openFiles`-supplying fixtures in `extensions/agent-claude-code/test/claude-code.test.mjs` with fixtures that reproduce real Claude Code evidence — a journal on disk and no open writable handle. Verified by the suite passing with every `openFiles` stub returning `[]` except the one test that explicitly exercises the fallback.
 
 ## 3. Interpreter claim lifecycle
 
