@@ -185,9 +185,11 @@ measurement SHALL be recorded with it.
 
 Replay SHALL follow the events journal to the last complete JSONL record, and follow chunks SHALL stay small enough to fit the extension IPC message cap after JSON number-array encoding. A resumed idle TUI whose latest lifecycle record is `turn_ended` SHALL be `done` rather than `working`. Title and model SHALL come from the sibling `summary.json` while the root is bound: the first document names the row even before a native turn, and a later rewrite updates that same row in place. A hanging or rotating summary watcher SHALL NOT stall or abort event replay.
 
-Grok records per-child lifecycle in the bound root's own events journal. A `subagent_progress` record SHALL enumerate that child beneath the root, labelled from the bounded agent label Grok records for it, and a `subagent_finished` record SHALL complete it with its outcome. A child SHALL be attached only because a record on the bound root's own journal names it; a session elsewhere in the sessions tree SHALL NOT become a child, and timestamp, path proximity, and display text SHALL NOT establish the relationship.
+Grok SHALL record each subagent at `<session>/subagents/<subagent_id>/meta.json` below the same sessions root, written when the child is spawned and rewritten in place as it runs. The extension SHALL follow that bounded, root-scoped directory while the root is bound, so children spawned after the root binds are admitted live.
 
-A completion for a child whose progress was never observed SHALL still land beneath the root rather than being dropped. A child completing SHALL NOT complete its root, and the root SHALL remain `working` while any child is working. Child prompts, tool arguments, tool output, and reasoning SHALL never be projected.
+A child SHALL be attached to the bound root only because its own `parent_session_id` equals that root's provider session id. A session elsewhere in the sessions tree SHALL NOT become a child, and timestamp, path proximity, and display text SHALL NOT establish the relationship.
+
+Each child SHALL carry its own state from its own record: a `running` status SHALL keep that child `working` and a terminal status SHALL complete it with the corresponding outcome, so children spawned together complete independently. A child completing SHALL NOT complete its root, and the root SHALL remain `working` while any child is working. The child's `prompt` field and its sibling `output.json` are conversation content and SHALL never be read or projected; only the bounded `description` SHALL label the child.
 
 #### Scenario: Resumed idle session
 
@@ -206,17 +208,17 @@ A completion for a child whose progress was never observed SHALL still land bene
 
 #### Scenario: Grok subagent spawn
 
-- **WHEN** Grok records `subagent_progress` for a child on the bound root's journal
+- **WHEN** a child's `meta.json` appears under the bound root's `subagents/` directory declaring that root as its parent
 - **THEN** a named child is admitted beneath that root and the root remains `working`
 
 #### Scenario: Grok subagent progress and completion
 
-- **WHEN** Grok records `subagent_progress` and later `subagent_finished` for a child
+- **WHEN** a child's record moves from `running` to a terminal status
 - **THEN** that child is `working` and then completes with its outcome, and its root is unchanged
 
 #### Scenario: Unrelated session in the sessions tree
 
-- **WHEN** a session exists in the sessions tree that no record on the bound root's journal names
+- **WHEN** a candidate child declares a `parent_session_id` other than the bound root
 - **THEN** it is not attached as a child
 
 #### Scenario: Resuming a Grok journal in a new process

@@ -28,9 +28,9 @@
 ## 4. Grok and OpenCode fault inference
 
 - [x] 4.1 Derive `blocked` for Grok from a fault that halts a turn with no `turn_ended`, keeping an error `turn_ended` as `done` with an error outcome. Verified by mapping tests over both fixtures.
-- [x] 4.2 Enumerate Grok subagents from the bound root's `subagents/` metadata directory, admitting each named child session live and refusing any sessions-tree session that metadata does not name. Verified by a test admitting a child created after the root binds and rejecting an unrelated session.
-- [x] 4.3 Follow each Grok child's own `subagent_progress` and `subagent_finished` records for its state, keeping the root `working` while any child works. Verified by a mapping test asserting independent child states and an unchanged root.
-- [ ] 4.4 Re-measure Grok's subagent layout against the installed CLI, capturing a real `subagents/meta.json` and a real `subagent_progress`/`subagent_finished` pair as fixtures. **Blocked:** no Grok session on this machine has spawned a subagent, so the record shapes come from the CLI binary's own embedded event names and documentation rather than a recorded run. The conformance test is what proves them; run it against a real Grok CLI to capture the fixtures.
+- [x] 4.2 Enumerate Grok subagents from the bound root's own `subagents/` directory, attaching a child only on its explicit `parent_session_id`. Verified by tests admitting a real child record and rejecting one declaring another parent.
+- [x] 4.3 Follow each Grok child's own recorded status for its state, keeping the root `working` while any child works and never reading its prompt or output. Verified against a recorded two-subagent run in which one child completed while the other was still running.
+- [x] 4.4 Re-measured Grok's subagent layout by running the real CLI. Children are `<session>/subagents/<subagent_id>/meta.json`, written with `status: "running"` at spawn and rewritten to `"completed"`, carrying an explicit `parent_session_id` and a `description`. The `subagent_progress`/`subagent_finished` records this was first built against do not exist in the journal. Fixtures are taken from that recorded run.
 - [x] 4.5 Derive `blocked` for OpenCode from a recorded error with no completion event following, under the same rule. Verified by a mapping test over the fixture.
 
 ## 5. OpenCode provider — decide the read boundary
