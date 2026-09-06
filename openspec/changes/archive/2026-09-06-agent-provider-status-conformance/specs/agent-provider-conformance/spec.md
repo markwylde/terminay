@@ -22,10 +22,10 @@ Grok, and OpenCode.
 
 | | Detect | Title | Idle | Working | Waiting | Blocked | Done | Sub:Enumerate | Sub:Status | Resume |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Codex | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
+| Codex | Y | Y | Y | Y | N | Y | Y | Y | Y | Y |
 | Claude Code | Y | Y | Y | Y | Y\* | Y\* | Y | Y | Y | Y |
 | Grok | Y | Y | Y | Y | Y | N | Y | Y | Y | Y |
-| OpenCode | Y | Y | Y | Y | Y | Y\* | Y | Y | Y | Y |
+| OpenCode | Y | Y | Y | Y | N | Y* | Y | Y | Y | Y |
 
 Grok's `Blocked` is `N` because Grok records no fault distinct from a turn
 outcome: a failed turn is a `turn_ended` carrying an error, which is a
@@ -194,9 +194,11 @@ has appeared.
 is explicitly requesting approval, an answer, or other user input, and leaves
 `waiting` when that request is answered or resolved.
 
-Codex, Grok, and OpenCode record the request explicitly and SHALL map it
-directly. Claude Code writes no record while a request is outstanding and SHALL
-reach `waiting` by its named journal-derived inference rule.
+Grok records the request explicitly and SHALL map it directly. Claude Code
+writes no record while a request is outstanding and SHALL reach `waiting` by
+its named journal-derived inference rule. Codex and OpenCode persist nothing
+that distinguishes an outstanding prompt from ordinary work, so their `waiting`
+is stated as unsupported and SHALL NOT be inferred.
 
 A `waiting` state SHALL be reachable while a turn is in progress and SHALL NOT
 require the provider to write anything at the moment the request is raised.
