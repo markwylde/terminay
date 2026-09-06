@@ -404,7 +404,12 @@ async function drainAgentTerminals(frame: HostFrame): Promise<void> {
 		process.exit(73);
 }
 
-function createAgentTerminalContext(
+/**
+ * Builds the terminal context an agent provider sees. Exported so the
+ * conformance harness drives providers through this exact construction rather
+ * than a second implementation of it.
+ */
+export function createAgentTerminalContext(
 	context: Record<string, unknown>,
 	capabilities: unknown[],
 	signal: AbortSignal,
