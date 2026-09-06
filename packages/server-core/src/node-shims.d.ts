@@ -122,6 +122,7 @@ declare module "node:fs/promises" {
   interface Stats {
     readonly size: number;
     readonly mtimeMs: number;
+    readonly birthtimeMs: number;
     isDirectory(): boolean;
     isFile(): boolean;
     isSymbolicLink(): boolean;
