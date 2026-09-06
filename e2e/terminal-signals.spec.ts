@@ -115,4 +115,48 @@ test.describe('terminal activity signals', () => {
     await expect(tab).toHaveAttribute('data-terminal-activity', 'viewed')
     await expect(projectBadge).toHaveCount(0)
   })
+
+  test('focusing a finished terminal dismisses the tab and project indicators', async ({
+    mainWindow,
+  }) => {
+    const { tab } = await withBackgroundTerminal(mainWindow)
+
+    await writeToBackgroundSession(
+      mainWindow,
+      tab,
+      "sleep 2.1; printf '\\033]9;4;3;\\007'; printf '\\033]9;4;0;\\007'\r",
+    )
+
+    await expect(tab).toHaveAttribute('data-terminal-activity', 'unviewed')
+    const projectBadge = mainWindow.locator('.project-tab--active .project-tab-activity-badge')
+    await expect(projectBadge).toHaveText('1')
+    await expect(projectBadge).toHaveClass(/project-tab-activity-badge--unviewed/)
+    await expect(mainWindow.locator('.terminal-activity-pill--unviewed')).toHaveText('1')
+
+    await tab.click()
+
+    await expect(tab).toHaveAttribute('data-terminal-activity', 'viewed')
+    await expect(tab.locator('.agent-status-indicator[data-agent-state="done"]')).toHaveCount(0)
+    await expect(projectBadge).toHaveCount(0)
+    await expect(mainWindow.locator('.terminal-activity-pill--unviewed')).toHaveCount(0)
+  })
+
+  test('a focused terminal that finishes does not keep the finished indicator', async ({
+    mainWindow,
+  }) => {
+    const activeTab = mainWindow
+      .locator('.project-workspace--active .terminal-tab-content--active')
+      .first()
+
+    await mainWindow.locator('.terminal-panel').first().click()
+    await mainWindow.keyboard.type("sleep 2.1; printf '\\033]9;4;3;\\007'; printf '\\033]9;4;0;\\007'")
+    await mainWindow.keyboard.press('Enter')
+
+    await expect(activeTab).toHaveAttribute('data-terminal-activity', 'viewed')
+    await expect(activeTab.locator('.agent-status-indicator[data-agent-state="done"]')).toHaveCount(0)
+    await expect(
+      mainWindow.locator('.project-tab--active .project-tab-activity-badge'),
+    ).toHaveCount(0)
+    await expect(mainWindow.locator('.terminal-activity-pill--unviewed')).toHaveCount(0)
+  })
 })
