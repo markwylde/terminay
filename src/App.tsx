@@ -184,6 +184,7 @@ import {
 	type ActivityCountBadge,
 	summarizeActivityBadge,
 } from './workspace/activityCountBadge';
+import { shouldAcknowledgeInteractedActivity } from './workspace/terminalActivityAcknowledgement';
 import {
 	buildTerminalActivityOverview,
 	TerminalActivityOverview,
@@ -1377,6 +1378,7 @@ const ProjectWorkspace = forwardRef<
 			(sessionId: string, now?: number) => void
 		>(() => {});
 		const focusedSessionIdRef = useRef<string | null>(null);
+		const interactedSessionIdRef = useRef<string | null>(null);
 		const filePathPanelMapRef = useRef<Map<string, string>>(new Map());
 		const filePanelSaveHandlersRef = useRef<Map<string, FilePanelSaveHandler>>(
 			new Map(),
@@ -1951,14 +1953,18 @@ const ProjectWorkspace = forwardRef<
 					) {
 						continue;
 					}
-					const isFocusedSession =
-						isActive &&
-						dockviewApiRef.current?.activePanel?.params?.sessionId ===
-							snapshot.sessionId;
-					if (isFocusedSession && !snapshot.acknowledged && !snapshot.claimed) {
-						// PTY output can arrive after the tab-selection acknowledgement.
-						// While this project and panel remain visibly active, fold it back
-						// into canonical acknowledgement instead of showing a phantom item.
+					if (
+						shouldAcknowledgeInteractedActivity({
+							acknowledged: snapshot.acknowledged,
+							interactedSessionId: interactedSessionIdRef.current,
+							sessionId: snapshot.sessionId,
+							status: snapshot.status,
+						})
+					) {
+						// Finished or attention on a terminal the user is clicking or
+						// typing in is acknowledgement, including claimed sessions.
+						// Working stays live so the amber indicator remains. A project
+						// becoming active is not interaction.
 						applyTerminalActivityEvaluation(snapshot.sessionId, {
 							state: 'viewed',
 							nextDeadline: null,
@@ -2000,6 +2006,7 @@ const ProjectWorkspace = forwardRef<
 		]);
 
 		useEffect(() => {
+			if (!isActive) interactedSessionIdRef.current = null;
 			if (isActive || serverActivityClient === undefined) return;
 			const sessionId = dockviewApiRef.current?.activePanel?.params?.sessionId;
 			if (typeof sessionId !== 'string' || sessionId.length === 0) return;
@@ -2037,7 +2044,6 @@ const ProjectWorkspace = forwardRef<
 			terminalPanel.api.setActive();
 			focusedSessionIdRef.current = sessionId;
 			setFocusedSessionId(sessionId);
-			markTerminalActivityViewed(sessionId);
 			window.requestAnimationFrame(() => {
 				window.dispatchEvent(
 					new CustomEvent('terminay-focus-terminal', {
@@ -2045,7 +2051,7 @@ const ProjectWorkspace = forwardRef<
 					}),
 				);
 			});
-		}, [markTerminalActivityViewed]);
+		}, []);
 
 		const {
 			cancelRun: cancelMacroRun,
@@ -2084,6 +2090,7 @@ const ProjectWorkspace = forwardRef<
 					return;
 				}
 				focusedSessionIdRef.current = sessionId;
+				interactedSessionIdRef.current = sessionId;
 				setFocusedSessionId(sessionId);
 				markTerminalActivityViewed(sessionId);
 				setErrorText(null);
@@ -4126,16 +4133,8 @@ const ProjectWorkspace = forwardRef<
 					return;
 				}
 
-				if (serverActivityClient !== undefined) {
-					void serverActivityClient
-						.acknowledge({ projectId: project.id, sessionId })
-						.catch(() => undefined);
-				} else {
-					applyTerminalActivityEvaluation(
-						sessionId,
-						terminalActivityStoreRef.current.recordUserInput(sessionId),
-					);
-				}
+				interactedSessionIdRef.current = sessionId;
+				markTerminalActivityViewed(sessionId);
 			};
 
 			window.addEventListener(
@@ -4148,12 +4147,7 @@ const ProjectWorkspace = forwardRef<
 					onTerminalUserInput,
 				);
 			};
-		}, [
-			applyTerminalActivityEvaluation,
-			getPanelForSession,
-			project.id,
-			serverActivityClient,
-		]);
+		}, [getPanelForSession, markTerminalActivityViewed]);
 
 		useEffect(() => {
 			return () => {

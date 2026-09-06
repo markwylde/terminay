@@ -112,7 +112,7 @@
 		"test:remote-stream-transport": "npm run build:shared && npm run build --workspace @terminay/server && node --test scripts/websocket-byte-transport-e2e.test.mjs",
 		"smoke:docker-pairing": "node scripts/docker-pairing-smoke.mjs",
 		"test:standalone-server": "npm run build:shared && npm run build --workspace @terminay/server && npm run test --workspace @terminay/server && node --test scripts/standalone-server-cli.test.mjs scripts/standalone-artifact.test.mjs",
-		"test:activity-store": "node --test scripts/terminal-activity-store.test.mjs",
+		"test:activity-store": "node --test scripts/terminal-activity-store.test.mjs scripts/terminal-tab-agent-presentation.test.mjs scripts/terminal-activity-acknowledgement.test.mjs",
 		"test:activity-forwarding": "node --test scripts/terminal-activity-forwarder.test.mjs",
 		"test:agent-status": "node --test scripts/agent-status-store.test.mjs",
 		"test:agent-runtime": "npm run build --workspace @terminay/server-core && node --test packages/server-core/test/agent-service.test.mjs packages/server-core/test/agent-protocol.test.mjs packages/server-core/test/agent-terminal-integration.test.mjs packages/server-core/test/extension-agent-runtime.test.mjs && node --test scripts/agent-extension-boundaries.test.mjs",
