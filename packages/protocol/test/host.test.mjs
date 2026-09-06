@@ -151,7 +151,11 @@ test('host compatibility separates required failures from optional degradation',
 	});
 
 	assert.throws(
-		() => parseTerminayHostCompatibilityRequirements({ ...requirements, executionRuntime: { minimum: 1, maximum: 1 } }),
+		() =>
+			parseTerminayHostCompatibilityRequirements({
+				...requirements,
+				executionRuntime: { minimum: 1, maximum: 1 },
+			}),
 		/fields are invalid/u,
 	);
 });
@@ -312,18 +316,27 @@ test('semantic host actions are closed and exact-binding/gesture checked', () =>
 });
 
 test('external URL actions accept credential-free HTTP and HTTPS only', () => {
-	assert.deepEqual(parseTerminayHostAction({
-		type: 'os.open-external',
-		url: 'http://127.0.0.1:8080/status',
-	}), { type: 'os.open-external', url: 'http://127.0.0.1:8080/status' });
-	assert.deepEqual(parseTerminayHostAction({
-		type: 'os.open-external',
-		url: 'https://example.com/docs',
-	}), { type: 'os.open-external', url: 'https://example.com/docs' });
-	assert.deepEqual(parseTerminayHostAction({
-		type: 'os.open-external',
-		url: 'HTTP://EXAMPLE.COM/docs',
-	}), { type: 'os.open-external', url: 'http://example.com/docs' });
+	assert.deepEqual(
+		parseTerminayHostAction({
+			type: 'os.open-external',
+			url: 'http://127.0.0.1:8080/status',
+		}),
+		{ type: 'os.open-external', url: 'http://127.0.0.1:8080/status' },
+	);
+	assert.deepEqual(
+		parseTerminayHostAction({
+			type: 'os.open-external',
+			url: 'https://example.com/docs',
+		}),
+		{ type: 'os.open-external', url: 'https://example.com/docs' },
+	);
+	assert.deepEqual(
+		parseTerminayHostAction({
+			type: 'os.open-external',
+			url: 'HTTP://EXAMPLE.COM/docs',
+		}),
+		{ type: 'os.open-external', url: 'http://example.com/docs' },
+	);
 	for (const url of [
 		'javascript:alert(1)',
 		'file:///etc/passwd',
@@ -340,22 +353,44 @@ test('external URL actions accept credential-free HTTP and HTTPS only', () => {
 });
 
 test('preview downloads are bounded opaque host payloads', () => {
-	assert.deepEqual(parseTerminayHostAction({
-		type: 'preview.download',
-		filename: 'diagram.png',
-		mimeType: 'image/png',
-		bytesBase64: 'AAE=',
-	}), {
-		type: 'preview.download',
-		filename: 'diagram.png',
-		mimeType: 'image/png',
-		bytesBase64: 'AAE=',
-	});
+	assert.deepEqual(
+		parseTerminayHostAction({
+			type: 'preview.download',
+			filename: 'diagram.png',
+			mimeType: 'image/png',
+			bytesBase64: 'AAE=',
+		}),
+		{
+			type: 'preview.download',
+			filename: 'diagram.png',
+			mimeType: 'image/png',
+			bytesBase64: 'AAE=',
+		},
+	);
 	for (const action of [
-		{ type: 'preview.download', filename: 'x', mimeType: 'text/plain; charset=utf-8', bytesBase64: 'AA==' },
-		{ type: 'preview.download', filename: 'x', mimeType: 'text/plain', bytesBase64: '' },
-		{ type: 'preview.download', filename: 'x', mimeType: 'text/plain', bytesBase64: 'not base64!' },
-	]) assert.throws(() => parseTerminayHostAction(action), /preview (MIME type|download payload) is invalid/u);
+		{
+			type: 'preview.download',
+			filename: 'x',
+			mimeType: 'text/plain; charset=utf-8',
+			bytesBase64: 'AA==',
+		},
+		{
+			type: 'preview.download',
+			filename: 'x',
+			mimeType: 'text/plain',
+			bytesBase64: '',
+		},
+		{
+			type: 'preview.download',
+			filename: 'x',
+			mimeType: 'text/plain',
+			bytesBase64: 'not base64!',
+		},
+	])
+		assert.throws(
+			() => parseTerminayHostAction(action),
+			/preview (MIME type|download payload) is invalid/u,
+		);
 });
 
 test('native menu accelerator updates are bounded and immutable', () => {
@@ -388,29 +423,53 @@ test('native menu accelerator updates are bounded and immutable', () => {
 });
 
 test('performance logging is a closed Desktop host action and bound event', () => {
-	assert.deepEqual(parseTerminayHostAction({
-		type: 'diagnostics.performance-logging.set',
-		enabled: true,
-	}), { type: 'diagnostics.performance-logging.set', enabled: true });
-	assert.throws(
-		() => parseTerminayHostAction({
+	assert.deepEqual(
+		parseTerminayHostAction({
 			type: 'diagnostics.performance-logging.set',
-			enabled: 'true',
+			enabled: true,
 		}),
+		{ type: 'diagnostics.performance-logging.set', enabled: true },
+	);
+	assert.throws(
+		() =>
+			parseTerminayHostAction({
+				type: 'diagnostics.performance-logging.set',
+				enabled: 'true',
+			}),
 		/performance logging/u,
 	);
 	const context = parseTerminayHostContext({
-		schemaVersion: 1, bootstrapVersion: 1, sourceId: 'source-a',
-		windowId: 'window-a', serverId: 'server-a', profileId: 'profile-a',
-		bundleId: 'bundle_12345678', applicationProtocolVersion: '1',
-		hostKind: 'desktop', hostBridgeVersion: 1, byteEndpointVersion: 1,
+		schemaVersion: 1,
+		bootstrapVersion: 1,
+		sourceId: 'source-a',
+		windowId: 'window-a',
+		serverId: 'server-a',
+		profileId: 'profile-a',
+		bundleId: 'bundle_12345678',
+		applicationProtocolVersion: '1',
+		hostKind: 'desktop',
+		hostBridgeVersion: 1,
+		byteEndpointVersion: 1,
 		capabilities: { nativeMenus: 1 },
 	});
-	assert.deepEqual(parseTerminayHostEvent({
-		schemaVersion: 1, bridgeVersion: 1, sourceId: 'source-a',
-		windowId: 'window-a', serverId: 'server-a', profileId: 'profile-a',
-		event: { type: 'diagnostics.performance-logging.changed', enabled: false },
-	}, context).event, { type: 'diagnostics.performance-logging.changed', enabled: false });
+	assert.deepEqual(
+		parseTerminayHostEvent(
+			{
+				schemaVersion: 1,
+				bridgeVersion: 1,
+				sourceId: 'source-a',
+				windowId: 'window-a',
+				serverId: 'server-a',
+				profileId: 'profile-a',
+				event: {
+					type: 'diagnostics.performance-logging.changed',
+					enabled: false,
+				},
+			},
+			context,
+		).event,
+		{ type: 'diagnostics.performance-logging.changed', enabled: false },
+	);
 	assert.equal(
 		requiredTerminayHostCapability({
 			type: 'diagnostics.performance-logging.set',
@@ -420,28 +479,129 @@ test('performance logging is a closed Desktop host action and bound event', () =
 	);
 });
 
+test('the performance snapshot is a closed Desktop host action and bound event', () => {
+	assert.deepEqual(
+		parseTerminayHostAction({ type: 'diagnostics.performance-snapshot.read' }),
+		{ type: 'diagnostics.performance-snapshot.read' },
+	);
+	// The read carries no parameters: a window cannot ask for anything else.
+	assert.throws(
+		() =>
+			parseTerminayHostAction({
+				type: 'diagnostics.performance-snapshot.read',
+				path: '/var/log/terminay',
+			}),
+		/performance snapshot action/u,
+	);
+	assert.throws(
+		() =>
+			parseTerminayHostAction({
+				type: 'diagnostics.performance-snapshot.read',
+				sessionId: 'session-a',
+			}),
+		/performance snapshot action/u,
+	);
+	const context = parseTerminayHostContext({
+		schemaVersion: 1,
+		bootstrapVersion: 1,
+		sourceId: 'source-a',
+		windowId: 'window-a',
+		serverId: 'server-a',
+		profileId: 'profile-a',
+		bundleId: 'bundle_12345678',
+		applicationProtocolVersion: '1',
+		hostKind: 'desktop',
+		hostBridgeVersion: 1,
+		byteEndpointVersion: 1,
+		capabilities: { nativeMenus: 1 },
+	});
+	const snapshot = { timeline: { phases: [] }, samples: [], terminals: {} };
+	assert.deepEqual(
+		parseTerminayHostEvent(
+			{
+				schemaVersion: 1,
+				bridgeVersion: 1,
+				sourceId: 'source-a',
+				windowId: 'window-a',
+				serverId: 'server-a',
+				profileId: 'profile-a',
+				event: { type: 'diagnostics.performance-snapshot.changed', snapshot },
+			},
+			context,
+		).event,
+		{ type: 'diagnostics.performance-snapshot.changed', snapshot },
+	);
+	assert.throws(
+		() =>
+			parseTerminayHostEvent(
+				{
+					schemaVersion: 1,
+					bridgeVersion: 1,
+					sourceId: 'source-a',
+					windowId: 'window-a',
+					serverId: 'server-a',
+					profileId: 'profile-a',
+					event: {
+						type: 'diagnostics.performance-snapshot.changed',
+						snapshot,
+						directory: '/var/log/terminay',
+					},
+				},
+				context,
+			),
+		/host performance snapshot event/u,
+	);
+	assert.equal(
+		requiredTerminayHostCapability({
+			type: 'diagnostics.performance-snapshot.read',
+		}),
+		'nativeMenus',
+	);
+});
+
 test('device settings use a closed host action and bound event snapshot', () => {
 	const settings = { keyboardShortcuts: { 'new-terminal': 'CmdOrCtrl+Y' } };
-	assert.deepEqual(parseTerminayHostAction({
-		type: 'device.settings.update',
-		settings,
-	}), { type: 'device.settings.update', settings });
+	assert.deepEqual(
+		parseTerminayHostAction({
+			type: 'device.settings.update',
+			settings,
+		}),
+		{ type: 'device.settings.update', settings },
+	);
 	assert.throws(
-		() => parseTerminayHostAction({ type: 'device.settings.update', settings: [] }),
+		() =>
+			parseTerminayHostAction({ type: 'device.settings.update', settings: [] }),
 		/device settings/u,
 	);
 	const context = parseTerminayHostContext({
-		schemaVersion: 1, bootstrapVersion: 1, sourceId: 'source-a',
-		windowId: 'window-a', serverId: 'server-a', profileId: 'profile-a',
-		bundleId: 'bundle_12345678', applicationProtocolVersion: '1',
-		hostKind: 'desktop', hostBridgeVersion: 1, byteEndpointVersion: 1,
+		schemaVersion: 1,
+		bootstrapVersion: 1,
+		sourceId: 'source-a',
+		windowId: 'window-a',
+		serverId: 'server-a',
+		profileId: 'profile-a',
+		bundleId: 'bundle_12345678',
+		applicationProtocolVersion: '1',
+		hostKind: 'desktop',
+		hostBridgeVersion: 1,
+		byteEndpointVersion: 1,
 		capabilities: { nativeMenus: 1 },
 	});
-	assert.deepEqual(parseTerminayHostEvent({
-		schemaVersion: 1, bridgeVersion: 1, sourceId: 'source-a',
-		windowId: 'window-a', serverId: 'server-a', profileId: 'profile-a',
-		event: { type: 'device.settings.changed', settings },
-	}, context).event, { type: 'device.settings.changed', settings });
+	assert.deepEqual(
+		parseTerminayHostEvent(
+			{
+				schemaVersion: 1,
+				bridgeVersion: 1,
+				sourceId: 'source-a',
+				windowId: 'window-a',
+				serverId: 'server-a',
+				profileId: 'profile-a',
+				event: { type: 'device.settings.changed', settings },
+			},
+			context,
+		).event,
+		{ type: 'device.settings.changed', settings },
+	);
 });
 
 test('host compatibility rejects ambiguous and unknown capability requirements', () => {
