@@ -366,7 +366,7 @@ export class GitDiffService {
     const cwd = await this.resolveGitCommandCwd(rawRepoPath)
     const worktreePath = this.fileBufferService.normalizePath(rawWorktreePath)
     const args = force
-      ? ['worktree', 'remove', '--force', worktreePath]
+      ? ['worktree', 'remove', '--force', '--force', worktreePath]
       : ['worktree', 'remove', worktreePath]
 
     try {
