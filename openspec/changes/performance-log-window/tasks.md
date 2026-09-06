@@ -14,9 +14,9 @@
 
 ## 3. Lightweight runtime metrics collector
 
-- [ ] 3.1 Factor the process-snapshot and event-loop-histogram helpers out of `electron/diagnostics/performance.ts` into a shared module without changing the opt-in collector's behaviour. Verified by the existing `scripts/local-desktop-diagnostics-performance.test.mjs` passing unmodified.
-- [ ] 3.2 Add `electron/diagnostics/runtimeMetrics.ts`: a 1 s bounded interval, a fixed 300-sample ring, process type/label/CPU/working-set, event-loop delay, heap and RSS totals, `start()`/`stop()` refcounted by subscriber, and no writer, no tracing, no stacks, no IPC counting. Verified by a new unit test covering ring overwrite at capacity, no sampling with zero subscribers, and stop-on-last-unsubscribe.
-- [ ] 3.3 Add a boundaries assertion that `runtimeMetrics.ts` imports neither `contentTracing`, the diagnostics writer, nor `node:fs`. Verified by `scripts/local-desktop-diagnostics-boundaries.test.mjs` passing.
+- [x] 3.1 Factor the process-snapshot and event-loop-histogram helpers out of `electron/diagnostics/performance.ts` into a shared module without changing the opt-in collector's behaviour. Verified by the existing `scripts/local-desktop-diagnostics-performance.test.mjs` passing unmodified.
+- [x] 3.2 Add `electron/diagnostics/runtimeMetrics.ts`: a 1 s bounded interval, a fixed 300-sample ring, process type/label/CPU/working-set, event-loop delay, heap and RSS totals, `start()`/`stop()` refcounted by subscriber, and no writer, no tracing, no stacks, no IPC counting. Verified by a new unit test covering ring overwrite at capacity, no sampling with zero subscribers, and stop-on-last-unsubscribe.
+- [x] 3.3 Add a boundaries assertion that `runtimeMetrics.ts` imports neither `contentTracing`, the diagnostics writer, nor `node:fs`. Verified by `scripts/local-desktop-diagnostics-boundaries.test.mjs` passing.
 
 ## 4. Per-terminal local resource sampling
 
