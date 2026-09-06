@@ -1,8 +1,43 @@
+import { readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { writeFile } from 'node:fs/promises';
-import { expect, nativeGrokSessionId, test } from './fixtures';
+import { expect, test } from './fixtures';
 import { typeInVisibleTerminal } from './support/terminal-input';
-import { selectSidebarGroup } from './support/ui';
+import { selectSidebarGroup, setProjectRoot } from './support/ui';
+
+async function nativeGrokSessionId(tempDir: string): Promise<string> {
+	const root = path.join(
+		tempDir,
+		'native-grok-home',
+		'sessions',
+		'e2e-workspace',
+	);
+	const names = await readdir(root);
+	const id = names.find((name) => /^[0-9a-f-]{36}$/iu.test(name));
+	if (!id) {
+		throw new Error(
+			`native grok session missing in ${root}: ${names.join(',')}`,
+		);
+	}
+	return id;
+}
+
+async function expectVisibleAgentCount(
+	page: Parameters<typeof selectSidebarGroup>[0],
+	count: number,
+): Promise<void> {
+	await selectSidebarGroup(page, 'agents');
+	const workspace = page.locator('.project-workspace--active');
+	if (count === 0) {
+		await expect(workspace.locator('.agents-sidebar__empty')).toBeVisible({
+			timeout: 15_000,
+		});
+		return;
+	}
+	await expect(workspace.locator('.agents-sidebar__tree-item')).toHaveCount(
+		count,
+		{ timeout: 15_000 },
+	);
+}
 
 /**
  * Stub Grok binary: prints canned "Grok e2e ready/resumed" and uses a
@@ -55,10 +90,8 @@ test('a real process-bound Grok CLI appears, leaves, and returns to Agents on re
 	await expect(root).toHaveCount(0, { timeout: 15_000 });
 	await expect(mainWindow.locator('.agents-sidebar__empty')).toBeVisible();
 
-	await typeInVisibleTerminal(
-		mainWindow,
-		`grok --resume ${nativeGrokSessionId}\n`,
-	);
+	const sessionId = await nativeGrokSessionId(tempDir);
+	await typeInVisibleTerminal(mainWindow, `grok --resume ${sessionId}\n`);
 	await expect
 		.poll(async () => await terminal.textContent(), { timeout: 15_000 })
 		.toMatch(/Grok e2e resumed/u);
@@ -78,13 +111,13 @@ test('a real process-bound Grok CLI appears, leaves, and returns to Agents on re
 		'native-grok-home',
 		'sessions',
 		'e2e-workspace',
-		nativeGrokSessionId,
+		sessionId,
 		'summary.json',
 	);
 	await writeFile(
 		summary,
 		`${JSON.stringify({
-			info: { id: nativeGrokSessionId },
+			info: { id: sessionId },
 			generated_title: 'Renamed native Grok session',
 			session_summary: 'Renamed native Grok session',
 			current_model_id: 'grok-4.6',
@@ -99,4 +132,76 @@ test('a real process-bound Grok CLI appears, leaves, and returns to Agents on re
 		'data-agent-state',
 		'done',
 	);
+});
+
+test('two projects each keep a live Grok agent, including after a later turn and resume', async ({
+	mainWindow,
+	createWorkspace,
+	tempDir,
+}) => {
+	test.setTimeout(120_000);
+	const books = await createWorkspace({ name: 'books' });
+	const other = await createWorkspace({ name: 'terminay' });
+	await setProjectRoot(mainWindow, books.rootDir);
+	await typeInVisibleTerminal(mainWindow, 'grok\n');
+	await expect
+		.poll(
+			async () =>
+				await mainWindow.locator('.terminal-panel:visible').textContent(),
+			{ timeout: 15_000 },
+		)
+		.toMatch(/Grok e2e ready/u);
+	await expectVisibleAgentCount(mainWindow, 1);
+	const booksSessionId = await nativeGrokSessionId(tempDir);
+
+	await mainWindow.getByLabel('Create project on This server').click();
+	await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+	await setProjectRoot(mainWindow, other.rootDir);
+	await typeInVisibleTerminal(mainWindow, 'grok\n');
+	await expect
+		.poll(
+			async () =>
+				await mainWindow.locator('.terminal-panel:visible').textContent(),
+			{ timeout: 15_000 },
+		)
+		.toMatch(/Grok e2e ready/u);
+	await expectVisibleAgentCount(mainWindow, 1);
+
+	await mainWindow.locator('.project-tab').first().click();
+	await expectVisibleAgentCount(mainWindow, 1);
+	const booksRoot = mainWindow.locator(
+		'.project-workspace--active .agents-sidebar__tree-item',
+	);
+	await typeInVisibleTerminal(mainWindow, 'hi\n');
+	await expect(booksRoot.locator('.agents-sidebar__row')).toHaveAttribute(
+		'data-agent-state',
+		'done',
+		{ timeout: 15_000 },
+	);
+	await typeInVisibleTerminal(mainWindow, 'again\n');
+	await expect(booksRoot.locator('.agents-sidebar__row')).toHaveAttribute(
+		'data-agent-state',
+		'working',
+		{ timeout: 15_000 },
+	);
+	await expect(booksRoot.locator('.agents-sidebar__row')).toHaveAttribute(
+		'data-agent-state',
+		'done',
+		{ timeout: 15_000 },
+	);
+
+	await typeInVisibleTerminal(mainWindow, 'quit\n');
+	await expectVisibleAgentCount(mainWindow, 0);
+	await typeInVisibleTerminal(mainWindow, `grok --resume ${booksSessionId}\n`);
+	await expect
+		.poll(
+			async () =>
+				await mainWindow.locator('.terminal-panel:visible').textContent(),
+			{ timeout: 15_000 },
+		)
+		.toMatch(/Grok e2e resumed/u);
+	await expectVisibleAgentCount(mainWindow, 1);
+
+	await mainWindow.locator('.project-tab').nth(1).click();
+	await expectVisibleAgentCount(mainWindow, 1);
 });
