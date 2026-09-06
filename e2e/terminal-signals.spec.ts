@@ -159,4 +159,37 @@ test.describe('terminal activity signals', () => {
     ).toHaveCount(0)
     await expect(mainWindow.locator('.terminal-activity-pill--unviewed')).toHaveCount(0)
   })
+
+  test('activating a project does not dismiss a finished terminal until that terminal is clicked', async ({
+    mainWindow,
+  }) => {
+    const { tab } = await withBackgroundTerminal(mainWindow)
+
+    await writeToBackgroundSession(
+      mainWindow,
+      tab,
+      "sleep 2.1; printf '\\033]9;4;3;\\007'; printf '\\033]9;4;0;\\007'\r",
+    )
+
+    await expect(tab).toHaveAttribute('data-terminal-activity', 'unviewed')
+    await expect(mainWindow.locator('.project-tab--active .project-tab-activity-badge')).toHaveText('1')
+
+    await mainWindow.getByLabel('Create project on This server').click()
+    await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 2')
+
+    const originalProject = mainWindow.locator('.project-tab').filter({ hasText: /^Project$/ })
+    await originalProject.click()
+    await expect(mainWindow.locator('.project-tab--active')).toContainText('Project')
+    await expect(mainWindow.locator('.project-tab--active')).not.toContainText('Project 2')
+
+    const finishedTab = mainWindow
+      .locator('.project-workspace--active .terminal-tab-content')
+      .filter({ hasText: 'Terminal 2' })
+    await expect(finishedTab).toHaveAttribute('data-terminal-activity', 'unviewed')
+    await expect(mainWindow.locator('.project-tab--active .project-tab-activity-badge')).toHaveText('1')
+
+    await finishedTab.click()
+    await expect(finishedTab).toHaveAttribute('data-terminal-activity', 'viewed')
+    await expect(mainWindow.locator('.project-tab--active .project-tab-activity-badge')).toHaveCount(0)
+  })
 })

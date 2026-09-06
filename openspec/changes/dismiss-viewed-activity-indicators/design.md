@@ -13,9 +13,10 @@ This is a client projection and presentation change. It does not move activity a
 
 **Goals:**
 
-- Focusing a finished or attention terminal clears that terminal's indicator and drops it from the project count and header aggregate.
-- Finished or attention activity that arrives on an already-focused terminal is treated as viewed.
-- Working (amber) remains on the focused tab until work ends.
+- Clicking a terminal tab, clicking into the xterm, or typing clears that terminal's finished or attention indicator and drops it from the project count and header aggregate.
+- Activating a project does not acknowledge any of that project's terminals.
+- Finished or attention activity that arrives while the user is already interacting with that terminal is treated as viewed.
+- Working (amber) remains until work ends.
 - Fallback activity and canonical agent RAG on tabs follow the same unviewed-vs-live rule.
 
 **Non-Goals:**
@@ -27,13 +28,15 @@ This is a client projection and presentation change. It does not move activity a
 
 ## Decisions
 
-### Acknowledge finished and attention on the focused session, including claimed ones
+### Acknowledge from terminal interaction, not project activation
 
-Extend the snapshot fold-back so a focused session that is not `working` is acknowledged whether or not it is claimed. Working snapshots are applied as-is so amber stays. Tab selection already calls `markViewed`, which acknowledges both fallback activity and bound agents; keep that path.
+Keep an `interactedSessionId` for the current project visit. Set it when the user clicks that terminal's tab, clicks into the xterm, or types; also set it from explicit terminal navigation such as the activity menu. Clear it when the project becomes inactive. Snapshot fold-back acknowledges claimed finished or attention only when that session is the interacted one and is not `working`.
+
+Do not acknowledge from Dockview `onDidActivePanelChange` alone: activating a project makes its last panel active without the user touching the terminal.
 
 Alternative considered: auto-acknowledge inside the server reducer when any client is "focused". Rejected because focus is a per-window client fact, not a session identity the server can own without a new protocol. The existing acknowledge commands are the client boundary.
 
-Alternative considered: suppress finished indicators only in the renderer without acknowledging. Rejected because the project count and header read the same items; a local hide would desync those surfaces and revive the indicator after reload.
+Alternative considered: treat "project is active and this panel is Dockview-active" as viewing. Rejected because clicking a project tab would dismiss green/red before the user has looked at the terminal.
 
 ### Gate tab RAG for `done`, `waiting`, and `blocked` on unread; always show `working`
 
