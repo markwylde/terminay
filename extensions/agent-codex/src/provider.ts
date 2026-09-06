@@ -268,7 +268,9 @@ async function* discoverChildSources(
   } catch {
     // The root remains valid when optional bounded discovery disappears.
   } finally {
-    await watcher?.dispose();
+    // Disposal after the terminal signal aborted is itself a cancelled
+    // observation request; a cancelled cleanup must not reject the discovery.
+    try { await watcher?.dispose(); } catch { /* already torn down by the host */ }
   }
 }
 
@@ -377,7 +379,8 @@ class CodexSessionWatcher implements AgentFileWatcher {
       }
     } finally {
       this.closed = true;
-      await Promise.all(watchers.map((watcher) => watcher.dispose()));
+      try { await Promise.all(watchers.map((watcher) => watcher.dispose())); }
+      catch { /* the host cancelled the observation; nothing is left to release */ }
     }
   }
 
@@ -413,6 +416,10 @@ interface ObservedSource {
 
 function scheduleNext(source: ObservedSource): void {
   source.pending = source.iterator.next().then((result) => ({ source, result }));
+  // Only the winner of each Promise.race is awaited. When the terminal signal
+  // aborts, every source rejects at once and the losers would surface as
+  // unhandled rejections, which the extension child treats as fatal.
+  source.pending.catch(() => undefined);
 }
 
 function sessionTitle(record: unknown, sessionId: string): string | undefined {

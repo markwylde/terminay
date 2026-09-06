@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import {
+	createAgentExtensionHarness,
+	fixtureTerminal,
+} from '@terminay/extension-api/testing';
+import extension from '../dist/index.js';
 import { createClaudeRecordMapper } from '../dist/mapping.js';
 
 const sessionId = '5f2aff08-eab3-4852-96eb-48235fc7f471';
@@ -48,9 +54,18 @@ test('the first header block starts the session exactly once', () => {
 	assert.equal(events[1].title, 'Investigate the parser');
 });
 
-test('a later header block opens a turn instead of restarting the session', () => {
+test('a later header block neither restarts the session nor opens a turn', () => {
+	// The real CLI rewrites its header block as bookkeeping — at session start,
+	// again after the user prompt, and again after `turn_duration` — so a header
+	// arriving after a completed turn must leave the entry done.
 	const events = collect([
 		...header(),
+		{
+			type: 'user',
+			sessionId,
+			promptId: 'p1',
+			message: { role: 'user', content: 'Inspect the parser' },
+		},
 		{ type: 'system', subtype: 'turn_duration', sessionId },
 		{ type: 'mode', mode: 'normal', sessionId },
 		{
@@ -60,15 +75,25 @@ test('a later header block opens a turn instead of restarting the session', () =
 			uuid: 'header-2',
 		},
 		{ type: 'atis-latch', atis: '', sessionId },
+		{ type: 'bridge-session', sessionId, bridgeSessionId: 'cse_2' },
 	]);
 	const kinds = events.map((event) => event.kind);
 	assert.equal(
 		kinds.filter((kind) => kind === 'sessionStarted').length,
 		1,
-		'one session start across two turns',
+		'one session start across the whole journal',
 	);
-	assert.deepEqual(kinds.slice(-2), ['done', 'turnStarted']);
-	assert.equal(events.at(-1).turnId, 'header-2');
+	assert.deepEqual(kinds, [
+		'sessionStarted',
+		'metadataChanged',
+		'turnStarted',
+		'done',
+	]);
+	assert.equal(
+		kinds.lastIndexOf('turnStarted') < kinds.lastIndexOf('done'),
+		true,
+		'the trailing header block leaves the entry done, never working',
+	);
 });
 
 test('a turn completes on turn_duration', () => {
@@ -330,4 +355,73 @@ test('a child journal never projects prompts or assistant text', () => {
 		},
 	]);
 	assert.equal(JSON.stringify(events).includes('secret'), false);
+});
+
+/**
+ * The record order a real Claude Code 2.1.263 run wrote for one user turn
+ * ("Reply with the single word ready."), captured verbatim apart from the
+ * conversation payloads. Its header block is rewritten three times — at session
+ * start, after the user prompt, and after `turn_duration` — so it is the
+ * evidence that a header is bookkeeping rather than a turn boundary.
+ */
+test('the real one-turn journal ends done, with no turn opened by its rewritten headers', async () => {
+	const capturedSession = '359d528f-27eb-4030-9375-7c6ade9b29f8';
+	const records = (
+		await readFile(
+			new URL('../fixtures/real-turn-headers-v01.jsonl', import.meta.url),
+			'utf8',
+		)
+	)
+		.trim()
+		.split('\n')
+		.map((line) => JSON.parse(line));
+	const harness = await createAgentExtensionHarness(extension);
+	try {
+		await harness.observe(
+			fixtureTerminal({
+				foregroundExecutable: 'claude',
+				files: {
+					[`/fixture/.claude/projects/-workspace/${capturedSession}.jsonl`]:
+						records,
+				},
+			}),
+		);
+		const events = harness.events();
+		assert.deepEqual(
+			events.map((event) => event.kind),
+			[
+				'session.started',
+				// The user prompt opens the only turn the prompt is responsible for.
+				'turn.started',
+				'agent.metadata',
+				'agent.metadata',
+				'agent.metadata',
+				// The assistant record re-asserts working under its own turn id.
+				'turn.started',
+				// `end_turn` completes the turn, and `turn_duration` confirms it.
+				'agent.done',
+				'agent.done',
+				// Only the trailing title metadata follows; the headers emit nothing.
+				'agent.metadata',
+			],
+		);
+		const starts = events.filter((event) => event.kind === 'turn.started');
+		assert.deepEqual(
+			starts.map((event) => event.turnId),
+			[
+				'acdd451b-f02c-4f3e-b133-1aea28468dee',
+				'ec83b685-31c6-4e79-9027-67ded43a24ea',
+			],
+			'only the user prompt and the assistant record open turns',
+		);
+		assert.equal(starts[0].promptText, 'Reply with the single word ready.');
+		const kinds = events.map((event) => event.kind);
+		assert.equal(
+			kinds.slice(kinds.lastIndexOf('agent.done')).includes('turn.started'),
+			false,
+			'nothing after the final agent.done projects the entry as working',
+		);
+	} finally {
+		await harness.dispose();
+	}
 });

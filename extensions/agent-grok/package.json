@@ -50,8 +50,7 @@
 	"devDependencies": {
 		"@terminay/extension-api": "^1.2.0",
 		"@types/node": "^24.0.0",
-		"typescript": "^6.0.0",
-		"@terminay/agent-conformance": "^0.1.0"
+		"typescript": "^6.0.0"
 	},
 	"terminay": {
 		"manifestVersion": 1,

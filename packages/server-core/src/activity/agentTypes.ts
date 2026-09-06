@@ -151,6 +151,10 @@ interface AgentStatusEntryBase {
 	readonly waitingReason?: string;
 	/** True when the current state was derived from a journal rather than read from an explicit record. */
 	readonly inferred?: boolean;
+	/** True on a root whose own turn completed while a child was still
+	 * working. The recorded completion is held until the last working child
+	 * completes, so a root never goes `done` ahead of its children. */
+	readonly completionHeldByChildren?: boolean;
 	readonly completionOutcome?: AgentCompletionOutcome;
 	readonly summary?: string;
 	readonly exitCode?: number;

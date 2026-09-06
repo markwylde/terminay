@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict';
+import { readdir, readFile } from 'node:fs/promises';
 import test from 'node:test';
+import {
+	createAgentExtensionHarness,
+	fixtureTerminal,
+} from '@terminay/extension-api/testing';
+import extension from '../dist/index.js';
 import { createGrokRecordMapper } from '../dist/provider.js';
 import { subagentRecordFrom } from '../dist/subagents.js';
 
@@ -173,4 +179,99 @@ test('an explicit permission request stays explicit, not inferred', () => {
 		undefined,
 		'Grok records permission requests explicitly',
 	);
+});
+
+/**
+ * Recorded Grok 1.0.13 run: the CLI created `<session>/subagents/` about twelve
+ * seconds after it created `events.jsonl`, so that directory does not exist
+ * while the root binds. `subagentsAppearLate` reproduces exactly that ordering
+ * by resolving nothing for the `subagents` path, as the real filesystem did.
+ */
+const RECORDED_SESSION = '01a07725-52c0-7d60-a13b-1ef9edc8bd7f';
+const RECORDED_DIRECTORY = `/home/test/.grok/sessions/%2Fprivate%2Fvar%2Ffolders%2Fgw%2Fn_lr8lp97k93jpcv2qg_1mpw0000gn%2FT%2Fterminay-conformance-rvnAd5/${RECORDED_SESSION}`;
+
+async function recordedSessionFiles() {
+	const base = new URL('../fixtures/v0.1/three-subagents/', import.meta.url);
+	const events = (await readFile(new URL('events.jsonl', base), 'utf8'))
+		.trim()
+		.split('\n')
+		.map((line) => JSON.parse(line));
+	const files = { [`${RECORDED_DIRECTORY}/events.jsonl`]: events };
+	const children = await readdir(new URL('subagents/', base));
+	for (const child of children.sort()) {
+		files[`${RECORDED_DIRECTORY}/subagents/${child}/meta.json`] = [
+			JSON.parse(
+				await readFile(new URL(`subagents/${child}/meta.json`, base), 'utf8'),
+			),
+		];
+	}
+	return files;
+}
+
+function subagentsAppearLate(terminal) {
+	const files = {
+		...terminal.observation.files,
+		async resolveHomeDirectory(relativePath, request) {
+			// `<session>/subagents` does not exist while the root is binding; only
+			// the session directory that already holds events.jsonl does.
+			if (relativePath.replace(/\/$/, '').endsWith('/subagents'))
+				return undefined;
+			return terminal.observation.files.resolveHomeDirectory(
+				relativePath,
+				request,
+			);
+		},
+	};
+	return {
+		...terminal,
+		observation: { ...terminal.observation, files },
+	};
+}
+
+test('children created after the root binds are still enumerated', async () => {
+	const harness = await createAgentExtensionHarness(extension);
+	try {
+		await harness.observe(
+			subagentsAppearLate(
+				fixtureTerminal({
+					foregroundExecutable: 'grok',
+					files: await recordedSessionFiles(),
+					openFilePaths: [`${RECORDED_DIRECTORY}/events.jsonl`],
+				}),
+			),
+		);
+		const events = harness.events();
+		assert.deepEqual(
+			events
+				.filter((event) => event.kind === 'subagent.started')
+				.map((event) => event.title)
+				.sort(),
+			['Compute 17 times 19', 'Compute 2 to the 12', 'Sum numbers 1 to 100'],
+		);
+		assert.deepEqual(
+			events
+				.filter((event) => event.kind === 'subagent.started')
+				.map((event) => event.parentAgentId),
+			[RECORDED_SESSION, RECORDED_SESSION, RECORDED_SESSION],
+		);
+		assert.deepEqual(
+			events
+				.filter((event) => event.kind === 'subagent.done')
+				.map((event) => event.outcome),
+			['success', 'success', 'success'],
+		);
+		assert.deepEqual(
+			events
+				.filter((event) => event.kind === 'subagent.done')
+				.map((event) => event.subagentId)
+				.sort(),
+			events
+				.filter((event) => event.kind === 'subagent.started')
+				.map((event) => event.subagentId)
+				.sort(),
+		);
+		assert.equal(JSON.stringify(events).includes('prompt'), false);
+	} finally {
+		await harness.dispose();
+	}
 });

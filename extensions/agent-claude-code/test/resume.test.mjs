@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+	claudeProjectDirectoryPath,
 	claudeProjectJournalPath,
 	claudeResumeSessionId,
 } from '../dist/index.js';
@@ -27,5 +28,19 @@ test('Claude Code derives only the provider-owned project journal path', () => {
 	assert.equal(
 		claudeProjectJournalPath('/work/acme', 'not-a-session'),
 		undefined,
+	);
+});
+
+test('the project directory encoding replaces every non-alphanumeric character', () => {
+	// Taken from a real run: a macOS temporary directory with underscores.
+	assert.equal(
+		claudeProjectDirectoryPath(
+			'/private/var/folders/gw/n_lr8lp97k93jpcv2qg_1mpw0000gn/T/terminay-conformance-KYT549',
+		),
+		'.claude/projects/-private-var-folders-gw-n-lr8lp97k93jpcv2qg-1mpw0000gn-T-terminay-conformance-KYT549',
+	);
+	assert.equal(
+		claudeProjectDirectoryPath('/Users/mark/Documents/Projects/terminay/terminay'),
+		'.claude/projects/-Users-mark-Documents-Projects-terminay-terminay',
 	);
 });
