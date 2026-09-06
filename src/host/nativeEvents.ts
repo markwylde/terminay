@@ -74,11 +74,7 @@ export function subscribeDesktopPerformanceSnapshot(
  * renders the code itself. */
 export function subscribePairingApproval(
 	listener: (
-		approval: Readonly<{
-			deviceName: string;
-			matchCode: string;
-			expiresAt: string;
-		}>,
+		approval: Readonly<{ deviceName: string; matchCode: string; expiresAt: string }>,
 	) => void,
 ): () => void {
 	if (typeof window === 'undefined') return () => undefined;
