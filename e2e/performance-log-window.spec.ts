@@ -26,9 +26,9 @@ test('opens the Performance Log window and shows the startup breakdown', async (
   const phases = performanceWindow.locator('.perf-phase-row')
   await expect(phases.first()).toBeVisible()
   expect(await phases.count()).toBeGreaterThan(1)
-  await expect(performanceWindow.locator('.perf-phase-total')).toContainText(
-    'slowest phase:',
-  )
+  await expect(
+    performanceWindow.locator('.perf-summary-stat--slow'),
+  ).toBeVisible()
 
   // The dominant phase is called out rather than left for the reader to find.
   await expect(
@@ -106,9 +106,13 @@ test('a terminal without local usage states why instead of showing zero', async 
   await expect(terminals).toBeVisible()
 
   // Whatever the state, the section never presents an unmeasured terminal as
-  // zero: it is either a real measurement or a stated reason.
-  const unavailable = terminals.locator('.perf-unavailable')
+  // zero: an unavailable row states its reason and shows an em dash, never 0.
+  const unavailable = terminals.locator('.perf-sub.perf-unavailable')
   for (let index = 0; index < (await unavailable.count()); index += 1) {
-    await expect(unavailable.nth(index)).toContainText('Not available')
+    const row = terminals.locator('tbody tr').filter({
+      has: unavailable.nth(index),
+    })
+    await expect(row.locator('.perf-numeric').first()).toHaveText('—')
+    await expect(unavailable.nth(index)).toContainText('·')
   }
 })

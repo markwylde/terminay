@@ -283,9 +283,10 @@ let startupPhaseWindow: BrowserWindow | null = null;
 /** Repaints are dropped once the verified bundle navigation has begun, so the
  * phase line can never race the handoff that replaces the whole document. */
 let startupPhasePaintingStopped = false;
-/** The key of the rule currently revealing a phase line, so it can be removed
- * when the next phase replaces it. */
-let startupPhaseCssKey: string | undefined;
+/** Keys of inserted phase rules, newest last, so superseded ones are removed. */
+let startupPhaseCssKeys: string[] = [];
+/** Reveals run one at a time. */
+let startupPhaseReveals: Promise<void> = Promise.resolve();
 
 /** Windows currently presenting the Performance Log route, and the release
  * handle each one holds on the lightweight collector. Sampling runs only while
@@ -317,19 +318,26 @@ function revealStartupPhaseLine(id: StartupPhaseId | StartupSubPhaseId): void {
 	const window = startupPhaseWindow;
 	if (window === null || startupPhasePaintingStopped || window.isDestroyed())
 		return;
-	const previous = startupPhaseCssKey;
-	startupPhaseCssKey = undefined;
-	void window.webContents
-		.insertCSS(startupPhaseVisibilityCss(id))
-		.then(async (key) => {
+	// Serialize so two phases cannot interleave their insert/remove pairs.
+	// Correctness does not depend on this: the rule form makes the newest rule
+	// win regardless. Serializing only keeps the stylesheet from growing.
+	startupPhaseReveals = startupPhaseReveals
+		.then(async () => {
 			if (startupPhasePaintingStopped || window.isDestroyed()) return;
-			startupPhaseCssKey = key;
-			if (previous !== undefined)
-				await window.webContents.removeInsertedCSS(previous);
+			const key = await window.webContents.insertCSS(
+				startupPhaseVisibilityCss(id),
+			);
+			const stale = startupPhaseCssKeys;
+			startupPhaseCssKeys = [key];
+			for (const previous of stale) {
+				if (window.isDestroyed()) return;
+				await window.webContents
+					.removeInsertedCSS(previous)
+					.catch(() => undefined);
+			}
 		})
 		.catch(() => {
 			// A failed reveal leaves the previously shown line in place.
-			startupPhaseCssKey = previous;
 		});
 }
 
@@ -337,7 +345,7 @@ function revealStartupPhaseLine(id: StartupPhaseId | StartupSubPhaseId): void {
 function stopStartupPhasePainting(): void {
 	startupPhasePaintingStopped = true;
 	startupPhaseWindow = null;
-	startupPhaseCssKey = undefined;
+	startupPhaseCssKeys = [];
 }
 
 export const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL'];

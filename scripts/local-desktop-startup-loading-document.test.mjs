@@ -65,6 +65,7 @@ test('every phase label is baked in, hidden, and revealed one at a time', () => 
 	assert.ok(html.includes('.phase{display:none'));
 	assert.ok(html.includes('.phase[data-phase="vault-unlock"]{display:block}'));
 	assert.equal(html.split('{display:block}').length - 1, 1);
+	assert.ok(html.includes('.phase[data-phase]{display:none}'));
 	// The block follows the dots, so it renders beneath the indicator.
 	assert.ok(html.indexOf('class="dots"') < html.indexOf('class="phases"'));
 });
@@ -76,9 +77,12 @@ test('with no active phase no line is revealed', () => {
 });
 
 test('the reveal rule is confined to the closed phase vocabulary', () => {
+	// The rule hides every phase before showing one, at equal specificity, so
+	// the newest inserted rule always wins and a stale rule cannot keep its own
+	// line on screen.
 	assert.equal(
 		startupPhaseVisibilityCss('server-compose'),
-		'.phase[data-phase="server-compose"]{display:block}',
+		'.phase[data-phase]{display:none}.phase[data-phase="server-compose"]{display:block}',
 	);
 	for (const bogus of ['"] , * {display:none} .x[y="', '../etc/passwd', '']) {
 		assert.throws(

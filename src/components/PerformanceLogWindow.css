@@ -3,11 +3,10 @@
 
 .perf-window {
 	display: grid;
-	align-content: start;
-	gap: 28px;
+	grid-template-rows: auto minmax(0, 1fr);
 	box-sizing: border-box;
-	min-height: 100vh;
-	padding: 28px 32px 40px;
+	height: 100vh;
+	overflow: hidden;
 	background: var(--settings-bg, #111111);
 	color: var(--settings-text, #ffffff);
 	font-family: var(
@@ -22,9 +21,42 @@
 	font-size: 13px;
 }
 
+/* The window has a hidden title bar, so the header both clears the traffic
+ * lights and provides the drag region they would otherwise have. */
+.perf-header {
+	padding: 42px 24px 14px;
+	border-bottom: 1px solid var(--settings-border, #38383a);
+	-webkit-app-region: drag;
+}
+
+.perf-header h1 {
+	margin: 0;
+	font-size: 14px;
+	font-weight: 600;
+	line-height: 1.25;
+}
+
+.perf-header p {
+	margin: 3px 0 0;
+	color: var(--settings-text-muted, #98989d);
+	font-size: 11px;
+}
+
+.perf-body {
+	display: grid;
+	align-content: start;
+	gap: 26px;
+	box-sizing: border-box;
+	width: 100%;
+	max-width: 1040px;
+	margin: 0 auto;
+	padding: 22px 24px 40px;
+	overflow-y: auto;
+}
+
 .perf-section {
 	display: grid;
-	gap: 12px;
+	gap: 10px;
 }
 
 .perf-heading {
@@ -40,30 +72,91 @@
 .perf-note {
 	margin: 0;
 	color: var(--settings-text-muted, #98989d);
-}
-
-.perf-note {
 	font-size: 12px;
 }
 
-/* Startup breakdown -------------------------------------------------- */
+/* Startup summary ------------------------------------------------------ */
+
+.perf-summary {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 28px;
+	padding: 2px 2px 4px;
+}
+
+.perf-summary-stat {
+	display: grid;
+	gap: 1px;
+}
+
+.perf-summary-value {
+	font-size: 26px;
+	font-variant-numeric: tabular-nums;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	line-height: 1.1;
+}
+
+.perf-summary-stat--slow .perf-summary-value {
+	color: #ff9f0a;
+}
+
+.perf-summary-label {
+	color: var(--settings-text-muted, #98989d);
+	font-size: 11px;
+}
+
+/* Startup breakdown ---------------------------------------------------- */
 
 .perf-phases {
 	display: grid;
-	gap: 2px;
-	padding: 8px;
+	gap: 1px;
+	padding: 6px;
 	border: 1px solid var(--settings-border, #38383a);
 	border-radius: 10px;
 	background: var(--settings-card-bg, #1e1e1e);
 }
 
-.perf-phase-row {
+/* One shared column template so the ruler, rows, and sub-rows all align. */
+.perf-scale,
+.perf-phase-row,
+.perf-subphases li {
 	display: grid;
-	align-items: center;
 	gap: 10px;
-	grid-template-columns: 14px minmax(120px, 180px) 1fr 72px;
+	grid-template-columns: 12px minmax(120px, 196px) minmax(0, 1fr) 68px;
+	align-items: center;
+}
+
+.perf-scale {
+	margin-bottom: 4px;
+	padding: 0 6px 5px;
+	border-bottom: 1px solid var(--settings-border, #38383a);
+	color: var(--settings-text-muted, #98989d);
+	font-size: 10px;
+	font-variant-numeric: tabular-nums;
+}
+
+/* The three markers all sit in the track column, at its ends and middle. */
+.perf-scale span {
+	grid-row: 1;
+	grid-column: 3;
+}
+
+.perf-scale span:first-child {
+	justify-self: start;
+}
+
+.perf-scale span:nth-child(2) {
+	justify-self: center;
+}
+
+.perf-scale span:last-child {
+	justify-self: end;
+}
+
+.perf-phase-row {
 	width: 100%;
-	padding: 5px 6px;
+	padding: 4px 6px;
 	border: 0;
 	border-radius: 6px;
 	background: none;
@@ -86,26 +179,39 @@
 }
 
 .perf-phase-caret {
-	color: var(--settings-text-muted, #98989d);
-	font-size: 11px;
-	line-height: 1;
-	text-align: center;
+	justify-self: center;
+	inline-size: 0;
+	block-size: 0;
+	border-block-start: 4px solid transparent;
+	border-block-end: 4px solid transparent;
+	border-inline-start: 5px solid var(--settings-text-muted, #98989d);
+	transition: transform 120ms ease;
+}
+
+.perf-phase-row[aria-expanded="true"] .perf-phase-caret {
+	transform: rotate(90deg);
+}
+
+.perf-phase-row:disabled .perf-phase-caret {
+	border-inline-start-color: transparent;
 }
 
 .perf-phase-label {
 	overflow: hidden;
+	color: var(--settings-text-muted, #98989d);
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
 .perf-phase-row--dominant .perf-phase-label {
+	color: var(--settings-text, #ffffff);
 	font-weight: 600;
 }
 
 .perf-phase-bar {
 	position: relative;
 	display: block;
-	block-size: 8px;
+	block-size: 6px;
 	border-radius: 999px;
 	background: var(--settings-input-bg, rgba(255, 255, 255, 0.06));
 }
@@ -113,6 +219,7 @@
 .perf-phase-fill {
 	position: absolute;
 	inset-block: 0;
+	min-inline-size: 2px;
 	border-radius: 999px;
 	background: var(--settings-accent, #0a84ff);
 }
@@ -131,6 +238,7 @@
 
 .perf-phase-duration {
 	color: var(--settings-text-muted, #98989d);
+	font-size: 12px;
 	font-variant-numeric: tabular-nums;
 	text-align: end;
 }
@@ -141,31 +249,31 @@
 }
 
 .perf-phase-failure {
-	margin: 0 0 4px 30px;
+	margin: 0 0 4px 28px;
 	color: var(--settings-danger, #ff453a);
 	font-size: 12px;
 }
 
 .perf-subphases {
 	display: grid;
-	gap: 3px;
-	margin: 0 0 6px;
-	padding: 0 6px;
+	gap: 2px;
+	margin: 1px 0 5px;
+	padding: 0;
 	color: var(--settings-text-muted, #98989d);
 	font-size: 12px;
 	list-style: none;
 }
 
-/* Match the parent row's columns so sub-phase durations line up under it. */
 .perf-subphases li {
-	display: grid;
-	gap: 10px;
-	grid-template-columns: 14px minmax(120px, 180px) 1fr 72px;
+	padding: 1px 6px;
 }
 
 .perf-subphases li span:first-child {
+	overflow: hidden;
 	grid-column: 2;
-	padding-inline-start: 12px;
+	padding-inline-start: 14px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .perf-subphases li span:last-child {
@@ -174,26 +282,33 @@
 	text-align: end;
 }
 
-.perf-phase-total {
-	margin: 6px 0 0;
-	padding: 0 6px;
-	color: var(--settings-text-muted, #98989d);
-	font-size: 12px;
+.perf-subphases .perf-phase-bar {
+	grid-column: 3;
+	block-size: 4px;
+	opacity: 0.75;
 }
 
-/* Live cards ---------------------------------------------------------- */
+.perf-subphases .perf-phase-fill {
+	background: color-mix(
+		in srgb,
+		var(--settings-accent, #0a84ff) 55%,
+		transparent
+	);
+}
+
+/* Live cards ----------------------------------------------------------- */
 
 .perf-cards {
 	display: grid;
 	gap: 10px;
-	grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+	grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
 }
 
 .perf-card {
 	display: grid;
 	align-content: start;
-	gap: 4px;
-	padding: 12px 14px;
+	gap: 3px;
+	padding: 12px 14px 10px;
 	border: 1px solid var(--settings-border, #38383a);
 	border-radius: 10px;
 	background: var(--settings-card-bg, #1e1e1e);
@@ -208,37 +323,59 @@
 	font-size: 22px;
 	font-variant-numeric: tabular-nums;
 	font-weight: 600;
+	letter-spacing: -0.01em;
+	line-height: 1.2;
 }
 
 .perf-spark {
 	display: block;
-	block-size: 30px;
+	overflow: visible;
+	margin-block-start: 6px;
+	block-size: 28px;
 	inline-size: 100%;
 	color: var(--settings-accent, #0a84ff);
+}
+
+.perf-spark-line {
+	fill: none;
 	stroke: currentColor;
+	stroke-linejoin: round;
+	stroke-width: 1.5;
+	vector-effect: non-scaling-stroke;
+}
+
+.perf-spark-area {
+	fill: color-mix(in srgb, currentColor 16%, transparent);
+	stroke: none;
 }
 
 .perf-spark--empty {
-	block-size: 30px;
+	margin-block-start: 6px;
+	block-size: 28px;
+	border-block-end: 1px dashed var(--settings-border, #38383a);
 }
 
-/* Tables -------------------------------------------------------------- */
+/* Tables --------------------------------------------------------------- */
 
 .perf-table {
-	display: table;
-	overflow: hidden;
 	width: 100%;
+	overflow: hidden;
 	border: 1px solid var(--settings-border, #38383a);
 	border-radius: 10px;
-	border-collapse: collapse;
+	border-collapse: separate;
+	border-spacing: 0;
 	background: var(--settings-card-bg, #1e1e1e);
+	table-layout: fixed;
 }
 
 .perf-table th,
 .perf-table td {
-	padding: 7px 12px;
+	overflow: hidden;
+	padding: 7px 14px;
 	border-bottom: 1px solid var(--settings-border, #38383a);
 	text-align: start;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .perf-table tbody tr:last-child th,
@@ -252,20 +389,30 @@
 	font-weight: 500;
 }
 
-.perf-table td {
+/* Numbers get a fixed, right-aligned column so they stay comparable rather
+ * than drifting apart across a wide window. The selector is scoped to beat
+ * the `text-align: start` on every cell. */
+.perf-table th.perf-numeric,
+.perf-table td.perf-numeric {
+	inline-size: 108px;
 	font-variant-numeric: tabular-nums;
+	text-align: end;
 }
 
-.perf-terminal-name {
-	display: grid;
-	gap: 1px;
+.perf-name {
+	display: block;
+	overflow: hidden;
 	font-weight: 500;
+	text-overflow: ellipsis;
 }
 
-.perf-terminal-project {
+.perf-sub {
+	display: block;
+	overflow: hidden;
 	color: var(--settings-text-muted, #98989d);
 	font-size: 11px;
 	font-weight: 400;
+	text-overflow: ellipsis;
 }
 
 .perf-unavailable {
