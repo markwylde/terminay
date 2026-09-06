@@ -106,17 +106,30 @@ export function mapOpenCodeEvent(
 			return;
 		}
 		if (role !== 'assistant') return;
-		const error = object(info.error) ?? text(info.error, 200);
+		const error = object(info.error);
+		const errorName = error ? text(error.name, 200) : undefined;
 		const finish = text(info.finish, 64);
+		// An abort is the user stopping the turn, not a fault needing
+		// intervention. Observed on a real store: 77 of 99 recorded errors are
+		// MessageAbortedError, and 96 of 99 carry no completion, so treating any
+		// error without a completion as blocked would paint ordinary
+		// cancellations red.
+		const aborted = errorName !== undefined && /abort|cancel/iu.test(errorName);
+		if (error !== undefined && aborted) {
+			state.turnOpen = false;
+			state.faulted = false;
+			publish.done({ outcome: 'cancelled' });
+			return;
+		}
 		if (error !== undefined && !finish) {
-			// A recorded fault with no completion halts the turn. OpenCode
-			// records no explicitly blocking condition, so this is derived.
+			// A recorded fault that halts the turn. OpenCode records no explicitly
+			// blocking condition, so this is derived.
 			if (state.faulted) return;
 			state.faulted = true;
 			publish.waitStarted({
 				waitId: `opencode:fault:${context.rootId}`,
 				state: 'blocked',
-				reason: 'assistant-error',
+				reason: errorName ?? 'assistant-error',
 				inferred: true,
 			});
 			return;
@@ -130,7 +143,7 @@ export function mapOpenCodeEvent(
 					? 'error'
 					: finish === 'stop' || finish === 'end_turn'
 						? 'success'
-						: finish.includes('cancel') || finish.includes('abort')
+						: /cancel|abort/iu.test(finish)
 							? 'cancelled'
 							: 'success',
 		});

@@ -15,9 +15,10 @@ const descriptor = {
 		working: 'Y',
 		// Grok records permission_requested / permission_resolved explicitly.
 		waiting: 'Y',
-		// It records no explicitly blocking condition, so a halting fault is
-		// derived from its own recorded fault with no turn_ended following.
-		blocked: 'Y*',
+		// Grok records no fault distinct from a turn outcome: a failed turn is a
+		// turn_ended carrying an error, which is a completion and not a blocking
+		// condition. Verified against every rollout on this machine.
+		blocked: 'N',
 		done: 'Y',
 		subEnumerate: 'Y',
 		subStatus: 'Y',
@@ -37,10 +38,6 @@ const descriptor = {
 	},
 	answerInput(harness) {
 		harness.pty.write('\r');
-	},
-	provokeFault(harness) {
-		harness.pty.send('/exit');
-		harness.pty.send('GROK_API_KEY=invalid grok "say hello"');
 	},
 	quit(harness) {
 		harness.pty.send('/exit');

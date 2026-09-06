@@ -193,20 +193,60 @@ test('a task tool part is a child, not an ordinary tool', () => {
 	);
 });
 
-test('an assistant error with no completion blocks the root', () => {
+test('an assistant fault with no completion blocks the root', () => {
+	// Real error names on this store: APIError, ContextOverflowError,
+	// UnknownError and MessageAbortedError. Only the first three are faults.
 	const events = collect([
 		['session.created.1', { info: { id: rootId, slug: 's' } }],
 		[
 			'message.updated.1',
-			{
-				info: { id: 'm', role: 'assistant', error: { name: 'ProviderError' } },
-			},
+			{ info: { id: 'm', role: 'assistant', error: { name: 'APIError' } } },
 		],
 	]);
 	const wait = events.at(-1);
 	assert.equal(wait.kind, 'waitStarted');
 	assert.equal(wait.state, 'blocked');
 	assert.equal(wait.inferred, true);
+	assert.equal(wait.reason, 'APIError');
+});
+
+test('a user abort completes the turn as cancelled rather than blocking it', () => {
+	// 77 of the 99 recorded errors on a real store are MessageAbortedError with
+	// no completion. Treating those as blocked would paint every stopped turn
+	// red.
+	for (const name of ['MessageAbortedError', 'MessageCancelledError']) {
+		const events = collect([
+			['session.created.1', { info: { id: rootId, slug: 's' } }],
+			[
+				'message.updated.1',
+				{ info: { id: 'm', role: 'assistant', error: { name } } },
+			],
+		]);
+		assert.equal(events.at(-1).kind, 'done', name);
+		assert.equal(events.at(-1).outcome, 'cancelled', name);
+		assert.equal(
+			events.some((event) => event.state === 'blocked'),
+			false,
+			name,
+		);
+	}
+});
+
+test('a context overflow blocks rather than silently completing', () => {
+	const events = collect([
+		['session.created.1', { info: { id: rootId, slug: 's' } }],
+		[
+			'message.updated.1',
+			{
+				info: {
+					id: 'm',
+					role: 'assistant',
+					error: { name: 'ContextOverflowError' },
+				},
+			},
+		],
+	]);
+	assert.equal(events.at(-1).state, 'blocked');
 });
 
 test('an assistant error on a completed turn is a failed completion, not blocked', () => {

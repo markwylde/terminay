@@ -13,10 +13,11 @@ const descriptor = {
 		title: 'Y',
 		idle: 'Y',
 		working: 'Y',
-		// Codex records execution, patch and permission approval requests.
+		// Codex records execution, patch and permission approval requests, and is
+		// the only matrix provider recording an explicitly blocking condition.
+		// Neither appears in any rollout on this machine, because every local
+		// session ran with approvals bypassed: this run is what confirms them.
 		waiting: 'Y',
-		// It is the only matrix provider that records an explicitly blocking
-		// condition rather than one derived from a halting fault.
 		blocked: 'Y',
 		done: 'Y',
 		subEnumerate: 'Y',
