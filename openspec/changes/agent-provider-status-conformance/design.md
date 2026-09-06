@@ -16,12 +16,12 @@ running `claude` processes held 30 open files between them and none under
 The spec's primary rule — the root journal created for the process's working
 directory after that process started — exists on paper and nowhere in code.
 
-The second failure is downstream. When the authoritative path produces nothing,
-terminal activity should still light the tab amber; `src/components/TerminalTab.tsx`
-already bridges `recent → working`. But the legacy Claude Code interpreter
-profile claims the session and, per the current spec, that claim disables the
-raw-output timer. Claude Code emits no `OSC 9;4`, so the claiming profile has
-nothing to interpret and the terminal is described by nobody.
+The terminal-activity fallback below it is sound. `reducer.ts` sets `claimed`
+only through `explicitSeen`, which is latched in exactly two places — a real
+`OSC 9;4` progress signal and a real `OSC 133`/`633` command signal — never from
+a process name. A Claude Code terminal emitting neither is therefore never
+claimed, `applyRawActivity` proceeds, and `src/components/TerminalTab.tsx`
+bridges `recent → working`. The fallback needs no change; only the binding does.
 
 Constraints carried into this design:
 
@@ -43,7 +43,6 @@ Constraints carried into this design:
 **Goals:**
 
 - Claude Code binds and reports the full lifecycle from a normally launched CLI.
-- A terminal running a recognized agent CLI is never left with no indicator.
 - A single written matrix says what each provider observes explicitly, what is
   derived from its journal, and what is genuinely unavailable.
 - Every cell is proven by an integration test in that provider's own extension,
@@ -104,29 +103,7 @@ Alternative rejected: matching the newest journal in the project directory. That
 is exactly the "closest-match logic" the spec forbids, and it misbinds whenever
 two terminals sit in one repository.
 
-### 2. An interpreter claim is conditional on observing its own signal
-
-Today a profile claims a session on process-name selection and holds that claim
-whether or not signals arrive, which suppresses the raw-output timer for a CLI
-that emits nothing the profile understands. The fix is to make the claim
-evidence-bound: a profile claims only while it is receiving the kind of signal
-it interprets, and releases the claim after the progress-signal timeout with no
-such signal. Releasing restores the raw-output timer and hands the session to
-the generic interpreter.
-
-Reusing the existing progress-signal timeout (15 s default) avoids inventing a
-second tunable, and it is already the value that governs "this progress signal
-has gone stale".
-
-This deliberately reintroduces raw-output oscillation risk for a repainting TUI
-that a profile *cannot* interpret. That is the correct trade: an amber dot that
-flickers is strictly better than a dead tab, and a profile that genuinely
-interprets a TUI keeps its claim and its timer suppression.
-
-Alternative rejected: special-casing Claude Code to stop claiming. It fixes one
-provider and leaves the same trap for the next.
-
-### 3. OpenCode is read as a SQLite store, restricted to lifecycle tables
+### 2. OpenCode is read as a SQLite store, restricted to lifecycle tables
 
 OpenCode has no JSONL journal. Its state is `opencode.db` under
 `~/.local/share/opencode` (XDG-relocatable), with `session` (id, project_id,
@@ -152,7 +129,7 @@ Extension API with a bounded read-only SQLite accessor, or whether the extension
 child opens it directly under its existing `agent-observation` permission, is an
 open question below.
 
-### 4. Conformance tests live in each extension and drive a real CLI in a real PTY
+### 3. Conformance tests live in each extension and drive a real CLI in a real PTY
 
 The tests belong beside the code that has to be right about the provider. Each
 extension package gets a conformance test that spawns a real shell in a real
@@ -193,7 +170,7 @@ existing `e2e/real-codex-agent-runtime.spec.ts` is being retired into this.
 Alternative rejected: mocking each provider's journal. That is what the current
 tests do, and it is the reason this bug shipped.
 
-### 5. Quit and resume are part of every provider's conformance run
+### 4. Quit and resume are part of every provider's conformance run
 
 A session's life includes ending and coming back. Quitting must make a root
 inactive rather than leaving it stuck reporting `working` — the most visible
@@ -206,7 +183,7 @@ but nothing exercises either against a real CLI. Making Resume a matrix column
 puts it on the same footing as the states, and the quit/resume leg runs for every
 provider rather than for whichever one someone remembered.
 
-### 6. Inference from the session journal is in scope; inference from the terminal is not
+### 5. Inference from the session journal is in scope; inference from the terminal is not
 
 Providers differ in what they bother to record, and that variation is not
 something we can negotiate away — we do not touch their configuration. Where a
@@ -273,7 +250,7 @@ Alternative rejected: declaring these capabilities unavailable. That was the
 first draft of this design, and it was wrong — it treated a provider's silence
 as our limit rather than as a thing to reason about.
 
-### 7. Fixture parity is a spec requirement, not a review convention
+### 6. Fixture parity is a spec requirement, not a review convention
 
 The rule that a fixture must not supply evidence the real CLI never produces is
 written into the conformance spec. It is the check that would have caught
@@ -286,11 +263,6 @@ Claude Code, and it is cheap to apply during review of any new provider.
   same repository. → The `createdAt`-after-process-start rule plus the
   bind-nothing-on-ambiguity rule keeps this safe; ambiguity is the designed
   outcome, not a failure to fix.
-
-- **Releasing an interpreter claim can make a repainting TUI oscillate between
-  amber and green.** → Scoped to profiles receiving no signal at all, which is
-  precisely the case that currently shows nothing. A profile that works keeps
-  its claim.
 
 - **Reading a live SQLite store risks lock contention with OpenCode itself.** →
   Read-only WAL access, bounded retry, never a write lock. A store that cannot
