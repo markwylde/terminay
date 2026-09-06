@@ -1,0 +1,34 @@
+{"type":"mode","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","mode":"normal"}
+{"type":"permission-mode","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","permissionMode":"default"}
+{"type":"file-history-snapshot"}
+{"type":"file-history-snapshot"}
+{"type":"user","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","permissionMode":"default","uuid":"05fa11a0-f5a6-4288-9580-062777a1ebf2","promptId":"acdd451b-f02c-4f3e-b133-1aea28468dee","isSidechain":false,"version":"2.1.263","message":{"role":"user","content":"Reply with the single word ready."}}
+{"type":"attachment","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","uuid":"51fcea57-4c55-427b-90b3-de7661ef30f3","isSidechain":false,"version":"2.1.263"}
+{"type":"attachment","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","uuid":"a79d7f22-9351-47d4-b8ff-fd3899a2bc0d","isSidechain":false,"version":"2.1.263"}
+{"type":"attachment","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","uuid":"eb3760ff-f578-4607-b04b-79aba17885f7","isSidechain":false,"version":"2.1.263"}
+{"type":"attachment","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","uuid":"034818e6-609a-4600-b2e5-edd3e92bc971","isSidechain":false,"version":"2.1.263"}
+{"type":"attachment","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","uuid":"aa6fc9f2-f719-4a12-b21b-3d9a0c579573","isSidechain":false,"version":"2.1.263"}
+{"type":"attachment","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","uuid":"041ed99b-7e97-4a50-8d98-9eac7e86fb93","isSidechain":false,"version":"2.1.263"}
+{"type":"atis-latch","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","atis":"56af8d27ead9c3fd"}
+{"type":"attachment","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","uuid":"eab604bc-0889-4530-aa01-205d0fc0e33c","isSidechain":false,"version":"2.1.263"}
+{"type":"attachment","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","uuid":"b931fdda-f47b-423e-b317-50b93cf9d757","isSidechain":false,"version":"2.1.263"}
+{"type":"attachment","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","uuid":"4c9ea02a-2247-4a0e-a867-92de5e9ab2db","isSidechain":false,"version":"2.1.263"}
+{"type":"last-prompt","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","lastPrompt":"Reply with the single word ready."}
+{"type":"mode","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","mode":"normal"}
+{"type":"permission-mode","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","permissionMode":"default"}
+{"type":"atis-latch","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","atis":"56af8d27ead9c3fd"}
+{"type":"bridge-session","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","bridgeSessionId":"cse_01Wqv7EwB7jQaJj361aBmXs5"}
+{"type":"ai-title","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","aiTitle":"Ready"}
+{"type":"assistant","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","uuid":"ec83b685-31c6-4e79-9027-67ded43a24ea","requestId":"req_011CenLj3rMJDHwBpkuVW4wf","isSidechain":false,"version":"2.1.263","message":{"role":"assistant","model":"claude-fable-5-1","content":[{"type":"text","text":"ready"}],"stop_reason":"end_turn"}}
+{"type":"attachment","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","uuid":"e1773f02-aab0-425a-a802-4e3b92f0767c","isSidechain":false,"version":"2.1.263"}
+{"type":"system","subtype":"stop_hook_summary","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","uuid":"a101b354-21ff-4c24-9d20-e7a80bc36036","isSidechain":false,"version":"2.1.263"}
+{"type":"system","subtype":"turn_duration","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","uuid":"58590c28-243d-4d06-a455-428d9e0ca182","isMeta":false,"isSidechain":false,"durationMs":2479,"version":"2.1.263"}
+{"type":"last-prompt","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","lastPrompt":"Reply with the single word ready."}
+{"type":"ai-title","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","aiTitle":"Ready"}
+{"type":"mode","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","mode":"normal"}
+{"type":"permission-mode","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","permissionMode":"default"}
+{"type":"atis-latch","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","atis":"56af8d27ead9c3fd"}
+{"type":"bridge-session","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","bridgeSessionId":"cse_01Wqv7EwB7jQaJj361aBmXs5"}
+{"type":"bridge-session","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8","bridgeSessionId":"cse_01Wqv7EwB7jQaJj361aBmXs5"}
+{"type":"cost-state","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8"}
+{"type":"cost-state","sessionId":"359d528f-27eb-4030-9375-7c6ade9b29f8"}

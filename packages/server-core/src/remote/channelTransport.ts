@@ -1,17 +1,20 @@
 import {
 	abortIfSignalled,
+	type ByteTransport,
 	ChannelFragmentReassembler,
 	DEFAULT_PROTOCOL_LIMITS,
 	encodeChannelFragments,
 	FRAGMENT_HEADER_BYTES,
 	MIN_FRAGMENT_PAYLOAD_BYTES,
 	nextChannelTransferId,
-	validateTransportFrame,
-	type ByteTransport,
 	type TransportCloseReason,
 	type TransportState,
-} from "@terminay/protocol";
-import type { HeadlessDataChannel, HeadlessDataChannelState } from "./headless.js";
+	validateTransportFrame,
+} from '@terminay/protocol';
+import type {
+	HeadlessDataChannel,
+	HeadlessDataChannelState,
+} from './headless.js';
 
 const DEFAULT_BUFFERED_BYTES = DEFAULT_PROTOCOL_LIMITS.maxQueuedBytes;
 const DEFAULT_CLOSE_TIMEOUT_MS = 1_000;
@@ -42,7 +45,7 @@ type IncomingWaiter = {
  * pressure cannot consume the control/application queue.
  */
 export class HeadlessChannelTransport implements ByteTransport {
-	private currentState: TransportState = "opening";
+	private currentState: TransportState = 'opening';
 	private readonly maxFrameBytes: number;
 	private readonly maxBufferedBytes: number;
 	private readonly maxInboundBytes: number;
@@ -55,7 +58,9 @@ export class HeadlessChannelTransport implements ByteTransport {
 	private inboundEnded = false;
 	private inboundFailure: unknown;
 	private readonly incomingWaiters: IncomingWaiter[] = [];
-	private readonly stateListeners = new Set<(state: TransportState, reason?: TransportCloseReason) => void>();
+	private readonly stateListeners = new Set<
+		(state: TransportState, reason?: TransportCloseReason) => void
+	>();
 	private readonly removeListeners: Array<() => void> = [];
 	private closePromise: Promise<void> | undefined;
 	private closeReason: TransportCloseReason | undefined;
@@ -63,22 +68,44 @@ export class HeadlessChannelTransport implements ByteTransport {
 	constructor(
 		private readonly channel: HeadlessDataChannel,
 		options: HeadlessChannelTransportOptions = {},
-		subscribe: (listener: (frame: Uint8Array) => void) => () => void = (listener) => channel.onMessage(listener),
+		subscribe: (listener: (frame: Uint8Array) => void) => () => void = (
+			listener,
+		) => channel.onMessage(listener),
 	) {
-		this.maxFrameBytes = positive(options.maxFrameBytes ?? DEFAULT_PROTOCOL_LIMITS.maxFrameBytes, "maxFrameBytes");
-		this.maxBufferedBytes = positive(options.maxBufferedBytes ?? DEFAULT_BUFFERED_BYTES, "maxBufferedBytes");
-		this.maxInboundBytes = positive(options.maxInboundBytes ?? this.maxBufferedBytes, "maxInboundBytes");
-		this.maxWritableWaitMs = positive(options.maxWritableWaitMs ?? DEFAULT_MAX_WRITABLE_WAIT_MS, "maxWritableWaitMs");
+		this.maxFrameBytes = positive(
+			options.maxFrameBytes ?? DEFAULT_PROTOCOL_LIMITS.maxFrameBytes,
+			'maxFrameBytes',
+		);
+		this.maxBufferedBytes = positive(
+			options.maxBufferedBytes ?? DEFAULT_BUFFERED_BYTES,
+			'maxBufferedBytes',
+		);
+		this.maxInboundBytes = positive(
+			options.maxInboundBytes ?? this.maxBufferedBytes,
+			'maxInboundBytes',
+		);
+		this.maxWritableWaitMs = positive(
+			options.maxWritableWaitMs ?? DEFAULT_MAX_WRITABLE_WAIT_MS,
+			'maxWritableWaitMs',
+		);
 		const messageLimit = options.maxMessageBytes ?? channel.maxMessageBytes;
 		// A limit too small to carry a useful payload is treated as unknown: the
 		// frame goes to the channel whole and the channel decides.
 		this.maxMessageBytes =
-			messageLimit === undefined || !Number.isSafeInteger(messageLimit) || messageLimit <= FRAGMENT_HEADER_BYTES + MIN_FRAGMENT_PAYLOAD_BYTES
+			messageLimit === undefined ||
+			!Number.isSafeInteger(messageLimit) ||
+			messageLimit <= FRAGMENT_HEADER_BYTES + MIN_FRAGMENT_PAYLOAD_BYTES
 				? undefined
 				: messageLimit;
-		this.reassembler = new ChannelFragmentReassembler({ maxFrameBytes: this.maxFrameBytes });
-		this.removeListeners.push(subscribe((frame) => this.enqueueIncoming(frame)));
-		this.removeListeners.push(channel.onStateChange((state) => this.onChannelState(state)));
+		this.reassembler = new ChannelFragmentReassembler({
+			maxFrameBytes: this.maxFrameBytes,
+		});
+		this.removeListeners.push(
+			subscribe((frame) => this.enqueueIncoming(frame)),
+		);
+		this.removeListeners.push(
+			channel.onStateChange((state) => this.onChannelState(state)),
+		);
 		this.onChannelState(channel.readyState);
 	}
 
@@ -94,7 +121,10 @@ export class HeadlessChannelTransport implements ByteTransport {
 					next: () => endpoint.nextIncoming(),
 					return: async () => {
 						endpoint.finishIncoming();
-						return { done: true, value: undefined } as IteratorResult<Uint8Array>;
+						return {
+							done: true,
+							value: undefined,
+						} as IteratorResult<Uint8Array>;
 					},
 				};
 			},
@@ -102,7 +132,8 @@ export class HeadlessChannelTransport implements ByteTransport {
 	}
 
 	get queuedBytes(): number {
-		if (this.currentState === "closed" || this.currentState === "failed") return 0;
+		if (this.currentState === 'closed' || this.currentState === 'failed')
+			return 0;
 		// Native channel counters are an untrusted boundary.  This getter is used
 		// by diagnostics as well as flow-control, so an invalid native value must
 		// not escape as poisoned relay state or leave the authenticated transport
@@ -121,8 +152,9 @@ export class HeadlessChannelTransport implements ByteTransport {
 
 	async open(signal?: AbortSignal): Promise<void> {
 		abortIfSignalled(signal);
-		if (this.currentState === "open") return;
-		if (this.currentState === "closed" || this.currentState === "failed") throw transportError(this.currentState);
+		if (this.currentState === 'open') return;
+		if (this.currentState === 'closed' || this.currentState === 'failed')
+			throw transportError(this.currentState);
 		await new Promise<void>((resolve, reject) => {
 			let done = false;
 			let remove = (): void => undefined;
@@ -130,33 +162,47 @@ export class HeadlessChannelTransport implements ByteTransport {
 				if (done) return;
 				done = true;
 				remove();
-				if (signal !== undefined) signal.removeEventListener("abort", onAbort);
+				if (signal !== undefined) signal.removeEventListener('abort', onAbort);
 				if (error === undefined) resolve();
 				else reject(error);
 			};
-			const onAbort = (): void => finish(signal?.reason ?? new DOMException("The operation was aborted", "AbortError"));
+			const onAbort = (): void =>
+				finish(
+					signal?.reason ??
+						new DOMException('The operation was aborted', 'AbortError'),
+				);
 			remove = this.onStateChange((state) => {
-				if (state === "open") finish();
-				else if (state === "closed" || state === "failed") finish(transportError(state));
+				if (state === 'open') finish();
+				else if (state === 'closed' || state === 'failed')
+					finish(transportError(state));
 			});
-			if (signal !== undefined) signal.addEventListener("abort", onAbort, { once: true });
-			if (this.currentState === "open") finish();
+			if (signal !== undefined)
+				signal.addEventListener('abort', onAbort, { once: true });
+			if (this.currentState === 'open') finish();
 		});
 	}
 
-	async send(frame: Uint8Array, options: { readonly signal?: AbortSignal } = {}): Promise<void> {
+	async send(
+		frame: Uint8Array,
+		options: { readonly signal?: AbortSignal } = {},
+	): Promise<void> {
 		abortIfSignalled(options.signal);
 		validateTransportFrame(frame, this.maxFrameBytes);
 		// The lane carries bounded messages (a WebRTC channel negotiates far less
 		// than one protocol frame), so anything larger travels as fragments the
 		// peer reassembles.
 		const messages =
-			this.maxMessageBytes === undefined || frame.byteLength <= this.maxMessageBytes
+			this.maxMessageBytes === undefined ||
+			frame.byteLength <= this.maxMessageBytes
 				? [frame]
-				: encodeChannelFragments(frame, this.maxMessageBytes, this.takeTransferId());
+				: encodeChannelFragments(
+						frame,
+						this.maxMessageBytes,
+						this.takeTransferId(),
+					);
 		for (const message of messages) {
 			await this.waitForWritable(message.byteLength, options.signal);
-			if (this.currentState !== "open") throw transportError(this.currentState);
+			if (this.currentState !== 'open') throw transportError(this.currentState);
 			try {
 				this.channel.send(message.slice());
 			} catch (error) {
@@ -164,7 +210,7 @@ export class HeadlessChannelTransport implements ByteTransport {
 				// the request layer answers with an error while every other
 				// subscription, terminal, and pending query stays live. A channel
 				// that genuinely died reports it through its own state instead.
-				throw new Error("headless data channel send failed", { cause: error });
+				throw new Error('headless data channel send failed', { cause: error });
 			}
 		}
 	}
@@ -174,46 +220,64 @@ export class HeadlessChannelTransport implements ByteTransport {
 		return this.transferId;
 	}
 
-	async waitForWritable(requiredBytes = 1, signal?: AbortSignal): Promise<void> {
+	async waitForWritable(
+		requiredBytes = 1,
+		signal?: AbortSignal,
+	): Promise<void> {
 		abortIfSignalled(signal);
-		if (!Number.isSafeInteger(requiredBytes) || requiredBytes <= 0 || requiredBytes > this.maxBufferedBytes) throw new RangeError("transport writable size is invalid");
+		if (
+			!Number.isSafeInteger(requiredBytes) ||
+			requiredBytes <= 0 ||
+			requiredBytes > this.maxBufferedBytes
+		)
+			throw new RangeError('transport writable size is invalid');
 		const deadline = Date.now() + this.maxWritableWaitMs;
 		while (true) {
-			if (this.currentState !== "open") throw transportError(this.currentState);
+			if (this.currentState !== 'open') throw transportError(this.currentState);
 			const buffered = this.readBufferedAmount();
 			if (buffered + requiredBytes <= this.maxBufferedBytes) return;
 			const remaining = deadline - Date.now();
 			if (remaining <= 0) {
-				const error = new Error("headless data channel remained backpressured");
-				this.fail({ code: "timeout", message: error.message, cause: error });
+				const error = new Error('headless data channel remained backpressured');
+				this.fail({ code: 'timeout', message: error.message, cause: error });
 				throw error;
 			}
 			await delay(Math.min(10, remaining), signal);
 		}
 	}
 
-	async close(reason: TransportCloseReason = { code: "normal" }, options: { readonly signal?: AbortSignal; readonly timeoutMs?: number } = {}): Promise<void> {
+	async close(
+		reason: TransportCloseReason = { code: 'normal' },
+		options: {
+			readonly signal?: AbortSignal;
+			readonly timeoutMs?: number;
+		} = {},
+	): Promise<void> {
 		abortIfSignalled(options.signal);
-		if (this.currentState === "closed" || this.currentState === "failed") return;
+		if (this.currentState === 'closed' || this.currentState === 'failed')
+			return;
 		if (this.closePromise !== undefined) return this.closePromise;
 		this.closeReason = reason;
-		this.setState("closing", reason);
+		this.setState('closing', reason);
 		const timeoutMs = options.timeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS;
-		if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0) throw new RangeError("timeoutMs must be a non-negative integer");
+		if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0)
+			throw new RangeError('timeoutMs must be a non-negative integer');
 		this.closePromise = (async () => {
 			this.removeChannelListeners();
 			try {
 				this.channel.close();
 			} finally {
 				this.finishIncoming();
-				this.setState("closed", this.closeReason);
+				this.setState('closed', this.closeReason);
 			}
 			void timeoutMs;
 		})();
 		return this.closePromise;
 	}
 
-	onStateChange(listener: (state: TransportState, reason?: TransportCloseReason) => void): () => void {
+	onStateChange(
+		listener: (state: TransportState, reason?: TransportCloseReason) => void,
+	): () => void {
 		this.stateListeners.add(listener);
 		return () => this.stateListeners.delete(listener);
 	}
@@ -225,33 +289,57 @@ export class HeadlessChannelTransport implements ByteTransport {
 			return Promise.resolve({ done: false, value: frame });
 		}
 		if (this.inboundEnded) {
-			if (this.inboundFailure !== undefined) return Promise.reject(this.inboundFailure);
-			return Promise.resolve({ done: true, value: undefined } as IteratorResult<Uint8Array>);
+			if (this.inboundFailure !== undefined)
+				return Promise.reject(this.inboundFailure);
+			return Promise.resolve({
+				done: true,
+				value: undefined,
+			} as IteratorResult<Uint8Array>);
 		}
-		return new Promise<IteratorResult<Uint8Array>>((resolve, reject) => this.incomingWaiters.push({ resolve, reject }));
+		return new Promise<IteratorResult<Uint8Array>>((resolve, reject) =>
+			this.incomingWaiters.push({ resolve, reject }),
+		);
 	}
 
 	private enqueueIncoming(message: Uint8Array): void {
-		if (this.inboundEnded || this.currentState === "closed" || this.currentState === "failed") return;
+		if (
+			this.inboundEnded ||
+			this.currentState === 'closed' ||
+			this.currentState === 'failed'
+		)
+			return;
 		let frame: Uint8Array;
 		try {
 			validateTransportFrame(message, this.maxFrameBytes);
 			const admitted = this.reassembler.accept(message);
-			if (admitted.kind === "partial") {
-				if (this.inboundBytes + this.reassembler.bufferedBytes > this.maxInboundBytes) {
+			if (admitted.kind === 'partial') {
+				if (
+					this.inboundBytes + this.reassembler.bufferedBytes >
+					this.maxInboundBytes
+				) {
 					this.reassembler.reset();
-					this.fail({ code: "resource", message: "headless data channel inbound queue limit reached" });
+					this.fail({
+						code: 'resource',
+						message: 'headless data channel inbound queue limit reached',
+					});
 				}
 				return;
 			}
 			frame = admitted.frame;
 			validateTransportFrame(frame, this.maxFrameBytes);
 		} catch (error) {
-			this.fail({ code: "protocol_error", message: "headless data channel frame is invalid", cause: error });
+			this.fail({
+				code: 'protocol_error',
+				message: 'headless data channel frame is invalid',
+				cause: error,
+			});
 			return;
 		}
 		if (this.inboundBytes + frame.byteLength > this.maxInboundBytes) {
-			this.fail({ code: "resource", message: "headless data channel inbound queue limit reached" });
+			this.fail({
+				code: 'resource',
+				message: 'headless data channel inbound queue limit reached',
+			});
 			return;
 		}
 		const copy = frame.slice();
@@ -268,46 +356,64 @@ export class HeadlessChannelTransport implements ByteTransport {
 		try {
 			buffered = this.channel.bufferedAmount;
 		} catch (cause) {
-			this.fail({ code: "resource", message: "headless data channel buffered amount is invalid", cause });
-			throw new Error("headless data channel buffered amount is invalid", { cause });
+			this.fail({
+				code: 'resource',
+				message: 'headless data channel buffered amount is invalid',
+				cause,
+			});
+			throw new Error('headless data channel buffered amount is invalid', {
+				cause,
+			});
 		}
-		if (!Number.isSafeInteger(buffered) || buffered < 0 || buffered > this.maxBufferedBytes * 2) {
-			this.fail({ code: "resource", message: "headless data channel buffered amount is invalid" });
-			throw new Error("headless data channel buffered amount is invalid");
+		if (
+			!Number.isSafeInteger(buffered) ||
+			buffered < 0 ||
+			buffered > this.maxBufferedBytes * 2
+		) {
+			this.fail({
+				code: 'resource',
+				message: 'headless data channel buffered amount is invalid',
+			});
+			throw new Error('headless data channel buffered amount is invalid');
 		}
 		return buffered;
 	}
 
 	private onChannelState(state: HeadlessDataChannelState): void {
-		if (state === "open") {
-			if (this.currentState === "opening") this.setState("open");
+		if (state === 'open') {
+			if (this.currentState === 'opening') this.setState('open');
 			return;
 		}
-		if (state === "closing") {
-			if (this.currentState === "open" || this.currentState === "opening") this.setState("closing");
+		if (state === 'closing') {
+			if (this.currentState === 'open' || this.currentState === 'opening')
+				this.setState('closing');
 			return;
 		}
-		if (state === "closed" && this.currentState !== "failed") {
+		if (state === 'closed' && this.currentState !== 'failed') {
 			// A remote peer can disappear without the transport initiating close.
 			// Drop both native subscriptions immediately so repeated reconnects cannot
 			// retain one message/state closure per abandoned channel.
 			this.removeChannelListeners();
 			this.finishIncoming();
-			this.setState("closed", this.closeReason);
+			this.setState('closed', this.closeReason);
 		}
 	}
 
 	private fail(reason: TransportCloseReason): void {
-		if (this.currentState === "closed" || this.currentState === "failed") return;
+		if (this.currentState === 'closed' || this.currentState === 'failed')
+			return;
 		this.closeReason = reason;
-		this.finishIncoming(reason.cause ?? new Error(reason.message ?? "headless data channel failed"));
+		this.finishIncoming(
+			reason.cause ??
+				new Error(reason.message ?? 'headless data channel failed'),
+		);
 		this.removeChannelListeners();
 		try {
 			this.channel.close();
 		} catch {
 			/* The transport is already failed; native cleanup is best effort. */
 		}
-		this.setState("failed", reason);
+		this.setState('failed', reason);
 	}
 
 	private finishIncoming(error?: unknown): void {
@@ -320,7 +426,11 @@ export class HeadlessChannelTransport implements ByteTransport {
 		this.inbound.splice(0);
 		this.inboundBytes = 0;
 		for (const waiter of this.incomingWaiters.splice(0)) {
-			if (error === undefined) waiter.resolve({ done: true, value: undefined } as IteratorResult<Uint8Array>);
+			if (error === undefined)
+				waiter.resolve({
+					done: true,
+					value: undefined,
+				} as IteratorResult<Uint8Array>);
 			else waiter.reject(error);
 		}
 	}
@@ -345,7 +455,8 @@ export class HeadlessChannelTransport implements ByteTransport {
 }
 
 function positive(value: number, name: string): number {
-	if (!Number.isSafeInteger(value) || value <= 0) throw new RangeError(`${name} must be positive`);
+	if (!Number.isSafeInteger(value) || value <= 0)
+		throw new RangeError(`${name} must be positive`);
 	return value;
 }
 
@@ -353,22 +464,29 @@ function transportError(state: TransportState): Error {
 	return new Error(`transport is ${state}`);
 }
 
-async function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+async function delay(
+	milliseconds: number,
+	signal?: AbortSignal,
+): Promise<void> {
 	abortIfSignalled(signal);
 	await new Promise<void>((resolve, reject) => {
 		let settled = false;
 		const timer = setTimeout(() => {
 			settled = true;
-			if (signal !== undefined) signal.removeEventListener("abort", onAbort);
+			if (signal !== undefined) signal.removeEventListener('abort', onAbort);
 			resolve();
 		}, milliseconds);
 		const onAbort = (): void => {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
-			if (signal !== undefined) signal.removeEventListener("abort", onAbort);
-			reject(signal?.reason ?? new DOMException("The operation was aborted", "AbortError"));
+			if (signal !== undefined) signal.removeEventListener('abort', onAbort);
+			reject(
+				signal?.reason ??
+					new DOMException('The operation was aborted', 'AbortError'),
+			);
 		};
-		if (signal !== undefined) signal.addEventListener("abort", onAbort, { once: true });
+		if (signal !== undefined)
+			signal.addEventListener('abort', onAbort, { once: true });
 	});
 }

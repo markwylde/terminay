@@ -95,7 +95,7 @@ test("Cursor model labels and prompt fallbacks are bounded and display safe", ()
   assert.equal(cursorPromptText({ role: "user", message: { content: [{ type: "text", text: "<timestamp>ignored</timestamp><user_query>actual prompt</user_query>" }] } }), "actual prompt");
 });
 
-async function createCursorFixture() {
+async function createCursorFixture(options = {}) {
   const root = await mkdtemp(join(tmpdir(), "terminay-agent-cursor-"));
   const cursorHome = join(root, "cursor");
   const cwd = join(root, "project");
@@ -124,7 +124,7 @@ async function createCursorFixture() {
   const terminal = {
     capabilities: new Set(["process-observation", "filesystem-observation", "agent-journal"]),
     signal: { aborted: false, throwIfAborted() {} },
-    foreground: { executableName: "agent" },
+    foreground: { executableName: "agent", arguments: options.arguments },
     observation: {
       processes: {
         async descendants() { return [{ handle: { id: "process" }, executableName: "agent" }]; },
@@ -151,6 +151,30 @@ async function createCursorFixture() {
     cleanup: () => rm(root, { recursive: true, force: true }),
   };
 }
+
+test("Cursor --continue binds through the writable store.db", async () => {
+  const fixture = await createCursorFixture({ arguments: ["--continue"] });
+  try {
+    const observed = await createCursorAgentProvider({ cursorHome: fixture.cursorHome, pollMs: 1 }).observe(fixture.terminal);
+    assert.equal(observed.state, "bound");
+    assert.equal(observed.binding.providerSessionId, sessionId);
+    await observed.source.dispose();
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("Cursor --resume with no chat id binds through the writable store.db", async () => {
+  const fixture = await createCursorFixture({ arguments: ["--resume"] });
+  try {
+    const observed = await createCursorAgentProvider({ cursorHome: fixture.cursorHome, pollMs: 1 }).observe(fixture.terminal);
+    assert.equal(observed.state, "bound");
+    assert.equal(observed.binding.providerSessionId, sessionId);
+    await observed.source.dispose();
+  } finally {
+    await fixture.cleanup();
+  }
+});
 
 function publisherFor(events) {
   const publish = (event) => events.push(event);

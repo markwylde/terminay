@@ -134,7 +134,9 @@ export class MdxCompiler {
 								)
 									return {
 										errors: [
-											{ text: 'Absolute host paths are blocked in MDX imports.' },
+											{
+												text: 'Absolute host paths are blocked in MDX imports.',
+											},
 										],
 									};
 								try {
@@ -512,11 +514,9 @@ async function withTimeout<T>(
 		signal === undefined
 			? undefined
 			: new Promise<never>((_, reject) => {
-					signal.addEventListener(
-						'abort',
-						() => reject(abortError(signal)),
-						{ once: true },
-					);
+					signal.addEventListener('abort', () => reject(abortError(signal)), {
+						once: true,
+					});
 				});
 	try {
 		return await Promise.race([
@@ -531,18 +531,18 @@ async function withTimeout<T>(
 function mapCompileError(error: unknown): Error {
 	if (error instanceof FileServiceError || error instanceof DOMException)
 		return error;
-	let message = error instanceof Error ? error.message : 'MDX compilation failed.';
+	let message =
+		error instanceof Error ? error.message : 'MDX compilation failed.';
 	if (typeof error === 'object' && error !== null && 'errors' in error) {
 		const errors = error.errors;
 		if (Array.isArray(errors) && typeof errors[0]?.text === 'string')
 			message = errors[0].text;
 	}
-	const code =
-		/escape|outside the project|Absolute host|blocked/u.test(message)
-			? 'path_escape'
-			: /does not exist|missing/u.test(message)
-				? 'path_missing'
-				: 'invalid_path';
+	const code = /escape|outside the project|Absolute host|blocked/u.test(message)
+		? 'path_escape'
+		: /does not exist|missing/u.test(message)
+			? 'path_missing'
+			: 'invalid_path';
 	return new FileServiceError(code, message);
 }
 function validPath(value: string): boolean {

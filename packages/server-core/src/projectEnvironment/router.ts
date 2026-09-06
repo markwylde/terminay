@@ -1,6 +1,13 @@
 import type { ProtocolId } from '@terminay/protocol';
-import { THIS_SERVER_ENVIRONMENT_ID, type WorkspaceState } from '../workspace.js';
-import type { PtyFactory, PtyProcess, PtySpawnOptions } from '../terminalService/types.js';
+import type {
+	PtyFactory,
+	PtyProcess,
+	PtySpawnOptions,
+} from '../terminalService/types.js';
+import {
+	THIS_SERVER_ENVIRONMENT_ID,
+	type WorkspaceState,
+} from '../workspace.js';
 import type { ProjectEnvironmentRegistry } from './registry.js';
 import { ProjectEnvironmentCapabilityError } from './registry.js';
 import type {
@@ -35,11 +42,15 @@ export class ProjectEnvironmentRouteError extends Error {
 			readonly cause?: unknown;
 		} = {},
 	) {
-		super(message, options.cause === undefined ? undefined : { cause: options.cause });
+		super(
+			message,
+			options.cause === undefined ? undefined : { cause: options.cause },
+		);
 		this.name = 'ProjectEnvironmentRouteError';
 		this.code = code;
 		this.retryable = options.retryable === true;
-		if (options.environmentStatus !== undefined) this.environmentStatus = options.environmentStatus;
+		if (options.environmentStatus !== undefined)
+			this.environmentStatus = options.environmentStatus;
 	}
 }
 
@@ -75,10 +86,16 @@ export class ProjectEnvironmentRouter {
 	private readonly defaultTimeoutMs: number;
 
 	constructor(private readonly options: ProjectEnvironmentRouterOptions) {
-		if (options.serverId.length === 0) throw new TypeError('project environment router server id is required');
+		if (options.serverId.length === 0)
+			throw new TypeError('project environment router server id is required');
 		this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30_000;
-		if (!Number.isSafeInteger(this.defaultTimeoutMs) || this.defaultTimeoutMs <= 0)
-			throw new RangeError('project environment router timeout must be positive');
+		if (
+			!Number.isSafeInteger(this.defaultTimeoutMs) ||
+			this.defaultTimeoutMs <= 0
+		)
+			throw new RangeError(
+				'project environment router timeout must be positive',
+			);
 		this.now = options.now ?? (() => Date.now());
 	}
 
@@ -102,7 +119,13 @@ export class ProjectEnvironmentRouter {
 		input: unknown,
 		options: ProjectEnvironmentInvocationOptions = {},
 	): Promise<T> {
-		return this.invokeBound(this.bindProject(projectId), capability, operation, input, options);
+		return this.invokeBound(
+			this.bindProject(projectId),
+			capability,
+			operation,
+			input,
+			options,
+		);
 	}
 
 	/** Route a production entrypoint while adapting the existing This server
@@ -119,7 +142,8 @@ export class ProjectEnvironmentRouter {
 		const binding = this.bindProject(projectId);
 		if (binding.projectEnvironmentId === THIS_SERVER_ENVIRONMENT_ID) {
 			const environment = this.environment(binding);
-			if (!environment.availableCapabilities.includes(capability)) throw new ProjectEnvironmentCapabilityError(capability);
+			if (!environment.availableCapabilities.includes(capability))
+				throw new ProjectEnvironmentCapabilityError(capability);
 			return thisServer();
 		}
 		return this.invokeBound(binding, capability, operation, input, options);
@@ -133,31 +157,49 @@ export class ProjectEnvironmentRouter {
 		options: ProjectEnvironmentInvocationOptions = {},
 	): Promise<T> {
 		if (binding.serverId !== this.options.serverId)
-			throw new ProjectEnvironmentRouteError('project-unavailable', 'Project belongs to another Terminay Server.');
-		if (operation.length === 0 || operation.length > 256 || operation.includes('\0'))
+			throw new ProjectEnvironmentRouteError(
+				'project-unavailable',
+				'Project belongs to another Terminay Server.',
+			);
+		if (
+			operation.length === 0 ||
+			operation.length > 256 ||
+			operation.includes('\0')
+		)
 			throw new TypeError('project environment operation is invalid');
 		const environment = this.environment(binding);
 		const runtime = this.runtime(environment, capability);
 		const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
-		if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new RangeError('project environment operation timeout must be positive');
+		if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)
+			throw new RangeError(
+				'project environment operation timeout must be positive',
+			);
 		const deadline = this.now() + timeoutMs;
 		const cancellation = boundedSignal(options.signal, timeoutMs);
 		try {
-			return await invokeWithCancellation(
-				Promise.resolve(runtime.invoke(capability, operation, input, {
-					...binding,
-					deadline,
-					signal: cancellation.signal,
-				})),
+			return (await invokeWithCancellation(
+				Promise.resolve(
+					runtime.invoke(capability, operation, input, {
+						...binding,
+						deadline,
+						signal: cancellation.signal,
+					}),
+				),
 				cancellation.signal,
-			) as T;
+			)) as T;
 		} catch (error) {
-			if (error instanceof ProjectEnvironmentCapabilityError || error instanceof ProjectEnvironmentRouteError) throw error;
+			if (
+				error instanceof ProjectEnvironmentCapabilityError ||
+				error instanceof ProjectEnvironmentRouteError
+			)
+				throw error;
 			if (cancellation.signal.aborted) {
 				const external = options.signal?.aborted === true;
 				throw new ProjectEnvironmentRouteError(
 					external ? 'operation-cancelled' : 'operation-timeout',
-					external ? 'Project environment operation was cancelled.' : 'Project environment operation timed out.',
+					external
+						? 'Project environment operation was cancelled.'
+						: 'Project environment operation timed out.',
 					{ retryable: !external, cause: error },
 				);
 			}
@@ -174,36 +216,75 @@ export class ProjectEnvironmentRouter {
 	private project(projectId: ProtocolId) {
 		const workspace = this.options.workspaceSnapshot();
 		if (workspace.serverId !== this.options.serverId)
-			throw new ProjectEnvironmentRouteError('project-unavailable', 'Workspace belongs to another Terminay Server.');
+			throw new ProjectEnvironmentRouteError(
+				'project-unavailable',
+				'Workspace belongs to another Terminay Server.',
+			);
 		const project = workspace.projects[projectId];
 		if (project === undefined)
-			throw new ProjectEnvironmentRouteError('project-unavailable', 'Project is unavailable.');
+			throw new ProjectEnvironmentRouteError(
+				'project-unavailable',
+				'Project is unavailable.',
+			);
 		return { workspace, project };
 	}
 
-	private environment(binding: ProjectEnvironmentBinding): ProjectEnvironmentRecord {
+	private environment(
+		binding: ProjectEnvironmentBinding,
+	): ProjectEnvironmentRecord {
 		const state = this.options.environmentSnapshot();
 		if (state.serverId !== this.options.serverId)
-			throw new ProjectEnvironmentRouteError('environment-unavailable', 'Environment registry belongs to another Terminay Server.');
+			throw new ProjectEnvironmentRouteError(
+				'environment-unavailable',
+				'Environment registry belongs to another Terminay Server.',
+			);
 		const environment = state.environments[binding.projectEnvironmentId];
 		if (environment === undefined)
-			throw new ProjectEnvironmentRouteError('environment-unavailable', 'Project environment is unavailable.');
+			throw new ProjectEnvironmentRouteError(
+				'environment-unavailable',
+				'Project environment is unavailable.',
+			);
 		if (environment.pinnedRevision !== binding.environmentRevision)
-			throw new ProjectEnvironmentRouteError('environment-revision-mismatch', 'Project environment configuration changed; reconnect explicitly.');
+			throw new ProjectEnvironmentRouteError(
+				'environment-revision-mismatch',
+				'Project environment configuration changed; reconnect explicitly.',
+			);
 		if (environment.archived || environment.status !== 'ready')
-			throw new ProjectEnvironmentRouteError('environment-unavailable', environment.failure?.message ?? `Project environment is ${environment.status}.`, {
-				retryable: environment.failure?.retryable ?? ['connecting', 'reconnecting', 'provisioning', 'starting', 'stopping', 'offline', 'unreachable'].includes(environment.status),
-				environmentStatus: environment.status,
-			});
+			throw new ProjectEnvironmentRouteError(
+				'environment-unavailable',
+				environment.failure?.message ??
+					`Project environment is ${environment.status}.`,
+				{
+					retryable:
+						environment.failure?.retryable ??
+						[
+							'connecting',
+							'reconnecting',
+							'provisioning',
+							'starting',
+							'stopping',
+							'offline',
+							'unreachable',
+						].includes(environment.status),
+					environmentStatus: environment.status,
+				},
+			);
 		return environment;
 	}
 
-	private runtime(environment: ProjectEnvironmentRecord, capability: ProjectEnvironmentCapability) {
+	private runtime(
+		environment: ProjectEnvironmentRecord,
+		capability: ProjectEnvironmentCapability,
+	) {
 		try {
 			return this.options.registry.resolve(environment, capability);
 		} catch (error) {
 			if (error instanceof ProjectEnvironmentCapabilityError) throw error;
-			throw new ProjectEnvironmentRouteError('provider-unavailable', 'Project environment provider is unavailable.', { retryable: true, cause: error });
+			throw new ProjectEnvironmentRouteError(
+				'provider-unavailable',
+				'Project environment provider is unavailable.',
+				{ retryable: true, cause: error },
+			);
 		}
 	}
 }
@@ -216,12 +297,36 @@ export class EnvironmentRoutedProjectService {
 		readonly capability: ProjectEnvironmentCapability,
 	) {}
 
-	bind(projectId: ProtocolId): ProjectEnvironmentBinding { return this.router.bindProject(projectId); }
-	invoke<T>(projectId: ProtocolId, operation: string, input: unknown, options?: ProjectEnvironmentInvocationOptions): Promise<T> {
-		return this.router.invoke(projectId, this.capability, operation, input, options);
+	bind(projectId: ProtocolId): ProjectEnvironmentBinding {
+		return this.router.bindProject(projectId);
 	}
-	invokeBound<T>(binding: ProjectEnvironmentBinding, operation: string, input: unknown, options?: ProjectEnvironmentInvocationOptions): Promise<T> {
-		return this.router.invokeBound(binding, this.capability, operation, input, options);
+	invoke<T>(
+		projectId: ProtocolId,
+		operation: string,
+		input: unknown,
+		options?: ProjectEnvironmentInvocationOptions,
+	): Promise<T> {
+		return this.router.invoke(
+			projectId,
+			this.capability,
+			operation,
+			input,
+			options,
+		);
+	}
+	invokeBound<T>(
+		binding: ProjectEnvironmentBinding,
+		operation: string,
+		input: unknown,
+		options?: ProjectEnvironmentInvocationOptions,
+	): Promise<T> {
+		return this.router.invokeBound(
+			binding,
+			this.capability,
+			operation,
+			input,
+			options,
+		);
 	}
 }
 
@@ -239,16 +344,30 @@ export interface EnvironmentRoutedProjectServices {
 /** One shared router fans out to every privileged project service. Optional
  * services are still present as facades so an unsupported capability produces
  * the same explicit typed failure instead of encouraging a host-local path. */
-export function createEnvironmentRoutedProjectServices(router: ProjectEnvironmentRouter): EnvironmentRoutedProjectServices {
+export function createEnvironmentRoutedProjectServices(
+	router: ProjectEnvironmentRouter,
+): EnvironmentRoutedProjectServices {
 	return Object.freeze({
 		terminal: new EnvironmentRoutedProjectService(router, 'terminal'),
 		filesystem: new EnvironmentRoutedProjectService(router, 'filesystem'),
-		filesystemObservation: new EnvironmentRoutedProjectService(router, 'filesystem-observation'),
+		filesystemObservation: new EnvironmentRoutedProjectService(
+			router,
+			'filesystem-observation',
+		),
 		git: new EnvironmentRoutedProjectService(router, 'git'),
-		processObservation: new EnvironmentRoutedProjectService(router, 'process-observation'),
+		processObservation: new EnvironmentRoutedProjectService(
+			router,
+			'process-observation',
+		),
 		agentJournal: new EnvironmentRoutedProjectService(router, 'agent-journal'),
-		shellDiscovery: new EnvironmentRoutedProjectService(router, 'shell-discovery'),
-		infrastructure: new EnvironmentRoutedProjectService(router, 'infrastructure'),
+		shellDiscovery: new EnvironmentRoutedProjectService(
+			router,
+			'shell-discovery',
+		),
+		infrastructure: new EnvironmentRoutedProjectService(
+			router,
+			'infrastructure',
+		),
 	});
 }
 
@@ -279,7 +398,8 @@ export function filterRemoteTerminalEnvironment(
 			upper === 'SSH_AUTH_SOCK' ||
 			upper === 'GIT_ASKPASS' ||
 			upper === 'ELECTRON_RUN_AS_NODE'
-		) continue;
+		)
+			continue;
 		filtered[name] = value;
 	}
 	return Object.freeze(filtered);
@@ -287,34 +407,60 @@ export function filterRemoteTerminalEnvironment(
 
 /** Route PTY creation while TerminalService remains the canonical stream,
  * replay, recording, attachment and lifecycle authority. */
-export function createEnvironmentRoutedPtyFactory(router: ProjectEnvironmentRouter, thisServerFactory: PtyFactory): PtyFactory {
+export function createEnvironmentRoutedPtyFactory(
+	router: ProjectEnvironmentRouter,
+	thisServerFactory: PtyFactory,
+): PtyFactory {
 	return {
 		spawn: async (options: PtySpawnOptions): Promise<PtyProcess> => {
 			const projectId = options.projectId;
-			if (projectId === undefined) return await spawnPty(thisServerFactory, options);
-			const { projectId: _projectId, projectEnvironmentId: _environmentId, environmentRevision: _revision, ...providerOptions } = options;
-			void _projectId; void _environmentId; void _revision;
+			if (projectId === undefined)
+				return await spawnPty(thisServerFactory, options);
+			const {
+				projectId: _projectId,
+				projectEnvironmentId: _environmentId,
+				environmentRevision: _revision,
+				...providerOptions
+			} = options;
+			void _projectId;
+			void _environmentId;
+			void _revision;
 			return router.route(
 				projectId,
 				'terminal',
 				'spawn',
-				{ ...providerOptions, env: filterRemoteTerminalEnvironment(providerOptions.env ?? {}) },
+				{
+					...providerOptions,
+					env: filterRemoteTerminalEnvironment(providerOptions.env ?? {}),
+				},
 				async () => await spawnPty(thisServerFactory, options),
 			) as Promise<PtyProcess>;
 		},
 	};
 }
 
-function spawnPty(factory: PtyFactory, options: PtySpawnOptions): PromiseLike<PtyProcess> | PtyProcess {
-	return typeof factory === 'function' ? factory(options) : factory.spawn(options);
+function spawnPty(
+	factory: PtyFactory,
+	options: PtySpawnOptions,
+): PromiseLike<PtyProcess> | PtyProcess {
+	return typeof factory === 'function'
+		? factory(options)
+		: factory.spawn(options);
 }
 
-function boundedSignal(parent: AbortSignal | undefined, timeoutMs: number): { readonly signal: AbortSignal; readonly dispose: () => void } {
+function boundedSignal(
+	parent: AbortSignal | undefined,
+	timeoutMs: number,
+): { readonly signal: AbortSignal; readonly dispose: () => void } {
 	const controller = new AbortController();
 	const abort = () => controller.abort(parent?.reason);
 	if (parent?.aborted === true) abort();
 	else parent?.addEventListener('abort', abort, { once: true });
-	const timer = setTimeout(() => controller.abort(new Error('project environment operation timed out')), timeoutMs);
+	const timer = setTimeout(
+		() =>
+			controller.abort(new Error('project environment operation timed out')),
+		timeoutMs,
+	);
 	return {
 		signal: controller.signal,
 		dispose: () => {
@@ -324,11 +470,16 @@ function boundedSignal(parent: AbortSignal | undefined, timeoutMs: number): { re
 	};
 }
 
-function invokeWithCancellation<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+function invokeWithCancellation<T>(
+	operation: Promise<T>,
+	signal: AbortSignal,
+): Promise<T> {
 	if (signal.aborted) return Promise.reject(signal.reason);
 	return new Promise<T>((resolve, reject) => {
 		const aborted = () => reject(signal.reason);
 		signal.addEventListener('abort', aborted, { once: true });
-		operation.then(resolve, reject).finally(() => signal.removeEventListener('abort', aborted));
+		operation
+			.then(resolve, reject)
+			.finally(() => signal.removeEventListener('abort', aborted));
 	});
 }

@@ -76,6 +76,20 @@ test("unsupported permission and wait-shaped records never invent waiting lifecy
   assert.deepEqual(events, []);
 });
 
+test("omp --continue binds through the terminal breadcrumb", async () => {
+  const fixture = ompObservationFixture("root-continue", "Continue", { arguments: ["--continue"] });
+  const result = await ompAgentProvider.observe(fixture.terminal);
+  assert.equal(result.state, "bound");
+  assert.equal(result.binding.providerSessionId, "root-continue");
+});
+
+test("omp --resume with no value binds through the terminal breadcrumb after selection", async () => {
+  const fixture = ompObservationFixture("root-picker", "Picker", { arguments: ["--resume"] });
+  const result = await ompAgentProvider.observe(fixture.terminal);
+  assert.equal(result.state, "bound");
+  assert.equal(result.binding.providerSessionId, "root-picker");
+});
+
 test("resume and topology rebind follow the exact current PTY breadcrumb", async () => {
   const first = ompObservationFixture("root-one", "First");
   const second = ompObservationFixture("root-two", "Second");
@@ -191,7 +205,7 @@ function ompObservationFixture(sessionId, title, options = {}) {
   const handle = (id) => ({ id });
   let bindingRequest;
   const terminal = {
-    terminal: { id: "terminal" }, project: { id: "project" }, environment: { id: "environment" }, process: { id: "process" }, foreground: { executableName: "omp" }, tty: { deviceId: "ttys000" },
+    terminal: { id: "terminal" }, project: { id: "project" }, environment: { id: "environment" }, process: { id: "process" }, foreground: { executableName: "omp", arguments: options.arguments }, tty: { deviceId: "ttys000" },
     capabilities: new Set(["process-observation", "filesystem-observation", "agent-journal"]), signal: { aborted: false, throwIfAborted() {} },
     async bindSession(request) { bindingRequest = request; return { providerSessionId: request.providerSessionId, mappingVersion: request.mappingVersion, journal: request.journal }; },
     observation: {

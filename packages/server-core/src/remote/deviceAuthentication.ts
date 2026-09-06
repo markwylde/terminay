@@ -113,7 +113,8 @@ export class RemoteDeviceAuthentication {
 		readonly deviceName: string;
 		readonly publicKeyPem: string;
 	}): RemoteRegisteredDevice {
-		if (input.deviceId !== undefined && !validId(input.deviceId)) throw new TypeError('remote device identity is invalid');
+		if (input.deviceId !== undefined && !validId(input.deviceId))
+			throw new TypeError('remote device identity is invalid');
 		if (!validDeviceName(input.deviceName))
 			throw new TypeError('remote device name is invalid');
 		assertRsaPssPublicKey(input.publicKeyPem);
@@ -121,7 +122,8 @@ export class RemoteDeviceAuthentication {
 		const deviceId = input.deviceId ?? this.nextId('device');
 		const existing = this.devices.get(deviceId);
 		if (existing !== undefined) {
-			if (existing.revokedAt !== null) throw new Error('remote device is revoked');
+			if (existing.revokedAt !== null)
+				throw new Error('remote device is revoked');
 			if (existing.publicKeyPem !== input.publicKeyPem)
 				throw new Error('remote device key does not match');
 			const next: RemoteRegisteredDevice = {
@@ -178,7 +180,8 @@ export class RemoteDeviceAuthentication {
 		const revoked = { ...device, revokedAt: this.currentTime() };
 		this.devices.set(deviceId, revoked);
 		for (const [challengeId, pending] of this.challenges)
-			if (pending.challenge.deviceId === deviceId) this.challenges.delete(challengeId);
+			if (pending.challenge.deviceId === deviceId)
+				this.challenges.delete(challengeId);
 		for (const [token, record] of this.tickets)
 			if (record.ticket.deviceId === deviceId) this.tickets.delete(token);
 		return true;
@@ -242,10 +245,14 @@ export class RemoteDeviceAuthentication {
 	}
 
 	/** Mint a one-use application ticket after pairing enrollment or a signed challenge. */
-	issueConnectionTicket(deviceId: ProtocolId, peerId?: ProtocolId): RemoteDeviceConnectionTicket {
+	issueConnectionTicket(
+		deviceId: ProtocolId,
+		peerId?: ProtocolId,
+	): RemoteDeviceConnectionTicket {
 		this.cleanup();
 		const device = this.requireActiveDevice(deviceId);
-		if (peerId !== undefined && !validId(peerId)) throw new TypeError('remote peer identity is invalid');
+		if (peerId !== undefined && !validId(peerId))
+			throw new TypeError('remote peer identity is invalid');
 		const expiresAt = this.currentTime() + this.ticketTtlMs;
 		const ticket: RemoteDeviceConnectionTicket = Object.freeze({
 			ticket: this.token(32),
@@ -264,7 +271,10 @@ export class RemoteDeviceAuthentication {
 		return ticket;
 	}
 
-	consumeTicket(token: string, peerId?: ProtocolId): RemoteDeviceConnectionTicket {
+	consumeTicket(
+		token: string,
+		peerId?: ProtocolId,
+	): RemoteDeviceConnectionTicket {
 		this.cleanup();
 		const record = this.tickets.get(token);
 		if (record === undefined || record.used)
@@ -276,7 +286,10 @@ export class RemoteDeviceAuthentication {
 		if (record.ticket.peerId !== null && record.ticket.peerId !== peerId)
 			throw new Error('remote ticket belongs to another peer');
 		const device = this.requireActiveDevice(record.ticket.deviceId);
-		this.devices.set(device.deviceId, { ...device, lastSeenAt: this.currentTime() });
+		this.devices.set(device.deviceId, {
+			...device,
+			lastSeenAt: this.currentTime(),
+		});
 		return record.ticket;
 	}
 
@@ -297,9 +310,11 @@ export class RemoteDeviceAuthentication {
 	}
 
 	private requireActiveDevice(deviceId: ProtocolId): RemoteRegisteredDevice {
-		if (!validId(deviceId)) throw new TypeError('remote device identity is invalid');
+		if (!validId(deviceId))
+			throw new TypeError('remote device identity is invalid');
 		const device = this.devices.get(deviceId);
-		if (device === undefined) throw new Error('remote device is not registered');
+		if (device === undefined)
+			throw new Error('remote device is not registered');
 		if (device.revokedAt !== null) throw new Error('remote device is revoked');
 		return device;
 	}
@@ -319,7 +334,9 @@ export class RemoteDeviceAuthentication {
 	private token(bytes: number): string {
 		const value = this.randomBytes(bytes);
 		if (!(value instanceof Uint8Array) || value.byteLength !== bytes)
-			throw new TypeError('remote entropy generator returned an invalid length');
+			throw new TypeError(
+				'remote entropy generator returned an invalid length',
+			);
 		return Buffer.from(value).toString('base64url');
 	}
 }
@@ -357,7 +374,9 @@ function assertRsaPssPublicKey(value: string): void {
 	}
 }
 
-function snapshotDevice(device: RemoteRegisteredDevice): RemoteRegisteredDevice {
+function snapshotDevice(
+	device: RemoteRegisteredDevice,
+): RemoteRegisteredDevice {
 	return Object.freeze({ ...device });
 }
 
@@ -373,11 +392,19 @@ function isStoredDevice(value: RemoteRegisteredDevice): boolean {
 }
 
 function validId(value: string): value is ProtocolId {
-	return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value);
+	return (
+		typeof value === 'string' &&
+		/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value)
+	);
 }
 
 function validDeviceName(value: string): boolean {
-	return typeof value === 'string' && value.trim().length > 0 && value.length <= 128 && !/[\0\r\n]/u.test(value);
+	return (
+		typeof value === 'string' &&
+		value.trim().length > 0 &&
+		value.length <= 128 &&
+		!/[\0\r\n]/u.test(value)
+	);
 }
 
 function validTimestamp(value: number): boolean {
@@ -385,14 +412,29 @@ function validTimestamp(value: number): boolean {
 }
 
 function validSignature(value: string): boolean {
-	return typeof value === 'string' && value.length >= 32 && value.length <= 2048 && /^[A-Za-z0-9_-]+$/u.test(value);
+	return (
+		typeof value === 'string' &&
+		value.length >= 32 &&
+		value.length <= 2048 &&
+		/^[A-Za-z0-9_-]+$/u.test(value)
+	);
 }
 
 function validOrigin(value: string): boolean {
 	try {
 		const url = new URL(value);
-		const local = url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname.endsWith('.localhost');
-		return (url.protocol === 'https:' || (url.protocol === 'http:' && local)) && !url.username && !url.password && !url.search && !url.hash && url.pathname === '/';
+		const local =
+			url.hostname === '127.0.0.1' ||
+			url.hostname === 'localhost' ||
+			url.hostname.endsWith('.localhost');
+		return (
+			(url.protocol === 'https:' || (url.protocol === 'http:' && local)) &&
+			!url.username &&
+			!url.password &&
+			!url.search &&
+			!url.hash &&
+			url.pathname === '/'
+		);
 	} catch {
 		return false;
 	}
