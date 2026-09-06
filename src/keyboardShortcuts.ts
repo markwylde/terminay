@@ -64,6 +64,12 @@ export const appCommandMetadata: AppCommandMetadata[] = [
     keywords: 'project environment connections ssh puzed server',
   },
   {
+    command: 'open-performance-log',
+    title: 'Open Performance Log',
+    description: 'See startup timing and live CPU, memory, and disk use.',
+    keywords: 'performance startup timing cpu memory disk slow profiling',
+  },
+  {
     command: 'open-remote-control',
     title: 'Open Remote Control',
     description: 'Manage Terminay server connections for this workspace.',
@@ -133,6 +139,7 @@ export const defaultKeyboardShortcuts: KeyboardShortcutSettings = {
   'open-settings': '',
   'open-macros': '',
   'open-project-environments': '',
+  'open-performance-log': '',
   'open-remote-control': '',
   'open-extensions': '',
   'save-active': 'CmdOrCtrl+S',

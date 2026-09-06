@@ -9,13 +9,15 @@ export interface DiagnosticsHelpMenuOptions {
 	recordCleared: () => Promise<void>;
 	/** Keep menu failures contained when the diagnostic writer itself is degraded. */
 	reportFailure?: (
-		operation: 'reveal' | 'clear' | 'performance',
+		operation: 'reveal' | 'clear' | 'performance-log',
 		error: unknown,
 	) => void;
-	/** Opt-in performance logging; omitted keeps the Help checkbox hidden. */
-	performanceLogging?: {
-		isEnabled: () => boolean;
-		setEnabled: (enabled: boolean) => Promise<boolean> | boolean;
+	/** Opens or focuses the Performance Log window. Omitted on hosts that have
+	 * no workspace window to present it. */
+	performanceLog?: {
+		/** False when no local workspace window exists to host the route. */
+		canOpen: () => boolean;
+		open: () => Promise<void> | void;
 	};
 }
 
@@ -44,7 +46,7 @@ const nativeDependencies: DiagnosticsMenuNativeDependencies = {
 
 function reportMenuFailure(
 	options: DiagnosticsHelpMenuOptions,
-	operation: 'reveal' | 'clear' | 'performance',
+	operation: 'reveal' | 'clear' | 'performance-log',
 	error: unknown,
 ): void {
 	if (options.reportFailure) {
@@ -81,20 +83,20 @@ export function createDiagnosticsHelpMenuItems(
 	options: DiagnosticsHelpMenuOptions,
 	dependencies: DiagnosticsMenuNativeDependencies = nativeDependencies,
 ): MenuItemConstructorOptions[] {
-	const performanceLogging = options.performanceLogging;
+	const performanceLog = options.performanceLog;
 	return [
-		...(performanceLogging === undefined
+		...(performanceLog === undefined
 			? []
 			: [
 					{
-						label: 'Performance Logging',
-						type: 'checkbox' as const,
-						checked: performanceLogging.isEnabled(),
-						click: (menuItem: { checked: boolean }) => {
-							void Promise.resolve(
-								performanceLogging.setEnabled(menuItem.checked),
-							).catch((error) =>
-								reportMenuFailure(options, 'performance', error),
+						label: 'Performance Log',
+						// The window is a route on the workspace bundle, so it needs a
+						// local workspace window to present it. Reveal and clear below
+						// stay usable when there is none.
+						enabled: performanceLog.canOpen(),
+						click: () => {
+							void Promise.resolve(performanceLog.open()).catch((error) =>
+								reportMenuFailure(options, 'performance-log', error),
 							);
 						},
 					},
