@@ -22,6 +22,7 @@ import {
 	app,
 	BrowserWindow,
 	clipboard,
+	contentTracing,
 	crashReporter,
 	dialog,
 	ipcMain,
@@ -30,7 +31,6 @@ import {
 	nativeImage,
 	powerMonitor,
 	safeStorage,
-	contentTracing,
 	screen,
 	shell,
 	webContents,
@@ -61,7 +61,6 @@ import {
 	FileProjectEnvironmentStateBackend,
 	ProjectEnvironmentRepository,
 } from '../packages/server-core/src/projectEnvironment/index';
-import { MigratingProjectEnvironmentStateBackend } from './projectEnvironmentPersistence';
 import {
 	RecordingService,
 	ServerRecordingAdapter,
@@ -102,7 +101,14 @@ import {
 	warmAiTabMetadataProviderEnv,
 } from './aiTabMetadata/service';
 import { showCanonicalLaunchRecovery } from './canonicalLaunchRecovery';
-import { desktopStartupLoadingDocument } from './startupLoadingDocument';
+import {
+	desktopEmbeddedStorePaths,
+	desktopLocalServerUiPartitionKey,
+	migrateLegacyEmbeddedProjectEnvironmentServerId,
+	migrateLegacyEmbeddedRecordingServerId,
+	migrateLegacyEmbeddedWorkspaceServerId,
+	resolveDesktopInstanceIdentity,
+} from './desktopInstanceIdentity';
 import {
 	bindAppChildDiagnostics,
 	bindWebContentsDiagnostics,
@@ -113,15 +119,12 @@ import {
 	bindFatalProcessDiagnostics,
 	initializeDesktopDiagnostics,
 } from './diagnostics/service';
-import { normalizeExternalUrl } from './externalUrl';
 import {
-	desktopEmbeddedStorePaths,
-	desktopLocalServerUiPartitionKey,
-	migrateLegacyEmbeddedProjectEnvironmentServerId,
-	migrateLegacyEmbeddedRecordingServerId,
-	migrateLegacyEmbeddedWorkspaceServerId,
-	resolveDesktopInstanceIdentity,
-} from './desktopInstanceIdentity';
+	type StartupPhaseId,
+	type StartupSubPhaseId,
+	StartupTimeline,
+} from './diagnostics/startupTimeline';
+import { normalizeExternalUrl } from './externalUrl';
 import { FileBufferService } from './fileViewer/fileBufferService';
 import { FileWatchService } from './fileViewer/fileWatchService';
 import { GitDiffService } from './fileViewer/gitDiffService';
@@ -137,14 +140,18 @@ import {
 	type McpServerCommand,
 	uninstallMcpAgent,
 } from './mcpInstall';
+import { MigratingProjectEnvironmentStateBackend } from './projectEnvironmentPersistence';
 import { TerminalRecordingService } from './recording/service';
-import { establishDesktopDevicePairing } from './remote/desktopPairing';
 import {
 	connectDesktopHostedRemote,
-	isHostedDesktopOrigin,
 	type DesktopHostedSignalOptions,
+	isHostedDesktopOrigin,
 } from './remote/desktopHostedConnection';
-import { createDesktopReconnectTransport, type DesktopReconnectTransport } from './remote/desktopReconnect';
+import { establishDesktopDevicePairing } from './remote/desktopPairing';
+import {
+	createDesktopReconnectTransport,
+	type DesktopReconnectTransport,
+} from './remote/desktopReconnect';
 import { createDesktopBootstrappedWebRtcConnection } from './remote/desktopWebRtcBootstrap';
 import { resolveDesktopWebRtcRuntimeRoot } from './remote/desktopWebRtcRuntimeRoot';
 import {
@@ -169,6 +176,7 @@ import {
 	releaseServerUiWindowBinding,
 } from './serverUiHost';
 import { secureSession } from './sessionSecurity';
+import { desktopStartupLoadingDocument } from './startupLoadingDocument';
 import { assertTrustedIpcSender } from './trustedIpcSender';
 import { resolveDesktopUserDataPath } from './userDataNamespace';
 import {
@@ -207,7 +215,8 @@ const customUserDataPath = process.env.TERMINAY_USER_DATA_DIR?.trim();
 const resolvedUserDataPath = resolveDesktopUserDataPath({
 	appDataPath: app.getPath('appData'),
 	...(customUserDataPath ? { customPath: customUserDataPath } : {}),
-	isDevelopmentBuild: process.env.TERMINAY_DEVELOPMENT_SOURCE_WORKSPACES === '1',
+	isDevelopmentBuild:
+		process.env.TERMINAY_DEVELOPMENT_SOURCE_WORKSPACES === '1',
 	isPackaged: app.isPackaged,
 });
 if (resolvedUserDataPath) {
@@ -222,7 +231,8 @@ const embeddedDesktopInstance = resolveDesktopInstanceIdentity(
 );
 const embeddedServerId = embeddedDesktopInstance.id;
 const embeddedStorePaths = desktopEmbeddedStorePaths(embeddedDesktopInstance);
-const embeddedLocalProfileId = LocalServerUiSession.profileIdFor(embeddedServerId);
+const embeddedLocalProfileId =
+	LocalServerUiSession.profileIdFor(embeddedServerId);
 
 try {
 	if (process.env.TERMINAY_TEST === '1' && resolvedUserDataPath) {
@@ -260,6 +270,59 @@ const desktopPerformanceLogging = new DesktopPerformanceLogging({
 	},
 	userDataDirectory: app.getPath('userData'),
 });
+
+/** Always-on, in-memory only. Never reaches the diagnostics writer. */
+const desktopStartupTimeline = new StartupTimeline();
+/** The window painting the pre-server loading document, while it is doing so. */
+let startupPhaseWindow: BrowserWindow | null = null;
+/** Repaints are dropped once the verified bundle navigation has begun, so the
+ * phase line can never race the handoff that replaces the whole document. */
+let startupPhasePaintingStopped = false;
+let startupPhasePaintInFlight = false;
+let startupPhasePaintedLabel: string | undefined;
+
+/** Open a startup phase and repaint the loading document's phase line.
+ * The repaint is deliberately not awaited: a phase must never be delayed by
+ * the paint that names it. */
+function beginStartupPhase(id: StartupPhaseId | StartupSubPhaseId): void {
+	desktopStartupTimeline.begin(id);
+	paintStartupPhaseLine();
+}
+
+function endStartupPhase(id: StartupPhaseId | StartupSubPhaseId): void {
+	desktopStartupTimeline.end(id);
+}
+
+function paintStartupPhaseLine(): void {
+	const window = startupPhaseWindow;
+	if (
+		window === null ||
+		startupPhasePaintingStopped ||
+		startupPhasePaintInFlight ||
+		window.isDestroyed()
+	)
+		return;
+	const label = desktopStartupTimeline.currentLabel();
+	// Consecutive phases can share a label; repainting the same text would be a
+	// navigation with no visible effect.
+	if (label === undefined || label === startupPhasePaintedLabel) return;
+	startupPhasePaintedLabel = label;
+	startupPhasePaintInFlight = true;
+	void window
+		.loadURL(desktopStartupLoadingDocument(label))
+		.catch(() => {
+			// A failed repaint leaves the previously painted loading state intact.
+		})
+		.finally(() => {
+			startupPhasePaintInFlight = false;
+		});
+}
+
+/** Called once the verified bundle navigation owns the window. */
+function stopStartupPhasePainting(): void {
+	startupPhasePaintingStopped = true;
+	startupPhaseWindow = null;
+}
 
 export const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL'];
 export const MAIN_DIST = path.join(process.env.APP_ROOT, 'dist-electron');
@@ -1218,27 +1281,43 @@ const embeddedRuntimeReady = prepareEmbeddedRuntime();
 
 async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 	process.stderr.write('[Terminay] waiting for app.whenReady()\n');
+	desktopStartupTimeline.begin('electron-ready');
 	await app.whenReady();
+	desktopStartupTimeline.end('electron-ready');
 	process.stderr.write('[Terminay] app.whenReady resolved\n');
+	desktopStartupTimeline.begin('startup-window');
 	const embeddedStartupWindow = createWindow({ deferCanonicalLaunch: true });
 	if (embeddedStartupWindow === null)
 		throw new Error('The embedded workspace window could not be created.');
 	embeddedStartupWindowForRecovery = embeddedStartupWindow;
+	desktopStartupTimeline.end('startup-window');
 	// Paint a self-contained loading document before any workspace, extension, or
 	// server initialization. The verified server UI replaces it only once its
 	// local session and document endpoint are ready. Awaiting the paint avoids
 	// overlapping `loadURL` with persistence recovery, which leaves Chromium
 	// pending and Playwright waiting forever for the first window.
+	desktopStartupTimeline.begin('first-paint');
+	const firstPaintLabel = desktopStartupTimeline.currentLabel();
 	try {
-		await embeddedStartupWindow.loadURL(desktopStartupLoadingDocument());
+		await embeddedStartupWindow.loadURL(
+			desktopStartupLoadingDocument(firstPaintLabel),
+		);
 		if (!embeddedStartupWindow.isDestroyed()) embeddedStartupWindow.show();
 	} catch (error) {
 		if (!embeddedStartupWindow.isDestroyed())
 			console.error('[window] startup loading document failed', error);
 	}
+	desktopStartupTimeline.end('first-paint');
+	// Only later phases repaint the line; the first paint above is the one that
+	// must complete before restoration begins.
+	startupPhaseWindow = embeddedStartupWindow;
+	startupPhasePaintedLabel = firstPaintLabel;
+	beginStartupPhase('workspace-restore');
 	const embeddedWorkspace = await openEmbeddedWorkspaceWithRecovery(
 		embeddedStartupWindow,
 	);
+	endStartupPhase('workspace-restore');
+	beginStartupPhase('server-compose');
 	const authority: ServerTerminalAuthority = new ServerTerminalAuthority({
 		serverId: embeddedServerId,
 		dataRoot: app.getPath('userData'),
@@ -1399,16 +1478,22 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 			}
 		},
 	});
+	endStartupPhase('server-compose');
+	beginStartupPhase('workspace-init');
 	await recoverEmbeddedWorkspaceOperation(embeddedStartupWindow, () =>
 		authority.initializeWorkspace(),
 	);
 	serverTerminalAuthority = authority;
+	endStartupPhase('workspace-init');
+	beginStartupPhase('mcp-endpoint');
 	applyMcpSetting(embeddedServerSettings.settings);
 	removeMcpSettingsObserver?.();
 	removeMcpSettingsObserver = embeddedServerSettings.onChange((state) =>
 		applyMcpSetting(state.settings),
 	);
 	await startMcpControlEndpoint();
+	endStartupPhase('mcp-endpoint');
+	beginStartupPhase('bundle-hosts');
 	localServerUiSession = new LocalServerUiSession({
 		bundleRoot: SERVER_UI_DIST,
 		cacheRoot: embeddedStorePaths.uiBundles,
@@ -1426,6 +1511,8 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 			updater: 1,
 		},
 	});
+	endStartupPhase('bundle-hosts');
+	beginStartupPhase('remote-exposure');
 	const desktopWebRtcRuntimeRoot = resolveDesktopWebRtcRuntimeRoot({
 		isPackaged: app.isPackaged,
 		resourcesPath: process.resourcesPath,
@@ -1508,6 +1595,7 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 				? {}
 				: { webrtcRuntimeRoot: desktopWebRtcRuntimeRoot }),
 	});
+	endStartupPhase('remote-exposure');
 	return embeddedStartupWindow;
 }
 
@@ -3642,7 +3730,13 @@ async function prepareCanonicalHttpRemoteLaunch(
  * inside DesktopDeviceCredentialStore. */
 async function enrollPairedDesktopRemoteProfile(
 	pairingUrl: string,
-	onMatchCode: (approval: Readonly<{ deviceName: string; matchCode: string; expiresAt: number }>) => void,
+	onMatchCode: (
+		approval: Readonly<{
+			deviceName: string;
+			matchCode: string;
+			expiresAt: number;
+		}>,
+	) => void,
 ): Promise<RememberedRemoteConnection> {
 	const deviceName = 'Terminay Desktop';
 	const enrolled = await establishDesktopDevicePairing({
@@ -3726,10 +3820,16 @@ async function openDesktopRemoteLanes(
 			iceServers: parseHostedIceServers(
 				readEmbeddedRemoteAccessSettings().webRtcIceServers,
 			),
-			...(profile.serverId === undefined ? {} : { expectedServerId: profile.serverId }),
+			...(profile.serverId === undefined
+				? {}
+				: { expectedServerId: profile.serverId }),
 			...(signal === undefined ? {} : { signal }),
 		});
-		return Object.freeze({ kind: 'webrtc', transport: webRtc.transport, webRtc });
+		return Object.freeze({
+			kind: 'webrtc',
+			transport: webRtc.transport,
+			webRtc,
+		});
 	}
 	const connected = await createDesktopReconnectTransport({
 		origin: profile.origin,
@@ -3753,7 +3853,11 @@ async function openDesktopRemoteLanes(
 				: { webrtcRuntimeRoot: remoteWebRtcRuntimeRoot }),
 		});
 		await connected.transport.close({ code: 'normal' });
-		return Object.freeze({ kind: 'webrtc', transport: webRtc.transport, webRtc });
+		return Object.freeze({
+			kind: 'webrtc',
+			transport: webRtc.transport,
+			webRtc,
+		});
 	} catch (error) {
 		await connected.transport.close({ code: 'normal' }).catch(() => undefined);
 		throw error;
@@ -3762,7 +3866,9 @@ async function openDesktopRemoteLanes(
 
 function desktopWebRtcReconnectAuth(connected: DesktopReconnectTransport) {
 	if (connected.pinnedHostKey === undefined) {
-		throw new Error('Server host identity is not pinned; explicit re-pairing is required.');
+		throw new Error(
+			'Server host identity is not pinned; explicit re-pairing is required.',
+		);
 	}
 	return Object.freeze({
 		scope: 'reconnect' as const,
@@ -3787,9 +3893,7 @@ async function prepareCanonicalDesktopRemoteConnection(
 				transport: lanes.transport,
 			});
 		} catch (error) {
-			await lanes.transport
-				.close({ code: 'normal' })
-				.catch(() => undefined);
+			await lanes.transport.close({ code: 'normal' }).catch(() => undefined);
 			throw error;
 		}
 	}
@@ -4141,7 +4245,6 @@ async function closeRemoteConnection(
 	return desktopRemoteExposure.closeConnection(connectionId);
 }
 
-
 if (process.env.TERMINAY_TEST === '1') {
 	ipcMain.handle(
 		'test:create-server-terminal',
@@ -4398,7 +4501,10 @@ if (process.env.TERMINAY_TEST === '1') {
 			) {
 				throw new Error('A terminal session id is required.');
 			}
-			if (typeof payload?.providerSessionId !== 'string' || payload.providerSessionId.length === 0)
+			if (
+				typeof payload?.providerSessionId !== 'string' ||
+				payload.providerSessionId.length === 0
+			)
 				throw new Error('An agent provider session id is required.');
 			if (!Array.isArray(payload.events) || payload.events.length === 0)
 				throw new Error('Agent lifecycle events are required.');
@@ -4415,13 +4521,27 @@ if (process.env.TERMINAY_TEST === '1') {
 					},
 					payload.provider,
 				);
-				return serverTerminalAuthority!.agents.ingestExtensionLifecycle(
-					{ serverId: serverSession.serverId, projectId: serverSession.projectId, sessionId: serverSession.id },
-					payload.provider,
-					'e2e',
-					{ providerSessionId: payload.providerSessionId, mappingVersion: 'e2e', fingerprint: { kind: 'test', process: { id: `e2e:${serverSession.id}` }, metadata: { source: 'electron-e2e' } } },
-					events,
-				).then((result) => result.acceptedEventCount === events.length);
+				return serverTerminalAuthority!.agents
+					.ingestExtensionLifecycle(
+						{
+							serverId: serverSession.serverId,
+							projectId: serverSession.projectId,
+							sessionId: serverSession.id,
+						},
+						payload.provider,
+						'e2e',
+						{
+							providerSessionId: payload.providerSessionId,
+							mappingVersion: 'e2e',
+							fingerprint: {
+								kind: 'test',
+								process: { id: `e2e:${serverSession.id}` },
+								metadata: { source: 'electron-e2e' },
+							},
+						},
+						events,
+					)
+					.then((result) => result.acceptedEventCount === events.length);
 			}
 			throw new Error('The terminal session is not available.');
 		},
@@ -4630,9 +4750,11 @@ async function completeDesktopStartup(): Promise<void> {
 	// readiness gate before admitting any renderer or reporting the Local server
 	// ready. safeStorage owns the OS interaction; no reusable passphrase or key
 	// material is supplied by Terminay in embedded mode.
+	beginStartupPhase('vault-unlock');
 	if (embeddedVault.status().state === 'locked') {
 		await embeddedVault.unlock({ secret: new Uint8Array() });
 	}
+	endStartupPhase('vault-unlock');
 	powerMonitor.on('resume', () => {
 		void desktopDiagnostics.cleanup();
 	});
@@ -4645,10 +4767,13 @@ async function completeDesktopStartup(): Promise<void> {
 		},
 		{ channel: 'lifecycle' },
 	);
+	beginStartupPhase('native-menu');
 	ensureNodePtySpawnHelperIsExecutable();
 	setDockIcon();
 	await desktopPerformanceLogging.restore();
 	createAppMenu();
+	endStartupPhase('native-menu');
+	beginStartupPhase('agent-integration');
 	try {
 		await applyAgentIntegrationSetting(readTerminalSettings());
 		await desktopDiagnostics.record(
@@ -4673,11 +4798,21 @@ async function completeDesktopStartup(): Promise<void> {
 		);
 		throw error;
 	}
+	endStartupPhase('agent-integration');
+	// The verified bundle navigation now owns the window; stop repainting the
+	// loading document so a phase line can never race the handoff.
+	desktopStartupTimeline.begin('ui-handoff');
+	stopStartupPhasePainting();
 	await launchDeferredCanonicalWindow(embeddedStartupWindow);
+	desktopStartupTimeline.end('ui-handoff');
 }
 
 async function recoverFailedDesktopBootstrap(error: unknown): Promise<void> {
 	console.error('[main] Desktop bootstrap failed', error);
+	// Close the phase that was running so the timeline identifies where startup
+	// failed, and stop repainting before the recovery document takes the window.
+	desktopStartupTimeline.fail('startup failed');
+	stopStartupPhasePainting();
 	const window = embeddedStartupWindowForRecovery;
 	if (window === null || window.isDestroyed()) {
 		// There is no native surface on which a recovery state could be rendered.
