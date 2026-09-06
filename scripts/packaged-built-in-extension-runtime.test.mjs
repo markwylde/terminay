@@ -105,7 +105,7 @@ function active(state, extensionId) {
 async function exercisePackagedRoot(label, artifactRoot) {
   const source = new DirectoryBuiltInExtensionArtifactSource(resolve(artifactRoot))
   const artifacts = await source.list()
-  assert.equal(artifacts.length, 7, `${label} must expose the complete built-in inventory`)
+  assert.equal(artifacts.length, 8, `${label} must expose the complete built-in inventory`)
   const codex = artifacts.find((artifact) => artifact.extensionId === CODEX_ID)
   assert.ok(codex)
   const registry = new OverrideRegistry(codex.manifestMetadata)
@@ -114,7 +114,7 @@ async function exercisePackagedRoot(label, artifactRoot) {
     const initialSource = new FilteredBuiltIns(source, new Set([CURSOR_ID]))
     let installer = new ExtensionInstaller({ dataRoot, registryClient: registry, materializer: registry, builtIns: initialSource })
     let state = await installer.initialize()
-    assert.equal(Object.keys(state.extensions).length, 6)
+    assert.equal(Object.keys(state.extensions).length, 7)
     assert.ok(Object.values(state.extensions).every((record) => record.enabled))
 
     await installer.disable(CODEX_ID)
@@ -146,7 +146,7 @@ async function exercisePackagedRoot(label, artifactRoot) {
     const state = await installer.initialize()
     assert.equal(state.extensions[CODEX_ID].state, 'failed')
     assert.equal(Object.values(state.extensions).filter((record) => record.state === 'failed').length, 1, JSON.stringify(state.extensions))
-    assert.equal(Object.keys(state.extensions).length, 7)
+    assert.equal(Object.keys(state.extensions).length, 8)
   } finally {
     await rm(badRoot, { recursive: true, force: true })
   }
@@ -306,6 +306,10 @@ async function exercisePackagedHostRuntime(label, artifactRoot) {
     let installer = new ExtensionInstaller({ dataRoot, registryClient: registry, materializer: registry, builtIns: source })
     hosts = new ExtensionHostManager({ broker: { async request() {} }, agents })
     let state = await installer.initialize()
+    const enabledByDefault = new Set(await installer.enabledExtensionIds())
+    for (const extensionId of ['com.terminay.agent.opencode', ...artifacts.map((artifact) => artifact.extensionId)]) {
+      assert.equal(enabledByDefault.has(extensionId), true, `${label} must enable ${extensionId} by default`)
+    }
     await startEnabled(installer, hosts, dataRoot)
     assert.deepEqual(
       hosts.statuses().map((status) => [status.extensionId, status.state]),
@@ -320,6 +324,7 @@ async function exercisePackagedHostRuntime(label, artifactRoot) {
         'com.terminay.agent.cursor/cli',
         'com.terminay.agent.grok/cli',
         'com.terminay.agent.omp/cli',
+        'com.terminay.agent.opencode/cli',
       ],
       `${label} must publish all staged agent contributions only after activation`,
     )

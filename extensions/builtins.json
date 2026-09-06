@@ -1,12 +1,45 @@
 {
   "schemaVersion": 1,
   "extensions": [
-    { "directory": "ssh", "extensionId": "com.terminay.ssh", "packageName": "terminay-plugin-ssh" },
-    { "directory": "puzed", "extensionId": "com.puzed.platform", "packageName": "terminay-plugin-puzed" },
-    { "directory": "agent-codex", "extensionId": "com.terminay.agent.codex", "packageName": "terminay-agent-codex" },
-    { "directory": "agent-claude-code", "extensionId": "com.terminay.agent.claude-code", "packageName": "terminay-agent-claude-code" },
-    { "directory": "agent-cursor", "extensionId": "com.terminay.agent.cursor", "packageName": "terminay-agent-cursor" },
-    { "directory": "agent-grok", "extensionId": "com.terminay.agent.grok", "packageName": "terminay-agent-grok" },
-    { "directory": "agent-omp", "extensionId": "com.terminay.agent.omp", "packageName": "terminay-agent-omp" }
+    {
+      "directory": "ssh",
+      "extensionId": "com.terminay.ssh",
+      "packageName": "terminay-plugin-ssh"
+    },
+    {
+      "directory": "puzed",
+      "extensionId": "com.puzed.platform",
+      "packageName": "terminay-plugin-puzed"
+    },
+    {
+      "directory": "agent-codex",
+      "extensionId": "com.terminay.agent.codex",
+      "packageName": "terminay-agent-codex"
+    },
+    {
+      "directory": "agent-claude-code",
+      "extensionId": "com.terminay.agent.claude-code",
+      "packageName": "terminay-agent-claude-code"
+    },
+    {
+      "directory": "agent-cursor",
+      "extensionId": "com.terminay.agent.cursor",
+      "packageName": "terminay-agent-cursor"
+    },
+    {
+      "directory": "agent-grok",
+      "extensionId": "com.terminay.agent.grok",
+      "packageName": "terminay-agent-grok"
+    },
+    {
+      "directory": "agent-opencode",
+      "extensionId": "com.terminay.agent.opencode",
+      "packageName": "terminay-agent-opencode"
+    },
+    {
+      "directory": "agent-omp",
+      "extensionId": "com.terminay.agent.omp",
+      "packageName": "terminay-agent-omp"
+    }
   ]
 }

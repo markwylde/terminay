@@ -4,6 +4,12 @@ import { expect, nativeGrokSessionId, test } from './fixtures';
 import { typeInVisibleTerminal } from './support/terminal-input';
 import { selectSidebarGroup } from './support/ui';
 
+/**
+ * Stub Grok binary: prints canned "Grok e2e ready/resumed" and uses a
+ * hardcoded session UUID. This is not Resume proof for the real Grok CLI.
+ * Real restore coverage is the opt-in conformance harness
+ * (`TERMINAY_CONFORMANCE_GROK=1`), which types `grok --continue`.
+ */
 test('a real process-bound Grok CLI appears, leaves, and returns to Agents on resume', async ({
 	mainWindow,
 	tempDir,

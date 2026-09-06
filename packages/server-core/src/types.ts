@@ -1,159 +1,174 @@
 import type {
-  AuthScope,
-  ByteTransport,
-  ClientHello,
-  CommandEnvelope,
-  JsonValue,
-  ProtocolError,
-  ProtocolId,
-  ProtocolLimits,
-  QueryEnvelope,
+	AuthScope,
+	ByteTransport,
+	ClientHello,
+	CommandEnvelope,
+	JsonValue,
+	ProtocolError,
+	ProtocolId,
+	ProtocolLimits,
+	QueryEnvelope,
 	TransportCloseCode,
-} from "@terminay/protocol";
+} from '@terminay/protocol';
 
 /** A canonical identity returned by the transport/application authenticator. */
 export interface AuthenticatedClient {
-  /** Identity from the authentication layer, never from hello.authScope. */
-  readonly clientId: ProtocolId;
-  readonly authScope: AuthScope;
-  /** Named privileged operations granted by the transport/device authority.
-   * Scope remains the coarse read/write gate; services enforce these grants. */
-  readonly permissions?: readonly string[];
-  /** Optional transport/application claims. Claims are never sent back to clients. */
-  readonly claims?: JsonValue;
+	/** Identity from the authentication layer, never from hello.authScope. */
+	readonly clientId: ProtocolId;
+	readonly authScope: AuthScope;
+	/** Named privileged operations granted by the transport/device authority.
+	 * Scope remains the coarse read/write gate; services enforce these grants. */
+	readonly permissions?: readonly string[];
+	/** Optional transport/application claims. Claims are never sent back to clients. */
+	readonly claims?: JsonValue;
 }
 
 export interface AuthenticationContext {
-  readonly hello: ClientHello;
-  readonly signal: AbortSignal;
+	readonly hello: ClientHello;
+	readonly signal: AbortSignal;
 }
 
 export type AuthenticationResult = AuthenticatedClient | ProtocolError;
 
 export type AuthenticateClient = (
-  context: AuthenticationContext,
+	context: AuthenticationContext,
 ) => AuthenticationResult | Promise<AuthenticationResult>;
 
 export interface ServerIdentity {
-  readonly serverId: ProtocolId;
-  readonly serverVersion: string;
-  readonly capabilities: readonly string[];
-  readonly limits?: ProtocolLimits;
+	readonly serverId: ProtocolId;
+	readonly serverVersion: string;
+	readonly capabilities: readonly string[];
+	readonly limits?: ProtocolLimits;
 }
 
 export interface RequestContext {
-  readonly connectionId: ProtocolId;
-  readonly clientId: ProtocolId;
-  readonly authScope: AuthScope;
-  readonly permissions?: readonly string[];
-  readonly claims?: JsonValue;
-  readonly signal: AbortSignal;
-  readonly deadline?: number;
-  readonly expectedRevision?: number;
+	readonly connectionId: ProtocolId;
+	readonly clientId: ProtocolId;
+	readonly authScope: AuthScope;
+	readonly permissions?: readonly string[];
+	readonly claims?: JsonValue;
+	readonly signal: AbortSignal;
+	readonly deadline?: number;
+	readonly expectedRevision?: number;
 }
 
 export interface QueryRequest {
-  readonly envelope: QueryEnvelope;
-  readonly body: Uint8Array;
-  readonly context: RequestContext;
+	readonly envelope: QueryEnvelope;
+	readonly body: Uint8Array;
+	readonly context: RequestContext;
 }
 
 export interface CommandRequest {
-  readonly envelope: CommandEnvelope;
-  readonly body: Uint8Array;
-  readonly context: RequestContext;
+	readonly envelope: CommandEnvelope;
+	readonly body: Uint8Array;
+	readonly context: RequestContext;
 }
 
 export interface BinaryQueryHandlerResult {
-  readonly result: JsonValue;
-  readonly body: Uint8Array;
+	readonly result: JsonValue;
+	readonly body: Uint8Array;
 }
 
 export type QueryHandler = (
-  request: QueryRequest,
-) => JsonValue | BinaryQueryHandlerResult | Promise<JsonValue | BinaryQueryHandlerResult>;
+	request: QueryRequest,
+) =>
+	| JsonValue
+	| BinaryQueryHandlerResult
+	| Promise<JsonValue | BinaryQueryHandlerResult>;
 
 export interface CommandHandlerResult {
-  readonly result?: JsonValue;
-  readonly revision?: number;
+	readonly result?: JsonValue;
+	readonly revision?: number;
 }
 
 export type CommandHandler = (
-  request: CommandRequest,
-) => CommandHandlerResult | JsonValue | Promise<CommandHandlerResult | JsonValue>;
+	request: CommandRequest,
+) =>
+	| CommandHandlerResult
+	| JsonValue
+	| Promise<CommandHandlerResult | JsonValue>;
 
 export interface OperationPolicy {
-  readonly scope?: AuthScope;
-  readonly query?: QueryHandler;
-  readonly command?: CommandHandler;
+	readonly scope?: AuthScope;
+	readonly query?: QueryHandler;
+	readonly command?: CommandHandler;
 }
 
 export interface OperationRegistries {
-  readonly queries?: ReadonlyMap<string, QueryHandler> | Record<string, QueryHandler>;
-  readonly commands?: ReadonlyMap<string, CommandHandler> | Record<string, CommandHandler>;
-  readonly policies?: ReadonlyMap<string, OperationPolicy> | Record<string, OperationPolicy>;
+	readonly queries?:
+		| ReadonlyMap<string, QueryHandler>
+		| Record<string, QueryHandler>;
+	readonly commands?:
+		| ReadonlyMap<string, CommandHandler>
+		| Record<string, CommandHandler>;
+	readonly policies?:
+		| ReadonlyMap<string, OperationPolicy>
+		| Record<string, OperationPolicy>;
 }
 
 export interface OrderedEvent {
-  readonly revision: number;
-  readonly cursor: string;
-  readonly event: string;
-  readonly payload: JsonValue;
-  /** Ephemeral transport bytes for a live event. They are never journaled. */
-  readonly body?: Uint8Array;
+	readonly revision: number;
+	readonly cursor: string;
+	readonly event: string;
+	readonly payload: JsonValue;
+	/** Ephemeral transport bytes for a live event. They are never journaled. */
+	readonly body?: Uint8Array;
 }
 
 export interface EventSubscription {
-  readonly subscriptionId: ProtocolId;
-  readonly fromRevision: number;
-  readonly signal?: AbortSignal;
+	readonly subscriptionId: ProtocolId;
+	readonly fromRevision: number;
+	readonly signal?: AbortSignal;
 }
 
 export interface ResyncSnapshot {
-  readonly revision: number;
-  readonly cursor: string;
-  readonly payload: JsonValue;
+	readonly revision: number;
+	readonly cursor: string;
+	readonly payload: JsonValue;
 }
 
 export interface EventReplay {
-  readonly kind: "events" | "resync";
-  readonly events: readonly OrderedEvent[];
-  readonly snapshot?: ResyncSnapshot;
+	readonly kind: 'events' | 'resync';
+	readonly events: readonly OrderedEvent[];
+	readonly snapshot?: ResyncSnapshot;
 }
 
 export type EventListener = (event: OrderedEvent) => void;
 
 export interface EventJournalOptions {
-  readonly maxEvents?: number;
-  readonly initialRevision?: number;
-  readonly initialCursor?: string;
-  readonly snapshot?: () => ResyncSnapshot | Promise<ResyncSnapshot>;
+	readonly maxEvents?: number;
+	readonly initialRevision?: number;
+	readonly initialCursor?: string;
+	readonly snapshot?: () => ResyncSnapshot | Promise<ResyncSnapshot>;
 }
 
 export interface ServerCoreOptions extends ServerIdentity, OperationRegistries {
-  readonly authenticate?: AuthenticateClient;
-  readonly eventJournal?: OrderedEventJournalLike;
-  readonly maxConnections?: number;
-  /** Inbound silence a heartbeat client may show before the server reaps it.
-   * Applies only to clients advertising `connection.heartbeat`. */
-  readonly heartbeatTimeoutMs?: number;
-  readonly defaultQueryScope?: AuthScope;
-  readonly defaultCommandScope?: AuthScope;
-  /** Presentation-lane unconfirmed-bytes bound. Catch-up on a fresh
-   * presentation is derived from this so a lowered host limit cannot
-   * hydrate into congestion. */
-  readonly maxTerminalUnconfirmedBytes?: number;
+	readonly authenticate?: AuthenticateClient;
+	readonly eventJournal?: OrderedEventJournalLike;
+	readonly maxConnections?: number;
+	/** Inbound silence a heartbeat client may show before the server reaps it.
+	 * Applies only to clients advertising `connection.heartbeat`. */
+	readonly heartbeatTimeoutMs?: number;
+	readonly defaultQueryScope?: AuthScope;
+	readonly defaultCommandScope?: AuthScope;
+	/** Presentation-lane unconfirmed-bytes bound. Catch-up on a fresh
+	 * presentation is derived from this so a lowered host limit cannot
+	 * hydrate into congestion. */
+	readonly maxTerminalUnconfirmedBytes?: number;
 
-  /** Optional server-owned projection applied immediately before a journal
-   * event is replayed or sent to an authenticated client. */
-  readonly projectEvent?: (event: OrderedEvent, client: AuthenticatedClient | undefined) => OrderedEvent | undefined;
-  /** Host-owned cleanup for connection-scoped protocol adapters. Teardown is
-   * scoped to the exact connection: another live connection authenticated by
-   * the same client keeps its attachments, leases, and subscriptions. */
-  readonly onConnectionClosed?: (
-    connectionId: ProtocolId,
-    clientId: ProtocolId,
-  ) => void;
+	/** Optional server-owned projection applied immediately before a journal
+	 * event is replayed or sent to an authenticated client. */
+	readonly projectEvent?: (
+		event: OrderedEvent,
+		client: AuthenticatedClient | undefined,
+	) => OrderedEvent | undefined;
+	/** Host-owned cleanup for connection-scoped protocol adapters. Teardown is
+	 * scoped to the exact connection: another live connection authenticated by
+	 * the same client keeps its attachments, leases, and subscriptions. */
+	readonly onConnectionClosed?: (
+		connectionId: ProtocolId,
+		clientId: ProtocolId,
+	) => void;
 	/** Internal attachment-owned output suppression after presentation
 	 * congestion. The PTY and canonical checkpoint remain live. */
 	readonly onTerminalCongestion?: (
@@ -164,33 +179,39 @@ export interface ServerCoreOptions extends ServerIdentity, OperationRegistries {
 }
 
 export interface OrderedEventJournalLike {
-  readonly revision: number;
-  readonly cursor: string;
-  append(event: string, payload: JsonValue): OrderedEvent;
-  /** Publish a live event without advancing or consuming retained history. */
-  publishTransient(event: string, payload: JsonValue, body?: Uint8Array): OrderedEvent;
-  replay(afterRevision?: number): EventReplay | Promise<EventReplay>;
-  subscribe(listener: EventListener): () => void;
+	readonly revision: number;
+	readonly cursor: string;
+	append(event: string, payload: JsonValue): OrderedEvent;
+	/** Publish a live event without advancing or consuming retained history. */
+	publishTransient(
+		event: string,
+		payload: JsonValue,
+		body?: Uint8Array,
+	): OrderedEvent;
+	replay(afterRevision?: number): EventReplay | Promise<EventReplay>;
+	subscribe(listener: EventListener): () => void;
 }
 
 export interface ConnectionOptions {
-  readonly connectionId?: ProtocolId;
-  /** Authority established by the concrete transport before application
-   * framing starts. When present, ClientHello is negotiation metadata only and
-   * cannot replace the authenticated identity, scope, or claims. */
-  readonly authenticatedClient?: AuthenticatedClient;
-  readonly signal?: AbortSignal;
-  readonly handshakeTimeoutMs?: number;
+	readonly connectionId?: ProtocolId;
+	/** Authority established by the concrete transport before application
+	 * framing starts. When present, ClientHello is negotiation metadata only and
+	 * cannot replace the authenticated identity, scope, or claims. */
+	readonly authenticatedClient?: AuthenticatedClient;
+	readonly signal?: AbortSignal;
+	readonly handshakeTimeoutMs?: number;
 	/** Internal lifecycle observer; runs exactly once even for unauthenticated
 	 * handshakes so connection limits and host tracking cannot leak. */
 	readonly onClosed?: () => void;
 	/** Metadata-only delivery diagnostics. Frames and application payloads are
 	 * intentionally unavailable at this boundary. */
-	readonly onDeliveryDiagnostic?: (diagnostic: ConnectionDeliveryDiagnostic) => void;
+	readonly onDeliveryDiagnostic?: (
+		diagnostic: ConnectionDeliveryDiagnostic,
+	) => void;
 }
 
 export interface ConnectionDeliveryDiagnostic {
-	readonly phase: "terminal_congestion" | "failure" | "closed";
+	readonly phase: 'terminal_congestion' | 'failure' | 'closed';
 	readonly code: TransportCloseCode;
 	readonly queuedBytes: number;
 	readonly queuedFrames: number;
@@ -200,25 +221,39 @@ export interface ConnectionDeliveryDiagnostic {
 }
 
 export interface ServerConnectionLike {
-  readonly connectionId: ProtocolId;
-  readonly state: "new" | "handshaking" | "open" | "closing" | "closed";
-  readonly client: AuthenticatedClient | undefined;
-  start(signal?: AbortSignal): Promise<void>;
-  process(frame: Uint8Array, body?: Uint8Array): Promise<void>;
-  subscribe(subscriptionId: ProtocolId, fromRevision?: number): Promise<EventReplay>;
-  close(reason?: ProtocolError): Promise<void>;
+	readonly connectionId: ProtocolId;
+	readonly state: 'new' | 'handshaking' | 'open' | 'closing' | 'closed';
+	readonly client: AuthenticatedClient | undefined;
+	start(signal?: AbortSignal): Promise<void>;
+	process(frame: Uint8Array, body?: Uint8Array): Promise<void>;
+	subscribe(
+		subscriptionId: ProtocolId,
+		fromRevision?: number,
+	): Promise<EventReplay>;
+	close(reason?: ProtocolError): Promise<void>;
 }
 
 export interface ConnectionFactory {
-  accept(transport: ByteTransport, options?: ConnectionOptions): ServerConnectionLike;
+	accept(
+		transport: ByteTransport,
+		options?: ConnectionOptions,
+	): ServerConnectionLike;
 }
 
-export function isJsonObject(value: JsonValue): value is { readonly [key: string]: JsonValue } {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+export function isJsonObject(
+	value: JsonValue,
+): value is { readonly [key: string]: JsonValue } {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export function isAuthenticatedClient(value: unknown): value is AuthenticatedClient {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const candidate = value as Record<string, unknown>;
-  return typeof candidate.clientId === "string" && typeof candidate.authScope === "string";
+export function isAuthenticatedClient(
+	value: unknown,
+): value is AuthenticatedClient {
+	if (typeof value !== 'object' || value === null || Array.isArray(value))
+		return false;
+	const candidate = value as Record<string, unknown>;
+	return (
+		typeof candidate.clientId === 'string' &&
+		typeof candidate.authScope === 'string'
+	);
 }

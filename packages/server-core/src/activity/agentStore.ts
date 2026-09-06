@@ -1,247 +1,559 @@
 import type {
-  AgentEventCursor,
-  AgentLifecycleEvent,
-  AgentState,
-  AgentStatusEntry,
-  AgentStatusListener,
-  AgentStatusSnapshot,
-  AgentToolStatus,
-  RootAgentStatusEntry,
-  SubagentStatusEntry,
-} from "./agentTypes.js";
+	AgentEventCursor,
+	AgentLifecycleEvent,
+	AgentState,
+	AgentStatusEntry,
+	AgentStatusListener,
+	AgentStatusSnapshot,
+	AgentToolStatus,
+	RootAgentStatusEntry,
+	SubagentStatusEntry,
+} from './agentTypes.js';
 
-const ATTENTION_STATES: ReadonlySet<AgentState> = new Set(["waiting", "blocked", "done"]);
+const ATTENTION_STATES: ReadonlySet<AgentState> = new Set([
+	'waiting',
+	'blocked',
+	'done',
+]);
 
-export function makeAgentStatusEntryId(activationTerminalSessionId: string, sessionId: string, agentId = sessionId): string {
-  return [activationTerminalSessionId, sessionId, agentId].map(encodeURIComponent).join(":");
+export function makeAgentStatusEntryId(
+	activationTerminalSessionId: string,
+	sessionId: string,
+	agentId = sessionId,
+): string {
+	return [activationTerminalSessionId, sessionId, agentId]
+		.map(encodeURIComponent)
+		.join(':');
 }
 
-export function makeAgentStatusStreamId(provider: string, activationTerminalSessionId: string, sessionId: string): string {
-  return [provider, activationTerminalSessionId, sessionId].map(encodeURIComponent).join(":");
+export function makeAgentStatusStreamId(
+	provider: string,
+	activationTerminalSessionId: string,
+	sessionId: string,
+): string {
+	return [provider, activationTerminalSessionId, sessionId]
+		.map(encodeURIComponent)
+		.join(':');
 }
 
 export function createEmptyAgentStatusSnapshot(): AgentStatusSnapshot {
-  return Object.freeze({ revision: 0, entries: Object.freeze({}), eventCursors: Object.freeze({}) });
+	return Object.freeze({
+		revision: 0,
+		entries: Object.freeze({}),
+		eventCursors: Object.freeze({}),
+	});
 }
 
-function compareEntries(left: AgentStatusEntry, right: AgentStatusEntry): number {
-  return left.activationTerminalSessionId.localeCompare(right.activationTerminalSessionId) ||
-    left.sessionId.localeCompare(right.sessionId) ||
-    (left.kind === right.kind ? 0 : left.kind === "root" ? -1 : 1) ||
-    left.agentId.localeCompare(right.agentId);
+function compareEntries(
+	left: AgentStatusEntry,
+	right: AgentStatusEntry,
+): number {
+	return (
+		left.activationTerminalSessionId.localeCompare(
+			right.activationTerminalSessionId,
+		) ||
+		left.sessionId.localeCompare(right.sessionId) ||
+		(left.kind === right.kind ? 0 : left.kind === 'root' ? -1 : 1) ||
+		left.agentId.localeCompare(right.agentId)
+	);
 }
 
 function rootEntryFor(event: AgentLifecycleEvent): RootAgentStatusEntry {
-  return {
-    entryId: makeAgentStatusEntryId(event.activationTerminalSessionId, event.sessionId),
-    kind: "root",
-    provider: event.provider,
-    agentId: event.sessionId,
-    sessionId: event.sessionId,
-    activationTerminalSessionId: event.activationTerminalSessionId,
-    ...(event.providerDisplayName === undefined ? {} : { providerDisplayName: event.providerDisplayName }),
-    terminalSessionId: event.activationTerminalSessionId,
-    inProcess: false,
-    state: "idle",
-    stateStartedAt: event.occurredAt,
-    updatedAt: event.occurredAt,
-    lastEventKind: event.kind,
-    lastEventSequence: event.sequence,
-    active: true,
-    activeTools: [],
-    unread: false,
-  };
+	return {
+		entryId: makeAgentStatusEntryId(
+			event.activationTerminalSessionId,
+			event.sessionId,
+		),
+		kind: 'root',
+		provider: event.provider,
+		agentId: event.sessionId,
+		sessionId: event.sessionId,
+		activationTerminalSessionId: event.activationTerminalSessionId,
+		...(event.providerDisplayName === undefined
+			? {}
+			: { providerDisplayName: event.providerDisplayName }),
+		terminalSessionId: event.activationTerminalSessionId,
+		inProcess: false,
+		state: 'idle',
+		stateStartedAt: event.occurredAt,
+		updatedAt: event.occurredAt,
+		lastEventKind: event.kind,
+		lastEventSequence: event.sequence,
+		active: true,
+		activeTools: [],
+		unread: false,
+	};
 }
 
-function subagentEntryFor(event: Extract<AgentLifecycleEvent, { kind: "subagent.started" | "subagent.stopped" }>): SubagentStatusEntry {
-  const parentAgentId = event.kind === "subagent.started" ? (event.parentAgentId ?? event.sessionId) : event.sessionId;
-  return {
-    entryId: makeAgentStatusEntryId(event.activationTerminalSessionId, event.sessionId, event.subagentId),
-    kind: "subagent",
-    provider: event.provider,
-    agentId: event.subagentId,
-    sessionId: event.sessionId,
-    activationTerminalSessionId: event.activationTerminalSessionId,
-    ...(event.providerDisplayName === undefined ? {} : { providerDisplayName: event.providerDisplayName }),
-    terminalSessionId: null,
-    inProcess: true,
-    parentAgentId,
-    parentEntryId: makeAgentStatusEntryId(event.activationTerminalSessionId, event.sessionId, parentAgentId),
-    state: "idle",
-    stateStartedAt: event.occurredAt,
-    updatedAt: event.occurredAt,
-    lastEventKind: event.kind,
-    lastEventSequence: event.sequence,
-    active: false,
-    activeTools: [],
-    unread: false,
-  };
+function subagentEntryFor(
+	event: Extract<
+		AgentLifecycleEvent,
+		{ kind: 'subagent.started' | 'subagent.stopped' }
+	>,
+): SubagentStatusEntry {
+	const parentAgentId =
+		event.kind === 'subagent.started'
+			? (event.parentAgentId ?? event.sessionId)
+			: event.sessionId;
+	return {
+		entryId: makeAgentStatusEntryId(
+			event.activationTerminalSessionId,
+			event.sessionId,
+			event.subagentId,
+		),
+		kind: 'subagent',
+		provider: event.provider,
+		agentId: event.subagentId,
+		sessionId: event.sessionId,
+		activationTerminalSessionId: event.activationTerminalSessionId,
+		...(event.providerDisplayName === undefined
+			? {}
+			: { providerDisplayName: event.providerDisplayName }),
+		terminalSessionId: null,
+		inProcess: true,
+		parentAgentId,
+		parentEntryId: makeAgentStatusEntryId(
+			event.activationTerminalSessionId,
+			event.sessionId,
+			parentAgentId,
+		),
+		state: 'idle',
+		stateStartedAt: event.occurredAt,
+		updatedAt: event.occurredAt,
+		lastEventKind: event.kind,
+		lastEventSequence: event.sequence,
+		active: false,
+		activeTools: [],
+		unread: false,
+	};
 }
 
 function targetAgentId(event: AgentLifecycleEvent): string {
-  if ("subagentId" in event) return event.subagentId;
-  return "agentId" in event && event.agentId ? event.agentId : event.sessionId;
+	if ('subagentId' in event) return event.subagentId;
+	return 'agentId' in event && event.agentId ? event.agentId : event.sessionId;
 }
 
-function targetEntry(snapshot: AgentStatusSnapshot, event: AgentLifecycleEvent): AgentStatusEntry | undefined {
-  const agentId = targetAgentId(event);
-  const existing = snapshot.entries[makeAgentStatusEntryId(event.activationTerminalSessionId, event.sessionId, agentId)];
-  if (existing) return existing;
-  if (event.kind === "subagent.started" || event.kind === "subagent.stopped") return subagentEntryFor(event);
-  if (agentId !== event.sessionId) return undefined;
-  return rootEntryFor(event);
+function targetEntry(
+	snapshot: AgentStatusSnapshot,
+	event: AgentLifecycleEvent,
+): AgentStatusEntry | undefined {
+	const agentId = targetAgentId(event);
+	const existing =
+		snapshot.entries[
+			makeAgentStatusEntryId(
+				event.activationTerminalSessionId,
+				event.sessionId,
+				agentId,
+			)
+		];
+	if (existing) return existing;
+	if (event.kind === 'subagent.started' || event.kind === 'subagent.stopped')
+		return subagentEntryFor(event);
+	if (agentId !== event.sessionId) return undefined;
+	return rootEntryFor(event);
 }
 
-function addTool(tools: readonly AgentToolStatus[], tool: AgentToolStatus): readonly AgentToolStatus[] {
-  return [...tools.filter((candidate) => candidate.id !== tool.id), tool].sort((left, right) => left.id.localeCompare(right.id));
+function addTool(
+	tools: readonly AgentToolStatus[],
+	tool: AgentToolStatus,
+): readonly AgentToolStatus[] {
+	return [...tools.filter((candidate) => candidate.id !== tool.id), tool].sort(
+		(left, right) => left.id.localeCompare(right.id),
+	);
 }
 
-function withState(entry: AgentStatusEntry, state: AgentState, event: AgentLifecycleEvent, changes: Partial<AgentStatusEntry> = {}): AgentStatusEntry {
-  return {
-    ...entry,
-    ...changes,
-    ...(event.promptText === undefined || (entry.kind === "root" && entry.promptText !== undefined)
-      ? {}
-      : { promptText: event.promptText }),
-    ...(event.model === undefined ? {} : { model: event.model }),
-    state,
-    stateStartedAt: state === entry.state ? entry.stateStartedAt : event.occurredAt,
-    updatedAt: event.occurredAt,
-    lastEventKind: event.kind,
-    lastEventSequence: event.sequence,
-    unread: entry.unread || ATTENTION_STATES.has(state),
-  } as AgentStatusEntry;
+function withState(
+	entry: AgentStatusEntry,
+	state: AgentState,
+	event: AgentLifecycleEvent,
+	changes: Partial<AgentStatusEntry> = {},
+): AgentStatusEntry {
+	return {
+		...entry,
+		// Explicit provider records supersede an inference; only `wait.started`
+		// reinstates the flag, through `changes`.
+		inferred: false,
+		// A new record on the root supersedes a held completion; only
+		// `agent.done` with a working child reinstates it, through `changes`.
+		completionHeldByChildren: undefined,
+		...changes,
+		...(event.promptText === undefined ||
+		(entry.kind === 'root' && entry.promptText !== undefined)
+			? {}
+			: { promptText: event.promptText }),
+		...(event.model === undefined ? {} : { model: event.model }),
+		state,
+		stateStartedAt:
+			state === entry.state ? entry.stateStartedAt : event.occurredAt,
+		updatedAt: event.occurredAt,
+		lastEventKind: event.kind,
+		lastEventSequence: event.sequence,
+		unread: entry.unread || ATTENTION_STATES.has(state),
+	} as AgentStatusEntry;
 }
 
-function applyEvent(entry: AgentStatusEntry, event: AgentLifecycleEvent): AgentStatusEntry {
-  switch (event.kind) {
-    case "session.started":
-      return withState(entry, "idle", event, { active: true, activeTools: [], displayName: event.displayName ?? entry.displayName, waitingReason: undefined, completionOutcome: undefined, summary: undefined, exitCode: undefined, exitSignal: undefined });
-    case "agent.metadata":
-      // Provider model changes are observational. In particular, a model
-      // switch while a turn is working must not reset it to idle.
-      return withState(entry, entry.state, event, { displayName: event.displayName ?? entry.displayName });
-    case "session.stopped":
-      return withState(entry, "idle", event, { active: false, activeTools: [], waitingReason: undefined, summary: event.reason ?? entry.summary });
-    case "turn.started":
-      return withState(entry, "working", event, { active: true, activeTools: [], currentTurnId: event.turnId, waitingReason: undefined, completionOutcome: undefined, summary: undefined });
-    case "tool.started":
-      return withState(entry, "working", event, { active: true, activeTools: addTool(entry.activeTools, { ...event.tool, startedAt: event.occurredAt }), waitingReason: undefined });
-    case "tool.finished":
-      return withState(entry, "working", event, { active: true, activeTools: entry.activeTools.filter((tool) => tool.id !== event.toolId), waitingReason: undefined });
-    case "wait.started":
-      return withState(entry, event.state, event, { active: true, waitingReason: event.reason });
-    case "wait.finished":
-      return withState(entry, "working", event, { active: true, waitingReason: undefined });
-    case "agent.done":
-      return withState(entry, "done", event, { active: true, activeTools: [], waitingReason: undefined, completionOutcome: event.outcome, summary: event.summary });
-    case "subagent.started":
-      return withState(entry, "working", event, { active: true, activeTools: [], displayName: event.displayName ?? entry.displayName, waitingReason: undefined, completionOutcome: undefined, summary: undefined });
-    case "subagent.stopped":
-      return withState(entry, "done", event, { active: false, activeTools: [], waitingReason: undefined, completionOutcome: event.outcome, summary: event.summary });
-    case "agent.exited":
-      return withState(entry, "done", event, { active: false, activeTools: [], waitingReason: undefined, exitCode: event.exitCode, exitSignal: event.signal, completionOutcome: event.exitCode === undefined || event.exitCode === 0 ? entry.completionOutcome : "error" });
-  }
+/** Children of `rootEntryId` that are still `working`, ignoring `excludeEntryId`
+ * (the child the event being reduced is about to complete). */
+function workingChildCount(
+	snapshot: AgentStatusSnapshot,
+	rootEntryId: string,
+	excludeEntryId?: string,
+): number {
+	let count = 0;
+	for (const candidate of Object.values(snapshot.entries))
+		if (
+			candidate.kind === 'subagent' &&
+			candidate.parentEntryId === rootEntryId &&
+			candidate.entryId !== excludeEntryId &&
+			candidate.state === 'working'
+		)
+			count += 1;
+	return count;
 }
 
-function orderedAfter(cursor: AgentEventCursor | undefined, event: AgentLifecycleEvent): boolean {
-  return Number.isSafeInteger(event.sequence) && event.sequence >= 0 && Number.isFinite(event.occurredAt) &&
-    (cursor === undefined || (event.sequence > cursor.sequence && event.occurredAt >= cursor.occurredAt));
+/** Realise a completion that was held while children worked. The outcome and
+ * summary recorded by the root's own `agent.done` are carried through. */
+function releaseHeldCompletion(
+	root: AgentStatusEntry,
+	event: AgentLifecycleEvent,
+): AgentStatusEntry {
+	return {
+		...root,
+		completionHeldByChildren: undefined,
+		state: 'done',
+		stateStartedAt:
+			root.state === 'done' ? root.stateStartedAt : event.occurredAt,
+		updatedAt: event.occurredAt,
+		lastEventKind: event.kind,
+		lastEventSequence: event.sequence,
+		unread: true,
+	};
 }
 
-export function reduceAgentStatusSnapshot(snapshot: AgentStatusSnapshot, event: AgentLifecycleEvent): AgentStatusSnapshot {
-  const streamId = makeAgentStatusStreamId(event.provider, event.activationTerminalSessionId, event.sessionId);
-  if (!orderedAfter(snapshot.eventCursors[streamId], event)) return snapshot;
-  const entry = targetEntry(snapshot, event);
-  if (!entry) return snapshot;
-  const nextEntry = applyEvent(entry, event);
-  return Object.freeze({
-    revision: snapshot.revision + 1,
-    entries: Object.freeze({ ...snapshot.entries, [nextEntry.entryId]: Object.freeze(nextEntry) }),
-    eventCursors: Object.freeze({ ...snapshot.eventCursors, [streamId]: Object.freeze({ sequence: event.sequence, occurredAt: event.occurredAt }) }),
-  });
+function applyEvent(
+	entry: AgentStatusEntry,
+	event: AgentLifecycleEvent,
+	snapshot: AgentStatusSnapshot,
+): AgentStatusEntry {
+	switch (event.kind) {
+		case 'session.started':
+			return withState(entry, 'idle', event, {
+				active: true,
+				activeTools: [],
+				displayName: event.displayName ?? entry.displayName,
+				waitingReason: undefined,
+				completionOutcome: undefined,
+				summary: undefined,
+				exitCode: undefined,
+				exitSignal: undefined,
+			});
+		case 'agent.metadata':
+			// Provider model changes are observational. In particular, a model
+			// switch while a turn is working must not reset it to idle, and it
+			// must not discard a completion held for still-working children.
+			return withState(entry, entry.state, event, {
+				displayName: event.displayName ?? entry.displayName,
+				completionHeldByChildren: entry.completionHeldByChildren,
+			});
+		case 'session.stopped':
+			return withState(entry, 'idle', event, {
+				active: false,
+				activeTools: [],
+				waitingReason: undefined,
+				summary: event.reason ?? entry.summary,
+			});
+		case 'turn.started':
+			return withState(entry, 'working', event, {
+				active: true,
+				activeTools: [],
+				currentTurnId: event.turnId,
+				waitingReason: undefined,
+				completionOutcome: undefined,
+				summary: undefined,
+			});
+		case 'tool.started':
+			return withState(entry, 'working', event, {
+				active: true,
+				activeTools: addTool(entry.activeTools, {
+					...event.tool,
+					startedAt: event.occurredAt,
+				}),
+				waitingReason: undefined,
+			});
+		case 'tool.finished':
+			return withState(entry, 'working', event, {
+				active: true,
+				activeTools: entry.activeTools.filter(
+					(tool) => tool.id !== event.toolId,
+				),
+				waitingReason: undefined,
+			});
+		case 'wait.started':
+			return withState(entry, event.state, event, {
+				active: true,
+				waitingReason: event.reason,
+				inferred: event.inferred === true,
+			});
+		case 'wait.finished':
+			return withState(entry, 'working', event, {
+				active: true,
+				waitingReason: undefined,
+			});
+		case 'agent.done': {
+			// A root whose turn ends while a child is still working stays
+			// `working`; its completion is held until the last child finishes.
+			const held =
+				entry.kind === 'root' && workingChildCount(snapshot, entry.entryId) > 0;
+			return withState(entry, held ? 'working' : 'done', event, {
+				active: true,
+				activeTools: [],
+				waitingReason: undefined,
+				completionOutcome: event.outcome,
+				summary: event.summary,
+				...(held ? { completionHeldByChildren: true } : {}),
+			});
+		}
+		case 'subagent.started':
+			return withState(entry, 'working', event, {
+				active: true,
+				activeTools: [],
+				displayName: event.displayName ?? entry.displayName,
+				waitingReason: undefined,
+				completionOutcome: undefined,
+				summary: undefined,
+			});
+		case 'subagent.stopped':
+			return withState(entry, 'done', event, {
+				active: false,
+				activeTools: [],
+				waitingReason: undefined,
+				completionOutcome: event.outcome,
+				summary: event.summary,
+			});
+		case 'agent.exited':
+			return withState(entry, 'done', event, {
+				active: false,
+				activeTools: [],
+				waitingReason: undefined,
+				exitCode: event.exitCode,
+				exitSignal: event.signal,
+				completionOutcome:
+					event.exitCode === undefined || event.exitCode === 0
+						? entry.completionOutcome
+						: 'error',
+			});
+	}
 }
 
-export function selectAgentStatusEntries(snapshot: AgentStatusSnapshot): readonly AgentStatusEntry[] {
-  return Object.values(snapshot.entries).sort(compareEntries);
+function orderedAfter(
+	cursor: AgentEventCursor | undefined,
+	event: AgentLifecycleEvent,
+): boolean {
+	return (
+		Number.isSafeInteger(event.sequence) &&
+		event.sequence >= 0 &&
+		Number.isFinite(event.occurredAt) &&
+		(cursor === undefined ||
+			(event.sequence > cursor.sequence &&
+				event.occurredAt >= cursor.occurredAt))
+	);
 }
 
-export function selectAgentStatusesForTerminal(snapshot: AgentStatusSnapshot, terminalSessionId: string): readonly AgentStatusEntry[] {
-  return selectAgentStatusEntries(snapshot).filter((entry) => entry.activationTerminalSessionId === terminalSessionId);
+export function reduceAgentStatusSnapshot(
+	snapshot: AgentStatusSnapshot,
+	event: AgentLifecycleEvent,
+): AgentStatusSnapshot {
+	const streamId = makeAgentStatusStreamId(
+		event.provider,
+		event.activationTerminalSessionId,
+		event.sessionId,
+	);
+	if (!orderedAfter(snapshot.eventCursors[streamId], event)) return snapshot;
+	const entry = targetEntry(snapshot, event);
+	if (!entry) return snapshot;
+	const nextEntry = applyEvent(entry, event, snapshot);
+	const nextEntries: Record<string, AgentStatusEntry> = {
+		...snapshot.entries,
+		[nextEntry.entryId]: Object.freeze(nextEntry),
+	};
+	// A child completing never completes its root on its own, but it does
+	// release a completion the root already recorded once no child is working.
+	if (event.kind === 'subagent.stopped' && nextEntry.kind === 'subagent') {
+		const root = snapshot.entries[nextEntry.parentEntryId];
+		if (
+			root?.completionHeldByChildren === true &&
+			workingChildCount(snapshot, root.entryId, nextEntry.entryId) === 0
+		) {
+			const released = releaseHeldCompletion(root, event);
+			nextEntries[released.entryId] = Object.freeze(released);
+		}
+	}
+	return Object.freeze({
+		revision: snapshot.revision + 1,
+		entries: Object.freeze(nextEntries),
+		eventCursors: Object.freeze({
+			...snapshot.eventCursors,
+			[streamId]: Object.freeze({
+				sequence: event.sequence,
+				occurredAt: event.occurredAt,
+			}),
+		}),
+	});
 }
 
-export function selectLiveAgentStatusesForTerminal(snapshot: AgentStatusSnapshot, terminalSessionId: string): readonly AgentStatusEntry[] {
-  return selectAgentStatusesForTerminal(snapshot, terminalSessionId).filter((entry) => entry.active);
+export function selectAgentStatusEntries(
+	snapshot: AgentStatusSnapshot,
+): readonly AgentStatusEntry[] {
+	return Object.values(snapshot.entries).sort(compareEntries);
 }
 
-export function selectAgentStatusEntry(snapshot: AgentStatusSnapshot, entryId: string): AgentStatusEntry | undefined {
-  return snapshot.entries[entryId];
+export function selectAgentStatusesForTerminal(
+	snapshot: AgentStatusSnapshot,
+	terminalSessionId: string,
+): readonly AgentStatusEntry[] {
+	return selectAgentStatusEntries(snapshot).filter(
+		(entry) => entry.activationTerminalSessionId === terminalSessionId,
+	);
+}
+
+export function selectLiveAgentStatusesForTerminal(
+	snapshot: AgentStatusSnapshot,
+	terminalSessionId: string,
+): readonly AgentStatusEntry[] {
+	return selectAgentStatusesForTerminal(snapshot, terminalSessionId).filter(
+		(entry) => entry.active,
+	);
+}
+
+export function selectAgentStatusEntry(
+	snapshot: AgentStatusSnapshot,
+	entryId: string,
+): AgentStatusEntry | undefined {
+	return snapshot.entries[entryId];
 }
 
 export class AgentStatusStore {
-  private snapshot: AgentStatusSnapshot;
-  private readonly listeners = new Set<AgentStatusListener>();
+	private snapshot: AgentStatusSnapshot;
+	private readonly listeners = new Set<AgentStatusListener>();
 
-  constructor(initialSnapshot: AgentStatusSnapshot = createEmptyAgentStatusSnapshot()) { this.snapshot = initialSnapshot; }
-  getSnapshot = (): AgentStatusSnapshot => this.snapshot;
-  subscribe = (listener: AgentStatusListener): (() => void) => { this.listeners.add(listener); return () => this.listeners.delete(listener); };
+	constructor(
+		initialSnapshot: AgentStatusSnapshot = createEmptyAgentStatusSnapshot(),
+	) {
+		this.snapshot = initialSnapshot;
+	}
+	getSnapshot = (): AgentStatusSnapshot => this.snapshot;
+	subscribe = (listener: AgentStatusListener): (() => void) => {
+		this.listeners.add(listener);
+		return () => this.listeners.delete(listener);
+	};
 
-  dispatch(event: AgentLifecycleEvent): boolean {
-    const next = reduceAgentStatusSnapshot(this.snapshot, event);
-    if (next === this.snapshot) return false;
-    this.publish(next);
-    return true;
-  }
+	dispatch(event: AgentLifecycleEvent): boolean {
+		const next = reduceAgentStatusSnapshot(this.snapshot, event);
+		if (next === this.snapshot) return false;
+		this.publish(next);
+		return true;
+	}
 
-  /** Atomically applies a validated publication. A rejected event must never
-   * leave the sidebar at a prefix of the provider's publication. */
-  dispatchBatch(events: readonly AgentLifecycleEvent[]): boolean {
-    let next = this.snapshot;
-    for (const event of events) {
-      const reduced = reduceAgentStatusSnapshot(next, event);
-      if (reduced === next) return false;
-      next = reduced;
-    }
-    if (next === this.snapshot) return false;
-    // Preflight above guarantees the whole batch is reducible before the first
-    // observer notification. Preserve one canonical journal revision per
-    // lifecycle event for connected clients and replay cursors.
-    for (const event of events) this.publish(reduceAgentStatusSnapshot(this.snapshot, event));
-    return true;
-  }
+	/** Atomically applies a validated publication. A rejected event must never
+	 * leave the sidebar at a prefix of the provider's publication. */
+	dispatchBatch(events: readonly AgentLifecycleEvent[]): boolean {
+		let next = this.snapshot;
+		for (const event of events) {
+			const reduced = reduceAgentStatusSnapshot(next, event);
+			if (reduced === next) return false;
+			next = reduced;
+		}
+		if (next === this.snapshot) return false;
+		// Preflight above guarantees the whole batch is reducible before the first
+		// observer notification. Preserve one canonical journal revision per
+		// lifecycle event for connected clients and replay cursors.
+		for (const event of events)
+			this.publish(reduceAgentStatusSnapshot(this.snapshot, event));
+		return true;
+	}
 
-  markAcknowledged(entryId: string, acknowledgedAt = Date.now()): boolean {
-    const entry = this.snapshot.entries[entryId];
-    if (!entry || !Number.isFinite(acknowledgedAt)) return false;
-    // Acknowledging an already-read entry is intentionally a no-op. In
-    // particular, do not let a later duplicate acknowledgement from another
-    // client mutate acknowledgement metadata and create a new revision.
-    if (!entry.unread) return false;
-    const timestamp = Math.max(entry.acknowledgedAt ?? -Infinity, acknowledgedAt);
-    this.publish(Object.freeze({ ...this.snapshot, revision: this.snapshot.revision + 1, entries: Object.freeze({ ...this.snapshot.entries, [entryId]: Object.freeze({ ...entry, unread: false, acknowledgedAt: timestamp }) }) }));
-    return true;
-  }
+	markAcknowledged(entryId: string, acknowledgedAt = Date.now()): boolean {
+		const entry = this.snapshot.entries[entryId];
+		if (!entry || !Number.isFinite(acknowledgedAt)) return false;
+		// Acknowledging an already-read entry is intentionally a no-op. In
+		// particular, do not let a later duplicate acknowledgement from another
+		// client mutate acknowledgement metadata and create a new revision.
+		if (!entry.unread) return false;
+		const timestamp = Math.max(
+			entry.acknowledgedAt ?? -Infinity,
+			acknowledgedAt,
+		);
+		this.publish(
+			Object.freeze({
+				...this.snapshot,
+				revision: this.snapshot.revision + 1,
+				entries: Object.freeze({
+					...this.snapshot.entries,
+					[entryId]: Object.freeze({
+						...entry,
+						unread: false,
+						acknowledgedAt: timestamp,
+					}),
+				}),
+			}),
+		);
+		return true;
+	}
 
-  markTerminalAcknowledged(terminalSessionId: string, acknowledgedAt = Date.now()): number {
-    if (!Number.isFinite(acknowledgedAt)) return 0;
-    const entries = selectAgentStatusesForTerminal(this.snapshot, terminalSessionId).filter((entry) => entry.unread);
-    if (entries.length === 0) return 0;
-    const nextEntries = { ...this.snapshot.entries };
-    for (const entry of entries) nextEntries[entry.entryId] = Object.freeze({ ...entry, unread: false, acknowledgedAt: Math.max(entry.acknowledgedAt ?? -Infinity, acknowledgedAt) });
-    this.publish(Object.freeze({ ...this.snapshot, revision: this.snapshot.revision + 1, entries: Object.freeze(nextEntries) }));
-    return entries.length;
-  }
+	markTerminalAcknowledged(
+		terminalSessionId: string,
+		acknowledgedAt = Date.now(),
+	): number {
+		if (!Number.isFinite(acknowledgedAt)) return 0;
+		const entries = selectAgentStatusesForTerminal(
+			this.snapshot,
+			terminalSessionId,
+		).filter((entry) => entry.unread);
+		if (entries.length === 0) return 0;
+		const nextEntries = { ...this.snapshot.entries };
+		for (const entry of entries)
+			nextEntries[entry.entryId] = Object.freeze({
+				...entry,
+				unread: false,
+				acknowledgedAt: Math.max(
+					entry.acknowledgedAt ?? -Infinity,
+					acknowledgedAt,
+				),
+			});
+		this.publish(
+			Object.freeze({
+				...this.snapshot,
+				revision: this.snapshot.revision + 1,
+				entries: Object.freeze(nextEntries),
+			}),
+		);
+		return entries.length;
+	}
 
-  clear(): boolean {
-    if (Object.keys(this.snapshot.entries).length === 0 && Object.keys(this.snapshot.eventCursors).length === 0) return false;
-    this.publish(Object.freeze({ revision: this.snapshot.revision + 1, entries: Object.freeze({}), eventCursors: Object.freeze({}) }));
-    return true;
-  }
+	clear(): boolean {
+		if (
+			Object.keys(this.snapshot.entries).length === 0 &&
+			Object.keys(this.snapshot.eventCursors).length === 0
+		)
+			return false;
+		this.publish(
+			Object.freeze({
+				revision: this.snapshot.revision + 1,
+				entries: Object.freeze({}),
+				eventCursors: Object.freeze({}),
+			}),
+		);
+		return true;
+	}
 
-  private publish(snapshot: AgentStatusSnapshot): void {
-    this.snapshot = snapshot;
-    for (const listener of [...this.listeners]) {
-      try { listener(snapshot); } catch { /* observers cannot roll back server state */ }
-    }
-  }
+	private publish(snapshot: AgentStatusSnapshot): void {
+		this.snapshot = snapshot;
+		for (const listener of [...this.listeners]) {
+			try {
+				listener(snapshot);
+			} catch {
+				/* observers cannot roll back server state */
+			}
+		}
+	}
 }

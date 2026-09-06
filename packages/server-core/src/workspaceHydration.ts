@@ -4,8 +4,8 @@ import {
 	WorkspaceStore,
 } from './workspace.js';
 import {
-	type WorkspaceStateBackend,
 	WorkspaceRepository,
+	type WorkspaceStateBackend,
 } from './workspaceRepository.js';
 
 export const DEFAULT_WORKSPACE_IDENTITIES = Object.freeze({
@@ -41,41 +41,70 @@ export function createFreshWorkspaceState(
 		if (!result.ok) throw new Error(result.conflict.message);
 	};
 	apply('system:default-project', {
-		type: 'project.create', projectId: DEFAULT_WORKSPACE_IDENTITIES.projectId,
-		viewId, root: defaultProjectRoot, rootOrigin: 'server-default', name: 'Project',
+		type: 'project.create',
+		projectId: DEFAULT_WORKSPACE_IDENTITIES.projectId,
+		viewId,
+		root: defaultProjectRoot,
+		rootOrigin: 'server-default',
+		name: 'Project',
 	});
 	apply('system:default-terminal-panel', {
-		type: 'terminal.createPanel', projectId: DEFAULT_WORKSPACE_IDENTITIES.projectId,
+		type: 'terminal.createPanel',
+		projectId: DEFAULT_WORKSPACE_IDENTITIES.projectId,
 		sessionId: DEFAULT_WORKSPACE_IDENTITIES.sessionId,
-		panelId: DEFAULT_WORKSPACE_IDENTITIES.panelId, title: 'Terminal 1',
-		cwd: defaultProjectRoot, createdAt: now,
+		panelId: DEFAULT_WORKSPACE_IDENTITIES.panelId,
+		title: 'Terminal 1',
+		cwd: defaultProjectRoot,
+		createdAt: now,
 	});
 	return workspace.state;
 }
 
-export async function openCanonicalWorkspace(options: Readonly<{
-	backend: WorkspaceStateBackend;
-	serverId: string;
-	defaultProjectRoot: string;
-	now?: number;
-}>): Promise<WorkspaceRepository> {
-	const repository = new WorkspaceRepository(options.backend, options.serverId, () =>
-		createFreshWorkspaceState(options.serverId, options.defaultProjectRoot, options.now),
+export async function openCanonicalWorkspace(
+	options: Readonly<{
+		backend: WorkspaceStateBackend;
+		serverId: string;
+		defaultProjectRoot: string;
+		now?: number;
+	}>,
+): Promise<WorkspaceRepository> {
+	const repository = new WorkspaceRepository(
+		options.backend,
+		options.serverId,
+		() =>
+			createFreshWorkspaceState(
+				options.serverId,
+				options.defaultProjectRoot,
+				options.now,
+			),
 	);
 	await repository.load();
 	return repository;
 }
 
-export function resolveWorkspaceHydration(state: WorkspaceState): WorkspaceHydration {
+export function resolveWorkspaceHydration(
+	state: WorkspaceState,
+): WorkspaceHydration {
 	for (const viewId of state.viewOrder) {
 		const view = state.views[viewId];
 		const projectId = view?.activeProjectId ?? view?.projectIds[0];
-		const project = projectId === undefined ? undefined : state.projects[projectId];
+		const project =
+			projectId === undefined ? undefined : state.projects[projectId];
 		const panelId = project?.activePanelId ?? project?.panelIds[0];
 		const panel = panelId === undefined ? undefined : state.panels[panelId];
-		if (view !== undefined && project !== undefined && panel?.type === 'terminal') {
-			return { state: 'ready', viewId, projectId: project.id, panelId: panel.id,
-				sessionId: panel.sessionId, projectEnvironmentId: project.projectEnvironmentId };
+		if (
+			view !== undefined &&
+			project !== undefined &&
+			panel?.type === 'terminal'
+		) {
+			return {
+				state: 'ready',
+				viewId,
+				projectId: project.id,
+				panelId: panel.id,
+				sessionId: panel.sessionId,
+				projectEnvironmentId: project.projectEnvironmentId,
+			};
 		}
 	}
 	return { state: 'empty' };

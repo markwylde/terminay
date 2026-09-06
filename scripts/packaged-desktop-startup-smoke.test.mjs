@@ -299,6 +299,7 @@ async function requireBuiltInExtensionsInstalled(electronApp, window, failures) 
 			'terminay-agent-claude-code',
 			'terminay-agent-cursor',
 			'terminay-agent-grok',
+			'terminay-agent-opencode',
 			'terminay-agent-omp',
 		]) {
 			const card = settings.locator('.extension-card').filter({ hasText: packageName });

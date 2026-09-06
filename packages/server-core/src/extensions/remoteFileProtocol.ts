@@ -3,13 +3,13 @@ import type { JsonValue } from '@terminay/protocol';
 import { ServerFileAdapter } from '../fileService/adapter.js';
 import { FileCatalog } from '../fileService/catalog.js';
 import { ServerFileCatalogAdapter } from '../fileService/catalogAdapter.js';
-import { DocumentationCatalog } from '../fileService/documentationCatalog.js';
-import { ServerDocumentationCatalogAdapter } from '../fileService/documentationCatalogAdapter.js';
-import { MdxRuntime } from '../mdxRuntime/runtime.js';
-import { ServerMdxRuntimeAdapter } from '../mdxRuntime/adapter.js';
 import { ServerFileContentAdapter } from '../fileService/contentAdapter.js';
 import { FileContentStreamService } from '../fileService/contentStream.js';
+import { DocumentationCatalog } from '../fileService/documentationCatalog.js';
+import { ServerDocumentationCatalogAdapter } from '../fileService/documentationCatalogAdapter.js';
 import { CanonicalProjectPathResolver } from '../fileService/pathResolver.js';
+import { ServerMdxRuntimeAdapter } from '../mdxRuntime/adapter.js';
+import { MdxRuntime } from '../mdxRuntime/runtime.js';
 import type { ProjectEnvironmentInvocationContext } from '../projectEnvironment/registry.js';
 import type {
 	CommandHandler,
@@ -210,31 +210,63 @@ export class RemoteFileProtocol {
 		}).operations();
 		const documentation = new ServerDocumentationCatalogAdapter({
 			serverId: 'remote-runtime',
-			projects: new Map([[context.projectId, { projectId: context.projectId, catalog: new DocumentationCatalog(resolver, storage) }]]),
+			projects: new Map([
+				[
+					context.projectId,
+					{
+						projectId: context.projectId,
+						catalog: new DocumentationCatalog(resolver, storage),
+					},
+				],
+			]),
 		}).operations();
 		const mdxRuntime = new ServerMdxRuntimeAdapter({
 			serverId: 'remote-runtime',
-			projects: new Map([[context.projectId, { projectId: context.projectId, runtime: new MdxRuntime({ projectId: context.projectId, resolver, storage }) }]]),
+			projects: new Map([
+				[
+					context.projectId,
+					{
+						projectId: context.projectId,
+						runtime: new MdxRuntime({
+							projectId: context.projectId,
+							resolver,
+							storage,
+						}),
+					},
+				],
+			]),
 		}).operations();
 		const sessions = new ServerFileAdapter({
 			serverId: 'remote-runtime',
 			projects,
 		}).operations();
 		return {
-			queries: { ...catalog.queries, ...content.queries, ...documentation.queries, ...mdxRuntime.queries, ...sessions.queries },
+			queries: {
+				...catalog.queries,
+				...content.queries,
+				...documentation.queries,
+				...mdxRuntime.queries,
+				...sessions.queries,
+			},
 			commands: {
 				...catalog.commands,
 				...content.commands,
-				...mdxRuntime.commands, ...sessions.commands,
+				...mdxRuntime.commands,
+				...sessions.commands,
 			},
 		};
 	}
 }
 
-function remoteFilesystemFailure(error: unknown): Error & { readonly code: 'unavailable'; readonly retryable: true } {
-	const message = error instanceof Error ? error.message : 'remote filesystem request failed';
+function remoteFilesystemFailure(
+	error: unknown,
+): Error & { readonly code: 'unavailable'; readonly retryable: true } {
+	const message =
+		error instanceof Error ? error.message : 'remote filesystem request failed';
 	return Object.assign(
-		new Error(`Remote filesystem is unavailable: ${message.replace(/[\r\n]/gu, ' ').slice(0, 1_000)}`),
+		new Error(
+			`Remote filesystem is unavailable: ${message.replace(/[\r\n]/gu, ' ').slice(0, 1_000)}`,
+		),
 		{ code: 'unavailable' as const, retryable: true as const },
 	);
 }

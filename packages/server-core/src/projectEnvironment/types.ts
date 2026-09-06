@@ -14,17 +14,39 @@ export const PROJECT_ENVIRONMENT_CAPABILITIES = [
 	'infrastructure',
 	'shell-discovery',
 ] as const;
-export type ProjectEnvironmentCapability = typeof PROJECT_ENVIRONMENT_CAPABILITIES[number];
+export type ProjectEnvironmentCapability =
+	(typeof PROJECT_ENVIRONMENT_CAPABILITIES)[number];
 
 export const PROJECT_ENVIRONMENT_STATUSES = [
-	'ready', 'connecting', 'reconnecting', 'provisioning', 'starting', 'stopping',
-	'offline', 'authentication-required', 'host-key-changed', 'permission-denied',
-	'extension-missing', 'extension-disabled', 'extension-incompatible', 'unreachable', 'failed',
+	'ready',
+	'connecting',
+	'reconnecting',
+	'provisioning',
+	'starting',
+	'stopping',
+	'offline',
+	'authentication-required',
+	'host-key-changed',
+	'permission-denied',
+	'extension-missing',
+	'extension-disabled',
+	'extension-incompatible',
+	'unreachable',
+	'failed',
 ] as const;
-export type ProjectEnvironmentStatus = typeof PROJECT_ENVIRONMENT_STATUSES[number];
+export type ProjectEnvironmentStatus =
+	(typeof PROJECT_ENVIRONMENT_STATUSES)[number];
 
 export interface EnvironmentFailure {
-	readonly classification: Exclude<ProjectEnvironmentStatus, 'ready' | 'connecting' | 'reconnecting' | 'provisioning' | 'starting' | 'stopping'>;
+	readonly classification: Exclude<
+		ProjectEnvironmentStatus,
+		| 'ready'
+		| 'connecting'
+		| 'reconnecting'
+		| 'provisioning'
+		| 'starting'
+		| 'stopping'
+	>;
 	readonly message: string;
 	readonly retryable: boolean;
 }
@@ -44,7 +66,9 @@ export interface EnvironmentProfile {
 	readonly defaultRoot?: string;
 	readonly activeRevision: number;
 	readonly recommendedRevision: number;
-	readonly revisions: Readonly<Record<string, EnvironmentConfigurationRevision>>;
+	readonly revisions: Readonly<
+		Record<string, EnvironmentConfigurationRevision>
+	>;
 	readonly presentation?: Readonly<Record<string, string>>;
 	readonly archived: boolean;
 }
@@ -93,7 +117,9 @@ export interface ProjectEnvironmentState {
 	readonly cursor: string;
 	readonly profiles: Readonly<Record<ProtocolId, EnvironmentProfile>>;
 	readonly environments: Readonly<Record<ProtocolId, ProjectEnvironmentRecord>>;
-	readonly operations: Readonly<Record<ProtocolId, ProjectEnvironmentOperationRecord>>;
+	readonly operations: Readonly<
+		Record<ProtocolId, ProjectEnvironmentOperationRecord>
+	>;
 }
 
 export interface ProjectEnvironmentSummary {
@@ -111,7 +137,9 @@ export interface ProjectEnvironmentSummary {
 	readonly builtIn: boolean;
 }
 
-export function createInitialProjectEnvironmentState(serverId: ProtocolId): ProjectEnvironmentState {
+export function createInitialProjectEnvironmentState(
+	serverId: ProtocolId,
+): ProjectEnvironmentState {
 	return {
 		schemaVersion: PROJECT_ENVIRONMENT_SCHEMA_VERSION,
 		serverId,
@@ -126,8 +154,24 @@ export function createInitialProjectEnvironmentState(serverId: ProtocolId): Proj
 				pinnedRevision: 1,
 				name: 'This server',
 				endpointSummary: 'Local to this Terminay Server',
-				declaredCapabilities: ['terminal', 'filesystem', 'filesystem-observation', 'git', 'process-observation', 'agent-journal', 'shell-discovery'],
-				availableCapabilities: ['terminal', 'filesystem', 'filesystem-observation', 'git', 'process-observation', 'agent-journal', 'shell-discovery'],
+				declaredCapabilities: [
+					'terminal',
+					'filesystem',
+					'filesystem-observation',
+					'git',
+					'process-observation',
+					'agent-journal',
+					'shell-discovery',
+				],
+				availableCapabilities: [
+					'terminal',
+					'filesystem',
+					'filesystem-observation',
+					'git',
+					'process-observation',
+					'agent-journal',
+					'shell-discovery',
+				],
 				status: 'ready',
 				operationReferences: [],
 				projectReferenceCount: 0,
