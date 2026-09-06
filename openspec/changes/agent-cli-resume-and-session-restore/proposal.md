@@ -16,7 +16,7 @@ process. So the matrix claims a behaviour the running app does not have.
 - Bind a restored session for every bundled CLI that documents a resume,
   continue, or session-restore command, including the forms that put no session
   UUID on argv: a picker (`claude --resume`, `codex resume`, `omp --resume`,
-  Cursor `--resume`), last-session shortcuts (`--continue`, `codex resume --last`,
+  last-session shortcuts (`--continue`, `codex resume --last`,
   OpenCode `--continue`), and explicit ids where the CLI accepts them.
 - After a picker, bind once the user has selected a session and that session's
   journal or store is the one the CLI is writing. Until then, do not invent a
@@ -52,7 +52,7 @@ process. So the matrix claims a behaviour the running app does not have.
 ## Impact
 
 - `extensions/agent-claude-code`, `agent-codex`, `agent-grok`, `agent-opencode`,
-  `agent-cursor`, `agent-omp`: binding for restore argv and, where needed, the
+  `agent-omp`: binding for restore argv and, where needed, the
   association used when argv has no UUID.
 - `tests/agent-conformance` and each `test/conformance.test.mjs`: resume
   gestures.

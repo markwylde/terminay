@@ -17,7 +17,6 @@ test('narrow release builds materialize their workspace dependencies through Tur
 		['puzed', 'terminay-plugin-puzed'],
 		['agent-codex', 'terminay-agent-codex'],
 		['agent-claude-code', 'terminay-agent-claude-code'],
-		['agent-cursor', 'terminay-agent-cursor'],
 		['agent-grok', 'terminay-agent-grok'],
 		['agent-opencode', 'terminay-agent-opencode'],
 		['agent-omp', 'terminay-agent-omp'],

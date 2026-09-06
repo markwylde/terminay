@@ -14,7 +14,6 @@ at least:
 - Codex: `resume` (picker); `resume --last`; `resume` with a session id.
 - Grok: `--continue` / `-c`; `--resume` / `-r` with a session id or title; `--resume` / `-r` with no value.
 - OpenCode: `--continue` / `-c`; `--session` with a session id.
-- Cursor Agent: `--continue`; `--resume` with a chat id; `--resume` with no value; the `resume` subcommand.
 - omp: `--continue` / `-c`; `--resume` with an id prefix or path; `--resume` with no value (picker).
 
 An explicit session identity on argv SHALL bind that session. A last-session
@@ -32,7 +31,7 @@ documented association.
 
 #### Scenario: Resume picker with no UUID on argv
 
-- **WHEN** the user runs the CLI's session picker (`claude --resume`, `codex resume`, `omp --resume`, Cursor `--resume`, or Grok `--resume` with no value) and selects a session
+- **WHEN** the user runs the CLI's session picker (`claude --resume`, `codex resume`, `omp --resume`, or Grok `--resume` with no value) and selects a session
 - **THEN** that session binds to the terminal and appears in the Agents pane even though argv carries no session UUID
 
 #### Scenario: Last-session shortcut
