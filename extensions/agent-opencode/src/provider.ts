@@ -21,6 +21,24 @@ import {
 	storePathFor,
 } from './store.js';
 
+/** OpenCode `--session` / `-s` names the restored root when present. */
+export function openCodeSessionId(
+	arguments_: readonly string[] | undefined,
+): string | undefined {
+	if (!arguments_) return undefined;
+	for (let index = 0; index < arguments_.length; index += 1) {
+		const argument = arguments_[index];
+		if (typeof argument !== 'string') continue;
+		const inline = /^(?:--session|-s)=(.*)$/u.exec(argument)?.[1];
+		if (inline) return inline || undefined;
+		if (argument === '--session' || argument === '-s') {
+			const next = arguments_[index + 1];
+			return typeof next === 'string' && next.length > 0 ? next : undefined;
+		}
+	}
+	return undefined;
+}
+
 export const PROVIDER_ID = 'com.terminay.agent.opencode/cli';
 const MAPPING_VERSION = '0.1';
 const POLL_INTERVAL_MS = 250;
@@ -84,10 +102,10 @@ export const openCodeProvider = defineAgentProvider({
 			const store = new OpenCodeStore(path);
 			try {
 				const roots = [...cwds].flatMap((cwd) => store.rootsForDirectory(cwd));
-				// Several eligible roots are ordinary; the most recently updated one
-				// is the session this process is working in. Directory alone is never
-				// identity: only a parentless row for this exact cwd is eligible.
-				const root = roots.sort((a, b) => b.timeUpdated - a.timeUpdated)[0];
+				const requested = openCodeSessionId(terminal.foreground.arguments);
+				const root = requested
+					? roots.find((candidate) => candidate.id === requested)
+					: roots.sort((a, b) => b.timeUpdated - a.timeUpdated)[0];
 				if (!root) {
 					store.close();
 					continue;

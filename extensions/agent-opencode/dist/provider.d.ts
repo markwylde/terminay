@@ -1,5 +1,7 @@
 import { type AgentFileWatcher, type AgentRecordContext, type AgentTerminalContext } from '@terminay/extension-api';
 import { LIMITS, OpenCodeStore } from './store.js';
+/** OpenCode `--session` / `-s` names the restored root when present. */
+export declare function openCodeSessionId(arguments_: readonly string[] | undefined): string | undefined;
 export declare const PROVIDER_ID = "com.terminay.agent.opencode/cli";
 /**
  * OpenCode keeps its state in a SQLite store rather than a JSONL journal, so

@@ -299,10 +299,18 @@ interface JournalCandidate {
  * Claude Code's own association: the descendant process CWD names the provider
  * project directory, and a root journal appended there since that process
  * started belongs to it. Appends rather than creation are the evidence because
- * `claude --resume` and `--continue` append to a journal an earlier process
- * created. One process writes a new journal per conversation, so several
- * candidates are ordinary; the bound root is the one most recently appended.
- * Two appended at the same instant are concurrent and bind nothing.
+ * `claude --resume` (picker or UUID) and `--continue` append to a journal an
+ * earlier process created. Measured against Claude Code's `--help`: `-r,
+ * --resume [value]` resumes by session ID, or opens a picker when the value is
+ * omitted; `-c, --continue` continues the most recent conversation in the
+ * current directory. The picker is therefore cwd-scoped the same way the
+ * project directory encoding is. A journal in another encoded project is not
+ * listed and is not admitted. We do not scan every directory under
+ * `.claude/projects`.
+ *
+ * One process writes a new journal per conversation, so several candidates are
+ * ordinary; the bound root is the one most recently appended. Two appended at
+ * the same instant are concurrent and bind nothing.
  */
 async function projectJournalCandidate(
 	terminal: AgentTerminalContext,

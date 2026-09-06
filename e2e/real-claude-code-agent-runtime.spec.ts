@@ -76,4 +76,19 @@ test('a real Claude Code session shows working, done and waiting in the app', as
 	await mainWindow.keyboard.press('Enter');
 	await expect(indicator('done')).toBeVisible({ timeout: 90_000 });
 	await typeInVisibleTerminal(mainWindow, '/exit\n');
+	await expect(root).toHaveCount(0, { timeout: 60_000 });
+
+	await typeInVisibleTerminal(mainWindow, 'claude --resume\n');
+	await mainWindow.waitForTimeout(800);
+	await mainWindow.keyboard.press('Enter');
+	await expect(root).toBeVisible({ timeout: 90_000 });
+	await expect(root.locator('.agents-sidebar__metadata')).toContainText('Claude Code');
+	await expect(indicator('done')).toBeVisible({ timeout: 90_000 });
+	await typeInVisibleTerminal(
+		mainWindow,
+		'Reply with the single word resumed, then stop.\n',
+	);
+	await expect(indicator('working')).toBeVisible({ timeout: 30_000 });
+	await expect(indicator('done')).toBeVisible({ timeout: 90_000 });
+	await expect(mainWindow.locator('.agents-sidebar__tree-item')).toHaveCount(1);
 });
