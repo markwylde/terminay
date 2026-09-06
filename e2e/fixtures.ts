@@ -133,7 +133,17 @@ const nativeGrokFixture = String.raw`
 #include <sys/stat.h>
 #include <unistd.h>
 
-static const char SESSION_ID[] = "${nativeGrokSessionId}";
+static const char DEFAULT_SESSION_ID[] = "${nativeGrokSessionId}";
+/**
+ * Two Grok CLIs in one directory are two distinct sessions writing two
+ * journals. A test drives that by exporting GROK_E2E_SESSION before the
+ * command, the way two real processes would each mint their own id.
+ */
+static const char *session_id(void) {
+  const char *chosen = getenv("GROK_E2E_SESSION");
+  return chosen && *chosen ? chosen : DEFAULT_SESSION_ID;
+}
+#define SESSION_ID session_id()
 
 static void directories(char *path) {
   for (char *cursor = path + 1; *cursor; cursor += 1) {
@@ -372,10 +382,12 @@ export const test = base.extend<ElectronFixtures>({
 			specFile === 'extension-agent-runtime.spec.ts'
 				? await prepareNativeCodexFixture(tempDir)
 				: undefined;
-		const nativeGrok =
-			specFile === 'extension-grok-agent-runtime.spec.ts'
-				? await prepareNativeGrokFixture(tempDir)
-				: undefined;
+		const nativeGrok = [
+			'extension-grok-agent-runtime.spec.ts',
+			'agent-multi-terminal.spec.ts',
+		].includes(specFile)
+			? await prepareNativeGrokFixture(tempDir)
+			: undefined;
 		if (path.basename(testInfo.file) === 'mixed-project-environments.spec.ts') {
 			const now = Date.now();
 			const profile = (
