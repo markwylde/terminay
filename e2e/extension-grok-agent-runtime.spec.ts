@@ -2,7 +2,12 @@ import { readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, test } from './fixtures';
 import { typeInVisibleTerminal } from './support/terminal-input';
-import { selectSidebarGroup, setProjectRoot } from './support/ui';
+import {
+	openProjectEditWindow,
+	selectSidebarGroup,
+	setProjectRoot,
+	submitEditWindow,
+} from './support/ui';
 
 async function nativeGrokSessionId(tempDir: string): Promise<string> {
 	const root = path.join(
@@ -36,6 +41,33 @@ async function expectVisibleAgentCount(
 	await expect(workspace.locator('.agents-sidebar__tree-item')).toHaveCount(
 		count,
 		{ timeout: 15_000 },
+	);
+}
+
+async function nameActiveProject(
+	page: Parameters<typeof selectSidebarGroup>[0],
+	name: string,
+): Promise<void> {
+	const editor = await openProjectEditWindow(page);
+	await editor.getByPlaceholder('Project name').fill(name);
+	await submitEditWindow(editor);
+	await expect(page.locator('.project-tab--active')).toContainText(name);
+}
+
+async function activateNamedProject(
+	page: Parameters<typeof selectSidebarGroup>[0],
+	name: string,
+): Promise<void> {
+	const tab = page.locator('.project-tab').filter({ hasText: name });
+	await tab.click();
+	await expect(tab).toHaveClass(/project-tab--active/);
+	const panel = page.locator(
+		'.project-workspace--active .terminal-panel:visible',
+	);
+	await expect(panel).toBeVisible();
+	await expect(panel).toHaveAttribute(
+		'data-terminay-terminal-session-id',
+		/.+/,
 	);
 }
 
@@ -143,6 +175,7 @@ test('two projects each keep a live Grok agent, including after a later turn and
 	const books = await createWorkspace({ name: 'books' });
 	const other = await createWorkspace({ name: 'terminay' });
 	await setProjectRoot(mainWindow, books.rootDir);
+	await nameActiveProject(mainWindow, 'Books');
 	await typeInVisibleTerminal(mainWindow, 'grok\n');
 	await expect
 		.poll(
@@ -156,7 +189,9 @@ test('two projects each keep a live Grok agent, including after a later turn and
 
 	await mainWindow.getByLabel('Create project on This server').click();
 	await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+	await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 	await setProjectRoot(mainWindow, other.rootDir);
+	await nameActiveProject(mainWindow, 'Terminay');
 	await typeInVisibleTerminal(mainWindow, 'grok\n');
 	await expect
 		.poll(
@@ -167,7 +202,14 @@ test('two projects each keep a live Grok agent, including after a later turn and
 		.toMatch(/Grok e2e ready/u);
 	await expectVisibleAgentCount(mainWindow, 1);
 
-	await mainWindow.locator('.project-tab').first().click();
+	await activateNamedProject(mainWindow, 'Books');
+	await expect
+		.poll(
+			async () =>
+				await mainWindow.locator('.terminal-panel:visible').textContent(),
+			{ timeout: 15_000 },
+		)
+		.toMatch(/Grok e2e ready/u);
 	await expectVisibleAgentCount(mainWindow, 1);
 	const booksRoot = mainWindow.locator(
 		'.project-workspace--active .agents-sidebar__tree-item',
@@ -202,6 +244,13 @@ test('two projects each keep a live Grok agent, including after a later turn and
 		.toMatch(/Grok e2e resumed/u);
 	await expectVisibleAgentCount(mainWindow, 1);
 
-	await mainWindow.locator('.project-tab').nth(1).click();
+	await activateNamedProject(mainWindow, 'Terminay');
+	await expect
+		.poll(
+			async () =>
+				await mainWindow.locator('.terminal-panel:visible').textContent(),
+			{ timeout: 15_000 },
+		)
+		.toMatch(/Grok e2e ready/u);
 	await expectVisibleAgentCount(mainWindow, 1);
 });
