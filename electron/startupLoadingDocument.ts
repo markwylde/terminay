@@ -32,12 +32,20 @@ function escapeHtml(value: string): string {
 		.replaceAll("'", '&#39;');
 }
 
-/** The rule that reveals one phase line. Ids come from a closed union, so the
- * attribute selector cannot be widened by a caller. */
+/** The rule that reveals one phase line.
+ *
+ * It hides every phase before showing one, and both halves have identical
+ * specificity, so the last rule inserted always wins the cascade for every
+ * element. That makes accumulation harmless: a rule left behind by an earlier
+ * phase cannot keep its own line visible once a later rule is inserted. The
+ * previous rule is still removed for tidiness, but correctness does not depend
+ * on that removal winning a race against the next phase.
+ *
+ * Ids come from a closed union, so the selector cannot be widened by a caller. */
 export function startupPhaseVisibilityCss(id: StartupDocumentPhaseId): string {
 	if (!ALL_PHASE_IDS.includes(id))
 		throw new Error('unknown startup phase identifier');
-	return `.phase[data-phase="${id}"]{display:block}`;
+	return `.phase[data-phase]{display:none}.phase[data-phase="${id}"]{display:block}`;
 }
 
 export function desktopStartupLoadingDocument(
