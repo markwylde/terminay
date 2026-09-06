@@ -11,7 +11,7 @@ import {
 	jsonlSession,
 	safeAgentString,
 } from '@terminay/extension-api';
-import { mapClaudeRecord } from './mapping.js';
+import { createClaudeRecordMapper } from './mapping.js';
 import {
 	claudeProjectDirectoryPath,
 	claudeProjectJournalPath,
@@ -88,7 +88,7 @@ export const claudeCodeProvider = defineAgentProvider({
 			source: terminal.observation.files.follow(candidate.journal, {
 				signal: terminal.signal,
 			}),
-			mapRecord: mapClaudeRecord,
+			mapRecord: createClaudeRecordMapper(),
 		});
 	},
 });

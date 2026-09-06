@@ -1,7 +1,7 @@
 import { defineExtension } from '@terminay/extension-api';
 import { claudeCodeProvider, PROVIDER_ID } from './provider.js';
 
-export { mapClaudeRecord } from './mapping.js';
+export { createClaudeRecordMapper, mapClaudeRecord } from './mapping.js';
 export { claudeCodeProvider, PROVIDER_ID } from './provider.js';
 export {
 	claudeProjectDirectoryPath,

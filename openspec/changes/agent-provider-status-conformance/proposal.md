@@ -6,23 +6,17 @@ amber terminal-activity fallback either. Grok and Codex behave correctly in the
 same situation, so the user's reasonable conclusion is that agent status is
 unreliable rather than that one provider is broken.
 
-Two independent defects produce that single symptom, and neither is visible to
-the current test suite:
+The cause is a single defect, invisible to the current test suite:
 
-1. **Claude Code never binds.** `extensions/agent-claude-code/src/provider.ts`
-   implements only the *fallback* discovery rule — a journal held open for
-   writing by a process in the PTY tree. Claude Code appends to its JSONL and
-   closes it, so it holds no such descriptor; verified on a live host, two
-   running `claude` processes had 30 open files between them and zero under
-   `~/.claude/projects`. The primary rule the spec already states — admit the
-   one root journal created for the process's working directory *after* that
-   process started — was never implemented. Without a binding there is no
-   canonical agent entry, so no RAG glyph.
-2. **The terminal-activity fallback is claimed but silent.** The legacy Claude
-   Code interpreter profile claims the session, which by spec disables the
-   raw-output timer. Claude Code emits no `OSC 9;4` progress, so the claimed
-   interpreter has no signal to interpret and reports nothing. Both the
-   authoritative path and the fallback path fail for the same terminal.
+**Claude Code never binds.** `extensions/agent-claude-code/src/provider.ts`
+implements only the *fallback* discovery rule — a journal held open for writing
+by a process in the PTY tree. Claude Code appends to its JSONL and closes it, so
+it holds no such descriptor; verified on a live host, two running `claude`
+processes had 30 open files between them and zero under `~/.claude/projects`.
+The primary rule the spec already states — admit a root journal created for the
+process's working directory *after* that process started — was never
+implemented. Without a binding there is no canonical agent entry, so no RAG
+glyph, and the tab falls back to ordinary terminal activity.
 
 Underneath both sits the real problem: **no provider is verified against the
 behaviour a real CLI actually exhibits.** Every Claude Code unit test
@@ -39,12 +33,6 @@ able to observe, and no cross-provider test regime that would have caught this.
   one currently receiving appends — one `claude` process writes a new journal per
   conversation, so several candidates are normal rather than ambiguous. Keep the
   open-writable-handle path as the fallback the spec already designates it to be.
-- **Fix the fallback interpreter claim.** An interpreter profile SHALL only
-  claim a session — and so only suppress the raw-output timer — when it is
-  actually receiving the signals it interprets. A profile that claims a session
-  and then observes no signal of its kind SHALL release the claim so ordinary
-  terminal activity resumes. This restores an amber fallback for any provider
-  whose authoritative binding is unavailable, rather than leaving a dead tab.
 - **Add an OpenCode provider** (`terminay-agent-opencode`) as a bundled,
   enabled-by-default agent extension. OpenCode is already installed on
   developer hosts and is one of the four providers the conformance matrix must
@@ -96,9 +84,6 @@ provider already writes, or it is declared unsupported.
   around the child sessions and per-child records its CLI now writes; OpenCode is
   added as a bundled provider with its session root, binding evidence, privacy
   boundary, and record mapping.
-- `terminal-activity-signals`: An interpreter profile's claim over a session
-  becomes conditional on that profile actually observing its own signal kind,
-  and is released when it does not.
 
 ## Impact
 
@@ -107,7 +92,6 @@ provider already writes, or it is declared unsupported.
 - `extensions/agent-opencode/` — new extension package; `extensions/builtins.json`.
 - `packages/extension-api/` — `AgentDiscoveredFile` needs a creation-time fact,
   or the post-process-start rule must be derived from directory-watch deltas.
-- `packages/server-core/src/activity/` — interpreter claim lifecycle.
 - `extensions/*/test/` — a conformance test per provider extension; the existing
   per-extension `real-cli-smoke.mjs` files and `e2e/real-codex-agent-runtime.spec.ts`
   are retired into them.
