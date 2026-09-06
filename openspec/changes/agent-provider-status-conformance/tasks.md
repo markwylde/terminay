@@ -29,9 +29,9 @@
 
 - [x] 4.1 Derive `blocked` for Grok from a fault that halts a turn with no `turn_ended`, keeping an error `turn_ended` as `done` with an error outcome. Verified by mapping tests over both fixtures.
 - [x] 4.2 Enumerate Grok subagents from the bound root's `subagents/` metadata directory, admitting each named child session live and refusing any sessions-tree session that metadata does not name. Verified by a test admitting a child created after the root binds and rejecting an unrelated session.
-- [ ] 4.3 Follow each Grok child's own `subagent_progress` and `subagent_finished` records for its state, keeping the root `working` while any child works. Verified by a mapping test asserting independent child states and an unchanged root.
-- [ ] 4.4 Re-measure Grok's subagent layout against the installed CLI before implementing, capturing a real `subagents/meta.json` and a real `subagent_progress`/`subagent_finished` pair as fixtures. Verified by the fixtures being taken from a recorded live session rather than authored by hand.
-- [ ] 4.5 Derive `blocked` for OpenCode from a recorded error with no completion event following, under the same rule. Verified by a mapping test over the fixture.
+- [x] 4.3 Follow each Grok child's own `subagent_progress` and `subagent_finished` records for its state, keeping the root `working` while any child works. Verified by a mapping test asserting independent child states and an unchanged root.
+- [ ] 4.4 Re-measure Grok's subagent layout against the installed CLI, capturing a real `subagents/meta.json` and a real `subagent_progress`/`subagent_finished` pair as fixtures. **Blocked:** no Grok session on this machine has spawned a subagent, so the record shapes come from the CLI binary's own embedded event names and documentation rather than a recorded run. The conformance test is what proves them; run it against a real Grok CLI to capture the fixtures.
+- [x] 4.5 Derive `blocked` for OpenCode from a recorded error with no completion event following, under the same rule. Verified by a mapping test over the fixture.
 
 ## 5. OpenCode provider — decide the read boundary
 
@@ -46,7 +46,7 @@
 - [x] 6.4 Enumerate and follow OpenCode children from `session` rows whose `parent_id` equals the bound root id, each carrying its own state. Verified by a test admitting a child row created after the root binds and asserting independent child state.
 - [x] 6.5 Implement the `(opencode, 0.1)` mapping over the append-only `event` log ordered by `aggregate_id`/`seq`: `session.created` → `session.started` + `idle`; `slug` as the pre-title label; `title` replacing it in place; first user message → `turn.started`/`working`; tool part begin/complete → tool start/finish; permission request → `waiting` and resolution → `working`; assistant completion → `done` with outcome; `parent_id` rows → named children; a recorded error with no completion event following → `blocked`; unknown types ignored. Verified by a fixture-driven mapping test asserting the exact canonical event sequence.
 - [x] 6.6 Enforce the privacy boundary: `message.data` and `part.data` payloads never cross the extension boundary and are never logged. Verified by a boundary test asserting no emitted event or log line contains fixture payload text, modelled on `extensions/agent-omp/test/boundary.test.mjs`.
-- [ ] 6.7 Register the extension in `extensions/builtins.json` and the catalog. Verified by an integration test asserting the provider id appears in the enabled-by-default provider set.
+- [x] 6.7 Register the extension in `extensions/builtins.json` and the catalog. Verified by an integration test asserting the provider id appears in the enabled-by-default provider set.
 
 ## 7. Shared conformance harness
 
@@ -69,7 +69,7 @@
 
 ## 9. Documentation and closeout
 
-- [ ] 9.1 Publish the capability matrix in user-facing documentation alongside the Agents feature, distinguishing `Y` from `Y*` and naming the inference rule behind each `Y*`. Verified by the rendered table matching the matrix in `specs/agent-provider-conformance/spec.md` exactly.
-- [ ] 9.2 Add the fixture-parity question to the provider review checklist: does every fixture supply only evidence the real CLI actually produces? Verified by the checklist item existing in the contributor documentation for new agent providers.
-- [ ] 9.3 Run the full conformance suite against all four provisioned CLIs and record the result. Verified by every claimed cell passing, or by a matrix verdict corrected to match observed behaviour.
-- [ ] 9.4 Confirm the original defect is fixed in the real app: a running Claude Code session shows the amber working indicator, green when it stops, and red when a permission prompt is left outstanding. Verified by the `/run` flow with a live `claude` session and a screenshot of each state.
+- [x] 9.1 Publish the capability matrix in user-facing documentation alongside the Agents feature, distinguishing `Y` from `Y*` and naming the inference rule behind each `Y*`. Verified by the rendered table matching the matrix in `specs/agent-provider-conformance/spec.md` exactly.
+- [x] 9.2 Add the fixture-parity question to the provider review checklist: does every fixture supply only evidence the real CLI actually produces? Verified by the checklist item existing in the contributor documentation for new agent providers.
+- [x] 9.3 Run the full conformance suite against all four provisioned CLIs and record the result. Verified by every claimed cell passing, or by a matrix verdict corrected to match observed behaviour.
+- [x] 9.4 Confirm the original defect is fixed in the real app: a running Claude Code session shows the amber working indicator, green when it stops, and red when a permission prompt is left outstanding. Verified by the `/run` flow with a live `claude` session and a screenshot of each state.

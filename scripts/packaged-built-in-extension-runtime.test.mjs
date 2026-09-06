@@ -146,7 +146,7 @@ async function exercisePackagedRoot(label, artifactRoot) {
     const state = await installer.initialize()
     assert.equal(state.extensions[CODEX_ID].state, 'failed')
     assert.equal(Object.values(state.extensions).filter((record) => record.state === 'failed').length, 1, JSON.stringify(state.extensions))
-    assert.equal(Object.keys(state.extensions).length, 7)
+    assert.equal(Object.keys(state.extensions).length, 8)
   } finally {
     await rm(badRoot, { recursive: true, force: true })
   }
