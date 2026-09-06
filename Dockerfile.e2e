@@ -21,6 +21,7 @@ COPY --chown=node:node extensions/agent-codex/package.json extensions/agent-code
 COPY --chown=node:node extensions/agent-cursor/package.json extensions/agent-cursor/package.json
 COPY --chown=node:node extensions/agent-grok/package.json extensions/agent-grok/package.json
 COPY --chown=node:node extensions/agent-omp/package.json extensions/agent-omp/package.json
+COPY --chown=node:node extensions/agent-opencode/package.json extensions/agent-opencode/package.json
 COPY --chown=node:node extensions/puzed/package.json extensions/puzed/package.json
 COPY --chown=node:node extensions/ssh/package.json extensions/ssh/package.json
 COPY --chown=node:node packages/client-core/package.json packages/client-core/package.json
@@ -29,6 +30,7 @@ COPY --chown=node:node packages/protocol-conformance/package.json packages/proto
 COPY --chown=node:node packages/protocol/package.json packages/protocol/package.json
 COPY --chown=node:node packages/responsive-ui/package.json packages/responsive-ui/package.json
 COPY --chown=node:node packages/server-core/package.json packages/server-core/package.json
+COPY --chown=node:node packages/shared-ui/package.json packages/shared-ui/package.json
 COPY --chown=node:node packages/ui-bundle/package.json packages/ui-bundle/package.json
 COPY --chown=node:node scripts/ensure-node-pty-helper-mode.mjs scripts/ensure-node-pty-helper-mode.mjs
 
