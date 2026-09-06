@@ -7,6 +7,7 @@ import {
 	realpath,
 	stat,
 } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { isAbsolute, relative, resolve } from 'node:path';
 import type { JsonValue } from '@terminay/extension-api';
 import type {
@@ -16,6 +17,8 @@ import type {
 
 const MAX_PATH_LENGTH = 4_096;
 const MAX_PROCESSES = 2_048;
+/** Descendants asked for an environment value the shell did not expose. */
+const MAX_ENVIRONMENT_PROBES = 32;
 /** Keep process/open-file snapshots bounded for the provider, not because they
  * cross host IPC. Local observation now runs inside the extension child. */
 const MAX_OBSERVED_PROCESSES = 256;
@@ -25,7 +28,9 @@ const MAX_READ_BYTES = 4 * 1024 * 1024;
 const MAX_FOLLOW_CHUNK_BYTES = 256 * 1024;
 const MAX_DIRECTORY_LIST_DEPTH = 8;
 const MAX_DIRECTORY_LIST_ENTRIES = 256;
-const MAX_DIRECTORY_LIST_BYTES = 16 * 1024 * 1024;
+/** A listing carries metadata only; reads have their own byte limit. Real
+ * provider histories run to hundreds of megabytes per project. */
+const MAX_DIRECTORY_LIST_BYTES = 1024 * 1024 * 1024;
 
 /** A server-owned lookup for one admitted terminal.  This is intentionally
  * separate from the public terminal context: extensions never receive the
@@ -126,6 +131,10 @@ export interface ThisServerAgentObservationAdapterOptions {
 	/** Supplying this makes homeRelative checks deterministic in tests and on
 	 * service accounts whose HOME is intentionally unset. */
 	readonly homeDirectory?: string;
+	/** Home used when no process in the terminal's tree exposes `HOME`. A
+	 * this-server terminal's shell is spawned by this server as this user, so
+	 * the server's own home is the default. `false` disables the fallback. */
+	readonly fallbackHomeDirectory?: string | false;
 	readonly maximumReadBytes?: number;
 	readonly maximumFollowChunkBytes?: number;
 }
@@ -424,11 +433,7 @@ export class ThisServerAgentObservationAdapter {
 		)
 			throw new Error('agent environment request is invalid');
 		const safeNames = names as string[];
-		const values = await this.system.environment(
-			requiredPid(terminal),
-			safeNames,
-			signal,
-		);
+		const values = await this.terminalEnvironment(terminal, safeNames, signal);
 		const entries: Array<[string, string]> = [];
 		for (const name of safeNames) {
 			const value = values[name];
@@ -887,9 +892,9 @@ export class ThisServerAgentObservationAdapter {
 		signal: AbortSignal,
 	): Promise<string | undefined> {
 		if (!environmentName(name)) return undefined;
-		const value = (
-			await this.system.environment(requiredPid(terminal), [name], signal)
-		)[name];
+		const value = (await this.terminalEnvironment(terminal, [name], signal))[
+			name
+		];
 		const path = safePath(value);
 		if (path === undefined) return undefined;
 		const canonical = await this.system.realpath(path, signal);
@@ -922,16 +927,59 @@ export class ThisServerAgentObservationAdapter {
 		signal: AbortSignal,
 	): Promise<string | undefined> {
 		if (this.homeDirectory !== undefined) return this.homeDirectory;
-		const value = (
-			await this.system.environment(requiredPid(terminal), ['HOME'], signal)
-		).HOME;
-		const path = safePath(value);
+		const value = (await this.terminalEnvironment(terminal, ['HOME'], signal))
+			.HOME;
+		const fallback =
+			this.options.fallbackHomeDirectory === false
+				? undefined
+				: (this.options.fallbackHomeDirectory ?? homedir());
+		const path = safePath(value) ?? safePath(fallback);
 		if (path === undefined) return undefined;
 		const canonical = await this.system.realpath(path, signal);
 		return canonical !== undefined &&
 			(await this.system.stat(canonical, signal))?.kind === 'directory'
 			? canonical
 			: undefined;
+	}
+
+	/**
+	 * Reads environment values from the terminal's own process tree: the shell
+	 * first, then its descendants for any name the shell did not expose. On
+	 * macOS a login `zsh` publishes no environment at all through `ps`, while
+	 * the agent CLI it launched does, and that CLI's values are the ones its
+	 * journals were written under.
+	 */
+	private async terminalEnvironment(
+		terminal: ThisServerAgentTerminal,
+		names: readonly string[],
+		signal: AbortSignal,
+	): Promise<Record<string, string>> {
+		const shellPid = requiredPid(terminal);
+		const found: Record<string, string> = {};
+		const missing = (): string[] =>
+			names.filter((name) => !safeText(found[name], 4_096));
+		const collect = async (pid: number): Promise<void> => {
+			const wanted = missing();
+			if (wanted.length === 0) return;
+			const values = await this.system
+				.environment(pid, wanted, signal)
+				.catch(() => ({}) as Readonly<Record<string, string>>);
+			for (const name of wanted) {
+				const value = values[name];
+				if (safeText(value, 4_096)) found[name] = value;
+			}
+		};
+		await collect(shellPid);
+		if (missing().length === 0) return found;
+		const descendants = await this.system
+			.descendants(shellPid, signal)
+			.catch(() => [] as readonly ThisServerAgentProcess[]);
+		for (const process of descendants.slice(0, MAX_ENVIRONMENT_PROBES)) {
+			if (process.pid === shellPid) continue;
+			await collect(process.pid);
+			if (missing().length === 0) break;
+		}
+		return found;
 	}
 
 	private matchesFileConstraint(
@@ -1021,10 +1069,12 @@ export class ThisServerAgentObservationAdapter {
 		const options = record(request?.options);
 		if (state.watchers.size >= MAX_WATCHERS_PER_TERMINAL)
 			throw new Error('agent file follow exceeds its limit');
-		const maximumChunkBytes = boundedBytes(
-			options?.maxChunkBytes,
-			this.maximumFollowChunkBytes,
-		);
+		// The chunk limit is optional for a provider: an omitted one means the
+		// host's own ceiling, and only an explicit value is validated against it.
+		const maximumChunkBytes =
+			options?.maxChunkBytes === undefined
+				? this.maximumFollowChunkBytes
+				: boundedBytes(options.maxChunkBytes, this.maximumFollowChunkBytes);
 		const watcher: Watcher = {
 			id: `watch-${++state.nextId}`,
 			file,
@@ -1248,7 +1298,91 @@ async function nodeDescendants(
 		children.set(parent, [...(children.get(parent) ?? []), pid]);
 		names.set(pid, command.join(' '));
 	}
-	return sessionProcesses(shellPid, children, names);
+	return darwinProcessFacts(sessionProcesses(shellPid, children, names), signal);
+}
+
+/**
+ * Adds each session process's start time and working directory, the two facts
+ * a provider needs to associate a journal its CLI wrote for that process. Both
+ * probes are bounded to the session's own pids. A probe that fails leaves the
+ * fact absent rather than failing the whole snapshot.
+ */
+async function darwinProcessFacts(
+	processes: readonly ThisServerAgentProcess[],
+	signal: AbortSignal,
+): Promise<readonly ThisServerAgentProcess[]> {
+	if (processes.length === 0) return processes;
+	const pids = processes.map((process) => process.pid);
+	const [startedAt, cwd] = await Promise.all([
+		darwinStartTimes(pids, signal),
+		darwinWorkingDirectories(pids, signal),
+	]);
+	return processes.map((process) => ({
+		...process,
+		...(startedAt.has(process.pid)
+			? { startedAt: startedAt.get(process.pid) }
+			: {}),
+		...(cwd.has(process.pid) ? { cwd: cwd.get(process.pid) } : {}),
+	}));
+}
+
+/** `lstart` is whole seconds, so it never postdates the true start. */
+async function darwinStartTimes(
+	pids: readonly number[],
+	signal: AbortSignal,
+): Promise<ReadonlyMap<number, string>> {
+	const result = new Map<number, string>();
+	let output: string;
+	try {
+		output = await commandText(
+			unixTool('ps'),
+			['-o', 'pid=,lstart=', '-p', pids.join(',')],
+			1024 * 1024,
+			signal,
+			true,
+		);
+	} catch {
+		return result;
+	}
+	for (const line of output.split(/\r?\n/u)) {
+		const match = /^\s*(\d+)\s+(.+?)\s*$/u.exec(line);
+		if (!match) continue;
+		const pid = Number(match[1]);
+		const started = Date.parse(match[2] ?? '');
+		if (!validPid(pid) || !Number.isFinite(started)) continue;
+		result.set(pid, new Date(started).toISOString());
+	}
+	return result;
+}
+
+async function darwinWorkingDirectories(
+	pids: readonly number[],
+	signal: AbortSignal,
+): Promise<ReadonlyMap<number, string>> {
+	const result = new Map<number, string>();
+	let output: string;
+	try {
+		output = await commandText(
+			unixTool('lsof'),
+			['-a', '-d', 'cwd', '-p', pids.join(','), '-Fpn'],
+			1024 * 1024,
+			signal,
+			true,
+		);
+	} catch {
+		return result;
+	}
+	let pid: number | undefined;
+	for (const line of output.split(/\r?\n/u)) {
+		if (line.startsWith('p')) {
+			const value = Number(line.slice(1));
+			pid = validPid(value) ? value : undefined;
+		} else if (line.startsWith('n') && pid !== undefined) {
+			const path = safePath(line.slice(1));
+			if (path !== undefined && isAbsolute(path)) result.set(pid, path);
+		}
+	}
+	return result;
 }
 
 async function linuxDescendants(
@@ -1274,7 +1408,60 @@ async function linuxDescendants(
 		children.set(parent, [...(children.get(parent) ?? []), pid]);
 		names.set(pid, name);
 	}
-	return sessionProcesses(shellPid, children, names);
+	return linuxProcessFacts(sessionProcesses(shellPid, children, names));
+}
+
+/** Kernel `USER_HZ`: `/proc/<pid>/stat` start times are in these ticks. */
+const LINUX_CLOCK_TICKS_PER_SECOND = 100;
+
+/**
+ * Adds each session process's start time and working directory from procfs.
+ * The start time is boot time plus the process's tick offset, both floored, so
+ * it never postdates the true start.
+ */
+async function linuxProcessFacts(
+	processes: readonly ThisServerAgentProcess[],
+): Promise<readonly ThisServerAgentProcess[]> {
+	if (processes.length === 0) return processes;
+	const bootedAt = await linuxBootTime();
+	return Promise.all(
+		processes.map(async (process) => {
+			const [cwd, startedAt] = await Promise.all([
+				readlink(`/proc/${process.pid}/cwd`).catch(() => undefined),
+				linuxStartTime(process.pid, bootedAt),
+			]);
+			const safeCwd = cwd === undefined ? undefined : safePath(cwd);
+			return {
+				...process,
+				...(startedAt === undefined ? {} : { startedAt }),
+				...(safeCwd !== undefined && isAbsolute(safeCwd)
+					? { cwd: safeCwd }
+					: {}),
+			};
+		}),
+	);
+}
+
+async function linuxBootTime(): Promise<number | undefined> {
+	const raw = await readFile('/proc/stat', 'utf8').catch(() => '');
+	const seconds = Number(/^btime\s+(\d+)/mu.exec(raw)?.[1]);
+	return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : undefined;
+}
+
+async function linuxStartTime(
+	pid: number,
+	bootedAt: number | undefined,
+): Promise<string | undefined> {
+	if (bootedAt === undefined) return undefined;
+	const raw = await readFile(`/proc/${pid}/stat`, 'utf8').catch(() => '');
+	const close = raw.lastIndexOf(')');
+	if (close < 0) return undefined;
+	// Fields after the command are documented from index 3, so `starttime`
+	// (field 22) is the twentieth entry following it.
+	const ticks = Number(raw.slice(close + 2).split(/\s+/u)[19]);
+	if (!Number.isFinite(ticks) || ticks < 0) return undefined;
+	const seconds = bootedAt + Math.floor(ticks / LINUX_CLOCK_TICKS_PER_SECOND);
+	return new Date(seconds * 1000).toISOString();
 }
 
 async function nodeOpenFiles(

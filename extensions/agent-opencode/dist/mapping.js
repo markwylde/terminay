@@ -1,25 +1,51 @@
 import { LIMITS } from './store.js';
-
 function object(value) {
-	return typeof value === 'object' && value !== null && !Array.isArray(value)
-		? value
-		: undefined;
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+        ? value
+        : undefined;
 }
 function text(value, limit) {
-	return typeof value === 'string' && value.length > 0 && value.length <= limit
-		? value
-		: undefined;
+    return typeof value === 'string' && value.length > 0 && value.length <= limit
+        ? value
+        : undefined;
 }
 export function emptyState() {
-	return {
-		started: false,
-		titled: false,
-		turnOpen: false,
-		faulted: false,
-		tools: new Set(),
-		waits: new Set(),
-		children: new Set(),
-	};
+    return {
+        started: false,
+        titled: false,
+        turnOpen: false,
+        faulted: false,
+        turns: new Set(),
+        tools: new Set(),
+        children: new Set(),
+        labelled: new Set(),
+    };
+}
+/**
+ * The bounded human label for a `task` child.
+ *
+ * OpenCode records a short `state.input.description` for every task call, and
+ * that is the only field taken. The child's prompt is conversation content: it
+ * is used solely as a last resort, and then never beyond its first line, capped
+ * well below a full instruction, so no prompt body is ever projected.
+ */
+const SUBAGENT_LABEL_LIMIT = 80;
+export function subagentLabel(state) {
+    if (!state)
+        return undefined;
+    const declared = text(state.title, LIMITS.title) ??
+        text(object(state.input)?.description, LIMITS.title);
+    if (declared)
+        return declared;
+    const prompt = object(state.input)?.prompt;
+    if (typeof prompt !== 'string')
+        return undefined;
+    const line = prompt.split('\n', 1)[0]?.trim() ?? '';
+    if (line.length === 0)
+        return undefined;
+    return line.length > SUBAGENT_LABEL_LIMIT
+        ? `${line.slice(0, SUBAGENT_LABEL_LIMIT - 1)}\u2026`
+        : line;
 }
 /**
  * OpenCode `(opencode, 0.1)`.
@@ -30,140 +56,177 @@ export function emptyState() {
  * contributes its role and completion, never its text.
  */
 export function mapOpenCodeEvent(type, raw, context) {
-	let payload;
-	try {
-		payload = JSON.parse(raw);
-	} catch {
-		return;
-	}
-	const envelope = object(payload);
-	if (!envelope) return;
-	const { publish, state } = context;
-	const kind = type.replace(/\.\d+$/u, '');
-	if (kind === 'session.created' || kind === 'session.updated') {
-		const info = object(envelope.info);
-		if (!info) return;
-		const id = text(info.id, LIMITS.sessionId);
-		if (id !== context.rootId) return;
-		if (!state.started) {
-			state.started = true;
-			publish.sessionStarted({ title: 'OpenCode' });
-			// The slug is OpenCode's own deterministic name for a session, so a
-			// root is never unlabelled while it waits for a generated title.
-			const slug = text(info.slug, LIMITS.slug);
-			if (slug) publish.metadataChanged({ title: slug });
-		}
-		const title = text(info.title, LIMITS.title);
-		if (title && !state.titled) {
-			state.titled = true;
-			publish.metadataChanged({ title });
-		} else if (title && state.titled) {
-			publish.metadataChanged({ title });
-		}
-		const model = text(info.model, LIMITS.title);
-		if (model) publish.metadataChanged({ model: { id: model } });
-		return;
-	}
-	if (kind === 'message.updated') {
-		const info = object(envelope.info);
-		if (!info) return;
-		const role = text(info.role, 32);
-		if (role === 'user') {
-			state.turnOpen = true;
-			state.faulted = false;
-			const id = text(info.id, LIMITS.sessionId) ?? context.rootId;
-			publish.turnStarted({ turnId: `opencode:turn:${id}` });
-			return;
-		}
-		if (role !== 'assistant') return;
-		const error = object(info.error);
-		const errorName = error ? text(error.name, 200) : undefined;
-		const finish = text(info.finish, 64);
-		// An abort is the user stopping the turn, not a fault needing
-		// intervention. Observed on a real store: 77 of 99 recorded errors are
-		// MessageAbortedError, and 96 of 99 carry no completion, so treating any
-		// error without a completion as blocked would paint ordinary
-		// cancellations red.
-		const aborted = errorName !== undefined && /abort|cancel/iu.test(errorName);
-		if (error !== undefined && aborted) {
-			state.turnOpen = false;
-			state.faulted = false;
-			publish.done({ outcome: 'cancelled' });
-			return;
-		}
-		if (error !== undefined && !finish) {
-			// A recorded fault that halts the turn. OpenCode records no explicitly
-			// blocking condition, so this is derived.
-			if (state.faulted) return;
-			state.faulted = true;
-			publish.waitStarted({
-				waitId: `opencode:fault:${context.rootId}`,
-				state: 'blocked',
-				reason: errorName ?? 'assistant-error',
-				inferred: true,
-			});
-			return;
-		}
-		if (!finish) return;
-		state.turnOpen = false;
-		state.faulted = false;
-		publish.done({
-			outcome:
-				error !== undefined
-					? 'error'
-					: finish === 'stop' || finish === 'end_turn'
-						? 'success'
-						: /cancel|abort/iu.test(finish)
-							? 'cancelled'
-							: 'success',
-		});
-		return;
-	}
-	if (kind === 'message.part.updated') {
-		const part = object(envelope.part);
-		if (!part || text(part.type, 32) !== 'tool') return;
-		const callId = text(part.callID, LIMITS.toolId);
-		const name = text(part.tool, LIMITS.toolName);
-		if (!callId || !name) return;
-		const status = text(object(part.state)?.status, 32);
-		if (status === 'pending') {
-			// A tool part is pending while it waits for the user to approve it.
-			if (state.waits.has(callId)) return;
-			state.waits.add(callId);
-			publish.waitStarted({
-				waitId: callId,
-				state: 'waiting',
-				reason: `permission:${name}`,
-			});
-			return;
-		}
-		if (state.waits.delete(callId)) publish.waitFinished({ waitId: callId });
-		if (status === 'running') {
-			if (name === 'task') {
-				if (state.children.has(callId)) return;
-				state.children.add(callId);
-				const title = text(object(part.state)?.title, LIMITS.title);
-				publish.subagentStarted({
-					subagentId: callId,
-					parentAgentId: context.rootId,
-					...(title ? { title } : {}),
-				});
-				return;
-			}
-			if (state.tools.has(callId)) return;
-			state.tools.add(callId);
-			publish.toolStarted({ toolId: callId, name });
-			return;
-		}
-		if (status === 'completed' || status === 'error') {
-			const outcome = status === 'error' ? 'error' : 'success';
-			if (state.children.delete(callId)) {
-				publish.subagentDone({ subagentId: callId, outcome });
-				return;
-			}
-			if (!state.tools.delete(callId)) return;
-			publish.toolFinished({ toolId: callId, outcome });
-		}
-	}
+    let payload;
+    try {
+        payload = JSON.parse(raw);
+    }
+    catch {
+        return;
+    }
+    const envelope = object(payload);
+    if (!envelope)
+        return;
+    const { publish, state } = context;
+    const kind = type.replace(/\.\d+$/u, '');
+    if (kind === 'session.created' || kind === 'session.updated') {
+        const info = object(envelope.info);
+        if (!info)
+            return;
+        const id = text(info.id, LIMITS.sessionId);
+        if (id !== context.rootId)
+            return;
+        if (!state.started) {
+            state.started = true;
+            publish.sessionStarted({ title: 'OpenCode' });
+            // The slug is OpenCode's own deterministic name for a session, so a
+            // root is never unlabelled while it waits for a generated title.
+            const slug = text(info.slug, LIMITS.slug);
+            if (slug)
+                publish.metadataChanged({ title: slug });
+        }
+        const title = text(info.title, LIMITS.title);
+        if (title && !state.titled) {
+            state.titled = true;
+            publish.metadataChanged({ title });
+        }
+        else if (title && state.titled) {
+            publish.metadataChanged({ title });
+        }
+        const model = text(info.model, LIMITS.title);
+        if (model)
+            publish.metadataChanged({ model: { id: model } });
+        return;
+    }
+    if (kind === 'message.updated') {
+        const info = object(envelope.info);
+        if (!info)
+            return;
+        const role = text(info.role, 32);
+        if (role === 'user') {
+            const id = text(info.id, LIMITS.sessionId) ?? context.rootId;
+            // Only the first record of a user message opens a turn. A re-store of
+            // the same message — OpenCode writes one when it attaches the turn's
+            // diff summary, after the assistant has completed — would otherwise
+            // reopen a finished turn and leave the entry working forever.
+            if (state.turns.has(id))
+                return;
+            state.turns.add(id);
+            state.turnOpen = true;
+            state.faulted = false;
+            publish.turnStarted({ turnId: `opencode:turn:${id}` });
+            return;
+        }
+        if (role !== 'assistant')
+            return;
+        const error = object(info.error);
+        const errorName = error ? text(error.name, 200) : undefined;
+        const finish = text(info.finish, 64);
+        // An abort is the user stopping the turn, not a fault needing
+        // intervention. Observed on a real store: 77 of 99 recorded errors are
+        // MessageAbortedError, and 96 of 99 carry no completion, so treating any
+        // error without a completion as blocked would paint ordinary
+        // cancellations red.
+        const aborted = errorName !== undefined && /abort|cancel/iu.test(errorName);
+        if (error !== undefined && aborted) {
+            state.turnOpen = false;
+            state.faulted = false;
+            publish.done({ outcome: 'cancelled' });
+            return;
+        }
+        if (error !== undefined && !finish) {
+            // A recorded fault that halts the turn. OpenCode records no explicitly
+            // blocking condition, so this is derived.
+            if (state.faulted)
+                return;
+            state.faulted = true;
+            publish.waitStarted({
+                waitId: `opencode:fault:${context.rootId}`,
+                state: 'blocked',
+                reason: errorName ?? 'assistant-error',
+                inferred: true,
+            });
+            return;
+        }
+        if (!finish)
+            return;
+        state.turnOpen = false;
+        state.faulted = false;
+        publish.done({
+            outcome: error !== undefined
+                ? 'error'
+                : finish === 'stop' || finish === 'end_turn'
+                    ? 'success'
+                    : /cancel|abort/iu.test(finish)
+                        ? 'cancelled'
+                        : 'success',
+        });
+        return;
+    }
+    if (kind === 'message.part.updated') {
+        const part = object(envelope.part);
+        if (!part || text(part.type, 32) !== 'tool')
+            return;
+        const callId = text(part.callID, LIMITS.toolId);
+        const name = text(part.tool, LIMITS.toolName);
+        if (!callId || !name)
+            return;
+        const partState = object(part.state);
+        const status = text(partState?.status, 32);
+        // `pending` is the state every tool part is first written in, before its
+        // input has streamed in: on this store 6,901 pending records span every
+        // tool, and the store holds no record of an approval request of any kind
+        // (`session.info.permission` is the configured policy, never an ask). So
+        // a pending part is not a permission wait and never reports `waiting`.
+        if (status === 'pending')
+            return;
+        if (name === 'task') {
+            mapTaskPart(callId, status, partState, context);
+            return;
+        }
+        if (status === 'running') {
+            if (state.tools.has(callId))
+                return;
+            state.tools.add(callId);
+            publish.toolStarted({ toolId: callId, name });
+            return;
+        }
+        if (status === 'completed' || status === 'error') {
+            if (!state.tools.delete(callId))
+                return;
+            publish.toolFinished({
+                toolId: callId,
+                outcome: status === 'error' ? 'error' : 'success',
+            });
+        }
+    }
+}
+/**
+ * A `task` part is a child agent. Its label is absent from the first record and
+ * appears with the tool input, so the start is republished once the label is
+ * known: the canonical publisher merges a repeated start for the same child.
+ */
+function mapTaskPart(callId, status, partState, context) {
+    const { publish, state } = context;
+    const title = subagentLabel(partState);
+    const known = state.children.has(callId);
+    if (!known || (title && !state.labelled.has(callId))) {
+        if (title)
+            state.labelled.add(callId);
+        state.children.add(callId);
+        publish.subagentStarted({
+            subagentId: callId,
+            parentAgentId: context.rootId,
+            ...(title ? { title } : {}),
+        });
+    }
+    if (status !== 'completed' && status !== 'error')
+        return;
+    if (!state.children.delete(callId))
+        return;
+    state.labelled.delete(callId);
+    publish.subagentDone({
+        subagentId: callId,
+        outcome: status === 'error' ? 'error' : 'success',
+    });
 }
 //# sourceMappingURL=mapping.js.map

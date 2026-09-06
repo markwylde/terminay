@@ -300,3 +300,114 @@ test("environment-relative path facts are relative to the optional contained sub
   }, signal);
   assert.equal(typeof resolved?.id, "string");
 });
+
+test("HOME is read from a descendant when the shell exposes no environment", async () => {
+  // A macOS login zsh publishes nothing through `ps e`; the agent CLI it
+  // launched does, and that CLI's HOME is the one its journals live under.
+  const system = fixtureSystem();
+  system.files.set("/terminal-home/.claude/projects/session.jsonl", new Uint8Array([1]));
+  const originalStat = system.stat;
+  system.stat = async (path) => path === "/terminal-home" ? { kind: "directory", size: 0 } : originalStat(path);
+  const asked = [];
+  system.descendants = async () => [{ pid: 10, executableName: "zsh" }, { pid: 42, executableName: "claude" }];
+  system.environment = async (pid, names) => {
+    asked.push([pid, names]);
+    return pid === 42 ? { HOME: "/terminal-home" } : {};
+  };
+  const adapter = new ThisServerAgentObservationAdapter({
+    system,
+    fallbackHomeDirectory: "/never-used",
+    resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }),
+  });
+  const handle = await adapter.observe(terminal("descendant-home"), "filesystem.resolve-home-relative", {
+    relativePath: ".claude/projects/session.jsonl", beneath: { homeRelative: ".claude/projects" }, extension: ".jsonl",
+  }, signal);
+  assert.deepEqual(handle, { id: "file-1" });
+  assert.deepEqual(asked, [[10, ["HOME"]], [42, ["HOME"]]]);
+});
+
+test("HOME falls back to the server's own home for a this-server terminal whose tree exposes none", async () => {
+  const system = fixtureSystem();
+  system.files.set("/server-home/.claude/projects/session.jsonl", new Uint8Array([1]));
+  const originalStat = system.stat;
+  system.stat = async (path) => path === "/server-home" ? { kind: "directory", size: 0 } : originalStat(path);
+  system.descendants = async () => [{ pid: 10, executableName: "zsh" }];
+  system.environment = async () => ({});
+  const adapter = new ThisServerAgentObservationAdapter({
+    system,
+    fallbackHomeDirectory: "/server-home",
+    resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }),
+  });
+  const handle = await adapter.observe(terminal("fallback-home"), "filesystem.resolve-home-relative", {
+    relativePath: ".claude/projects/session.jsonl", beneath: { homeRelative: ".claude/projects" }, extension: ".jsonl",
+  }, signal);
+  assert.deepEqual(handle, { id: "file-1" });
+
+  const disabled = new ThisServerAgentObservationAdapter({
+    system,
+    fallbackHomeDirectory: false,
+    resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }),
+  });
+  assert.equal(await disabled.observe(terminal("no-home"), "filesystem.resolve-home-relative", {
+    relativePath: ".claude/projects/session.jsonl", beneath: { homeRelative: ".claude/projects" }, extension: ".jsonl",
+  }, signal), null);
+});
+
+test("a provider environment value the shell does not expose is read from its descendants", async () => {
+  const system = fixtureSystem();
+  system.descendants = async () => [{ pid: 10, executableName: "zsh" }, { pid: 42, executableName: "codex" }];
+  system.environment = async (pid, names) => pid === 42 && names.includes("CODEX_HOME") ? { CODEX_HOME: "/codex-home" } : {};
+  const adapter = new ThisServerAgentObservationAdapter({
+    homeDirectory: "/home/mark", system,
+    resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }),
+  });
+  assert.deepEqual(
+    await adapter.observe(terminal("descendant-env"), "process.environment", { names: ["CODEX_HOME"] }, signal),
+    { CODEX_HOME: "/codex-home" },
+  );
+});
+
+test("the real process system reports each descendant's working directory and start time", async () => {
+  const { spawn } = await import("node:child_process");
+  const { mkdtempSync, realpathSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const cwd = realpathSync(mkdtempSync(join(tmpdir(), "terminay-process-facts-")));
+  const before = Date.now();
+  const child = spawn("/bin/sh", ["-c", "sleep 30"], { cwd, stdio: "ignore" });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const adapter = new ThisServerAgentObservationAdapter({
+      resolveTerminal: () => ({ environment: "this-server", shellPid: process.pid }),
+    });
+    const descendants = await adapter.observe(terminal("real-facts"), "process.descendants", {}, signal);
+    const shell = descendants.find((entry) => entry.pid === child.pid);
+    assert.ok(shell, `spawned shell ${child.pid} is a descendant: ${JSON.stringify(descendants)}`);
+    assert.equal(shell.cwd, cwd);
+    const startedAt = Date.parse(shell.startedAt);
+    assert.ok(Number.isFinite(startedAt), `startedAt is a timestamp: ${shell.startedAt}`);
+    // Whole-second truncation means the reported start never postdates the
+    // true one, and it cannot precede the spawn by more than that second.
+    assert.ok(startedAt <= Date.now(), "start time is not in the future");
+    assert.ok(startedAt >= before - 1_000, `start time ${shell.startedAt} is within a second of the spawn`);
+  } finally {
+    child.kill("SIGKILL");
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("a follow without an explicit chunk limit uses the host ceiling rather than failing", async () => {
+  const system = fixtureSystem();
+  const adapter = new ThisServerAgentObservationAdapter({
+    homeDirectory: "/home/mark", system,
+    resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }),
+  });
+  const current = terminal("follow-default");
+  const descendants = await adapter.observe(current, "process.descendants", {}, signal);
+  const files = await adapter.observe(current, "process.open-files", { processes: descendants, options: { access: "writable" } }, signal);
+  const opened = await adapter.observe(current, "filesystem.follow", { handle: files[0].handle, options: {} }, signal);
+  assert.match(opened.watcherId, /^watch-/);
+  const first = await adapter.observe(current, "filesystem.follow", { watcherId: opened.watcherId }, signal);
+  assert.equal(first.events.length, 1);
+  assert.equal(new TextDecoder().decode(new Uint8Array(first.events[0].bytes)), '{"one":true}\n');
+});

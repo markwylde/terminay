@@ -80,6 +80,25 @@ interface ClaudeState {
 	titled: boolean;
 	/** Live subagent launches keyed by the `Agent` tool-use id that started them. */
 	children: Set<string>;
+	/**
+	 * Children already completed, keyed the same way. The root lane and the
+	 * child-journal lane describe the same subagent, and a child journal is
+	 * replayed from its start, so a completed child must never be re-opened by
+	 * records that were written before it finished.
+	 */
+	completed: Set<string>;
+}
+
+function newState(): ClaudeState {
+	return {
+		started: false,
+		headerSeen: false,
+		titled: false,
+		turnOpen: false,
+		inferredWaiting: false,
+		children: new Set<string>(),
+		completed: new Set<string>(),
+	};
 }
 
 /**
@@ -88,8 +107,10 @@ interface ClaudeState {
  * text never cross the extension boundary.
  *
  * Two behaviours of the real CLI shape this mapping. Its header block is
- * rewritten at the start of every turn rather than only at session start, so a
- * later header opens a turn instead of restarting the session. And an assistant
+ * rewritten after every user prompt and again after every `turn_duration`,
+ * not only at session start, so a later header is bookkeeping: it neither
+ * restarts the session nor opens a turn. The user prompt record opens a turn
+ * and `turn_duration` closes it. And an assistant
  * record is flushed together with its `tool_result` once the tool completes, so
  * the journal never shows an outstanding tool call: `AskUserQuestion` records
  * the question only after it has been answered and is therefore not a live
@@ -99,14 +120,7 @@ export function createClaudeRecordMapper(): (
 	record: unknown,
 	session: AgentRecordContext,
 ) => void {
-	const state: ClaudeState = {
-		started: false,
-		headerSeen: false,
-		titled: false,
-		turnOpen: false,
-		inferredWaiting: false,
-		children: new Set(),
-	};
+	const state = newState();
 	return (record, session) => mapClaudeRecord(record, session, state);
 }
 
@@ -115,18 +129,11 @@ export function mapClaudeRecord(
 	session: AgentRecordContext,
 	state?: ClaudeState,
 ): void {
+	const scope = state ?? newState();
 	if (session.journal?.role === 'child') {
-		mapChildRecord(record, session, session.journal.childId);
+		mapChildRecord(record, session, session.journal.childId, scope);
 		return;
 	}
-	const scope = state ?? {
-		started: false,
-		headerSeen: false,
-		titled: false,
-		turnOpen: false,
-		inferredWaiting: false,
-		children: new Set<string>(),
-	};
 	const envelope = object(record);
 	if (!envelope || envelope.isSidechain === true) return;
 	const message = object(envelope.message) ?? {};
@@ -180,16 +187,12 @@ export function mapClaudeRecord(
 		if (TURN_HEADER.has(type)) return;
 	}
 	if (TURN_HEADER.has(type)) {
-		// A later header block is the start of another turn, not another session.
-		// Restarting here would clear active tools and drop a working root to idle.
-		if (type === 'permission-mode') {
-			if (!scope.headerSeen) {
-				scope.headerSeen = true;
-				return;
-			}
-			const turnId = id(envelope.uuid, 'turn', envelope.sessionId);
-			if (turnId) publisher.turnStarted({ turnId });
-		}
+		// Header blocks are bookkeeping, not turn boundaries. The real CLI writes
+		// one at session start, another after the user prompt has been recorded,
+		// and another after `turn_duration`, so opening a turn here would leave a
+		// phantom turn open after every completed one. The user prompt record
+		// opens a turn and `turn_duration` closes it.
+		scope.headerSeen = true;
 		return;
 	}
 	if (type === 'ai-title') {
@@ -260,6 +263,9 @@ export function mapClaudeRecord(
 			if (!toolId || !name) continue;
 			const input = object(item.input) ?? {};
 			if (name === 'Agent' || name === 'Task') {
+				// The launch record is replayed from the start of the journal, so a
+				// child that already completed must not be re-opened by it.
+				if (scope.completed.has(toolId)) continue;
 				const childTitle =
 					bounded(input.description, 200) ?? bounded(input.subagent_type, 200);
 				const childPrompt = bounded(input.prompt, 4_000);
@@ -290,21 +296,35 @@ export function mapClaudeRecord(
  * the root, so only bounded lifecycle facts are read from them: a child works
  * while its journal is appended and completes when its turn ends. Child
  * prompts, assistant text, reasoning and tool payloads are never projected.
+ *
+ * The child is keyed by the same tool-use id the root lane used to launch it,
+ * so these records refine one entry rather than adding a second. A child the
+ * root already completed is left alone: its journal is replayed from the
+ * beginning and its earlier records would otherwise put it back to work. A
+ * child completing publishes only that child's completion and never the root's.
  */
 function mapChildRecord(
 	record: unknown,
 	session: AgentRecordContext,
 	childId: string,
+	state: ClaudeState,
 ): void {
+	if (state.completed.has(childId)) return;
 	const envelope = object(record);
 	if (!envelope) return;
 	const message = object(envelope.message) ?? {};
 	const type = typeof envelope.type === 'string' ? envelope.type : undefined;
+	const finish = (): void => {
+		state.children.delete(childId);
+		state.completed.add(childId);
+		session.publish.subagentDone({ subagentId: childId, outcome: 'success' });
+	};
 	if (type === 'assistant' && message.role === 'assistant') {
 		if (message.stop_reason === 'end_turn') {
-			session.publish.subagentDone({ subagentId: childId, outcome: 'success' });
+			finish();
 			return;
 		}
+		state.children.add(childId);
 		session.publish.subagentStarted({
 			subagentId: childId,
 			parentAgentId: session.binding.providerSessionId,
@@ -312,9 +332,7 @@ function mapChildRecord(
 		});
 		return;
 	}
-	if (type === 'system' && envelope.subtype === 'turn_duration') {
-		session.publish.subagentDone({ subagentId: childId, outcome: 'success' });
-	}
+	if (type === 'system' && envelope.subtype === 'turn_duration') finish();
 }
 
 /**
@@ -338,6 +356,9 @@ function finishSubagent(
 	const toolId = TASK_TOOL_USE.exec(raw)?.[1];
 	if (!toolId || !state.children.has(toolId)) return true;
 	state.children.delete(toolId);
+	// The child's own journal is followed independently and replays from its
+	// start; recording the completion here keeps it from re-opening this child.
+	state.completed.add(toolId);
 	const status = TASK_STATUS.exec(raw)?.[1];
 	publisher.subagentDone({
 		subagentId: toolId,

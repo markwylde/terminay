@@ -1,5 +1,5 @@
 import test from 'node:test';
-import { conformanceGate, runConformance } from '@terminay/agent-conformance';
+import { conformanceGate, runConformance } from '../../../tests/agent-conformance/index.mjs';
 import extension from '../dist/index.js';
 
 const descriptor = {
@@ -17,15 +17,33 @@ const descriptor = {
 		// the only matrix provider recording an explicitly blocking condition.
 		// Neither appears in any rollout on this machine, because every local
 		// session ran with approvals bypassed: this run is what confirms them.
-		waiting: 'Y',
+		// Codex shows an approval prompt on screen but persists nothing for it:
+		// no rollout on record carries exec_approval_request, request_permissions
+		// or request_user_input, even while the prompt was open (verified live,
+		// rollout 01a0774e-f9e4-71c2-9e19-bbdb97103a09). Nothing in the journal
+		// can distinguish an outstanding prompt from ordinary work.
+		waiting: 'N',
 		blocked: 'Y',
 		done: 'Y',
 		subEnumerate: 'Y',
 		subStatus: 'Y',
 		resume: 'Y',
 	},
-	launch(harness) {
-		harness.pty.send('codex "Reply with the single word ready."');
+	async launch(harness) {
+		// Approval prompting is forced on the command line so the run does not
+		// depend on, or change, the developer's own `approval_policy`.
+		harness.pty.send(
+			'codex -a on-request -s read-only "Reply with the single word ready."',
+		);
+		// A directory Codex has not seen before asks for trust first; the harness
+		// working directory is always new. "Yes, continue" is the default choice.
+		try {
+			await harness.pty.waitForOutput(/Press enter to continue/u, 30_000);
+			await new Promise((resolve) => setTimeout(resolve, 500));
+			harness.pty.write('\r');
+		} catch {
+			// No trust prompt: the CLI went straight to the conversation.
+		}
 	},
 	startSubagents(harness) {
 		harness.pty.send(
@@ -33,20 +51,27 @@ const descriptor = {
 		);
 	},
 	requestInput(harness) {
-		harness.pty.send('Run the shell command `id`.');
+		// The sandbox is read-only, so a write inside the workspace must be
+		// approved rather than run silently.
+		harness.pty.send(
+			'Create an empty file named needs-approval.txt in the current directory using the shell (touch). Do nothing else.',
+		);
 	},
 	answerInput(harness) {
 		harness.pty.write('\r');
 	},
-	provokeFault(harness) {
+	async provokeFault(harness) {
 		harness.pty.send('/quit');
+		// The CLI must have exited before the next command is typed, or the TUI
+		// reads both lines as one prompt.
+		await harness.await('the CLI to exit before the fault', (projection) => !projection.active);
 		harness.pty.send('OPENAI_API_KEY=invalid codex "say hello"');
 	},
 	quit(harness) {
 		harness.pty.send('/quit');
 	},
 	resume(harness) {
-		harness.pty.send('codex resume --last');
+		harness.pty.send('codex -a on-request -s read-only resume --last');
 	},
 };
 
@@ -54,6 +79,8 @@ const gate = await conformanceGate(descriptor);
 
 test('Codex satisfies its conformance matrix row', {
 	skip: gate?.reason,
+	// A full matrix run drives several real model turns and subagent waits.
+	timeout: 30 * 60 * 1000,
 }, async () => {
 	await runConformance(descriptor);
 });

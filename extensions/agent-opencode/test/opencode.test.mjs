@@ -105,7 +105,10 @@ test('a turn runs from the user message to the assistant completion', () => {
 	assert.equal(events.at(-1).outcome, 'success');
 });
 
-test('a pending tool part waits and its run clears the wait', () => {
+test('a pending tool part is not a permission wait', () => {
+	// `pending` is the state every tool part is first written in, before its
+	// input has streamed in. The store records no approval request of any kind,
+	// so nothing here may be reported as waiting.
 	const events = collect([
 		['session.created.1', { info: { id: rootId, slug: 's' } }],
 		[
@@ -115,7 +118,7 @@ test('a pending tool part waits and its run clears the wait', () => {
 					type: 'tool',
 					tool: 'write',
 					callID: 'call-1',
-					state: { status: 'pending' },
+					state: { status: 'pending', input: {}, raw: '' },
 				},
 			},
 		],
@@ -142,17 +145,75 @@ test('a pending tool part waits and its run clears the wait', () => {
 			},
 		],
 	]);
-	const kinds = events.map((event) => event.kind);
-	assert.deepEqual(kinds.slice(-4), [
-		'waitStarted',
-		'waitFinished',
+	assert.deepEqual(events.map((event) => event.kind).slice(-2), [
 		'toolStarted',
 		'toolFinished',
 	]);
 	assert.equal(
-		events.find((event) => event.kind === 'waitStarted').state,
-		'waiting',
+		events.some((event) => /^wait/u.test(event.kind)),
+		false,
 	);
+});
+
+test('a child label that arrives late republishes the start', () => {
+	const events = collect([
+		['session.created.1', { info: { id: rootId, slug: 's' } }],
+		[
+			'message.part.updated.1',
+			{
+				part: {
+					type: 'tool',
+					tool: 'task',
+					callID: 'call-8',
+					state: { status: 'running', input: {} },
+				},
+			},
+		],
+		[
+			'message.part.updated.1',
+			{
+				part: {
+					type: 'tool',
+					tool: 'task',
+					callID: 'call-8',
+					state: {
+						status: 'running',
+						input: { description: 'Audit the parser' },
+					},
+				},
+			},
+		],
+	]);
+	const started = events.filter((event) => event.kind === 'subagentStarted');
+	assert.equal(started.length, 2);
+	assert.equal(started[0].title, undefined);
+	assert.equal(started[1].subagentId, 'call-8');
+	assert.equal(started[1].title, 'Audit the parser');
+});
+
+test('a child with no description falls back to a bounded prompt line', () => {
+	const events = collect([
+		['session.created.1', { info: { id: rootId, slug: 's' } }],
+		[
+			'message.part.updated.1',
+			{
+				part: {
+					type: 'tool',
+					tool: 'task',
+					callID: 'call-7',
+					state: {
+						status: 'running',
+						input: { prompt: `${'x'.repeat(400)}\nsecond line` },
+					},
+				},
+			},
+		],
+	]);
+	const started = events.find((event) => event.kind === 'subagentStarted');
+	// Only a bounded first line is ever projected: a child's prompt is
+	// conversation content and never reaches the label whole.
+	assert.equal(started.title.length, 80);
+	assert.equal(started.title.endsWith('\u2026'), true);
 });
 
 test('a task tool part is a child, not an ordinary tool', () => {

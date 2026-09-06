@@ -1,0 +1,17 @@
+{
+	"subagent_id": "01a07725-8538-75e0-8ae0-cdfb42937e9d",
+	"parent_session_id": "01a07725-52c0-7d60-a13b-1ef9edc8bd7f",
+	"child_session_id": "01a07725-8538-75e0-8ae0-cdfb42937e9d",
+	"subagent_type": "general-purpose",
+	"description": "Compute 17 times 19",
+	"prompt": "<prompt removed from fixture>",
+	"status": "completed",
+	"started_at": "2026-09-06T14:35:42.783640Z",
+	"completed_at": "2026-09-06T14:35:52.151496Z",
+	"duration_ms": 9371,
+	"tool_calls": 1,
+	"turns": 1,
+	"effective_context_source": "new",
+	"child_cwd": "/private/var/folders/gw/n_lr8lp97k93jpcv2qg_1mpw0000gn/T/terminay-conformance-rvnAd5",
+	"effective_model_id": "grok-4.6"
+}

@@ -173,6 +173,9 @@ function withState(
 		// Explicit provider records supersede an inference; only `wait.started`
 		// reinstates the flag, through `changes`.
 		inferred: false,
+		// A new record on the root supersedes a held completion; only
+		// `agent.done` with a working child reinstates it, through `changes`.
+		completionHeldByChildren: undefined,
 		...changes,
 		...(event.promptText === undefined ||
 		(entry.kind === 'root' && entry.promptText !== undefined)
@@ -189,9 +192,48 @@ function withState(
 	} as AgentStatusEntry;
 }
 
+/** Children of `rootEntryId` that are still `working`, ignoring `excludeEntryId`
+ * (the child the event being reduced is about to complete). */
+function workingChildCount(
+	snapshot: AgentStatusSnapshot,
+	rootEntryId: string,
+	excludeEntryId?: string,
+): number {
+	let count = 0;
+	for (const candidate of Object.values(snapshot.entries))
+		if (
+			candidate.kind === 'subagent' &&
+			candidate.parentEntryId === rootEntryId &&
+			candidate.entryId !== excludeEntryId &&
+			candidate.state === 'working'
+		)
+			count += 1;
+	return count;
+}
+
+/** Realise a completion that was held while children worked. The outcome and
+ * summary recorded by the root's own `agent.done` are carried through. */
+function releaseHeldCompletion(
+	root: AgentStatusEntry,
+	event: AgentLifecycleEvent,
+): AgentStatusEntry {
+	return {
+		...root,
+		completionHeldByChildren: undefined,
+		state: 'done',
+		stateStartedAt:
+			root.state === 'done' ? root.stateStartedAt : event.occurredAt,
+		updatedAt: event.occurredAt,
+		lastEventKind: event.kind,
+		lastEventSequence: event.sequence,
+		unread: true,
+	};
+}
+
 function applyEvent(
 	entry: AgentStatusEntry,
 	event: AgentLifecycleEvent,
+	snapshot: AgentStatusSnapshot,
 ): AgentStatusEntry {
 	switch (event.kind) {
 		case 'session.started':
@@ -207,9 +249,11 @@ function applyEvent(
 			});
 		case 'agent.metadata':
 			// Provider model changes are observational. In particular, a model
-			// switch while a turn is working must not reset it to idle.
+			// switch while a turn is working must not reset it to idle, and it
+			// must not discard a completion held for still-working children.
 			return withState(entry, entry.state, event, {
 				displayName: event.displayName ?? entry.displayName,
+				completionHeldByChildren: entry.completionHeldByChildren,
 			});
 		case 'session.stopped':
 			return withState(entry, 'idle', event, {
@@ -255,14 +299,20 @@ function applyEvent(
 				active: true,
 				waitingReason: undefined,
 			});
-		case 'agent.done':
-			return withState(entry, 'done', event, {
+		case 'agent.done': {
+			// A root whose turn ends while a child is still working stays
+			// `working`; its completion is held until the last child finishes.
+			const held =
+				entry.kind === 'root' && workingChildCount(snapshot, entry.entryId) > 0;
+			return withState(entry, held ? 'working' : 'done', event, {
 				active: true,
 				activeTools: [],
 				waitingReason: undefined,
 				completionOutcome: event.outcome,
 				summary: event.summary,
+				...(held ? { completionHeldByChildren: true } : {}),
 			});
+		}
 		case 'subagent.started':
 			return withState(entry, 'working', event, {
 				active: true,
@@ -321,13 +371,26 @@ export function reduceAgentStatusSnapshot(
 	if (!orderedAfter(snapshot.eventCursors[streamId], event)) return snapshot;
 	const entry = targetEntry(snapshot, event);
 	if (!entry) return snapshot;
-	const nextEntry = applyEvent(entry, event);
+	const nextEntry = applyEvent(entry, event, snapshot);
+	const nextEntries: Record<string, AgentStatusEntry> = {
+		...snapshot.entries,
+		[nextEntry.entryId]: Object.freeze(nextEntry),
+	};
+	// A child completing never completes its root on its own, but it does
+	// release a completion the root already recorded once no child is working.
+	if (event.kind === 'subagent.stopped' && nextEntry.kind === 'subagent') {
+		const root = snapshot.entries[nextEntry.parentEntryId];
+		if (
+			root?.completionHeldByChildren === true &&
+			workingChildCount(snapshot, root.entryId, nextEntry.entryId) === 0
+		) {
+			const released = releaseHeldCompletion(root, event);
+			nextEntries[released.entryId] = Object.freeze(released);
+		}
+	}
 	return Object.freeze({
 		revision: snapshot.revision + 1,
-		entries: Object.freeze({
-			...snapshot.entries,
-			[nextEntry.entryId]: Object.freeze(nextEntry),
-		}),
+		entries: Object.freeze(nextEntries),
 		eventCursors: Object.freeze({
 			...snapshot.eventCursors,
 			[streamId]: Object.freeze({

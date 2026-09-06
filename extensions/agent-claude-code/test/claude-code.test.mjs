@@ -21,7 +21,7 @@ function claudeFixture(options) {
 	return fixtureTerminal({
 		startedAt,
 		openFilePaths: [],
-		fileCreatedAt: Object.fromEntries(
+		fileModifiedAt: Object.fromEntries(
 			Object.keys(files).map((path) => [path, '2026-09-06T11:00:04.000Z']),
 		),
 		cwd: '/workspace',

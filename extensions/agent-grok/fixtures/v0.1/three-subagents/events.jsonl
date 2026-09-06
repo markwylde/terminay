@@ -1,0 +1,20 @@
+{"ts": "2026-09-06T14:35:31.290Z", "type": "turn_started", "session_id": "01a07725-52c0-7d60-a13b-1ef9edc8bd7f", "turn_number": 0, "model_id": "grok-4.6", "session_relationship": "primary"}
+{"ts": "2026-09-06T14:35:33.265Z", "type": "turn_ended", "outcome": "completed"}
+{"ts": "2026-09-06T14:35:34.236Z", "type": "turn_started", "session_id": "01a07725-52c0-7d60-a13b-1ef9edc8bd7f", "turn_number": 1, "model_id": "grok-4.6", "session_relationship": "primary"}
+{"ts": "2026-09-06T14:35:42.711Z", "type": "tool_started", "tool_name": "spawn_subagent"}
+{"ts": "2026-09-06T14:35:42.732Z", "type": "permission_requested", "tool_name": "spawn_subagent"}
+{"ts": "2026-09-06T14:35:42.733Z", "type": "permission_resolved", "tool_name": "spawn_subagent"}
+{"ts": "2026-09-06T14:35:42.733Z", "type": "tool_started", "tool_name": "spawn_subagent"}
+{"ts": "2026-09-06T14:35:42.754Z", "type": "permission_requested", "tool_name": "spawn_subagent"}
+{"ts": "2026-09-06T14:35:42.754Z", "type": "permission_resolved", "tool_name": "spawn_subagent"}
+{"ts": "2026-09-06T14:35:42.754Z", "type": "tool_started", "tool_name": "spawn_subagent"}
+{"ts": "2026-09-06T14:35:42.775Z", "type": "permission_requested", "tool_name": "spawn_subagent"}
+{"ts": "2026-09-06T14:35:42.775Z", "type": "permission_resolved", "tool_name": "spawn_subagent"}
+{"ts": "2026-09-06T14:35:42.798Z", "type": "tool_completed", "tool_name": "spawn_subagent", "tool_call_id": "call-d5ac1cba-7e99-4071-a08d-dfa50f0900a3-0", "outcome": "success"}
+{"ts": "2026-09-06T14:35:42.817Z", "type": "tool_completed", "tool_name": "spawn_subagent", "tool_call_id": "call-d5ac1cba-7e99-4071-a08d-dfa50f0900a3-1", "outcome": "success"}
+{"ts": "2026-09-06T14:35:42.838Z", "type": "tool_completed", "tool_name": "spawn_subagent", "tool_call_id": "call-d5ac1cba-7e99-4071-a08d-dfa50f0900a3-2", "outcome": "success"}
+{"ts": "2026-09-06T14:35:46.288Z", "type": "tool_started", "tool_name": "get_command_or_subagent_output"}
+{"ts": "2026-09-06T14:35:46.310Z", "type": "permission_requested", "tool_name": "get_command_or_subagent_output"}
+{"ts": "2026-09-06T14:35:46.311Z", "type": "permission_resolved", "tool_name": "get_command_or_subagent_output"}
+{"ts": "2026-09-06T14:36:17.531Z", "type": "tool_completed", "tool_name": "get_command_or_subagent_output", "tool_call_id": "call-5956ca32-0df0-4d23-8328-47465eed9295-3", "outcome": "success"}
+{"ts": "2026-09-06T14:36:19.493Z", "type": "turn_ended", "outcome": "completed"}
