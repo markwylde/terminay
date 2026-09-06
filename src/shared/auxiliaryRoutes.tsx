@@ -14,6 +14,7 @@ export type AuxiliaryRouteRequest =
 	| { readonly kind: 'macros' }
 	| { readonly kind: 'recordings' }
 	| { readonly kind: 'remote-control' }
+	| { readonly kind: 'performance-log' }
 	| {
 			readonly kind: 'edit-tab';
 			readonly state: EditWindowState;
@@ -37,6 +38,7 @@ export type AuxiliaryRouteController = Readonly<{
 	openMacros: () => Promise<void>;
 	openRecordings: () => Promise<void>;
 	openRemoteControl: () => Promise<void>;
+	openPerformanceLog: () => Promise<void>;
 	editProjectTab: (
 		state: Extract<EditWindowState, { readonly kind: 'project' }>,
 	) => Promise<ProjectEditWindowResult | null>;
@@ -84,6 +86,9 @@ export function createAuxiliaryRouteController({
 		},
 		async openRemoteControl() {
 			await requestInPage({ kind: 'remote-control' });
+		},
+		async openPerformanceLog() {
+			await requestInPage({ kind: 'performance-log' });
 		},
 		async editProjectTab(state) {
 			const result = await requestInPage({ kind: 'edit-tab', state });

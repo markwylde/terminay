@@ -6050,6 +6050,9 @@ function App({
 			if (command === 'open-remote-control') {
 				return auxiliaryRouteController.openRemoteControl();
 			}
+			if (command === 'open-performance-log') {
+				return auxiliaryRouteController.openPerformanceLog();
+			}
 			return (
 				workspaceRefs.current.get(activeProjectId)?.executeCommand(command) ??
 				Promise.resolve()
