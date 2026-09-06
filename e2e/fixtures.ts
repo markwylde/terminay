@@ -142,12 +142,12 @@ static void directories(char *path) {
   mkdir(path, 0700);
 }
 
-static void write_summary(const char *path, const char *title) {
+static void write_summary(const char *path, const char *id, const char *title) {
   FILE *stream = fopen(path, "w");
   if (!stream) return;
   fprintf(stream,
     "{\"info\":{\"id\":\"%s\"},\"generated_title\":\"%s\",\"session_summary\":\"%s\",\"current_model_id\":\"grok-4.6\"}\n",
-    SESSION_ID, title, title);
+    id, title, title);
   fflush(stream);
   fclose(stream);
 }
@@ -162,17 +162,32 @@ static int resuming(int argc, char **argv) {
   return 0;
 }
 
+static const char *resume_session_id(int argc, char **argv) {
+  for (int index = 1; index < argc; index += 1) {
+    if ((strcmp(argv[index], "--resume") == 0 || strcmp(argv[index], "-r") == 0)
+      && index + 1 < argc && argv[index + 1][0] != '-') {
+      return argv[index + 1];
+    }
+  }
+  return NULL;
+}
+
 int main(int argc, char **argv) {
   const char *home = getenv("GROK_HOME");
   if (!home) return 64;
+  char session_id[64];
+  const char *explicit = resume_session_id(argc, argv);
+  const int resume = resuming(argc, argv);
+  if (explicit) snprintf(session_id, sizeof(session_id), "%s", explicit);
+  else if (resume) snprintf(session_id, sizeof(session_id), "%s", SESSION_ID);
+  else snprintf(session_id, sizeof(session_id), "aaaaaaaa-bbbb-4ccc-8ddd-%012x", (unsigned)getpid());
   char directory[PATH_MAX];
   char events_path[PATH_MAX];
   char summary_path[PATH_MAX];
-  snprintf(directory, sizeof(directory), "%s/sessions/e2e-workspace/%s", home, SESSION_ID);
+  snprintf(directory, sizeof(directory), "%s/sessions/e2e-workspace/%s", home, session_id);
   directories(directory);
   snprintf(events_path, sizeof(events_path), "%s/events.jsonl", directory);
   snprintf(summary_path, sizeof(summary_path), "%s/summary.json", directory);
-  const int resume = resuming(argc, argv);
   FILE *events = fopen(events_path, resume ? "a" : "w");
   if (!events) return 65;
   setvbuf(events, NULL, _IONBF, 0);
@@ -184,7 +199,7 @@ int main(int argc, char **argv) {
     fputs("Grok e2e resumed\n", stdout);
   } else {
     fputs("{\"ts\":\"2026-08-05T10:00:00.000Z\",\"type\":\"mcp_config_resolved\",\"servers\":[],\"disabled\":[]}\n", events);
-    write_summary(summary_path, "");
+    write_summary(summary_path, session_id, "");
     fputs("Grok e2e ready\n", stdout);
   }
   char line[512];
@@ -201,10 +216,10 @@ int main(int argc, char **argv) {
     turn += 1;
     fprintf(events,
       "{\"ts\":\"2026-08-05T10:00:%02d.000Z\",\"type\":\"turn_started\",\"session_id\":\"%s\",\"turn_number\":%d,\"model_id\":\"grok-4.6\",\"session_relationship\":\"primary\"}\n",
-      turn, SESSION_ID, turn - 1);
+      turn, session_id, turn - 1);
     sleep(2);
     fprintf(events, "{\"ts\":\"2026-08-05T10:00:%02d.500Z\",\"type\":\"turn_ended\",\"outcome\":\"completed\"}\n", turn);
-    write_summary(summary_path, "Native Grok chat");
+    write_summary(summary_path, session_id, "Native Grok chat");
     fputs("Grok e2e turn done\n", stdout);
   }
   return 0;
