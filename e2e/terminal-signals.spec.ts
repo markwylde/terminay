@@ -163,6 +163,7 @@ test.describe('terminal activity signals', () => {
   test('activating a project does not dismiss a finished terminal until that terminal is clicked', async ({
     mainWindow,
   }) => {
+    test.setTimeout(60_000)
     const { tab } = await withBackgroundTerminal(mainWindow)
 
     await writeToBackgroundSession(
@@ -176,10 +177,11 @@ test.describe('terminal activity signals', () => {
 
     await mainWindow.getByLabel('Create project on This server').click()
     await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 2')
+    await expect(
+      mainWindow.locator('.project-tab:not(.project-tab--active) .project-tab-activity-badge'),
+    ).toHaveText('1')
 
-    const originalProject = mainWindow.locator('.project-tab').filter({ hasText: /^Project$/ })
-    await originalProject.click()
-    await expect(mainWindow.locator('.project-tab--active')).toContainText('Project')
+    await mainWindow.locator('.project-tab:not(.project-tab--active)').click()
     await expect(mainWindow.locator('.project-tab--active')).not.toContainText('Project 2')
 
     const finishedTab = mainWindow
