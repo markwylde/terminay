@@ -19,6 +19,7 @@ test('narrow release builds materialize their workspace dependencies through Tur
 		['agent-claude-code', 'terminay-agent-claude-code'],
 		['agent-cursor', 'terminay-agent-cursor'],
 		['agent-grok', 'terminay-agent-grok'],
+		['agent-opencode', 'terminay-agent-opencode'],
 		['agent-omp', 'terminay-agent-omp'],
 	];
 
@@ -40,8 +41,14 @@ test('narrow release builds materialize their workspace dependencies through Tur
 		true,
 	);
 	assert.match(rootPackage.scripts['build:application-graph'], /turbo run compile --filter=terminay-\*/u);
-	assert.match(extensionStaging, /npm\(root, \["run", "build:built-in-extension-workspaces"\]\)/u);
-	assert.match(extensionStaging, /npm\(root, \["run", "test:ci", "--workspace", entry\.packageName\]\)/u);
+	assert.match(
+		extensionStaging,
+		/npm\(root, \[['"]run['"], ['"]build:built-in-extension-workspaces['"]\]\)/u,
+	);
+	assert.match(
+		extensionStaging,
+		/npm\(root, \[['"]run['"], ['"]test:ci['"], ['"]--workspace['"], entry\.packageName\]\)/u,
+	);
 	for (const [directory, packageName] of builtInPackages) {
 		const packageJson = JSON.parse(
 			await readFile(resolve(root, 'extensions', directory, 'package.json'), 'utf8'),
