@@ -28,7 +28,7 @@ Grok, and OpenCode.
 
 | | Detect | Title | Idle | Working | Waiting | Blocked | Done | Sub:Enumerate | Sub:Status | Resume |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Codex | Y | Y | Y | Y | N | Y | Y | Y | Y | Y |
+| Codex | Y | Y | Y | Y | N | Y | Y | Y | Y | N |
 | Claude Code | Y | Y | Y | Y | Y\* | Y\* | Y | Y | Y | Y |
 | Grok | Y | Y | Y | Y | Y | N | Y | Y | Y | Y |
 | OpenCode | Y | Y | Y | Y | N | Y* | Y | Y | Y | Y |
@@ -36,6 +36,11 @@ Grok, and OpenCode.
 Grok's `Blocked` is `N` because Grok records no fault distinct from a turn
 outcome: a failed turn is a `turn_ended` carrying an error, which is a
 completion rather than a condition needing intervention.
+
+Codex's `Resume` is `N` because `codex resume --last` in a real PTY starts the
+TUI ("Resuming session…") but the restored process does not become an active
+bound root: the CLI holds no writable rollout, and the post-start sessions-tree
+rule did not rebind before the conformance wait expired.
 
 A provider not listed SHALL still participate through the ordinary provider
 contracts; it simply makes no conformance claim.

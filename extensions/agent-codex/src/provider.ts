@@ -9,6 +9,7 @@ import {
   type AgentDirectoryHandle,
   type AgentLifecyclePublisher,
   type AgentModelMetadata,
+  type AgentProcessHandle,
   type AgentRecordContext,
   type AgentTerminalContext,
 } from "@terminay/extension-api";
@@ -28,6 +29,8 @@ interface RootRollout {
   journal: AgentFileHandle;
   sourceFile: AgentFileHandle;
   sessionId: string;
+  fingerprintKind?: string;
+  process?: AgentProcessHandle;
 }
 
 interface ChildRollout {
@@ -67,7 +70,10 @@ export const codexAgentProvider = defineAgentProvider({
       return { state: "unavailable" as const, reason: "environment-capability-missing" as const };
     }
 
-    const rollout = await findProcessBoundRootRollout(terminal);
+    const restore = codexRestoreCommand(terminal.foreground.arguments);
+    const rollout = restore
+      ? (await findRestoredRootRollout(terminal, restore)) ?? (await findProcessBoundRootRollout(terminal))
+      : await findProcessBoundRootRollout(terminal);
     if (!rollout) return { state: "not-bound" as const };
 
     const binding = await terminal.bindSession({
@@ -75,8 +81,9 @@ export const codexAgentProvider = defineAgentProvider({
       mappingVersion: MAPPING_VERSION,
       journal: rollout.journal,
       fingerprint: {
-        kind: "writable-file-below-terminal-process",
+        kind: rollout.fingerprintKind ?? "writable-file-below-terminal-process",
         file: rollout.sourceFile,
+        ...(rollout.process ? { process: rollout.process } : {}),
       },
     });
     // Codex writes user-assigned session names into its terminal-scoped home
@@ -117,6 +124,94 @@ export const codexAgentProvider = defineAgentProvider({
     });
   },
 });
+
+type CodexRestore =
+  | { kind: "last" | "picker" }
+  | { kind: "id"; sessionId: string };
+
+/** Codex's documented restore argv: `resume`, `resume --last`, `resume <id>`. */
+export function codexRestoreCommand(
+  arguments_: readonly string[] | undefined,
+): CodexRestore | undefined {
+  if (!arguments_) return undefined;
+  for (let index = 0; index < arguments_.length; index += 1) {
+    if (arguments_[index] !== "resume") continue;
+    const next = arguments_[index + 1];
+    if (next === "--last" || next === "-l") return { kind: "last" };
+    if (typeof next === "string" && next.length > 0 && !next.startsWith("-")) {
+      return { kind: "id", sessionId: next };
+    }
+    return { kind: "picker" };
+  }
+  return undefined;
+}
+
+const CHILD_DIRECTORY_OPTIONS = Object.freeze({
+  extensions: [".jsonl"],
+  maxDepth: 4,
+  maxEntries: 256,
+  maxBytes: 16 * 1024 * 1024,
+});
+
+/**
+ * Restore commands close the rollout between writes, so they cannot depend on
+ * an open writable handle. Admit an eligible CLI root under this process's
+ * sessions tree that was appended after the process started. An explicit
+ * `resume <id>` still has to match that id.
+ */
+async function findRestoredRootRollout(
+  terminal: AgentTerminalContext,
+  restore: CodexRestore,
+): Promise<RootRollout | undefined> {
+  const descendants = await terminal.observation.processes.descendants({
+    signal: terminal.signal,
+  });
+  const process = descendants.find((candidate) => isCodexForeground(candidate.executableName));
+  const startedAt = process?.startedAt ? Date.parse(process.startedAt) : Number.NaN;
+  if (!process || !Number.isFinite(startedAt)) return undefined;
+  const sessions = await findSessionsDirectory(terminal);
+  if (!sessions) return undefined;
+  const listing = await terminal.observation.files.listDirectory(sessions, {
+    ...CHILD_DIRECTORY_OPTIONS,
+    signal: terminal.signal,
+  }).catch(() => undefined);
+  if (!listing) return undefined;
+  const matches: Array<RootRollout & { modifiedAt: number }> = [];
+  for (const entry of listing.entries) {
+    if (!isRestoredRolloutPath(entry.relativePath)) continue;
+    const modifiedAt = entry.modifiedAt ? Date.parse(entry.modifiedAt) : Number.NaN;
+    if (!Number.isFinite(modifiedAt) || modifiedAt < startedAt) continue;
+    const journal = await terminal.observation.files.canonicalFile(entry.handle, {
+      extension: ".jsonl",
+      signal: terminal.signal,
+    });
+    if (!journal) continue;
+    const header = await terminal.observation.files.readJsonLine<unknown>(journal, {
+      position: "first",
+      maxBytes: LIMITS.recordBytes,
+      signal: terminal.signal,
+    });
+    const sessionId = rootSessionId(header);
+    if (!sessionId) continue;
+    if (restore.kind === "id" && sessionId !== restore.sessionId) continue;
+    matches.push({
+      journal,
+      sourceFile: journal,
+      sessionId,
+      modifiedAt,
+      fingerprintKind: "sessions-rollout-appended-since-process-start",
+      process: process.handle,
+    });
+  }
+  matches.sort((left, right) => right.modifiedAt - left.modifiedAt);
+  if (!matches[0]) return undefined;
+  const { modifiedAt: _modifiedAt, ...selected } = matches[0];
+  return selected;
+}
+
+function isRestoredRolloutPath(relativePath: string): boolean {
+  return /(?:^|[\\/])rollout-[^\\/]+\.jsonl$/u.test(relativePath);
+}
 
 /**
  * Finds only a root rollout with an open writable descriptor below this exact
@@ -187,13 +282,6 @@ async function findSessionIndex(terminal: AgentTerminalContext): Promise<AgentFi
  * separate rollouts, so discovery accepts only files whose native nested
  * parent id equals the already-bound root session id.
  */
-const CHILD_DIRECTORY_OPTIONS = Object.freeze({
-  extensions: [".jsonl"],
-  maxDepth: 4,
-  maxEntries: 256,
-  maxBytes: 16 * 1024 * 1024,
-});
-
 async function findSessionsDirectory(terminal: AgentTerminalContext): Promise<AgentDirectoryHandle | undefined> {
   try {
     const environment = await terminal.observation.processes.environment(["CODEX_HOME"], { signal: terminal.signal });

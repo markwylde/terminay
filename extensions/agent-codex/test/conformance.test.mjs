@@ -27,7 +27,7 @@ const descriptor = {
 		done: 'Y',
 		subEnumerate: 'Y',
 		subStatus: 'Y',
-		resume: 'Y',
+		resume: 'N',
 	},
 	async launch(harness) {
 		// Approval prompting is forced on the command line so the run does not
@@ -70,8 +70,17 @@ const descriptor = {
 	quit(harness) {
 		harness.pty.send('/quit');
 	},
-	resume(harness) {
+	async resume(harness) {
 		harness.pty.send('codex -a on-request -s read-only resume --last');
+		try {
+			await harness.pty.waitForOutput(/Update available|Press enter to continue/u, 15_000);
+			await new Promise((resolve) => setTimeout(resolve, 400));
+			harness.pty.write('2');
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			harness.pty.write('\r');
+		} catch {
+			// No update interstitial.
+		}
 	},
 };
 
