@@ -297,7 +297,6 @@ async function requireBuiltInExtensionsInstalled(electronApp, window, failures) 
 			'terminay-plugin-puzed',
 			'terminay-agent-codex',
 			'terminay-agent-claude-code',
-			'terminay-agent-cursor',
 			'terminay-agent-grok',
 			'terminay-agent-opencode',
 			'terminay-agent-omp',

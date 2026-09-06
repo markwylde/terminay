@@ -44,14 +44,6 @@ export const OFFICIAL_EXTENSION_CATALOGUE: readonly OfficialExtensionCatalogueRe
 			official: true,
 		}),
 		Object.freeze({
-			extensionId: 'com.terminay.agent.cursor',
-			packageName: 'terminay-agent-cursor',
-			displayName: 'Cursor Agent',
-			description: 'Show Cursor Agent CLI sessions in the Agents sidebar.',
-			publisher: 'Terminay',
-			official: true,
-		}),
-		Object.freeze({
 			extensionId: 'com.terminay.agent.grok',
 			packageName: 'terminay-agent-grok',
 			displayName: 'Grok',
