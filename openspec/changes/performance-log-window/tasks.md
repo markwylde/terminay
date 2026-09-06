@@ -20,10 +20,10 @@
 
 ## 4. Per-terminal local resource sampling
 
-- [ ] 4.1 Maintain a `sessionId → shellPid` map in main from `TerminalSessionLifecycle.terminalStarted`/`terminalExited` on the composed `ServerTerminalAuthority`, without changing `packages/server-core`. Verified by a unit test that starts and exits fake sessions and asserts map contents.
-- [ ] 4.2 Add platform process-tree readers for CPU, RSS, and cumulative disk bytes read/written — `/proc/<pid>/stat` and `/proc/<pid>/io` on Linux, libproc/`ps` on macOS — behind one injectable interface returning `{ available: true, ... } | { available: false, reason }`. Verified by unit tests against recorded fixture output per platform plus an unreadable-pid case.
-- [ ] 4.3 Sample all local sessions under one per-tick deadline, report `available: false, reason: 'remote-environment'` for sessions routed to a non-embedded project environment, and never emit a stale or substituted value. Verified by a unit test with a slow reader asserting unreached sessions report unavailable rather than last-known numbers.
-- [ ] 4.4 Confirm no title, command line, argument, cwd, environment value, or PTY byte appears in a sampled record. Verified by a unit test asserting the emitted record's key set is exactly the permitted fields.
+- [x] 4.1 **Simplified during implementation.** No lifecycle map is kept. `authority.service.listSessions()` already returns `pid` and `status` per session, so the sampler reads it each tick instead. Same behaviour, no `server-core` plumbing, and no stale-map risk. Verified by the sampler tests below driving session lists directly.
+- [x] 4.2 Add platform process-table readers behind one injectable interface. Linux reads `/proc/<pid>/stat` (true instantaneous CPU from cumulative-tick deltas) and `/proc/<pid>/io` for disk; macOS uses one `ps -Ao pid=,ppid=,pcpu=,rss=` per tick. **Disk is Linux-only**: macOS has no per-process byte counter without native code, so `diskAvailable` is false there and the window says so once rather than showing an empty column per row. Verified by unit tests covering tree summation, disk rates, an unreadable table, a missing pid, and per-platform `diskAvailable`.
+- [x] 4.3 Sample all local sessions under one per-tick deadline. A running session with **no local pid** is reported `remote-environment` — SSH sessions are a remote channel and never have one, so no environment lookup or adapter call is needed. Verified by unit tests for the deadline, the remote case, the not-running case, and that a failed read reports `unreadable` rather than the previous sample's numbers.
+- [x] 4.4 Confirm no title, command line, argument, cwd, environment value, or PTY byte appears in a sampled record. Verified by a unit test asserting the emitted record's key set is exactly the permitted fields.
 
 ## 5. Host bridge contract
 
