@@ -165,12 +165,23 @@
 	text-align: start;
 }
 
+/* A bare `button` rule in the shared stylesheet paints a dark background on
+ * hover, and it is not guarded against disabled buttons. Rows without
+ * sub-phases are disabled, so without this reset they flash that background
+ * when the pointer crosses them. */
+.perf-phase-row,
+.perf-phase-row:hover,
+.perf-phase-row:disabled,
+.perf-phase-row:disabled:hover {
+	background: none;
+}
+
 .perf-phase-row:not(:disabled) {
 	cursor: pointer;
 }
 
 .perf-phase-row:not(:disabled):hover {
-	background: var(--settings-nav-hover, rgba(255, 255, 255, 0.05));
+	background: var(--settings-nav-hover, rgba(120, 130, 150, 0.12));
 }
 
 .perf-phase-row:focus-visible {
