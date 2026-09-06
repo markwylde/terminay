@@ -24,8 +24,12 @@ Grok, and OpenCode.
 |---|---|---|---|---|---|---|---|---|---|---|
 | Codex | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
 | Claude Code | Y | Y | Y | Y | Y\* | Y\* | Y | Y | Y | Y |
-| Grok | Y | Y | Y | Y | Y | Y\* | Y | Y | Y | Y |
+| Grok | Y | Y | Y | Y | Y | N | Y | Y | Y | Y |
 | OpenCode | Y | Y | Y | Y | Y | Y\* | Y | Y | Y | Y |
+
+Grok's `Blocked` is `N` because Grok records no fault distinct from a turn
+outcome: a failed turn is a `turn_ended` carrying an error, which is a
+completion rather than a condition needing intervention.
 
 A provider not listed SHALL still participate through the ordinary provider
 contracts; it simply makes no conformance claim.

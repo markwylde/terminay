@@ -286,28 +286,33 @@ OpenCode records no explicitly blocking condition, so `blocked` SHALL be derived
 
 #### Scenario: Error halts a turn
 
-- **WHEN** OpenCode records an error and no completion event follows for that turn
+- **WHEN** OpenCode records an assistant error that is not an abort and no completion follows for that turn
 - **THEN** the entry is `blocked` and records that the state was inferred
 
-### Requirement: Grok fault inference
+#### Scenario: User aborts a turn
+
+- **WHEN** OpenCode records an abort or cancellation error for a turn
+- **THEN** the entry is `done` with a cancelled outcome and is not `blocked`
+
+### Requirement: Grok waiting and completion outcomes
 
 Grok records `permission_requested` and `permission_resolved` explicitly and
-SHALL map them directly to `waiting` and back to `working`. Grok records no
-explicitly blocking condition, so `blocked` SHALL be derived under the
-journal-derived inference rules: a `turn_ended` whose outcome is an error, or a
-recorded fault that halts a turn with no `turn_ended` following, SHALL make the
-entry `blocked` where it reports a condition needing intervention, and `done`
-with an error outcome otherwise.
+SHALL map them directly to `waiting` and back to `working`.
+
+Grok records no fault distinct from a turn outcome: a failed turn is a
+`turn_ended` carrying an error. That SHALL be `done` with an error outcome, and
+Grok SHALL NOT produce `blocked`. No blocking state SHALL be synthesized from a
+completion outcome, an unanswered permission request, or terminal output.
 
 #### Scenario: Permission request
 
 - **WHEN** Grok records `permission_requested` and later `permission_resolved`
 - **THEN** the entry is `waiting` and then resumes `working`
 
-#### Scenario: Fault halts a turn
+#### Scenario: Failed turn
 
-- **WHEN** a recorded Grok fault halts a turn with no `turn_ended` following
-- **THEN** the entry is `blocked` and records that the state was inferred
+- **WHEN** Grok records a `turn_ended` carrying an error outcome
+- **THEN** the entry is `done` with an error outcome and is not `blocked`
 
 ### Requirement: Deterministic root label before a provider title
 

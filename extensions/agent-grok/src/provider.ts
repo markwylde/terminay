@@ -33,8 +33,6 @@ export interface GrokState {
 	started: boolean;
 	/** Live children keyed by Grok's own subagent id. */
 	children: Set<string>;
-	/** True while the root is held `blocked` by the fault inference. */
-	faulted: boolean;
 	title?: string;
 	model?: AgentModelMetadata;
 	pendingTools: Map<string, string[]>;
@@ -915,28 +913,7 @@ export function mapGrokRecord(
 	}
 	if (type === 'turn_ended') {
 		ensureStarted(publish, state, at);
-		state.faulted = false;
 		publish.done({ outcome: outcome(envelope.outcome), ...at });
-		return;
-	}
-	// Grok records no explicitly blocking condition, so a recorded fault that
-	// halts a turn with no `turn_ended` following is derived as `blocked`. A
-	// later `turn_ended` supersedes it as an ordinary completion outcome.
-	if (
-		type === 'turn_failed' ||
-		type === 'auth_failed' ||
-		type === 'rate_limited'
-	) {
-		ensureStarted(publish, state, at);
-		if (state.faulted) return;
-		state.faulted = true;
-		publish.waitStarted({
-			waitId: `grok:fault:${context.binding.providerSessionId}`,
-			state: 'blocked',
-			reason: bounded(LIMITS.toolName, envelope.error_kind) ?? String(type),
-			inferred: true,
-			...at,
-		});
 	}
 }
 
@@ -1045,7 +1022,6 @@ function emptyState(): GrokState {
 	return {
 		started: false,
 		children: new Set(),
-		faulted: false,
 		pendingTools: new Map(),
 		pendingWaits: new Map(),
 		nextTool: 0,
