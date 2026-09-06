@@ -1,10 +1,11 @@
 import './diagnostics.mjs';
 import { randomUUID } from 'node:crypto';
-import {
-	consumeAgentSession,
-	createAgentTerminalContext,
-} from '@terminay/server-core/agent-child';
 import { openConformancePty } from './pty.mjs';
+
+/** Loaded lazily so a skipped CI run does not need a built server-core. */
+async function loadAgentChild() {
+	return import('@terminay/server-core/agent-child');
+}
 
 /**
  * @typedef {'idle' | 'working' | 'waiting' | 'blocked' | 'done'} ConformanceState
@@ -227,6 +228,8 @@ export async function createConformanceHarness(options) {
 		if (!runtime)
 			throw new Error(`provider ${options.providerId} did not register`);
 		const controller = new AbortController();
+		const { consumeAgentSession, createAgentTerminalContext } =
+			await loadAgentChild();
 		const built = createAgentTerminalContext(
 			{
 				contextId: randomUUID(),
