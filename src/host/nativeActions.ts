@@ -215,6 +215,22 @@ export async function setDesktopPerformanceLogging(
 	return enabled;
 }
 
+/** A bounded, main-computed projection of Desktop startup timing, lightweight
+ * process samples, and per-terminal usage. Returns null in a browser host and
+ * for a window bound to a remote profile. */
+export async function readDesktopPerformanceSnapshot(): Promise<
+	import('@terminay/protocol').JsonValue | null
+> {
+	const response = await request({
+		type: 'diagnostics.performance-snapshot.read',
+	});
+	if (!response.handled) return null;
+	const result = response.result;
+	return typeof result === 'object' && result !== null && !Array.isArray(result)
+		? (result as import('@terminay/protocol').JsonValue)
+		: null;
+}
+
 export type WorkspaceDragDecision =
 	| Readonly<{ action: 'reorder' }>
 	| Readonly<{ action: 'merge'; targetViewId: string }>

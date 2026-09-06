@@ -1,10 +1,16 @@
 import path from 'node:path';
-import { monitorEventLoopDelay } from 'node:perf_hooks';
 import type { App, TraceConfig } from 'electron';
 import {
 	readDiagnosticsPreferences,
 	writeDiagnosticsPreferences,
 } from './preferences';
+import {
+	createEventLoopDelayHistogram,
+	type EventLoopDelayHistogram,
+	type EventLoopSample,
+	snapshotEventLoopDelay,
+	snapshotProcessMetrics,
+} from './processMetrics';
 import type { DesktopDiagnostics } from './service';
 
 export const PERFORMANCE_SAMPLE_INTERVAL_MS = 5_000;
@@ -15,9 +21,7 @@ export const PERFORMANCE_TRACE_CPU_PERCENT = 25;
 export const PERFORMANCE_TRACE_DURATION_MS = 6_000;
 export const PERFORMANCE_TRACE_COOLDOWN_MS = 45_000;
 export const PERFORMANCE_TRACE_BUFFER_KB = 8_192;
-const MAX_PROCESSES = 32;
 const STACK_COLLECTION_TIMEOUT_MS = 2_000;
-const MAX_LABEL_CHARS = 96;
 
 export const PERFORMANCE_TRACE_CONFIG: TraceConfig = {
 	enable_argument_filter: true,
@@ -38,15 +42,7 @@ export const PERFORMANCE_TRACE_CONFIG: TraceConfig = {
 	trace_buffer_size_in_kb: PERFORMANCE_TRACE_BUFFER_KB,
 };
 
-export interface PerformanceEventLoopDelay {
-	enable(): void;
-	disable(): void;
-	reset(): void;
-	readonly min: number;
-	readonly max: number;
-	readonly mean: number;
-	percentile(percentile: number): number;
-}
+export type PerformanceEventLoopDelay = EventLoopDelayHistogram;
 
 export interface PerformanceContentTracing {
 	startRecording(options: TraceConfig): Promise<void>;
@@ -102,31 +98,6 @@ function classifyIpcChannel(channel: unknown): string {
 		if (channel.startsWith(prefix)) return name;
 	}
 	return 'other';
-}
-
-function boundedLabel(value: string | undefined): string | undefined {
-	if (typeof value !== 'string' || value.length === 0) return undefined;
-	return value.length <= MAX_LABEL_CHARS
-		? value
-		: value.slice(0, MAX_LABEL_CHARS);
-}
-
-function roundMetric(value: number): number {
-	if (!Number.isFinite(value)) return 0;
-	return Math.round(value * 100) / 100;
-}
-
-const MAX_EVENT_LOOP_MS = 60_000;
-
-function nanosecondsToMs(value: number): number {
-	if (!Number.isFinite(value) || value <= 0) return 0;
-	const milliseconds = value / 1e6;
-	if (milliseconds > MAX_EVENT_LOOP_MS) return 0;
-	return roundMetric(milliseconds);
-}
-
-function defaultEventLoopDelay(): PerformanceEventLoopDelay {
-	return monitorEventLoopDelay({ resolution: 20 });
 }
 
 function defaultClock(): PerformanceLoggingClock {
@@ -214,7 +185,7 @@ export class DesktopPerformanceLogging {
 	constructor(private readonly options: DesktopPerformanceLoggingOptions) {
 		this.clock = options.clock ?? defaultClock();
 		this.createEventLoopDelay =
-			options.createEventLoopDelay ?? defaultEventLoopDelay;
+			options.createEventLoopDelay ?? createEventLoopDelayHistogram;
 		this.cpuUsage = options.cpuUsage ?? (() => process.cpuUsage());
 		this.memoryUsage = options.memoryUsage ?? (() => process.memoryUsage());
 	}
@@ -364,52 +335,12 @@ export class DesktopPerformanceLogging {
 		return counts;
 	}
 
-	private snapshotProcesses(): {
-		readonly processes: Record<string, unknown>[];
-		readonly maxCpuPercent: number;
-	} {
-		let metrics: ReturnType<App['getAppMetrics']> = [];
-		try {
-			metrics = this.options.app.getAppMetrics();
-		} catch {
-			return { processes: [], maxCpuPercent: 0 };
-		}
-		const processes = metrics.slice(0, MAX_PROCESSES).map((metric) => {
-			const name = boundedLabel(metric.name);
-			const serviceName = boundedLabel(metric.serviceName);
-			return {
-				type: metric.type,
-				pid: metric.pid,
-				cpuPercent: roundMetric(metric.cpu.percentCPUUsage),
-				idleWakeupsPerSecond: roundMetric(metric.cpu.idleWakeupsPerSecond),
-				memoryWorkingSetKiB: metric.memory.workingSetSize,
-				...(name === undefined ? {} : { name }),
-				...(serviceName === undefined ? {} : { serviceName }),
-			};
-		});
-		const maxCpuPercent = processes.reduce(
-			(max, processMetric) => Math.max(max, processMetric.cpuPercent),
-			0,
-		);
-		return { processes, maxCpuPercent };
+	private snapshotProcesses() {
+		return snapshotProcessMetrics(this.options.app);
 	}
 
-	private snapshotEventLoop(): Record<string, number> | undefined {
-		const histogram = this.eventLoop;
-		if (histogram === undefined) return undefined;
-		try {
-			const snapshot = {
-				minMs: nanosecondsToMs(histogram.min),
-				meanMs: nanosecondsToMs(histogram.mean),
-				maxMs: nanosecondsToMs(histogram.max),
-				p50Ms: nanosecondsToMs(histogram.percentile(50)),
-				p99Ms: nanosecondsToMs(histogram.percentile(99)),
-			};
-			histogram.reset();
-			return snapshot;
-		} catch {
-			return undefined;
-		}
+	private snapshotEventLoop(): EventLoopSample | undefined {
+		return snapshotEventLoopDelay(this.eventLoop);
 	}
 
 	private async sample(

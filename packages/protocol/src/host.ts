@@ -134,6 +134,7 @@ export const TERMINAY_HOST_MENU_COMMANDS = [
 	'open-command-bar',
 	'open-extensions',
 	'open-macros',
+	'open-performance-log',
 	'open-project-environments',
 	'open-recordings',
 	'open-remote-control',
@@ -182,6 +183,13 @@ export type TerminayHostEvent = Readonly<{
 		| Readonly<{
 				type: 'diagnostics.performance-logging.changed';
 				enabled: boolean;
+		  }>
+		| Readonly<{
+				/** A bounded, main-computed projection of the startup timeline,
+				 * lightweight samples, and per-terminal outcomes. The window receives
+				 * values only; it never receives a way to read diagnostics. */
+				type: 'diagnostics.performance-snapshot.changed';
+				snapshot: JsonValue;
 		  }>
 		| Readonly<{
 				/** Desktop pairing is waiting for the exposing host to approve the
@@ -246,7 +254,8 @@ export type TerminayHostAction =
 	| Readonly<{
 			type: 'diagnostics.performance-logging.set';
 			enabled: boolean;
-	  }>;
+	  }>
+	| Readonly<{ type: 'diagnostics.performance-snapshot.read' }>;
 
 export interface TerminayHostActionRequest {
 	readonly schemaVersion: typeof TERMINAY_HOST_CONTEXT_SCHEMA_VERSION;
@@ -350,6 +359,13 @@ export function parseTerminayHostEvent(
 		parsedEvent = Object.freeze({
 			type: 'diagnostics.performance-logging.changed',
 			enabled: event.enabled,
+		});
+	} else if (event.type === 'diagnostics.performance-snapshot.changed') {
+		exactKeys(event, ['type', 'snapshot'], 'host performance snapshot event');
+		assertJsonValue(event.snapshot);
+		parsedEvent = Object.freeze({
+			type: 'diagnostics.performance-snapshot.changed',
+			snapshot: event.snapshot,
 		});
 	} else if (event.type === 'connection.pairing-approval') {
 		exactKeys(
@@ -966,6 +982,9 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 				type: 'diagnostics.performance-logging.set',
 				enabled: action.enabled,
 			});
+		case 'diagnostics.performance-snapshot.read':
+			exactKeys(action, ['type'], 'performance snapshot action');
+			return Object.freeze({ type: 'diagnostics.performance-snapshot.read' });
 		default:
 			throw new TypeError('host action is not allowed');
 	}
@@ -1055,6 +1074,7 @@ export function requiredTerminayHostCapability(
 		case 'workspace.drag.end':
 			return 'nativeWindows';
 		case 'diagnostics.performance-logging.set':
+		case 'diagnostics.performance-snapshot.read':
 			return 'nativeMenus';
 	}
 }

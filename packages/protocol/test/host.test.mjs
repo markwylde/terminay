@@ -420,6 +420,86 @@ test('performance logging is a closed Desktop host action and bound event', () =
 	);
 });
 
+test('the performance snapshot is a closed Desktop host action and bound event', () => {
+	assert.deepEqual(
+		parseTerminayHostAction({ type: 'diagnostics.performance-snapshot.read' }),
+		{ type: 'diagnostics.performance-snapshot.read' },
+	);
+	// The read carries no parameters: a window cannot ask for anything else.
+	assert.throws(
+		() =>
+			parseTerminayHostAction({
+				type: 'diagnostics.performance-snapshot.read',
+				path: '/var/log/terminay',
+			}),
+		/performance snapshot action/u,
+	);
+	assert.throws(
+		() =>
+			parseTerminayHostAction({
+				type: 'diagnostics.performance-snapshot.read',
+				sessionId: 'session-a',
+			}),
+		/performance snapshot action/u,
+	);
+	const context = parseTerminayHostContext({
+		schemaVersion: 1,
+		bootstrapVersion: 1,
+		sourceId: 'source-a',
+		windowId: 'window-a',
+		serverId: 'server-a',
+		profileId: 'profile-a',
+		bundleId: 'bundle_12345678',
+		applicationProtocolVersion: '1',
+		hostKind: 'desktop',
+		hostBridgeVersion: 1,
+		byteEndpointVersion: 1,
+		capabilities: { nativeMenus: 1 },
+	});
+	const snapshot = { timeline: { phases: [] }, samples: [], terminals: {} };
+	assert.deepEqual(
+		parseTerminayHostEvent(
+			{
+				schemaVersion: 1,
+				bridgeVersion: 1,
+				sourceId: 'source-a',
+				windowId: 'window-a',
+				serverId: 'server-a',
+				profileId: 'profile-a',
+				event: { type: 'diagnostics.performance-snapshot.changed', snapshot },
+			},
+			context,
+		).event,
+		{ type: 'diagnostics.performance-snapshot.changed', snapshot },
+	);
+	assert.throws(
+		() =>
+			parseTerminayHostEvent(
+				{
+					schemaVersion: 1,
+					bridgeVersion: 1,
+					sourceId: 'source-a',
+					windowId: 'window-a',
+					serverId: 'server-a',
+					profileId: 'profile-a',
+					event: {
+						type: 'diagnostics.performance-snapshot.changed',
+						snapshot,
+						directory: '/var/log/terminay',
+					},
+				},
+				context,
+			),
+		/host performance snapshot event/u,
+	);
+	assert.equal(
+		requiredTerminayHostCapability({
+			type: 'diagnostics.performance-snapshot.read',
+		}),
+		'nativeMenus',
+	);
+});
+
 test('device settings use a closed host action and bound event snapshot', () => {
 	const settings = { keyboardShortcuts: { 'new-terminal': 'CmdOrCtrl+Y' } };
 	assert.deepEqual(parseTerminayHostAction({

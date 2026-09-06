@@ -17,8 +17,8 @@ import {
 	encodeDiagnosticEvent,
 	ensurePrivateDiagnosticsDirectory,
 	normalizeDiagnosticEvent,
-	sanitizeDiagnosticText,
 	SegmentedJsonlWriter,
+	sanitizeDiagnosticText,
 } from './core';
 
 const CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
