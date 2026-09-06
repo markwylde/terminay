@@ -126,8 +126,13 @@ function silentWatcher() {
 	});
 	return {
 		stop: () => stop(),
-		async *[Symbol.asyncIterator]() {
-			await stopped;
+		[Symbol.asyncIterator]() {
+			return {
+				async next() {
+					await stopped;
+					return { done: true, value: undefined };
+				},
+			};
 		},
 		async dispose() {
 			stop();

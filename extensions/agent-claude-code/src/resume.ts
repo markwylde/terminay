@@ -19,10 +19,15 @@ export function claudeResumeSessionId(
 	return undefined;
 }
 
-/** Claude's provider-owned project directory encoding for a canonical cwd. */
+/**
+ * Claude's provider-owned project directory encoding for a canonical cwd:
+ * every character outside `[A-Za-z0-9]` becomes `-`. Verified against the
+ * real CLI, which wrote `/private/var/folders/gw/n_lr8lp.../T/x` as
+ * `-private-var-folders-gw-n-lr8lp...-T-x`.
+ */
 export function claudeProjectDirectoryPath(cwd: string): string | undefined {
 	if (!cwd.startsWith('/')) return undefined;
-	const directory = cwd.replace(/[/.]/gu, '-');
+	const directory = cwd.replace(/[^A-Za-z0-9]/gu, '-');
 	return directory ? `.claude/projects/${directory}` : undefined;
 }
 

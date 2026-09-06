@@ -33,7 +33,7 @@ function claudeTerminal(options) {
 	});
 }
 
-test('binds a journal the running process wrote after it started, holding no writable handle', async () => {
+test('binds a journal the running process appended since it started, holding no writable handle', async () => {
 	const harness = await createAgentExtensionHarness(extension);
 	try {
 		await harness.observe(
@@ -42,28 +42,117 @@ test('binds a journal the running process wrote after it started, holding no wri
 				fileCreatedAt: {
 					[`${projects}/${sessionId}.jsonl`]: '2026-09-06T11:00:04.000Z',
 				},
+				fileModifiedAt: {
+					[`${projects}/${sessionId}.jsonl`]: '2026-09-06T11:00:04.000Z',
+				},
 			}),
 		);
 		assert.deepEqual(harness.events(), [
 			{ kind: 'session.started', title: 'Claude Code' },
 		]);
+		assert.equal(harness.observation()?.binding.providerSessionId, sessionId);
 	} finally {
 		await harness.dispose();
 	}
 });
 
-test('ignores a journal that predates the process', async () => {
+test('a resumed session appends to a journal created before the process and binds', async () => {
+	// `claude --resume` and `--continue` append to the original journal rather
+	// than creating one, verified against the real CLI: the file keeps its
+	// creation time and only its modification time moves.
 	const harness = await createAgentExtensionHarness(extension);
 	try {
 		await harness.observe(
 			claudeTerminal({
 				files: { [`${projects}/${sessionId}.jsonl`]: [header(sessionId)] },
 				fileCreatedAt: {
+					[`${projects}/${sessionId}.jsonl`]: '2026-09-01T20:22:07.000Z',
+				},
+				fileModifiedAt: {
+					[`${projects}/${sessionId}.jsonl`]: '2026-09-06T11:00:09.000Z',
+				},
+			}),
+		);
+		assert.deepEqual(harness.events(), [
+			{ kind: 'session.started', title: 'Claude Code' },
+		]);
+		assert.equal(harness.observation()?.binding.providerSessionId, sessionId);
+	} finally {
+		await harness.dispose();
+	}
+});
+
+test('ignores a journal last appended before the process started', async () => {
+	const harness = await createAgentExtensionHarness(extension);
+	try {
+		await harness.observe(
+			claudeTerminal({
+				files: { [`${projects}/${sessionId}.jsonl`]: [header(sessionId)] },
+				fileCreatedAt: {
+					[`${projects}/${sessionId}.jsonl`]: '2026-09-06T09:00:00.000Z',
+				},
+				fileModifiedAt: {
 					[`${projects}/${sessionId}.jsonl`]: '2026-09-06T10:00:00.000Z',
 				},
 			}),
 		);
 		assert.deepEqual(harness.events(), []);
+	} finally {
+		await harness.dispose();
+	}
+});
+
+test('a journal whose append time is unknown is not admitted', async () => {
+	const harness = await createAgentExtensionHarness(extension);
+	try {
+		await harness.observe(
+			claudeTerminal({
+				files: { [`${projects}/${sessionId}.jsonl`]: [header(sessionId)] },
+			}),
+		);
+		assert.deepEqual(harness.events(), []);
+	} finally {
+		await harness.dispose();
+	}
+});
+
+test('the primary rule binds before the open-writable fallback is consulted', async () => {
+	// The fallback would bind the other journal, the only one held open. The
+	// primary rule finds the appended one first, so the fallback never runs.
+	const harness = await createAgentExtensionHarness(extension);
+	try {
+		await harness.observe(
+			claudeTerminal({
+				files: {
+					[`${projects}/${sessionId}.jsonl`]: [header(sessionId)],
+					[`${projects}/${other}.jsonl`]: [header(other)],
+				},
+				fileModifiedAt: {
+					[`${projects}/${sessionId}.jsonl`]: '2026-09-06T11:00:04.000Z',
+					[`${projects}/${other}.jsonl`]: '2026-09-06T10:00:00.000Z',
+				},
+				openFilePaths: [`${projects}/${other}.jsonl`],
+			}),
+		);
+		assert.equal(harness.observation()?.binding.providerSessionId, sessionId);
+	} finally {
+		await harness.dispose();
+	}
+});
+
+test('the open-writable fallback is consulted when the primary rule finds nothing', async () => {
+	const harness = await createAgentExtensionHarness(extension);
+	try {
+		await harness.observe(
+			claudeTerminal({
+				files: { [`${projects}/${sessionId}.jsonl`]: [header(sessionId)] },
+				fileModifiedAt: {
+					[`${projects}/${sessionId}.jsonl`]: '2026-09-06T10:00:00.000Z',
+				},
+				openFilePaths: [`${projects}/${sessionId}.jsonl`],
+			}),
+		);
+		assert.equal(harness.observation()?.binding.providerSessionId, sessionId);
 	} finally {
 		await harness.dispose();
 	}
@@ -137,7 +226,7 @@ test('a sidechain journal is never an eligible root', async () => {
 						{ ...header(sessionId), isSidechain: true },
 					],
 				},
-				fileCreatedAt: {
+				fileModifiedAt: {
 					[`${projects}/${sessionId}.jsonl`]: '2026-09-06T11:00:04.000Z',
 				},
 			}),
@@ -163,7 +252,7 @@ test('a subagents journal below the root session is not a root candidate', async
 						},
 					],
 				},
-				fileCreatedAt: { [child]: '2026-09-06T11:00:20.000Z' },
+				fileModifiedAt: { [child]: '2026-09-06T11:00:20.000Z' },
 			}),
 		);
 		assert.deepEqual(harness.events(), []);
@@ -201,7 +290,7 @@ test('a journal in another project directory is not admitted', async () => {
 		await harness.observe(
 			claudeTerminal({
 				files: { [elsewhere]: [header(sessionId)] },
-				fileCreatedAt: { [elsewhere]: '2026-09-06T11:00:04.000Z' },
+				fileModifiedAt: { [elsewhere]: '2026-09-06T11:00:04.000Z' },
 			}),
 		);
 		assert.deepEqual(harness.events(), []);
@@ -222,7 +311,7 @@ test('a journal written after a first unbound observation binds on the next one'
 		await harness.observe(
 			claudeTerminal({
 				files: { [`${projects}/${sessionId}.jsonl`]: [header(sessionId)] },
-				fileCreatedAt: {
+				fileModifiedAt: {
 					[`${projects}/${sessionId}.jsonl`]: '2026-09-06T11:00:04.000Z',
 				},
 			}),

@@ -119,7 +119,7 @@ export const grokAgentProvider = defineAgentProvider({
 				terminal,
 				events: root.journal,
 				summary: await findSummary(terminal, root),
-				subagents: await findSubagents(terminal, root),
+				subagents: await findSessionDirectory(terminal, root),
 				sessionId: root.sessionId,
 			}),
 			mapRecord: createGrokRecordMapper(),
@@ -476,8 +476,13 @@ async function summaryFromHome(
 	}
 }
 
-/** Resolves the bound root's own `subagents/` directory, never another's. */
-async function findSubagents(
+/**
+ * Resolves the bound root's own session directory, the parent of its journal
+ * and of the `subagents/` tree, never another session's. The session directory
+ * (not `subagents/`) is the listing root because Grok creates `subagents/`
+ * only when the first child is spawned, well after the root binds.
+ */
+async function findSessionDirectory(
 	terminal: AgentTerminalContext,
 	root: Omit<GrokRoot, 'modifiedAt'>,
 ): Promise<AgentDirectoryHandle | undefined> {
@@ -497,7 +502,7 @@ async function findSubagents(
 							beneath: { homeRelative: '.grok/sessions' },
 							signal: terminal.signal,
 						});
-			const directory = subagentsRelativePath(relative);
+			const directory = sessionDirectoryRelativePath(relative);
 			if (!directory) continue;
 			const handle =
 				scope === 'environment'
@@ -521,11 +526,11 @@ async function findSubagents(
 	return undefined;
 }
 
-function subagentsRelativePath(
+function sessionDirectoryRelativePath(
 	relative: string | undefined,
 ): string | undefined {
 	return relative?.endsWith('/events.jsonl')
-		? `${relative.slice(0, -'/events.jsonl'.length)}/subagents`
+		? relative.slice(0, -'/events.jsonl'.length)
 		: undefined;
 }
 
@@ -599,9 +604,12 @@ class GrokSessionWatcher implements AgentFileWatcher {
 				if (complete) yield complete;
 			}
 
-			const sources: ObservedSource[] = [
-				{ iterator: eventsIterator, title: false },
-			];
+			const eventsSource: ObservedSource = {
+				iterator: eventsIterator,
+				title: false,
+			};
+			let following = true;
+			const sources: ObservedSource[] = [eventsSource];
 			if (summaryWatcher !== undefined) {
 				sources.push({
 					iterator: summaryWatcher[Symbol.asyncIterator](),
@@ -612,9 +620,12 @@ class GrokSessionWatcher implements AgentFileWatcher {
 				// Child state arrives as already-complete synthetic lines, so it
 				// joins the events lane rather than the title lane.
 				sources.push({
-					iterator: followSubagents(terminal, subagents, LIMITS.subagentPollMs)[
-						Symbol.asyncIterator
-					](),
+					iterator: followSubagents(
+						terminal,
+						subagents,
+						LIMITS.subagentPollMs,
+						() => following,
+					)[Symbol.asyncIterator](),
 					title: false,
 				});
 			}
@@ -630,7 +641,10 @@ class GrokSessionWatcher implements AgentFileWatcher {
 					),
 				);
 				ready.source.pending = undefined;
-				if (ready.result.done) continue;
+				if (ready.result.done) {
+					if (ready.source === eventsSource) following = false;
+					continue;
+				}
 				if (!ready.source.title) {
 					const complete = completeLines(pendingEvents, ready.result.value);
 					scheduleNext(ready.source);

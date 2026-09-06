@@ -31,7 +31,8 @@
     "test": "npm run build && node --test test/*.test.mjs",
     "test:ci": "node --test test/*.test.mjs",
     "test:compat": "npm run build && node --test test/compat.test.mjs",
-    "test:packed": "npm run build && node test/packed.test.mjs"
+    "test:packed": "npm run build && node test/packed.test.mjs",
+    "test:conformance": "npm run build && node --test test/conformance.test.mjs"
   },
   "engines": {
     "node": ">=24"

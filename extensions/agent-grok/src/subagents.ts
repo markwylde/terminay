@@ -16,17 +16,23 @@ export const SUBAGENT_RECORD = 'terminay-grok-subagent';
  * children spawned together reach `completed` at different times. It carries an
  * explicit `parent_session_id`, which is the only parentage evidence used.
  *
+ * The listing root is the bound session's own directory, not `subagents/`:
+ * Grok creates `subagents/` only when the first child is spawned, which on a
+ * recorded 1.0.13 run was twelve seconds after it created `events.jsonl`, so a
+ * root resolved at bind time never exists yet. Depth 2 below the session
+ * directory is exactly `subagents/<subagent_id>/meta.json`.
+ *
  * The sibling `output.json`, and this file's own `prompt`, are the child's
  * conversation content and are never read or projected.
  */
 export const SUBAGENT_DIRECTORY = {
 	extensions: ['.json'],
-	maxDepth: 1,
+	maxDepth: 2,
 	maxEntries: 128,
 	maxBytes: 4 * 1024 * 1024,
 } as const;
 
-const META_JSON = /^([0-9a-f-]{1,128})\/meta\.json$/iu;
+const META_JSON = /^subagents\/([0-9a-f-]{1,128})\/meta\.json$/iu;
 const encoder = new TextEncoder();
 
 export interface GrokSubagentRecord {
@@ -71,11 +77,15 @@ export function subagentRecordFrom(
  * record whenever a child appears or changes state. Nothing else in the
  * sessions tree is followed, so a session Grok did not declare as this root's
  * child can never become one.
+ *
+ * Polling re-lists the session directory, so a `subagents/` tree Grok creates
+ * long after the root bound is still enumerated.
  */
 export async function* followSubagents(
 	terminal: AgentTerminalContext,
 	directory: AgentDirectoryHandle,
 	pollMs: number,
+	isFollowing: () => boolean,
 ): AsyncGenerator<AgentFileWatchChunk> {
 	const seen = new Map<string, string>();
 	while (!terminal.signal.aborted) {
@@ -107,6 +117,10 @@ export async function* followSubagents(
 		}
 		if (lines.length > 0)
 			yield { type: 'append', bytes: encoder.encode(`${lines.join('\n')}\n`) };
+		// The root journal is the session's lifetime. Once its follower is
+		// exhausted there is nothing left to enrich, so the poll must not outlive
+		// it.
+		if (!isFollowing()) return;
 		await delay(pollMs);
 	}
 }

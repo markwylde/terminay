@@ -679,7 +679,11 @@ export function parseObservedJsonLine(
 	}
 }
 
-async function consumeAgentSession(
+/**
+ * Feeds a bound provider session through its own mapper. Exported so the
+ * conformance harness pumps a real CLI's journals exactly as the child does.
+ */
+export async function consumeAgentSession(
 	result: unknown,
 	publisher: Record<string, (event: unknown) => Promise<unknown>>,
 	signal: AbortSignal,

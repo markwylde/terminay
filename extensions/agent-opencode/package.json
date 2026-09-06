@@ -29,6 +29,7 @@
 		"typecheck": "tsc -p tsconfig.json --noEmit",
 		"test": "npm run compile && node --test test/*.test.mjs",
 		"test:ci": "node --test test/*.test.mjs",
+		"test:packed": "npm run compile && node --test test/packed.test.mjs",
 		"test:conformance": "npm run compile && node --test test/conformance.test.mjs"
 	},
 	"engines": {
@@ -40,8 +41,7 @@
 	"devDependencies": {
 		"@terminay/extension-api": "^1.2.0",
 		"@types/node": "^24.0.0",
-		"typescript": "^6.0.0",
-		"@terminay/agent-conformance": "^0.1.0"
+		"typescript": "^6.0.0"
 	},
 	"terminay": {
 		"manifestVersion": 1,

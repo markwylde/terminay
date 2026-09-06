@@ -2,6 +2,7 @@ import type {
 	AgentBindingFingerprint,
 	AgentChildJournalSource,
 	AgentDirectoryHandle,
+	AgentDiscoveredFile,
 	AgentFileHandle,
 	AgentForegroundProcess,
 	AgentObservationResult,
@@ -61,11 +62,14 @@ export const claudeCodeProvider = defineAgentProvider({
 		// Explicit native identity first, then the provider's own project-directory
 		// association, then the open-handle fallback. The Claude Code CLI appends to
 		// its journal and closes it, so it normally holds no writable handle at all
-		// and the fallback alone would never bind.
-		const candidate = explicitResume
-			? await resumedJournalCandidate(terminal, descendants, explicitResume)
-			: ((await projectJournalCandidate(terminal, descendants)) ??
-				(await writableJournalCandidate(terminal, descendants)));
+		// and the fallback alone would never bind. Each rule is consulted only when
+		// the one before it found nothing.
+		const candidate =
+			(explicitResume
+				? await resumedJournalCandidate(terminal, descendants, explicitResume)
+				: undefined) ??
+			(await projectJournalCandidate(terminal, descendants)) ??
+			(await writableJournalCandidate(terminal, descendants));
 		if (!candidate) return { state: 'not-bound' };
 		const header = await terminal.observation.files.readJsonLine<unknown>(
 			candidate.journal,
@@ -88,6 +92,7 @@ export const claudeCodeProvider = defineAgentProvider({
 		});
 		const subagents = await subagentDirectory(terminal, candidate, sessionId);
 		const children = await findChildSources(terminal, subagents);
+		const sources = children.map((child) => child.source);
 		return jsonlSession({
 			binding,
 			source: withQuiescence(
@@ -97,28 +102,36 @@ export const claudeCodeProvider = defineAgentProvider({
 				{ terminal, providerExecutable: 'claude' },
 			),
 			mapRecord: createClaudeRecordMapper(),
-			...(children.length === 0 ? {} : { childSources: children }),
+			...(sources.length === 0 ? {} : { childSources: sources }),
 			...(subagents === undefined
 				? {}
 				: {
 						childSourceDiscovery: discoverChildSources(
 							terminal,
 							subagents,
-							new Set(children.map((child) => child.childId)),
+							new Set(children.map((child) => child.agentId)),
 						),
 					}),
 		});
 	},
 });
 
-/** Bounded listing limits for one root session's own children. */
+/**
+ * Bounded listing limits for one root session's own children. The CLI writes
+ * two files per child — the journal and its `.meta.json` sidecar — so the
+ * entry budget covers both.
+ */
 const SUBAGENT_DIRECTORY = {
-	extensions: ['.jsonl'],
+	extensions: ['.jsonl', '.json'],
 	maxDepth: 0,
-	maxEntries: 64,
+	maxEntries: 128,
 	maxBytes: 256 * 1024 * 1024,
 } as const;
 const SUBAGENT_JOURNAL = /^agent-([A-Za-z0-9_-]{1,128})\.jsonl$/u;
+const SUBAGENT_META = /^agent-([A-Za-z0-9_-]{1,128})\.meta\.json$/u;
+/** The sidecar is a single small object; nothing larger is read. */
+const MAX_META_BYTES = 8 * 1024;
+const TOOL_USE_ID = /^[A-Za-z0-9_-]{1,512}$/u;
 
 /**
  * A root session's children live in its own `<session-uuid>/subagents/`
@@ -146,29 +159,92 @@ function childIdOf(relativePath: string): string | undefined {
 	return SUBAGENT_JOURNAL.exec(relativePath)?.[1];
 }
 
+/**
+ * One child journal, paired with the identifier the root session already knows
+ * it by. The directory names a child by its native agent id, while the root
+ * journal's `Agent` tool call and the later task notification both name the
+ * same child by the launching tool-use id. The two lanes must agree or the
+ * same subagent is projected twice and the agent-id copy never completes.
+ */
+interface DiscoveredChild {
+	/** File-level identity, used only to avoid re-admitting the same journal. */
+	readonly agentId: string;
+	readonly source: AgentChildJournalSource;
+}
+
+/**
+ * The CLI writes `agent-<agentId>.meta.json` beside each child journal. Only
+ * the launching tool-use id is read from it; the description and prompt the
+ * sidecar also carries are never read across this boundary.
+ */
+async function childToolUseId(
+	terminal: AgentTerminalContext,
+	meta: AgentFileHandle | undefined,
+): Promise<string | undefined> {
+	if (!meta) return undefined;
+	try {
+		const sidecar = await terminal.observation.files.readJson<unknown>(meta, {
+			maxBytes: MAX_META_BYTES,
+			signal: terminal.signal,
+		});
+		const toolUseId = safeAgentString(record(sidecar)?.toolUseId);
+		return toolUseId && TOOL_USE_ID.test(toolUseId) ? toolUseId : undefined;
+	} catch {
+		// A missing or unreadable sidecar leaves the child keyed by its agent id.
+		return undefined;
+	}
+}
+
+/**
+ * Builds one child source per journal in a listing, keyed by the tool-use id
+ * its sidecar names and falling back to the agent id when no sidecar exists.
+ */
+async function childSourcesIn(
+	terminal: AgentTerminalContext,
+	entries: readonly AgentDiscoveredFile[],
+): Promise<readonly DiscoveredChild[]> {
+	const journals: Array<{ agentId: string; handle: AgentFileHandle }> = [];
+	const sidecars = new Map<string, AgentFileHandle>();
+	for (const entry of entries) {
+		const agentId = childIdOf(entry.relativePath);
+		if (agentId) {
+			journals.push({ agentId, handle: entry.handle });
+			continue;
+		}
+		const metaId = SUBAGENT_META.exec(entry.relativePath)?.[1];
+		if (metaId) sidecars.set(metaId, entry.handle);
+	}
+	const children: DiscoveredChild[] = [];
+	for (const journal of journals) {
+		const toolUseId = await childToolUseId(
+			terminal,
+			sidecars.get(journal.agentId),
+		);
+		children.push({
+			agentId: journal.agentId,
+			source: {
+				childId: toolUseId ?? journal.agentId,
+				journal: journal.handle,
+				source: terminal.observation.files.follow(journal.handle, {
+					signal: terminal.signal,
+				}),
+			},
+		});
+	}
+	return children;
+}
+
 async function findChildSources(
 	terminal: AgentTerminalContext,
 	subagents: AgentDirectoryHandle | undefined,
-): Promise<readonly AgentChildJournalSource[]> {
+): Promise<readonly DiscoveredChild[]> {
 	if (!subagents) return [];
 	try {
 		const listing = await terminal.observation.files.listDirectory(subagents, {
 			...SUBAGENT_DIRECTORY,
 			signal: terminal.signal,
 		});
-		const children: AgentChildJournalSource[] = [];
-		for (const entry of listing.entries) {
-			const childId = childIdOf(entry.relativePath);
-			if (!childId) continue;
-			children.push({
-				childId,
-				journal: entry.handle,
-				source: terminal.observation.files.follow(entry.handle, {
-					signal: terminal.signal,
-				}),
-			});
-		}
-		return children;
+		return await childSourcesIn(terminal, listing.entries);
 	} catch {
 		// Child discovery is bounded enrichment; a missing directory must not
 		// make an already proven root unavailable.
@@ -176,7 +252,11 @@ async function findChildSources(
 	}
 }
 
-/** Admits children created after the root binds, never re-admitting one. */
+/**
+ * Admits children created after the root binds, never re-admitting one. The
+ * seen set holds agent ids — the file's own identity — so a child already
+ * admitted under its tool-use id is not admitted a second time.
+ */
 async function* discoverChildSources(
 	terminal: AgentTerminalContext,
 	subagents: AgentDirectoryHandle,
@@ -189,18 +269,15 @@ async function* discoverChildSources(
 		});
 		try {
 			for await (const listing of watcher) {
-				for (const entry of listing.entries) {
+				const fresh = listing.entries.filter((entry) => {
+					const agentId = childIdOf(entry.relativePath);
+					return agentId === undefined || !seen.has(agentId);
+				});
+				for (const child of await childSourcesIn(terminal, fresh)) {
 					if (seen.size >= SUBAGENT_DIRECTORY.maxEntries) return;
-					const childId = childIdOf(entry.relativePath);
-					if (!childId || seen.has(childId)) continue;
-					seen.add(childId);
-					yield {
-						childId,
-						journal: entry.handle,
-						source: terminal.observation.files.follow(entry.handle, {
-							signal: terminal.signal,
-						}),
-					};
+					if (seen.has(child.agentId)) continue;
+					seen.add(child.agentId);
+					yield child.source;
 				}
 			}
 		} finally {
@@ -220,10 +297,12 @@ interface JournalCandidate {
 
 /**
  * Claude Code's own association: the descendant process CWD names the provider
- * project directory, and a root journal it wrote after that process started
- * belongs to it. One process writes a new journal per conversation, so several
- * candidates are ordinary; the bound root is the one currently receiving
- * appends. Creation time narrows the candidates and never picks between them.
+ * project directory, and a root journal appended there since that process
+ * started belongs to it. Appends rather than creation are the evidence because
+ * `claude --resume` and `--continue` append to a journal an earlier process
+ * created. One process writes a new journal per conversation, so several
+ * candidates are ordinary; the bound root is the one most recently appended.
+ * Two appended at the same instant are concurrent and bind nothing.
  */
 async function projectJournalCandidate(
 	terminal: AgentTerminalContext,
@@ -257,10 +336,10 @@ async function projectJournalCandidate(
 			// A root session's children live in `<uuid>/subagents/`; depth 0 keeps
 			// them out, and the header check below is authoritative regardless.
 			if (entry.relativePath.includes('/')) continue;
-			const createdAt = entry.createdAt
-				? Date.parse(entry.createdAt)
+			const modifiedAt = entry.modifiedAt
+				? Date.parse(entry.modifiedAt)
 				: Number.NaN;
-			if (!Number.isFinite(createdAt) || createdAt < startedAt) continue;
+			if (!Number.isFinite(modifiedAt) || modifiedAt < startedAt) continue;
 			const header = await terminal.observation.files.readJsonLine<unknown>(
 				entry.handle,
 				{
@@ -270,16 +349,7 @@ async function projectJournalCandidate(
 				},
 			);
 			if (!rootSessionId(header)) continue;
-			const stat = await terminal.observation.files.stat(entry.handle, {
-				signal: terminal.signal,
-			});
-			const modifiedAt = stat?.modifiedAt
-				? Date.parse(stat.modifiedAt)
-				: Number.NaN;
-			roots.push({
-				handle: entry.handle,
-				modifiedAt: Number.isFinite(modifiedAt) ? modifiedAt : 0,
-			});
+			roots.push({ handle: entry.handle, modifiedAt });
 		}
 		const active = mostRecentlyAppended(roots);
 		if (!active) continue;
@@ -287,7 +357,7 @@ async function projectJournalCandidate(
 			journal: active,
 			projectDirectory: relativePath,
 			fingerprint: {
-				kind: 'process-cwd-project-journal-written-after-process-start',
+				kind: 'process-cwd-project-journal-appended-since-process-start',
 				process: process.handle,
 				file: active,
 			},
