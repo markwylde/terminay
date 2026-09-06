@@ -5,9 +5,8 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { build } from 'esbuild';
 
-const { desktopStartupLoadingDocument } = await importBundled(
-	'../electron/startupLoadingDocument.ts',
-);
+const { desktopStartupLoadingDocument, startupPhaseVisibilityCss } =
+	await importBundled('../electron/startupLoadingDocument.ts');
 
 const CSP =
 	"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'";
@@ -22,7 +21,7 @@ function decode(document) {
 test('the document stays script-free and keeps its closed CSP', () => {
 	for (const html of [
 		decode(desktopStartupLoadingDocument()),
-		decode(desktopStartupLoadingDocument('Starting the local server')),
+		decode(desktopStartupLoadingDocument('server-compose')),
 	]) {
 		assert.ok(!/<script/iu.test(html), 'a script tag was introduced');
 		assert.ok(!/\son[a-z]+=/iu.test(html), 'an inline handler was introduced');
@@ -38,9 +37,7 @@ test('the document stays script-free and keeps its closed CSP', () => {
 
 test('the mark, dots, colours, and reduced-motion rule are unchanged by a label', () => {
 	const without = decode(desktopStartupLoadingDocument());
-	const withLabel = decode(
-		desktopStartupLoadingDocument('Restoring your workspace'),
-	);
+	const withLabel = decode(desktopStartupLoadingDocument('workspace-restore'));
 	for (const fragment of [
 		'class="logo"',
 		'viewBox="0 0 24 24"',
@@ -58,37 +55,57 @@ test('the mark, dots, colours, and reduced-motion rule are unchanged by a label'
 	}
 });
 
-test('the phase line appears only when a label is supplied', () => {
-	assert.ok(!decode(desktopStartupLoadingDocument()).includes('class="phase"'));
-	assert.ok(!decode(desktopStartupLoadingDocument('   ')).includes('phase"'));
-	const html = decode(
-		desktopStartupLoadingDocument('Unlocking secure storage'),
-	);
-	assert.ok(html.includes('<p class="phase" aria-live="polite">'));
+test('every phase label is baked in, hidden, and revealed one at a time', () => {
+	const html = decode(desktopStartupLoadingDocument('vault-unlock'));
+	// Labels are real text nodes, so the line is readable by assistive tech.
+	assert.ok(html.includes('<p class="phase" data-phase="vault-unlock">'));
 	assert.ok(html.includes('Unlocking secure storage'));
-	// It follows the dots, so it renders beneath the indicator.
-	assert.ok(html.indexOf('class="dots"') < html.indexOf('class="phase"'));
+	assert.ok(html.includes('Starting the local server'));
+	// All are hidden by default; exactly one rule reveals the active phase.
+	assert.ok(html.includes('.phase{display:none'));
+	assert.ok(html.includes('.phase[data-phase="vault-unlock"]{display:block}'));
+	assert.equal(html.split('{display:block}').length - 1, 1);
+	// The block follows the dots, so it renders beneath the indicator.
+	assert.ok(html.indexOf('class="dots"') < html.indexOf('class="phases"'));
+});
+
+test('with no active phase no line is revealed', () => {
+	const html = decode(desktopStartupLoadingDocument());
+	assert.ok(html.includes('class="phase"'), 'labels are still present');
+	assert.ok(!html.includes('{display:block}'), 'nothing is revealed');
+});
+
+test('the reveal rule is confined to the closed phase vocabulary', () => {
+	assert.equal(
+		startupPhaseVisibilityCss('server-compose'),
+		'.phase[data-phase="server-compose"]{display:block}',
+	);
+	for (const bogus of ['"] , * {display:none} .x[y="', '../etc/passwd', '']) {
+		assert.throws(
+			() => startupPhaseVisibilityCss(bogus),
+			/unknown startup phase/u,
+		);
+	}
+	assert.throws(
+		() => desktopStartupLoadingDocument('not-a-phase'),
+		/unknown startup phase/u,
+	);
 });
 
 test('the negative animation delay is recomputed so the dots never restart', () => {
-	const html = decode(desktopStartupLoadingDocument('Building menus'));
+	const html = decode(desktopStartupLoadingDocument('native-menu'));
 	const match = /--terminay-loading-phase:(-?\d+)ms/u.exec(html);
 	assert.ok(match, 'the loading phase variable is missing');
 	const value = Number(match[1]);
 	assert.ok(value <= 0 && value > -1600, `unexpected delay ${value}`);
 });
 
-test('a label is escaped and length-bounded', () => {
-	const html = decode(
-		desktopStartupLoadingDocument('<img src=x onerror="alert(1)">'),
-	);
-	assert.ok(!html.includes('<img'));
-	assert.ok(html.includes('&lt;img src=x onerror=&quot;alert(1)&quot;&gt;'));
-
-	const long = decode(desktopStartupLoadingDocument('A'.repeat(200)));
-	const line = /<p class="phase"[^>]*>([^<]*)<\/p>/u.exec(long);
-	assert.ok(line);
-	assert.equal(line[1].length, 64);
+test('labels are escaped when written into the document', () => {
+	// Labels come from a closed table, but the document escapes them anyway so
+	// it cannot become an injection surface if that table ever changes.
+	const html = decode(desktopStartupLoadingDocument());
+	assert.ok(!html.includes('<script'));
+	assert.ok(!/data-phase="[^"]*"><[^/]/u.test(html));
 });
 
 async function importBundled(relativePath) {

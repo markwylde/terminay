@@ -178,7 +178,10 @@ import {
 	releaseServerUiWindowBinding,
 } from './serverUiHost';
 import { secureSession } from './sessionSecurity';
-import { desktopStartupLoadingDocument } from './startupLoadingDocument';
+import {
+	desktopStartupLoadingDocument,
+	startupPhaseVisibilityCss,
+} from './startupLoadingDocument';
 import { assertTrustedIpcSender } from './trustedIpcSender';
 import { resolveDesktopUserDataPath } from './userDataNamespace';
 import {
@@ -280,45 +283,9 @@ let startupPhaseWindow: BrowserWindow | null = null;
 /** Repaints are dropped once the verified bundle navigation has begun, so the
  * phase line can never race the handoff that replaces the whole document. */
 let startupPhasePaintingStopped = false;
-let startupPhasePaintInFlight = false;
-let startupPhasePaintedLabel: string | undefined;
-
-/** Open a startup phase and repaint the loading document's phase line.
- * The repaint is deliberately not awaited: a phase must never be delayed by
- * the paint that names it. */
-function beginStartupPhase(id: StartupPhaseId | StartupSubPhaseId): void {
-	desktopStartupTimeline.begin(id);
-	paintStartupPhaseLine();
-}
-
-function endStartupPhase(id: StartupPhaseId | StartupSubPhaseId): void {
-	desktopStartupTimeline.end(id);
-}
-
-function paintStartupPhaseLine(): void {
-	const window = startupPhaseWindow;
-	if (
-		window === null ||
-		startupPhasePaintingStopped ||
-		startupPhasePaintInFlight ||
-		window.isDestroyed()
-	)
-		return;
-	const label = desktopStartupTimeline.currentLabel();
-	// Consecutive phases can share a label; repainting the same text would be a
-	// navigation with no visible effect.
-	if (label === undefined || label === startupPhasePaintedLabel) return;
-	startupPhasePaintedLabel = label;
-	startupPhasePaintInFlight = true;
-	void window
-		.loadURL(desktopStartupLoadingDocument(label))
-		.catch(() => {
-			// A failed repaint leaves the previously painted loading state intact.
-		})
-		.finally(() => {
-			startupPhasePaintInFlight = false;
-		});
-}
+/** The key of the rule currently revealing a phase line, so it can be removed
+ * when the next phase replaces it. */
+let startupPhaseCssKey: string | undefined;
 
 /** Windows currently presenting the Performance Log route, and the release
  * handle each one holds on the lightweight collector. Sampling runs only while
@@ -333,10 +300,44 @@ const desktopRuntimeMetrics = new DesktopRuntimeMetrics({
 });
 const desktopTerminalResources = new TerminalResourceSampler();
 
+/** Open a startup phase and reveal its line on the loading document.
+ * Revealing is a style insertion, never a navigation, so it cannot destroy the
+ * renderer's execution context or interrupt the dot animation. It is also not
+ * awaited: a phase is never delayed by the line that names it. */
+function beginStartupPhase(id: StartupPhaseId | StartupSubPhaseId): void {
+	desktopStartupTimeline.begin(id);
+	revealStartupPhaseLine(id);
+}
+
+function endStartupPhase(id: StartupPhaseId | StartupSubPhaseId): void {
+	desktopStartupTimeline.end(id);
+}
+
+function revealStartupPhaseLine(id: StartupPhaseId | StartupSubPhaseId): void {
+	const window = startupPhaseWindow;
+	if (window === null || startupPhasePaintingStopped || window.isDestroyed())
+		return;
+	const previous = startupPhaseCssKey;
+	startupPhaseCssKey = undefined;
+	void window.webContents
+		.insertCSS(startupPhaseVisibilityCss(id))
+		.then(async (key) => {
+			if (startupPhasePaintingStopped || window.isDestroyed()) return;
+			startupPhaseCssKey = key;
+			if (previous !== undefined)
+				await window.webContents.removeInsertedCSS(previous);
+		})
+		.catch(() => {
+			// A failed reveal leaves the previously shown line in place.
+			startupPhaseCssKey = previous;
+		});
+}
+
 /** Called once the verified bundle navigation owns the window. */
 function stopStartupPhasePainting(): void {
 	startupPhasePaintingStopped = true;
 	startupPhaseWindow = null;
+	startupPhaseCssKey = undefined;
 }
 
 export const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL'];
@@ -1312,10 +1313,9 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 	// overlapping `loadURL` with persistence recovery, which leaves Chromium
 	// pending and Playwright waiting forever for the first window.
 	desktopStartupTimeline.begin('first-paint');
-	const firstPaintLabel = desktopStartupTimeline.currentLabel();
 	try {
 		await embeddedStartupWindow.loadURL(
-			desktopStartupLoadingDocument(firstPaintLabel),
+			desktopStartupLoadingDocument('first-paint'),
 		);
 		if (!embeddedStartupWindow.isDestroyed()) embeddedStartupWindow.show();
 	} catch (error) {
@@ -1323,10 +1323,9 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 			console.error('[window] startup loading document failed', error);
 	}
 	desktopStartupTimeline.end('first-paint');
-	// Only later phases repaint the line; the first paint above is the one that
-	// must complete before restoration begins.
+	// This is the only navigation the loading document ever receives. Later
+	// phases reveal their line with an inserted style rule instead.
 	startupPhaseWindow = embeddedStartupWindow;
-	startupPhasePaintedLabel = firstPaintLabel;
 	beginStartupPhase('workspace-restore');
 	const embeddedWorkspace = await openEmbeddedWorkspaceWithRecovery(
 		embeddedStartupWindow,
