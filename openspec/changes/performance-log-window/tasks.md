@@ -27,10 +27,10 @@
 
 ## 5. Host bridge contract
 
-- [ ] 5.1 Add `diagnostics.performance-snapshot.read` to `TerminayHostAction` and `diagnostics.performance-snapshot.changed` to `TerminayHostEvent` in `packages/protocol/src/host.ts`, with `exactKeys` parsing for both and the `nativeMenus` capability mapping. Verified by extending `packages/protocol/test/host.test.mjs` with accept and reject cases including an extra key and a wrong-typed field.
-- [ ] 5.2 Handle the action in `main.ts`'s `bindServerUiWindow` switch, returning `{ timeline, samples, terminals }` and refusing when the requesting context's `profileId` is not `embeddedLocalProfileId`. Verified by a unit test asserting a remote-profile context is refused and a local one returns a bounded snapshot.
-- [ ] 5.3 Broadcast `diagnostics.performance-snapshot.changed` per sample to subscribed Performance Log windows only, and start/stop the collector on first subscribe and last window close. Verified by a unit test asserting sampling begins on subscribe and stops when the last window is destroyed.
-- [ ] 5.4 Add `readDesktopPerformanceSnapshot` to `src/host/nativeActions.ts` and `subscribeDesktopPerformanceSnapshot` to `src/host/nativeEvents.ts`, both returning inert no-ops in a browser host. Verified by unit tests with `window.terminayHost` absent and with `{ handled: false }`.
+- [x] 5.1 Add `diagnostics.performance-snapshot.read` to `TerminayHostAction` and `diagnostics.performance-snapshot.changed` to `TerminayHostEvent` in `packages/protocol/src/host.ts`, with `exactKeys` parsing for both and the `nativeMenus` capability mapping. Verified by extending `packages/protocol/test/host.test.mjs` with accept and reject cases including an extra key and a wrong-typed field.
+- [x] 5.2 Handle the action in `main.ts`'s `bindServerUiWindow` switch, returning `{ timeline, samples, terminals }` and refusing when the requesting context's `profileId` is not `embeddedLocalProfileId`. Verified by a unit test asserting a remote-profile context is refused and a local one returns a bounded snapshot.
+- [x] 5.3 Broadcast `diagnostics.performance-snapshot.changed` per sample to subscribed Performance Log windows only, and start/stop the collector on first subscribe and last window close. Verified by a unit test asserting sampling begins on subscribe and stops when the last window is destroyed.
+- [x] 5.4 Add `readDesktopPerformanceSnapshot` to `src/host/nativeActions.ts` and `subscribeDesktopPerformanceSnapshot` to `src/host/nativeEvents.ts`, both returning inert no-ops in a browser host. Verified by unit tests with `window.terminayHost` absent and with `{ handled: false }`.
 
 ## 6. Performance Log window
 

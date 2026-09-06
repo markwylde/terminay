@@ -115,6 +115,7 @@ import {
 } from './diagnostics/electronEvents';
 import { createDiagnosticsHelpMenuItems } from './diagnostics/menu';
 import { DesktopPerformanceLogging } from './diagnostics/performance';
+import { DesktopRuntimeMetrics } from './diagnostics/runtimeMetrics';
 import {
 	bindFatalProcessDiagnostics,
 	initializeDesktopDiagnostics,
@@ -124,6 +125,7 @@ import {
 	type StartupSubPhaseId,
 	StartupTimeline,
 } from './diagnostics/startupTimeline';
+import { TerminalResourceSampler } from './diagnostics/terminalResources';
 import { normalizeExternalUrl } from './externalUrl';
 import { FileBufferService } from './fileViewer/fileBufferService';
 import { FileWatchService } from './fileViewer/fileWatchService';
@@ -317,6 +319,19 @@ function paintStartupPhaseLine(): void {
 			startupPhasePaintInFlight = false;
 		});
 }
+
+/** Windows currently presenting the Performance Log route, and the release
+ * handle each one holds on the lightweight collector. Sampling runs only while
+ * this map is non-empty. */
+const performanceLogWindows = new Map<number, () => void>();
+
+const desktopRuntimeMetrics = new DesktopRuntimeMetrics({
+	app,
+	onSample: () => {
+		void broadcastPerformanceSnapshot();
+	},
+});
+const desktopTerminalResources = new TerminalResourceSampler();
 
 /** Called once the verified bundle navigation owns the window. */
 function stopStartupPhasePainting(): void {
@@ -1904,6 +1919,72 @@ function broadcastPerformanceLogging(): void {
 	for (const window of BrowserWindow.getAllWindows()) {
 		sendPerformanceLogging(window.webContents);
 	}
+}
+
+/** The bounded projection the Performance Log window may receive. Values only:
+ * no file path, handle, directory listing, or log-reading capability. */
+async function buildPerformanceSnapshot(): Promise<Record<string, unknown>> {
+	const sessions = (serverTerminalAuthority?.service.listSessions() ?? []).map(
+		(session) => ({
+			sessionId: session.sessionId,
+			projectId: session.projectId,
+			status: session.status,
+			...(session.pid === undefined ? {} : { pid: session.pid }),
+		}),
+	);
+	const terminals = await desktopTerminalResources.sample(sessions);
+	return {
+		startup: desktopStartupTimeline.snapshot(),
+		samples: desktopRuntimeMetrics.samples(),
+		terminals: {
+			at: terminals.at,
+			diskAvailable: terminals.diskAvailable,
+			// Session identity only; the window resolves names from its own
+			// workspace state, so no title crosses the boundary.
+			sessions: sessions.map((session) => ({
+				sessionId: session.sessionId,
+				projectId: session.projectId,
+				usage: terminals.sessions[session.sessionId] ?? {
+					available: false,
+					reason: 'unreadable',
+				},
+			})),
+		},
+	};
+}
+
+async function broadcastPerformanceSnapshot(): Promise<void> {
+	if (performanceLogWindows.size === 0) return;
+	let snapshot: Record<string, unknown>;
+	try {
+		snapshot = await buildPerformanceSnapshot();
+	} catch {
+		// A sampling failure must never take down the window or the collector.
+		return;
+	}
+	for (const window of BrowserWindow.getAllWindows()) {
+		if (!performanceLogWindows.has(window.webContents.id)) continue;
+		if (window.webContents.isDestroyed()) continue;
+		window.webContents.send('server-ui-host:event', {
+			type: 'diagnostics.performance-snapshot.changed',
+			snapshot,
+		});
+	}
+}
+
+/** Begin sampling for one Performance Log window and release it on close. */
+function bindPerformanceLogWindow(window: BrowserWindow): void {
+	const id = window.webContents.id;
+	if (performanceLogWindows.has(id)) return;
+	performanceLogWindows.set(id, desktopRuntimeMetrics.subscribe());
+	const release = () => {
+		const stop = performanceLogWindows.get(id);
+		if (stop === undefined) return;
+		performanceLogWindows.delete(id);
+		stop();
+	};
+	window.once('closed', release);
+	window.webContents.once('destroyed', release);
 }
 
 function readMacros(): MacroDefinition[] {
@@ -3522,6 +3603,16 @@ function createWindow(options?: {
 								action.enabled,
 							),
 						};
+					case 'diagnostics.performance-snapshot.read': {
+						// Desktop-local evidence about this process and its local
+						// terminals. A window bound to a remote profile is refused.
+						if (launch.context.profileId !== embeddedLocalProfileId)
+							throw new Error(
+								'The performance snapshot is only available for the Local server.',
+							);
+						bindPerformanceLogWindow(window);
+						return await buildPerformanceSnapshot();
+					}
 				}
 			},
 		});
