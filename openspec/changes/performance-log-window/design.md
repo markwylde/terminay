@@ -28,15 +28,17 @@ Per-terminal usage needs a shell pid. `TerminalSessionSnapshot.pid` already carr
 
 ## Decisions
 
-### 1. The phase line is painted by re-issuing the data-URL document, not by adding script
+### 1. The phase line is revealed by an inserted style rule, not by navigating or adding script
 
-`desktopStartupLoadingDocument()` gains an optional phase label. Main calls `embeddedStartupWindow.loadURL(desktopStartupLoadingDocument(phase))` when a phase begins. The negative `--terminay-loading-phase` delay is recomputed from the same wall clock each time, so the dots resume mid-animation and never visibly restart — the identical mechanism that already carries the splash-to-bundle handoff.
+Every phase label is baked into the loading document as a hidden text node, and main reveals exactly one with `webContents.insertCSS`, removing the superseded rule.
 
-**Boundary**: this keeps the loading document at `default-src 'none'` with no script and no network access. The alternative — relaxing CSP to allow an inline script plus an IPC channel into a pre-server document — would create a privileged surface that exists precisely during the window when nothing else is initialised yet, and it would need its own preload. The re-load approach adds no capability at all.
+**This was originally designed as a `loadURL` per phase**, reusing the negative `--terminay-loading-phase` delay so the dots would resume mid-animation. The end-to-end suite proved that wrong: re-navigating the startup window destroys the renderer's execution context, and anything already attached to that window — Playwright's `mainWindow` fixture calling `page.evaluate`, and by extension any real client attached during startup — fails with "Execution context was destroyed". Thirty-three tests failed on that signature.
 
-**Cost**: a `data:` navigation per phase, roughly ten over a launch. Each is a parse of a ~3 KB inline document with no subresources. The call is fire-and-forget (`void ... .catch()`), never awaited, so a phase is never delayed by the paint that names it — which the spec requires. `prepareEmbeddedRuntime()`'s existing first paint stays awaited, because the current comment there explains that overlapping `loadURL` with persistence recovery leaves Chromium pending; only the subsequent updates are unawaited, and they are dropped if one is already in flight.
+Inserting a style rule touches no navigation at all, so the document is loaded exactly once. That removes the whole class of problem rather than narrowing it: there is no navigation to race the bundle handoff, no animation to resume, and no context to destroy. Labels stay real text nodes rather than CSS `content`, so the line remains readable by assistive technology, and `startupPhaseVisibilityCss` builds its selector from the closed phase union so a caller cannot widen it.
 
-*Alternative considered*: a hidden `<div>` toggled by CSS `:target` and a fragment navigation. It avoids re-parsing but requires the full phase vocabulary to be baked into the first document, which makes the phase list a presentation constant rather than a timeline output.
+**Cost**: measured at **0.203 ms of synchronous main-thread work across all 13 phases**, for the timeline calls plus the one document render. The reveal is fire-and-forget (`void ... .catch()`), never awaited, so a phase is never delayed by the line that names it. `prepareEmbeddedRuntime()`'s single first paint stays awaited, because the comment there explains that overlapping `loadURL` with persistence recovery leaves Chromium pending.
+
+**Boundary**: `insertCSS` is injected by main, so the document keeps `default-src 'none'` with no script and no network access. The alternative — relaxing CSP to allow an inline script plus an IPC channel into a pre-server document — would create a privileged surface precisely during the window when nothing else is initialised yet.
 
 ### 2. The startup timeline is a plain in-memory list owned by main, with an explicit phase vocabulary
 
@@ -76,9 +78,9 @@ The protocol gains `diagnostics.performance-snapshot.read` (action) and `diagnos
 
 ## Risks / Trade-offs
 
-- **Re-issuing `loadURL` on the splash could race the deferred canonical launch and leave Chromium pending, the exact failure the existing comment at main.ts:1230-1233 warns about.** → Phase updates are guarded by a single in-flight flag and are skipped entirely once `launchDeferredCanonicalWindow` has begun; the window's own `loadURL` of the bundle is the last navigation. An e2e assertion that the workspace still reaches its canonical root after a launch with many phase updates is the gate.
+- **~~Re-issuing `loadURL` on the splash could race the deferred canonical launch.~~ This risk materialised and the design changed in response** — see Decision 1. The current mechanism performs no navigation after the first paint, so the risk is removed rather than mitigated.
 - **A phase name that is wrong or stale is worse than no phase name, because the user will act on it.** → Phases are opened and closed by the same `await` boundaries they describe, and a phase that ends without its successor beginning is displayed as still running rather than blank.
-- **Per-terminal process-tree walking is per-platform and can be slow on a machine with many sessions.** → One tick has a single deadline across all sessions; sessions not reached report unavailable. The walk only runs while the window is open. Windows is out of scope for the packaged matrix (ADR-0004), so macOS and Linux readers are the whole surface.
+- **Per-terminal process-tree walking is per-platform and can be slow on a machine with many sessions.** → One tick has a single deadline across all sessions; sessions not reached report unavailable. The walk only runs while the window is open. Windows is out of scope for the packaged matrix (ADR-0004), so macOS and Linux readers are the whole surface. **macOS has no per-process disk byte counter without native code**, so `diskAvailable` is false there and the window says so once rather than showing an empty column per row; CPU and memory work on both.
 - **The lightweight collector could drift into a second heavy collector over time.** → The spec's `Lightweight always-on runtime metrics` requirement enumerates what it may collect and explicitly forbids stacks, traces, profiles, heap snapshots, and IPC channel strings; a boundaries test asserts `runtimeMetrics.ts` never imports `contentTracing` or the diagnostics writer.
 - **Removing the Help checkbox is a visible regression for anyone who used it.** → The Settings switch already exists in the Diagnostics category and is reachable by search; the Settings copy is updated to stop pointing at a Help item that no longer exists.
 
