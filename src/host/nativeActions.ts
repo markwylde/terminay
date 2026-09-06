@@ -83,9 +83,7 @@ export async function readTerminalClipboard(): Promise<string> {
 }
 
 export function canReadTerminalClipboard(): boolean {
-	return (
-		bridge()?.readTerminalClipboard !== undefined || canReadClipboardText()
-	);
+	return bridge()?.readTerminalClipboard !== undefined || canReadClipboardText();
 }
 
 export function canUseDesktopTerminalClipboard(): boolean {
@@ -94,9 +92,7 @@ export function canUseDesktopTerminalClipboard(): boolean {
 
 /** Desktop-only native File lookup for user-initiated terminal drops. Browser
  * clients never receive a local pathname and use their server upload flow. */
-export function resolveDesktopDroppedFilePath(
-	file: unknown,
-): string | undefined {
+export function resolveDesktopDroppedFilePath(file: unknown): string | undefined {
 	if (!(file instanceof File)) return undefined;
 	try {
 		return bridge()?.resolveDroppedFilePath?.(file);
@@ -130,10 +126,7 @@ export async function savePreviewDownload(input: {
 		bytesBase64: base64(input.bytes),
 	});
 	if (response.handled) return;
-	const copy = input.bytes.buffer.slice(
-		input.bytes.byteOffset,
-		input.bytes.byteOffset + input.bytes.byteLength,
-	) as ArrayBuffer;
+	const copy = input.bytes.buffer.slice(input.bytes.byteOffset, input.bytes.byteOffset + input.bytes.byteLength) as ArrayBuffer;
 	const url = URL.createObjectURL(new Blob([copy], { type: input.mimeType }));
 	const anchor = document.createElement('a');
 	anchor.href = url;
@@ -146,23 +139,17 @@ export async function savePreviewDownload(input: {
 }
 
 function safeDownloadFilename(value: string): string {
-	const result = [...value]
-		.map((character) => {
-			const code = character.codePointAt(0) ?? 0;
-			return code < 0x20 || /[\\/:*?"<>|]/u.test(character) ? '_' : character;
-		})
-		.join('')
-		.trim()
-		.slice(0, 128);
+	const result = [...value].map((character) => {
+		const code = character.codePointAt(0) ?? 0;
+		return code < 0x20 || /[\\/:*?"<>|]/u.test(character) ? '_' : character;
+	}).join('').trim().slice(0, 128);
 	return result.length > 0 ? result : 'download';
 }
 
 function base64(bytes: Uint8Array): string {
 	let output = '';
 	for (let offset = 0; offset < bytes.length; offset += 0x8000)
-		output += String.fromCharCode(
-			...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)),
-		);
+		output += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
 	return window.btoa(output);
 }
 
