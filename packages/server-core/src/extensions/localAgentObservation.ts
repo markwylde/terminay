@@ -1443,9 +1443,14 @@ async function linuxProcessFacts(
 }
 
 async function linuxBootTime(): Promise<number | undefined> {
-	const raw = await readFile('/proc/stat', 'utf8').catch(() => '');
-	const seconds = Number(/^btime\s+(\d+)/mu.exec(raw)?.[1]);
-	return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : undefined;
+	// `/proc/uptime` plus `Date.now()` shares the test's wall clock. `/proc/stat`
+	// `btime` is the host's boot unix time and drifts from the container clock
+	// (NTP, suspend, a different namespace), which made a freshly spawned
+	// process look more than a second older than the spawn.
+	const raw = await readFile('/proc/uptime', 'utf8').catch(() => '');
+	const uptime = Number(raw.trim().split(/\s+/u)[0]);
+	if (!Number.isFinite(uptime) || uptime < 0) return undefined;
+	return Date.now() / 1000 - uptime;
 }
 
 async function linuxStartTime(
