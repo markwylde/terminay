@@ -1,10 +1,16 @@
-import { scopeAllows } from '../auth.js';
 import type { AuthScope, JsonValue } from '@terminay/protocol';
-import type { BinaryQueryHandlerResult, QueryHandler, QueryRequest } from '../types.js';
-import { FileServiceError } from './types.js';
+import { scopeAllows } from '../auth.js';
+import type {
+	BinaryQueryHandlerResult,
+	QueryHandler,
+	QueryRequest,
+} from '../types.js';
 import { DocumentationCatalog } from './documentationCatalog.js';
+import { FileServiceError } from './types.js';
 
-export const DOCUMENTATION_OPERATIONS = Object.freeze({ catalog: 'docs.catalog' } as const);
+export const DOCUMENTATION_OPERATIONS = Object.freeze({
+	catalog: 'docs.catalog',
+} as const);
 export interface DocumentationProjectContext {
 	readonly projectId: string;
 	readonly catalog: DocumentationCatalog;
@@ -12,7 +18,10 @@ export interface DocumentationProjectContext {
 export interface DocumentationCatalogAdapterOptions {
 	readonly serverId: string;
 	readonly projects: ReadonlyMap<string, DocumentationProjectContext>;
-	readonly authorizeProject?: (context: DocumentationAuthorization, projectId: string) => boolean;
+	readonly authorizeProject?: (
+		context: DocumentationAuthorization,
+		projectId: string,
+	) => boolean;
 	readonly observationCapability?: 'watching' | 'unavailable';
 }
 export interface DocumentationAuthorization {
@@ -28,17 +37,25 @@ export class ServerDocumentationCatalogAdapter {
 	operations(): { readonly queries: Readonly<Record<string, QueryHandler>> } {
 		return {
 			queries: {
-				[DOCUMENTATION_OPERATIONS.catalog]: (request) => this.catalogRequest(request),
+				[DOCUMENTATION_OPERATIONS.catalog]: (request) =>
+					this.catalogRequest(request),
 			},
 		};
 	}
 
-	private async catalogRequest(request: QueryRequest): Promise<BinaryQueryHandlerResult> {
+	private async catalogRequest(
+		request: QueryRequest,
+	): Promise<BinaryQueryHandlerResult> {
 		const payload = object(request.envelope.payload);
 		const projectId =
-			typeof payload.projectId === 'string' ? payload.projectId : claimProject(request.context.claims);
+			typeof payload.projectId === 'string'
+				? payload.projectId
+				: claimProject(request.context.claims);
 		if (projectId === undefined)
-			throw new FileServiceError('path_escape', 'documentation project identity is missing');
+			throw new FileServiceError(
+				'path_escape',
+				'documentation project identity is missing',
+			);
 		const claimed = claimProject(request.context.claims);
 		const authorization: DocumentationAuthorization = {
 			serverId: this.options.serverId,
@@ -48,17 +65,34 @@ export class ServerDocumentationCatalogAdapter {
 		};
 		if (
 			!scopeAllows(authorization.scope, 'read') ||
-			(authorization.projectId !== undefined && authorization.projectId !== projectId) ||
+			(authorization.projectId !== undefined &&
+				authorization.projectId !== projectId) ||
 			this.options.authorizeProject?.(authorization, projectId) === false
 		)
-			throw new FileServiceError('path_escape', 'documentation is outside the authorized project');
+			throw new FileServiceError(
+				'path_escape',
+				'documentation is outside the authorized project',
+			);
 		const project = this.options.projects.get(projectId);
 		if (project === undefined || project.projectId !== projectId)
 			throw new FileServiceError('path_escape', 'project is not authorized');
-		const cursor = typeof payload.cursor === 'string' ? payload.cursor : undefined;
-		const knownRevision = typeof payload.knownRevision === 'string' ? payload.knownRevision : undefined;
-		if (cursor !== undefined && (cursor.length === 0 || cursor.length > 4096 || cursor.startsWith('/') || cursor.includes('\\')))
-			throw new FileServiceError('invalid_path', 'documentation catalog cursor is invalid');
+		const cursor =
+			typeof payload.cursor === 'string' ? payload.cursor : undefined;
+		const knownRevision =
+			typeof payload.knownRevision === 'string'
+				? payload.knownRevision
+				: undefined;
+		if (
+			cursor !== undefined &&
+			(cursor.length === 0 ||
+				cursor.length > 4096 ||
+				cursor.startsWith('/') ||
+				cursor.includes('\\'))
+		)
+			throw new FileServiceError(
+				'invalid_path',
+				'documentation catalog cursor is invalid',
+			);
 		const result = await project.catalog.catalog({
 			signal: request.context.signal,
 			...(cursor === undefined ? {} : { cursor }),
@@ -76,8 +110,12 @@ export class ServerDocumentationCatalogAdapter {
 				scannedFiles: result.scannedFiles,
 				partial: result.partial,
 				observationCapability: result.observationCapability,
-				...(result.partialReason === undefined ? {} : { partialReason: result.partialReason }),
-				...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
+				...(result.partialReason === undefined
+					? {}
+					: { partialReason: result.partialReason }),
+				...(result.nextCursor === undefined
+					? {}
+					: { nextCursor: result.nextCursor }),
 			} as JsonValue,
 			body,
 		};

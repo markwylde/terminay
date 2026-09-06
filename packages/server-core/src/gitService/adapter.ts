@@ -8,10 +8,10 @@ import {
 	type GitQuickPushApprovalRequest,
 	type GitQuickPushProposalRequest,
 	type GitRepositoryId,
-	type GitServiceEvent,
-	type GitWorktreePullRequest,
 	GitServiceError,
+	type GitServiceEvent,
 	type GitWorktreeId,
+	type GitWorktreePullRequest,
 } from './types.js';
 
 /** Stable application-protocol operation names for the server Git contract. */
@@ -156,7 +156,9 @@ export class ServerGitAdapter {
 		this.quickPush = options.quickPush;
 		this.actions = options.actions ?? {};
 		this.resolveProjectRoot = options.resolveProjectRoot;
-		this.hostCapabilities = new Set(options.hostCapabilities ?? inferHostCapabilities(this.actions));
+		this.hostCapabilities = new Set(
+			options.hostCapabilities ?? inferHostCapabilities(this.actions),
+		);
 	}
 
 	subscribeEvents(listener: (event: GitServiceEvent) => void): () => void {
@@ -183,16 +185,38 @@ export class ServerGitAdapter {
 		return boundGitQueryResult(result as unknown as JsonValue);
 	}
 
-	async read(request: QueryRequest, operation: 'status' | 'branch' | 'diff'): Promise<JsonValue> {
+	async read(
+		request: QueryRequest,
+		operation: 'status' | 'branch' | 'diff',
+	): Promise<JsonValue> {
 		const payload = objectPayload(request);
 		const authorization = this.authorization(request);
 		this.requireScope(authorization, 'read');
-		const projectId = this.requireProject(authorization, stringValue(payload.projectId));
-		const repositoryId = payload.repositoryId === undefined ? undefined : requiredId(payload.repositoryId, 'repositoryId');
-		const worktreeId = payload.worktreeId === undefined ? undefined : requiredId(payload.worktreeId, 'worktreeId');
-		const path = payload.path === undefined ? undefined : boundedString(payload.path, 'path', 4096);
+		const projectId = this.requireProject(
+			authorization,
+			stringValue(payload.projectId),
+		);
+		const repositoryId =
+			payload.repositoryId === undefined
+				? undefined
+				: requiredId(payload.repositoryId, 'repositoryId');
+		const worktreeId =
+			payload.worktreeId === undefined
+				? undefined
+				: requiredId(payload.worktreeId, 'worktreeId');
+		const path =
+			payload.path === undefined
+				? undefined
+				: boundedString(payload.path, 'path', 4096);
 		await this.ensureProjectBound(projectId);
-		const result = await this.git.readOnly({ operation, projectId, ...(repositoryId === undefined ? {} : { repositoryId }), ...(worktreeId === undefined ? {} : { worktreeId }), ...(path === undefined ? {} : { path }), signal: request.context.signal });
+		const result = await this.git.readOnly({
+			operation,
+			projectId,
+			...(repositoryId === undefined ? {} : { repositoryId }),
+			...(worktreeId === undefined ? {} : { worktreeId }),
+			...(path === undefined ? {} : { path }),
+			signal: request.context.signal,
+		});
 		if (operation === 'diff') return result as unknown as JsonValue;
 		return boundGitQueryResult(result as unknown as JsonValue);
 	}
@@ -206,10 +230,20 @@ export class ServerGitAdapter {
 	}
 
 	openTerminal(request: GitOpenTerminalRequest): Promise<JsonValue> {
-		return this.action('open terminal', this.actions.openTerminal, request, 'nativeWindows');
+		return this.action(
+			'open terminal',
+			this.actions.openTerminal,
+			request,
+			'nativeWindows',
+		);
 	}
 	switchProject(request: GitSwitchProjectRequest): Promise<JsonValue> {
-		return this.action('switch project', this.actions.switchProject, request, 'nativeWindows');
+		return this.action(
+			'switch project',
+			this.actions.switchProject,
+			request,
+			'nativeWindows',
+		);
 	}
 	renamePresentation(
 		request: GitRenamePresentationRequest,
@@ -233,20 +267,35 @@ export class ServerGitAdapter {
 		);
 	}
 	reveal(request: GitRevealRequest): Promise<JsonValue> {
-		return this.action('reveal worktree', this.actions.reveal, request, 'nativeWindows');
+		return this.action(
+			'reveal worktree',
+			this.actions.reveal,
+			request,
+			'nativeWindows',
+		);
 	}
 	copy(request: GitCopyRequest): Promise<JsonValue> {
-		return this.action('copy worktree', this.actions.copy, request, 'clipboard');
+		return this.action(
+			'copy worktree',
+			this.actions.copy,
+			request,
+			'clipboard',
+		);
 	}
 
 	async pull(request: GitPullRequest): Promise<JsonValue> {
 		this.requireScope(request.authorization, 'write');
-		const projectId = this.requireProject(request.authorization, request.projectId);
+		const projectId = this.requireProject(
+			request.authorization,
+			request.projectId,
+		);
 		const result = await this.git.pullWorktree({
 			projectId,
 			repositoryId: request.repositoryId,
 			worktreeId: request.worktreeId,
-			...(request.expectedHead === undefined ? {} : { expectedHead: request.expectedHead }),
+			...(request.expectedHead === undefined
+				? {}
+				: { expectedHead: request.expectedHead }),
 			...(request.signal === undefined ? {} : { signal: request.signal }),
 		} satisfies GitWorktreePullRequest);
 		return result as unknown as JsonValue;
@@ -272,13 +321,20 @@ export class ServerGitAdapter {
 
 	async move(request: GitMoveRequest): Promise<JsonValue> {
 		this.requireScope(request.authorization, 'write');
-		const projectId = this.requireProject(request.authorization, request.projectId);
-		return await this.git.moveWorktree({
-			projectId, repositoryId: request.repositoryId, worktreeId: request.worktreeId,
+		const projectId = this.requireProject(
+			request.authorization,
+			request.projectId,
+		);
+		return (await this.git.moveWorktree({
+			projectId,
+			repositoryId: request.repositoryId,
+			worktreeId: request.worktreeId,
 			name: request.name,
-			...(request.expectedHead === undefined ? {} : { expectedHead: request.expectedHead }),
+			...(request.expectedHead === undefined
+				? {}
+				: { expectedHead: request.expectedHead }),
 			...(request.signal === undefined ? {} : { signal: request.signal }),
-		}) as unknown as JsonValue;
+		})) as unknown as JsonValue;
 	}
 
 	async proposeQuickPush(
@@ -382,7 +438,8 @@ export class ServerGitAdapter {
 					this.reveal(this.refActionRequest(request, 'reveal')),
 				[GIT_OPERATIONS.copy]: (request) =>
 					this.copy(this.refActionRequest(request, 'copy')),
-				[GIT_OPERATIONS.pull]: (request) => this.pull(this.pullRequest(request)),
+				[GIT_OPERATIONS.pull]: (request) =>
+					this.pull(this.pullRequest(request)),
 				[GIT_OPERATIONS.removeWorktree]: (request) =>
 					this.remove(this.removeRequest(request)),
 				[GIT_OPERATIONS.moveWorktree]: (request) =>
@@ -397,7 +454,9 @@ export class ServerGitAdapter {
 		};
 	}
 
-	private commandResult(value: JsonValue | Promise<JsonValue>): Promise<{ readonly result: JsonValue }> {
+	private commandResult(
+		value: JsonValue | Promise<JsonValue>,
+	): Promise<{ readonly result: JsonValue }> {
 		return Promise.resolve(value).then((result) => ({ result }));
 	}
 
@@ -410,7 +469,12 @@ export class ServerGitAdapter {
 		this.requireScope(request.authorization, 'write');
 		this.requireProject(request.authorization, request.projectId);
 		if (capability !== undefined && !this.hostCapabilities.has(capability))
-			return Promise.reject(new GitServiceError('invalid-operation', `${label} requires unavailable host capability: ${capability}`));
+			return Promise.reject(
+				new GitServiceError(
+					'invalid-operation',
+					`${label} requires unavailable host capability: ${capability}`,
+				),
+			);
 		if (handler === undefined)
 			return Promise.reject(
 				new GitServiceError(
@@ -556,7 +620,12 @@ export class ServerGitAdapter {
 		const payload = objectPayload(request);
 		const authorization = this.authorization(request);
 		const projectId = stringValue(payload.projectId) ?? authorization.projectId;
-		const expectedHead = payload.expectedHead === undefined ? undefined : payload.expectedHead === null ? null : boundedString(payload.expectedHead, 'expectedHead', 256);
+		const expectedHead =
+			payload.expectedHead === undefined
+				? undefined
+				: payload.expectedHead === null
+					? null
+					: boundedString(payload.expectedHead, 'expectedHead', 256);
 		return {
 			authorization,
 			projectId: requiredId(projectId, 'projectId'),
@@ -570,10 +639,29 @@ export class ServerGitAdapter {
 	private moveRequest(request: CommandRequest): GitMoveRequest {
 		const payload = objectPayload(request);
 		const value = this.refActionRequest(request, 'switch');
-		const expectedHead = payload.expectedHead === undefined ? undefined : payload.expectedHead === null ? null : boundedString(payload.expectedHead, 'expectedHead', 256);
+		const expectedHead =
+			payload.expectedHead === undefined
+				? undefined
+				: payload.expectedHead === null
+					? null
+					: boundedString(payload.expectedHead, 'expectedHead', 256);
 		const name = boundedString(payload.name, 'name', 255);
-		if (name === '.' || name === '..' || name.trim() !== name || /[/\\]/u.test(name)) throw new GitServiceError('invalid-project', 'worktree directory name is invalid');
-		return { ...value, name, ...(expectedHead === undefined ? {} : { expectedHead }), signal: request.context.signal };
+		if (
+			name === '.' ||
+			name === '..' ||
+			name.trim() !== name ||
+			/[/\\]/u.test(name)
+		)
+			throw new GitServiceError(
+				'invalid-project',
+				'worktree directory name is invalid',
+			);
+		return {
+			...value,
+			name,
+			...(expectedHead === undefined ? {} : { expectedHead }),
+			signal: request.context.signal,
+		};
 	}
 
 	private quickPushProposalRequest(
@@ -681,9 +769,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function inferHostCapabilities(actions: GitWorktreeActionHandlers): readonly GitHostCapability[] {
+function inferHostCapabilities(
+	actions: GitWorktreeActionHandlers,
+): readonly GitHostCapability[] {
 	const capabilities: GitHostCapability[] = [];
-	if (actions.openTerminal !== undefined || actions.switchProject !== undefined || actions.reveal !== undefined) capabilities.push('nativeWindows');
+	if (
+		actions.openTerminal !== undefined ||
+		actions.switchProject !== undefined ||
+		actions.reveal !== undefined
+	)
+		capabilities.push('nativeWindows');
 	if (actions.copy !== undefined) capabilities.push('clipboard');
 	return capabilities;
 }
