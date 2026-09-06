@@ -1322,18 +1322,17 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 	// pending and Playwright waiting forever for the first window.
 	desktopStartupTimeline.begin('first-paint');
 	try {
-		await embeddedStartupWindow.loadURL(
-			desktopStartupLoadingDocument('first-paint'),
-		);
+		await embeddedStartupWindow.loadURL(desktopStartupLoadingDocument());
 		if (!embeddedStartupWindow.isDestroyed()) embeddedStartupWindow.show();
 	} catch (error) {
 		if (!embeddedStartupWindow.isDestroyed())
 			console.error('[window] startup loading document failed', error);
 	}
 	desktopStartupTimeline.end('first-paint');
-	// This is the only navigation the loading document ever receives. Later
-	// phases reveal their line with an inserted style rule instead.
+	// This is the only navigation the loading document ever receives. Every
+	// phase, including this one, reveals its line with an inserted style rule.
 	startupPhaseWindow = embeddedStartupWindow;
+	revealStartupPhaseLine('first-paint');
 	beginStartupPhase('workspace-restore');
 	const embeddedWorkspace = await openEmbeddedWorkspaceWithRecovery(
 		embeddedStartupWindow,

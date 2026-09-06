@@ -39,7 +39,7 @@ test('diagnostics initialize before Electron readiness, recovery window, and Loc
 		ready,
 	);
 	const startupLoading = main.indexOf(
-		"desktopStartupLoadingDocument('first-paint')",
+		'loadURL(desktopStartupLoadingDocument())',
 		recoveryWindow,
 	);
 	const workspace = main.indexOf(
@@ -63,13 +63,12 @@ test('diagnostics initialize before Electron readiness, recovery window, and Loc
 	assert.match(main, /crashReporter,/u);
 	assert.match(
 		main,
-		/await embeddedStartupWindow\.loadURL\(\s*desktopStartupLoadingDocument\('first-paint'\),?\s*\)/u,
+		/await embeddedStartupWindow\.loadURL\(desktopStartupLoadingDocument\(\)\)/u,
 	);
 	// The loading document is navigated exactly once. Any second navigation
 	// would destroy the renderer's execution context mid-startup.
 	assert.equal(
-		main.split('loadURL(desktopStartupLoadingDocument').length - 1 +
-			main.split('loadURL(\n\t\t\tdesktopStartupLoadingDocument').length - 1,
+		main.split('loadURL(desktopStartupLoadingDocument').length - 1,
 		1,
 	);
 });
