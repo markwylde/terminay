@@ -53,7 +53,9 @@ let verbose = readVerboseDefault();
 
 function readVerboseDefault(): boolean {
 	const value = globalThis.process?.env?.TERMINAY_DEBUG_STREAM;
-	return value !== undefined && value !== '' && value !== '0' && value !== 'false';
+	return (
+		value !== undefined && value !== '' && value !== '0' && value !== 'false'
+	);
 }
 
 /** True when per-chunk records are wanted. Guard hot paths on this rather than
@@ -80,7 +82,8 @@ export function recordStreamDiagnostic(
 		detail,
 	};
 	history.push(record);
-	if (history.length > HISTORY_LIMIT) history.splice(0, history.length - HISTORY_LIMIT);
+	if (history.length > HISTORY_LIMIT)
+		history.splice(0, history.length - HISTORY_LIMIT);
 	// Under `TERMINAY_DEBUG_STREAM` the host process log is the fastest place to
 	// watch a freeze happen, so records go there as well as into the ring.
 	if (verbose) console.debug('[terminay-stream]', scope, event, detail);
@@ -104,7 +107,9 @@ export function recordVerboseStreamDiagnostic(
 	recordStreamDiagnostic(scope, event, detail());
 }
 
-export function onStreamDiagnostic(listener: StreamDiagnosticListener): () => void {
+export function onStreamDiagnostic(
+	listener: StreamDiagnosticListener,
+): () => void {
 	listeners.add(listener);
 	return () => {
 		listeners.delete(listener);
@@ -138,7 +143,9 @@ export function streamDiagnosticSnapshot(): StreamDiagnosticSnapshot {
 		try {
 			state[name] = provider();
 		} catch (error) {
-			state[name] = { error: error instanceof Error ? error.message : String(error) };
+			state[name] = {
+				error: error instanceof Error ? error.message : String(error),
+			};
 		}
 	}
 	return { at: Date.now(), verbose, state, history: [...history] };

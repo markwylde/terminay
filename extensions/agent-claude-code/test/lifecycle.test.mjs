@@ -15,7 +15,11 @@ function collect(records) {
 			},
 		},
 	);
-	const session = { publish, binding: { providerSessionId: sessionId } };
+	const session = {
+		publish,
+		binding: { providerSessionId: sessionId },
+		journal: { role: 'root' },
+	};
 	const map = createClaudeRecordMapper();
 	for (const record of records) map(record, session);
 	return events;
@@ -262,4 +266,68 @@ test('a system reminder is never projected as a prompt label', () => {
 		events.some((event) => event.kind === 'turnStarted'),
 		false,
 	);
+});
+
+/** Collects what a child journal's records publish for one child id. */
+function collectChild(childId, records) {
+	const events = [];
+	const publish = new Proxy(
+		{},
+		{
+			get: (_t, kind) => (event) => {
+				events.push({ kind, ...event });
+			},
+		},
+	);
+	const map = createClaudeRecordMapper();
+	for (const record of records) {
+		map(record, {
+			publish,
+			binding: { providerSessionId: sessionId },
+			journal: { role: 'child', childId },
+		});
+	}
+	return events;
+}
+
+test("a child journal drives that child's own state, never the root's", () => {
+	const events = collectChild('a94c3c95918d29dc8', [
+		{
+			isSidechain: true,
+			agentId: 'a94c3c95918d29dc8',
+			type: 'assistant',
+			message: { role: 'assistant', model: 'claude-opus-5', content: [] },
+		},
+		{ isSidechain: true, type: 'system', subtype: 'turn_duration' },
+	]);
+	assert.deepEqual(
+		events.map((event) => event.kind),
+		['subagentStarted', 'subagentDone'],
+	);
+	assert.equal(events[0].subagentId, 'a94c3c95918d29dc8');
+	assert.equal(events[1].subagentId, 'a94c3c95918d29dc8');
+	assert.equal(
+		events.some((event) => event.kind === 'done'),
+		false,
+		'a child completing never completes its root',
+	);
+});
+
+test('a child journal never projects prompts or assistant text', () => {
+	const events = collectChild('child-1', [
+		{
+			isSidechain: true,
+			type: 'user',
+			message: { role: 'user', content: 'secret child prompt' },
+		},
+		{
+			isSidechain: true,
+			type: 'assistant',
+			message: {
+				role: 'assistant',
+				content: [{ type: 'text', text: 'secret child reasoning' }],
+			},
+		},
+	]);
+	assert.equal(JSON.stringify(events).includes('secret'), false);
 });

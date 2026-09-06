@@ -148,6 +148,9 @@ function withState(
 ): AgentStatusEntry {
 	return {
 		...entry,
+		// Explicit provider records supersede an inference; only `wait.started`
+		// reinstates the flag, through `changes`.
+		inferred: false,
 		...changes,
 		promptText: event.promptText ?? entry.promptText,
 		model: event.model ?? entry.model,
@@ -259,6 +262,7 @@ function applyLifecycleEvent(
 		case 'wait.started':
 			return withState(entry, event.state, event, {
 				active: true,
+				inferred: event.inferred === true,
 				waitingReason: event.reason,
 			});
 		case 'wait.finished':
@@ -458,8 +462,7 @@ export function selectLiveAgentStatusesForTerminal(
 	const endedRootEntryIds = new Set(
 		entries
 			.filter(
-				(entry) =>
-					entry.kind === 'root' && isEndedAgentStatusEntry(entry),
+				(entry) => entry.kind === 'root' && isEndedAgentStatusEntry(entry),
 			)
 			.map((entry) => entry.entryId),
 	);

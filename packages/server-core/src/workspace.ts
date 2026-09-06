@@ -9,7 +9,11 @@ const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 export type PanelType = 'terminal' | 'file' | 'folder';
 export type TerminalStatus = 'running' | 'exited' | 'interrupted';
 export type SplitDirection = 'horizontal' | 'vertical';
-export type ProjectRootOrigin = 'explicit' | 'server-default' | 'environment-default' | 'legacy-unverified';
+export type ProjectRootOrigin =
+	| 'explicit'
+	| 'server-default'
+	| 'environment-default'
+	| 'legacy-unverified';
 
 export interface PanelBase {
 	readonly id: ProtocolId;
@@ -61,7 +65,11 @@ export interface WorkspaceView {
 	readonly projectIds: readonly ProtocolId[];
 	readonly activeProjectId?: ProtocolId;
 }
-export type WorkspaceSidebarPanelId = 'explorer' | 'agents' | 'git' | 'documentation';
+export type WorkspaceSidebarPanelId =
+	| 'explorer'
+	| 'agents'
+	| 'git'
+	| 'documentation';
 export interface WorkspaceSidebarState {
 	readonly fileExplorerWidth: number;
 	readonly isFileExplorerOpen: boolean;
@@ -78,7 +86,12 @@ export interface WorkspaceSidebarState {
 	readonly sidebarPanelOrder: readonly WorkspaceSidebarPanelId[];
 }
 export type WorkspaceSidebarPatch = Partial<WorkspaceSidebarState>;
-const SIDEBAR_PANEL_IDS: readonly WorkspaceSidebarPanelId[] = ['explorer', 'agents', 'git', 'documentation'];
+const SIDEBAR_PANEL_IDS: readonly WorkspaceSidebarPanelId[] = [
+	'explorer',
+	'agents',
+	'git',
+	'documentation',
+];
 
 export function defaultWorkspaceSidebarState(): WorkspaceSidebarState {
 	return {
@@ -184,7 +197,9 @@ export function canonicalizeWorkspaceState(
 			name: project.name,
 			...(project.color === undefined ? {} : { color: project.color }),
 			...(project.icon === undefined ? {} : { icon: project.icon }),
-			...(project.defaultShellProfileId === undefined ? {} : { defaultShellProfileId: project.defaultShellProfileId }),
+			...(project.defaultShellProfileId === undefined
+				? {}
+				: { defaultShellProfileId: project.defaultShellProfileId }),
 			sidebar: normalizeWorkspaceSidebarState(project.sidebar),
 			panelIds: [...project.panelIds],
 			...(project.activePanelId === undefined
@@ -202,8 +217,12 @@ export function canonicalizeWorkspaceState(
 			...(panel.title === undefined ? {} : { title: panel.title }),
 			...(panel.emoji === undefined ? {} : { emoji: panel.emoji }),
 			...(panel.color === undefined ? {} : { color: panel.color }),
-			...(panel.inheritsProjectColor === undefined ? {} : { inheritsProjectColor: panel.inheritsProjectColor }),
-			...(panel.activityIndicatorsEnabled === undefined ? {} : { activityIndicatorsEnabled: panel.activityIndicatorsEnabled }),
+			...(panel.inheritsProjectColor === undefined
+				? {}
+				: { inheritsProjectColor: panel.inheritsProjectColor }),
+			...(panel.activityIndicatorsEnabled === undefined
+				? {}
+				: { activityIndicatorsEnabled: panel.activityIndicatorsEnabled }),
 			createdAt: panel.createdAt,
 		};
 		if (panel.type === 'terminal')
@@ -219,7 +238,8 @@ export function canonicalizeWorkspaceState(
 				type: 'file',
 				path: panel.path,
 				...(panel.mode === undefined ? {} : { mode: panel.mode }),
-				...(panel.presentation === 'documentation' || panel.presentation === 'file-viewer'
+				...(panel.presentation === 'documentation' ||
+				panel.presentation === 'file-viewer'
 					? { presentation: panel.presentation }
 					: {}),
 			};
@@ -242,7 +262,9 @@ export function canonicalizeWorkspaceState(
 			status: session.status,
 			createdAt: session.createdAt,
 			outputPosition: session.outputPosition,
-			...(session.launch === undefined ? {} : { launch: structuredClone(session.launch) }),
+			...(session.launch === undefined
+				? {}
+				: { launch: structuredClone(session.launch) }),
 			...(session.exitCode === undefined ? {} : { exitCode: session.exitCode }),
 			...(session.interruptedAt === undefined
 				? {}
@@ -319,15 +341,30 @@ export type WorkspaceCommand =
 			readonly icon?: string;
 			readonly sidebar?: WorkspaceSidebarState;
 	  }
-	| { readonly type: 'project.sidebar.update'; readonly projectId: ProtocolId; readonly sidebar: WorkspaceSidebarPatch }
+	| {
+			readonly type: 'project.sidebar.update';
+			readonly projectId: ProtocolId;
+			readonly sidebar: WorkspaceSidebarPatch;
+	  }
 	| {
 			readonly type: 'project.root.update';
 			readonly projectId: ProtocolId;
 			readonly root: string;
 	  }
-	| { readonly type: 'project.shellProfile.set'; readonly projectId: ProtocolId; readonly profileId: ProtocolId }
-	| { readonly type: 'project.shellProfile.clear'; readonly projectId: ProtocolId }
-	| { readonly type: 'project.shellProfile.replace'; readonly fromProfileId: ProtocolId; readonly toProfileId?: ProtocolId }
+	| {
+			readonly type: 'project.shellProfile.set';
+			readonly projectId: ProtocolId;
+			readonly profileId: ProtocolId;
+	  }
+	| {
+			readonly type: 'project.shellProfile.clear';
+			readonly projectId: ProtocolId;
+	  }
+	| {
+			readonly type: 'project.shellProfile.replace';
+			readonly fromProfileId: ProtocolId;
+			readonly toProfileId?: ProtocolId;
+	  }
 	| { readonly type: 'project.activate'; readonly projectId: ProtocolId }
 	| {
 			readonly type: 'project.rename';
@@ -505,12 +542,19 @@ function patchWorkspaceSidebarState(
 		'sidebarDocumentationHeight',
 		'sidebarPanelOrder',
 	]);
-	if (Object.keys(input).length === 0 || Object.keys(input).some((key) => !allowed.has(key as keyof WorkspaceSidebarState)))
+	if (
+		Object.keys(input).length === 0 ||
+		Object.keys(input).some(
+			(key) => !allowed.has(key as keyof WorkspaceSidebarState),
+		)
+	)
 		throw new TypeError('sidebar patch is invalid');
 	return normalizeWorkspaceSidebarState({ ...current, ...input });
 }
 
-function validateWorkspaceSidebarState(value: unknown): asserts value is WorkspaceSidebarState {
+function validateWorkspaceSidebarState(
+	value: unknown,
+): asserts value is WorkspaceSidebarState {
 	if (typeof value !== 'object' || value === null || Array.isArray(value))
 		throw new TypeError('project sidebar is invalid');
 	const sidebar = value as Record<string, unknown>;
@@ -530,15 +574,40 @@ function validateWorkspaceSidebarState(value: unknown): asserts value is Workspa
 		'sidebarGitHeight',
 		'sidebarDocumentationHeight',
 	];
-	if (dimensions.some((key) => !Number.isSafeInteger(sidebar[key]) || (sidebar[key] as number) < 30 || (sidebar[key] as number) > 2_000))
+	if (
+		dimensions.some(
+			(key) =>
+				!Number.isSafeInteger(sidebar[key]) ||
+				(sidebar[key] as number) < 30 ||
+				(sidebar[key] as number) > 2_000,
+		)
+	)
 		throw new TypeError('project sidebar dimensions are invalid');
-	for (const key of ['expandedAgentEntryIds', 'expandedDocumentationFolderIds'] as const) {
+	for (const key of [
+		'expandedAgentEntryIds',
+		'expandedDocumentationFolderIds',
+	] as const) {
 		const entries = sidebar[key];
-		if (!Array.isArray(entries) || entries.length > 256 || entries.some((entry) => typeof entry !== 'string' || entry.length === 0 || entry.length > 4_096 || entry.includes('\0')))
+		if (
+			!Array.isArray(entries) ||
+			entries.length > 256 ||
+			entries.some(
+				(entry) =>
+					typeof entry !== 'string' ||
+					entry.length === 0 ||
+					entry.length > 4_096 ||
+					entry.includes('\0'),
+			)
+		)
 			throw new TypeError('project sidebar navigation state is invalid');
 	}
 	const order = sidebar.sidebarPanelOrder;
-	if (!Array.isArray(order) || order.length !== SIDEBAR_PANEL_IDS.length || new Set(order).size !== SIDEBAR_PANEL_IDS.length || SIDEBAR_PANEL_IDS.some((id) => !order.includes(id)))
+	if (
+		!Array.isArray(order) ||
+		order.length !== SIDEBAR_PANEL_IDS.length ||
+		new Set(order).size !== SIDEBAR_PANEL_IDS.length ||
+		SIDEBAR_PANEL_IDS.some((id) => !order.includes(id))
+	)
 		throw new TypeError('project sidebar panel order is invalid');
 }
 
@@ -582,11 +651,20 @@ export function validateWorkspace(state: WorkspaceState): void {
 		)
 			throw new TypeError('project crosses server/view boundary');
 		assertId(project.projectEnvironmentId, 'projectEnvironmentId');
-		if (!Number.isSafeInteger(project.environmentRevision) || project.environmentRevision < 1)
+		if (
+			!Number.isSafeInteger(project.environmentRevision) ||
+			project.environmentRevision < 1
+		)
 			throw new TypeError('project environment revision is invalid');
-		if (project.rootOrigin !== 'explicit' && project.rootOrigin !== 'server-default' && project.rootOrigin !== 'environment-default' && project.rootOrigin !== 'legacy-unverified')
+		if (
+			project.rootOrigin !== 'explicit' &&
+			project.rootOrigin !== 'server-default' &&
+			project.rootOrigin !== 'environment-default' &&
+			project.rootOrigin !== 'legacy-unverified'
+		)
 			throw new TypeError('project root origin is invalid');
-		if (project.defaultShellProfileId !== undefined) assertId(project.defaultShellProfileId, 'defaultShellProfileId');
+		if (project.defaultShellProfileId !== undefined)
+			assertId(project.defaultShellProfileId, 'defaultShellProfileId');
 		validateWorkspaceSidebarState(project.sidebar);
 		if (
 			project.panelIds.some(
@@ -622,8 +700,14 @@ export function validateWorkspace(state: WorkspaceState): void {
 		)
 			throw new TypeError('invalid terminal session');
 		const project = state.projects[session.projectId];
-		if (project === undefined || session.projectEnvironmentId !== project.projectEnvironmentId || session.environmentRevision !== project.environmentRevision)
-			throw new TypeError('terminal session environment does not match project');
+		if (
+			project === undefined ||
+			session.projectEnvironmentId !== project.projectEnvironmentId ||
+			session.environmentRevision !== project.environmentRevision
+		)
+			throw new TypeError(
+				'terminal session environment does not match project',
+			);
 		if (session.launch !== undefined) validateLaunchMetadata(session.launch);
 	}
 }
@@ -642,18 +726,56 @@ export function migrateWorkspaceState(
 		return canonicalizeWorkspaceState(value as unknown as WorkspaceState);
 	}
 	const legacySchemaVersion = value.schemaVersion;
-	if (legacySchemaVersion === 1 || legacySchemaVersion === 2 || legacySchemaVersion === 3) {
-		const projects = Object.fromEntries(Object.entries((value.projects ?? {}) as Record<string, WorkspaceProject>).map(([id, project]) => [id, {
-			...project,
-			rootOrigin: legacySchemaVersion === 1 ? 'legacy-unverified' as const : project.rootOrigin,
-			...(legacySchemaVersion < 3 ? { projectEnvironmentId: THIS_SERVER_ENVIRONMENT_ID, environmentRevision: 1 } : {}),
-			sidebar: normalizeWorkspaceSidebarState((project as unknown as { sidebar?: unknown }).sidebar),
-		}]));
-		const terminalSessions = Object.fromEntries(Object.entries((value.terminalSessions ?? {}) as Record<string, TerminalSession>).map(([id, session]) => [id, {
-			...session,
-			...(legacySchemaVersion < 3 ? { projectEnvironmentId: THIS_SERVER_ENVIRONMENT_ID, environmentRevision: 1 } : {}),
-		}]));
-		return canonicalizeWorkspaceState({ ...(value as unknown as WorkspaceState), schemaVersion: WORKSPACE_SCHEMA_VERSION, projects, terminalSessions });
+	if (
+		legacySchemaVersion === 1 ||
+		legacySchemaVersion === 2 ||
+		legacySchemaVersion === 3
+	) {
+		const projects = Object.fromEntries(
+			Object.entries(
+				(value.projects ?? {}) as Record<string, WorkspaceProject>,
+			).map(([id, project]) => [
+				id,
+				{
+					...project,
+					rootOrigin:
+						legacySchemaVersion === 1
+							? ('legacy-unverified' as const)
+							: project.rootOrigin,
+					...(legacySchemaVersion < 3
+						? {
+								projectEnvironmentId: THIS_SERVER_ENVIRONMENT_ID,
+								environmentRevision: 1,
+							}
+						: {}),
+					sidebar: normalizeWorkspaceSidebarState(
+						(project as unknown as { sidebar?: unknown }).sidebar,
+					),
+				},
+			]),
+		);
+		const terminalSessions = Object.fromEntries(
+			Object.entries(
+				(value.terminalSessions ?? {}) as Record<string, TerminalSession>,
+			).map(([id, session]) => [
+				id,
+				{
+					...session,
+					...(legacySchemaVersion < 3
+						? {
+								projectEnvironmentId: THIS_SERVER_ENVIRONMENT_ID,
+								environmentRevision: 1,
+							}
+						: {}),
+				},
+			]),
+		);
+		return canonicalizeWorkspaceState({
+			...(value as unknown as WorkspaceState),
+			schemaVersion: WORKSPACE_SCHEMA_VERSION,
+			projects,
+			terminalSessions,
+		});
 	}
 	if (value.schemaVersion !== 0)
 		throw new Error('unsupported workspace schema');
@@ -806,9 +928,7 @@ export class WorkspaceStore {
 	snapshot(): WorkspaceSnapshot {
 		return { state: this.state, events: [] };
 	}
-	delta(
-		afterRevision: number,
-	):
+	delta(afterRevision: number):
 		| WorkspaceSnapshot
 		| {
 				readonly state: WorkspaceState;
@@ -951,7 +1071,8 @@ export class WorkspaceStore {
 			next.projects[project.id] = withActivePanel(
 				project,
 				panelIds,
-				project.activePanelId !== undefined && panelIds.includes(project.activePanelId)
+				project.activePanelId !== undefined &&
+					panelIds.includes(project.activePanelId)
 					? project.activePanelId
 					: panelIds[0],
 			);
@@ -1027,7 +1148,8 @@ export class WorkspaceStore {
 					id: command.projectId,
 					serverId: state.serverId,
 					viewId: command.viewId,
-					projectEnvironmentId: command.projectEnvironmentId ?? THIS_SERVER_ENVIRONMENT_ID,
+					projectEnvironmentId:
+						command.projectEnvironmentId ?? THIS_SERVER_ENVIRONMENT_ID,
 					environmentRevision: command.environmentRevision ?? 1,
 					root: boundedPath(command.root),
 					rootOrigin: command.rootOrigin ?? 'explicit',
@@ -1075,7 +1197,10 @@ export class WorkspaceStore {
 			case 'project.shellProfile.set': {
 				assertId(command.profileId, 'profileId');
 				const project = requireProject(state, command.projectId);
-				state.projects[command.projectId] = { ...project, defaultShellProfileId: command.profileId };
+				state.projects[command.projectId] = {
+					...project,
+					defaultShellProfileId: command.profileId,
+				};
 				changed.push(command.projectId);
 				break;
 			}
@@ -1088,13 +1213,19 @@ export class WorkspaceStore {
 			}
 			case 'project.shellProfile.replace': {
 				assertId(command.fromProfileId, 'fromProfileId');
-				if (command.toProfileId !== undefined) assertId(command.toProfileId, 'toProfileId');
+				if (command.toProfileId !== undefined)
+					assertId(command.toProfileId, 'toProfileId');
 				for (const [projectId, project] of Object.entries(state.projects)) {
 					if (project.defaultShellProfileId !== command.fromProfileId) continue;
 					if (command.toProfileId === undefined) {
-						const { defaultShellProfileId: _removed, ...withoutDefault } = project;
+						const { defaultShellProfileId: _removed, ...withoutDefault } =
+							project;
 						state.projects[projectId] = withoutDefault;
-					} else state.projects[projectId] = { ...project, defaultShellProfileId: command.toProfileId };
+					} else
+						state.projects[projectId] = {
+							...project,
+							defaultShellProfileId: command.toProfileId,
+						};
 					changed.push(projectId);
 				}
 				break;
@@ -1135,11 +1266,15 @@ export class WorkspaceStore {
 				const project = requireProject(state, command.projectId);
 				const from = requireView(state, project.viewId);
 				const to = requireView(state, command.targetViewId);
-				const sourceProjectIds = from.projectIds.filter((id) => id !== project.id);
+				const sourceProjectIds = from.projectIds.filter(
+					(id) => id !== project.id,
+				);
 				state.views[project.viewId] = withActiveProject(
 					from,
 					sourceProjectIds,
-					from.activeProjectId === project.id ? sourceProjectIds[0] : from.activeProjectId,
+					from.activeProjectId === project.id
+						? sourceProjectIds[0]
+						: from.activeProjectId,
 				);
 				const ids = to.projectIds.filter((id) => id !== project.id);
 				ids.splice(indexAt(command.index, ids.length), 0, project.id);
@@ -1176,7 +1311,9 @@ export class WorkspaceStore {
 				state.views[view.id] = withActiveProject(
 					view,
 					remainingProjectIds,
-					view.activeProjectId === project.id ? remainingProjectIds[0] : view.activeProjectId,
+					view.activeProjectId === project.id
+						? remainingProjectIds[0]
+						: view.activeProjectId,
 				);
 				changed.push(project.id, view.id);
 				break;
@@ -1275,7 +1412,10 @@ export class WorkspaceStore {
 				const panel = requirePanel(state, command.panelId);
 				const from = requireProject(state, panel.projectId);
 				const to = requireProject(state, command.targetProjectId);
-				if (from.projectEnvironmentId !== to.projectEnvironmentId || from.environmentRevision !== to.environmentRevision)
+				if (
+					from.projectEnvironmentId !== to.projectEnvironmentId ||
+					from.environmentRevision !== to.environmentRevision
+				)
 					throw new Error('panel move crosses project environment boundary');
 				const sourceIds = from.panelIds.filter((id) => id !== panel.id);
 				const targetIds = to.panelIds.filter((id) => id !== panel.id);
@@ -1319,7 +1459,9 @@ export class WorkspaceStore {
 				state.projects[project.id] = withActivePanel(
 					project,
 					panelIds,
-					project.activePanelId === panel.id ? panelIds[0] : project.activePanelId,
+					project.activePanelId === panel.id
+						? panelIds[0]
+						: project.activePanelId,
 				);
 				changed.push(panel.id, project.id);
 				break;
@@ -1338,7 +1480,9 @@ export class WorkspaceStore {
 					status: 'running',
 					createdAt: command.createdAt ?? Date.now(),
 					outputPosition: 0,
-					...(command.launch === undefined ? {} : { launch: validateLaunchMetadata(command.launch) }),
+					...(command.launch === undefined
+						? {}
+						: { launch: validateLaunchMetadata(command.launch) }),
 				};
 				changed.push(command.sessionId, project.id);
 				break;
@@ -1361,7 +1505,9 @@ export class WorkspaceStore {
 					status: 'running',
 					createdAt,
 					outputPosition: 0,
-					...(command.launch === undefined ? {} : { launch: validateLaunchMetadata(command.launch) }),
+					...(command.launch === undefined
+						? {}
+						: { launch: validateLaunchMetadata(command.launch) }),
 				};
 				const panel: TerminalPanel = {
 					id: command.panelId,
@@ -1456,7 +1602,9 @@ function boundedPresentation(value: string, name: string): string {
 		throw new Error(`${name} is invalid`);
 	return value;
 }
-function validateLaunchMetadata(value: TerminalLaunchMetadata): TerminalLaunchMetadata {
+function validateLaunchMetadata(
+	value: TerminalLaunchMetadata,
+): TerminalLaunchMetadata {
 	assertId(value.profileId, 'profileId');
 	for (const [name, revision] of [
 		['profileRevision', value.profileRevision],
@@ -1473,8 +1621,12 @@ function validateLaunchMetadata(value: TerminalLaunchMetadata): TerminalLaunchMe
 		targetSummary: boundedName(value.targetSummary),
 		workspaceRevision: value.workspaceRevision,
 		settingsRevision: value.settingsRevision,
-		...(value.icon === undefined ? {} : { icon: boundedPresentation(value.icon, 'launch icon') }),
-		...(value.color === undefined ? {} : { color: boundedPresentation(value.color, 'launch color') }),
+		...(value.icon === undefined
+			? {}
+			: { icon: boundedPresentation(value.icon, 'launch icon') }),
+		...(value.color === undefined
+			? {}
+			: { color: boundedPresentation(value.color, 'launch color') }),
 	};
 }
 function requireView(state: WorkspaceState, id: ProtocolId): WorkspaceView {

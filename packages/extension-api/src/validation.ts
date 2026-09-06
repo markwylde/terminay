@@ -2854,7 +2854,14 @@ export function validateAgentLifecycleEvent(
 		case 'wait.started':
 			closed(
 				value,
-				new Set([...common, ...targeted, 'waitId', 'state', 'reason']),
+				new Set([
+					...common,
+					...targeted,
+					'waitId',
+					'state',
+					'reason',
+					'inferred',
+				]),
 				'$',
 				out,
 			);
@@ -2873,6 +2880,12 @@ export function validateAgentLifecycleEvent(
 				out,
 				false,
 			);
+			if (value.inferred !== undefined && typeof value.inferred !== 'boolean')
+				out.push({
+					path: '$.inferred',
+					code: 'invalid_type',
+					message: 'inferred must be a boolean',
+				});
 			break;
 		case 'wait.finished':
 			closed(value, new Set([...common, ...targeted, 'waitId']), '$', out);

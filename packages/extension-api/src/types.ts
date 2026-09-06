@@ -1160,6 +1160,12 @@ export type AgentLifecycleEvent =
 			waitId: string;
 			state: AgentWaitState;
 			reason?: string;
+			/**
+			 * True when the state was derived from the provider's journal rather
+			 * than read from an explicit record. Surfaces may label it; it never
+			 * changes how the state itself is reduced.
+			 */
+			inferred?: boolean;
 			occurredAt?: string;
 	  }
 	| {

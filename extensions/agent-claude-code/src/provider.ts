@@ -1,5 +1,7 @@
 import type {
 	AgentBindingFingerprint,
+	AgentChildJournalSource,
+	AgentDirectoryHandle,
 	AgentFileHandle,
 	AgentForegroundProcess,
 	AgentObservationResult,
@@ -12,6 +14,7 @@ import {
 	safeAgentString,
 } from '@terminay/extension-api';
 import { createClaudeRecordMapper } from './mapping.js';
+import { withQuiescence } from './quiescence.js';
 import {
 	claudeProjectDirectoryPath,
 	claudeProjectJournalPath,
@@ -83,19 +86,136 @@ export const claudeCodeProvider = defineAgentProvider({
 				? { metadata: { providerVersion: providerVersion(header)! } }
 				: {}),
 		});
+		const subagents = await subagentDirectory(terminal, candidate, sessionId);
+		const children = await findChildSources(terminal, subagents);
 		return jsonlSession({
 			binding,
-			source: terminal.observation.files.follow(candidate.journal, {
-				signal: terminal.signal,
-			}),
+			source: withQuiescence(
+				terminal.observation.files.follow(candidate.journal, {
+					signal: terminal.signal,
+				}),
+				{ terminal, providerExecutable: 'claude' },
+			),
 			mapRecord: createClaudeRecordMapper(),
+			...(children.length === 0 ? {} : { childSources: children }),
+			...(subagents === undefined
+				? {}
+				: {
+						childSourceDiscovery: discoverChildSources(
+							terminal,
+							subagents,
+							new Set(children.map((child) => child.childId)),
+						),
+					}),
 		});
 	},
 });
 
+/** Bounded listing limits for one root session's own children. */
+const SUBAGENT_DIRECTORY = {
+	extensions: ['.jsonl'],
+	maxDepth: 0,
+	maxEntries: 64,
+	maxBytes: 256 * 1024 * 1024,
+} as const;
+const SUBAGENT_JOURNAL = /^agent-([A-Za-z0-9_-]{1,128})\.jsonl$/u;
+
+/**
+ * A root session's children live in its own `<session-uuid>/subagents/`
+ * directory below the same project directory. That containment is the only
+ * parentage evidence used: a journal elsewhere in the tree is never a child.
+ */
+async function subagentDirectory(
+	terminal: AgentTerminalContext,
+	candidate: JournalCandidate,
+	sessionId: string,
+): Promise<AgentDirectoryHandle | undefined> {
+	if (!candidate.projectDirectory) return undefined;
+	try {
+		return await terminal.observation.files.resolveHomeDirectory(
+			`${candidate.projectDirectory}/${sessionId}/subagents`,
+			{ beneath: { homeRelative: CLAUDE_PROJECTS }, signal: terminal.signal },
+		);
+	} catch {
+		return undefined;
+	}
+}
+
+/** Reads a child's native id from its own file name inside that directory. */
+function childIdOf(relativePath: string): string | undefined {
+	return SUBAGENT_JOURNAL.exec(relativePath)?.[1];
+}
+
+async function findChildSources(
+	terminal: AgentTerminalContext,
+	subagents: AgentDirectoryHandle | undefined,
+): Promise<readonly AgentChildJournalSource[]> {
+	if (!subagents) return [];
+	try {
+		const listing = await terminal.observation.files.listDirectory(subagents, {
+			...SUBAGENT_DIRECTORY,
+			signal: terminal.signal,
+		});
+		const children: AgentChildJournalSource[] = [];
+		for (const entry of listing.entries) {
+			const childId = childIdOf(entry.relativePath);
+			if (!childId) continue;
+			children.push({
+				childId,
+				journal: entry.handle,
+				source: terminal.observation.files.follow(entry.handle, {
+					signal: terminal.signal,
+				}),
+			});
+		}
+		return children;
+	} catch {
+		// Child discovery is bounded enrichment; a missing directory must not
+		// make an already proven root unavailable.
+		return [];
+	}
+}
+
+/** Admits children created after the root binds, never re-admitting one. */
+async function* discoverChildSources(
+	terminal: AgentTerminalContext,
+	subagents: AgentDirectoryHandle,
+	seen: Set<string>,
+): AsyncGenerator<AgentChildJournalSource> {
+	try {
+		const watcher = await terminal.observation.files.watchDirectory(subagents, {
+			...SUBAGENT_DIRECTORY,
+			signal: terminal.signal,
+		});
+		try {
+			for await (const listing of watcher) {
+				for (const entry of listing.entries) {
+					if (seen.size >= SUBAGENT_DIRECTORY.maxEntries) return;
+					const childId = childIdOf(entry.relativePath);
+					if (!childId || seen.has(childId)) continue;
+					seen.add(childId);
+					yield {
+						childId,
+						journal: entry.handle,
+						source: terminal.observation.files.follow(entry.handle, {
+							signal: terminal.signal,
+						}),
+					};
+				}
+			}
+		} finally {
+			await watcher.dispose();
+		}
+	} catch {
+		return;
+	}
+}
+
 interface JournalCandidate {
 	readonly journal: AgentFileHandle;
 	readonly fingerprint: AgentBindingFingerprint;
+	/** Home-relative project directory, where the primary rule established one. */
+	readonly projectDirectory?: string;
 }
 
 /**
@@ -165,6 +285,7 @@ async function projectJournalCandidate(
 		if (!active) continue;
 		return {
 			journal: active,
+			projectDirectory: relativePath,
 			fingerprint: {
 				kind: 'process-cwd-project-journal-written-after-process-start',
 				process: process.handle,
