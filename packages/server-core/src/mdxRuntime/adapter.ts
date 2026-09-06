@@ -1,13 +1,13 @@
-import { scopeAllows } from '../auth.js';
 import type { AuthScope, JsonValue } from '@terminay/protocol';
+import { scopeAllows } from '../auth.js';
+import { FileServiceError } from '../fileService/types.js';
 import type {
 	BinaryQueryHandlerResult,
 	CommandHandler,
+	CommandRequest,
 	QueryHandler,
 	QueryRequest,
-	CommandRequest,
 } from '../types.js';
-import { FileServiceError } from '../fileService/types.js';
 import type { MdxRuntime } from './runtime.js';
 
 export const MDX_RUNTIME_OPERATIONS = Object.freeze({

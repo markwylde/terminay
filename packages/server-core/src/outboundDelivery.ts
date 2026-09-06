@@ -28,7 +28,12 @@ interface PendingDelivery {
 	readonly frame: Uint8Array;
 	readonly resolve: () => void;
 	readonly reject: (reason: OutboundDeliveryError) => void;
-	readonly trafficClass: 'control' | 'state' | 'state_resync' | 'terminal' | 'terminal_skip';
+	readonly trafficClass:
+		| 'control'
+		| 'state'
+		| 'state_resync'
+		| 'terminal'
+		| 'terminal_skip';
 	readonly terminalLaneId?: string;
 	/** End of this terminal frame's byte range, used to advance `sentPosition`
 	 * once the transport has actually accepted it. */
@@ -209,8 +214,14 @@ export class OutboundDeliveryPump {
 				DEFAULT_MAX_TERMINAL_UNCONFIRMED_AGE_MS,
 			'maxTerminalUnconfirmedAgeMs',
 		);
-		this.maxStateQueuedBytes = positiveInteger(limits.maxStateQueuedBytes ?? DEFAULT_MAX_STATE_QUEUED_BYTES, 'maxStateQueuedBytes');
-		this.maxStateQueuedFrames = positiveInteger(limits.maxStateQueuedFrames ?? DEFAULT_MAX_STATE_QUEUED_FRAMES, 'maxStateQueuedFrames');
+		this.maxStateQueuedBytes = positiveInteger(
+			limits.maxStateQueuedBytes ?? DEFAULT_MAX_STATE_QUEUED_BYTES,
+			'maxStateQueuedBytes',
+		);
+		this.maxStateQueuedFrames = positiveInteger(
+			limits.maxStateQueuedFrames ?? DEFAULT_MAX_STATE_QUEUED_FRAMES,
+			'maxStateQueuedFrames',
+		);
 		ensureDeliveryProvider();
 		livePumps.add(this);
 	}
@@ -248,10 +259,16 @@ export class OutboundDeliveryPump {
 
 	get snapshot(): OutboundDeliverySnapshot {
 		return {
-			queuedBytes: this.controlQueuedByteCount + this.stateQueuedByteCount + this.terminalQueuedByteCount,
+			queuedBytes:
+				this.controlQueuedByteCount +
+				this.stateQueuedByteCount +
+				this.terminalQueuedByteCount,
 			queuedFrames:
 				this.controlQueue.length +
-				[...this.stateLanes.values()].reduce((sum, lane) => sum + lane.queue.length, 0) +
+				[...this.stateLanes.values()].reduce(
+					(sum, lane) => sum + lane.queue.length,
+					0,
+				) +
 				[...this.terminalLanes.values()].reduce(
 					(sum, lane) => sum + lane.queue.length,
 					0,
@@ -263,16 +280,26 @@ export class OutboundDeliveryPump {
 	 * queue. Pending values with the same key supersede one another. If a
 	 * subscription exceeds its independent bound, one resync marker replaces
 	 * its backlog; this lane can never fail the application connection. */
-	sendState(frame: Uint8Array, admission: StateDeliveryAdmission): Promise<void> {
-		if (this.terminalError !== undefined) return Promise.reject(this.terminalError);
-		if (admission.laneId.length === 0 || admission.key.length === 0) return Promise.reject(new TypeError('state delivery identity is invalid'));
+	sendState(
+		frame: Uint8Array,
+		admission: StateDeliveryAdmission,
+	): Promise<void> {
+		if (this.terminalError !== undefined)
+			return Promise.reject(this.terminalError);
+		if (admission.laneId.length === 0 || admission.key.length === 0)
+			return Promise.reject(
+				new TypeError('state delivery identity is invalid'),
+			);
 		let lane = this.stateLanes.get(admission.laneId);
 		if (lane === undefined) {
 			lane = { queue: [], queuedBytes: 0, resyncPending: false };
 			this.stateLanes.set(admission.laneId, lane);
 		}
 		if (lane.resyncPending) return Promise.resolve();
-		const replaceIndex = lane.queue.findIndex((pending) => pending !== this.activeDelivery && pending.stateKey === admission.key);
+		const replaceIndex = lane.queue.findIndex(
+			(pending) =>
+				pending !== this.activeDelivery && pending.stateKey === admission.key,
+		);
 		if (replaceIndex >= 0) {
 			const replaced = lane.queue[replaceIndex];
 			if (replaced !== undefined) {
@@ -282,14 +309,29 @@ export class OutboundDeliveryPump {
 				replaced.resolve();
 			}
 		}
-		if (lane.queue.length >= this.maxStateQueuedFrames || lane.queuedBytes + frame.byteLength > this.maxStateQueuedBytes || this.stateQueuedByteCount + frame.byteLength > this.maxStateQueuedBytes) {
-			this.congestStateLane(admission.laneId, lane, admission.createResyncFrame);
+		if (
+			lane.queue.length >= this.maxStateQueuedFrames ||
+			lane.queuedBytes + frame.byteLength > this.maxStateQueuedBytes ||
+			this.stateQueuedByteCount + frame.byteLength > this.maxStateQueuedBytes
+		) {
+			this.congestStateLane(
+				admission.laneId,
+				lane,
+				admission.createResyncFrame,
+			);
 			this.start();
 			return Promise.resolve();
 		}
 		const copy = frame.slice();
 		const result = new Promise<void>((resolve, reject) => {
-			lane.queue.push({ frame: copy, resolve, reject, trafficClass: 'state', stateLaneId: admission.laneId, stateKey: admission.key });
+			lane.queue.push({
+				frame: copy,
+				resolve,
+				reject,
+				trafficClass: 'state',
+				stateLaneId: admission.laneId,
+				stateKey: admission.key,
+			});
 			lane.queuedBytes += copy.byteLength;
 			this.stateQueuedByteCount += copy.byteLength;
 		});
@@ -317,7 +359,7 @@ export class OutboundDeliveryPump {
 				frame: copy,
 				resolve,
 				reject,
-				trafficClass: "control",
+				trafficClass: 'control',
 			});
 			this.controlQueuedByteCount += copy.byteLength;
 		});
@@ -342,7 +384,9 @@ export class OutboundDeliveryPump {
 			admission.position < 0 ||
 			admission.nextPosition <= admission.position
 		)
-			return Promise.reject(new TypeError('terminal output position is invalid'));
+			return Promise.reject(
+				new TypeError('terminal output position is invalid'),
+			);
 		let lane = this.terminalLanes.get(admission.laneId);
 		if (lane === undefined) {
 			lane = {
@@ -390,8 +434,7 @@ export class OutboundDeliveryPump {
 			this.start();
 			return Promise.resolve();
 		}
-		if (lane.unconfirmedSince === undefined)
-			lane.unconfirmedSince = this.now();
+		if (lane.unconfirmedSince === undefined) lane.unconfirmedSince = this.now();
 		lane.headPosition = admission.nextPosition;
 		if (
 			lane.queue.length >= this.maxTerminalQueuedFrames ||
@@ -411,7 +454,7 @@ export class OutboundDeliveryPump {
 				frame: copy,
 				resolve,
 				reject,
-				trafficClass: "terminal",
+				trafficClass: 'terminal',
 				terminalLaneId: admission.laneId,
 				nextPosition: admission.nextPosition,
 			});
@@ -432,9 +475,11 @@ export class OutboundDeliveryPump {
 			!Number.isSafeInteger(position) ||
 			position < lane.confirmedPosition ||
 			position > lane.headPosition
-		) return;
+		)
+			return;
 		lane.confirmedPosition = position;
-		lane.unconfirmedSince = position >= lane.headPosition ? undefined : this.now();
+		lane.unconfirmedSince =
+			position >= lane.headPosition ? undefined : this.now();
 		recordVerboseStreamDiagnostic('delivery', 'ack', () => ({
 			connection: this.diagnosticLabel,
 			laneId,
@@ -503,7 +548,11 @@ export class OutboundDeliveryPump {
 					// every other lane alive. Terminal and state lanes stay terminal:
 					// their frames carry stream positions and event revisions, so a
 					// silently dropped frame would desync a client that is never told.
-					if (this.transport.state !== 'open' || pending.trafficClass !== 'control') throw cause;
+					if (
+						this.transport.state !== 'open' ||
+						pending.trafficClass !== 'control'
+					)
+						throw cause;
 					recordStreamDiagnostic('delivery', 'control_frame_rejected', {
 						connection: this.diagnosticLabel,
 						frameBytes: pending.frame.byteLength,
@@ -537,7 +586,9 @@ export class OutboundDeliveryPump {
 			([, lane]) => lane.queue.length > 0,
 		);
 		const control = this.controlQueue[0];
-		const stateLanes = [...this.stateLanes.entries()].filter(([, lane]) => lane.queue.length > 0);
+		const stateLanes = [...this.stateLanes.entries()].filter(
+			([, lane]) => lane.queue.length > 0,
+		);
 		if (
 			control !== undefined &&
 			((lanes.length === 0 && stateLanes.length === 0) ||
@@ -568,13 +619,20 @@ export class OutboundDeliveryPump {
 			this.controlQueuedByteCount -= pending.frame.byteLength;
 			return;
 		}
-		if (pending.trafficClass === 'state' || pending.trafficClass === 'state_resync') {
-			const lane = pending.stateLaneId === undefined ? undefined : this.stateLanes.get(pending.stateLaneId);
+		if (
+			pending.trafficClass === 'state' ||
+			pending.trafficClass === 'state_resync'
+		) {
+			const lane =
+				pending.stateLaneId === undefined
+					? undefined
+					: this.stateLanes.get(pending.stateLaneId);
 			if (lane === undefined || lane.queue[0] !== pending) return;
 			lane.queue.shift();
 			lane.queuedBytes -= pending.frame.byteLength;
 			this.stateQueuedByteCount -= pending.frame.byteLength;
-			if (lane.queue.length === 0) this.stateLanes.delete(pending.stateLaneId as string);
+			if (lane.queue.length === 0)
+				this.stateLanes.delete(pending.stateLaneId as string);
 			return;
 		}
 		const laneId = pending.terminalLaneId;
@@ -603,8 +661,15 @@ export class OutboundDeliveryPump {
 			this.terminalLanes.delete(laneId);
 	}
 
-	private congestStateLane(laneId: string, lane: StateLane, createResyncFrame: () => Uint8Array): void {
-		const retained = this.activeDelivery?.stateLaneId === laneId ? this.activeDelivery : undefined;
+	private congestStateLane(
+		laneId: string,
+		lane: StateLane,
+		createResyncFrame: () => Uint8Array,
+	): void {
+		const retained =
+			this.activeDelivery?.stateLaneId === laneId
+				? this.activeDelivery
+				: undefined;
 		for (const pending of lane.queue.splice(0)) {
 			if (pending === retained) continue;
 			lane.queuedBytes -= pending.frame.byteLength;
@@ -614,7 +679,13 @@ export class OutboundDeliveryPump {
 		if (retained !== undefined) lane.queue.push(retained);
 		const copy = createResyncFrame().slice();
 		if (copy.byteLength > this.maxStateQueuedBytes) return;
-		lane.queue.push({ frame: copy, resolve: () => undefined, reject: () => undefined, trafficClass: 'state_resync', stateLaneId: laneId });
+		lane.queue.push({
+			frame: copy,
+			resolve: () => undefined,
+			reject: () => undefined,
+			trafficClass: 'state_resync',
+			stateLaneId: laneId,
+		});
 		lane.queuedBytes += copy.byteLength;
 		this.stateQueuedByteCount += copy.byteLength;
 		lane.resyncPending = true;
@@ -715,7 +786,8 @@ export class OutboundDeliveryPump {
 		const error = new OutboundDeliveryError(reason);
 		this.terminalError = error;
 		for (const pending of this.controlQueue.splice(0)) pending.reject(error);
-		for (const lane of this.stateLanes.values()) for (const pending of lane.queue.splice(0)) pending.reject(error);
+		for (const lane of this.stateLanes.values())
+			for (const pending of lane.queue.splice(0)) pending.reject(error);
 		this.stateLanes.clear();
 		for (const lane of this.terminalLanes.values())
 			for (const pending of lane.queue.splice(0)) pending.reject(error);

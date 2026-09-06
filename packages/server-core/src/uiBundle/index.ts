@@ -1,1 +1,1 @@
-export * from "@terminay/ui-bundle";
+export * from '@terminay/ui-bundle';

@@ -1,4 +1,8 @@
 import type { AgentRecordContext } from '@terminay/extension-api';
+import { QUIET_RECORD } from './quiescence.js';
+
+const QUIET_RECORD_TYPE = QUIET_RECORD.type;
+
 import { safeAgentString } from '@terminay/extension-api';
 
 type JsonObject = Record<string, unknown>;
@@ -59,8 +63,17 @@ function metadata(message: JsonObject): { model?: { id: string } } {
 	return value ? { model: value } : {};
 }
 
+/** Permission modes in which Claude Code never prompts the user. */
+const NON_PROMPTING_MODES = new Set(['bypassPermissions', 'plan']);
+
 interface ClaudeState {
 	started: boolean;
+	/** True between a turn header and that turn's `turn_duration`. */
+	turnOpen: boolean;
+	/** True while the entry is held `waiting` by the quiescence inference. */
+	inferredWaiting: boolean;
+	/** The session's most recent recorded permission mode. */
+	permissionMode?: string;
 	/** True once the session's first turn header has been consumed. */
 	headerSeen: boolean;
 	/** True once an `ai-title` has named the root, so a prompt no longer relabels it. */
@@ -90,6 +103,8 @@ export function createClaudeRecordMapper(): (
 		started: false,
 		headerSeen: false,
 		titled: false,
+		turnOpen: false,
+		inferredWaiting: false,
 		children: new Set(),
 	};
 	return (record, session) => mapClaudeRecord(record, session, state);
@@ -100,10 +115,16 @@ export function mapClaudeRecord(
 	session: AgentRecordContext,
 	state?: ClaudeState,
 ): void {
+	if (session.journal?.role === 'child') {
+		mapChildRecord(record, session, session.journal.childId);
+		return;
+	}
 	const scope = state ?? {
 		started: false,
 		headerSeen: false,
 		titled: false,
+		turnOpen: false,
+		inferredWaiting: false,
 		children: new Set<string>(),
 	};
 	const envelope = object(record);
@@ -112,6 +133,39 @@ export function mapClaudeRecord(
 	const publisher = session.publish;
 	const type = typeof envelope.type === 'string' ? envelope.type : undefined;
 	if (type === undefined) return;
+
+	if (type === QUIET_RECORD_TYPE) {
+		// Silence is only evidence of a prompt inside an open turn, and only in a
+		// mode that can prompt at all. A bypassing session never asks.
+		if (!scope.turnOpen || scope.inferredWaiting) return;
+		if (
+			scope.permissionMode !== undefined &&
+			NON_PROMPTING_MODES.has(scope.permissionMode)
+		)
+			return;
+		scope.inferredWaiting = true;
+		publisher.waitStarted({
+			waitId: `inferred-wait:${session.binding.providerSessionId}`,
+			state: 'waiting',
+			reason: 'input-request-inferred',
+			inferred: true,
+		});
+		return;
+	}
+	// Any record the provider actually wrote answers an inferred wait.
+	if (scope.inferredWaiting) {
+		scope.inferredWaiting = false;
+		publisher.waitFinished({
+			waitId: `inferred-wait:${session.binding.providerSessionId}`,
+		});
+	}
+
+	// The recorded permission mode decides whether this session can prompt at
+	// all, so it is tracked before any early return in the header handling.
+	if (type === 'permission-mode') {
+		const mode = bounded(envelope.permissionMode, 64);
+		if (mode !== undefined) scope.permissionMode = mode;
+	}
 
 	// The header block is preceded by `last-prompt` and `ai-title` in the real
 	// journal, so the session starts on whichever recognized record arrives
@@ -172,7 +226,10 @@ export function mapClaudeRecord(
 		const promptText = userText(message);
 		if (promptText === undefined) return;
 		const turnId = id(envelope.promptId, 'user', envelope.uuid);
-		if (turnId) publisher.turnStarted({ turnId, promptText });
+		if (turnId) {
+			scope.turnOpen = true;
+			publisher.turnStarted({ turnId, promptText });
+		}
 		return;
 	}
 	if (type === 'assistant' && message.role === 'assistant') {
@@ -191,7 +248,10 @@ export function mapClaudeRecord(
 		const turnId = id(envelope.uuid, 'assistant', envelope.requestId);
 		const modelMetadata = metadata(message);
 		if (modelMetadata.model) publisher.metadataChanged(modelMetadata);
-		if (turnId) publisher.turnStarted({ turnId });
+		if (turnId) {
+			scope.turnOpen = true;
+			publisher.turnStarted({ turnId });
+		}
 		for (const item of content(message).filter(
 			(candidate) => candidate.type === 'tool_use',
 		)) {
@@ -219,8 +279,42 @@ export function mapClaudeRecord(
 			publisher.done({ outcome: 'success' });
 		return;
 	}
-	if (type === 'system' && envelope.subtype === 'turn_duration')
+	if (type === 'system' && envelope.subtype === 'turn_duration') {
+		scope.turnOpen = false;
 		publisher.done({ outcome: 'success' });
+	}
+}
+
+/**
+ * A child's own journal carries its lifecycle. Its records are sidechains of
+ * the root, so only bounded lifecycle facts are read from them: a child works
+ * while its journal is appended and completes when its turn ends. Child
+ * prompts, assistant text, reasoning and tool payloads are never projected.
+ */
+function mapChildRecord(
+	record: unknown,
+	session: AgentRecordContext,
+	childId: string,
+): void {
+	const envelope = object(record);
+	if (!envelope) return;
+	const message = object(envelope.message) ?? {};
+	const type = typeof envelope.type === 'string' ? envelope.type : undefined;
+	if (type === 'assistant' && message.role === 'assistant') {
+		if (message.stop_reason === 'end_turn') {
+			session.publish.subagentDone({ subagentId: childId, outcome: 'success' });
+			return;
+		}
+		session.publish.subagentStarted({
+			subagentId: childId,
+			parentAgentId: session.binding.providerSessionId,
+			...metadata(message),
+		});
+		return;
+	}
+	if (type === 'system' && envelope.subtype === 'turn_duration') {
+		session.publish.subagentDone({ subagentId: childId, outcome: 'success' });
+	}
 }
 
 /**
