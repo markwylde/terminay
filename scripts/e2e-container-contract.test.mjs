@@ -149,3 +149,28 @@ test("trusted Gitea builds use the signed internal Turborepo cache without bakin
   assert.match(dockerfile, /--mount=type=secret,id=turbo_signature_key,required=false/u);
   assert.match(dockerfile, /npm run build:app/u);
 });
+
+/**
+ * The image installs dependencies from a hand-written list of workspace
+ * manifests. A workspace missing from that list is not installed, so its
+ * extension is absent from every containerised end-to-end run while the suite
+ * still reports green. `agent-opencode` and `shared-ui` were both missing.
+ */
+test("the E2E image copies a manifest for every workspace", async () => {
+  const { readdir } = await import("node:fs/promises");
+  const dockerfile = await text("Dockerfile.e2e");
+  const packageJson = JSON.parse(await text("package.json"));
+  const directories = [];
+  for (const pattern of packageJson.workspaces) {
+    assert.ok(pattern.endsWith("/*"), `unsupported workspace pattern ${pattern}`);
+    const parent = pattern.slice(0, -2);
+    for (const entry of await readdir(new URL(`${parent}/`, root), { withFileTypes: true })) {
+      if (entry.isDirectory()) directories.push(`${parent}/${entry.name}`);
+    }
+  }
+  assert.ok(directories.length > 0, "no workspaces were discovered");
+  const missing = directories.filter(
+    (directory) => !dockerfile.includes(`COPY --chown=node:node ${directory}/package.json ${directory}/package.json`),
+  );
+  assert.deepEqual(missing, [], `Dockerfile.e2e must copy each workspace manifest; missing: ${missing.join(", ")}`);
+});
