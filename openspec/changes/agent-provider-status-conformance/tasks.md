@@ -27,8 +27,8 @@
 
 ## 4. Grok and OpenCode fault inference
 
-- [ ] 4.1 Derive `blocked` for Grok from a fault that halts a turn with no `turn_ended`, keeping an error `turn_ended` as `done` with an error outcome. Verified by mapping tests over both fixtures.
-- [ ] 4.2 Enumerate Grok subagents from the bound root's `subagents/` metadata directory, admitting each named child session live and refusing any sessions-tree session that metadata does not name. Verified by a test admitting a child created after the root binds and rejecting an unrelated session.
+- [x] 4.1 Derive `blocked` for Grok from a fault that halts a turn with no `turn_ended`, keeping an error `turn_ended` as `done` with an error outcome. Verified by mapping tests over both fixtures.
+- [x] 4.2 Enumerate Grok subagents from the bound root's `subagents/` metadata directory, admitting each named child session live and refusing any sessions-tree session that metadata does not name. Verified by a test admitting a child created after the root binds and rejecting an unrelated session.
 - [ ] 4.3 Follow each Grok child's own `subagent_progress` and `subagent_finished` records for its state, keeping the root `working` while any child works. Verified by a mapping test asserting independent child states and an unchanged root.
 - [ ] 4.4 Re-measure Grok's subagent layout against the installed CLI before implementing, capturing a real `subagents/meta.json` and a real `subagent_progress`/`subagent_finished` pair as fixtures. Verified by the fixtures being taken from a recorded live session rather than authored by hand.
 - [ ] 4.5 Derive `blocked` for OpenCode from a recorded error with no completion event following, under the same rule. Verified by a mapping test over the fixture.
