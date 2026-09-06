@@ -52,6 +52,13 @@ seen. "Skipped" is not "passed".
 - [ ] 8.2 Bind each terminal to the journal its own process is writing. Verified by 8.1 passing without weakening the existing ambiguity rules, and by the rest of the Claude Code suite still passing.
 - [ ] 8.3 Check the same class of defect in Codex, Grok, OpenCode, Cursor and omp: does any of them select among candidates by timestamp rather than by process identity? Verified by a per-provider note here, and a failing test for each one that does.
 
+## 8b. Containerised real-CLI runs
+
+- [x] 8b.1 Give every agent extension a Dockerfile that installs its CLI at `@latest` and runs its own conformance suite. **DONE.** `CLI_REVISION` defeats Docker's layer cache so each run resolves `@latest` afresh. Verified by contract tests (5 pass) covering: every agent extension has one; none pins a version; each names its own workspace in `CMD` (the generated Grok image ran Claude Code's suite until that test caught it); every extension has a runner case; the runner mounts no host directory.
+- [x] 8b.2 Add `scripts/run-agent-conformance-container.sh`, which loads `.env`, forces that provider's enable flag, and passes only API keys. Verified by a real Grok run.
+- [x] 8b.3 Install `procps` and `lsof` in the images. **Found by running it:** the slim base has no `ps`, so the harness's process probe returned an empty tree and no CLI was ever seen below the shell — `observe: no grok process below the shell yet`, with the CLI plainly running and answering.
+- [ ] 8b.4 Get each provider's containerised run green. **Grok: detect, title and first-turn-done pass in the container against the real CLI with XAI_API_KEY.** It then stops at `subagents` with `state=waiting`, so a gesture prompts for permission in a clean home that did not prompt in a developer's. Verified per provider by the recorded last step reached.
+
 ## 9. Closeout
 
 - [ ] 9.1 Run every agent extension's unit suite. Verified by the pass/fail/skip counts for each recorded here, with skips named rather than counted as passes.
