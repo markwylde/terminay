@@ -1,40 +1,19 @@
 import { ChevronDown } from 'lucide-react';
 import type { CSSProperties, RefObject } from 'react';
 import { AgentStatusIndicator } from '../components/AgentStatusIndicator';
-import type { TerminalActivityState } from '../components/TerminalTab';
-import type { AgentState } from '../types/agentStatus';
 import { activityCountDigits, formatActivityCount } from './activityCountBadge';
+import {
+	type TerminalActivityOverviewItem,
+	type TerminalActivityOverviewState,
+	terminalOverviewStateToAgentState,
+} from './activityStates';
 
-export type TerminalPresentationActivityState = Extract<
-	TerminalActivityState,
-	'recent' | 'unviewed' | 'attention'
->;
-
-export type TerminalActivityOverviewState =
-	| TerminalPresentationActivityState
-	| Exclude<AgentState, 'idle'>;
-
-export type TerminalActivityOverviewItem = {
-	color: string;
-	emoji: string;
-	panelId: string;
-	projectEmoji: string;
-	projectId: string;
-	projectTitle: string;
-	sessionId: string;
-	state: TerminalActivityOverviewState;
-	isAgentStatus: boolean;
-	title: string;
-};
-
-export function terminalOverviewStateToAgentState(
-	state: TerminalActivityOverviewState,
-): Exclude<AgentState, 'idle'> {
-	if (state === 'recent') return 'working';
-	if (state === 'unviewed') return 'done';
-	if (state === 'attention') return 'blocked';
-	return state;
-}
+export type {
+	TerminalActivityOverviewItem,
+	TerminalActivityOverviewState,
+	TerminalPresentationActivityState,
+} from './activityStates';
+export { terminalOverviewStateToAgentState } from './activityStates';
 
 export function buildTerminalActivityOverview(
 	items: TerminalActivityOverviewItem[],

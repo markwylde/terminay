@@ -77,6 +77,80 @@ export function forgetActiveSession(projectId: string): void {
 	writeAll(all);
 }
 
+/**
+ * Whether this device was last showing the Home dashboard rather than a
+ * project.
+ *
+ * The selected view is this device's business in exactly the way the selected
+ * terminal is: two devices attached to one workspace can sit on Home and on a
+ * project without either dragging the other. It is scoped per workspace view so
+ * two windows onto the same server keep their own answer, and it is a hint like
+ * every other value in this module — a device that cannot read it, or that
+ * reconnects to a workspace where Home cannot be shown, simply selects a
+ * project.
+ */
+const HOME_SELECTION_STORAGE_KEY = 'terminay.view.home-selected.v1';
+
+function homeSelectionKey(serverId: string, viewId: string): string {
+	return `${serverId}:${viewId}`;
+}
+
+function readHomeSelections(): Record<string, true> {
+	try {
+		const raw = globalThis.localStorage?.getItem(HOME_SELECTION_STORAGE_KEY);
+		if (raw === null || raw === undefined) return {};
+		const parsed: unknown = JSON.parse(raw);
+		if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
+			return {};
+		return Object.fromEntries(
+			Object.entries(parsed)
+				.filter((entry) => entry[1] === true)
+				.map((entry) => [entry[0], true as const]),
+		);
+	} catch {
+		return {};
+	}
+}
+
+function writeHomeSelections(value: Record<string, true>): void {
+	try {
+		const entries = Object.entries(value).slice(-MAX_REMEMBERED_PROJECTS);
+		globalThis.localStorage?.setItem(
+			HOME_SELECTION_STORAGE_KEY,
+			JSON.stringify(Object.fromEntries(entries)),
+		);
+	} catch {
+		/* A device that cannot remember still works; it just starts on a project. */
+	}
+}
+
+export function rememberHomeSelected(
+	serverId: string,
+	viewId: string | null,
+	selected: boolean,
+): void {
+	if (serverId.length === 0 || viewId === null || viewId.length === 0) return;
+	const key = homeSelectionKey(serverId, viewId);
+	const all = readHomeSelections();
+	if (selected) {
+		if (all[key] === true) return;
+		all[key] = true;
+	} else {
+		if (!(key in all)) return;
+		delete all[key];
+	}
+	writeHomeSelections(all);
+}
+
+export function recallHomeSelected(
+	serverId: string,
+	viewId: string | null,
+): boolean {
+	if (serverId.length === 0 || viewId === null || viewId.length === 0)
+		return false;
+	return readHomeSelections()[homeSelectionKey(serverId, viewId)] === true;
+}
+
 export interface AdoptedTerminalActivation {
 	/** True when this device asked for the terminal: a tab dragged into this
 	 * project, or a terminal this device created. False when it merely appeared
