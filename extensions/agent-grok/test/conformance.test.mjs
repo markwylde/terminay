@@ -1,23 +1,28 @@
 import test from 'node:test';
 import { conformanceGate, runConformance } from '../../../tests/agent-conformance/index.mjs';
-import { copyFileSync, existsSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import extension from '../dist/index.js';
 
 /**
  * Grok honours `permission_mode` from its config file over the command-line
  * flag: with `always-approve` configured, a write was resolved `allow` in 1ms
- * on record. The run therefore gets its own GROK_HOME carrying only the
- * developer's credentials and trust decisions, with prompting configured,
- * so nothing in the developer's home is read for permissions or changed.
+ * on record. The run therefore gets its own GROK_HOME with prompting
+ * configured, so nothing in the developer's home is read or changed.
+ *
+ * The home carries no credential. Grok resolves a credential in the order
+ * per-model key, then a `grok login` session token, then `XAI_API_KEY` — so an
+ * empty home falls through to the key, which is the only way these runs
+ * authenticate. A developer's session token is never copied in and never used:
+ * a run must be reproducible in a container, and must not spend a real login.
  */
 function isolatedGrokHome() {
-	const source = process.env.GROK_HOME?.trim() || join(homedir(), '.grok');
+	if (!process.env.XAI_API_KEY?.trim())
+		throw new Error(
+			'XAI_API_KEY is required: Grok conformance authenticates by API key, never by a copied login session',
+		);
 	const home = mkdtempSync(join(tmpdir(), 'terminay-conformance-grok-home-'));
-	for (const name of ['auth.json', 'trusted_folders.toml', 'version.json', 'models_cache.json']) {
-		if (existsSync(join(source, name))) copyFileSync(join(source, name), join(home, name));
-	}
 	writeFileSync(
 		join(home, 'config.toml'),
 		'[ui]\npermission_mode = "default"\n\n[privacy]\nprivacy_banner_acked = "2026-08-29T12:33:17Z"\n',
