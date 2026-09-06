@@ -39,7 +39,7 @@ test('diagnostics initialize before Electron readiness, recovery window, and Loc
 		ready,
 	);
 	const startupLoading = main.indexOf(
-		'loadURL(desktopStartupLoadingDocument())',
+		'loadURL(\n\t\t\tdesktopStartupLoadingDocument(firstPaintLabel),\n\t\t)',
 		recoveryWindow,
 	);
 	const workspace = main.indexOf(
@@ -61,14 +61,56 @@ test('diagnostics initialize before Electron readiness, recovery window, and Loc
 			diagnosticsStart,
 	);
 	assert.match(main, /crashReporter,/u);
+	// The first paint is awaited; only later phase repaints are fire-and-forget,
+	// so a phase is never delayed by the paint that names it.
 	assert.match(
 		main,
-		/await embeddedStartupWindow\.loadURL\(desktopStartupLoadingDocument\(\)\)/u,
+		/await embeddedStartupWindow\.loadURL\(\s*desktopStartupLoadingDocument\(firstPaintLabel\),?\s*\)/u,
 	);
 	assert.doesNotMatch(
 		main,
-		/void embeddedStartupWindow[\s\S]{0,80}loadURL\(desktopStartupLoadingDocument\(\)\)/u,
+		/void embeddedStartupWindow[\s\S]{0,80}loadURL\(desktopStartupLoadingDocument\(/u,
 	);
+});
+
+test('startup phase repaints are bounded, in-flight guarded, and stop at handoff', () => {
+	// A repaint must never be awaited on the startup path.
+	assert.match(
+		main,
+		/startupPhasePaintInFlight = true;\s*void window\s*\.loadURL\(desktopStartupLoadingDocument\(label\)\)/u,
+	);
+	// A failed repaint leaves the previous loading state painted.
+	assert.match(main, /\.catch\(\(\) => \{[\s\S]{0,120}\}\)\s*\.finally\(/u);
+	// The handoff and the bootstrap-failure path both stop painting.
+	assert.match(
+		main,
+		/stopStartupPhasePainting\(\);\s*await launchDeferredCanonicalWindow/u,
+	);
+	assert.match(
+		main,
+		/desktopStartupTimeline\.fail\([^)]*\);\s*stopStartupPhasePainting\(\);/u,
+	);
+});
+
+test('the startup timeline never becomes a diagnostics artifact', async () => {
+	const timeline = await readFile(
+		new URL('../electron/diagnostics/startupTimeline.ts', import.meta.url),
+		'utf8',
+	);
+	for (const forbidden of [
+		'node:fs',
+		'diagnostics/service',
+		'./service',
+		'record(',
+		'writeFile',
+		'app.getPath',
+	]) {
+		assert.ok(
+			!timeline.includes(forbidden),
+			`startupTimeline.ts must not reference ${forbidden}`,
+		);
+	}
+	assert.doesNotMatch(timeline, /^import /mu);
 });
 
 test('the pre-server Desktop loading document is self-contained and branded', () => {
