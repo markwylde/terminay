@@ -316,3 +316,98 @@ test('the adoption controller reads the remembered session once, not per adoptio
     'and the restored selection is spent so it cannot pull focus back later',
   )
 })
+
+/**
+ * Which view a device is showing is that device's business in exactly the way
+ * the selected terminal is. A device that was on the dashboard comes back to
+ * the dashboard; one that cannot remember comes back to a project without
+ * complaining about it.
+ */
+test('a device that was showing Home comes back to Home', async () => {
+  const { module } = await loadModule()
+  globalThis.localStorage = fakeStorage()
+  try {
+    assert.equal(module.recallHomeSelected('server-a', 'view-1'), false)
+    module.rememberHomeSelected('server-a', 'view-1', true)
+    assert.equal(module.recallHomeSelected('server-a', 'view-1'), true)
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('Home is remembered per server and per workspace view', async () => {
+  const { module } = await loadModule()
+  globalThis.localStorage = fakeStorage()
+  try {
+    module.rememberHomeSelected('server-a', 'view-1', true)
+    assert.equal(module.recallHomeSelected('server-a', 'view-2'), false)
+    assert.equal(module.recallHomeSelected('server-b', 'view-1'), false)
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('selecting a project forgets Home', async () => {
+  const { module } = await loadModule()
+  globalThis.localStorage = fakeStorage()
+  try {
+    module.rememberHomeSelected('server-a', 'view-1', true)
+    module.rememberHomeSelected('server-a', 'view-1', false)
+    assert.equal(module.recallHomeSelected('server-a', 'view-1'), false)
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('an unrestorable remembered value falls back to a project', async () => {
+  const { module } = await loadModule()
+  globalThis.localStorage = fakeStorage({
+    'terminay.view.home-selected.v1': 'not json at all',
+  })
+  try {
+    assert.equal(module.recallHomeSelected('server-a', 'view-1'), false)
+  } finally {
+    delete globalThis.localStorage
+  }
+  globalThis.localStorage = fakeStorage({
+    'terminay.view.home-selected.v1': JSON.stringify({ 'server-a:view-1': 'yes' }),
+  })
+  try {
+    assert.equal(module.recallHomeSelected('server-a', 'view-1'), false)
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('a device with no view bound has no Home to remember', async () => {
+  const { module } = await loadModule()
+  globalThis.localStorage = fakeStorage()
+  try {
+    module.rememberHomeSelected('server-a', null, true)
+    assert.equal(globalThis.localStorage.size, 0)
+    assert.equal(module.recallHomeSelected('server-a', null), false)
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('storage that throws leaves the device on a project rather than failing', async () => {
+  const { module } = await loadModule()
+  globalThis.localStorage = {
+    getItem() { throw new Error('storage disabled') },
+    setItem() { throw new Error('storage disabled') },
+  }
+  try {
+    assert.doesNotThrow(() => module.rememberHomeSelected('server-a', 'view-1', true))
+    assert.equal(module.recallHomeSelected('server-a', 'view-1'), false)
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('a device with no storage at all still works', async () => {
+  const { module } = await loadModule()
+  delete globalThis.localStorage
+  assert.doesNotThrow(() => module.rememberHomeSelected('server-a', 'view-1', true))
+  assert.equal(module.recallHomeSelected('server-a', 'view-1'), false)
+})
