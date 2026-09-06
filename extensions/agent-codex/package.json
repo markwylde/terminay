@@ -42,7 +42,7 @@
     "test:ci": "node --test test/*.test.mjs",
     "test:compat": "npm run compile && node --test test/compatibility.test.mjs",
     "test:packed": "npm run compile && node --test test/packed.test.mjs",
-    "test:real-cli": "npm run compile && node test/real-cli-smoke.mjs"
+    "test:conformance": "npm run compile && node --test test/conformance.test.mjs"
   },
   "peerDependencies": {
     "@terminay/extension-api": "^1.2.0"
@@ -55,7 +55,8 @@
   "devDependencies": {
     "@terminay/extension-api": "^1.2.0",
     "@types/node": "^24.0.0",
-    "typescript": "^6.0.0"
+    "typescript": "^6.0.0",
+    "@terminay/agent-conformance": "^0.1.0"
   },
   "terminay": {
     "manifestVersion": 1,
@@ -68,19 +69,41 @@
       "node": ">=24"
     },
     "entrypoint": "dist/index.js",
-    "platforms": ["darwin", "linux"],
-    "permissions": ["agent-observation"],
+    "platforms": [
+      "darwin",
+      "linux"
+    ],
+    "permissions": [
+      "agent-observation"
+    ],
     "contributes": {
-      "agentProviders": [{
-        "id": "com.terminay.agent.codex/cli",
-        "displayName": "Codex",
-        "description": "Codex CLI rollout-journal lifecycle observation.",
-        "icon": "terminal",
-        "processMatchers": [{ "executableName": "codex" }],
-        "mappings": [{ "mappingVersion": "0.1", "providerVersionRange": ">=0" }],
-        "requiredEnvironmentVariables": ["CODEX_HOME"],
-        "requiredEnvironmentCapabilities": ["process-observation", "filesystem-observation", "agent-journal"]
-      }]
+      "agentProviders": [
+        {
+          "id": "com.terminay.agent.codex/cli",
+          "displayName": "Codex",
+          "description": "Codex CLI rollout-journal lifecycle observation.",
+          "icon": "terminal",
+          "processMatchers": [
+            {
+              "executableName": "codex"
+            }
+          ],
+          "mappings": [
+            {
+              "mappingVersion": "0.1",
+              "providerVersionRange": ">=0"
+            }
+          ],
+          "requiredEnvironmentVariables": [
+            "CODEX_HOME"
+          ],
+          "requiredEnvironmentCapabilities": [
+            "process-observation",
+            "filesystem-observation",
+            "agent-journal"
+          ]
+        }
+      ]
     }
   }
 }
