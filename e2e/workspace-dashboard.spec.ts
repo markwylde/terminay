@@ -62,15 +62,17 @@ test.describe('workspace dashboard', () => {
 		});
 		await setProjectRoot(mainWindow, workspace.rootDir);
 
+		const firstProjectId = await activeProjectId(mainWindow);
+		// Read this while the terminal is the visible panel: opening a file panel
+		// detaches the terminal's renderer, leaving nothing in the DOM to read.
+		const firstSessionId = await settledTerminalSessionId(
+			mainWindow.locator('.project-workspace--active .terminal-panel').first(),
+		);
+
 		// A file panel alongside the project's terminal: the dashboard lists both.
 		await openFileExplorer(mainWindow);
 		await fileExplorerItem(mainWindow, 'notes.txt').dblclick();
 		await expect(mainWindow.locator('.file-preview-text')).toBeVisible();
-
-		const firstProjectId = await activeProjectId(mainWindow);
-		const firstSessionId = await settledTerminalSessionId(
-			mainWindow.locator('.project-workspace--active .terminal-panel').first(),
-		);
 		await mainWindow.getByLabel('Create project on This server').click();
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
@@ -98,9 +100,9 @@ test.describe('workspace dashboard', () => {
 			0,
 		);
 
-		// Nothing was closed: going back to the first project finds the same live
-		// session it had before Home, not a replacement.
-		await projectRow(mainWindow, firstProjectId).click();
+		// Nothing was closed: activating the first project's terminal row finds the
+		// same live session it had before Home, not a replacement.
+		await panelRows(mainWindow).first().click();
 		await expect(dashboard(mainWindow)).toHaveCount(0);
 		await expect(mainWindow.locator('.project-tab--active')).toHaveAttribute(
 			'data-project-id',
