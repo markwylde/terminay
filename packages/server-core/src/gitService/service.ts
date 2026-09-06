@@ -835,10 +835,10 @@ export class GitService {
 			};
 		}
 		// The client confirmation explicitly authorizes deleting uncommitted,
-		// untracked, and unmerged contents. Keep identity and HEAD checks above,
-		// then ask Git to carry out that destructive choice.
+		// untracked, and unmerged contents, including a leftover Git lock.
+		// Git requires `--force` twice to remove a locked worktree.
 		const result = await this.runGit(
-			['worktree', 'remove', '--force', '--', selected.path],
+			['worktree', 'remove', '--force', '--force', '--', selected.path],
 			cwd,
 			request.signal,
 		);
@@ -1901,12 +1901,6 @@ function assertRemovableWorktree(
 		throw new GitServiceError(
 			'worktree-bare',
 			'refusing to remove a bare worktree',
-			{ worktreeId: worktree.id },
-		);
-	if (worktree.locked)
-		throw new GitServiceError(
-			'worktree-locked',
-			'refusing to remove a locked worktree',
 			{ worktreeId: worktree.id },
 		);
 	if (worktree.isPrunable) {

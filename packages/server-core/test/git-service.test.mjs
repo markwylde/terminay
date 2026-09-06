@@ -342,6 +342,58 @@ test("GitService moves only a clean reviewed worktree to a safe sibling name", a
   }
 });
 
+test("GitService removes a locked linked worktree including dirty files", async () => {
+  const { GitService, GitServiceError } = await import("../dist/gitService/index.js");
+  const root = await mkdtemp(join(tmpdir(), "terminay-server-git-remove-locked-"));
+  const locked = join(root, "locked");
+  try {
+    await git(["init", "-b", "main"], root);
+    await git(["config", "user.email", "test@example.invalid"], root);
+    await git(["config", "user.name", "Terminay Test"], root);
+    await writeFile(join(root, "file.txt"), "base\n");
+    await git(["add", "file.txt"], root);
+    await git(["commit", "-m", "initial"], root);
+    await git(["worktree", "add", locked, "-b", "locked"], root);
+    await writeFile(join(locked, "untracked.txt"), "discard me\n");
+    await git(["worktree", "lock", locked], root);
+
+    const service = new GitService();
+    const binding = await service.bindProject("project", root);
+    const listing = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId });
+    const selected = listing.worktrees.find((worktree) => worktree.path.endsWith("/locked"));
+    const main = listing.worktrees.find((worktree) => worktree.isMain);
+    assert.ok(selected);
+    assert.ok(main);
+    assert.equal(selected.locked, true);
+    await assert.rejects(
+      () => service.removeWorktree({ projectId: "project", repositoryId: binding.repositoryId, worktreeId: main.id }),
+      (error) => error instanceof GitServiceError && error.code === "worktree-main",
+    );
+    await assert.rejects(
+      () => service.pullWorktree({ projectId: "project", repositoryId: binding.repositoryId, worktreeId: selected.id, expectedHead: selected.head }),
+      (error) => error instanceof GitServiceError && error.code === "worktree-locked",
+    );
+    await assert.rejects(
+      () => service.moveWorktree({ projectId: "project", repositoryId: binding.repositoryId, worktreeId: selected.id, name: "renamed", expectedHead: selected.head }),
+      (error) => error instanceof GitServiceError && error.code === "mutation-failed",
+    );
+
+    const removed = await service.removeWorktree({
+      projectId: "project",
+      repositoryId: binding.repositoryId,
+      worktreeId: selected.id,
+      expectedHead: selected.head,
+    });
+    assert.equal(removed.applied, true);
+    assert.equal(removed.state, "removed");
+    const after = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId });
+    assert.equal(after.worktrees.some((worktree) => worktree.id === selected.id), false);
+    await assert.rejects(() => access(locked));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("GitService serializes concurrent worktree removals for one repository", async () => {
   const { GitService } = await import("../dist/gitService/index.js");
   const root = await mkdtemp(join(tmpdir(), "terminay-server-git-remove-concurrent-"));
