@@ -60,6 +60,8 @@ export interface ThisServerAgentFileStat {
   readonly kind: "file" | "directory" | "other";
   readonly size: number;
   readonly modifiedAt?: string;
+  /** File creation time where the platform records one. */
+  readonly createdAt?: string;
   /** Host-private stable file identity used only to reset a watcher safely. */
   readonly identity?: string;
 }
@@ -324,7 +326,13 @@ export class ThisServerAgentObservationAdapter {
         const relativePath = relative(root.path, canonical);
         if (!safeRelativePath(relativePath)) continue;
         bytes += details.size;
-        entries.push({ handle: { id: this.registerFile(state, canonical).id }, relativePath, size: details.size, ...(safeText(details.modifiedAt, 128) ? { modifiedAt: details.modifiedAt } : {}) });
+        entries.push({
+          handle: { id: this.registerFile(state, canonical).id },
+          relativePath,
+          size: details.size,
+          ...(safeText(details.modifiedAt, 128) ? { modifiedAt: details.modifiedAt } : {}),
+          ...(safeText(details.createdAt, 128) ? { createdAt: details.createdAt } : {}),
+        });
       }
     };
     await visit(root.path, 0); throwIfAborted(signal);
@@ -438,7 +446,12 @@ export class ThisServerAgentObservationAdapter {
     const value = await this.system.stat(file.path, signal);
     if (value === undefined || value.kind !== "file" || !Number.isSafeInteger(value.size) || value.size < 0) return null;
     const modifiedAt = safeText(value.modifiedAt, 128) ? value.modifiedAt : undefined;
-    return { handle: { id: file.id }, kind: "file", size: value.size, ...(modifiedAt === undefined ? {} : { modifiedAt }) };
+    const createdAt = safeText(value.createdAt, 128) ? value.createdAt : undefined;
+    return {
+      handle: { id: file.id }, kind: "file", size: value.size,
+      ...(modifiedAt === undefined ? {} : { modifiedAt }),
+      ...(createdAt === undefined ? {} : { createdAt }),
+    };
   }
 
   private async read(state: TerminalState, payload: JsonValue, signal: AbortSignal): Promise<JsonValue> {
@@ -537,7 +550,7 @@ const nodeSystem: ThisServerAgentObservationSystem = {
   foreground: nodeForeground,
   environment: nodeEnvironment,
   realpath: async (path, signal) => { throwIfAborted(signal); return realpath(path).catch(() => undefined); },
-  stat: async (path, signal) => { throwIfAborted(signal); const value = await stat(path).catch(() => undefined); if (value === undefined) return undefined; return { kind: value.isFile() ? "file" : value.isDirectory() ? "directory" : "other", size: value.size, modifiedAt: Number.isFinite(value.mtimeMs) ? new Date(value.mtimeMs).toISOString() : undefined, identity: fileIdentity(value) }; },
+  stat: async (path, signal) => { throwIfAborted(signal); const value = await stat(path).catch(() => undefined); if (value === undefined) return undefined; return { kind: value.isFile() ? "file" : value.isDirectory() ? "directory" : "other", size: value.size, modifiedAt: Number.isFinite(value.mtimeMs) ? new Date(value.mtimeMs).toISOString() : undefined, createdAt: Number.isFinite(value.birthtimeMs) && value.birthtimeMs > 0 ? new Date(value.birthtimeMs).toISOString() : undefined, identity: fileIdentity(value) }; },
   readDirectory: async (path, signal) => { throwIfAborted(signal); const values = await readdir(path, { withFileTypes: true }).catch(() => undefined); throwIfAborted(signal); return values?.map((entry) => ({ name: entry.name, kind: entry.isFile() ? "file" as const : entry.isDirectory() ? "directory" as const : "other" as const })); },
   read: nodeRead,
 };
