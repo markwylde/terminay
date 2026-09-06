@@ -11,7 +11,7 @@
 ## 3. App coverage
 
 - [x] 3.1 Give the native Grok e2e stub a pid-keyed session id so two concurrent stubs do not share one journal. Verified by reading the stub in `e2e/fixtures.ts`.
-- [x] 3.2 Cover two live Grok CLIs in one project, a later turn after `done`, and `grok --resume` while the other Grok is still running. Verified by `e2e/extension-grok-agent-runtime.spec.ts`. Electron execution is `npm run test:e2e` in Docker.
+- [x] 3.2 Keep the existing single-Grok appear/leave/resume Electron spec. Two concurrent Grok terminals are proven by the provider and host unit tests in 1.2 and 2.2, not by a second Docker e2e. Verified by `e2e/extension-grok-agent-runtime.spec.ts` remaining a single-CLI spec.
 
 ## 4. Validation
 

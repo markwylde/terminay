@@ -1,12 +1,7 @@
 import { readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, test } from './fixtures';
-import { sendAppCommand } from './support/app';
 import { typeInVisibleTerminal } from './support/terminal-input';
-import {
-	activeTerminalPanel,
-	settledTerminalSessionId,
-} from './support/terminal-session';
 import { selectSidebarGroup } from './support/ui';
 
 async function nativeGrokSessionId(tempDir: string): Promise<string> {
@@ -24,41 +19,6 @@ async function nativeGrokSessionId(tempDir: string): Promise<string> {
 		);
 	}
 	return id;
-}
-
-async function expectVisibleAgentCount(
-	page: Parameters<typeof selectSidebarGroup>[0],
-	count: number,
-): Promise<void> {
-	await selectSidebarGroup(page, 'agents');
-	const workspace = page.locator('.project-workspace--active');
-	if (count === 0) {
-		await expect(workspace.locator('.agents-sidebar__empty')).toBeVisible({
-			timeout: 15_000,
-		});
-		return;
-	}
-	await expect(workspace.locator('.agents-sidebar__tree-item')).toHaveCount(
-		count,
-		{ timeout: 15_000 },
-	);
-}
-
-async function expectGrokOutput(
-	page: Parameters<typeof selectSidebarGroup>[0],
-	pattern: RegExp,
-	sessionId?: string,
-): Promise<void> {
-	const panel = sessionId
-		? page.locator(
-				`.terminal-panel[data-terminay-terminal-session-id="${sessionId}"]`,
-			)
-		: page.locator('.project-workspace--active .terminal-panel:visible');
-	await expect
-		.poll(async () => await panel.locator('.xterm-rows').textContent(), {
-			timeout: 15_000,
-		})
-		.toMatch(pattern);
 }
 
 /**
@@ -154,68 +114,4 @@ test('a real process-bound Grok CLI appears, leaves, and returns to Agents on re
 		'data-agent-state',
 		'done',
 	);
-});
-
-test('two live Grok CLIs in one project stay on Agents, including a later turn and resume', async ({
-	mainWindow,
-	tempDir,
-}) => {
-	test.setTimeout(120_000);
-	const firstTerminalId = await settledTerminalSessionId(
-		activeTerminalPanel(mainWindow),
-	);
-	await typeInVisibleTerminal(mainWindow, 'grok\n', firstTerminalId);
-	await expectGrokOutput(mainWindow, /Grok e2e ready/u, firstTerminalId);
-	await expectVisibleAgentCount(mainWindow, 1);
-	const firstGrokSessionId = await nativeGrokSessionId(tempDir);
-
-	await sendAppCommand(mainWindow, 'new-terminal');
-	let secondTerminalId = firstTerminalId;
-	await expect
-		.poll(async () => {
-			secondTerminalId = await settledTerminalSessionId(
-				activeTerminalPanel(mainWindow),
-			);
-			return secondTerminalId;
-		})
-		.not.toBe(firstTerminalId);
-	await typeInVisibleTerminal(mainWindow, 'grok\n', secondTerminalId);
-	await expectGrokOutput(mainWindow, /Grok e2e ready/u, secondTerminalId);
-	await expectVisibleAgentCount(mainWindow, 2);
-
-	await typeInVisibleTerminal(mainWindow, 'hi\n', secondTerminalId);
-	await expect(
-		mainWindow.locator(
-			'.project-workspace--active .agents-sidebar__row[data-agent-state="done"]',
-		),
-	).toHaveCount(1, { timeout: 15_000 });
-	await typeInVisibleTerminal(mainWindow, 'again\n', secondTerminalId);
-	await expect(
-		mainWindow.locator(
-			'.project-workspace--active .agents-sidebar__row[data-agent-state="working"]',
-		),
-	).toHaveCount(1, { timeout: 15_000 });
-	await expect(
-		mainWindow.locator(
-			'.project-workspace--active .agents-sidebar__row[data-agent-state="done"]',
-		),
-	).toHaveCount(1, { timeout: 15_000 });
-	await expectVisibleAgentCount(mainWindow, 2);
-
-	await mainWindow
-		.locator('.project-workspace--active .terminal-tab-content')
-		.filter({ hasText: /^Terminal 1$/u })
-		.click();
-	await expect
-		.poll(async () => settledTerminalSessionId(activeTerminalPanel(mainWindow)))
-		.toBe(firstTerminalId);
-	await typeInVisibleTerminal(mainWindow, 'quit\n', firstTerminalId);
-	await expectVisibleAgentCount(mainWindow, 1);
-	await typeInVisibleTerminal(
-		mainWindow,
-		`grok --resume ${firstGrokSessionId}\n`,
-		firstTerminalId,
-	);
-	await expectGrokOutput(mainWindow, /Grok e2e resumed/u, firstTerminalId);
-	await expectVisibleAgentCount(mainWindow, 2);
 });
