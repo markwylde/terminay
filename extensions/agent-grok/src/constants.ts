@@ -5,6 +5,8 @@ export const SESSION_TITLE_RECORD = 'terminay.grok_metadata';
 
 export const LIMITS = Object.freeze({
 	sessionId: 512,
+	/** How often the bound root's own subagents directory is re-listed. */
+	subagentPollMs: 500,
 	title: 200,
 	prompt: 4_000,
 	toolId: 512,
