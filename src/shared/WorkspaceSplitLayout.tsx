@@ -262,6 +262,11 @@ export function WorkspaceSplitLayout({
 			latestWidth: renderedNavigationWidth,
 			removeListeners,
 		};
+		// Losing pointer capture does not end the gesture. The handle is 6px wide
+		// and travels with the preview, so a quick pointer leaves it and Chromium
+		// fires lostpointercapture while the button is still held; cancelling there
+		// is the snap-back. The window listeners keep the drag, and pointer-up
+		// still commits it.
 		ownerWindow?.addEventListener('pointermove', handleWindowPointerMove);
 		ownerWindow?.addEventListener('pointerup', handleWindowPointerEnd);
 		ownerWindow?.addEventListener('pointercancel', handleWindowPointerEnd);
@@ -447,7 +452,6 @@ export function WorkspaceSplitLayout({
 				onPointerDown={handleSeparatorPointerDown}
 				onPointerUp={handleSeparatorPointerEnd}
 				onPointerCancel={handleSeparatorPointerCancel}
-				onLostPointerCapture={cancelNavigationResize}
 			/>
 			<section
 				className="workspace-split-layout__content"
