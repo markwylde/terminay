@@ -39,7 +39,7 @@ test('diagnostics initialize before Electron readiness, recovery window, and Loc
 		ready,
 	);
 	const startupLoading = main.indexOf(
-		'loadURL(\n\t\t\tdesktopStartupLoadingDocument(firstPaintLabel),\n\t\t)',
+		"desktopStartupLoadingDocument('first-paint')",
 		recoveryWindow,
 	);
 	const workspace = main.indexOf(
@@ -61,27 +61,30 @@ test('diagnostics initialize before Electron readiness, recovery window, and Loc
 			diagnosticsStart,
 	);
 	assert.match(main, /crashReporter,/u);
-	// The first paint is awaited; only later phase repaints are fire-and-forget,
-	// so a phase is never delayed by the paint that names it.
 	assert.match(
 		main,
-		/await embeddedStartupWindow\.loadURL\(\s*desktopStartupLoadingDocument\(firstPaintLabel\),?\s*\)/u,
+		/await embeddedStartupWindow\.loadURL\(\s*desktopStartupLoadingDocument\('first-paint'\),?\s*\)/u,
 	);
-	assert.doesNotMatch(
-		main,
-		/void embeddedStartupWindow[\s\S]{0,80}loadURL\(desktopStartupLoadingDocument\(/u,
+	// The loading document is navigated exactly once. Any second navigation
+	// would destroy the renderer's execution context mid-startup.
+	assert.equal(
+		main.split('loadURL(desktopStartupLoadingDocument').length - 1 +
+			main.split('loadURL(\n\t\t\tdesktopStartupLoadingDocument').length - 1,
+		1,
 	);
 });
 
-test('startup phase repaints are bounded, in-flight guarded, and stop at handoff', () => {
-	// A repaint must never be awaited on the startup path.
+test('startup phase lines are revealed by style, never by navigation', () => {
+	// Revealing a phase inserts a style rule; it must never navigate.
 	assert.match(
 		main,
-		/startupPhasePaintInFlight = true;\s*void window\s*\.loadURL\(desktopStartupLoadingDocument\(label\)\)/u,
+		/void window\.webContents\s*\.insertCSS\(startupPhaseVisibilityCss\(id\)\)/u,
 	);
-	// A failed repaint leaves the previous loading state painted.
-	assert.match(main, /\.catch\(\(\) => \{[\s\S]{0,120}\}\)\s*\.finally\(/u);
-	// The handoff and the bootstrap-failure path both stop painting.
+	// The superseded rule is removed so exactly one line is ever shown.
+	assert.match(main, /removeInsertedCSS\(previous\)/u);
+	// A failed reveal leaves the previously shown line in place.
+	assert.match(main, /startupPhaseCssKey = previous;/u);
+	// The handoff and the bootstrap-failure path both stop revealing.
 	assert.match(
 		main,
 		/stopStartupPhasePainting\(\);\s*await launchDeferredCanonicalWindow/u,
