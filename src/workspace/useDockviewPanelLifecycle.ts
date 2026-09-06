@@ -111,7 +111,8 @@ export function useDockviewPanelLifecycle(options: LifecycleOptions) {
 			if (typeof sessionId === 'string' && sessionId.length > 0) {
 				latest.focusedSessionIdRef.current = sessionId;
 				latest.setFocusedSessionId(sessionId);
-				latest.markTerminalActivityViewed(sessionId);
+				// Do not acknowledge here: activating a project also makes its last
+				// panel Dockview-active. Tab click, xterm click, and typing ack.
 				// This device's own choice, kept on this device so a reconnect
 				// restores the tab this user was on rather than another device's.
 				rememberActiveSession(latest.projectId, sessionId);
