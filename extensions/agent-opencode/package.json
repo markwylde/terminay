@@ -1,94 +1,95 @@
 {
-	"name": "terminay-agent-opencode",
-	"version": "0.1.0",
-	"description": "Official OpenCode agent-status provider for Terminay",
-	"type": "module",
-	"license": "MIT",
-	"repository": {
-		"type": "git",
-		"url": "git@github.com:markwylde/terminay.git",
-		"directory": "extensions/agent-opencode"
-	},
-	"publishConfig": {
-		"access": "public",
-		"provenance": true
-	},
-	"exports": {
-		".": {
-			"types": "./dist/index.d.ts",
-			"import": "./dist/index.js"
-		}
-	},
-	"files": [
-		"dist",
-		"README.md",
-		"LICENSE"
-	],
-	"scripts": {
-		"compile": "tsc -p tsconfig.json",
-		"typecheck": "tsc -p tsconfig.json --noEmit",
-		"test": "npm run compile && node --test test/*.test.mjs",
-		"test:ci": "node --test test/*.test.mjs",
-		"test:conformance": "npm run compile && node --test test/conformance.test.mjs"
-	},
-	"engines": {
-		"node": ">=24"
-	},
-	"peerDependencies": {
-		"@terminay/extension-api": "^1.2.0"
-	},
-	"devDependencies": {
-		"@terminay/extension-api": "^1.2.0",
-		"@types/node": "^24.0.0",
-		"typescript": "^6.0.0"
-	},
-	"terminay": {
-		"manifestVersion": 1,
-		"id": "com.terminay.agent.opencode",
-		"displayName": "OpenCode",
-		"description": "Show OpenCode CLI sessions in Terminay's Agents sidebar.",
-		"api": "^1.2.0",
-		"engines": {
-			"terminay": ">=1.0.0",
-			"node": ">=24"
-		},
-		"entrypoint": "dist/index.js",
-		"platforms": [
-			"darwin",
-			"linux"
-		],
-		"permissions": [
-			"agent-observation"
-		],
-		"contributes": {
-			"agentProviders": [
-				{
-					"id": "com.terminay.agent.opencode/cli",
-					"displayName": "OpenCode",
-					"description": "OpenCode session store.",
-					"icon": "terminal",
-					"platforms": [
-						"darwin",
-						"linux"
-					],
-					"processMatchers": [
-						{
-							"executableName": "opencode"
-						}
-					],
-					"mappings": [
-						{
-							"mappingVersion": "0.1",
-							"providerVersionRange": ">=0"
-						}
-					],
-					"requiredEnvironmentCapabilities": [
-						"process-observation",
-						"filesystem-observation",
-						"agent-journal"
-					]
-				}
-			]
-		}
-	}
+  "name": "terminay-agent-opencode",
+  "version": "0.1.0",
+  "description": "Official OpenCode agent-status provider for Terminay",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:markwylde/terminay.git",
+    "directory": "extensions/agent-opencode"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "compile": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run compile && node --test test/*.test.mjs",
+    "test:ci": "node --test test/*.test.mjs",
+    "test:conformance": "npm run compile && node --test test/conformance.test.mjs"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "peerDependencies": {
+    "@terminay/extension-api": "^1.2.0"
+  },
+  "devDependencies": {
+    "@terminay/extension-api": "^1.2.0",
+    "@types/node": "^24.0.0",
+    "typescript": "^6.0.0",
+    "@terminay/agent-conformance": "^0.1.0"
+  },
+  "terminay": {
+    "manifestVersion": 1,
+    "id": "com.terminay.agent.opencode",
+    "displayName": "OpenCode",
+    "description": "Show OpenCode CLI sessions in Terminay's Agents sidebar.",
+    "api": "^1.2.0",
+    "engines": {
+      "terminay": ">=1.0.0",
+      "node": ">=24"
+    },
+    "entrypoint": "dist/index.js",
+    "platforms": [
+      "darwin",
+      "linux"
+    ],
+    "permissions": [
+      "agent-observation"
+    ],
+    "contributes": {
+      "agentProviders": [
+        {
+          "id": "com.terminay.agent.opencode/cli",
+          "displayName": "OpenCode",
+          "description": "OpenCode session store.",
+          "icon": "terminal",
+          "platforms": [
+            "darwin",
+            "linux"
+          ],
+          "processMatchers": [
+            {
+              "executableName": "opencode"
+            }
+          ],
+          "mappings": [
+            {
+              "mappingVersion": "0.1",
+              "providerVersionRange": ">=0"
+            }
+          ],
+          "requiredEnvironmentCapabilities": [
+            "process-observation",
+            "filesystem-observation",
+            "agent-journal"
+          ]
+        }
+      ]
+    }
+  }
 }

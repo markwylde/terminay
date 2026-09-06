@@ -18,6 +18,11 @@
       "types": "./dist/uiBundle/index.d.ts",
       "import": "./dist/uiBundle/index.js",
       "default": "./dist/uiBundle/index.js"
+    },
+    "./agent-child": {
+      "types": "./dist/extensions/child.d.ts",
+      "import": "./dist/extensions/child.js",
+      "default": "./dist/extensions/child.js"
     }
   },
   "files": [
