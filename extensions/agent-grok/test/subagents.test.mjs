@@ -143,40 +143,21 @@ test('an interrupted child completes with a non-success outcome', () => {
 	assert.equal(events.at(-1).outcome, 'cancelled');
 });
 
-test('a recorded fault that halts a turn blocks the root', () => {
+test('Grok records no fault distinct from a turn outcome, so nothing is blocked', () => {
+	// Verified against every rollout on this machine: the only event types Grok
+	// writes are first_token, loop_started, mcp_*, permission_requested,
+	// permission_resolved, phase_changed, tool_started, tool_completed,
+	// turn_started, turn_ended and yolo_toggled. There is no fault record, so a
+	// failed turn is a completion outcome and never a blocked state.
 	const events = collect([
 		turnStarted,
-		{ type: 'auth_failed', error_kind: 'auth_expired' },
-	]);
-	const wait = events.at(-1);
-	assert.equal(wait.kind, 'waitStarted');
-	assert.equal(wait.state, 'blocked');
-	assert.equal(wait.inferred, true);
-	assert.equal(wait.reason, 'auth_expired');
-});
-
-test('a repeated fault does not republish the blocked state', () => {
-	const events = collect([
-		turnStarted,
-		{ type: 'rate_limited', error_kind: 'rate_limit' },
-		{ type: 'rate_limited', error_kind: 'rate_limit' },
-	]);
-	assert.equal(
-		events.filter((event) => event.kind === 'waitStarted').length,
-		1,
-	);
-});
-
-test('a turn_ended after a fault is an ordinary completion outcome', () => {
-	const events = collect([
-		turnStarted,
-		{ type: 'turn_failed', error_kind: 'model_error' },
 		{ type: 'turn_ended', outcome: 'error' },
 	]);
-	assert.deepEqual(events.map((event) => event.kind).slice(-2), [
-		'waitStarted',
-		'done',
-	]);
+	assert.equal(
+		events.some((event) => event.kind === 'waitStarted'),
+		false,
+	);
+	assert.equal(events.at(-1).kind, 'done');
 	assert.equal(events.at(-1).outcome, 'error');
 });
 
