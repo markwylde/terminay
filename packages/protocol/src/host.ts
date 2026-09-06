@@ -134,6 +134,7 @@ export const TERMINAY_HOST_MENU_COMMANDS = [
 	'open-command-bar',
 	'open-extensions',
 	'open-macros',
+	'open-performance-log',
 	'open-project-environments',
 	'open-recordings',
 	'open-remote-control',

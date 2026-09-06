@@ -266,8 +266,8 @@ const desktopPerformanceLogging = new DesktopPerformanceLogging({
 	contentTracing,
 	diagnostics: desktopDiagnostics,
 	listWebContents: () => webContents.getAllWebContents(),
+	// The Help menu no longer shows this state, so only renderers are told.
 	onEnabledChange: () => {
-		createAppMenu();
 		broadcastPerformanceLogging();
 	},
 	userDataDirectory: app.getPath('userData'),
@@ -2879,10 +2879,12 @@ function createAppMenu(
 				directory: desktopDiagnostics.directory,
 				clearManagedArtifacts: () => desktopDiagnostics.clearManagedArtifacts(),
 				recordCleared: () => desktopDiagnostics.recordCleared(),
-				performanceLogging: {
-					isEnabled: () => desktopPerformanceLogging.isEnabled(),
-					setEnabled: (enabled) =>
-						desktopPerformanceLogging.setEnabled(enabled),
+				performanceLog: {
+					// The window is a route on the workspace bundle; without a local
+					// workspace window there is nothing to present it.
+					canOpen: () =>
+						(BrowserWindow.getFocusedWindow() ?? getFirstAppWindow()) !== null,
+					open: () => sendCommandToFocusedWindow('open-performance-log'),
 				},
 				reportFailure: (operation, error) => {
 					void desktopDiagnostics.record(
@@ -2907,6 +2909,7 @@ function createAppMenu(
 
 const AUXILIARY_TITLES: Readonly<Record<string, string>> = Object.freeze({
 	macros: 'Macros',
+	'performance-log': 'Performance Log',
 	'project-environments': 'Project Environments',
 	recordings: 'Recordings',
 	'remote-control': 'Remote Control',

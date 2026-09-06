@@ -14,6 +14,7 @@ import 'dockview/dist/styles/dockview.css';
 import '@xterm/xterm/css/xterm.css';
 import '../index.css';
 import { MacrosWindow } from '../components/MacrosWindow';
+import { PerformanceLogWindow } from '../components/PerformanceLogWindow';
 import { RecordingsWindow } from '../components/RecordingsWindow';
 import { SettingsWindow } from '../components/SettingsWindow';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
@@ -79,6 +80,8 @@ function initialAuxiliaryRoute(): AuxiliaryRouteRequest | null {
 			return { kind: 'recordings' };
 		case 'remote-control':
 			return { kind: 'remote-control' };
+		case 'performance-log':
+			return { kind: 'performance-log' };
 		case 'project-environments': {
 			const providerId = params.get('provider');
 			const mode = params.get('mode');
@@ -113,6 +116,7 @@ function nativeAuxiliaryRoute(request: AuxiliaryRouteRequest): string | null {
 		case 'macros':
 		case 'recordings':
 		case 'remote-control':
+		case 'performance-log':
 			params.set('auxiliary', request.kind);
 			break;
 		case 'project-environments':
@@ -414,6 +418,8 @@ export function ConnectedWebRendererWorkspace({
 					<MacrosWindow macroSettingsClient={macroSettingsClient} />
 				) : route.kind === 'remote-control' ? (
 					<RemoteControlWindow {...remoteControlProps} />
+				) : route.kind === 'performance-log' ? (
+					<PerformanceLogWindow />
 				) : (
 					<RecordingsWindow client={recordingsClient} />
 				)}
@@ -469,6 +475,8 @@ export function ConnectedWebRendererWorkspace({
 				return auxiliaryContent({ kind: 'macros' });
 			case 'recordings':
 				return auxiliaryContent({ kind: 'recordings' });
+			case 'performance-log':
+				return auxiliaryContent({ kind: 'performance-log' });
 			case 'edit-tab':
 				return <main role="status">Select a terminal tab to edit.</main>;
 			default:
@@ -935,6 +943,8 @@ function getAuxiliaryRouteTitle(route: AuxiliaryRouteRequest): string {
 			return 'Project Environments';
 		case 'remote-control':
 			return 'Remote Control';
+		case 'performance-log':
+			return 'Performance Log';
 		case 'edit-tab':
 			return route.state.kind === 'project'
 				? 'Edit Project Tab'

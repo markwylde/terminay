@@ -1,0 +1,274 @@
+/* The Performance Log reuses the Settings window token set so it reads as a
+ * member of the same management-window family in both colour schemes. */
+
+.perf-window {
+	display: grid;
+	align-content: start;
+	gap: 28px;
+	box-sizing: border-box;
+	min-height: 100vh;
+	padding: 28px 32px 40px;
+	background: var(--settings-bg, #111111);
+	color: var(--settings-text, #ffffff);
+	font-family: var(
+		--settings-font,
+		-apple-system,
+		BlinkMacSystemFont,
+		"Segoe UI",
+		Helvetica,
+		Arial,
+		sans-serif
+	);
+	font-size: 13px;
+}
+
+.perf-section {
+	display: grid;
+	gap: 12px;
+}
+
+.perf-heading {
+	margin: 0;
+	color: var(--settings-text-muted, #98989d);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+
+.perf-empty,
+.perf-note {
+	margin: 0;
+	color: var(--settings-text-muted, #98989d);
+}
+
+.perf-note {
+	font-size: 12px;
+}
+
+/* Startup breakdown -------------------------------------------------- */
+
+.perf-phases {
+	display: grid;
+	gap: 2px;
+	padding: 8px;
+	border: 1px solid var(--settings-border, #38383a);
+	border-radius: 10px;
+	background: var(--settings-card-bg, #1e1e1e);
+}
+
+.perf-phase-row {
+	display: grid;
+	align-items: center;
+	gap: 10px;
+	grid-template-columns: 14px minmax(120px, 180px) 1fr 72px;
+	width: 100%;
+	padding: 5px 6px;
+	border: 0;
+	border-radius: 6px;
+	background: none;
+	color: inherit;
+	font: inherit;
+	text-align: start;
+}
+
+.perf-phase-row:not(:disabled) {
+	cursor: pointer;
+}
+
+.perf-phase-row:not(:disabled):hover {
+	background: var(--settings-nav-hover, rgba(255, 255, 255, 0.05));
+}
+
+.perf-phase-row:focus-visible {
+	outline: 2px solid var(--settings-accent, #0a84ff);
+	outline-offset: -2px;
+}
+
+.perf-phase-caret {
+	color: var(--settings-text-muted, #98989d);
+	font-size: 11px;
+	line-height: 1;
+	text-align: center;
+}
+
+.perf-phase-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.perf-phase-row--dominant .perf-phase-label {
+	font-weight: 600;
+}
+
+.perf-phase-bar {
+	position: relative;
+	display: block;
+	block-size: 8px;
+	border-radius: 999px;
+	background: var(--settings-input-bg, rgba(255, 255, 255, 0.06));
+}
+
+.perf-phase-fill {
+	position: absolute;
+	inset-block: 0;
+	border-radius: 999px;
+	background: var(--settings-accent, #0a84ff);
+}
+
+.perf-phase-row--dominant .perf-phase-fill {
+	background: #ff9f0a;
+}
+
+.perf-phase-fill--running {
+	background: var(--settings-text-muted, #98989d);
+}
+
+.perf-phase-fill--failed {
+	background: var(--settings-danger, #ff453a);
+}
+
+.perf-phase-duration {
+	color: var(--settings-text-muted, #98989d);
+	font-variant-numeric: tabular-nums;
+	text-align: end;
+}
+
+.perf-phase-row--dominant .perf-phase-duration {
+	color: #ff9f0a;
+	font-weight: 600;
+}
+
+.perf-phase-failure {
+	margin: 0 0 4px 30px;
+	color: var(--settings-danger, #ff453a);
+	font-size: 12px;
+}
+
+.perf-subphases {
+	display: grid;
+	gap: 3px;
+	margin: 0 0 6px;
+	padding: 0 6px;
+	color: var(--settings-text-muted, #98989d);
+	font-size: 12px;
+	list-style: none;
+}
+
+/* Match the parent row's columns so sub-phase durations line up under it. */
+.perf-subphases li {
+	display: grid;
+	gap: 10px;
+	grid-template-columns: 14px minmax(120px, 180px) 1fr 72px;
+}
+
+.perf-subphases li span:first-child {
+	grid-column: 2;
+	padding-inline-start: 12px;
+}
+
+.perf-subphases li span:last-child {
+	grid-column: 4;
+	font-variant-numeric: tabular-nums;
+	text-align: end;
+}
+
+.perf-phase-total {
+	margin: 6px 0 0;
+	padding: 0 6px;
+	color: var(--settings-text-muted, #98989d);
+	font-size: 12px;
+}
+
+/* Live cards ---------------------------------------------------------- */
+
+.perf-cards {
+	display: grid;
+	gap: 10px;
+	grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.perf-card {
+	display: grid;
+	align-content: start;
+	gap: 4px;
+	padding: 12px 14px;
+	border: 1px solid var(--settings-border, #38383a);
+	border-radius: 10px;
+	background: var(--settings-card-bg, #1e1e1e);
+}
+
+.perf-card-label {
+	color: var(--settings-text-muted, #98989d);
+	font-size: 11px;
+}
+
+.perf-card-value {
+	font-size: 22px;
+	font-variant-numeric: tabular-nums;
+	font-weight: 600;
+}
+
+.perf-spark {
+	display: block;
+	block-size: 30px;
+	inline-size: 100%;
+	color: var(--settings-accent, #0a84ff);
+	stroke: currentColor;
+}
+
+.perf-spark--empty {
+	block-size: 30px;
+}
+
+/* Tables -------------------------------------------------------------- */
+
+.perf-table {
+	display: table;
+	overflow: hidden;
+	width: 100%;
+	border: 1px solid var(--settings-border, #38383a);
+	border-radius: 10px;
+	border-collapse: collapse;
+	background: var(--settings-card-bg, #1e1e1e);
+}
+
+.perf-table th,
+.perf-table td {
+	padding: 7px 12px;
+	border-bottom: 1px solid var(--settings-border, #38383a);
+	text-align: start;
+}
+
+.perf-table tbody tr:last-child th,
+.perf-table tbody tr:last-child td {
+	border-bottom: 0;
+}
+
+.perf-table thead th {
+	color: var(--settings-text-muted, #98989d);
+	font-size: 11px;
+	font-weight: 500;
+}
+
+.perf-table td {
+	font-variant-numeric: tabular-nums;
+}
+
+.perf-terminal-name {
+	display: grid;
+	gap: 1px;
+	font-weight: 500;
+}
+
+.perf-terminal-project {
+	color: var(--settings-text-muted, #98989d);
+	font-size: 11px;
+	font-weight: 400;
+}
+
+.perf-unavailable {
+	color: var(--settings-text-muted, #98989d);
+	font-style: italic;
+}

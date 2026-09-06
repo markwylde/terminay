@@ -93,7 +93,7 @@ const diagnosticsSettingsCategory = Object.freeze({
 });
 
 const DIAGNOSTICS_SEARCH_TERMS =
-	'diagnostics performance logging cpu energy trace stack sample';
+	'diagnostics performance logging cpu energy trace stack sample startup timing memory disk slow';
 
 type AiModelOption = { id: string; label: string };
 type MicrophoneDeviceOption = { deviceId: string; label: string };
@@ -2735,7 +2735,8 @@ export function SettingsWindow({
 									stacks, and occasional Chromium traces in the Diagnostics
 									folder. Off by default. Logs stay on this device and are never
 									uploaded. Help → Reveal Diagnostics Folder opens the same
-									folder.
+									folder. For startup timing and live terminal usage you do not
+									need this on: open Help → Performance Log.
 								</span>
 							</div>
 							<div className="settings-row-control">
