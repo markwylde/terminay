@@ -9,7 +9,7 @@ test('repository ownership decision is backed by the matched release topology', 
   const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
   const decision = await readFile(join(root, 'openspec/adr/evidence/repository-ownership-release.md'), 'utf8')
   const runtime = await readFile(join(root, 'openspec/specs/server-runtime-and-protocol/spec.md'), 'utf8')
-  const ci = await readFile(join(root, '.github/workflows/ci.yml'), 'utf8')
+  const ci = await readFile(join(root, '.gitea/workflows/ci.yml'), 'utf8')
   const release = await readFile(join(root, '.github/workflows/trigger-release.yml'), 'utf8')
 
   assert.deepEqual(packageJson.workspaces, ['apps/*', 'packages/*', 'extensions/*'])
