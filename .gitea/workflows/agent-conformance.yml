@@ -85,12 +85,34 @@ jobs:
       # One provider at a time: five images building and five CLIs driving PTYs
       # together starved the container host during development.
       max-parallel: 2
+      # A static list rather than fromJSON(needs...): this runner leaves a
+      # matrix built from a job output unexpanded, so the job sits waiting with
+      # its expression as its name. Selection is applied per job below instead.
       matrix:
-        extension: ${{ fromJSON(needs.select.outputs.extensions) }}
+        extension:
+          - agent-claude-code
+          - agent-codex
+          - agent-grok
+          - agent-opencode
+          - agent-omp
     steps:
+      - name: Is ${{ matrix.extension }} affected
+        id: selected
+        shell: bash
+        run: |
+          set -euo pipefail
+          if printf '%s' '${{ needs.select.outputs.extensions }}' | grep -q '"${{ matrix.extension }}"'; then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'run=false' >> "$GITHUB_OUTPUT"
+            echo '${{ matrix.extension }} is unaffected by this change; not spending a run on it.'
+          fi
+
       - uses: actions/checkout@v4
+        if: steps.selected.outputs.run == 'true'
 
       - name: Run ${{ matrix.extension }} conformance
+        if: steps.selected.outputs.run == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
