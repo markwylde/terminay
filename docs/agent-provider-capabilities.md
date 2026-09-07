@@ -29,12 +29,19 @@ record always supersedes an inference.
 
 ## Matrix
 
-| | Detect | Title | Idle | Working | Waiting | Blocked | Done | Sub:Enumerate | Sub:Status | Resume | Concurrent |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| Claude Code | Y | Y | Y | Y | Y\* | Y | Y | Y | Y | Y | Y |
-| Codex | Y | Y | Y | Y | N[^codex-waiting] | N[^codex-blocked] | Y | Y | Y | Y | Y |
-| Grok | Y | Y | Y | Y | Y | N[^grok-blocked] | Y | Y | Y | Y | Y |
-| OpenCode | Y | Y | Y | Y | N[^opencode-waiting] | Y\* | Y | Y | Y | Y | Y |
+| Capability | Claude Code | Codex | Grok | OpenCode |
+|---|---|---|---|---|
+| Detect | Y | Y | Y | Y |
+| Title | Y | Y | Y | Y |
+| Idle | Y | Y | Y | Y |
+| Working | Y | Y | Y | Y |
+| Waiting | Y\* | N[^codex-waiting] | Y | N[^opencode-waiting] |
+| Blocked | Y | N[^codex-blocked] | N[^grok-blocked] | Y\* |
+| Done | Y | Y | Y | Y |
+| Sub:Enumerate | Y | Y | Y | Y |
+| Sub:Status | Y | Y | Y | Y |
+| Resume | Y | Y | Y | Y |
+| Concurrent | Y | Y | Y | Y |
 
 Every cell above is verified against that provider's real CLI, running in that
 extension's own container, on the latest release of the CLI.
