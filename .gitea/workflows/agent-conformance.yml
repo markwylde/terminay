@@ -1,0 +1,99 @@
+name: Agent conformance
+
+# Real-CLI conformance for the agent extensions. Each provider runs its own
+# matrix against its own real CLI in its own container, so a run spends that
+# provider's API credit and nothing else.
+#
+# These are deliberately narrow: only the extensions a change actually touches
+# run, because every run drives live model turns and costs real money. A change
+# to something they all share — the extension API, the agent runtime, the
+# shared harness, the runner script — runs all of them, since that is exactly
+# where the defects this suite exists to catch have come from.
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      extensions:
+        description: 'JSON array of extension directories, or "all"'
+        required: false
+        default: all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terminay-agent-conformance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  select:
+    name: Select extensions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      extensions: ${{ steps.detect.outputs.extensions }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+          all='["agent-claude-code","agent-codex","agent-grok","agent-opencode","agent-omp"]'
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            requested='${{ inputs.extensions }}'
+            if [ "$requested" = "all" ] || [ -z "$requested" ]; then
+              echo "extensions=$all" >> "$GITHUB_OUTPUT"
+            else
+              echo "extensions=$requested" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+
+          base="${{ github.event.pull_request.base.sha }}"
+          changed=$(git diff --name-only "$base"...HEAD)
+
+          # Anything every provider is built on. A defect here is invisible to a
+          # single-provider run, which is how the terminal-context and
+          # home-scoping bugs reached production.
+          if echo "$changed" | grep -qE '^(packages/extension-api/|packages/server-core/src/(activity|extensions)/|tests/agent-conformance/|scripts/run-agent-conformance-container\.sh$)'; then
+            echo "extensions=$all" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          selected='[]'
+          for extension in agent-claude-code agent-codex agent-grok agent-opencode agent-omp; do
+            if echo "$changed" | grep -q "^extensions/$extension/"; then
+              selected=$(printf '%s' "$selected" | jq -c --arg e "$extension" '. + [$e]')
+            fi
+          done
+          echo "extensions=$selected" >> "$GITHUB_OUTPUT"
+
+  conformance:
+    name: ${{ matrix.extension }}
+    needs: select
+    if: needs.select.outputs.extensions != '[]'
+    runs-on: ubuntu-latest
+    # A full matrix drives several real model turns, staggered subagent waits,
+    # an outstanding approval and a resume.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      # One provider at a time: five images building and five CLIs driving PTYs
+      # together starved the container host during development.
+      max-parallel: 2
+      matrix:
+        extension: ${{ fromJSON(needs.select.outputs.extensions) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run ${{ matrix.extension }} conformance
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          TERMINAY_CONFORMANCE_LOG: '1'
+        run: sh scripts/run-agent-conformance-container.sh ${{ matrix.extension }}
