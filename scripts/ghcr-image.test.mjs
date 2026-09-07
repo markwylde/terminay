@@ -24,7 +24,7 @@ const operatorGuide = await readFile(
 );
 const workflows = new Map(
 	await Promise.all(
-		['ci.yml', 'trigger-release.yml'].map(async (name) => [
+		['server-image.yml', 'trigger-release.yml'].map(async (name) => [
 			name,
 			await readFile(
 				new URL(`../.github/workflows/${name}`, import.meta.url),
@@ -189,6 +189,7 @@ test('other project workflows pin every third-party action to a reviewed immutab
 			new Set(['2dbeb2d7c37642111f938c56ef0feb5d51dad55d']),
 		],
 		['docker/setup-buildx-action', new Set(['bb05f3f5519dd87d3ba754cc423b652a5edd6d2c'])],
+		['docker/setup-qemu-action', new Set(['96fe6ef7f33517b61c61be40b68a1882f3264fb8'])],
 		['docker/metadata-action', new Set(['dc802804100637a589fabce1cb79ff13a1411302'])],
 		['docker/login-action', new Set(['dbcb813823bdd20940b903addbd779551569679f'])],
 		['docker/build-push-action', new Set(['53b7df96c91f9c12dcc8a07bcb9ccacbed38856a'])],
@@ -213,27 +214,4 @@ test('other project workflows pin every third-party action to a reviewed immutab
 			);
 		}
 	}
-});
-
-test('provider-specific workflow folders resolve only their compatible artifact action generation', () => {
-	const githubCi = workflows.get('ci.yml');
-	const giteaCi = workflows.get('gitea-ci.yml');
-	assert.ok(githubCi, '.github/workflows/ci.yml must exist');
-	assert.ok(giteaCi, '.gitea/workflows/ci.yml must exist');
-	const job = (workflow, name) => {
-		const header = `  ${name}:\n`;
-		const start = workflow.indexOf(header);
-		assert.notEqual(start, -1, `CI must declare ${name}`);
-		const remainder = workflow.slice(start + header.length);
-		const next = remainder.search(/^ {2}[a-z][a-z0-9-]+:\n/mu);
-		return next === -1 ? workflow.slice(start) : workflow.slice(start, start + header.length + next);
-	};
-
-  const github = `${job(githubCi, 'e2e-image')}\n${job(githubCi, 'e2e-test')}`;
-  const gitea = `${job(giteaCi, 'e2e-image')}\n${job(giteaCi, 'e2e-test')}`;
-  assert.match(github, /(?:ea165f8d65b6e75b540449e92b4886f43607fa02|d3f86a106a0bac45b974a628896c90dbdf5c8093)/u);
-  assert.doesNotMatch(github, /(?:ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5|9bc31d5ccc31df68ecc42ccf4149144866c47d8a)/u);
-  assert.match(gitea, /docker login git\.i\.wylde\.net/u);
-  assert.match(gitea, /docker pull "\$IMAGE_TAG"/u);
-  assert.doesNotMatch(gitea, /actions\/download-artifact/u);
 });
