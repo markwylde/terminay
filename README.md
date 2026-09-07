@@ -98,17 +98,17 @@ container.
 
 | Capability | Claude Code | Codex | Grok | OpenCode |
 |---|---|---|---|---|
-| Detect | ✅ | ✅ | ✅ | ✅ |
-| Title | ✅ | ✅ | ✅ | ✅ |
-| Idle | ✅ | ✅ | ✅ | ✅ |
-| Working | ✅ | ✅ | ✅ | ✅ |
-| Waiting | ✳️ | ❌ <sup>1</sup> | ✅ | ❌ <sup>4</sup> |
-| Blocked | ✅ | ❌ <sup>2</sup> | ❌ <sup>3</sup> | ✳️ |
-| Done | ✅ | ✅ | ✅ | ✅ |
-| Subagent names | ✅ | ✅ | ✅ | ✅ |
-| Subagent status | ✅ | ✅ | ✅ | ✅ |
-| Resume | ✅ | ✅ | ✅ | ✅ |
-| Concurrent sessions | ✅ | ✅ | ✅ | ✅ |
+| Appears when launched | ✅ | ✅ | ✅ | ✅ |
+| Shows the session title | ✅ | ✅ | ✅ | ✅ |
+| Idle before any work | ✅ | ✅ | ✅ | ✅ |
+| Working through a turn | ✅ | ✅ | ✅ | ✅ |
+| Waiting for your input | ✳️ | ❌ <sup>1</sup> | ✅ | ❌ <sup>4</sup> |
+| Blocked needing intervention | ✅ | ❌ <sup>2</sup> | ❌ <sup>3</sup> | ✳️ |
+| Done, with its outcome | ✅ | ✅ | ✅ | ✅ |
+| Names each subagent | ✅ | ✅ | ✅ | ✅ |
+| Each subagent's own state | ✅ | ✅ | ✅ | ✅ |
+| Returns after a resume | ✅ | ✅ | ✅ | ✅ |
+| Several sessions at once | ✅ | ✅ | ✅ | ✅ |
 
 ✅ the provider records it explicitly and Terminay reads it &nbsp;·&nbsp;
 ✳️ the provider records nothing, so Terminay derives it from that provider's own

@@ -31,17 +31,17 @@ record always supersedes an inference.
 
 | Capability | Claude Code | Codex | Grok | OpenCode |
 |---|---|---|---|---|
-| Detect | Y | Y | Y | Y |
-| Title | Y | Y | Y | Y |
-| Idle | Y | Y | Y | Y |
-| Working | Y | Y | Y | Y |
-| Waiting | Y\* | N[^codex-waiting] | Y | N[^opencode-waiting] |
-| Blocked | Y | N[^codex-blocked] | N[^grok-blocked] | Y\* |
-| Done | Y | Y | Y | Y |
-| Sub:Enumerate | Y | Y | Y | Y |
-| Sub:Status | Y | Y | Y | Y |
-| Resume | Y | Y | Y | Y |
-| Concurrent | Y | Y | Y | Y |
+| Appears when launched | Y | Y | Y | Y |
+| Shows the session title | Y | Y | Y | Y |
+| Idle before any work | Y | Y | Y | Y |
+| Working through a turn | Y | Y | Y | Y |
+| Waiting for your input | Y\* | N[^codex-waiting] | Y | N[^opencode-waiting] |
+| Blocked needing intervention | Y | N[^codex-blocked] | N[^grok-blocked] | Y\* |
+| Done, with its outcome | Y | Y | Y | Y |
+| Names each subagent | Y | Y | Y | Y |
+| Each subagent's own state | Y | Y | Y | Y |
+| Returns after a resume | Y | Y | Y | Y |
+| Several sessions at once | Y | Y | Y | Y |
 
 Every cell above is verified against that provider's real CLI, running in that
 extension's own container, on the latest release of the CLI.
