@@ -217,6 +217,18 @@ export function mapClaudeRecord(
 		// for ever. The process says it is idle, so every open child is over.
 		if (typeof envelope.idleSince === 'number')
 			scope.idleSince = Math.max(scope.idleSince ?? 0, envelope.idleSince);
+		// The same goes for the root: a turn still open when the CLI says idle
+		// never wrote its `turn_duration` — interrupted, or lost — and is over.
+		if (scope.inferredWaiting) {
+			scope.inferredWaiting = false;
+			publisher.waitFinished({
+				waitId: `inferred-wait:${session.binding.providerSessionId}`,
+			});
+		}
+		if (scope.turnOpen) {
+			scope.turnOpen = false;
+			publisher.done({ outcome: 'cancelled' });
+		}
 		for (const child of scope.children) {
 			scope.completed.add(child);
 			publisher.subagentDone({ subagentId: child, outcome: 'cancelled' });
@@ -292,6 +304,18 @@ export function mapClaudeRecord(
 		// supersedes it and a prompt never overwrites a chosen title.
 		const prompt = bounded(envelope.lastPrompt, 200);
 		if (prompt && !scope.titled) publisher.metadataChanged({ title: prompt });
+		return;
+	}
+	// Everything below changes state. A record written at or before the CLI's
+	// last idle mark is history: replaying it live would show a turn that ended
+	// before this terminal bound, for as long as the replay takes.
+	if (beforeIdle(envelope, scope)) return;
+	if (type === 'user' && interrupted(message)) {
+		// The turn was stopped before its `turn_duration` could be written.
+		if (scope.turnOpen) {
+			scope.turnOpen = false;
+			publisher.done({ outcome: 'cancelled' });
+		}
 		return;
 	}
 	if (type === 'user' && message.role === 'user' && envelope.isMeta !== true) {

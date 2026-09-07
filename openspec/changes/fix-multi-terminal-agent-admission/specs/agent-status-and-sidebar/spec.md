@@ -69,7 +69,7 @@ The Claude Code CLI writes one session file per interactive process at `.claude/
 
 The bound journal SHALL be `<sessionId>.jsonl` below the provider-encoded project directory for the file's `cwd`, under `.claude/projects`, and its first record SHALL carry the same `sessionId`. Exactly one descendant with an accepted session file and a resolvable journal SHALL bind; zero or more than one SHALL bind nothing. The extension SHALL NOT list the project directory to choose a root, SHALL NOT consult open writable handles, and SHALL NOT derive the session from a `--resume` or `--continue` argument; a resumed process's session file already names the resumed session.
 
-While bound, the extension SHALL watch the process's session file. When its `sessionId` changes, the current root SHALL be retired and the newly named journal bound in the same terminal under the renewable root binding rules. When its `status` is `idle`, at binding or later, every subagent still open beneath the root SHALL complete as cancelled, and no subagent launch or start recorded at or before that `statusUpdatedAt` SHALL open a subagent, because the CLI's own word outranks a journal whose end was never written and journals are replayed in no fixed order. A subagent journal ending on a `[Request interrupted by user]` record SHALL complete that subagent as cancelled. Journals below a root session's `subagents/` directory and unrelated history SHALL NOT be eligible roots.
+While bound, the extension SHALL watch the process's session file. When its `sessionId` changes, the current root SHALL be retired and the newly named journal bound in the same terminal under the renewable root binding rules. The file's `status` SHALL be authoritative for the root: when it is `idle`, at binding or later, an open turn SHALL close as cancelled and every subagent still open beneath the root SHALL complete as cancelled, and no record written at or before that `statusUpdatedAt` SHALL open a turn, tool, wait, or subagent, because the CLI's own word outranks a journal whose end was never written, journals are replayed in no fixed order, and a long replay must not paint finished turns as live. A root journal record of `[Request interrupted by user]` SHALL close the open turn as cancelled. A subagent journal ending on a `[Request interrupted by user]` record SHALL complete that subagent as cancelled. Journals below a root session's `subagents/` directory and unrelated history SHALL NOT be eligible roots.
 
 It SHALL use explicit `ai-title` records for the root label, the bounded `last-prompt` text and then the provider display name until such a record exists, assistant model metadata, and bounded tool lifecycle. Meta and local-command user records, tool-result content, assistant text, and reasoning SHALL never be projected.
 
@@ -146,6 +146,16 @@ Claude Code flushes an assistant record and its corresponding `tool_result` toge
 
 - **WHEN** the bound process's session file comes to report `status: "idle"` while a subagent beneath the root is still open
 - **THEN** that subagent completes as cancelled
+
+#### Scenario: CLI reports idle while its journal replays
+
+- **WHEN** a terminal binds a session whose file reports `status: "idle"` and whose journal holds completed turns before that mark
+- **THEN** the root is shown idle with its title from the moment it binds, and no historical turn is replayed as live
+
+#### Scenario: Root turn stopped by the user
+
+- **WHEN** the root journal records `[Request interrupted by user]` while a turn is open and no `turn_duration` follows
+- **THEN** the turn closes as cancelled
 
 #### Scenario: Session file already idle when the terminal binds
 
