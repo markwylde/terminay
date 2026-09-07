@@ -409,6 +409,22 @@ async function drainAgentTerminals(frame: HostFrame): Promise<void> {
  * conformance harness drives providers through this exact construction rather
  * than a second implementation of it.
  */
+/** A terminal device is a local fact; anything slower than this is not coming. */
+const TTY_FACT_TIMEOUT_MS = 2_000;
+
+/** `/dev/pts/3` names the device and `pts-3` identifies it, matching the
+ * identifier providers find in their own per-terminal records. */
+function ttyFactFor(path: string): Readonly<{
+	deviceId: string;
+	deviceName: string;
+}> | undefined {
+	if (!path.startsWith('/dev/')) return undefined;
+	const deviceId = path.slice('/dev/'.length).replaceAll('/', '-');
+	return deviceId
+		? Object.freeze({ deviceId, deviceName: path })
+		: undefined;
+}
+
 export async function createAgentTerminalContext(
 	context: Record<string, unknown>,
 	capabilities: unknown[],
@@ -616,8 +632,27 @@ export async function createAgentTerminalContext(
 	// A terminal with no device, or an environment that cannot prove one, simply
 	// leaves the fact absent: it is enrichment, never a precondition for binding.
 	const tty = await (async () => {
+		// The device is read straight from the admission context where the host
+		// proved one, and otherwise only through a local adapter — never as an
+		// unsolicited broker round-trip, which would put a request the provider
+		// did not make on every admission.
+		const issued = typeof context.ttyPath === 'string' ? context.ttyPath : undefined;
+		if (issued) return ttyFactFor(issued);
+		if (local === undefined || !capabilities.includes('process-observation'))
+			return undefined;
 		try {
-			const fact = object(await request('terminal.tty', null));
+			// Bounded, because this must never hold up admission. An environment
+			// that cannot answer — or does not answer at all — leaves the fact
+			// absent, which is the documented contract: enrichment, never a
+			// precondition for binding.
+			const answered = await Promise.race([
+				request('terminal.tty', null),
+				new Promise<undefined>((resolve) => {
+					const timer = setTimeout(() => resolve(undefined), TTY_FACT_TIMEOUT_MS);
+					timer.unref?.();
+				}),
+			]);
+			const fact = object(answered);
 			const deviceId = typeof fact?.terminalId === 'string' ? fact.terminalId : undefined;
 			if (!deviceId) return undefined;
 			return Object.freeze({
