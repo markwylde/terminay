@@ -26,12 +26,17 @@ An agent entry SHALL carry one of five states. `working` means the agent is proc
 
 ### Requirement: Acknowledgement independent of state
 
-Acknowledgement SHALL be independent of operational state. Viewing an entry SHALL clear its unread treatment without rewriting its provider-derived state, and a later meaningful transition SHALL be able to make it unread again. A terminal that is already focused when a meaningful `done`, `waiting`, or `blocked` transition arrives SHALL be treated as viewed for that transition.
+Acknowledgement SHALL be independent of operational state. Interacting with a terminal — clicking its tab, clicking into it, or typing — SHALL clear its unread treatment without rewriting its provider-derived state, and a later meaningful transition SHALL be able to make it unread again. Activating the project SHALL NOT clear unread treatment. A terminal the user is already interacting with when a meaningful `done`, `waiting`, or `blocked` transition arrives SHALL be treated as viewed for that transition.
 
 #### Scenario: Viewing an entry
 
-- **WHEN** the user views an agent entry
+- **WHEN** the user clicks the bound terminal tab, clicks into that terminal, or types into it
 - **THEN** its unread treatment clears and its provider-derived state is unchanged
+
+#### Scenario: Activating the project does not acknowledge an agent
+
+- **WHEN** a bound agent is `done` or needs attention and the user activates its project without interacting with that terminal
+- **THEN** the entry stays unread and the tab indicator remains
 
 #### Scenario: New transition after acknowledgement
 
@@ -40,12 +45,12 @@ Acknowledgement SHALL be independent of operational state. Viewing an entry SHAL
 
 #### Scenario: Done while already viewing
 
-- **WHEN** a bound agent becomes `done` on the terminal the user is already viewing
+- **WHEN** a bound agent becomes `done` on the terminal the user is already clicking or typing in
 - **THEN** the entry is acknowledged, remains `done`, and no green tab or project activity indicator is shown for it
 
 #### Scenario: Waiting while already viewing
 
-- **WHEN** a bound agent becomes `waiting` or `blocked` on the terminal the user is already viewing
+- **WHEN** a bound agent becomes `waiting` or `blocked` on the terminal the user is already clicking or typing in
 - **THEN** the entry is acknowledged, its operational state is unchanged, and no red tab or project activity indicator is shown for it
 
 ### Requirement: Terminal tab and header status surfaces

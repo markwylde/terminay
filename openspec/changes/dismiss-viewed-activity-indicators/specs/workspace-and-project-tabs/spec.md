@@ -2,11 +2,16 @@
 
 ### Requirement: Project activity count follows viewed terminals
 
-The project-tab activity count SHALL count the same terminals that currently show a visible activity indicator. Focusing a terminal, or already viewing it when finished or attention activity arrives, SHALL remove that terminal from the count. A working terminal SHALL remain in the count while it is working, including when its tab is focused. The count SHALL hide when it reaches zero.
+The project-tab activity count SHALL count the same terminals that currently show a visible activity indicator. Clicking a terminal tab, clicking into the terminal, or typing, or already interacting with it when finished or attention activity arrives, SHALL remove that terminal from the count. Activating the project SHALL NOT remove a terminal from the count. A working terminal SHALL remain in the count while it is working, including when its tab is focused. The count SHALL hide when it reaches zero.
+
+#### Scenario: Activating the project keeps the count
+
+- **WHEN** a project shows a green activity count of one because a single terminal has finished unviewed activity, and the user activates that project without clicking the terminal
+- **THEN** the project-tab activity count remains `1` and green
 
 #### Scenario: Focusing the last finished terminal
 
-- **WHEN** a project shows a green activity count of one because a single terminal has finished unviewed activity, and the user focuses that terminal
+- **WHEN** a project shows a green activity count of one because a single terminal has finished unviewed activity, and the user clicks that terminal tab
 - **THEN** the project-tab activity count hides
 
 #### Scenario: Completion on the focused terminal

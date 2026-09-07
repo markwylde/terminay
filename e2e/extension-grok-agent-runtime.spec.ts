@@ -1,8 +1,25 @@
+import { readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { writeFile } from 'node:fs/promises';
-import { expect, nativeGrokSessionId, test } from './fixtures';
+import { expect, test } from './fixtures';
 import { typeInVisibleTerminal } from './support/terminal-input';
 import { selectSidebarGroup } from './support/ui';
+
+async function nativeGrokSessionId(tempDir: string): Promise<string> {
+	const root = path.join(
+		tempDir,
+		'native-grok-home',
+		'sessions',
+		'e2e-workspace',
+	);
+	const names = await readdir(root);
+	const id = names.find((name) => /^[0-9a-f-]{36}$/iu.test(name));
+	if (!id) {
+		throw new Error(
+			`native grok session missing in ${root}: ${names.join(',')}`,
+		);
+	}
+	return id;
+}
 
 /**
  * Stub Grok binary: prints canned "Grok e2e ready/resumed" and uses a
@@ -55,10 +72,8 @@ test('a real process-bound Grok CLI appears, leaves, and returns to Agents on re
 	await expect(root).toHaveCount(0, { timeout: 15_000 });
 	await expect(mainWindow.locator('.agents-sidebar__empty')).toBeVisible();
 
-	await typeInVisibleTerminal(
-		mainWindow,
-		`grok --resume ${nativeGrokSessionId}\n`,
-	);
+	const sessionId = await nativeGrokSessionId(tempDir);
+	await typeInVisibleTerminal(mainWindow, `grok --resume ${sessionId}\n`);
 	await expect
 		.poll(async () => await terminal.textContent(), { timeout: 15_000 })
 		.toMatch(/Grok e2e resumed/u);
@@ -78,13 +93,13 @@ test('a real process-bound Grok CLI appears, leaves, and returns to Agents on re
 		'native-grok-home',
 		'sessions',
 		'e2e-workspace',
-		nativeGrokSessionId,
+		sessionId,
 		'summary.json',
 	);
 	await writeFile(
 		summary,
 		`${JSON.stringify({
-			info: { id: nativeGrokSessionId },
+			info: { id: sessionId },
 			generated_title: 'Renamed native Grok session',
 			session_summary: 'Renamed native Grok session',
 			current_model_id: 'grok-4.6',

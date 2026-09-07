@@ -226,29 +226,48 @@ async function findActiveSessionRoot(
 	const registry = await readActiveSessions(terminal);
 	if (!registry) return undefined;
 	const matches = registry.sessions.filter((entry) => byPid.has(entry.pid));
-	if (matches.length !== 1 || !matches[0]) return undefined;
-	const selected = matches[0];
-	const process = byPid.get(selected.pid);
-	if (!process) return undefined;
+	if (matches.length === 0) return undefined;
 
-	const journal = await resolveSessionJournal(
-		terminal,
-		selected.cwd,
-		selected.sessionId,
-	);
-	if (!journal || !(await isPrimaryRoot(terminal, journal, selected.sessionId)))
-		return undefined;
-	return {
-		journal,
-		sourceFile: registry.handle,
-		sessionId: selected.sessionId,
-		fingerprintKind: 'grok-active-session-registry',
-		process: process.handle,
-		...(process.startedAt && Number.isFinite(Date.parse(process.startedAt))
-			? { processStartedAt: Date.parse(process.startedAt) }
-			: {}),
-		...(registry.grokHome ? { grokHome: registry.grokHome } : {}),
-	};
+	// Grok registers every live pid, including helpers and a second `grok
+	// --resume` in the same PTY. Fail-closed on `matches.length !== 1` left
+	// that tree unbound even when one descendant owned a primary journal.
+	const resolved: GrokRoot[] = [];
+	for (const selected of matches) {
+		const process = byPid.get(selected.pid);
+		if (!process) continue;
+		const journal = await resolveSessionJournal(
+			terminal,
+			selected.cwd,
+			selected.sessionId,
+		);
+		if (
+			!journal ||
+			!(await isPrimaryRoot(terminal, journal, selected.sessionId))
+		)
+			continue;
+		const stat = await terminal.observation.files.stat(journal, {
+			signal: terminal.signal,
+		});
+		const modifiedAt = stat?.modifiedAt
+			? Date.parse(stat.modifiedAt)
+			: Number.NaN;
+		resolved.push({
+			journal,
+			sourceFile: registry.handle,
+			sessionId: selected.sessionId,
+			modifiedAt: Number.isFinite(modifiedAt) ? modifiedAt : 0,
+			fingerprintKind: 'grok-active-session-registry',
+			process: process.handle,
+			...(process.startedAt && Number.isFinite(Date.parse(process.startedAt))
+				? { processStartedAt: Date.parse(process.startedAt) }
+				: {}),
+			...(registry.grokHome ? { grokHome: registry.grokHome } : {}),
+		});
+	}
+	if (!resolved[0]) return undefined;
+	resolved.sort((left, right) => right.modifiedAt - left.modifiedAt);
+	const { modifiedAt: _modifiedAt, ...selected } = resolved[0];
+	return selected;
 }
 
 interface GrokActiveSession {

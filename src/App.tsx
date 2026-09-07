@@ -23,6 +23,7 @@ import {
 	GitBranchPlus,
 	GitPullRequestArrow,
 	History,
+	LayoutDashboard,
 	Mic,
 	Play,
 	Plug,
@@ -89,7 +90,6 @@ import {
 	type TerminalPanelClientContextValue,
 } from './components/TerminalPanel';
 import type {
-	TerminalActivityState,
 	TerminalContextReader,
 	TerminalPanelParams,
 	TerminalTabMoveProject,
@@ -184,12 +184,22 @@ import {
 	type ActivityCountBadge,
 	summarizeActivityBadge,
 } from './workspace/activityCountBadge';
+import { shouldAcknowledgeInteractedActivity } from './workspace/terminalActivityAcknowledgement';
 import {
 	buildTerminalActivityOverview,
 	TerminalActivityOverview,
 	type TerminalActivityOverviewItem,
-	type TerminalPresentationActivityState,
 } from './workspace/TerminalActivityOverview';
+import {
+	areTerminalActivityIndicatorsEnabled,
+	buildProjectInventoryEntries,
+	getEffectiveTerminalTabColor,
+	type InventoryPanelParams,
+	type InventoryPanelSource,
+	type PanelTabAppearance,
+	selectNotableEntries,
+	type WorkspaceInventoryEntry,
+} from './workspace/workspaceInventory';
 import {
 	activateTerminalPanel,
 	findTerminalFocusTarget,
@@ -214,6 +224,11 @@ import {
 import { useMacroLauncherController } from './workspace/useMacroLauncherController';
 import { useMacroRunController } from './workspace/useMacroRunController';
 import { useProjectCollection } from './workspace/useProjectCollection';
+import { WorkspaceDashboard } from './workspace/WorkspaceDashboard';
+import {
+	type DashboardRow,
+	resolveDashboardActivation,
+} from './workspace/dashboardRows';
 import { useProjectEditor } from './workspace/useProjectEditor';
 import { useProjectTabTransfer } from './workspace/useProjectTabTransfer';
 import { useProjectTerminalCwd } from './workspace/useProjectTerminalCwd';
@@ -409,20 +424,6 @@ type MacroLauncherGroupedItem = {
 	item: MacroLauncherItem;
 };
 
-type DockPanelTabAppearance = {
-	activityIndicatorsEnabled?: boolean;
-	agentNeedsAttention?: boolean;
-	agentState?: AgentState;
-	agentUnread?: boolean;
-	color?: string;
-	emoji?: string;
-	inheritsProjectColor?: boolean;
-	projectColor?: string;
-	showActiveTabActivityIndicator?: boolean;
-	showFinishedTabActivityIndicator?: boolean;
-	terminalNote?: string;
-};
-
 type ProjectWorkspaceHandle = {
 	acceptMovedTerminal: (terminal: MovedTerminalTab) => boolean;
 	acceptServerTerminal: (
@@ -460,6 +461,7 @@ type ProjectWorkspaceProps = {
 	isMac: boolean;
 	macros: MacroDefinition[];
 	onAddProject: () => Promise<void>;
+	onShowDashboard: () => void;
 	onCloseProject: (
 		projectId: string,
 		options?: { skipConfirmation?: boolean },
@@ -471,9 +473,9 @@ type ProjectWorkspaceProps = {
 		targetProjectId: string,
 	) => void;
 	onPopoutProject: (projectId: string) => Promise<void>;
-	onTerminalActivityOverviewChange: (
+	onWorkspaceInventoryChange: (
 		projectId: string,
-		items: TerminalActivityOverviewItem[],
+		entries: WorkspaceInventoryEntry[],
 	) => void;
 	onCommitProjectSidebar: (
 		projectId: string,
@@ -533,46 +535,6 @@ function serverActivityEvaluation(
 
 function clamp(value: number, min: number, max: number): number {
 	return Math.min(Math.max(value, min), max);
-}
-
-function getEffectiveTerminalTabColor(
-	params: DockPanelTabAppearance | undefined,
-	fallbackProjectColor: string,
-): string {
-	if (params?.inheritsProjectColor) {
-		return params.projectColor ?? fallbackProjectColor;
-	}
-
-	return params?.color ?? fallbackProjectColor;
-}
-
-function areTerminalActivityIndicatorsEnabled(
-	params: DockPanelTabAppearance | undefined,
-): boolean {
-	return params?.activityIndicatorsEnabled !== false;
-}
-
-function isTerminalActivityIndicatorStateVisible(
-	state: TerminalActivityState | undefined,
-	params: DockPanelTabAppearance | undefined,
-): state is TerminalPresentationActivityState {
-	if (!areTerminalActivityIndicatorsEnabled(params)) {
-		return false;
-	}
-
-	if (state === 'attention') {
-		return true;
-	}
-
-	if (state === 'recent') {
-		return params?.showActiveTabActivityIndicator === true;
-	}
-
-	if (state === 'unviewed') {
-		return params?.showFinishedTabActivityIndicator !== false;
-	}
-
-	return false;
 }
 
 type AggregatedAgentStatus = {
@@ -1231,7 +1193,8 @@ const ProjectWorkspace = forwardRef<
 			onEditProject,
 			onMoveTerminalToProject,
 			onPopoutProject,
-			onTerminalActivityOverviewChange,
+			onShowDashboard,
+			onWorkspaceInventoryChange,
 			onCommitProjectSidebar,
 			onUpdateProject,
 			popoutUrl,
@@ -1377,6 +1340,7 @@ const ProjectWorkspace = forwardRef<
 			(sessionId: string, now?: number) => void
 		>(() => {});
 		const focusedSessionIdRef = useRef<string | null>(null);
+		const interactedSessionIdRef = useRef<string | null>(null);
 		const filePathPanelMapRef = useRef<Map<string, string>>(new Map());
 		const filePanelSaveHandlersRef = useRef<Map<string, FilePanelSaveHandler>>(
 			new Map(),
@@ -1708,69 +1672,34 @@ const ProjectWorkspace = forwardRef<
 			setErrorText,
 		});
 
-		const getActivityOverviewItems =
-			useCallback((): TerminalActivityOverviewItem[] => {
+		const getWorkspaceInventoryItems =
+			useCallback((): WorkspaceInventoryEntry[] => {
 				const api = dockviewApiRef.current;
 				if (!api) {
 					return [];
 				}
 
-				const items: TerminalActivityOverviewItem[] = [];
+				const panels: InventoryPanelSource[] = [];
 				for (const group of api.groups) {
 					for (const panel of group.panels) {
-						const sessionId = panel.params?.sessionId;
-						const agentState = panel.params?.agentState;
-						if (settings.agentIntegration.enabled && sessionId && agentState) {
-							const agentUnread = panel.params?.agentUnread === true;
-							const shouldIncludeAgent =
-								agentState === 'working' ||
-								isAgentAttentionState(agentState) ||
-								(agentState === 'done' && agentUnread);
-							if (shouldIncludeAgent) {
-								items.push({
-									color: getEffectiveTerminalTabColor(
-										panel.params,
-										project.color,
-									),
-									emoji: panel.params?.emoji ?? '',
-									panelId: panel.id,
-									projectEmoji: project.emoji,
-									projectId: project.id,
-									projectTitle: project.title,
-									sessionId,
-									state: agentState,
-									isAgentStatus: true,
-									title: panel.title ?? 'Terminal',
-								});
-							}
-							// Once a native lifecycle hook has claimed this terminal, raw
-							// output activity must never compete with that authority.
-							continue;
-						}
-						const state = panel.params?.terminalActivityState;
-						if (
-							!sessionId ||
-							!isTerminalActivityIndicatorStateVisible(state, panel.params)
-						) {
-							continue;
-						}
-
-						items.push({
-							color: getEffectiveTerminalTabColor(panel.params, project.color),
-							emoji: panel.params?.emoji ?? '',
-							panelId: panel.id,
-							projectEmoji: project.emoji,
-							projectId: project.id,
-							projectTitle: project.title,
-							sessionId,
-							state,
-							isAgentStatus: false,
-							title: panel.title ?? 'Terminal',
+						panels.push({
+							id: panel.id,
+							params: panel.params as InventoryPanelParams | undefined,
+							...(panel.title === undefined ? {} : { title: panel.title }),
 						});
 					}
 				}
 
-				return items;
+				return buildProjectInventoryEntries({
+					agentIntegrationEnabled: settings.agentIntegration.enabled,
+					panels,
+					project: {
+						color: project.color,
+						emoji: project.emoji,
+						id: project.id,
+						title: project.title,
+					},
+				});
 			}, [
 				project.color,
 				project.emoji,
@@ -1779,11 +1708,11 @@ const ProjectWorkspace = forwardRef<
 				settings.agentIntegration.enabled,
 			]);
 
-		const publishTerminalActivityOverview = useCallback(() => {
-			onTerminalActivityOverviewChange(project.id, getActivityOverviewItems());
+		const publishWorkspaceInventory = useCallback(() => {
+			onWorkspaceInventoryChange(project.id, getWorkspaceInventoryItems());
 		}, [
-			getActivityOverviewItems,
-			onTerminalActivityOverviewChange,
+			getWorkspaceInventoryItems,
+			onWorkspaceInventoryChange,
 			project.id,
 		]);
 
@@ -1849,7 +1778,7 @@ const ProjectWorkspace = forwardRef<
 			isSashDraggingRef: isDockviewSashDraggingRef,
 			markLocalViewed: (sessionId) =>
 				terminalActivityStoreRef.current.markViewed(sessionId),
-			onOverviewChanged: publishTerminalActivityOverview,
+			onOverviewChanged: publishWorkspaceInventory,
 			timersRef: terminalActivityTimersRef,
 		});
 
@@ -1888,12 +1817,12 @@ const ProjectWorkspace = forwardRef<
 			}
 
 			if (didChange) {
-				window.requestAnimationFrame(publishTerminalActivityOverview);
+				window.requestAnimationFrame(publishWorkspaceInventory);
 			}
 		}, [
 			agentStatusSnapshot,
 			isDockviewReady,
-			publishTerminalActivityOverview,
+			publishWorkspaceInventory,
 			settings.agentIntegration.enabled,
 			project.id,
 			serverAgentStatusClient,
@@ -1951,14 +1880,18 @@ const ProjectWorkspace = forwardRef<
 					) {
 						continue;
 					}
-					const isFocusedSession =
-						isActive &&
-						dockviewApiRef.current?.activePanel?.params?.sessionId ===
-							snapshot.sessionId;
-					if (isFocusedSession && !snapshot.acknowledged && !snapshot.claimed) {
-						// PTY output can arrive after the tab-selection acknowledgement.
-						// While this project and panel remain visibly active, fold it back
-						// into canonical acknowledgement instead of showing a phantom item.
+					if (
+						shouldAcknowledgeInteractedActivity({
+							acknowledged: snapshot.acknowledged,
+							interactedSessionId: interactedSessionIdRef.current,
+							sessionId: snapshot.sessionId,
+							status: snapshot.status,
+						})
+					) {
+						// Finished or attention on a terminal the user is clicking or
+						// typing in is acknowledgement, including claimed sessions.
+						// Working stays live so the amber indicator remains. A project
+						// becoming active is not interaction.
 						applyTerminalActivityEvaluation(snapshot.sessionId, {
 							state: 'viewed',
 							nextDeadline: null,
@@ -2000,6 +1933,7 @@ const ProjectWorkspace = forwardRef<
 		]);
 
 		useEffect(() => {
+			if (!isActive) interactedSessionIdRef.current = null;
 			if (isActive || serverActivityClient === undefined) return;
 			const sessionId = dockviewApiRef.current?.activePanel?.params?.sessionId;
 			if (typeof sessionId !== 'string' || sessionId.length === 0) return;
@@ -2037,7 +1971,6 @@ const ProjectWorkspace = forwardRef<
 			terminalPanel.api.setActive();
 			focusedSessionIdRef.current = sessionId;
 			setFocusedSessionId(sessionId);
-			markTerminalActivityViewed(sessionId);
 			window.requestAnimationFrame(() => {
 				window.dispatchEvent(
 					new CustomEvent('terminay-focus-terminal', {
@@ -2045,7 +1978,7 @@ const ProjectWorkspace = forwardRef<
 					}),
 				);
 			});
-		}, [markTerminalActivityViewed]);
+		}, []);
 
 		const {
 			cancelRun: cancelMacroRun,
@@ -2084,6 +2017,7 @@ const ProjectWorkspace = forwardRef<
 					return;
 				}
 				focusedSessionIdRef.current = sessionId;
+				interactedSessionIdRef.current = sessionId;
 				setFocusedSessionId(sessionId);
 				markTerminalActivityViewed(sessionId);
 				setErrorText(null);
@@ -2306,7 +2240,7 @@ const ProjectWorkspace = forwardRef<
 								reconciledPanel.api.setActive();
 								setFocusedSessionId(sessionId);
 								scheduleCreatedTerminalFocus(sessionId);
-								window.requestAnimationFrame(publishTerminalActivityOverview);
+								window.requestAnimationFrame(publishWorkspaceInventory);
 								resolve();
 								return;
 							}
@@ -2328,7 +2262,7 @@ const ProjectWorkspace = forwardRef<
 				fileViewerClient,
 				getPanelForSession,
 				project.id,
-				publishTerminalActivityOverview,
+				publishWorkspaceInventory,
 				hydrateRecordingStateForSession,
 				settings.recording.recordNewTerminals,
 				startRecordingForSession,
@@ -2759,7 +2693,7 @@ const ProjectWorkspace = forwardRef<
 
 			for (const group of api?.groups ?? []) {
 				for (const panel of group.panels) {
-					const params = panel.params as DockPanelTabAppearance | undefined;
+					const params = panel.params as PanelTabAppearance | undefined;
 					if (!params || !('inheritsProjectColor' in params)) {
 						continue;
 					}
@@ -2772,13 +2706,13 @@ const ProjectWorkspace = forwardRef<
 				}
 			}
 
-			window.requestAnimationFrame(publishTerminalActivityOverview);
+			window.requestAnimationFrame(publishWorkspaceInventory);
 		}, [
 			project.id,
 			project.title,
 			project.emoji,
 			project.color,
-			publishTerminalActivityOverview,
+			publishWorkspaceInventory,
 		]);
 
 		useEffect(() => {
@@ -2801,9 +2735,9 @@ const ProjectWorkspace = forwardRef<
 				});
 			}
 
-			window.requestAnimationFrame(publishTerminalActivityOverview);
+			window.requestAnimationFrame(publishWorkspaceInventory);
 		}, [
-			publishTerminalActivityOverview,
+			publishWorkspaceInventory,
 			settings.activityIndicators.showActiveTabs,
 			settings.activityIndicators.showFinishedTabs,
 		]);
@@ -2872,7 +2806,7 @@ const ProjectWorkspace = forwardRef<
 						projectColor: project.color,
 					});
 
-					window.requestAnimationFrame(publishTerminalActivityOverview);
+					window.requestAnimationFrame(publishWorkspaceInventory);
 				} finally {
 					window.requestAnimationFrame(() => {
 						if (sessionId) {
@@ -2892,7 +2826,7 @@ const ProjectWorkspace = forwardRef<
 				project.id,
 				project.title,
 				project.emoji,
-				publishTerminalActivityOverview,
+				publishWorkspaceInventory,
 				terminalClientContext?.workspaceSnapshotStore,
 			],
 		);
@@ -3034,7 +2968,7 @@ const ProjectWorkspace = forwardRef<
 						activePanel.api.setTitle(text);
 						setTerminalTitleRevision((revision) => revision + 1);
 						activePanel.api.updateParameters({ titleUpdateNonce: Date.now() });
-						window.requestAnimationFrame(publishTerminalActivityOverview);
+						window.requestAnimationFrame(publishWorkspaceInventory);
 					} else {
 						activePanel.api.updateParameters({ terminalNote: text });
 					}
@@ -3060,7 +2994,7 @@ const ProjectWorkspace = forwardRef<
 				project.rootFolder,
 				project.title,
 				serverAiClient,
-				publishTerminalActivityOverview,
+				publishWorkspaceInventory,
 				settings.aiTabMetadata,
 			],
 		);
@@ -3218,7 +3152,7 @@ const ProjectWorkspace = forwardRef<
 				onMoveToProject: onMoveTerminalToProject,
 				panelSessionsRef: panelSessionMapRef,
 				project,
-				publishActivityOverview: publishTerminalActivityOverview,
+				publishWorkspaceInventory,
 				registerTerminalContextReader,
 				replaceMacroRuns: replaceMacroRunsForSession,
 				revealRecording,
@@ -3255,8 +3189,10 @@ const ProjectWorkspace = forwardRef<
 						continue;
 					}
 					if (!panel) continue;
-					if (canonical.title !== undefined && panel.title !== canonical.title)
+					if (canonical.title !== undefined && panel.title !== canonical.title) {
 						panel.api.setTitle(canonical.title);
+						setTerminalTitleRevision((revision) => revision + 1);
+					}
 					panel.api.updateParameters({
 						...(canonical.emoji === undefined
 							? {}
@@ -3443,6 +3379,23 @@ const ProjectWorkspace = forwardRef<
 				},
 				{
 					group: 'Workspace',
+					icon: <LayoutDashboard size={18} strokeWidth={2.1} />,
+					id: 'show-dashboard',
+					title: 'Show dashboard',
+					description:
+						'See every project and tab in this workspace at a glance.',
+					searchText: `show dashboard home overview projects tabs status at a glance ${getCommandShortcut(settings.keyboardShortcuts, 'show-dashboard')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'show-dashboard',
+						isMac,
+					),
+					onSelect: () => {
+						onShowDashboard();
+					},
+				},
+				{
+					group: 'Workspace',
 					icon: <Sidebar size={18} strokeWidth={2.1} />,
 					id: 'toggle-file-explorer-sidebar',
 					title: project.isFileExplorerOpen
@@ -3543,6 +3496,7 @@ const ProjectWorkspace = forwardRef<
 			runMacro,
 			settings.keyboardShortcuts,
 			setProjectRootFolderToWorkingDirectory,
+			onShowDashboard,
 			openProfileChooser,
 			startDictation,
 			toggleFileExplorerSidebar,
@@ -3752,6 +3706,11 @@ const ProjectWorkspace = forwardRef<
 					case 'set-project-root-folder-to-working-directory':
 						await setProjectRootFolderToWorkingDirectory();
 						break;
+					// The dashboard is a view of the whole workspace, so a project
+					// hands this one back up rather than answering it itself.
+					case 'show-dashboard':
+						onShowDashboard();
+						break;
 					default:
 						break;
 				}
@@ -3762,6 +3721,7 @@ const ProjectWorkspace = forwardRef<
 				clearActiveTerminal,
 				closeActivePanel,
 				onAddProject,
+				onShowDashboard,
 				popoutActivePanel,
 				saveActivePanel,
 				setProjectRootFolderToWorkingDirectory,
@@ -3868,9 +3828,12 @@ const ProjectWorkspace = forwardRef<
 			],
 		);
 
+		// Every rename path — the edit sheet, an AI title, an MCP rename, and
+		// canonical reconciliation from the server — bumps this revision, so one
+		// effect republishes the inventory for all of them.
 		useEffect(() => {
-			publishTerminalActivityOverview();
-		}, [publishTerminalActivityOverview]);
+			publishWorkspaceInventory();
+		}, [publishWorkspaceInventory, terminalTitleRevision]);
 
 		useEffect(() => {
 			focusedSessionIdRef.current = focusedSessionId;
@@ -3943,7 +3906,7 @@ const ProjectWorkspace = forwardRef<
 			movingTerminalSessionIdsRef,
 			panelSessionMapRef,
 			projectId: project.id,
-			publishTerminalActivityOverview,
+			publishWorkspaceInventory,
 			setFocusedSessionId,
 			setIsDockviewReady,
 			syncPanelFocusState,
@@ -4126,16 +4089,8 @@ const ProjectWorkspace = forwardRef<
 					return;
 				}
 
-				if (serverActivityClient !== undefined) {
-					void serverActivityClient
-						.acknowledge({ projectId: project.id, sessionId })
-						.catch(() => undefined);
-				} else {
-					applyTerminalActivityEvaluation(
-						sessionId,
-						terminalActivityStoreRef.current.recordUserInput(sessionId),
-					);
-				}
+				interactedSessionIdRef.current = sessionId;
+				markTerminalActivityViewed(sessionId);
 			};
 
 			window.addEventListener(
@@ -4148,23 +4103,18 @@ const ProjectWorkspace = forwardRef<
 					onTerminalUserInput,
 				);
 			};
-		}, [
-			applyTerminalActivityEvaluation,
-			getPanelForSession,
-			project.id,
-			serverActivityClient,
-		]);
+		}, [getPanelForSession, markTerminalActivityViewed]);
 
 		useEffect(() => {
 			return () => {
-				onTerminalActivityOverviewChange(project.id, []);
+				onWorkspaceInventoryChange(project.id, []);
 				for (const timer of terminalActivityTimersRef.current.values()) {
 					window.clearTimeout(timer);
 				}
 				terminalActivityTimersRef.current.clear();
 				terminalActivityStoreRef.current.clear();
 			};
-		}, [onTerminalActivityOverviewChange, project.id]);
+		}, [onWorkspaceInventoryChange, project.id]);
 
 		useEffect(() => {
 			const onTerminalExit = (event: Event) => {
@@ -5441,10 +5391,12 @@ function App({
 		closeProject,
 		commitProjectSidebar,
 		homePath,
+		isHomeSelected,
 		isWorkspaceHydrating,
 		projectCreationError,
 		projects,
 		projectsRef,
+		selectHome,
 		setActiveProjectId,
 		setProjects,
 		updateProject,
@@ -5815,8 +5767,9 @@ function App({
 		projectEnvironmentChoices,
 		projectEnvironmentsClient,
 	]);
-	const [terminalActivityItemsByProject, setTerminalActivityItemsByProject] =
-		useState<Record<string, TerminalActivityOverviewItem[]>>({});
+	const [inventoryByProject, setInventoryByProject] = useState<
+		Record<string, WorkspaceInventoryEntry[]>
+	>({});
 	const [agentStatusSnapshot, setAgentStatusSnapshot] =
 		useState<AgentStatusSnapshot>(EMPTY_AGENT_STATUS_SNAPSHOT);
 
@@ -6035,6 +5988,12 @@ function App({
 
 	const executeCommandOnActiveProject = useCallback(
 		(command: AppCommand): Promise<void> => {
+			// The dashboard belongs to the workspace view, not to a project, so it
+			// runs with no active panel and with no projects open at all.
+			if (command === 'show-dashboard') {
+				selectHome();
+				return Promise.resolve();
+			}
 			if (command === 'open-project-environments') {
 				return auxiliaryRouteController.openProjectEnvironments();
 			}
@@ -6058,13 +6017,13 @@ function App({
 				Promise.resolve()
 			);
 		},
-		[activeProjectId, auxiliaryRouteController],
+		[activeProjectId, auxiliaryRouteController, selectHome],
 	);
 
-	const updateTerminalActivityOverview = useCallback(
-		(projectId: string, items: TerminalActivityOverviewItem[]) => {
-			setTerminalActivityItemsByProject((current) => {
-				if (items.length === 0) {
+	const updateWorkspaceInventory = useCallback(
+		(projectId: string, entries: WorkspaceInventoryEntry[]) => {
+			setInventoryByProject((current) => {
+				if (entries.length === 0) {
 					if (!(projectId in current)) {
 						return current;
 					}
@@ -6076,7 +6035,7 @@ function App({
 
 				return {
 					...current,
-					[projectId]: items,
+					[projectId]: entries,
 				};
 			});
 		},
@@ -6084,24 +6043,45 @@ function App({
 	);
 
 	const terminalActivityItems = useMemo(() => {
-		const items = projects.flatMap(
-			(project) => terminalActivityItemsByProject[project.id] ?? [],
+		const items = projects.flatMap((project) =>
+			selectNotableEntries(inventoryByProject[project.id] ?? []),
 		);
 		return buildTerminalActivityOverview(items);
-	}, [projects, terminalActivityItemsByProject]);
+	}, [inventoryByProject, projects]);
 
 	const hasTerminalActivityOverview = terminalActivityItems.items.length > 0;
 
 	const activityBadgesByProject = useMemo(() => {
 		const badges: Record<string, ActivityCountBadge> = {};
-		for (const [projectId, items] of Object.entries(
-			terminalActivityItemsByProject,
-		)) {
-			const badge = summarizeActivityBadge(items.map((item) => item.state));
+		for (const [projectId, entries] of Object.entries(inventoryByProject)) {
+			const badge = summarizeActivityBadge(
+				selectNotableEntries(entries).map((item) => item.state),
+			);
 			if (badge) badges[projectId] = badge;
 		}
 		return badges;
-	}, [terminalActivityItemsByProject]);
+	}, [inventoryByProject]);
+
+	const activateDashboardRow = useCallback(
+		(row: DashboardRow) => {
+			// Resolve at click time: a row rendered before a project or panel went
+			// away must not act on it.
+			const activation = resolveDashboardActivation(
+				row,
+				projectsRef.current,
+				inventoryByProject,
+			);
+			if (activation.kind === 'stale') return;
+			activateProject(activation.projectId);
+			if (activation.kind === 'project') return;
+			window.requestAnimationFrame(() => {
+				workspaceRefs.current
+					.get(activation.projectId)
+					?.activateTerminal(activation.panelId, activation.sessionId);
+			});
+		},
+		[activateProject, inventoryByProject, projectsRef],
+	);
 
 	const activateTerminalFromOverview = useCallback(
 		(item: TerminalActivityOverviewItem) => {
@@ -6192,6 +6172,40 @@ function App({
 		};
 	}, [isActivityMenuOpen]);
 
+	// A project workspace owns the keyboard while it is on screen. When none is —
+	// the dashboard is showing, or this view holds no projects — the workspace
+	// view answers for the commands that are its own rather than a project's.
+	const hasActiveProjectWorkspace =
+		!isHomeSelected &&
+		projects.some((project) => project.id === activeProjectId);
+
+	useEffect(() => {
+		if (hasActiveProjectWorkspace) return;
+
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.defaultPrevented) return;
+			const command = findCommandForKeyboardEvent(
+				event,
+				settings.keyboardShortcuts,
+				isMac,
+			);
+			if (command !== 'show-dashboard') return;
+			event.preventDefault();
+			event.stopPropagation();
+			if (!event.repeat) void executeCommandOnActiveProject(command);
+		};
+
+		window.addEventListener('keydown', onKeyDown, true);
+		return () => {
+			window.removeEventListener('keydown', onKeyDown, true);
+		};
+	}, [
+		executeCommandOnActiveProject,
+		hasActiveProjectWorkspace,
+		isMac,
+		settings.keyboardShortcuts,
+	]);
+
 	const isPendingProjectFailure =
 		pendingProjectCreation?.tab.creationStatus === 'failed';
 	const activeProject = isPendingProjectFailure
@@ -6269,6 +6283,7 @@ function App({
 			className={`app-shell${isMac && hasNativeWindowControls ? ' app-shell--macos' : ''}`}
 			data-terminay-app-component={TERMINAY_APP_COMPONENT_ID}
 			data-terminay-active-project-id={displayedActiveProjectId}
+			data-terminay-selected-view={isHomeSelected ? 'home' : 'project'}
 			data-terminay-server-id={terminalClientContext?.serverId}
 			data-terminay-workspace-revision={
 				terminalClientContext?.workspaceSnapshotStore?.snapshot?.revision
@@ -6276,9 +6291,9 @@ function App({
 			style={
 				{
 					'--terminal-panel-surface': settings.theme.background,
-					...(displayedActiveProject?.color
-						? { '--project-color': displayedActiveProject.color }
-						: {}),
+					...(isHomeSelected || !displayedActiveProject?.color
+						? {}
+						: { '--project-color': displayedActiveProject.color }),
 				} as CSSProperties
 			}
 		>
@@ -6312,8 +6327,21 @@ function App({
 						</svg>
 					</button>
 				</div>
+				<div className="project-tab-home-box">
+					<button
+						type="button"
+						className={`project-tab-home${isHomeSelected ? ' project-tab-home--active' : ''}`}
+						onClick={selectHome}
+						aria-label="Show dashboard"
+						aria-pressed={isHomeSelected}
+						title="Dashboard"
+						data-terminay-home-control="true"
+					>
+						<LayoutDashboard size={14} aria-hidden="true" />
+					</button>
+				</div>
 				<ProjectTabList
-					activeProjectId={displayedActiveProjectId}
+					activeProjectId={isHomeSelected ? '' : displayedActiveProjectId}
 					activityBadgesByProject={activityBadgesByProject}
 					draggingProjectId={draggingProjectId}
 					dropPreview={dropPreview}
@@ -6463,6 +6491,13 @@ function App({
 						{connectionFeatureError}
 					</div>
 				) : null}
+				{isHomeSelected ? (
+					<WorkspaceDashboard
+						inventoryByProject={inventoryByProject}
+						onActivate={activateDashboardRow}
+						projects={displayedProjects}
+					/>
+				) : null}
 				{projects.map((project) => (
 					<ProjectWorkspace
 						key={project.id}
@@ -6472,16 +6507,19 @@ function App({
 						agentStatusSnapshot={agentStatusSnapshot}
 						auxiliaryRoutes={auxiliaryRouteController}
 						isActive={
-							!isPendingProjectFailure && project.id === activeProjectId
+							!isHomeSelected &&
+							!isPendingProjectFailure &&
+							project.id === activeProjectId
 						}
 						isMac={isMac}
 						macros={macros}
 						onAddProject={createThisServerProject}
+						onShowDashboard={selectHome}
 						onCloseProject={closeProject}
 						onEditProject={openEditProjectWindow}
 						onMoveTerminalToProject={moveTerminalToProject}
 						onPopoutProject={popoutProject}
-						onTerminalActivityOverviewChange={updateTerminalActivityOverview}
+						onWorkspaceInventoryChange={updateWorkspaceInventory}
 						onCommitProjectSidebar={commitProjectSidebar}
 						onUpdateProject={updateProject}
 						popoutUrl={popoutUrl}
