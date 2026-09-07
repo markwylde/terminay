@@ -64,8 +64,17 @@ export function selectOpenCodeRoot(roots, options) {
     if (options.requested)
         return roots.find((root) => root.id === options.requested);
     const mostRecentlyUpdated = [...roots].sort((a, b) => b.timeUpdated - a.timeUpdated)[0];
-    if (options.startedAt === undefined)
+    const remembered = options.remembered
+        ? roots.find((root) => root.id === options.remembered)
+        : undefined;
+    // `--continue` is OpenCode's own "newest session in this directory", so when
+    // the arguments prove it the provider follows the same rule the CLI used.
+    if (options.continuing)
         return mostRecentlyUpdated;
+    // Without a proven start there is no way to tell this process's row from a
+    // neighbour's; the terminal's last root is the only exact fact left.
+    if (options.startedAt === undefined)
+        return remembered;
     const own = [...roots]
         .filter((root) => root.timeCreated >=
         (options.startedAt ?? 0) - ROOT_SELECTION.clockToleranceMs)
@@ -76,18 +85,11 @@ export function selectOpenCodeRoot(roots, options) {
     // binding an older root here is what makes two terminals share one session.
     if (options.now - options.startedAt < ROOT_SELECTION.newSessionGraceMs)
         return undefined;
-    // `--continue` is OpenCode's own "newest session in this directory", so when
-    // the arguments prove it the provider follows the same rule the CLI used.
-    if (options.continuing)
-        return mostRecentlyUpdated;
     // Otherwise this process reopened a session it did not name where the
     // environment could see it. The session this terminal last had is the one
-    // reading it back, and unlike "newest in the directory" it can never hand
-    // two terminals the same root.
-    const remembered = options.remembered
-        ? roots.find((root) => root.id === options.remembered)
-        : undefined;
-    return remembered ?? mostRecentlyUpdated;
+    // reading it back. "Newest in the directory" is never used here: it is the
+    // live session of whichever neighbour typed last.
+    return remembered;
 }
 /**
  * The last root each terminal was bound to, keyed by the PTY device the CLI
@@ -193,8 +195,14 @@ export const openCodeProvider = defineAgentProvider({
                 continue;
             const store = new OpenCodeStore(path);
             try {
-                const requested = openCodeSessionId(terminal.foreground.arguments);
-                const continuing = openCodeContinues(terminal.foreground.arguments);
+                // The CLI's flags come from the `opencode` process's own command
+                // line — per-process evidence — and only failing that from the
+                // foreground summary the host issued.
+                const argv = descendants.find((process) => isOpenCodeForeground(process.executableName) &&
+                    process.arguments !== undefined &&
+                    process.arguments.length > 0)?.arguments ?? terminal.foreground.arguments;
+                const requested = openCodeSessionId(argv);
+                const continuing = openCodeContinues(argv);
                 const root = [...directories]
                     .flatMap((entry) => {
                     const chosen = selectOpenCodeRoot(store.rootsForDirectory(entry[0]), {
