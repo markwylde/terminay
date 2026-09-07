@@ -177,6 +177,32 @@ Claude Code flushes an assistant record and its corresponding `tool_result` toge
 - **WHEN** an `Agent` tool use records a subagent launch
 - **THEN** a named child entry starts beneath the root at that launch and completes on its own journal's completion or the parent's task notification for that `agentId`
 
+### Requirement: Grok record mapping
+
+The first supported Grok mapping SHALL be `(grok, 0.1)` and SHALL accept later Grok versions until a divergent mapping is added. It SHALL map records as follows: the first eligible `turn_started` with `session_relationship: primary` produces root `session.started` and `idle` then `turn.started` and `working`, with the model taken from a bounded `model_id`; a later `turn_started` produces the corresponding `turn.started` and `working`; a bounded `summary.json` `generated_title` or `session_summary` provides root title metadata and a rename updates the existing root in place; `tool_started` produces a `working` tool start keyed by a session-local ordinal on `tool_name` because Grok omits a native call id on start; `permission_requested` produces `waiting` and `permission_resolved` finishes the wait and resumes `working`; `tool_completed` finishes the tool using the matching start ordinal and Grok's `outcome`; `mcp_tool_call_started` and `mcp_tool_call_completed` produce tool start and finish using the native `call_id`; `turn_ended` produces `done` mapping `completed` to success, cancel or abort to cancelled, and error or fail to error; later `mcp_*` records after `turn_ended`, including resume and re-init, are ignored and SHALL NOT return the root to `working`; and unknown `type` or `phase` values are ignored.
+
+Grok appends to one events journal across resumes and the journal is replayed from its start on every bind. A record whose `ts` precedes the start of the bound `grok` process, as the pid-keyed registry and the process tree prove it, SHALL NOT open a turn, tool, or wait; it SHALL still start the session, carry title and model metadata, and a historical `turn_ended` SHALL still produce `done` with its outcome, so a resumed terminal shows the last turn's outcome at once rather than replaying every past turn as live.
+
+#### Scenario: Permission cycle
+
+- **WHEN** Grok writes `permission_requested` and later `permission_resolved`
+- **THEN** the entry becomes `waiting` and then resumes `working`
+
+#### Scenario: MCP records after a turn ends
+
+- **WHEN** `mcp_*` records arrive after `turn_ended`, including on resume or re-init
+- **THEN** they are ignored and the root does not return to `working`
+
+#### Scenario: Turn outcome mapping
+
+- **WHEN** `turn_ended` reports `completed`, a cancel or abort, or an error or fail
+- **THEN** the entry becomes `done` with a success, cancelled, or error outcome respectively
+
+#### Scenario: Resumed process replays an earlier turn
+
+- **WHEN** a `grok` process binds a journal holding a turn recorded before that process started
+- **THEN** no `working` state is shown for that turn and the root shows the turn's outcome as `done`
+
 ## ADDED Requirements
 
 ### Requirement: Concurrent agent terminals
