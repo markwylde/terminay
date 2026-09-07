@@ -38,7 +38,15 @@ test('the reference session file carries every field the provider reads', () => 
 test('the allowed field set is exactly the five documented fields', () => {
 	assert.deepEqual(
 		[...CLAUDE_SESSION_FILE_FIELDS],
-		['pid', 'sessionId', 'cwd', 'startedAt', 'version', 'status'],
+		[
+			'pid',
+			'sessionId',
+			'cwd',
+			'startedAt',
+			'version',
+			'status',
+			'statusUpdatedAt',
+		],
 	);
 });
 
@@ -53,7 +61,6 @@ test('nothing else the captured file carries is in the allowed set', () => {
 		'procStart',
 		'name',
 		'nameSource',
-		'statusUpdatedAt',
 		'updatedAt',
 		'peerProtocol',
 		'peerFeatures',
