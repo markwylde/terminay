@@ -4,9 +4,15 @@ import { openCodeProvider, PROVIDER_ID } from './provider.js';
 export { emptyState, mapOpenCodeEvent } from './mapping.js';
 export {
 	createOpenCodeRecordMapper,
+	openCodeContinues,
 	openCodeProvider,
+	openCodeSessionId,
+	openCodeWorkingDirectories,
 	PROVIDER_ID,
+	ROOT_SELECTION,
+	selectOpenCodeRoot,
 	storeWatcher,
+	terminalDeviceKey,
 } from './provider.js';
 export {
 	effectiveOpenCodeRoot,

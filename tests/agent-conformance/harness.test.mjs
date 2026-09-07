@@ -66,7 +66,8 @@ test('a bound provider feeds its own mapper through the real session pump', asyn
 		async activate(context) {
 			context.agents.registerProvider('example.agent/cli', {
 				mappingVersion: '0.1',
-				matchesForeground: (foreground) => foreground.executableName === 'sleep',
+				matchesForeground: (foreground) =>
+					foreground.executableName === 'sleep',
 				async observe(terminal) {
 					const binding = await terminal.bindSession({
 						providerSessionId: 'session-1',
@@ -111,7 +112,11 @@ test('a bound provider feeds its own mapper through the real session pump', asyn
 		);
 		assert.equal(harness.projection.active, true);
 		harness.pty.write('');
-		await harness.await('the root to retire once its process exits', (p) => !p.active, 5_000);
+		await harness.await(
+			'the root to retire once its process exits',
+			(p) => !p.active,
+			5_000,
+		);
 	} finally {
 		await harness.close();
 	}
@@ -130,15 +135,93 @@ test('a matrix row must state a verdict for every capability and nothing else', 
 		subStatus: 'Y',
 		resume: 'Y',
 	};
-	assertRowIsComplete({ name: 'Example', row });
+	const gestures = { secondLaunch: () => {}, resume: () => {} };
+	assertRowIsComplete({ name: 'Example', row, ...gestures });
 	const { resume, ...missing } = row;
-	assert.throws(() => assertRowIsComplete({ name: 'Example', row: missing }), /no verdict for resume/u);
 	assert.throws(
-		() => assertRowIsComplete({ name: 'Example', row: { ...row, invented: 'Y' } }),
+		() => assertRowIsComplete({ name: 'Example', row: missing, ...gestures }),
+		/no verdict for resume/u,
+	);
+	assert.throws(
+		() =>
+			assertRowIsComplete({
+				name: 'Example',
+				row: { ...row, invented: 'Y' },
+				...gestures,
+			}),
 		/does not match the matrix columns/u,
 	);
 	assert.throws(
-		() => assertRowIsComplete({ name: 'Example', row: { ...row, done: 'maybe' } }),
+		() =>
+			assertRowIsComplete({
+				name: 'Example',
+				row: { ...row, done: 'maybe' },
+				...gestures,
+			}),
 		/no verdict for done/u,
 	);
+	// Two concurrent sessions of one provider is the case every other step is
+	// blind to, so a descriptor cannot opt out of proving it.
+	assert.throws(
+		() =>
+			assertRowIsComplete({ name: 'Example', row, resume: gestures.resume }),
+		/must supply secondLaunch/u,
+	);
+	// The resume gesture is driven from a terminal with no binding of its own,
+	// so it is required of every descriptor whatever its resume verdict.
+	assert.throws(
+		() =>
+			assertRowIsComplete({
+				name: 'Example',
+				row,
+				secondLaunch: gestures.secondLaunch,
+			}),
+		/must supply resume/u,
+	);
+});
+
+test('a resume gesture is given the session to resume rather than reading one', async () => {
+	// The resume-while-another-runs step drives a third terminal that has no
+	// binding of its own, so the descriptor gesture must take the id as an
+	// argument. Every shipped descriptor defaults it to its own projection, and
+	// this asserts both halves of that contract on the same shape.
+	const seen = [];
+	const descriptor = {
+		resume(harness, providerSessionId = harness.projection.providerSessionId) {
+			seen.push(providerSessionId);
+		},
+	};
+	descriptor.resume({ projection: { providerSessionId: 'its-own' } });
+	descriptor.resume(
+		{ projection: { providerSessionId: 'its-own' } },
+		'another-terminals',
+	);
+	assert.deepEqual(seen, ['its-own', 'another-terminals']);
+});
+
+test('the working directory outlives the harness that seeded it', async () => {
+	// The seeded session is quit and its harness closed before the session under
+	// test starts, and both work in one directory. A PTY handed a directory does
+	// not own it, so closing the seed must leave the directory and its contents
+	// in place for everything that follows.
+	const { mkdtempSync, rmSync, writeFileSync, existsSync } = await import(
+		'node:fs'
+	);
+	const { tmpdir } = await import('node:os');
+	const { join } = await import('node:path');
+	const directory = mkdtempSync(join(tmpdir(), 'terminay-conformance-self-'));
+	try {
+		const first = await openConformancePty({ cwd: directory });
+		writeFileSync(join(first.cwd, 'seeded.txt'), 'earlier session');
+		await first.close();
+		assert.ok(
+			existsSync(join(directory, 'seeded.txt')),
+			'the seeded directory survives its PTY',
+		);
+		const second = await openConformancePty({ cwd: directory });
+		assert.equal(second.cwd, first.cwd);
+		await second.close();
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
 });

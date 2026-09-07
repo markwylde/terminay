@@ -1,0 +1,146 @@
+name: Agent conformance
+
+# Real-CLI conformance for the agent extensions. Each provider runs its own
+# matrix against its own real CLI in its own container, so a run spends that
+# provider's API credit and nothing else.
+#
+# These are deliberately narrow: only the extensions a change actually touches
+# run, because every run drives live model turns and costs real money. A change
+# to something they all share — the extension API, the agent runtime, the
+# shared harness, the runner script — runs all of them, since that is exactly
+# where the defects this suite exists to catch have come from.
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      extensions:
+        description: 'JSON array of extension directories, or "all"'
+        required: false
+        default: all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terminay-agent-conformance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  select:
+    name: Select extensions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      extensions: ${{ steps.detect.outputs.extensions }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+          all='["agent-claude-code","agent-codex","agent-grok","agent-opencode","agent-omp"]'
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            requested='${{ inputs.extensions }}'
+            if [ "$requested" = "all" ] || [ -z "$requested" ]; then
+              echo "extensions=$all" >> "$GITHUB_OUTPUT"
+            else
+              echo "extensions=$requested" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+
+          base="${{ github.event.pull_request.base.sha }}"
+          changed=$(git diff --name-only "$base"...HEAD)
+
+          # Anything every provider is built on. A defect here is invisible to a
+          # single-provider run, which is how the terminal-context and
+          # home-scoping bugs reached production.
+          if echo "$changed" | grep -qE '^(packages/extension-api/|packages/server-core/src/(activity|extensions)/|tests/agent-conformance/|scripts/run-agent-conformance-container\.sh$)'; then
+            echo "extensions=$all" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          selected='[]'
+          for extension in agent-claude-code agent-codex agent-grok agent-opencode agent-omp; do
+            if echo "$changed" | grep -q "^extensions/$extension/"; then
+              selected=$(printf '%s' "$selected" | jq -c --arg e "$extension" '. + [$e]')
+            fi
+          done
+          echo "extensions=$selected" >> "$GITHUB_OUTPUT"
+
+  conformance:
+    name: ${{ matrix.extension }}
+    needs: select
+    if: needs.select.outputs.extensions != '[]'
+    runs-on: ubuntu-latest
+    # A full matrix drives several real model turns, staggered subagent waits,
+    # an outstanding approval and a resume.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      # One provider at a time: five images building and five CLIs driving PTYs
+      # together starved the container host during development.
+      max-parallel: 2
+      # A static list rather than fromJSON(needs...): this runner leaves a
+      # matrix built from a job output unexpanded, so the job sits waiting with
+      # its expression as its name. Selection is applied per job below instead.
+      matrix:
+        extension:
+          - agent-claude-code
+          - agent-codex
+          - agent-grok
+          - agent-opencode
+          - agent-omp
+    steps:
+      - name: Is ${{ matrix.extension }} affected
+        id: selected
+        shell: bash
+        run: |
+          set -euo pipefail
+          if printf '%s' '${{ needs.select.outputs.extensions }}' | grep -q '"${{ matrix.extension }}"'; then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'run=false' >> "$GITHUB_OUTPUT"
+            echo '${{ matrix.extension }} is unaffected by this change; not spending a run on it.'
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.selected.outputs.run == 'true'
+
+      # These drive real models, so a step can fail for reasons that say nothing
+      # about the provider: a model wanders off the prompt, or the container
+      # host drops a build. Three attempts absorbs that. Three failures in a row
+      # is not noise, and fails the job.
+      #
+      # A pass on a later attempt is reported as a warning rather than passing
+      # quietly, because a provider that needs two goes every time is telling us
+      # something and should not look identical to one that passes first time.
+      - name: Run ${{ matrix.extension }} conformance
+        if: steps.selected.outputs.run == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          TERMINAY_CONFORMANCE_LOG: '1'
+        run: |
+          set -uo pipefail
+          attempts=3
+          extension='${{ matrix.extension }}'
+          for attempt in $(seq 1 "$attempts"); do
+            echo "::group::$extension conformance, attempt $attempt of $attempts"
+            if sh scripts/run-agent-conformance-container.sh "$extension"; then
+              echo "::endgroup::"
+              if [ "$attempt" -gt 1 ]; then
+                echo "::warning title=$extension needed $attempt attempts::Passed on attempt $attempt of $attempts. Repeated retries mean the run is not reliable, whatever the final result."
+              fi
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "$extension failed on attempt $attempt of $attempts"
+          done
+          echo "::error title=$extension conformance failed::Failed $attempts consecutive attempts. At that point it is the provider or the descriptor, not model non-determinism."
+          exit 1

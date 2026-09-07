@@ -5,6 +5,7 @@ import {
 	fixtureTerminal,
 } from '@terminay/extension-api/testing';
 import extension from '../dist/index.js';
+import { PID, sessionFile, sessionFilePath } from './claude-terminal.mjs';
 
 /**
  * Shaped from a real Claude Code 2.1.263 session directory captured during a
@@ -213,17 +214,22 @@ function resumedTerminal() {
 			},
 		];
 	}
+	// `claude --continue` appends to a journal an earlier process created, and
+	// the subagents directory already exists when the session rebinds. The
+	// process's own session file names the continued session, which is the only
+	// reason it binds.
+	files[sessionFilePath(PID)] = [
+		sessionFile({ sessionId, startedAt: Date.parse(startedAt) }),
+	];
 	return fixtureTerminal({
 		foregroundExecutable: 'claude',
 		arguments: ['--continue'],
 		cwd: '/workspace',
+		pid: PID,
 		startedAt,
 		openFilePaths: [],
 		files,
-		// `claude --continue` appends to a journal an earlier process created,
-		// and the subagents directory already exists when the session rebinds.
 		fileCreatedAt: { [root]: '2026-09-05T09:00:00.000Z' },
-		fileModifiedAt: { [root]: '2026-09-06T11:00:20.000Z' },
 	});
 }
 
@@ -279,6 +285,204 @@ test('a resumed session with existing child journals projects each subagent once
 			harness.projection().working,
 			false,
 			'the root is left working by a child that never completes',
+		);
+	} finally {
+		await harness.dispose();
+	}
+});
+
+/**
+ * A subagent that never finishes. The user stopped it, so its journal ends on
+ * `[Request interrupted by user]` with no `end_turn`, no `turn_duration` and no
+ * task notification back to the root. Left alone, the child stays `working`
+ * and holds the root `working` with it for as long as the terminal lives —
+ * which is what a developer saw an hour after killing four of them.
+ */
+const stopped = subagents[2];
+const stoppedRootJournal = [
+	{ type: 'mode', sessionId, version: '2.1.263' },
+	{ type: 'permission-mode', sessionId, permissionMode: 'default' },
+	{ type: 'last-prompt', sessionId, lastPrompt: 'placeholder prompt' },
+	...launch(stopped, 0),
+	{
+		type: 'assistant',
+		sessionId,
+		uuid: 'launched',
+		isSidechain: false,
+		message: {
+			role: 'assistant',
+			model: 'claude-opus-5',
+			stop_reason: 'end_turn',
+			content: [{ type: 'text', text: 'placeholder' }],
+		},
+	},
+	{ type: 'system', subtype: 'turn_duration', sessionId, isSidechain: false },
+];
+const interruptedRecord = {
+	type: 'user',
+	sessionId,
+	uuid: `${stopped.agentId}-4`,
+	parentUuid: `${stopped.agentId}-3`,
+	agentId: stopped.agentId,
+	isSidechain: true,
+	message: {
+		role: 'user',
+		content: [{ type: 'text', text: '[Request interrupted by user]' }],
+	},
+};
+
+function stoppedTerminal({ childRecords, fileRewrites }) {
+	return fixtureTerminal({
+		foregroundExecutable: 'claude',
+		cwd: '/workspace',
+		pid: PID,
+		startedAt,
+		openFilePaths: [],
+		files: {
+			[root]: stoppedRootJournal,
+			[`${projects}/${sessionId}/subagents/agent-${stopped.agentId}.jsonl`]:
+				childRecords,
+			[`${projects}/${sessionId}/subagents/agent-${stopped.agentId}.meta.json`]:
+				[{ description: stopped.description, toolUseId: stopped.toolUseId }],
+			[sessionFilePath(PID)]: [
+				sessionFile({ sessionId, startedAt: Date.parse(startedAt) }),
+			],
+		},
+		...(fileRewrites ? { fileRewrites } : {}),
+	});
+}
+
+const doneEvents = (harness) =>
+	harness
+		.events()
+		.filter((event) => event.kind === 'subagent.done')
+		.map((event) => [event.subagentId, event.outcome]);
+
+test('a subagent whose journal ends on an interruption completes as cancelled', async () => {
+	const harness = await createAgentExtensionHarness(extension);
+	try {
+		await harness.observe(
+			stoppedTerminal({
+				childRecords: [...childJournal(stopped), interruptedRecord],
+			}),
+		);
+		assert.deepEqual(doneEvents(harness), [[stopped.toolUseId, 'cancelled']]);
+	} finally {
+		await harness.dispose();
+	}
+});
+
+test('the session file reporting idle cancels every subagent still open', async () => {
+	// The CLI itself writes `status: "idle"` into its own session file. A child
+	// still `working` at that point has no end coming, whatever its journal says.
+	const harness = await createAgentExtensionHarness(extension);
+	try {
+		await harness.observe(
+			stoppedTerminal({
+				childRecords: childJournal(stopped),
+				fileRewrites: {
+					[sessionFilePath(PID)]: [
+						[
+							sessionFile({
+								sessionId,
+								startedAt: Date.parse(startedAt),
+								status: 'idle',
+							}),
+						],
+					],
+				},
+			}),
+		);
+		assert.deepEqual(doneEvents(harness), [[stopped.toolUseId, 'cancelled']]);
+	} finally {
+		await harness.dispose();
+	}
+});
+
+/**
+ * The order the host sees events in is not the order the journals hold them:
+ * the root and every child journal replay concurrently, and the host re-opens
+ * a stopped child on any later start. So a dead child is kept down by time,
+ * not by order — the CLI's own idle mark in its session file outranks every
+ * launch or start recorded before it.
+ */
+const idleAt = Date.parse('2026-09-06T12:00:00.000Z');
+const stamp = (records, at) =>
+	records.map((record) => ({ ...record, timestamp: at }));
+
+test('a session file already idle at bind keeps every earlier subagent down', async () => {
+	// The child journal never says the child stopped, and it is replayed in
+	// full; but every record in it — and the launch — predates the idle mark.
+	const harness = await createAgentExtensionHarness(extension);
+	try {
+		await harness.observe(
+			fixtureTerminal({
+				foregroundExecutable: 'claude',
+				cwd: '/workspace',
+				pid: PID,
+				startedAt,
+				openFilePaths: [],
+				files: {
+					[root]: stamp(stoppedRootJournal, '2026-09-06T11:30:00.000Z'),
+					[`${projects}/${sessionId}/subagents/agent-${stopped.agentId}.jsonl`]:
+						stamp(childJournal(stopped), '2026-09-06T11:31:00.000Z'),
+					[`${projects}/${sessionId}/subagents/agent-${stopped.agentId}.meta.json`]:
+						[
+							{
+								description: stopped.description,
+								toolUseId: stopped.toolUseId,
+							},
+						],
+					[sessionFilePath(PID)]: [
+						sessionFile({
+							sessionId,
+							startedAt: Date.parse(startedAt),
+							status: 'idle',
+							statusUpdatedAt: idleAt,
+						}),
+					],
+				},
+			}),
+		);
+		assert.deepEqual(
+			harness.events().filter((event) => event.kind.startsWith('subagent')),
+			[],
+			'nothing recorded before the idle mark may start a subagent',
+		);
+	} finally {
+		await harness.dispose();
+	}
+});
+
+test('a subagent recorded after the idle mark still starts', async () => {
+	const harness = await createAgentExtensionHarness(extension);
+	try {
+		await harness.observe(
+			fixtureTerminal({
+				foregroundExecutable: 'claude',
+				cwd: '/workspace',
+				pid: PID,
+				startedAt,
+				openFilePaths: [],
+				files: {
+					[root]: stamp(stoppedRootJournal, '2026-09-06T12:30:00.000Z'),
+					[sessionFilePath(PID)]: [
+						sessionFile({
+							sessionId,
+							startedAt: Date.parse(startedAt),
+							status: 'idle',
+							statusUpdatedAt: idleAt,
+						}),
+					],
+				},
+			}),
+		);
+		assert.deepEqual(
+			harness
+				.events()
+				.filter((event) => event.kind === 'subagent.started')
+				.map((event) => event.subagentId),
+			[stopped.toolUseId],
 		);
 	} finally {
 		await harness.dispose();

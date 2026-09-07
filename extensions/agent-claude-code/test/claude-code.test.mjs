@@ -5,6 +5,7 @@ import {
 	fixtureTerminal,
 } from '@terminay/extension-api/testing';
 import extension, { PROVIDER_ID } from '../dist/index.js';
+import { PID, sessionFile, sessionFilePath } from './claude-terminal.mjs';
 
 const sessionId = '5f2aff08-eab3-4852-96eb-48235fc7f471';
 const projects = '/home/test/.claude/projects/-workspace';
@@ -12,20 +13,28 @@ const journal = `${projects}/${sessionId}.jsonl`;
 const startedAt = '2026-09-06T11:00:00.000Z';
 
 /**
- * The evidence a real Claude Code CLI presents: the journal exists on disk and
- * the process holds no writable handle, because Claude Code appends and closes.
- * Only the test that exercises the open-handle fallback overrides this.
+ * The evidence a real Claude Code CLI presents: the pid-keyed session file the
+ * running process wrote for itself, naming the journal it is appending to. The
+ * journal exists on disk and the process holds no writable handle on it,
+ * because Claude Code appends and closes.
  */
-function claudeFixture(options) {
-	const files = options.files ?? {};
+function claudeFixture({ files = {}, boundSession = sessionId, ...options }) {
 	return fixtureTerminal({
 		startedAt,
+		pid: PID,
 		openFilePaths: [],
-		fileModifiedAt: Object.fromEntries(
-			Object.keys(files).map((path) => [path, '2026-09-06T11:00:04.000Z']),
-		),
 		cwd: '/workspace',
 		...options,
+		files: {
+			...files,
+			[sessionFilePath(PID)]: [
+				sessionFile({
+					sessionId: boundSession,
+					cwd: options.cwd ?? '/workspace',
+					startedAt: Date.parse(startedAt),
+				}),
+			],
+		},
 	});
 }
 
@@ -176,7 +185,9 @@ test('Claude Code rejects sidechains and injected command metadata', async () =>
 	}
 });
 
-test('Claude Code refuses concurrently appended root journals rather than choosing by filename or time', async () => {
+test('Claude Code never chooses among journals by filename or time', async () => {
+	// Both journals were appended at the same instant, which the deleted rule
+	// treated as unresolvable ambiguity. The session file resolves it outright.
 	const otherSession = 'bf0b34e1-4afc-4b93-8389-80caa0b589a4';
 	const harness = await createAgentExtensionHarness(extension);
 	try {
@@ -184,9 +195,13 @@ test('Claude Code refuses concurrently appended root journals rather than choosi
 			claudeFixture({
 				foregroundExecutable: 'claude',
 				files: {
-					[journal]: [{ type: 'permission-mode', sessionId }],
+					[journal]: [
+						{ type: 'permission-mode', sessionId },
+						{ type: 'ai-title', aiTitle: 'Mine' },
+					],
 					[`${projects}/${otherSession}.jsonl`]: [
 						{ type: 'permission-mode', sessionId: otherSession },
+						{ type: 'ai-title', aiTitle: 'Not mine' },
 					],
 				},
 				fileModifiedAt: {
@@ -195,17 +210,22 @@ test('Claude Code refuses concurrently appended root journals rather than choosi
 				},
 			}),
 		);
-		assert.deepEqual(harness.events(), []);
+		assert.deepEqual(harness.events(), [
+			{ kind: 'session.started', title: 'Claude Code' },
+			{ kind: 'agent.metadata', title: 'Mine' },
+		]);
 	} finally {
 		await harness.dispose();
 	}
 });
 
-test('Claude Code binds an explicit --resume UUID before Claude opens that journal for writing', async () => {
+test('Claude Code binds a resumed session before the CLI opens its journal for writing', async () => {
+	// The resumed identity is read from the session file, never from the
+	// command line, and no writable handle is consulted.
 	const resumedJournal = `/home/test/.claude/projects/-workspace-github-io/${sessionId}.jsonl`;
 	const harness = await createAgentExtensionHarness(extension);
 	try {
-		const terminal = fixtureTerminal({
+		const terminal = claudeFixture({
 			foregroundExecutable: 'claude',
 			arguments: ['--resume', sessionId],
 			cwd: '/workspace.github.io',
@@ -225,10 +245,10 @@ test('Claude Code binds an explicit --resume UUID before Claude opens that journ
 	}
 });
 
-test('Claude Code rejects a resume path whose root header does not prove the requested UUID', async () => {
+test('Claude Code rejects a journal whose root header does not prove the named session', async () => {
 	const harness = await createAgentExtensionHarness(extension);
 	try {
-		const terminal = fixtureTerminal({
+		const terminal = claudeFixture({
 			foregroundExecutable: 'claude',
 			arguments: [`--resume=${sessionId}`],
 			cwd: '/workspace.github.io',

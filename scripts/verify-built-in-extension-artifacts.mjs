@@ -10,7 +10,6 @@ const expected = [
 	'com.puzed.platform',
 	'com.terminay.agent.codex',
 	'com.terminay.agent.claude-code',
-	'com.terminay.agent.cursor',
 	'com.terminay.agent.grok',
 	'com.terminay.agent.opencode',
 	'com.terminay.agent.omp',

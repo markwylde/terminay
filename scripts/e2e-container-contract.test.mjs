@@ -69,50 +69,37 @@ test("busy torn-off window E2E waits for a non-shell process the container can r
   );
 });
 
-test("CI shards Electron E2E through the same isolated Docker entrypoint", async () => {
-  const [githubWorkflow, giteaWorkflow] = await Promise.all([
-    text(".github/workflows/ci.yml"),
-    text(".gitea/workflows/ci.yml"),
-  ]);
-  assert.match(githubWorkflow, /npm install --global npm@12\.0\.2/u);
-  assert.match(giteaWorkflow, /npm install --global npm@12\.0\.2/u);
+test("Gitea CI shards Electron E2E through the same isolated Docker entrypoint", async () => {
+  const workflow = await text(".gitea/workflows/ci.yml");
+  assert.match(workflow, /npm install --global npm@12\.0\.2/u);
 
-  for (const [provider, workflow] of [
-    ["GitHub", githubWorkflow],
-    ["Gitea", giteaWorkflow],
-  ]) {
-    const e2eJob = job(workflow, "e2e-test");
-    assert.match(e2eJob, /shard: \[1, 2, 3, 4, 5, 6, 7, 8, 9, 10\]/u, `${provider} E2E job must retain ten shards`);
-    assert.match(e2eJob, /needs: e2e-image/u);
-    assert.match(e2eJob, new RegExp([
-      "TERMINAY_E2E_IMAGE: \\$\\{\\{ needs\\.e2e-image\\.outputs\\.image \\}\\}",
-    ].join(""), "u"));
-    assert.match(e2eJob, /TERMINAY_E2E_IMAGE_IS_PRELOADED: "1"/u);
-    assert.match(e2eJob, /TERMINAY_E2E_PLATFORM: linux\/amd64/u);
-    assert.match(e2eJob, /Require amd64 Docker host/u);
-    assert.match(e2eJob, /x86_64\|amd64/u);
-    assert.match(e2eJob, /TERMINAY_E2E_ARTIFACT_DIR: \$\{\{ github\.workspace \}\}\/.docker-cache\/e2e\/shard-\$\{\{ matrix\.shard \}\}-of-10/u);
-    assert.match(e2eJob, /run: npm run test:e2e -- --shard=\$\{\{ matrix\.shard \}\}\/10/u);
-    assert.doesNotMatch(e2eJob, /run: xvfb-run -a npm run test:e2e:host/u);
-    assert.match(e2eJob, /if: \$\{\{ always\(\) \}\}/u);
-    assert.match(e2eJob, /name: playwright-report-\$\{\{ matrix\.shard \}\}-of-10/u);
-    assert.match(e2eJob, /retention-days: 7/u);
-  }
+  const e2eJob = job(workflow, "e2e-test");
+  assert.match(e2eJob, /shard: \[1, 2, 3, 4, 5, 6, 7, 8, 9, 10\]/u, "Gitea E2E job must retain ten shards");
+  assert.match(e2eJob, /needs: e2e-image/u);
+  assert.match(e2eJob, new RegExp([
+    "TERMINAY_E2E_IMAGE: \\$\\{\\{ needs\\.e2e-image\\.outputs\\.image \\}\\}",
+  ].join(""), "u"));
+  assert.match(e2eJob, /TERMINAY_E2E_IMAGE_IS_PRELOADED: "1"/u);
+  assert.match(e2eJob, /TERMINAY_E2E_PLATFORM: linux\/amd64/u);
+  assert.match(e2eJob, /Require amd64 Docker host/u);
+  assert.match(e2eJob, /x86_64\|amd64/u);
+  assert.match(e2eJob, /TERMINAY_E2E_ARTIFACT_DIR: \$\{\{ github\.workspace \}\}\/.docker-cache\/e2e\/shard-\$\{\{ matrix\.shard \}\}-of-10/u);
+  assert.match(e2eJob, /run: npm run test:e2e -- --shard=\$\{\{ matrix\.shard \}\}\/10/u);
+  assert.doesNotMatch(e2eJob, /run: xvfb-run -a npm run test:e2e:host/u);
+  assert.match(e2eJob, /if: \$\{\{ always\(\) \}\}/u);
+  assert.match(e2eJob, /name: playwright-report-\$\{\{ matrix\.shard \}\}-of-10/u);
+  assert.match(e2eJob, /retention-days: 7/u);
 
-  const githubE2e = `${job(githubWorkflow, "e2e-image")}\n${job(githubWorkflow, "e2e-test")}`;
-  assert.match(githubE2e, /uses: actions\/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093/u);
-
-  const giteaImage = job(giteaWorkflow, "e2e-image");
-  const giteaE2e = job(giteaWorkflow, "e2e-test");
+  const giteaImage = job(workflow, "e2e-image");
   assert.match(giteaImage, /node scripts\/e2e-image-cache-key\.mjs/u);
   assert.match(giteaImage, /git\.i\.wylde\.net\/markwylde\/terminay-e2e:\$IMAGE_KEY/u);
   assert.match(giteaImage, /docker manifest inspect "\$IMAGE_TAG"/u);
   assert.match(giteaImage, /docker push "\$IMAGE_TAG"/u);
   assert.doesNotMatch(giteaImage, /docker save|Upload shared E2E image|upload-artifact/u);
-  assert.match(giteaE2e, /docker login git\.i\.wylde\.net/u);
-  assert.match(giteaE2e, /docker pull "\$IMAGE_TAG"/u);
-  assert.match(giteaE2e, /needs\.e2e-image\.outputs\.image-key/u);
-  assert.doesNotMatch(giteaE2e, /download-artifact|docker load|image-id/u);
+  assert.match(e2eJob, /docker login git\.i\.wylde\.net/u);
+  assert.match(e2eJob, /docker pull "\$IMAGE_TAG"/u);
+  assert.match(e2eJob, /needs\.e2e-image\.outputs\.image-key/u);
+  assert.doesNotMatch(e2eJob, /download-artifact|docker load|image-id/u);
 });
 
 test("trusted Gitea builds use the signed internal Turborepo cache without baking credentials into the E2E image", async () => {
@@ -148,4 +135,35 @@ test("trusted Gitea builds use the signed internal Turborepo cache without bakin
   assert.match(dockerfile, /--mount=type=secret,id=turbo_token,required=false/u);
   assert.match(dockerfile, /--mount=type=secret,id=turbo_signature_key,required=false/u);
   assert.match(dockerfile, /npm run build:app/u);
+});
+
+/**
+ * The image installs dependencies from a hand-written list of workspace
+ * manifests. A workspace missing from that list is not installed, so its
+ * extension is absent from every containerised end-to-end run while the suite
+ * still reports green. `agent-opencode` and `shared-ui` were both missing.
+ */
+test("the E2E image copies a manifest for every workspace", async () => {
+  const { readdir } = await import("node:fs/promises");
+  const dockerfile = await text("Dockerfile.e2e");
+  const packageJson = JSON.parse(await text("package.json"));
+  const directories = [];
+  for (const pattern of packageJson.workspaces) {
+    assert.ok(pattern.endsWith("/*"), `unsupported workspace pattern ${pattern}`);
+    const parent = pattern.slice(0, -2);
+    for (const entry of await readdir(new URL(`${parent}/`, root), { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      // A directory under a workspace glob is only a workspace if it has a
+      // manifest. `packages/shared-ui` is sources compiled by its consumers and
+      // has none, so npm never installs it and the image must not copy one.
+      const directory = `${parent}/${entry.name}`;
+      const manifest = await readFile(new URL(`${directory}/package.json`, root), "utf8").catch(() => undefined);
+      if (manifest !== undefined) directories.push(directory);
+    }
+  }
+  assert.ok(directories.length > 0, "no workspaces were discovered");
+  const missing = directories.filter(
+    (directory) => !dockerfile.includes(`COPY --chown=node:node ${directory}/package.json ${directory}/package.json`),
+  );
+  assert.deepEqual(missing, [], `Dockerfile.e2e must copy each workspace manifest; missing: ${missing.join(", ")}`);
 });

@@ -720,3 +720,86 @@ test("a stalled provider retirement does not disturb a healthy provider context"
   assert.equal(registry.foregroundProcessChanged(otherIdentity,"other-agent"),true);unblock();await retiring;
   assert.equal(registry.observationTerminal(admitted[1].context)?.environment,"this-server");await agents.stop();
 });
+
+/**
+ * Two terminals of one project each running the same provider's CLI. The
+ * privileged host admits exactly one context per context id and refuses a
+ * repeat, so the id it issues must depend on which terminal it is for. This
+ * double enforces that refusal the way `ExtensionHost.admitAgentTerminal`
+ * does, which the other doubles in this file do not.
+ */
+const secondIdentity = Object.freeze({ serverId: "server-1", projectId: "project-1", sessionId: "terminal-2" });
+
+function admittingHost(admitted, cancelled) {
+  const contexts = new Set();
+  return {
+    agentProviderContributions: () => [provider],
+    async admitAgentTerminal(value) {
+      if (contexts.has(value.context.contextId))
+        throw new Error("agent terminal context is already admitted");
+      contexts.add(value.context.contextId);
+      admitted.push(value);
+    },
+    async cancelAgentTerminal(value) { cancelled.push(value); contexts.delete(value.contextId); return true; },
+    async drainAgentObservers() {},
+  };
+}
+
+test("two terminals running one provider are each admitted with their own context", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId });
+  activity.register(identity); activity.register(secondIdentity);
+  const agents = new AgentStatusService({ activity });
+  await agents.start(); agents.register(identity); agents.register(secondIdentity);
+  const admitted = []; const cancelled = [];
+  // No `contextId` override: this must exercise the shipped default, because
+  // an injected double can carry the same collision and hide it.
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: admittingHost(admitted, cancelled),
+    reobserveDebounceMs: 0,
+  });
+
+  for (const [terminal, shellPid] of [[identity, 4321], [secondIdentity, 4322]]) {
+    registry.register(terminal);
+    registry.terminalStarted(terminal, shellPid);
+    assert.equal(registry.foregroundProcessChanged(terminal, "/usr/local/bin/test-agent"), true);
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  assert.deepEqual(
+    admitted.map(({ context }) => context.terminalSessionId),
+    [identity.sessionId, secondIdentity.sessionId],
+    "both terminals must be admitted; the second is refused when the context id ignores terminal identity",
+  );
+  const [first, second] = admitted.map(({ context }) => context.contextId);
+  assert.notEqual(first, second, "two live terminals must not share one context id");
+});
+
+test("the issued context id distinguishes terminals at the same incarnation", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId });
+  activity.register(identity); activity.register(secondIdentity);
+  const agents = new AgentStatusService({ activity });
+  await agents.start(); agents.register(identity); agents.register(secondIdentity);
+  const admitted = [];
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: {
+      agentProviderContributions: () => [provider],
+      async admitAgentTerminal(value) { admitted.push(value); },
+      async cancelAgentTerminal() { return true; },
+      async drainAgentObservers() {},
+    },
+    reobserveDebounceMs: 0,
+  });
+
+  for (const [terminal, shellPid] of [[identity, 4321], [secondIdentity, 4322]]) {
+    registry.register(terminal);
+    registry.terminalStarted(terminal, shellPid);
+    registry.foregroundProcessChanged(terminal, "/usr/local/bin/test-agent");
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  // Both are the first incarnation of their own terminal.
+  assert.deepEqual(admitted.map(({ context }) => context.terminalIncarnationId), ["1", "1"]);
+  assert.equal(new Set(admitted.map(({ context }) => context.contextId)).size, 2);
+});

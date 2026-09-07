@@ -84,6 +84,20 @@ export interface FixtureTerminalOptions {
 	 * journal currently receiving appends can be exercised.
 	 */
 	fileModifiedAt?: Record<string, string>;
+	/**
+	 * Successive whole contents a fixture file takes while the observation runs,
+	 * for a provider store the CLI rewrites in place rather than appends to. Each
+	 * revision is applied when a directory watcher over that file's directory
+	 * next reports, so a provider watching the file observes the change and any
+	 * later read returns the new content.
+	 */
+	fileRewrites?: Record<string, unknown[][]>;
+	/**
+	 * Called with the path of every fixture file whose bytes are read, in order,
+	 * so a test can assert exactly which files a provider opened — and which it
+	 * never touched.
+	 */
+	onFileRead?: (path: string) => void;
 	/** Descendant process start time, compared against `fileCreatedAt`. */
 	startedAt?: string;
 	/**
@@ -94,6 +108,7 @@ export interface FixtureTerminalOptions {
 		executableName: string;
 		cwd?: string;
 		pid?: number;
+		arguments?: string[];
 		startedAt?: string;
 		id?: string;
 	}>;
@@ -377,16 +392,21 @@ function createIdempotentWatcher<T>(
 export function fixtureTerminal(
 	options: FixtureTerminalOptions,
 ): AgentTerminalContext {
-	const files = new Map<string, Uint8Array>();
-	for (const [path, records] of Object.entries(options.files ?? {})) {
-		files.set(
-			path,
-			new TextEncoder().encode(
-				records.map((record) => JSON.stringify(record)).join('\n') +
-					(records.length ? '\n' : ''),
-			),
+	const encodeRecords = (records: readonly unknown[]): Uint8Array =>
+		new TextEncoder().encode(
+			records.map((record) => JSON.stringify(record)).join('\n') +
+				(records.length ? '\n' : ''),
 		);
-	}
+	const files = new Map<string, Uint8Array>();
+	for (const [path, records] of Object.entries(options.files ?? {}))
+		files.set(path, encodeRecords(records));
+	/** Pending in-place rewrites, consumed one step at a time by a watcher. */
+	const rewrites = new Map<string, unknown[][]>(
+		Object.entries(options.fileRewrites ?? {}).map(([path, revisions]) => [
+			path,
+			[...revisions],
+		]),
+	);
 	const scope =
 		options.terminalId ??
 		`fixture-terminal-${(++fixtureTerminalSequence).toString(36)}`;
@@ -424,8 +444,11 @@ export function fixtureTerminal(
 				`agent observation is unavailable: ${capability} is not advertised`,
 			);
 	};
-	const lookup = (handle: AgentFileHandle): Uint8Array =>
-		files.get(pathOf(handle, 'file', 'agent file handle')) ?? new Uint8Array();
+	const lookup = (handle: AgentFileHandle): Uint8Array => {
+		const path = pathOf(handle, 'file', 'agent file handle');
+		options.onFileRead?.(path);
+		return files.get(path) ?? new Uint8Array();
+	};
 	const processHandleOf = (
 		value: AgentProcessSnapshot | AgentProcessHandle,
 	): AgentProcessHandle =>
@@ -472,6 +495,9 @@ export function fixtureTerminal(
 							...(options.startedAt === undefined
 								? {}
 								: { startedAt: options.startedAt }),
+							...(options.arguments === undefined
+								? {}
+								: { arguments: options.arguments }),
 						},
 						...(options.descendants ?? []).map((child, index) => ({
 							handle: issue<AgentProcessHandle>(
@@ -484,6 +510,9 @@ export function fixtureTerminal(
 							...(child.startedAt === undefined
 								? {}
 								: { startedAt: child.startedAt }),
+							...(child.arguments === undefined
+								? {}
+								: { arguments: child.arguments }),
 						})),
 					];
 				},
@@ -590,8 +619,36 @@ export function fixtureTerminal(
 				) {
 					requireCapability('filesystem-observation');
 					signal.throwIfAborted();
-					const listing = await this.listDirectory(root, request);
-					return createIdempotentWatcher([listing], signal);
+					const prefix = `${pathOf(root, 'dir', 'agent directory handle').replace(/\/$/, '')}/`;
+					const list = () => this.listDirectory(root, request);
+					let closed = false;
+					return {
+						async *[Symbol.asyncIterator]() {
+							signal.throwIfAborted();
+							if (closed) return;
+							yield await list();
+							// One report per pending in-place rewrite below this
+							// directory, applied lazily so a provider reading the file
+							// between reports sees exactly the revision it was told about.
+							while (!closed) {
+								let changed = false;
+								for (const [path, revisions] of rewrites) {
+									if (!path.startsWith(prefix)) continue;
+									const next = revisions.shift();
+									if (next === undefined) continue;
+									files.set(path, encodeRecords(next));
+									changed = true;
+								}
+								if (!changed) return;
+								signal.throwIfAborted();
+								if (closed) return;
+								yield await list();
+							}
+						},
+						async dispose() {
+							closed = true;
+						},
+					};
 				},
 				async resolveRelativeToEnvironment(
 					relativePath: string,

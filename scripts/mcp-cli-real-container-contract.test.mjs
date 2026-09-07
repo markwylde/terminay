@@ -48,16 +48,11 @@ test('real MCP client compatibility installs latest CLIs inside an isolated imag
   assert.match(probe, /process\.env\.HOME = homeDirectory/u)
 })
 
-test('GitHub and Gitea CI call the same Docker compatibility entrypoint', async () => {
-  const workflows = await Promise.all([
-    text('.github/workflows/ci.yml'),
-    text('.gitea/workflows/ci.yml'),
-  ])
-  for (const workflow of workflows) {
-    assert.match(workflow, /^ {2}mcp-cli-compatibility:$/mu)
-    assert.match(workflow, /name: Real MCP CLI compatibility/u)
-    assert.match(workflow, /run: npm run e2e:mcp-cli-real-tests/u)
-  }
+test('Gitea CI calls the Docker compatibility entrypoint', async () => {
+  const workflow = await text('.gitea/workflows/ci.yml')
+  assert.match(workflow, /^ {2}mcp-cli-compatibility:$/mu)
+  assert.match(workflow, /name: Real MCP CLI compatibility/u)
+  assert.match(workflow, /run: npm run e2e:mcp-cli-real-tests/u)
 })
 
 function escapeRegex(value) {

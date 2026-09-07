@@ -272,7 +272,6 @@ test("seeded SSH and Puzed hosts reconcile five late agents and re-admit an exis
   const lateAgents = [
     ["com.terminay.agent.codex", "codex", "Codex"],
     ["com.terminay.agent.claude-code", "claude", "Claude Code"],
-    ["com.terminay.agent.cursor", "agent", "Cursor Agent"],
     ["com.terminay.agent.grok", "grok", "Grok"],
     ["com.terminay.agent.omp", "omp", "omp"],
   ];
