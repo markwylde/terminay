@@ -111,6 +111,14 @@ jobs:
       - uses: actions/checkout@v4
         if: steps.selected.outputs.run == 'true'
 
+      # These drive real models, so a step can fail for reasons that say nothing
+      # about the provider: a model wanders off the prompt, or the container
+      # host drops a build. Three attempts absorbs that. Three failures in a row
+      # is not noise, and fails the job.
+      #
+      # A pass on a later attempt is reported as a warning rather than passing
+      # quietly, because a provider that needs two goes every time is telling us
+      # something and should not look identical to one that passes first time.
       - name: Run ${{ matrix.extension }} conformance
         if: steps.selected.outputs.run == 'true'
         env:
@@ -118,4 +126,21 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
           TERMINAY_CONFORMANCE_LOG: '1'
-        run: sh scripts/run-agent-conformance-container.sh ${{ matrix.extension }}
+        run: |
+          set -uo pipefail
+          attempts=3
+          extension='${{ matrix.extension }}'
+          for attempt in $(seq 1 "$attempts"); do
+            echo "::group::$extension conformance, attempt $attempt of $attempts"
+            if sh scripts/run-agent-conformance-container.sh "$extension"; then
+              echo "::endgroup::"
+              if [ "$attempt" -gt 1 ]; then
+                echo "::warning title=$extension needed $attempt attempts::Passed on attempt $attempt of $attempts. Repeated retries mean the run is not reliable, whatever the final result."
+              fi
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "$extension failed on attempt $attempt of $attempts"
+          done
+          echo "::error title=$extension conformance failed::Failed $attempts consecutive attempts. At that point it is the provider or the descriptor, not model non-determinism."
+          exit 1
