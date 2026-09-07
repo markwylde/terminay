@@ -309,8 +309,8 @@ interface JournalCandidate {
  * `.claude/projects`.
  *
  * One process writes a new journal per conversation, so several candidates are
- * ordinary; the bound root is the one most recently appended. Two appended at
- * the same instant are concurrent and bind nothing.
+ * ordinary. Which of them is this process's own is decided by creation time
+ * where the environment can prove one: see `ownJournal`.
  */
 async function projectJournalCandidate(
 	terminal: AgentTerminalContext,
@@ -339,7 +339,7 @@ async function projectJournalCandidate(
 			...PROJECT_DIRECTORY,
 			signal: terminal.signal,
 		});
-		const roots: Array<{ handle: AgentFileHandle; modifiedAt: number }> = [];
+		const roots: RootJournal[] = [];
 		for (const entry of listing.entries) {
 			// A root session's children live in `<uuid>/subagents/`; depth 0 keeps
 			// them out, and the header check below is authoritative regardless.
@@ -357,9 +357,13 @@ async function projectJournalCandidate(
 				},
 			);
 			if (!rootSessionId(header)) continue;
-			roots.push({ handle: entry.handle, modifiedAt });
+			roots.push({
+				handle: entry.handle,
+				modifiedAt,
+				createdAt: entry.createdAt ? Date.parse(entry.createdAt) : Number.NaN,
+			});
 		}
-		const active = mostRecentlyAppended(roots);
+		const active = ownJournal(roots, startedAt);
 		if (!active) continue;
 		return {
 			journal: active,
@@ -374,21 +378,57 @@ async function projectJournalCandidate(
 	return undefined;
 }
 
+/** A root journal in one process's project directory, with both timestamps. */
+interface RootJournal {
+	readonly handle: AgentFileHandle;
+	readonly modifiedAt: number;
+	/** `NaN` where the environment cannot prove a creation time. */
+	readonly createdAt: number;
+}
+
 /**
- * Selects the journal currently receiving appends. Two candidates written at
- * the same instant are genuinely concurrent and bind nothing rather than being
- * separated by a timestamp.
+ * Selects the journal this exact process is writing.
+ *
+ * Appends alone cannot answer that. Two terminals running `claude` in one
+ * repository share an encoded project directory, and each terminal lists the
+ * other's journal beside its own; whichever session typed last holds the newest
+ * append, so an append-ordered rule moves every terminal onto one session. The
+ * per-process evidence is creation: a process opens its conversation's journal
+ * when the conversation starts, so among the journals created since this
+ * process started, its own is the one created first — anything created later in
+ * a shared project directory was opened by a terminal that started after it.
+ *
+ * Creation cannot stand alone either: `claude --resume` and `--continue` append
+ * to a journal an earlier process created, so a session with no post-start
+ * creation falls back to the journal receiving appends. Two journals appended
+ * at the same instant remain genuinely concurrent and bind nothing, and so do
+ * two created at the same instant.
+ *
+ * The cost is stated rather than hidden: a process that opens a second
+ * conversation of its own stays bound to its first while the first still
+ * exists. A later conversation in one process and a second terminal's first
+ * conversation are indistinguishable from the filesystem, and binding a
+ * terminal to another terminal's session is the worse of the two errors.
  */
-function mostRecentlyAppended(
-	roots: ReadonlyArray<{ handle: AgentFileHandle; modifiedAt: number }>,
+function ownJournal(
+	roots: readonly RootJournal[],
+	startedAt: number,
 ): AgentFileHandle | undefined {
-	if (roots.length === 0) return undefined;
-	const ordered = [...roots].sort(
+	const appended = [...roots].sort(
 		(left, right) => right.modifiedAt - left.modifiedAt,
 	);
-	const [first, second] = ordered;
-	if (!first) return undefined;
-	if (second && second.modifiedAt === first.modifiedAt) return undefined;
+	const [newest, nextNewest] = appended;
+	if (!newest) return undefined;
+	if (nextNewest && nextNewest.modifiedAt === newest.modifiedAt)
+		return undefined;
+	const opened = roots
+		.filter(
+			(root) => Number.isFinite(root.createdAt) && root.createdAt >= startedAt,
+		)
+		.sort((left, right) => left.createdAt - right.createdAt);
+	const [first, second] = opened;
+	if (!first) return newest.handle;
+	if (second && second.createdAt === first.createdAt) return undefined;
 	return first.handle;
 }
 

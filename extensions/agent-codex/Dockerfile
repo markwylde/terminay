@@ -37,4 +37,8 @@ RUN npm ci \
 ENV HOME=/tmp/conformance-home
 RUN mkdir -p /tmp/conformance-home
 
-CMD ["npm", "run", "test:conformance", "--workspace", "terminay-agent-codex"]
+# Codex does not read `OPENAI_API_KEY` on its own: with no `auth.json` it opens
+# the browser sign-in flow and the TUI never reaches a prompt. `codex login
+# --with-api-key` writes that key into this image's own home, which is the only
+# credential the run ever has.
+CMD ["sh", "-c", "printenv OPENAI_API_KEY | codex login --with-api-key && exec npm run test:conformance --workspace terminay-agent-codex"]

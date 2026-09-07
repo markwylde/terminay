@@ -8,10 +8,15 @@ import {
 	createOpenCodeRecordMapper,
 	effectiveOpenCodeRoot,
 	isOpenCodeForeground,
-	openCodeProvider,
 	OpenCodeStore,
+	openCodeContinues,
+	openCodeProvider,
+	openCodeWorkingDirectories,
+	ROOT_SELECTION,
 	safeStorePath,
+	selectOpenCodeRoot,
 	storePathFor,
+	terminalDeviceKey,
 } from '../dist/index.js';
 
 const rootId = 'ses_f9c5cf7fdffeDKS2wDIaso3ubN';
@@ -486,9 +491,7 @@ function openCodeObserveTerminal(storePath, dataHome, cwd, arguments_) {
 					];
 				},
 				async openFiles() {
-					return [
-						{ handle: storeHandle, path: storePath, access: 'writable' },
-					];
+					return [{ handle: storeHandle, path: storePath, access: 'writable' }];
 				},
 				async environment() {
 					return { XDG_DATA_HOME: dataHome };
@@ -560,4 +563,155 @@ test('opencode --session <id> binds that root on the writable store', async () =
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
 	}
+});
+
+const NOW = 1_800_000_000_000;
+const row = (id, created, updated) => ({
+	id,
+	directory: '/work',
+	timeCreated: created,
+	timeUpdated: updated,
+});
+
+test('two CLIs started in one directory never resolve to one session', () => {
+	// The first terminal started at NOW - 600s and made its session a moment
+	// later; the second started at NOW - 2s and has not written its own row
+	// yet, because OpenCode only stores a session when its first prompt is
+	// submitted. "Newest in the directory" hands the second terminal the
+	// first's session, which is the bug this rule exists to prevent.
+	const first = row('ses_first', NOW - 599_000, NOW - 30_000);
+	assert.equal(
+		selectOpenCodeRoot([first], {
+			startedAt: NOW - 600_000,
+			now: NOW,
+		})?.id,
+		'ses_first',
+		'the terminal that made the session keeps it',
+	);
+	assert.equal(
+		selectOpenCodeRoot([first], { startedAt: NOW - 2_000, now: NOW }),
+		undefined,
+		"a second terminal must not adopt the first terminal's session",
+	);
+	// A moment later the second terminal's own session appears and is taken.
+	const second = row('ses_second', NOW - 1_000, NOW - 1_000);
+	assert.equal(
+		selectOpenCodeRoot([second, first], {
+			startedAt: NOW - 2_000,
+			now: NOW,
+		})?.id,
+		'ses_second',
+	);
+	// And the first terminal is unmoved by the second's arrival: it keeps the
+	// earliest root it could have created, not the newest in the directory.
+	assert.equal(
+		selectOpenCodeRoot([second, first], {
+			startedAt: NOW - 600_000,
+			now: NOW,
+		})?.id,
+		'ses_first',
+	);
+});
+
+test('a reopened session rebinds the root that terminal last had', () => {
+	const first = row('ses_first', NOW - 600_000, NOW - 300_000);
+	const second = row('ses_second', NOW - 200_000, NOW - 100_000);
+	const options = {
+		startedAt: NOW - ROOT_SELECTION.newSessionGraceMs - 1_000,
+		now: NOW,
+	};
+	// Nothing was created after this process started, so it reopened something.
+	// Without a memory the newest root in the directory wins, which is the
+	// other terminal's session.
+	assert.equal(selectOpenCodeRoot([second, first], options)?.id, 'ses_second');
+	assert.equal(
+		selectOpenCodeRoot([second, first], {
+			...options,
+			remembered: 'ses_first',
+		})?.id,
+		'ses_first',
+	);
+	// A remembered root that is no longer in the directory is not forced.
+	assert.equal(
+		selectOpenCodeRoot([second], { ...options, remembered: 'ses_first' })?.id,
+		'ses_second',
+	);
+	// `--continue` is OpenCode's own "newest session here", so the CLI's rule
+	// wins over the memory when the arguments prove it.
+	assert.equal(
+		selectOpenCodeRoot([second, first], {
+			...options,
+			remembered: 'ses_first',
+			continuing: true,
+		})?.id,
+		'ses_second',
+	);
+	// An explicitly named session always wins.
+	assert.equal(
+		selectOpenCodeRoot([second, first], {
+			...options,
+			remembered: 'ses_second',
+			requested: 'ses_first',
+		})?.id,
+		'ses_first',
+	);
+});
+
+test('root selection falls back when a process start cannot be proven', () => {
+	const first = row('ses_first', NOW - 600_000, NOW - 300_000);
+	const second = row('ses_second', NOW - 200_000, NOW - 100_000);
+	assert.equal(
+		selectOpenCodeRoot([second, first], { now: NOW })?.id,
+		'ses_second',
+	);
+});
+
+test('a directory with an unproven process start is never time-filtered', () => {
+	const directories = openCodeWorkingDirectories([
+		{
+			executableName: 'opencode',
+			cwd: '/work',
+			startedAt: new Date(NOW - 10_000).toISOString(),
+		},
+		{ executableName: 'opencode', cwd: '/work' },
+		{ executableName: 'bash', cwd: '/elsewhere' },
+	]);
+	assert.deepEqual([...directories.keys()], ['/work']);
+	assert.equal(directories.get('/work'), undefined);
+	assert.equal(
+		openCodeWorkingDirectories([
+			{
+				executableName: 'opencode',
+				cwd: '/work',
+				startedAt: new Date(NOW - 10_000).toISOString(),
+			},
+			{
+				executableName: 'opencode',
+				cwd: '/work',
+				startedAt: new Date(NOW - 5_000).toISOString(),
+			},
+		]).get('/work'),
+		NOW - 10_000,
+		'the earliest proven start in a directory is the one used',
+	);
+});
+
+test('the terminal device is read from the CLI open files', () => {
+	assert.equal(
+		terminalDeviceKey([
+			{ path: '/dev/pts/3' },
+			{ path: '/dev/pts/3' },
+			{ path: '/home/user/.local/share/opencode/opencode.db' },
+		]),
+		'/dev/pts/3',
+	);
+	assert.equal(terminalDeviceKey([{ path: '/dev/ttys028' }]), '/dev/ttys028');
+	assert.equal(terminalDeviceKey([{ path: '/tmp/opencode.db' }]), undefined);
+});
+
+test('--continue is recognized on the CLI arguments', () => {
+	assert.equal(openCodeContinues(['--continue']), true);
+	assert.equal(openCodeContinues(['-c']), true);
+	assert.equal(openCodeContinues(['--session', 'ses_x']), false);
+	assert.equal(openCodeContinues(undefined), false);
 });

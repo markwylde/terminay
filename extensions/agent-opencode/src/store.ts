@@ -66,6 +66,12 @@ export interface OpenCodeSessionRow {
 	readonly slug?: string;
 	readonly title?: string;
 	readonly directory: string;
+	/**
+	 * When OpenCode first stored this session. A session is written the moment
+	 * its first prompt is submitted, so this is the only field that ties a root
+	 * to the process that made it.
+	 */
+	readonly timeCreated: number;
 	readonly timeUpdated: number;
 }
 
@@ -126,7 +132,7 @@ export class OpenCodeStore {
 			this.query((database) =>
 				database
 					.prepare(
-						'SELECT id, parent_id, slug, title, directory, time_updated FROM session WHERE parent_id IS NULL AND directory = ? ORDER BY time_updated DESC LIMIT 16',
+						'SELECT id, parent_id, slug, title, directory, time_created, time_updated FROM session WHERE parent_id IS NULL AND directory = ? ORDER BY time_updated DESC LIMIT 16',
 					)
 					.all(directory)
 					.flatMap((row) => {
@@ -144,6 +150,10 @@ export class OpenCodeStore {
 									? { title: text(value.title, LIMITS.title) }
 									: {}),
 								directory: rowDirectory,
+								timeCreated:
+									typeof value.time_created === 'number'
+										? value.time_created
+										: 0,
 								timeUpdated:
 									typeof value.time_updated === 'number'
 										? value.time_updated
@@ -161,7 +171,7 @@ export class OpenCodeStore {
 			this.query((database) =>
 				database
 					.prepare(
-						'SELECT id, parent_id, slug, title, directory, time_updated FROM session WHERE parent_id = ? ORDER BY time_created ASC LIMIT 64',
+						'SELECT id, parent_id, slug, title, directory, time_created, time_updated FROM session WHERE parent_id = ? ORDER BY time_created ASC LIMIT 64',
 					)
 					.all(rootId)
 					.flatMap((row) => {
@@ -179,6 +189,10 @@ export class OpenCodeStore {
 									? { title: text(value.title, LIMITS.title) }
 									: {}),
 								directory: text(value.directory, LIMITS.directory) ?? '',
+								timeCreated:
+									typeof value.time_created === 'number'
+										? value.time_created
+										: 0,
 								timeUpdated:
 									typeof value.time_updated === 'number'
 										? value.time_updated

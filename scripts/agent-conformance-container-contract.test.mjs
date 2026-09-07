@@ -34,11 +34,15 @@ test("every agent extension ships a conformance image", async () => {
 test("conformance images install the latest CLI rather than a pinned version", async () => {
   for (const extension of await agentExtensions()) {
     const dockerfile = await text(`extensions/${extension}/Dockerfile`);
-    // The CLI install is the line carrying CLI_REVISION; the image's own
-    // toolchain (a pinned npm, a bun runtime) is deliberately not.
+    // The CLI install is the instruction carrying CLI_REVISION; the image's own
+    // toolchain (a pinned npm, a bun runtime) is deliberately not. Shell line
+    // continuations are joined first, because an install that needs extra flags
+    // spans several lines and its version would otherwise not be on the line
+    // the marker is on.
     const installs = dockerfile
+      .replace(/\\\n\s*/gu, " ")
       .split("\n")
-      .filter((line) => line.includes("CLI_REVISION=${CLI_REVISION}"));
+      .filter((line) => /CLI_REVISION=\$\{CLI_REVISION\}/u.test(line));
     assert.equal(installs.length, 1, `${extension} must install exactly one CLI under CLI_REVISION`);
     const [install] = installs;
     assert.doesNotMatch(
@@ -97,9 +101,19 @@ test("each conformance image runs its own extension's suite", async () => {
       text(`extensions/${extension}/package.json`),
     ]);
     const { name } = JSON.parse(manifest);
+    // The suite may be launched directly or through an entrypoint script that
+    // first prepares the container — Claude Code pre-records its API-key
+    // approval, Codex exchanges its key for a login. Either way the image must
+    // end up running this workspace's own conformance suite and no other.
+    const cmd = dockerfile.split("\n").find((line) => line.startsWith("CMD ")) ?? "";
+    assert.notEqual(cmd, "", `${extension}'s image must declare a CMD`);
+    const launcher = /([\w./-]*conformance-entrypoint\.sh)/u.exec(cmd)?.[1];
+    const launched = launcher
+      ? await text(`extensions/${extension}/${launcher.split("/").pop()}`)
+      : cmd;
     assert.match(
-      dockerfile,
-      new RegExp(`CMD \\["npm", "run", "test:conformance", "--workspace", "${name}"\\]`, "u"),
+      launched,
+      new RegExp(`test:conformance[^\n]*--workspace ${name}|--workspace", "${name}"`, "u"),
       `${extension}'s image must run ${name}'s conformance suite`,
     );
   }

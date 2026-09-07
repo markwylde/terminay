@@ -31,6 +31,12 @@ interface RootRollout {
   sessionId: string;
   fingerprintKind?: string;
   process?: AgentProcessHandle;
+  /**
+   * Bytes of rollout that already existed when this process adopted it. It is
+   * zero for a session this process opened, and the whole recorded history for
+   * a `codex resume`, which re-opens an earlier rollout and appends to it.
+   */
+  historyBytes?: number;
 }
 
 interface ChildRollout {
@@ -39,6 +45,9 @@ interface ChildRollout {
 }
 
 const SESSION_TITLE_RECORD = "terminay.codex_session_title";
+
+/** Slack between a process's floored start time and its own rollout header. */
+const ADOPTION_MARGIN_MS = 5_000;
 
 /**
  * Documents the native Codex home convention for local Node integrations.
@@ -92,7 +101,16 @@ export const codexAgentProvider = defineAgentProvider({
     // authority that binds the session to this PTY.
     const sessionIndex = await findSessionIndex(terminal);
     const sessionsDirectory = await findSessionsDirectory(terminal);
-    const childSources = await findChildSources(terminal, rollout.sessionId, sessionsDirectory);
+    const recordedChildren = await findChildRollouts(terminal, rollout.sessionId, sessionsDirectory);
+    // A subagent recorded before this process adopted the rollout finished
+    // under the earlier one. Its rollout is a completed transcript: attaching
+    // it would announce a child that starts and can never finish, because
+    // what completes a Codex child is a collaboration record in the root's
+    // own history, which an adopted binding deliberately does not replay.
+    // Those children are excluded from discovery too, so only subagents this
+    // process actually spawns are admitted.
+    const adopted = (rollout.historyBytes ?? 0) > 0;
+    const sources = adopted ? [] : childSources(terminal, recordedChildren);
     const states = new Map<string, CodexState>();
     return jsonlSession({
       binding,
@@ -101,8 +119,9 @@ export const codexAgentProvider = defineAgentProvider({
         rollout: rollout.journal,
         sessionIndex,
         sessionId: rollout.sessionId,
+        ...(rollout.historyBytes ? { historyBytes: rollout.historyBytes } : {}),
       }),
-      ...(childSources.length === 0 ? {} : { childSources }),
+      ...(sources.length === 0 ? {} : { childSources: sources }),
       ...(sessionsDirectory === undefined ? {} : {
         // Codex writes a subagent's native session_meta to a separate rollout
         // after the root binding may already be active. The generic host owns
@@ -112,7 +131,7 @@ export const codexAgentProvider = defineAgentProvider({
           terminal,
           rollout.sessionId,
           sessionsDirectory,
-          new Set(childSources.map((child) => child.childId)),
+          new Set(recordedChildren.map((child) => child.sessionId)),
         ),
       }),
       mapRecord(record, context) {
@@ -225,6 +244,15 @@ async function findProcessBoundRootRollout(terminal: AgentTerminalContext): Prom
     access: "writable",
     signal: terminal.signal,
   });
+  // The oldest live Codex process below this terminal. A rollout whose own
+  // header predates it was recorded by an earlier process and re-opened here,
+  // which is what `codex resume` does.
+  const adoptedBefore = Math.min(
+    ...descendants
+      .filter((candidate) => isCodexForeground(candidate.executableName))
+      .map((candidate) => (candidate.startedAt ? Date.parse(candidate.startedAt) : Number.NaN))
+      .filter((value) => Number.isFinite(value)),
+  );
   const matches: Array<RootRollout & { modifiedAt: number }> = [];
   const candidates = writable.filter((file) => isRolloutPath(file.path));
   for (const candidate of candidates) {
@@ -242,7 +270,22 @@ async function findProcessBoundRootRollout(terminal: AgentTerminalContext): Prom
     if (!sessionId) continue;
     const stat = await terminal.observation.files.stat(journal, { signal: terminal.signal });
     const modifiedAt = stat?.modifiedAt ? Date.parse(stat.modifiedAt) : Number.NaN;
-    matches.push({ journal, sourceFile: candidate.handle, sessionId, modifiedAt: Number.isFinite(modifiedAt) ? modifiedAt : 0 });
+    const recordedAt = rolloutRecordedAt(header);
+    // Process start times are floored to the second, so a session opened by
+    // this very process can read as marginally older than it. Only a header
+    // older than that margin is evidence of an earlier process's session.
+    const adopted =
+      Number.isFinite(adoptedBefore)
+      && recordedAt !== undefined
+      && recordedAt < adoptedBefore - ADOPTION_MARGIN_MS;
+    matches.push({
+      journal,
+      sourceFile: candidate.handle,
+      sessionId,
+      modifiedAt: Number.isFinite(modifiedAt) ? modifiedAt : 0,
+      ...(adopted && stat?.size ? { historyBytes: stat.size } : {}),
+      ...(adopted ? { fingerprintKind: "writable-file-below-terminal-process-resumed" } : {}),
+    });
   }
   // Codex can retain an earlier rollout while a resumed/branched root opens a
   // second one. Both have exact writer proof; its own modified timestamp is
@@ -299,7 +342,8 @@ async function findSessionsDirectory(terminal: AgentTerminalContext): Promise<Ag
   }
 }
 
-async function findChildSources(terminal: AgentTerminalContext, parentSessionId: string, sessions: AgentDirectoryHandle | undefined): Promise<readonly AgentChildJournalSource[]> {
+/** The child rollouts already on disk for this root, newest listing wins. */
+async function findChildRollouts(terminal: AgentTerminalContext, parentSessionId: string, sessions: AgentDirectoryHandle | undefined): Promise<readonly ChildRollout[]> {
   if (!sessions) return [];
   try {
     const listing = await terminal.observation.files.listDirectory(sessions, { ...CHILD_DIRECTORY_OPTIONS, signal: terminal.signal });
@@ -308,19 +352,23 @@ async function findChildSources(terminal: AgentTerminalContext, parentSessionId:
       const child = await childSourceForEntry(terminal, parentSessionId, entry.handle);
       if (child && !children.has(child.sessionId)) children.set(child.sessionId, child);
     }
-    return [...children.values()].slice(0, 64).map(({ journal, sessionId }) => ({
-      childId: sessionId,
-      journal,
-      source: terminal.observation.files.follow(journal, {
-        signal: terminal.signal,
-        maxChunkBytes: LIMITS.recordBytes,
-      }),
-    }));
+    return [...children.values()].slice(0, 64);
   } catch {
     // Child discovery is optional bounded enrichment. A temporarily missing
     // directory capability must not make the already proven root unavailable.
     return [];
   }
+}
+
+function childSources(terminal: AgentTerminalContext, children: readonly ChildRollout[]): readonly AgentChildJournalSource[] {
+  return children.map(({ journal, sessionId }) => ({
+    childId: sessionId,
+    journal,
+    source: terminal.observation.files.follow(journal, {
+      signal: terminal.signal,
+      maxChunkBytes: LIMITS.recordBytes,
+    }),
+  }));
 }
 
 /**
@@ -408,6 +456,8 @@ class CodexSessionWatcher implements AgentFileWatcher {
     rollout: AgentFileHandle;
     sessionIndex?: AgentFileHandle;
     sessionId: string;
+    /** Bytes already recorded when this terminal adopted the rollout. */
+    historyBytes?: number;
   }) {}
 
   dispose(): void { this.closed = true; }
@@ -424,7 +474,7 @@ class CodexSessionWatcher implements AgentFileWatcher {
   }
 
   private async *followedChunks(): AsyncGenerator<AgentFileWatchChunk> {
-    const { terminal, rollout, sessionIndex, sessionId } = this.options;
+    const { terminal, rollout, sessionIndex, sessionId, historyBytes } = this.options;
     const watchOptions = { signal: terminal.signal, maxChunkBytes: LIMITS.recordBytes };
     const rolloutWatcher = await terminal.observation.files.follow(rollout, watchOptions);
     // The rollout is the binding authority. The optional title index can be
@@ -440,11 +490,18 @@ class CodexSessionWatcher implements AgentFileWatcher {
     let lastTitle: string | undefined;
     try {
       const rolloutIterator = rolloutWatcher[Symbol.asyncIterator]();
-      // The first rollout chunk always contains session_meta for a newly
-      // opened watcher. Yield it before metadata so session.started exists
-      // before an explicit title can refine the same root entry.
-      const firstRollout = await rolloutIterator.next();
-      if (!firstRollout.done && !this.closed && !terminal.signal.aborted) yield firstRollout.value;
+      if (historyBytes !== undefined && historyBytes > 0) {
+        // An adopted rollout replays from byte zero, so the recorded history
+        // arrives before anything this process writes. Consume exactly that
+        // much, publish the trimmed form of it, then stream live appends.
+        yield* this.adoptedChunks(rolloutIterator, historyBytes);
+      } else {
+        // The first rollout chunk always contains session_meta for a newly
+        // opened watcher. Yield it before metadata so session.started exists
+        // before an explicit title can refine the same root entry.
+        const firstRollout = await rolloutIterator.next();
+        if (!firstRollout.done && !this.closed && !terminal.signal.aborted) yield firstRollout.value;
+      }
 
       const sources: Array<ObservedSource> = [{ iterator: rolloutIterator, titleIndex: false }];
       if (indexWatcher !== undefined) sources.push({ iterator: indexWatcher[Symbol.asyncIterator](), titleIndex: true });
@@ -470,6 +527,46 @@ class CodexSessionWatcher implements AgentFileWatcher {
       try { await Promise.all(watchers.map((watcher) => watcher.dispose())); }
       catch { /* the host cancelled the observation; nothing is left to release */ }
     }
+  }
+
+  /**
+   * Consumes the recorded history of an adopted rollout and yields it trimmed,
+   * followed by whatever this process has already appended past it. Only whole
+   * records cross the boundary: a chunk that ends mid-record is split at its
+   * last newline so no half line reaches the mapping.
+   */
+  private async *adoptedChunks(
+    iterator: AsyncIterator<AgentFileWatchChunk>,
+    historyBytes: number,
+  ): AsyncGenerator<AgentFileWatchChunk> {
+    const { terminal } = this.options;
+    let history: Uint8Array<ArrayBufferLike> = new Uint8Array();
+    while (history.byteLength < historyBytes && !this.closed && !terminal.signal.aborted) {
+      const next = await iterator.next();
+      if (next.done) break;
+      const chunk = chunkBytes(next.value);
+      if (next.value.type === "append") {
+        const merged = new Uint8Array(history.byteLength + chunk.byteLength);
+        merged.set(history);
+        merged.set(chunk, history.byteLength);
+        history = merged;
+      } else {
+        // The rollout was replaced or truncated under the watcher; whatever it
+        // holds now is the only history there is.
+        history = chunk;
+      }
+    }
+    if (this.closed || terminal.signal.aborted) return;
+    let live: Uint8Array<ArrayBufferLike> = new Uint8Array();
+    if (history.byteLength > historyBytes) {
+      let boundary = Math.min(historyBytes, history.byteLength);
+      while (boundary > 0 && history[boundary - 1] !== 0x0a) boundary -= 1;
+      live = history.slice(boundary);
+      history = history.slice(0, boundary);
+    }
+    const trimmed = trimAdoptedRollout(history);
+    if (trimmed.byteLength > 0) yield { type: "append", bytes: trimmed };
+    if (live.byteLength > 0) yield { type: "append", bytes: live };
   }
 
   private async *snapshotChunks(): AsyncGenerator<AgentFileWatchChunk> {
@@ -535,6 +632,84 @@ function rootSessionId(record: unknown): string | undefined {
   if (envelope?.type !== "session_meta" || !payload) return undefined;
   const sessionId = bounded(LIMITS.sessionId, payload.id, payload.session_id);
   return sessionId && payload.originator === "codex-tui" && payload.source === "cli" ? sessionId : undefined;
+}
+
+/** When the rollout's own header says the session was first recorded. */
+function rolloutRecordedAt(record: unknown): number | undefined {
+  const payload = object(object(record)?.payload);
+  const recorded = bounded(64, payload?.timestamp) ?? bounded(64, object(record)?.timestamp);
+  if (!recorded) return undefined;
+  const parsed = Date.parse(recorded);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/**
+ * A turn boundary in the rollout: the record the mapping turns into
+ * `turn.started`. Replaying an adopted rollout from the last one publishes the
+ * session's present state without re-announcing every turn it already ran.
+ */
+function isTurnBoundary(record: unknown): boolean {
+  const envelope = object(record);
+  if (envelope?.type !== "event_msg") return false;
+  const payload = object(envelope.payload);
+  const eventType = bounded(100, payload?.type);
+  return eventType === "task_started" || eventType === "turn_started";
+}
+
+/**
+ * Trims an already-recorded rollout to what a rebinding terminal must publish:
+ * the session header, so the root carries its identity and model, and the last
+ * turn, so its state is the state that turn ended in. Everything between is
+ * history the session already reported while it was live, and republishing it
+ * would show a resumed terminal re-running work that finished long ago.
+ */
+export function trimAdoptedRollout(history: Uint8Array): Uint8Array {
+  const text = new TextDecoder().decode(history);
+  const lines = text.split("\n");
+  const parsed = lines.map((line) => {
+    if (!line) return undefined;
+    try { return JSON.parse(line) as unknown; }
+    catch { return undefined; }
+  });
+  let header: string | undefined;
+  let lastTurn = -1;
+  for (let index = 0; index < lines.length; index += 1) {
+    const record = parsed[index];
+    if (record === undefined) continue;
+    if (header === undefined && object(record)?.type === "session_meta") header = lines[index];
+    if (isTurnBoundary(record)) lastTurn = index;
+  }
+  if (lastTurn === -1) return history;
+  const kept = [
+    ...(header === undefined ? [] : [header]),
+    // The subagents of the retained turn belong to the process that ran it and
+    // are not re-attached, so their lifecycle records are left behind with the
+    // rest of the history rather than announcing children nothing can finish.
+    ...lines.slice(lastTurn).filter((line, offset) => line && !isSubagentLifecycle(parsed[lastTurn + offset])),
+  ];
+  return new TextEncoder().encode(`${kept.join("\n")}\n`);
+}
+
+/**
+ * A watch chunk's payload. The host may hand a chunk's bytes across a process
+ * boundary as a plain array of numbers rather than a typed array, so nothing
+ * may assume `byteLength` is defined on it.
+ */
+function chunkBytes(chunk: AgentFileWatchChunk): Uint8Array {
+  const bytes = chunk.bytes as unknown;
+  return bytes instanceof Uint8Array ? bytes : new Uint8Array(Array.isArray(bytes) ? bytes : []);
+}
+
+/** Records that announce or close a Codex subagent. */
+function isSubagentLifecycle(record: unknown): boolean {
+  const envelope = object(record);
+  if (envelope?.type !== "event_msg") return false;
+  const payload = object(envelope.payload);
+  const eventType = bounded(100, payload?.type);
+  if (!eventType) return false;
+  if (eventType.startsWith("collab_") || eventType === "sub_agent_activity") return true;
+  const item = bounded(100, object(payload?.item)?.type);
+  return eventType === "item_completed" && (item === "CollabAgentToolCall" || item === "SubAgentActivity");
 }
 
 /** Maps one bounded Codex rollout record to public canonical lifecycle facts. */

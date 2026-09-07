@@ -22,7 +22,10 @@ RUN apt-get update \
 	&& npm install --global npm@12.0.2
 
 ARG CLI_REVISION=unset
-RUN CLI_REVISION=${CLI_REVISION} npm install --global opencode-ai@latest \
+# npm 12 refuses install scripts unless they are named, and `opencode-ai` is a
+# stub whose postinstall fetches the platform binary: without the script the
+# package installs but `opencode` cannot run at all.
+RUN CLI_REVISION=${CLI_REVISION} npm install --global --allow-scripts=opencode-ai opencode-ai@latest \
 	&& opencode --version
 
 WORKDIR /workspace
