@@ -1,8 +1,11 @@
-import test from 'node:test';
-import { conformanceGate, runConformance } from '../../../tests/agent-conformance/index.mjs';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import test from 'node:test';
+import {
+	conformanceGate,
+	runConformance,
+} from '../../../tests/agent-conformance/index.mjs';
 import extension from '../dist/index.js';
 
 /**
@@ -192,14 +195,15 @@ const descriptor = {
 	quit(harness) {
 		harness.pty.send('/exit');
 	},
-	resume(harness) {
+	resume(harness, providerSessionId = harness.projection.providerSessionId) {
 		// Not `--continue`: the second session was started in this same directory
 		// and this same home, and `--continue` takes the most recent session for
 		// the directory, which would rebind the wrong one. The session is named
-		// explicitly so the resume is unambiguous.
-		const sessionId = harness.projection.providerSessionId;
+		// explicitly so the resume is unambiguous. The id defaults to this
+		// terminal's own session and is passed explicitly by the
+		// resume-while-another-runs step.
 		harness.pty.send(
-			`grok ${MODEL} --permission-mode default --resume ${sessionId}`,
+			`grok ${MODEL} --permission-mode default --resume ${providerSessionId}`,
 		);
 	},
 };

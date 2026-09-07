@@ -24,7 +24,11 @@ Each provider's test SHALL drive one session that:
   replaying old transitions, and moves through `working` and `done` again on
   further work.
 
-Each provider's test SHALL additionally drive a second concurrent session of the same provider, in its own PTY and in the same working directory as the first, and SHALL assert that both sessions are admitted, that each binds its own distinct provider session, that work in one moves only that session's state, and that quitting one leaves the other bound. A provider that binds only one of two concurrent sessions SHALL fail.
+Before the first session under test is launched, the harness SHALL seed the working directory with at least one earlier session of the same provider: it SHALL start a session there, drive one turn, and quit it. Every process under test therefore starts in a directory whose provider store already holds a journal that process did not write and that is older than it. A directory empty of prior sessions SHALL NOT be accepted as the conformance working directory.
+
+Each provider's test SHALL additionally drive a second concurrent session of the same provider, in its own PTY and in the same working directory as the first, and SHALL assert that both sessions are admitted, that each binds its own distinct provider session, that the first terminal's binding does not move when the second binds, that work in one moves only that session's state, and that quitting one leaves the other bound. A provider that binds only one of two concurrent sessions, or binds both to one session, SHALL fail.
+
+While the second session is still bound, the test SHALL resume the first session by its provider session id in a fresh PTY and SHALL assert that the resumed process binds that id and not the second session's, and that the second terminal's binding does not move. A provider whose resumed process binds the most recently active session rather than the resumed one SHALL fail.
 
 An inferred (`Y*`) cell SHALL be exercised through the real condition — an actual permission prompt left outstanding, an actual halting fault — and never by injecting the inference's inputs. A capability a provider declares `N` SHALL be asserted as unsupported, so a provider that gains it fails the test until its matrix verdict is updated.
 
@@ -57,8 +61,18 @@ Each test SHALL be opt-in and credential-gated, SHALL skip rather than fail with
 
 #### Scenario: Only one of two concurrent sessions binds
 
-- **WHEN** a provider binds one of two concurrent sessions and not the other
+- **WHEN** a provider binds one of two concurrent sessions and not the other, or binds both to one provider session
 - **THEN** its conformance test fails
+
+#### Scenario: Directory seeded with an earlier session
+
+- **WHEN** a conformance run begins
+- **THEN** its working directory already holds a quit session of the same provider, older than every process the run launches
+
+#### Scenario: Resume while another session runs
+
+- **WHEN** the first session is resumed by id in a fresh PTY while the second session is still bound
+- **THEN** the resumed process binds the first session's id, and the second terminal's binding does not move
 
 #### Scenario: Inferred cell exercised for real
 
@@ -87,7 +101,7 @@ Each test SHALL be opt-in and credential-gated, SHALL skip rather than fail with
 
 ### Requirement: Shared conformance harness
 
-The mechanics of real-CLI conformance SHALL live in one shared testing harness rather than being reimplemented per extension. The harness SHALL own spawning a PTY and shell, launching a CLI in it, writing input to it, building a real terminal observation context over the live process tree and filesystem, running a provider's `observe` against it, collecting emitted lifecycle events, awaiting an expected state with a timeout, and tearing everything down. It SHALL be able to hold more than one such PTY and context at once so concurrent sessions of one provider can be driven together.
+The mechanics of real-CLI conformance SHALL live in one shared testing harness rather than being reimplemented per extension. The harness SHALL own spawning a PTY and shell, launching a CLI in it, writing input to it, building a real terminal observation context over the live process tree and filesystem, running a provider's `observe` against it, collecting emitted lifecycle events, awaiting an expected state with a timeout, and tearing everything down. It SHALL be able to hold more than one such PTY and context at once so concurrent sessions of one provider can be driven together, and SHALL own seeding the working directory with a quit earlier session before the matrix begins.
 
 Each provider's test SHALL supply only what is provider-specific: how its CLI is launched, the prompt that starts subagents, the gesture that leaves an input request outstanding, the gesture that produces a halting fault, how the CLI is quit, how the session is resumed, and the matrix row to assert.
 
@@ -114,7 +128,9 @@ A capability assertion SHALL be expressed once in the harness and run for every 
 
 Every provider that ships an agent extension SHALL have an Electron end-to-end specification that drives its CLI in the running application and asserts the resulting rows in the Agents pane. That specification SHALL run on every ordinary end-to-end run rather than only when a real-CLI credential gate is set, using a stub CLI that writes the provider's real journal format where a real authenticated CLI cannot run unattended.
 
-Each such specification SHALL drive at least two terminals of that provider in one project and assert a row for each. A provider whose extension ships without this specification SHALL be treated as unverified at the application surface, whatever its unit or conformance coverage states.
+Each such specification SHALL drive at least two terminals of that provider in one project and assert a row for each, and SHALL start them in a project whose provider store already holds an earlier session of that provider. Where the provider binds through a per-process record — Claude Code's `sessions/<pid>.json`, Grok's `active_sessions.json` — the stub SHALL write that record with its own real pid, working directory, and start time, exactly as the CLI does, so a provider that ignores the record and guesses from journals cannot pass. The Claude Code specification SHALL additionally launch one terminal with `--resume` of the earlier session while the other terminal is live, and assert the resumed terminal's row is that session and the live terminal's row is unchanged.
+
+A provider whose extension ships without this specification SHALL be treated as unverified at the application surface, whatever its unit or conformance coverage states.
 
 #### Scenario: Ordinary end-to-end run
 
@@ -123,8 +139,18 @@ Each such specification SHALL drive at least two terminals of that provider in o
 
 #### Scenario: Two terminals in the application
 
-- **WHEN** an agent extension's specification drives two terminals of its provider in one project
-- **THEN** the Agents pane shows a row for each
+- **WHEN** an agent extension's specification drives two terminals of its provider in one project that already holds an earlier session
+- **THEN** the Agents pane shows a row for each, and neither row is the earlier session
+
+#### Scenario: Stub writes the per-process record
+
+- **WHEN** a provider binds through a per-process record
+- **THEN** its stub CLI writes that record with its own pid, working directory, and start time
+
+#### Scenario: Resumed terminal beside a live one
+
+- **WHEN** the Claude Code specification resumes the earlier session in one terminal while another terminal's session is live
+- **THEN** the resumed terminal's row is the resumed session and the live terminal's row is unchanged
 
 #### Scenario: Extension without application coverage
 
