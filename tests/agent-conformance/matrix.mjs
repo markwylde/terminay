@@ -92,9 +92,13 @@ export async function conformanceGate(descriptor) {
 		};
 	}
 	const { spawnSync } = await import('node:child_process');
-	const found = spawnSync('/bin/bash', ['-lc', 'command -v "$1"', '--', descriptor.executable], {
-		encoding: 'utf8',
-	});
+	const found = spawnSync(
+		'/bin/bash',
+		['-lc', 'command -v "$1"', '--', descriptor.executable],
+		{
+			encoding: 'utf8',
+		},
+	);
 	if (found.status !== 0) {
 		return { skip: true, reason: `${descriptor.executable} is not on PATH` };
 	}
@@ -136,7 +140,9 @@ export async function runConformance(descriptor, options = {}) {
 	const step = async (name, run) => {
 		log(`▶ ${name}`);
 		await run();
-		log(`✓ ${name} (state=${harness ? harness.projection.state : 'not yet launched'})`);
+		log(
+			`✓ ${name} (state=${harness ? harness.projection.state : 'not yet launched'})`,
+		);
 	};
 	/** @type {Awaited<ReturnType<typeof createConformanceHarness>> | undefined} */
 	let second;
@@ -204,7 +210,11 @@ export async function runConformance(descriptor, options = {}) {
 		await step('idle before any work', async () => {
 			const kinds = harness.projection.events.map((event) => event.kind);
 			const started = kinds.indexOf('session.started');
-			assert.notEqual(started, -1, `${descriptor.name} never started a session`);
+			assert.notEqual(
+				started,
+				-1,
+				`${descriptor.name} never started a session`,
+			);
 			const firstWork = kinds.findIndex(
 				(kind) => kind === 'turn.started' || kind === 'tool.started',
 			);
@@ -392,17 +402,43 @@ export async function runConformance(descriptor, options = {}) {
 				firstSessionId,
 				'work in one session must not rebind the other',
 			);
-
 		});
 
-		// Resume while another session runs. This is the reported defect in its
+		// Quit the first session while the second stays live. Its process must be
+		// gone before its session is resumed elsewhere: a CLI that holds its
+		// journal open refuses to resume a thread that already has a writer.
+		const secondSessionId = second.projection.providerSessionId;
+		await step('quit', async () => {
+			await descriptor.quit(harness);
+			await harness.await(
+				'the root to go inactive on quit',
+				(projection) => !projection.active,
+			);
+			assert.notEqual(
+				harness.projection.state,
+				'working',
+				'a quit CLI must not be left reporting working',
+			);
+			// The second terminal is still live and must not have noticed.
+			await second.observe();
+			assert.equal(
+				second.projection.providerSessionId,
+				secondSessionId,
+				`${descriptor.name} moved the second terminal's binding when the first quit`,
+			);
+			assert.ok(
+				second.projection.active,
+				`${descriptor.name} retired the second session when the first quit`,
+			);
+		});
+		// Resume while another session runs, with the first CLI already quit. This
+		// is the reported defect in its
 		// exact shape: a third terminal reopens the first terminal's session by
 		// id while the second terminal's session is live and is the most recently
 		// written thing in the directory. A provider that picks the newest
 		// journal, or the one that was appended to last, binds the second
 		// session's id here and fails.
 		await step('resume while another session runs', async () => {
-			const secondSessionId = second.projection.providerSessionId;
 			assert.ok(
 				second.projection.active,
 				'the second session must still be running for this step to mean anything',
@@ -458,33 +494,16 @@ export async function runConformance(descriptor, options = {}) {
 			third = undefined;
 		});
 
-		// Quitting one leaves the other bound.
-		await step('quitting one session leaves the other bound', async () => {
+		// The second session quits on its own; the first is already gone.
+		await step('quit the second session', async () => {
 			await descriptor.quit(second);
 			await second.await(
 				'the second session to go inactive',
 				(projection) => !projection.active,
 			);
-			await harness.observe();
-			assert.ok(
-				harness.projection.active,
-				`${descriptor.name} retired the first session when the second quit`,
-			);
 		});
 
-		// Resume: quitting makes the root inactive, resuming rebinds the same one.
-		await step('quit', async () => {
-			await descriptor.quit(harness);
-			await harness.await(
-				'the root to go inactive on quit',
-				(projection) => !projection.active,
-			);
-			assert.notEqual(
-				harness.projection.state,
-				'working',
-				'a quit CLI must not be left reporting working',
-			);
-		});
+		// Resume: quitting made the root inactive; resuming rebinds the same one.
 		const rootId = harness.projection.providerSessionId;
 		const eventsBeforeResume = harness.projection.events.length;
 		await step('resume', async () => {
@@ -541,7 +560,8 @@ export async function runConformance(descriptor, options = {}) {
 			await step('blocked declared unsupported', async () => {
 				assert.equal(
 					harness.projection.events.filter(
-						(event) => event.kind === 'wait.started' && event.state === 'blocked',
+						(event) =>
+							event.kind === 'wait.started' && event.state === 'blocked',
 					).length,
 					0,
 					`${descriptor.name} declares blocked N but reported a block`,

@@ -28,7 +28,7 @@ Before the first session under test is launched, the harness SHALL seed the work
 
 Each provider's test SHALL additionally drive a second concurrent session of the same provider, in its own PTY and in the same working directory as the first, and SHALL assert that both sessions are admitted, that each binds its own distinct provider session, that the first terminal's binding does not move when the second binds, that work in one moves only that session's state, and that quitting one leaves the other bound. A provider that binds only one of two concurrent sessions, or binds both to one session, SHALL fail.
 
-While the second session is still bound, the test SHALL resume the first session by its provider session id in a fresh PTY and SHALL assert that the resumed process binds that id and not the second session's, and that the second terminal's binding does not move. A provider whose resumed process binds the most recently active session rather than the resumed one SHALL fail.
+After quitting the first session's CLI, and while the second session is still bound, the test SHALL resume the first session by its provider session id in a fresh PTY and SHALL assert that the resumed process binds that id and not the second session's, and that the second terminal's binding does not move. The first CLI SHALL have exited before its session is resumed, because a provider that holds its journal open refuses to resume a thread that already has a writer. A provider whose resumed process binds the most recently active session rather than the resumed one SHALL fail.
 
 An inferred (`Y*`) cell SHALL be exercised through the real condition — an actual permission prompt left outstanding, an actual halting fault — and never by injecting the inference's inputs. A capability a provider declares `N` SHALL be asserted as unsupported, so a provider that gains it fails the test until its matrix verdict is updated.
 
@@ -71,7 +71,7 @@ Each test SHALL be opt-in and credential-gated, SHALL skip rather than fail with
 
 #### Scenario: Resume while another session runs
 
-- **WHEN** the first session is resumed by id in a fresh PTY while the second session is still bound
+- **WHEN** the first session's CLI has quit and that session is resumed by id in a fresh PTY while the second session is still bound
 - **THEN** the resumed process binds the first session's id, and the second terminal's binding does not move
 
 #### Scenario: Inferred cell exercised for real

@@ -309,7 +309,16 @@ export function mapClaudeRecord(
 	// Everything below changes state. A record written at or before the CLI's
 	// last idle mark is history: replaying it live would show a turn that ended
 	// before this terminal bound, for as long as the replay takes.
-	if (beforeIdle(envelope, scope)) return;
+	if (beforeIdle(envelope, scope)) {
+		// A turn that finished before the mark still ends with its outcome, so
+		// a terminal binding just after a turn shows DONE rather than nothing;
+		// it just never passes through `working` on the way.
+		if (type === 'system' && envelope.subtype === 'turn_duration') {
+			scope.turnOpen = false;
+			publisher.done({ outcome: 'success' });
+		}
+		return;
+	}
 	if (type === 'user' && interrupted(message)) {
 		// The turn was stopped before its `turn_duration` could be written.
 		if (scope.turnOpen) {
