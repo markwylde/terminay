@@ -165,7 +165,13 @@ test("the E2E image copies a manifest for every workspace", async () => {
     assert.ok(pattern.endsWith("/*"), `unsupported workspace pattern ${pattern}`);
     const parent = pattern.slice(0, -2);
     for (const entry of await readdir(new URL(`${parent}/`, root), { withFileTypes: true })) {
-      if (entry.isDirectory()) directories.push(`${parent}/${entry.name}`);
+      if (!entry.isDirectory()) continue;
+      // A directory under a workspace glob is only a workspace if it has a
+      // manifest. `packages/shared-ui` is sources compiled by its consumers and
+      // has none, so npm never installs it and the image must not copy one.
+      const directory = `${parent}/${entry.name}`;
+      const manifest = await readFile(new URL(`${directory}/package.json`, root), "utf8").catch(() => undefined);
+      if (manifest !== undefined) directories.push(directory);
     }
   }
   assert.ok(directories.length > 0, "no workspaces were discovered");
