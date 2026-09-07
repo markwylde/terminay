@@ -304,8 +304,8 @@ async function loadCatalogue(path) {
 		});
 	});
 	if (
-		new Set(entries.map((entry) => entry.extensionId)).size !== 8 ||
-		new Set(entries.map((entry) => entry.packageName)).size !== 8 ||
+		new Set(entries.map((entry) => entry.extensionId)).size !== 7 ||
+		new Set(entries.map((entry) => entry.packageName)).size !== 7 ||
 		!entries.every((entry) => expectedIds.has(entry.extensionId))
 	)
 		throw new Error(
