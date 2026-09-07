@@ -24,7 +24,7 @@ type LifecycleOptions = {
 	panelSessionMapRef: MutableRefObject<Map<string, string>>;
 	/** Scopes this device's remembered tab to the project it belongs to. */
 	projectId: string;
-	publishTerminalActivityOverview: () => void;
+	publishWorkspaceInventory: () => void;
 	setFocusedSessionId: Dispatch<SetStateAction<string | null>>;
 	setIsDockviewReady: Dispatch<SetStateAction<boolean>>;
 	syncPanelFocusState: () => void;
@@ -101,7 +101,7 @@ export function useDockviewPanelLifecycle(options: LifecycleOptions) {
 			);
 			if (!isMoving) latest.cancelMacroRunsForSession(sessionId);
 			if (!isMoving) latest.closeServerPanel?.(panel.id);
-			window.requestAnimationFrame(latest.publishTerminalActivityOverview);
+			window.requestAnimationFrame(latest.publishWorkspaceInventory);
 		});
 
 		event.api.onDidActivePanelChange(() => {
@@ -119,10 +119,18 @@ export function useDockviewPanelLifecycle(options: LifecycleOptions) {
 			}
 		});
 
+		event.api.onDidAddPanel(() => {
+			if (rendererUnloadingRef.current) return;
+			window.requestAnimationFrame(optionsRef.current.publishWorkspaceInventory);
+		});
+
 		event.api.onDidMovePanel((move) => {
+			const latest = optionsRef.current;
+			// Moving a panel changes the order the inventory reports, whether it was
+			// a tab reorder or a change of split geometry.
+			window.requestAnimationFrame(latest.publishWorkspaceInventory);
 			// A cross-group move changes split geometry and is not a tab reorder.
 			if (move.panel.group.id !== move.from.id) return;
-			const latest = optionsRef.current;
 			const panelIds = event.api.groups.flatMap((group) =>
 				group.panels.map((panel) => panel.id),
 			);

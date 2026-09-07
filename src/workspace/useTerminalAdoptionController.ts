@@ -44,7 +44,7 @@ type UseTerminalAdoptionControllerOptions = {
 	) => void;
 	panelSessionsRef: MutableRefObject<Map<string, string>>;
 	project: ProjectIdentity;
-	publishActivityOverview: () => void;
+	publishWorkspaceInventory: () => void;
 	registerTerminalContextReader: (
 		sessionId: string,
 		reader: TerminalContextReader,
@@ -72,7 +72,7 @@ export function useTerminalAdoptionController({
 	onMoveToProject,
 	panelSessionsRef,
 	project,
-	publishActivityOverview,
+	publishWorkspaceInventory,
 	registerTerminalContextReader,
 	replaceMacroRuns,
 	revealRecording,
@@ -216,7 +216,7 @@ export function useTerminalAdoptionController({
 			}
 			onError(null);
 			syncPanelFocusState();
-			window.requestAnimationFrame(publishActivityOverview);
+			window.requestAnimationFrame(publishWorkspaceInventory);
 			recordBootstrapDiagnostic('app.workspace.adopt.end');
 			return true;
 		},
@@ -231,7 +231,7 @@ export function useTerminalAdoptionController({
 			onMoveToProject,
 			panelSessionsRef,
 			project,
-			publishActivityOverview,
+			publishWorkspaceInventory,
 			registerTerminalContextReader,
 			replaceMacroRuns,
 			revealRecording,

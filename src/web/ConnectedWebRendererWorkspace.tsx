@@ -676,7 +676,13 @@ function ConnectedBrowserMenuBar({
 			],
 			view: [
 				{
+					id: 'show-dashboard',
+					label: 'Show Dashboard',
+					onSelect: () => dispatchShortcut('0'),
+				},
+				{
 					id: 'set-project-root',
+					startsGroup: true,
 					label: 'Set Project Root to Working Directory',
 					onSelect: () => dispatchShortcut('r'),
 				},
