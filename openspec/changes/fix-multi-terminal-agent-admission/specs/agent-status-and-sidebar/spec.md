@@ -65,11 +65,11 @@ CWD, filename timestamps, terminal title, active tab, and closest-match logic SH
 
 The `terminay-agent-claude-code` package SHALL own the Claude Code mapping under the same zero-injection boundary.
 
-The Claude Code CLI writes one session file per interactive process at `.claude/sessions/<pid>.json` below the provider home, carrying at least `pid`, `sessionId`, `cwd`, and `startedAt` in epoch milliseconds; it rewrites the file when the process changes session and removes it when the process exits. That file SHALL be the sole binding rule. For each `claude` descendant of the registered PTY that reports a pid, the extension SHALL resolve `.claude/sessions/<pid>.json` beneath `.claude/sessions`, read it bounded, and accept it only when its `pid` equals the process pid, its `cwd` equals the observed process working directory, its `sessionId` is a session UUID, and, where the environment reports a process start time, its `startedAt` lies within a bounded tolerance of that start. The extension SHALL read only `pid`, `sessionId`, `cwd`, `startedAt`, and `version` from that file, and SHALL NOT read the sibling `.key` file or any socket, name, or status field.
+The Claude Code CLI writes one session file per interactive process at `.claude/sessions/<pid>.json` below the provider home, carrying at least `pid`, `sessionId`, `cwd`, and `startedAt` in epoch milliseconds; it rewrites the file when the process changes session and removes it when the process exits. That file SHALL be the sole binding rule. For each `claude` descendant of the registered PTY that reports a pid, the extension SHALL resolve `.claude/sessions/<pid>.json` beneath `.claude/sessions`, read it bounded, and accept it only when its `pid` equals the process pid, its `cwd` equals the observed process working directory, its `sessionId` is a session UUID, and, where the environment reports a process start time, its `startedAt` lies within a bounded tolerance of that start. The extension SHALL read only `pid`, `sessionId`, `cwd`, `startedAt`, `version`, and `status` from that file, and SHALL NOT read the sibling `.key` file or any socket or name field.
 
 The bound journal SHALL be `<sessionId>.jsonl` below the provider-encoded project directory for the file's `cwd`, under `.claude/projects`, and its first record SHALL carry the same `sessionId`. Exactly one descendant with an accepted session file and a resolvable journal SHALL bind; zero or more than one SHALL bind nothing. The extension SHALL NOT list the project directory to choose a root, SHALL NOT consult open writable handles, and SHALL NOT derive the session from a `--resume` or `--continue` argument; a resumed process's session file already names the resumed session.
 
-While bound, the extension SHALL watch the process's session file. When its `sessionId` changes, the current root SHALL be retired and the newly named journal bound in the same terminal under the renewable root binding rules. Journals below a root session's `subagents/` directory and unrelated history SHALL NOT be eligible roots.
+While bound, the extension SHALL watch the process's session file. When its `sessionId` changes, the current root SHALL be retired and the newly named journal bound in the same terminal under the renewable root binding rules. When its `status` becomes `idle`, every subagent still open beneath the root SHALL complete as cancelled, because the CLI's own word outranks a journal whose end was never written. A subagent journal ending on a `[Request interrupted by user]` record SHALL complete that subagent as cancelled. Journals below a root session's `subagents/` directory and unrelated history SHALL NOT be eligible roots.
 
 It SHALL use explicit `ai-title` records for the root label, the bounded `last-prompt` text and then the provider display name until such a record exists, assistant model metadata, and bounded tool lifecycle. Meta and local-command user records, tool-result content, assistant text, and reasoning SHALL never be projected.
 
@@ -136,6 +136,16 @@ Claude Code flushes an assistant record and its corresponding `tool_result` toge
 
 - **WHEN** the bound process's session file comes to name a different `sessionId`
 - **THEN** the previous root is retired and the newly named journal is bound in the same terminal
+
+#### Scenario: Subagent stopped before it finished
+
+- **WHEN** a subagent's journal ends on a `[Request interrupted by user]` record with no completion after it
+- **THEN** that subagent completes as cancelled and does not hold the root `working`
+
+#### Scenario: Session file reports idle with a subagent open
+
+- **WHEN** the bound process's session file comes to report `status: "idle"` while a subagent beneath the root is still open
+- **THEN** that subagent completes as cancelled
 
 #### Scenario: Two claude descendants with valid session files
 

@@ -46,6 +46,7 @@ export function sessionFile({
 	cwd = CWD,
 	startedAt,
 	version = '2.1.263',
+	status = 'busy',
 }) {
 	return {
 		pid,
@@ -62,7 +63,7 @@ export function sessionFile({
 		name: 'workspace-1',
 		nameSource: 'derived',
 		updatedAt: startedAt + 90_000,
-		status: 'busy',
+		status,
 		statusUpdatedAt: startedAt + 90_000,
 	};
 }

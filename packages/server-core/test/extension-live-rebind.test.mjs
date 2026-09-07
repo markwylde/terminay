@@ -7,15 +7,12 @@ import {
 } from '../dist/index.js';
 
 /**
- * What a live, already-bound extension context may publish.
- *
- * An extension whose CLI changes conversation inside one process — Claude
- * Code's `/clear` rewrites its own `sessions/<pid>.json` with a new session id
- * without touching the process tree — has no foreground or topology edge to
- * re-observe on, so its only lever is a second `terminal.bindSession` on the
- * context it is already bound in. A binding-only publication naming another
- * provider session is therefore the replacement: the host retires the root on
- * screen and the next `session.started` opens the new one in the same terminal.
+ * What a live, already-bound extension context may publish. A provider whose
+ * CLI changes conversation inside one process (Claude Code `/clear`) has no
+ * process edge to re-observe on. The host refuses a live context re-binding to
+ * a different provider session, so the Claude Code provider follows the new
+ * journal under its original binding instead. This test holds that host
+ * behaviour so the provider is told when it changes.
  */
 const providerId = 'example.agent/test';
 const identity = Object.freeze({
@@ -89,41 +86,9 @@ const rootsOf = (agents) =>
 		.filter((entry) => entry.kind === 'root')
 		.map((entry) => [entry.sessionId, entry.active]);
 
-test('a binding-only publication for another provider session replaces the root in place', async (t) => {
+test('a live extension context cannot re-bind to a different provider session', async (t) => {
 	const { agents, publish } = await boundTerminal(t);
-	assert.deepEqual(await publish('rebind', { binding: bindingFor('root-b') }), {
-		acceptedEventCount: 0,
-		rejectedEventCount: 0,
-	});
-	assert.deepEqual(
-		rootsOf(agents),
-		[['root-a', false]],
-		'the previous root is retired by the replacement binding',
-	);
-	assert.equal(
-		(
-			await publish('start-second', {
-				events: [{ kind: 'session.started', title: 'B' }],
-			})
-		).acceptedEventCount,
-		1,
-	);
-	assert.deepEqual(
-		rootsOf(agents),
-		[
-			['root-a', false],
-			['root-b', true],
-		],
-		'the replacement session opens as a live root in the same terminal',
-	);
-});
-
-test('a replacement binding carrying events is refused', async (t) => {
-	const { agents, publish } = await boundTerminal(t);
-	const rebind = await publish('rebind-with-events', {
-		binding: bindingFor('root-b'),
-		events: [{ kind: 'session.started', title: 'B' }],
-	});
+	const rebind = await publish('rebind', { binding: bindingFor('root-b') });
 	assert.equal(rebind.acceptedEventCount, 0);
 	assert.match(
 		rebind.failure,
