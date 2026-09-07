@@ -107,3 +107,14 @@ Gitea never resolves artifact-action v4.
 - Defects that only appear under signing, notarization, native arm64, or
   publication are by design not caught before merge; they are caught on the
   release workflow.
+
+## Amendment 2026-09-07: verification runs on Gitea only
+
+GitHub is a mirror of the Gitea repository and no longer runs pull-request or
+`main` CI. Every verification job described above — the packaged macOS smoke,
+the fast gate, the shared E2E-image build, the ten Electron shards, and the real
+MCP CLI compatibility run — executes only from `.gitea/workflows/ci.yml`.
+`.github/workflows/` holds release workflows alone: the manually triggered
+`trigger-release.yml` and the tag-driven `server-image.yml` GHCR publication.
+Both directories must still exist and remain provider-exclusive, but the
+provider-portability contract tests now assert the Gitea workflow alone.

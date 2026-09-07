@@ -25,7 +25,7 @@ workspace.
 - `scripts/release-readiness.mjs` records the workspace packages, lockfile
   version, native package inventory, SBOM hash, and source correspondence in
   one release manifest.
-- `.github/workflows/ci.yml` builds and tests the workspace from one checkout,
+- `.gitea/workflows/ci.yml` builds and tests the workspace from one checkout,
   with the Electron suite isolated in the repository's pinned Docker image.
 - `.github/workflows/trigger-release.yml` sequences one release version and
   matched Desktop and standalone Server artifacts from the same tagged source
