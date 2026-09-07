@@ -22,7 +22,13 @@ RUN apt-get update \
 	&& npm install --global npm@12.0.2
 
 ARG CLI_REVISION=unset
-RUN CLI_REVISION=${CLI_REVISION} npm install --global @anthropic-ai/claude-code@latest \
+# npm 12 blocks install scripts unless they are named, and the CLI's own
+# postinstall is what fetches its native binary: without the allowance the
+# package installs and `claude` immediately reports "native binary not
+# installed".
+RUN CLI_REVISION=${CLI_REVISION} npm install --global \
+		--allow-scripts=@anthropic-ai/claude-code \
+		@anthropic-ai/claude-code@latest \
 	&& claude --version
 
 WORKDIR /workspace
@@ -37,4 +43,6 @@ RUN npm ci \
 ENV HOME=/tmp/conformance-home
 RUN mkdir -p /tmp/conformance-home
 
-CMD ["npm", "run", "test:conformance", "--workspace", "terminay-agent-claude-code"]
+# The entrypoint seeds that home with the CLI's own onboarding and API-key
+# answers before the suite starts; see the script for why each one is needed.
+CMD ["sh", "/workspace/extensions/agent-claude-code/conformance-entrypoint.sh"]

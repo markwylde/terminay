@@ -94,7 +94,7 @@ export class OpenCodeStore {
     /** Parentless sessions whose directory matches the process working directory. */
     rootsForDirectory(directory) {
         return (this.query((database) => database
-            .prepare('SELECT id, parent_id, slug, title, directory, time_updated FROM session WHERE parent_id IS NULL AND directory = ? ORDER BY time_updated DESC LIMIT 16')
+            .prepare('SELECT id, parent_id, slug, title, directory, time_created, time_updated FROM session WHERE parent_id IS NULL AND directory = ? ORDER BY time_updated DESC LIMIT 16')
             .all(directory)
             .flatMap((row) => {
             const value = row;
@@ -112,6 +112,9 @@ export class OpenCodeStore {
                         ? { title: text(value.title, LIMITS.title) }
                         : {}),
                     directory: rowDirectory,
+                    timeCreated: typeof value.time_created === 'number'
+                        ? value.time_created
+                        : 0,
                     timeUpdated: typeof value.time_updated === 'number'
                         ? value.time_updated
                         : 0,
@@ -122,7 +125,7 @@ export class OpenCodeStore {
     /** Children whose declared parent is exactly the bound root. */
     childrenOf(rootId) {
         return (this.query((database) => database
-            .prepare('SELECT id, parent_id, slug, title, directory, time_updated FROM session WHERE parent_id = ? ORDER BY time_created ASC LIMIT 64')
+            .prepare('SELECT id, parent_id, slug, title, directory, time_created, time_updated FROM session WHERE parent_id = ? ORDER BY time_created ASC LIMIT 64')
             .all(rootId)
             .flatMap((row) => {
             const value = row;
@@ -140,6 +143,9 @@ export class OpenCodeStore {
                         ? { title: text(value.title, LIMITS.title) }
                         : {}),
                     directory: text(value.directory, LIMITS.directory) ?? '',
+                    timeCreated: typeof value.time_created === 'number'
+                        ? value.time_created
+                        : 0,
                     timeUpdated: typeof value.time_updated === 'number'
                         ? value.time_updated
                         : 0,
