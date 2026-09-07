@@ -279,10 +279,10 @@ async function loadCatalogue(path) {
 	if (
 		value?.schemaVersion !== 1 ||
 		!Array.isArray(value.extensions) ||
-		value.extensions.length !== 8
+		value.extensions.length !== 7
 	)
 		throw new Error(
-			'built-in extension catalogue must name exactly eight extensions',
+			'built-in extension catalogue must name exactly seven extensions',
 		);
 	const entries = value.extensions.map((entry) => {
 		if (

@@ -11,7 +11,7 @@ test('development prerequisite stages and verifies eight built-ins from an absen
 		const outputDirectory = join(root, 'absent', 'built-in-extensions')
 		await assert.rejects(access(outputDirectory))
 		const result = await prepareDevelopmentBuiltInExtensions({ outputDirectory })
-		assert.equal(result.artifacts.length, 8)
+		assert.equal(result.artifacts.length, 7)
 		await access(join(outputDirectory, 'inventory.v1.json'))
 	} finally {
 		await rm(root, { recursive: true, force: true })
