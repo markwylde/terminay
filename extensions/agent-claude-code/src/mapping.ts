@@ -20,10 +20,17 @@ const CONVERSATION_SWITCH_RECORD_TYPE = CONVERSATION_SWITCH_RECORD.type;
  * anything inferred from journals: no subagent can still be running once the
  * process that owns it says it is idle.
  */
-export const SESSION_IDLE_RECORD = {
-	type: 'terminay-session-idle',
-} as const;
-const SESSION_IDLE_RECORD_TYPE = SESSION_IDLE_RECORD.type;
+export const SESSION_IDLE_RECORD_TYPE = 'terminay-session-idle';
+/** Builds the idle record; `idleSince` is the file's own `statusUpdatedAt`. */
+export function sessionIdleRecord(idleSince: number | undefined): {
+	readonly type: typeof SESSION_IDLE_RECORD_TYPE;
+	readonly idleSince?: number;
+} {
+	return {
+		type: SESSION_IDLE_RECORD_TYPE,
+		...(idleSince === undefined ? {} : { idleSince }),
+	};
+}
 
 import { safeAgentString } from '@terminay/extension-api';
 
@@ -109,6 +116,15 @@ interface ClaudeState {
 	 * records that were written before it finished.
 	 */
 	completed: Set<string>;
+	/**
+	 * Epoch milliseconds of the CLI's last `status: "idle"` mark, from its own
+	 * session file. A subagent launch or start recorded before it is history:
+	 * the process has been idle since, so whatever that child did is over,
+	 * whether or not its journal ever said so. Journals are replayed
+	 * concurrently and the host re-opens a stopped child on a later start, so
+	 * this is the only ordering-independent way to keep a dead child down.
+	 */
+	idleSince?: number;
 }
 
 function newState(): ClaudeState {
@@ -199,6 +215,8 @@ export function mapClaudeRecord(
 		// A child whose completion was never recorded — killed, or interrupted
 		// before its journal closed — would otherwise hold the root `working`
 		// for ever. The process says it is idle, so every open child is over.
+		if (typeof envelope.idleSince === 'number')
+			scope.idleSince = Math.max(scope.idleSince ?? 0, envelope.idleSince);
 		for (const child of scope.children) {
 			scope.completed.add(child);
 			publisher.subagentDone({ subagentId: child, outcome: 'cancelled' });
@@ -332,6 +350,12 @@ export function mapClaudeRecord(
 				// The launch record is replayed from the start of the journal, so a
 				// child that already completed must not be re-opened by it.
 				if (scope.completed.has(toolId)) continue;
+				if (beforeIdle(envelope, scope)) {
+					// Launched before the CLI last went idle: finished, one way or
+					// another, and its own journal must not re-open it either.
+					scope.completed.add(toolId);
+					continue;
+				}
 				const childTitle =
 					bounded(input.description, 200) ?? bounded(input.subagent_type, 200);
 				const childPrompt = bounded(input.prompt, 4_000);
@@ -397,6 +421,12 @@ function mapChildRecord(
 			finish();
 			return;
 		}
+		// Written before the CLI last went idle: this child cannot be running.
+		if (beforeIdle(envelope, state)) return;
+		// One start per child. The host re-opens a stopped child on any later
+		// start, and journals replay concurrently, so a start repeated for every
+		// assistant record is a stream of chances to resurrect a finished child.
+		if (state.children.has(childId)) return;
 		state.children.add(childId);
 		session.publish.subagentStarted({
 			subagentId: childId,
@@ -443,6 +473,16 @@ function finishSubagent(
 					: 'error',
 	});
 	return true;
+}
+
+/** True when the record predates the CLI's last idle mark. */
+function beforeIdle(envelope: JsonObject, state: ClaudeState): boolean {
+	if (state.idleSince === undefined) return false;
+	const at =
+		typeof envelope.timestamp === 'string'
+			? Date.parse(envelope.timestamp)
+			: Number.NaN;
+	return Number.isFinite(at) && at <= state.idleSince;
 }
 
 /** True for the `[Request interrupted by user…]` record the CLI writes when a run is stopped. */

@@ -398,3 +398,93 @@ test('the session file reporting idle cancels every subagent still open', async 
 		await harness.dispose();
 	}
 });
+
+/**
+ * The order the host sees events in is not the order the journals hold them:
+ * the root and every child journal replay concurrently, and the host re-opens
+ * a stopped child on any later start. So a dead child is kept down by time,
+ * not by order — the CLI's own idle mark in its session file outranks every
+ * launch or start recorded before it.
+ */
+const idleAt = Date.parse('2026-09-06T12:00:00.000Z');
+const stamp = (records, at) =>
+	records.map((record) => ({ ...record, timestamp: at }));
+
+test('a session file already idle at bind keeps every earlier subagent down', async () => {
+	// The child journal never says the child stopped, and it is replayed in
+	// full; but every record in it — and the launch — predates the idle mark.
+	const harness = await createAgentExtensionHarness(extension);
+	try {
+		await harness.observe(
+			fixtureTerminal({
+				foregroundExecutable: 'claude',
+				cwd: '/workspace',
+				pid: PID,
+				startedAt,
+				openFilePaths: [],
+				files: {
+					[root]: stamp(stoppedRootJournal, '2026-09-06T11:30:00.000Z'),
+					[`${projects}/${sessionId}/subagents/agent-${stopped.agentId}.jsonl`]:
+						stamp(childJournal(stopped), '2026-09-06T11:31:00.000Z'),
+					[`${projects}/${sessionId}/subagents/agent-${stopped.agentId}.meta.json`]:
+						[
+							{
+								description: stopped.description,
+								toolUseId: stopped.toolUseId,
+							},
+						],
+					[sessionFilePath(PID)]: [
+						sessionFile({
+							sessionId,
+							startedAt: Date.parse(startedAt),
+							status: 'idle',
+							statusUpdatedAt: idleAt,
+						}),
+					],
+				},
+			}),
+		);
+		assert.deepEqual(
+			harness.events().filter((event) => event.kind.startsWith('subagent')),
+			[],
+			'nothing recorded before the idle mark may start a subagent',
+		);
+	} finally {
+		await harness.dispose();
+	}
+});
+
+test('a subagent recorded after the idle mark still starts', async () => {
+	const harness = await createAgentExtensionHarness(extension);
+	try {
+		await harness.observe(
+			fixtureTerminal({
+				foregroundExecutable: 'claude',
+				cwd: '/workspace',
+				pid: PID,
+				startedAt,
+				openFilePaths: [],
+				files: {
+					[root]: stamp(stoppedRootJournal, '2026-09-06T12:30:00.000Z'),
+					[sessionFilePath(PID)]: [
+						sessionFile({
+							sessionId,
+							startedAt: Date.parse(startedAt),
+							status: 'idle',
+							statusUpdatedAt: idleAt,
+						}),
+					],
+				},
+			}),
+		);
+		assert.deepEqual(
+			harness
+				.events()
+				.filter((event) => event.kind === 'subagent.started')
+				.map((event) => event.subagentId),
+			[stopped.toolUseId],
+		);
+	} finally {
+		await harness.dispose();
+	}
+});

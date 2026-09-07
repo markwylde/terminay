@@ -17,8 +17,8 @@ import {
 } from '@terminay/extension-api';
 import {
 	CONVERSATION_SWITCH_RECORD,
-	SESSION_IDLE_RECORD,
 	createClaudeRecordMapper,
+	sessionIdleRecord,
 } from './mapping.js';
 import { withQuiescence } from './quiescence.js';
 import {
@@ -62,6 +62,7 @@ export const CLAUDE_SESSION_FILE_FIELDS = Object.freeze([
 	'startedAt',
 	'version',
 	'status',
+	'statusUpdatedAt',
 ] as const);
 
 /**
@@ -164,6 +165,8 @@ interface SessionFile {
 	readonly version?: string;
 	/** The CLI's own `idle` / `busy` word, rewritten as the process changes. */
 	readonly status?: string;
+	/** When that word was last written, epoch milliseconds. */
+	readonly statusUpdatedAt?: number;
 }
 
 /**
@@ -219,6 +222,7 @@ function acceptSessionFile(
 	const startedAt = read<unknown>('startedAt');
 	const version = safeAgentString(read<unknown>('version'))?.slice(0, 100);
 	const status = safeAgentString(read<unknown>('status'))?.slice(0, 32);
+	const statusUpdatedAt = read<unknown>('statusUpdatedAt');
 	if (pid !== process.pid) return undefined;
 	if (!cwd || cwd !== process.cwd) return undefined;
 	if (!sessionId || !SESSION_ID.test(sessionId)) return undefined;
@@ -239,6 +243,9 @@ function acceptSessionFile(
 		cwd,
 		...(version ? { version } : {}),
 		...(status ? { status } : {}),
+		...(typeof statusUpdatedAt === 'number' && Number.isFinite(statusUpdatedAt)
+			? { statusUpdatedAt }
+			: {}),
 	};
 }
 
@@ -290,10 +297,14 @@ const SWITCH_CHUNK: AgentFileWatchChunk = {
 	),
 };
 
-const IDLE_CHUNK: AgentFileWatchChunk = {
-	type: 'append',
-	bytes: new TextEncoder().encode(`${JSON.stringify(SESSION_IDLE_RECORD)}\n`),
-};
+function idleChunk(file: SessionFile): AgentFileWatchChunk {
+	return {
+		type: 'append',
+		bytes: new TextEncoder().encode(
+			`${JSON.stringify(sessionIdleRecord(file.statusUpdatedAt))}\n`,
+		),
+	};
+}
 
 /** Which of the two lanes produced a result, and what it produced. */
 type Lane =
@@ -377,6 +388,9 @@ function rootSource(
 
 	async function* iterate(): AsyncGenerator<AgentFileWatchChunk> {
 		let bound = file.sessionId;
+		// The CLI's idle mark goes first, ahead of any replayed record, so every
+		// lane knows from its first record which launches are already history.
+		if (file.status === 'idle') yield idleChunk(file);
 		follower = await terminal.observation.files.follow(journal, {
 			signal: terminal.signal,
 		});
@@ -429,7 +443,7 @@ function rootSource(
 			if (settled.session.sessionId === bound) {
 				// Same conversation, new status word. Only `idle` carries a fact the
 				// journal cannot: a subagent whose end was never written is over.
-				if (settled.session.status === 'idle') yield IDLE_CHUNK;
+				if (settled.session.status === 'idle') yield idleChunk(settled.session);
 				continue;
 			}
 			const moved = await journalFor(

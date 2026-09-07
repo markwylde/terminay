@@ -47,6 +47,7 @@ export function sessionFile({
 	startedAt,
 	version = '2.1.263',
 	status = 'busy',
+	statusUpdatedAt = startedAt + 90_000,
 }) {
 	return {
 		pid,
@@ -64,7 +65,7 @@ export function sessionFile({
 		nameSource: 'derived',
 		updatedAt: startedAt + 90_000,
 		status,
-		statusUpdatedAt: startedAt + 90_000,
+		statusUpdatedAt,
 	};
 }
 
