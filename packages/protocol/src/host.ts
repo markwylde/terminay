@@ -142,6 +142,7 @@ export const TERMINAY_HOST_MENU_COMMANDS = [
 	'popout-active',
 	'save-active',
 	'set-project-root-folder-to-working-directory',
+	'show-dashboard',
 	'split-horizontal',
 	'split-vertical',
 	'start-dictation',

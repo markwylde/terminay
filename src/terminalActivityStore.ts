@@ -142,17 +142,21 @@ export class TerminalActivityStore {
 		record.signalWorking = activity.status === 'working';
 
 		const recentInput = this.hasRecentUserInput(record, now);
+		const focused = options?.focused === true;
 
 		// A working → idle transition means a unit of work finished; surface the
-		// finished (green) indicator unless the user is actively interacting.
-		if (wasWorking && activity.status === 'idle' && !recentInput) {
+		// finished (green) indicator unless the user is already looking at it.
+		if (wasWorking && activity.status === 'idle' && !recentInput && !focused) {
 			record.needsAcknowledgement = true;
 		}
 
-		// Attention never fires for the tab the user is already looking at;
-		// viewing it is acknowledgement.
-		if (options?.focused) {
+		// Viewing is acknowledgement: a focused tab never keeps finished or
+		// attention indicators. Working still shows through signalWorking.
+		if (focused) {
 			record.attentionPending = false;
+			if (activity.status !== 'working') {
+				record.needsAcknowledgement = false;
+			}
 		} else if (activity.attention && !recentInput) {
 			record.attentionPending = true;
 		}
