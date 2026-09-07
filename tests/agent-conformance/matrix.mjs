@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createConformanceHarness } from './harness.mjs';
 
 const sleep = (ms) =>
@@ -41,7 +44,13 @@ export const CAPABILITIES = Object.freeze([
  * @property {(harness: unknown) => unknown} answerInput Answers it.
  * @property {(harness: unknown) => unknown} [provokeFault] Provokes a real halting fault.
  * @property {(harness: unknown) => unknown} quit
- * @property {(harness: unknown) => unknown} resume Resumes the same provider session in a new process.
+ * @property {(harness: unknown, providerSessionId?: string) => unknown} resume
+ *   Resumes a provider session in a new process. The second argument names the
+ *   session to resume; a descriptor that is passed none resumes the session its
+ *   own harness is bound to, which is what the plain quit-then-resume step
+ *   wants. The argument exists because the resume-while-another-runs step
+ *   resumes one terminal's session from a *different* harness, whose own
+ *   projection knows nothing about it.
  * @property {(harness: import('./harness.mjs').ConformanceHarness) => unknown} secondLaunch Starts a second, independent session of this provider.
  */
 
@@ -63,6 +72,14 @@ export function assertRowIsComplete(descriptor) {
 		typeof descriptor.secondLaunch,
 		'function',
 		`${descriptor.name} must supply secondLaunch so two concurrent sessions can be proven`,
+	);
+	// The resume gesture is driven from a harness other than the one that owns
+	// the session, so it cannot be optional and cannot be a bare `--continue`
+	// with no way to name what it resumes.
+	assert.equal(
+		typeof descriptor.resume,
+		'function',
+		`${descriptor.name} must supply resume so a session can be reopened by id`,
 	);
 }
 
@@ -96,22 +113,71 @@ export async function runConformance(descriptor, options = {}) {
 		(process.env.TERMINAY_CONFORMANCE_LOG === '1'
 			? (line) => process.stderr.write(`${line}\n`)
 			: () => {});
-	const harness = await createConformanceHarness({
-		extension: descriptor.extension,
-		providerId: descriptor.providerId,
-		executable: descriptor.executable,
-		...(descriptor.environment
-			? { environment: descriptor.environment(process.cwd()) }
-			: {}),
-	});
+	// One disposable directory for the whole run, owned here rather than by any
+	// one PTY: the seeded session, the session under test, the concurrent second
+	// session and the resuming third all work in it, and it must outlive the
+	// first of them closing.
+	const workingDirectory = realpathSync(
+		mkdtempSync(join(tmpdir(), 'terminay-conformance-')),
+	);
+	const openHarness = () =>
+		createConformanceHarness({
+			extension: descriptor.extension,
+			providerId: descriptor.providerId,
+			executable: descriptor.executable,
+			cwd: workingDirectory,
+			...(descriptor.environment
+				? { environment: descriptor.environment(process.cwd()) }
+				: {}),
+			log,
+		});
+	/** @type {Awaited<ReturnType<typeof createConformanceHarness>> | undefined} */
+	let harness;
 	const step = async (name, run) => {
 		log(`▶ ${name}`);
 		await run();
-		log(`✓ ${name} (state=${harness.projection.state})`);
+		log(`✓ ${name} (state=${harness ? harness.projection.state : 'not yet launched'})`);
 	};
 	/** @type {Awaited<ReturnType<typeof createConformanceHarness>> | undefined} */
 	let second;
+	/** @type {Awaited<ReturnType<typeof createConformanceHarness>> | undefined} */
+	let third;
+	/** @type {string | undefined} */
+	let seededSessionId;
 	try {
+		// The working directory must already hold somebody else's session before
+		// anything under test starts. Every process the matrix launches then sees
+		// a journal it did not write, older than itself — the ordinary state of a
+		// repository a developer has worked in, and the state an empty container
+		// directory hid. A provider that picks its session by file time binds this
+		// one and fails `detect`.
+		await step('seed an earlier session', async () => {
+			const seed = await openHarness();
+			try {
+				await descriptor.launch(seed);
+				await seed.await(
+					'the seeded session to bind',
+					(projection) => projection.bound,
+				);
+				// One whole turn, so the seeded journal holds real work rather than
+				// an empty header: the launch gesture carries the first prompt.
+				await seed.awaitState('done');
+				seededSessionId = seed.projection.providerSessionId;
+				assert.ok(
+					seededSessionId,
+					`${descriptor.name} could not seed the working directory: the earlier session bound no provider session id, so nothing under test would start beside a session it did not write`,
+				);
+				await descriptor.quit(seed);
+				await seed.await(
+					'the seeded session to go inactive',
+					(projection) => !projection.active,
+				);
+			} finally {
+				await seed.close();
+			}
+		});
+
+		harness = await openHarness();
 		// Detect: launching the CLI normally binds a root to this exact PTY.
 		await step('detect', async () => {
 			await descriptor.launch(harness);
@@ -120,6 +186,14 @@ export async function runConformance(descriptor, options = {}) {
 				descriptor.row.detect,
 				'Y',
 				`${descriptor.name} bound but does not claim detection`,
+			);
+			// The directory holds an earlier session. Binding it would mean the
+			// provider chose by what the directory contains rather than by what
+			// this process is.
+			assert.notEqual(
+				harness.projection.providerSessionId,
+				seededSessionId,
+				`${descriptor.name} bound the session under test to the earlier session already in the directory (${seededSessionId}) instead of its own`,
 			);
 		});
 
@@ -274,20 +348,16 @@ export async function runConformance(descriptor, options = {}) {
 		// is the ordinary case on a developer's machine — one repository, several
 		// terminals — and the case every other step is blind to, because each
 		// drives a single PTY.
+		assert.notEqual(
+			firstSessionId,
+			seededSessionId,
+			`${descriptor.name} left the first terminal on the seeded session`,
+		);
 		await step('two concurrent sessions', async () => {
-			second = await createConformanceHarness({
-				extension: descriptor.extension,
-				providerId: descriptor.providerId,
-				executable: descriptor.executable,
-				// The same directory as the first session: providers key their
-				// session stores on the working directory, so a separate one would
-				// not exercise the case at all.
-				cwd: harness.pty.cwd,
-				...(descriptor.environment
-					? { environment: descriptor.environment(process.cwd()) }
-					: {}),
-				log,
-			});
+			// The same directory as the first session: providers key their session
+			// stores on the working directory, so a separate one would not exercise
+			// the case at all.
+			second = await openHarness();
 			await descriptor.secondLaunch(second);
 			await second.await(
 				'the second session to bind',
@@ -297,6 +367,11 @@ export async function runConformance(descriptor, options = {}) {
 				second.projection.providerSessionId,
 				harness.projection.providerSessionId,
 				`${descriptor.name} bound both terminals to one provider session`,
+			);
+			assert.notEqual(
+				second.projection.providerSessionId,
+				seededSessionId,
+				`${descriptor.name} bound the second terminal to the earlier session already in the directory (${seededSessionId})`,
 			);
 			// The first session must be untouched by the second's arrival.
 			await harness.observe();
@@ -318,7 +393,73 @@ export async function runConformance(descriptor, options = {}) {
 				'work in one session must not rebind the other',
 			);
 
-			// Quitting one leaves the other bound.
+		});
+
+		// Resume while another session runs. This is the reported defect in its
+		// exact shape: a third terminal reopens the first terminal's session by
+		// id while the second terminal's session is live and is the most recently
+		// written thing in the directory. A provider that picks the newest
+		// journal, or the one that was appended to last, binds the second
+		// session's id here and fails.
+		await step('resume while another session runs', async () => {
+			const secondSessionId = second.projection.providerSessionId;
+			assert.ok(
+				second.projection.active,
+				'the second session must still be running for this step to mean anything',
+			);
+			third = await openHarness();
+			// The resuming harness has no binding of its own yet, so the session to
+			// reopen is named explicitly rather than read from its projection.
+			await descriptor.resume(third, firstSessionId);
+			if (descriptor.row.resume === 'N') {
+				// Held to the opposite, the way the plain resume step is: the gesture
+				// is still made and the session must not come back.
+				await sleep(30_000);
+				await third.observe();
+				assert.notEqual(
+					third.projection.providerSessionId,
+					firstSessionId,
+					`${descriptor.name} declares resume N but a resuming process bound the first session`,
+				);
+			} else {
+				await third.await(
+					'the resumed session to bind while another session runs',
+					(projection) => projection.bound && projection.active,
+				);
+				assert.equal(
+					third.projection.providerSessionId,
+					firstSessionId,
+					`${descriptor.name} resumed session ${firstSessionId} but bound ${third.projection.providerSessionId}${
+						third.projection.providerSessionId === secondSessionId
+							? ' — the live session of the other terminal'
+							: third.projection.providerSessionId === seededSessionId
+								? ' — the earlier seeded session'
+								: ''
+					}`,
+				);
+			}
+			// The live terminal must not have moved while its neighbour resumed.
+			await second.observe();
+			assert.equal(
+				second.projection.providerSessionId,
+				secondSessionId,
+				`${descriptor.name} moved the second terminal's binding when the first session was resumed beside it`,
+			);
+			assert.ok(
+				second.projection.active,
+				`${descriptor.name} retired the second session when the first was resumed beside it`,
+			);
+			await descriptor.quit(third);
+			await third.await(
+				'the resuming session to go inactive',
+				(projection) => !projection.active,
+			);
+			await third.close();
+			third = undefined;
+		});
+
+		// Quitting one leaves the other bound.
+		await step('quitting one session leaves the other bound', async () => {
 			await descriptor.quit(second);
 			await second.await(
 				'the second session to go inactive',
@@ -421,7 +562,11 @@ export async function runConformance(descriptor, options = {}) {
 			});
 		}
 	} finally {
+		if (third) await third.close();
 		if (second) await second.close();
-		await harness.close();
+		if (harness) await harness.close();
+		// No PTY owns this directory, so it is removed here — after every CLI
+		// below every PTY has been terminated, so nothing is left writing into it.
+		rmSync(workingDirectory, { recursive: true, force: true });
 	}
 }

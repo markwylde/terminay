@@ -5,6 +5,7 @@ import {
 	fixtureTerminal,
 } from '@terminay/extension-api/testing';
 import extension from '../dist/index.js';
+import { PID, sessionFile, sessionFilePath } from './claude-terminal.mjs';
 
 /**
  * Shaped from a real Claude Code 2.1.263 session directory captured during a
@@ -213,17 +214,22 @@ function resumedTerminal() {
 			},
 		];
 	}
+	// `claude --continue` appends to a journal an earlier process created, and
+	// the subagents directory already exists when the session rebinds. The
+	// process's own session file names the continued session, which is the only
+	// reason it binds.
+	files[sessionFilePath(PID)] = [
+		sessionFile({ sessionId, startedAt: Date.parse(startedAt) }),
+	];
 	return fixtureTerminal({
 		foregroundExecutable: 'claude',
 		arguments: ['--continue'],
 		cwd: '/workspace',
+		pid: PID,
 		startedAt,
 		openFilePaths: [],
 		files,
-		// `claude --continue` appends to a journal an earlier process created,
-		// and the subagents directory already exists when the session rebinds.
 		fileCreatedAt: { [root]: '2026-09-05T09:00:00.000Z' },
-		fileModifiedAt: { [root]: '2026-09-06T11:00:20.000Z' },
 	});
 }
 

@@ -1,8 +1,11 @@
-import test from 'node:test';
-import { conformanceGate, runConformance } from '../../../tests/agent-conformance/index.mjs';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import test from 'node:test';
+import {
+	conformanceGate,
+	runConformance,
+} from '../../../tests/agent-conformance/index.mjs';
 import extension from '../dist/index.js';
 
 /**
@@ -216,8 +219,17 @@ const descriptor = {
 		// mapping turns into `session.stopped`.
 		harness.pty.send('/exit');
 	},
-	resume(harness) {
-		harness.pty.send(`${OMP} --continue`);
+	resume(harness, providerSessionId) {
+		// `--continue` reopens the most recent session for this terminal, which is
+		// what the plain quit-then-resume step wants. When a session is named —
+		// the resume-while-another-runs step, driven from a terminal with no
+		// binding of its own — `--resume` takes the id, which omp documents as
+		// "Resume a session (by ID prefix, path, or picker if omitted)".
+		harness.pty.send(
+			providerSessionId
+				? `${OMP} --resume ${providerSessionId}`
+				: `${OMP} --continue`,
+		);
 	},
 	secondLaunch(harness) {
 		// A second omp in the same working directory. omp keys its breadcrumb on
