@@ -103,6 +103,20 @@ export interface ThisServerAgentProcess {
 	readonly executableName: string;
 	readonly startedAt?: string;
 	readonly cwd?: string;
+	/** The process's own command line, bounded; a provider reads its CLI flags from it. */
+	readonly arguments?: readonly string[];
+}
+
+const MAX_PROCESS_ARGUMENTS = 64;
+const MAX_PROCESS_ARGUMENT_LENGTH = 4_096;
+
+function boundedArguments(
+	value: readonly string[] | undefined,
+): readonly string[] | undefined {
+	if (value === undefined) return undefined;
+	return value
+		.filter((item) => safeText(item, MAX_PROCESS_ARGUMENT_LENGTH) !== undefined)
+		.slice(0, MAX_PROCESS_ARGUMENTS);
 }
 
 export interface ThisServerAgentOpenFile {
@@ -370,6 +384,7 @@ export class ThisServerAgentObservationAdapter {
 				? process.startedAt
 				: undefined;
 			const cwd = safePath(process.cwd);
+			const argumentsSafe = boundedArguments(process.arguments);
 			return [
 				{
 					handle: { id: handle.id },
@@ -377,6 +392,9 @@ export class ThisServerAgentObservationAdapter {
 					pid: process.pid,
 					...(startedAt === undefined ? {} : { startedAt }),
 					...(cwd === undefined ? {} : { cwd }),
+					...(argumentsSafe === undefined
+						? {}
+						: { arguments: [...argumentsSafe] }),
 				},
 			];
 		});
@@ -734,10 +752,14 @@ export class ThisServerAgentObservationAdapter {
 		)
 			return null;
 		const canonical = await this.system.realpath(providerPath, signal);
+		// Home comes from the issuing terminal, exactly as `homeRelativePath`
+		// does. Without it this falls back to an adapter-level home the
+		// extension child never sets, so a `beneath.homeRelative` constraint
+		// could never be satisfied and this operation always returned null.
 		if (
 			canonical === undefined ||
 			safePath(canonical) === undefined ||
-			!this.withinHomeConstraint(canonical, request, false)
+			!this.withinHomeConstraint(canonical, request, false, state.homeDirectory)
 		)
 			return null;
 		const details = await this.system.stat(canonical, signal);
@@ -1298,7 +1320,10 @@ async function nodeDescendants(
 		children.set(parent, [...(children.get(parent) ?? []), pid]);
 		names.set(pid, command.join(' '));
 	}
-	return darwinProcessFacts(sessionProcesses(shellPid, children, names), signal);
+	return darwinProcessFacts(
+		sessionProcesses(shellPid, children, names),
+		signal,
+	);
 }
 
 /**
@@ -1313,9 +1338,10 @@ async function darwinProcessFacts(
 ): Promise<readonly ThisServerAgentProcess[]> {
 	if (processes.length === 0) return processes;
 	const pids = processes.map((process) => process.pid);
-	const [startedAt, cwd] = await Promise.all([
+	const [startedAt, cwd, argv] = await Promise.all([
 		darwinStartTimes(pids, signal),
 		darwinWorkingDirectories(pids, signal),
+		darwinArguments(pids, signal),
 	]);
 	return processes.map((process) => ({
 		...process,
@@ -1323,7 +1349,41 @@ async function darwinProcessFacts(
 			? { startedAt: startedAt.get(process.pid) }
 			: {}),
 		...(cwd.has(process.pid) ? { cwd: cwd.get(process.pid) } : {}),
+		...(argv.has(process.pid) ? { arguments: argv.get(process.pid) } : {}),
 	}));
+}
+
+/**
+ * Each session process's command line. `ps` prints it space-joined, so an
+ * argument that itself held a space is split; the flags a provider reads —
+ * a session id, `--continue`, `resume` — never do.
+ */
+async function darwinArguments(
+	pids: readonly number[],
+	signal: AbortSignal,
+): Promise<ReadonlyMap<number, readonly string[]>> {
+	const result = new Map<number, readonly string[]>();
+	let output: string;
+	try {
+		output = await commandText(
+			unixTool('ps'),
+			['-o', 'pid=,args=', '-p', pids.join(',')],
+			1024 * 1024,
+			signal,
+			true,
+		);
+	} catch {
+		return result;
+	}
+	for (const line of output.split(/\r?\n/u)) {
+		const match = /^\s*(\d+)\s+(.*?)\s*$/u.exec(line);
+		if (!match) continue;
+		const pid = Number(match[1]);
+		if (!validPid(pid) || !match[2]) continue;
+		const [, ...rest] = match[2].split(/\s+/u);
+		result.set(pid, rest);
+	}
+	return result;
 }
 
 /** `lstart` is whole seconds, so it never postdates the true start. */
@@ -1426,17 +1486,24 @@ async function linuxProcessFacts(
 	const bootedAt = await linuxBootTime();
 	return Promise.all(
 		processes.map(async (process) => {
-			const [cwd, startedAt] = await Promise.all([
+			const [cwd, startedAt, cmdline] = await Promise.all([
 				readlink(`/proc/${process.pid}/cwd`).catch(() => undefined),
 				linuxStartTime(process.pid, bootedAt),
+				readFile(`/proc/${process.pid}/cmdline`).catch(() => undefined),
 			]);
 			const safeCwd = cwd === undefined ? undefined : safePath(cwd);
+			// `cmdline` is NUL-separated argv, exact; the first entry is argv[0].
+			const argv =
+				cmdline === undefined
+					? undefined
+					: cmdline.toString('utf8').split('\0').filter(Boolean).slice(1);
 			return {
 				...process,
 				...(startedAt === undefined ? {} : { startedAt }),
 				...(safeCwd !== undefined && isAbsolute(safeCwd)
 					? { cwd: safeCwd }
 					: {}),
+				...(argv === undefined ? {} : { arguments: argv }),
 			};
 		}),
 	);

@@ -725,6 +725,12 @@ export interface AgentProcessSnapshot {
 	 * not a path and does not grant filesystem authority.
 	 */
 	pid?: number;
+	/**
+	 * The process's own command line after its executable, bounded, when the
+	 * environment can read it. It is per-process evidence: a session id or a
+	 * resume flag on it belongs to exactly this process.
+	 */
+	arguments?: readonly string[];
 }
 
 export interface AgentOpenFile {

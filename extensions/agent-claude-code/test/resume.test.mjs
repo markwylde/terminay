@@ -3,18 +3,13 @@ import test from 'node:test';
 import {
 	claudeProjectDirectoryPath,
 	claudeProjectJournalPath,
-	claudeResumeSessionId,
 } from '../dist/index.js';
 
 const sessionId = '5f2aff08-eab3-4852-96eb-48235fc7f471';
 
-test('Claude Code only accepts explicit valid native --resume identities', () => {
-	assert.equal(claudeResumeSessionId(['--resume', sessionId]), sessionId);
-	assert.equal(claudeResumeSessionId([`--resume=${sessionId}`]), sessionId);
-	assert.equal(claudeResumeSessionId(['-r', sessionId]), sessionId);
-	assert.equal(claudeResumeSessionId(['--resume', 'not-a-session']), undefined);
-	assert.equal(claudeResumeSessionId(undefined), undefined);
-});
+// The `--resume` argument is deliberately not parsed: a resumed process's own
+// session file already names the resumed session, and names the right one after
+// a later `/clear` or in-process `/resume`, which the argument never can.
 
 test('Claude Code derives only the provider-owned project journal path', () => {
 	assert.equal(
@@ -40,7 +35,9 @@ test('the project directory encoding replaces every non-alphanumeric character',
 		'.claude/projects/-private-var-folders-gw-n-lr8lp97k93jpcv2qg-1mpw0000gn-T-terminay-conformance-KYT549',
 	);
 	assert.equal(
-		claudeProjectDirectoryPath('/Users/mark/Documents/Projects/terminay/terminay'),
+		claudeProjectDirectoryPath(
+			'/Users/mark/Documents/Projects/terminay/terminay',
+		),
 		'.claude/projects/-Users-mark-Documents-Projects-terminay-terminay',
 	);
 });

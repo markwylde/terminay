@@ -1,0 +1,53 @@
+{"ts": "2026-09-06T21:41:12.222Z", "type": "turn_started", "session_id": "01a0785e-4001-7570-b63f-9f397b1662a6", "turn_number": 10, "model_id": "grok-4.6", "yolo_mode": true, "conversation_message_count": 618, "session_relationship": "primary", "schema_version": "1.0"}
+{"ts": "2026-09-06T21:41:12.457Z", "type": "loop_started", "loop_index": 0}
+{"ts": "2026-09-06T21:41:12.464Z", "type": "phase_changed", "phase": "waiting_for_model"}
+{"ts": "2026-09-06T21:41:18.012Z", "type": "first_token"}
+{"ts": "2026-09-06T21:41:18.012Z", "type": "phase_changed", "phase": "streaming_reasoning"}
+{"ts": "2026-09-06T21:41:18.013Z", "type": "phase_changed", "phase": "streaming_reasoning"}
+{"ts": "2026-09-06T21:41:18.013Z", "type": "phase_changed", "phase": "streaming_reasoning"}
+{"ts": "2026-09-06T21:41:18.013Z", "type": "phase_changed", "phase": "streaming_reasoning"}
+{"ts": "2026-09-06T21:41:18.013Z", "type": "phase_changed", "phase": "streaming_reasoning"}
+{"ts": "2026-09-06T21:41:18.014Z", "type": "phase_changed", "phase": "streaming_reasoning"}
+{"ts": "2026-09-06T21:41:18.014Z", "type": "phase_changed", "phase": "streaming_reasoning"}
+{"ts": "2026-09-06T21:41:18.016Z", "type": "phase_changed", "phase": "streaming_reasoning"}
+{"ts": "2026-09-06T21:41:18.016Z", "type": "phase_changed", "phase": "streaming_reasoning"}
+{"ts": "2026-09-06T21:41:18.016Z", "type": "phase_changed", "phase": "streaming_reasoning"}
+{"ts": "2026-09-06T21:41:18.016Z", "type": "phase_changed", "phase": "streaming_reasoning"}
+{"ts": "2026-09-06T21:41:18.016Z", "type": "phase_changed", "phase": "streaming_reasoning"}
+{"ts": "2026-09-06T21:41:18.016Z", "type": "phase_changed", "phase": "streaming_reasoning"}
+{"ts": "2026-09-06T21:41:18.017Z", "type": "phase_changed", "phase": "streaming_reasoning"}
+{"ts": "2026-09-06T21:41:18.018Z", "type": "phase_changed", "phase": "streaming_reasoning"}
+{"ts": "2026-09-06T21:41:18.019Z", "type": "phase_changed", "phase": "streaming_reasoning"}
+{"ts": "2026-09-06T21:41:18.019Z", "type": "phase_changed", "phase": "streaming_reasoning"}
+{"ts": "2026-09-06T21:41:18.020Z", "type": "phase_changed", "phase": "streaming_reasoning"}
+{"ts": "2026-09-06T21:41:18.021Z", "type": "phase_changed", "phase": "streaming_reasoning"}
+{"ts": "2026-09-06T21:41:18.023Z", "type": "phase_changed", "phase": "streaming_reasoning"}
+{"ts": "2026-09-06T21:41:18.023Z", "type": "phase_changed", "phase": "streaming_reasoning"}
+{"ts": "2026-09-06T21:41:18.023Z", "type": "phase_changed", "phase": "streaming_text"}
+{"ts": "2026-09-06T21:41:18.024Z", "type": "phase_changed", "phase": "streaming_text"}
+{"ts": "2026-09-06T21:41:18.024Z", "type": "phase_changed", "phase": "streaming_text"}
+{"ts": "2026-09-06T21:41:18.024Z", "type": "phase_changed", "phase": "streaming_text"}
+{"ts": "2026-09-06T21:41:18.024Z", "type": "phase_changed", "phase": "streaming_text"}
+{"ts": "2026-09-06T21:41:18.024Z", "type": "phase_changed", "phase": "streaming_text"}
+{"ts": "2026-09-06T21:41:18.024Z", "type": "phase_changed", "phase": "streaming_text"}
+{"ts": "2026-09-06T21:41:18.024Z", "type": "phase_changed", "phase": "streaming_text"}
+{"ts": "2026-09-06T21:41:18.024Z", "type": "phase_changed", "phase": "streaming_text"}
+{"ts": "2026-09-06T21:41:18.024Z", "type": "phase_changed", "phase": "streaming_text"}
+{"ts": "2026-09-06T21:41:18.024Z", "type": "phase_changed", "phase": "streaming_text"}
+{"ts": "2026-09-06T21:41:18.024Z", "type": "phase_changed", "phase": "streaming_text"}
+{"ts": "2026-09-06T21:41:18.025Z", "type": "phase_changed", "phase": "streaming_text"}
+{"ts": "2026-09-06T21:41:18.027Z", "type": "phase_changed", "phase": "streaming_text"}
+{"ts": "2026-09-06T21:41:18.027Z", "type": "phase_changed", "phase": "streaming_text"}
+{"ts": "2026-09-06T21:41:18.028Z", "type": "phase_changed", "phase": "streaming_text"}
+{"ts": "2026-09-06T21:41:18.036Z", "type": "phase_changed", "phase": "streaming_text"}
+{"ts": "2026-09-06T21:41:18.040Z", "type": "phase_changed", "phase": "streaming_text"}
+{"ts": "2026-09-06T21:41:18.046Z", "type": "phase_changed", "phase": "streaming_text"}
+{"ts": "2026-09-06T21:41:18.054Z", "type": "phase_changed", "phase": "streaming_text"}
+{"ts": "2026-09-06T21:41:18.057Z", "type": "phase_changed", "phase": "streaming_text"}
+{"ts": "2026-09-06T21:41:18.058Z", "type": "phase_changed", "phase": "streaming_text"}
+{"ts": "2026-09-06T21:41:18.058Z", "type": "phase_changed", "phase": "streaming_text"}
+{"ts": "2026-09-06T21:41:18.267Z", "type": "turn_ended", "outcome": "completed"}
+{"ts": "2026-09-07T09:53:45.037Z", "type": "mcp_config_resolved", "servers": [{"name": "chrome-devtools", "transport": "stdio", "source": "local"}], "disabled": []}
+{"ts": "2026-09-07T09:53:45.050Z", "type": "mcp_server_starting", "server_name": "chrome-devtools", "transport": "stdio", "target": "npx chrome-devtools-mcp@latest", "timeout_sec": 30}
+{"ts": "2026-09-07T09:53:45.727Z", "type": "mcp_server_connected", "server_name": "chrome-devtools", "transport": "stdio", "tool_count": 29, "duration_ms": 676, "tools": ["click", "close_page", "drag", "emulate", "evaluate_script", "fill", "fill_form", "get_console_message", "get_network_request", "handle_dialog", "hover", "lighthouse_audit", "list_console_messages", "list_network_requests", "list_pages", "navigate_page", "new_page", "performance_analyze_insight", "performance_start_trace", "performance_stop_trace", "press_key", "resize_page", "select_page", "take_heapsnapshot", "take_screenshot", "take_snapshot", "type_text", "upload_file", "wait_for"]}
+{"ts": "2026-09-07T09:53:45.727Z", "type": "mcp_init_completed", "total_servers": 1, "succeeded": 1, "failed": 0, "auth_required": 0, "total_tools": 29, "duration_ms": 676, "is_reinit": false}

@@ -1,0 +1,19 @@
+{
+	"pid": 81679,
+	"sessionId": "6a2f403e-8c17-4284-8caf-44ea5b7befb5",
+	"cwd": "/Users/mark/Documents/Projects/terminay/terminay",
+	"startedAt": 1788774848318,
+	"procStart": "Mon Sep  7 09:54:07 2026",
+	"version": "2.1.263",
+	"peerProtocol": 1,
+	"peerFeatures": ["notify_idle"],
+	"kind": "interactive",
+	"entrypoint": "cli",
+	"pidDomain": "darwin",
+	"name": "terminay-19",
+	"nameSource": "derived",
+	"nameSince": 1788774848318,
+	"updatedAt": 1788776021642,
+	"status": "busy",
+	"statusUpdatedAt": 1788776021642
+}

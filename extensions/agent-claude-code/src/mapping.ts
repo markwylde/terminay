@@ -3,6 +3,35 @@ import { QUIET_RECORD } from './quiescence.js';
 
 const QUIET_RECORD_TYPE = QUIET_RECORD.type;
 
+/**
+ * The synthetic record a conversation switch produces. It never reaches a
+ * journal: the provider injects it when the process's own session file comes to
+ * name a different conversation, so the records of the journal that follows are
+ * not read as a continuation of the one before it.
+ */
+export const CONVERSATION_SWITCH_RECORD = {
+	type: 'terminay-conversation-switch',
+} as const;
+const CONVERSATION_SWITCH_RECORD_TYPE = CONVERSATION_SWITCH_RECORD.type;
+
+/**
+ * The synthetic record the provider injects when the process's own session
+ * file reports `status: "idle"`. The CLI writes that itself, so it outranks
+ * anything inferred from journals: no subagent can still be running once the
+ * process that owns it says it is idle.
+ */
+export const SESSION_IDLE_RECORD_TYPE = 'terminay-session-idle';
+/** Builds the idle record; `idleSince` is the file's own `statusUpdatedAt`. */
+export function sessionIdleRecord(idleSince: number | undefined): {
+	readonly type: typeof SESSION_IDLE_RECORD_TYPE;
+	readonly idleSince?: number;
+} {
+	return {
+		type: SESSION_IDLE_RECORD_TYPE,
+		...(idleSince === undefined ? {} : { idleSince }),
+	};
+}
+
 import { safeAgentString } from '@terminay/extension-api';
 
 type JsonObject = Record<string, unknown>;
@@ -87,6 +116,15 @@ interface ClaudeState {
 	 * records that were written before it finished.
 	 */
 	completed: Set<string>;
+	/**
+	 * Epoch milliseconds of the CLI's last `status: "idle"` mark, from its own
+	 * session file. A subagent launch or start recorded before it is history:
+	 * the process has been idle since, so whatever that child did is over,
+	 * whether or not its journal ever said so. Journals are replayed
+	 * concurrently and the host re-opens a stopped child on a later start, so
+	 * this is the only ordering-independent way to keep a dead child down.
+	 */
+	idleSince?: number;
 }
 
 function newState(): ClaudeState {
@@ -99,6 +137,22 @@ function newState(): ClaudeState {
 		children: new Set<string>(),
 		completed: new Set<string>(),
 	};
+}
+
+/**
+ * Clears everything that belonged to the conversation just left, so the journal
+ * that follows relabels the entry, opens its own turns and carries none of the
+ * previous conversation's subagents. `started` is deliberately kept: the host
+ * materialises one root per bound session and the entry stays that same root.
+ */
+function resetConversation(state: ClaudeState): void {
+	state.headerSeen = false;
+	state.titled = false;
+	state.turnOpen = false;
+	state.inferredWaiting = false;
+	delete state.permissionMode;
+	state.children.clear();
+	state.completed.clear();
 }
 
 /**
@@ -140,6 +194,48 @@ export function mapClaudeRecord(
 	const publisher = session.publish;
 	const type = typeof envelope.type === 'string' ? envelope.type : undefined;
 	if (type === undefined) return;
+
+	if (type === CONVERSATION_SWITCH_RECORD_TYPE) {
+		// The process changed conversation in place. Anything the conversation
+		// left open ends with it — a turn abandoned by `/clear` is cancelled, not
+		// completed — and the entry then follows the process: the next journal's
+		// own records relabel it and open its turns.
+		if (scope.inferredWaiting)
+			publisher.waitFinished({
+				waitId: `inferred-wait:${session.binding.providerSessionId}`,
+			});
+		for (const child of scope.children)
+			publisher.subagentDone({ subagentId: child, outcome: 'cancelled' });
+		if (scope.turnOpen) publisher.done({ outcome: 'cancelled' });
+		resetConversation(scope);
+		return;
+	}
+
+	if (type === SESSION_IDLE_RECORD_TYPE) {
+		// A child whose completion was never recorded — killed, or interrupted
+		// before its journal closed — would otherwise hold the root `working`
+		// for ever. The process says it is idle, so every open child is over.
+		if (typeof envelope.idleSince === 'number')
+			scope.idleSince = Math.max(scope.idleSince ?? 0, envelope.idleSince);
+		// The same goes for the root: a turn still open when the CLI says idle
+		// never wrote its `turn_duration` — interrupted, or lost — and is over.
+		if (scope.inferredWaiting) {
+			scope.inferredWaiting = false;
+			publisher.waitFinished({
+				waitId: `inferred-wait:${session.binding.providerSessionId}`,
+			});
+		}
+		if (scope.turnOpen) {
+			scope.turnOpen = false;
+			publisher.done({ outcome: 'cancelled' });
+		}
+		for (const child of scope.children) {
+			scope.completed.add(child);
+			publisher.subagentDone({ subagentId: child, outcome: 'cancelled' });
+		}
+		scope.children.clear();
+		return;
+	}
 
 	if (type === QUIET_RECORD_TYPE) {
 		// Silence is only evidence of a prompt inside an open turn, and only in a
@@ -210,6 +306,27 @@ export function mapClaudeRecord(
 		if (prompt && !scope.titled) publisher.metadataChanged({ title: prompt });
 		return;
 	}
+	// Everything below changes state. A record written at or before the CLI's
+	// last idle mark is history: replaying it live would show a turn that ended
+	// before this terminal bound, for as long as the replay takes.
+	if (beforeIdle(envelope, scope)) {
+		// A turn that finished before the mark still ends with its outcome, so
+		// a terminal binding just after a turn shows DONE rather than nothing;
+		// it just never passes through `working` on the way.
+		if (type === 'system' && envelope.subtype === 'turn_duration') {
+			scope.turnOpen = false;
+			publisher.done({ outcome: 'success' });
+		}
+		return;
+	}
+	if (type === 'user' && interrupted(message)) {
+		// The turn was stopped before its `turn_duration` could be written.
+		if (scope.turnOpen) {
+			scope.turnOpen = false;
+			publisher.done({ outcome: 'cancelled' });
+		}
+		return;
+	}
 	if (type === 'user' && message.role === 'user' && envelope.isMeta !== true) {
 		const results = content(message).filter(
 			(item) => item.type === 'tool_result',
@@ -266,6 +383,12 @@ export function mapClaudeRecord(
 				// The launch record is replayed from the start of the journal, so a
 				// child that already completed must not be re-opened by it.
 				if (scope.completed.has(toolId)) continue;
+				if (beforeIdle(envelope, scope)) {
+					// Launched before the CLI last went idle: finished, one way or
+					// another, and its own journal must not re-open it either.
+					scope.completed.add(toolId);
+					continue;
+				}
 				const childTitle =
 					bounded(input.description, 200) ?? bounded(input.subagent_type, 200);
 				const childPrompt = bounded(input.prompt, 4_000);
@@ -314,16 +437,29 @@ function mapChildRecord(
 	if (!envelope) return;
 	const message = object(envelope.message) ?? {};
 	const type = typeof envelope.type === 'string' ? envelope.type : undefined;
-	const finish = (): void => {
+	const finish = (outcome: 'success' | 'cancelled' = 'success'): void => {
 		state.children.delete(childId);
 		state.completed.add(childId);
-		session.publish.subagentDone({ subagentId: childId, outcome: 'success' });
+		session.publish.subagentDone({ subagentId: childId, outcome });
 	};
+	// A stopped subagent's journal ends on this user record and nothing else:
+	// no `end_turn`, no `turn_duration`, and no task notification reaches the
+	// root for it. It is the child's own last word, so it closes the child.
+	if (type === 'user' && interrupted(message)) {
+		finish('cancelled');
+		return;
+	}
 	if (type === 'assistant' && message.role === 'assistant') {
 		if (message.stop_reason === 'end_turn') {
 			finish();
 			return;
 		}
+		// Written before the CLI last went idle: this child cannot be running.
+		if (beforeIdle(envelope, state)) return;
+		// One start per child. The host re-opens a stopped child on any later
+		// start, and journals replay concurrently, so a start repeated for every
+		// assistant record is a stream of chances to resurrect a finished child.
+		if (state.children.has(childId)) return;
 		state.children.add(childId);
 		session.publish.subagentStarted({
 			subagentId: childId,
@@ -370,6 +506,26 @@ function finishSubagent(
 					: 'error',
 	});
 	return true;
+}
+
+/** True when the record predates the CLI's last idle mark. */
+function beforeIdle(envelope: JsonObject, state: ClaudeState): boolean {
+	if (state.idleSince === undefined) return false;
+	const at =
+		typeof envelope.timestamp === 'string'
+			? Date.parse(envelope.timestamp)
+			: Number.NaN;
+	return Number.isFinite(at) && at <= state.idleSince;
+}
+
+/** True for the `[Request interrupted by user…]` record the CLI writes when a run is stopped. */
+function interrupted(message: JsonObject): boolean {
+	return content(message).some(
+		(item) =>
+			item.type === 'text' &&
+			typeof item.text === 'string' &&
+			item.text.startsWith('[Request interrupted by user'),
+	);
 }
 
 function userText(message: JsonObject): string | undefined {

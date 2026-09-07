@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import type { AgentProviderContribution } from '@terminay/extension-api';
 import type { ThisServerAgentTerminal } from '../extensions/localAgentObservation.js';
 import type { ExtensionHostManager } from '../extensions/manager.js';
@@ -139,10 +139,30 @@ export class ExtensionAgentRuntimeRegistry {
 		// two simultaneous server processes with identical persisted labels from
 		// ever minting the same extension-host handle.
 		const authorityNonce = randomBytes(18).toString('base64url');
+		// The incarnation counter is per terminal and starts at one, so it names
+		// which incarnation and not which terminal. The issued id must also carry
+		// the identity the context was issued for, or two terminals both on their
+		// first incarnation mint the same handle and the host — which admits one
+		// context per id — refuses every terminal after the first.
+		// The identity is folded in under the nonce rather than concatenated, so
+		// the id stays opaque and is still not a derivation of user-restorable
+		// project or session labels. NUL separators cannot occur in the segments,
+		// so no two identities can collide by construction.
+		const identityDigest = (identity: ActivitySessionIdentity): string =>
+			createHash('sha256')
+				.update(authorityNonce)
+				.update('\0')
+				.update(identity.serverId)
+				.update('\0')
+				.update(identity.projectId)
+				.update('\0')
+				.update(identity.sessionId)
+				.digest('base64url')
+				.slice(0, 24);
 		this.makeContextId =
 			options.contextId ??
-			((_identity, incarnation) =>
-				`extension-agent:${authorityNonce}:${incarnation}`);
+			((identity, incarnation) =>
+				`extension-agent:${authorityNonce}:${identityDigest(identity)}:${incarnation}`);
 		this.reobserveDebounceMs = Math.max(0, options.reobserveDebounceMs ?? 100);
 		this.topologyPollIntervalMs = Math.max(
 			100,

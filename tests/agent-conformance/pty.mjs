@@ -120,12 +120,20 @@ export function userTerminalEnvironment(environment) {
 }
 
 /**
- * @param {{ environment?: Record<string, string>; shell?: string }} [options]
+ * `cwd` lets a second session run in the first session's directory, which is
+ * how two of one provider's CLIs actually meet: same repository, two
+ * terminals, one provider session store. A directory the caller supplies is
+ * theirs to remove, so this PTY does not delete it on close.
+ *
+ * @param {{ environment?: Record<string, string>; shell?: string; cwd?: string }} [options]
  * @returns {Promise<ConformancePty>}
  */
 export async function openConformancePty(options = {}) {
 	const pty = await loadPty();
-	const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'terminay-conformance-')));
+	const ownsCwd = options.cwd === undefined;
+	const cwd = ownsCwd
+		? realpathSync(mkdtempSync(join(tmpdir(), 'terminay-conformance-')))
+		: realpathSync(options.cwd);
 	let buffer = '';
 	const listeners = new Set();
 	const child = pty.spawn(options.shell ?? '/bin/bash', ['--norc', '--noprofile'], {
@@ -203,7 +211,7 @@ export async function openConformancePty(options = {}) {
 			} catch {
 				// Already gone; nothing further to terminate.
 			}
-			rmSync(cwd, { recursive: true, force: true });
+			if (ownsCwd) rmSync(cwd, { recursive: true, force: true });
 		},
 	};
 }
