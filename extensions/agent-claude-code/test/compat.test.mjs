@@ -6,6 +6,7 @@ import {
 	fixtureTerminal,
 } from '@terminay/extension-api/testing';
 import extension from '../dist/index.js';
+import { PID, sessionFile, sessionFilePath } from './claude-terminal.mjs';
 
 const sessionId = '5f2aff08-eab3-4852-96eb-48235fc7f471';
 
@@ -24,8 +25,19 @@ test('Claude Code mapping v0.1 remains compatible with the captured project-sess
 		await harness.observe(
 			fixtureTerminal({
 				foregroundExecutable: 'claude',
+				cwd: '/workspace',
+				pid: PID,
+				startedAt: '2026-09-06T11:00:00.000Z',
+				openFilePaths: [],
 				files: {
-					[`/fixture/.claude/projects/-workspace/${sessionId}.jsonl`]: records,
+					[`/home/test/.claude/projects/-workspace/${sessionId}.jsonl`]:
+						records,
+					[sessionFilePath(PID)]: [
+						sessionFile({
+							sessionId,
+							startedAt: Date.parse('2026-09-06T11:00:00.000Z'),
+						}),
+					],
 				},
 			}),
 		);

@@ -414,15 +414,15 @@ const TTY_FACT_TIMEOUT_MS = 2_000;
 
 /** `/dev/pts/3` names the device and `pts-3` identifies it, matching the
  * identifier providers find in their own per-terminal records. */
-function ttyFactFor(path: string): Readonly<{
-	deviceId: string;
-	deviceName: string;
-}> | undefined {
+function ttyFactFor(path: string):
+	| Readonly<{
+			deviceId: string;
+			deviceName: string;
+	  }>
+	| undefined {
 	if (!path.startsWith('/dev/')) return undefined;
 	const deviceId = path.slice('/dev/'.length).replaceAll('/', '-');
-	return deviceId
-		? Object.freeze({ deviceId, deviceName: path })
-		: undefined;
+	return deviceId ? Object.freeze({ deviceId, deviceName: path }) : undefined;
 }
 
 export async function createAgentTerminalContext(
@@ -466,6 +466,10 @@ export async function createAgentTerminalContext(
 			events,
 		});
 	let rootSessionStarted = false;
+	/** The provider session the current binding names, so a later binding to
+	 * a different session (an in-process `/clear` or `/resume`) starts a new
+	 * root instead of being folded into the retired one as metadata. */
+	let boundProviderSessionId: string | undefined;
 	const publisher = Object.freeze({
 		sessionStarted(event: unknown) {
 			const payload = object(event) ?? {};
@@ -636,7 +640,8 @@ export async function createAgentTerminalContext(
 		// proved one, and otherwise only through a local adapter — never as an
 		// unsolicited broker round-trip, which would put a request the provider
 		// did not make on every admission.
-		const issued = typeof context.ttyPath === 'string' ? context.ttyPath : undefined;
+		const issued =
+			typeof context.ttyPath === 'string' ? context.ttyPath : undefined;
 		if (issued) return ttyFactFor(issued);
 		if (local === undefined || !capabilities.includes('process-observation'))
 			return undefined;
@@ -648,12 +653,16 @@ export async function createAgentTerminalContext(
 			const answered = await Promise.race([
 				request('terminal.tty', null),
 				new Promise<undefined>((resolve) => {
-					const timer = setTimeout(() => resolve(undefined), TTY_FACT_TIMEOUT_MS);
+					const timer = setTimeout(
+						() => resolve(undefined),
+						TTY_FACT_TIMEOUT_MS,
+					);
 					timer.unref?.();
 				}),
 			]);
 			const fact = object(answered);
-			const deviceId = typeof fact?.terminalId === 'string' ? fact.terminalId : undefined;
+			const deviceId =
+				typeof fact?.terminalId === 'string' ? fact.terminalId : undefined;
 			if (!deviceId) return undefined;
 			return Object.freeze({
 				deviceId,
@@ -678,6 +687,14 @@ export async function createAgentTerminalContext(
 		observation,
 		signal,
 		async bindSession(binding: unknown) {
+			const providerSessionId = object(binding)?.providerSessionId;
+			if (
+				typeof providerSessionId === 'string' &&
+				providerSessionId !== boundProviderSessionId
+			) {
+				boundProviderSessionId = providerSessionId;
+				rootSessionStarted = false;
+			}
 			await publish(binding, []);
 			// Binding is exact evidence that this provider owns a live session in
 			// this PTY. Materialize the root immediately, then let the first native

@@ -145,14 +145,13 @@ const descriptor = {
 	async quit(harness) {
 		await exitCli(harness);
 	},
-	resume(harness) {
+	resume(harness, providerSessionId = harness.projection.providerSessionId) {
 		// Not `--continue`: that reopens the most recently updated session in the
 		// directory, which after the two-concurrent-sessions step is the *second*
-		// terminal's session, not this one's. `--session` names the root this
-		// terminal actually had.
-		harness.pty.send(
-			`opencode --session ${harness.projection.providerSessionId}`,
-		);
+		// terminal's session, not this one's. `--session` names the root the step
+		// is about. The id defaults to this terminal's own session and is passed
+		// explicitly by the resume-while-another-runs step.
+		harness.pty.send(`opencode --session ${providerSessionId}`);
 	},
 };
 

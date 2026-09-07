@@ -1,5 +1,8 @@
 import test from 'node:test';
-import { conformanceGate, runConformance } from '../../../tests/agent-conformance/index.mjs';
+import {
+	conformanceGate,
+	runConformance,
+} from '../../../tests/agent-conformance/index.mjs';
 import extension from '../dist/index.js';
 
 /**
@@ -116,7 +119,10 @@ const descriptor = {
 		harness.pty.send('/quit');
 		// The CLI must have exited before the next command is typed, or the TUI
 		// reads both lines as one prompt.
-		await harness.await('the CLI to exit before the fault', (projection) => !projection.active);
+		await harness.await(
+			'the CLI to exit before the fault',
+			(projection) => !projection.active,
+		);
 		// Retained for the day Codex persists a blocking record; with `blocked:
 		// 'N'` the harness does not call it. Note that this exact gesture no
 		// longer reaches the API at all in the conformance image: the container
@@ -130,12 +136,17 @@ const descriptor = {
 	quit(harness) {
 		harness.pty.send('/quit');
 	},
-	async resume(harness) {
-		// Resume this terminal's own session by id rather than `--last`: by this
-		// point a second session has run in the same directory and is the most
-		// recent one, so `--last` would restore the wrong conversation.
+	async resume(
+		harness,
+		providerSessionId = harness.projection.providerSessionId,
+	) {
+		// Resume a named session by id rather than `--last`: by this point a
+		// second session has run in the same directory and is the most recent
+		// one, so `--last` would restore the wrong conversation. The id defaults
+		// to this terminal's own session and is passed explicitly by the
+		// resume-while-another-runs step.
 		const seen = harness.pty.plainOutput().length;
-		harness.pty.send(`codex ${FLAGS} resume ${harness.projection.providerSessionId}`);
+		harness.pty.send(`codex ${FLAGS} resume ${providerSessionId}`);
 		// Only output this command produces may be answered. Matching the whole
 		// buffer would find the launch's own trust prompt, still in scrollback,
 		// and type the answer into the restored conversation as a message.

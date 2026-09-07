@@ -162,15 +162,19 @@ const descriptor = {
 		harness.pty.write(ESCAPE);
 		harness.pty.send('/exit');
 	},
-	resume(harness) {
-		// Resume by native session id rather than through the picker. A second
-		// session has run in this directory by now, and the picker's first entry
-		// is the most recent conversation there — which is the other session's,
-		// not this root's. Naming the id resumes the root the step is about, and
-		// is the gesture a user takes from `/resume <id>` or a session list.
-		harness.pty.send(
-			`claude --model ${MODEL} --resume ${harness.projection.providerSessionId}`,
-		);
+	/**
+	 * Resume by native session id rather than through the picker. A second
+	 * session has run in this directory by now, and the picker's first entry is
+	 * the most recent conversation there — which is the other session's, not
+	 * this root's. Naming the id resumes the session the step is about, and is
+	 * the gesture a user takes from `/resume <id>` or a session list.
+	 *
+	 * The id defaults to this harness's own session, and is passed explicitly by
+	 * the resume-while-another-runs step, which drives a third terminal that has
+	 * no binding of its own yet.
+	 */
+	resume(harness, providerSessionId = harness.projection.providerSessionId) {
+		harness.pty.send(`claude --model ${MODEL} --resume ${providerSessionId}`);
 	},
 };
 

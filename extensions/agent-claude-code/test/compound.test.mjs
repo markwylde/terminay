@@ -5,9 +5,34 @@ import {
 	fixtureTerminal,
 } from '@terminay/extension-api/testing';
 import extension, { mapClaudeRecord } from '../dist/index.js';
+import { sessionFile, sessionFilePath } from './claude-terminal.mjs';
 
 const firstId = '5f2aff08-eab3-4852-96eb-48235fc7f471';
 const secondId = 'bf0b34e1-4afc-4b93-8389-80caa0b589a4';
+
+const startedAt = '2026-09-06T11:00:00.000Z';
+
+/**
+ * One terminal running one `claude`, with the pid-keyed session file that
+ * process wrote for itself. That file is the only reason anything binds, so
+ * every fixture below supplies one.
+ */
+function claudeTerminal({ pid, sessionId, cwd, files, ...rest }) {
+	return fixtureTerminal({
+		foregroundExecutable: 'claude',
+		cwd,
+		pid,
+		startedAt,
+		openFilePaths: [],
+		files: {
+			...files,
+			[sessionFilePath(pid)]: [
+				sessionFile({ pid, sessionId, cwd, startedAt: Date.parse(startedAt) }),
+			],
+		},
+		...rest,
+	});
+}
 
 function root(sessionId, prompt) {
 	return [
@@ -27,10 +52,12 @@ test('two terminal process trees bind independent new Claude roots without cross
 	try {
 		await Promise.all([
 			left.observe(
-				fixtureTerminal({
-					foregroundExecutable: 'claude',
+				claudeTerminal({
+					pid: 4101,
+					sessionId: firstId,
+					cwd: '/left',
 					files: {
-						[`/fixture/.claude/projects/-left/${firstId}.jsonl`]: root(
+						[`/home/test/.claude/projects/-left/${firstId}.jsonl`]: root(
 							firstId,
 							'left-only',
 						),
@@ -38,10 +65,12 @@ test('two terminal process trees bind independent new Claude roots without cross
 				}),
 			),
 			right.observe(
-				fixtureTerminal({
-					foregroundExecutable: 'claude',
+				claudeTerminal({
+					pid: 4102,
+					sessionId: secondId,
+					cwd: '/right',
 					files: {
-						[`/fixture/.claude/projects/-right/${secondId}.jsonl`]: root(
+						[`/home/test/.claude/projects/-right/${secondId}.jsonl`]: root(
 							secondId,
 							'right-only',
 						),
@@ -58,13 +87,16 @@ test('two terminal process trees bind independent new Claude roots without cross
 	}
 });
 
-test('an exact native resume identity rebinds to its project journal even when unrelated writable history exists', async () => {
+test('a resumed session binds its own project journal even when unrelated history exists', async () => {
+	// The resumed identity comes from the process's own session file. The
+	// command line is not parsed for it, so the argument here is only realism.
 	const harness = await createAgentExtensionHarness(extension);
 	try {
 		const resumed = `/home/test/.claude/projects/-work-repo/${secondId}.jsonl`;
-		const unrelated = `/fixture/.claude/projects/-other/${firstId}.jsonl`;
-		const terminal = fixtureTerminal({
-			foregroundExecutable: 'claude',
+		const unrelated = `/home/test/.claude/projects/-other/${firstId}.jsonl`;
+		const terminal = claudeTerminal({
+			pid: 4103,
+			sessionId: secondId,
 			arguments: ['--resume', secondId],
 			cwd: '/work/repo',
 			files: {
@@ -87,10 +119,12 @@ test('topology replacement re-observes a new exact writer rather than retaining 
 	const harness = await createAgentExtensionHarness(extension);
 	try {
 		await harness.observe(
-			fixtureTerminal({
-				foregroundExecutable: 'claude',
+			claudeTerminal({
+				pid: 4104,
+				sessionId: firstId,
+				cwd: '/one',
 				files: {
-					[`/fixture/.claude/projects/-one/${firstId}.jsonl`]: root(
+					[`/home/test/.claude/projects/-one/${firstId}.jsonl`]: root(
 						firstId,
 						'first topology',
 					),
@@ -98,10 +132,12 @@ test('topology replacement re-observes a new exact writer rather than retaining 
 			}),
 		);
 		await harness.observe(
-			fixtureTerminal({
-				foregroundExecutable: 'claude',
+			claudeTerminal({
+				pid: 4105,
+				sessionId: secondId,
+				cwd: '/two',
 				files: {
-					[`/fixture/.claude/projects/-two/${secondId}.jsonl`]: root(
+					[`/home/test/.claude/projects/-two/${secondId}.jsonl`]: root(
 						secondId,
 						'second topology',
 					),

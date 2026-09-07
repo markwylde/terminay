@@ -1,9 +1,10 @@
 import type {
-	AgentBindingFingerprint,
 	AgentChildJournalSource,
 	AgentDirectoryHandle,
 	AgentDiscoveredFile,
 	AgentFileHandle,
+	AgentFileWatchChunk,
+	AgentFileWatcher,
 	AgentForegroundProcess,
 	AgentObservationResult,
 	AgentProcessSnapshot,
@@ -14,30 +15,73 @@ import {
 	jsonlSession,
 	safeAgentString,
 } from '@terminay/extension-api';
-import { createClaudeRecordMapper } from './mapping.js';
+import {
+	CONVERSATION_SWITCH_RECORD,
+	createClaudeRecordMapper,
+} from './mapping.js';
 import { withQuiescence } from './quiescence.js';
 import {
 	claudeProjectDirectoryPath,
 	claudeProjectJournalPath,
-	claudeResumeSessionId,
 } from './resume.js';
 
 export const PROVIDER_ID = 'com.terminay.agent.claude-code/cli';
 const CLAUDE_PROJECTS = '.claude/projects';
+const CLAUDE_SESSIONS = '.claude/sessions';
 const MAX_HEADER_BYTES = 64 * 1024;
-/** Bounded listing limits for one terminal's project directory. */
-const PROJECT_DIRECTORY = {
-	extensions: ['.jsonl'],
-	maxDepth: 0,
-	maxEntries: 256,
-	maxBytes: 512 * 1024 * 1024,
-} as const;
+/** The session file is one small flat object; nothing larger is ever read. */
+const MAX_SESSION_FILE_BYTES = 64 * 1024;
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f-]{27}$/iu;
 
 /**
- * Claude Code v0.1 observes only files currently held by the exact terminal
- * process tree. The host canonicalizes the candidate below `.claude/projects`
- * before this extension reads it, so filenames/cwds cannot bind a session.
+ * How far the session file's `startedAt` may lie from the process start the
+ * environment reports before the file is treated as evidence about a dead
+ * process rather than this one.
+ *
+ * `ps` reports a start time at second resolution in local time, while the CLI
+ * records epoch milliseconds a moment after the kernel started the process, so
+ * a healthy pair disagrees by up to a second or two. Five seconds absorbs that
+ * and a slow start, and still rejects the case the check exists for: a crash
+ * left a session file behind and the kernel handed the same pid to a new
+ * process minutes or hours later.
+ */
+export const SESSION_START_TOLERANCE_MS = 5_000;
+
+/**
+ * Every field this provider reads from a `.claude/sessions/<pid>.json` file.
+ * The file also carries a peer token path, a socket path, a display name and a
+ * live status; none of them is read, and the sibling `<pid>.<digest>.key` is
+ * never opened at all. `fixtures/session-file-v01.json` is the captured shape
+ * this set is held against.
+ */
+export const CLAUDE_SESSION_FILE_FIELDS = Object.freeze([
+	'pid',
+	'sessionId',
+	'cwd',
+	'startedAt',
+	'version',
+] as const);
+
+/**
+ * Bounded listing limits for the provider's own session directory. One small
+ * object per live `claude`; the extension filter also keeps the sibling `.key`
+ * files out of the listing entirely.
+ */
+const SESSION_DIRECTORY = {
+	extensions: ['.json'],
+	maxDepth: 0,
+	maxEntries: 256,
+	maxBytes: 4 * 1024 * 1024,
+} as const;
+
+/**
+ * Claude Code binds through the pid-keyed session file its own CLI writes, and
+ * through nothing else. Every interactive `claude` writes
+ * `~/.claude/sessions/<pid>.json` naming the conversation that process is
+ * holding, rewrites it when the process changes conversation, and removes it on
+ * exit. No file time, append order or open handle is consulted: two terminals
+ * in one repository share a project directory, and only the process's own
+ * record says which journal in it belongs to which terminal.
  */
 export const claudeCodeProvider = defineAgentProvider({
 	mappingVersion: '0.1',
@@ -58,49 +102,41 @@ export const claudeCodeProvider = defineAgentProvider({
 		const descendants = await terminal.observation.processes.descendants({
 			signal: terminal.signal,
 		});
-		const explicitResume = claudeResumeSessionId(terminal.foreground.arguments);
-		// Explicit native identity first, then the provider's own project-directory
-		// association, then the open-handle fallback. The Claude Code CLI appends to
-		// its journal and closes it, so it normally holds no writable handle at all
-		// and the fallback alone would never bind. Each rule is consulted only when
-		// the one before it found nothing.
-		const candidate =
-			(explicitResume
-				? await resumedJournalCandidate(terminal, descendants, explicitResume)
-				: undefined) ??
-			(await projectJournalCandidate(terminal, descendants)) ??
-			(await writableJournalCandidate(terminal, descendants));
-		if (!candidate) return { state: 'not-bound' };
-		const header = await terminal.observation.files.readJsonLine<unknown>(
-			candidate.journal,
-			{
-				position: 'first',
-				maxBytes: MAX_HEADER_BYTES,
-				signal: terminal.signal,
-			},
-		);
-		const sessionId = rootSessionId(header);
-		if (!sessionId) return { state: 'not-bound' };
+		const accepted: SessionFile[] = [];
+		for (const process of descendants) {
+			const file = await sessionFileFor(terminal, process);
+			if (file) accepted.push(file);
+		}
+		// A `claude` nested inside a `claude` is not a case worth guessing at.
+		if (accepted.length !== 1) return { state: 'not-bound' };
+		const file = accepted[0]!;
+		const journal = await journalFor(terminal, file.cwd, file.sessionId);
+		if (!journal) return { state: 'not-bound' };
 		const binding = await terminal.bindSession({
-			providerSessionId: sessionId,
+			providerSessionId: file.sessionId,
 			mappingVersion: '0.1',
-			journal: candidate.journal,
-			fingerprint: candidate.fingerprint,
-			...(providerVersion(header)
-				? { metadata: { providerVersion: providerVersion(header)! } }
+			journal: journal.handle,
+			fingerprint: {
+				kind: 'claude-session-file-for-pty-descendant-pid',
+				process: file.process.handle,
+				// The session file is the evidence; the journal it names is carried
+				// by the binding itself.
+				file: file.handle,
+				metadata: { providerSessionId: file.sessionId },
+			},
+			...((file.version ?? journal.version)
+				? { metadata: { providerVersion: (file.version ?? journal.version)! } }
 				: {}),
 		});
-		const subagents = await subagentDirectory(terminal, candidate, sessionId);
+		const subagents = await subagentDirectory(terminal, file);
 		const children = await findChildSources(terminal, subagents);
 		const sources = children.map((child) => child.source);
 		return jsonlSession({
 			binding,
-			source: withQuiescence(
-				terminal.observation.files.follow(candidate.journal, {
-					signal: terminal.signal,
-				}),
-				{ terminal, providerExecutable: 'claude' },
-			),
+			source: withQuiescence(rootSource(terminal, file, journal.handle), {
+				terminal,
+				providerExecutable: 'claude',
+			}),
 			mapRecord: createClaudeRecordMapper(),
 			...(sources.length === 0 ? {} : { childSources: sources }),
 			...(subagents === undefined
@@ -115,6 +151,292 @@ export const claudeCodeProvider = defineAgentProvider({
 		});
 	},
 });
+
+/** One accepted `sessions/<pid>.json`, reduced to the fields that are read. */
+interface SessionFile {
+	readonly process: AgentProcessSnapshot;
+	readonly handle: AgentFileHandle;
+	readonly relativePath: string;
+	readonly sessionId: string;
+	readonly cwd: string;
+	readonly version?: string;
+}
+
+/**
+ * Resolves and validates the session file one `claude` descendant wrote for
+ * itself. The pid names the file, so no listing is needed to find it, and the
+ * file is accepted only when everything in it that can be checked against the
+ * observed process agrees with that process.
+ */
+async function sessionFileFor(
+	terminal: AgentTerminalContext,
+	process: AgentProcessSnapshot,
+): Promise<SessionFile | undefined> {
+	if (process.executableName !== 'claude') return undefined;
+	const pid = process.pid;
+	if (pid === undefined || !Number.isSafeInteger(pid) || pid <= 0)
+		return undefined;
+	const relativePath = `${pid}.json`;
+	const handle = await terminal.observation.files.resolveHomeRelative(
+		`${CLAUDE_SESSIONS}/${relativePath}`,
+		{
+			beneath: { homeRelative: CLAUDE_SESSIONS },
+			extension: '.json',
+			signal: terminal.signal,
+		},
+	);
+	if (!handle) return undefined;
+	return acceptSessionFile(
+		await terminal.observation.files.readJson<unknown>(handle, {
+			maxBytes: MAX_SESSION_FILE_BYTES,
+			signal: terminal.signal,
+		}),
+		process,
+		handle,
+		relativePath,
+	);
+}
+
+function acceptSessionFile(
+	value: unknown,
+	process: AgentProcessSnapshot,
+	handle: AgentFileHandle,
+	relativePath: string,
+): SessionFile | undefined {
+	const envelope = record(value);
+	if (!envelope) return undefined;
+	// Only the allowed fields are ever looked at, and the set is the one the
+	// reference capture is held against.
+	const read = <T>(field: (typeof CLAUDE_SESSION_FILE_FIELDS)[number]): T =>
+		envelope[field] as T;
+	const pid = read<unknown>('pid');
+	const sessionId = safeAgentString(read<unknown>('sessionId'))?.slice(0, 512);
+	const cwd = safeAgentString(read<unknown>('cwd'))?.slice(0, 4_096);
+	const startedAt = read<unknown>('startedAt');
+	const version = safeAgentString(read<unknown>('version'))?.slice(0, 100);
+	if (pid !== process.pid) return undefined;
+	if (!cwd || cwd !== process.cwd) return undefined;
+	if (!sessionId || !SESSION_ID.test(sessionId)) return undefined;
+	const observedStart = process.startedAt
+		? Date.parse(process.startedAt)
+		: Number.NaN;
+	if (Number.isFinite(observedStart)) {
+		if (typeof startedAt !== 'number' || !Number.isFinite(startedAt))
+			return undefined;
+		if (Math.abs(startedAt - observedStart) > SESSION_START_TOLERANCE_MS)
+			return undefined;
+	}
+	return {
+		process,
+		handle,
+		relativePath,
+		sessionId,
+		cwd,
+		...(version ? { version } : {}),
+	};
+}
+
+interface RootJournalHandle {
+	readonly handle: AgentFileHandle;
+	readonly version?: string;
+}
+
+/**
+ * The journal a session file names: `<encoded cwd>/<sessionId>.jsonl` below
+ * `.claude/projects`. The path is derived, never searched for, and the
+ * journal's own first record must name the same session.
+ */
+async function journalFor(
+	terminal: AgentTerminalContext,
+	cwd: string,
+	sessionId: string,
+): Promise<RootJournalHandle | undefined> {
+	const relativePath = claudeProjectJournalPath(cwd, sessionId);
+	if (!relativePath) return undefined;
+	const handle = await terminal.observation.files.resolveHomeRelative(
+		relativePath,
+		{
+			beneath: { homeRelative: CLAUDE_PROJECTS },
+			extension: '.jsonl',
+			signal: terminal.signal,
+		},
+	);
+	if (!handle) return undefined;
+	const header = await terminal.observation.files.readJsonLine<unknown>(
+		handle,
+		{
+			position: 'first',
+			maxBytes: MAX_HEADER_BYTES,
+			signal: terminal.signal,
+		},
+	);
+	if (rootSessionId(header) !== sessionId) return undefined;
+	const version = providerVersion(header);
+	return { handle, ...(version ? { version } : {}) };
+}
+
+const SWITCH_CHUNK: AgentFileWatchChunk = {
+	// `truncate` resets the record decoder, so no partial line of the retired
+	// journal can be joined to the first line of its replacement.
+	type: 'truncate',
+	bytes: new TextEncoder().encode(
+		`${JSON.stringify(CONVERSATION_SWITCH_RECORD)}\n`,
+	),
+};
+
+/** Which of the two lanes produced a result, and what it produced. */
+type Lane =
+	| { readonly lane: 'record'; readonly chunk?: AgentFileWatchChunk }
+	| { readonly lane: 'session'; readonly session?: SessionFile };
+
+/**
+ * Reports each time this process's own session file comes to name a session
+ * other than the bound one. The CLI rewrites the file in place rather than
+ * appending to it, so its directory is watched and only the one entry this pid
+ * names is ever read from the listing.
+ */
+async function* renamedSessions(
+	terminal: AgentTerminalContext,
+	file: SessionFile,
+	bound: () => string,
+): AsyncGenerator<SessionFile> {
+	const directory = await terminal.observation.files.resolveHomeDirectory(
+		CLAUDE_SESSIONS,
+		{ signal: terminal.signal },
+	);
+	if (!directory) return;
+	const watcher = await terminal.observation.files.watchDirectory(directory, {
+		...SESSION_DIRECTORY,
+		signal: terminal.signal,
+	});
+	try {
+		for await (const listing of watcher) {
+			const entry = listing.entries.find(
+				(candidate) => candidate.relativePath === file.relativePath,
+			);
+			if (!entry) continue;
+			const named = acceptSessionFile(
+				await terminal.observation.files.readJson<unknown>(entry.handle, {
+					maxBytes: MAX_SESSION_FILE_BYTES,
+					signal: terminal.signal,
+				}),
+				file.process,
+				entry.handle,
+				file.relativePath,
+			);
+			if (named && named.sessionId !== bound()) yield named;
+		}
+	} finally {
+		await watcher.dispose();
+	}
+}
+
+/**
+ * The bound journal's records, followed by those of whatever journal the
+ * process moves to.
+ *
+ * `/clear` and an in-process `/resume` change the `sessionId` in the same
+ * pid-keyed file rather than starting a new process, and neither changes the
+ * process tree, so nothing outside this stream would ever look again: the
+ * terminal would sit on a journal its process had stopped writing.
+ *
+ * The entry therefore follows the process. A switch resets the mapping and
+ * continues on the newly named journal, so the row relabels itself and opens
+ * the new conversation's turns.
+ *
+ * What it does not do is re-bind. The host refuses a live context that
+ * publishes a binding naming a different `providerSessionId`
+ * (`agentService.ts`, `ingestExtensionLifecycle`: "extension agent session
+ * replacement requires a separate binding publication"), and the method that
+ * would retire and re-materialise the root has no caller. Until that exists the
+ * canonical root keeps the session id it bound with; retiring it here would
+ * leave the terminal with no root at all.
+ */
+function rootSource(
+	terminal: AgentTerminalContext,
+	file: SessionFile,
+	journal: AgentFileHandle,
+): AgentFileWatcher {
+	let follower: AgentFileWatcher | undefined;
+	let renamed: AsyncGenerator<SessionFile> | undefined;
+
+	async function* iterate(): AsyncGenerator<AgentFileWatchChunk> {
+		let bound = file.sessionId;
+		follower = await terminal.observation.files.follow(journal, {
+			signal: terminal.signal,
+		});
+		let records = follower[Symbol.asyncIterator]();
+		let recordsDone = false;
+		let renamedDone = false;
+		let replayed = false;
+		let nextRecord: Promise<Lane> | undefined;
+		let nextSession: Promise<Lane> | undefined;
+		while (!terminal.signal.aborted) {
+			// The watch opens only once the bound journal has replayed, so a switch
+			// can never be projected ahead of the session it supersedes.
+			if (replayed && renamed === undefined)
+				renamed = renamedSessions(terminal, file, () => bound);
+			// A lane that fails simply ends: an unreadable session directory must
+			// never take the bound session down with it.
+			if (!recordsDone)
+				nextRecord ??= records.next().then(
+					(result) => ({ lane: 'record', chunk: result.value }) as Lane,
+					() => ({ lane: 'record' }) as Lane,
+				);
+			if (renamed && !renamedDone)
+				nextSession ??= renamed.next().then(
+					(result) => ({ lane: 'session', session: result.value }) as Lane,
+					() => ({ lane: 'session' }) as Lane,
+				);
+			const racing = [nextRecord, nextSession].filter(
+				(pending) => pending !== undefined,
+			);
+			if (racing.length === 0) return;
+			const settled = await Promise.race(racing);
+			if (settled.lane === 'record') {
+				nextRecord = undefined;
+				if (!settled.chunk) {
+					recordsDone = true;
+					// A journal that ended before it produced anything is no evidence
+					// for a switch either; there is nothing left to watch.
+					if (!replayed) return;
+					continue;
+				}
+				replayed = true;
+				yield settled.chunk;
+				continue;
+			}
+			nextSession = undefined;
+			if (!settled.session) {
+				renamedDone = true;
+				continue;
+			}
+			const moved = await journalFor(
+				terminal,
+				settled.session.cwd,
+				settled.session.sessionId,
+			);
+			if (!moved) continue;
+			yield SWITCH_CHUNK;
+			bound = settled.session.sessionId;
+			await follower.dispose();
+			follower = await terminal.observation.files.follow(moved.handle, {
+				signal: terminal.signal,
+			});
+			records = follower[Symbol.asyncIterator]();
+			recordsDone = false;
+			nextRecord = undefined;
+		}
+	}
+
+	return {
+		[Symbol.asyncIterator]: iterate,
+		async dispose() {
+			await renamed?.return(undefined as never);
+			await follower?.dispose();
+		},
+	};
+}
 
 /**
  * Bounded listing limits for one root session's own children. The CLI writes
@@ -140,13 +462,13 @@ const TOOL_USE_ID = /^[A-Za-z0-9_-]{1,512}$/u;
  */
 async function subagentDirectory(
 	terminal: AgentTerminalContext,
-	candidate: JournalCandidate,
-	sessionId: string,
+	file: SessionFile,
 ): Promise<AgentDirectoryHandle | undefined> {
-	if (!candidate.projectDirectory) return undefined;
+	const projectDirectory = claudeProjectDirectoryPath(file.cwd);
+	if (!projectDirectory) return undefined;
 	try {
 		return await terminal.observation.files.resolveHomeDirectory(
-			`${candidate.projectDirectory}/${sessionId}/subagents`,
+			`${projectDirectory}/${file.sessionId}/subagents`,
 			{ beneath: { homeRelative: CLAUDE_PROJECTS }, signal: terminal.signal },
 		);
 	} catch {
@@ -286,245 +608,6 @@ async function* discoverChildSources(
 	} catch {
 		return;
 	}
-}
-
-interface JournalCandidate {
-	readonly journal: AgentFileHandle;
-	readonly fingerprint: AgentBindingFingerprint;
-	/** Home-relative project directory, where the primary rule established one. */
-	readonly projectDirectory?: string;
-}
-
-/**
- * Claude Code's own association: the descendant process CWD names the provider
- * project directory, and a root journal appended there since that process
- * started belongs to it. Appends rather than creation are the evidence because
- * `claude --resume` (picker or UUID) and `--continue` append to a journal an
- * earlier process created. Measured against Claude Code's `--help`: `-r,
- * --resume [value]` resumes by session ID, or opens a picker when the value is
- * omitted; `-c, --continue` continues the most recent conversation in the
- * current directory. The picker is therefore cwd-scoped the same way the
- * project directory encoding is. A journal in another encoded project is not
- * listed and is not admitted. We do not scan every directory under
- * `.claude/projects`.
- *
- * One process writes a new journal per conversation, so several candidates are
- * ordinary. Which of them is this process's own is decided by creation time
- * where the environment can prove one: see `ownJournal`.
- */
-async function projectJournalCandidate(
-	terminal: AgentTerminalContext,
-	descendants: readonly AgentProcessSnapshot[],
-): Promise<JournalCandidate | undefined> {
-	for (const process of descendants) {
-		if (
-			process.executableName !== 'claude' ||
-			!process.cwd ||
-			!process.startedAt
-		)
-			continue;
-		const startedAt = Date.parse(process.startedAt);
-		if (!Number.isFinite(startedAt)) continue;
-		const relativePath = claudeProjectDirectoryPath(process.cwd);
-		if (!relativePath) continue;
-		const directory = await terminal.observation.files.resolveHomeDirectory(
-			relativePath,
-			{
-				beneath: { homeRelative: CLAUDE_PROJECTS },
-				signal: terminal.signal,
-			},
-		);
-		if (!directory) continue;
-		const listing = await terminal.observation.files.listDirectory(directory, {
-			...PROJECT_DIRECTORY,
-			signal: terminal.signal,
-		});
-		const roots: RootJournal[] = [];
-		for (const entry of listing.entries) {
-			// A root session's children live in `<uuid>/subagents/`; depth 0 keeps
-			// them out, and the header check below is authoritative regardless.
-			if (entry.relativePath.includes('/')) continue;
-			const modifiedAt = entry.modifiedAt
-				? Date.parse(entry.modifiedAt)
-				: Number.NaN;
-			if (!Number.isFinite(modifiedAt) || modifiedAt < startedAt) continue;
-			const header = await terminal.observation.files.readJsonLine<unknown>(
-				entry.handle,
-				{
-					position: 'first',
-					maxBytes: MAX_HEADER_BYTES,
-					signal: terminal.signal,
-				},
-			);
-			if (!rootSessionId(header)) continue;
-			roots.push({
-				handle: entry.handle,
-				modifiedAt,
-				createdAt: entry.createdAt ? Date.parse(entry.createdAt) : Number.NaN,
-			});
-		}
-		const active = ownJournal(roots, startedAt);
-		if (!active) continue;
-		return {
-			journal: active,
-			projectDirectory: relativePath,
-			fingerprint: {
-				kind: 'process-cwd-project-journal-appended-since-process-start',
-				process: process.handle,
-				file: active,
-			},
-		};
-	}
-	return undefined;
-}
-
-/** A root journal in one process's project directory, with both timestamps. */
-interface RootJournal {
-	readonly handle: AgentFileHandle;
-	readonly modifiedAt: number;
-	/** `NaN` where the environment cannot prove a creation time. */
-	readonly createdAt: number;
-}
-
-/**
- * Selects the journal this exact process is writing.
- *
- * Appends alone cannot answer that. Two terminals running `claude` in one
- * repository share an encoded project directory, and each terminal lists the
- * other's journal beside its own; whichever session typed last holds the newest
- * append, so an append-ordered rule moves every terminal onto one session. The
- * per-process evidence is creation: a process opens its conversation's journal
- * when the conversation starts, so among the journals created since this
- * process started, its own is the one created first — anything created later in
- * a shared project directory was opened by a terminal that started after it.
- *
- * Creation cannot stand alone either: `claude --resume` and `--continue` append
- * to a journal an earlier process created, so a session with no post-start
- * creation falls back to the journal receiving appends. Two journals appended
- * at the same instant remain genuinely concurrent and bind nothing, and so do
- * two created at the same instant.
- *
- * The cost is stated rather than hidden: a process that opens a second
- * conversation of its own stays bound to its first while the first still
- * exists. A later conversation in one process and a second terminal's first
- * conversation are indistinguishable from the filesystem, and binding a
- * terminal to another terminal's session is the worse of the two errors.
- */
-function ownJournal(
-	roots: readonly RootJournal[],
-	startedAt: number,
-): AgentFileHandle | undefined {
-	const appended = [...roots].sort(
-		(left, right) => right.modifiedAt - left.modifiedAt,
-	);
-	const [newest, nextNewest] = appended;
-	if (!newest) return undefined;
-	if (nextNewest && nextNewest.modifiedAt === newest.modifiedAt)
-		return undefined;
-	const opened = roots
-		.filter(
-			(root) => Number.isFinite(root.createdAt) && root.createdAt >= startedAt,
-		)
-		.sort((left, right) => left.createdAt - right.createdAt);
-	const [first, second] = opened;
-	if (!first) return newest.handle;
-	if (second && second.createdAt === first.createdAt) return undefined;
-	return first.handle;
-}
-
-async function writableJournalCandidate(
-	terminal: AgentTerminalContext,
-	descendants: readonly AgentProcessSnapshot[],
-): Promise<JournalCandidate | undefined> {
-	const openFiles = await terminal.observation.processes.openFiles(
-		descendants,
-		{
-			access: 'writable',
-			signal: terminal.signal,
-		},
-	);
-	return rootJournalCandidate(
-		terminal,
-		openFiles.map((file) => file.handle),
-	);
-}
-
-async function resumedJournalCandidate(
-	terminal: AgentTerminalContext,
-	descendants: readonly AgentProcessSnapshot[],
-	sessionId: string,
-): Promise<JournalCandidate | undefined> {
-	const candidates: JournalCandidate[] = [];
-	for (const process of descendants) {
-		if (process.executableName !== 'claude' || !process.cwd) continue;
-		const relativePath = claudeProjectJournalPath(process.cwd, sessionId);
-		if (!relativePath) continue;
-		const journal = await terminal.observation.files.resolveHomeRelative(
-			relativePath,
-			{
-				beneath: { homeRelative: CLAUDE_PROJECTS },
-				extension: '.jsonl',
-				signal: terminal.signal,
-			},
-		);
-		if (!journal) continue;
-		const header = await terminal.observation.files.readJsonLine<unknown>(
-			journal,
-			{
-				position: 'first',
-				maxBytes: MAX_HEADER_BYTES,
-				signal: terminal.signal,
-			},
-		);
-		if (rootSessionId(header) !== sessionId) continue;
-		candidates.push({
-			journal,
-			fingerprint: {
-				kind: 'explicit-resume-argument-and-project-journal',
-				process: process.handle,
-				file: journal,
-				metadata: { providerSessionId: sessionId },
-			},
-		});
-	}
-	return candidates.length === 1 ? candidates[0] : undefined;
-}
-
-async function rootJournalCandidate(
-	terminal: AgentTerminalContext,
-	writers: readonly AgentFileHandle[],
-): Promise<JournalCandidate | undefined> {
-	const candidates: JournalCandidate[] = [];
-	for (const writer of writers) {
-		const journal = await terminal.observation.files.canonicalFile(writer, {
-			beneath: { homeRelative: CLAUDE_PROJECTS },
-			extension: '.jsonl',
-			signal: terminal.signal,
-		});
-		if (!journal) continue;
-		// Claude's sidechain journals live below a subagents directory. The header
-		// check below is authoritative; this inexpensive path filter prevents a
-		// sidechain becoming a root candidate on path-preserving environments.
-		const file = await terminal.observation.files.readJsonLine<unknown>(
-			journal,
-			{
-				position: 'first',
-				maxBytes: MAX_HEADER_BYTES,
-				signal: terminal.signal,
-			},
-		);
-		if (!rootSessionId(file)) continue;
-		candidates.push({
-			journal,
-			fingerprint: {
-				kind: 'writable-file-below-terminal-process',
-				file: writer,
-			},
-		});
-	}
-	// More than one root journal held by one exact process tree is ambiguous.
-	// Do not choose by mtime, title, cwd, or filename.
-	return candidates.length === 1 ? candidates[0] : undefined;
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {

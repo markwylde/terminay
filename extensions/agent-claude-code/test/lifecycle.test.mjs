@@ -7,6 +7,7 @@ import {
 } from '@terminay/extension-api/testing';
 import extension from '../dist/index.js';
 import { createClaudeRecordMapper } from '../dist/mapping.js';
+import { PID, sessionFile, sessionFilePath } from './claude-terminal.mjs';
 
 const sessionId = '5f2aff08-eab3-4852-96eb-48235fc7f471';
 
@@ -380,9 +381,19 @@ test('the real one-turn journal ends done, with no turn opened by its rewritten 
 		await harness.observe(
 			fixtureTerminal({
 				foregroundExecutable: 'claude',
+				cwd: '/workspace',
+				pid: PID,
+				startedAt: '2026-09-06T11:00:00.000Z',
+				openFilePaths: [],
 				files: {
-					[`/fixture/.claude/projects/-workspace/${capturedSession}.jsonl`]:
+					[`/home/test/.claude/projects/-workspace/${capturedSession}.jsonl`]:
 						records,
+					[sessionFilePath(PID)]: [
+						sessionFile({
+							sessionId: capturedSession,
+							startedAt: Date.parse('2026-09-06T11:00:00.000Z'),
+						}),
+					],
 				},
 			}),
 		);

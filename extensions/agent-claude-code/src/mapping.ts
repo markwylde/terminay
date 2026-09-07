@@ -3,6 +3,17 @@ import { QUIET_RECORD } from './quiescence.js';
 
 const QUIET_RECORD_TYPE = QUIET_RECORD.type;
 
+/**
+ * The synthetic record a conversation switch produces. It never reaches a
+ * journal: the provider injects it when the process's own session file comes to
+ * name a different conversation, so the records of the journal that follows are
+ * not read as a continuation of the one before it.
+ */
+export const CONVERSATION_SWITCH_RECORD = {
+	type: 'terminay-conversation-switch',
+} as const;
+const CONVERSATION_SWITCH_RECORD_TYPE = CONVERSATION_SWITCH_RECORD.type;
+
 import { safeAgentString } from '@terminay/extension-api';
 
 type JsonObject = Record<string, unknown>;
@@ -102,6 +113,22 @@ function newState(): ClaudeState {
 }
 
 /**
+ * Clears everything that belonged to the conversation just left, so the journal
+ * that follows relabels the entry, opens its own turns and carries none of the
+ * previous conversation's subagents. `started` is deliberately kept: the host
+ * materialises one root per bound session and the entry stays that same root.
+ */
+function resetConversation(state: ClaudeState): void {
+	state.headerSeen = false;
+	state.titled = false;
+	state.turnOpen = false;
+	state.inferredWaiting = false;
+	delete state.permissionMode;
+	state.children.clear();
+	state.completed.clear();
+}
+
+/**
  * Claude Code project-session JSONL mapping v0.1. It reads only lifecycle
  * fields and an allowlisted user-text preview. Tool input/output and assistant
  * text never cross the extension boundary.
@@ -140,6 +167,22 @@ export function mapClaudeRecord(
 	const publisher = session.publish;
 	const type = typeof envelope.type === 'string' ? envelope.type : undefined;
 	if (type === undefined) return;
+
+	if (type === CONVERSATION_SWITCH_RECORD_TYPE) {
+		// The process changed conversation in place. Anything the conversation
+		// left open ends with it — a turn abandoned by `/clear` is cancelled, not
+		// completed — and the entry then follows the process: the next journal's
+		// own records relabel it and open its turns.
+		if (scope.inferredWaiting)
+			publisher.waitFinished({
+				waitId: `inferred-wait:${session.binding.providerSessionId}`,
+			});
+		for (const child of scope.children)
+			publisher.subagentDone({ subagentId: child, outcome: 'cancelled' });
+		if (scope.turnOpen) publisher.done({ outcome: 'cancelled' });
+		resetConversation(scope);
+		return;
+	}
 
 	if (type === QUIET_RECORD_TYPE) {
 		// Silence is only evidence of a prompt inside an open turn, and only in a
