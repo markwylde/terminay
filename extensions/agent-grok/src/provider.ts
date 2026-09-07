@@ -27,6 +27,8 @@ interface GrokRoot {
 	grokHome?: string;
 	fingerprintKind?: string;
 	process?: AgentProcessSnapshot['handle'];
+	/** Epoch milliseconds the bound `grok` process started, where proven. */
+	processStartedAt?: number;
 }
 
 export interface GrokState {
@@ -39,6 +41,14 @@ export interface GrokState {
 	pendingWaits: Map<string, string[]>;
 	nextTool: number;
 	nextWait: number;
+	/**
+	 * When the bound process started. Grok appends to one events journal
+	 * across resumes and replays it from the top on every bind, so without
+	 * this a rebound terminal shows every past turn as live for as long as the
+	 * replay takes. A record older than the process cannot be its work: it
+	 * keeps its outcome and its title, and opens nothing.
+	 */
+	processStartedAt?: number;
 }
 
 const SESSION_ID =
@@ -71,11 +81,11 @@ export function isGrokForeground(executableName: string): boolean {
 	);
 }
 
-export function createGrokRecordMapper(): (
-	record: unknown,
-	context: AgentRecordContext,
-) => void {
+export function createGrokRecordMapper(
+	processStartedAt?: number,
+): (record: unknown, context: AgentRecordContext) => void {
 	const state: GrokState = emptyState();
+	if (processStartedAt !== undefined) state.processStartedAt = processStartedAt;
 	return (record, context) => mapGrokRecord(record, context, state);
 }
 
@@ -122,7 +132,7 @@ export const grokAgentProvider = defineAgentProvider({
 				subagents: await findSessionDirectory(terminal, root),
 				sessionId: root.sessionId,
 			}),
-			mapRecord: createGrokRecordMapper(),
+			mapRecord: createGrokRecordMapper(root.processStartedAt),
 		});
 	},
 });
@@ -234,6 +244,9 @@ async function findActiveSessionRoot(
 		sessionId: selected.sessionId,
 		fingerprintKind: 'grok-active-session-registry',
 		process: process.handle,
+		...(process.startedAt && Number.isFinite(Date.parse(process.startedAt))
+			? { processStartedAt: Date.parse(process.startedAt) }
+			: {}),
 		...(registry.grokHome ? { grokHome: registry.grokHome } : {}),
 	};
 }
@@ -789,6 +802,11 @@ export function mapGrokRecord(
 	const occurredAt = timestamp(envelope);
 	const at = occurredAt ? { occurredAt } : {};
 	const publish = context.publish;
+	// Written before the bound process existed: history, not live work.
+	const historical =
+		state.processStartedAt !== undefined &&
+		occurredAt !== undefined &&
+		Date.parse(occurredAt) < state.processStartedAt;
 
 	if (envelope.type === SESSION_TITLE_RECORD) {
 		if (
@@ -825,10 +843,12 @@ export function mapGrokRecord(
 		const model = modelMetadata(envelope.model_id);
 		if (model) state.model = model;
 		ensureStarted(publish, state, at);
+		if (historical) return;
 		const turnId = turnIdFor(envelope.turn_number);
 		if (turnId) publish.turnStarted({ turnId, ...at });
 		return;
 	}
+	if (historical && type !== 'turn_ended' && type !== SUBAGENT_RECORD) return;
 	if (type === 'tool_started') {
 		const name = bounded(LIMITS.toolName, envelope.tool_name);
 		if (!name) return;
