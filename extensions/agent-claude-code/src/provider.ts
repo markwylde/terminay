@@ -17,6 +17,7 @@ import {
 } from '@terminay/extension-api';
 import {
 	CONVERSATION_SWITCH_RECORD,
+	SESSION_IDLE_RECORD,
 	createClaudeRecordMapper,
 } from './mapping.js';
 import { withQuiescence } from './quiescence.js';
@@ -60,6 +61,7 @@ export const CLAUDE_SESSION_FILE_FIELDS = Object.freeze([
 	'cwd',
 	'startedAt',
 	'version',
+	'status',
 ] as const);
 
 /**
@@ -160,6 +162,8 @@ interface SessionFile {
 	readonly sessionId: string;
 	readonly cwd: string;
 	readonly version?: string;
+	/** The CLI's own `idle` / `busy` word, rewritten as the process changes. */
+	readonly status?: string;
 }
 
 /**
@@ -214,6 +218,7 @@ function acceptSessionFile(
 	const cwd = safeAgentString(read<unknown>('cwd'))?.slice(0, 4_096);
 	const startedAt = read<unknown>('startedAt');
 	const version = safeAgentString(read<unknown>('version'))?.slice(0, 100);
+	const status = safeAgentString(read<unknown>('status'))?.slice(0, 32);
 	if (pid !== process.pid) return undefined;
 	if (!cwd || cwd !== process.cwd) return undefined;
 	if (!sessionId || !SESSION_ID.test(sessionId)) return undefined;
@@ -233,6 +238,7 @@ function acceptSessionFile(
 		sessionId,
 		cwd,
 		...(version ? { version } : {}),
+		...(status ? { status } : {}),
 	};
 }
 
@@ -284,6 +290,11 @@ const SWITCH_CHUNK: AgentFileWatchChunk = {
 	),
 };
 
+const IDLE_CHUNK: AgentFileWatchChunk = {
+	type: 'append',
+	bytes: new TextEncoder().encode(`${JSON.stringify(SESSION_IDLE_RECORD)}\n`),
+};
+
 /** Which of the two lanes produced a result, and what it produced. */
 type Lane =
 	| { readonly lane: 'record'; readonly chunk?: AgentFileWatchChunk }
@@ -291,7 +302,7 @@ type Lane =
 
 /**
  * Reports each time this process's own session file comes to name a session
- * other than the bound one. The CLI rewrites the file in place rather than
+ * other than the bound one, or to report a different status. The CLI rewrites the file in place rather than
  * appending to it, so its directory is watched and only the one entry this pid
  * names is ever read from the listing.
  */
@@ -309,6 +320,7 @@ async function* renamedSessions(
 		...SESSION_DIRECTORY,
 		signal: terminal.signal,
 	});
+	let status = file.status;
 	try {
 		for await (const listing of watcher) {
 			const entry = listing.entries.find(
@@ -324,7 +336,10 @@ async function* renamedSessions(
 				entry.handle,
 				file.relativePath,
 			);
-			if (named && named.sessionId !== bound()) yield named;
+			if (!named) continue;
+			if (named.sessionId === bound() && named.status === status) continue;
+			status = named.status;
+			yield named;
 		}
 	} finally {
 		await watcher.dispose();
@@ -409,6 +424,12 @@ function rootSource(
 			nextSession = undefined;
 			if (!settled.session) {
 				renamedDone = true;
+				continue;
+			}
+			if (settled.session.sessionId === bound) {
+				// Same conversation, new status word. Only `idle` carries a fact the
+				// journal cannot: a subagent whose end was never written is over.
+				if (settled.session.status === 'idle') yield IDLE_CHUNK;
 				continue;
 			}
 			const moved = await journalFor(

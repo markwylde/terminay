@@ -14,6 +14,17 @@ export const CONVERSATION_SWITCH_RECORD = {
 } as const;
 const CONVERSATION_SWITCH_RECORD_TYPE = CONVERSATION_SWITCH_RECORD.type;
 
+/**
+ * The synthetic record the provider injects when the process's own session
+ * file reports `status: "idle"`. The CLI writes that itself, so it outranks
+ * anything inferred from journals: no subagent can still be running once the
+ * process that owns it says it is idle.
+ */
+export const SESSION_IDLE_RECORD = {
+	type: 'terminay-session-idle',
+} as const;
+const SESSION_IDLE_RECORD_TYPE = SESSION_IDLE_RECORD.type;
+
 import { safeAgentString } from '@terminay/extension-api';
 
 type JsonObject = Record<string, unknown>;
@@ -181,6 +192,18 @@ export function mapClaudeRecord(
 			publisher.subagentDone({ subagentId: child, outcome: 'cancelled' });
 		if (scope.turnOpen) publisher.done({ outcome: 'cancelled' });
 		resetConversation(scope);
+		return;
+	}
+
+	if (type === SESSION_IDLE_RECORD_TYPE) {
+		// A child whose completion was never recorded — killed, or interrupted
+		// before its journal closed — would otherwise hold the root `working`
+		// for ever. The process says it is idle, so every open child is over.
+		for (const child of scope.children) {
+			scope.completed.add(child);
+			publisher.subagentDone({ subagentId: child, outcome: 'cancelled' });
+		}
+		scope.children.clear();
 		return;
 	}
 
@@ -357,11 +380,18 @@ function mapChildRecord(
 	if (!envelope) return;
 	const message = object(envelope.message) ?? {};
 	const type = typeof envelope.type === 'string' ? envelope.type : undefined;
-	const finish = (): void => {
+	const finish = (outcome: 'success' | 'cancelled' = 'success'): void => {
 		state.children.delete(childId);
 		state.completed.add(childId);
-		session.publish.subagentDone({ subagentId: childId, outcome: 'success' });
+		session.publish.subagentDone({ subagentId: childId, outcome });
 	};
+	// A stopped subagent's journal ends on this user record and nothing else:
+	// no `end_turn`, no `turn_duration`, and no task notification reaches the
+	// root for it. It is the child's own last word, so it closes the child.
+	if (type === 'user' && interrupted(message)) {
+		finish('cancelled');
+		return;
+	}
 	if (type === 'assistant' && message.role === 'assistant') {
 		if (message.stop_reason === 'end_turn') {
 			finish();
@@ -413,6 +443,16 @@ function finishSubagent(
 					: 'error',
 	});
 	return true;
+}
+
+/** True for the `[Request interrupted by user…]` record the CLI writes when a run is stopped. */
+function interrupted(message: JsonObject): boolean {
+	return content(message).some(
+		(item) =>
+			item.type === 'text' &&
+			typeof item.text === 'string' &&
+			item.text.startsWith('[Request interrupted by user'),
+	);
 }
 
 function userText(message: JsonObject): string | undefined {
