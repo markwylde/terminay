@@ -96,12 +96,19 @@ configures, hooks or wraps a provider. Every cell below is verified against that
 provider's real CLI, on its latest release, running in that extension's own
 container.
 
-| | Detect | Title | Idle | Working | Waiting | Blocked | Done | Sub&nbsp;names | Sub&nbsp;status | Resume | Concurrent |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| **Claude Code** | ✅ | ✅ | ✅ | ✅ | ✳️ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Codex** | ✅ | ✅ | ✅ | ✅ | ❌ <sup>1</sup> | ❌ <sup>2</sup> | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Grok** | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ <sup>3</sup> | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **OpenCode** | ✅ | ✅ | ✅ | ✅ | ❌ <sup>4</sup> | ✳️ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Capability | Claude Code | Codex | Grok | OpenCode |
+|---|---|---|---|---|
+| Detect | ✅ | ✅ | ✅ | ✅ |
+| Title | ✅ | ✅ | ✅ | ✅ |
+| Idle | ✅ | ✅ | ✅ | ✅ |
+| Working | ✅ | ✅ | ✅ | ✅ |
+| Waiting | ✳️ | ❌ <sup>1</sup> | ✅ | ❌ <sup>4</sup> |
+| Blocked | ✅ | ❌ <sup>2</sup> | ❌ <sup>3</sup> | ✳️ |
+| Done | ✅ | ✅ | ✅ | ✅ |
+| Subagent names | ✅ | ✅ | ✅ | ✅ |
+| Subagent status | ✅ | ✅ | ✅ | ✅ |
+| Resume | ✅ | ✅ | ✅ | ✅ |
+| Concurrent sessions | ✅ | ✅ | ✅ | ✅ |
 
 ✅ the provider records it explicitly and Terminay reads it &nbsp;·&nbsp;
 ✳️ the provider records nothing, so Terminay derives it from that provider's own
