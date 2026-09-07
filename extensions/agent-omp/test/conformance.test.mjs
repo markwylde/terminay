@@ -29,9 +29,9 @@ const PROFILE = 'conformance';
  *
  * `modelRoles` — every prompt in this matrix is trivial: a one-word reply, one
  * empty file, three subagents doing school arithmetic. `gpt-5.4-nano` is the
- * cheapest model this key reaches and takes all three auxiliary roles (smol,
- * slow, plan); subagents run on the smol role, so they are the cheap model
- * too. The conversation model is one step up, `gpt-5.4-mini`, because it has
+ * cheapest model this key reaches and takes the `slow` and `plan` roles. The
+ * conversation model and the `smol` role subagents run on are one step up,
+ * `gpt-5.4-mini`, because they have
  * to spawn subagents and drive a tool call onto an approval prompt, and a
  * failure there is a failed matrix step rather than a saving. `--model`,
  * `--smol`, `--slow` and `--plan` set the same four roles from the command
@@ -71,7 +71,13 @@ function isolatedOmpProfile() {
 			'setupVersion: 2',
 			'modelRoles:',
 			'  default: openai/gpt-5.4-mini',
-			'  smol: openai/gpt-5.4-nano',
+			// Subagents run on the smol role. `gpt-5.4-nano` drove this turn fine
+			// locally but hung in CI: instead of running `sleep 2` it went off
+			// defining a sleep tool, and sat there — the PTY read `running define
+			// sleep tool` until the step timed out. A step that fails because the
+			// model wandered is not evidence about the provider, so subagents get
+			// the same model as the conversation. `slow` and `plan` stay cheap.
+			'  smol: openai/gpt-5.4-mini',
 			'  slow: openai/gpt-5.4-nano',
 			'  plan: openai/gpt-5.4-nano',
 			'tools:',
@@ -190,7 +196,7 @@ const descriptor = {
 		// shell command only to complete at different times. On record this whole
 		// turn took 27 seconds, with the children finishing 2 seconds apart.
 		harness.pty.send(
-			'Spawn three subagents concurrently. Give one each of: compute 17*19, compute the sum 1..100, compute 2^12. Tell each one to work the arithmetic out in its head, then to wait before replying by running exactly one shell command: `sleep 2` for the first, `sleep 5` for the second, `sleep 9` for the third. Do not read, create or modify files. Report only the three numbers.',
+			'Spawn three subagents concurrently. Give one each of: compute 17*19, compute the sum 1..100, compute 2^12. Tell each one to work the arithmetic out in its head, then to wait before replying by running exactly one shell command: `sleep 2` for the first, `sleep 5` for the second, `sleep 9` for the third. Run that command directly with the shell tool you already have. Do not define, write or register a tool, and do not read, create or modify files. Report only the three numbers.',
 		);
 	},
 	requestInput(harness) {
