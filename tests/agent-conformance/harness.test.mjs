@@ -130,15 +130,22 @@ test('a matrix row must state a verdict for every capability and nothing else', 
 		subStatus: 'Y',
 		resume: 'Y',
 	};
-	assertRowIsComplete({ name: 'Example', row });
+	const secondLaunch = () => {};
+	assertRowIsComplete({ name: 'Example', row, secondLaunch });
 	const { resume, ...missing } = row;
-	assert.throws(() => assertRowIsComplete({ name: 'Example', row: missing }), /no verdict for resume/u);
+	assert.throws(() => assertRowIsComplete({ name: 'Example', row: missing, secondLaunch }), /no verdict for resume/u);
 	assert.throws(
-		() => assertRowIsComplete({ name: 'Example', row: { ...row, invented: 'Y' } }),
+		() => assertRowIsComplete({ name: 'Example', row: { ...row, invented: 'Y' }, secondLaunch }),
 		/does not match the matrix columns/u,
 	);
 	assert.throws(
-		() => assertRowIsComplete({ name: 'Example', row: { ...row, done: 'maybe' } }),
+		() => assertRowIsComplete({ name: 'Example', row: { ...row, done: 'maybe' }, secondLaunch }),
 		/no verdict for done/u,
+	);
+	// Two concurrent sessions of one provider is the case every other step is
+	// blind to, so a descriptor cannot opt out of proving it.
+	assert.throws(
+		() => assertRowIsComplete({ name: 'Example', row }),
+		/must supply secondLaunch/u,
 	);
 });

@@ -42,6 +42,7 @@ export const CAPABILITIES = Object.freeze([
  * @property {(harness: unknown) => unknown} [provokeFault] Provokes a real halting fault.
  * @property {(harness: unknown) => unknown} quit
  * @property {(harness: unknown) => unknown} resume Resumes the same provider session in a new process.
+ * @property {(harness: import('./harness.mjs').ConformanceHarness) => unknown} secondLaunch Starts a second, independent session of this provider.
  */
 
 /** A row must state a verdict for every capability, with no gaps or extras. */
@@ -57,6 +58,11 @@ export function assertRowIsComplete(descriptor) {
 		Object.keys(descriptor.row).sort(),
 		[...CAPABILITIES].sort(),
 		`${descriptor.name} declares a row that does not match the matrix columns`,
+	);
+	assert.equal(
+		typeof descriptor.secondLaunch,
+		'function',
+		`${descriptor.name} must supply secondLaunch so two concurrent sessions can be proven`,
 	);
 }
 
@@ -103,6 +109,8 @@ export async function runConformance(descriptor, options = {}) {
 		await run();
 		log(`✓ ${name} (state=${harness.projection.state})`);
 	};
+	/** @type {Awaited<ReturnType<typeof createConformanceHarness>> | undefined} */
+	let second;
 	try {
 		// Detect: launching the CLI normally binds a root to this exact PTY.
 		await step('detect', async () => {
@@ -113,6 +121,24 @@ export async function runConformance(descriptor, options = {}) {
 				'Y',
 				`${descriptor.name} bound but does not claim detection`,
 			);
+		});
+
+		// Idle: a bound session with no work yet. The launch gesture carries the
+		// first prompt, so polling for `idle` would race the turn that prompt
+		// opens. The recorded order is the evidence instead: the session started
+		// — which is the idle state — before anything opened a turn.
+		await step('idle before any work', async () => {
+			const kinds = harness.projection.events.map((event) => event.kind);
+			const started = kinds.indexOf('session.started');
+			assert.notEqual(started, -1, `${descriptor.name} never started a session`);
+			const firstWork = kinds.findIndex(
+				(kind) => kind === 'turn.started' || kind === 'tool.started',
+			);
+			assert.ok(
+				firstWork === -1 || started < firstWork,
+				`${descriptor.name} opened a turn before its session started, so it was never idle`,
+			);
+			assert.equal(descriptor.row.idle, 'Y');
 		});
 
 		// Title: a label exists before the provider has chosen one. The pump can
@@ -137,6 +163,12 @@ export async function runConformance(descriptor, options = {}) {
 		await step('first turn done', async () => {
 			await harness.awaitState('done');
 			assert.equal(descriptor.row.done, 'Y');
+			// `done` must carry its outcome so a failed or cancelled run is
+			// distinguishable from a successful one.
+			assert.ok(
+				harness.projection.outcome,
+				`${descriptor.name} completed a turn without recording an outcome`,
+			);
 		});
 
 		// Working and subagents: several children, completing at different times.
@@ -171,7 +203,24 @@ export async function runConformance(descriptor, options = {}) {
 					},
 				);
 			}
+			// The root must not complete before its children do: while any child
+			// is working the root is held in `working`.
+			if (descriptor.row.subStatus !== 'N') {
+				assert.equal(
+					harness.projection.state,
+					'working',
+					`${descriptor.name} left its root out of working while a child was still working`,
+				);
+			}
 			await harness.awaitState('done');
+			if (descriptor.row.subStatus !== 'N') {
+				assert.ok(
+					[...harness.projection.children.values()].every(
+						(child) => child.state === 'done',
+					),
+					`${descriptor.name} completed its root while a child was still working`,
+				);
+			}
 			if (descriptor.row.subEnumerate === 'N') {
 				assert.equal(
 					harness.projection.children.size,
@@ -220,6 +269,68 @@ export async function runConformance(descriptor, options = {}) {
 			await harness.awaitState('done');
 		});
 
+		const firstSessionId = harness.projection.providerSessionId;
+		// Two concurrent sessions of one provider, in one working directory. This
+		// is the ordinary case on a developer's machine — one repository, several
+		// terminals — and the case every other step is blind to, because each
+		// drives a single PTY.
+		await step('two concurrent sessions', async () => {
+			second = await createConformanceHarness({
+				extension: descriptor.extension,
+				providerId: descriptor.providerId,
+				executable: descriptor.executable,
+				// The same directory as the first session: providers key their
+				// session stores on the working directory, so a separate one would
+				// not exercise the case at all.
+				cwd: harness.pty.cwd,
+				...(descriptor.environment
+					? { environment: descriptor.environment(process.cwd()) }
+					: {}),
+				log,
+			});
+			await descriptor.secondLaunch(second);
+			await second.await(
+				'the second session to bind',
+				(projection) => projection.bound,
+			);
+			assert.notEqual(
+				second.projection.providerSessionId,
+				harness.projection.providerSessionId,
+				`${descriptor.name} bound both terminals to one provider session`,
+			);
+			// The first session must be untouched by the second's arrival.
+			await harness.observe();
+			assert.equal(
+				harness.projection.providerSessionId,
+				firstSessionId,
+				`${descriptor.name} moved the first terminal's binding when a second started`,
+			);
+			assert.ok(harness.projection.active, 'the first session must stay bound');
+
+			// Work in the second session moves only the second session.
+			second.pty.send('Reply with the single word second.');
+			await second.awaitState('working');
+			await second.awaitState('done');
+			await harness.observe();
+			assert.equal(
+				harness.projection.providerSessionId,
+				firstSessionId,
+				'work in one session must not rebind the other',
+			);
+
+			// Quitting one leaves the other bound.
+			await descriptor.quit(second);
+			await second.await(
+				'the second session to go inactive',
+				(projection) => !projection.active,
+			);
+			await harness.observe();
+			assert.ok(
+				harness.projection.active,
+				`${descriptor.name} retired the first session when the second quit`,
+			);
+		});
+
 		// Resume: quitting makes the root inactive, resuming rebinds the same one.
 		await step('quit', async () => {
 			await descriptor.quit(harness);
@@ -234,8 +345,23 @@ export async function runConformance(descriptor, options = {}) {
 			);
 		});
 		const rootId = harness.projection.providerSessionId;
+		const eventsBeforeResume = harness.projection.events.length;
 		await step('resume', async () => {
 			await descriptor.resume(harness);
+			// A provider that declares resume unavailable is held to the opposite:
+			// the gesture is still made, and the session must not come back. Without
+			// this the step ran unconditionally and a provider declaring N could
+			// never pass its own matrix row.
+			if (descriptor.row.resume === 'N') {
+				await sleep(30_000);
+				await harness.observe();
+				assert.equal(
+					harness.projection.active,
+					false,
+					`${descriptor.name} declares resume N but the session rebound`,
+				);
+				return;
+			}
 			await harness.await(
 				'the resumed session to rebind',
 				(projection) => projection.active,
@@ -244,6 +370,15 @@ export async function runConformance(descriptor, options = {}) {
 				harness.projection.providerSessionId,
 				rootId,
 				'a resumed session must rebind the same root, not create a second',
+			);
+			// Rebinding must not replay the session's earlier transitions as new
+			// activity: a resume publishes a binding, not the whole history again.
+			const replayed = harness.projection.events
+				.slice(eventsBeforeResume)
+				.filter((event) => event.kind === 'turn.started').length;
+			assert.ok(
+				replayed <= 1,
+				`${descriptor.name} replayed ${replayed} earlier turns on resume`,
 			);
 			// A resumed session that had completed reports done, not working.
 			await harness.await(
@@ -259,7 +394,19 @@ export async function runConformance(descriptor, options = {}) {
 
 		// Blocked: a real halting fault, where the provider can report one. This
 		// runs last because a faulted CLI may not survive to be resumed.
-		if (descriptor.row.blocked !== 'N') {
+		if (descriptor.row.blocked === 'N') {
+			// Held to the opposite, the same way waiting N is: nothing in the whole
+			// run may have reported a blocked state.
+			await step('blocked declared unsupported', async () => {
+				assert.equal(
+					harness.projection.events.filter(
+						(event) => event.kind === 'wait.started' && event.state === 'blocked',
+					).length,
+					0,
+					`${descriptor.name} declares blocked N but reported a block`,
+				);
+			});
+		} else {
 			await step('blocked', async () => {
 				assert.ok(
 					descriptor.provokeFault,
@@ -274,6 +421,7 @@ export async function runConformance(descriptor, options = {}) {
 			});
 		}
 	} finally {
+		if (second) await second.close();
 		await harness.close();
 	}
 }
