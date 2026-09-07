@@ -108,6 +108,7 @@ export interface FixtureTerminalOptions {
 		executableName: string;
 		cwd?: string;
 		pid?: number;
+		arguments?: string[];
 		startedAt?: string;
 		id?: string;
 	}>;
@@ -494,6 +495,9 @@ export function fixtureTerminal(
 							...(options.startedAt === undefined
 								? {}
 								: { startedAt: options.startedAt }),
+							...(options.arguments === undefined
+								? {}
+								: { arguments: options.arguments }),
 						},
 						...(options.descendants ?? []).map((child, index) => ({
 							handle: issue<AgentProcessHandle>(
@@ -506,6 +510,9 @@ export function fixtureTerminal(
 							...(child.startedAt === undefined
 								? {}
 								: { startedAt: child.startedAt }),
+							...(child.arguments === undefined
+								? {}
+								: { arguments: child.arguments }),
 						})),
 					];
 				},

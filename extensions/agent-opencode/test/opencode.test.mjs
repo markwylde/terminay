@@ -457,7 +457,13 @@ test('a store is never opened for writing', () => {
 	}
 });
 
-function openCodeObserveTerminal(storePath, dataHome, cwd, arguments_) {
+function openCodeObserveTerminal(
+	storePath,
+	dataHome,
+	cwd,
+	arguments_,
+	descendantArguments,
+) {
 	const storeHandle = { id: 'store' };
 	const controller = new AbortController();
 	let binding;
@@ -487,6 +493,9 @@ function openCodeObserveTerminal(storePath, dataHome, cwd, arguments_) {
 							handle: { id: 'opencode' },
 							executableName: 'opencode',
 							cwd,
+							...(descendantArguments === undefined
+								? {}
+								: { arguments: descendantArguments }),
 						},
 					];
 				},
@@ -621,9 +630,9 @@ test('a reopened session rebinds the root that terminal last had', () => {
 		now: NOW,
 	};
 	// Nothing was created after this process started, so it reopened something.
-	// Without a memory the newest root in the directory wins, which is the
-	// other terminal's session.
-	assert.equal(selectOpenCodeRoot([second, first], options)?.id, 'ses_second');
+	// Without a memory nothing is bound: the newest root in the directory is
+	// the other terminal's session.
+	assert.equal(selectOpenCodeRoot([second, first], options), undefined);
 	assert.equal(
 		selectOpenCodeRoot([second, first], {
 			...options,
@@ -631,10 +640,11 @@ test('a reopened session rebinds the root that terminal last had', () => {
 		})?.id,
 		'ses_first',
 	);
-	// A remembered root that is no longer in the directory is not forced.
+	// A remembered root that is no longer in the directory is not forced, and
+	// nothing else is guessed in its place.
 	assert.equal(
-		selectOpenCodeRoot([second], { ...options, remembered: 'ses_first' })?.id,
-		'ses_second',
+		selectOpenCodeRoot([second], { ...options, remembered: 'ses_first' }),
+		undefined,
 	);
 	// `--continue` is OpenCode's own "newest session here", so the CLI's rule
 	// wins over the memory when the arguments prove it.
@@ -657,13 +667,79 @@ test('a reopened session rebinds the root that terminal last had', () => {
 	);
 });
 
-test('root selection falls back when a process start cannot be proven', () => {
+test('root selection binds nothing when a process start cannot be proven and nothing names a session', () => {
 	const first = row('ses_first', NOW - 600_000, NOW - 300_000);
 	const second = row('ses_second', NOW - 200_000, NOW - 100_000);
 	assert.equal(
-		selectOpenCodeRoot([second, first], { now: NOW })?.id,
-		'ses_second',
+		selectOpenCodeRoot([second, first], { now: NOW }),
+		undefined,
+		'"newest in the directory" is a neighbour\'s live session, not evidence',
 	);
+	assert.equal(
+		selectOpenCodeRoot([second, first], { now: NOW, continuing: true })?.id,
+		'ses_second',
+		"--continue is the CLI's own newest-in-directory rule",
+	);
+	assert.equal(
+		selectOpenCodeRoot([second, first], { now: NOW, remembered: 'ses_first' })
+			?.id,
+		'ses_first',
+	);
+});
+
+test('a resumed session beside a live neighbour binds by its own --session, not by recency', () => {
+	// The reported shape: the first terminal's session is resumed in a third
+	// PTY while the second terminal is live and is the newest thing in the
+	// directory. Nothing was created after the resuming process started.
+	const first = row('ses_first', NOW - 600_000, NOW - 300_000);
+	const second = row('ses_second', NOW - 200_000, NOW - 1_000);
+	assert.equal(
+		selectOpenCodeRoot([second, first], {
+			requested: 'ses_first',
+			startedAt: NOW - 20_000,
+			now: NOW,
+		})?.id,
+		'ses_first',
+	);
+	assert.equal(
+		selectOpenCodeRoot([second, first], { startedAt: NOW - 20_000, now: NOW }),
+		undefined,
+		'with no id proven, the resumed terminal binds nothing rather than the neighbour',
+	);
+});
+
+test("--session on the opencode process's own argv binds that root when the foreground carries none", async () => {
+	// Production issues the foreground with only an executable name; the flags
+	// are read from the CLI process itself.
+	const directory = mkdtempSync(join(tmpdir(), 'opencode-argv-'));
+	const dataHome = directory;
+	const dataRoot = join(dataHome, 'opencode');
+	mkdirSync(dataRoot);
+	const path = join(dataRoot, 'opencode.db');
+	try {
+		const database = new DatabaseSync(path);
+		database.exec(`
+			CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT, slug TEXT, title TEXT, directory TEXT, time_created INTEGER, time_updated INTEGER);
+			CREATE TABLE event (id TEXT PRIMARY KEY, aggregate_id TEXT, seq INTEGER, type TEXT, data TEXT);
+			INSERT INTO session VALUES ('ses_live','p',NULL,'live','Live','/work',1,${NOW});
+			INSERT INTO session VALUES ('${rootId}','p',NULL,'curious-eagle','','/work',1,5);
+		`);
+		database.close();
+		const terminal = openCodeObserveTerminal(
+			path,
+			dataHome,
+			'/work',
+			undefined,
+			['--session', rootId],
+		);
+		const observed = await openCodeProvider.observe(terminal);
+		terminal.abort();
+		assert.equal(observed.state, 'bound');
+		assert.equal(observed.binding.providerSessionId, rootId);
+		await observed.source.dispose();
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
 });
 
 test('a directory with an unproven process start is never time-filtered', () => {
