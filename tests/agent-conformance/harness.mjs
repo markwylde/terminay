@@ -235,7 +235,7 @@ export async function createConformanceHarness(options) {
 		const controller = new AbortController();
 		const { consumeAgentSession, createAgentTerminalContext } =
 			await loadAgentChild();
-		const built = createAgentTerminalContext(
+		const built = await createAgentTerminalContext(
 			{
 				contextId: randomUUID(),
 				serverId: 'conformance',
