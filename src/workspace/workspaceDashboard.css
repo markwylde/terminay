@@ -1,0 +1,148 @@
+/*
+ * Every row is exactly one line. Truncation is CSS only — fixed-width cells for
+ * the status, colour, kind and emoji, and one text cell that ellipsises — so a
+ * narrow window can only shorten a row, never reflow, reorder, or hide one.
+ */
+
+.workspace-dashboard {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+	background: var(--terminal-panel-surface, #0f1318);
+	color: #dce2f0;
+	overflow: hidden;
+}
+
+.workspace-dashboard__header {
+	flex: 0 0 auto;
+	padding: 18px 20px 10px;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.workspace-dashboard__heading {
+	margin: 0;
+	font-size: 15px;
+	font-weight: 600;
+	letter-spacing: 0.01em;
+}
+
+.workspace-dashboard__subheading {
+	margin: 3px 0 0;
+	font-size: 12px;
+	color: rgba(220, 226, 240, 0.55);
+}
+
+.workspace-dashboard__list {
+	flex: 1;
+	min-height: 0;
+	min-width: 0;
+	overflow-y: auto;
+	overflow-x: hidden;
+	padding: 8px 10px 16px;
+}
+
+.workspace-dashboard__empty {
+	margin: 18px 10px;
+	font-size: 13px;
+	color: rgba(220, 226, 240, 0.55);
+}
+
+.workspace-dashboard__row {
+	all: unset;
+	box-sizing: border-box;
+	display: grid;
+	align-items: center;
+	width: 100%;
+	height: 28px;
+	padding: 0 10px;
+	border-radius: 6px;
+	cursor: pointer;
+	white-space: nowrap;
+	color: inherit;
+}
+
+.workspace-dashboard__row:hover {
+	background: rgba(255, 255, 255, 0.05);
+}
+
+.workspace-dashboard__row:focus-visible {
+	outline: 1px solid rgba(120, 170, 255, 0.75);
+	outline-offset: -1px;
+}
+
+.workspace-dashboard__row--project {
+	grid-template-columns: 3px minmax(0, 1fr) auto;
+	gap: 8px;
+	margin-top: 10px;
+	font-weight: 600;
+}
+
+.workspace-dashboard__list > .workspace-dashboard__row--project:first-child {
+	margin-top: 0;
+}
+
+.workspace-dashboard__row--panel {
+	grid-template-columns: 14px 3px 15px minmax(0, 1fr);
+	gap: 7px;
+	padding-left: 22px;
+	color: rgba(220, 226, 240, 0.82);
+}
+
+.workspace-dashboard__swatch {
+	width: 3px;
+	height: 15px;
+	border-radius: 999px;
+	background: var(--row-color, #4c5563);
+}
+
+.workspace-dashboard__kind {
+	color: rgba(220, 226, 240, 0.45);
+}
+
+.workspace-dashboard__title {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12.5px;
+}
+
+.workspace-dashboard__counts {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex: 0 0 auto;
+}
+
+.workspace-dashboard__count {
+	font-size: 10.5px;
+	font-weight: 600;
+	letter-spacing: 0.01em;
+	padding: 1px 7px;
+	border-radius: 999px;
+	white-space: nowrap;
+}
+
+.workspace-dashboard__count--attention {
+	color: #ffb4ae;
+	background: rgba(238, 98, 88, 0.16);
+}
+
+.workspace-dashboard__count--working {
+	color: #f0d17c;
+	background: rgba(232, 185, 49, 0.16);
+}
+
+.workspace-dashboard__count--done {
+	color: #8fe0ab;
+	background: rgba(69, 200, 116, 0.16);
+}
+
+.workspace-dashboard__count--quiet {
+	color: rgba(220, 226, 240, 0.42);
+	background: rgba(255, 255, 255, 0.05);
+	font-weight: 500;
+}

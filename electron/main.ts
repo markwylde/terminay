@@ -2846,6 +2846,12 @@ function createAppMenu(
 				},
 				{ type: 'separator' },
 				{
+					label: 'Show Dashboard',
+					accelerator: getMenuShortcut(settings, 'show-dashboard'),
+					click: () => sendCommandToFocusedWindow('show-dashboard'),
+				},
+				{ type: 'separator' },
+				{
 					label: 'Set Project Root to Working Directory',
 					accelerator: getMenuShortcut(
 						settings,
