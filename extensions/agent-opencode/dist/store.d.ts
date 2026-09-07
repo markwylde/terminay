@@ -30,6 +30,12 @@ export interface OpenCodeSessionRow {
     readonly slug?: string;
     readonly title?: string;
     readonly directory: string;
+    /**
+     * When OpenCode first stored this session. A session is written the moment
+     * its first prompt is submitted, so this is the only field that ties a root
+     * to the process that made it.
+     */
+    readonly timeCreated: number;
     readonly timeUpdated: number;
 }
 export interface OpenCodeEventRow {
