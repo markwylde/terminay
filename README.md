@@ -86,7 +86,46 @@ Recording can capture terminal output, typed input, commands, file paths, tokens
 
 ## Agent status and terminal activity
 
-Terminay observes process-bound Codex, Claude Code, Cursor, Grok, and omp session journals owned by the exact terminal process tree. Terminal tabs use compact RAG indicators: yellow while working, red when waiting for input or blocked, green when done, and neutral when idle. Unread acknowledgement is tracked separately, so viewing an agent never changes the state reported by the provider.
+Terminay observes process-bound Claude Code, Codex, Grok, OpenCode, and omp session journals owned by the exact terminal process tree. Terminal tabs use compact RAG indicators: yellow while working, red when waiting for input or blocked, green when done, and neutral when idle. Unread acknowledgement is tracked separately, so viewing an agent never changes the state reported by the provider.
+
+### What each agent CLI can report
+
+What Terminay can show differs by provider, because every fact comes from
+artifacts the CLI already writes for its own purposes — Terminay never modifies,
+configures, hooks or wraps a provider. Every cell below is verified against that
+provider's real CLI, on its latest release, running in that extension's own
+container.
+
+| | Detect | Title | Idle | Working | Waiting | Blocked | Done | Sub&nbsp;names | Sub&nbsp;status | Resume | Concurrent |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| **Claude Code** | ✅ | ✅ | ✅ | ✅ | ✳️ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Codex** | ✅ | ✅ | ✅ | ✅ | ❌ <sup>1</sup> | ❌ <sup>2</sup> | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Grok** | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ <sup>3</sup> | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **OpenCode** | ✅ | ✅ | ✅ | ✅ | ❌ <sup>4</sup> | ✳️ | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+✅ the provider records it explicitly and Terminay reads it &nbsp;·&nbsp;
+✳️ the provider records nothing, so Terminay derives it from that provider's own
+session journal by a named rule, and marks the entry as inferred &nbsp;·&nbsp;
+❌ neither is possible from the provider's own artifacts
+
+**❌ is a tested result, not an untested one.** The conformance run still raises
+a real permission prompt or provokes a real fault, then asserts the state was
+never reported. A provider that starts recording a capability marked ❌ fails its
+own test until this table is corrected.
+
+<sup>1</sup> Codex shows an approval prompt on screen but persists nothing that
+distinguishes it from ordinary work, so a Codex session awaiting approval reads
+as working.
+<sup>2</sup> Codex records a halting fault as the completion of the turn it
+halted, so it reads as done with an error outcome.
+<sup>3</sup> Grok records no fault distinct from a turn outcome — a failed turn
+is a completion carrying an error.
+<sup>4</sup> OpenCode persists no record of a permission request; every tool part
+is written pending whether or not a prompt is shown.
+
+omp is a shipped provider whose conformance run is not yet complete, so it makes
+no claim here. Full detail, including the columns and how the tests run, is in
+[docs/agent-provider-capabilities.md](docs/agent-provider-capabilities.md).
 
 The project sidebar includes an **Agents** pane with root agents and their in-process subagents. It shows only agents belonging to that project. Root rows use a descriptive session title when available and retain their terminal title as context without repeating inherited child metadata. Codex subagents use their structured task name (for example, `math_question_one`) when available, with numbered labels only as a fallback. Prompts stay on one compact line. Subagents are collapsed by default, never auto-expand, and each root remembers its manual expansion state while switching projects. Selecting an agent switches to its exact terminal; selecting a subagent without its own PTY focuses the parent agent's terminal.
 
