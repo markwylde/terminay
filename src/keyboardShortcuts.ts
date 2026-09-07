@@ -40,6 +40,12 @@ export const appCommandMetadata: AppCommandMetadata[] = [
     keywords: 'save active file tab write changes',
   },
   {
+    command: 'show-dashboard',
+    title: 'Show Dashboard',
+    description: 'See every project and tab in this workspace at a glance.',
+    keywords: 'show dashboard home overview projects tabs status at a glance',
+  },
+  {
     command: 'open-recordings',
     title: 'Open recordings timeline',
     description: 'Browse and replay saved terminal recordings.',
@@ -134,6 +140,7 @@ export const appCommandMetadata: AppCommandMetadata[] = [
 export const defaultKeyboardShortcuts: KeyboardShortcutSettings = {
   'new-terminal': 'CmdOrCtrl+T',
   'new-project': 'CmdOrCtrl+P',
+  'show-dashboard': 'CmdOrCtrl+0',
   'clear-terminal': 'CmdOrCtrl+K',
   'open-recordings': '',
   'open-settings': '',
