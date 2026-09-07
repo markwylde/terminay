@@ -378,19 +378,10 @@ export class AgentStatusService {
 				currentBinding !== undefined &&
 				(currentBinding.provider !== providerId ||
 					currentBinding.providerSessionId !== activeBinding.providerSessionId);
-			if (replacing && validatedEvents.length > 0)
+			if (replacing)
 				throw new Error(
 					'extension agent session replacement requires a separate binding publication',
 				);
-			if (replacing) {
-				// A binding-only publication naming a different provider session is
-				// the replacement itself: the provider's process moved to another
-				// conversation in place (Claude Code `/clear`), so the root on screen
-				// is retired and the next `session.started` opens the new one.
-				this.retireBinding(identity, currentBinding);
-				this.bindings.set(identity.sessionId, activeBinding);
-				return Object.freeze({ acceptedEventCount: 0, rejectedEventCount: 0 });
-			}
 			const startSequence =
 				this.sequences.get(identity.sessionId)?.get(providerId) ?? 1;
 			const rawCanonical = validatedEvents.map((event, index) =>
