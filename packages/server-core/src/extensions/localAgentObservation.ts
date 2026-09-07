@@ -734,10 +734,14 @@ export class ThisServerAgentObservationAdapter {
 		)
 			return null;
 		const canonical = await this.system.realpath(providerPath, signal);
+		// Home comes from the issuing terminal, exactly as `homeRelativePath`
+		// does. Without it this falls back to an adapter-level home the
+		// extension child never sets, so a `beneath.homeRelative` constraint
+		// could never be satisfied and this operation always returned null.
 		if (
 			canonical === undefined ||
 			safePath(canonical) === undefined ||
-			!this.withinHomeConstraint(canonical, request, false)
+			!this.withinHomeConstraint(canonical, request, false, state.homeDirectory)
 		)
 			return null;
 		const details = await this.system.stat(canonical, signal);
