@@ -328,7 +328,7 @@ async function admitAgentTerminal(frame: HostFrame): Promise<void> {
 		return;
 	}
 	const controller = new AbortController();
-	const bridge = createAgentTerminalContext(
+	const bridge = await createAgentTerminalContext(
 		context,
 		Array.isArray(payload?.observationCapabilities)
 			? payload.observationCapabilities
@@ -409,14 +409,14 @@ async function drainAgentTerminals(frame: HostFrame): Promise<void> {
  * conformance harness drives providers through this exact construction rather
  * than a second implementation of it.
  */
-export function createAgentTerminalContext(
+export async function createAgentTerminalContext(
 	context: Record<string, unknown>,
 	capabilities: unknown[],
 	signal: AbortSignal,
-): {
+): Promise<{
 	readonly terminal: Record<string, unknown>;
 	readonly publisher: Record<string, (event: unknown) => Promise<unknown>>;
-} {
+}> {
 	const contextId = String(context.contextId);
 	const providerId = String(context.providerId);
 	const terminalContext = localObservationContext(context);
@@ -607,8 +607,30 @@ export function createAgentTerminalContext(
 				pollingWatcher(request, handle, options, signal),
 		}),
 	});
+	// The PTY device this terminal is, as a bounded fact rather than a path a
+	// provider could roam from. A provider whose CLI records the terminal it
+	// runs in — omp writes a per-device breadcrumb — has no other way to prove
+	// which of several terminals it is looking at, and the broker has always
+	// exposed this operation while nothing ever asked it for one.
+	//
+	// A terminal with no device, or an environment that cannot prove one, simply
+	// leaves the fact absent: it is enrichment, never a precondition for binding.
+	const tty = await (async () => {
+		try {
+			const fact = object(await request('terminal.tty', null));
+			const deviceId = typeof fact?.terminalId === 'string' ? fact.terminalId : undefined;
+			if (!deviceId) return undefined;
+			return Object.freeze({
+				deviceId,
+				...(typeof fact?.path === 'string' ? { deviceName: fact.path } : {}),
+			});
+		} catch {
+			return undefined;
+		}
+	})();
 	const terminal = Object.freeze({
 		terminal: Object.freeze({ id: context.terminalSessionId }),
+		...(tty === undefined ? {} : { tty }),
 		project: Object.freeze({ id: context.projectId }),
 		environment: Object.freeze({ id: context.projectEnvironmentId }),
 		process: Object.freeze({ id: context.contextId }),

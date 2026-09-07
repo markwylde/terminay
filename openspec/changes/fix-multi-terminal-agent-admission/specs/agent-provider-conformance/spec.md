@@ -130,3 +130,55 @@ Each such specification SHALL drive at least two terminals of that provider in o
 
 - **WHEN** an agent extension ships with no Agents-pane specification
 - **THEN** it is treated as unverified at the application surface
+
+### Requirement: Provider capability matrix
+
+Terminay SHALL publish a provider capability matrix stating, for every provider
+it claims conformance for, a verdict on each of ten capabilities: **Detect**,
+**Title**, the five canonical states **Idle**, **Working**, **Waiting**,
+**Blocked**, and **Done**, the two subagent capabilities **Sub:Enumerate** and
+**Sub:Status**, and **Resume**.
+
+A verdict SHALL be one of:
+
+- **Y** — the provider records the fact explicitly and the mapping reads it.
+- **Y\*** — the provider records no explicit fact, and the state is derived from
+  that provider's session journal by a named inference rule stated in its
+  mapping requirement.
+- **N** — neither is possible from the provider's own artifacts, with the reason
+  stated.
+
+There SHALL be no unstated cell. The matrix SHALL cover Codex, Claude Code,
+Grok, and OpenCode.
+
+| | Detect | Title | Idle | Working | Waiting | Blocked | Done | Sub:Enumerate | Sub:Status | Resume |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Codex | Y | Y | Y | Y | N | N | Y | Y | Y | Y |
+| Claude Code | Y | Y | Y | Y | Y\* | Y | Y | Y | Y | Y |
+| Grok | Y | Y | Y | Y | Y | N | Y | Y | Y | Y |
+| OpenCode | Y | Y | Y | Y | N | Y* | Y | Y | Y | Y |
+
+Grok's `Blocked` is `N` because Grok records no fault distinct from a turn
+outcome: a failed turn is a `turn_ended` carrying an error, which is a
+completion rather than a condition needing intervention.
+
+Codex's `Blocked` is `N` because Codex records a halting fault as the completion
+of the turn it halted — an `event_msg task_complete` carrying `error` — rather
+than as a condition the session sits in.
+
+Claude Code's `Blocked` is `Y` because it is read from an explicit
+`isApiErrorMessage` record carrying `apiErrorStatus` and `error`; nothing about
+it is inferred.
+
+A provider not listed SHALL still participate through the ordinary provider
+contracts; it simply makes no conformance claim.
+
+#### Scenario: Every cell has a verdict
+
+- **WHEN** a provider is listed in the capability matrix
+- **THEN** each of its ten capabilities carries `Y`, `Y*` with a named inference rule, or `N` with a stated reason
+
+#### Scenario: Provider outside the matrix
+
+- **WHEN** a provider makes no conformance claim
+- **THEN** it participates through the ordinary provider contracts and no matrix verdict is asserted for it
