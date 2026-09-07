@@ -22,6 +22,7 @@ async function loadAgentChild() {
  * @property {string} [title]
  * @property {ConformanceState} state
  * @property {boolean} inferred
+ * @property {string} [outcome] The completion outcome of the last finished turn.
  * @property {boolean} active
  * @property {Map<string, ConformanceChild>} children
  * @property {Array<Record<string, unknown>>} events
@@ -76,6 +77,9 @@ export function applyConformanceEvent(projection, event) {
 				(child) => child.state === 'working',
 			);
 			projection.inferred = false;
+			// The completion outcome is what distinguishes a failed or cancelled
+			// run from a successful one, so it is kept rather than collapsed.
+			if (event.outcome) projection.outcome = event.outcome;
 			if (childWorking) {
 				projection.rootDonePending = true;
 				projection.state = 'working';
@@ -166,6 +170,7 @@ const sleep = (ms) =>
  *   executable: string;
  *   environment?: Record<string, string>;
  *   shell?: string;
+ *   cwd?: string;
  *   pollMs?: number;
  * }} options
  */
