@@ -328,7 +328,7 @@ async function admitAgentTerminal(frame: HostFrame): Promise<void> {
 		return;
 	}
 	const controller = new AbortController();
-	const bridge = createAgentTerminalContext(
+	const bridge = await createAgentTerminalContext(
 		context,
 		Array.isArray(payload?.observationCapabilities)
 			? payload.observationCapabilities
@@ -409,14 +409,30 @@ async function drainAgentTerminals(frame: HostFrame): Promise<void> {
  * conformance harness drives providers through this exact construction rather
  * than a second implementation of it.
  */
-export function createAgentTerminalContext(
+/** A terminal device is a local fact; anything slower than this is not coming. */
+const TTY_FACT_TIMEOUT_MS = 2_000;
+
+/** `/dev/pts/3` names the device and `pts-3` identifies it, matching the
+ * identifier providers find in their own per-terminal records. */
+function ttyFactFor(path: string): Readonly<{
+	deviceId: string;
+	deviceName: string;
+}> | undefined {
+	if (!path.startsWith('/dev/')) return undefined;
+	const deviceId = path.slice('/dev/'.length).replaceAll('/', '-');
+	return deviceId
+		? Object.freeze({ deviceId, deviceName: path })
+		: undefined;
+}
+
+export async function createAgentTerminalContext(
 	context: Record<string, unknown>,
 	capabilities: unknown[],
 	signal: AbortSignal,
-): {
+): Promise<{
 	readonly terminal: Record<string, unknown>;
 	readonly publisher: Record<string, (event: unknown) => Promise<unknown>>;
-} {
+}> {
 	const contextId = String(context.contextId);
 	const providerId = String(context.providerId);
 	const terminalContext = localObservationContext(context);
@@ -607,8 +623,49 @@ export function createAgentTerminalContext(
 				pollingWatcher(request, handle, options, signal),
 		}),
 	});
+	// The PTY device this terminal is, as a bounded fact rather than a path a
+	// provider could roam from. A provider whose CLI records the terminal it
+	// runs in — omp writes a per-device breadcrumb — has no other way to prove
+	// which of several terminals it is looking at, and the broker has always
+	// exposed this operation while nothing ever asked it for one.
+	//
+	// A terminal with no device, or an environment that cannot prove one, simply
+	// leaves the fact absent: it is enrichment, never a precondition for binding.
+	const tty = await (async () => {
+		// The device is read straight from the admission context where the host
+		// proved one, and otherwise only through a local adapter — never as an
+		// unsolicited broker round-trip, which would put a request the provider
+		// did not make on every admission.
+		const issued = typeof context.ttyPath === 'string' ? context.ttyPath : undefined;
+		if (issued) return ttyFactFor(issued);
+		if (local === undefined || !capabilities.includes('process-observation'))
+			return undefined;
+		try {
+			// Bounded, because this must never hold up admission. An environment
+			// that cannot answer — or does not answer at all — leaves the fact
+			// absent, which is the documented contract: enrichment, never a
+			// precondition for binding.
+			const answered = await Promise.race([
+				request('terminal.tty', null),
+				new Promise<undefined>((resolve) => {
+					const timer = setTimeout(() => resolve(undefined), TTY_FACT_TIMEOUT_MS);
+					timer.unref?.();
+				}),
+			]);
+			const fact = object(answered);
+			const deviceId = typeof fact?.terminalId === 'string' ? fact.terminalId : undefined;
+			if (!deviceId) return undefined;
+			return Object.freeze({
+				deviceId,
+				...(typeof fact?.path === 'string' ? { deviceName: fact.path } : {}),
+			});
+		} catch {
+			return undefined;
+		}
+	})();
 	const terminal = Object.freeze({
 		terminal: Object.freeze({ id: context.terminalSessionId }),
+		...(tty === undefined ? {} : { tty }),
 		project: Object.freeze({ id: context.projectId }),
 		environment: Object.freeze({ id: context.projectEnvironmentId }),
 		process: Object.freeze({ id: context.contextId }),

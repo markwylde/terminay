@@ -123,6 +123,318 @@ async function prepareNativeCodexFixture(
 	return { codexHome, bin };
 }
 
+/**
+ * Claude Code's per-process record and journal identities used by the stub
+ * CLI and by `claude-code-multi-terminal.spec.ts`. Three distinct sessions
+ * exist in one project directory: one quit before the run begins, one minted
+ * by a fresh process, and one minted in-process by `/clear`.
+ */
+export const nativeClaudeEarlierSessionId =
+	'cccccccc-dddd-4eee-8fff-000000000001';
+export const nativeClaudeFreshSessionId =
+	'cccccccc-dddd-4eee-8fff-000000000002';
+export const nativeClaudeClearedSessionId =
+	'cccccccc-dddd-4eee-8fff-000000000003';
+/** The CLI version the stub records, matching the real host observation. */
+export const nativeClaudeVersion = '2.1.263';
+
+/** Home the stub CLI and the app's terminals share, isolated per test run. */
+export function nativeClaudeHome(tempDir: string): string {
+	return path.join(tempDir, 'native-claude-home');
+}
+
+/** Working directory the spec drives both terminals in. */
+export function nativeClaudeProject(tempDir: string): string {
+	return path.join(tempDir, 'native-claude-project');
+}
+
+/**
+ * A stub `claude` that writes what the real CLI writes: the pid-keyed session
+ * record under `~/.claude/sessions`, then the journal that record names under
+ * the encoded project directory. It is a real compiled process so its pid,
+ * cwd, start time and executable name are the operating system's, not a
+ * fixture's claim about them — a provider that ignores the record and guesses
+ * a journal from file times cannot pass against it.
+ *
+ * Behaviour driven by the spec: `--resume <id>` binds an existing session,
+ * `CLAUDE_E2E_SESSION` names a fresh one, a typed line runs one turn, `/clear`
+ * mints a new session and rewrites both the record and the journal, and
+ * quitting removes the record the way the CLI does on exit.
+ */
+const nativeClaudeFixture = String.raw`
+#include <errno.h>
+#include <limits.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/time.h>
+#include <time.h>
+#include <unistd.h>
+
+static const char VERSION[] = "${nativeClaudeVersion}";
+static const char DEFAULT_SESSION_ID[] = "${nativeClaudeFreshSessionId}";
+static const char DEFAULT_CLEAR_SESSION_ID[] = "${nativeClaudeClearedSessionId}";
+#ifdef __APPLE__
+static const char PID_DOMAIN[] = "darwin";
+#else
+static const char PID_DOMAIN[] = "linux";
+#endif
+
+/** The record the provider joins to this process's pid. */
+static char session_file[PATH_MAX];
+
+static void directories(char *path) {
+  for (char *cursor = path + 1; *cursor; cursor += 1) {
+    if (*cursor == '/') { *cursor = '\0'; mkdir(path, 0700); *cursor = '/'; }
+  }
+  mkdir(path, 0700);
+}
+
+static long long now_ms(void) {
+  struct timeval clock_value;
+  gettimeofday(&clock_value, NULL);
+  return (long long)clock_value.tv_sec * 1000 + clock_value.tv_usec / 1000;
+}
+
+/**
+ * Claude's project-directory encoding: every character outside [A-Za-z0-9]
+ * becomes '-'. Kept identical to the provider's own encoder so the stub and
+ * the extension name the same directory.
+ */
+static void encode_cwd(const char *cwd, char *out, size_t size) {
+  size_t index = 0;
+  for (; cwd[index] && index + 1 < size; index += 1) {
+    char value = cwd[index];
+    int plain = (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z')
+      || (value >= '0' && value <= '9');
+    out[index] = plain ? value : '-';
+  }
+  out[index] = '\0';
+}
+
+static void write_session_file(const char *session_id, const char *cwd,
+    long long started_at, const char *name) {
+  FILE *stream = fopen(session_file, "w");
+  if (!stream) return;
+  time_t seconds = (time_t)(started_at / 1000);
+  struct tm parts;
+  char proc_start[64];
+  gmtime_r(&seconds, &parts);
+  strftime(proc_start, sizeof(proc_start), "%a %b %e %H:%M:%S %Y", &parts);
+  long long updated_at = now_ms();
+  fprintf(stream,
+    "{\"pid\":%d,\"sessionId\":\"%s\",\"cwd\":\"%s\",\"startedAt\":%lld,"
+    "\"procStart\":\"%s\",\"version\":\"%s\",\"kind\":\"interactive\","
+    "\"entrypoint\":\"cli\",\"pidDomain\":\"%s\",\"name\":\"%s\","
+    "\"nameSource\":\"derived\",\"nameSince\":%lld,\"updatedAt\":%lld,"
+    "\"status\":\"idle\",\"statusUpdatedAt\":%lld}\n",
+    (int)getpid(), session_id, cwd, started_at, proc_start, VERSION, PID_DOMAIN, name,
+    started_at, updated_at, updated_at);
+  fclose(stream);
+}
+
+/** The CLI removes its record on exit; a signal must not leave a stale one. */
+static void remove_session_file(void) { unlink(session_file); }
+
+static void handle_signal(int signal_number) {
+  (void)signal_number;
+  remove_session_file();
+  _exit(0);
+}
+
+static FILE *open_journal(const char *home, const char *encoded,
+    const char *session_id, int append, char *journal_path) {
+  char directory[PATH_MAX];
+  snprintf(directory, sizeof(directory), "%s/.claude/projects/%s", home, encoded);
+  directories(directory);
+  snprintf(journal_path, PATH_MAX, "%s/%s.jsonl", directory, session_id);
+  FILE *stream = fopen(journal_path, append ? "a" : "w");
+  if (stream) setvbuf(stream, NULL, _IONBF, 0);
+  return stream;
+}
+
+/**
+ * The turn header block. The real CLI rewrites it at session start, after a
+ * prompt and after each turn completes, and every record carries the session
+ * id the journal is named for.
+ */
+static void write_header(FILE *journal, const char *session_id, const char *cwd) {
+  fprintf(journal,
+    "{\"type\":\"mode\",\"mode\":\"default\",\"sessionId\":\"%s\","
+    "\"version\":\"%s\",\"cwd\":\"%s\"}\n", session_id, VERSION, cwd);
+  fprintf(journal,
+    "{\"type\":\"permission-mode\",\"permissionMode\":\"default\","
+    "\"sessionId\":\"%s\"}\n", session_id);
+}
+
+static void write_label(FILE *journal, const char *session_id, const char *label) {
+  fprintf(journal, "{\"type\":\"last-prompt\",\"lastPrompt\":\"%s\","
+    "\"sessionId\":\"%s\"}\n", label, session_id);
+}
+
+/**
+ * --resume takes either a session id or nothing at all. With no id the real
+ * CLI opens a picker and the user chooses a session in it, which is the form
+ * the reported defect was seen under: ps shows only "claude --resume", and the
+ * process then appends to a journal created before it. The picker choice is
+ * supplied here by CLAUDE_E2E_SESSION. The picker flag reports that form so
+ * the caller resumes rather than creating a session.
+ */
+static const char *resume_argument(int argc, char **argv, int *picker) {
+  *picker = 0;
+  for (int index = 1; index < argc; index += 1) {
+    if (strncmp(argv[index], "--resume=", 9) == 0) return argv[index] + 9;
+    if (strcmp(argv[index], "--resume") != 0 && strcmp(argv[index], "-r") != 0)
+      continue;
+    const char *next = index + 1 < argc ? argv[index + 1] : NULL;
+    if (next && next[0] != '-') return next;
+    *picker = 1;
+    return NULL;
+  }
+  return NULL;
+}
+
+/**
+ * How long a turn takes. The real CLI's turns are as long as the model takes;
+ * a test that needs one terminal to still be working while another binds sets
+ * CLAUDE_E2E_TURN_MS.
+ */
+static void sleep_one_turn(FILE *journal, const char *session_id, int turn) {
+  const char *configured = getenv("CLAUDE_E2E_TURN_MS");
+  long milliseconds = configured && *configured ? strtol(configured, NULL, 10) : 2000;
+  if (milliseconds <= 0) milliseconds = 2000;
+  int step = 0;
+  for (long elapsed = 0; elapsed < milliseconds; elapsed += 500) {
+    long slice = milliseconds - elapsed < 500 ? milliseconds - elapsed : 500;
+    struct timespec span;
+    span.tv_sec = slice / 1000;
+    span.tv_nsec = (slice % 1000) * 1000000L;
+    while (nanosleep(&span, &span) == -1 && errno == EINTR) continue;
+    step += 1;
+    /*
+     * The real CLI writes assistant records throughout a turn, so a working
+     * session's journal keeps advancing its modification time; a stub that
+     * goes silent for the whole turn does not, and a file-time rule that would
+     * pick the wrong journal in production never gets the chance to. Carries
+     * no stop_reason, so the turn stays open, and no model, so nothing about
+     * the entry's label or metadata moves.
+     */
+    fprintf(journal,
+      "{\"type\":\"assistant\",\"sessionId\":\"%s\","
+      "\"uuid\":\"e2e-turn-%d-step-%d\","
+      "\"message\":{\"role\":\"assistant\",\"content\":[]}}\n",
+      session_id, turn, step);
+  }
+}
+
+static const char *value_of(const char *name, const char *fallback) {
+  const char *value = getenv(name);
+  return value && *value ? value : fallback;
+}
+
+int main(int argc, char **argv) {
+  const char *home = getenv("HOME");
+  if (!home || !*home) return 64;
+  char cwd[PATH_MAX];
+  if (!getcwd(cwd, sizeof(cwd))) return 66;
+  char encoded[PATH_MAX];
+  encode_cwd(cwd, encoded, sizeof(encoded));
+  const long long started_at = now_ms();
+  int picker = 0;
+  const char *chosen = resume_argument(argc, argv, &picker);
+  const int resumed = chosen != NULL || picker;
+  char session_id[128];
+  snprintf(session_id, sizeof(session_id), "%s",
+    chosen ? chosen : value_of("CLAUDE_E2E_SESSION", DEFAULT_SESSION_ID));
+  const char *label = value_of("CLAUDE_E2E_LABEL", "Claude e2e session");
+
+  char sessions[PATH_MAX];
+  snprintf(sessions, sizeof(sessions), "%s/.claude/sessions", home);
+  directories(sessions);
+  snprintf(session_file, sizeof(session_file), "%s/%d.json", sessions, (int)getpid());
+  write_session_file(session_id, cwd, started_at, label);
+  atexit(remove_session_file);
+  signal(SIGTERM, handle_signal);
+  signal(SIGINT, handle_signal);
+  signal(SIGHUP, handle_signal);
+
+  char journal_path[PATH_MAX];
+  FILE *journal = open_journal(home, encoded, session_id, resumed, journal_path);
+  if (!journal) return 65;
+  setvbuf(stdout, NULL, _IONBF, 0);
+  write_header(journal, session_id, cwd);
+  if (resumed) {
+    fputs("Claude e2e resumed\n", stdout);
+  } else {
+    write_label(journal, session_id, label);
+    fputs("Claude e2e ready\n", stdout);
+  }
+
+  char line[512];
+  int turn = 0;
+  while (fgets(line, sizeof(line), stdin)) {
+    size_t length = strlen(line);
+    while (length > 0 && (line[length - 1] == '\n' || line[length - 1] == '\r')) {
+      line[--length] = '\0';
+    }
+    if (length == 0) continue;
+    if (strcmp(line, "quit") == 0 || strcmp(line, "/quit") == 0
+        || strcmp(line, "/exit") == 0) {
+      return 0;
+    }
+    if (strcmp(line, "/clear") == 0) {
+      snprintf(session_id, sizeof(session_id), "%s",
+        value_of("CLAUDE_E2E_CLEAR_SESSION", DEFAULT_CLEAR_SESSION_ID));
+      label = value_of("CLAUDE_E2E_CLEAR_LABEL", "Cleared Claude e2e session");
+      fclose(journal);
+      journal = open_journal(home, encoded, session_id, 0, journal_path);
+      if (!journal) return 65;
+      write_header(journal, session_id, cwd);
+      write_label(journal, session_id, label);
+      // The record is rewritten in place: same pid, same start time, new
+      // session. This is the only evidence that the terminal's session moved.
+      write_session_file(session_id, cwd, started_at, label);
+      fputs("Claude e2e cleared\n", stdout);
+      continue;
+    }
+    turn += 1;
+    fprintf(journal, "{\"type\":\"ai-title\",\"aiTitle\":\"%s\",\"sessionId\":\"%s\"}\n",
+      label, session_id);
+    fprintf(journal,
+      "{\"type\":\"user\",\"sessionId\":\"%s\",\"promptId\":\"e2e-turn-%d\","
+      "\"message\":{\"role\":\"user\",\"content\":\"%s\"}}\n",
+      session_id, turn, line);
+    sleep_one_turn(journal, session_id, turn);
+    fprintf(journal,
+      "{\"type\":\"system\",\"subtype\":\"turn_duration\",\"sessionId\":\"%s\","
+      "\"durationMs\":2000}\n", session_id);
+    write_header(journal, session_id, cwd);
+    fputs("Claude e2e turn done\n", stdout);
+  }
+  return 0;
+}
+`;
+
+async function prepareNativeClaudeFixture(
+	tempDir: string,
+): Promise<{ readonly claudeHome: string; readonly bin: string }> {
+	const claudeHome = nativeClaudeHome(tempDir);
+	const bin = path.join(tempDir, 'native-claude-bin');
+	const source = path.join(tempDir, 'native-claude.c');
+	const executable = path.join(bin, 'claude');
+	await Promise.all([
+		mkdir(path.join(claudeHome, '.claude', 'projects'), { recursive: true }),
+		mkdir(path.join(claudeHome, '.claude', 'sessions'), { recursive: true }),
+		mkdir(nativeClaudeProject(tempDir), { recursive: true }),
+		mkdir(bin, { recursive: true }),
+	]);
+	await writeFile(source, nativeClaudeFixture, { mode: 0o600 });
+	await execFileAsync('cc', [source, '-O2', '-o', executable]);
+	return { claudeHome, bin };
+}
+
 export const nativeGrokSessionId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee1';
 
 const nativeGrokFixture = String.raw`
@@ -387,9 +699,17 @@ export const test = base.extend<ElectronFixtures>({
 			specFile === 'extension-agent-runtime.spec.ts'
 				? await prepareNativeCodexFixture(tempDir)
 				: undefined;
-		const nativeGrok =
-			specFile === 'extension-grok-agent-runtime.spec.ts'
-				? await prepareNativeGrokFixture(tempDir)
+		const nativeGrok = ['extension-grok-agent-runtime.spec.ts'].includes(
+			specFile,
+		)
+			? await prepareNativeGrokFixture(tempDir)
+			: undefined;
+		// The Claude Code provider resolves `~/.claude` from the terminal's own
+		// HOME, so the stub CLI's store is isolated by giving the whole app an
+		// isolated HOME rather than by an environment variable of its own.
+		const nativeClaude =
+			specFile === 'claude-code-multi-terminal.spec.ts'
+				? await prepareNativeClaudeFixture(tempDir)
 				: undefined;
 		if (path.basename(testInfo.file) === 'mixed-project-environments.spec.ts') {
 			const now = Date.now();
@@ -559,7 +879,7 @@ export const test = base.extend<ElectronFixtures>({
 		const staticServer = await createStaticServer(
 			rendererArtifact.rootDirectory,
 		);
-		const extraPath = [nativeCodex?.bin, nativeGrok?.bin]
+		const extraPath = [nativeCodex?.bin, nativeGrok?.bin, nativeClaude?.bin]
 			.filter((value): value is string => value !== undefined)
 			.join(path.delimiter);
 		const electronApp = await electron.launch({
@@ -579,6 +899,11 @@ export const test = base.extend<ElectronFixtures>({
 					? {}
 					: {
 							GROK_HOME: nativeGrok.grokHome,
+						}),
+				...(nativeClaude === undefined
+					? {}
+					: {
+							HOME: nativeClaude.claudeHome,
 						}),
 				...(extraPath.length === 0
 					? {}

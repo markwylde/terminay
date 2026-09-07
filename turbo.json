@@ -37,11 +37,6 @@
       "outputs": [],
       "cache": false
     },
-    "terminay-agent-cursor#test:ci": {
-      "dependsOn": ["compile", "^build"],
-      "outputs": [],
-      "cache": false
-    },
     "terminay-agent-grok#test:ci": {
       "dependsOn": ["compile", "^build"],
       "outputs": [],
@@ -79,7 +74,6 @@
         "@terminay/web#build",
         "terminay-agent-claude-code#compile",
         "terminay-agent-codex#compile",
-        "terminay-agent-cursor#compile",
         "terminay-agent-grok#compile",
         "terminay-agent-omp#compile",
         "terminay-agent-opencode#compile",

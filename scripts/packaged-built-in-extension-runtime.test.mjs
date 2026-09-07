@@ -15,7 +15,9 @@ import {
 
 const CODEX_ID = 'com.terminay.agent.codex'
 const CODEX_PACKAGE = 'terminay-agent-codex'
-const CURSOR_ID = 'com.terminay.agent.cursor'
+// Held back from the first install so a later bundle proves a newly
+// bundled floor is default-enabled.
+const LATE_BUNDLED_ID = 'com.terminay.agent.opencode'
 const OVERRIDE_VERSION = '9.9.9'
 const OVERRIDE_INTEGRITY = `sha512-${Buffer.alloc(64, 9).toString('base64')}`
 const CODEX_PROVIDER_ID = `${CODEX_ID}/cli`
@@ -105,16 +107,16 @@ function active(state, extensionId) {
 async function exercisePackagedRoot(label, artifactRoot) {
   const source = new DirectoryBuiltInExtensionArtifactSource(resolve(artifactRoot))
   const artifacts = await source.list()
-  assert.equal(artifacts.length, 8, `${label} must expose the complete built-in inventory`)
+  assert.equal(artifacts.length, 7, `${label} must expose the complete built-in inventory`)
   const codex = artifacts.find((artifact) => artifact.extensionId === CODEX_ID)
   assert.ok(codex)
   const registry = new OverrideRegistry(codex.manifestMetadata)
   const dataRoot = await mkdtemp(join(tmpdir(), `terminay-${label}-built-ins-`))
   try {
-    const initialSource = new FilteredBuiltIns(source, new Set([CURSOR_ID]))
+    const initialSource = new FilteredBuiltIns(source, new Set([LATE_BUNDLED_ID]))
     let installer = new ExtensionInstaller({ dataRoot, registryClient: registry, materializer: registry, builtIns: initialSource })
     let state = await installer.initialize()
-    assert.equal(Object.keys(state.extensions).length, 7)
+    assert.equal(Object.keys(state.extensions).length, 6)
     assert.ok(Object.values(state.extensions).every((record) => record.enabled))
 
     await installer.disable(CODEX_ID)
@@ -129,7 +131,7 @@ async function exercisePackagedRoot(label, artifactRoot) {
 
     installer = new ExtensionInstaller({ dataRoot, registryClient: registry, materializer: registry, builtIns: source })
     state = await installer.initialize()
-    assert.equal(state.extensions[CURSOR_ID].enabled, true, `${label} must default-enable a newly bundled floor`)
+    assert.equal(state.extensions[LATE_BUNDLED_ID].enabled, true, `${label} must default-enable a newly bundled floor`)
     assert.equal(active(state, CODEX_ID).version, OVERRIDE_VERSION, `${label} must retain the npm override`)
 
     state = await installer.remove(CODEX_ID)
@@ -146,7 +148,7 @@ async function exercisePackagedRoot(label, artifactRoot) {
     const state = await installer.initialize()
     assert.equal(state.extensions[CODEX_ID].state, 'failed')
     assert.equal(Object.values(state.extensions).filter((record) => record.state === 'failed').length, 1, JSON.stringify(state.extensions))
-    assert.equal(Object.keys(state.extensions).length, 8)
+    assert.equal(Object.keys(state.extensions).length, 7)
   } finally {
     await rm(badRoot, { recursive: true, force: true })
   }
@@ -321,7 +323,6 @@ async function exercisePackagedHostRuntime(label, artifactRoot) {
       [
         'com.terminay.agent.claude-code/cli',
         CODEX_PROVIDER_ID,
-        'com.terminay.agent.cursor/cli',
         'com.terminay.agent.grok/cli',
         'com.terminay.agent.omp/cli',
         'com.terminay.agent.opencode/cli',

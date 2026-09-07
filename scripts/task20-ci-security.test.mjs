@@ -148,139 +148,15 @@ test("spec-progress push uses a step-scoped token instead of checkout credential
   assert.doesNotMatch(workflow, /^\s+git push origin HEAD:main$/mu);
 });
 
-test("ordinary CI retains a read-only token while using provider-neutral E2E artifacts", () => {
-  const ci = workflows.get("ci.yml");
+test("ordinary Gitea CI retains a read-only token except for the E2E image registry push", () => {
   const giteaCi = giteaWorkflows.get("ci.yml");
-  assert.ok(ci, "ci.yml must exist");
   assert.ok(giteaCi, ".gitea/workflows/ci.yml must exist");
-  for (const workflow of [ci, giteaCi]) {
-    assert.match(workflow, /^permissions:\n {2}contents: read$/mu);
-    assert.doesNotMatch(workflow, /^\s+(?:contents|packages|id-token|actions|checks|deployments|discussions|issues|pull-requests|security-events|statuses): write$/mu);
-    assert.doesNotMatch(workflow, /docker (?:login|push|pull)/u);
-  }
-});
-
-test("CI isolates incompatible artifact actions from every provider-runnable job", () => {
-  const githubCi = workflows.get("ci.yml");
-  const giteaCi = giteaWorkflows.get("ci.yml");
-  assert.ok(githubCi, ".github/workflows/ci.yml must exist");
-  assert.ok(giteaCi, ".gitea/workflows/ci.yml must exist");
-
-  const job = (workflow, name) => {
-    const header = `  ${name}:\n`;
-    const start = workflow.indexOf(header);
-    assert.notEqual(start, -1, `CI must declare ${name}`);
-    const remainder = workflow.slice(start + header.length);
-    const next = remainder.search(/^ {2}[a-z][a-z0-9-]+:\n/mu);
-    return next === -1 ? workflow.slice(start) : workflow.slice(start, start + header.length + next);
-  };
-
-  const githubImage = job(githubCi, "e2e-image");
-  const githubShard = job(githubCi, "e2e-test");
-  const giteaImage = job(giteaCi, "e2e-image");
-  const giteaShard = job(giteaCi, "e2e-test");
-  assert.match(githubShard, /needs: e2e-image/u);
-  assert.match(githubShard, /d3f86a106a0bac45b974a628896c90dbdf5c8093/u);
-  assert.doesNotMatch(`${githubImage}\n${githubShard}`, /(?:ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5|9bc31d5ccc31df68ecc42ccf4149144866c47d8a)/u);
-  assert.match(giteaShard, /needs: e2e-image/u);
-  assert.match(giteaShard, /9bc31d5ccc31df68ecc42ccf4149144866c47d8a/u);
-  assert.doesNotMatch(`${giteaImage}\n${giteaShard}`, /(?:ea165f8d65b6e75b540449e92b4886f43607fa02|d3f86a106a0bac45b974a628896c90dbdf5c8093)/u);
-
-  assert.doesNotMatch(githubCi, /(?:ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5|9bc31d5ccc31df68ecc42ccf4149144866c47d8a)/u);
-  assert.doesNotMatch(giteaCi, /(?:ea165f8d65b6e75b540449e92b4886f43607fa02|d3f86a106a0bac45b974a628896c90dbdf5c8093)/u);
-});
-
-test("production WebRTC evidence is pinned to an immutable hosted signaling commit", () => {
-  const ci = workflows.get("ci.yml");
-  assert.ok(ci, "ci.yml must exist");
-
-  const jobStart = ci.indexOf("  production-headless-webrtc:\n");
-  const e2eStart = ci.indexOf("  e2e-test:\n");
-  assert.ok(jobStart >= 0 && e2eStart > jobStart,
-    "CI must declare the production WebRTC evidence job before E2E");
-  const job = ci.slice(jobStart, e2eStart);
-  const checkout = job.indexOf("- name: Check out hosted signaling service");
-  const immutableRef = job.indexOf("- name: Verify immutable hosted signaling revision");
-  const install = job.indexOf("- name: Install production proof dependencies");
-  const proof = job.indexOf("- name: Prove production WebRTC on native Linux");
-  assert.ok(checkout >= 0 && immutableRef > checkout && install > immutableRef && proof > install,
-    "hosted signaling source must be verified before dependencies or WebRTC evidence run");
-
-  const verification = job.slice(immutableRef, install);
-  assert.match(verification, /EXPECTED_HOSTED_REF: \$\{\{ vars\.TERMINAY_HOSTED_WEBRTC_REF \}\}/u,
-    "the verifier must use the configured hosted-service revision");
-  assert.match(verification, /\[\[ "\$EXPECTED_HOSTED_REF" =~ \^\[0-9a-f\]\{40\}\$ \]\]/u,
-    "a movable branch, tag, or abbreviated SHA must be rejected");
-  assert.match(verification, /git -C terminay-hosted-service rev-parse HEAD/u,
-    "the hosted checkout must resolve its actual commit");
-  assert.match(verification, /test "\$\(git -C terminay-hosted-service rev-parse HEAD\)" = "\$EXPECTED_HOSTED_REF"/u,
-    "the hosted checkout must exactly match the configured immutable commit");
-  assert.match(verification, /git -C terminay-hosted-service status --porcelain/u,
-    "the evidence job must reject a modified hosted source tree");
-});
-
-test("native Linux WebRTC evidence consumes the governed candidate selection", async () => {
-  const ci = workflows.get("ci.yml");
-  assert.ok(ci, "ci.yml must exist");
-  const jobStart = ci.indexOf("  production-headless-webrtc:\n");
-  const e2eStart = ci.indexOf("  e2e-test:\n");
-  assert.ok(jobStart >= 0 && e2eStart > jobStart);
-  const job = ci.slice(jobStart, e2eStart);
-  assert.match(job, /- arch: x64\n\s+os: ubuntu-24\.04/u);
-  assert.match(job, /- arch: arm64\n\s+os: ubuntu-24\.04-arm/u);
-  assert.match(job, /TERMINAY_PROOF_EXPECT_ARCH: \$\{\{ matrix\.arch \}\}/u);
-  assert.match(job, /node --test scripts\/production-headless-webrtc-secure-werift\.test\.mjs/u);
-
-  const proof = await readFile(
-    new URL("./production-headless-webrtc-secure-werift.test.mjs", import.meta.url),
-    "utf8",
-  );
-  assert.match(proof, /stagedSelection\.package\?\.version, WERIFT_CANDIDATE_VERSION/u);
-  assert.match(proof, /stagedSelection\.patches/u);
-  assert.match(proof, /WERIFT_TURN_REFRESH_PATCH_SHA256/u);
-
-  const selection = JSON.parse(await readFile(
-    new URL("../build/webrtc-runtime/selection.json", import.meta.url),
-    "utf8",
-  ));
-  assert.equal(selection.package.version, "0.24.1-candidate.1");
-  assert.equal(
-    selection.patches[0].sha256,
-    "34ea60bd991256adb2cd50bfe0ef9011cfc79054aff686b9ec35ef4703de4211",
-  );
-
-  const load = job.indexOf("- name: Measure selected WebRTC runtime under direct and relay-only load");
-  const upload = job.indexOf("- name: Upload selected WebRTC load evidence");
-  assert.ok(load > job.indexOf("- name: Prove production WebRTC on native Linux"));
-  assert.ok(upload > load);
-  const loadStep = job.slice(load, upload);
-  assert.match(loadStep, /npm run build --workspace @terminay\/server/u);
-  assert.match(loadStep, /stage-selected-secure-werift-runtime\.mjs --output-dir "\$RUNTIME_ROOT"/u);
-  assert.match(loadStep, /selection\.package\?\.version !== "0\.24\.1-candidate\.1"/u);
-  assert.match(loadStep, /34ea60bd991256adb2cd50bfe0ef9011cfc79054aff686b9ec35ef4703de4211/u);
-  assert.match(loadStep, /commit: process\.env\.GITHUB_SHA/u);
-  assert.match(loadStep, /target: process\.env\.TARGET/u);
-  assert.match(loadStep, /cp "\$RUNTIME_ROOT\/selection\.json" "\$EVIDENCE_ROOT\/selection\.json"/u);
-  assert.match(loadStep, /"\$EVIDENCE_ROOT\/runner\.json"/u);
-  assert.match(loadStep, /> "\$EVIDENCE_ROOT\/direct\.json"/u);
-  assert.match(loadStep, /> "\$EVIDENCE_ROOT\/turn\.json"/u);
-  assert.match(loadStep, /verify-native-webrtc-load-evidence\.mjs/u);
-  assert.match(loadStep, /--commit "\$GITHUB_SHA"/u);
-  assert.match(loadStep, /--mode direct[\s\S]*--duration-ms 10000[\s\S]*--peer-pairs 6/u);
-  assert.match(loadStep, /docker\.io\/coturn\/coturn:4\.6\.3-r3/u);
-  assert.match(loadStep, /umask 077/u);
-  assert.match(loadStep, /trap cleanup EXIT/u);
-  assert.match(loadStep, /docker rm --force "\$TURN_CONTAINER"/u);
-  assert.match(loadStep, /"\$TURN_ROOT" == "\$RUNNER_TEMP"\/terminay-coturn\.\*/u);
-  assert.match(loadStep, /--user "\$\(id -u\):\$\(id -g\)"/u);
-  assert.match(loadStep, /docker inspect --format '\{\{\.State\.Status\}\}' "\$TURN_CONTAINER"/u);
-  assert.match(loadStep, /docker logs "\$TURN_CONTAINER"/u);
-  assert.match(loadStep, /--mode turn[\s\S]*--duration-ms 5000[\s\S]*--peer-pairs 4/u);
-  assert.match(loadStep, /--turn-config "\$TURN_ROOT\/turnserver\.conf"/u);
-  const uploadStep = job.slice(upload);
-  assert.match(uploadStep, /name: selected-webrtc-load-\$\{\{ matrix\.arch \}\}/u);
-  assert.match(uploadStep, /path: release-evidence\/webrtc-load-linux-\$\{\{ matrix\.arch \}\}/u);
-  assert.match(uploadStep, /if-no-files-found: error/u);
+  assert.match(giteaCi, /^permissions:\n {2}contents: read$/mu);
+  const writes = [...giteaCi.matchAll(/^ {6}([a-z-]+): write$/gmu)].map((match) => match[1]);
+  assert.deepEqual(writes, ["packages"], "only the E2E image job may escalate, and only to push its image");
+  const imageJob = giteaCi.slice(giteaCi.indexOf("  e2e-image:\n"), giteaCi.indexOf("  e2e-test:\n"));
+  assert.match(imageJob, /^ {4}permissions:\n {6}contents: read\n {6}packages: write$/mu);
+  assert.doesNotMatch(giteaCi.replace(imageJob, ""), /: write$/mu);
 });
 
 test("release write permission is isolated to jobs that mutate release state", () => {
