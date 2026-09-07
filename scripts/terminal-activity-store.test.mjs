@@ -47,16 +47,39 @@ test('user input clears a pending attention request', () => {
   assert.equal(store.recordUserInput(SESSION, 10).state, 'viewed')
 })
 
-test('attention is suppressed for the focused tab but the finished state is not', () => {
+test('attention and finished states are viewed on the focused tab', () => {
   const store = new TerminalActivityStore()
 
-  // A claimed agent finishes a turn and rings for attention while focused.
   store.recordActivitySignal(SESSION, working(), 0, { focused: true })
   const result = store.recordActivitySignal(SESSION, idle(true, true), 10, { focused: true })
 
-  // No red dot on the tab you are looking at, but the finished (green) state
-  // still applies — matching how active tabs surface completed work.
-  assert.equal(result.state, 'unviewed')
+  assert.equal(result.state, 'viewed')
+})
+
+test('finishing while focused is viewed rather than finished-unviewed', () => {
+  const store = new TerminalActivityStore()
+
+  store.recordActivitySignal(SESSION, working(), 0, { focused: true })
+  const result = store.recordActivitySignal(SESSION, idle(), 10, { focused: true })
+
+  assert.equal(result.state, 'viewed')
+})
+
+test('attention while focused is viewed rather than finished-unviewed', () => {
+  const store = new TerminalActivityStore()
+
+  store.recordActivitySignal(SESSION, working(), 0, { focused: true })
+  const result = store.recordActivitySignal(SESSION, idle(true, true), 10, { focused: true })
+
+  assert.equal(result.state, 'viewed')
+})
+
+test('working while focused stays recent', () => {
+  const store = new TerminalActivityStore()
+
+  const result = store.recordActivitySignal(SESSION, working(), 0, { focused: true })
+
+  assert.equal(result.state, 'recent')
 })
 
 test('raw output never moves a claimed session (the tips-bar repaint case)', () => {

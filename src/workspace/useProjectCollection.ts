@@ -9,6 +9,7 @@ import { closeHostPresentation } from '../host/nativeActions';
 import type { WorkspaceSnapshotStore } from '../shared/WorkspaceSnapshotStore';
 import { normalizeSidebarPanelOrder } from '../terminalSettings';
 import type { SidebarSettings } from '../types/settings';
+import { recallHomeSelected, rememberHomeSelected } from './localViewState';
 import {
 	createProjectTab,
 	isProjectSidebarOpenOnDevice,
@@ -254,6 +255,15 @@ export function useProjectCollection<TTerminal>({
 				: 'project-1';
 	});
 	const activeProjectIdRef = useRef(activeProjectId);
+	/**
+	 * Which view this presentation is showing. Home is not a project, so it is
+	 * held apart from `activeProjectId`, which keeps meaning "the project
+	 * commands act on" whether or not it is the thing on screen.
+	 */
+	const [isHomeSelected, setIsHomeSelected] = useState(() => {
+		if (isAdoptWindow) return false;
+		return recallHomeSelected(projectColorScope, initialViewId);
+	});
 	const reservedProjectColorsRef = useRef(new Set<string>());
 	const [projectCreationError, setProjectCreationError] = useState<
 		string | null
@@ -309,6 +319,10 @@ export function useProjectCollection<TTerminal>({
 			activeProjectId,
 		);
 	}, [activeProjectId, projectColorScope, workspaceViewId]);
+
+	useEffect(() => {
+		rememberHomeSelected(projectColorScope, workspaceViewId, isHomeSelected);
+	}, [isHomeSelected, projectColorScope, workspaceViewId]);
 
 	useEffect(() => {
 		if (workspaceSnapshotStore === undefined) return;
@@ -779,11 +793,20 @@ export function useProjectCollection<TTerminal>({
 			) {
 				holdActiveProjectIdRef.current = projectId;
 			}
+			setIsHomeSelected(false);
 			activeProjectIdRef.current = projectId;
 			setActiveProjectId(projectId);
 		},
 		[holdActiveProjectIdRef],
 	);
+
+	/**
+	 * Show the dashboard. The project commands act on is deliberately left
+	 * alone: selecting Home is a change of view, not of target.
+	 */
+	const selectHome = useCallback(() => {
+		setIsHomeSelected(true);
+	}, []);
 
 	return {
 		activateProject,
@@ -797,6 +820,7 @@ export function useProjectCollection<TTerminal>({
 			workspaceSnapshotStore.snapshot !== null,
 		closeProject,
 		homePath: defaultProjectRoot,
+		isHomeSelected,
 		isWorkspaceHydrating:
 			workspaceSnapshotStore !== undefined &&
 			workspaceSnapshotStore.snapshot === null,
@@ -804,6 +828,7 @@ export function useProjectCollection<TTerminal>({
 		projects,
 		projectsRef,
 		commitProjectSidebar,
+		selectHome,
 		setActiveProjectId,
 		setProjects,
 		updateProject,

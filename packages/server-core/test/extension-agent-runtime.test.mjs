@@ -562,6 +562,55 @@ test("topology polling is inert after a proven binding, including when workers c
   registry.terminalExited(identity); await agents.stop();
 });
 
+test("two terminals of the same provider both keep an active root", async () => {
+  const left = identity;
+  const right = Object.freeze({ serverId: identity.serverId, projectId: "project-2", sessionId: "terminal-2" });
+  const activity = new TerminalActivityService({ serverId: identity.serverId });
+  activity.register(left); activity.register(right);
+  const agents = new AgentStatusService({ activity }); await agents.start();
+  agents.register(left); agents.register(right);
+  const admitted = [];
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: {
+      agentProviderContributions: () => [provider],
+      async admitAgentTerminal(value) { admitted.push(value.context.terminalSessionId); return { state: "bound" }; },
+      async cancelAgentTerminal() { return true; },
+      async drainAgentObservers() {},
+    },
+    reobserveDebounceMs: 0,
+  });
+  registry.register(left); registry.register(right);
+  registry.terminalStarted(left, 19049); registry.terminalStarted(right, 44903);
+  assert.equal(registry.foregroundProcessChanged(left, "test-agent"), true);
+  assert.equal(registry.foregroundProcessChanged(right, "test-agent"), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(admitted.sort(), ["terminal-1", "terminal-2"]);
+  const binding = (sessionId) => ({
+    providerSessionId: `provider-${sessionId}`,
+    mappingVersion: "test-v1",
+    fingerprint: { kind: "fixture", process: { id: sessionId }, metadata: { source: "test" } },
+  });
+  assert.equal((await agents.ingestExtensionLifecycle(left, provider.id, "test-v1", binding("terminal-1"), [
+    { kind: "session.started", title: "Books Grok" },
+    { kind: "turn.started", turnId: "turn-1" },
+    { kind: "agent.done", outcome: "success" },
+  ])).acceptedEventCount, 3);
+  assert.equal((await agents.ingestExtensionLifecycle(right, provider.id, "test-v1", binding("terminal-2"), [
+    { kind: "session.started", title: "Terminay Grok" },
+    { kind: "turn.started", turnId: "turn-1" },
+  ])).acceptedEventCount, 2);
+  const entries = Object.values(agents.getSnapshot().entries);
+  assert.equal(entries.filter((entry) => entry.active && entry.kind === "root").length, 2);
+  assert.equal((await agents.ingestExtensionLifecycle(left, provider.id, "test-v1", undefined, [
+    { kind: "turn.started", turnId: "turn-2" },
+  ])).acceptedEventCount, 1);
+  const books = Object.values(agents.getSnapshot().entries).find((entry) => entry.displayName === "Books Grok");
+  assert.equal(books.state, "working");
+  assert.equal(books.active, true);
+  registry.terminalExited(left); registry.terminalExited(right); await agents.stop();
+});
+
 test("a topology change does not tear down a proven writer; terminal replacement still owns retirement", async () => {
   const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
   const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
