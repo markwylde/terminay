@@ -54,6 +54,7 @@ import {
 	hostedPeerConfiguration,
 	requiredLaneClosed,
 	resolveIceRecoveryGraceMs,
+	type AdvertisedIceAddress,
 } from './hostedPeerLifecycle.js';
 import { createHostedStreamDiagnostics, frameByteLength } from './hostedStreamDiagnostics.js';
 
@@ -74,7 +75,7 @@ export {
 	resolveHostedIceServers,
 	resolveIceRecoveryGraceMs,
 } from './hostedPeerLifecycle.js';
-export type { HostedIceServer } from './hostedPeerLifecycle.js';
+export type { AdvertisedIceAddress, HostedIceServer } from './hostedPeerLifecycle.js';
 
 const CHANNELS = ['api', 'asset', 'control', 'application', 'terminal', 'assets'] as const;
 
@@ -152,6 +153,9 @@ export interface HostedPairingHostOptions {
 	readonly loadRuntime?: (runtimeRoot: string) => Promise<SecureWeriftRuntimeModule>;
 	readonly iceServers?: readonly HostedIceServer[];
 	readonly resolveIceServers?: () => readonly HostedIceServer[];
+	/** An address and UDP port an administrator forwarded to this server, added
+	 * to the gathered candidates rather than replacing them. */
+	readonly advertiseAddress?: AdvertisedIceAddress;
 	readonly iceRecoveryGraceMs?: number;
 	readonly rotateHandoff?: () => ServerPairingHandoff;
 	readonly onHandoff?: (handoff: ServerPairingHandoff) => void;
@@ -947,6 +951,7 @@ async function startPeer(
 				: context.options.signal?.connectHost,
 			context.options.resolveIceServers?.() ?? context.options.iceServers,
 			collectHostIceAddresses(networkInterfaces()),
+			context.options.advertiseAddress,
 		),
 	);
 	const session: { connection?: ServerConnectionLike; peer?: HostedConnectedPeer } = {};

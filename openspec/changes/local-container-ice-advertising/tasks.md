@@ -1,9 +1,9 @@
 ## 1. Server
 
-- [ ] 1.1 Add `--advertise-address` and `TERMINAY_WEBRTC_ADVERTISE_ADDRESS` to `apps/terminay-server/src/cliOptions.ts`, parsing a literal IPv4 or IPv6 address with a port and rejecting hostnames, missing ports, and out-of-range ports; verified by parser unit tests covering IPv4, bracketed IPv6, a hostname, a bare address, port 0, and port 65536
-- [ ] 1.2 Wire the parsed value into `hostedPeerConfiguration` as `iceAdditionalHostAddresses` plus `icePortRange` pinned to that single port, leaving the loopback-signaling branch untouched; verified by unit tests asserting the produced configuration contains the advertised address, pins the port, and still contains the gathered addresses in their original order
-- [ ] 1.3 Fail startup with a message naming the advertised address when it cannot be parsed or its port cannot be bound, including the port-already-in-use case; verified by a test that binds the port first and asserts the server exits non-zero naming that port
-- [ ] 1.4 Assert the advertised address changes nothing about authentication: same pairing URL, same session origin, same host-key proof, and no application data before verification; verified by extending the existing transport-authentication tests with an advertised-address case
+- [x] 1.1 Add `--advertise-address` and `TERMINAY_WEBRTC_ADVERTISE_ADDRESS` to `apps/terminay-server/src/cliOptions.ts`, parsing a literal IPv4 or IPv6 address with a port and rejecting hostnames, missing ports, and out-of-range ports; verified by parser unit tests covering IPv4, bracketed IPv6, a hostname, a bare address, port 0, and port 65536
+- [x] 1.2 Wire the parsed value into `hostedPeerConfiguration` as `iceAdditionalHostAddresses` plus `icePortRange` pinned to that single port, leaving the loopback-signaling branch untouched; verified by unit tests asserting the produced configuration contains the advertised address, pins the port, and still contains the gathered addresses in their original order
+- [x] 1.3 Fail startup with a message naming the advertised address when it cannot be parsed or its port cannot be bound, including the port-already-in-use case; verified by a test that binds the port first and asserts the server exits non-zero naming that port
+- [x] 1.4 Assert the advertised address changes nothing about authentication: same pairing URL, same session origin, same host-key proof, and no application data before verification; verified by extending the existing transport-authentication tests with an advertised-address case
 
 ## 2. CLI
 
