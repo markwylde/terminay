@@ -13,12 +13,12 @@
 
 ## 3. Install layout and systemd integration
 
-- [ ] 3.1 Implement `installArchive` that unpacks into `versions/<version>`, verifies the manifest with `scripts/standalone-artifact.mjs` logic, and writes `install.json`; verified by tests on a temporary prefix checking layout, permissions, and manifest rejection
-- [ ] 3.2 Implement `activate` and `rollback` with `current.tmp` plus `rename`, and `retain` keeping the active and one previous version; verified by tests that interrupt between steps and assert `current` always points at a complete version
-- [ ] 3.3 Implement the systemd adapter (`daemon-reload`, `enable --now`, `start`, `stop`, `disable`, `is-active`, `--user` variants, `loginctl enable-linger`, journal tail) as a thin wrapper over `systemctl` found on `PATH`; verified by tests with a fake `systemctl` script recording invocations
-- [ ] 3.4 Implement the unit and environment-file templates for system and user scope with the runbook hardening and the default variables from design D7, writing the server id once and never rewriting it; verified by golden-file tests for both scopes and a test that reinstall preserves an existing server id
-- [ ] 3.5 Implement scope and run-as selection: TTY prompts with preselected defaults, non-TTY flag requirement, root check for system scope, `useradd` for the dedicated account, existence check for `--run-as`, data-root creation with 0700 and ownership; verified by tests driving the prompts through a fake stdin and a fake `useradd`
-- [ ] 3.6 Implement primary-address discovery for the default direct origin with `--direct-origin` override; verified by a unit test that stubs the UDP socket and by the override path
+- [x] 3.1 Implement `installArchive` that unpacks into `versions/<version>`, verifies the manifest with `scripts/standalone-artifact.mjs` logic, and writes `install.json`; verified by tests on a temporary prefix checking layout, permissions, and manifest rejection
+- [x] 3.2 Implement `activate` and `rollback` with `current.tmp` plus `rename`, and `retain` keeping the active and one previous version; verified by tests that interrupt between steps and assert `current` always points at a complete version
+- [x] 3.3 Implement the systemd adapter (`daemon-reload`, `enable --now`, `start`, `stop`, `disable`, `is-active`, `--user` variants, `loginctl enable-linger`, journal tail) as a thin wrapper over `systemctl` found on `PATH`; verified by tests with a fake `systemctl` script recording invocations
+- [x] 3.4 Implement the unit and environment-file templates for system and user scope with the runbook hardening and the default variables from design D7, writing the server id once and never rewriting it; verified by golden-file tests for both scopes and a test that reinstall preserves an existing server id
+- [x] 3.5 Implement scope and run-as selection: TTY prompts with preselected defaults, non-TTY flag requirement, root check for system scope, `useradd` for the dedicated account, existence check for `--run-as`, data-root creation with 0700 and ownership; verified by tests driving the prompts through a fake stdin and a fake `useradd`
+- [x] 3.6 Implement primary-address discovery for the default direct origin with `--direct-origin` override; verified by a unit test that stubs the UDP socket and by the override path
 
 ## 4. Commands
 
