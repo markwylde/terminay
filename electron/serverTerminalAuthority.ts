@@ -45,6 +45,10 @@ import {
 	type ServerCoreComposition,
 } from '../packages/server-core/src/composition';
 import { OrderedEventJournal } from '../packages/server-core/src/events';
+import type {
+	AgentObservationDiagnosticListener,
+	ExtensionHostDiagnosticListener,
+} from '../packages/server-core/src/extensions/diagnostics';
 import {
 	createDefaultExtensionManagement,
 	createThisServerAgentObservationAdapter,
@@ -267,12 +271,18 @@ export interface ServerTerminalAuthorityOptions {
 	readonly onDeliveryDiagnostic?: (
 		diagnostic: ConnectionDeliveryDiagnostic,
 	) => void;
-	/** Metadata-only report when a matched provider cannot begin observing a
-	 * terminal. The default is written to Desktop diagnostics; no raw extension
-	 * error, journal, path, prompt, or output is exposed. */
+	/** Report when a matched provider cannot begin observing a terminal. It
+	 * carries the provider id, opaque terminal identity, failure class, and the
+	 * reported error; never a journal, prompt, tool input or result. */
 	readonly onAgentAdmissionFailure?: (
 		failure: ExtensionAgentAdmissionFailure,
 	) => void;
+	/** Every agent observation outcome for a terminal, so a terminal that never
+	 * binds is distinguishable from one that was never matched. */
+	readonly onAgentObservationDiagnostic?: AgentObservationDiagnosticListener;
+	/** Extension host lifecycle, including the error behind a crash. Without it
+	 * a host that dies leaves no evidence anywhere. */
+	readonly onExtensionHostDiagnostic?: ExtensionHostDiagnosticListener;
 	/** Metadata-only observer for failed server-owned filesystem operations. */
 	readonly onFileOperationFailure?: (
 		failure: ServerFileOperationFailure,
@@ -635,6 +645,9 @@ export class ServerTerminalAuthority {
 								dataRoot: options.dataRoot,
 								authorityLabel: 'This server',
 								agents: broker,
+								...(options.onExtensionHostDiagnostic === undefined
+									? {}
+									: { onHostDiagnostic: options.onExtensionHostDiagnostic }),
 								...(options.extensionHostChildEntrypoint === undefined
 									? {}
 									: { childEntrypoint: options.extensionHostChildEntrypoint }),
@@ -644,6 +657,9 @@ export class ServerTerminalAuthority {
 								dataRoot: options.dataRoot,
 								authorityLabel: 'This server',
 								agents: broker,
+								...(options.onExtensionHostDiagnostic === undefined
+									? {}
+									: { onHostDiagnostic: options.onExtensionHostDiagnostic }),
 								...(options.extensionHostChildEntrypoint === undefined
 									? {}
 									: { childEntrypoint: options.extensionHostChildEntrypoint }),
@@ -658,12 +674,11 @@ export class ServerTerminalAuthority {
 						projectEnvironmentRouter,
 						topologySignature: (context, signal) => observation.topologySignature(context, signal),
 						onAdmissionFailure: (failure) => {
-							// stderr is captured by DesktopDiagnostics in production. Keep this
-							// record deliberately metadata-only so a broken extension is
-							// observable without leaking provider-private data.
-							process.stderr.write(`[terminay-agent-admission] ${JSON.stringify(failure)}\n`);
 							try { options.onAgentAdmissionFailure?.(failure); } catch { /* host diagnostics cannot affect terminal fallback */ }
 						},
+						...(options.onAgentObservationDiagnostic === undefined
+							? {}
+							: { onObservation: options.onAgentObservationDiagnostic }),
 					});
 					management.hosts.onContributionsChanged(async () => {
 						await extensionAgents?.reconcileProviderInventory();
@@ -829,6 +844,9 @@ export class ServerTerminalAuthority {
 						serviceLifecycle: {
 							stop: async () => {
 								parakeetProvider?.stop();
+								// Stop supervising before draining hosts, so a host stopped
+								// during shutdown cannot schedule a restart behind it.
+								extensionManagement?.stopSupervision();
 								const results = await Promise.allSettled([
 									extensionManagement?.hosts.shutdown(),
 									options.vault?.lock(),

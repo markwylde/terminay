@@ -88,3 +88,31 @@ test("enabled records without a running host are pending, and a failed hot activ
   assert.equal(result.result.extensions[0].runtimeState, "failed");
   assert.equal(result.result.extensions[0].failureMessage, "activation refused");
 });
+
+test("the restart action reaches the quarantine-clearing path and reports the resulting state", async () => {
+  const extensionId = "dev.example.fixture";
+  let snapshot = { schemaVersion: 1, revision: 2, extensions: { [extensionId]: { extensionId, packageName: "fixture-extension", state: "installed", enabled: true, slots: {} } } };
+  const fixture = {
+    snapshot: async () => snapshot,
+    setFailureState: async (id, state, failureClass) => (snapshot = { ...snapshot, revision: snapshot.revision + 1, extensions: { ...snapshot.extensions, [id]: { ...snapshot.extensions[id], state, failureClass } } }),
+  };
+  // A quarantined host is not startable until quarantine is cleared, so the
+  // restart action must go through the composition's restart rather than a
+  // bare stop-then-activate.
+  const calls = [];
+  let quarantined = true;
+  const handlers = createExtensionOperationHandlers({
+    installer: fixture,
+    authorityLabel: "This server",
+    hosts: { statuses: () => [{ extensionId, state: quarantined ? "quarantined" : "running", consecutiveCrashes: quarantined ? 5 : 0 }] },
+    restart: async (id) => { calls.push(id); quarantined = false; },
+    activate: async () => { throw new Error("a quarantined host cannot be activated directly"); },
+  });
+
+  const pending = await handlers.queries["extensions.list"](query("extensions.list", {}));
+  assert.equal(pending.extensions[0].runtimeState, "quarantined", "quarantine is reported rather than hidden");
+
+  const result = await handlers.commands["extensions.restart"](command("extensions.restart", { extensionId, expectedRevision: 2 }, 2));
+  assert.deepEqual(calls, [extensionId]);
+  assert.equal(result.result.extensions[0].runtimeState, "running");
+});
