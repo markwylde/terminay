@@ -624,7 +624,9 @@ jobs:
     if: needs.release.outputs.no_release != 'true'
     permissions:
       contents: read
-      # Provenance attestation signs the published tarball against this run.
+      # npm trusted publishing: the registry authenticates this workflow by its
+      # OIDC identity, so there is no npm token to leak, rotate, or scope
+      # wrongly. The same token signs the provenance attestation.
       id-token: write
 
     steps:
@@ -653,6 +655,8 @@ jobs:
 
       - name: Install dependencies
         run: |
+          # Trusted publishing needs npm 11.5.1 or newer, which is what
+          # exchanges the OIDC token for a short-lived registry credential.
           npm install --global npm@12.0.2
           npm ci
 
@@ -676,12 +680,12 @@ jobs:
       - name: Build the CLI
         run: npm run build --workspace terminay
 
+      # No NODE_AUTH_TOKEN. The registry trusts this repository and this
+      # workflow file by name, and mints a short-lived credential from the OIDC
+      # token granted above. Configured once at npmjs.com under the package's
+      # Settings -> Trusted publisher.
       - name: Publish to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          test -n "$NODE_AUTH_TOKEN"
-          npm publish --workspace terminay --provenance --access public
+        run: npm publish --workspace terminay --provenance --access public
 
   publish-release-notes:
     name: Publish Release Notes
