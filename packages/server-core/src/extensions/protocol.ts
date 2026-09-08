@@ -48,8 +48,39 @@ export type ChildFrame = ExtensionChildFrameBase & {
 		| 'agent.observation.request'
 		| 'agent.terminal.admitted'
 		| 'agent.terminal.cancelled'
-		| 'agent.drain.completed';
+		| 'agent.drain.completed'
+		| 'fatal';
 };
+
+/**
+ * What a child reports about the error that is about to end it.
+ *
+ * A packaged extension child has no terminal behind its stderr, so an error it
+ * does not send here leaves no evidence anywhere. The frame is best effort: a
+ * killed child never sends one, and the host records the exit code it observed
+ * regardless.
+ */
+export interface ExtensionFatalErrorReport {
+	readonly name: string;
+	readonly message: string;
+	readonly stack?: string;
+	readonly exitCode: number;
+}
+
+export function isExtensionFatalErrorReport(
+	value: unknown,
+): value is ExtensionFatalErrorReport {
+	if (typeof value !== 'object' || value === null || Array.isArray(value))
+		return false;
+	const report = value as Record<string, unknown>;
+	return (
+		typeof report.name === 'string' &&
+		typeof report.message === 'string' &&
+		(report.stack === undefined || typeof report.stack === 'string') &&
+		typeof report.exitCode === 'number' &&
+		Number.isInteger(report.exitCode)
+	);
+}
 
 export function frameByteLength(value: unknown): number {
 	try {
@@ -102,6 +133,7 @@ export function isChildFrame(value: unknown): value is ChildFrame {
 			frame.kind === 'agent.observation.request' ||
 			frame.kind === 'agent.terminal.admitted' ||
 			frame.kind === 'agent.terminal.cancelled' ||
-			frame.kind === 'agent.drain.completed')
+			frame.kind === 'agent.drain.completed' ||
+			frame.kind === 'fatal')
 	);
 }

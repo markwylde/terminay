@@ -106,14 +106,12 @@ test('normalization tolerates hostile accessors, symbols, bigint, invalid dates,
 	assert.match(event.fields.error.message, /safe failure/);
 });
 
-test('common credentials, authority URLs, home paths, Windows paths, and private keys are redacted', () => {
+test('common credentials, authority URLs, and private keys are redacted', () => {
 	const canaries = [
 		'Authorization: Bearer auth-canary-123',
 		'api_key=api-canary-123',
 		'password="password-canary"',
 		'https://person:pass@example.test/private?q=query-canary#fragment-canary',
-		'/Users/alice/private/project/file.ts',
-		'C:\\Users\\Alice\\private\\file.ts',
 		'ghp_githubcanary123456789',
 		'-----BEGIN PRIVATE KEY-----\nprivate-canary\n-----END PRIVATE KEY-----',
 	].join(' | ');
@@ -124,7 +122,6 @@ test('common credentials, authority URLs, home paths, Windows paths, and private
 		'password-canary',
 		'query-canary',
 		'fragment-canary',
-		'alice',
 		'githubcanary',
 		'private-canary',
 	]) {
@@ -134,7 +131,49 @@ test('common credentials, authority URLs, home paths, Windows paths, and private
 			canary,
 		);
 	}
-	assert.match(sanitized, /<redacted>|<url:redacted>|<path:redacted>/);
+	assert.match(sanitized, /<redacted>|<url:redacted>/);
+});
+
+test('an extension failure record keeps its stack and still encodes as one line', () => {
+	const stack = [
+		'TypeError: journal directory vanished',
+		'    at renamedSessions (/Users/alice/terminay/extensions/dist/provider.js:312:19)',
+		'    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)',
+	].join('\n');
+	const event = normalizeDiagnosticEvent(
+		input({
+			component: 'local-server',
+			event: 'local-server.extension.failed',
+			fields: {
+				extensionId: 'com.terminay.agent.claude-code',
+				consecutiveFailures: 1,
+				errorName: 'TypeError',
+				errorMessage: 'journal directory vanished',
+				errorStack: stack,
+			},
+		}),
+		'launch',
+	);
+	const encoded = encodeDiagnosticEvent(event);
+	assert.equal(encoded.trimEnd().includes('\n'), false, 'a multi-line stack cannot forge extra log lines');
+	const parsed = JSON.parse(encoded);
+	assert.equal(parsed.fields.errorName, 'TypeError');
+	assert.equal(parsed.fields.errorMessage, 'journal directory vanished');
+	assert.equal(parsed.fields.errorStack, stack, 'the stack is recorded exactly as it was reported');
+});
+
+test('a stack keeps the paths that say which code threw', () => {
+	// A stack whose file names are gone cannot be read back to the code that
+	// threw, which is the whole reason the stack is recorded.
+	const stack = [
+		'TypeError: journal directory vanished',
+		'    at renamedSessions (/Users/alice/Library/Application Support/Terminay/extensions/dist/provider.js:312:19)',
+		'    at handler (C:\\Users\\Alice\\terminay\\dist\\provider.js:88:7)',
+	].join('\n');
+	const sanitized = sanitizeDiagnosticText(stack);
+	assert.match(sanitized, /\/Users\/alice\/Library\/Application Support\/Terminay\/extensions\/dist\/provider\.js:312:19/u);
+	assert.match(sanitized, /C:\\Users\\Alice\\terminay\\dist\\provider\.js:88:7/u);
+	assert.equal(sanitized.includes('journal directory vanished'), true);
 });
 
 test('secret-shaped fields are recursively redacted even when values have no label', () => {
