@@ -35,6 +35,6 @@
   completing clean.
 - [x] 3.2 Validate the change with `openspec validate fix-stale-reconcile-panel-removal`.
   Verified by validation reporting no issues.
-- [ ] 3.3 Open a pull request from the change branch with the proposal's summary,
+- [x] 3.3 Open a pull request from the change branch with the proposal's summary,
   and confirm its checks are green. Verified by the PR's checks reporting
   success.
