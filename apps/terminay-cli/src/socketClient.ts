@@ -16,9 +16,14 @@ if (socketPath === undefined || encodedRequest === undefined) {
 }
 
 try {
-	const response = await sendApprovalRequest(socketPath, JSON.parse(encodedRequest));
+	const response = await sendApprovalRequest(
+		socketPath,
+		JSON.parse(encodedRequest),
+	);
 	process.stdout.write(`${JSON.stringify(response)}\n`);
 } catch (error) {
-	process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+	process.stderr.write(
+		`${error instanceof Error ? error.message : String(error)}\n`,
+	);
 	process.exit(1);
 }

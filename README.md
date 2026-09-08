@@ -60,65 +60,87 @@ There is no published Windows build.
 
 ### Server on Linux
 
-The standalone server ships as one self-contained archive per architecture. It
-bundles its own pinned Node runtime, the native PTY addon, and the UI it
-serves, so the target needs neither Node nor a compiler. Supported hosts are
-GNU/Linux x64 and arm64 with a Debian 12-compatible userspace (glibc 2.36+).
+One command, on the machine you want to reach:
 
 ```bash
-VERSION=<version>
-ARCH=x64                  # or arm64
-BASE=https://github.com/markwylde/terminay/releases/download/v$VERSION
-NAME=terminay-server-$VERSION-linux-$ARCH.tar.gz
-
-curl -fLO "$BASE/$NAME"
-curl -fLO "$BASE/$NAME.sha256"
-sha256sum -c "$NAME.sha256"
-
-sudo tar -xzf "$NAME" -C /opt
-sudo mv /opt/terminay-server-node24.15.0-linux-$ARCH /opt/terminay-server
-/opt/terminay-server/bin/terminay-server --version
+sudo npx terminay daemon install
 ```
 
-A detached Ed25519 `.sig` is published beside each archive for operators who
-hold the release signing public key. Merges to `main` also publish a rolling
-`terminay-server-main-linux-<arch>.tar.gz` on the `main-latest` prerelease; compare
-`revision` in the archive's `artifact-manifest.json`, not `version`, to tell
-whether that channel moved.
+It resolves the newest release, verifies its checksum and Ed25519 signature
+against a key built into the CLI, unpacks it, writes a systemd unit, and starts
+the service. The archive bundles its own pinned Node runtime, the native PTY
+addon, and the UI it serves, so the target needs neither Node nor a compiler
+for the server itself.
 
-Run it in the foreground against a data root that only the service account can
-read. The data root is the server's trust boundary:
+Supported hosts are GNU/Linux x64 and arm64 with systemd and a Debian
+12-compatible userspace (glibc 2.36+).
+
+The installer asks two questions when it has a terminal: whether to install a
+system-wide service or one owned by your login, and which account the server
+and its terminals should run as. That second choice decides whose files, keys,
+and agents a paired device can reach; a dedicated `terminay` account is the
+default. Pass `--system`/`--user` and `--run-as <user>` to answer them up
+front, which is also required when there is no terminal.
+
+Then pair a device:
 
 ```bash
-sudo useradd --system --shell /usr/sbin/nologin terminay
-sudo install -d -o terminay -g terminay -m 700 /var/lib/terminay
-sudo -u terminay /opt/terminay-server/bin/terminay-server --data-root /var/lib/terminay
+sudo npx terminay daemon qr-code
 ```
 
-The server is not remotely reachable until you say so. `--expose direct` serves
-its own signaling endpoint, so no hosted relay is involved:
+That prints a scannable code and the pairing URLs, waits for the device that
+scans it, and asks you to approve it after comparing the match code shown on
+both sides. Open the URL in Terminay Desktop's **Add connection** if you would
+rather not scan.
+
+#### Everyday commands
 
 ```bash
-/opt/terminay-server/bin/terminay-server \
-  --data-root /var/lib/terminay \
-  --expose direct \
-  --http-host 0.0.0.0 --http-port 8443 \
-  --direct-origin https://box.example.test:8443
+npx terminay daemon status        # unit state, version, channel, exposure
+npx terminay daemon upgrade       # follow the installed channel
+npx terminay daemon start|stop
+npx terminay daemon approvals     # non-interactive pairing
+npx terminay daemon uninstall     # keeps the data root unless --purge
 ```
 
-Ask the running server for the pairing link, open it in Terminay Desktop's
-**Add connection**, then approve the device after comparing the match code
-shown on both sides:
+`upgrade` stages the new version beside the running one, switches an atomic
+`current` symlink, and rolls back to the version that was working if the new
+one does not report ready. It refuses to move to an older version unless you
+pass `--allow-downgrade`.
+
+#### Choosing what to install
 
 ```bash
-TERMINAY=/opt/terminay-server/bin/terminay-server
-$TERMINAY --pairing --data-root /var/lib/terminay
-$TERMINAY approvals --data-root /var/lib/terminay
-$TERMINAY approve <approval-id> --data-root /var/lib/terminay
+sudo npx terminay daemon install v4.1.1        # a specific release
+sudo npx terminay daemon install main          # the rolling main channel
+sudo npx terminay daemon install my-branch     # built from source on the target
 ```
 
-The [standalone server runbook](docs/operations/standalone-server.md) covers
-every option, hosted exposure, the systemd unit, backup, and upgrades. The
+A branch or commit has no published archive, so the CLI builds one on the
+machine. It checks for `git`, `python3`, `make`, and a C++ compiler before
+downloading anything.
+
+#### Reaching it
+
+By default the server exposes itself both through the hosted relay and
+directly, and derives its direct origin from the machine's primary address.
+If devices cannot reach that address — the box is behind NAT, or has a DNS
+name — say so:
+
+```bash
+sudo npx terminay daemon install --direct-origin https://box.example.com:8443
+```
+
+`--expose off|hosted|direct|hosted,direct` and `--port` control the rest.
+
+#### Installing by hand
+
+The CLI is the supported path. The archives are published on
+[GitHub Releases](https://github.com/markwylde/terminay/releases) with a
+`.sha256` sidecar and a detached Ed25519 `.sig`, and the
+[standalone server runbook](docs/operations/standalone-server.md) documents the
+manual procedure for hosts where the CLI cannot run, along with hosted
+exposure, backup, and restore. The
 [release install and update policy](docs/operations/release-update-policy.md)
 covers channels, verification, and rollback.
 

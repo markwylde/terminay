@@ -21,13 +21,19 @@ export class VerificationError extends Error {}
 /** The sidecar is `<sha256>  <filename>`, as `release-checksum.mjs` writes it. */
 export function parseChecksumSidecar(contents: string): string {
 	const match = /^([0-9a-f]{64})\s/u.exec(contents.trim());
-	if (match?.[1] === undefined) throw new VerificationError('the published checksum sidecar is not readable');
+	if (match?.[1] === undefined)
+		throw new VerificationError(
+			'the published checksum sidecar is not readable',
+		);
 	return match[1];
 }
 
 export function releasePublicKey(pem: string = RELEASE_PUBLIC_KEY_PEM) {
 	const key = createPublicKey(pem);
-	if (key.asymmetricKeyType !== 'ed25519') throw new VerificationError('the embedded release key is not an Ed25519 key');
+	if (key.asymmetricKeyType !== 'ed25519')
+		throw new VerificationError(
+			'the embedded release key is not an Ed25519 key',
+		);
 	return key;
 }
 
@@ -40,7 +46,9 @@ export interface VerifyArchiveInput {
 	readonly publicKeyPem?: string;
 }
 
-export async function verifyArchive(input: VerifyArchiveInput): Promise<{ readonly sha256: string }> {
+export async function verifyArchive(
+	input: VerifyArchiveInput,
+): Promise<{ readonly sha256: string }> {
 	const expected = parseChecksumSidecar(input.sidecar);
 	const actual = input.digest ?? (await hashFile(input.archivePath));
 	if (actual !== expected) {
@@ -53,8 +61,17 @@ export async function verifyArchive(input: VerifyArchiveInput): Promise<{ readon
 	// message, so the archive is read in full here, exactly as the release
 	// pipeline reads it when signing.
 	const payload = await readFile(input.archivePath);
-	if (!verify(null, payload, releasePublicKey(input.publicKeyPem), input.signature)) {
-		throw new VerificationError('the downloaded archive is not signed by the Terminay release key');
+	if (
+		!verify(
+			null,
+			payload,
+			releasePublicKey(input.publicKeyPem),
+			input.signature,
+		)
+	) {
+		throw new VerificationError(
+			'the downloaded archive is not signed by the Terminay release key',
+		);
 	}
 	return Object.freeze({ sha256: actual });
 }

@@ -1,8 +1,7 @@
 import type { CommandContext } from '../context.js';
 import { probeHealth, waitForReady } from '../health.js';
 import { activeVersion } from '../install.js';
-import { requireOk, sendAsUser } from '../socket.js';
-import { approvalSocketPath } from '../socket.js';
+import { approvalSocketPath, requireOk, sendAsUser } from '../socket.js';
 
 /**
  * `daemon start`, `daemon stop`, and `daemon status`.
@@ -18,10 +17,14 @@ export async function runStart(context: CommandContext): Promise<boolean> {
 	await context.systemd.start();
 	const snapshot = await waitForReady(context.record.healthPort);
 	if (snapshot !== undefined) {
-		context.write(`Terminay Server ${snapshot.version ?? context.record.version} is ready.`);
+		context.write(
+			`Terminay Server ${snapshot.version ?? context.record.version} is ready.`,
+		);
 		return true;
 	}
-	context.write('The server started but has not reported ready. Recent log lines:');
+	context.write(
+		'The server started but has not reported ready. Recent log lines:',
+	);
 	context.write(await context.systemd.journal(20));
 	return false;
 }
@@ -42,7 +45,9 @@ export interface StatusReport {
 	readonly activeVersion?: string;
 }
 
-export async function runStatus(context: CommandContext): Promise<StatusReport> {
+export async function runStatus(
+	context: CommandContext,
+): Promise<StatusReport> {
 	const [unit, enabled, snapshot, active] = await Promise.all([
 		context.systemd.state(),
 		context.systemd.isEnabled(),
@@ -52,10 +57,16 @@ export async function runStatus(context: CommandContext): Promise<StatusReport> 
 
 	// Exposure is asked of the running server rather than read from the record,
 	// so a hand-edited environment file cannot make the status lie.
-	let exposure: readonly string[] | 'off' = context.record.expose.split(',').filter((mode) => mode.length > 0);
+	let exposure: readonly string[] | 'off' = context.record.expose
+		.split(',')
+		.filter((mode) => mode.length > 0);
 	try {
 		const response = requireOk(
-			await sendAsUser(approvalSocketPath(context.record.dataRoot), { op: 'pairing' }, context.record.runAs),
+			await sendAsUser(
+				approvalSocketPath(context.record.dataRoot),
+				{ op: 'pairing' },
+				context.record.runAs,
+			),
 		);
 		if ('exposure' in response) exposure = response.exposure;
 	} catch {
@@ -73,11 +84,15 @@ export async function runStatus(context: CommandContext): Promise<StatusReport> 
 		...(active === undefined ? {} : { activeVersion: active }),
 	});
 
-	context.write(`unit         ${report.unit}${report.enabled ? ' (enabled)' : ' (not enabled)'}`);
+	context.write(
+		`unit         ${report.unit}${report.enabled ? ' (enabled)' : ' (not enabled)'}`,
+	);
 	context.write(`version      ${report.version}`);
 	context.write(`channel      ${report.channel}`);
 	context.write(`revision     ${report.revision.slice(0, 12)}`);
 	context.write(`ready        ${report.ready ? 'yes' : 'no'}`);
-	context.write(`exposure     ${report.exposure === 'off' ? 'off' : report.exposure.join(', ') || 'off'}`);
+	context.write(
+		`exposure     ${report.exposure === 'off' ? 'off' : report.exposure.join(', ') || 'off'}`,
+	);
 	return report;
 }

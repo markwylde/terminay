@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { installLayout } from '../dist/layout.js';
-import { parseEnvironmentFile, renderEnvironmentFile, renderUnit } from '../dist/unit.js';
+import {
+	parseEnvironmentFile,
+	renderEnvironmentFile,
+	renderUnit,
+} from '../dist/unit.js';
 
 const configuration = {
 	serverId: 'build-box',
@@ -60,8 +64,14 @@ test('the user unit runs as its owner and never sets User=', () => {
 	});
 	assert.doesNotMatch(unit, /^User=/mu, 'systemd rejects User= in a user unit');
 	assert.doesNotMatch(unit, /^Group=/mu);
-	assert.match(unit, /^ExecStart=\/home\/ada\/\.local\/share\/terminay\/current\/bin\/terminay-server$/mu);
-	assert.match(unit, /^EnvironmentFile=\/home\/ada\/\.config\/terminay\/server\.env$/mu);
+	assert.match(
+		unit,
+		/^ExecStart=\/home\/ada\/\.local\/share\/terminay\/current\/bin\/terminay-server$/mu,
+	);
+	assert.match(
+		unit,
+		/^EnvironmentFile=\/home\/ada\/\.config\/terminay\/server\.env$/mu,
+	);
 	assert.match(unit, /^WantedBy=default\.target$/mu);
 });
 
@@ -72,7 +82,11 @@ test('every version is reached through current, never a versioned path', () => {
 			runAs: 'ada',
 			workingDirectory: '/home/ada',
 		});
-		assert.doesNotMatch(unit, /\/versions\//u, 'a unit pinned to a version could not be upgraded by switching current');
+		assert.doesNotMatch(
+			unit,
+			/\/versions\//u,
+			'a unit pinned to a version could not be upgraded by switching current',
+		);
 	}
 });
 
@@ -113,7 +127,11 @@ test('a direct origin is omitted rather than left empty when it is not set', () 
 
 test('no secret is ever written to the environment file or the unit', () => {
 	const environment = renderEnvironmentFile(configuration);
-	const unit = renderUnit({ layout: installLayout('system'), runAs: 'terminay', workingDirectory: '/var/lib/terminay' });
+	const unit = renderUnit({
+		layout: installLayout('system'),
+		runAs: 'terminay',
+		workingDirectory: '/var/lib/terminay',
+	});
 	// Comments are stripped first: the file says in prose that no secret
 	// belongs in it, and that sentence must not read as a secret.
 	const withoutComments = (text) =>
@@ -133,18 +151,27 @@ test('no secret is ever written to the environment file or the unit', () => {
 });
 
 test('an existing environment file is parsed so a reinstall can keep its server id', () => {
-	const existing = renderEnvironmentFile({ ...configuration, serverId: 'paired-already' });
+	const existing = renderEnvironmentFile({
+		...configuration,
+		serverId: 'paired-already',
+	});
 	const values = parseEnvironmentFile(existing);
 	assert.equal(values.TERMINAY_SERVER_ID, 'paired-already');
 
 	// Rewriting with the preserved id leaves the identity devices paired with
 	// unchanged, which is the whole point of reading it back.
-	const rewritten = renderEnvironmentFile({ ...configuration, serverId: values.TERMINAY_SERVER_ID, port: 9000 });
+	const rewritten = renderEnvironmentFile({
+		...configuration,
+		serverId: values.TERMINAY_SERVER_ID,
+		port: 9000,
+	});
 	assert.match(rewritten, /^TERMINAY_SERVER_ID=paired-already$/mu);
 	assert.match(rewritten, /^TERMINAY_HTTP_PORT=9000$/mu);
 });
 
 test('comments and blank lines are ignored when parsing', () => {
-	const values = parseEnvironmentFile('# comment\n\nA=1\n  B=two words  \nnot-a-pair\n');
+	const values = parseEnvironmentFile(
+		'# comment\n\nA=1\n  B=two words  \nnot-a-pair\n',
+	);
 	assert.deepEqual({ ...values }, { A: '1', B: 'two words' });
 });
