@@ -58,18 +58,37 @@ wrong value costs some failed connectivity checks and nothing else.
 This also decides the failure mode when the value is wrong: ICE tries it, fails,
 and falls back. Nothing hangs waiting for it.
 
-### D2. The flag pins the ICE port
+### D2. The flag pins a small port range, which is also a budget
 
 A candidate is only publishable if its port is known in advance. werift binds an
-ephemeral UDP port by default, which cannot be named in a `-p` line.
+ephemeral UDP port by default, which cannot be named in a `-p` line. So
+supplying an advertised address also pins `icePortRange`. The two are one
+decision: an address without a fixed port is not forwardable, and a fixed port
+without an address does not help anyone.
 
-So supplying an advertised address also pins `icePortRange` to that single port.
-The two are one decision, not two flags: an address without a fixed port is not
-forwardable, and a fixed port without an address does not help anyone.
+Measured against the real runtime, two things forced the shape of that range.
+werift rejects a single-port range outright (`min` must be less than `max`), and
+it takes one socket per candidate from the range — so the range is a budget, not
+just a promise. Unpinned, this laptop offered 16 candidates, one per local
+address; pinned to four ports, it offers four.
 
-Consequence: two servers on one host cannot both advertise the same port, and
-the second fails to bind at startup. That is correct — they would be
-advertising the same destination.
+Four ports is the chosen budget: publishable in one `-p 51000-51003` range, and
+enough for the advertised address plus a couple of the server's own. A host with
+more addresses than that offers fewer of them than it would unpinned.
+
+That is a real cost, and it was weighed against a range wide enough to keep
+every candidate (32 ports, an ugly `-p` line) and against offering only the
+advertised candidate (one port, but a server reachable some other way loses that
+path). The small range wins because the addresses given up are the ones that
+were not reaching this client — which is the situation that made the operator
+set the option.
+
+What must not happen is the advertised address losing its socket to a gathered
+one. It is first in the list, so it keeps its port, and a test asserts that.
+
+Consequence: two servers on one host cannot advertise overlapping ranges, and
+the second fails to bind at startup. That is correct — they would be advertising
+the same destination.
 
 ### D3. Literal addresses only
 
@@ -130,5 +149,9 @@ or ignores it.
 ## Open Questions
 
 - None blocking. Whether to offer a preset that sets the flag and the published
-  port together is a documentation question, answerable after the runbook is
+  range together is a documentation question, answerable after the runbook is
   written against the real flow.
+- Whether four ports is the right budget is worth revisiting if a real
+  deployment reports losing a candidate it needed. The span is one constant,
+  shared by the server and the CLI so the published range and the bound range
+  cannot drift.

@@ -17,6 +17,7 @@ import {
 	DEFAULT_PROTOCOL_LIMITS,
 	type ProtocolLimits,
 } from '@terminay/protocol';
+import type { AuthenticatedClient, ServerCore } from '@terminay/server-core';
 import {
 	DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY,
 	type UiBundleManifest,
@@ -24,10 +25,6 @@ import {
 	type VerifiedUiBundle,
 	verifyUiBundle,
 } from '@terminay/server-core/ui-bundle';
-import type {
-	AuthenticatedClient,
-	ServerCore,
-} from '@terminay/server-core';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { ServerWebSocketByteTransport } from './webSocketByteTransport.js';
 
@@ -91,9 +88,7 @@ export interface LocalUiServerOptions {
 		}) =>
 			| { readonly deviceId: string }
 			| Promise<{ readonly deviceId: string }>;
-		readonly challenge: (input: {
-			readonly deviceId: string;
-		}) =>
+		readonly challenge: (input: { readonly deviceId: string }) =>
 			| {
 					readonly challengeId: string;
 					readonly deviceId: string;
@@ -443,10 +438,7 @@ export class LocalUiServer {
 			if (
 				method !== 'GET' &&
 				method !== 'HEAD' &&
-				!(
-					method === 'POST' &&
-					request.url?.startsWith('/api/devices/')
-				)
+				!(method === 'POST' && request.url?.startsWith('/api/devices/'))
 			) {
 				sendText(response, 405, 'method not allowed');
 				return;
@@ -456,20 +448,20 @@ export class LocalUiServer {
 					sendText(response, 400, 'credentials must not be placed in a URL');
 					return;
 				}
-				if (url.pathname === '/host-bootstrap.json') {
-					sendJson(
-						response,
-						200,
-						{
-							schemaVersion: 1,
-							serverId: this.options.serverId,
-							manifestPath: '/manifest.json',
-							streamPath: REMOTE_STREAM_PATH,
-						},
-						method === 'HEAD',
-					);
-					return;
-				}
+			if (url.pathname === '/host-bootstrap.json') {
+				sendJson(
+					response,
+					200,
+					{
+						schemaVersion: 1,
+						serverId: this.options.serverId,
+						manifestPath: '/manifest.json',
+						streamPath: REMOTE_STREAM_PATH,
+					},
+					method === 'HEAD',
+				);
+				return;
+			}
 			if (
 				url.pathname === '/api/devices/enroll' ||
 				url.pathname === '/api/devices/challenge' ||
@@ -556,8 +548,11 @@ export class LocalUiServer {
 		try {
 			if (kind === 'enroll') {
 				const allowed = new Set([
-					'pairingSessionId', 'pairingToken', 'pairingExpiresAt',
-					'deviceName', 'publicKeyPem',
+					'pairingSessionId',
+					'pairingToken',
+					'pairingExpiresAt',
+					'deviceName',
+					'publicKeyPem',
 				]);
 				if (
 					Object.keys(value).length !== allowed.size ||
@@ -565,11 +560,17 @@ export class LocalUiServer {
 					[...allowed].some((key) => typeof value[key] !== 'string')
 				)
 					throw new TypeError('device enrollment is invalid');
-				const result = await deviceAuthentication.enroll(value as {
-					pairingSessionId: string; pairingToken: string; pairingExpiresAt: string;
-					deviceName: string; publicKeyPem: string;
-				});
-				if (!isSafeId(result.deviceId)) throw new TypeError('device enrollment is invalid');
+				const result = await deviceAuthentication.enroll(
+					value as {
+						pairingSessionId: string;
+						pairingToken: string;
+						pairingExpiresAt: string;
+						deviceName: string;
+						publicKeyPem: string;
+					},
+				);
+				if (!isSafeId(result.deviceId))
+					throw new TypeError('device enrollment is invalid');
 				sendJson(response, 200, result);
 				return;
 			}
@@ -982,8 +983,7 @@ function formatHost(host: string): string {
 }
 function isProtocolPath(pathname: string): boolean {
 	return (
-		pathname === REMOTE_STREAM_PATH ||
-		pathname.startsWith('/api/devices/')
+		pathname === REMOTE_STREAM_PATH || pathname.startsWith('/api/devices/')
 	);
 }
 function expandAllowedWebOriginAliases(value: string): readonly string[] {

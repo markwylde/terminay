@@ -1,4 +1,3 @@
-import { WebSocket, type RawData } from 'ws';
 import {
 	type ByteTransport,
 	DEFAULT_PROTOCOL_LIMITS,
@@ -7,11 +6,13 @@ import {
 	type TransportState,
 	validateTransportFrame,
 } from '@terminay/protocol';
+import { type RawData, WebSocket } from 'ws';
 
 export class ServerWebSocketByteTransport implements ByteTransport {
 	private readonly values: Uint8Array[] = [];
-	private readonly waiters: Array<(result: IteratorResult<Uint8Array>) => void> =
-		[];
+	private readonly waiters: Array<
+		(result: IteratorResult<Uint8Array>) => void
+	> = [];
 	private readonly listeners = new Set<
 		(state: TransportState, reason?: TransportCloseReason) => void
 	>();
@@ -30,12 +31,14 @@ export class ServerWebSocketByteTransport implements ByteTransport {
 			throw new RangeError('remote stream queue limit is invalid');
 		this.socket.on('message', (data) => this.receive(data));
 		this.socket.once('close', (code, reason) =>
-			this.finishClosed(
-				this.terminalReason ?? socketCloseReason(code, reason),
-			),
+			this.finishClosed(this.terminalReason ?? socketCloseReason(code, reason)),
 		);
 		this.socket.once('error', (cause) =>
-			this.fail({ code: 'unavailable', message: 'remote stream failed', cause }),
+			this.fail({
+				code: 'unavailable',
+				message: 'remote stream failed',
+				cause,
+			}),
 		);
 	}
 
@@ -48,7 +51,11 @@ export class ServerWebSocketByteTransport implements ByteTransport {
 		};
 	}
 	get queuedBytes(): number {
-		try { return this.readBufferedAmount(); } catch { return 0; }
+		try {
+			return this.readBufferedAmount();
+		} catch {
+			return 0;
+		}
 	}
 	get bufferedBytes(): number {
 		return this.buffered;
@@ -76,20 +83,35 @@ export class ServerWebSocketByteTransport implements ByteTransport {
 			try {
 				this.socket.send(frame, { binary: true }, (error) => {
 					if (error) {
-						this.fail({ code: 'unavailable', message: 'remote stream send failed', cause: error });
+						this.fail({
+							code: 'unavailable',
+							message: 'remote stream send failed',
+							cause: error,
+						});
 						reject(error);
 					} else resolve();
 				});
 			} catch (cause) {
-				this.fail({ code: 'unavailable', message: 'remote stream send failed', cause });
+				this.fail({
+					code: 'unavailable',
+					message: 'remote stream send failed',
+					cause,
+				});
 				reject(cause);
 			}
 		});
 	}
 
-	async waitForWritable(requiredBytes = 1, signal?: AbortSignal): Promise<void> {
+	async waitForWritable(
+		requiredBytes = 1,
+		signal?: AbortSignal,
+	): Promise<void> {
 		if (signal?.aborted) throw signal.reason;
-		if (!Number.isSafeInteger(requiredBytes) || requiredBytes < 1 || requiredBytes > this.maxQueuedBytes)
+		if (
+			!Number.isSafeInteger(requiredBytes) ||
+			requiredBytes < 1 ||
+			requiredBytes > this.maxQueuedBytes
+		)
 			throw new RangeError('remote stream writable size is invalid');
 		while (this.readBufferedAmount() + requiredBytes > this.maxQueuedBytes) {
 			this.assertWritable();
@@ -98,7 +120,9 @@ export class ServerWebSocketByteTransport implements ByteTransport {
 		this.assertWritable();
 	}
 
-	async close(reason: TransportCloseReason = { code: 'normal' }): Promise<void> {
+	async close(
+		reason: TransportCloseReason = { code: 'normal' },
+	): Promise<void> {
 		if (this.stateValue === 'closed' || this.stateValue === 'failed') return;
 		this.terminalReason = reason;
 		this.transition('closing', reason);
@@ -158,7 +182,11 @@ export class ServerWebSocketByteTransport implements ByteTransport {
 		this.terminalReason = reason;
 		this.finishIncoming();
 		this.transition('failed', reason);
-		try { this.socket.close(closeCode(reason), reason.message?.slice(0, 120)); } catch { /* best effort after failure */ }
+		try {
+			this.socket.close(closeCode(reason), reason.message?.slice(0, 120));
+		} catch {
+			/* best effort after failure */
+		}
 	}
 
 	private finishClosed(reason: TransportCloseReason): void {
@@ -174,25 +202,43 @@ export class ServerWebSocketByteTransport implements ByteTransport {
 			this.waiters.shift()?.({ done: true, value: undefined });
 	}
 
-	private transition(state: TransportState, reason?: TransportCloseReason): void {
+	private transition(
+		state: TransportState,
+		reason?: TransportCloseReason,
+	): void {
 		this.stateValue = state;
 		for (const listener of [...this.listeners]) {
-			try { listener(state, reason); } catch { /* State observers cannot break transport lifecycle. */ }
+			try {
+				listener(state, reason);
+			} catch {
+				/* State observers cannot break transport lifecycle. */
+			}
 		}
 	}
 
 	private assertWritable(): void {
-		if (this.stateValue === 'open' && this.socket.readyState === WebSocket.OPEN) return;
+		if (this.stateValue === 'open' && this.socket.readyState === WebSocket.OPEN)
+			return;
 		if (this.stateValue === 'open') {
-			this.fail({ code: 'unavailable', message: 'remote stream underlying socket is not open' });
+			this.fail({
+				code: 'unavailable',
+				message: 'remote stream underlying socket is not open',
+			});
 		}
 		throw new Error(`remote stream is ${this.stateValue}`);
 	}
 
 	private readBufferedAmount(): number {
 		const value = this.socket.bufferedAmount;
-		if (!Number.isSafeInteger(value) || value < 0 || value > this.maxQueuedBytes * 2) {
-			this.fail({ code: 'resource', message: 'remote stream buffered amount is invalid' });
+		if (
+			!Number.isSafeInteger(value) ||
+			value < 0 ||
+			value > this.maxQueuedBytes * 2
+		) {
+			this.fail({
+				code: 'resource',
+				message: 'remote stream buffered amount is invalid',
+			});
 			throw new Error('remote stream buffered amount is invalid');
 		}
 		return value;
@@ -203,7 +249,11 @@ function rawDataBytes(data: RawData): Uint8Array {
 	if (Array.isArray(data)) return Buffer.concat(data).slice();
 	if (data instanceof ArrayBuffer) return new Uint8Array(data);
 	if (ArrayBuffer.isView(data))
-		return new Uint8Array(data.buffer, data.byteOffset, data.byteLength).slice();
+		return new Uint8Array(
+			data.buffer,
+			data.byteOffset,
+			data.byteLength,
+		).slice();
 	throw new TypeError('remote stream message is not binary');
 }
 
