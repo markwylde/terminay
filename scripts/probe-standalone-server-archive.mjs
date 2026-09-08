@@ -6,6 +6,7 @@ import { basename, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { assertElfArchitecture, assertSafeArtifactPath, describeArtifactFiles, sha256File, walkRegularTree } from './artifact-determinism.mjs'
 import { getPtyRuntimePlatform, PTY_RUNTIME_NODE_VERSION } from './pty-runtime-platforms.mjs'
+import { normalizeArtifactRelease } from './standalone-artifact.mjs'
 
 const execFileAsync = promisify(execFile)
 
@@ -14,7 +15,7 @@ const execFileAsync = promisify(execFile)
  * This deliberately never tries to execute Linux ELF binaries on a developer
  * machine: callers must run it on Linux with the matching CPU architecture.
  */
-export async function probeStandaloneServerArchive({ archivePath, target = nativeTarget() }) {
+export async function probeStandaloneServerArchive({ archivePath, target = nativeTarget(), channel, revision }) {
   if (process.platform !== 'linux') throw new Error('Standalone archive execution requires native Linux.')
   const platform = getPtyRuntimePlatform(target)
   if (process.arch !== platform.architecture) {
@@ -27,12 +28,15 @@ export async function probeStandaloneServerArchive({ archivePath, target = nativ
     const rootName = await inspectArchiveIndex(archive, target)
     await execFileAsync('tar', ['-xzf', archive, '--no-same-owner', '--no-same-permissions', '-C', temporary])
     const root = join(temporary, rootName)
-    const manifest = await validateExtractedArchive(root, target)
+    const manifest = await validateExtractedArchive(root, target, { channel, revision })
     const version = await executeVersion(root)
     return Object.freeze({
       archive: basename(archive),
       archiveSha256: await sha256File(archive),
       target,
+      channel: manifest.channel,
+      revision: manifest.revision,
+      architecture: manifest.architecture,
       version,
       fileCount: manifest.files.length,
     })
@@ -68,7 +72,7 @@ export async function inspectArchiveIndex(archivePath, target) {
 }
 
 /** Validate the manifest against all extracted regular files before execution. */
-export async function validateExtractedArchive(root, target) {
+export async function validateExtractedArchive(root, target, expected = {}) {
   const platform = getPtyRuntimePlatform(target)
   const entries = await walkRegularTree(root)
   const files = await describeArtifactFiles(root)
@@ -82,6 +86,18 @@ export async function validateExtractedArchive(root, target) {
   }
   if (manifest.entrypoints?.server !== 'bin/terminay-server') {
     throw new Error('standalone archive manifest entrypoints are invalid')
+  }
+  // Channel, revision, and architecture are what an installer compares to
+  // decide whether it already runs these bytes, so a manifest that omits or
+  // misstates any of them is not a usable release artifact.
+  const release = normalizeArtifactRelease(manifest)
+  if (release.architecture !== platform.architecture) {
+    throw new Error(`standalone archive manifest architecture is ${release.architecture}; expected ${platform.architecture}`)
+  }
+  for (const field of ['channel', 'revision']) {
+    if (expected[field] !== undefined && release[field] !== expected[field]) {
+      throw new Error(`standalone archive manifest ${field} is ${release[field]}; expected ${expected[field]}`)
+    }
   }
   if (!Array.isArray(manifest.files) || manifest.files.length === 0) throw new Error('standalone archive manifest has no files')
 
@@ -129,15 +145,18 @@ function parseArgs(values) {
   for (let index = 0; index < values.length; index += 2) {
     const key = values[index]
     const value = values[index + 1]
-    if (!key?.startsWith('--') || value === undefined) throw new Error('expected --archive path and optional --target target')
+    if (!key?.startsWith('--') || value === undefined) throw new Error('expected --archive path and optional --target, --channel, and --revision values')
     args[key.slice(2)] = value
   }
-  if (!args.archive || Object.keys(args).some((key) => key !== 'archive' && key !== 'target')) throw new Error('expected --archive path and optional --target target')
+  const allowed = new Set(['archive', 'target', 'channel', 'revision'])
+  if (!args.archive || Object.keys(args).some((key) => !allowed.has(key))) {
+    throw new Error('expected --archive path and optional --target, --channel, and --revision values')
+  }
   return args
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {
   const args = parseArgs(process.argv.slice(2))
-  const result = await probeStandaloneServerArchive({ archivePath: args.archive, target: args.target })
+  const result = await probeStandaloneServerArchive({ archivePath: args.archive, target: args.target, channel: args.channel, revision: args.revision })
   process.stdout.write(`${JSON.stringify(result)}\n`)
 }

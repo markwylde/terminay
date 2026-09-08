@@ -36,6 +36,8 @@ export interface ServerRuntimeConfig {
 	readonly logSink?: string;
 	readonly uiBundle?: string;
 	readonly localEndpoint?: string;
+	/** Exposure the administrator standingly enabled for this data root. */
+	readonly exposureModes?: readonly string[];
 	readonly shutdownTimeoutMs?: number;
 	/** Server-owned state services. Values never cross this config boundary. */
 	readonly services?: ServerRuntimeServices;
@@ -86,6 +88,9 @@ export interface RuntimeDiagnostics {
 	readonly dataRootConfigured: boolean;
 	readonly uiBundleConfigured: boolean;
 	readonly localEndpointConfigured: boolean;
+	/** Which exposure paths this server was configured to open. Names only: no
+	 * origin, room, or pairing material. */
+	readonly exposureModes: readonly string[];
 	/** Revision and vault metadata are safe to expose; values are never present. */
 	readonly settingsRevision?: number;
 	readonly vault?: VaultStatus;
@@ -278,6 +283,7 @@ export class ServerRuntime {
 			dataRootConfigured: this.config.dataRoot.length > 0,
 			uiBundleConfigured: this.config.uiBundle !== undefined,
 			localEndpointConfigured: this.config.localEndpoint !== undefined,
+			exposureModes: Object.freeze([...(this.config.exposureModes ?? [])]),
 			...(settingsRevision === undefined ? {} : { settingsRevision }),
 			...(vault === undefined ? {} : { vault }),
 			...(remoteExposure === undefined ? {} : { remoteExposure }),

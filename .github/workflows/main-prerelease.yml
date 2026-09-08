@@ -1,0 +1,276 @@
+name: Rolling Main Prerelease
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and sign the archives without touching the main prerelease
+        type: boolean
+        default: true
+
+permissions:
+  # Building proves nothing about the release; only the publishing job may
+  # mutate release state, and it opts in below.
+  contents: read
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+concurrency:
+  # Two swaps must never interleave over the same asset names.
+  group: main-prerelease
+  cancel-in-progress: false
+
+jobs:
+  build-main-archives:
+    name: Build Main Archive (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      # Neither architecture is published unless both were built from this commit.
+      fail-fast: true
+      matrix:
+        include:
+          - target: linux-x64
+            arch: x64
+            runner: ubuntu-latest
+          - target: linux-arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+          cache: npm
+
+      - name: Verify the build commit
+        env:
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          test -n "$EXPECTED_COMMIT"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+
+      - name: Install dependencies
+        run: |
+          npm install --global npm@12.0.2
+          npm ci
+
+      - name: Prepare integrity-pinned Secure Werift source mirror
+        run: |
+          node scripts/prove-secure-werift-offline-rebuild.mjs --prepare-mirror "$RUNNER_TEMP/secure-werift-source-mirror"
+
+      - name: Prove clean network-independent Secure Werift rebuild
+        env:
+          npm_config_offline: "true"
+        run: |
+          node scripts/prove-secure-werift-offline-rebuild.mjs --prove-mirror "$RUNNER_TEMP/secure-werift-source-mirror"
+
+      - name: Build self-contained main channel archive
+        env:
+          EXPECTED_COMMIT: ${{ github.sha }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          OUTPUT="release/main"
+          mkdir -p "$OUTPUT"
+          npm run build:app
+          npm run verify:built-in-extensions
+          node scripts/stage-selected-secure-werift-runtime.mjs
+          NODE_ARCHIVE_URL="$(node -e 'import("./scripts/pty-runtime-platforms.mjs").then((module) => process.stdout.write(module.getPtyRuntimePlatform(process.argv[1]).nodeArchive))' "$TARGET")"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            --output "$RUNNER_TEMP/node-runtime.tar.xz" "$NODE_ARCHIVE_URL"
+          # `main` is a channel, not a version: the manifest records the commit
+          # so an installer can tell whether the channel actually moved.
+          node scripts/build-standalone-server-artifact.mjs \
+            --target "$TARGET" \
+            --channel main \
+            --revision "$EXPECTED_COMMIT" \
+            --node-archive "$RUNNER_TEMP/node-runtime.tar.xz" \
+            --runtime-modules node_modules \
+            --webrtc-runtime build/webrtc-runtime \
+            --output-dir "$RUNNER_TEMP/standalone" > "$RUNNER_TEMP/standalone-build.json"
+          BUILT="$(node -e 'process.stdout.write(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).archivePath)' "$RUNNER_TEMP/standalone-build.json")"
+          test -f "$BUILT"
+          test ! -L "$BUILT"
+          mv "$BUILT" "$OUTPUT/terminay-server-main-$TARGET.tar.gz"
+
+      - name: Probe the extracted main channel archive
+        env:
+          EXPECTED_COMMIT: ${{ github.sha }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          node scripts/probe-standalone-server-archive.mjs \
+            --archive "release/main/terminay-server-main-$TARGET.tar.gz" \
+            --target "$TARGET" \
+            --channel main \
+            --revision "$EXPECTED_COMMIT" > "$RUNNER_TEMP/standalone-probe.json"
+
+      - name: Write and verify main channel checksum
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          ARCHIVE="release/main/terminay-server-main-$TARGET.tar.gz"
+          node scripts/release-checksum.mjs write "$ARCHIVE" "$ARCHIVE.sha256"
+          node scripts/release-checksum.mjs verify "$ARCHIVE" "$ARCHIVE.sha256"
+
+      - name: Sign and verify main channel archive
+        env:
+          TARGET: ${{ matrix.target }}
+          TERMINAY_RELEASE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.TERMINAY_RELEASE_SIGNING_PRIVATE_KEY_B64 }}
+          TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64: ${{ vars.TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64 }}
+        run: |
+          ARCHIVE="release/main/terminay-server-main-$TARGET.tar.gz"
+          test -n "$TERMINAY_RELEASE_SIGNING_PRIVATE_KEY_B64"
+          test -n "$TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64"
+          node scripts/release-signature.mjs sign "$ARCHIVE" "$ARCHIVE.sig"
+          node scripts/release-signature.mjs verify "$ARCHIVE" "$ARCHIVE.sig"
+
+      - name: Upload main channel workflow artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: main-prerelease-${{ matrix.target }}
+          path: |
+            release/main/terminay-server-main-${{ matrix.target }}.tar.gz
+            release/main/terminay-server-main-${{ matrix.target }}.tar.gz.sha256
+            release/main/terminay-server-main-${{ matrix.target }}.tar.gz.sig
+          if-no-files-found: error
+          include-hidden-files: false
+
+  publish-main-prerelease:
+    name: Replace Main Prerelease Assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: build-main-archives
+    # A dry run proves the build and signature path on a branch without ever
+    # touching the published channel.
+    if: github.event_name == 'push' || inputs.dry_run != true
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out verification code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+
+      - name: Download built main channel assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: main-prerelease-*
+          merge-multiple: true
+          path: release/main
+
+      - name: Verify every downloaded asset before publication
+        env:
+          EXPECTED_COMMIT: ${{ github.sha }}
+          TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64: ${{ vars.TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64 }}
+        run: |
+          test -n "$TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64"
+          for target in linux-x64 linux-arm64; do
+            ARCHIVE="release/main/terminay-server-main-$target.tar.gz"
+            test -f "$ARCHIVE"
+            test ! -L "$ARCHIVE"
+            test ! -L "$ARCHIVE.sha256"
+            test ! -L "$ARCHIVE.sig"
+            node scripts/release-checksum.mjs verify "$ARCHIVE" "$ARCHIVE.sha256"
+            node scripts/release-signature.mjs verify "$ARCHIVE" "$ARCHIVE.sig"
+          done
+
+      - name: Ensure the main prerelease exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if ! gh release view main --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release create main \
+              --repo "$GH_REPO" \
+              --target main \
+              --prerelease \
+              --title "main" \
+              --notes "Rolling build of the main branch. Not a supported release."
+          fi
+
+      - name: Upload replacement assets under temporary names
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # Every replacement lands beside the published set first, so a reader
+          # that fetches during the upload still sees the previous complete set.
+          for target in linux-x64 linux-arm64; do
+            for suffix in "" ".sha256" ".sig"; do
+              NAME="terminay-server-main-$target.tar.gz$suffix"
+              cp "release/main/$NAME" "release/main/$NAME.incoming"
+              gh release upload main "release/main/$NAME.incoming" --repo "$GH_REPO" --clobber
+            done
+          done
+
+      - name: Rename temporary assets over the published main channel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # Only after every replacement is fully uploaded does the published
+          # name move, one asset at a time, so no half-written body is ever
+          # served under a channel name.
+          RELEASE_ID="$(gh release view main --repo "$GH_REPO" --json databaseId --jq '.databaseId')"
+          test -n "$RELEASE_ID"
+          for target in linux-x64 linux-arm64; do
+            for suffix in "" ".sha256" ".sig"; do
+              NAME="terminay-server-main-$target.tar.gz$suffix"
+              INCOMING_ID="$(gh api "repos/$GH_REPO/releases/$RELEASE_ID/assets" --paginate --jq ".[] | select(.name == \"$NAME.incoming\") | .id")"
+              test -n "$INCOMING_ID"
+              PUBLISHED_ID="$(gh api "repos/$GH_REPO/releases/$RELEASE_ID/assets" --paginate --jq ".[] | select(.name == \"$NAME\") | .id")"
+              if [ -n "$PUBLISHED_ID" ]; then
+                gh api -X DELETE "repos/$GH_REPO/releases/assets/$PUBLISHED_ID"
+              fi
+              gh api -X PATCH "repos/$GH_REPO/releases/assets/$INCOMING_ID" -f "name=$NAME"
+            done
+          done
+
+      - name: Verify the published main channel set
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EXPECTED_COMMIT: ${{ github.sha }}
+          TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64: ${{ vars.TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64 }}
+        run: |
+          ASSET_NAMES="$(gh release view main --repo "$GH_REPO" --json assets --jq '.assets[].name' | sort)"
+          EXPECTED_ASSET_NAMES="$(cat <<EOF
+          terminay-server-main-linux-arm64.tar.gz
+          terminay-server-main-linux-arm64.tar.gz.sha256
+          terminay-server-main-linux-arm64.tar.gz.sig
+          terminay-server-main-linux-x64.tar.gz
+          terminay-server-main-linux-x64.tar.gz.sha256
+          terminay-server-main-linux-x64.tar.gz.sig
+          EOF
+          )"
+          test "$ASSET_NAMES" = "$EXPECTED_ASSET_NAMES"
+          PUBLISHED="$RUNNER_TEMP/published"
+          mkdir -p "$PUBLISHED"
+          for target in linux-x64 linux-arm64; do
+            for suffix in "" ".sha256" ".sig"; do
+              gh release download main --repo "$GH_REPO" --dir "$PUBLISHED" --pattern "terminay-server-main-$target.tar.gz$suffix"
+            done
+            node scripts/release-checksum.mjs verify \
+              "$PUBLISHED/terminay-server-main-$target.tar.gz" \
+              "$PUBLISHED/terminay-server-main-$target.tar.gz.sha256"
+            node scripts/release-signature.mjs verify \
+              "$PUBLISHED/terminay-server-main-$target.tar.gz" \
+              "$PUBLISHED/terminay-server-main-$target.tar.gz.sig"
+          done
