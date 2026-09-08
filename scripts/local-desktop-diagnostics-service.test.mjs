@@ -23,6 +23,7 @@ const {
 	bindAppChildDiagnostics,
 	bindWebContentsDiagnostics,
 	classifyDiagnosticUrl,
+	reduceRendererSourceLocations,
 } = eventsModule;
 
 async function readEvents(directory) {
@@ -243,6 +244,28 @@ test('WebContents events are registered once and classify load, crash, hang, and
 	const responsive = records.find(({ input }) => input.event === 'renderer.responsive');
 	assert.equal(responsive.input.fields.durationMs, 250);
 	assert.equal(JSON.stringify(records).includes('example.test'), false);
+	// A bootstrap failure names the module, not the path it was loaded from.
+	const preload = records.find(({ input }) => input.event === 'renderer.preload-failed');
+	assert.equal(JSON.stringify(preload.input).includes('/Users/private/'), false);
+});
+
+test('renderer bootstrap source locations are reduced to module names', () => {
+	assert.equal(
+		reduceRendererSourceLocations("ENOENT: no such file or directory, open '/home/someone/secret-project/preload.cjs'"),
+		"ENOENT: no such file or directory, open 'preload.cjs'",
+	);
+	assert.equal(
+		reduceRendererSourceLocations('Error: boom\n    at handler (/Users/someone/app.asar/dist-electron/main.js:12:9)'),
+		'Error: boom\n    at handler (main.js:12:9)',
+	);
+	assert.equal(
+		reduceRendererSourceLocations('at start (C:\\Users\\Someone\\app\\renderer.js:3:1)'),
+		'at start (renderer.js:3:1)',
+	);
+	assert.equal(
+		reduceRendererSourceLocations('at boot (file:///home/someone/app/index.js:8:4)'),
+		'at boot (index.js:8:4)',
+	);
 });
 
 test('Electron child failures have a separate lifecycle source', async () => {
