@@ -28,7 +28,10 @@ export interface InstallLayout {
 	readonly unitPath: string;
 }
 
-export function installLayout(scope: InstallScope, home: string = homedir()): InstallLayout {
+export function installLayout(
+	scope: InstallScope,
+	home: string = homedir(),
+): InstallLayout {
 	if (scope === 'system') {
 		const prefix = '/opt/terminay';
 		return Object.freeze({
@@ -76,36 +79,65 @@ export interface InstallRecord {
 }
 
 export function parseInstallRecord(value: unknown): InstallRecord {
-	if (typeof value !== 'object' || value === null) throw new Error('the install record is not readable');
+	if (typeof value !== 'object' || value === null)
+		throw new Error('the install record is not readable');
 	const record = value as Record<string, unknown>;
-	if (record.schemaVersion !== 1) throw new Error('the install record has an unsupported schema version');
-	for (const field of ['scope', 'channel', 'version', 'revision', 'runAs', 'dataRoot', 'projectRoot', 'expose', 'hostedDomain']) {
-		if (typeof record[field] !== 'string' || (record[field] as string).length === 0) {
+	if (record.schemaVersion !== 1)
+		throw new Error('the install record has an unsupported schema version');
+	for (const field of [
+		'scope',
+		'channel',
+		'version',
+		'revision',
+		'runAs',
+		'dataRoot',
+		'projectRoot',
+		'expose',
+		'hostedDomain',
+	]) {
+		if (
+			typeof record[field] !== 'string' ||
+			(record[field] as string).length === 0
+		) {
 			throw new Error(`the install record is missing ${field}`);
 		}
 	}
-	if (!Number.isSafeInteger(record.port) || !Number.isSafeInteger(record.healthPort)) {
+	if (
+		!Number.isSafeInteger(record.port) ||
+		!Number.isSafeInteger(record.healthPort)
+	) {
 		throw new Error('the install record is missing its ports');
 	}
 	return record as unknown as InstallRecord;
 }
 
-export async function readInstallRecord(layout: InstallLayout): Promise<InstallRecord | undefined> {
+export async function readInstallRecord(
+	layout: InstallLayout,
+): Promise<InstallRecord | undefined> {
 	const raw = await readFile(layout.recordPath, 'utf8').catch(() => undefined);
 	if (raw === undefined) return undefined;
 	return parseInstallRecord(JSON.parse(raw));
 }
 
-export async function writeInstallRecord(layout: InstallLayout, record: InstallRecord): Promise<void> {
+export async function writeInstallRecord(
+	layout: InstallLayout,
+	record: InstallRecord,
+): Promise<void> {
 	// Replaced by rename so a command interrupted mid-write never leaves a
 	// half-written record that the next command would refuse to parse.
 	const temporary = `${layout.recordPath}.tmp`;
-	await writeFile(temporary, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o644 });
+	await writeFile(temporary, `${JSON.stringify(record, null, 2)}\n`, {
+		mode: 0o644,
+	});
 	await rename(temporary, layout.recordPath);
 }
 
-export function versionDirectory(layout: InstallLayout, version: string): string {
-	if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(version)) throw new Error(`unsafe version directory name: ${version}`);
+export function versionDirectory(
+	layout: InstallLayout,
+	version: string,
+): string {
+	if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(version))
+		throw new Error(`unsafe version directory name: ${version}`);
 	return join(layout.versionsDirectory, version);
 }
 
@@ -114,6 +146,10 @@ export function versionDirectory(layout: InstallLayout, version: string): string
  * directories are named for the commit instead. Without this an upgrade would
  * try to stage a new build on top of the running one.
  */
-export function stagedName(channel: ReleaseChannel, version: string, revision: string): string {
+export function stagedName(
+	channel: ReleaseChannel,
+	version: string,
+	revision: string,
+): string {
 	return channel === 'tag' ? version : `${channel}-${revision.slice(0, 12)}`;
 }

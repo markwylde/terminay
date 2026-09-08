@@ -26,7 +26,9 @@ export interface ServiceConfiguration {
 	readonly uiBundle: string;
 }
 
-export function renderEnvironmentFile(configuration: ServiceConfiguration): string {
+export function renderEnvironmentFile(
+	configuration: ServiceConfiguration,
+): string {
 	const lines = [
 		'# Written by `terminay daemon install`. Edit and restart the service to change it.',
 		'# No passphrase, device key, or pairing token belongs in this file.',
@@ -41,7 +43,9 @@ export function renderEnvironmentFile(configuration: ServiceConfiguration): stri
 		`TERMINAY_HEALTH_PORT=${configuration.healthPort}`,
 		`TERMINAY_EXPOSE=${configuration.expose}`,
 		`TERMINAY_HOSTED_DOMAIN=${configuration.hostedDomain}`,
-		...(configuration.directOrigin === undefined ? [] : [`TERMINAY_DIRECT_ORIGIN=${configuration.directOrigin}`]),
+		...(configuration.directOrigin === undefined
+			? []
+			: [`TERMINAY_DIRECT_ORIGIN=${configuration.directOrigin}`]),
 		'TERMINAY_AGENT_INTEGRATION=enabled',
 		'TERMINAY_AI_PROVIDERS=disabled',
 		'TERMINAY_LOG_SINK=journal',
@@ -54,7 +58,9 @@ export function renderEnvironmentFile(configuration: ServiceConfiguration): stri
  * Parse an existing environment file so a reinstall can keep the values it is
  * not being asked to change — the server id above all.
  */
-export function parseEnvironmentFile(contents: string): Readonly<Record<string, string>> {
+export function parseEnvironmentFile(
+	contents: string,
+): Readonly<Record<string, string>> {
 	const values: Record<string, string> = {};
 	for (const line of contents.split('\n')) {
 		const trimmed = line.trim();
@@ -77,7 +83,9 @@ export function renderUnit(configuration: UnitConfiguration): string {
 	// System scope names the account explicitly; a user unit already runs as
 	// its owner, and User=/Group= are rejected there.
 	const account =
-		layout.scope === 'system' ? [`User=${configuration.runAs}`, `Group=${configuration.runAs}`] : [];
+		layout.scope === 'system'
+			? [`User=${configuration.runAs}`, `Group=${configuration.runAs}`]
+			: [];
 	return `[Unit]
 Description=Terminay Server
 Documentation=https://terminay.com/docs/installation

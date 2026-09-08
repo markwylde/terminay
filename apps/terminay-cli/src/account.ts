@@ -3,7 +3,12 @@ import { chmod, mkdir } from 'node:fs/promises';
 import { promisify } from 'node:util';
 
 import type { InstallScope } from './args.js';
-import { type PromptStreams, choose, defaultStreams, isInteractive } from './prompt.js';
+import {
+	choose,
+	defaultStreams,
+	isInteractive,
+	type PromptStreams,
+} from './prompt.js';
 
 /**
  * Choosing the scope of an install and the account the server runs as.
@@ -51,9 +56,14 @@ export async function selectScope(options: {
 	);
 }
 
-export function assertRootForSystemScope(command: string, uid: number | undefined = process.getuid?.()): void {
+export function assertRootForSystemScope(
+	command: string,
+	uid: number | undefined = process.getuid?.(),
+): void {
 	if (uid === 0) return;
-	throw new ScopeError(`a system-wide install writes to /etc and /opt, so it needs root. Re-run it as: sudo ${command}`);
+	throw new ScopeError(
+		`a system-wide install writes to /etc and /opt, so it needs root. Re-run it as: sudo ${command}`,
+	);
 }
 
 async function userExists(name: string): Promise<boolean> {
@@ -67,7 +77,9 @@ async function userExists(name: string): Promise<boolean> {
 
 async function homeOf(name: string): Promise<string | undefined> {
 	try {
-		const { stdout } = await execFileAsync('getent', ['passwd', name], { timeout: 30_000 });
+		const { stdout } = await execFileAsync('getent', ['passwd', name], {
+			timeout: 30_000,
+		});
 		const home = stdout.split('\n')[0]?.split(':')[5];
 		return home !== undefined && home.length > 0 ? home : undefined;
 	} catch {
@@ -78,7 +90,15 @@ async function homeOf(name: string): Promise<string | undefined> {
 async function createDedicatedAccount(): Promise<void> {
 	await execFileAsync(
 		'useradd',
-		['--system', '--home-dir', DEDICATED_HOME, '--create-home', '--shell', '/usr/sbin/nologin', DEDICATED_ACCOUNT],
+		[
+			'--system',
+			'--home-dir',
+			DEDICATED_HOME,
+			'--create-home',
+			'--shell',
+			'/usr/sbin/nologin',
+			DEDICATED_ACCOUNT,
+		],
 		{ timeout: 60_000 },
 	);
 }
@@ -91,25 +111,43 @@ export async function selectRunAs(options: {
 }): Promise<ScopeSelection> {
 	if (options.scope === 'user') {
 		const user = options.currentUser ?? process.env.USER ?? process.env.LOGNAME;
-		if (user === undefined || user.length === 0) throw new ScopeError('the invoking user could not be determined');
+		if (user === undefined || user.length === 0)
+			throw new ScopeError('the invoking user could not be determined');
 		if (options.requested !== undefined && options.requested !== user) {
-			throw new ScopeError('--run-as cannot be used with a user-scope install: the service always runs as you.');
+			throw new ScopeError(
+				'--run-as cannot be used with a user-scope install: the service always runs as you.',
+			);
 		}
 		const home = (await homeOf(user)) ?? process.env.HOME;
-		if (home === undefined) throw new ScopeError(`the home directory of ${user} could not be determined`);
+		if (home === undefined)
+			throw new ScopeError(
+				`the home directory of ${user} could not be determined`,
+			);
 		return Object.freeze({ scope: options.scope, runAs: user, home });
 	}
 
 	if (options.requested !== undefined) {
-		if (!USER_NAME.test(options.requested)) throw new ScopeError(`--run-as is not a valid account name: ${options.requested}`);
+		if (!USER_NAME.test(options.requested))
+			throw new ScopeError(
+				`--run-as is not a valid account name: ${options.requested}`,
+			);
 		// Checked before anything is written, so a typo does not leave a
 		// half-installed service behind.
 		if (!(await userExists(options.requested))) {
-			throw new ScopeError(`--run-as names an account that does not exist on this machine: ${options.requested}`);
+			throw new ScopeError(
+				`--run-as names an account that does not exist on this machine: ${options.requested}`,
+			);
 		}
-		const home = (await homeOf(options.requested));
-		if (home === undefined) throw new ScopeError(`the home directory of ${options.requested} could not be determined`);
-		return Object.freeze({ scope: options.scope, runAs: options.requested, home });
+		const home = await homeOf(options.requested);
+		if (home === undefined)
+			throw new ScopeError(
+				`the home directory of ${options.requested} could not be determined`,
+			);
+		return Object.freeze({
+			scope: options.scope,
+			runAs: options.requested,
+			home,
+		});
 	}
 
 	const streams = options.streams ?? defaultStreams();
@@ -118,23 +156,38 @@ export async function selectRunAs(options: {
 		choice = await choose(
 			'Which account should the server and its terminals run as?\nThis decides whose files, keys, and agents a paired device can reach.',
 			[
-				['dedicated', `A dedicated \`${DEDICATED_ACCOUNT}\` account with its own home (recommended)`],
+				[
+					'dedicated',
+					`A dedicated \`${DEDICATED_ACCOUNT}\` account with its own home (recommended)`,
+				],
 				['login', 'An existing login user, named with --run-as'],
 			],
 			streams,
 		);
 	}
 	if (choice === 'login') {
-		throw new ScopeError('re-run the install with --run-as <user> to name the login account the server should run as.');
+		throw new ScopeError(
+			're-run the install with --run-as <user> to name the login account the server should run as.',
+		);
 	}
 	if (!(await userExists(DEDICATED_ACCOUNT))) await createDedicatedAccount();
-	return Object.freeze({ scope: options.scope, runAs: DEDICATED_ACCOUNT, home: DEDICATED_HOME });
+	return Object.freeze({
+		scope: options.scope,
+		runAs: DEDICATED_ACCOUNT,
+		home: DEDICATED_HOME,
+	});
 }
 
 /** The data root is the trust boundary, so it is owner-only from the start. */
-export async function prepareDataRoot(dataRoot: string, runAs: string, scope: InstallScope): Promise<void> {
+export async function prepareDataRoot(
+	dataRoot: string,
+	runAs: string,
+	scope: InstallScope,
+): Promise<void> {
 	await mkdir(dataRoot, { recursive: true, mode: 0o700 });
 	await chmod(dataRoot, 0o700);
 	if (scope !== 'system') return;
-	await execFileAsync('chown', ['-R', `${runAs}:${runAs}`, dataRoot], { timeout: 60_000 });
+	await execFileAsync('chown', ['-R', `${runAs}:${runAs}`, dataRoot], {
+		timeout: 60_000,
+	});
 }

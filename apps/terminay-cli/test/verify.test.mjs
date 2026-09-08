@@ -7,7 +7,13 @@ import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
 
-import { RELEASE_PUBLIC_KEY_PEM, VerificationError, parseChecksumSidecar, releasePublicKey, verifyArchive } from '../dist/verify.js';
+import {
+	parseChecksumSidecar,
+	RELEASE_PUBLIC_KEY_PEM,
+	releasePublicKey,
+	VerificationError,
+	verifyArchive,
+} from '../dist/verify.js';
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = resolve(new URL('../../..', import.meta.url).pathname);
@@ -16,8 +22,12 @@ function keyPair() {
 	const { publicKey, privateKey } = generateKeyPairSync('ed25519');
 	return {
 		publicPem: publicKey.export({ type: 'spki', format: 'pem' }).toString(),
-		publicB64: Buffer.from(publicKey.export({ type: 'spki', format: 'pem' })).toString('base64'),
-		privateB64: Buffer.from(privateKey.export({ type: 'pkcs8', format: 'pem' })).toString('base64'),
+		publicB64: Buffer.from(
+			publicKey.export({ type: 'spki', format: 'pem' }),
+		).toString('base64'),
+		privateB64: Buffer.from(
+			privateKey.export({ type: 'pkcs8', format: 'pem' }),
+		).toString('base64'),
 	};
 }
 
@@ -31,13 +41,22 @@ async function signedFixture(directory, bytes) {
 	const archive = join(directory, 'terminay-server-9.9.9-linux-x64.tar.gz');
 	await writeFile(archive, bytes);
 	const signature = `${archive}.sig`;
-	await execFileAsync('node', [join(repositoryRoot, 'scripts/release-signature.mjs'), 'sign', archive, signature], {
-		env: {
-			...process.env,
-			TERMINAY_RELEASE_SIGNING_PRIVATE_KEY_B64: keys.privateB64,
-			TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64: keys.publicB64,
+	await execFileAsync(
+		'node',
+		[
+			join(repositoryRoot, 'scripts/release-signature.mjs'),
+			'sign',
+			archive,
+			signature,
+		],
+		{
+			env: {
+				...process.env,
+				TERMINAY_RELEASE_SIGNING_PRIVATE_KEY_B64: keys.privateB64,
+				TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64: keys.publicB64,
+			},
 		},
-	});
+	);
 	const digest = createHash('sha256').update(bytes).digest('hex');
 	return {
 		archivePath: archive,
@@ -69,8 +88,15 @@ test('a wrong hash is refused before the signature is considered', async () => {
 	await withDirectory(async (directory) => {
 		const fixture = await signedFixture(directory, randomBytes(4096));
 		await assert.rejects(
-			() => verifyArchive({ ...fixture, sidecar: `${'0'.repeat(64)}  archive\n`, digest: undefined }),
-			(error) => error instanceof VerificationError && /does not match its published checksum/u.test(error.message),
+			() =>
+				verifyArchive({
+					...fixture,
+					sidecar: `${'0'.repeat(64)}  archive\n`,
+					digest: undefined,
+				}),
+			(error) =>
+				error instanceof VerificationError &&
+				/does not match its published checksum/u.test(error.message),
 		);
 	});
 });
@@ -82,8 +108,15 @@ test('a tampered archive whose sidecar was updated to match still fails the sign
 		await writeFile(fixture.archivePath, tampered);
 		const digest = createHash('sha256').update(tampered).digest('hex');
 		await assert.rejects(
-			() => verifyArchive({ ...fixture, sidecar: `${digest}  archive\n`, digest: undefined }),
-			(error) => error instanceof VerificationError && /not signed by the Terminay release key/u.test(error.message),
+			() =>
+				verifyArchive({
+					...fixture,
+					sidecar: `${digest}  archive\n`,
+					digest: undefined,
+				}),
+			(error) =>
+				error instanceof VerificationError &&
+				/not signed by the Terminay release key/u.test(error.message),
 		);
 	});
 });
@@ -104,7 +137,10 @@ test('a corrupted signature is refused', async () => {
 		const fixture = await signedFixture(directory, randomBytes(4096));
 		const broken = Buffer.from(fixture.signature);
 		broken[0] = broken[0] ^ 0xff;
-		await assert.rejects(() => verifyArchive({ ...fixture, signature: broken }), (error) => error instanceof VerificationError);
+		await assert.rejects(
+			() => verifyArchive({ ...fixture, signature: broken }),
+			(error) => error instanceof VerificationError,
+		);
 	});
 });
 
@@ -116,24 +152,49 @@ test('the embedded release key is a usable Ed25519 public key', () => {
 test('a non-Ed25519 embedded key is rejected rather than used', () => {
 	const { publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
 	assert.throws(
-		() => releasePublicKey(publicKey.export({ type: 'spki', format: 'pem' }).toString()),
+		() =>
+			releasePublicKey(
+				publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+			),
 		(error) => error instanceof VerificationError,
 	);
 });
 
 test('checksum sidecars are parsed and malformed ones refused', () => {
-	assert.equal(parseChecksumSidecar(`${'a'.repeat(64)}  file.tar.gz\n`), 'a'.repeat(64));
-	assert.throws(() => parseChecksumSidecar('not a checksum'), VerificationError);
+	assert.equal(
+		parseChecksumSidecar(`${'a'.repeat(64)}  file.tar.gz\n`),
+		'a'.repeat(64),
+	);
+	assert.throws(
+		() => parseChecksumSidecar('not a checksum'),
+		VerificationError,
+	);
 	assert.throws(() => parseChecksumSidecar(''), VerificationError);
 });
 
 test('no flag or environment variable can skip verification', async () => {
 	// Scanned with comments removed: the module documents why there is no
 	// bypass, and that prose must not be mistaken for a bypass.
-	const source = (await readFile(resolve(repositoryRoot, 'apps/terminay-cli/src/verify.ts'), 'utf8'))
+	const source = (
+		await readFile(
+			resolve(repositoryRoot, 'apps/terminay-cli/src/verify.ts'),
+			'utf8',
+		)
+	)
 		.replaceAll(/\/\*[\s\S]*?\*\//gu, '')
 		.replaceAll(/\/\/.*$/gmu, '');
-	assert.doesNotMatch(source, /process\.env/u, 'verification must not consult the environment');
-	assert.doesNotMatch(source, /process\.argv/u, 'verification must not consult the command line');
-	assert.doesNotMatch(source, /\bskip|\binsecure|allowUnsigned|rejectUnauthorized/iu);
+	assert.doesNotMatch(
+		source,
+		/process\.env/u,
+		'verification must not consult the environment',
+	);
+	assert.doesNotMatch(
+		source,
+		/process\.argv/u,
+		'verification must not consult the command line',
+	);
+	assert.doesNotMatch(
+		source,
+		/\bskip|\binsecure|allowUnsigned|rejectUnauthorized/iu,
+	);
 });

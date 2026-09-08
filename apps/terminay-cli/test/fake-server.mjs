@@ -1,6 +1,6 @@
+import { mkdir } from 'node:fs/promises';
 import { createServer as createHttpServer } from 'node:http';
 import { createServer } from 'node:net';
-import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 /**

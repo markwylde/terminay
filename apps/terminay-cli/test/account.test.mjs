@@ -5,7 +5,14 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 
-import { DEDICATED_ACCOUNT, ScopeError, assertRootForSystemScope, prepareDataRoot, selectRunAs, selectScope } from '../dist/account.js';
+import {
+	assertRootForSystemScope,
+	DEDICATED_ACCOUNT,
+	prepareDataRoot,
+	ScopeError,
+	selectRunAs,
+	selectScope,
+} from '../dist/account.js';
 import { createFakeBin } from './fake-bin.mjs';
 
 /** A stdin the prompt believes is a terminal, scripted with answers. */
@@ -33,31 +40,50 @@ test('a terminal is asked for the scope, with system preselected', async () => {
 	const prompt = written.join('');
 	assert.match(prompt, /System-wide service/u);
 	assert.match(prompt, /\[default\]/u);
-	assert.ok(prompt.indexOf('System-wide') < prompt.indexOf('User service'), 'system must be offered first');
+	assert.ok(
+		prompt.indexOf('System-wide') < prompt.indexOf('User service'),
+		'system must be offered first',
+	);
 });
 
 test('a terminal can choose the user scope by number or by name', async () => {
 	assert.equal(await selectScope({ streams: terminal('2').streams }), 'user');
-	assert.equal(await selectScope({ streams: terminal('user').streams }), 'user');
+	assert.equal(
+		await selectScope({ streams: terminal('user').streams }),
+		'user',
+	);
 });
 
 test('a flag skips the prompt entirely', async () => {
-	assert.equal(await selectScope({ requested: 'user', streams: terminal().streams }), 'user');
-	assert.equal(await selectScope({ requested: 'system', streams: pipe().streams }), 'system');
+	assert.equal(
+		await selectScope({ requested: 'user', streams: terminal().streams }),
+		'user',
+	);
+	assert.equal(
+		await selectScope({ requested: 'system', streams: pipe().streams }),
+		'system',
+	);
 });
 
 test('without a terminal the scope must be given as a flag', async () => {
 	await assert.rejects(
 		() => selectScope({ streams: pipe().streams }),
-		(error) => error instanceof ScopeError && /--system/u.test(error.message) && /--user/u.test(error.message),
+		(error) =>
+			error instanceof ScopeError &&
+			/--system/u.test(error.message) &&
+			/--user/u.test(error.message),
 	);
 });
 
 test('a system install by a non-root user is refused and told how to re-run', () => {
-	assert.doesNotThrow(() => assertRootForSystemScope('terminay daemon install', 0));
+	assert.doesNotThrow(() =>
+		assertRootForSystemScope('terminay daemon install', 0),
+	);
 	assert.throws(
 		() => assertRootForSystemScope('terminay daemon install', 1000),
-		(error) => error instanceof ScopeError && /sudo terminay daemon install/u.test(error.message),
+		(error) =>
+			error instanceof ScopeError &&
+			/sudo terminay daemon install/u.test(error.message),
 	);
 });
 
@@ -74,9 +100,16 @@ test('the dedicated account is preselected and created when it is absent', async
 		const selection = await selectRunAs({ scope: 'system', streams });
 		assert.equal(selection.runAs, DEDICATED_ACCOUNT);
 		assert.equal(selection.home, '/var/lib/terminay');
-		assert.match(written.join(''), /whose files, keys, and agents a paired device can reach/u);
+		assert.match(
+			written.join(''),
+			/whose files, keys, and agents a paired device can reach/u,
+		);
 		assert.ok(
-			fake.invocations().some((line) => line.startsWith('useradd --system --home-dir /var/lib/terminay')),
+			fake
+				.invocations()
+				.some((line) =>
+					line.startsWith('useradd --system --home-dir /var/lib/terminay'),
+				),
 			'expected the dedicated system account to be created',
 		);
 	} finally {
@@ -92,9 +125,15 @@ test('an existing dedicated account is reused rather than recreated', async () =
 	const originalPath = process.env.PATH;
 	process.env.PATH = `${fake.directory}:${originalPath}`;
 	try {
-		const selection = await selectRunAs({ scope: 'system', streams: terminal('').streams });
+		const selection = await selectRunAs({
+			scope: 'system',
+			streams: terminal('').streams,
+		});
 		assert.equal(selection.runAs, DEDICATED_ACCOUNT);
-		assert.ok(!fake.invocations().some((line) => line.startsWith('useradd')), 'useradd must not run for an existing account');
+		assert.ok(
+			!fake.invocations().some((line) => line.startsWith('useradd')),
+			'useradd must not run for an existing account',
+		);
 	} finally {
 		process.env.PATH = originalPath;
 		await fake.close();
@@ -126,9 +165,13 @@ test('--run-as naming an account that does not exist fails before anything is wr
 	try {
 		await assert.rejects(
 			() => selectRunAs({ scope: 'system', requested: 'nobody-here' }),
-			(error) => error instanceof ScopeError && /does not exist/u.test(error.message),
+			(error) =>
+				error instanceof ScopeError && /does not exist/u.test(error.message),
 		);
-		assert.ok(!fake.invocations().some((line) => line.startsWith('useradd')), 'nothing may be created for an unknown user');
+		assert.ok(
+			!fake.invocations().some((line) => line.startsWith('useradd')),
+			'nothing may be created for an unknown user',
+		);
 	} finally {
 		process.env.PATH = originalPath;
 		await fake.close();
@@ -138,7 +181,9 @@ test('--run-as naming an account that does not exist fails before anything is wr
 test('an invalid account name is refused without shelling out', async () => {
 	await assert.rejects(
 		() => selectRunAs({ scope: 'system', requested: 'Ada Lovelace; rm -rf /' }),
-		(error) => error instanceof ScopeError && /not a valid account name/u.test(error.message),
+		(error) =>
+			error instanceof ScopeError &&
+			/not a valid account name/u.test(error.message),
 	);
 });
 
@@ -151,8 +196,13 @@ test('a user-scope install always runs as the invoking account', async () => {
 		const selection = await selectRunAs({ scope: 'user', currentUser: 'ada' });
 		assert.equal(selection.runAs, 'ada');
 		await assert.rejects(
-			() => selectRunAs({ scope: 'user', currentUser: 'ada', requested: 'root' }),
-			(error) => error instanceof ScopeError && /--run-as cannot be used with a user-scope install/u.test(error.message),
+			() =>
+				selectRunAs({ scope: 'user', currentUser: 'ada', requested: 'root' }),
+			(error) =>
+				error instanceof ScopeError &&
+				/--run-as cannot be used with a user-scope install/u.test(
+					error.message,
+				),
 		);
 	} finally {
 		process.env.PATH = originalPath;
@@ -181,7 +231,9 @@ test('a system-scope data root is handed to the run-as account', async () => {
 		const dataRoot = join(directory, 'data');
 		await prepareDataRoot(dataRoot, 'terminay', 'system');
 		assert.equal((await stat(dataRoot)).mode & 0o777, 0o700);
-		assert.deepEqual(fake.invocations(), [`chown -R terminay:terminay ${dataRoot}`]);
+		assert.deepEqual(fake.invocations(), [
+			`chown -R terminay:terminay ${dataRoot}`,
+		]);
 	} finally {
 		process.env.PATH = originalPath;
 		await rm(directory, { recursive: true, force: true });

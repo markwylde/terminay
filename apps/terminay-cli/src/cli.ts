@@ -1,14 +1,18 @@
 #!/usr/bin/env node
-import { HELP_TEXT, UsageError, parseCommandLine } from './args.js';
 import { ScopeError } from './account.js';
+import { HELP_TEXT, parseCommandLine, UsageError } from './args.js';
 import { runInstall } from './commands/install.js';
 import { runStart, runStatus, runStop } from './commands/lifecycle.js';
-import { runApprovals, runPairing, runResolveApproval } from './commands/pairing.js';
+import {
+	runApprovals,
+	runPairing,
+	runResolveApproval,
+} from './commands/pairing.js';
 import { runResetIdentity, runUninstall } from './commands/uninstall.js';
 import { runUpgrade } from './commands/upgrade.js';
 import { NotInstalledError, resolveContext } from './context.js';
 import { ManifestError } from './manifest.js';
-import { UnsupportedHostError, assertSupportedHost } from './platform.js';
+import { assertSupportedHost, UnsupportedHostError } from './platform.js';
 import { SocketError } from './socket.js';
 import { VerificationError } from './verify.js';
 
@@ -62,7 +66,11 @@ async function main(argv: readonly string[]): Promise<number> {
 			return 0;
 		case 'approve':
 		case 'deny':
-			await runResolveApproval(parsed.command, parsed.approvalId as string, context);
+			await runResolveApproval(
+				parsed.command,
+				parsed.approvalId as string,
+				context,
+			);
 			return 0;
 		case 'reset-identity':
 			await runResetIdentity(parsed.options, context);
@@ -84,10 +92,20 @@ const EXPECTED_ERRORS = [
 try {
 	process.exitCode = await main(process.argv.slice(2));
 } catch (error) {
-	const expected = EXPECTED_ERRORS.some((kind) => error instanceof kind) || (error instanceof Error && error.name.endsWith('Error'));
-	process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-	if (error instanceof UsageError) process.stderr.write('\nRun `terminay --help` for usage.\n');
-	if (!expected && error instanceof Error && error.stack !== undefined && process.env.TERMINAY_DEBUG === '1') {
+	const expected =
+		EXPECTED_ERRORS.some((kind) => error instanceof kind) ||
+		(error instanceof Error && error.name.endsWith('Error'));
+	process.stderr.write(
+		`${error instanceof Error ? error.message : String(error)}\n`,
+	);
+	if (error instanceof UsageError)
+		process.stderr.write('\nRun `terminay --help` for usage.\n');
+	if (
+		!expected &&
+		error instanceof Error &&
+		error.stack !== undefined &&
+		process.env.TERMINAY_DEBUG === '1'
+	) {
 		process.stderr.write(`${error.stack}\n`);
 	}
 	process.exitCode = 1;

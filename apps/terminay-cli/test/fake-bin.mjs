@@ -31,7 +31,9 @@ export async function createFakeBin() {
 			return path;
 		},
 		invocations() {
-			return readFileSync(log, 'utf8').split('\n').filter((line) => line.length > 0);
+			return readFileSync(log, 'utf8')
+				.split('\n')
+				.filter((line) => line.length > 0);
 		},
 		env(base = process.env) {
 			return { ...base, PATH: `${directory}:${base.PATH ?? ''}` };

@@ -21,30 +21,42 @@ export interface HealthSnapshot {
 	readonly version?: string;
 }
 
-export function probeHealth(port: number, path: '/readyz' | '/healthz' = '/readyz'): Promise<HealthSnapshot | undefined> {
+export function probeHealth(
+	port: number,
+	path: '/readyz' | '/healthz' = '/readyz',
+): Promise<HealthSnapshot | undefined> {
 	return new Promise((resolve) => {
-		const request = get({ host: '127.0.0.1', port, path, timeout: REQUEST_TIMEOUT_MS }, (response) => {
-			let body = '';
-			response.setEncoding('utf8');
-			response.on('data', (chunk: string) => {
-				body += chunk;
-				if (body.length > 64 * 1024) response.destroy();
-			});
-			response.on('end', () => {
-				try {
-					const parsed = JSON.parse(body) as Record<string, unknown>;
-					resolve({
-						status: String(parsed.status ?? 'unknown'),
-						ready: parsed.ready === true,
-						...(typeof parsed.phase === 'string' ? { phase: parsed.phase } : {}),
-						...(typeof parsed.serverId === 'string' ? { serverId: parsed.serverId } : {}),
-						...(typeof parsed.version === 'string' ? { version: parsed.version } : {}),
-					});
-				} catch {
-					resolve(undefined);
-				}
-			});
-		});
+		const request = get(
+			{ host: '127.0.0.1', port, path, timeout: REQUEST_TIMEOUT_MS },
+			(response) => {
+				let body = '';
+				response.setEncoding('utf8');
+				response.on('data', (chunk: string) => {
+					body += chunk;
+					if (body.length > 64 * 1024) response.destroy();
+				});
+				response.on('end', () => {
+					try {
+						const parsed = JSON.parse(body) as Record<string, unknown>;
+						resolve({
+							status: String(parsed.status ?? 'unknown'),
+							ready: parsed.ready === true,
+							...(typeof parsed.phase === 'string'
+								? { phase: parsed.phase }
+								: {}),
+							...(typeof parsed.serverId === 'string'
+								? { serverId: parsed.serverId }
+								: {}),
+							...(typeof parsed.version === 'string'
+								? { version: parsed.version }
+								: {}),
+						});
+					} catch {
+						resolve(undefined);
+					}
+				});
+			},
+		);
 		request.on('timeout', () => request.destroy());
 		request.on('error', () => resolve(undefined));
 	});

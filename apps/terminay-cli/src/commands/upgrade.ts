@@ -1,6 +1,11 @@
 import type { DaemonOptions } from '../args.js';
 import type { CommandContext } from '../context.js';
-import { discardDownloads, downloadAsset, downloadBytes, downloadText } from '../download.js';
+import {
+	discardDownloads,
+	downloadAsset,
+	downloadBytes,
+	downloadText,
+} from '../download.js';
 import { waitForReady } from '../health.js';
 import { activate, activeVersion, installArchive, retain } from '../install.js';
 import { stagedName, writeInstallRecord } from '../layout.js';
@@ -41,7 +46,8 @@ export class UpgradeError extends Error {}
 
 /** Compare two release versions by semver precedence, ignoring prerelease tags. */
 function compareVersions(left: string, right: string): number {
-	const parse = (value: string) => value.split(/[-+]/u, 1)[0]?.split('.').map(Number) ?? [];
+	const parse = (value: string) =>
+		value.split(/[-+]/u, 1)[0]?.split('.').map(Number) ?? [];
 	const a = parse(left);
 	const b = parse(right);
 	for (let index = 0; index < 3; index += 1) {
@@ -71,16 +77,27 @@ export async function runUpgrade(
 	const architecture = dependencies.architecture ?? hostArchitecture();
 	const resolved = await resolveRef(target, {
 		architecture,
-		...(dependencies.repository === undefined ? {} : { repository: dependencies.repository }),
-		...(dependencies.apiBase === undefined ? {} : { apiBase: dependencies.apiBase }),
-		...(dependencies.webBase === undefined ? {} : { webBase: dependencies.webBase }),
+		...(dependencies.repository === undefined
+			? {}
+			: { repository: dependencies.repository }),
+		...(dependencies.apiBase === undefined
+			? {}
+			: { apiBase: dependencies.apiBase }),
+		...(dependencies.webBase === undefined
+			? {}
+			: { webBase: dependencies.webBase }),
 	});
 
 	if (resolved.channel === 'tag' && record.channel === 'tag') {
 		const order = compareVersions(resolved.version, record.version);
 		if (order === 0) {
 			write(`Already on ${record.version}. Nothing to do.`);
-			return Object.freeze({ from: record.version, to: record.version, rolledBack: false, upToDate: true });
+			return Object.freeze({
+				from: record.version,
+				to: record.version,
+				rolledBack: false,
+				upToDate: true,
+			});
 		}
 		if (order < 0 && !options.allowDowngrade) {
 			throw new UpgradeError(
@@ -93,44 +110,66 @@ export async function runUpgrade(
 		// is the only ordering it has.
 		const published = resolved.publishedAt;
 		if (published !== undefined && record.publishedAt !== undefined) {
-			if (Date.parse(published) < Date.parse(record.publishedAt) && !options.allowDowngrade) {
+			if (
+				Date.parse(published) < Date.parse(record.publishedAt) &&
+				!options.allowDowngrade
+			) {
 				throw new UpgradeError(
 					`the ${resolved.channel} release published at ${published} is older than the installed one from ${record.publishedAt}. Pass --allow-downgrade to install it anyway.`,
 				);
 			}
 			if (Date.parse(published) === Date.parse(record.publishedAt)) {
 				write(`Already on the newest ${record.channel} build. Nothing to do.`);
-				return Object.freeze({ from: record.version, to: record.version, rolledBack: false, upToDate: true });
+				return Object.freeze({
+					from: record.version,
+					to: record.version,
+					rolledBack: false,
+					upToDate: true,
+				});
 			}
 		}
 	}
 
-	const previous = (await activeVersion(layout)) ?? stagedName(record.channel, record.version, record.revision);
+	const previous =
+		(await activeVersion(layout)) ??
+		stagedName(record.channel, record.version, record.revision);
 
 	// Staged beside the running version: nothing below this point has stopped
 	// the service yet.
 	let archivePath: string;
 	if (resolved.channel === 'source') {
-		write(`Building ${resolved.sourceRef ?? resolved.version} from source. This takes a while.`);
+		write(
+			`Building ${resolved.sourceRef ?? resolved.version} from source. This takes a while.`,
+		);
 		const built = await buildFromSource({
 			ref: resolved.sourceRef ?? resolved.version,
-			...(resolved.revision === undefined ? {} : { revision: resolved.revision }),
+			...(resolved.revision === undefined
+				? {}
+				: { revision: resolved.revision }),
 			destination: layout.prefix,
 			write,
 		});
 		archivePath = built.archivePath;
 	} else {
 		const assets = resolved.assets;
-		if (assets === undefined) throw new UpgradeError('the resolved release names no archive to download');
+		if (assets === undefined)
+			throw new UpgradeError(
+				'the resolved release names no archive to download',
+			);
 		write('Downloading and verifying …');
 		const asset = await downloadAsset(assets.archive, layout.prefix);
-		const [sidecar, signature] = await Promise.all([downloadText(assets.sha256), downloadBytes(assets.signature)]);
+		const [sidecar, signature] = await Promise.all([
+			downloadText(assets.sha256),
+			downloadBytes(assets.signature),
+		]);
 		await verifyArchive({
 			archivePath: asset.path,
 			sidecar,
 			signature,
 			digest: asset.sha256,
-			...(dependencies.releasePublicKeyPem === undefined ? {} : { publicKeyPem: dependencies.releasePublicKeyPem }),
+			...(dependencies.releasePublicKeyPem === undefined
+				? {}
+				: { publicKeyPem: dependencies.releasePublicKeyPem }),
 		});
 		archivePath = asset.path;
 	}
@@ -143,14 +182,21 @@ export async function runUpgrade(
 			channel: resolved.channel,
 			architecture,
 			...(resolved.channel === 'tag' ? { version: resolved.version } : {}),
-			...(resolved.revision === undefined ? {} : { revision: resolved.revision }),
+			...(resolved.revision === undefined
+				? {}
+				: { revision: resolved.revision }),
 		},
 	});
 	await discardDownloads(layout.prefix);
 
 	if (installed.name === previous) {
 		write(`Already running ${installed.manifest.version}. Nothing to do.`);
-		return Object.freeze({ from: record.version, to: installed.manifest.version, rolledBack: false, upToDate: true });
+		return Object.freeze({
+			from: record.version,
+			to: installed.manifest.version,
+			rolledBack: false,
+			upToDate: true,
+		});
 	}
 
 	write(`Upgrading ${record.version} → ${installed.manifest.version} …`);
@@ -158,12 +204,19 @@ export async function runUpgrade(
 	await activate(layout, installed.name);
 	await systemd.start();
 
-	if ((await waitForReady(record.healthPort, dependencies.readinessTimeoutMs)) === undefined) {
+	if (
+		(await waitForReady(record.healthPort, dependencies.readinessTimeoutMs)) ===
+		undefined
+	) {
 		write('The upgraded server did not report ready. Rolling back.');
 		await systemd.stop();
 		await activate(layout, previous);
 		await systemd.start();
-		const recovered = (await waitForReady(record.healthPort, dependencies.readinessTimeoutMs)) !== undefined;
+		const recovered =
+			(await waitForReady(
+				record.healthPort,
+				dependencies.readinessTimeoutMs,
+			)) !== undefined;
 		write(await systemd.journal(20));
 		throw new UpgradeError(
 			`the upgrade to ${installed.manifest.version} did not become ready, so ${record.version} was restored and ${recovered ? 'is running again' : 'was started, but has not reported ready either'}.`,
@@ -175,12 +228,22 @@ export async function runUpgrade(
 		channel: resolved.channel,
 		version: installed.manifest.version,
 		revision: installed.manifest.revision,
-		...(resolved.publishedAt === undefined ? {} : { publishedAt: resolved.publishedAt }),
+		...(resolved.publishedAt === undefined
+			? {}
+			: { publishedAt: resolved.publishedAt }),
 		installedAt: new Date().toISOString(),
 	});
 	const removed = await retain(layout, [installed.name, previous]);
-	write(`Upgraded to ${installed.manifest.version}. Kept ${previous} to roll back to.`);
-	if (removed.length > 0) write(`Removed older versions: ${removed.join(', ')}.`);
+	write(
+		`Upgraded to ${installed.manifest.version}. Kept ${previous} to roll back to.`,
+	);
+	if (removed.length > 0)
+		write(`Removed older versions: ${removed.join(', ')}.`);
 
-	return Object.freeze({ from: record.version, to: installed.manifest.version, rolledBack: false, upToDate: false });
+	return Object.freeze({
+		from: record.version,
+		to: installed.manifest.version,
+		rolledBack: false,
+		upToDate: false,
+	});
 }
