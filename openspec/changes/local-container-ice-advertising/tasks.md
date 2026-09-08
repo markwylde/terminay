@@ -7,10 +7,10 @@
 
 ## 2. CLI
 
-- [ ] 2.1 Add `--advertise-address` to the parser for `install` and `upgrade`, validating before anything is written, with `''` clearing it; verified by parser tests covering a valid value, a hostname, a malformed value, and the clearing form
-- [ ] 2.2 Persist it in the install record and the environment file, and keep the recorded value on `upgrade` when the flag is absent; verified by tests on a temporary prefix asserting the record and environment file after install, after upgrade without the flag, and after upgrade clearing it
-- [ ] 2.3 Print the UDP port that must be reachable after an install that supplied one; verified by asserting the install output names the port
-- [ ] 2.4 Report the advertised address in `daemon status`, and assert the report still names no path, account, or device; verified by extending the existing status redaction test
+- [x] 2.1 Add `--advertise-address` to the parser for `install` and `upgrade`, validating before anything is written, with `''` clearing it; verified by parser tests covering a valid value, a hostname, a malformed value, and the clearing form
+- [x] 2.2 Persist it in the install record and the environment file, and keep the recorded value on `upgrade` when the flag is absent; verified by tests on a temporary prefix asserting the record and environment file after install, after upgrade without the flag, and after upgrade clearing it
+- [x] 2.3 Print the UDP port that must be reachable after an install that supplied one; verified by asserting the install output names the port
+- [x] 2.4 Report the advertised address in `daemon status`, and assert the report still names no path, account, or device; verified by extending the existing status redaction test
 
 ## 3. Proving it works
 

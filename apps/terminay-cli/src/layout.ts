@@ -75,6 +75,8 @@ export interface InstallRecord {
 	readonly expose: string;
 	readonly hostedDomain: string;
 	readonly directOrigin?: string;
+	/** An address and UDP port offered as an additional ICE candidate. */
+	readonly advertiseAddress?: string;
 	readonly installedAt: string;
 }
 
