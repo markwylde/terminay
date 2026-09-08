@@ -133,7 +133,7 @@ try {
 		recursive: true,
 		dereference: false,
 	});
-	await writeLaunchers(root);
+	await writeLaunchers(root, serverPackage.version);
 	await assertSafeTree(root, 'staged artifact');
 	await assertNoElectron(root);
 	await normalizeArtifactModes(
@@ -195,13 +195,21 @@ try {
 	await rm(temporary, { force: true, recursive: true });
 }
 
-async function writeLaunchers(root) {
+async function writeLaunchers(root, version) {
+	// The version is baked in rather than left to the environment: an installed
+	// archive has to be able to say which release it is. Without it the server
+	// reports the workspace placeholder, so an operator checking the version
+	// output before staging an upgrade is told 0.0.0 for every release.
+	if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(version)) {
+		throw new Error(`staged server version is not a release version: ${version}`);
+	}
 	const server =
 		'#!/bin/sh\nset -eu\nROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)\n' +
 		': "$' +
+		`{TERMINAY_SERVER_VERSION:=${version}}"\n: "$` +
 		'{TERMINAY_UI_BUNDLE:=$ROOT/ui}"\n: "$' +
 		'{TERMINAY_WEBRTC_RUNTIME_ROOT:=$ROOT/webrtc-runtime}"\n' +
-		'export TERMINAY_UI_BUNDLE TERMINAY_WEBRTC_RUNTIME_ROOT\nexec "$ROOT/bin/node" "$ROOT/server/dist/cli.js" "$@"\n';
+		'export TERMINAY_SERVER_VERSION TERMINAY_UI_BUNDLE TERMINAY_WEBRTC_RUNTIME_ROOT\nexec "$ROOT/bin/node" "$ROOT/server/dist/cli.js" "$@"\n';
 	await writeFile(join(root, 'bin', 'terminay-server'), server, {
 		mode: 0o755,
 	});

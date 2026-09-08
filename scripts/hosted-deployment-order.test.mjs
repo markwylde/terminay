@@ -70,7 +70,7 @@ test("the rolling main prerelease uploads every replacement before any published
     "replacements must be uploaded, then renamed over, then re-verified")
 
   const uploadStep = workflow.slice(upload, rename)
-  assert.match(uploadStep, /gh release upload main "release\/main\/\$NAME\.incoming"/u,
+  assert.match(uploadStep, /gh release upload main-latest "release\/main\/\$NAME\.incoming"/u,
     "a replacement must land beside the published set under a temporary name")
   assert.doesNotMatch(uploadStep, /-X DELETE/u,
     "no published asset may be removed while a replacement is still uploading")
@@ -88,4 +88,13 @@ test("the rolling main prerelease uploads every replacement before any published
   assert.match(workflow, /fail-fast: true/u)
   assert.match(workflow, /--channel main/u)
   assert.match(workflow, /--revision "\$EXPECTED_COMMIT"/u)
+
+  // A release tagged for a branch makes that name ambiguous in every clone of
+  // the repository: `git fetch main` then resolves the tag, not the branch.
+  assert.match(workflow, /gh release create main-latest/u)
+  assert.doesNotMatch(
+    workflow,
+    /gh release (?:create|view|upload|download) main(?![-\w])/u,
+    "the rolling prerelease tag must not be named for the default branch",
+  )
 })
