@@ -5,6 +5,7 @@ import {
 	collectHostIceAddresses,
 	createHandshakeJoinQueue,
 	DEFAULT_HOSTED_ICE_SERVERS,
+	ADVERTISED_PORT_SPAN,
 	hostedPeerConfiguration,
 	HostedPeerLifecycle,
 	parseHostedIceServers,
@@ -252,8 +253,10 @@ test('an advertised address pins the ICE socket to its port', () => {
 		port: 51000,
 	});
 	// A candidate is only forwardable if its port is known in advance, so the
-	// socket must bind the advertised port rather than an ephemeral one.
-	assert.deepEqual([...config.icePortRange], [51000, 51000]);
+	// range is pinned rather than ephemeral. It spans a few ports because the
+	// runtime rejects a single-port range and gives each candidate its own
+	// socket from it.
+	assert.deepEqual([...config.icePortRange], [51000, 51000 + ADVERTISED_PORT_SPAN - 1]);
 });
 
 test('no advertised address leaves the socket and candidates untouched', () => {
@@ -270,7 +273,7 @@ test('an advertised address survives the loopback-signaling branch', () => {
 		port: 51000,
 	});
 	assert.ok(config.iceAdditionalHostAddresses.includes('198.51.100.9'));
-	assert.deepEqual([...config.icePortRange], [51000, 51000]);
+	assert.deepEqual([...config.icePortRange], [51000, 51000 + ADVERTISED_PORT_SPAN - 1]);
 });
 
 test('an advertised address is offered even when it is not a gatherable local address', () => {

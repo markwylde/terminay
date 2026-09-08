@@ -234,7 +234,7 @@ function registerTools(
 				max_bytes: maxBytes,
 				...(lines === undefined ? {} : { lines }),
 				...(after === undefined ? {} : { after }),
-		}),
+			}),
 	);
 	server.registerTool(
 		'search_terminal',

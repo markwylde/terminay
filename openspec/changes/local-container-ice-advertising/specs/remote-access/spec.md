@@ -2,21 +2,28 @@
 
 ### Requirement: Administrator-supplied advertised ICE address
 
-An administrator MAY supply one advertised ICE address, as a host and UDP port, for a server whose reachable address it cannot observe about itself — a server behind a port forward, or inside a container whose network the client cannot route to. When supplied, the server SHALL offer that address and port as an additional host candidate in every peer offer and answer, SHALL bind its ICE socket to that UDP port so the advertised candidate is the port an administrator forwarded, and SHALL continue to gather and offer the candidates it would otherwise have offered. The advertised address SHALL NOT replace, suppress, or reorder gathered candidates.
+An administrator MAY supply one advertised ICE address, as a host and UDP port, for a server whose reachable address it cannot observe about itself — a server behind a port forward, or inside a container whose network the client cannot route to. When supplied, the server SHALL offer that address as a host candidate on that UDP port in every peer offer and answer, and SHALL confine every candidate it offers to a small published range of consecutive ports beginning at the advertised port, so that forwarding that range forwards all of them.
+
+The range is a budget. Each candidate takes one port from it, so a host with more local addresses than the range has ports SHALL offer fewer of its own addresses than it would unpinned. The advertised address SHALL keep its port regardless: it is the candidate the client can reach, and the reason the option was set. A server given no advertised address SHALL gather and offer candidates exactly as before, on ephemeral ports.
 
 The advertised address SHALL be a literal IPv4 or IPv6 address and a port, never a hostname: a candidate is a destination for a peer's connectivity checks, and a name resolved on the client's machine is not the address the administrator forwarded. A server SHALL refuse to start when the advertised address cannot be parsed, when its port is outside the range a UDP socket can bind, or when that port is already in use, rather than starting with an exposure whose advertised candidate is unreachable.
 
-#### Scenario: Advertised candidate is offered alongside gathered ones
+#### Scenario: The advertised candidate is offered on the advertised port
 
 - **WHEN** a server is exposed with an advertised ICE address
-- **THEN** its offer contains a host candidate for that address and port
-- **AND** it still contains every candidate the server would have offered without it
+- **THEN** its offer contains a host candidate for that address on that UDP port
 
-#### Scenario: The ICE socket uses the advertised port
+#### Scenario: Every offered candidate is inside the published range
 
 - **WHEN** a server is exposed with an advertised ICE address
-- **THEN** its ICE socket is bound to that UDP port
-- **AND** connectivity checks for the advertised candidate arrive on that port
+- **THEN** every candidate it offers uses a port within the published range
+- **AND** an administrator who forwarded that range has forwarded all of them
+
+#### Scenario: The advertised candidate keeps its port when the budget is tight
+
+- **WHEN** a host has more local addresses than the range has ports
+- **THEN** the advertised candidate is still offered on the advertised port
+- **AND** the addresses given up are the server's own, which the client was not reaching
 
 #### Scenario: Reachable from a client that cannot route the server's own address
 

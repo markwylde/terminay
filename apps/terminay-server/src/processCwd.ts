@@ -58,11 +58,9 @@ async function resolveProcessCwd(
 ): Promise<string | null> {
 	try {
 		if (process.platform === 'linux') {
-			const { stdout } = await execFileAsync(
-				'readlink',
-				[`/proc/${pid}/cwd`],
-				{ signal },
-			);
+			const { stdout } = await execFileAsync('readlink', [`/proc/${pid}/cwd`], {
+				signal,
+			});
 			return stdout.trim() || null;
 		}
 		if (process.platform === 'darwin') {

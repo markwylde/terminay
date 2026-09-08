@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { hostedSessionId } from "./hostedPairingSecrets.js";
+import { createHash } from 'node:crypto';
+import { hostedSessionId } from './hostedPairingSecrets.js';
 
 /**
  * The relay session id for a self-hosted direct signaling endpoint.
@@ -16,7 +16,7 @@ import { hostedSessionId } from "./hostedPairingSecrets.js";
 export function directSessionId(directOrigin: string): string {
 	const origin = new URL(directOrigin).origin;
 	// 32 lowercase hex characters, which is the shape a session id must take.
-	return createHash("sha256").update(origin).digest("hex").slice(0, 32);
+	return createHash('sha256').update(origin).digest('hex').slice(0, 32);
 }
 
 /**
@@ -29,8 +29,8 @@ export function directSessionId(directOrigin: string): string {
 export function relaySessionId(origin: string): string {
 	const host = new URL(origin).hostname.toLowerCase();
 	const hosted =
-		host.endsWith(".terminay.com") ||
-		host.endsWith(".localhost") ||
+		host.endsWith('.terminay.com') ||
+		host.endsWith('.localhost') ||
 		/\.127\.0\.0\.1$/u.test(host);
 	return hosted ? hostedSessionId(origin) : directSessionId(origin);
 }
