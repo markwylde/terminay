@@ -128,6 +128,7 @@ export async function buildArchive({ directory, version, revision }) {
 export const CONTAINER_DRIVER = `
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -184,6 +185,22 @@ const status = await runStatus(await resolveContext({ options, write }))
 assert.equal(status.version, '9.9.0')
 assert.equal(status.ready, true, 'the supervised process must report ready')
 assert.equal(status.enabled, true)
+
+write('--- advertise-address ---')
+// Reinstalling with the flag is what an operator does to add one, and it must
+// reach the environment file the unit reads and the record status reports.
+await runInstall(undefined, { ...options, advertiseAddress: '127.0.0.1:51000' }, {
+  write,
+  streams,
+  localArchivePath: first,
+  readinessTimeoutMs: 30000,
+})
+const advertisedEnvironment = readFileSync('/etc/terminay/server.env', 'utf8')
+assert.match(advertisedEnvironment, /TERMINAY_WEBRTC_ADVERTISE_ADDRESS=127.0.0.1:51000/)
+assert.equal((await readInstallRecord(layout)).advertiseAddress, '127.0.0.1:51000')
+assert.equal(systemctl('is-active', 'terminay-server.service'), 'active')
+const advertisedStatus = await runStatus(await resolveContext({ options, write }))
+assert.equal(advertisedStatus.advertiseAddress, '127.0.0.1:51000')
 
 write('--- stop and start ---')
 const lifecycle = await resolveContext({ options, write })

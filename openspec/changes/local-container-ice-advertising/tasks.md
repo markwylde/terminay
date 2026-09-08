@@ -14,8 +14,8 @@
 
 ## 3. Proving it works
 
-- [ ] 3.1 Add a test that a published UDP port round-trips through the container runtime, so the assumption the design rests on fails loudly if a runtime stops honouring it; verified by the test passing under `TERMINAY_RUN_DAEMON_SMOKE=1`
-- [ ] 3.2 Extend the systemd container smoke to install with `--advertise-address` and assert the server offers that candidate; verified by the smoke passing
+- [x] 3.1 Add a test that a published UDP port round-trips through the container runtime, so the assumption the design rests on fails loudly if a runtime stops honouring it; verified by the test passing under `TERMINAY_RUN_DAEMON_SMOKE=1`
+- [x] 3.2 Extend the systemd container smoke to install with `--advertise-address` and assert the server offers that candidate; verified by the smoke passing
 - [ ] 3.3 Connect Terminay Desktop to a containerised server on the same machine through hosted signaling, and record the result as evidence; verified by the peer reaching a connected state over the advertised candidate
 
 ## 4. Documentation
