@@ -1,3 +1,5 @@
+import { readFile, writeFile } from 'node:fs/promises';
+
 import type { DaemonOptions } from '../args.js';
 import type { CommandContext } from '../context.js';
 import {
@@ -12,6 +14,7 @@ import { stagedName, writeInstallRecord } from '../layout.js';
 import { hostArchitecture } from '../platform.js';
 import { resolveRef } from '../resolve.js';
 import { buildFromSource } from '../source.js';
+import { withEnvironmentValue } from '../unit.js';
 import { verifyArchive } from '../verify.js';
 
 /**
@@ -223,8 +226,39 @@ export async function runUpgrade(
 		);
 	}
 
+	// An advertised address given here changes how the server is reached, which
+	// lives in the environment file rather than in the version that was staged.
+	// Absent, the recorded value carries forward with the rest of the record.
+	if (options.advertiseAddress !== undefined) {
+		const existing = await readFile(layout.environmentFile, 'utf8').catch(
+			() => '',
+		);
+		await writeFile(
+			layout.environmentFile,
+			withEnvironmentValue(
+				existing,
+				'TERMINAY_WEBRTC_ADVERTISE_ADDRESS',
+				options.advertiseAddress === '' ? undefined : options.advertiseAddress,
+			),
+			{ mode: 0o640 },
+		);
+	}
+
+	// Cleared means the key is absent, not present and undefined, so the record
+	// is rebuilt without it rather than assigned over.
+	const { advertiseAddress: recorded, ...withoutAdvertised } = record;
+	const advertisedFields =
+		options.advertiseAddress === undefined
+			? recorded === undefined
+				? {}
+				: { advertiseAddress: recorded }
+			: options.advertiseAddress === ''
+				? {}
+				: { advertiseAddress: options.advertiseAddress };
+
 	await writeInstallRecord(layout, {
-		...record,
+		...withoutAdvertised,
+		...advertisedFields,
 		channel: resolved.channel,
 		version: installed.manifest.version,
 		revision: installed.manifest.revision,

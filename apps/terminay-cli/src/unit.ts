@@ -23,6 +23,7 @@ export interface ServiceConfiguration {
 	readonly expose: string;
 	readonly hostedDomain: string;
 	readonly directOrigin?: string;
+	readonly advertiseAddress?: string;
 	readonly uiBundle: string;
 }
 
@@ -46,6 +47,13 @@ export function renderEnvironmentFile(
 		...(configuration.directOrigin === undefined
 			? []
 			: [`TERMINAY_DIRECT_ORIGIN=${configuration.directOrigin}`]),
+		// Written even when empty: an empty variable is how a cleared address
+		// reaches the server, and it reads as unset there.
+		...(configuration.advertiseAddress === undefined
+			? []
+			: [
+					`TERMINAY_WEBRTC_ADVERTISE_ADDRESS=${configuration.advertiseAddress}`,
+				]),
 		'TERMINAY_AGENT_INTEGRATION=enabled',
 		'TERMINAY_AI_PROVIDERS=disabled',
 		'TERMINAY_LOG_SINK=journal',
@@ -70,6 +78,33 @@ export function parseEnvironmentFile(
 		values[trimmed.slice(0, equals)] = trimmed.slice(equals + 1);
 	}
 	return Object.freeze(values);
+}
+
+/**
+ * Set or remove one variable in an existing environment file, leaving every
+ * other line as it was.
+ *
+ * The file is documented as editable, so an upgrade that only needs to change
+ * one value edits that value rather than regenerating the file and discarding
+ * whatever the operator put there.
+ */
+export function withEnvironmentValue(
+	contents: string,
+	key: string,
+	value: string | undefined,
+): string {
+	const lines = contents.split('\n');
+	const kept = lines.filter((line) => !line.trimStart().startsWith(`${key}=`));
+	if (value === undefined) {
+		return kept.join('\n');
+	}
+	// Appended before the trailing blank the file ends with, so the result keeps
+	// exactly one terminating newline.
+	const trailing =
+		kept.length > 0 && kept[kept.length - 1] === '' ? kept.pop() : undefined;
+	kept.push(`${key}=${value}`);
+	if (trailing !== undefined) kept.push(trailing);
+	return kept.join('\n');
 }
 
 export interface UnitConfiguration {
