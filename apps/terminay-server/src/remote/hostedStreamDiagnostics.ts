@@ -18,8 +18,10 @@ export function inboundKind(value: unknown): HostedInboundKind {
 	if (value === undefined || value === null) return 'empty';
 	if (typeof value === 'string') return value.length === 0 ? 'empty' : 'string';
 	if (typeof Blob !== 'undefined' && value instanceof Blob) return 'blob';
-	if (value instanceof ArrayBuffer) return value.byteLength === 0 ? 'empty' : 'bytes';
-	if (ArrayBuffer.isView(value)) return value.byteLength === 0 ? 'empty' : 'bytes';
+	if (value instanceof ArrayBuffer)
+		return value.byteLength === 0 ? 'empty' : 'bytes';
+	if (ArrayBuffer.isView(value))
+		return value.byteLength === 0 ? 'empty' : 'bytes';
 	return 'other';
 }
 
@@ -34,16 +36,26 @@ export function frameByteLength(value: unknown): number {
 export function classifyPeerCloseReason(reason: string): string {
 	const text = String(reason ?? '').toLowerCase();
 	if (text.includes('grace period expired')) return 'ice-grace-expired';
-	if (text.includes('ice connection failed') || text.includes('ice connection closed')) {
+	if (
+		text.includes('ice connection failed') ||
+		text.includes('ice connection closed')
+	) {
 		return 'ice-failed';
 	}
-	if (text.includes('peer connection failed') || text.includes('peer connection closed')) {
+	if (
+		text.includes('peer connection failed') ||
+		text.includes('peer connection closed')
+	) {
 		return 'peer-failed';
 	}
 	if (text.includes('replaced')) return 'replaced-by-rejoin';
 	if (text.includes('heartbeat')) return 'heartbeat-timeout';
 	if (text.includes('disconnected')) return 'disconnected';
-	if (text.includes('lane closed') || text.includes('lane closing') || text.includes('lane failed')) {
+	if (
+		text.includes('lane closed') ||
+		text.includes('lane closing') ||
+		text.includes('lane failed')
+	) {
 		return 'required-lane-closed';
 	}
 	if (!text.trim()) return 'empty';
@@ -90,7 +102,9 @@ export function createHostedStreamDiagnostics(options: {
 		options.emit(event);
 	}
 
-	function laneFields(extra: Record<string, unknown> = {}): HostedPairingDiagnostic {
+	function laneFields(
+		extra: Record<string, unknown> = {},
+	): HostedPairingDiagnostic {
 		const current = now();
 		return {
 			type: 'application-lane',
@@ -99,13 +113,16 @@ export function createHostedStreamDiagnostics(options: {
 			outboundFrames,
 			inboundBytes,
 			outboundBytes,
-			lastInboundAgeMs: lastInboundAt === null ? null : Math.max(0, current - lastInboundAt),
+			lastInboundAgeMs:
+				lastInboundAt === null ? null : Math.max(0, current - lastInboundAt),
 			lastOutboundAgeMs:
 				lastOutboundAt === null ? null : Math.max(0, current - lastOutboundAt),
 			firstInboundAgeMs:
 				firstInboundAt === null ? null : Math.max(0, current - firstInboundAt),
 			firstOutboundAgeMs:
-				firstOutboundAt === null ? null : Math.max(0, current - firstOutboundAt),
+				firstOutboundAt === null
+					? null
+					: Math.max(0, current - firstOutboundAt),
 			inboundKind: lastInboundKind,
 			droppedFrames,
 			sendFailures,
@@ -132,12 +149,19 @@ export function createHostedStreamDiagnostics(options: {
 	}
 
 	return {
-		peerState(peerState: string | undefined, iceState: string | undefined): void {
+		peerState(
+			peerState: string | undefined,
+			iceState: string | undefined,
+		): void {
 			if (peerState === lastPeerState && iceState === lastIceState) return;
 			lastPeerState = peerState;
 			lastIceState = iceState;
 			emit({ type: 'peer-state', peerState, iceState });
-			if (peerState === 'connected' || iceState === 'connected' || iceState === 'completed') {
+			if (
+				peerState === 'connected' ||
+				iceState === 'connected' ||
+				iceState === 'completed'
+			) {
 				startSummary();
 			}
 		},
@@ -150,7 +174,11 @@ export function createHostedStreamDiagnostics(options: {
 			lastIceState = iceState;
 			emit({ type: 'ice-grace', iceGracePhase: phase, peerState, iceState });
 		},
-		channelState(channel: string, channelState: string | undefined, hangup = false): void {
+		channelState(
+			channel: string,
+			channelState: string | undefined,
+			hangup = false,
+		): void {
 			if (!CHANNEL_LABELS.has(channel)) return;
 			const label = channel as
 				| 'api'
@@ -226,4 +254,6 @@ export function createHostedStreamDiagnostics(options: {
 	};
 }
 
-export type HostedStreamDiagnostics = ReturnType<typeof createHostedStreamDiagnostics>;
+export type HostedStreamDiagnostics = ReturnType<
+	typeof createHostedStreamDiagnostics
+>;

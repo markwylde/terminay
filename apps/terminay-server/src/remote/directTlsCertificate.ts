@@ -1,10 +1,16 @@
-import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import path from "node:path";
-import selfsigned from "selfsigned";
+import { createHash } from 'node:crypto';
+import {
+	mkdirSync,
+	readFileSync,
+	renameSync,
+	statSync,
+	writeFileSync,
+} from 'node:fs';
+import path from 'node:path';
+import selfsigned from 'selfsigned';
 
 /** The one file that holds a data root's direct signaling certificate. */
-export const DIRECT_TLS_FILE = "direct-tls.v1.json";
+export const DIRECT_TLS_FILE = 'direct-tls.v1.json';
 const VALIDITY_DAYS = 825;
 
 export interface DirectTlsCertificate {
@@ -60,16 +66,19 @@ export async function loadOrCreateDirectTlsCertificate(
 
 	const notBeforeDate = new Date(now());
 	const notAfterDate = new Date(now() + VALIDITY_DAYS * 24 * 60 * 60 * 1_000);
-	const pems = await selfsigned.generate([{ name: "commonName", value: host }], {
-		algorithm: "sha256",
-		keySize: 2048,
-		notBeforeDate,
-		notAfterDate,
-		extensions: [
-			{ name: "basicConstraints", cA: false },
-			{ name: "subjectAltName", altNames: subjectAltNames(host) },
-		],
-	});
+	const pems = await selfsigned.generate(
+		[{ name: 'commonName', value: host }],
+		{
+			algorithm: 'sha256',
+			keySize: 2048,
+			notBeforeDate,
+			notAfterDate,
+			extensions: [
+				{ name: 'basicConstraints', cA: false },
+				{ name: 'subjectAltName', altNames: subjectAltNames(host) },
+			],
+		},
+	);
 	const record: PersistedDirectTls = {
 		schemaVersion: 1,
 		host,
@@ -81,7 +90,7 @@ export async function loadOrCreateDirectTlsCertificate(
 	mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
 	const temporary = `${file}.tmp`;
 	writeFileSync(temporary, `${JSON.stringify(record)}\n`, {
-		encoding: "utf8",
+		encoding: 'utf8',
 		mode: 0o600,
 	});
 	renameSync(temporary, file);
@@ -98,17 +107,17 @@ export async function loadOrCreateDirectTlsCertificate(
 function subjectAltNames(
 	host: string,
 ): ({ type: 7; ip: string } | { type: 2; value: string })[] {
-	return /^[0-9.]+$/u.test(host) || host.includes(":")
+	return /^[0-9.]+$/u.test(host) || host.includes(':')
 		? [{ type: 7, ip: host }]
 		: [{ type: 2, value: host }];
 }
 
 function certificateFingerprint(cert: string): string {
 	const body = cert
-		.replace(/-----BEGIN CERTIFICATE-----/u, "")
-		.replace(/-----END CERTIFICATE-----/u, "")
-		.replace(/\s+/gu, "");
-	return createHash("sha256").update(Buffer.from(body, "base64")).digest("hex");
+		.replace(/-----BEGIN CERTIFICATE-----/u, '')
+		.replace(/-----END CERTIFICATE-----/u, '')
+		.replace(/\s+/gu, '');
+	return createHash('sha256').update(Buffer.from(body, 'base64')).digest('hex');
 }
 
 function readPersisted(file: string): PersistedDirectTls | undefined {
@@ -118,27 +127,27 @@ function readPersisted(file: string): PersistedDirectTls | undefined {
 		// key another account can read is not this server's key any more.
 		const mode = statSync(file).mode & 0o777;
 		if (mode !== 0o600) return undefined;
-		parsed = JSON.parse(readFileSync(file, "utf8"));
+		parsed = JSON.parse(readFileSync(file, 'utf8'));
 	} catch (error) {
 		if (
-			typeof error === "object" &&
+			typeof error === 'object' &&
 			error !== null &&
-			(error as { code?: unknown }).code === "ENOENT"
+			(error as { code?: unknown }).code === 'ENOENT'
 		) {
 			return undefined;
 		}
 		if (error instanceof SyntaxError) return undefined;
 		throw error;
 	}
-	if (parsed === null || typeof parsed !== "object") return undefined;
+	if (parsed === null || typeof parsed !== 'object') return undefined;
 	const record = parsed as Record<string, unknown>;
 	if (
 		record.schemaVersion !== 1 ||
-		typeof record.host !== "string" ||
-		typeof record.cert !== "string" ||
-		typeof record.key !== "string" ||
-		typeof record.fingerprint !== "string" ||
-		typeof record.notAfter !== "string"
+		typeof record.host !== 'string' ||
+		typeof record.cert !== 'string' ||
+		typeof record.key !== 'string' ||
+		typeof record.fingerprint !== 'string' ||
+		typeof record.notAfter !== 'string'
 	) {
 		return undefined;
 	}

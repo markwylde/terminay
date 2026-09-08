@@ -10,9 +10,9 @@ const STREAM_TYPES = new Set([
 	'peer-closed',
 ]);
 
-export function createHostedDiagnosticLogger(logSink?: string): (
-	event: HostedPairingDiagnostic,
-) => void {
+export function createHostedDiagnosticLogger(
+	logSink?: string,
+): (event: HostedPairingDiagnostic) => void {
 	let sinkReady = logSink === undefined;
 	if (logSink) {
 		void mkdir(dirname(logSink), { recursive: true })
@@ -41,7 +41,9 @@ export function isHostedStreamDiagnostic(type: string): boolean {
 	return STREAM_TYPES.has(type);
 }
 
-function omitUndefined(event: HostedPairingDiagnostic): Record<string, unknown> {
+function omitUndefined(
+	event: HostedPairingDiagnostic,
+): Record<string, unknown> {
 	const fields: Record<string, unknown> = {};
 	for (const [key, value] of Object.entries(event)) {
 		if (key === 'type' || value === undefined) continue;
