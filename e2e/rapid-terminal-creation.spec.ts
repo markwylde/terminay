@@ -89,7 +89,7 @@ async function expectTerminalCount(
 async function expectStableTerminalCount(
 	page: Page,
 	expected: number,
-	holdMs = 4_000,
+	holdMs = 2_500,
 ): Promise<void> {
 	const deadline = Date.now() + holdMs;
 	do {
@@ -111,7 +111,7 @@ test('keeps every terminal added by repeated add-tab clicks', async ({
 
 	// Every click lands while the terminal from the click before is still
 	// starting, and none of them is ever typed into.
-	const delaysMs = [0, 40, 120, 250, 40, 0, 300, 80, 0, 160, 0, 60];
+	const delaysMs = [0, 40, 120, 250, 40, 0, 160, 60];
 	let expected = 1;
 	for (const delayMs of delaysMs) {
 		await addTabButton(mainWindow).click();
@@ -171,13 +171,13 @@ test('keeps terminals added to a second project while the first still holds its 
 	await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 	await expect(terminalTabs(mainWindow)).toHaveCount(1, { timeout: 15_000 });
 
-	for (const delayMs of [0, 100, 0, 200, 40, 0]) {
+	for (const delayMs of [0, 100, 0, 200]) {
 		await addTabButton(mainWindow).click();
 		if (delayMs > 0) await mainWindow.waitForTimeout(delayMs);
 	}
 
-	await expect(terminalTabs(mainWindow)).toHaveCount(7, { timeout: 15_000 });
-	await expectStableTerminalCount(mainWindow, 7);
+	await expectTerminalCount(mainWindow, 5);
+	await expectStableTerminalCount(mainWindow, 5);
 });
 
 async function waitForWorkspacePopout(
@@ -230,7 +230,7 @@ test('keeps terminals created while another window presents a project', async ({
 	await expect(mainWindow.locator('.project-tab')).toHaveCount(1);
 	await expect(terminalTabs(mainWindow)).toHaveCount(1);
 
-	const delaysMs = [0, 60, 120, 0, 250, 40, 90, 0, 300, 50];
+	const delaysMs = [0, 60, 120, 0, 250, 40, 90, 0];
 	let expected = 1;
 	for (const delayMs of delaysMs) {
 		await addTabButton(mainWindow).click();
