@@ -30,6 +30,12 @@ export async function probeStandaloneServerArchive({ archivePath, target = nativ
     const root = join(temporary, rootName)
     const manifest = await validateExtractedArchive(root, target, { channel, revision })
     const version = await executeVersion(root)
+    // An installed archive must be able to say which release it is. If the
+    // launcher reports anything but the version its own manifest records, the
+    // operator checks in the update policy are reading a fiction.
+    if (version !== manifest.version) {
+      throw new Error(`standalone archive reports version ${version}; its manifest records ${manifest.version}`)
+    }
     return Object.freeze({
       archive: basename(archive),
       archiveSha256: await sha256File(archive),

@@ -75,7 +75,10 @@ test('the update policy names the archives, sidecars, signatures, and channels a
   assert.match(policy, /\.sha256/)
   assert.match(policy, /Ed25519/)
   assert.match(policy, /## Release channels/)
-  assert.match(policy, /`channel`, the built\n`revision` \(commit\), and its `architecture`/)
+  assert.match(policy, /`channel`, the built\n`revision` \(commit\), its `architecture`, and its `version`/)
+  // A rolling tag named for the default branch makes that ref ambiguous.
+  assert.match(policy, /tagged `main-latest`/)
+  assert.match(policy, /launcher reports that same version/)
   // The npm pack tarball is no longer published and must not be described as
   // something an operator can install.
   assert.match(policy, /no longer an `npm pack` tarball/)
