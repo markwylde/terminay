@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -29,30 +29,61 @@ test('standalone server CLI has deterministic version and redacted status entry 
 		expiresAt: null,
 		connectedPeers: 0,
 	});
+	assert.deepEqual(status.exposureModes, []);
 	assert.equal(JSON.stringify(status).includes('pairingUrl'), false);
 });
 
-test('standalone server CLI exposes help and explicit pairing handoff without secrets', () => {
-	assert.match(run('--help'), /--pairing/);
-	assert.match(run('--help'), /headless MCP stdio adapter/);
-	const pairing = JSON.parse(
-		runWithEnv(
-			['--pairing', '--server-id', 'server-pair', '--endpoint', 'loopback'],
-			{},
+test('status reports the enabled exposure modes as names only', () => {
+	const hosted = JSON.parse(run('--status', '--expose', 'hosted'));
+	assert.deepEqual(hosted.exposureModes, ['hosted']);
+
+	const both = JSON.parse(
+		run(
+			'--status',
+			'--expose',
+			'hosted,direct',
+			'--direct-origin',
+			'https://box.example.test:8443',
 		),
 	);
-	assert.equal(pairing.serverId, 'server-pair');
-	assert.equal(pairing.endpoint, 'loopback');
-	assert.match(pairing.roomId, /^pair-/);
-	assert.equal(pairing.requiresApproval, true);
-	assert.ok(pairing.expiresInSeconds >= 59 && pairing.expiresInSeconds <= 60);
-	const pairingUrl = new URL(pairing.pairingUrl);
-	assert.equal(pairingUrl.protocol, 'https:');
-	assert.equal(pairingUrl.hostname, 'server-pair.remote.terminay.local');
-	assert.ok(pairingUrl.hash.length > 1);
-	assert.equal(typeof pairing.expiresAt, 'string');
-	assert.equal(Object.hasOwn(pairing, 'token'), false);
-	assert.equal(Object.hasOwn(pairing, 'secret'), false);
+	assert.deepEqual(both.exposureModes, ['hosted', 'direct']);
+	// The mode names are diagnostics. Neither the direct origin nor any pairing
+	// material may travel with them.
+	const serialized = JSON.stringify(both);
+	assert.equal(serialized.includes('box.example.test'), false);
+	assert.equal(serialized.includes('pairingUrl'), false);
+});
+
+test('the pairing command fails with a clear message when no server owns the data root', async () => {
+	assert.match(run('--help'), /--pairing/);
+	assert.match(run('--help'), /headless MCP stdio adapter/);
+
+	const dataRoot = await mkdtemp(join(tmpdir(), 'terminay-pairing-lookup-'));
+	try {
+		const result = spawnSync(process.execPath, [cli, '--pairing', '--data-root', dataRoot], {
+			encoding: 'utf8',
+		});
+		assert.notEqual(result.status, 0);
+		assert.equal(result.stdout, '');
+		assert.match(result.stderr, /no running server accepts approvals at this data root/u);
+		// A command that mints nothing cannot leak anything.
+		assert.equal(result.stderr.includes('pairingToken'), false);
+	} finally {
+		await rm(dataRoot, { recursive: true, force: true });
+	}
+});
+
+test('the pairing command asks the running server rather than minting a room of its own', async () => {
+	const source = await readFile('apps/terminay-server/src/cli.ts', 'utf8');
+	const pairingCommand = source.slice(source.indexOf('async function runPairingCommand'));
+	assert.match(pairingCommand, /sendApprovalSocketRequest\(approvalSocketPath\(options\.dataRoot\), \{\s*op: 'pairing',/u);
+	// The old command constructed a throwaway exposure and printed a token the
+	// running server never registered. Nothing may bring that path back.
+	assert.doesNotMatch(
+		pairingCommand.slice(0, pairingCommand.indexOf('\n}\n')),
+		/remote\.start\(/u,
+	);
+	assert.doesNotMatch(source, /command === 'pairing'\)\s*\{\s*const handoff = remote\.start/u);
 });
 
 test('standalone mcp entry fails closed without an inherited local control socket', () => {
@@ -182,6 +213,8 @@ test('clean foreground startup emits bounded readiness and responds to SIGTERM',
 				logSink,
 				healthEndpoint: null,
 				pairing: undefined,
+				exposure: [],
+				handoffs: [],
 			},
 		);
 		const protocolEndpoint = new URL(ready.protocolEndpoint);

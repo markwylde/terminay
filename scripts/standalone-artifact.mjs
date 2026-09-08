@@ -10,6 +10,8 @@ const REQUIRED_BINS = {
   'terminay-server': 'dist/cli.js',
   'terminay-mcp': 'dist/mcpEntry.js',
 }
+export const RELEASE_CHANNELS = Object.freeze(['tag', 'main'])
+export const ARTIFACT_ARCHITECTURES = Object.freeze(['x64', 'arm64'])
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex')
@@ -34,10 +36,25 @@ function assertSafeManifestPath(path) {
 }
 
 /**
+ * Validate the release coordinates that pin a payload to a channel, a commit,
+ * and an architecture. These cannot be derived from the payload, so they are
+ * supplied by the builder and recorded verbatim in the manifest.
+ */
+export function normalizeArtifactRelease(release) {
+  if (release === null || typeof release !== 'object') fail('release coordinates are missing')
+  const { channel, revision, architecture } = release
+  if (!RELEASE_CHANNELS.includes(channel)) fail(`release channel must be one of: ${RELEASE_CHANNELS.join(', ')}`)
+  if (typeof revision !== 'string' || !/^[a-f0-9]{40}$/u.test(revision)) fail('release revision must be a full lowercase commit sha')
+  if (!ARTIFACT_ARCHITECTURES.includes(architecture)) fail(`release architecture must be one of: ${ARTIFACT_ARCHITECTURES.join(', ')}`)
+  return { channel, revision, architecture }
+}
+
+/**
  * Inspect the minimal standalone server payload without executing it. The
  * result is deterministic and contains hashes, not file contents or secrets.
  */
-export async function inspectStandaloneArtifact(root) {
+export async function inspectStandaloneArtifact(root, release) {
+  const { channel, revision, architecture } = normalizeArtifactRelease(release)
   const packageFile = await readRegularFile(root, 'package.json')
   let packageJson
   try {
@@ -73,6 +90,9 @@ export async function inspectStandaloneArtifact(root) {
   return {
     schemaVersion: 1,
     artifact: 'terminay-server',
+    channel,
+    revision,
+    architecture,
     package: { name: packageJson.name, version: packageJson.version, node: packageJson.engines.node, npm: packageJson.dependencies.npm },
     files,
     provenance: {
@@ -84,8 +104,8 @@ export async function inspectStandaloneArtifact(root) {
 }
 
 /** Write a deterministic payload manifest next to a standalone artifact. */
-export async function writeStandaloneArtifactManifest(root, outputPath = join(root, 'artifact-manifest.json')) {
-  const manifest = await inspectStandaloneArtifact(root)
+export async function writeStandaloneArtifactManifest(root, release, outputPath = join(root, 'artifact-manifest.json')) {
+  const manifest = await inspectStandaloneArtifact(root, release)
   await mkdir(dirname(outputPath), { recursive: true })
   await writeFile(outputPath, `${JSON.stringify(manifest, null, 2)}\n`)
   return manifest
@@ -96,12 +116,19 @@ export async function writeStandaloneArtifactManifest(root, outputPath = join(ro
  * intentionally does not verify signatures; release signing remains a later
  * gate and cannot be implied by this check.
  */
-export async function validateStandaloneArtifact(root, manifest) {
+export async function validateStandaloneArtifact(root, manifest, expectedRelease) {
   if (manifest === null || typeof manifest !== 'object' || manifest.schemaVersion !== 1 || manifest.artifact !== 'terminay-server') {
     fail('manifest schema or artifact name is invalid')
   }
   if (!Array.isArray(manifest.files) || manifest.files.length !== REQUIRED_FILES.length) fail('manifest file list is invalid')
-  const expected = await inspectStandaloneArtifact(root)
+  const release = normalizeArtifactRelease({ channel: manifest.channel, revision: manifest.revision, architecture: manifest.architecture })
+  if (expectedRelease !== undefined) {
+    const wanted = normalizeArtifactRelease(expectedRelease)
+    for (const field of ['channel', 'revision', 'architecture']) {
+      if (release[field] !== wanted[field]) fail(`manifest ${field} is ${release[field]}, expected ${wanted[field]}`)
+    }
+  }
+  const expected = await inspectStandaloneArtifact(root, release)
   const expectedJson = JSON.stringify(expected)
   const actualJson = JSON.stringify({ ...manifest, provenance: expected.provenance })
   if (actualJson !== expectedJson) fail('manifest metadata or file hashes do not match the payload')
@@ -112,6 +139,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const root = process.argv[2]
   if (!root) fail('usage: node scripts/standalone-artifact.mjs <artifact-root> [manifest-path]')
   const outputPath = process.argv[3] ?? join(root, 'artifact-manifest.json')
-  const manifest = await writeStandaloneArtifactManifest(root, outputPath)
-  console.log(JSON.stringify({ artifact: manifest.artifact, version: manifest.package.version, files: manifest.files.length, outputPath }))
+  const release = normalizeArtifactRelease({
+    channel: process.env.TERMINAY_RELEASE_CHANNEL ?? 'tag',
+    revision: process.env.TERMINAY_RELEASE_REVISION,
+    architecture: process.env.TERMINAY_RELEASE_ARCHITECTURE ?? process.arch,
+  })
+  const manifest = await writeStandaloneArtifactManifest(root, release, outputPath)
+  console.log(JSON.stringify({ artifact: manifest.artifact, version: manifest.package.version, channel: manifest.channel, revision: manifest.revision, architecture: manifest.architecture, files: manifest.files.length, outputPath }))
 }

@@ -29,6 +29,7 @@ const DEFAULT_PAIRING_REQUEST_TIMEOUT_MS = 15_000
 
 export type DesktopPairingTarget =
   | Readonly<{ kind: 'hosted'; label: string; origin: string }>
+  | Readonly<{ kind: 'direct'; label: string; origin: string }>
   | Readonly<{
       kind: 'loopback'
       bootstrap: ReturnType<typeof parsePairingBootstrap>
@@ -39,8 +40,9 @@ export type DesktopPairingTarget =
 /**
  * Desktop receives pairing URLs from an untrusted clipboard/renderer input.
  * Classify before anything else can run: a hosted link (app.terminay.com or a
- * session origin) pairs only over the transport-authenticated data channels;
- * a loopback embedded-server link keeps its same-machine HTTP enrollment.
+ * session origin) and a direct link (a standalone server's own HTTPS signaling
+ * listener) both pair only over the transport-authenticated data channels; a
+ * loopback embedded-server link keeps its same-machine HTTP enrollment.
  */
 export function resolveDesktopPairingTarget(pairingUrl: string): DesktopPairingTarget {
   try {
@@ -48,7 +50,9 @@ export function resolveDesktopPairingTarget(pairingUrl: string): DesktopPairingT
     const loopback = new URL(hosted.origin)
     const isLoopbackHttp = loopback.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(loopback.hostname)
     if (!isLoopbackHttp) {
-      return Object.freeze({ kind: 'hosted', label: hosted.label, origin: hosted.origin })
+      // A direct link names the server's own listener, so its origin is kept
+      // literally rather than reconstructed from a hosted session id.
+      return Object.freeze({ kind: hosted.class === 'direct' ? 'direct' : 'hosted', label: hosted.label, origin: hosted.origin })
     }
   } catch (hostedError) {
     if (!(hostedError instanceof TypeError)) throw hostedError
@@ -113,7 +117,7 @@ export async function establishDesktopDevicePairing(options: Readonly<{
   }>
 }>): Promise<Readonly<{ deviceId: string; deviceName: string; label: string; origin: string; serverId?: string }>> {
   const target = resolveDesktopPairingTarget(options.pairingUrl)
-  if (target.kind === 'hosted') {
+  if (target.kind === 'hosted' || target.kind === 'direct') {
     const runtimeRoot = options.hosted?.webrtcRuntimeRoot
     if (runtimeRoot === undefined) {
       throw new Error(
@@ -126,7 +130,15 @@ export async function establishDesktopDevicePairing(options: Readonly<{
       store: options.store,
       webrtcRuntimeRoot: runtimeRoot,
       ...(options.hosted?.iceServers === undefined ? {} : { iceServers: options.hosted.iceServers }),
-      ...(options.hosted?.signal === undefined ? {} : { signal: options.hosted.signal }),
+      // A direct listener presents a certificate the server minted for itself.
+      // It authenticates nothing: the host key's signature over the transport
+      // transcript does, exactly as for a hosted relay. Verification is
+      // disabled only for this socket, never globally.
+      ...(target.kind === 'direct'
+        ? { signal: Object.freeze({ ...options.hosted?.signal, insecureTls: true }) }
+        : options.hosted?.signal === undefined
+          ? {}
+          : { signal: options.hosted.signal }),
       ...(options.hosted?.abort === undefined ? {} : { abort: options.hosted.abort }),
       ...(options.hosted?.onMatchCode === undefined ? {} : { onMatchCode: options.hosted.onMatchCode }),
     })

@@ -438,15 +438,26 @@ jobs:
           done
 
   build-standalone-server:
-    name: Build Standalone Server Artifact
-    runs-on: ubuntu-latest
-    # Packing, extracted-payload validation, and publication must not retain a
-    # write-capable token indefinitely.
-    timeout-minutes: 30
+    name: Build Standalone Server Archive (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    # Compiling the workspace, staging the runtime closure, probing the archive,
+    # and publishing must not retain a write-capable token indefinitely.
+    timeout-minutes: 60
     needs: release
     if: needs.release.outputs.no_release != 'true'
     permissions:
       contents: write
+    strategy:
+      # One architecture must never publish while the other is still unproven.
+      fail-fast: true
+      matrix:
+        include:
+          - target: linux-x64
+            arch: x64
+            runner: ubuntu-latest
+          - target: linux-arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
 
     steps:
       - name: Check out code
@@ -493,64 +504,75 @@ jobs:
         run: |
           node scripts/prove-secure-werift-offline-rebuild.mjs --prove-mirror "$RUNNER_TEMP/secure-werift-source-mirror"
 
-      - name: Build and pack exact standalone server artifact
+      - name: Build self-contained standalone server archive
         env:
           TAG: ${{ needs.release.outputs.tag }}
+          EXPECTED_COMMIT: ${{ needs.release.outputs.source_commit }}
+          TARGET: ${{ matrix.target }}
         run: |
           VERSION="${TAG#v}"
           OUTPUT="release/$VERSION"
           mkdir -p "$OUTPUT"
-          # The server's published declarations import these workspace
-          # packages. Build the graph rather than compiling the server in
-          # isolation, as a fresh release checkout has no cached dist output.
-          npm run build:application-graph
-          npm run build:server-postcompile
-          node scripts/stage-selected-secure-werift-runtime.mjs
-          cp -R build/webrtc-runtime apps/terminay-server/dist/webrtc-runtime
-          node apps/terminay-server/scripts/write-release-integrity-manifest.mjs
+          # The archive carries the compiled server, its workspace packages, and
+          # the UI bundle it serves, so the whole application graph is built here
+          # rather than compiling the server in isolation.
+          npm run build:app
           npm run verify:built-in-extensions
-          npm pack --workspace @terminay/server --json --pack-destination "$OUTPUT" > "$RUNNER_TEMP/terminay-server-pack.json"
+          node scripts/stage-selected-secure-werift-runtime.mjs
+          NODE_ARCHIVE_URL="$(node -e 'import("./scripts/pty-runtime-platforms.mjs").then((module) => process.stdout.write(module.getPtyRuntimePlatform(process.argv[1]).nodeArchive))' "$TARGET")"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            --output "$RUNNER_TEMP/node-runtime.tar.xz" "$NODE_ARCHIVE_URL"
+          # The builder re-verifies the pinned Node archive digest and the ELF
+          # machine of every native binary it stages, so a wrong download or a
+          # wrong runner architecture fails here rather than on an operator's box.
+          node scripts/build-standalone-server-artifact.mjs \
+            --target "$TARGET" \
+            --channel tag \
+            --revision "$EXPECTED_COMMIT" \
+            --node-archive "$RUNNER_TEMP/node-runtime.tar.xz" \
+            --runtime-modules node_modules \
+            --webrtc-runtime build/webrtc-runtime \
+            --output-dir "$RUNNER_TEMP/standalone" > "$RUNNER_TEMP/standalone-build.json"
+          BUILT="$(node -e 'process.stdout.write(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).archivePath)' "$RUNNER_TEMP/standalone-build.json")"
+          test -f "$BUILT"
+          test ! -L "$BUILT"
+          mv "$BUILT" "$OUTPUT/terminay-server-$VERSION-$TARGET.tar.gz"
+          test "$(find "$OUTPUT" -maxdepth 1 -type f -name '*.tar.gz' -print | wc -l | tr -d '[:space:]')" = 1
 
-          EXPECTED="terminay-server-$VERSION.tgz"
-          test "$(node scripts/npm-pack-result.mjs "$RUNNER_TEMP/terminay-server-pack.json")" = "$EXPECTED"
-          test -f "$OUTPUT/$EXPECTED"
-          test "$(find "$OUTPUT" -maxdepth 1 -type f -name '*.tgz' -print | wc -l | tr -d '[:space:]')" = 1
-
-      - name: Verify extracted standalone server payload before checksumming
+      - name: Probe the extracted standalone server archive
         env:
           TAG: ${{ needs.release.outputs.tag }}
+          EXPECTED_COMMIT: ${{ needs.release.outputs.source_commit }}
+          TARGET: ${{ matrix.target }}
         run: |
           VERSION="${TAG#v}"
-          ARCHIVE="release/$VERSION/terminay-server-$VERSION.tgz"
-          EXTRACTED="release/$VERSION/extracted"
-          mkdir -p "$EXTRACTED"
-          tar -xzf "$ARCHIVE" -C "$EXTRACTED"
-          test -d "$EXTRACTED/package"
-          test -f "$EXTRACTED/package/dist/release-integrity.json"
-          test -f "$EXTRACTED/package/dist/webrtc-runtime/artifact/lib/index.mjs"
-          test -f "$EXTRACTED/package/dist/built-in-extensions/inventory.v1.json"
-          test ! -L "$EXTRACTED/package"
-          MANIFEST="$RUNNER_TEMP/terminay-server-artifact-manifest.json"
-          node scripts/standalone-artifact.mjs "$EXTRACTED/package" "$MANIFEST"
-          test "$(node -e 'process.stdout.write(require(process.argv[1]).package.version)' "$MANIFEST")" = "$VERSION"
+          ARCHIVE="release/$VERSION/terminay-server-$VERSION-$TARGET.tar.gz"
+          node scripts/probe-standalone-server-archive.mjs \
+            --archive "$ARCHIVE" \
+            --target "$TARGET" \
+            --channel tag \
+            --revision "$EXPECTED_COMMIT" > "$RUNNER_TEMP/standalone-probe.json"
+          test "$(node -e 'process.stdout.write(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).version)' "$RUNNER_TEMP/standalone-probe.json")" = "$VERSION"
 
       - name: Write and verify standalone server checksum
         env:
           TAG: ${{ needs.release.outputs.tag }}
+          TARGET: ${{ matrix.target }}
         run: |
           VERSION="${TAG#v}"
-          ARCHIVE="release/$VERSION/terminay-server-$VERSION.tgz"
+          ARCHIVE="release/$VERSION/terminay-server-$VERSION-$TARGET.tar.gz"
           node scripts/release-checksum.mjs write "$ARCHIVE" "$ARCHIVE.sha256"
           node scripts/release-checksum.mjs verify "$ARCHIVE" "$ARCHIVE.sha256"
 
       - name: Sign and verify exact standalone server archive
         env:
           TAG: ${{ needs.release.outputs.tag }}
+          TARGET: ${{ matrix.target }}
           TERMINAY_RELEASE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.TERMINAY_RELEASE_SIGNING_PRIVATE_KEY_B64 }}
           TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64: ${{ vars.TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64 }}
         run: |
           VERSION="${TAG#v}"
-          ARCHIVE="release/$VERSION/terminay-server-$VERSION.tgz"
+          ARCHIVE="release/$VERSION/terminay-server-$VERSION-$TARGET.tar.gz"
           test -n "$TERMINAY_RELEASE_SIGNING_PRIVATE_KEY_B64"
           test -n "$TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64"
           node scripts/release-signature.mjs sign "$ARCHIVE" "$ARCHIVE.sig"
@@ -559,11 +581,11 @@ jobs:
       - name: Upload standalone server workflow artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: standalone-server
+          name: standalone-server-${{ matrix.target }}
           path: |
-            release/*/terminay-server-*.tgz
-            release/*/terminay-server-*.tgz.sha256
-            release/*/terminay-server-*.tgz.sig
+            release/*/terminay-server-*-${{ matrix.target }}.tar.gz
+            release/*/terminay-server-*-${{ matrix.target }}.tar.gz.sha256
+            release/*/terminay-server-*-${{ matrix.target }}.tar.gz.sig
           if-no-files-found: error
           include-hidden-files: false
 
@@ -572,10 +594,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.release.outputs.tag }}
+          TARGET: ${{ matrix.target }}
           TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64: ${{ vars.TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64 }}
         run: |
           VERSION="${TAG#v}"
-          ARCHIVE="release/$VERSION/terminay-server-$VERSION.tgz"
+          ARCHIVE="release/$VERSION/terminay-server-$VERSION-$TARGET.tar.gz"
           test -f "$ARCHIVE"
           test -f "$ARCHIVE.sha256"
           test -f "$ARCHIVE.sig"
@@ -635,9 +658,12 @@ jobs:
           Terminay-Linux-${VERSION}.AppImage.sha256
           Terminay-Mac-${VERSION}-Installer.dmg
           Terminay-Mac-${VERSION}-Installer.dmg.sha256
-          terminay-server-${VERSION}.tgz
-          terminay-server-${VERSION}.tgz.sha256
-          terminay-server-${VERSION}.tgz.sig
+          terminay-server-${VERSION}-linux-arm64.tar.gz
+          terminay-server-${VERSION}-linux-arm64.tar.gz.sha256
+          terminay-server-${VERSION}-linux-arm64.tar.gz.sig
+          terminay-server-${VERSION}-linux-x64.tar.gz
+          terminay-server-${VERSION}-linux-x64.tar.gz.sha256
+          terminay-server-${VERSION}-linux-x64.tar.gz.sig
           EOF
           )"
           # A release retry must not publish notes for a mixture of the exact
@@ -660,16 +686,20 @@ jobs:
             "Terminay-Mac-${VERSION}-Installer.dmg.sha256" \
             "Terminay-Linux-${VERSION}.AppImage" \
             "Terminay-Linux-${VERSION}.AppImage.sha256" \
-            "terminay-server-${VERSION}.tgz" \
-            "terminay-server-${VERSION}.tgz.sha256" \
-            "terminay-server-${VERSION}.tgz.sig"; do
+            "terminay-server-${VERSION}-linux-x64.tar.gz" \
+            "terminay-server-${VERSION}-linux-x64.tar.gz.sha256" \
+            "terminay-server-${VERSION}-linux-x64.tar.gz.sig" \
+            "terminay-server-${VERSION}-linux-arm64.tar.gz" \
+            "terminay-server-${VERSION}-linux-arm64.tar.gz.sha256" \
+            "terminay-server-${VERSION}-linux-arm64.tar.gz.sig"; do
             gh release download "$TAG" --repo "$GH_REPO" --dir "$ASSET_DIR" --pattern "$expected"
             test -f "$ASSET_DIR/$expected"
           done
           for asset in \
             "$ASSET_DIR/Terminay-Mac-${VERSION}-Installer.dmg" \
             "$ASSET_DIR/Terminay-Linux-${VERSION}.AppImage" \
-            "$ASSET_DIR/terminay-server-${VERSION}.tgz"; do
+            "$ASSET_DIR/terminay-server-${VERSION}-linux-x64.tar.gz" \
+            "$ASSET_DIR/terminay-server-${VERSION}-linux-arm64.tar.gz"; do
             (
               cd "$ASSET_DIR"
               shasum -a 256 -c "$(basename "$asset").sha256"
@@ -677,8 +707,11 @@ jobs:
           done
           test -n "$TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64"
           node scripts/release-signature.mjs verify \
-            "$ASSET_DIR/terminay-server-${VERSION}.tgz" \
-            "$ASSET_DIR/terminay-server-${VERSION}.tgz.sig"
+            "$ASSET_DIR/terminay-server-${VERSION}-linux-x64.tar.gz" \
+            "$ASSET_DIR/terminay-server-${VERSION}-linux-x64.tar.gz.sig"
+          node scripts/release-signature.mjs verify \
+            "$ASSET_DIR/terminay-server-${VERSION}-linux-arm64.tar.gz" \
+            "$ASSET_DIR/terminay-server-${VERSION}-linux-arm64.tar.gz.sig"
 
       - name: Append release asset summary
         env:
@@ -691,7 +724,8 @@ jobs:
 
           - macOS installer: https://github.com/${REPOSITORY}/releases/download/${TAG}/Terminay-Mac-${TAG#v}-Installer.dmg
           - Linux AppImage: https://github.com/${REPOSITORY}/releases/download/${TAG}/Terminay-Linux-${TAG#v}.AppImage
-          - Standalone server: https://github.com/${REPOSITORY}/releases/download/${TAG}/terminay-server-${TAG#v}.tgz
+          - Standalone server (linux-x64): https://github.com/${REPOSITORY}/releases/download/${TAG}/terminay-server-${TAG#v}-linux-x64.tar.gz
+          - Standalone server (linux-arm64): https://github.com/${REPOSITORY}/releases/download/${TAG}/terminay-server-${TAG#v}-linux-arm64.tar.gz
           EOF
 
       - name: Update GitHub release notes
