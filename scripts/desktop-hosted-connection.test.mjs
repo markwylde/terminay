@@ -2,12 +2,17 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createServer as createHttpServer } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { deriveMatchCode } from '../packages/protocol/dist/index.js';
+import { relaySessionId } from '../apps/terminay-server/dist/remote/directSessionId.js';
+import { createDirectSignalingRelay } from '../apps/terminay-server/dist/remote/directSignalingRelay.js';
+import { loadOrCreateDirectTlsCertificate } from '../apps/terminay-server/dist/remote/directTlsCertificate.js';
 import { createHostedHostKey } from '../apps/terminay-server/dist/remote/hostedHostKey.js';
 import { deriveHostedPairingSecrets } from '../apps/terminay-server/dist/remote/hostedPairingSecrets.js';
 import { startHostedPairingHost } from '../apps/terminay-server/dist/remote/hostedPairingHost.js';
@@ -140,4 +145,126 @@ test('Desktop pairs over the authenticated channel, pins the host key, and recon
 	await assert.rejects(connectDesktopHostedRemote({
 		origin: sessionOrigin, store: wrongStore, webrtcRuntimeRoot: RUNTIME_ROOT, iceServers: [], signal: { connectHost: '127.0.0.1' },
 	}), /timed out|identity|proof|failed/u);
+});
+
+test('Desktop pairs, reconnects, and is revoked against a standalone server it reaches directly', { skip: runtimeStaged ? false : `selected WebRTC runtime is not staged at ${RUNTIME_ROOT}`, timeout: 240_000 }, async (t) => {
+	const dataRoot = await mkdtemp(join(tmpdir(), 'terminay-desktop-direct-'));
+	// The advertised origin must be the port the listener answers on: the
+	// upgrade boundary compares it with the Host header.
+	const idle = createHttpServer();
+	await new Promise((resolveListen) => idle.listen(0, '127.0.0.1', resolveListen));
+	const directPort = idle.address().port;
+	await new Promise((resolveClose) => idle.close(resolveClose));
+	// A hostname, not a loopback literal: a loopback host is the connection
+	// manager's own name, and the connect host below is what actually dials.
+	const directOrigin = `https://box.example.test:${directPort}`;
+
+	const certificate = await loadOrCreateDirectTlsCertificate(dataRoot, directOrigin);
+	const signaling = createDirectSignalingRelay({ sessionOrigin: directOrigin, managerOrigin: 'https://app.example.test' });
+	const listener = createHttpsServer({ cert: certificate.cert, key: certificate.key });
+	listener.on('upgrade', (request, socket, head) => signaling.handleUpgrade(request, socket, head));
+	await new Promise((resolveListen) => listener.listen(directPort, '127.0.0.1', resolveListen));
+
+	const relay = await startHostedLoopbackRelay();
+	const hostedOrigin = `http://${SESSION_ID}.localhost:${relay.port}`;
+	const exposure = createServerRemoteExposure({ serverId: 'server-direct', sessionOrigin: hostedOrigin, pairingUrlFormat: 'hosted-compact', cleanupIntervalMs: 0 });
+	const handoff = exposure.start();
+	const hostKey = createHostedHostKey();
+	const fragment = new URL(handoff.pairingUrl).hash.slice(1);
+	const pairingUrl = `${directOrigin}/v1/?hostName=Studio-Box#${fragment}`;
+	const connections = [];
+	const host = await startHostedPairingHost({
+		acceptApplication: () => {
+			const connection = { connectionId: `connection-${connections.length + 1}`, closed: false, start: async () => undefined, close: async () => { connection.closed = true; } };
+			connections.push(connection);
+			return connection;
+		},
+		handoff: { ...handoff, sessionOrigin: directOrigin, pairingUrl },
+		sessionId: relaySessionId(directOrigin),
+		hostKey,
+		persistDevices: () => undefined,
+		remote: exposure,
+		serverId: 'server-direct',
+		// The host reaches its own listener over loopback and does not verify the
+		// certificate it minted: the transcript authenticates the endpoint.
+		signal: { connectHost: '127.0.0.1', insecureTls: true },
+		webrtcRuntimeRoot: RUNTIME_ROOT,
+		iceServers: [],
+	});
+	t.after(async () => {
+		await host.close();
+		await exposure.shutdown();
+		await signaling.close();
+		await new Promise((resolveClose) => listener.close(resolveClose));
+		await relay.close();
+		await rm(dataRoot, { force: true, recursive: true });
+	});
+
+	const store = new DesktopDeviceCredentialStore({ directory: join(directory, 'credentials-direct'), codec: codec() });
+	const desktopSignal = { connectHost: '127.0.0.1', insecureTls: true };
+	const shown = [];
+	const pairing = pairDesktopHostedDevice({
+		pairingUrl,
+		deviceName: 'Terminay Desktop',
+		store,
+		webrtcRuntimeRoot: RUNTIME_ROOT,
+		iceServers: [],
+		signal: desktopSignal,
+		onMatchCode: (code) => shown.push(code),
+	});
+	const pending = await new Promise((resolvePending, reject) => {
+		const startedAt = Date.now();
+		const tick = () => {
+			const [entry] = exposure.listPendingApprovals();
+			if (entry && shown.length === 1) return resolvePending(entry);
+			if (Date.now() - startedAt > 60_000) return reject(new Error('no pending approval'));
+			setTimeout(tick, 50);
+		};
+		tick();
+	});
+	assert.equal(shown[0].matchCode, pending.matchCode);
+	exposure.approveEnrollment(pending.approvalId);
+	const paired = await pairing;
+
+	// The profile is persisted against the origin exactly as written, not a
+	// hosted session origin reconstructed from a session id.
+	assert.equal(paired.origin, directOrigin);
+	assert.equal(paired.label, 'Studio-Box');
+	assert.equal(paired.serverId, 'server-direct');
+	assert.deepEqual(await store.loadPinnedHostKey(directOrigin), { algorithm: 'ed25519', publicKey: hostKey.publicKey });
+	const device = await store.loadDevice(directOrigin);
+	assert.equal(device.deviceId, paired.deviceId);
+
+	// Reconnect runs through the direct endpoint's own /signal, and must work
+	// from the saved profile alone. The caller passes no TLS relaxation here:
+	// recognising a direct origin is the connection's own job, or a device that
+	// paired successfully could never reconnect.
+	const connection = await connectDesktopHostedRemote({
+		origin: directOrigin,
+		store,
+		webrtcRuntimeRoot: RUNTIME_ROOT,
+		expectedServerId: 'server-direct',
+		iceServers: [],
+		signal: { connectHost: '127.0.0.1' },
+	});
+	assert.equal(connection.serverId, 'server-direct');
+	assert.equal(connection.hostContext.serverId, 'server-direct');
+	assert.equal(connections.length, 1);
+	// Nothing crossed the loopback hosted relay: this device only ever spoke to
+	// the server's own listener.
+	assert.equal(relay.state.log.includes('client-join'), false);
+	assert.equal(relay.state.log.includes('device-join'), false);
+	await connection.transport.close({ code: 'normal' }).catch(() => undefined);
+
+	// Revoking the device on the server ends its access; the saved profile can
+	// no longer reconnect without pairing again.
+	assert.equal(await exposure.revokeAllDevices(), 1);
+	await assert.rejects(connectDesktopHostedRemote({
+		origin: directOrigin,
+		store,
+		webrtcRuntimeRoot: RUNTIME_ROOT,
+		expectedServerId: 'server-direct',
+		iceServers: [],
+		signal: { connectHost: '127.0.0.1' },
+	}), /timed out|revoked|denied|proof|failed|unknown/u);
 });

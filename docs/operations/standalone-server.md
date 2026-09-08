@@ -25,6 +25,9 @@ option uses the documented default:
 | Structured log destination | `--log-sink PATH` | `TERMINAY_LOG_SINK` | host-selected |
 | Matching server UI bundle | `--ui-bundle PATH` | `TERMINAY_UI_BUNDLE` | host-selected |
 | Reported server version | *(none)* | `TERMINAY_SERVER_VERSION` | `0.0.0` |
+| Hosted signaling domain | `--hosted-domain DOMAIN` | `TERMINAY_HOSTED_DOMAIN` | `terminay.com` |
+| Exposure enabled at startup | `--expose MODES` | `TERMINAY_EXPOSE` | `off` |
+| Advertised direct signaling origin | `--direct-origin URL` | `TERMINAY_DIRECT_ORIGIN` | *(unset)* |
 
 The data root is the server's authority boundary. Keep it on a local disk
 with owner-only permissions, back it up as one unit, and do not put it below a
@@ -35,8 +38,9 @@ and applying platform permissions.
 
 The foreground readiness record may include the configured data and log paths
 so a local operator can find them. `--status` is intentionally redacted: it
-reports phase, identity, version, runtime mode, and whether paths/bundles are
-configured, but not their values or workspace data. Do not redirect readiness
+reports phase, identity, version, runtime mode, the enabled exposure modes by
+name, and whether paths/bundles are configured, but not their values, the
+direct origin, or workspace data. Do not redirect readiness
 or diagnostics to a public endpoint.
 
 ## Foreground commands
@@ -45,16 +49,22 @@ or diagnostics to a public endpoint.
 terminay-server --help
 terminay-server --version
 terminay-server --status --data-root /var/lib/terminay
-terminay-server --pairing --server-id workstation-a --endpoint loopback
+terminay-server --pairing --data-root /var/lib/terminay
 terminay-server --data-root /var/lib/terminay --log-sink /var/log/terminay/server.jsonl
 ```
 
-`--pairing` emits a short-lived handoff record and never prints a private
-key, durable browser credential, or application token. Each device that scans
-the link must then be approved on this server: the foreground process logs an
-`approval-pending` line with the device name, a five-character match code, and
-an approval id, and the operator compares the code with the one on the device
-and runs one of:
+`--pairing` asks the running server, through the owner-only socket in its data
+root, for the pairing handoff it is currently advertising, and prints one line
+per enabled exposure mode. It mints nothing of its own: a pairing room only
+exists once the server has registered it, so this command fails with a clear
+message when no server owns the data root, and reports `"exposure":"off"` when
+the server was never exposed. It never prints a private key, durable browser
+credential, or application token.
+
+Each device that opens a pairing link must then be approved on this server:
+the foreground process logs an `approval-pending` line with the device name, a
+five-character match code, and an approval id, and the operator compares the
+code with the one on the device and runs one of:
 
 ```sh
 terminay-server approvals --data-root /var/lib/terminay
@@ -71,6 +81,71 @@ Stop the foreground process with `SIGTERM` for a bounded graceful shutdown.
 `SIGINT` is equivalent for an interactive terminal. A supervisor must not
 start a second process against the same data root while the first one is
 stopping.
+
+## Installing and upgrading
+
+A standalone server is installed from one self-contained archive per Linux
+architecture, `terminay-server-<version>-linux-<arch>.tar.gz`, published with
+a `.sha256` sidecar and an Ed25519 `.sig` beside it. The archive carries its
+own pinned Node runtime, the compiled server, the production dependency
+closure including the native `node-pty`, the matched UI bundle, and the
+selected WebRTC runtime, so the target needs neither Node nor a compiler.
+Merges to the default branch also publish a rolling `main` channel under
+stable asset names. Verify the sidecar and the signature before staging, and
+compare `revision` in the archive's `artifact-manifest.json` — not `version` —
+to decide whether the rolling channel moved. The full contract is in the
+[release install and update policy](./release-update-policy.md).
+
+## Exposure
+
+A standalone server is not remotely reachable until it is configured to be.
+`--expose` is that decision, standing for the data root:
+
+| Value | Effect |
+| --- | --- |
+| `off` (default) | Not remotely reachable. |
+| `hosted` | Registers with the hosted relay under `--hosted-domain`. |
+| `direct` | Serves its own signaling endpoint at `--direct-origin`. |
+| `hosted,direct` | Both, sharing one room, one host key, and one device registry. |
+
+**Hosted exposure** provisions a stable session origin under
+`--hosted-domain` (default `terminay.com`) and persists it in the data root as
+`remote-session-origin.v1.json`, so paired devices reconnect across restarts
+without pairing again. Changing the hosted domain mints a new origin.
+
+**Direct exposure** serves the signaling endpoint from this process at
+`/signal` on the origin `--direct-origin` names, so no hosted relay is
+involved. It requires the authenticated HTTP listener, and `--http-port` must
+be the port that origin advertises:
+
+```sh
+terminay-server \
+  --data-root /var/lib/terminay \
+  --expose direct \
+  --http-host 0.0.0.0 --http-port 8443 \
+  --direct-origin https://box.example.test:8443
+```
+
+**Direct mode is authenticated by the server host key, not by TLS.** The
+listener presents a certificate the server generates into its own data root
+(`direct-tls.v1.json`, owner-only). A client verifies the host key's signature
+over the transport transcript and the DTLS fingerprints before any credential
+crosses, exactly as it does for the hosted relay; the certificate plays no
+part in that decision and is not something to distribute or pin. An attacker
+who controls the network path to the endpoint can deny service or relay opaque
+DTLS packets, and nothing more.
+
+Browsers cannot accept that self-signed listener, so direct mode is for
+Terminay Desktop. Operators who want browser access keep a reverse proxy with
+a real certificate in front, as before.
+
+Both modes advertise the same one-time pairing room and differ only in the
+origin a client reaches it through. A hosted link takes the form
+`https://app.<hosted-domain>/?s=<session-id>&hostName=…#<secret>`; a direct
+link takes the form `https://<direct-origin>/v1/?hostName=…#<secret>`. The
+secret is always in the fragment, so it never reaches a request line, a proxy
+log, or the signaling endpoint. A device paired one way reconnects the other
+without pairing again.
 
 ## Network, pairing, and revocation
 

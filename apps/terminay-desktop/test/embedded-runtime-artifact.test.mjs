@@ -40,7 +40,7 @@ function run(command, args, options = {}) {
     child.stderr.on("data", (chunk) => { stderr += chunk; });
     child.once("error", reject);
     child.once("close", (code) => {
-      if (code === 0) resolve({ stdout, stderr });
+      if (code === 0 || options.allowFailure === true) resolve({ code, stdout, stderr });
       else reject(new Error(`${command} ${args.join(" ")} exited ${code}: ${stderr}`));
     });
   });
@@ -181,9 +181,9 @@ test("extracted Desktop package starts the extracted shared embedded server runt
     const serverPackage = JSON.parse(await readFile(join(modules, "@terminay/server/package.json"), "utf8"));
     // The Desktop closure must also execute the shared server's real pairing
     // CLI, rather than resolving a workspace CLI or an Electron-owned remote
-    // implementation. Pairing is intentionally a short-lived, fragment-only
-    // bootstrap record; keep it in memory and assert the exact staged server
-    // dependency honours its configured origin.
+    // implementation. That command is a lookup on the running server's
+    // owner-only socket: it mints nothing itself, so against a data root no
+    // server owns it must fail visibly and print no pairing material.
     const pairing = await run(process.execPath, [
       join(modules, "@terminay/server", serverPackage.bin["terminay-server"]),
       "--pairing",
@@ -196,20 +196,12 @@ test("extracted Desktop package starts the extracted shared embedded server runt
         ...process.env,
         TERMINAY_SERVER_VERSION: serverPackage.version,
       },
+      allowFailure: true,
     });
-    assert.equal(pairing.stderr, "");
-    const pairingRecord = JSON.parse(pairing.stdout);
-    assert.equal(pairingRecord.serverId, "packed-desktop-pairing");
-    assert.equal(pairingRecord.endpoint, "loopback");
-    assert.equal(pairingRecord.requiresApproval, true);
-    assert.equal(pairingRecord.roomId, pairingRecord.pairingSessionId);
-    const pairingUrl = new URL(pairingRecord.pairingUrl);
-    assert.equal(pairingUrl.origin, "https://packed-desktop-pairing.example.test");
-    assert.equal(pairingUrl.search, "");
-    const pairingBootstrap = new URLSearchParams(pairingUrl.hash.slice(1));
-    assert.equal(pairingBootstrap.get("pairingSessionId"), pairingRecord.pairingSessionId);
-    assert.ok(pairingBootstrap.get("pairingToken"));
-    assert.equal(pairingBootstrap.get("pairingExpiresAt"), pairingRecord.expiresAt);
+    assert.notEqual(pairing.code, 0);
+    assert.equal(pairing.stdout, "");
+    assert.match(pairing.stderr, /no running server accepts approvals at this data root/u);
+    assert.equal(pairing.stderr.includes("pairingToken"), false);
 
     // Status follows a distinct CLI path from pairing and must retain the
     // standalone server's flag-over-environment precedence and redaction when

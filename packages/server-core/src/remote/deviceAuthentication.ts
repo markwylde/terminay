@@ -187,7 +187,14 @@ export class RemoteDeviceAuthentication {
 		return true;
 	}
 
-	createChallenge(deviceId: ProtocolId): {
+	/**
+	 * A challenge names the origin the client actually reached. A server may be
+	 * exposed through more than one origin (a hosted relay and its own direct
+	 * listener), and a client checks that the challenge belongs to the origin it
+	 * dialled, so the caller that owns the peer supplies it. It is never taken
+	 * from the client.
+	 */
+	createChallenge(deviceId: ProtocolId, sessionOrigin?: string): {
 		readonly challenge: RemoteDeviceChallenge;
 		readonly signingInput: string;
 	} {
@@ -199,7 +206,7 @@ export class RemoteDeviceAuthentication {
 		const challenge: RemoteDeviceChallenge = Object.freeze({
 			challengeId: this.nextId('challenge'),
 			serverId: this.options.serverId,
-			sessionOrigin: this.options.sessionOrigin,
+			sessionOrigin: sessionOrigin ?? this.options.sessionOrigin,
 			deviceId: device.deviceId,
 			nonce: this.token(32),
 			issuedAt,
@@ -216,6 +223,11 @@ export class RemoteDeviceAuthentication {
 		readonly challengeId: ProtocolId;
 		readonly deviceSignature: string;
 		readonly peerId?: ProtocolId;
+		/** The origin this peer reached the server on, supplied by the caller
+		 * that owns the peer. It must match the origin the challenge was minted
+		 * under, so a challenge issued for one exposure cannot be redeemed on
+		 * another. Never taken from the client. */
+		readonly sessionOrigin?: string;
 	}): RemoteDeviceConnectionTicket {
 		this.cleanup();
 		const pending = this.challenges.get(input.challengeId);
@@ -223,7 +235,7 @@ export class RemoteDeviceAuthentication {
 			pending === undefined ||
 			pending.challenge.deviceId !== input.deviceId ||
 			pending.challenge.serverId !== this.options.serverId ||
-			pending.challenge.sessionOrigin !== this.options.sessionOrigin
+			pending.challenge.sessionOrigin !== (input.sessionOrigin ?? this.options.sessionOrigin)
 		)
 			throw new Error('remote device challenge is unavailable');
 		const device = this.requireActiveDevice(input.deviceId);
