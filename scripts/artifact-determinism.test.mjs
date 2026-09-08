@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -54,6 +54,22 @@ test('the standalone builder gates architecture on the shipped ELF bytes, not on
   } finally {
     await rm(scratch, { recursive: true, force: true })
   }
+})
+
+test('the archive launcher reports the release version it was built from', async () => {
+  // A published archive is installed by copying it onto a box, so nothing
+  // outside it can supply the version. Without this the server falls back to
+  // the workspace placeholder and an operator checking the version output
+  // before an upgrade is told 0.0.0 for every release.
+  const builder = await readFile(new URL('build-standalone-server-artifact.mjs', import.meta.url), 'utf8')
+  assert.match(builder, /writeLaunchers\(root, serverPackage\.version\)/u)
+  const launcher = builder.slice(builder.indexOf('async function writeLaunchers'))
+  assert.match(launcher, /TERMINAY_SERVER_VERSION:=\$\{version\}/u)
+  assert.match(launcher, /export TERMINAY_SERVER_VERSION /u)
+
+  // The probe refuses an archive whose launcher and manifest disagree.
+  const probe = await readFile(new URL('probe-standalone-server-archive.mjs', import.meta.url), 'utf8')
+  assert.match(probe, /version !== manifest\.version/u)
 })
 
 function runBuilder(args) {
