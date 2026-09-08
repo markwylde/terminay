@@ -109,3 +109,53 @@ test("command-line exposure configuration takes precedence over the environment"
   assert.deepEqual(overridden.exposeModes, []);
   assert.equal(overridden.directOrigin, "https://flag.example.test");
 });
+
+test("an advertised ICE address is parsed from the flag and the environment", () => {
+  const flag = parse(["--advertise-address", "127.0.0.1:51000"]);
+  assert.deepEqual({ ...flag.advertiseAddress }, { host: "127.0.0.1", port: 51000 });
+
+  const environment = parse([], { TERMINAY_WEBRTC_ADVERTISE_ADDRESS: "192.168.2.10:51000" });
+  assert.deepEqual({ ...environment.advertiseAddress }, { host: "192.168.2.10", port: 51000 });
+
+  // The flag wins, as every other option in this parser does.
+  const both = parse(["--advertise-address", "127.0.0.1:51000"], {
+    TERMINAY_WEBRTC_ADVERTISE_ADDRESS: "192.168.2.10:52000",
+  });
+  assert.deepEqual({ ...both.advertiseAddress }, { host: "127.0.0.1", port: 51000 });
+});
+
+test("a bracketed IPv6 address is accepted", () => {
+  const parsed = parse(["--advertise-address", "[::1]:51000"]);
+  assert.deepEqual({ ...parsed.advertiseAddress }, { host: "::1", port: 51000 });
+});
+
+test("no advertised address leaves the option unset", () => {
+  assert.equal(parse().advertiseAddress, undefined);
+  // The daemon CLI clears the address by writing an empty variable into the
+  // environment file, so an empty variable must read as unset rather than as a
+  // malformed address. An empty *flag* value stays a usage error, as it is for
+  // every other option in this parser.
+  assert.equal(parse([], { TERMINAY_WEBRTC_ADVERTISE_ADDRESS: "" }).advertiseAddress, undefined);
+  assert.equal(parse([], { TERMINAY_WEBRTC_ADVERTISE_ADDRESS: "   " }).advertiseAddress, undefined);
+  assert.throws(() => parse(["--advertise-address"]), /requires a value/u);
+});
+
+test("a hostname is refused, because a candidate is resolved on the peer's machine", () => {
+  assert.throws(
+    () => parse(["--advertise-address", "box.example.com:51000"]),
+    /literal address and port/u,
+  );
+  assert.throws(() => parse(["--advertise-address", "localhost:51000"]), /literal address and port/u);
+});
+
+test("a malformed advertised address is refused", () => {
+  for (const value of ["127.0.0.1", "51000", "127.0.0.1:", ":51000", "127.0.0.1:abc", "::1:51000"]) {
+    assert.throws(() => parse(["--advertise-address", value]), /--advertise-address/u, value);
+  }
+});
+
+test("an out-of-range port or octet is refused", () => {
+  assert.throws(() => parse(["--advertise-address", "127.0.0.1:0"]), /between 1 and 65535/u);
+  assert.throws(() => parse(["--advertise-address", "127.0.0.1:65536"]), /--advertise-address/u);
+  assert.throws(() => parse(["--advertise-address", "999.0.0.1:51000"]), /valid IPv4 address/u);
+});

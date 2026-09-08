@@ -202,7 +202,11 @@ export function requiredLaneClosed(
 ): boolean {
 	if (channel === undefined || !REQUIRED_LANES.has(channel)) return false;
 	if (!everOpened) return false;
-	return channelState === 'closed' || channelState === 'closing' || channelState === 'failed';
+	return (
+		channelState === 'closed' ||
+		channelState === 'closing' ||
+		channelState === 'failed'
+	);
 }
 
 export type HostedLivePeer = Readonly<{
@@ -238,7 +242,10 @@ export class HostedLivePeerRegistry {
 
 	/** Drop the entry only when it still describes this exact peer, so a late
 	 * teardown from a superseded generation cannot evict its replacement. */
-	drop(deviceId: string, peer: HostedLivePeer['peer']): HostedLivePeer | undefined {
+	drop(
+		deviceId: string,
+		peer: HostedLivePeer['peer'],
+	): HostedLivePeer | undefined {
 		const existing = this.peers.get(deviceId);
 		if (existing === undefined || existing.peer !== peer) return undefined;
 		this.peers.delete(deviceId);
@@ -442,13 +449,20 @@ export function isUsableHostIceAddress(address: string): boolean {
 }
 
 export function collectHostIceAddresses(
-	nics: Readonly<Record<string, readonly HostIceNetworkAddress[] | undefined>> = {},
+	nics: Readonly<
+		Record<string, readonly HostIceNetworkAddress[] | undefined>
+	> = {},
 ): readonly string[] {
 	const addresses = new Set<string>();
 	for (const entries of Object.values(nics)) {
 		for (const entry of entries ?? []) {
 			const family = entry.family;
-			if (family !== 'IPv4' && family !== 'IPv6' && family !== 4 && family !== 6) {
+			if (
+				family !== 'IPv4' &&
+				family !== 'IPv6' &&
+				family !== 4 &&
+				family !== 6
+			) {
 				continue;
 			}
 			if (!isUsableHostIceAddress(entry.address)) continue;
@@ -458,26 +472,57 @@ export function collectHostIceAddresses(
 	return Object.freeze([...addresses]);
 }
 
+/**
+ * An address and UDP port an administrator forwarded to this server, for the
+ * case where the addresses it can observe about itself are not the address a
+ * client reaches it on.
+ */
+export interface AdvertisedIceAddress {
+	readonly host: string;
+	readonly port: number;
+}
+
 export function hostedPeerConfiguration(
 	connectHost: string | undefined,
 	iceServers?: readonly HostedIceServer[],
 	hostAddresses?: readonly string[],
+	advertise?: AdvertisedIceAddress,
 ): Record<string, unknown> {
+	// Pinning the socket to the advertised port is what makes the advertised
+	// candidate forwardable: an ephemeral port cannot be named in advance, so
+	// there would be nothing for an administrator to publish.
+	const advertised =
+		advertise === undefined
+			? {}
+			: { icePortRange: [advertise.port, advertise.port] as const };
 	const loopback =
 		connectHost === '127.0.0.1' ||
 		connectHost === 'localhost' ||
 		connectHost === '::1';
+	// The advertised address goes in first and the gathered ones follow, so
+	// enabling it can only add a path. It is not filtered by
+	// `isUsableHostIceAddress`: that filter exists to drop addresses the server
+	// merely observed about itself, and this one an administrator chose.
 	const additional = [
-		...new Set(
-			(hostAddresses ?? []).filter((address) => isUsableHostIceAddress(address)),
-		),
+		...new Set([
+			...(advertise === undefined ? [] : [advertise.host]),
+			...(hostAddresses ?? []).filter((address) =>
+				isUsableHostIceAddress(address),
+			),
+		]),
 	];
 	return {
 		iceServers: [...resolveHostedIceServers(iceServers)],
 		maxMessageSize: 1024 * 1024,
+		...advertised,
 		...(loopback
 			? {
-					iceAdditionalHostAddresses: ['127.0.0.1'],
+					iceAdditionalHostAddresses: [
+						...new Set([
+							'127.0.0.1',
+							...(advertise === undefined ? [] : [advertise.host]),
+						]),
+					],
 					iceInterfaceAddresses: { udp4: '127.0.0.1' },
 					iceUseIpv4: false,
 					iceUseIpv6: false,
