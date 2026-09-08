@@ -1,5 +1,5 @@
 {
-	"name": "terminay",
+	"name": "terminay-workspace",
 	"productName": "Terminay",
 	"private": true,
 	"version": "0.0.0",
@@ -48,7 +48,7 @@
 		"build:server-ui:bundle": "vite build --config vite.server-ui.config.ts",
 		"benchmark:server-ui-archive": "npm run build:server-ui && node scripts/server-ui-archive-benchmark.mjs --renderer-directory dist-web --entry-path server.html",
 		"build:web": "npm run build --workspace @terminay/protocol && npm run build --workspace @terminay/client-core && npm run build --workspace @terminay/responsive-ui && npm run build:server-ui",
-		"build:applications": "turbo run build --filter=@terminay/server --filter=@terminay/desktop --filter=@terminay/web",
+		"build:applications": "turbo run build --filter=@terminay/server --filter=@terminay/desktop --filter=@terminay/web --filter=terminay",
 		"build:shared": "turbo run build --filter=@terminay/client-core --filter=@terminay/responsive-ui --filter=@terminay/server-core",
 		"check:boundaries": "node scripts/check-workspace-boundaries.mjs",
 		"check:deterministic-artifacts": "node scripts/check-deterministic-workspace-builds.mjs",
@@ -56,13 +56,13 @@
 		"test:close-protection": "node --test scripts/process-cwd-foreground.test.mjs scripts/foreground-close-protection.test.mjs scripts/main-window-close-confirmation.test.mjs scripts/user-data-process-lock.test.mjs",
 		"typecheck:workspaces": "turbo run typecheck",
 		"smoke:workspaces": "npm run check:boundaries && npm run test:boundaries && npm run typecheck:workspaces && npm run check:deterministic-artifacts && npm run build:applications",
-		"smoke": "npm run lint && npm run test:close-protection && npm run test:desktop-diagnostics && node --test --experimental-strip-types scripts/workspace-inventory.test.mjs scripts/workspace-dashboard-rows.test.mjs && node --test scripts/canonical-application-feature-ipc.test.mjs scripts/local-view-state.test.mjs scripts/e2e-container-contract.test.mjs scripts/provider-portable-ci.test.mjs scripts/stage-macos-app-from-dmg.test.mjs scripts/release-artifact-build-contract.test.mjs scripts/task54-canonical-runtime-journeys.test.mjs scripts/task54-legacy-architecture-gate.test.mjs && npm run build:app && node --test scripts/packaged-desktop-artifact.test.mjs && npm run smoke:workspaces && npm run test:security-boundaries",
+		"smoke": "npm run lint && npm run test:close-protection && npm run test:desktop-diagnostics && node --test --experimental-strip-types scripts/workspace-inventory.test.mjs scripts/workspace-dashboard-rows.test.mjs && node --test scripts/canonical-application-feature-ipc.test.mjs scripts/local-view-state.test.mjs scripts/e2e-container-contract.test.mjs scripts/provider-portable-ci.test.mjs scripts/stage-macos-app-from-dmg.test.mjs scripts/release-artifact-build-contract.test.mjs scripts/daemon-cli-smoke.test.mjs scripts/task54-canonical-runtime-journeys.test.mjs scripts/task54-legacy-architecture-gate.test.mjs && npm run build:app && node --test scripts/packaged-desktop-artifact.test.mjs && npm run smoke:workspaces && npm run test:security-boundaries",
 		"test:workspaces": "turbo run test:ci --concurrency=1",
 		"test:ci": "npm run smoke && npm run test:workspaces && npm run test:release-evidence",
 		"release": "node scripts/create-release.mjs",
 		"release:prepare-credentials": "node scripts/prepare-release-credentials.mjs",
 		"test:e2e": "sh scripts/run-project-environment-e2e.sh && sh scripts/run-e2e-container.sh",
-    "test:e2e:puzed-ssh": "npm run build --workspace @terminay/server-core && TERMINAY_RUN_PACKED_COMPOSITION_E2E=1 node --test packages/server-core/test/puzed-ssh-public-composition.test.mjs",
+		"test:e2e:puzed-ssh": "npm run build --workspace @terminay/server-core && TERMINAY_RUN_PACKED_COMPOSITION_E2E=1 node --test packages/server-core/test/puzed-ssh-public-composition.test.mjs",
 		"test:e2e:host": "npm run build:app && playwright test",
 		"test:desktop-diagnostics": "npm run build:shared && npm run build --workspace @terminay/ui-bundle && node --test scripts/local-desktop-diagnostics-*.test.mjs scripts/renderer-root-diagnostics.test.mjs scripts/privileged-webrtc-transport-lifecycle.test.mjs",
 		"test:desktop-diagnostics-release": "npm run build:app && TERMINAY_REQUIRE_DESKTOP_DIAGNOSTICS_BUILD=1 node --test scripts/local-desktop-diagnostics-release.test.mjs",
@@ -150,7 +150,9 @@
 		"test:spike-headless-webrtc-node-datachannel": "node --test scripts/headless-webrtc-node-datachannel.test.mjs",
 		"test:spike-production-headless-webrtc": "node --test scripts/production-headless-webrtc-node-datachannel.test.mjs",
 		"test:spike-production-headless-webrtc-secure-werift": "node --test scripts/production-headless-webrtc-secure-werift.test.mjs",
-		"preview": "vite preview"
+		"preview": "vite preview",
+		"smoke:daemon-cli": "node scripts/daemon-cli-smoke.mjs",
+		"test:daemon-cli-smoke": "node --test scripts/daemon-cli-smoke.test.mjs"
 	},
 	"dependencies": {
 		"@fontsource/open-sans": "^5.3.0",

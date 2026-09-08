@@ -13,6 +13,7 @@ RUN apt-get update \
     && npm install --global npm@12.0.2
 
 COPY --chown=node:node package.json package-lock.json ./
+COPY --chown=node:node apps/terminay-cli/package.json apps/terminay-cli/package.json
 COPY --chown=node:node apps/terminay-desktop/package.json apps/terminay-desktop/package.json
 COPY --chown=node:node apps/terminay-server/package.json apps/terminay-server/package.json
 COPY --chown=node:node apps/terminay-web/package.json apps/terminay-web/package.json
