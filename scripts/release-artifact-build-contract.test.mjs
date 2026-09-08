@@ -138,3 +138,60 @@ test('tagged releases publish signed self-contained archives per architecture an
 		}
 	}
 });
+
+test('the CLI is published to npm only after the archives it installs are attached', async () => {
+	const workflow = await readFile(
+		resolve(root, '.github/workflows/trigger-release.yml'),
+		'utf8',
+	);
+
+	const archiveStart = workflow.indexOf('  build-standalone-server:\n');
+	const publishStart = workflow.indexOf('  publish-cli:\n');
+	const notesStart = workflow.indexOf('  publish-release-notes:\n');
+	assert.ok(archiveStart >= 0 && publishStart > archiveStart && notesStart > publishStart);
+
+	const job = workflow.slice(publishStart, notesStart);
+	// Publishing before the archives are attached would ship a CLI whose own
+	// release has nothing for it to install.
+	assert.match(job, /needs: \[release, build-standalone-server\]/u);
+	assert.match(job, /node scripts\/check-embedded-release-key\.mjs/u);
+	assert.match(job, /npm publish --workspace terminay --provenance --access public/u);
+	assert.match(job, /id-token: write/u);
+	assert.match(job, /NODE_AUTH_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/u);
+	assert.match(job, /registry-url: https:\/\/registry\.npmjs\.org/u);
+
+	// The published version is the release tag, so `npx terminay@X.Y.Z` and
+	// release X.Y.Z are the same thing.
+	assert.match(job, /node scripts\/sync-package-version\.mjs "\$VERSION"/u);
+	assert.match(job, /apps\/terminay-cli\/package\.json"\)\.version'\)" = "\$VERSION"/u);
+
+	const keyCheck = job.indexOf('check-embedded-release-key.mjs');
+	const publish = job.indexOf('npm publish');
+	assert.ok(keyCheck < publish, 'the embedded key check must gate the publish');
+});
+
+test('the published CLI package ships only its compiled output and one dependency', async () => {
+	const manifest = JSON.parse(
+		await readFile(resolve(root, 'apps/terminay-cli/package.json'), 'utf8'),
+	);
+
+	assert.equal(manifest.name, 'terminay');
+	assert.notEqual(manifest.private, true, 'the CLI is the one workspace that is published');
+	assert.deepEqual(manifest.files, ['dist']);
+	assert.deepEqual(manifest.bin, { terminay: 'dist/cli.js' });
+
+	// The CLI is run as root through `npx`, so its dependency footprint is
+	// deliberately one pinned package.
+	assert.deepEqual(Object.keys(manifest.dependencies), ['qrcode']);
+	assert.match(manifest.dependencies.qrcode, /^\d+\.\d+\.\d+$/u, 'runtime dependencies are pinned exactly');
+
+	// It must never pull the server in: that would drag a native addon into an
+	// npx install and tie the CLI to one server version.
+	for (const name of Object.keys({ ...manifest.dependencies, ...manifest.devDependencies })) {
+		assert.doesNotMatch(name, /^@terminay\//u, `the CLI must not depend on ${name}`);
+	}
+
+	// It runs on whatever Node the operator has; the server runs on the Node
+	// inside its own archive.
+	assert.equal(manifest.engines.node, '>=20');
+});
