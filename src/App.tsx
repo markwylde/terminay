@@ -5809,6 +5809,81 @@ function App({
 		let reconcileRetryTimer: number | null = null;
 		let reconcileRetryRevision = -1;
 		let reconcileRetryDeadline = 0;
+		const cancelPendingPass = () => {
+			if (reconcileFrame !== null) {
+				window.cancelAnimationFrame(reconcileFrame);
+				reconcileFrame = null;
+			}
+			if (reconcileRetryTimer !== null) {
+				window.clearTimeout(reconcileRetryTimer);
+				reconcileRetryTimer = null;
+			}
+		};
+		// A published projection decides only *that* a pass is due. What the pass
+		// sees is read here, when it runs. A pass that replayed the projection it
+		// was scheduled with would remove panels this client has since adopted
+		// from a newer one — and removing a canonical panel closes the terminal
+		// session behind it, so a stale pass would destroy live shells.
+		const runPass = () => {
+			recordBootstrapDiagnostic('app.workspace.reconcile-frame');
+			reconcileFrame = null;
+			if (disposed) return;
+			const snapshot = store.snapshot;
+			if (snapshot === null) return;
+			let pendingPresentations = 0;
+			for (const session of Object.values(snapshot.terminalSessions)) {
+				const workspace = workspaceRefs.current.get(session.projectId);
+				if (workspace == null) {
+					pendingPresentations += 1;
+					continue;
+				}
+				if (workspace.ownsControlSession(session.id)) {
+					continue;
+				}
+				const panel = Object.values(snapshot.panels).find(
+					(candidate) => candidate.sessionId === session.id,
+				);
+				if (panel === undefined) {
+					pendingPresentations += 1;
+					continue;
+				}
+				const accepted = workspace.acceptServerTerminal(
+					panel.id,
+					session.id,
+					panel.title,
+					panel.cwd,
+					session.status,
+				);
+				if (!accepted) {
+					pendingPresentations += 1;
+				}
+			}
+			const canonicalTerminalPanels = Object.values(snapshot.panels).filter(
+				(panel) => panel.type === 'terminal',
+			);
+			// Desktop moves and popouts can present a live server panel in another
+			// local workspace without changing its canonical project ownership.
+			// Reconcile against global panel existence so those presentations survive;
+			// a real close removes the canonical panel from this complete list.
+			for (const workspace of workspaceRefs.current.values()) {
+				if (workspace == null) continue;
+				workspace.reconcileServerPanels(canonicalTerminalPanels);
+			}
+			if (
+				pendingPresentations > 0 &&
+				reconcileRetryTimer === null &&
+				performance.now() < reconcileRetryDeadline
+			) {
+				reconcileRetryTimer = window.setTimeout(() => {
+					reconcileRetryTimer = null;
+					schedulePass();
+				}, 50);
+			}
+		};
+		const schedulePass = () => {
+			if (disposed) return;
+			reconcileFrame = window.requestAnimationFrame(runPass);
+		};
 		const reconcile = (snapshot: NonNullable<typeof store.snapshot>) => {
 			if (disposed) return;
 			if (snapshot.revision !== reconcileRetryRevision) {
@@ -5819,71 +5894,18 @@ function App({
 				'app.workspace.reconcile',
 				Object.keys(snapshot.terminalSessions).length,
 			);
-			if (reconcileFrame !== null) window.cancelAnimationFrame(reconcileFrame);
-			reconcileFrame = window.requestAnimationFrame(() => {
-				recordBootstrapDiagnostic('app.workspace.reconcile-frame');
-				reconcileFrame = null;
-				if (disposed) return;
-				let pendingPresentations = 0;
-				for (const session of Object.values(snapshot.terminalSessions)) {
-					const workspace = workspaceRefs.current.get(session.projectId);
-					if (workspace == null) {
-						pendingPresentations += 1;
-						continue;
-					}
-					if (workspace.ownsControlSession(session.id)) {
-						continue;
-					}
-					const panel = Object.values(snapshot.panels).find(
-						(candidate) => candidate.sessionId === session.id,
-					);
-					if (panel === undefined) {
-						pendingPresentations += 1;
-						continue;
-					}
-					const accepted = workspace.acceptServerTerminal(
-						panel.id,
-						session.id,
-						panel.title,
-						panel.cwd,
-						session.status,
-					);
-					if (!accepted) {
-						pendingPresentations += 1;
-					}
-				}
-				const canonicalTerminalPanels = Object.values(snapshot.panels).filter(
-					(panel) => panel.type === 'terminal',
-				);
-				// Desktop moves and popouts can present a live server panel in another
-				// local workspace without changing its canonical project ownership.
-				// Reconcile against global panel existence so those presentations survive;
-				// a real close removes the canonical panel from this complete list.
-				for (const workspace of workspaceRefs.current.values()) {
-					if (workspace == null) continue;
-					workspace.reconcileServerPanels(canonicalTerminalPanels);
-				}
-				if (
-					pendingPresentations > 0 &&
-					reconcileRetryTimer === null &&
-					performance.now() < reconcileRetryDeadline
-				) {
-					reconcileRetryTimer = window.setTimeout(() => {
-						reconcileRetryTimer = null;
-						reconcile(snapshot);
-					}, 50);
-				}
-			});
+			// A newer projection supersedes every pass still pending from an older
+			// one, retries included. One pass is pending at a time, and it reads
+			// the projection this client has confirmed.
+			cancelPendingPass();
+			schedulePass();
 			recordBootstrapDiagnostic('app.workspace.reconcile.end');
 		};
 		const unsubscribe = store.subscribe(reconcile);
 		return () => {
 			disposed = true;
 			unsubscribe();
-			if (reconcileFrame !== null) window.cancelAnimationFrame(reconcileFrame);
-			if (reconcileRetryTimer !== null) {
-				window.clearTimeout(reconcileRetryTimer);
-			}
+			cancelPendingPass();
 		};
 	}, [terminalClientContext?.workspaceSnapshotStore]);
 
