@@ -41,6 +41,39 @@ test('a hosted link resolves to the session origin and is classified for the aut
   assert.equal(direct.origin, `https://${sessionId}.terminay.com`)
 })
 
+test('a standalone server link resolves to its literal origin and pairs on the channels', async () => {
+  const directUrl = `https://box.example.test:8443/v1/?hostName=Studio-Box#${fragment}`
+  const target = resolveDesktopPairingTarget(directUrl)
+  assert.equal(target.kind, 'direct')
+  // The origin is kept exactly as the operator wrote it: nothing is derived
+  // from the hostname and no manager origin is contacted.
+  assert.equal(target.origin, 'https://box.example.test:8443')
+  assert.equal(target.label, 'Studio-Box')
+
+  // Pairing goes to the same authenticated-channel path as a hosted link, so
+  // no pairing material can reach the direct origin over HTTPS.
+  let fetches = 0
+  await assert.rejects(() => establishDesktopDevicePairing({
+    deviceName: 'Terminay Desktop',
+    pairingUrl: directUrl,
+    async fetch() {
+      fetches += 1
+      throw new Error('must not fetch')
+    },
+    store: {
+      createDeviceKey() { throw new Error('must not allocate a key before the transport verifies') },
+      async saveDeviceIdentity() { throw new Error('must not store') },
+    },
+    hosted: { webrtcRuntimeRoot: undefined },
+  }), /WebRTC runtime directory is unavailable/u)
+  assert.equal(fetches, 0)
+
+  // A direct link with an IP literal or a bare hostname is still a direct
+  // target: neither is a hosted session id.
+  assert.equal(resolveDesktopPairingTarget(`https://203.0.113.4:8443/v1/#${fragment}`).kind, 'direct')
+  assert.equal(resolveDesktopPairingTarget(`https://box/v1/#${fragment}`).kind, 'direct')
+})
+
 test('Desktop never sends pairing material to a hosted origin over HTTP', async () => {
   let fetches = 0
   await assert.rejects(() => establishDesktopDevicePairing({

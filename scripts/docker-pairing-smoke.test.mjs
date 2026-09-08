@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+	inspectExposureHandoffs,
 	inspectServerHandoff,
 	inspectServerHealth,
 	probeClientPairingParser,
@@ -46,6 +47,50 @@ test('Docker readiness validation requires the structured, origin-bound handoff 
 	assert.equal(inspected.pairingUrl, redactPairingUrl(HANDOFF.pairing.pairingUrl))
 	assert.throws(() => inspectServerHandoff({ ...HANDOFF, pairing: { ...HANDOFF.pairing, pairingUrl: 'https://docker-pairing-smoke.example.test/#fixed-secret' } }), /structured pairing field/u)
 	assert.throws(() => inspectServerHandoff({ ...HANDOFF, pairing: { ...HANDOFF.pairing, pairingToken: 'different-token' } }), /must not expose/u)
+})
+
+test('a direct exposure handoff keeps the /v1/ grammar and its secret in the fragment', () => {
+	const secret = 'nG9E_ZoCVpw7MmR-qxRhxn9AeeUAPsQifRDcsrMEGn8'
+	const readiness = {
+		...HANDOFF,
+		exposure: ['hosted', 'direct'],
+		handoffs: [
+			{
+				mode: 'hosted',
+				pairingUrl: `https://app.terminay.com/?s=524b6f409e8845828f48715171ed1400&hostName=box#${secret}`,
+				pairingExpiresAt: '2026-07-27T19:00:00.000Z',
+				serverId: 'docker-pairing-smoke',
+			},
+			{
+				mode: 'direct',
+				pairingUrl: `https://box.example.test:8443/v1/?hostName=box#${secret}`,
+				pairingExpiresAt: '2026-07-27T19:00:00.000Z',
+				serverId: 'docker-pairing-smoke',
+			},
+		],
+	}
+	const inspected = inspectExposureHandoffs(readiness, { directOrigin: 'https://box.example.test:8443' })
+	assert.deepEqual(inspected.map((entry) => entry.mode), ['hosted', 'direct'])
+	assert.equal(inspected[1].origin, 'https://box.example.test:8443')
+	assert.equal(inspected[1].pathname, '/v1/')
+	assert.equal(inspected[1].pairingUrl.includes(secret), false, 'the reported URL is redacted')
+
+	const direct = (pairingUrl) => ({
+		...readiness,
+		handoffs: [readiness.handoffs[0], { ...readiness.handoffs[1], pairingUrl }],
+	})
+	assert.throws(() => inspectExposureHandoffs(direct(`http://box.example.test:8443/v1/?hostName=box#${secret}`)), /must use HTTPS/u)
+	assert.throws(() => inspectExposureHandoffs(direct(`https://box.example.test:8443/?hostName=box#${secret}`)), /\/v1\/ path/u)
+	assert.throws(() => inspectExposureHandoffs(direct(`https://box.example.test:8443/v1/?s=${secret}#${secret}`)), /only the non-secret host name/u)
+	assert.throws(() => inspectExposureHandoffs(direct(`https://box.example.test:8443/v1/?hostName=box#`)), /no pairing fragment/u)
+	assert.throws(
+		() => inspectExposureHandoffs(readiness, { directOrigin: 'https://other.example.test' }),
+		/configured direct origin/u,
+	)
+	assert.throws(() => inspectExposureHandoffs({ ...readiness, handoffs: [] }), /exactly one handoff per exposure mode/u)
+
+	// A server that was never exposed reports no handoff at all.
+	assert.deepEqual(inspectExposureHandoffs({ ...HANDOFF, exposure: [], handoffs: [] }), [])
 })
 
 test('Docker health validation requires both safe foreground lifecycle responses', () => {
