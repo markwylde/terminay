@@ -451,9 +451,9 @@ export class ServerRemoteExposure {
 		return this.devices.issueConnectionTicket(deviceId, peerId);
 	}
 
-	createDeviceChallenge(deviceId: string) {
+	createDeviceChallenge(deviceId: string, sessionOrigin?: string) {
 		this.deviceAuthenticationRateLimiter.consume(`device:${deviceId}`);
-		return this.devices.createChallenge(deviceId);
+		return this.devices.createChallenge(deviceId, sessionOrigin);
 	}
 
 	verifyDeviceSignature(input: {
@@ -461,6 +461,7 @@ export class ServerRemoteExposure {
 		readonly challengeId: string;
 		readonly deviceSignature: string;
 		readonly peerId?: string;
+		readonly sessionOrigin?: string;
 	}) {
 		const ticket = this.devices.verify(input);
 		this.deviceAuthenticationRateLimiter.reset(`device:${input.deviceId}`);

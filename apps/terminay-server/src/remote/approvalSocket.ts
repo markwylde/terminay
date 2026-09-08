@@ -19,17 +19,34 @@ const APPROVAL_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 export type ApprovalSocketRequest =
 	| Readonly<{ op: 'list' }>
 	| Readonly<{ op: 'approve'; approvalId: string }>
-	| Readonly<{ op: 'deny'; approvalId: string }>;
+	| Readonly<{ op: 'deny'; approvalId: string }>
+	| Readonly<{ op: 'pairing'; rotate?: boolean }>;
+
+/** One live pairing handoff, as the running server currently advertises it.
+ * The secret lives in the URL fragment and nowhere else; no host key, device
+ * record, or application credential is carried here. */
+export interface PairingHandoffSummary {
+	readonly mode: string;
+	readonly pairingUrl: string;
+	readonly pairingExpiresAt: string;
+	readonly serverId: string;
+}
 
 export type ApprovalSocketResponse =
 	| Readonly<{ ok: true; pending: readonly PendingEnrollmentApprovalSummary[] }>
 	| Readonly<{ ok: true; approvalId: string; outcome: 'approved' | 'denied'; deviceName: string }>
+	| Readonly<{ ok: true; exposure: readonly string[] | 'off'; handoffs: readonly PairingHandoffSummary[] }>
 	| Readonly<{ ok: false; error: string }>;
 
 export interface ApprovalSocketAuthority {
 	listPendingApprovals(): readonly PendingEnrollmentApprovalSummary[];
 	approveEnrollment(approvalId: string): Readonly<{ deviceName: string }>;
 	denyEnrollment(approvalId: string): Readonly<{ deviceName: string }>;
+	/** Live pairing handoffs, optionally after minting a replacement room.
+	 * Absent when the process composing the socket has no exposure at all. */
+	pairingHandoffs?(rotate: boolean): Promise<readonly PairingHandoffSummary[]> | readonly PairingHandoffSummary[];
+	/** Exposure modes the administrator enabled for this data root. */
+	exposureModes?(): readonly string[];
 }
 
 export function approvalSocketPath(dataRoot: string): string {
@@ -45,6 +62,18 @@ export function parseApprovalSocketRequest(value: unknown): ApprovalSocketReques
 		if (Object.keys(input).length !== 1) throw new Error('approval request is invalid');
 		return Object.freeze({ op: 'list' });
 	}
+	if (input.op === 'pairing') {
+		if (Object.keys(input).some((key) => key !== 'op' && key !== 'rotate')) {
+			throw new Error('approval request is invalid');
+		}
+		const rotate = input.rotate;
+		if (rotate !== undefined && typeof rotate !== 'boolean') {
+			throw new Error('approval request is invalid');
+		}
+		return rotate === undefined
+			? Object.freeze({ op: 'pairing' as const })
+			: Object.freeze({ op: 'pairing' as const, rotate });
+	}
 	if (input.op === 'approve' || input.op === 'deny') {
 		if (Object.keys(input).length !== 2 || typeof input.approvalId !== 'string' || !APPROVAL_ID.test(input.approvalId)) {
 			throw new Error('approval request is invalid');
@@ -54,12 +83,22 @@ export function parseApprovalSocketRequest(value: unknown): ApprovalSocketReques
 	throw new Error('approval request is invalid');
 }
 
-export function handleApprovalSocketRequest(
+export async function handleApprovalSocketRequest(
 	request: ApprovalSocketRequest,
 	authority: ApprovalSocketAuthority,
-): ApprovalSocketResponse {
+): Promise<ApprovalSocketResponse> {
 	try {
 		if (request.op === 'list') return Object.freeze({ ok: true, pending: authority.listPendingApprovals() });
+		if (request.op === 'pairing') {
+			const modes = authority.exposureModes?.() ?? [];
+			// A server nobody exposed says so rather than handing back a URL that
+			// no relay would route.
+			if (modes.length === 0 || authority.pairingHandoffs === undefined) {
+				return Object.freeze({ ok: true, exposure: 'off', handoffs: Object.freeze([]) });
+			}
+			const handoffs = await authority.pairingHandoffs(request.rotate === true);
+			return Object.freeze({ ok: true, exposure: Object.freeze([...modes]), handoffs: Object.freeze([...handoffs]) });
+		}
 		const resolved =
 			request.op === 'approve'
 				? authority.approveEnrollment(request.approvalId)
@@ -127,7 +166,9 @@ function serve(socket: Socket, authority: ApprovalSocketAuthority): void {
 			finish({ ok: false, error: 'approval request is invalid' });
 			return;
 		}
-		finish(handleApprovalSocketRequest(request, authority));
+		void handleApprovalSocketRequest(request, authority).then(finish, () =>
+			finish({ ok: false, error: 'approval failed' }),
+		);
 	});
 	socket.on('error', () => {
 		clearTimeout(timer);

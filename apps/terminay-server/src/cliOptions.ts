@@ -1,5 +1,12 @@
 import { resolve } from "node:path";
 
+/** The exposure paths a standalone server may open at startup. */
+export type ServerExposureMode = "hosted" | "direct";
+
+export const SERVER_EXPOSURE_MODES: readonly ServerExposureMode[] = Object.freeze(["hosted", "direct"]);
+
+export const DEFAULT_HOSTED_DOMAIN = "terminay.com";
+
 export interface ServerCliOptions {
   readonly command: "start" | "status" | "pairing" | "mcp" | "help" | "version" | "approve" | "deny" | "approvals" | "reset-identity";
   /** Pending approval id for the approve and deny commands. */
@@ -24,6 +31,13 @@ export interface ServerCliOptions {
   readonly healthPort?: number;
   readonly logSink?: string;
   readonly uiBundle?: string;
+  /** Hosted signaling domain the session origin is provisioned under. */
+  readonly hostedDomain: string;
+  /** Exposure the administrator standingly enabled for this data root. Empty
+   * means the server is not remotely reachable. */
+  readonly exposeModes: readonly ServerExposureMode[];
+  /** Advertised HTTPS origin of the server's own signaling listener. */
+  readonly directOrigin?: string;
   /** Whether this standalone host should reconcile its managed provider hooks. */
   readonly agentIntegrationEnabled: boolean;
   readonly aiProviders: readonly ("codex" | "claude-code")[];
@@ -66,6 +80,13 @@ export function parseServerCliOptions(argv: readonly string[], env: Readonly<Rec
   const agentIntegrationValue = value(argv, "--agent-integration") ?? env.TERMINAY_AGENT_INTEGRATION;
   const aiProvidersValue = value(argv, "--ai-providers") ?? env.TERMINAY_AI_PROVIDERS;
   const vaultUnlockFdValue = value(argv, "--vault-unlock-fd");
+  const hostedDomain = parseHostedDomain(value(argv, "--hosted-domain") ?? env.TERMINAY_HOSTED_DOMAIN);
+  const exposeModes = parseExposeModes(value(argv, "--expose") ?? env.TERMINAY_EXPOSE);
+  const directOriginValue = value(argv, "--direct-origin") ?? env.TERMINAY_DIRECT_ORIGIN;
+  const directOrigin = directOriginValue === undefined ? undefined : normalizeDirectOrigin(directOriginValue);
+  if (exposeModes.includes("direct") && directOrigin === undefined) {
+    throw new Error("--expose direct requires --direct-origin (TERMINAY_DIRECT_ORIGIN)");
+  }
   return Object.freeze({
     command,
     serverId,
@@ -85,6 +106,9 @@ export function parseServerCliOptions(argv: readonly string[], env: Readonly<Rec
     ...(healthPortValue === undefined ? {} : { healthPort: parsePort(healthPortValue, "--health-port") }),
     ...(logSink === undefined ? {} : { logSink }),
     ...(uiBundle === undefined ? {} : { uiBundle }),
+    hostedDomain,
+    exposeModes,
+    ...(directOrigin === undefined ? {} : { directOrigin }),
     agentIntegrationEnabled: parseAgentIntegration(agentIntegrationValue),
     aiProviders: parseAiProviders(aiProvidersValue),
     ...(vaultUnlockFdValue === undefined ? {} : { vaultUnlockFd: parseInheritedFd(vaultUnlockFdValue) }),
@@ -106,12 +130,15 @@ export function formatServerHelp(): string {
     "  --remote-origin URL remote WebRTC session origin (TERMINAY_REMOTE_ORIGIN)",
     "  --log-sink PATH    structured log destination (TERMINAY_LOG_SINK)",
     "  --ui-bundle PATH   matching workspace bundle (TERMINAY_UI_BUNDLE)",
+    "  --hosted-domain DOMAIN  hosted signaling domain for this server's session origin (TERMINAY_HOSTED_DOMAIN)",
+    "  --expose MODES     exposure to enable at startup: off, hosted, direct, or hosted,direct (TERMINAY_EXPOSE)",
+    "  --direct-origin URL advertised HTTPS origin of this server's own signaling listener; required by --expose direct (TERMINAY_DIRECT_ORIGIN)",
     "  --agent-integration MODE  observe supported agent session journals: enabled or disabled (TERMINAY_AGENT_INTEGRATION)",
     "  --ai-providers LIST  opt in to bounded server CLI providers: codex,claude-code (TERMINAY_AI_PROVIDERS)",
     "  --health-host HOST unauthenticated liveness/readiness bind host (TERMINAY_HEALTH_HOST)",
     "  --health-port PORT unauthenticated liveness/readiness port (TERMINAY_HEALTH_PORT)",
     "  --vault-unlock-fd FD  consume vault passphrase from inherited FD >= 3; otherwise use an echo-disabled controlling terminal",
-    "  --pairing          print a short-lived pairing handoff record",
+    "  --pairing          ask the running server for its live pairing handoff, one line per exposure mode",
     "  approvals          list devices waiting for pairing approval on the running server",
     "  approve ID         approve a pending device by its approval id after comparing the match code",
     "  deny ID            deny a pending device by its approval id",
@@ -127,6 +154,48 @@ function parseApprovalId(value: string | undefined): string {
     throw new Error("approve and deny require the approval id shown for the pending device");
   }
   return value;
+}
+
+function parseHostedDomain(value: string | undefined): string {
+  if (value === undefined) return DEFAULT_HOSTED_DOMAIN;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) throw new Error("--hosted-domain must name a hosted signaling domain");
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed.includes("://") ? trimmed : `https://${trimmed}`);
+  } catch {
+    throw new Error("--hosted-domain must name a hosted signaling domain");
+  }
+  if (parsed.username || parsed.password || parsed.pathname !== "/" || parsed.search || parsed.hash) {
+    throw new Error("--hosted-domain must be a bare domain or an exact origin");
+  }
+  return parsed.port === "" ? parsed.hostname : `${parsed.hostname}:${parsed.port}`;
+}
+
+function parseExposeModes(value: string | undefined): readonly ServerExposureMode[] {
+  // Exposure is off unless an administrator standingly enabled it for this
+  // data root, so an absent or explicitly disabled value is not an error.
+  if (value === undefined || value.trim() === "" || value === "off" || value === "disabled") return Object.freeze([]);
+  const selected: ServerExposureMode[] = [];
+  for (const mode of value.split(",").map((item) => item.trim())) {
+    if (mode !== "hosted" && mode !== "direct") {
+      throw new Error("--expose accepts off, hosted, direct, or hosted,direct");
+    }
+    if (!selected.includes(mode)) selected.push(mode);
+  }
+  return Object.freeze(SERVER_EXPOSURE_MODES.filter((mode) => selected.includes(mode)));
+}
+
+function normalizeDirectOrigin(value: string): string {
+  let parsed: URL;
+  try { parsed = new URL(value); } catch { throw new Error("--direct-origin must be an HTTPS URL"); }
+  // The pairing URL grammar and the client's WebSocket both require https, and
+  // the listener terminates TLS itself with a self-signed certificate.
+  if (parsed.protocol !== "https:") throw new Error("--direct-origin must use HTTPS");
+  if (parsed.username || parsed.password || parsed.pathname !== "/" || parsed.search || parsed.hash) {
+    throw new Error("--direct-origin must be an exact origin");
+  }
+  return parsed.origin;
 }
 
 function parseInheritedFd(value: string): number {

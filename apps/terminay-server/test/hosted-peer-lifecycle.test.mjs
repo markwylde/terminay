@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { mock, test } from 'node:test';
 import {
 	collectHostIceAddresses,
@@ -55,6 +56,30 @@ test('loopback signaling still pins ICE to 127.0.0.1', () => {
 	]);
 	assert.deepEqual(config.iceAdditionalHostAddresses, ['127.0.0.1']);
 	assert.deepEqual(config.iceInterfaceAddresses, { udp4: '127.0.0.1' });
+});
+
+test('a server that dials its own relay over loopback still offers reachable candidates', async () => {
+	// A direct endpoint reaches its own signaling over 127.0.0.1, but the media
+	// path it advertises is the one a remote client has to use. Narrowing ICE to
+	// loopback there would publish candidates nothing off the box can reach.
+	const source = await readFile(new URL('../src/cli.ts', import.meta.url), 'utf8');
+	const directHost = source.slice(source.indexOf("await startPairingHost(\n\t\t\t\t\t\t\t'direct'"));
+	assert.match(directHost, /connectHost: '127\.0\.0\.1'/u);
+	assert.match(directHost, /signalingOnlyConnectHost: true/u);
+
+	const host = await readFile(new URL('../src/remote/hostedPairingHost.ts', import.meta.url), 'utf8');
+	assert.match(
+		host,
+		/signalingOnlyConnectHost === true\s*\?\s*undefined\s*:\s*context\.options\.signal\?\.connectHost/u,
+		'the signaling-only connect host must not reach the peer configuration',
+	);
+
+	// Without the connect host, gathering stays on the real interfaces.
+	const config = hostedPeerConfiguration(undefined, undefined, ['192.168.1.20']);
+	assert.equal(config.iceUseIpv4, true);
+	assert.equal(config.iceUseIpv6, true);
+	assert.equal('iceInterfaceAddresses' in config, false);
+	assert.deepEqual(config.iceAdditionalHostAddresses, ['192.168.1.20']);
 });
 
 test('host peer configuration uses the advertised ICE servers', () => {

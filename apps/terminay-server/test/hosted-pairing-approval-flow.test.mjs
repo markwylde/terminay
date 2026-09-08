@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { constants, generateKeyPairSync, randomBytes, sign } from 'node:crypto';
 import { once } from 'node:events';
 import { existsSync } from 'node:fs';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { resolve } from 'node:path';
+import { createServer as createHttpsServer } from 'node:https';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
@@ -16,6 +20,14 @@ import {
 	verifyAuthenticatedWebRtcHostSignature,
 	verifyAuthenticatedWebRtcPairingAuthenticator,
 } from '@terminay/protocol';
+import {
+	approvalSocketPath,
+	sendApprovalSocketRequest,
+	startApprovalSocket,
+} from '../dist/remote/approvalSocket.js';
+import { createDirectSignalingRelay } from '../dist/remote/directSignalingRelay.js';
+import { directSessionId } from '../dist/remote/directSessionId.js';
+import { loadOrCreateDirectTlsCertificate } from '../dist/remote/directTlsCertificate.js';
 import { createHostedHostKey } from '../dist/remote/hostedHostKey.js';
 import { deriveHostedPairingSecrets } from '../dist/remote/hostedPairingSecrets.js';
 import { startHostedPairingHost } from '../dist/remote/hostedPairingHost.js';
@@ -132,7 +144,13 @@ function waitFor(predicate, label, timeoutMs = 60_000) {
 
 /** Behave exactly like the browser shell: verify the transcript before setRemoteDescription. */
 async function connectClient(relay, options) {
-	const socket = new WebSocket(`ws://127.0.0.1:${relay.port}/signal`);
+	// A direct endpoint is reached at its own origin over `wss` with its
+	// self-signed certificate; the transcript, not TLS, authenticates it.
+	const socket = new WebSocket(
+		options.signalingUrl ?? `ws://127.0.0.1:${relay.port}/signal`,
+		options.socketOptions,
+	);
+	const sessionId = options.sessionId ?? SESSION_ID;
 	await once(socket, 'open');
 	const clientNonce = randomBytes(32).toString('base64url');
 	const peer = new RTCPeerConnection(LOOPBACK_PEER);
@@ -149,7 +167,7 @@ async function connectClient(relay, options) {
 			type: options.mode === 'pairing' ? 'ice' : 'device-ice',
 			roomId: options.roomId,
 			deviceId: options.deviceId,
-			sessionId: SESSION_ID,
+			sessionId,
 			candidate: { candidate: candidate.candidate, sdpMid: candidate.sdpMid ?? '0' },
 		}));
 	});
@@ -181,7 +199,7 @@ async function connectClient(relay, options) {
 					type: options.mode === 'pairing' ? 'answer' : 'device-answer',
 					roomId: options.roomId,
 					deviceId: options.deviceId,
-					sessionId: SESSION_ID,
+					sessionId,
 					sdp: { type: 'answer', sdp: peer.localDescription.sdp },
 				}));
 				for (const candidate of remoteIce.splice(0)) await peer.addIceCandidate(candidate);
@@ -198,7 +216,7 @@ async function connectClient(relay, options) {
 		type: options.mode === 'pairing' ? 'client-join' : 'device-join',
 		roomId: options.roomId,
 		deviceId: options.deviceId,
-		sessionId: SESSION_ID,
+		sessionId,
 		clientNonce,
 		...(options.deviceProof === undefined ? {} : { deviceProof: options.deviceProof(clientNonce) }),
 	}));
@@ -405,3 +423,381 @@ test('a device pairs only after the host approves its match code, and the ticket
 	const context2 = await rejoin.request('/api/host-context', {});
 	assert.equal(context2.serverId, 'server-a');
 });
+
+test('the data-root socket mints a fresh pairing room while a live peer keeps working', { skip: runtimeStaged ? false : `selected WebRTC runtime is not staged at ${RUNTIME_ROOT}`, timeout: 180_000 }, async (t) => {
+	const relay = await startRelay();
+	const dataRoot = await mkdtemp(join(tmpdir(), 'terminay-pairing-rotate-'));
+	const sessionOrigin = `http://${SESSION_ID}.localhost:${relay.port}`;
+	const exposure = createServerRemoteExposure({ serverId: 'server-a', sessionOrigin, pairingUrlFormat: 'hosted-compact', cleanupIntervalMs: 0 });
+	const handoff = exposure.start();
+	const hostKey = createHostedHostKey();
+	const connections = [];
+	let sharedHandoff = handoff;
+	const host = await startHostedPairingHost({
+		acceptApplication: () => {
+			const connection = { connectionId: `connection-${connections.length + 1}`, closed: false, start: async () => undefined, close: async () => { connection.closed = true; } };
+			connections.push(connection);
+			return connection;
+		},
+		handoff,
+		hostKey,
+		persistDevices: () => undefined,
+		remote: exposure,
+		serverId: 'server-a',
+		signal: { connectHost: '127.0.0.1' },
+		webrtcRuntimeRoot: RUNTIME_ROOT,
+		iceServers: [],
+		rotateHandoff: () => {
+			sharedHandoff = exposure.rotate();
+			return sharedHandoff;
+		},
+	});
+
+	// The same authority the CLI composes onto the owner-only socket.
+	const socketPath = approvalSocketPath(dataRoot);
+	const socket = await startApprovalSocket({
+		socketPath,
+		authority: {
+			listPendingApprovals: () => exposure.listPendingApprovals(),
+			approveEnrollment: (approvalId) => exposure.approveEnrollment(approvalId),
+			denyEnrollment: (approvalId) => exposure.denyEnrollment(approvalId),
+			exposureModes: () => ['hosted'],
+			pairingHandoffs: async (rotate) => {
+				if (rotate) await host.mintPairing();
+				return [{
+					mode: 'hosted',
+					pairingUrl: sharedHandoff.pairingUrl,
+					pairingExpiresAt: sharedHandoff.pairingExpiresAt,
+					serverId: 'server-a',
+				}];
+			},
+		},
+	});
+	t.after(async () => {
+		await socket.close();
+		await host.close();
+		await exposure.shutdown();
+		await relay.close();
+		await rm(dataRoot, { recursive: true, force: true });
+	});
+
+	// Pair a device and put it on the application lane.
+	const secrets = deriveHostedPairingSecrets(new URL(handoff.pairingUrl).hash.slice(1));
+	const key = deviceKey();
+	const client = await connectClient(relay, {
+		mode: 'pairing', roomId: secrets.pairingRoomId, pairingSecret: secrets.qrSecret, sessionOrigin, serverId: 'server-a',
+	});
+	t.after(() => client.close());
+	await client.open();
+	const push = client.nextPush();
+	const pendingResponse = parsePendingEnrollmentResponse(await client.request('/api/devices/enroll', {
+		deviceName: 'Phone',
+		pairingSessionId: handoff.pairingSessionId,
+		pairingToken: secrets.pairingToken,
+		publicKeyPem: key.publicKey,
+	}));
+	exposure.approveEnrollment(pendingResponse.approvalId);
+	const approved = await push;
+	assert.equal(await client.authenticate(approved.ticket), true);
+	await waitFor(() => connections.length === 1, 'the application lane to be accepted');
+	assert.equal((await client.request('/api/host-context', {})).serverId, 'server-a');
+
+	// A lookup without rotation reports the room the server actually registered.
+	const current = await sendApprovalSocketRequest(socketPath, { op: 'pairing' });
+	assert.deepEqual(current.exposure, ['hosted']);
+	assert.equal(current.handoffs.length, 1);
+	assert.equal(current.handoffs[0].mode, 'hosted');
+	assert.equal(current.handoffs[0].serverId, 'server-a');
+
+	const rotated = await sendApprovalSocketRequest(socketPath, { op: 'pairing', rotate: true });
+	assert.notEqual(rotated.handoffs[0].pairingUrl, current.handoffs[0].pairingUrl);
+	assert.notEqual(
+		new URL(rotated.handoffs[0].pairingUrl).hash,
+		new URL(current.handoffs[0].pairingUrl).hash,
+		'a fresh room carries a fresh one-time fragment',
+	);
+	await waitFor(() => relay.state.log.filter((type) => type === 'host-ready').length >= 2, 'the replacement room to register');
+
+	// The live peer is untouched by the rotation: its lane is still accepted and
+	// still answers on the same connection.
+	assert.equal(connections.length, 1);
+	assert.equal(connections[0].closed, false);
+	assert.equal((await client.request('/api/host-context', {})).serverId, 'server-a');
+
+	// And the replacement room is the one a new device would join.
+	const replacementSecrets = deriveHostedPairingSecrets(new URL(rotated.handoffs[0].pairingUrl).hash.slice(1));
+	assert.notEqual(replacementSecrets.pairingRoomId, secrets.pairingRoomId);
+});
+
+test('hosted and direct exposure share one host key and device registry, so a device paired one way reconnects the other',{ skip: runtimeStaged ? false : `selected WebRTC runtime is not staged at ${RUNTIME_ROOT}`, timeout: 240_000 }, async (t) => {
+	const relay = await startRelay();
+	const dataRoot = await mkdtemp(join(tmpdir(), 'terminay-direct-identity-'));
+	// The advertised direct origin must be the port the listener actually
+	// answers on: the upgrade boundary compares the Host header with it.
+	const idle = createServer();
+	await new Promise((resolveListen) => idle.listen(0, '127.0.0.1', resolveListen));
+	const directPort = idle.address().port;
+	await new Promise((resolveClose) => idle.close(resolveClose));
+	const directOrigin = `https://127.0.0.1:${directPort}`;
+	const directRoom = directSessionId(directOrigin);
+
+	const certificate = await loadOrCreateDirectTlsCertificate(dataRoot, directOrigin);
+	const directRelay = createDirectSignalingRelay({
+		sessionOrigin: directOrigin,
+		managerOrigin: 'https://app.example.test',
+	});
+	const directListener = createHttpsServer({ cert: certificate.cert, key: certificate.key });
+	directListener.on('upgrade', (request, socket, head) =>
+		directRelay.handleUpgrade(request, socket, head),
+	);
+	await new Promise((resolveListen) => directListener.listen(directPort, '127.0.0.1', resolveListen));
+
+	// One exposure, one host key: hosted and direct are two ways to reach the
+	// same room on the same server, not two servers.
+	const hostedOrigin = `http://${SESSION_ID}.localhost:${relay.port}`;
+	const exposure = createServerRemoteExposure({ serverId: 'server-a', sessionOrigin: hostedOrigin, pairingUrlFormat: 'hosted-compact', cleanupIntervalMs: 0 });
+	const handoff = exposure.start();
+	const hostKey = createHostedHostKey();
+	const connections = [];
+	const acceptApplication = () => {
+		const connection = { connectionId: `connection-${connections.length + 1}`, closed: false, start: async () => undefined, close: async () => { connection.closed = true; } };
+		connections.push(connection);
+		return connection;
+	};
+	const common = {
+		acceptApplication,
+		hostKey,
+		persistDevices: () => undefined,
+		remote: exposure,
+		serverId: 'server-a',
+		webrtcRuntimeRoot: RUNTIME_ROOT,
+		iceServers: [],
+	};
+	let hostedHandoff = handoff;
+	const hostedHost = await startHostedPairingHost({
+		...common,
+		handoff,
+		rotateHandoff: () => exposure.rotate(),
+		onHandoff: (next) => {
+			hostedHandoff = next;
+		},
+		signal: { connectHost: '127.0.0.1' },
+	});
+	const directPairingUrl = (() => {
+		const advertised = new URL(handoff.pairingUrl);
+		const url = new URL('/v1/', directOrigin);
+		url.hash = advertised.hash;
+		return url.toString();
+	})();
+	const directHost = await startHostedPairingHost({
+		...common,
+		handoff: { ...handoff, sessionOrigin: directOrigin, pairingUrl: directPairingUrl },
+		sessionId: directRoom,
+		signal: { connectHost: '127.0.0.1', insecureTls: true },
+	});
+	t.after(async () => {
+		await directHost.close();
+		await hostedHost.close();
+		await exposure.shutdown();
+		await directRelay.close();
+		await new Promise((resolveClose) => directListener.close(resolveClose));
+		await relay.close();
+		await rm(dataRoot, { recursive: true, force: true });
+	});
+
+	const secrets = deriveHostedPairingSecrets(new URL(handoff.pairingUrl).hash.slice(1));
+	const directSocket = {
+		signalingUrl: `wss://127.0.0.1:${directPort}/signal`,
+		socketOptions: { rejectUnauthorized: false, headers: { host: `127.0.0.1:${directPort}` } },
+		sessionId: directRoom,
+	};
+
+	// Pair through the server's own endpoint.
+	const key = deviceKey();
+	const paired = await connectClient(relay, {
+		...directSocket,
+		mode: 'pairing',
+		roomId: secrets.pairingRoomId,
+		pairingSecret: secrets.qrSecret,
+		sessionOrigin: directOrigin,
+		serverId: 'server-a',
+	});
+	t.after(() => paired.close());
+	await paired.open();
+	assert.deepEqual(paired.rejected, []);
+	assert.equal(paired.transcript.hostPublicKey, hostKey.publicKey);
+
+	const pendingResponse = parsePendingEnrollmentResponse(await paired.request('/api/devices/enroll', {
+		deviceName: 'Direct phone',
+		pairingSessionId: handoff.pairingSessionId,
+		pairingToken: secrets.pairingToken,
+		publicKeyPem: key.publicKey,
+	}));
+	const [pending] = exposure.listPendingApprovals();
+	assert.equal(pending.approvalId, pendingResponse.approvalId);
+	assert.equal(
+		pending.matchCode,
+		await deriveMatchCode({
+			pairingSecret: secrets.qrSecret,
+			clientNonce: paired.clientNonce,
+			hostPublicKey: hostKey.publicKey,
+			devicePublicKeyPem: key.publicKey,
+		}),
+	);
+	const push = paired.nextPush();
+	exposure.approveEnrollment(pending.approvalId);
+	const approved = await push;
+	assert.equal(approved.type, 'enrollment-approved');
+	const deviceId = approved.deviceId;
+	assert.equal(exposure.devices.list().length, 1);
+
+	// The same device reconnects through the hosted relay. It pins the host key
+	// it saw over the direct endpoint, and never pairs again.
+	const hostedProof = (nonce) => sign('sha256', Buffer.from(deviceJoinProofPayload({ sessionId: SESSION_ID, clientNonce: nonce })), {
+		key: key.privateKey, padding: constants.RSA_PKCS1_PSS_PADDING, saltLength: 32,
+	}).toString('base64url');
+	const viaHosted = await connectClient(relay, {
+		mode: 'device', deviceId, sessionOrigin: hostedOrigin, serverId: 'server-a',
+		pinnedHostKey: hostKey.publicKey, deviceProof: hostedProof,
+	});
+	t.after(() => viaHosted.close());
+	await viaHosted.open();
+	assert.deepEqual(viaHosted.rejected, []);
+	const hostedChallenge = await viaHosted.request('/api/devices/challenge', { deviceId });
+	const hostedSignature = sign('sha256', Buffer.from(hostedChallenge.signingInput), { key: key.privateKey, padding: constants.RSA_PKCS1_PSS_PADDING, saltLength: 32 }).toString('base64url');
+	const hostedTicket = await viaHosted.request('/api/devices/verify', { deviceId, challengeId: hostedChallenge.challengeId, deviceSignature: hostedSignature });
+	assert.equal(await viaHosted.authenticate(hostedTicket.ticket), true);
+	assert.equal(exposure.devices.list().length, 1, 'reconnecting the other way enrolls nothing new');
+
+	// The reverse: a device paired through the hosted relay reconnects through
+	// the direct endpoint on the same registration.
+	await hostedHost.mintPairing();
+	const rotated = hostedHandoff;
+	assert.notEqual(rotated.pairingSessionId, handoff.pairingSessionId);
+	const rotatedSecrets = deriveHostedPairingSecrets(new URL(rotated.pairingUrl).hash.slice(1));
+	await waitFor(() => relay.state.log.filter((type) => type === 'host-ready').length >= 2, 'the rotated room to register');
+	const secondKey = deviceKey();
+	const viaHostedPairing = await connectClient(relay, {
+		mode: 'pairing',
+		roomId: rotatedSecrets.pairingRoomId,
+		pairingSecret: rotatedSecrets.qrSecret,
+		sessionOrigin: hostedOrigin,
+		serverId: 'server-a',
+	});
+	t.after(() => viaHostedPairing.close());
+	await viaHostedPairing.open();
+	const secondPending = parsePendingEnrollmentResponse(await viaHostedPairing.request('/api/devices/enroll', {
+		deviceName: 'Hosted phone',
+		pairingSessionId: rotated.pairingSessionId,
+		pairingToken: rotatedSecrets.pairingToken,
+		publicKeyPem: secondKey.publicKey,
+	}));
+	const secondPush = viaHostedPairing.nextPush();
+	exposure.approveEnrollment(secondPending.approvalId);
+	const secondApproved = await secondPush;
+	const secondDeviceId = secondApproved.deviceId;
+	assert.equal(exposure.devices.list().length, 2);
+
+	const directProof = (nonce) => sign('sha256', Buffer.from(deviceJoinProofPayload({ sessionId: directRoom, clientNonce: nonce })), {
+		key: secondKey.privateKey, padding: constants.RSA_PKCS1_PSS_PADDING, saltLength: 32,
+	}).toString('base64url');
+	const viaDirect = await connectClient(relay, {
+		...directSocket,
+		mode: 'device', deviceId: secondDeviceId, sessionOrigin: directOrigin, serverId: 'server-a',
+		pinnedHostKey: hostKey.publicKey, deviceProof: directProof,
+	});
+	t.after(() => viaDirect.close());
+	await viaDirect.open();
+	assert.deepEqual(viaDirect.rejected, []);
+	const directChallenge = await viaDirect.request('/api/devices/challenge', { deviceId: secondDeviceId });
+	const directSignature = sign('sha256', Buffer.from(directChallenge.signingInput), { key: secondKey.privateKey, padding: constants.RSA_PKCS1_PSS_PADDING, saltLength: 32 }).toString('base64url');
+	const directTicket = await viaDirect.request('/api/devices/verify', { deviceId: secondDeviceId, challengeId: directChallenge.challengeId, deviceSignature: directSignature });
+	assert.equal(await viaDirect.authenticate(directTicket.ticket), true);
+	assert.equal(exposure.devices.list().length, 2, 'no device paired twice');
+});
+
+test('a standalone server started with --expose hosted registers its rooms before readiness',{ skip: runtimeStaged ? false : `selected WebRTC runtime is not staged at ${RUNTIME_ROOT}`, timeout: 120_000 }, async (t) => {
+	const relay = await startRelay();
+	const dataRoot = await mkdtemp(join(tmpdir(), 'terminay-expose-hosted-'));
+	t.after(async () => {
+		await relay.close();
+		await rm(dataRoot, { recursive: true, force: true });
+	});
+
+	const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
+	const child = spawn(
+		process.execPath,
+		[
+			cli,
+			'--data-root', dataRoot,
+			'--project-root', dataRoot,
+			'--server-id', 'exposed-server',
+			'--endpoint', 'disabled',
+			'--expose', 'hosted',
+			'--hosted-domain', `localhost:${relay.port}`,
+		],
+		{
+			env: {
+				...process.env,
+				TERMINAY_SIGNAL_CONNECT_HOST: '127.0.0.1',
+				TERMINAY_WEBRTC_RUNTIME_ROOT: RUNTIME_ROOT,
+				TERMINAY_AGENT_INTEGRATION: 'disabled',
+			},
+			stdio: ['ignore', 'pipe', 'pipe'],
+		},
+	);
+	t.after(async () => {
+		if (child.exitCode !== null || child.signalCode !== null) return;
+		child.kill('SIGTERM');
+		await once(child, 'exit');
+	});
+
+	const readiness = await readFirstJsonLine(child);
+	assert.equal(readiness.ready, true);
+	assert.equal(readiness.serverId, 'exposed-server');
+
+	// Both rooms must already be registered with the relay by the time readiness
+	// advertises a pairing URL: the pairing room a device joins, and the signed
+	// reconnect host a saved device joins.
+	assert.ok(relay.state.log.includes('host-ready'), 'the pairing room must be registered before readiness');
+	assert.ok(relay.state.log.includes('device-host-ready'), 'the reconnect host must be registered before readiness');
+
+	// The advertised handoff is a hosted-compact link under the persisted
+	// session origin, not the unroutable per-server placeholder.
+	const pairingUrl = new URL(readiness.pairing.pairingUrl);
+	const sessionOrigin = new URL(
+		JSON.parse(await readFile(join(dataRoot, 'remote-session-origin.v1.json'), 'utf8')).origin,
+	);
+	assert.match(sessionOrigin.host, new RegExp(`^[a-f0-9]{32}\\.localhost:${relay.port}$`, 'u'));
+	assert.equal(pairingUrl.searchParams.get('s'), sessionOrigin.hostname.split('.')[0]);
+	assert.ok(pairingUrl.hash.length > 1, 'the pairing secret stays in the fragment');
+	assert.equal(pairingUrl.search.includes(pairingUrl.hash.slice(1)), false);
+});
+
+function readFirstJsonLine(child) {
+	return new Promise((resolveLine, reject) => {
+		let output = '';
+		let errors = '';
+		const timeout = setTimeout(() => reject(new Error(`server did not become ready: ${output}${errors}`)), 60_000);
+		const onExit = (code) => {
+			clearTimeout(timeout);
+			reject(new Error(`server exited before readiness (${code}): ${output}${errors}`));
+		};
+		child.stderr.setEncoding('utf8');
+		child.stderr.on('data', (chunk) => { errors += chunk; });
+		child.once('exit', onExit);
+		child.stdout.setEncoding('utf8');
+		child.stdout.on('data', (chunk) => {
+			output += chunk;
+			const lineEnd = output.indexOf('\n');
+			if (lineEnd === -1) return;
+			clearTimeout(timeout);
+			child.off('exit', onExit);
+			try {
+				resolveLine(JSON.parse(output.slice(0, lineEnd)));
+			} catch (error) {
+				reject(error);
+			}
+		});
+	});
+}

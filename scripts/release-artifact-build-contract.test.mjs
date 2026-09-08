@@ -85,15 +85,56 @@ test('skipped agent conformance tests do not require a built server-core', async
 });
 
 test('release pack consumers accept npm 12 single-object metadata', async () => {
-	const workflow = await readFile(resolve(root, '.github/workflows/trigger-release.yml'), 'utf8');
+	const extensionStaging = await readFile(
+		resolve(root, 'scripts/stage-built-in-extensions.mjs'),
+		'utf8',
+	);
 	const secureRuntimeBuilder = await readFile(
 		resolve(root, 'scripts/build-secure-werift-candidate.mjs'),
 		'utf8',
 	);
-	assert.match(workflow, /node scripts\/npm-pack-result\.mjs/u);
-	assert.doesNotMatch(workflow, /!Array\.isArray\(result\) \|\| result\.length !== 1/u);
+	assert.match(extensionStaging, /parseSingleNpmPackResult/u);
 	assert.equal(
 		[...secureRuntimeBuilder.matchAll(/parseSingleNpmPackResult\(packed\.stdout\)/gu)].length,
 		3,
 	);
+});
+
+test('tagged releases publish signed self-contained archives per architecture and no npm pack tarball', async () => {
+	const workflow = await readFile(
+		resolve(root, '.github/workflows/trigger-release.yml'),
+		'utf8',
+	);
+	// The npm pack tgz was never installable: the server's workspace
+	// dependencies are private, so an operator could not resolve them.
+	assert.doesNotMatch(workflow, /npm pack --workspace @terminay\/server/u);
+	assert.doesNotMatch(workflow, /terminay-server-[^\n]*\.tgz/u);
+
+	const jobStart = workflow.indexOf('  build-standalone-server:\n');
+	const notesStart = workflow.indexOf('  publish-release-notes:\n');
+	assert.ok(jobStart >= 0 && notesStart > jobStart);
+	const job = workflow.slice(jobStart, notesStart);
+	assert.match(job, /runs-on: \$\{\{ matrix\.runner \}\}/u);
+	assert.match(job, /- target: linux-x64\n\s+arch: x64\n\s+runner: ubuntu-latest/u);
+	assert.match(job, /- target: linux-arm64\n\s+arch: arm64\n\s+runner: ubuntu-24\.04-arm/u);
+	assert.match(job, /node scripts\/build-standalone-server-artifact\.mjs/u);
+	assert.match(job, /--channel tag/u);
+	assert.match(job, /--revision "\$EXPECTED_COMMIT"/u);
+	assert.match(job, /ARCHIVE="release\/\$VERSION\/terminay-server-\$VERSION-\$TARGET\.tar\.gz"/u);
+	assert.match(job, /release-checksum\.mjs write "\$ARCHIVE" "\$ARCHIVE\.sha256"/u);
+	assert.match(job, /release-signature\.mjs sign "\$ARCHIVE" "\$ARCHIVE\.sig"/u);
+	assert.match(job, /release-signature\.mjs verify "\$ARCHIVE" "\$ARCHIVE\.sig"/u);
+	assert.match(job, /gh release upload "\$TAG" "\$ARCHIVE" "\$ARCHIVE\.sha256" "\$ARCHIVE\.sig" --repo "\$GH_REPO"/u);
+
+	// Both architectures, each with its sidecar and detached signature, are the
+	// exact asset set the release notes step will accept.
+	const notes = workflow.slice(notesStart);
+	for (const architecture of ['x64', 'arm64']) {
+		for (const suffix of ['', '.sha256', '.sig']) {
+			assert.ok(
+				notes.includes(`terminay-server-\${VERSION}-linux-${architecture}.tar.gz${suffix}\n`),
+				`release notes must require terminay-server-<version>-linux-${architecture}.tar.gz${suffix}`,
+			);
+		}
+	}
 });

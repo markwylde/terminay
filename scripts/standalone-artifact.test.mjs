@@ -22,6 +22,12 @@ import { stageProductionDependencyClosure } from './standalone-runtime-dependenc
 
 const repositoryRoot = new URL('..', import.meta.url);
 
+const RELEASE = Object.freeze({
+	channel: 'tag',
+	revision: 'a'.repeat(40),
+	architecture: 'x64',
+});
+
 function run(command, args, options = {}) {
 	return new Promise((resolve, reject) => {
 		const child = spawn(command, args, {
@@ -47,6 +53,28 @@ function run(command, args, options = {}) {
 					new Error(`${command} ${args.join(' ')} exited ${code}: ${stderr}`),
 				);
 		});
+	});
+}
+
+function runExpectingFailure(command, args, options = {}) {
+	return new Promise((resolve, reject) => {
+		const child = spawn(command, args, {
+			cwd: options.cwd,
+			env: options.env,
+			stdio: ['ignore', 'pipe', 'pipe'],
+		});
+		let stdout = '';
+		let stderr = '';
+		child.stdout.setEncoding('utf8');
+		child.stderr.setEncoding('utf8');
+		child.stdout.on('data', (chunk) => {
+			stdout += chunk;
+		});
+		child.stderr.on('data', (chunk) => {
+			stderr += chunk;
+		});
+		child.once('error', reject);
+		child.once('close', (code) => resolve({ code, stdout, stderr }));
 	});
 }
 
@@ -86,11 +114,14 @@ async function createFixture() {
 test('standalone artifact manifest is deterministic and validates exact payload hashes', async () => {
 	const root = await createFixture();
 	try {
-		const first = await inspectStandaloneArtifact(root);
-		const second = await inspectStandaloneArtifact(root);
+		const first = await inspectStandaloneArtifact(root, RELEASE);
+		const second = await inspectStandaloneArtifact(root, RELEASE);
 		assert.deepEqual(first, second);
+		assert.equal(first.channel, 'tag');
+		assert.equal(first.revision, RELEASE.revision);
+		assert.equal(first.architecture, 'x64');
 		const manifestPath = join(root, 'artifact-manifest.json');
-		const written = await writeStandaloneArtifactManifest(root, manifestPath);
+		const written = await writeStandaloneArtifactManifest(root, RELEASE, manifestPath);
 		assert.deepEqual(written, first);
 		const onDisk = JSON.parse(await readFile(manifestPath, 'utf8'));
 		assert.deepEqual(onDisk, first);
@@ -106,10 +137,83 @@ test('standalone artifact manifest is deterministic and validates exact payload 
 	}
 });
 
+test('standalone artifact manifest records and enforces channel, revision, and architecture', async () => {
+	const root = await createFixture();
+	try {
+		const manifest = await writeStandaloneArtifactManifest(root, {
+			channel: 'main',
+			revision: 'b'.repeat(40),
+			architecture: 'arm64',
+		});
+		assert.deepEqual(
+			{
+				channel: manifest.channel,
+				revision: manifest.revision,
+				architecture: manifest.architecture,
+			},
+			{ channel: 'main', revision: 'b'.repeat(40), architecture: 'arm64' },
+		);
+		assert.deepEqual(await validateStandaloneArtifact(root, manifest), manifest);
+
+		for (const field of ['channel', 'revision', 'architecture']) {
+			const missing = { ...manifest };
+			delete missing[field];
+			await assert.rejects(
+				() => validateStandaloneArtifact(root, missing),
+				/release (channel|revision|architecture)/,
+				`validation must reject a manifest with no ${field}`,
+			);
+		}
+
+		await assert.rejects(
+			() => validateStandaloneArtifact(root, { ...manifest, channel: 'nightly' }),
+			/release channel must be one of/,
+		);
+		await assert.rejects(
+			() => validateStandaloneArtifact(root, { ...manifest, revision: 'abc' }),
+			/release revision must be a full lowercase commit sha/,
+		);
+		await assert.rejects(
+			() => validateStandaloneArtifact(root, { ...manifest, architecture: 'riscv64' }),
+			/release architecture must be one of/,
+		);
+
+		// A well-formed manifest that names different coordinates than the
+		// release job expects describes a different build, so verification must
+		// reject it rather than accept a self-consistent stranger.
+		await assert.rejects(
+			() =>
+				validateStandaloneArtifact(root, manifest, {
+					...manifest,
+					revision: 'c'.repeat(40),
+				}),
+			/manifest revision is b{40}, expected c{40}/,
+		);
+		await assert.rejects(
+			() => validateStandaloneArtifact(root, manifest, { ...manifest, channel: 'tag' }),
+			/manifest channel is main, expected tag/,
+		);
+		await assert.rejects(
+			() =>
+				validateStandaloneArtifact(root, manifest, {
+					...manifest,
+					architecture: 'x64',
+				}),
+			/manifest architecture is arm64, expected x64/,
+		);
+		assert.deepEqual(
+			await validateStandaloneArtifact(root, manifest, manifest),
+			manifest,
+		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
 test('standalone artifact validation detects payload tampering', async () => {
 	const root = await createFixture();
 	try {
-		const manifest = await writeStandaloneArtifactManifest(root);
+		const manifest = await writeStandaloneArtifactManifest(root, RELEASE);
 		await writeFile(
 			join(root, 'dist/cli.js'),
 			'#!/usr/bin/env node\nconsole.log("changed")\n',
@@ -131,7 +235,7 @@ test('standalone artifact inspection rejects Electron imports and unpinned Node 
 			'import electron from "electron"\nexport default electron\n',
 		);
 		await assert.rejects(
-			() => inspectStandaloneArtifact(root),
+			() => inspectStandaloneArtifact(root, RELEASE),
 			/imports Electron/,
 		);
 		await writeFile(join(root, 'dist/index.js'), 'export const ok = true\n');
@@ -144,7 +248,7 @@ test('standalone artifact inspection rejects Electron imports and unpinned Node 
 			`${JSON.stringify(packageJson)}\n`,
 		);
 		await assert.rejects(
-			() => inspectStandaloneArtifact(root),
+			() => inspectStandaloneArtifact(root, RELEASE),
 			/Node engine must be pinned/,
 		);
 	} finally {
@@ -159,14 +263,14 @@ test('standalone artifact inspection rejects missing, changed, and extra executa
 		delete packageJson.bin['terminay-mcp'];
 		await writeFile(join(root, 'package.json'), `${JSON.stringify(packageJson)}\n`);
 		await assert.rejects(
-			() => inspectStandaloneArtifact(root),
+			() => inspectStandaloneArtifact(root, RELEASE),
 			/expose exactly the terminay-server and terminay-mcp bins/,
 		);
 
 		packageJson.bin['terminay-mcp'] = 'dist/changed.js';
 		await writeFile(join(root, 'package.json'), `${JSON.stringify(packageJson)}\n`);
 		await assert.rejects(
-			() => inspectStandaloneArtifact(root),
+			() => inspectStandaloneArtifact(root, RELEASE),
 			/expose exactly the terminay-server and terminay-mcp bins/,
 		);
 
@@ -174,7 +278,7 @@ test('standalone artifact inspection rejects missing, changed, and extra executa
 		packageJson.bin.unexpected = 'dist/unexpected.js';
 		await writeFile(join(root, 'package.json'), `${JSON.stringify(packageJson)}\n`);
 		await assert.rejects(
-			() => inspectStandaloneArtifact(root),
+			() => inspectStandaloneArtifact(root, RELEASE),
 			/expose exactly the terminay-server and terminay-mcp bins/,
 		);
 	} finally {
@@ -262,6 +366,7 @@ test('the actual packed standalone artifact is byte-reproducible and its CLI sta
 				'@terminay/protocol',
 				'@modelcontextprotocol/sdk',
 				'node-pty',
+				'selfsigned',
 				'ws',
 				'zod',
 			],
@@ -278,20 +383,16 @@ test('the actual packed standalone artifact is byte-reproducible and its CLI sta
 		assert.equal(cli.stdout, `${packageJson.version}\n`);
 		assert.equal(cli.stderr, '');
 
-		// Pairing is a distinct standalone entry point from foreground startup:
-		// it must compose the packaged remote-exposure runtime, honour an exact
-		// configured origin, and emit its one-time bootstrap material only in the
-		// returned record. Keep the URL in-memory in this test so no credential is
-		// copied into test output or the artifact's data root.
-		const pairing = await run(
+		// Pairing is a lookup, not a mint: the packed CLI asks the running server
+		// through the owner-only socket in its data root. With no server there,
+		// it must fail visibly and print no pairing material at all.
+		const pairing = await runExpectingFailure(
 			process.execPath,
 			[
 				join(packageRoot, packageJson.bin['terminay-server']),
 				'--pairing',
 				'--server-id',
 				'packed-pairing',
-				'--remote-origin',
-				'https://packed-pairing.example.test',
 				'--data-root',
 				join(root, 'pairing-data'),
 			],
@@ -303,23 +404,10 @@ test('the actual packed standalone artifact is byte-reproducible and its CLI sta
 				},
 			},
 		);
-		assert.equal(pairing.stderr, '');
-		const pairingRecord = JSON.parse(pairing.stdout);
-		assert.equal(pairingRecord.serverId, 'packed-pairing');
-		assert.equal(pairingRecord.endpoint, 'loopback');
-		assert.equal(pairingRecord.requiresApproval, true);
-		assert.equal(pairingRecord.roomId, pairingRecord.pairingSessionId);
-		assert.match(pairingRecord.expiresAt, /^\d{4}-\d{2}-\d{2}T/u);
-		const pairingUrl = new URL(pairingRecord.pairingUrl);
-		assert.equal(pairingUrl.origin, 'https://packed-pairing.example.test');
-		assert.equal(pairingUrl.search, '');
-		const bootstrap = new URLSearchParams(pairingUrl.hash.slice(1));
-		assert.equal(
-			bootstrap.get('pairingSessionId'),
-			pairingRecord.pairingSessionId,
-		);
-		assert.ok(bootstrap.get('pairingToken'));
-		assert.equal(bootstrap.get('pairingExpiresAt'), pairingRecord.expiresAt);
+		assert.notEqual(pairing.code, 0);
+		assert.equal(pairing.stdout, '');
+		assert.match(pairing.stderr, /no running server accepts approvals at this data root/u);
+		assert.equal(pairing.stderr.includes('pairingToken'), false);
 
 		// The packed standalone runtime must execute the same server-owned
 		// provider CLI adapter as the development and Desktop layouts. Import it

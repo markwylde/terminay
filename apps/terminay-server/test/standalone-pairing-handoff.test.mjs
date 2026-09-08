@@ -100,14 +100,16 @@ test('hosted session ids come from the stable session hostname', async () => {
 	assert.throws(() => hostedSessionId('https://app.terminay.com'), /invalid/);
 });
 
-test('compiled standalone pairing CLI emits a fragment-only handoff and does not start server state', async () => {
+test('the compiled pairing CLI mints nothing of its own and fails when no server owns the data root', async () => {
+	// A room only exists once the running server has registered it with a
+	// relay, so a command that minted one in its own process printed a URL
+	// nothing would answer. It now asks the server, or fails.
 	const dataRoot = await mkdtemp(join(tmpdir(), 'terminay-pairing-cli-'));
-	const remoteOrigin = 'https://pairing.example.test';
 	const child = spawn(process.execPath, [
 		'dist/cli.js',
 		'--pairing',
 		'--server-id', 'compiled-pairing-server',
-		'--remote-origin', remoteOrigin,
+		'--remote-origin', 'https://pairing.example.test',
 		'--data-root', join(dataRoot, 'state'),
 	], {
 		cwd: fileURLToPath(new URL('../', import.meta.url)),
@@ -121,20 +123,11 @@ test('compiled standalone pairing CLI emits a fragment-only handoff and does not
 	child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
 	try {
 		const [code] = await once(child, 'exit');
-		assert.equal(code, 0, stderr);
-		const handoff = JSON.parse(stdout);
-		assert.equal(handoff.serverId, 'compiled-pairing-server');
-		assert.equal(handoff.endpoint, 'loopback');
-		assert.equal(handoff.requiresApproval, true);
-		assert.equal(typeof handoff.pairingUrl, 'string');
-		const url = new URL(handoff.pairingUrl);
-		assert.equal(url.origin, remoteOrigin);
-		assert.equal(url.search, '');
-		const bootstrap = new URLSearchParams(url.hash.slice(1));
-		assert.equal(bootstrap.get('pairingSessionId'), handoff.pairingSessionId);
-		assert.equal(typeof bootstrap.get('pairingToken'), 'string');
-		assert.equal(bootstrap.get('pairingToken')?.length > 0, true);
-		assert.equal(stdout.includes(bootstrap.get('pairingToken')), true);
+		assert.equal(code, 1, stdout);
+		assert.equal(stdout, '');
+		assert.match(stderr, /no running server accepts approvals at this data root/u);
+		assert.equal(stderr.includes('pairingToken'), false);
+		// Looking up a handoff must not create server state either.
 		await assert.rejects(stat(join(dataRoot, 'state')), { code: 'ENOENT' });
 	} finally {
 		await rm(dataRoot, { recursive: true, force: true });
