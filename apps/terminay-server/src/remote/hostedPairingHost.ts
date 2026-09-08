@@ -128,9 +128,23 @@ export interface HostedPairingHostOptions {
 	readonly persistDevices: (devices: ReturnType<ServerRemoteExposure['devices']['list']>) => void;
 	readonly remote: ServerRemoteExposure;
 	readonly serverId: string;
+	/** Relay session id for saved-device reconnect. Defaults to the id carried
+	 * by a hosted session origin's first label; a self-hosted direct endpoint
+	 * supplies one derived from its own origin instead. */
+	readonly sessionId?: string;
 	readonly signal?: Readonly<{
 		readonly connectHost?: string;
 		readonly insecureTls?: boolean;
+		/**
+		 * The connect host redirects the signaling socket only.
+		 *
+		 * A server that serves its own signaling endpoint reaches it over the
+		 * loopback interface, but the media path it offers is the one a remote
+		 * client has to use. Without this, dialling its own relay would narrow
+		 * ICE to `127.0.0.1` and every candidate it advertised would be
+		 * unreachable from anywhere but the box itself.
+		 */
+		readonly signalingOnlyConnectHost?: boolean;
 	}>;
 	readonly webrtcRuntimeRoot: string;
 	/** Test seam only. Production leaves this unset so the selected,
@@ -227,7 +241,7 @@ type HandshakeEntry = {
 export async function startHostedPairingHost(
 	options: HostedPairingHostOptions,
 ): Promise<HostedPairingHost> {
-	const sessionId = hostedSessionId(options.handoff.sessionOrigin);
+	const sessionId = options.sessionId ?? hostedSessionId(options.handoff.sessionOrigin);
 	const signalingUrl = hostedSignalingUrl(options.handoff.sessionOrigin);
 	const signalingHostClass = classifySignalingHost(options.handoff.sessionOrigin);
 	const runtime = await (options.loadRuntime ?? loadSelectedSecureWeriftRuntime)(
@@ -928,7 +942,9 @@ async function startPeer(
 ): Promise<WeriftPeer> {
 	const native = new Peer(
 		hostedPeerConfiguration(
-			context.options.signal?.connectHost,
+			context.options.signal?.signalingOnlyConnectHost === true
+				? undefined
+				: context.options.signal?.connectHost,
 			context.options.resolveIceServers?.() ?? context.options.iceServers,
 			collectHostIceAddresses(networkInterfaces()),
 		),
@@ -1240,7 +1256,9 @@ async function handleApi(
 	if (pathname === '/api/host-context') {
 		if (!auth.authenticated) throw new Error('Terminay requires an authenticated device before host context.');
 		const sessionId =
-			new URL(context.options.handoff.sessionOrigin).hostname.split('.')[0] ?? 'session';
+			context.options.sessionId ??
+			new URL(context.options.handoff.sessionOrigin).hostname.split('.')[0] ??
+			'session';
 		return {
 			applicationProtocolVersion: '1',
 			bootstrapVersion: 1,
@@ -1279,7 +1297,13 @@ async function handleApi(
 		return { status: 'pending', approvalId: pending.approvalId, expiresAt: pending.expiresAt };
 	}
 	if (pathname === '/api/devices/challenge') {
-		const pending = context.options.remote.createDeviceChallenge(String(request.deviceId ?? ''));
+		// The client checks the challenge against the origin it dialled, so this
+		// names the origin this host is registered under, not whichever origin
+		// the shared exposure was constructed with.
+		const pending = context.options.remote.createDeviceChallenge(
+			String(request.deviceId ?? ''),
+			context.options.handoff.sessionOrigin,
+		);
 		const expiresAt = new Date(pending.challenge.expiresAt).toISOString();
 		return {
 			challenge: {
@@ -1301,6 +1325,8 @@ async function handleApi(
 			deviceId: String(request.deviceId ?? ''),
 			deviceSignature: String(request.deviceSignature ?? ''),
 			peerId: auth.peerId,
+			// A challenge minted for one exposure cannot be redeemed on another.
+			sessionOrigin: context.options.handoff.sessionOrigin,
 		});
 		return { ticket: ticket.ticket };
 	}

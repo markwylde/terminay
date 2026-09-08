@@ -21,6 +21,14 @@ test('release evidence is deterministic and records native/runtime provenance', 
   assert.equal(manifest.importBoundaryEvidence.violationCount, 0)
   assert.equal(manifest.importBoundaryEvidence.checker, 'scripts/check-workspace-boundaries.mjs')
   assert.match(manifest.importBoundaryEvidence.sha256, /^[a-f0-9]{64}$/u)
+  assert.deepEqual(manifest.distribution.channels, ['tag', 'main'])
+  assert.deepEqual(manifest.distribution.architectures, ['x64', 'arm64'])
+  assert.equal(manifest.distribution.archiveNames.tag, 'terminay-server-<version>-linux-<arch>.tar.gz')
+  assert.equal(manifest.distribution.archiveNames.main, 'terminay-server-main-linux-<arch>.tar.gz')
+  assert.equal(manifest.distribution.checksumSuffix, '.sha256')
+  assert.equal(manifest.distribution.signatureSuffix, '.sig')
+  assert.equal(manifest.distribution.signatureAlgorithm, 'ed25519')
+  assert.deepEqual(manifest.distribution.manifest.requiredFields, ['channel', 'revision', 'architecture'])
   const downloaded = first.packages.find((entry) => entry.downloadLocation !== 'NOASSERTION')
   assert.ok(downloaded)
   assert.equal(downloaded.checksums?.[0]?.algorithm, 'SHA512')
@@ -59,6 +67,20 @@ test('standalone operations runbook documents paths, network trust, recovery, an
   assert.match(runbook, /foreground/i)
 })
 
+test('the update policy names the archives, sidecars, signatures, and channels as the install unit', async () => {
+  const policy = await readFile(join(process.cwd(), 'docs/operations/release-update-policy.md'), 'utf8')
+  assert.match(policy, /install and upgrade unit/i)
+  assert.match(policy, /terminay-server-<version>-linux-<arch>\.tar\.gz/)
+  assert.match(policy, /terminay-server-main-linux-<arch>\.tar\.gz/)
+  assert.match(policy, /\.sha256/)
+  assert.match(policy, /Ed25519/)
+  assert.match(policy, /## Release channels/)
+  assert.match(policy, /`channel`, the built\n`revision` \(commit\), and its `architecture`/)
+  // The npm pack tarball is no longer published and must not be described as
+  // something an operator can install.
+  assert.match(policy, /no longer an `npm pack` tarball/)
+})
+
 test('release workflow keeps readiness, artifact builds, and hosted publication ordered', async () => {
   const release = await readFile(join(process.cwd(), '.github/workflows/trigger-release.yml'), 'utf8')
   const packageJson = JSON.parse(await readFile(join(process.cwd(), 'package.json'), 'utf8'))
@@ -76,11 +98,12 @@ test('release workflow keeps readiness, artifact builds, and hosted publication 
   assert.match(release.slice(binariesIndex, notesIndex), /needs: release/)
   assert.match(release.slice(notesIndex), /needs: \[release, build-binaries, build-standalone-server\]/)
   const standaloneJob = release.slice(standaloneIndex, notesIndex)
-  const applicationGraphBuild = standaloneJob.indexOf('npm run build:application-graph')
-  const postcompile = standaloneJob.indexOf('npm run build:server-postcompile')
-  const pack = standaloneJob.indexOf('npm pack --workspace @terminay/server')
-  assert.ok(applicationGraphBuild >= 0 && postcompile > applicationGraphBuild && pack > postcompile,
-    'standalone packaging must build the server dependency graph and postcompile artifacts before packing a fresh checkout')
+  const applicationBuild = standaloneJob.indexOf('npm run build:app')
+  const webrtcRuntime = standaloneJob.indexOf('node scripts/stage-selected-secure-werift-runtime.mjs')
+  const archive = standaloneJob.indexOf('node scripts/build-standalone-server-artifact.mjs')
+  const probe = standaloneJob.indexOf('node scripts/probe-standalone-server-archive.mjs')
+  assert.ok(applicationBuild >= 0 && webrtcRuntime > applicationBuild && archive > webrtcRuntime && probe > archive,
+    'the archive must be assembled from a freshly built application graph and WebRTC runtime, then probed before publication')
   assert.doesNotMatch(release, /build-web-image|terminay-web|Dockerfile\.web|web-image-integration/)
   assert.match(packageJson.scripts['test:ci'], /test:release-evidence/)
   assert.match(release, /npm run test:release-evidence/)

@@ -17,6 +17,7 @@ import {
 	getPtyRuntimePlatform,
 	PTY_RUNTIME_NODE_VERSION,
 } from './pty-runtime-platforms.mjs';
+import { normalizeArtifactRelease } from './standalone-artifact.mjs';
 import { stageProductionDependencyClosure } from './standalone-runtime-dependencies.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -33,12 +34,22 @@ const serverCoreRoot = resolve(
 );
 const protocolRoot = resolve(args['protocol-root'] ?? 'packages/protocol');
 const webrtcRuntime = resolve(required(args, 'webrtc-runtime'));
+const release = normalizeArtifactRelease({
+	channel: args.channel ?? 'tag',
+	revision: args.revision,
+	architecture: platform.architecture,
+});
+// The ELF machine checks below are the authoritative architecture gate: they
+// read the bytes that ship. Requiring a same-architecture runner is a weaker,
+// environmental proxy, kept available for release jobs that want it but off by
+// default so arm64 can be staged wherever a runner is free.
+const requireNativeRunner = parseBoolean(args['require-native-runner'] ?? 'false');
 
 if (process.platform !== 'linux')
 	throw new Error(
 		'Standalone server archives must be assembled on native Linux release runners.',
 	);
-if (process.arch !== platform.architecture)
+if (requireNativeRunner && process.arch !== platform.architecture)
 	throw new Error(
 		`${target} requires native ${platform.architecture}; this runner is ${process.arch}.`,
 	);
@@ -137,6 +148,10 @@ try {
 		schemaVersion: 1,
 		artifact: 'terminay-server',
 		target,
+		channel: release.channel,
+		revision: release.revision,
+		architecture: release.architecture,
+		version: serverPackage.version,
 		node: {
 			version: PTY_RUNTIME_NODE_VERSION,
 			archive: basename(nodeArchive),
@@ -174,7 +189,7 @@ try {
 		stagingDirectory: stagingParent,
 	});
 	process.stdout.write(
-		`${JSON.stringify({ archivePath, archiveSha256: await sha256File(archivePath), target }, null, 2)}\n`,
+		`${JSON.stringify({ archivePath, archiveSha256: await sha256File(archivePath), target, channel: release.channel, revision: release.revision, architecture: release.architecture }, null, 2)}\n`,
 	);
 } finally {
 	await rm(temporary, { force: true, recursive: true });
@@ -237,6 +252,11 @@ function parseArgs(values) {
 		parsed[key.slice(2)] = value;
 	}
 	return parsed;
+}
+function parseBoolean(value) {
+	if (value === 'true') return true;
+	if (value === 'false') return false;
+	throw new Error(`expected true or false, received ${JSON.stringify(value)}`);
 }
 function required(args, name) {
 	if (!args[name]) throw new Error(`missing required --${name}`);

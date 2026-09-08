@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import WebSocket from 'ws';
 import {
 	AUTHENTICATED_WEBRTC_TRANSPORT_VERSION,
+	classifyPairingOrigin,
 	deviceJoinProofPayload,
 	isEnrollmentPushMessage,
 	parseEnrollmentPushMessage,
@@ -10,9 +11,9 @@ import {
 	type EnrollmentPushMessage,
 } from '@terminay/protocol';
 import { HeadlessChannelTransport, type HeadlessDataChannel } from '@terminay/server-core/remote';
+import { relaySessionId } from '../../apps/terminay-server/src/remote/directSessionId';
 import {
 	deriveHostedPairingSecrets,
-	hostedSessionId,
 	hostedSignalingUrl,
 } from '../../apps/terminay-server/src/remote/hostedPairingSecrets';
 import {
@@ -116,7 +117,7 @@ export async function connectDesktopHostedPeer(options: Readonly<{
 	onPinned?: (pin: PinnedServerHostKey) => void | Promise<void>;
 }>): Promise<DesktopHostedPeer> {
 	const sessionOrigin = normalizeHostedOrigin(options.sessionOrigin);
-	const sessionId = hostedSessionId(sessionOrigin);
+	const sessionId = relaySessionId(sessionOrigin);
 	const runtime = await loadSelectedSecureWeriftRuntime(options.webrtcRuntimeRoot);
 	const Peer = runtime.RTCPeerConnection as unknown as new (configuration?: Record<string, unknown>) => WeriftPeer;
 	const clientNonce = createDesktopClientNonce();
@@ -316,12 +317,18 @@ export async function pairDesktopHostedDevice(options: Readonly<{
 	if (!(Date.parse(pairingExpiresAt) > Date.now())) {
 		throw new Error('Desktop pairing URL is expired or has an invalid expiry.');
 	}
+	// Same rule as reconnect: a direct endpoint's own certificate is not an
+	// authentication input, so verification is disabled for this socket alone.
+	const signal =
+		hosted.class === 'direct'
+			? Object.freeze({ ...options.signal, insecureTls: true })
+			: options.signal;
 	const peer = await connectDesktopHostedPeer({
 		sessionOrigin: origin,
 		scope: { kind: 'pairing', fragment: hosted.fragment },
 		webrtcRuntimeRoot: options.webrtcRuntimeRoot,
 		...(options.iceServers === undefined ? {} : { iceServers: options.iceServers }),
-		...(options.signal === undefined ? {} : { signal: options.signal }),
+		...(signal === undefined ? {} : { signal }),
 		...(options.abort === undefined ? {} : { abort: options.abort }),
 	});
 	try {
@@ -370,6 +377,15 @@ export async function connectDesktopHostedRemote(options: Readonly<{
 	if (device === null) throw new Error('No paired device exists for this server origin.');
 	const pinnedHostKey = await options.store.loadPinnedHostKey(origin);
 	if (pinnedHostKey === null) throw new Error('Server host identity is not pinned; explicit re-pairing is required.');
+	// A saved direct profile reaches the server's own signaling listener, which
+	// presents a certificate the server minted for itself. That certificate
+	// authenticates nothing here either: the pinned host key's signature over
+	// the transport transcript does. Verification is disabled only for this
+	// socket, exactly as it is when pairing with the same endpoint.
+	const signal =
+		classifyPairingOrigin(origin) === 'direct'
+			? Object.freeze({ ...options.signal, insecureTls: true })
+			: options.signal;
 	const peer = await connectDesktopHostedPeer({
 		sessionOrigin: origin,
 		scope: {
@@ -381,7 +397,7 @@ export async function connectDesktopHostedRemote(options: Readonly<{
 		},
 		webrtcRuntimeRoot: options.webrtcRuntimeRoot,
 		...(options.iceServers === undefined ? {} : { iceServers: options.iceServers }),
-		...(options.signal === undefined ? {} : { signal: options.signal }),
+		...(signal === undefined ? {} : { signal }),
 		...(options.abort === undefined ? {} : { abort: options.abort }),
 	});
 	try {

@@ -54,6 +54,7 @@ import {
 } from '../apps/terminay-server/src/index';
 import { createProtectedHostKeyStore } from '../apps/terminay-server/src/remote/hostedHostKey';
 import { parseHostedIceServers } from '../apps/terminay-server/src/remote/hostedPeerLifecycle';
+import { loadOrCreateSessionOrigin } from '../apps/terminay-server/src/remote/sessionOrigin';
 import type { AgentLifecycleEvent } from '../packages/extension-api/src/index';
 import { ParakeetRuntime } from '../packages/server-core/src/aiService/parakeetRuntime';
 import { MacroRepository } from '../packages/server-core/src/macroService/repository';
@@ -1146,57 +1147,6 @@ function saveEmbeddedRemoteDevices(dataRoot: string, records: unknown): void {
 	renameSync(temporary, file);
 }
 
-function loadOrCreateEmbeddedSessionOrigin(dataRoot: string): string {
-	const settings = readEmbeddedRemoteAccessSettings();
-	const configured = settings.webRtcHostedDomain.includes('://')
-		? settings.webRtcHostedDomain
-		: `https://${settings.webRtcHostedDomain}`;
-	const hosted = new URL(configured);
-	const loopbackHostedDomain =
-		hosted.hostname === 'localhost' ||
-		hosted.hostname.endsWith('.localhost') ||
-		hosted.hostname === '127.0.0.1' ||
-		hosted.hostname === '[::1]';
-	hosted.protocol = loopbackHostedDomain ? 'http:' : 'https:';
-	hosted.pathname = '/';
-	hosted.search = '';
-	hosted.hash = '';
-	const file = path.join(dataRoot, 'remote-session-origin.v1.json');
-	try {
-		const parsed = JSON.parse(readFileSync(file, 'utf8')) as {
-			origin?: unknown;
-			schemaVersion?: unknown;
-		};
-		if (parsed.schemaVersion === 1 && typeof parsed.origin === 'string') {
-			const origin = new URL(parsed.origin);
-			if (
-				origin.hostname === hosted.hostname ||
-				origin.hostname.endsWith(`.${hosted.hostname}`)
-			) {
-				return origin.origin;
-			}
-		}
-	} catch (error) {
-		if (
-			typeof error !== 'object' ||
-			error === null ||
-			(error as { code?: unknown }).code !== 'ENOENT'
-		) {
-			throw error;
-		}
-	}
-	hosted.hostname = `${randomUUID().replace(/-/g, '')}.${hosted.hostname}`;
-	mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-	const temporary = `${file}.tmp`;
-	writeFileSync(
-		temporary,
-		`${JSON.stringify({ origin: hosted.origin, schemaVersion: 1 })}\n`,
-		{ encoding: 'utf8', mode: 0o600 },
-	);
-	renameSync(temporary, file);
-	return hosted.origin;
-}
-
 const embeddedShellProfiles = new ShellProfileCatalogueService({
 	settings: embeddedServerSettings,
 	discovery: new ShellProfileDiscoveryService(
@@ -1597,7 +1547,11 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 			});
 			return { bundleId: archive.bundleId, bytes: archive.bytes };
 		},
-		resolveSessionOrigin: () => loadOrCreateEmbeddedSessionOrigin(dataRoot),
+		resolveSessionOrigin: () =>
+			loadOrCreateSessionOrigin(
+				dataRoot,
+				readEmbeddedRemoteAccessSettings().webRtcHostedDomain,
+			),
 		...(desktopWebRtcRuntimeRoot === undefined &&
 		!(
 			process.env.TERMINAY_TEST === '1' &&
