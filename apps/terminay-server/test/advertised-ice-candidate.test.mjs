@@ -21,7 +21,11 @@ const RUNTIME_ROOT = resolve(
 	new URL('../../..', import.meta.url).pathname,
 	'build/webrtc-runtime',
 );
-const AVAILABLE = existsSync(resolve(RUNTIME_ROOT, 'selection.json'));
+// The selection record is committed; the runtime it selects is staged by a
+// build step that the unit-test job does not run. Guarding on the payload
+// rather than the record is what makes this skip cleanly there instead of
+// failing on a missing directory.
+const AVAILABLE = existsSync(resolve(RUNTIME_ROOT, 'artifact/lib/index.mjs'));
 
 const ADVERTISED = { host: '198.51.100.9', port: 51_000 };
 
