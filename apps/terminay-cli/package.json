@@ -1,0 +1,49 @@
+{
+  "name": "terminay",
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Installs and controls a headless Terminay Server on Linux.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/markwylde/terminay.git",
+    "directory": "apps/terminay-cli"
+  },
+  "homepage": "https://terminay.com",
+  "keywords": [
+    "terminay",
+    "terminal",
+    "daemon",
+    "systemd",
+    "cli"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "bin": {
+    "terminay": "dist/cli.js"
+  },
+  "deterministicBuild": true,
+  "dependencies": {
+    "qrcode": "1.5.4"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "test:ci": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "selfsigned": "^5.5.0"
+  }
+}

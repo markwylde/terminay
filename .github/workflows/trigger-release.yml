@@ -612,6 +612,77 @@ jobs:
           # is immutable, including its checksum and detached signature.
           gh release upload "$TAG" "$ARCHIVE" "$ARCHIVE.sha256" "$ARCHIVE.sig" --repo "$GH_REPO"
 
+  publish-cli:
+    name: Publish terminay CLI to npm
+    runs-on: ubuntu-latest
+    # A dependency install, one check, and one publish.
+    timeout-minutes: 20
+    # The archives must already be attached: the published CLI resolves its own
+    # release, so `npx terminay@X.Y.Z daemon install` would otherwise find a
+    # release with nothing to install.
+    needs: [release, build-standalone-server]
+    if: needs.release.outputs.no_release != 'true'
+    permissions:
+      contents: read
+      # Provenance attestation signs the published tarball against this run.
+      id-token: write
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Verify immutable release tag source
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+          EXPECTED_COMMIT: ${{ needs.release.outputs.source_commit }}
+        run: |
+          test -n "$TAG"
+          test -n "$EXPECTED_COMMIT"
+          test "$(git rev-parse "$TAG^{commit}")" = "$EXPECTED_COMMIT"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+
+      - name: Install dependencies
+        run: |
+          npm install --global npm@12.0.2
+          npm ci
+
+      - name: Sync package version to release tag
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          VERSION="${TAG#v}"
+          node scripts/sync-package-version.mjs "$VERSION"
+          test "$(node -p 'require("./apps/terminay-cli/package.json").version')" = "$VERSION"
+
+      # An embedded key that is not the signing key ships a CLI that refuses
+      # every archive this release just published. That fails here instead.
+      - name: Verify the embedded release key is the signing key
+        env:
+          TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64: ${{ vars.TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64 }}
+        run: |
+          test -n "$TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64"
+          node scripts/check-embedded-release-key.mjs
+
+      - name: Build the CLI
+        run: npm run build --workspace terminay
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          test -n "$NODE_AUTH_TOKEN"
+          npm publish --workspace terminay --provenance --access public
+
   publish-release-notes:
     name: Publish Release Notes
     runs-on: ubuntu-latest

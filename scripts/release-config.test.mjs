@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { generateKeyPairSync } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -6,6 +7,7 @@ import { join, resolve } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import test from 'node:test'
+import { EMBEDDED_KEY_SOURCE, assertEmbeddedKeyMatches } from './check-embedded-release-key.mjs'
 import { getNextVersion, getReleaseType, incrementVersion } from './release-utils.mjs'
 
 const execFileAsync = promisify(execFile)
@@ -90,28 +92,35 @@ test('syncs package metadata to the release tag before packaging', () => {
   assert.doesNotMatch(workflow, /pkg\.version = process\.argv\[1\]/)
 })
 
-test('version sync keeps root and standalone server package metadata valid and aligned', async () => {
+test('version sync keeps root, standalone server, and CLI package metadata valid and aligned', async () => {
   const fixture = await mkdtemp(join(tmpdir(), 'terminay-version-sync-'))
   try {
     await mkdir(join(fixture, 'apps/terminay-server'), { recursive: true })
+    await mkdir(join(fixture, 'apps/terminay-cli'), { recursive: true })
     await writeFile(join(fixture, 'package.json'), JSON.stringify({ name: 'terminay', version: '0.0.0' }))
     await writeFile(join(fixture, 'apps/terminay-server/package.json'), JSON.stringify({ name: '@terminay/server', version: '0.0.0' }))
+    await writeFile(join(fixture, 'apps/terminay-cli/package.json'), JSON.stringify({ name: 'terminay', version: '0.0.0' }))
     await writeFile(join(fixture, 'package-lock.json'), JSON.stringify({
       name: 'terminay',
       version: '0.0.0',
       packages: {
         '': { name: 'terminay', version: '0.0.0' },
         'apps/terminay-server': { name: '@terminay/server', version: '0.0.0' },
+        'apps/terminay-cli': { name: 'terminay', version: '0.0.0' },
       },
     }))
 
     await execFileAsync(process.execPath, [resolve('scripts/sync-package-version.mjs'), '2.0.0'], { cwd: fixture })
     assert.equal(JSON.parse(await readFile(join(fixture, 'package.json'), 'utf8')).version, '2.0.0')
     assert.equal(JSON.parse(await readFile(join(fixture, 'apps/terminay-server/package.json'), 'utf8')).version, '2.0.0')
+    // The published CLI must carry the release version too: it is what
+    // `npx terminay@X.Y.Z` resolves.
+    assert.equal(JSON.parse(await readFile(join(fixture, 'apps/terminay-cli/package.json'), 'utf8')).version, '2.0.0')
     const lock = JSON.parse(await readFile(join(fixture, 'package-lock.json'), 'utf8'))
     assert.equal(lock.version, '2.0.0')
     assert.equal(lock.packages[''].version, '2.0.0')
     assert.equal(lock.packages['apps/terminay-server'].version, '2.0.0')
+    assert.equal(lock.packages['apps/terminay-cli'].version, '2.0.0')
   } finally {
     await rm(fixture, { recursive: true, force: true })
   }
@@ -156,4 +165,40 @@ test('release publication creates the tag through the step-scoped GitHub API tok
   assert.match(script, /const targetCommitish = await run\('git', \['rev-parse', 'HEAD'\]\)/)
   assert.match(script, /const publishedWithGitHubToken = await createGitHubRelease\(tag, targetCommitish\)/)
   assert.match(script, /if \(!publishedWithGitHubToken\) \{\s+await run\('git', \['push', 'origin', tag\]\)\s+\}/)
+})
+
+test('the CLI embeds the release signing key and the check catches a mismatch', async () => {
+  const source = await readFile(resolve(EMBEDDED_KEY_SOURCE), 'utf8')
+
+  // The key the repository ships is the key the release variable names.
+  const signing =
+    'LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUNvd0JRWURLMlZ3QXlFQVlDNTJsd09xRmVmTFhDcHY5R2NwbGZNajgvK1FEakExUmg5NXZFWmxMY2c9Ci0tLS0tRU5EIFBVQkxJQyBLRVktLS0tLQo='
+  assert.ok(assertEmbeddedKeyMatches(source, signing))
+
+  // A rotated signing key the CLI has not been updated for must fail the
+  // release rather than ship a CLI that refuses its own archives.
+  const { publicKey } = generateKeyPairSync('ed25519')
+  const rotated = Buffer.from(publicKey.export({ type: 'spki', format: 'pem' })).toString('base64')
+  assert.throws(() => assertEmbeddedKeyMatches(source, rotated), /is not the release signing key/)
+
+  assert.throws(() => assertEmbeddedKeyMatches(source, ''), /is required/)
+  assert.throws(() => assertEmbeddedKeyMatches(source, 'not base64!'), /base64-encoded PEM/)
+  assert.throws(() => assertEmbeddedKeyMatches('no key here', signing), /no public key is embedded/)
+})
+
+test('the release workflow publishes the CLI only after the key check passes', () => {
+  const workflow = readFileSync(resolve('.github/workflows/trigger-release.yml'), 'utf8')
+
+  const jobStart = workflow.indexOf('  publish-cli:\n')
+  assert.ok(jobStart >= 0, 'expected a publish-cli job')
+  const job = workflow.slice(jobStart)
+  const keyCheck = job.indexOf('scripts/check-embedded-release-key.mjs')
+  const publish = job.indexOf('npm publish')
+  assert.ok(keyCheck >= 0, 'expected the embedded key check')
+  assert.ok(publish > keyCheck, 'the key check must run before npm publish')
+  // Publishing after the archives are attached is what makes
+  // `npx terminay@X.Y.Z daemon install` able to resolve its own release.
+  assert.match(job, /needs: \[release, build-standalone-server\]/)
+  assert.match(job, /--provenance/)
+  assert.match(job, /--access public/)
 })
