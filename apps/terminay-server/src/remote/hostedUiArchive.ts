@@ -73,7 +73,10 @@ async function collectFiles(root: string): Promise<readonly ArchiveFile[]> {
 	return files.sort((left, right) => left.path.localeCompare(right.path));
 }
 
-function deriveBundleId(files: readonly ArchiveFile[], entryPath: string): string {
+function deriveBundleId(
+	files: readonly ArchiveFile[],
+	entryPath: string,
+): string {
 	const hash = createHash('sha256');
 	hash.update(`hosted-ui-archive\0${entryPath}\0`);
 	for (const file of files) {
@@ -133,6 +136,8 @@ function isSafeRelativePath(value: string): boolean {
 		value.length > 0 &&
 		!value.includes('\0') &&
 		!value.startsWith('/') &&
-		!value.split('/').some((part) => part.length === 0 || part === '.' || part === '..')
+		!value
+			.split('/')
+			.some((part) => part.length === 0 || part === '.' || part === '..')
 	);
 }

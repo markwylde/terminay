@@ -835,8 +835,8 @@ test('install persists the advertised address and names the port to forward', as
 			// Forwarding the port is the one step the CLI cannot take, so it says so.
 			const output = lines.join('\n');
 			assert.match(output, /advertised {3}127\.0\.0\.1:51000/u);
-			assert.match(output, /UDP port 51000 must reach this machine/u);
-			assert.match(output, /-p 51000:51000\/udp/u);
+			assert.match(output, /UDP ports 51000-51003 must reach this machine/u);
+			assert.match(output, /-p 51000-51003:51000-51003\/udp/u);
 		},
 	);
 });

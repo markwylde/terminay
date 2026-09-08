@@ -477,6 +477,14 @@ export function collectHostIceAddresses(
  * case where the addresses it can observe about itself are not the address a
  * client reaches it on.
  */
+/**
+ * How many consecutive UDP ports an advertised address reserves.
+ *
+ * Small enough to publish in one `-p` range, large enough that the advertised
+ * candidate plus a couple of local addresses all get a socket.
+ */
+export const ADVERTISED_PORT_SPAN = 4;
+
 export interface AdvertisedIceAddress {
 	readonly host: string;
 	readonly port: number;
@@ -488,13 +496,25 @@ export function hostedPeerConfiguration(
 	hostAddresses?: readonly string[],
 	advertise?: AdvertisedIceAddress,
 ): Record<string, unknown> {
-	// Pinning the socket to the advertised port is what makes the advertised
-	// candidate forwardable: an ephemeral port cannot be named in advance, so
-	// there would be nothing for an administrator to publish.
+	// Pinning the port range is what makes the advertised candidate forwardable:
+	// an ephemeral port cannot be named in a forwarding rule ahead of time.
+	//
+	// The runtime gives every candidate its own socket from this range, so the
+	// range is also a budget. It is deliberately small — four ports an operator
+	// can publish in one line — which means a host with many local addresses
+	// offers fewer of them than it would unpinned. The advertised address is
+	// first in the list and so keeps its socket; the addresses given up are the
+	// ones that were not reaching this client anyway, which is why the option
+	// was set.
 	const advertised =
 		advertise === undefined
 			? {}
-			: { icePortRange: [advertise.port, advertise.port] as const };
+			: {
+					icePortRange: [
+						advertise.port,
+						advertise.port + ADVERTISED_PORT_SPAN - 1,
+					] as const,
+				};
 	const loopback =
 		connectHost === '127.0.0.1' ||
 		connectHost === 'localhost' ||

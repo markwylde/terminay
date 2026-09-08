@@ -2,12 +2,18 @@ import {
 	createPrivateKey,
 	createPublicKey,
 	generateKeyPairSync,
-	sign,
 	type KeyObject,
+	sign,
 } from 'node:crypto';
-import { AUTHENTICATED_WEBRTC_TRANSPORT_VERSION } from '@terminay/protocol';
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+	mkdirSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	writeFileSync,
+} from 'node:fs';
 import { dirname } from 'node:path';
+import { AUTHENTICATED_WEBRTC_TRANSPORT_VERSION } from '@terminay/protocol';
 
 /** Must stay identical to the hosted signaling relay's device-host proof payload. */
 export const DEVICE_HOST_PROOF_LABEL = 'terminay remote v1 device host';
@@ -41,7 +47,10 @@ export function parseHostedHostKey(value: unknown): HostedHostKey {
 	if (record.schemaVersion !== 1 || record.algorithm !== 'ed25519') {
 		throw new Error('Hosted host key is invalid.');
 	}
-	if (typeof record.privateKeyPem !== 'string' || record.privateKeyPem.length === 0) {
+	if (
+		typeof record.privateKeyPem !== 'string' ||
+		record.privateKeyPem.length === 0
+	) {
 		throw new Error('Hosted host key is invalid.');
 	}
 	const privateKey = createPrivateKey(record.privateKeyPem);
@@ -122,7 +131,9 @@ export function createProtectedHostKeyStore(options: {
 		mkdirSync(dirname(options.file), { recursive: true, mode: 0o700 });
 		const envelope = `${JSON.stringify({
 			schemaVersion: 2,
-			encrypted: options.codec.encrypt(serializeHostedHostKey(key)).toString('base64'),
+			encrypted: options.codec
+				.encrypt(serializeHostedHostKey(key))
+				.toString('base64'),
 		})}\n`;
 		const temporary = `${options.file}.tmp`;
 		writeFileSync(temporary, envelope, { encoding: 'utf8', mode: 0o600 });
@@ -137,11 +148,16 @@ export function createProtectedHostKeyStore(options: {
 			throw error;
 		}
 		const envelope = JSON.parse(raw) as Record<string, unknown>;
-		if (envelope.schemaVersion !== 2 || typeof envelope.encrypted !== 'string') {
+		if (
+			envelope.schemaVersion !== 2 ||
+			typeof envelope.encrypted !== 'string'
+		) {
 			throw new Error('Protected host key record is invalid.');
 		}
 		return parseHostedHostKey(
-			JSON.parse(options.codec.decrypt(Buffer.from(envelope.encrypted, 'base64'))),
+			JSON.parse(
+				options.codec.decrypt(Buffer.from(envelope.encrypted, 'base64')),
+			),
 		);
 	};
 	return Object.freeze({
@@ -169,7 +185,8 @@ export function createProtectedHostKeyStore(options: {
 			requireCodec();
 			const key = createHostedHostKey();
 			write(key);
-			if (options.legacyPlaintextFile !== undefined) rmSync(options.legacyPlaintextFile, { force: true });
+			if (options.legacyPlaintextFile !== undefined)
+				rmSync(options.legacyPlaintextFile, { force: true });
 			return key;
 		},
 	});
@@ -227,11 +244,16 @@ export function createDeviceHostReadyMessage(input: {
 	});
 }
 
-function freezeHostKey(privateKey: KeyObject, publicKey: KeyObject): HostedHostKey {
+function freezeHostKey(
+	privateKey: KeyObject,
+	publicKey: KeyObject,
+): HostedHostKey {
 	const der = publicKey.export({ format: 'der', type: 'spki' });
 	return Object.freeze({
 		algorithm: 'ed25519',
-		privateKeyPem: privateKey.export({ format: 'pem', type: 'pkcs8' }).toString(),
+		privateKeyPem: privateKey
+			.export({ format: 'pem', type: 'pkcs8' })
+			.toString(),
 		publicKey: Buffer.from(der.subarray(-32)).toString('base64url'),
 	});
 }

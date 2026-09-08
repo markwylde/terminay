@@ -356,9 +356,9 @@ Flags:
   --advertise-address <addr:port>
                        An address and UDP port to offer as an extra connection
                        candidate, for a server reachable only at a forwarded
-                       address — a container, or behind a port forward. The
-                       port must be forwarded to this machine. Pass an empty
-                       value to remove one set earlier.
+                       address — a container, or behind a port forward. That
+                       port and the three above it must be forwarded to this
+                       machine. Pass an empty value to remove one set earlier.
   --hosted-domain <d>  Hosted signalling domain.
   --expose <modes>     off, hosted, direct, or hosted,direct.
   --project-root <p>   Directory the server opens projects from.

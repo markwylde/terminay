@@ -8,6 +8,7 @@ import {
 	selectScope,
 } from '../account.js';
 import { defaultDirectOrigin } from '../address.js';
+import { ADVERTISED_PORT_SPAN } from '../advertise.js';
 import type { DaemonOptions, InstallScope } from '../args.js';
 import {
 	discardDownloads,
@@ -319,16 +320,19 @@ export async function runInstall(
 	write(`  data root    ${dataRoot}`);
 	write(`  exposure     ${expose}`);
 	if (advertised !== undefined && advertised !== '') {
-		const advertisedPort = advertised.slice(advertised.lastIndexOf(':') + 1);
+		const first = Number(advertised.slice(advertised.lastIndexOf(':') + 1));
+		const last = first + ADVERTISED_PORT_SPAN - 1;
 		write(`  advertised   ${advertised}`);
 		write('');
 		write(
-			`UDP port ${advertisedPort} must reach this machine for that address to work.`,
+			`UDP ports ${first}-${last} must reach this machine for that address to work.`,
 		);
 		write(
-			'Forwarding it is the one step this command cannot take for you — in Docker,',
+			'Forwarding them is the one step this command cannot take for you — in',
 		);
-		write(`publish it with -p ${advertisedPort}:${advertisedPort}/udp.`);
+		write(
+			`Docker, publish them with -p ${first}-${last}:${first}-${last}/udp.`,
+		);
 	}
 	if (directOrigin !== undefined) {
 		write(`  direct URL   ${directOrigin}`);
