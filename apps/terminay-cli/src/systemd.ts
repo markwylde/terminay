@@ -30,16 +30,27 @@ function scopeArguments(scope: InstallScope): readonly string[] {
 	return scope === 'user' ? ['--user'] : [];
 }
 
-async function run(command: string, args: readonly string[], options: SystemdOptions): Promise<CommandResult> {
+async function run(
+	command: string,
+	args: readonly string[],
+	options: SystemdOptions,
+): Promise<CommandResult> {
 	try {
 		const { stdout, stderr } = await execFileAsync(command, [...args], {
 			timeout: TIMEOUT_MS,
 			maxBuffer: 4 * 1024 * 1024,
-			...(options.env === undefined ? {} : { env: options.env as NodeJS.ProcessEnv }),
+			...(options.env === undefined
+				? {}
+				: { env: options.env as NodeJS.ProcessEnv }),
 		});
 		return Object.freeze({ code: 0, stdout, stderr });
 	} catch (error) {
-		const failure = error as { code?: number | string; stdout?: string; stderr?: string; message?: string };
+		const failure = error as {
+			code?: number | string;
+			stdout?: string;
+			stderr?: string;
+			message?: string;
+		};
 		// `systemctl is-active` exits non-zero to answer the question, so the
 		// exit status is returned rather than thrown for every caller to handle.
 		return Object.freeze({
@@ -51,11 +62,14 @@ async function run(command: string, args: readonly string[], options: SystemdOpt
 }
 
 export function createSystemd(options: SystemdOptions) {
-	const systemctl = (args: readonly string[]) => run('systemctl', [...scopeArguments(options.scope), ...args], options);
+	const systemctl = (args: readonly string[]) =>
+		run('systemctl', [...scopeArguments(options.scope), ...args], options);
 	const expect = async (args: readonly string[]) => {
 		const result = await systemctl(args);
 		if (result.code !== 0) {
-			throw new Error(`systemctl ${args.join(' ')} failed: ${(result.stderr || result.stdout).trim()}`);
+			throw new Error(
+				`systemctl ${args.join(' ')} failed: ${(result.stderr || result.stdout).trim()}`,
+			);
 		}
 		return result;
 	};
@@ -81,7 +95,14 @@ export function createSystemd(options: SystemdOptions) {
 		async journal(lines = 20): Promise<string> {
 			const result = await run(
 				'journalctl',
-				[...scopeArguments(options.scope), '-u', UNIT_NAME, '--no-pager', '-n', String(lines)],
+				[
+					...scopeArguments(options.scope),
+					'-u',
+					UNIT_NAME,
+					'--no-pager',
+					'-n',
+					String(lines),
+				],
 				options,
 			);
 			return (result.stdout || result.stderr).trim();

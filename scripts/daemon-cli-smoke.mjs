@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-import { spawnSync } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 /**
  * Exercise `terminay daemon` against a real systemd, in a container.
@@ -23,22 +23,30 @@ import { join, resolve } from 'node:path'
  * running systemd as PID 1, and a few minutes.
  */
 
-export const DEFAULT_IMAGE = 'debian:12-slim'
-export const SMOKE_ENVIRONMENT_FLAG = 'TERMINAY_RUN_DAEMON_SMOKE'
+export const DEFAULT_IMAGE = 'debian:12-slim';
+export const SMOKE_ENVIRONMENT_FLAG = 'TERMINAY_RUN_DAEMON_SMOKE';
 
 export function isSmokeEnabled(env = process.env) {
-  return env[SMOKE_ENVIRONMENT_FLAG] === '1'
+	return env[SMOKE_ENVIRONMENT_FLAG] === '1';
 }
 
 /** The lifecycle the smoke drives, in order. */
-export const SMOKE_STEPS = Object.freeze(['install', 'status', 'upgrade', 'qr-code --no-wait', 'uninstall'])
+export const SMOKE_STEPS = Object.freeze([
+	'install',
+	'status',
+	'upgrade',
+	'qr-code --no-wait',
+	'uninstall',
+]);
 
 function run(command, args, options = {}) {
-  const result = spawnSync(command, args, { stdio: 'inherit', ...options })
-  if (result.status !== 0) {
-    throw new Error(`${command} ${args.join(' ')} exited with ${result.status ?? 'a signal'}`)
-  }
-  return result
+	const result = spawnSync(command, args, { stdio: 'inherit', ...options });
+	if (result.status !== 0) {
+		throw new Error(
+			`${command} ${args.join(' ')} exited with ${result.status ?? 'a signal'}`,
+		);
+	}
+	return result;
 }
 
 /**
@@ -114,7 +122,7 @@ export async function buildArchive({ directory, version, revision }) {
   execFileSync('tar', ['-czf', archivePath, '-C', directory, rootName])
   return archivePath
 }
-`
+`;
 
 /** The driver that runs inside the container, against the real systemd. */
 export const CONTAINER_DRIVER = `
@@ -215,65 +223,74 @@ try {
 assert.equal(stillKnown, false, 'systemd must no longer know the unit')
 
 write('SMOKE OK')
-`
+`;
 
 export async function runDaemonSmoke(options = {}) {
-  const image = options.image ?? DEFAULT_IMAGE
-  const container = `terminay-daemon-smoke-${randomUUID().slice(0, 8)}`
-  const workspace = await mkdtemp(join(tmpdir(), 'terminay-daemon-smoke-'))
-  const repositoryRoot = resolve(new URL('..', import.meta.url).pathname)
-  try {
-    await writeFile(join(workspace, 'build-archive.mjs'), ARCHIVE_BUILDER)
-    await writeFile(join(workspace, 'driver.mjs'), CONTAINER_DRIVER)
+	const image = options.image ?? DEFAULT_IMAGE;
+	const container = `terminay-daemon-smoke-${randomUUID().slice(0, 8)}`;
+	const workspace = await mkdtemp(join(tmpdir(), 'terminay-daemon-smoke-'));
+	const repositoryRoot = resolve(new URL('..', import.meta.url).pathname);
+	try {
+		await writeFile(join(workspace, 'build-archive.mjs'), ARCHIVE_BUILDER);
+		await writeFile(join(workspace, 'driver.mjs'), CONTAINER_DRIVER);
 
-    run('docker', [
-      'run',
-      '--detach',
-      '--name',
-      container,
-      '--privileged',
-      '--tmpfs',
-      '/run',
-      '--tmpfs',
-      '/run/lock',
-      '-v',
-      `${join(repositoryRoot, 'apps/terminay-cli')}:/cli:ro`,
-      // The CLI's one runtime dependency is hoisted to the workspace root, so
-      // it is mounted where Node will look for it.
-      '-v',
-      `${join(repositoryRoot, 'node_modules')}:/cli/node_modules:ro`,
-      '-v',
-      `${workspace}:/smoke:ro`,
-      image,
-      '/bin/sh',
-      '-c',
-      'apt-get update -qq && apt-get install -y -qq systemd nodejs >/dev/null 2>&1 && exec /lib/systemd/systemd',
-    ])
+		run('docker', [
+			'run',
+			'--detach',
+			'--name',
+			container,
+			'--privileged',
+			'--tmpfs',
+			'/run',
+			'--tmpfs',
+			'/run/lock',
+			'-v',
+			`${join(repositoryRoot, 'apps/terminay-cli')}:/cli:ro`,
+			// The CLI's one runtime dependency is hoisted to the workspace root, so
+			// it is mounted where Node will look for it.
+			'-v',
+			`${join(repositoryRoot, 'node_modules')}:/cli/node_modules:ro`,
+			'-v',
+			`${workspace}:/smoke:ro`,
+			image,
+			'/bin/sh',
+			'-c',
+			'apt-get update -qq && apt-get install -y -qq systemd nodejs >/dev/null 2>&1 && exec /lib/systemd/systemd',
+		]);
 
-    // systemd takes a moment to reach a state where systemctl answers.
-    let booted = false
-    for (let attempt = 0; attempt < 90 && !booted; attempt += 1) {
-      const probe = spawnSync('docker', ['exec', container, 'systemctl', 'is-system-running'], { encoding: 'utf8' })
-      booted = /running|degraded/u.test(probe.stdout ?? '')
-      if (!booted) spawnSync('sleep', ['2'])
-    }
-    if (!booted) {
-      spawnSync('docker', ['logs', container], { stdio: 'inherit' })
-      throw new Error('systemd did not come up inside the smoke container')
-    }
+		// systemd takes a moment to reach a state where systemctl answers.
+		let booted = false;
+		for (let attempt = 0; attempt < 90 && !booted; attempt += 1) {
+			const probe = spawnSync(
+				'docker',
+				['exec', container, 'systemctl', 'is-system-running'],
+				{ encoding: 'utf8' },
+			);
+			booted = /running|degraded/u.test(probe.stdout ?? '');
+			if (!booted) spawnSync('sleep', ['2']);
+		}
+		if (!booted) {
+			spawnSync('docker', ['logs', container], { stdio: 'inherit' });
+			throw new Error('systemd did not come up inside the smoke container');
+		}
 
-    run('docker', ['exec', container, 'node', '/smoke/driver.mjs'])
-  } finally {
-    spawnSync('docker', ['rm', '-f', container], { stdio: 'ignore' })
-    await rm(workspace, { recursive: true, force: true })
-  }
+		run('docker', ['exec', container, 'node', '/smoke/driver.mjs']);
+	} finally {
+		spawnSync('docker', ['rm', '-f', container], { stdio: 'ignore' });
+		await rm(workspace, { recursive: true, force: true });
+	}
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {
-  if (!isSmokeEnabled()) {
-    console.log(`Set ${SMOKE_ENVIRONMENT_FLAG}=1 to run the systemd container smoke.`)
-    process.exit(0)
-  }
-  await runDaemonSmoke()
-  console.log('Daemon CLI smoke passed.')
+if (
+	process.argv[1] &&
+	resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)
+) {
+	if (!isSmokeEnabled()) {
+		console.log(
+			`Set ${SMOKE_ENVIRONMENT_FLAG}=1 to run the systemd container smoke.`,
+		);
+		process.exit(0);
+	}
+	await runDaemonSmoke();
+	console.log('Daemon CLI smoke passed.');
 }

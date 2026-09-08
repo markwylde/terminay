@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { ROLLING_TAG, archiveName, resolveRef } from '../dist/resolve.js';
+import { archiveName, ROLLING_TAG, resolveRef } from '../dist/resolve.js';
 import { createFakeBin } from './fake-bin.mjs';
-import { expandedAssets, html, json, releaseDocument, startHttpsFixture } from './https-fixture.mjs';
+import {
+	expandedAssets,
+	html,
+	json,
+	releaseDocument,
+	startHttpsFixture,
+} from './https-fixture.mjs';
 
 const TAG_ASSETS = [
 	'terminay-server-4.1.1-linux-x64.tar.gz',
@@ -46,11 +52,17 @@ async function withGitHub(options, run) {
 			return;
 		}
 		if (url === '/repos/markwylde/terminay/releases/tags/v9.9.9') {
-			json(response, 200, releaseDocument('v9.9.9', ['terminay-server-9.9.9-linux-x64.tar.gz']));
+			json(
+				response,
+				200,
+				releaseDocument('v9.9.9', ['terminay-server-9.9.9-linux-x64.tar.gz']),
+			);
 			return;
 		}
 		if (url === '/markwylde/terminay/releases/latest') {
-			response.writeHead(302, { location: '/markwylde/terminay/releases/tag/v4.1.1' });
+			response.writeHead(302, {
+				location: '/markwylde/terminay/releases/tag/v4.1.1',
+			});
 			response.end();
 			return;
 		}
@@ -63,13 +75,24 @@ async function withGitHub(options, run) {
 			return;
 		}
 		if (url === '/markwylde/terminay/releases/expanded_assets/v9.9.9') {
-			html(response, 200, expandedAssets('v9.9.9', ['terminay-server-9.9.9-linux-x64.tar.gz']));
+			html(
+				response,
+				200,
+				expandedAssets('v9.9.9', ['terminay-server-9.9.9-linux-x64.tar.gz']),
+			);
 			return;
 		}
 		json(response, 404, { message: 'Not Found' });
 	});
 	try {
-		await run({ apiBase: fixture.origin, webBase: fixture.origin, architecture: options.architecture ?? 'x64' }, seen);
+		await run(
+			{
+				apiBase: fixture.origin,
+				webBase: fixture.origin,
+				architecture: options.architecture ?? 'x64',
+			},
+			seen,
+		);
 	} finally {
 		await fixture.close();
 	}
@@ -81,7 +104,10 @@ test('no reference resolves the newest tagged release', async () => {
 		assert.equal(resolved.channel, 'tag');
 		assert.equal(resolved.version, '4.1.1');
 		assert.equal(resolved.tag, 'v4.1.1');
-		assert.match(resolved.assets.archive, /\/releases\/download\/v4\.1\.1\/terminay-server-4\.1\.1-linux-x64\.tar\.gz$/u);
+		assert.match(
+			resolved.assets.archive,
+			/\/releases\/download\/v4\.1\.1\/terminay-server-4\.1\.1-linux-x64\.tar\.gz$/u,
+		);
 		assert.equal(resolved.assets.sha256, `${resolved.assets.archive}.sha256`);
 		assert.equal(resolved.assets.signature, `${resolved.assets.archive}.sig`);
 	});
@@ -104,7 +130,10 @@ test('main resolves the rolling prerelease, which is not tagged for the branch',
 		assert.equal(resolved.tag, 'main-latest');
 		// A release tagged `main` would make `main` ambiguous in every clone.
 		assert.notEqual(resolved.tag, 'main');
-		assert.match(resolved.assets.archive, /terminay-server-main-linux-x64\.tar\.gz$/u);
+		assert.match(
+			resolved.assets.archive,
+			/terminay-server-main-linux-x64\.tar\.gz$/u,
+		);
 	});
 });
 
@@ -113,14 +142,18 @@ test('the host architecture selects the archive', async () => {
 		const resolved = await resolveRef('v4.1.1', options);
 		assert.match(resolved.assets.archive, /linux-arm64\.tar\.gz$/u);
 	});
-	assert.equal(archiveName('4.1.1', 'arm64'), 'terminay-server-4.1.1-linux-arm64.tar.gz');
+	assert.equal(
+		archiveName('4.1.1', 'arm64'),
+		'terminay-server-4.1.1-linux-arm64.tar.gz',
+	);
 });
 
 test('a release without an archive for this architecture fails and names both', async () => {
 	await withGitHub({ architecture: 'arm64' }, async (options) => {
 		await assert.rejects(
 			() => resolveRef('v9.9.9', options),
-			(error) => error.message.includes('arm64') && error.message.includes('v9.9.9'),
+			(error) =>
+				error.message.includes('arm64') && error.message.includes('v9.9.9'),
 		);
 	});
 });
@@ -129,7 +162,10 @@ test('a rate-limited API falls back to the release page', async () => {
 	await withGitHub({ apiDown: true }, async (options, seen) => {
 		const resolved = await resolveRef('v4.1.1', options);
 		assert.equal(resolved.version, '4.1.1');
-		assert.ok(seen.some((url) => url.includes('/expanded_assets/')), 'expected the release page fallback');
+		assert.ok(
+			seen.some((url) => url.includes('/expanded_assets/')),
+			'expected the release page fallback',
+		);
 	});
 	await withGitHub({ apiDown: true }, async (options) => {
 		const resolved = await resolveRef(undefined, options);
@@ -138,9 +174,12 @@ test('a rate-limited API falls back to the release page', async () => {
 });
 
 test('a rate-limited API still reports a missing architecture', async () => {
-	await withGitHub({ apiDown: true, architecture: 'arm64' }, async (options) => {
-		await assert.rejects(() => resolveRef('v9.9.9', options), /arm64/u);
-	});
+	await withGitHub(
+		{ apiDown: true, architecture: 'arm64' },
+		async (options) => {
+			await assert.rejects(() => resolveRef('v9.9.9', options), /arm64/u);
+		},
+	);
 });
 
 test('a branch resolves to a source build at the tip git reports', async () => {
@@ -182,7 +221,11 @@ test('a reference that is neither a release nor a git ref fails clearly', async 
 
 test('a full commit sha resolves to a source build without any network call', async () => {
 	const revision = 'a'.repeat(40);
-	const resolved = await resolveRef(revision, { architecture: 'x64', apiBase: 'https://127.0.0.1:1', webBase: 'https://127.0.0.1:1' });
+	const resolved = await resolveRef(revision, {
+		architecture: 'x64',
+		apiBase: 'https://127.0.0.1:1',
+		webBase: 'https://127.0.0.1:1',
+	});
 	assert.equal(resolved.channel, 'source');
 	assert.equal(resolved.revision, revision);
 	assert.equal(resolved.sourceRef, revision);

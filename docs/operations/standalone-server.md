@@ -5,6 +5,11 @@ operator boundaries around it. The server is a supported standalone artifact
 on GNU/Linux x64 and arm64 with a Debian 12-compatible userspace. It does not
 daemonize itself, and a service manager must supervise the foreground process.
 
+The supported way to install, upgrade, and pair one is the `terminay`
+command-line installer — `npx terminay daemon install` — documented under
+[Installing and upgrading](#installing-and-upgrading). The manual procedure is
+its fallback, for hosts the CLI does not support.
+
 Server-installed project-environment extensions follow the canonical
 [extension operations](./extensions.md) runbook. Supported artifacts include
 the pinned internal npm installer; extension packages are fetched from npmjs.
@@ -84,17 +89,131 @@ stopping.
 
 ## Installing and upgrading
 
-A standalone server is installed from one self-contained archive per Linux
-architecture, `terminay-server-<version>-linux-<arch>.tar.gz`, published with
-a `.sha256` sidecar and an Ed25519 `.sig` beside it. The archive carries its
-own pinned Node runtime, the compiled server, the production dependency
-closure including the native `node-pty`, the matched UI bundle, and the
-selected WebRTC runtime, so the target needs neither Node nor a compiler.
-Merges to the default branch also publish a rolling `main` channel under
-stable asset names. Verify the sidecar and the signature before staging, and
-compare `revision` in the archive's `artifact-manifest.json` — not `version` —
-to decide whether the rolling channel moved. The full contract is in the
-[release install and update policy](./release-update-policy.md).
+The supported install path is the `terminay` command-line installer. The
+manual procedure below it remains available for hosts the CLI does not
+support, and is the fallback rather than the default.
+
+### The `terminay daemon` installer
+
+```bash
+sudo npx terminay daemon install
+```
+
+The CLI resolves a version, verifies it, lays it out on disk, drives systemd,
+and puts pairing and approval in one terminal. It does not bundle the server:
+it fetches a distribution at install time. It supports GNU/Linux x64 and arm64
+with systemd, and refuses to run anywhere else with a message naming the
+requirement.
+
+| Command | What it does |
+| --- | --- |
+| `daemon install [ref]` | Resolve, verify, unpack, write the unit, start, wait for readiness |
+| `daemon upgrade [ref]` | Follow the installed channel, stage beside, switch, roll back on failure |
+| `daemon status` | Unit state, version, channel, readiness, exposure modes |
+| `daemon start` / `daemon stop` | Wrap the unit and wait for readiness or exit |
+| `daemon qr-code` | Terminal QR, pairing URLs, and the approval prompt |
+| `daemon approvals` / `approve <id>` / `deny <id>` | The same approvals, non-interactively |
+| `daemon reset-identity` | Rotate the host key and revoke every device |
+| `daemon uninstall [--purge]` | Remove the unit and versions; keep the data root unless purged |
+
+#### Version references
+
+`install` with no reference takes the newest tagged release. `vX.Y.Z` takes
+that tag. `main` takes the rolling prerelease, which is published under the
+tag `main-latest` — a release tagged for the default branch would make `main`
+ambiguous in every clone. Any other branch or commit is built from source on
+the target, after a preflight for `git`, `python3`, `make`, and a C++
+compiler; the resulting manifest records the built commit and a `source`
+channel.
+
+`upgrade` with no reference re-resolves whatever channel the machine is
+already on, so a box tracking `main` never silently moves onto the tag stream.
+A source install has no ordering the CLI can trust, so it must be told what to
+move to.
+
+#### Verification
+
+Every downloaded archive is checked against its published SHA-256 sidecar and
+then against its detached Ed25519 signature, using a public key committed to
+the CLI's own source. There is no flag or environment variable that skips it:
+the boundary crossed is "release pipeline → operator's machine", and that key
+is the only thing making the download trustworthy. A release that cannot be
+signed is a release to block, not a check to relax. A source build has no
+publisher and therefore no signature, but its manifest is still verified.
+
+#### Install scope and the run-as account
+
+Scope is prompted on a terminal with system scope preselected, and must be
+given as `--system` or `--user` when there is no terminal. A system install
+needs root and writes to `/etc` and `/opt`; a user install writes under the
+invoking account's home and enables login lingering so the service survives
+logout.
+
+In system scope the CLI also asks which account the server and its terminals
+run as. **This is the security decision in the command**: the daemon's PTYs
+run as that account, so the choice decides whose files, keys, and agents a
+paired device can reach. A dedicated `terminay` system account is preselected
+and created if absent; `--run-as <user>` names an existing login user instead,
+and is checked before anything is written.
+
+#### Layout
+
+| Path | System scope | User scope |
+| --- | --- | --- |
+| Prefix | `/opt/terminay` | `~/.local/share/terminay` |
+| Versions | `<prefix>/versions/<version>` | same |
+| Active version | `<prefix>/current` (symlink) | same |
+| Install record | `<prefix>/install.json` | same |
+| Environment file | `/etc/terminay/server.env` | `~/.config/terminay/server.env` |
+| Data root | `/var/lib/terminay` | `<prefix>/data` |
+| Unit | `/etc/systemd/system/terminay-server.service` | `~/.config/systemd/user/terminay-server.service` |
+
+Installed versions are immutable once verified; the CLI never edits a file
+inside a versioned directory. `current` is replaced by rename, so an interrupt
+at any point leaves it pointing at a complete version. Upgrades keep the
+active version and one previous, which is what a rollback restores.
+
+The environment file is readable only by the run-as account and never carries
+a vault passphrase, a device key, or pairing material — those live in the data
+root, which is the trust boundary. The server id is written once and never
+rewritten, because it is the identity paired devices know the machine by.
+
+#### Exposure and the direct origin
+
+Exposure defaults to `hosted,direct`. The direct origin is derived from the
+machine's primary address, which is right for a host with a routable address
+and wrong for one behind NAT — so the derived value is printed at install and
+`--direct-origin https://<host>:<port>` overrides it. `--expose`, `--port`,
+`--hosted-domain`, and `--project-root` set the rest.
+
+#### Pairing from the terminal
+
+`daemon qr-code` (alias `daemon pairing-url`) asks the running server for its
+live pairing URLs over the data root's owner-only socket, renders a terminal
+QR for the direct URL when direct exposure is on and the hosted URL otherwise,
+prints every URL with its expiry, and then waits. When a device requests
+enrollment it shows the device name and match code and asks for approval; a
+room seconds from expiring is replaced and the code redrawn. `--no-wait`
+prints and exits, and `--mode hosted|direct` selects which URL is rendered.
+
+Approval still happens only on the host, and the match code is still compared
+by a human. The CLI never prints a host key or a device key.
+
+### Installing by hand
+
+Where the CLI cannot run, the archives are installable directly. Each Linux
+architecture has one self-contained
+`terminay-server-<version>-linux-<arch>.tar.gz`, published with a `.sha256`
+sidecar and an Ed25519 `.sig` beside it. The archive carries its own pinned
+Node runtime, the compiled server, the production dependency closure including
+the native `node-pty`, the matched UI bundle, and the selected WebRTC runtime,
+so the target needs neither Node nor a compiler. Merges to the default branch
+also publish a rolling `main` channel under stable asset names on the
+`main-latest` prerelease. Verify the sidecar and the signature before staging,
+and compare `revision` in the archive's `artifact-manifest.json` — not
+`version` — to decide whether the rolling channel moved. The full contract is
+in the [release install and update policy](./release-update-policy.md), and the
+[systemd example](#systemd-linux) below is the unit the CLI writes.
 
 ## Exposure
 

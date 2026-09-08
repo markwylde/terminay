@@ -2,7 +2,12 @@ import { rm } from 'node:fs/promises';
 
 import type { DaemonOptions } from '../args.js';
 import type { CommandContext } from '../context.js';
-import { type PromptStreams, confirm, defaultStreams, isInteractive } from '../prompt.js';
+import {
+	confirm,
+	defaultStreams,
+	isInteractive,
+	type PromptStreams,
+} from '../prompt.js';
 
 /**
  * `daemon uninstall` — remove the service, keep the data.
@@ -38,7 +43,9 @@ export async function runUninstall(
 			);
 			if (!purge) write('Keeping the data root.');
 		} else {
-			throw new UninstallError('--purge removes the data root, so it needs --yes when there is no terminal to confirm on.');
+			throw new UninstallError(
+				'--purge removes the data root, so it needs --yes when there is no terminal to confirm on.',
+			);
 		}
 	}
 
@@ -58,7 +65,11 @@ export async function runUninstall(
 	if (purge) await rm(record.dataRoot, { recursive: true, force: true });
 
 	write('Terminay Server is uninstalled.');
-	write(purge ? `Removed the data root at ${record.dataRoot}.` : `Kept the data root at ${record.dataRoot}.`);
+	write(
+		purge
+			? `Removed the data root at ${record.dataRoot}.`
+			: `Kept the data root at ${record.dataRoot}.`,
+	);
 	return Object.freeze({ removedVersions: true, removedDataRoot: purge });
 }
 
@@ -77,10 +88,12 @@ export async function runResetIdentity(
 	const { record, systemd, write } = context;
 	if (!options.yes) {
 		if (!isInteractive(streams)) {
-			throw new UninstallError('resetting the identity unpairs every device, so it needs --yes when there is no terminal to confirm on.');
+			throw new UninstallError(
+				'resetting the identity unpairs every device, so it needs --yes when there is no terminal to confirm on.',
+			);
 		}
 		const confirmed = await confirm(
-			'Rotate this server\'s host key and revoke every paired device? They will all have to pair again.',
+			"Rotate this server's host key and revoke every paired device? They will all have to pair again.",
 			streams,
 		);
 		if (!confirmed) {
@@ -92,11 +105,17 @@ export async function runResetIdentity(
 	await systemd.stop();
 	const { execFile } = await import('node:child_process');
 	const { promisify } = await import('node:util');
-	await promisify(execFile)(`${context.layout.currentLink}/bin/terminay-server`, ['reset-identity'], {
-		timeout: 120_000,
-		env: { ...process.env, TERMINAY_DATA_ROOT: record.dataRoot },
-	});
+	await promisify(execFile)(
+		`${context.layout.currentLink}/bin/terminay-server`,
+		['reset-identity'],
+		{
+			timeout: 120_000,
+			env: { ...process.env, TERMINAY_DATA_ROOT: record.dataRoot },
+		},
+	);
 	await systemd.start();
-	write('The host key is rotated and every device is revoked. Pair again with `terminay daemon qr-code`.');
+	write(
+		'The host key is rotated and every device is revoked. Pair again with `terminay daemon qr-code`.',
+	);
 	return true;
 }

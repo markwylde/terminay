@@ -34,5 +34,5 @@
 
 - [x] 5.1 Add the npm publish job to `.github/workflows/trigger-release.yml` after archive attachment, setting the CLI version from the tag and running the key check before `npm publish --provenance --access public`; verified by `scripts/release-artifact-build-contract.test.mjs` extended to assert job order and by a dry-run publish on a branch
 - [x] 5.2 Add an opt-in container smoke on a systemd-enabled image that runs `daemon install <local archive>`, `status`, `upgrade`, `qr-code --no-wait`, and `uninstall`; verified by the smoke passing when `TERMINAY_RUN_DAEMON_SMOKE=1`
-- [ ] 5.3 Rewrite the install and upgrade sections of `docs/operations/standalone-server.md` to lead with `npx terminay daemon …`, keep the manual unit as fallback, and document scope, run-as, direct origin, and the QR approval loop; verified by review against the `daemon-cli` spec
+- [x] 5.3 Rewrite the install and upgrade sections of `docs/operations/standalone-server.md` to lead with `npx terminay daemon …`, keep the manual unit as fallback, and document scope, run-as, direct origin, and the QR approval loop; verified by review against the `daemon-cli` spec
 - [ ] 5.4 Run `openspec validate --all`, `npm run smoke:workspaces`, and the new CLI test suite; verified by all passing in CI

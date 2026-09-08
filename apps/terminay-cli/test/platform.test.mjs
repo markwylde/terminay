@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { UnsupportedHostError, assertSupportedHost, hostArchitecture } from '../dist/platform.js';
+import {
+	assertSupportedHost,
+	hostArchitecture,
+	UnsupportedHostError,
+} from '../dist/platform.js';
 
 const linux = { platform: 'linux', arch: 'x64', hasSystemd: true };
 
@@ -16,7 +20,10 @@ test('other operating systems are refused and named', () => {
 	for (const platform of ['darwin', 'win32', 'freebsd']) {
 		assert.throws(
 			() => assertSupportedHost({ ...linux, platform }),
-			(error) => error instanceof UnsupportedHostError && error.message.includes('Linux with systemd') && error.message.includes(platform),
+			(error) =>
+				error instanceof UnsupportedHostError &&
+				error.message.includes('Linux with systemd') &&
+				error.message.includes(platform),
 			platform,
 		);
 	}
@@ -25,13 +32,18 @@ test('other operating systems are refused and named', () => {
 test('unsupported architectures are refused and named', () => {
 	assert.throws(
 		() => assertSupportedHost({ ...linux, arch: 'ia32' }),
-		(error) => error instanceof UnsupportedHostError && error.message.includes('x64 and arm64') && error.message.includes('ia32'),
+		(error) =>
+			error instanceof UnsupportedHostError &&
+			error.message.includes('x64 and arm64') &&
+			error.message.includes('ia32'),
 	);
 });
 
 test('a Linux host without systemd is refused and told why', () => {
 	assert.throws(
 		() => assertSupportedHost({ ...linux, hasSystemd: false }),
-		(error) => error instanceof UnsupportedHostError && error.message.includes('/run/systemd/system'),
+		(error) =>
+			error instanceof UnsupportedHostError &&
+			error.message.includes('/run/systemd/system'),
 	);
 });

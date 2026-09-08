@@ -54,26 +54,40 @@ test('is-active answers the question rather than throwing', async () => {
 		assert.equal(await systemd.isActive(), true);
 		assert.equal(await systemd.state(), 'active');
 	});
-	await withFakeSystemd({ systemctl: 'echo inactive; exit 3' }, async (fake) => {
-		const systemd = createSystemd({ scope: 'system', env: fake.env() });
-		assert.equal(await systemd.isActive(), false);
-		assert.equal(await systemd.state(), 'inactive');
-	});
+	await withFakeSystemd(
+		{ systemctl: 'echo inactive; exit 3' },
+		async (fake) => {
+			const systemd = createSystemd({ scope: 'system', env: fake.env() });
+			assert.equal(await systemd.isActive(), false);
+			assert.equal(await systemd.state(), 'inactive');
+		},
+	);
 });
 
 test('a failing systemctl call reports what systemd said', async () => {
-	await withFakeSystemd({ systemctl: 'echo "Unit not found." >&2; exit 5' }, async (fake) => {
-		const systemd = createSystemd({ scope: 'system', env: fake.env() });
-		await assert.rejects(() => systemd.start(), /systemctl start terminay-server\.service failed: Unit not found\./u);
-	});
+	await withFakeSystemd(
+		{ systemctl: 'echo "Unit not found." >&2; exit 5' },
+		async (fake) => {
+			const systemd = createSystemd({ scope: 'system', env: fake.env() });
+			await assert.rejects(
+				() => systemd.start(),
+				/systemctl start terminay-server\.service failed: Unit not found\./u,
+			);
+		},
+	);
 });
 
 test('the journal is read for the failing unit only', async () => {
-	await withFakeSystemd({ journalctl: 'echo "line one"; echo "line two"' }, async (fake) => {
-		const systemd = createSystemd({ scope: 'system', env: fake.env() });
-		assert.equal(await systemd.journal(), 'line one\nline two');
-		assert.deepEqual(fake.invocations(), ['journalctl -u terminay-server.service --no-pager -n 20']);
-	});
+	await withFakeSystemd(
+		{ journalctl: 'echo "line one"; echo "line two"' },
+		async (fake) => {
+			const systemd = createSystemd({ scope: 'system', env: fake.env() });
+			assert.equal(await systemd.journal(), 'line one\nline two');
+			assert.deepEqual(fake.invocations(), [
+				'journalctl -u terminay-server.service --no-pager -n 20',
+			]);
+		},
+	);
 });
 
 test('user scope enables lingering so the service survives logout', async () => {

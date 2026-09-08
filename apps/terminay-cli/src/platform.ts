@@ -45,7 +45,9 @@ export function assertSupportedHost(facts: HostFacts = readHostFacts()): void {
 	}
 }
 
-export function hostArchitecture(facts: HostFacts = readHostFacts()): 'x64' | 'arm64' {
+export function hostArchitecture(
+	facts: HostFacts = readHostFacts(),
+): 'x64' | 'arm64' {
 	assertSupportedHost(facts);
 	return facts.arch as 'x64' | 'arm64';
 }

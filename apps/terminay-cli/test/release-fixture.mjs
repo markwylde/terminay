@@ -5,7 +5,13 @@ import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 import { buildArchiveFixture } from './archive-fixture.mjs';
-import { expandedAssets, html, json, releaseDocument, startHttpsFixture } from './https-fixture.mjs';
+import {
+	expandedAssets,
+	html,
+	json,
+	releaseDocument,
+	startHttpsFixture,
+} from './https-fixture.mjs';
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = resolve(new URL('../../..', import.meta.url).pathname);
@@ -18,10 +24,16 @@ const repositoryRoot = resolve(new URL('../../..', import.meta.url).pathname);
 export async function startReleaseFixture(options) {
 	const { directory, releases } = options;
 	const { publicKey, privateKey } = generateKeyPairSync('ed25519');
-	const publicPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
+	const publicPem = publicKey
+		.export({ type: 'spki', format: 'pem' })
+		.toString();
 	const keyEnv = {
-		TERMINAY_RELEASE_SIGNING_PRIVATE_KEY_B64: Buffer.from(privateKey.export({ type: 'pkcs8', format: 'pem' })).toString('base64'),
-		TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64: Buffer.from(publicKey.export({ type: 'spki', format: 'pem' })).toString('base64'),
+		TERMINAY_RELEASE_SIGNING_PRIVATE_KEY_B64: Buffer.from(
+			privateKey.export({ type: 'pkcs8', format: 'pem' }),
+		).toString('base64'),
+		TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64: Buffer.from(
+			publicKey.export({ type: 'spki', format: 'pem' }),
+		).toString('base64'),
 	};
 
 	const assets = new Map();
@@ -41,20 +53,34 @@ export async function startReleaseFixture(options) {
 		await writeFile(`${fixture.archivePath}.sha256`, `${digest}  ${name}\n`);
 		await execFileAsync(
 			'node',
-			[join(repositoryRoot, 'scripts/release-signature.mjs'), 'sign', fixture.archivePath, `${fixture.archivePath}.sig`],
+			[
+				join(repositoryRoot, 'scripts/release-signature.mjs'),
+				'sign',
+				fixture.archivePath,
+				`${fixture.archivePath}.sig`,
+			],
 			{ env: { ...process.env, ...keyEnv } },
 		);
 		assets.set(`${release.tag}/${name}`, bytes);
-		assets.set(`${release.tag}/${name}.sha256`, await readFile(`${fixture.archivePath}.sha256`));
-		assets.set(`${release.tag}/${name}.sig`, await readFile(`${fixture.archivePath}.sig`));
+		assets.set(
+			`${release.tag}/${name}.sha256`,
+			await readFile(`${fixture.archivePath}.sha256`),
+		);
+		assets.set(
+			`${release.tag}/${name}.sig`,
+			await readFile(`${fixture.archivePath}.sig`),
+		);
 		built.set(release.tag, { name, manifest: fixture.manifest });
 	}
 
-	const latest = releases.find((release) => release.latest === true) ?? releases[0];
+	const latest =
+		releases.find((release) => release.latest === true) ?? releases[0];
 
 	const server = await startHttpsFixture((request, response) => {
 		const url = request.url ?? '';
-		const download = /^\/markwylde\/terminay\/releases\/download\/(.+)$/u.exec(url);
+		const download = /^\/markwylde\/terminay\/releases\/download\/(.+)$/u.exec(
+			url,
+		);
 		if (download !== null) {
 			const key = decodeURIComponent(download[1]);
 			const bytes = assets.get(key);
@@ -68,10 +94,20 @@ export async function startReleaseFixture(options) {
 			return;
 		}
 		if (url === '/repos/markwylde/terminay/releases/latest') {
-			json(response, 200, releaseDocument(latest.tag, [built.get(latest.tag).name], latest.publishedAt));
+			json(
+				response,
+				200,
+				releaseDocument(
+					latest.tag,
+					[built.get(latest.tag).name],
+					latest.publishedAt,
+				),
+			);
 			return;
 		}
-		const tagged = /^\/repos\/markwylde\/terminay\/releases\/tags\/(.+)$/u.exec(url);
+		const tagged = /^\/repos\/markwylde\/terminay\/releases\/tags\/(.+)$/u.exec(
+			url,
+		);
 		if (tagged !== null) {
 			const tag = decodeURIComponent(tagged[1]);
 			const release = releases.find((entry) => entry.tag === tag);
@@ -79,10 +115,15 @@ export async function startReleaseFixture(options) {
 				json(response, 404, { message: 'Not Found' });
 				return;
 			}
-			json(response, 200, releaseDocument(tag, [built.get(tag).name], release.publishedAt));
+			json(
+				response,
+				200,
+				releaseDocument(tag, [built.get(tag).name], release.publishedAt),
+			);
 			return;
 		}
-		const expanded = /^\/markwylde\/terminay\/releases\/expanded_assets\/(.+)$/u.exec(url);
+		const expanded =
+			/^\/markwylde\/terminay\/releases\/expanded_assets\/(.+)$/u.exec(url);
 		if (expanded !== null) {
 			const tag = decodeURIComponent(expanded[1]);
 			html(response, 200, expandedAssets(tag, [built.get(tag)?.name ?? '']));
