@@ -49,6 +49,13 @@ export interface InstallDependencies {
 	 * so it relaxes nothing. The `terminay` binary never passes it.
 	 */
 	readonly releasePublicKeyPem?: string;
+	/**
+	 * Install an archive already on this disk instead of resolving a release.
+	 * It is treated exactly as a source build is — no publisher, so no
+	 * signature, and the manifest checked as always — which is what the
+	 * systemd container smoke installs. The `terminay` binary never passes it.
+	 */
+	readonly localArchivePath?: string;
 }
 
 export interface InstallResult {
@@ -113,15 +120,21 @@ export async function runInstall(
 
 	const layout = installLayout(scope, home);
 	const architecture = dependencies.architecture ?? hostArchitecture();
-	const resolved = await resolveRef(ref, {
-		architecture,
-		...(dependencies.repository === undefined ? {} : { repository: dependencies.repository }),
-		...(dependencies.apiBase === undefined ? {} : { apiBase: dependencies.apiBase }),
-		...(dependencies.webBase === undefined ? {} : { webBase: dependencies.webBase }),
-	});
+	const resolved: ResolvedRef =
+		dependencies.localArchivePath === undefined
+			? await resolveRef(ref, {
+					architecture,
+					...(dependencies.repository === undefined ? {} : { repository: dependencies.repository }),
+					...(dependencies.apiBase === undefined ? {} : { apiBase: dependencies.apiBase }),
+					...(dependencies.webBase === undefined ? {} : { webBase: dependencies.webBase }),
+				})
+			: Object.freeze({ channel: 'source' as const, version: 'local' });
 
 	await mkdir(layout.prefix, { recursive: true, mode: 0o755 });
-	const staged = await stageArchive(resolved, layout, write, dependencies.releasePublicKeyPem);
+	const staged =
+		dependencies.localArchivePath === undefined
+			? await stageArchive(resolved, layout, write, dependencies.releasePublicKeyPem)
+			: { archivePath: dependencies.localArchivePath, signed: false };
 	const installed = await installArchive({
 		layout,
 		archivePath: staged.archivePath,
