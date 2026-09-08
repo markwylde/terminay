@@ -96,8 +96,16 @@ import { parseHostedIceServers, startHostedPairingHost } from './remote/hostedPa
 import { createHostedDiagnosticLogger } from './remote/hostedDiagnosticLog.js';
 import { loadHostedUiArchive } from './remote/hostedUiArchive.js';
 import { loadOrCreateHostedHostKey, rotateHostedHostKey } from './remote/hostedHostKey.js';
+import { loadOrCreateSessionOrigin } from './remote/sessionOrigin.js';
+import {
+	createDirectSignalingRelay,
+	type DirectSignalingRelay,
+} from './remote/directSignalingRelay.js';
+import { loadOrCreateDirectTlsCertificate } from './remote/directTlsCertificate.js';
+import { relaySessionId } from './remote/directSessionId.js';
 import {
 	approvalSocketPath,
+	type PairingHandoffSummary,
 	sendApprovalSocketRequest,
 	startApprovalSocket,
 } from './remote/approvalSocket.js';
@@ -153,10 +161,26 @@ else {
 	const devicePersistence = createRemoteDevicePersistence(
 		options.dataRoot,
 	);
+	// `--expose hosted` is the administrator's standing decision for this data
+	// root, so the server provisions its own hosted session origin exactly as
+	// Desktop does for its embedded server, rather than advertising the
+	// unroutable per-server placeholder.
+	const exposeHosted = options.exposeModes.includes('hosted');
+	const sessionOrigin =
+		exposeHosted && !options.remoteOriginExplicit && options.command === 'start'
+			? loadOrCreateSessionOrigin(options.dataRoot, options.hostedDomain)
+			: options.remoteOrigin;
+	// Both exposure modes hand a client the same compact fragment; they differ
+	// only in the origin the client reaches the room through.
+	const pairingUrlFormat =
+		options.exposeModes.length > 0
+			? 'hosted-compact'
+			: pairingUrlFormatForOrigin(sessionOrigin, options.hostedDomain);
 	const remote = createRemoteExposure(
 		options.serverId,
-		options.remoteOrigin,
+		sessionOrigin,
 		devicePersistence.load(),
+		pairingUrlFormat,
 	);
 	let protocolReady = false;
 	if (options.command === 'approve' || options.command === 'deny' || options.command === 'approvals') {
@@ -167,10 +191,7 @@ else {
 		const runtime = createRuntime(options, remote);
 		process.stdout.write(`${JSON.stringify(runtime.diagnostics())}\n`);
 	} else if (options.command === 'pairing') {
-		const handoff = remote.start(Date.now() + 60_000);
-		process.stdout.write(
-			`${JSON.stringify({ serverId: options.serverId, endpoint: options.endpoint, roomId: handoff.roomId, pairingSessionId: handoff.pairingSessionId, pairingUrl: handoff.pairingUrl, expiresAt: handoff.pairingExpiresAt, expiresInSeconds: Math.max(1, Math.ceil((handoff.expiresAt - Date.now()) / 1000)), requiresApproval: true })}\n`,
-		);
+		await runPairingCommand(options);
 	} else {
 		try {
 		// Pairing material is the sole local HTTP credential. It is delivered in
@@ -184,8 +205,33 @@ else {
 		});
 		const composition = serverComposition.core;
 		let runtime: StandaloneRuntime | undefined;
-		let hostedPairingHost: { close(): Promise<void> } | undefined;
+		const pairingHosts: {
+			close(): Promise<void>;
+			mintPairing(): Promise<void>;
+		}[] = [];
 		let approvalSocket: { close(): Promise<void> } | undefined;
+		// Every exposure mode advertises the same room, so exactly one of them
+		// mints the replacement and the others re-register what it minted. The
+		// generation counter is what keeps a second mode from rotating again on
+		// its way to the room it was just told about.
+		let sharedHandoff = handoff;
+		let sharedGeneration = 0;
+		const seenGeneration = new Map<string, number>();
+		const rotateShared = (mode: string): ServerPairingHandoff => {
+			if (seenGeneration.get(mode) === sharedGeneration) {
+				sharedGeneration += 1;
+				sharedHandoff = remote.rotate();
+			}
+			seenGeneration.set(mode, sharedGeneration);
+			return sharedHandoff;
+		};
+		// The direct endpoint is served by this process on the origin it
+		// advertises, so it must have a listener to live on and that listener must
+		// answer on the advertised port. Fail before anything opens rather than
+		// advertising a URL nothing answers.
+		const direct = options.exposeModes.includes('direct')
+			? await createDirectExposure(options)
+			: undefined;
 		// Pending devices are announced as metadata-only lines so a headless
 		// operator can compare the match code and run `terminay-server approve`.
 		const announceApproval = createHostedDiagnosticLogger(options.logSink);
@@ -209,6 +255,7 @@ else {
 						remote,
 						credentials,
 						devicePersistence.save,
+						direct,
 					);
 		runtime = createRuntime(options, remote, uiServer, {
 			vault: serverComposition.vault.vault,
@@ -245,14 +292,37 @@ else {
 						listPendingApprovals: () => remote.listPendingApprovals(),
 						approveEnrollment: (approvalId) => remote.approveEnrollment(approvalId),
 						denyEnrollment: (approvalId) => remote.denyEnrollment(approvalId),
+						exposureModes: () => options.exposeModes,
+						pairingHandoffs: async (rotate) => {
+							// Minting a replacement room registers it on every mode.
+							// Live peers and reconnect registration are untouched.
+							if (rotate) {
+								for (const host of pairingHosts) await host.mintPairing();
+							}
+							return exposureHandoffs(options, sharedHandoff, direct);
+						},
 					},
 				});
-				if (pairingUrlFormatForOrigin(options.remoteOrigin) === 'hosted-compact') {
-					const rendererDirectory = process.env.TERMINAY_UI_RENDERER_DIRECTORY;
-					hostedPairingHost = await startHostedPairingHost({
+				const rendererDirectory = process.env.TERMINAY_UI_RENDERER_DIRECTORY;
+				// Hosted and direct exposure share one host key, one device
+				// registry, and one approval queue: they are two ways for a client
+				// to reach the same room on the same server, not two servers.
+				const startPairingHost = (
+					mode: 'hosted' | 'direct',
+					modeHandoff: ServerPairingHandoff,
+					signal: {
+						connectHost?: string;
+						insecureTls?: boolean;
+						signalingOnlyConnectHost?: boolean;
+					},
+					relaySessionId?: string,
+				) =>
+					startHostedPairingHost({
+						...(relaySessionId === undefined ? {} : { sessionId: relaySessionId }),
+						rotateHandoff: () => handoffForMode(mode, rotateShared(mode), direct),
 						acceptApplication: (transport, authenticatedClient) =>
 							composition.core.accept(transport, { authenticatedClient }),
-						handoff,
+						handoff: modeHandoff,
 						hostKey: loadOrCreateHostedHostKey(
 							join(options.dataRoot, 'remote-host-key.v1.json'),
 						),
@@ -260,7 +330,7 @@ else {
 						persistDevices: devicePersistence.save,
 						remote,
 						serverId: options.serverId,
-						signal: hostedSignalOptions(process.env),
+						signal,
 						iceServers: parseHostedIceServers(process.env.TERMINAY_WEBRTC_ICE_SERVERS),
 						webrtcRuntimeRoot: resolveWebRtcRuntimeRoot(process.cwd(), process.env),
 						...(rendererDirectory
@@ -270,6 +340,30 @@ else {
 								}
 							: {}),
 					});
+				if (pairingUrlFormat === 'hosted-compact' && !directOnly(options)) {
+					pairingHosts.push(
+						await startPairingHost('hosted', handoff, hostedSignalOptions(process.env)),
+					);
+				}
+				if (direct !== undefined) {
+					// The direct host reaches its own relay over the loopback
+					// interface and does not verify the certificate it just minted:
+					// the transport transcript, not TLS, authenticates this endpoint.
+					// That shortcut is for the signaling socket only — the media
+					// candidates it offers must be the ones a remote client can
+					// actually reach.
+					pairingHosts.push(
+						await startPairingHost(
+							'direct',
+							directHandoff(handoff, direct.directOrigin),
+							{
+								connectHost: '127.0.0.1',
+								insecureTls: true,
+								signalingOnlyConnectHost: true,
+							},
+							relaySessionId(direct.directOrigin),
+						),
+					);
 				}
 				protocolReady = true;
 				process.stdout.write(
@@ -286,11 +380,14 @@ else {
 							handoff,
 							options.publicOrigin ?? uiServer?.address?.origin,
 						),
+						exposure: options.exposeModes,
+						handoffs: exposureHandoffs(options, sharedHandoff, direct),
 					})}\n`,
 				);
 			} catch (error) {
 				clearInterval(foregroundLease);
-				await hostedPairingHost?.close().catch(() => undefined);
+				for (const host of pairingHosts) await host.close().catch(() => undefined);
+				await direct?.close().catch(() => undefined);
 				await approvalSocket?.close().catch(() => undefined);
 				await runtime!.stop().catch(() => undefined);
 				await composition.shutdown().catch(() => undefined);
@@ -313,7 +410,8 @@ else {
 				// Runtime owns the listeners/remote exposure; composition owns the
 				// terminal and hook authority. They must be stopped in this order,
 				// never concurrently, to avoid double-stopping a PTY or hook server.
-				await hostedPairingHost?.close().catch(() => undefined);
+				for (const host of pairingHosts) await host.close().catch(() => undefined);
+				await direct?.close().catch(() => undefined);
 				await approvalSocket?.close().catch(() => undefined);
 				await runtime!.stop();
 				await composition.shutdown();
@@ -351,6 +449,7 @@ function createRuntime(
 		serverVersion: options.serverVersion,
 		dataRoot: options.dataRoot,
 		localEndpoint: options.endpoint,
+		exposureModes: options.exposeModes,
 		...(options.logSink === undefined ? {} : { logSink: options.logSink }),
 		...(options.uiBundle === undefined ? {} : { uiBundle: options.uiBundle }),
 		services: {
@@ -365,11 +464,12 @@ function createRemoteExposure(
 	serverId: string,
 	sessionOrigin: string,
 	initialDevices: readonly RemoteRegisteredDevice[],
+	pairingUrlFormat: 'standalone' | 'hosted-compact',
 ): ServerRemoteExposure {
 	const exposure = createServerRemoteExposure({
 		serverId,
 		sessionOrigin,
-		pairingUrlFormat: pairingUrlFormatForOrigin(sessionOrigin),
+		pairingUrlFormat,
 	});
 	exposure.devices.restore(initialDevices);
 	return exposure;
@@ -1169,8 +1269,14 @@ function createProtocolServer(
 	persistDevices: (
 		records: readonly RemoteRegisteredDevice[],
 	) => void,
+	direct?: DirectExposure,
 ): LocalUiServer {
 	return createLocalUiServer({
+		// The signaling endpoint is served beside the authenticated protocol on
+		// this listener, and terminates TLS with the server's own certificate.
+		...(direct === undefined
+			? {}
+			: { tls: direct.tls, signalingUpgrade: direct.signalingUpgrade }),
 		...(options.uiBundle === undefined
 			? {}
 			: { rootDirectory: options.uiBundle }),
@@ -1315,6 +1421,46 @@ async function runApprovalCommand(options: ServerCliOptions): Promise<void> {
 	if (!response.ok) process.exitCode = 1;
 }
 
+/**
+ * Ask the running server for its live pairing handoff.
+ *
+ * The room a client must join is one the server has registered with a relay,
+ * so only that process can name it. This command is a client of the owner-only
+ * socket in the data root; it mints nothing of its own and fails with a clear
+ * message when no server owns the root.
+ */
+async function runPairingCommand(options: ServerCliOptions): Promise<void> {
+	let response: Awaited<ReturnType<typeof sendApprovalSocketRequest>>;
+	try {
+		response = await sendApprovalSocketRequest(approvalSocketPath(options.dataRoot), {
+			op: 'pairing',
+		});
+	} catch (error) {
+		process.stderr.write(
+			`${error instanceof Error ? error.message : 'no running server owns this data root'}\n`,
+		);
+		process.exitCode = 1;
+		return;
+	}
+	if (!response.ok) {
+		process.stderr.write(`${response.error}\n`);
+		process.exitCode = 1;
+		return;
+	}
+	if (!('handoffs' in response)) {
+		process.stderr.write('the running server did not return a pairing handoff\n');
+		process.exitCode = 1;
+		return;
+	}
+	if (response.exposure === 'off' || response.handoffs.length === 0) {
+		process.stdout.write(`${JSON.stringify({ serverId: options.serverId, exposure: 'off' })}\n`);
+		return;
+	}
+	for (const handoff of response.handoffs) {
+		process.stdout.write(`${JSON.stringify({ ...handoff, requiresApproval: true })}\n`);
+	}
+}
+
 /** Rotate the host key and revoke every device. Requires a stopped server so
  * the live host cannot keep advertising the retired key. */
 async function runResetIdentityCommand(
@@ -1423,6 +1569,143 @@ function publicPairing(
 	};
 }
 
+/** The same room as this mode's client reaches it. */
+function handoffForMode(
+	mode: 'hosted' | 'direct',
+	handoff: ServerPairingHandoff,
+	direct: DirectExposure | undefined,
+): ServerPairingHandoff {
+	return mode === 'direct' && direct !== undefined
+		? directHandoff(handoff, direct.directOrigin)
+		: handoff;
+}
+
+/**
+ * One live pairing handoff per enabled exposure mode. The hosted and direct
+ * modes share one exposure, so they share a room and differ only in the origin
+ * a client reaches it through. With no mode enabled this is empty: the server
+ * is not remotely reachable, whatever local pairing URL readiness also carries.
+ */
+function exposureHandoffs(
+	options: ServerCliOptions,
+	handoff: ServerPairingHandoff,
+	direct: DirectExposure | undefined,
+): readonly PairingHandoffSummary[] {
+	return Object.freeze(
+		options.exposeModes.map((mode) =>
+			Object.freeze({
+				mode,
+				pairingUrl: handoffForMode(mode, handoff, direct).pairingUrl,
+				pairingExpiresAt: handoff.pairingExpiresAt,
+				serverId: options.serverId,
+			}),
+		),
+	);
+}
+
+interface DirectExposure {
+	readonly directOrigin: string;
+	readonly tls: { readonly cert: string; readonly key: string };
+	readonly certificateFingerprint: string;
+	readonly signalingUpgrade: {
+		readonly path: string;
+		readonly handle: DirectSignalingRelay['handleUpgrade'];
+	};
+	close(): Promise<void>;
+}
+
+/**
+ * Compose the server's own data-blind signaling endpoint.
+ *
+ * The endpoint lives on the authenticated HTTP listener, so one port serves the
+ * UI archive, health, and signaling. That listener must therefore exist and
+ * must answer on exactly the port the direct origin advertises; anything else
+ * would publish a pairing URL that nothing answers.
+ */
+async function createDirectExposure(
+	options: ServerCliOptions,
+): Promise<DirectExposure> {
+	const directOrigin = options.directOrigin as string;
+	if (options.endpoint === 'disabled') {
+		throw new Error(
+			'--expose direct needs the authenticated HTTP listener; --endpoint disabled turns it off',
+		);
+	}
+	const advertised = new URL(directOrigin);
+	const advertisedPort = advertised.port === '' ? 443 : Number(advertised.port);
+	if (options.httpPort === undefined || options.httpPort !== advertisedPort) {
+		throw new Error(
+			`--expose direct requires --http-port ${advertisedPort} to match --direct-origin ${directOrigin}`,
+		);
+	}
+	const certificate = await loadOrCreateDirectTlsCertificate(
+		options.dataRoot,
+		directOrigin,
+	);
+	// The manager origin is the public connection-manager host, which must never
+	// be able to accept a signaling upgrade. It is always the hosted domain's
+	// manager, never this listener.
+	const managerOrigin = `https://app.${options.hostedDomain}`;
+	if (managerOrigin === directOrigin) {
+		throw new Error('--direct-origin must not be the hosted connection-manager origin');
+	}
+	const relay = createDirectSignalingRelay({
+		sessionOrigin: directOrigin,
+		managerOrigin,
+	});
+	return Object.freeze({
+		directOrigin,
+		tls: { cert: certificate.cert, key: certificate.key },
+		certificateFingerprint: certificate.fingerprint,
+		signalingUpgrade: {
+			path: relay.signalingPath,
+			handle: relay.handleUpgrade,
+		},
+		close: () => relay.close(),
+	}) as DirectExposure;
+}
+
+/**
+ * The same room, reached through the server's own origin. Hosted and direct
+ * links carry the same fragment, so a device that paired one way reconnects the
+ * other without pairing again.
+ */
+function directHandoff(
+	handoff: ServerPairingHandoff,
+	directOrigin: string,
+): ServerPairingHandoff {
+	return Object.freeze({
+		...handoff,
+		sessionOrigin: directOrigin,
+		pairingUrl: directPairingUrl(handoff, directOrigin),
+	});
+}
+
+/** True when the operator asked for direct exposure and nothing else. */
+function directOnly(options: ServerCliOptions): boolean {
+	return (
+		options.exposeModes.includes('direct') && !options.exposeModes.includes('hosted')
+	);
+}
+
+/**
+ * A direct pairing link points at the server's own signaling listener. It keeps
+ * the hosted `/v1/` grammar and the secret in the fragment, so a client parses
+ * and pairs with it exactly as it does a hosted link, and no secret is ever put
+ * where an HTTPS request line could carry it.
+ */
+function directPairingUrl(
+	handoff: ServerPairingHandoff,
+	directOrigin: string,
+): string {
+	const advertised = new URL(handoff.pairingUrl);
+	const direct = new URL('/v1/', directOrigin);
+	const hostName = advertised.searchParams.get('hostName');
+	if (hostName !== null) direct.searchParams.set('hostName', hostName);
+	direct.hash = advertised.hash;
+	return direct.toString();
+}
+
 function pairingUrlForEndpoint(
 	handoff: ServerPairingHandoff,
 	protocolEndpoint: string,
@@ -1438,10 +1721,15 @@ function pairingUrlForEndpoint(
 	return advertised.toString();
 }
 
-function pairingUrlFormatForOrigin(sessionOrigin: string): 'standalone' | 'hosted-compact' {
+function pairingUrlFormatForOrigin(
+	sessionOrigin: string,
+	hostedDomain: string,
+): 'standalone' | 'hosted-compact' {
 	try {
-		const host = new URL(sessionOrigin).hostname.toLowerCase();
-		if (host.endsWith('.terminay.com') && host !== 'app.terminay.com') return 'hosted-compact';
+		const url = new URL(sessionOrigin);
+		const domain = hostedDomain.toLowerCase();
+		const host = (domain.includes(':') ? url.host : url.hostname).toLowerCase();
+		if (host.endsWith(`.${domain}`) && host !== `app.${domain}`) return 'hosted-compact';
 	} catch {
 		// Fall through to the standalone local-HTTP pairing fragment.
 	}

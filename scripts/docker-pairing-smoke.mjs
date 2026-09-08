@@ -59,6 +59,49 @@ export function inspectServerHandoff(readiness, expected = {}) {
 	})
 }
 
+/**
+ * Validate the readiness record's per-mode pairing handoffs.
+ *
+ * A direct link points at the server's own signaling listener and keeps the
+ * hosted `/v1/` grammar with the secret in the fragment, so a client parses and
+ * pairs with it exactly as it does a hosted link, and nothing secret can end up
+ * in a request line or a proxy log.
+ */
+export function inspectExposureHandoffs(readiness, expected = {}) {
+	const modes = readiness?.exposure
+	if (!Array.isArray(modes)) throw new Error('server readiness must report its exposure modes')
+	const handoffs = readiness.handoffs
+	if (!Array.isArray(handoffs)) throw new Error('server readiness must report one handoff per exposure mode')
+	if (handoffs.length !== modes.length) throw new Error('server readiness must report exactly one handoff per exposure mode')
+	return Object.freeze(handoffs.map((handoff, index) => {
+		if (handoff?.mode !== modes[index]) throw new Error('server readiness handoff order does not match its exposure modes')
+		if (typeof handoff.serverId !== 'string' || handoff.serverId.length === 0) throw new Error('server readiness handoff server identity is missing')
+		if (typeof handoff.pairingExpiresAt !== 'string' || !Number.isFinite(Date.parse(handoff.pairingExpiresAt))) throw new Error('server readiness handoff expiry is invalid')
+		if (Object.hasOwn(handoff, 'pairingToken')) throw new Error('server readiness must not expose the pairing token outside the URL fragment')
+		if (typeof handoff.pairingUrl !== 'string') throw new Error('server readiness handoff pairing URL is missing')
+		const url = new URL(handoff.pairingUrl)
+		if (url.username || url.password) throw new Error('pairing URLs cannot contain credentials')
+		if (url.hash.length < 2) throw new Error('server readiness handoff carries no pairing fragment')
+		if (handoff.mode === 'direct') {
+			if (url.protocol !== 'https:') throw new Error('a direct pairing URL must use HTTPS')
+			if (expected.directOrigin !== undefined && url.origin !== expected.directOrigin) throw new Error('a direct pairing URL must name the configured direct origin')
+			if (url.pathname !== '/v1/') throw new Error('a direct pairing URL must use the /v1/ path')
+			for (const key of url.searchParams.keys()) {
+				if (key !== 'hostName') throw new Error('a direct pairing URL carries only the non-secret host name')
+			}
+			if (url.search.includes(url.hash.slice(1))) throw new Error('a direct pairing URL must keep its secret in the fragment')
+		}
+		return Object.freeze({
+			mode: handoff.mode,
+			serverId: handoff.serverId,
+			origin: url.origin,
+			pathname: url.pathname,
+			expiresAt: handoff.pairingExpiresAt,
+			pairingUrl: redactPairingUrl(handoff.pairingUrl),
+		})
+	}))
+}
+
 export function inspectServerHealth(probes, expected = {}) {
 	if (!Array.isArray(probes) || probes.length !== 2) throw new Error('Docker health probe did not return both endpoints')
 	const expectedServerId = expected.serverId ?? DEFAULT_SERVER_ID

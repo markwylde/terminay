@@ -4,6 +4,43 @@ This policy applies to the matched Terminay Desktop/server release topology.
 It is the local recovery contract behind [Task 20](../tasks_completed/20-security-release-and-operations.md)
 and complements the [standalone server runbook](./standalone-server.md).
 
+## The published install and upgrade unit
+
+A standalone server is installed and upgraded from one self-contained archive
+per Linux architecture. Nothing else on a GitHub release is an install unit;
+in particular there is no longer an `npm pack` tarball, which was never
+installable because the server's workspace dependencies are private.
+
+Each archive ships as three files:
+
+| File | Purpose |
+| --- | --- |
+| `terminay-server-<version>-linux-<arch>.tar.gz` | The archive: pinned Node runtime, compiled server and workspace packages, the production dependency closure including the native `node-pty`, the matched UI bundle, the selected WebRTC runtime, and `artifact-manifest.json` |
+| `<archive>.sha256` | SHA-256 sidecar over the archive bytes, verified from the archive's own directory |
+| `<archive>.sig` | Detached Ed25519 signature over the archive bytes, made with the release signing key |
+
+Supported architectures are `linux-x64` and `linux-arm64` (see
+[ADR-0004](../../openspec/adr/0004-node-pty-and-supported-distribution-matrix.md)).
+The archive carries its own Node runtime, so a target needs neither Node nor a
+compiler.
+
+## Release channels
+
+Two channels publish the same three files per architecture:
+
+- **`tag`** — a tagged release. Assets are named for the version and are
+  immutable: a published name is never replaced.
+- **`main`** — a rolling prerelease, rebuilt on every merge to the default
+  branch, whose assets keep the stable names
+  `terminay-server-main-linux-<arch>.tar.gz`. Replacement uploads land under
+  temporary names first and only then take the published names, so a reader
+  sees either the previous complete set or the new one.
+
+Every archive's `artifact-manifest.json` records its `channel`, the built
+`revision` (commit), and its `architecture`. On the rolling channel an
+installer compares `revision`, not `version`, to decide whether the channel
+moved. Verification rejects a manifest missing any of the three.
+
 ## Independent update targets
 
 - `desktop-host` updates Terminay Desktop and its embedded, matched server/UI
@@ -22,8 +59,10 @@ rejected while the current artifact remains active.
 
 ## Install, upgrade, and rollback
 
-1. Verify the artifact checksum, signature/provenance metadata, target
-   platform, and version output before staging it.
+1. Verify the `.sha256` sidecar and the `.sig` detached signature against the
+   release signing key, then the manifest's channel, revision, architecture,
+   target platform, and version output, before staging it. Fetch the manifest
+   last and re-verify the bytes that were actually fetched.
 2. Stop the foreground standalone process or let the Desktop supervisor own
    the embedded restart. Do not run two authorities against one data root.
 3. Stage the candidate in a new versioned directory and atomically move the

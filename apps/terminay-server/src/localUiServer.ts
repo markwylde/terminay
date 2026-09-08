@@ -48,6 +48,17 @@ export interface LocalUiServerOptions {
 	/** TLS is mandatory for non-loopback network exposure. Loopback development
 	 * may omit it and use the existing HTTP exception. */
 	readonly tls?: Pick<HttpsServerOptions, 'cert' | 'key'>;
+	/** Data-blind signaling endpoint served on this listener when direct
+	 * exposure is enabled. It carries no credential of its own: the frames it
+	 * routes are authenticated by the server host key, not by this listener. */
+	readonly signalingUpgrade?: {
+		readonly path: string;
+		readonly handle: (
+			request: IncomingMessage,
+			socket: Duplex,
+			head: Buffer,
+		) => void;
+	};
 	/** Exact browser origins permitted to call authenticated protocol endpoints. */
 	readonly allowedWebOrigins?: readonly string[];
 	readonly protocolVersion?: number;
@@ -316,6 +327,13 @@ export class LocalUiServer {
 	): Promise<void> {
 		try {
 			const url = new URL(request.url ?? '/', 'http://terminay.local');
+			const signaling = this.options.signalingUpgrade;
+			if (signaling !== undefined && url.pathname === signaling.path) {
+				// The signaling endpoint applies its own host boundary and never
+				// consumes this listener's credential.
+				signaling.handle(request, socket, head);
+				return;
+			}
 			if (url.pathname !== REMOTE_STREAM_PATH) {
 				rejectUpgrade(socket, 404, 'not found');
 				return;

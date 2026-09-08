@@ -24,8 +24,14 @@ function job(workflow, name) {
 test("Gitea is the only provider that runs verification CI", async () => {
   const { readdir } = await import("node:fs/promises");
   const githubWorkflows = (await readdir(new URL("../.github/workflows/", import.meta.url))).sort();
-  assert.deepEqual(githubWorkflows, ["server-image.yml", "trigger-release.yml"],
+  assert.deepEqual(githubWorkflows, ["main-prerelease.yml", "server-image.yml", "trigger-release.yml"],
     "GitHub mirrors the repository and runs only release workflows; verification runs on Gitea");
+  // The rolling prerelease publishes the same signed archives a tag does. It
+  // must stay a publication path: nothing here may become a second, weaker
+  // verification lane beside Gitea's.
+  const mainPrerelease = await read(".github/workflows/main-prerelease.yml");
+  assert.doesNotMatch(mainPrerelease, /npm run test:ci|npm run test:workspaces|npm run smoke\b/u);
+  assert.match(mainPrerelease, /release-signature\.mjs sign/u);
   assert.deepEqual(
     [...giteaCi.slice(giteaCi.indexOf("jobs:\n")).matchAll(/^ {2}([a-z][a-z0-9-]+):$/gmu)].map((match) => match[1]),
     ["packaged-macos-smoke", "packaged-linux-built-in-lifecycle", "build-and-test", "mcp-cli-compatibility", "e2e-image", "e2e-test"],

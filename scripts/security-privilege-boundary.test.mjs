@@ -138,6 +138,69 @@ test("remote admission binds server identity and revocation to exact devices", (
   assert.equal(manager.exposure.state, "disabled");
 });
 
+test("a direct origin never becomes an HTTPS fetch target for device endpoints", async () => {
+  const { build } = await import("esbuild");
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { fileURLToPath, pathToFileURL } = await import("node:url");
+
+  const directory = await mkdtemp(join(tmpdir(), "terminay-direct-boundary-"));
+  try {
+    const outfile = join(directory, "desktopPairing.mjs");
+    await build({
+      alias: {
+        "@terminay/protocol": fileURLToPath(new URL("../packages/protocol/src/index.ts", import.meta.url)),
+      },
+      banner: { js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);" },
+      bundle: true,
+      entryPoints: ["electron/remote/desktopPairing.ts"],
+      format: "esm",
+      logLevel: "silent",
+      outfile,
+      platform: "node",
+      target: "node20",
+    });
+    const { establishDesktopDevicePairing, resolveDesktopPairingTarget } = await import(pathToFileURL(outfile).href);
+
+    const directUrl = `https://box.example.test:8443/v1/?hostName=Box#${"a".repeat(43)}`;
+    assert.equal(resolveDesktopPairingTarget(directUrl).kind, "direct");
+
+    // ADR-0013: credentials cross transport-authenticated data channels only.
+    // A direct endpoint is an HTTPS origin, so this proves that being one does
+    // not make it an enrollment endpoint: no request is issued at all.
+    const requested = [];
+    await assert.rejects(() => establishDesktopDevicePairing({
+      deviceName: "Terminay Desktop",
+      pairingUrl: directUrl,
+      async fetch(input) {
+        requested.push(input);
+        throw new Error("must not fetch");
+      },
+      store: {
+        createDeviceKey() { throw new Error("must not allocate a device key over HTTPS"); },
+        async saveDeviceIdentity() { throw new Error("must not store"); },
+      },
+      hosted: { webrtcRuntimeRoot: undefined },
+    }), /WebRTC runtime directory is unavailable/u);
+    assert.deepEqual(requested, []);
+
+    // The only HTTPS enrollment path that exists remains the same-machine
+    // loopback one, and it is not reachable from a direct origin.
+    const pairing = await readFile(new URL("../electron/remote/desktopPairing.ts", import.meta.url), "utf8");
+    const httpEnrollment = pairing.slice(pairing.indexOf("const fetchImplementation"));
+    assert.match(httpEnrollment, /target\.bootstrap/u, "the HTTPS path is reached only by a loopback target");
+    assert.doesNotMatch(httpEnrollment, /kind === 'direct'/u);
+    assert.match(
+      pairing,
+      /if \(target\.kind === 'hosted' \|\| target\.kind === 'direct'\)/u,
+      "a direct target must return on the authenticated-channel path before any fetch",
+    );
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
 test("server UI host keeps privileged navigation and browser permissions denied", async () => {
   const host = await readFile(new URL("../electron/serverUiHost.ts", import.meta.url), "utf8");
   assert.match(host, /contextIsolation:\s*true/);

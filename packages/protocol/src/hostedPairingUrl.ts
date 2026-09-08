@@ -6,6 +6,10 @@ const MANAGER_QUERY = new Set(['s', 'hostName', 'pairingExpiresAt']);
 const SESSION_QUERY = new Set(['hostName', 'pairingExpiresAt']);
 
 export type HostedPairingEnvelope = {
+	/** `hosted` links name a session on a hosted relay; `direct` links name a
+	 * standalone server's own signaling listener, whose origin is taken
+	 * literally and has no hosted session id or connection manager. */
+	readonly class: 'hosted' | 'direct';
 	readonly fragment: string;
 	readonly href: string;
 	readonly hostName: string;
@@ -58,7 +62,66 @@ export function parseHostedPairingUrl(value: string): HostedPairingEnvelope {
 	}
 
 	if (isManagerHostname(url.hostname)) return parseManagerPairingUrl(url);
-	return parseLegacySessionPairingUrl(url);
+	if (isKnownHostedSessionHostname(url)) return parseLegacySessionPairingUrl(url);
+	return parseDirectPairingUrl(url);
+}
+
+/**
+ * A standalone server serving its own signaling endpoint. The origin is taken
+ * exactly as written: it is a machine an operator points at, not a session on
+ * a hosted relay, so it has no session id to derive and no manager beside it.
+ */
+function parseDirectPairingUrl(url: URL): HostedPairingEnvelope {
+	if (url.protocol !== 'https:') {
+		throw new TypeError('A direct Terminay pairing link must use HTTPS.');
+	}
+	if (!/^\/v1\/?$/.test(url.pathname)) {
+		throw new TypeError('Paste a complete Terminay pairing link.');
+	}
+	rejectUnknownQuery(url, SESSION_QUERY);
+	const fragment = normalizeFragment(url.hash);
+	const hostName = sanitizePairingHostName(url.searchParams.get('hostName') ?? '');
+	const origin = url.origin;
+	const href = sessionPairingHref(origin, fragment, hostName);
+	return Object.freeze({
+		class: 'direct',
+		fragment,
+		href,
+		hostName,
+		label: hostName || url.host,
+		// A direct endpoint is its own manager: there is no separate
+		// connection-manager origin to fall back to.
+		managerHref: href,
+		origin,
+		pairingExpiresAt: String(url.searchParams.get('pairingExpiresAt') ?? '').trim(),
+		sessionId: '',
+	});
+}
+
+/**
+ * Whether an origin names a session on the hosted relay or a standalone
+ * server's own signaling listener.
+ *
+ * Pairing and reconnect must agree: a client that paired with a direct
+ * endpoint reaches the same endpoint later from its saved profile, with the
+ * same rules about what its certificate does and does not mean.
+ */
+export function classifyPairingOrigin(origin: string): 'hosted' | 'direct' {
+	let url: URL;
+	try {
+		url = new URL(origin);
+	} catch {
+		return 'hosted';
+	}
+	if (isManagerHostname(url.hostname)) return 'hosted';
+	return isKnownHostedSessionHostname(url) ? 'hosted' : 'direct';
+}
+
+/** Hostnames the hosted relay serves sessions on. */
+function isKnownHostedSessionHostname(url: URL): boolean {
+	const host = url.hostname.toLowerCase();
+	if (host.endsWith(`.${TERMINAY_MANAGER_HOST.slice('app.'.length)}`)) return true;
+	return isLoopbackSessionHttp(url) || LOOPBACK_HOSTS.has(host);
 }
 
 function parseManagerPairingUrl(url: URL): HostedPairingEnvelope {
@@ -74,6 +137,7 @@ function parseManagerPairingUrl(url: URL): HostedPairingEnvelope {
 	const origin = session.origin;
 	const pairingExpiresAt = String(url.searchParams.get('pairingExpiresAt') ?? '').trim();
 	return Object.freeze({
+		class: 'hosted',
 		fragment,
 		href: sessionPairingHref(origin, fragment, hostName),
 		hostName,
@@ -102,6 +166,7 @@ function parseLegacySessionPairingUrl(url: URL): HostedPairingEnvelope {
 	const origin = url.origin;
 	const pairingExpiresAt = String(url.searchParams.get('pairingExpiresAt') ?? '').trim();
 	return Object.freeze({
+		class: 'hosted',
 		fragment,
 		href: sessionPairingHref(origin, fragment, hostName),
 		hostName,
