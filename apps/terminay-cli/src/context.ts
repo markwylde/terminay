@@ -1,7 +1,12 @@
 import { homedir } from 'node:os';
 
 import type { DaemonOptions, InstallScope } from './args.js';
-import { type InstallLayout, type InstallRecord, installLayout, readInstallRecord } from './layout.js';
+import {
+	type InstallLayout,
+	type InstallRecord,
+	installLayout,
+	readInstallRecord,
+} from './layout.js';
 import { createSystemd, type Systemd } from './systemd.js';
 
 /**
@@ -29,12 +34,16 @@ export interface ResolveContextOptions {
 	readonly write?: (line: string) => void;
 }
 
-export async function resolveContext(options: ResolveContextOptions): Promise<CommandContext> {
+export async function resolveContext(
+	options: ResolveContextOptions,
+): Promise<CommandContext> {
 	const home = options.home ?? homedir();
-	const write = options.write ?? ((line: string) => process.stdout.write(`${line}\n`));
+	const write =
+		options.write ?? ((line: string) => process.stdout.write(`${line}\n`));
 	const requested = options.options.scope;
 
-	const candidates: InstallScope[] = requested === undefined ? ['system', 'user'] : [requested];
+	const candidates: InstallScope[] =
+		requested === undefined ? ['system', 'user'] : [requested];
 	const found: { layout: InstallLayout; record: InstallRecord }[] = [];
 	for (const scope of candidates) {
 		const layout = installLayout(scope, home);
@@ -59,7 +68,10 @@ export async function resolveContext(options: ResolveContextOptions): Promise<Co
 	return Object.freeze({
 		layout: only.layout,
 		record: only.record,
-		systemd: createSystemd({ scope: only.layout.scope, ...(options.env === undefined ? {} : { env: options.env }) }),
+		systemd: createSystemd({
+			scope: only.layout.scope,
+			...(options.env === undefined ? {} : { env: options.env }),
+		}),
 		write,
 	});
 }

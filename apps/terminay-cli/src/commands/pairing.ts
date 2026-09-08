@@ -2,8 +2,20 @@ import QRCode from 'qrcode';
 
 import type { DaemonOptions, PairingMode } from '../args.js';
 import type { CommandContext } from '../context.js';
-import { type PromptStreams, confirm, defaultStreams, isInteractive } from '../prompt.js';
-import { type ApprovalResponse, type PairingHandoff, type PendingApproval, approvalSocketPath, requireOk, sendAsUser } from '../socket.js';
+import {
+	confirm,
+	defaultStreams,
+	isInteractive,
+	type PromptStreams,
+} from '../prompt.js';
+import {
+	type ApprovalResponse,
+	approvalSocketPath,
+	type PairingHandoff,
+	type PendingApproval,
+	requireOk,
+	sendAsUser,
+} from '../socket.js';
 
 /**
  * `daemon qr-code` — pairing and approval on one screen.
@@ -29,15 +41,21 @@ export interface PairingDependencies {
 	readonly pollIntervalMs?: number;
 	readonly now?: () => number;
 	readonly renderQr?: (url: string) => Promise<string>;
-	readonly send?: (request: Parameters<typeof sendAsUser>[1]) => Promise<ApprovalResponse>;
+	readonly send?: (
+		request: Parameters<typeof sendAsUser>[1],
+	) => Promise<ApprovalResponse>;
 }
 
 async function renderTerminalQr(url: string): Promise<string> {
 	return QRCode.toString(url, { type: 'terminal', small: true });
 }
 
-function selectHandoff(handoffs: readonly PairingHandoff[], mode: PairingMode | undefined): PairingHandoff | undefined {
-	if (mode !== undefined) return handoffs.find((handoff) => handoff.mode === mode);
+function selectHandoff(
+	handoffs: readonly PairingHandoff[],
+	mode: PairingMode | undefined,
+): PairingHandoff | undefined {
+	if (mode !== undefined)
+		return handoffs.find((handoff) => handoff.mode === mode);
 	// Direct is preferred when it is on: it reaches the server without a relay,
 	// which is the point of enabling it.
 	return handoffs.find((handoff) => handoff.mode === 'direct') ?? handoffs[0];
@@ -63,11 +81,18 @@ export async function runPairing(
 	const renderQr = dependencies.renderQr ?? renderTerminalQr;
 	const socketPath = approvalSocketPath(record.dataRoot);
 	const send =
-		dependencies.send ?? ((request: Parameters<typeof sendAsUser>[1]) => sendAsUser(socketPath, request, record.runAs));
+		dependencies.send ??
+		((request: Parameters<typeof sendAsUser>[1]) =>
+			sendAsUser(socketPath, request, record.runAs));
 
 	const fetchPairing = async (rotate: boolean) => {
-		const response = requireOk(await send(rotate ? { op: 'pairing', rotate: true } : { op: 'pairing' }));
-		if (!('handoffs' in response)) throw new PairingError('the server did not return any pairing information');
+		const response = requireOk(
+			await send(rotate ? { op: 'pairing', rotate: true } : { op: 'pairing' }),
+		);
+		if (!('handoffs' in response))
+			throw new PairingError(
+				'the server did not return any pairing information',
+			);
 		if (response.exposure === 'off' || response.handoffs.length === 0) {
 			throw new PairingError(
 				'this server is not exposed, so there is no pairing URL to show. Reinstall with --expose hosted,direct, or edit the environment file and restart it.',
@@ -102,14 +127,17 @@ export async function runPairing(
 	if (!options.wait) return Object.freeze({ printed, waited: false });
 
 	if (!isInteractive(streams)) {
-		write('No terminal is attached, so there is nothing to approve on. Use `daemon approvals` and `daemon approve <id>`.');
+		write(
+			'No terminal is attached, so there is nothing to approve on. Use `daemon approvals` and `daemon approve <id>`.',
+		);
 		return Object.freeze({ printed, waited: false });
 	}
 
 	write('Waiting for a device to scan it. Press Ctrl+C to stop.');
 	for (;;) {
 		const listed = requireOk(await send({ op: 'list' }));
-		const pending: readonly PendingApproval[] = 'pending' in listed ? listed.pending : [];
+		const pending: readonly PendingApproval[] =
+			'pending' in listed ? listed.pending : [];
 		const first = pending[0];
 		if (first !== undefined) {
 			write('');
@@ -119,17 +147,37 @@ export async function runPairing(
 			write('Approve this device only if that code is the one shown on it.');
 			const approved = await confirm('Approve?', streams);
 			const outcome = requireOk(
-				await send(approved ? { op: 'approve', approvalId: first.approvalId } : { op: 'deny', approvalId: first.approvalId }),
+				await send(
+					approved
+						? { op: 'approve', approvalId: first.approvalId }
+						: { op: 'deny', approvalId: first.approvalId },
+				),
 			);
-			const resolved = 'outcome' in outcome ? outcome.outcome : approved ? 'approved' : 'denied';
-			write(resolved === 'approved' ? `${first.deviceName} is paired.` : `${first.deviceName} was denied.`);
-			return Object.freeze({ printed, waited: true, outcome: resolved, deviceName: first.deviceName });
+			const resolved =
+				'outcome' in outcome
+					? outcome.outcome
+					: approved
+						? 'approved'
+						: 'denied';
+			write(
+				resolved === 'approved'
+					? `${first.deviceName} is paired.`
+					: `${first.deviceName} was denied.`,
+			);
+			return Object.freeze({
+				printed,
+				waited: true,
+				outcome: resolved,
+				deviceName: first.deviceName,
+			});
 		}
 
 		// A room that expires while nobody is looking would leave a QR on
 		// screen that no longer works, so it is replaced before that happens.
 		const soonest = Math.min(
-			...pairing.handoffs.map((handoff) => Date.parse(handoff.pairingExpiresAt)).filter((value) => Number.isFinite(value)),
+			...pairing.handoffs
+				.map((handoff) => Date.parse(handoff.pairingExpiresAt))
+				.filter((value) => Number.isFinite(value)),
 		);
 		if (Number.isFinite(soonest) && soonest - now() < REFRESH_WINDOW_MS) {
 			pairing = await fetchPairing(true);
@@ -144,17 +192,26 @@ export async function runPairing(
 }
 
 /** `daemon approvals`, `approve <id>`, and `deny <id>` for scripted use. */
-export async function runApprovals(context: CommandContext, dependencies: PairingDependencies = {}): Promise<readonly PendingApproval[]> {
+export async function runApprovals(
+	context: CommandContext,
+	dependencies: PairingDependencies = {},
+): Promise<readonly PendingApproval[]> {
 	const socketPath = approvalSocketPath(context.record.dataRoot);
-	const send = dependencies.send ?? ((request: Parameters<typeof sendAsUser>[1]) => sendAsUser(socketPath, request, context.record.runAs));
+	const send =
+		dependencies.send ??
+		((request: Parameters<typeof sendAsUser>[1]) =>
+			sendAsUser(socketPath, request, context.record.runAs));
 	const response = requireOk(await send({ op: 'list' }));
-	const pending: readonly PendingApproval[] = 'pending' in response ? response.pending : [];
+	const pending: readonly PendingApproval[] =
+		'pending' in response ? response.pending : [];
 	if (pending.length === 0) {
 		context.write('No devices are waiting for approval.');
 		return pending;
 	}
 	for (const approval of pending) {
-		context.write(`${approval.approvalId}  ${approval.deviceName}  match code ${approval.matchCode}`);
+		context.write(
+			`${approval.approvalId}  ${approval.deviceName}  match code ${approval.matchCode}`,
+		);
 	}
 	return pending;
 }
@@ -166,8 +223,13 @@ export async function runResolveApproval(
 	dependencies: PairingDependencies = {},
 ): Promise<void> {
 	const socketPath = approvalSocketPath(context.record.dataRoot);
-	const send = dependencies.send ?? ((request: Parameters<typeof sendAsUser>[1]) => sendAsUser(socketPath, request, context.record.runAs));
+	const send =
+		dependencies.send ??
+		((request: Parameters<typeof sendAsUser>[1]) =>
+			sendAsUser(socketPath, request, context.record.runAs));
 	const response = requireOk(await send({ op: action, approvalId }));
 	const name = 'deviceName' in response ? response.deviceName : approvalId;
-	context.write(action === 'approve' ? `${name} is paired.` : `${name} was denied.`);
+	context.write(
+		action === 'approve' ? `${name} is paired.` : `${name} was denied.`,
+	);
 }

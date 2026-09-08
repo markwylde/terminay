@@ -1,11 +1,25 @@
 import { execFile } from 'node:child_process';
-import { chmod, lstat, mkdir, mkdtemp, readdir, readlink, rename, rm, symlink } from 'node:fs/promises';
+import {
+	chmod,
+	lstat,
+	mkdir,
+	mkdtemp,
+	readdir,
+	readlink,
+	rename,
+	rm,
+	symlink,
+} from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 
 import type { InstallLayout } from './layout.js';
 import { stagedName } from './layout.js';
-import { type ArchiveManifest, type ExpectedRelease, validateUnpackedArchive } from './manifest.js';
+import {
+	type ArchiveManifest,
+	type ExpectedRelease,
+	validateUnpackedArchive,
+} from './manifest.js';
 import type { ReleaseChannel } from './resolve.js';
 
 /**
@@ -42,15 +56,26 @@ export async function installArchive(options: {
 	await mkdir(layout.versionsDirectory, { recursive: true, mode: 0o755 });
 	const scratch = await mkdtemp(join(layout.versionsDirectory, '.staging-'));
 	try {
-		await execFileAsync('tar', ['-xzf', archivePath, '-C', scratch], { maxBuffer: 8 * 1024 * 1024 });
+		await execFileAsync('tar', ['-xzf', archivePath, '-C', scratch], {
+			maxBuffer: 8 * 1024 * 1024,
+		});
 		const entries = await readdir(scratch, { withFileTypes: true });
 		const roots = entries.filter((entry) => entry.isDirectory());
 		if (roots.length !== 1 || entries.length !== roots.length) {
-			throw new Error('the server archive does not contain exactly one top-level directory');
+			throw new Error(
+				'the server archive does not contain exactly one top-level directory',
+			);
 		}
 		const unpacked = join(scratch, (roots[0] as { name: string }).name);
-		const manifest = await validateUnpackedArchive(unpacked, options.expected ?? {});
-		const name = stagedName(options.channel, manifest.version, manifest.revision);
+		const manifest = await validateUnpackedArchive(
+			unpacked,
+			options.expected ?? {},
+		);
+		const name = stagedName(
+			options.channel,
+			manifest.version,
+			manifest.revision,
+		);
 		const directory = join(layout.versionsDirectory, name);
 		// Re-installing the same version replaces it, because the payload was
 		// just proven to match its signed manifest byte for byte.
@@ -64,10 +89,14 @@ export async function installArchive(options: {
 }
 
 /** Point `current` at a version. Written beside the link, then renamed over it. */
-export async function activate(layout: InstallLayout, versionName: string): Promise<void> {
+export async function activate(
+	layout: InstallLayout,
+	versionName: string,
+): Promise<void> {
 	const target = join(layout.versionsDirectory, versionName);
 	const info = await lstat(target).catch(() => undefined);
-	if (info === undefined || !info.isDirectory()) throw new Error(`cannot activate ${versionName}: it is not installed`);
+	if (info === undefined || !info.isDirectory())
+		throw new Error(`cannot activate ${versionName}: it is not installed`);
 	await mkdir(dirname(layout.currentLink), { recursive: true, mode: 0o755 });
 	const temporary = `${layout.currentLink}.tmp`;
 	await rm(temporary, { force: true });
@@ -77,18 +106,27 @@ export async function activate(layout: InstallLayout, versionName: string): Prom
 	await rename(temporary, layout.currentLink);
 }
 
-export async function activeVersion(layout: InstallLayout): Promise<string | undefined> {
+export async function activeVersion(
+	layout: InstallLayout,
+): Promise<string | undefined> {
 	const target = await readlink(layout.currentLink).catch(() => undefined);
 	return target === undefined ? undefined : basename(target);
 }
 
 /** Roll back to a version known to have run. Identical to activation. */
-export async function rollback(layout: InstallLayout, versionName: string): Promise<void> {
+export async function rollback(
+	layout: InstallLayout,
+	versionName: string,
+): Promise<void> {
 	await activate(layout, versionName);
 }
 
-export async function installedVersions(layout: InstallLayout): Promise<readonly string[]> {
-	const entries = await readdir(layout.versionsDirectory, { withFileTypes: true }).catch(() => []);
+export async function installedVersions(
+	layout: InstallLayout,
+): Promise<readonly string[]> {
+	const entries = await readdir(layout.versionsDirectory, {
+		withFileTypes: true,
+	}).catch(() => []);
 	return entries
 		.filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
 		.map((entry) => entry.name)
@@ -99,12 +137,18 @@ export async function installedVersions(layout: InstallLayout): Promise<readonly
  * Keep the active version and one previous, so a bad upgrade always has
  * something proven to fall back to and disk use stays bounded.
  */
-export async function retain(layout: InstallLayout, keep: readonly string[]): Promise<readonly string[]> {
+export async function retain(
+	layout: InstallLayout,
+	keep: readonly string[],
+): Promise<readonly string[]> {
 	const kept = new Set(keep.filter((name) => name.length > 0));
 	const removed: string[] = [];
 	for (const name of await installedVersions(layout)) {
 		if (kept.has(name)) continue;
-		await rm(join(layout.versionsDirectory, name), { recursive: true, force: true });
+		await rm(join(layout.versionsDirectory, name), {
+			recursive: true,
+			force: true,
+		});
 		removed.push(name);
 	}
 	return removed;

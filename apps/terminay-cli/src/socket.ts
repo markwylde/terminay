@@ -43,8 +43,17 @@ export interface PairingHandoff {
 
 export type ApprovalResponse =
 	| Readonly<{ ok: true; pending: readonly PendingApproval[] }>
-	| Readonly<{ ok: true; approvalId: string; outcome: 'approved' | 'denied'; deviceName: string }>
-	| Readonly<{ ok: true; exposure: readonly string[] | 'off'; handoffs: readonly PairingHandoff[] }>
+	| Readonly<{
+			ok: true;
+			approvalId: string;
+			outcome: 'approved' | 'denied';
+			deviceName: string;
+	  }>
+	| Readonly<{
+			ok: true;
+			exposure: readonly string[] | 'off';
+			handoffs: readonly PairingHandoff[];
+	  }>
 	| Readonly<{ ok: false; error: string }>;
 
 export function approvalSocketPath(dataRoot: string): string {
@@ -53,7 +62,10 @@ export function approvalSocketPath(dataRoot: string): string {
 
 export class SocketError extends Error {}
 
-export function sendApprovalRequest(socketPath: string, request: ApprovalRequest): Promise<ApprovalResponse> {
+export function sendApprovalRequest(
+	socketPath: string,
+	request: ApprovalRequest,
+): Promise<ApprovalResponse> {
 	return new Promise((resolve, reject) => {
 		let buffered = '';
 		let settled = false;
@@ -75,7 +87,11 @@ export function sendApprovalRequest(socketPath: string, request: ApprovalRequest
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
-			reject(new SocketError('no running server accepts commands at this data root. Start it with `terminay daemon start`.'));
+			reject(
+				new SocketError(
+					'no running server accepts commands at this data root. Start it with `terminay daemon start`.',
+				),
+			);
 		});
 		socket.on('close', () => {
 			if (settled) return;
@@ -84,7 +100,9 @@ export function sendApprovalRequest(socketPath: string, request: ApprovalRequest
 			try {
 				resolve(JSON.parse(buffered.trim()) as ApprovalResponse);
 			} catch {
-				reject(new SocketError('the running server returned an unreadable response'));
+				reject(
+					new SocketError('the running server returned an unreadable response'),
+				);
 			}
 		});
 	});
@@ -108,7 +126,15 @@ export async function sendAsUser(
 	try {
 		const { stdout } = await execFileAsync(
 			'sudo',
-			['-n', '-u', runAs, process.execPath, script, socketPath, JSON.stringify(request)],
+			[
+				'-n',
+				'-u',
+				runAs,
+				process.execPath,
+				script,
+				socketPath,
+				JSON.stringify(request),
+			],
 			{ timeout: REQUEST_TIMEOUT_MS + 5_000, maxBuffer: MAX_FRAME_BYTES },
 		);
 		return JSON.parse(stdout.trim()) as ApprovalResponse;
@@ -119,7 +145,9 @@ export async function sendAsUser(
 	}
 }
 
-export function requireOk(response: ApprovalResponse): Extract<ApprovalResponse, { ok: true }> {
+export function requireOk(
+	response: ApprovalResponse,
+): Extract<ApprovalResponse, { ok: true }> {
 	if (response.ok !== true) throw new SocketError(response.error);
 	return response;
 }

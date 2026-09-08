@@ -25,7 +25,12 @@ import { DEFAULT_REPOSITORY } from './resolve.js';
 
 const execFileAsync = promisify(execFile);
 
-export const REQUIRED_TOOLS: readonly string[] = ['git', 'python3', 'make', 'c++'];
+export const REQUIRED_TOOLS: readonly string[] = [
+	'git',
+	'python3',
+	'make',
+	'c++',
+];
 const BUILD_TIMEOUT_MS = 45 * 60 * 1000;
 
 export class ToolchainError extends Error {}
@@ -78,7 +83,12 @@ export interface SourceBuildResult {
 	readonly buildDirectory: string;
 }
 
-async function run(command: string, args: readonly string[], cwd: string, env?: NodeJS.ProcessEnv): Promise<string> {
+async function run(
+	command: string,
+	args: readonly string[],
+	cwd: string,
+	env?: NodeJS.ProcessEnv,
+): Promise<string> {
 	const { stdout } = await execFileAsync(command, [...args], {
 		cwd,
 		timeout: BUILD_TIMEOUT_MS,
@@ -88,7 +98,9 @@ async function run(command: string, args: readonly string[], cwd: string, env?: 
 	return stdout;
 }
 
-export async function buildFromSource(options: SourceBuildOptions): Promise<SourceBuildResult> {
+export async function buildFromSource(
+	options: SourceBuildOptions,
+): Promise<SourceBuildResult> {
 	const write = options.write ?? (() => undefined);
 	const env = options.env as NodeJS.ProcessEnv | undefined;
 	const architecture = options.architecture ?? hostArchitecture();
@@ -108,12 +120,24 @@ export async function buildFromSource(options: SourceBuildOptions): Promise<Sour
 		if (options.revision !== undefined && /^[0-9a-f]{40}$/u.test(options.ref)) {
 			await run('git', ['init', checkout], build, env);
 			await run('git', ['remote', 'add', 'origin', remote], checkout, env);
-			await run('git', ['fetch', '--depth', '1', 'origin', options.ref], checkout, env);
+			await run(
+				'git',
+				['fetch', '--depth', '1', 'origin', options.ref],
+				checkout,
+				env,
+			);
 			await run('git', ['checkout', '--detach', 'FETCH_HEAD'], checkout, env);
 		} else {
-			await run('git', ['clone', '--depth', '1', '--branch', options.ref, remote, checkout], build, env);
+			await run(
+				'git',
+				['clone', '--depth', '1', '--branch', options.ref, remote, checkout],
+				build,
+				env,
+			);
 		}
-		const revision = (await run('git', ['rev-parse', 'HEAD'], checkout, env)).trim();
+		const revision = (
+			await run('git', ['rev-parse', 'HEAD'], checkout, env)
+		).trim();
 
 		write('Installing dependencies …');
 		await run('npm', ['ci'], checkout, env);
@@ -121,7 +145,12 @@ export async function buildFromSource(options: SourceBuildOptions): Promise<Sour
 		write('Compiling …');
 		await run('npm', ['run', 'build:application-graph'], checkout, env);
 		await run('npm', ['run', 'build:server-postcompile'], checkout, env);
-		await run('node', ['scripts/stage-selected-secure-werift-runtime.mjs'], checkout, env);
+		await run(
+			'node',
+			['scripts/stage-selected-secure-werift-runtime.mjs'],
+			checkout,
+			env,
+		);
 
 		write('Fetching the pinned Node runtime …');
 		const nodeArchiveUrl = (
@@ -138,7 +167,11 @@ export async function buildFromSource(options: SourceBuildOptions): Promise<Sour
 		).trim();
 		// The builder re-verifies this archive's pinned digest, so a wrong or
 		// tampered download fails there rather than being baked in.
-		const nodeArchive = await downloadAsset(nodeArchiveUrl, build, 'node-runtime.tar.xz');
+		const nodeArchive = await downloadAsset(
+			nodeArchiveUrl,
+			build,
+			'node-runtime.tar.xz',
+		);
 
 		write('Building the standalone archive …');
 		const output = join(build, 'artifact');
@@ -175,13 +208,18 @@ export async function buildFromSource(options: SourceBuildOptions): Promise<Sour
 		await rm(kept, { force: true });
 		await cp(archivePath, kept);
 		succeeded = true;
-		return Object.freeze({ archivePath: kept, revision, buildDirectory: build });
+		return Object.freeze({
+			archivePath: kept,
+			revision,
+			buildDirectory: build,
+		});
 	} catch (error) {
 		throw new SourceBuildError(
 			`building ${options.ref} from source failed: ${error instanceof Error ? error.message : String(error)}. The build directory was kept at ${build}.`,
 		);
 	} finally {
 		// Kept on failure so the operator can read the compiler's output.
-		if (succeeded && options.keepOnFailure !== true) await rm(build, { recursive: true, force: true }).catch(() => undefined);
+		if (succeeded && options.keepOnFailure !== true)
+			await rm(build, { recursive: true, force: true }).catch(() => undefined);
 	}
 }

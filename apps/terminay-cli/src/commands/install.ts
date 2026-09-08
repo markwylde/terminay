@@ -1,20 +1,43 @@
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { hostname, homedir } from 'node:os';
+import { homedir, hostname } from 'node:os';
 import { dirname } from 'node:path';
-
-import type { DaemonOptions, InstallScope } from '../args.js';
-import { assertRootForSystemScope, prepareDataRoot, selectRunAs, selectScope } from '../account.js';
+import {
+	assertRootForSystemScope,
+	prepareDataRoot,
+	selectRunAs,
+	selectScope,
+} from '../account.js';
 import { defaultDirectOrigin } from '../address.js';
-import { discardDownloads, downloadAsset, downloadBytes, downloadText } from '../download.js';
+import type { DaemonOptions, InstallScope } from '../args.js';
+import {
+	discardDownloads,
+	downloadAsset,
+	downloadBytes,
+	downloadText,
+} from '../download.js';
 import { waitForReady } from '../health.js';
-import { activate, installArchive, installedVersions, retain } from '../install.js';
-import { type InstallLayout, type InstallRecord, installLayout, writeInstallRecord } from '../layout.js';
+import {
+	activate,
+	installArchive,
+	installedVersions,
+	retain,
+} from '../install.js';
+import {
+	type InstallLayout,
+	type InstallRecord,
+	installLayout,
+	writeInstallRecord,
+} from '../layout.js';
 import { hostArchitecture } from '../platform.js';
-import { type PromptStreams, defaultStreams } from '../prompt.js';
+import { defaultStreams, type PromptStreams } from '../prompt.js';
 import { type ResolvedRef, resolveRef } from '../resolve.js';
 import { buildFromSource } from '../source.js';
 import { createSystemd } from '../systemd.js';
-import { parseEnvironmentFile, renderEnvironmentFile, renderUnit } from '../unit.js';
+import {
+	parseEnvironmentFile,
+	renderEnvironmentFile,
+	renderUnit,
+} from '../unit.js';
 import { verifyArchive } from '../verify.js';
 
 /**
@@ -74,20 +97,30 @@ async function stageArchive(
 	publicKeyPem?: string,
 ): Promise<{ readonly archivePath: string; readonly signed: boolean }> {
 	if (resolved.channel === 'source') {
-		write(`Building ${resolved.sourceRef ?? resolved.version} from source. This takes a while.`);
+		write(
+			`Building ${resolved.sourceRef ?? resolved.version} from source. This takes a while.`,
+		);
 		const built = await buildFromSource({
 			ref: resolved.sourceRef ?? resolved.version,
-			...(resolved.revision === undefined ? {} : { revision: resolved.revision }),
+			...(resolved.revision === undefined
+				? {}
+				: { revision: resolved.revision }),
 			destination: layout.prefix,
 			write,
 		});
 		return { archivePath: built.archivePath, signed: false };
 	}
 	const assets = resolved.assets;
-	if (assets === undefined) throw new Error('the resolved release names no archive to download');
-	write(`Downloading ${resolved.channel === 'tag' ? resolved.version : `${resolved.channel} channel`} …`);
+	if (assets === undefined)
+		throw new Error('the resolved release names no archive to download');
+	write(
+		`Downloading ${resolved.channel === 'tag' ? resolved.version : `${resolved.channel} channel`} …`,
+	);
 	const asset = await downloadAsset(assets.archive, layout.prefix);
-	const [sidecar, signature] = await Promise.all([downloadText(assets.sha256), downloadBytes(assets.signature)]);
+	const [sidecar, signature] = await Promise.all([
+		downloadText(assets.sha256),
+		downloadBytes(assets.signature),
+	]);
 	await verifyArchive({
 		archivePath: asset.path,
 		sidecar,
@@ -106,11 +139,18 @@ export async function runInstall(
 ): Promise<InstallResult> {
 	const home = dependencies.home ?? homedir();
 	const streams = dependencies.streams ?? defaultStreams();
-	const write = dependencies.write ?? ((line: string) => process.stdout.write(`${line}\n`));
+	const write =
+		dependencies.write ?? ((line: string) => process.stdout.write(`${line}\n`));
 
-	const scope: InstallScope = await selectScope({ ...(options.scope === undefined ? {} : { requested: options.scope }), streams });
+	const scope: InstallScope = await selectScope({
+		...(options.scope === undefined ? {} : { requested: options.scope }),
+		streams,
+	});
 	if (scope === 'system') {
-		assertRootForSystemScope(`npx terminay daemon install${ref === undefined ? '' : ` ${ref}`} --system`, dependencies.uid ?? process.getuid?.());
+		assertRootForSystemScope(
+			`npx terminay daemon install${ref === undefined ? '' : ` ${ref}`} --system`,
+			dependencies.uid ?? process.getuid?.(),
+		);
 	}
 	const selection = await selectRunAs({
 		scope,
@@ -124,16 +164,27 @@ export async function runInstall(
 		dependencies.localArchivePath === undefined
 			? await resolveRef(ref, {
 					architecture,
-					...(dependencies.repository === undefined ? {} : { repository: dependencies.repository }),
-					...(dependencies.apiBase === undefined ? {} : { apiBase: dependencies.apiBase }),
-					...(dependencies.webBase === undefined ? {} : { webBase: dependencies.webBase }),
+					...(dependencies.repository === undefined
+						? {}
+						: { repository: dependencies.repository }),
+					...(dependencies.apiBase === undefined
+						? {}
+						: { apiBase: dependencies.apiBase }),
+					...(dependencies.webBase === undefined
+						? {}
+						: { webBase: dependencies.webBase }),
 				})
 			: Object.freeze({ channel: 'source' as const, version: 'local' });
 
 	await mkdir(layout.prefix, { recursive: true, mode: 0o755 });
 	const staged =
 		dependencies.localArchivePath === undefined
-			? await stageArchive(resolved, layout, write, dependencies.releasePublicKeyPem)
+			? await stageArchive(
+					resolved,
+					layout,
+					write,
+					dependencies.releasePublicKeyPem,
+				)
 			: { archivePath: dependencies.localArchivePath, signed: false };
 	const installed = await installArchive({
 		layout,
@@ -143,7 +194,9 @@ export async function runInstall(
 			channel: resolved.channel,
 			architecture,
 			...(resolved.channel === 'tag' ? { version: resolved.version } : {}),
-			...(resolved.revision === undefined ? {} : { revision: resolved.revision }),
+			...(resolved.revision === undefined
+				? {}
+				: { revision: resolved.revision }),
 		},
 	});
 	await discardDownloads(layout.prefix);
@@ -153,19 +206,27 @@ export async function runInstall(
 	await prepareDataRoot(dataRoot, selection.runAs, scope);
 
 	// A reinstall keeps the identity paired devices already know.
-	const existing = parseEnvironmentFile(await readFile(layout.environmentFile, 'utf8').catch(() => ''));
-	const serverId = existing.TERMINAY_SERVER_ID ?? dependencies.serverId ?? hostname();
+	const existing = parseEnvironmentFile(
+		await readFile(layout.environmentFile, 'utf8').catch(() => ''),
+	);
+	const serverId =
+		existing.TERMINAY_SERVER_ID ?? dependencies.serverId ?? hostname();
 
 	const expose = options.expose ?? DEFAULT_EXPOSE;
 	const wantsDirect = expose.split(',').includes('direct');
-	const directOrigin = wantsDirect ? (options.directOrigin ?? (await defaultDirectOrigin(port))) : options.directOrigin;
+	const directOrigin = wantsDirect
+		? (options.directOrigin ?? (await defaultDirectOrigin(port)))
+		: options.directOrigin;
 	if (wantsDirect && directOrigin === undefined) {
 		throw new Error(
 			'direct exposure needs an origin devices can reach, and this machine has no routable address to derive one from. Pass --direct-origin https://<host>:<port>.',
 		);
 	}
 
-	await mkdir(dirname(layout.environmentFile), { recursive: true, mode: 0o755 });
+	await mkdir(dirname(layout.environmentFile), {
+		recursive: true,
+		mode: 0o755,
+	});
 	await writeFile(
 		layout.environmentFile,
 		renderEnvironmentFile({
@@ -189,16 +250,27 @@ export async function runInstall(
 	await mkdir(dirname(layout.unitPath), { recursive: true, mode: 0o755 });
 	await writeFile(
 		layout.unitPath,
-		renderUnit({ layout, runAs: selection.runAs, workingDirectory: options.projectRoot ?? selection.home }),
+		renderUnit({
+			layout,
+			runAs: selection.runAs,
+			workingDirectory: options.projectRoot ?? selection.home,
+		}),
 		{ mode: 0o644 },
 	);
 
-	const systemd = createSystemd({ scope, ...(dependencies.env === undefined ? {} : { env: dependencies.env }) });
+	const systemd = createSystemd({
+		scope,
+		...(dependencies.env === undefined ? {} : { env: dependencies.env }),
+	});
 	await systemd.daemonReload();
 	if (scope === 'user') await systemd.enableLinger(selection.runAs);
 	await systemd.enableNow();
 
-	const ready = (await waitForReady(DEFAULT_HEALTH_PORT, dependencies.readinessTimeoutMs)) !== undefined;
+	const ready =
+		(await waitForReady(
+			DEFAULT_HEALTH_PORT,
+			dependencies.readinessTimeoutMs,
+		)) !== undefined;
 
 	const record: InstallRecord = {
 		schemaVersion: 1,
@@ -206,7 +278,9 @@ export async function runInstall(
 		channel: resolved.channel,
 		version: installed.manifest.version,
 		revision: installed.manifest.revision,
-		...(resolved.publishedAt === undefined ? {} : { publishedAt: resolved.publishedAt }),
+		...(resolved.publishedAt === undefined
+			? {}
+			: { publishedAt: resolved.publishedAt }),
 		runAs: selection.runAs,
 		dataRoot,
 		projectRoot: options.projectRoot ?? selection.home,
@@ -218,10 +292,17 @@ export async function runInstall(
 		installedAt: new Date().toISOString(),
 	};
 	await writeInstallRecord(layout, record);
-	await retain(layout, [installed.name, ...(await installedVersions(layout)).filter((name) => name !== installed.name).slice(-1)]);
+	await retain(layout, [
+		installed.name,
+		...(await installedVersions(layout))
+			.filter((name) => name !== installed.name)
+			.slice(-1),
+	]);
 
 	write('');
-	write(`Terminay Server ${installed.manifest.version} is installed and ${ready ? 'running' : 'starting'}.`);
+	write(
+		`Terminay Server ${installed.manifest.version} is installed and ${ready ? 'running' : 'starting'}.`,
+	);
 	write(`  scope        ${scope}`);
 	write(`  runs as      ${selection.runAs}`);
 	write(`  channel      ${resolved.channel}`);
@@ -230,7 +311,9 @@ export async function runInstall(
 	if (directOrigin !== undefined) {
 		write(`  direct URL   ${directOrigin}`);
 		write('');
-		write('If devices cannot reach that address — the machine is behind NAT, or has a');
+		write(
+			'If devices cannot reach that address — the machine is behind NAT, or has a',
+		);
 		write('DNS name — reinstall with --direct-origin https://<host>:<port>.');
 	}
 	if (!ready) {

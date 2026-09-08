@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { HELP_TEXT, UsageError, parseCommandLine } from '../dist/args.js';
+import { HELP_TEXT, parseCommandLine, UsageError } from '../dist/args.js';
 
 function parse(...argv) {
 	return parseCommandLine(argv);
@@ -47,7 +47,10 @@ test('install takes an optional reference', () => {
 	assert.equal(parse('daemon', 'install').ref, undefined);
 	assert.equal(parse('daemon', 'install', 'v4.1.1').ref, 'v4.1.1');
 	assert.equal(parse('daemon', 'install', 'main').ref, 'main');
-	assert.equal(parse('daemon', 'upgrade', 'feature/branch').ref, 'feature/branch');
+	assert.equal(
+		parse('daemon', 'upgrade', 'feature/branch').ref,
+		'feature/branch',
+	);
 	usage('daemon', 'install', 'v4.1.1', 'extra');
 });
 
@@ -65,7 +68,10 @@ test('commands that take no arguments reject them', () => {
 });
 
 test('value flags accept both spellings and reject a missing value', () => {
-	assert.equal(parse('daemon', 'install', '--run-as', 'ci').options.runAs, 'ci');
+	assert.equal(
+		parse('daemon', 'install', '--run-as', 'ci').options.runAs,
+		'ci',
+	);
 	assert.equal(parse('daemon', 'install', '--run-as=ci').options.runAs, 'ci');
 	usage('daemon', 'install', '--run-as');
 	usage('daemon', 'install', '--run-as', '--system');
@@ -99,8 +105,14 @@ test('scope flags are exclusive', () => {
 
 test('boolean flags do not take values', () => {
 	usage('daemon', 'uninstall', '--purge=true');
-	assert.equal(parse('daemon', 'uninstall', '--purge', '--yes').options.purge, true);
-	assert.equal(parse('daemon', 'uninstall', '--purge', '--yes').options.yes, true);
+	assert.equal(
+		parse('daemon', 'uninstall', '--purge', '--yes').options.purge,
+		true,
+	);
+	assert.equal(
+		parse('daemon', 'uninstall', '--purge', '--yes').options.yes,
+		true,
+	);
 });
 
 test('port and mode are validated', () => {
@@ -108,7 +120,10 @@ test('port and mode are validated', () => {
 	usage('daemon', 'install', '--port', '0');
 	usage('daemon', 'install', '--port', '70000');
 	usage('daemon', 'install', '--port', 'https');
-	assert.equal(parse('daemon', 'qr-code', '--mode', 'direct').options.mode, 'direct');
+	assert.equal(
+		parse('daemon', 'qr-code', '--mode', 'direct').options.mode,
+		'direct',
+	);
 	usage('daemon', 'qr-code', '--mode', 'sideways');
 });
 

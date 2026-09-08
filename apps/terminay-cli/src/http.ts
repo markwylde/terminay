@@ -1,5 +1,5 @@
-import { get, type RequestOptions } from 'node:https';
 import type { IncomingMessage } from 'node:http';
+import { get, type RequestOptions } from 'node:https';
 
 /**
  * The CLI talks to exactly one host family (github.com) over TLS and reads
@@ -26,7 +26,8 @@ function headers(accept: string): Record<string, string> {
 	// An authenticated request lifts the anonymous rate limit that an `npx`
 	// install on a busy network can otherwise hit.
 	const token = process.env.GITHUB_TOKEN;
-	if (typeof token === 'string' && token.length > 0) value.authorization = `Bearer ${token}`;
+	if (typeof token === 'string' && token.length > 0)
+		value.authorization = `Bearer ${token}`;
 	return value;
 }
 
@@ -42,7 +43,9 @@ export function openStream(
 			reject(new Error(`refusing a non-HTTPS download: ${url}`));
 			return;
 		}
-		const options: RequestOptions = { headers: { ...headers(accept), ...extraHeaders } };
+		const options: RequestOptions = {
+			headers: { ...headers(accept), ...extraHeaders },
+		};
 		const request = get(parsed, options, (response) => {
 			const status = response.statusCode ?? 0;
 			const location = response.headers.location;
@@ -59,27 +62,46 @@ export function openStream(
 				}
 				// A redirect to a signed asset host must not carry the GitHub
 				// token onward, so the next hop is a fresh request.
-				resolve(openStream(new URL(location, parsed).toString(), accept, redirectsLeft - 1, extraHeaders));
+				resolve(
+					openStream(
+						new URL(location, parsed).toString(),
+						accept,
+						redirectsLeft - 1,
+						extraHeaders,
+					),
+				);
 				return;
 			}
 			resolve(response);
 		});
-		request.setTimeout(REQUEST_TIMEOUT_MS, () => request.destroy(new Error(`timed out fetching ${url}`)));
+		request.setTimeout(REQUEST_TIMEOUT_MS, () =>
+			request.destroy(new Error(`timed out fetching ${url}`)),
+		);
 		request.on('error', reject);
 	});
 }
 
-export async function request(url: string, accept = '*/*', followRedirects = true): Promise<HttpResponse> {
+export async function request(
+	url: string,
+	accept = '*/*',
+	followRedirects = true,
+): Promise<HttpResponse> {
 	// A caller that needs to read where a redirect points — `releases/latest`
 	// names the newest tag only in its Location — asks not to be followed.
-	const response = await openStream(url, accept, followRedirects ? MAX_REDIRECTS : NO_REDIRECT);
+	const response = await openStream(
+		url,
+		accept,
+		followRedirects ? MAX_REDIRECTS : NO_REDIRECT,
+	);
 	const chunks: Buffer[] = [];
 	let total = 0;
 	for await (const chunk of response) {
 		total += (chunk as Buffer).length;
 		if (total > MAX_DOCUMENT_BYTES) {
 			response.destroy();
-			throw new Error(`response from ${url} is larger than the ${MAX_DOCUMENT_BYTES}-byte limit`);
+			throw new Error(
+				`response from ${url} is larger than the ${MAX_DOCUMENT_BYTES}-byte limit`,
+			);
 		}
 		chunks.push(chunk as Buffer);
 	}
@@ -92,7 +114,8 @@ export async function request(url: string, accept = '*/*', followRedirects = tru
 
 export async function requestJson(url: string): Promise<unknown> {
 	const response = await request(url, 'application/vnd.github+json');
-	if (response.status !== 200) throw new Error(`GitHub returned ${response.status} for ${url}`);
+	if (response.status !== 200)
+		throw new Error(`GitHub returned ${response.status} for ${url}`);
 	try {
 		return JSON.parse(response.body);
 	} catch {

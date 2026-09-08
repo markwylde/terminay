@@ -23,9 +23,12 @@ export interface ProbeSocket {
 
 export type ProbeSocketFactory = () => ProbeSocket;
 
-const openProbeSocket: ProbeSocketFactory = () => createSocket('udp4') as unknown as ProbeSocket;
+const openProbeSocket: ProbeSocketFactory = () =>
+	createSocket('udp4') as unknown as ProbeSocket;
 
-export function primaryAddress(createProbeSocket: ProbeSocketFactory = openProbeSocket): Promise<string | undefined> {
+export function primaryAddress(
+	createProbeSocket: ProbeSocketFactory = openProbeSocket,
+): Promise<string | undefined> {
 	return new Promise((resolve) => {
 		let socket: ProbeSocket;
 		try {
