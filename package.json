@@ -48,7 +48,7 @@
 		"build:server-ui:bundle": "vite build --config vite.server-ui.config.ts",
 		"benchmark:server-ui-archive": "npm run build:server-ui && node scripts/server-ui-archive-benchmark.mjs --renderer-directory dist-web --entry-path server.html",
 		"build:web": "npm run build --workspace @terminay/protocol && npm run build --workspace @terminay/client-core && npm run build --workspace @terminay/responsive-ui && npm run build:server-ui",
-		"build:applications": "turbo run build --filter=@terminay/server --filter=@terminay/desktop --filter=@terminay/web",
+		"build:applications": "turbo run build --filter=@terminay/server --filter=@terminay/desktop --filter=@terminay/web --filter=terminay",
 		"build:shared": "turbo run build --filter=@terminay/client-core --filter=@terminay/responsive-ui --filter=@terminay/server-core",
 		"check:boundaries": "node scripts/check-workspace-boundaries.mjs",
 		"check:deterministic-artifacts": "node scripts/check-deterministic-workspace-builds.mjs",
