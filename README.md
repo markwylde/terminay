@@ -82,7 +82,7 @@ sudo mv /opt/terminay-server-node24.15.0-linux-$ARCH /opt/terminay-server
 
 A detached Ed25519 `.sig` is published beside each archive for operators who
 hold the release signing public key. Merges to `main` also publish a rolling
-`terminay-server-main-linux-<arch>.tar.gz` on the `main` prerelease; compare
+`terminay-server-main-linux-<arch>.tar.gz` on the `main-latest` prerelease; compare
 `revision` in the archive's `artifact-manifest.json`, not `version`, to tell
 whether that channel moved.
 

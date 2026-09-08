@@ -30,16 +30,22 @@ Two channels publish the same three files per architecture:
 
 - **`tag`** — a tagged release. Assets are named for the version and are
   immutable: a published name is never replaced.
-- **`main`** — a rolling prerelease, rebuilt on every merge to the default
-  branch, whose assets keep the stable names
+- **`main`** — a rolling prerelease tagged `main-latest`, rebuilt on every
+  merge to the default branch, whose assets keep the stable names
   `terminay-server-main-linux-<arch>.tar.gz`. Replacement uploads land under
   temporary names first and only then take the published names, so a reader
   sees either the previous complete set or the new one.
 
+The rolling tag is deliberately not named for the branch: a release tagged
+`main` would make `main` an ambiguous ref in every clone, so `git fetch main`
+would resolve the tag rather than the branch.
+
 Every archive's `artifact-manifest.json` records its `channel`, the built
-`revision` (commit), and its `architecture`. On the rolling channel an
-installer compares `revision`, not `version`, to decide whether the channel
-moved. Verification rejects a manifest missing any of the three.
+`revision` (commit), its `architecture`, and its `version`, and the installed
+launcher reports that same version. On the rolling channel an installer
+compares `revision`, not `version`, to decide whether the channel moved.
+Verification rejects a manifest missing any of the three, and rejects an
+archive whose launcher and manifest disagree about the version.
 
 ## Independent update targets
 
