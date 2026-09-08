@@ -196,12 +196,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          if ! gh release view main --repo "$GH_REPO" >/dev/null 2>&1; then
-            gh release create main \
+          # The tag must not be named for a branch. A release tagged `main`
+          # makes `main` an ambiguous ref in every clone, so `git fetch main`
+          # resolves the tag instead of the branch.
+          if ! gh release view main-latest --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release create main-latest \
               --repo "$GH_REPO" \
               --target main \
               --prerelease \
-              --title "main" \
+              --title "main (rolling)" \
               --notes "Rolling build of the main branch. Not a supported release."
           fi
 
@@ -216,7 +219,7 @@ jobs:
             for suffix in "" ".sha256" ".sig"; do
               NAME="terminay-server-main-$target.tar.gz$suffix"
               cp "release/main/$NAME" "release/main/$NAME.incoming"
-              gh release upload main "release/main/$NAME.incoming" --repo "$GH_REPO" --clobber
+              gh release upload main-latest "release/main/$NAME.incoming" --repo "$GH_REPO" --clobber
             done
           done
 
@@ -228,7 +231,7 @@ jobs:
           # Only after every replacement is fully uploaded does the published
           # name move, one asset at a time, so no half-written body is ever
           # served under a channel name.
-          RELEASE_ID="$(gh release view main --repo "$GH_REPO" --json databaseId --jq '.databaseId')"
+          RELEASE_ID="$(gh release view main-latest --repo "$GH_REPO" --json databaseId --jq '.databaseId')"
           test -n "$RELEASE_ID"
           for target in linux-x64 linux-arm64; do
             for suffix in "" ".sha256" ".sig"; do
@@ -250,7 +253,7 @@ jobs:
           EXPECTED_COMMIT: ${{ github.sha }}
           TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64: ${{ vars.TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64 }}
         run: |
-          ASSET_NAMES="$(gh release view main --repo "$GH_REPO" --json assets --jq '.assets[].name' | sort)"
+          ASSET_NAMES="$(gh release view main-latest --repo "$GH_REPO" --json assets --jq '.assets[].name' | sort)"
           EXPECTED_ASSET_NAMES="$(cat <<EOF
           terminay-server-main-linux-arm64.tar.gz
           terminay-server-main-linux-arm64.tar.gz.sha256
@@ -265,7 +268,7 @@ jobs:
           mkdir -p "$PUBLISHED"
           for target in linux-x64 linux-arm64; do
             for suffix in "" ".sha256" ".sig"; do
-              gh release download main --repo "$GH_REPO" --dir "$PUBLISHED" --pattern "terminay-server-main-$target.tar.gz$suffix"
+              gh release download main-latest --repo "$GH_REPO" --dir "$PUBLISHED" --pattern "terminay-server-main-$target.tar.gz$suffix"
             done
             node scripts/release-checksum.mjs verify \
               "$PUBLISHED/terminay-server-main-$target.tar.gz" \
