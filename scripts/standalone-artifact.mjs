@@ -10,7 +10,10 @@ const REQUIRED_BINS = {
   'terminay-server': 'dist/cli.js',
   'terminay-mcp': 'dist/mcpEntry.js',
 }
-export const RELEASE_CHANNELS = Object.freeze(['tag', 'main'])
+// `source` is a build the operator made on their own machine from a branch or
+// commit. It carries no publisher signature, so it is never a channel the
+// release pipeline produces — only one `terminay daemon install <ref>` writes.
+export const RELEASE_CHANNELS = Object.freeze(['tag', 'main', 'source'])
 export const ARTIFACT_ARCHITECTURES = Object.freeze(['x64', 'arm64'])
 
 function sha256(value) {
