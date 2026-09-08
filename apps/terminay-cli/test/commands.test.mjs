@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
-
+import { invokingUser } from '../dist/account.js';
 import { runInstall } from '../dist/commands/install.js';
 import { runStart, runStatus, runStop } from '../dist/commands/lifecycle.js';
 import { runResetIdentity, runUninstall } from '../dist/commands/uninstall.js';
@@ -160,8 +160,9 @@ test('install resolves, verifies, unpacks, writes the unit, and starts the servi
 			const record = await readInstallRecord(layout);
 			assert.equal(record.channel, 'tag');
 			assert.equal(record.version, '4.1.1');
-			// A user-scope service always runs as whoever invoked it.
-			assert.equal(record.runAs, process.env.USER ?? process.env.LOGNAME);
+			// A user-scope service always runs as whoever invoked it. `USER` is
+			// absent in a container, so the passwd database is the authority.
+			assert.equal(record.runAs, invokingUser());
 
 			// The downloaded archive is not left lying around.
 			assert.equal(

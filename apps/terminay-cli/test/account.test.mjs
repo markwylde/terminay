@@ -8,6 +8,7 @@ import test from 'node:test';
 import {
 	assertRootForSystemScope,
 	DEDICATED_ACCOUNT,
+	invokingUser,
 	prepareDataRoot,
 	ScopeError,
 	selectRunAs,
@@ -238,5 +239,54 @@ test('a system-scope data root is handed to the run-as account', async () => {
 		process.env.PATH = originalPath;
 		await rm(directory, { recursive: true, force: true });
 		await fake.close();
+	}
+});
+
+test('the invoking user is resolved without USER in the environment', async () => {
+	// A systemd user session, a container, a cron job, and `sudo -u` commonly
+	// have no USER set, so the passwd database has to be the authority.
+	const originalUser = process.env.USER;
+	const originalLogname = process.env.LOGNAME;
+	process.env.USER = undefined;
+	// biome-ignore lint/performance/noDelete: the variable must be absent, not empty.
+	delete process.env.USER;
+	// biome-ignore lint/performance/noDelete: the variable must be absent, not empty.
+	delete process.env.LOGNAME;
+	try {
+		const resolved = invokingUser();
+		assert.equal(typeof resolved, 'string');
+		assert.ok(
+			resolved.length > 0,
+			'a user-scope install must still know who it runs as',
+		);
+
+		const fake = await createFakeBin();
+		fake.install(
+			'getent',
+			`echo "${resolved}:x:1000:1000::/home/${resolved}:/bin/sh"`,
+		);
+		const originalPath = process.env.PATH;
+		process.env.PATH = `${fake.directory}:${originalPath}`;
+		try {
+			const selection = await selectRunAs({ scope: 'user' });
+			assert.equal(selection.runAs, resolved);
+		} finally {
+			process.env.PATH = originalPath;
+			await fake.close();
+		}
+	} finally {
+		if (originalUser !== undefined) process.env.USER = originalUser;
+		if (originalLogname !== undefined) process.env.LOGNAME = originalLogname;
+	}
+});
+
+test('an explicit USER still wins, because it is what the operator sees', () => {
+	const original = process.env.USER;
+	process.env.USER = 'ada';
+	try {
+		assert.equal(invokingUser(), 'ada');
+	} finally {
+		if (original === undefined) delete process.env.USER;
+		else process.env.USER = original;
 	}
 });

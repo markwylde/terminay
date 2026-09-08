@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { chmod, mkdir } from 'node:fs/promises';
+import { userInfo } from 'node:os';
 import { promisify } from 'node:util';
 
 import type { InstallScope } from './args.js';
@@ -33,6 +34,23 @@ export interface ScopeSelection {
 	readonly scope: InstallScope;
 	readonly runAs: string;
 	readonly home: string;
+}
+
+/**
+ * Who is running this. `USER` is absent more often than it looks — a systemd
+ * user session, a container, a cron job, and `sudo -u` all commonly have no
+ * `USER` in the environment — so the passwd database is the authority and the
+ * environment is only a hint.
+ */
+export function invokingUser(): string | undefined {
+	const named = process.env.USER ?? process.env.LOGNAME;
+	if (typeof named === 'string' && named.length > 0) return named;
+	try {
+		const name = userInfo().username;
+		return typeof name === 'string' && name.length > 0 ? name : undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 export async function selectScope(options: {
@@ -110,7 +128,7 @@ export async function selectRunAs(options: {
 	readonly currentUser?: string;
 }): Promise<ScopeSelection> {
 	if (options.scope === 'user') {
-		const user = options.currentUser ?? process.env.USER ?? process.env.LOGNAME;
+		const user = options.currentUser ?? invokingUser();
 		if (user === undefined || user.length === 0)
 			throw new ScopeError('the invoking user could not be determined');
 		if (options.requested !== undefined && options.requested !== user) {
