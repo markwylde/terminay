@@ -69,6 +69,9 @@
   },
   "linux": {
     "icon": "public/terminay.png",
+    // Pinned rather than derived from the workspace package name, which is
+    // private and says nothing about what the binary is called.
+    "executableName": "terminay",
     "target": [
       "AppImage"
     ],

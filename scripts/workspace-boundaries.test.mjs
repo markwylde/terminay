@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import path, { join } from 'node:path';
 import { checkWorkspace } from './check-workspace-boundaries.mjs';
+
+const root = path.resolve(new URL('..', import.meta.url).pathname);
 
 async function fixture(packages) {
   const root = await mkdtemp(join(tmpdir(), 'terminay-boundaries-'));
@@ -114,4 +116,44 @@ test('allows only Desktop main to compose the exact packaged Server application'
       ],
     );
   });
+});
+
+test('no two workspaces share a package name', async () => {
+	// A duplicate name makes `node_modules/<name>` ambiguous. When the private
+	// root shared its name with the published CLI, electron-builder resolved the
+	// desktop app's dependency tree to the CLI and packaged only the CLI's one
+	// dependency — shipping an app with no esbuild, no node-pty, and none of its
+	// workspace packages, which then died at launch before opening a window.
+	const rootManifest = JSON.parse(
+		await readFile(path.join(root, 'package.json'), 'utf8'),
+	);
+	const names = new Map([[rootManifest.name, 'package.json']]);
+	for (const pattern of rootManifest.workspaces) {
+		const group = pattern.replace(/\/\*$/u, '');
+		const directory = path.join(root, group);
+		const entries = await readdir(directory, { withFileTypes: true }).catch(
+			() => [],
+		);
+		for (const entry of entries) {
+			if (!entry.isDirectory()) continue;
+			const manifestPath = path.join(group, entry.name, 'package.json');
+			const raw = await readFile(path.join(root, manifestPath), 'utf8').catch(
+				() => undefined,
+			);
+			if (raw === undefined) continue;
+			const { name } = JSON.parse(raw);
+			if (typeof name !== 'string') continue;
+			const existing = names.get(name);
+			assert.equal(
+				existing,
+				undefined,
+				`${name} is declared by both ${existing} and ${manifestPath}`,
+			);
+			names.set(name, manifestPath);
+		}
+	}
+
+	// The published CLI owns the bare name, so `npm publish --workspace terminay`
+	// and `npx terminay` both mean the installer and nothing else.
+	assert.equal(names.get('terminay'), 'apps/terminay-cli/package.json');
 });

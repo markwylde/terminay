@@ -7,13 +7,24 @@ function manifest(path) {
   return JSON.parse(readFileSync(join(path, 'package.json'), 'utf8'));
 }
 
-function sharedPackages(root) {
-  const directory = join(root, 'packages');
+function buildableIn(root, group, include) {
+  const directory = join(root, group);
   if (!existsSync(directory)) return [];
   return readdirSync(directory, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && existsSync(join(directory, entry.name, 'package.json')))
     .map((entry) => join(directory, entry.name))
-    .filter((path) => typeof manifest(path).scripts?.build === 'string');
+    .filter((path) => typeof manifest(path).scripts?.build === 'string' && include(manifest(path)));
+}
+
+function sharedPackages(root) {
+  // Every shared package is checked. Applications are not, because most of
+  // them bundle assets whose output is not expected to be byte-identical; a
+  // published one opts in with `deterministicBuild`, because what an operator
+  // installs from npm has to be reproducible from the same source.
+  return [
+    ...buildableIn(root, 'packages', () => true),
+    ...buildableIn(root, 'apps', (packageManifest) => packageManifest.deterministicBuild === true),
+  ];
 }
 
 function hashDirectory(directory) {
