@@ -156,9 +156,24 @@ test('the CLI is published to npm only after the archives it installs are attach
 	assert.match(job, /needs: \[release, build-standalone-server\]/u);
 	assert.match(job, /node scripts\/check-embedded-release-key\.mjs/u);
 	assert.match(job, /npm publish --workspace terminay --provenance --access public/u);
+	// Trusted publishing: the registry authenticates the workflow by its OIDC
+	// identity, so the job must hold no npm credential at all. A token here
+	// would be a long-lived publish secret sitting in the release pipeline.
+	// Comments are stripped first, because the job documents in prose that it
+	// sets no token and that sentence must not read as one.
+	const configuration = job
+		.split('\n')
+		.filter((line) => !line.trimStart().startsWith('#'))
+		.join('\n');
 	assert.match(job, /id-token: write/u);
-	assert.match(job, /NODE_AUTH_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/u);
 	assert.match(job, /registry-url: https:\/\/registry\.npmjs\.org/u);
+	assert.doesNotMatch(configuration, /NODE_AUTH_TOKEN/u);
+	assert.doesNotMatch(configuration, /NPM_TOKEN/u);
+	assert.doesNotMatch(configuration, /_authToken/u);
+
+	// npm exchanges the OIDC token for a short-lived credential only from
+	// 11.5.1 onward; an older npm would fall back to looking for a token.
+	assert.match(job, /npm install --global npm@12\.0\.2/u);
 
 	// The published version is the release tag, so `npx terminay@X.Y.Z` and
 	// release X.Y.Z are the same thing.

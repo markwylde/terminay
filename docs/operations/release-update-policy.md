@@ -47,6 +47,40 @@ compares `revision`, not `version`, to decide whether the channel moved.
 Verification rejects a manifest missing any of the three, and rejects an
 archive whose launcher and manifest disagree about the version.
 
+## Publishing the CLI to npm
+
+Every tagged release publishes `terminay` to npm with the same version as the
+application, so `npx terminay@X.Y.Z` and release `vX.Y.Z` are the same thing.
+The publish job runs only after the server archives are attached: the CLI
+resolves its own release, and publishing first would let an operator install a
+version whose archives did not exist yet.
+
+Authentication is **npm trusted publishing**. The registry authenticates the
+workflow by its GitHub OIDC identity — repository, workflow file, and ref — and
+mints a short-lived credential for that one publish. There is no npm token in
+the repository, in a secret, or in the runner, so there is nothing to leak,
+rotate, or scope wrongly. A long-lived publish token is exactly the credential
+worth not having in a release pipeline.
+
+Requirements, all enforced by the release contract test:
+
+- `id-token: write` on the publish job, which also signs the provenance
+  attestation recorded in the public transparency log.
+- npm 11.5.1 or newer, which is what performs the token exchange. An older npm
+  silently falls back to looking for a token and fails.
+- No `NODE_AUTH_TOKEN`, `NPM_TOKEN`, or `_authToken` anywhere in the job.
+
+The trusted publisher is configured once, on npmjs.com, under the package's
+**Settings → Trusted publisher**: organisation or user `markwylde`, repository
+`terminay`, workflow file `trigger-release.yml`, environment left blank.
+Changing the workflow's filename, or moving the job to another workflow file,
+breaks publishing until that setting is updated to match.
+
+Trusted publishing cannot create a package that does not exist yet, because
+the setting lives on the package's own page. The first version of a new
+package is published once by a maintainer, and every release after that is
+publisher-less.
+
 ## Independent update targets
 
 - `desktop-host` updates Terminay Desktop and its embedded, matched server/UI
