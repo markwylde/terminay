@@ -31,6 +31,22 @@ export function classifyDiagnosticUrl(value: string): string {
 	}
 }
 
+/**
+ * Reduce source locations in renderer bootstrap text to application-relative
+ * module names.
+ *
+ * A renderer bootstrap failure names files the user chose or the installer
+ * placed, and the load location is already recorded as a URL class rather than
+ * a path. Reducing each absolute path to its module name keeps the stack
+ * readable without turning it into a record of where the application and the
+ * user's files live.
+ */
+export function reduceRendererSourceLocations(value: string): string {
+	return value
+		.replace(/(?:[A-Za-z]:)?[\\/](?:[^\s:*?"<>|\\/]+[\\/])+/g, '')
+		.replace(/\bfile:\/\/\S*?([^\s/\\]+(?::\d+)*)/g, '$1');
+}
+
 function processMetrics(app: App, processId: number): Record<string, unknown> {
 	const metric = app
 		.getAppMetrics()
@@ -104,14 +120,18 @@ export function bindWebContentsDiagnostics(options: {
 		});
 	});
 	contents.on('preload-error', (_event, _preloadPath, error) => {
+		// Electron puts the preload path in both the message and the stack. The
+		// bootstrap contract records module names, not the paths behind them.
 		void diagnostics.record(
 			{
 				component: 'renderer',
 				event: 'renderer.preload-failed',
-				message: error.message,
+				message: reduceRendererSourceLocations(error.message),
 				severity: 'error',
 				source,
-				stack: error.stack,
+				...(error.stack === undefined
+					? {}
+					: { stack: reduceRendererSourceLocations(error.stack) }),
 			},
 			{ channel: 'lifecycle' },
 		);
