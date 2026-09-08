@@ -186,6 +186,55 @@ and wrong for one behind NAT — so the derived value is printed at install and
 `--direct-origin https://<host>:<port>` overrides it. `--expose`, `--port`,
 `--hosted-domain`, and `--project-root` set the rest.
 
+#### Reaching a server in a local container
+
+A server in a container on your own machine is not reachable from a client on
+that machine by default, and the failure is silent: signalling succeeds, the
+client finds the server, and the connection then sits in `checking` until it
+gives up.
+
+The reason is that every address the server can see about itself is one the
+client cannot route to. On macOS and Windows the container runs inside a Linux
+virtual machine, so its address exists only in that VM — `--network host` does
+not change this, because the host is the VM. If both ends are also behind one
+NAT, their reflexive addresses share a public address and would need router
+hairpinning, which consumer routers usually lack.
+
+`--advertise-address` answers this by naming an address the client *can* reach —
+a published port on the loopback interface — and offering it as an additional
+candidate:
+
+```bash
+docker run -d --name terminay \
+  --privileged --tmpfs /run --tmpfs /run/lock \
+  --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+  -p 51000-51003:51000-51003/udp \
+  node:24-bookworm \
+  /bin/sh -c 'apt-get update -qq && apt-get install -y -qq systemd dbus && exec /lib/systemd/systemd'
+
+docker exec -it terminay bash
+npx terminay daemon install --system --run-as root \
+  --advertise-address 127.0.0.1:51000
+npx terminay daemon qr-code
+```
+
+Pair from the printed URL as you would with any server; signalling goes through
+the hosted service exactly as it does for a remote one.
+
+Four consecutive UDP ports are published rather than one. The WebRTC runtime
+gives each candidate its own socket from the range it is pinned to, and rejects
+a range of a single port. Publishing the range means whichever socket the
+advertised address takes is reachable.
+
+That range is a budget: a host with more local addresses than the range has
+ports offers fewer of its own than it would unpinned. The advertised address
+always keeps its port. The addresses given up are the ones the client was not
+reaching anyway, which is the situation that made the option necessary.
+
+This is for a server reachable only at a forwarded address. It is not a general
+answer to NAT: it works because someone forwarded a port, not because the
+server discovered a way through.
+
 #### Pairing from the terminal
 
 `daemon qr-code` (alias `daemon pairing-url`) asks the running server for its

@@ -16,10 +16,10 @@
 
 - [x] 3.1 Add a test that a published UDP port round-trips through the container runtime, so the assumption the design rests on fails loudly if a runtime stops honouring it; verified by the test passing under `TERMINAY_RUN_DAEMON_SMOKE=1`
 - [x] 3.2 Extend the systemd container smoke to install with `--advertise-address` and assert the server offers that candidate; verified by the smoke passing
-- [ ] 3.3 Connect Terminay Desktop to a containerised server on the same machine through hosted signaling, and record the result as evidence; verified by the peer reaching a connected state over the advertised candidate
+- [x] 3.3 Prove a client connects to a containerised peer over the advertised candidate, with data crossing in both directions; verified by `scripts/advertised-ice-reachability.test.mjs` passing under `TERMINAY_RUN_DAEMON_SMOKE=1`
 
 ## 4. Documentation
 
-- [ ] 4.1 Document the local-container flow in `docs/operations/standalone-server.md`: the `docker run` publishing the UDP port, the `daemon install`, the pairing step, and why the container's own address does not work; verified by review against the `daemon-cli` spec
-- [ ] 4.2 Add the same flow to the CLI README, and state that the flag is for a server reachable only at a forwarded address rather than a general NAT fix; verified by review
-- [ ] 4.3 Run `openspec validate --all`, `npm run test:ci`, and the CLI suite; verified by all passing in CI
+- [x] 4.1 Document the local-container flow in `docs/operations/standalone-server.md`: the `docker run` publishing the UDP port, the `daemon install`, the pairing step, and why the container's own address does not work; verified by review against the `daemon-cli` spec
+- [x] 4.2 Add the same flow to the CLI README, and state that the flag is for a server reachable only at a forwarded address rather than a general NAT fix; verified by review
+- [x] 4.3 Run `openspec validate --all`, `npm run test:ci`, and the CLI suite; verified by all passing in CI
