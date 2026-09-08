@@ -23,10 +23,11 @@ import {
 	type DesktopHostBridge,
 } from './desktopByteTransport';
 import {
+	createRecoveryLoop,
 	createSessionHeartbeat,
 	logSessionLane,
+	RecoveryRetrySchedule,
 	type SessionConnectAttempt,
-	SessionConnectGate,
 } from './sessionConnectAttempt';
 import {
 	getSessionTransportHost,
@@ -103,7 +104,6 @@ class WorkspaceErrorBoundary extends Component<
  */
 export default function SessionWorkspaceApp(): React.JSX.Element {
 	const clientRef = useRef<TerminayClient | undefined>(undefined);
-	const gateRef = useRef(new SessionConnectGate());
 	const connectRef = useRef<
 		(
 			attempt: SessionConnectAttempt,
@@ -114,17 +114,51 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 		(options?: Readonly<{ replaceDesktopEndpoint?: boolean }>) => void
 	>(() => undefined);
 	const connectionRef = useRef<ConnectedSession | undefined>(undefined);
-	const heartbeatRef = useRef<{ stop(): void } | undefined>(undefined);
+	const heartbeatRef = useRef<
+		{ stop(): void; probeNow(): void } | undefined
+	>(undefined);
 	const [connection, setConnection] = useState<ConnectedSession>();
+	const [error, setError] = useState<string>();
+	const [phase, setPhase] = useState<'connecting' | 'reconnecting' | 'ready'>(
+		'connecting',
+	);
+	// One persistent loop owns every attempt: mount, automatic recovery, and
+	// Retry. A failed attempt schedules the next one itself.
+	const loopRef = useRef(
+		createRecoveryLoop({
+			run: (attempt, runOptions) => connectRef.current(attempt, runOptions),
+			recovering: () => connectionRef.current !== undefined,
+			onAttemptStart: ({ recovering }) => {
+				setError(undefined);
+				if (recovering) {
+					// The workspace stays mounted under the reconnecting overlay.
+					setPhase('reconnecting');
+					return;
+				}
+				connectionRef.current = undefined;
+				setConnection(undefined);
+				setPhase('connecting');
+			},
+			onAttemptFailed: ({ message, retrying }) => {
+				connectionRef.current = undefined;
+				setConnection(undefined);
+				setError(message);
+				// A further attempt is already scheduled, so this stays a
+				// reconnecting session rather than an idle one awaiting a person.
+				setPhase(retrying ? 'reconnecting' : 'ready');
+			},
+			schedule: new RecoveryRetrySchedule({
+				isHidden: () =>
+					typeof document !== 'undefined' && document.visibilityState === 'hidden',
+			}),
+		}),
+	);
+	const gateRef = useRef(loopRef.current.gate);
 	const [desktopContext, setDesktopContext] = useState<TerminayHostContext>();
 	const [desktopPairingApproval, setDesktopPairingApproval] = useState<
 		Readonly<{ deviceName: string; matchCode: string; expiresAt: string }> | null
 	>(null);
 	useEffect(() => subscribePairingApproval(setDesktopPairingApproval), []);
-	const [error, setError] = useState<string>();
-	const [phase, setPhase] = useState<'connecting' | 'reconnecting' | 'ready'>(
-		'connecting',
-	);
 
 	const recoverConnection = useCallback(() => {
 		startAttemptRef.current({ replaceDesktopEndpoint: true });
@@ -258,39 +292,34 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 		[recoverConnection],
 	);
 	connectRef.current = connect;
-	startAttemptRef.current = (options) => {
-		const attempt = gateRef.current.begin();
-		if (attempt === undefined) return;
-		const recovering = connectionRef.current !== undefined;
-		setError(undefined);
-		if (recovering) {
-			setPhase('reconnecting');
-		} else {
-			connectionRef.current = undefined;
-			setConnection(undefined);
-			setPhase('connecting');
-		}
-		void gateRef.current
-			.withDeadline(attempt, connectRef.current(attempt, options))
-			.catch((cause) => {
-				if (!gateRef.current.isCurrent(attempt)) return;
-				connectionRef.current = undefined;
-				setConnection(undefined);
-				setError(
-					cause instanceof Error ? cause.message : 'Unable to reconnect.',
-				);
-				setPhase('ready');
-			})
-			.finally(() => {
-				gateRef.current.finish(attempt);
-			});
-	};
+	startAttemptRef.current = (options) => loopRef.current.start(options);
 
 	useEffect(() => {
-		startAttemptRef.current();
+		const loop = loopRef.current;
+		loop.start();
 		return () => {
+			loop.dispose();
 			heartbeatRef.current?.stop();
 			void clientRef.current?.close().catch(() => undefined);
+		};
+	}, []);
+
+	// Returning to the foreground is the moment to find out. A frozen document
+	// runs nothing, so its transport can have died with no probe outstanding and
+	// no attempt pending; waiting out the next heartbeat interval is most of why
+	// coming back to the app feels broken.
+	useEffect(() => {
+		if (typeof document === 'undefined') return;
+		const shown = () => {
+			if (document.visibilityState !== 'visible') return;
+			loopRef.current.resume();
+			heartbeatRef.current?.probeNow();
+		};
+		document.addEventListener('visibilitychange', shown);
+		window.addEventListener('pageshow', shown);
+		return () => {
+			document.removeEventListener('visibilitychange', shown);
+			window.removeEventListener('pageshow', shown);
 		};
 	}, []);
 
@@ -404,7 +433,8 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 					</h1>
 				)}
 				{error !== undefined && <p role="alert">{error}</p>}
-				{phase === 'ready' && (
+				{/* Recovery keeps trying on its own; this only asks for it now. */}
+				{(phase === 'ready' || error !== undefined) && (
 					<button type="button" onClick={recoverConnection}>
 						Retry connection
 					</button>
