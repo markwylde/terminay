@@ -194,30 +194,34 @@ test("standalone server release artifact is built from the immutable tag and ver
     "standalone package must be built from the release tag rather than an advancing branch");
   assert.match(job, /test "\$\(git rev-parse HEAD\)" = "\$EXPECTED_COMMIT"/u,
     "standalone package job must verify the checked-out immutable source commit");
-  assert.match(job, /npm pack --workspace @terminay\/server --json --pack-destination/u,
-    "standalone package job must create a real npm pack artifact");
+  assert.match(job, /node scripts\/build-standalone-server-artifact\.mjs/u,
+    "standalone job must assemble the self-contained release archive");
   assert.match(job, /node scripts\/sync-package-version\.mjs "\$VERSION"/u,
     "standalone package manifest version must use the tested release-tag synchronizer");
-  assert.match(job, /node scripts\/standalone-artifact\.mjs "\$EXTRACTED\/package" "\$MANIFEST"/u,
-    "the extracted package must pass non-executing payload inspection");
-  assert.match(job, /require\(process\.argv\[1\]\)\.package\.version/u,
-    "the inspected package version must match the release tag before publication");
+  assert.match(job, /node scripts\/probe-standalone-server-archive\.mjs/u,
+    "the extracted archive must pass manifest, architecture, and entrypoint inspection");
+  assert.match(job, /--revision "\$EXPECTED_COMMIT"/u,
+    "the archive manifest must record the immutable release commit");
+  assert.match(job, /\.version\)' "\$RUNNER_TEMP\/standalone-probe\.json"\)" = "\$VERSION"/u,
+    "the probed archive version must match the release tag before publication");
   assert.match(job, /release-checksum\.mjs write "\$ARCHIVE" "\$ARCHIVE\.sha256"/u,
     "standalone package checksum must be written by the regular-file verifier");
   assert.match(job, /release-checksum\.mjs verify "\$ARCHIVE" "\$ARCHIVE\.sha256"/u,
     "standalone package checksum must be verified before upload");
-  assert.match(job, /release\/\*\/terminay-server-\*\.tgz/u,
-    "workflow-artifact upload must include only a version-derived standalone archive");
+  assert.match(job, /release\/\*\/terminay-server-\*-\$\{\{ matrix\.target \}\}\.tar\.gz/u,
+    "workflow-artifact upload must include only this architecture's version-derived archive");
   assert.match(job, /gh release upload "\$TAG" "\$ARCHIVE" "\$ARCHIVE\.sha256" "\$ARCHIVE\.sig" --repo "\$GH_REPO"/u,
     "standalone package, checksum, and detached signature must be uploaded together without replacement");
 
   const notesJob = release.slice(notesStart);
   assert.match(notesJob, /needs: \[release, build-binaries, build-standalone-server\]/u,
     "release notes must wait for the standalone artifact publication");
-  assert.match(notesJob, /terminay-server-\$\{VERSION\}\.tgz/u,
-    "release-note verification must include the exact standalone archive");
-  assert.match(notesJob, /terminay-server-\$\{VERSION\}\.tgz\.sha256/u,
-    "release-note verification must include the standalone checksum sidecar");
+  for (const architecture of ["x64", "arm64"]) {
+    assert.ok(notesJob.includes(`terminay-server-\${VERSION}-linux-${architecture}.tar.gz`),
+      `release-note verification must include the exact linux-${architecture} archive`);
+    assert.ok(notesJob.includes(`terminay-server-\${VERSION}-linux-${architecture}.tar.gz.sha256`),
+      `release-note verification must include the linux-${architecture} checksum sidecar`);
+  }
 });
 
 test("standalone server archive is signed and re-verified at every release handoff", () => {
@@ -243,7 +247,7 @@ test("standalone server archive is signed and re-verified at every release hando
     "the exact archive must receive a detached signature");
   assert.match(signingStep, /release-signature\.mjs verify "\$ARCHIVE" "\$ARCHIVE\.sig"/u,
     "the signature must self-verify before upload");
-  assert.match(job.slice(workflowUpload, releaseUpload), /terminay-server-\*\.tgz\.sig/u,
+  assert.match(job.slice(workflowUpload, releaseUpload), /terminay-server-\*-\$\{\{ matrix\.target \}\}\.tar\.gz\.sig/u,
     "the workflow artifact handoff must retain the detached signature");
   const uploadStep = job.slice(releaseUpload);
   assert.match(uploadStep, /test ! -L "\$ARCHIVE"/u,
@@ -277,10 +281,12 @@ test("standalone server archive is signed and re-verified at every release hando
     "final publication must resolve the immutable tag target");
   assert.match(notesSourceStep, /git rev-parse HEAD/u,
     "final publication must verify its checked-out source");
-  assert.match(notes, /terminay-server-\$\{VERSION\}\.tgz\.sig/u,
-    "release-note publication must require the published standalone signature");
-  assert.match(notes, /release-signature\.mjs verify[\s\\]+"\$ASSET_DIR\/terminay-server-\$\{VERSION\}\.tgz"[\s\\]+"\$ASSET_DIR\/terminay-server-\$\{VERSION\}\.tgz\.sig"/u,
-    "release-note publication must verify the downloaded standalone signature");
+  for (const architecture of ["x64", "arm64"]) {
+    assert.ok(notes.includes(`terminay-server-\${VERSION}-linux-${architecture}.tar.gz.sig`),
+      `release-note publication must require the published linux-${architecture} signature`);
+    assert.match(notes, new RegExp(`release-signature\\.mjs verify[\\s\\\\]+"\\$ASSET_DIR/terminay-server-\\$\\{VERSION\\}-linux-${architecture}\\.tar\\.gz"[\\s\\\\]+"\\$ASSET_DIR/terminay-server-\\$\\{VERSION\\}-linux-${architecture}\\.tar\\.gz\\.sig"`, "u"),
+      `release-note publication must verify the downloaded linux-${architecture} signature`);
+  }
 });
 
 test("release notes accept exactly the verified release asset set", () => {
@@ -295,7 +301,7 @@ test("release notes accept exactly the verified release asset set", () => {
   const step = release.slice(verification, checksums);
   assert.match(step, /ASSET_NAMES="\$\(gh release view "\$TAG" --repo "\$GH_REPO" --json assets --jq '\.assets\[\]\.[^']+' \| sort\)"/u,
     "the release asset list must be read from the selected immutable release and sorted");
-  assert.match(step, /EXPECTED_ASSET_NAMES="\$\(cat <<EOF[\s\S]*Terminay-Linux-\$\{VERSION\}\.AppImage[\s\S]*terminay-server-\$\{VERSION\}\.tgz\.sig[\s\S]*EOF\n\s*\)"/u,
+  assert.match(step, /EXPECTED_ASSET_NAMES="\$\(cat <<EOF[\s\S]*Terminay-Linux-\$\{VERSION\}\.AppImage[\s\S]*terminay-server-\$\{VERSION\}-linux-x64\.tar\.gz\.sig[\s\S]*EOF\n\s*\)"/u,
     "the expected Desktop, checksum, standalone archive, and signature names must be explicit");
   assert.match(step, /test "\$ASSET_NAMES" = "\$EXPECTED_ASSET_NAMES"/u,
     "release notes must reject stale or substituted extra attachments rather than checking only for required names");
@@ -713,21 +719,28 @@ test("release notes are not published until every immutable Desktop asset and ch
     "the release attachment list must exactly equal the reviewed set, rather than allowing extra assets beside required names");
 });
 
-test("standalone npm payload is inspected without executing unresolved package dependencies", () => {
+test("standalone archive is probed against its own manifest before checksumming", () => {
   const release = workflows.get("trigger-release.yml");
   assert.ok(release, "trigger-release.yml must exist");
 
-  const verifyStart = release.indexOf("- name: Verify extracted standalone server payload before checksumming");
+  const verifyStart = release.indexOf("- name: Probe the extracted standalone server archive");
   const checksumStart = release.indexOf("- name: Write and verify standalone server checksum");
   assert.ok(verifyStart >= 0 && checksumStart > verifyStart,
     "standalone payload verification must precede checksumming");
   const verification = release.slice(verifyStart, checksumStart);
-  assert.match(verification, /node scripts\/standalone-artifact\.mjs "\$EXTRACTED\/package" "\$MANIFEST"/u,
-    "the extracted npm package must use the non-executing artifact inspector");
-  assert.match(verification, /require\(process\.argv\[1\]\)\.package\.version/u,
-    "the inspected package version must equal the release tag version");
-  assert.doesNotMatch(verification, /dist\/cli\.js" --version/u,
-    "the raw npm payload must not execute before its declared dependencies are installed");
+  // The archive carries its own Node runtime, native addon, and dependency
+  // closure, so the probe executes the launcher it ships rather than a
+  // workspace entrypoint whose dependencies are still unresolved.
+  assert.match(verification, /node scripts\/probe-standalone-server-archive\.mjs/u,
+    "the extracted archive must be verified by the archive probe");
+  assert.match(verification, /--target "\$TARGET"/u,
+    "the probe must be bound to this leg's declared target");
+  assert.match(verification, /--revision "\$EXPECTED_COMMIT"/u,
+    "the probed manifest must name the immutable release commit");
+  assert.match(verification, /= "\$VERSION"/u,
+    "the probed archive version must equal the release tag version");
+  assert.doesNotMatch(verification, /apps\/terminay-server\/dist\/cli\.js/u,
+    "the release must not execute an unpackaged workspace entrypoint");
 });
 
 test("release notes verify downloaded GitHub Release bytes against their published checksum sidecars", () => {
