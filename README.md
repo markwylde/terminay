@@ -30,6 +30,98 @@ _Generated automatically from the OpenSpec task checklists in
 - Pair a browser over the built-in HTTPS remote host, manage devices, inspect live connections, and review audit events
 - Check for GitHub release updates from the app chrome
 
+## Install
+
+Packaged builds are published on [GitHub Releases](https://github.com/markwylde/terminay/releases).
+
+### Desktop app
+
+| Platform | Asset |
+| --- | --- |
+| macOS 12+ (arm64) | `Terminay-Mac-<version>-Installer.dmg` |
+| GNU/Linux x64 | `Terminay-Linux-<version>.AppImage` |
+
+Each carries a `.sha256` sidecar. Verify it from the directory you downloaded
+into, then install:
+
+```bash
+shasum -a 256 -c Terminay-Mac-<version>-Installer.dmg.sha256
+```
+
+On macOS, open the DMG and drag Terminay to Applications; the build is signed
+and notarized. On Linux, make the AppImage executable and run it:
+
+```bash
+chmod +x Terminay-Linux-<version>.AppImage
+./Terminay-Linux-<version>.AppImage
+```
+
+There is no published Windows build.
+
+### Server on Linux
+
+The standalone server ships as one self-contained archive per architecture. It
+bundles its own pinned Node runtime, the native PTY addon, and the UI it
+serves, so the target needs neither Node nor a compiler. Supported hosts are
+GNU/Linux x64 and arm64 with a Debian 12-compatible userspace (glibc 2.36+).
+
+```bash
+VERSION=<version>
+ARCH=x64                  # or arm64
+BASE=https://github.com/markwylde/terminay/releases/download/v$VERSION
+NAME=terminay-server-$VERSION-linux-$ARCH.tar.gz
+
+curl -fLO "$BASE/$NAME"
+curl -fLO "$BASE/$NAME.sha256"
+sha256sum -c "$NAME.sha256"
+
+sudo tar -xzf "$NAME" -C /opt
+sudo mv /opt/terminay-server-node24.15.0-linux-$ARCH /opt/terminay-server
+/opt/terminay-server/bin/terminay-server --version
+```
+
+A detached Ed25519 `.sig` is published beside each archive for operators who
+hold the release signing public key. Merges to `main` also publish a rolling
+`terminay-server-main-linux-<arch>.tar.gz` on the `main` prerelease; compare
+`revision` in the archive's `artifact-manifest.json`, not `version`, to tell
+whether that channel moved.
+
+Run it in the foreground against a data root that only the service account can
+read. The data root is the server's trust boundary:
+
+```bash
+sudo useradd --system --shell /usr/sbin/nologin terminay
+sudo install -d -o terminay -g terminay -m 700 /var/lib/terminay
+sudo -u terminay /opt/terminay-server/bin/terminay-server --data-root /var/lib/terminay
+```
+
+The server is not remotely reachable until you say so. `--expose direct` serves
+its own signaling endpoint, so no hosted relay is involved:
+
+```bash
+/opt/terminay-server/bin/terminay-server \
+  --data-root /var/lib/terminay \
+  --expose direct \
+  --http-host 0.0.0.0 --http-port 8443 \
+  --direct-origin https://box.example.test:8443
+```
+
+Ask the running server for the pairing link, open it in Terminay Desktop's
+**Add connection**, then approve the device after comparing the match code
+shown on both sides:
+
+```bash
+TERMINAY=/opt/terminay-server/bin/terminay-server
+$TERMINAY --pairing --data-root /var/lib/terminay
+$TERMINAY approvals --data-root /var/lib/terminay
+$TERMINAY approve <approval-id> --data-root /var/lib/terminay
+```
+
+The [standalone server runbook](docs/operations/standalone-server.md) covers
+every option, hosted exposure, the systemd unit, backup, and upgrades. The
+[release install and update policy](docs/operations/release-update-policy.md)
+covers channels, verification, and rollback.
+
 ## Getting started
 
 ### Prerequisites
