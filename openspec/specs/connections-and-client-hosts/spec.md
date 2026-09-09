@@ -854,6 +854,8 @@ The session origin's reconnect operation SHALL only ever yield a transport that 
 
 Browser recovery SHALL continue until it reconnects or the session is left. A recovery attempt that fails or times out SHALL schedule a further attempt with bounded backoff, and SHALL keep the reconnecting state visible while it does. A failed attempt SHALL NOT leave the session idle awaiting a manual action; an explicit retry action SHALL remain available and SHALL start the next attempt immediately.
 
+Recovery SHALL be presented as one steady reconnecting surface. Whether a session is recovering SHALL be decided by whether it has ever been connected, not by whether a connection currently exists, so no attempt after the first is presented as a cold connect. The most recent attempt's error SHALL stay visible until an attempt succeeds, and a single attempt SHALL NOT change the presented phase on its own.
+
 #### Scenario: Painted chrome is not proof of connection
 
 - **WHEN** workspace chrome is painted but no live application events arrive
@@ -888,6 +890,11 @@ Browser recovery SHALL continue until it reconnects or the session is left. A re
 
 - **WHEN** a backgrounded session is frozen, its transport dies while it sleeps, and the document is shown again
 - **THEN** liveness is proven immediately, recovery runs against the session origin's reconnect operation, and the workspace reconnects without reloading the document or reinstalling the bundle
+
+#### Scenario: Repeated failures keep one reconnecting surface
+
+- **WHEN** several recovery attempts fail in a row after the session has been connected once
+- **THEN** every attempt is presented as reconnecting, none as a cold connect, and the most recent error stays visible until an attempt succeeds
 
 ### Requirement: Connections and client hosts non-goals
 
