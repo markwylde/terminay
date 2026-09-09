@@ -245,23 +245,30 @@ Reloading a native window SHALL preserve that exact server binding. Desktop SHAL
 - **WHEN** a window bound to a remote profile is reloaded
 - **THEN** the remote profile reconnects with its OS-protected credential and a fresh channel is transferred to the new document
 
-### Requirement: Connection window loading state
+### Requirement: Connection window loading state and startup phase line
 
-A newly opened Desktop connection window SHALL remain in the normal loading state until its own local or remote server connection is ready. The loading state SHALL centre the Terminay mark in the window above a looping five-dot loading indicator, with five fixed, contrasting colours from the tab hue palette entering in sequence. Desktop packaging, browser metadata, and visible web surfaces SHALL use the same square mark geometry: a pure-black background with even horizontal and vertical padding around the white glyph. Local embedded-server startup SHALL show no text, while remote connections SHALL also show a short status message. Native window controls SHALL never overlap it.
+A newly opened Desktop connection window SHALL remain in the normal loading state until its own local or remote server connection is ready. The loading state SHALL centre the Terminay mark in the window above a looping five-dot loading indicator, with five fixed, contrasting colours from the tab hue palette entering in sequence. Desktop packaging, browser metadata, and visible web surfaces SHALL use the same square mark geometry: a pure-black background with even horizontal and vertical padding around the white glyph. Beneath the indicator the loading state SHALL show a single short line: for local embedded-server startup it names the startup phase currently running, and for remote connections it carries that connection's short status message. The line SHALL be a bounded, product-authored string with no path, identifier, host, credential, or error detail, and it SHALL be visually subordinate to the mark and indicator. Native window controls SHALL never overlap the loading state.
 
 #### Scenario: Remote loading shows a status message
 
 - **WHEN** a remote connection window is loading
 - **THEN** the mark, five-dot indicator, and a short status message are shown
 
-#### Scenario: Local loading shows no text
+#### Scenario: Local loading names the current phase
 
 - **WHEN** the Local embedded server is starting
-- **THEN** the loading state shows the mark and dots without text
+- **THEN** the mark and five-dot indicator are shown with a single short line naming the startup phase currently running
+- **AND** that line carries no path, identifier, host, credential, or error detail
+
+#### Scenario: Mark and indicator are unchanged by the line
+
+- **WHEN** the phase line is shown, changes, or is absent
+- **THEN** the mark geometry, the five dot colours, and their sequence are unaffected
+- **AND** native window controls do not overlap the loading state
 
 ### Requirement: Startup paint sequence
 
-At local Desktop startup, a self-contained native loading document SHALL paint the loading state immediately after Electron is ready, before workspace restoration, extension setup, or server initialization begins. The loading document SHALL finish painting and the native window SHALL be shown before that restoration starts. The verified server UI SHALL replace the loading document once its session is ready, and its initial document SHALL paint the same loading state before the renderer bundle evaluates, keeping the dot animation in phase through that handoff so startup never presents an empty window or a visibly restarted loader. The originating window SHALL keep its existing server binding during that handoff.
+At local Desktop startup, a self-contained native loading document SHALL paint the loading state immediately after Electron is ready, before workspace restoration, extension setup, or server initialization begins. The loading document SHALL finish painting and the native window SHALL be shown before that restoration starts. As startup phases advance, Desktop SHALL update the phase line in that document without granting it script execution or network access, and each update SHALL keep the dot animation in phase so the indicator never visibly restarts. Updating the phase line SHALL NOT delay the phase it names, and a failed update SHALL leave the previously painted loading state intact rather than blanking the window. The verified server UI SHALL replace the loading document once its session is ready, and its initial document SHALL paint the same loading state before the renderer bundle evaluates, keeping the dot animation in phase through that handoff so startup never presents an empty window or a visibly restarted loader. The originating window SHALL keep its existing server binding during that handoff.
 
 #### Scenario: No empty window at startup
 
@@ -272,6 +279,18 @@ At local Desktop startup, a self-contained native loading document SHALL paint t
 
 - **WHEN** Electron becomes ready
 - **THEN** the loading document paints and the window is shown before workspace restoration begins
+
+#### Scenario: Phase line advances in place
+
+- **WHEN** a startup phase ends and the next begins
+- **THEN** the phase line names the new phase and the dot animation stays in phase
+- **AND** the loading document still has no script execution or network access
+
+#### Scenario: Phase update fails
+
+- **WHEN** updating the phase line fails
+- **THEN** the previously painted loading state remains visible
+- **AND** the startup phase it would have named is not delayed
 
 ### Requirement: Startup failure recovery
 
@@ -616,12 +635,18 @@ Browser connection and device-enrollment prompts SHALL use the same centered, re
 
 ### Requirement: Desktop add-connection parity
 
-Desktop **Add connection** SHALL accept the same pairing URL, including hosted `app.terminay.com` links, even when that URL would otherwise open a browser. It SHALL never pair against the manager origin. Browser and Desktop flows SHALL produce the same server-side device and audit semantics. The Desktop connection host SHALL consume the pairing fragment in memory; hosted links MAY carry non-secret `s`, `hostName`, and `pairingExpiresAt` query fields while pairing secrets stay in the fragment. It SHALL persist only the exact session origin plus sanitized profile metadata with a default label from `hostName`. The fragment and complete pairing URL SHALL never be returned by the host profile API or serialized into the connection menu store. Enrollment SHALL run against the reconstructed session origin.
+Desktop **Add connection** SHALL accept the same pairing URL, including hosted `app.terminay.com` links and direct standalone links whose origin is a server's own HTTPS signaling listener, even when that URL would otherwise open a browser. It SHALL never pair against the manager origin. Browser and Desktop flows SHALL produce the same server-side device and audit semantics. The Desktop connection host SHALL consume the pairing fragment in memory; hosted and direct links MAY carry non-secret `s`, `hostName`, and `pairingExpiresAt` query fields while pairing secrets stay in the fragment. It SHALL persist only the exact session or direct origin plus sanitized profile metadata with a default label from `hostName`. The fragment and complete pairing URL SHALL never be returned by the host profile API or serialized into the connection menu store. Enrollment SHALL run against the reconstructed session origin or the direct origin over the transport-authenticated WebRTC channels; Desktop SHALL NOT send pairing material to a direct origin over HTTPS.
 
 #### Scenario: Desktop enrols against the session origin
 
 - **WHEN** Desktop accepts a hosted pairing URL
 - **THEN** enrollment runs against the reconstructed session origin and never against `app.terminay.com`
+
+#### Scenario: Desktop enrols against a direct origin
+
+- **WHEN** Desktop accepts a direct standalone pairing URL
+- **THEN** it opens signaling at that origin's `/signal`, verifies the signed transport transcript, and completes enrollment on the data channels
+- **AND** no pairing token, device key, or ticket is sent over HTTPS
 
 #### Scenario: Fragment is not exposed by the profile API
 
