@@ -303,6 +303,35 @@ For terminal fallback activity, viewing the terminal or typing into it SHALL cle
 - **WHEN** late fallback lifecycle output is produced while switching projects
 - **THEN** it belongs to the same viewing acknowledgement for the terminal that was visible at handoff
 
+### Requirement: Sessions settle before fallback finished activity
+
+A terminal session SHALL be considered settled once it has received user input or a structured command-executing or progress-busy marker. Until a session is settled, raw output, foreground busy-to-idle transitions, and a command-finished marker without a preceding command-executing marker SHALL NOT clear acknowledgement and therefore SHALL NOT produce the finished indicator. Working status SHALL still be derived from that evidence so the active indicator stays accurate during shell start-up. Bell and notification attention SHALL be unaffected by settlement. Provider-backed agent state SHALL be unaffected by settlement.
+
+#### Scenario: Shell start-up noise on an unviewed terminal
+
+- **WHEN** a new terminal prints its prompt and its start-up child processes exit without any user input
+- **THEN** the session remains acknowledged and no finished indicator appears
+
+#### Scenario: First command after typing
+
+- **WHEN** a user types a command into a new terminal and output later stops
+- **THEN** the session is settled and the finished indicator appears as usual
+
+#### Scenario: Lone finished marker at the first prompt
+
+- **WHEN** a shell integration emits a command-finished marker at its first prompt with no prior command-executing marker and no user input
+- **THEN** the session remains acknowledged
+
+#### Scenario: Structured marker settles without typing
+
+- **WHEN** a session receives a command-executing or progress-busy marker before any user input
+- **THEN** the session is settled and the following completion produces the finished indicator
+
+#### Scenario: Bell before settlement
+
+- **WHEN** an unfocused, unsettled terminal rings a bell
+- **THEN** fallback attention is still set
+
 ### Requirement: Server-side parsing pipeline
 
 Structured terminal parsing SHALL run in Terminay Server independently of client mounting, native windows, and xterm view lifecycle. The terminal signal parser SHALL parse PTY bytes with a headless xterm parser and emit typed protocol signals; signal interpreters SHALL reduce those signals to a `SemanticActivity` snapshot; the server SHALL publish ordered changes through the application protocol; and the canonical activity reducer SHALL combine fallback activity with scoped focus, acknowledgement, and recent-input facts.

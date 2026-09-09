@@ -125,12 +125,17 @@ The pinned host key SHALL be part of the device credential, not a profile label 
 
 ### Requirement: Exposure is explicit and administrator-controlled
 
-Servers SHALL NOT be remotely reachable until an administrator enables **Expose this server…**. Exposure SHALL connect the server to Terminay's authenticated WebRTC signaling service before advertising a pairing URL, generate a short-lived pairing URL and QR code, display exposure expiry, signaling and relay health, paired devices, pending approvals, and live connections, and allow the administrator to approve or deny a pending device, generate another pairing URL, revoke a device, reset server identity, or stop exposure. Hosted pairing links SHALL take the form `https://app.terminay.com/?s=<session-id>&hostName=<optional>#<secret>`, where the session subdomain remains the WebRTC peer and `hostName` is a non-secret default label from the exposing machine.
+Servers SHALL NOT be remotely reachable until an administrator enables exposure, either through **Expose this server…** on a client host or through the standalone server's explicit `--expose` configuration, which counts as the administrator's standing decision for that data root. Exposure SHALL connect the server to an authenticated WebRTC signaling endpoint before advertising a pairing URL, apply the explicit approval policy, generate a short-lived pairing URL and QR code, display exposure expiry, signaling and relay health, paired devices, pending approvals, and live connections, and allow the administrator to approve or deny a pending device, generate another pairing URL, revoke a device, reset server identity, or stop exposure. Hosted pairing links SHALL take the form `https://app.terminay.com/?s=<session-id>&hostName=<optional>#<secret>`, where the session subdomain remains the WebRTC peer and `hostName` is a non-secret default label from the exposing machine. Direct pairing links SHALL take the form `https://<direct-origin>/v1/?hostName=<optional>#<secret>`, where the direct origin is the server's own signaling listener.
 
 #### Scenario: Server is unreachable before exposure
 
-- **WHEN** an administrator has not enabled exposure
+- **WHEN** neither an administrator nor the standalone configuration has enabled exposure
 - **THEN** the server is not remotely reachable
+
+#### Scenario: Standalone exposure at startup
+
+- **WHEN** a standalone server starts with `--expose` naming one or more modes
+- **THEN** it registers each mode's pairing room and reconnect host before readiness reports a pairing URL
 
 #### Scenario: Host registers before pairing is advertised
 
