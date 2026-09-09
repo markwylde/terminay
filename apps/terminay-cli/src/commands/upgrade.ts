@@ -226,6 +226,32 @@ export async function runUpgrade(
 		);
 	}
 
+	// A server installed before the renderer directory was written has an
+	// environment naming only the local UI bundle, so it pairs a device and then
+	// serves a placeholder workspace. The symptom gives no hint that the remedy
+	// is an upgrade, so the upgrade repairs it rather than waiting to be asked.
+	const environmentBefore = await readFile(layout.environmentFile, 'utf8').catch(
+		() => '',
+	);
+	if (
+		environmentBefore.length > 0 &&
+		!/^TERMINAY_UI_RENDERER_DIRECTORY=/mu.test(environmentBefore)
+	) {
+		const uiBundle = /^TERMINAY_UI_BUNDLE=(.*)$/mu.exec(environmentBefore)?.[1];
+		if (uiBundle !== undefined && uiBundle.length > 0) {
+			await writeFile(
+				layout.environmentFile,
+				withEnvironmentValue(
+					environmentBefore,
+					'TERMINAY_UI_RENDERER_DIRECTORY',
+					uiBundle,
+				),
+				{ mode: 0o640 },
+			);
+			write('Added the workspace UI directory the server reads.');
+		}
+	}
+
 	// An advertised address given here changes how the server is reached, which
 	// lives in the environment file rather than in the version that was staged.
 	// Absent, the recorded value carries forward with the rest of the record.

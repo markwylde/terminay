@@ -19,7 +19,14 @@ test('the smoke is opt-in so an ordinary run never needs a privileged container'
 test('the smoke drives the whole documented lifecycle', () => {
 	assert.deepEqual(
 		[...SMOKE_STEPS],
-		['install', 'status', 'upgrade', 'qr-code --no-wait', 'uninstall'],
+		[
+			'install',
+			'workspace UI',
+			'status',
+			'upgrade',
+			'qr-code --no-wait',
+			'uninstall',
+		],
 	);
 	for (const step of SMOKE_STEPS) {
 		assert.ok(

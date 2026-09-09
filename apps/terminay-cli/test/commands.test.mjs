@@ -1080,3 +1080,132 @@ test('status reports the advertised address and still names nothing private', as
 		},
 	);
 });
+
+test('upgrade repairs an install whose environment predates the renderer directory', async () => {
+	await withMachine(
+		{
+			releases: [
+				{
+					tag: 'v4.1.0',
+					version: '4.1.0',
+					revision: 'a'.repeat(40),
+					publishedAt: '2026-09-01T00:00:00Z',
+				},
+				{
+					tag: 'v4.1.1',
+					version: '4.1.1',
+					revision: 'b'.repeat(40),
+					latest: true,
+					publishedAt: '2026-09-08T00:00:00Z',
+				},
+			],
+		},
+		async ({ health, fake, layout, installDependencies, write, lines }) => {
+			await runInstall(
+				'v4.1.0',
+				{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+				installDependencies,
+			);
+			await pointHealthAtFixture(layout, health.port);
+
+			// An environment written before this change: the local UI bundle only.
+			// Such a server pairs a device and then serves a placeholder, and the
+			// symptom gives no hint that an upgrade is the remedy.
+			const original = await readFile(layout.environmentFile, 'utf8');
+			await writeFile(
+				layout.environmentFile,
+				original
+					.split('\n')
+					.filter((line) => !line.startsWith('TERMINAY_UI_RENDERER_DIRECTORY='))
+					.join('\n'),
+			);
+			assert.equal(
+				parseEnvironmentFile(await readFile(layout.environmentFile, 'utf8'))
+					.TERMINAY_UI_RENDERER_DIRECTORY,
+				undefined,
+			);
+
+			lines.length = 0;
+			await runUpgrade(
+				undefined,
+				OPTIONS,
+				{
+					layout,
+					record: await readInstallRecord(layout),
+					systemd: createSystemd({ scope: 'user', env: fake.env() }),
+					write,
+				},
+				{
+					apiBase: installDependencies.apiBase,
+					webBase: installDependencies.webBase,
+					architecture: 'x64',
+					releasePublicKeyPem: installDependencies.releasePublicKeyPem,
+					readinessTimeoutMs: 5_000,
+				},
+			);
+
+			const repaired = parseEnvironmentFile(
+				await readFile(layout.environmentFile, 'utf8'),
+			);
+			assert.equal(
+				repaired.TERMINAY_UI_RENDERER_DIRECTORY,
+				repaired.TERMINAY_UI_BUNDLE,
+				'the upgrade must name the workspace UI the server reads',
+			);
+			assert.match(lines.join('\n'), /workspace UI directory/u);
+		},
+	);
+});
+
+test('upgrade leaves an already-correct environment alone', async () => {
+	await withMachine(
+		{
+			releases: [
+				{
+					tag: 'v4.1.0',
+					version: '4.1.0',
+					revision: 'a'.repeat(40),
+					publishedAt: '2026-09-01T00:00:00Z',
+				},
+				{
+					tag: 'v4.1.1',
+					version: '4.1.1',
+					revision: 'b'.repeat(40),
+					latest: true,
+					publishedAt: '2026-09-08T00:00:00Z',
+				},
+			],
+		},
+		async ({ health, fake, layout, installDependencies, write, lines }) => {
+			await runInstall(
+				'v4.1.0',
+				{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+				installDependencies,
+			);
+			await pointHealthAtFixture(layout, health.port);
+			const before = await readFile(layout.environmentFile, 'utf8');
+
+			lines.length = 0;
+			await runUpgrade(
+				undefined,
+				OPTIONS,
+				{
+					layout,
+					record: await readInstallRecord(layout),
+					systemd: createSystemd({ scope: 'user', env: fake.env() }),
+					write,
+				},
+				{
+					apiBase: installDependencies.apiBase,
+					webBase: installDependencies.webBase,
+					architecture: 'x64',
+					releasePublicKeyPem: installDependencies.releasePublicKeyPem,
+					readinessTimeoutMs: 5_000,
+				},
+			);
+
+			assert.equal(await readFile(layout.environmentFile, 'utf8'), before);
+			assert.doesNotMatch(lines.join('\n'), /workspace UI directory/u);
+		},
+	);
+});
