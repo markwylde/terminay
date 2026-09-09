@@ -113,7 +113,10 @@ virtual machine, and `--network host` does not change that, because the host is
 the VM. Signalling succeeds and the connection then never forms.
 
 `--advertise-address` names an address the client can reach, and offers it as an
-additional connection candidate:
+additional connection candidate. Use this machine's routable address — the one
+`ipconfig getifaddr en0` or `hostname -I` prints — not a loopback address: a
+browser need not send connectivity checks to a loopback candidate and Firefox
+does not, so the CLI refuses one.
 
 ```bash
 docker run -d --name terminay \
@@ -125,7 +128,7 @@ docker run -d --name terminay \
 
 docker exec -it terminay bash
 npx terminay daemon install --system --run-as root \
-  --advertise-address 127.0.0.1:51000
+  --advertise-address 192.168.1.20:51000
 npx terminay daemon qr-code
 ```
 

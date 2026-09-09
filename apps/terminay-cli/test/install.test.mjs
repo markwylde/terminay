@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import {
 	chmod,
 	lstat,
@@ -13,6 +14,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
 	activate,
@@ -385,4 +387,43 @@ test('an archive with no manifest is refused', async () => {
 				/artifact-manifest\.json/u.test(error.message),
 		);
 	});
+});
+
+test('a refused advertised address leaves the machine untouched', async () => {
+	// The refusal happens while the command line is read, before the installer
+	// resolves a release or writes a unit. A half-configured machine is worse
+	// than no machine, so the ordering is worth an assertion of its own.
+	const home = await mkdtemp(join(tmpdir(), 'terminay-refusal-'));
+	try {
+		const result = spawnSync(
+			process.execPath,
+			[
+				fileURLToPath(new URL('../dist/cli.js', import.meta.url)),
+				'daemon',
+				'install',
+				'--user',
+				'--run-as',
+				'ada',
+				'--advertise-address',
+				'127.0.0.1:51000',
+			],
+			{
+				encoding: 'utf8',
+				env: {
+					...process.env,
+					HOME: home,
+					XDG_CONFIG_HOME: join(home, '.config'),
+				},
+			},
+		);
+		assert.notEqual(result.status, 0);
+		assert.match(`${result.stdout}${result.stderr}`, /loopback/u);
+		assert.deepEqual(
+			await readdir(home),
+			[],
+			'a refused command must write nothing',
+		);
+	} finally {
+		await rm(home, { recursive: true, force: true });
+	}
 });
