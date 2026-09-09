@@ -19,6 +19,10 @@ export type ExtensionHostTransition =
 	| 'ready'
 	/** The child process ended, whatever the reason. */
 	| 'child-exited'
+	/** A frame could not be written because the child's channel had closed. */
+	| 'channel-closed'
+	/** The host killed the child itself, rather than observing it exit. */
+	| 'child-terminated'
 	/** A failure was counted against the crash window. */
 	| 'failed'
 	/** A restart was scheduled for `restartAt`. */
@@ -60,6 +64,9 @@ export interface ExtensionHostDiagnostic {
 	readonly error?: ExtensionErrorDetail;
 	/** True when a stop was asked for rather than suffered. */
 	readonly deliberate?: boolean;
+	/** True for a failure discovered after this incarnation's child had gone,
+	 * recorded for the reader but not counted again against the threshold. */
+	readonly afterChildGone?: boolean;
 }
 
 export type ExtensionHostDiagnosticListener = (
