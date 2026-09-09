@@ -29,11 +29,20 @@ import {
 } from '@terminay/extension-api';
 import { validateExtensionLaunchDescriptor } from './descriptor.js';
 import {
+	type ExtensionErrorDetail,
+	extensionErrorDetail,
+	type ExtensionHostDiagnostic,
+	type ExtensionHostDiagnosticListener,
+	type ExtensionHostTransition,
+} from './diagnostics.js';
+import {
 	type ChildFrame,
 	EXTENSION_HOST_PROTOCOL_VERSION,
+	type ExtensionFatalErrorReport,
 	frameByteLength,
 	type HostFrame,
 	isChildFrame,
+	isExtensionFatalErrorReport,
 } from './protocol.js';
 import {
 	ExtensionProviderVault,
@@ -77,6 +86,11 @@ export interface ExtensionHostOptions {
 	readonly agents?: ExtensionAgentBroker;
 	readonly dependencies?: ExtensionDependencyRouter;
 	readonly providerVault?: ExtensionProviderVault;
+	/** Where lifecycle records go. Absent means they are not recorded. */
+	readonly onDiagnostic?: ExtensionHostDiagnosticListener;
+	/** Observed after every state transition, so a supervisor can act on a
+	 * failure without polling. Observers cannot change the transition. */
+	readonly onStateChange?: (status: ExtensionHostStatus) => void;
 }
 
 const DEFAULTS = Object.freeze({
@@ -163,6 +177,8 @@ export class ExtensionHost {
 		ExtensionAgentTerminalContext
 	>();
 	private agentPublicationsInFlight = 0;
+	/** The child's account of the error that is ending it, if it sent one. */
+	private fatalReport: ExtensionFatalErrorReport | undefined;
 	private readonly limits: Required<ExtensionHostLimits>;
 	private readonly now: () => number;
 
@@ -211,11 +227,12 @@ export class ExtensionHost {
 			throw new Error('extension restart backoff is active');
 		this.descriptor = await validateExtensionLaunchDescriptor(descriptor);
 		this.stopping = false;
-		this.state = {
+		this.fatalReport = undefined;
+		this.setState({
 			extensionId: this.extensionId,
 			state: 'starting',
 			consecutiveCrashes: this.state.consecutiveCrashes,
-		};
+		});
 		const childEntrypoint =
 			this.options.childEntrypoint ??
 			fileURLToPath(new URL('./child.js', import.meta.url));
@@ -228,6 +245,9 @@ export class ExtensionHost {
 			serialization: 'json',
 		});
 		this.child = child;
+		this.recordDiagnostic('spawned', {
+			consecutiveFailures: this.state.consecutiveCrashes,
+		});
 		child.on('message', (message) => this.receive(message));
 		child.once('error', (error) => {
 			if (this.child === child) this.childFailed(error);
@@ -269,11 +289,12 @@ export class ExtensionHost {
 				this.providers,
 				this.descriptor,
 			);
-			this.state = {
+			this.setState({
 				extensionId: this.extensionId,
 				state: 'running',
 				consecutiveCrashes: 0,
-			};
+			});
+			this.recordDiagnostic('ready', { consecutiveFailures: 0 });
 		} catch (error) {
 			this.terminateChild();
 			this.recordFailure(
@@ -353,11 +374,15 @@ export class ExtensionHost {
 		this.stopping = true;
 		const child = this.child;
 		if (child === undefined) {
-			this.state = {
-				extensionId: this.extensionId,
-				state: 'stopped',
-				consecutiveCrashes: this.state.consecutiveCrashes,
-			};
+			// Stopping something that is already quarantined must not hide that:
+			// the state is what tells a person why it is not running, and only an
+			// explicit restart clears it.
+			if (this.state.state !== 'quarantined')
+				this.setState({
+					extensionId: this.extensionId,
+					state: 'stopped',
+					consecutiveCrashes: this.state.consecutiveCrashes,
+				});
 			return;
 		}
 		await this.drainAgentObservers('extension-stopped').catch(() => undefined);
@@ -369,11 +394,15 @@ export class ExtensionHost {
 		}
 		this.terminateChild();
 		this.rejectPending(new Error('extension host stopped'));
-		this.state = {
+		this.setState({
 			extensionId: this.extensionId,
 			state: 'stopped',
 			consecutiveCrashes: this.state.consecutiveCrashes,
-		};
+		});
+		this.recordDiagnostic('stopped', {
+			deliberate: true,
+			consecutiveFailures: this.state.consecutiveCrashes,
+		});
 		this.providers = Object.freeze([]);
 		this.agentProviders = Object.freeze([]);
 		this.dependencyProviders.clear();
@@ -446,15 +475,25 @@ export class ExtensionHost {
 		}
 	}
 
+	/**
+	 * Return a quarantined host to a startable state.
+	 *
+	 * Quarantine exists to stop a crash loop, so nothing clears it on its own.
+	 * An explicit restart does, and it resets the crash window with it: the
+	 * person asking is the evidence that the situation has changed.
+	 */
 	clearQuarantine(): void {
 		if (this.child !== undefined)
 			throw new Error('cannot clear quarantine while extension is running');
+		const wasQuarantined = this.state.state === 'quarantined';
 		this.crashTimes.length = 0;
-		this.state = {
+		this.setState({
 			extensionId: this.extensionId,
 			state: 'stopped',
 			consecutiveCrashes: 0,
-		};
+		});
+		if (wasQuarantined)
+			this.recordDiagnostic('quarantine-cleared', { consecutiveFailures: 0 });
 	}
 
 	/** Admit exactly one server-issued terminal incarnation to one registered
@@ -622,6 +661,13 @@ export class ExtensionHost {
 		}
 		if (message.kind === 'agent.provider.disposed') {
 			void this.handleAgentProviderDisposed(message);
+			return;
+		}
+		if (message.kind === 'fatal') {
+			// The child is already exiting. Hold its account until the exit that
+			// follows records it; there is no pending call to settle.
+			if (isExtensionFatalErrorReport(message.payload))
+				this.fatalReport = message.payload;
 			return;
 		}
 		if (
@@ -1252,6 +1298,24 @@ export class ExtensionHost {
 	}
 	private childExited(code: number | null, signal: string | null): void {
 		this.child = undefined;
+		// Recorded whatever the reason, and before the failure branch below, so a
+		// child that died without reporting still leaves its exit status behind.
+		this.recordDiagnostic('child-exited', {
+			exitCode: code,
+			signal,
+			deliberate: this.stopping,
+			...(this.fatalReport === undefined
+				? {}
+				: {
+						error: {
+							name: this.fatalReport.name,
+							message: this.fatalReport.message,
+							...(this.fatalReport.stack === undefined
+								? {}
+								: { stack: this.fatalReport.stack }),
+						},
+					}),
+		});
 		this.rejectPending(new Error('extension child exited'));
 		for (const controller of this.activeBrokerCalls.values())
 			controller.abort();
@@ -1297,35 +1361,100 @@ export class ExtensionHost {
 		this.rejectPending(error);
 		this.providers = Object.freeze([]);
 		this.agentProviders = Object.freeze([]);
+		// The child's own report is the only account of what actually threw; the
+		// host-side error is usually just the exit that followed it.
+		const detail = this.reportedFatalDetail() ?? extensionErrorDetail(error);
+		this.recordDiagnostic('failed', {
+			consecutiveFailures: crashes,
+			error: detail,
+		});
 		if (crashes >= this.limits.maxCrashesInWindow) {
-			this.state = {
+			this.setState({
 				extensionId: this.extensionId,
 				state: 'quarantined',
 				consecutiveCrashes: crashes,
 				failure: safeFailure(error),
-			};
+			});
+			this.recordDiagnostic('quarantined', {
+				consecutiveFailures: crashes,
+				error: detail,
+			});
 			return;
 		}
 		const backoff = Math.min(
 			this.limits.initialBackoffMs * 2 ** Math.max(0, crashes - 1),
 			this.limits.maxBackoffMs,
 		);
-		this.state = {
+		const restartAt = now + backoff;
+		this.setState({
 			extensionId: this.extensionId,
 			state: 'failed',
 			consecutiveCrashes: crashes,
-			restartAt: now + backoff,
+			restartAt,
 			failure: safeFailure(error),
+		});
+		this.recordDiagnostic('restart-scheduled', {
+			consecutiveFailures: crashes,
+			restartAt,
+		});
+	}
+
+	/** Publish state once, so no transition can reach a supervisor unobserved. */
+	private setState(next: ExtensionHostStatus): void {
+		this.state = next;
+		try {
+			this.options.onStateChange?.(this.status());
+		} catch {
+			/* an observer must never change a lifecycle transition */
+		}
+	}
+
+	private recordDiagnostic(
+		transition: ExtensionHostTransition,
+		detail: Omit<ExtensionHostDiagnostic, 'extensionId' | 'transition' | 'at'>,
+	): void {
+		const listener = this.options.onDiagnostic;
+		if (listener === undefined) return;
+		try {
+			listener({
+				extensionId: this.extensionId,
+				transition,
+				at: this.now(),
+				...detail,
+			});
+		} catch {
+			/* a diagnostic sink must never break the host it observes */
+		}
+	}
+
+	/** The child's fatal report, consumed once by the failure it explains. */
+	private reportedFatalDetail(): ExtensionErrorDetail | undefined {
+		const report = this.fatalReport;
+		if (report === undefined) return undefined;
+		this.fatalReport = undefined;
+		return {
+			name: report.name,
+			message: report.message,
+			...(report.stack === undefined ? {} : { stack: report.stack }),
 		};
 	}
 
 	private terminateChild(): void {
 		const child = this.child;
 		this.child = undefined;
-		if (child !== undefined) {
-			child.removeAllListeners();
-			child.kill('SIGKILL');
-		}
+		if (child === undefined) return;
+		// Termination detaches the exit listener, so this is the only chance to
+		// record that the child stopped running.
+		this.recordDiagnostic('child-exited', {
+			exitCode: null,
+			signal: 'SIGKILL',
+			deliberate: this.stopping,
+			...(this.fatalReport === undefined
+				? {}
+				: { error: this.reportedFatalDetail() }),
+		});
+		child.removeAllListeners();
+		child.kill('SIGKILL');
 	}
 	private rejectPending(error: Error): void {
 		for (const id of [...this.pending.keys()])

@@ -11,12 +11,23 @@ import type {
 	ProjectEnvironmentRouter,
 } from '../projectEnvironment/router.js';
 import { THIS_SERVER_ENVIRONMENT_ID } from '../workspace.js';
+import type {
+	AgentObservationDiagnosticListener,
+	AgentObservationTransition,
+	ExtensionErrorDetail,
+} from '../extensions/diagnostics.js';
+import { extensionErrorDetail } from '../extensions/diagnostics.js';
 import { AgentStatusService } from './agentService.js';
 import type { ActivitySessionIdentity } from './service.js';
 
-/** Bounded, metadata-only evidence that a matched provider could not begin
- * observing a terminal. Hosts can send this to their local diagnostics sink;
- * raw extension errors and provider data deliberately stay private. */
+/**
+ * Evidence that a matched provider could not begin observing a terminal.
+ *
+ * The provider id, opaque terminal identity, and failure class say which
+ * terminal lost observation; the error says why, so the first failure is
+ * enough to find the fault. It carries no journal record, prompt, tool input
+ * or result, and no path belonging to the observed project.
+ */
 export interface ExtensionAgentAdmissionFailure {
 	readonly kind: 'agent-admission-failed';
 	readonly providerId: string;
@@ -28,8 +39,10 @@ export interface ExtensionAgentAdmissionFailure {
 		| 'unavailable'
 		| 'host-failed'
 		| 'failed';
-	/** Host-local stderr diagnostic. Not a provider payload. */
+	/** One-line summary of the error. */
 	readonly reason?: string;
+	/** The reported error itself, recorded as the provider raised it. */
+	readonly error?: ExtensionErrorDetail;
 }
 
 export interface ExtensionAgentRuntimeRegistryOptions {
@@ -59,6 +72,10 @@ export interface ExtensionAgentRuntimeRegistryOptions {
 	readonly onAdmissionFailure?: (
 		failure: ExtensionAgentAdmissionFailure,
 	) => void;
+	/** Every observation outcome for a terminal, not only the failures. A
+	 * terminal that never shows an agent is otherwise indistinguishable from
+	 * one that was never matched at all. */
+	readonly onObservation?: AgentObservationDiagnosticListener;
 	readonly reobserveDebounceMs?: number;
 	/** Host-private, terminal-scoped topology probe. It may inspect only the
 	 * admitted terminal's descendants/open-file identity and must not expose
@@ -223,6 +240,12 @@ export class ExtensionAgentRuntimeRegistry {
 			terminal.incarnation += 1;
 			terminal.notBoundRetries = 0;
 			terminal.unboundTopologyReobserve = false;
+			this.recordObservation(
+				terminal.identity,
+				previous.providerId,
+				'released',
+				{ reason: 'shell-foreground' },
+			);
 			try {
 				this.options.agents.releaseExtensionProvider(
 					terminal.identity,
@@ -327,6 +350,12 @@ export class ExtensionAgentRuntimeRegistry {
 			terminal.incarnation += 1;
 			terminal.notBoundRetries = 0;
 			terminal.unboundTopologyReobserve = false;
+			this.recordObservation(
+				terminal.identity,
+				context.providerId,
+				'released',
+				{ reason: 'provider-disabled' },
+			);
 			try {
 				this.options.agents.releaseExtensionProvider(
 					terminal.identity,
@@ -407,6 +436,7 @@ export class ExtensionAgentRuntimeRegistry {
 		});
 		terminal.context = context;
 		terminal.lastProcessName = processName;
+		this.recordObservation(identity, contribution.id, 'matched');
 		const observationCapabilities =
 			context.projectEnvironmentId === THIS_SERVER_ENVIRONMENT_ID
 				? contribution.requiredEnvironmentCapabilities.filter((capability) =>
@@ -417,7 +447,13 @@ export class ExtensionAgentRuntimeRegistry {
 			.admitAgentTerminal({ context, observationCapabilities })
 			.then((result) => {
 				if (terminal.context !== context) return;
-				if (admissionState(result) === 'not-bound') {
+				const state = admissionState(result);
+				this.recordObservation(identity, contribution.id, 'admitted', {
+					...(state === undefined ? {} : { reason: state }),
+				});
+				if (state === 'bound')
+					this.recordObservation(identity, contribution.id, 'bound');
+				if (state === 'not-bound') {
 					const next = this.nextDiscoveryProvider(
 						terminal,
 						contribution,
@@ -525,6 +561,12 @@ export class ExtensionAgentRuntimeRegistry {
 		if (terminal.context !== previous && terminal.context !== undefined) return;
 		if (terminal.context === previous) {
 			terminal.context = undefined;
+			this.recordObservation(
+				terminal.identity,
+				previous.providerId,
+				'released',
+				{ reason: 'terminal-replaced' },
+			);
 			try {
 				this.options.agents.releaseExtensionProvider(
 					terminal.identity,
@@ -583,6 +625,9 @@ export class ExtensionAgentRuntimeRegistry {
 				.catch(() => undefined);
 			if (terminal.context === context) {
 				terminal.context = undefined;
+				this.recordObservation(terminal.identity, providerId, 'released', {
+					reason,
+				});
 				try {
 					this.options.agents.releaseExtensionProvider(
 						terminal.identity,
@@ -607,6 +652,9 @@ export class ExtensionAgentRuntimeRegistry {
 		if (terminal?.context === undefined) return false;
 		this.clearTimers(terminal);
 		terminal.context = undefined;
+		this.recordObservation(terminal.identity, providerId, 'released', {
+			reason: 'context-retired',
+		});
 		try {
 			this.options.agents.releaseExtensionProvider(
 				terminal.identity,
@@ -840,6 +888,8 @@ export class ExtensionAgentRuntimeRegistry {
 		providerId: string,
 		error: unknown,
 	): void {
+		const failureClass = classifyAdmissionFailure(error);
+		const detail = extensionErrorDetail(error);
 		const failure: ExtensionAgentAdmissionFailure = Object.freeze({
 			kind: 'agent-admission-failed',
 			providerId: providerId.slice(0, 256),
@@ -848,13 +898,56 @@ export class ExtensionAgentRuntimeRegistry {
 				projectId: identity.projectId.slice(0, 256),
 				sessionId: identity.sessionId.slice(0, 256),
 			}),
-			failureClass: classifyAdmissionFailure(error),
+			failureClass,
 			...(admissionReason(error) === undefined
 				? {}
 				: { reason: admissionReason(error) }),
+			error: detail,
 		});
 		try {
 			this.options.onAdmissionFailure?.(failure);
+		} catch {
+			/* diagnostics are best effort */
+		}
+		this.recordObservation(identity, providerId, 'admission-failed', {
+			failureClass,
+			...(admissionReason(error) === undefined
+				? {}
+				: { reason: admissionReason(error) }),
+			error: detail,
+		});
+	}
+
+	/**
+	 * One record per observation outcome for one terminal.
+	 *
+	 * Terminal identity is the opaque server/project/session triple; nothing
+	 * the provider read is ever included.
+	 */
+	private recordObservation(
+		identity: ActivitySessionIdentity,
+		providerId: string,
+		transition: AgentObservationTransition,
+		detail: {
+			failureClass?: string;
+			reason?: string;
+			error?: ExtensionErrorDetail;
+		} = {},
+	): void {
+		const listener = this.options.onObservation;
+		if (listener === undefined) return;
+		try {
+			listener({
+				providerId: providerId.slice(0, 256),
+				terminal: {
+					serverId: identity.serverId.slice(0, 256),
+					projectId: identity.projectId.slice(0, 256),
+					sessionId: identity.sessionId.slice(0, 256),
+				},
+				transition,
+				at: Date.now(),
+				...detail,
+			});
 		} catch {
 			/* diagnostics are best effort */
 		}
