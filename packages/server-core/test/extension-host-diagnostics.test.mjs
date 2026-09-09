@@ -161,7 +161,82 @@ test("a deliberate stop is recorded as deliberate", async () => {
   const stopped = diagnostics.first("stopped");
   assert.equal(stopped.deliberate, true);
   assert.equal(diagnostics.first("failed"), undefined, "a deliberate stop is not a failure");
-  assert.equal(diagnostics.first("child-exited").deliberate, true);
+  // The host killed this child, so that is what is recorded: it never observed
+  // an exit status and does not invent one.
+  assert.equal(diagnostics.first("child-terminated").deliberate, true);
+  assert.equal(diagnostics.first("child-exited"), undefined);
+});
+
+test("one death counts once however many paths discover it", async () => {
+  // A child that dies during activation is discovered by its exit event and
+  // again by the activation that was waiting on it. Both are the same death.
+  const descriptor = await fixture("example.diesatonce", `
+    process.exit(3);
+    export function activate() { return { methods: {} }; }
+  `);
+  const diagnostics = collector();
+  const host = new ExtensionHost(descriptor.extensionId, {
+    broker: { async request() {} },
+    onDiagnostic: diagnostics.onDiagnostic,
+    limits: { maxCrashesInWindow: 2, startupTimeoutMs: 2_000 },
+  });
+
+  await assert.rejects(host.start(descriptor));
+  assert.equal(host.status().consecutiveCrashes, 1, "one death, one crash");
+  assert.notEqual(host.status().state, "quarantined", "and it does not reach the threshold on its own");
+  assert.equal(
+    diagnostics.of("failed").filter((record) => record.afterChildGone !== true).length,
+    1,
+    "exactly one failure is counted; any later discovery is recorded but not counted",
+  );
+});
+
+test("repeated deaths still reach quarantine", async () => {
+  const descriptor = await fixture("example.repeats", `
+    export function activate() {
+      setTimeout(() => { throw new Error("crash on bind"); }, 5);
+      return { methods: {} };
+    }
+  `);
+  const diagnostics = collector();
+  const host = new ExtensionHost(descriptor.extensionId, {
+    broker: { async request() {} },
+    onDiagnostic: diagnostics.onDiagnostic,
+    limits: { maxCrashesInWindow: 2, initialBackoffMs: 1 },
+  });
+
+  await host.start(descriptor);
+  await waitFor(() => diagnostics.of("failed").length >= 1, "first death missing");
+  await host.start(descriptor);
+  await waitFor(() => host.status().state === "quarantined", "second death did not quarantine");
+  assert.equal(host.status().consecutiveCrashes, 2, "each death counts once, and two is the threshold");
+});
+
+test("the exit status the system reported survives host teardown", async () => {
+  // The host's own kill must not overwrite an exit it already observed: that
+  // status is the only evidence of how the child actually ended.
+  const descriptor = await fixture("example.exitcode", `
+    export function activate() {
+      setTimeout(() => { process.exit(42); }, 10);
+      return { methods: {} };
+    }
+  `);
+  const diagnostics = collector();
+  const host = new ExtensionHost(descriptor.extensionId, {
+    broker: { async request() {} },
+    onDiagnostic: diagnostics.onDiagnostic,
+  });
+  await host.start(descriptor);
+  await waitFor(() => diagnostics.first("child-exited") !== undefined, "no exit was recorded");
+
+  assert.equal(diagnostics.first("child-exited").exitCode, 42, "the real exit code is kept");
+  await host.stop();
+  assert.equal(diagnostics.of("child-exited").length, 1, "one exit record per child");
+  assert.equal(
+    diagnostics.of("child-terminated").length,
+    0,
+    "a child already known to have exited is not re-recorded as a host kill",
+  );
 });
 
 test("state changes are observable without polling", async () => {
