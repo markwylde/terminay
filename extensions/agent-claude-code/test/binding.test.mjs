@@ -182,16 +182,150 @@ test('a process the environment reports no pid for binds nothing', async () => {
 	assert.equal(result.state, 'not-bound');
 });
 
-test('a journal in another project directory is not admitted', async () => {
-	const elsewhere = `/home/test/.claude/projects/-other/${sessionId}.jsonl`;
+test('a journal in another project directory for another session is not admitted', async () => {
+	// The directory a journal sits in is not what disqualifies it — a resumed
+	// conversation is filed under the directory it started in. What disqualifies
+	// this one is that it belongs to a session this process does not name.
+	const elsewhere = `/home/test/.claude/projects/-other/${other}.jsonl`;
 	const result = await observe(
 		claudeTerminal({
 			sessionId,
-			extraFiles: { [elsewhere]: [header(sessionId)] },
+			extraFiles: { [elsewhere]: [header(other)] },
 		}),
 	);
 	assert.equal(result.state, 'not-bound');
 	assert.deepEqual(result.events, []);
+});
+
+test('a conversation resumed away from the directory it started in binds', async () => {
+	// `claude --resume <id>` in another directory keeps writing the journal
+	// under the directory the conversation originated in, so the path derived
+	// from this process's cwd has nothing in it.
+	const origin = `/home/test/.claude/projects/-origin/${sessionId}.jsonl`;
+	const result = await observe(
+		claudeTerminal({
+			sessionId,
+			extraFiles: { [origin]: titled(sessionId, 'Resumed elsewhere') },
+		}),
+	);
+	assert.equal(result.sessionId, sessionId);
+	assert.deepEqual(
+		result.events.map((event) => event.kind),
+		['session.started', 'agent.metadata'],
+	);
+});
+
+test('the journal beside the working directory answers before any other', async () => {
+	// Two directories hold a journal for this id; the derived one is the answer,
+	// so the ambiguity rule never comes into it.
+	const elsewhere = `/home/test/.claude/projects/-origin/${sessionId}.jsonl`;
+	const result = await observe(
+		claudeTerminal({
+			sessionId,
+			journals: { [sessionId]: titled(sessionId, 'Beside the cwd') },
+			extraFiles: { [elsewhere]: titled(sessionId, 'Somewhere else') },
+		}),
+	);
+	assert.equal(result.sessionId, sessionId);
+	assert.deepEqual(
+		result.events.filter((event) => event.kind === 'agent.metadata'),
+		[{ kind: 'agent.metadata', title: 'Beside the cwd' }],
+	);
+});
+
+test('two directories claiming one session id bind nothing', async () => {
+	const first = `/home/test/.claude/projects/-one/${sessionId}.jsonl`;
+	const second = `/home/test/.claude/projects/-two/${sessionId}.jsonl`;
+	const result = await observe(
+		claudeTerminal({
+			sessionId,
+			extraFiles: {
+				[first]: [header(sessionId)],
+				[second]: [header(sessionId)],
+			},
+		}),
+	);
+	assert.equal(result.state, 'not-bound');
+	assert.deepEqual(result.events, []);
+});
+
+test('hundreds of unrelated journals do not crowd out the one being resolved', async () => {
+	// The lookup declares the filename it wants, so the limits are charged
+	// against that journal alone. Unrelated journals — of any number or size —
+	// are never considered, so they cannot exhaust the budget before the walk
+	// reaches the target. Sorted last, so an unfiltered walk would miss it.
+	const crowded = {};
+	for (let index = 0; index < 300; index += 1) {
+		const id = `0000${String(index).padStart(4, '0')}-0000-4000-8000-00000000000${index % 10}`;
+		crowded[`/home/test/.claude/projects/-crowd/${id}.jsonl`] = [header(id)];
+	}
+	crowded[`/home/test/.claude/projects/-zzz/${sessionId}.jsonl`] = titled(
+		sessionId,
+		'Found past the crowd',
+	);
+	const result = await observe(
+		claudeTerminal({ sessionId, extraFiles: crowded }),
+	);
+	assert.equal(result.sessionId, sessionId);
+	assert.deepEqual(
+		result.events.filter((event) => event.kind === 'agent.metadata'),
+		[{ kind: 'agent.metadata', title: 'Found past the crowd' }],
+	);
+});
+
+test('a listing stopped by a host limit still binds nothing', async () => {
+	// Only same-named journals are charged now, so reaching a limit takes many
+	// directories all claiming this one session. The snapshot is evidence of
+	// nothing either way, and discovery retries remain free to try again.
+	const claimants = {};
+	for (let index = 0; index < 300; index += 1) {
+		claimants[
+			`/home/test/.claude/projects/-claim${String(index).padStart(3, '0')}/${sessionId}.jsonl`
+		] = [header(sessionId)];
+	}
+	const result = await observe(
+		claudeTerminal({ sessionId, extraFiles: claimants }),
+	);
+	assert.equal(result.state, 'not-bound');
+	assert.deepEqual(result.events, []);
+});
+
+test('a journal found elsewhere still has to name the session itself', async () => {
+	// The filename is a lookup key, never the evidence.
+	const mislabelled = `/home/test/.claude/projects/-origin/${sessionId}.jsonl`;
+	const result = await observe(
+		claudeTerminal({
+			sessionId,
+			extraFiles: { [mislabelled]: [header(other)] },
+		}),
+	);
+	assert.equal(result.state, 'not-bound');
+	assert.deepEqual(result.events, []);
+});
+
+test('neither age nor recency selects between journals in other directories', async () => {
+	// An older journal and a newer one sit beside the target under other
+	// directories. Ordering takes no part: only the named id is resolved.
+	const older = `/home/test/.claude/projects/-aaa/${other}.jsonl`;
+	const newer = `/home/test/.claude/projects/-zzz/bf0b34e1-4afc-4b93-8389-80caa0b589a5.jsonl`;
+	const result = await observe(
+		claudeTerminal({
+			sessionId,
+			extraFiles: {
+				[older]: [header(other)],
+				[newer]: [header('bf0b34e1-4afc-4b93-8389-80caa0b589a5')],
+				[`/home/test/.claude/projects/-origin/${sessionId}.jsonl`]: titled(
+					sessionId,
+					'The named session',
+				),
+			},
+		}),
+	);
+	assert.equal(result.sessionId, sessionId);
+	assert.deepEqual(
+		result.events.filter((event) => event.kind === 'agent.metadata'),
+		[{ kind: 'agent.metadata', title: 'The named session' }],
+	);
 });
 
 test('a journal written after a first unbound observation binds on the next one', async () => {
