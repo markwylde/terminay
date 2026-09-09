@@ -148,15 +148,63 @@ test('remaining install flags reach the options', () => {
 
 test('install and upgrade accept an advertised address', () => {
 	assert.equal(
-		parse('daemon', 'install', '--advertise-address', '127.0.0.1:51000').options
-			.advertiseAddress,
-		'127.0.0.1:51000',
+		parse('daemon', 'install', '--advertise-address', '192.168.1.20:51000')
+			.options.advertiseAddress,
+		'192.168.1.20:51000',
 	);
 	assert.equal(
-		parse('daemon', 'upgrade', '--advertise-address=[::1]:51000').options
-			.advertiseAddress,
-		'[::1]:51000',
+		parse('daemon', 'upgrade', '--advertise-address=[2001:db8::20]:51000')
+			.options.advertiseAddress,
+		'[2001:db8::20]:51000',
 	);
+});
+
+test('a loopback advertised address is refused, and the message names the remedy', () => {
+	// The address is written here and the failure it causes arrives minutes
+	// later, in a browser, as a message about data channels. Refusing is the
+	// only place the two are close enough together to connect.
+	assert.throws(
+		() =>
+			parseCommandLine([
+				'daemon',
+				'install',
+				'--advertise-address',
+				'127.0.0.1:51000',
+			]),
+		(error) =>
+			error instanceof UsageError &&
+			/loopback/u.test(error.message) &&
+			/routable address/u.test(error.message),
+	);
+	for (const value of [
+		'127.0.0.1:51000',
+		'127.0.1.1:51000',
+		'127.255.255.254:51000',
+		'[::1]:51000',
+		'[0:0:0:0:0:0:0:1]:51000',
+		'[0::1]:51000',
+		'[::ffff:127.0.0.1]:51000',
+	]) {
+		usage('daemon', 'install', '--advertise-address', value);
+		usage('daemon', 'upgrade', '--advertise-address', value);
+	}
+});
+
+test('a routable address that merely looks loopback-adjacent is accepted', () => {
+	// The refusal is 127.0.0.0/8 and ::1, not everything with a 1 in it.
+	for (const value of [
+		'128.0.0.1:51000',
+		'10.0.0.1:51000',
+		'192.168.1.20:51000',
+		'[2001:db8::1]:51000',
+		'[fe80::1]:51000',
+	]) {
+		assert.equal(
+			parse('daemon', 'install', '--advertise-address', value).options
+				.advertiseAddress,
+			value,
+		);
+	}
 });
 
 test('an empty advertised address is the clearing form, not a usage error', () => {
@@ -192,11 +240,11 @@ test('a hostname is refused, and the message says why', () => {
 
 test('a malformed or out-of-range advertised address is refused', () => {
 	for (const value of [
-		'127.0.0.1',
+		'192.168.1.20',
 		'51000',
-		'127.0.0.1:',
-		'127.0.0.1:0',
-		'127.0.0.1:70000',
+		'192.168.1.20:',
+		'192.168.1.20:0',
+		'192.168.1.20:70000',
 		'300.0.0.1:51000',
 	]) {
 		usage('daemon', 'install', '--advertise-address', value);
@@ -204,12 +252,15 @@ test('a malformed or out-of-range advertised address is refused', () => {
 });
 
 test('commands that do not configure the server reject the flag', () => {
-	usage('daemon', 'status', '--advertise-address', '127.0.0.1:51000');
-	usage('daemon', 'qr-code', '--advertise-address', '127.0.0.1:51000');
-	usage('daemon', 'uninstall', '--advertise-address', '127.0.0.1:51000');
+	usage('daemon', 'status', '--advertise-address', '192.168.1.20:51000');
+	usage('daemon', 'qr-code', '--advertise-address', '192.168.1.20:51000');
+	usage('daemon', 'uninstall', '--advertise-address', '192.168.1.20:51000');
 });
 
 test('the help text documents the flag and that the port must be forwarded', () => {
 	assert.match(HELP_TEXT, /--advertise-address/u);
 	assert.match(HELP_TEXT, /forwarded/u);
+	// The example an operator copies has to be a value the CLI accepts.
+	assert.doesNotMatch(HELP_TEXT, /127\.0\.0\.1|\[::1\]/u);
+	assert.match(HELP_TEXT, /loopback address is refused/u);
 });
