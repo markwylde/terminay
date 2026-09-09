@@ -34,6 +34,42 @@ Every server SHALL bundle the complete responsive Terminay workspace UI built fr
 - **WHEN** a user opens a server's session URL directly
 - **THEN** the exact UI bundle shipped by that server is installed and run
 
+### Requirement: A standalone artifact carries a servable workspace UI
+
+A standalone server artifact SHALL contain the server-served workspace UI — the same bundle an embedded server hands its renderer — including the entry file the hosted UI archive loader reads. The Desktop renderer bundle is a different artifact with a different entry and SHALL NOT be staged in its place.
+
+Building an artifact whose staged UI cannot satisfy the hosted archive loader SHALL fail, naming the missing entry, and probing an already-built artifact whose UI cannot SHALL fail the same way. A published artifact that cannot serve a workspace to a paired device is not a releasable artifact, and neither the build nor the probe may pass one.
+
+#### Scenario: The staged UI carries the hosted entry
+
+- **WHEN** a standalone artifact is built
+- **THEN** its `ui/` directory contains the entry the hosted UI archive loader reads
+- **AND** that entry is the server-served workspace UI, not the Desktop renderer bundle
+
+#### Scenario: A UI without the hosted entry fails the build
+
+- **WHEN** the staged UI has no hosted archive entry
+- **THEN** the build fails and names the entry it looked for
+
+#### Scenario: A built artifact is probed for a servable UI
+
+- **WHEN** a built artifact is probed
+- **THEN** the probe fails unless its `ui/` directory carries the hosted archive entry
+
+### Requirement: A server without a renderer directory says so
+
+A standalone server configured to expose itself SHALL treat a missing renderer directory as a configuration failure rather than serving a placeholder workspace. A device that pairs successfully and then receives a page with no workspace in it cannot tell a broken server from a broken network, and the server is the only party that knows which.
+
+#### Scenario: Exposed with no renderer directory
+
+- **WHEN** a server is exposed and no renderer directory is configured
+- **THEN** it reports that its workspace UI is not configured, rather than serving a placeholder to a paired device
+
+#### Scenario: Renderer directory present
+
+- **WHEN** a renderer directory is configured and carries the hosted entry
+- **THEN** a paired device receives that workspace UI
+
 ### Requirement: Session entry is distinct from the connection manager
 
 The complete server-owned session entry SHALL be a separate artifact from the `app.terminay.com` connection manager. Embedded and standalone servers SHALL publish the session entry in their signed UI-bundle manifest and SHALL NOT point that manifest at the manager entry.
@@ -115,7 +151,7 @@ Closing or reloading an individual renderer SHALL NOT terminate PTYs. Desktop SH
 
 ### Requirement: Standalone server operation
 
-The standalone foreground command SHALL report readiness and a clear data and log location. A first-run or explicit pairing command SHALL print a short-lived secure pairing URL and SHALL require the configured PIN or an equivalent explicit approval. The runtime SHALL handle `SIGINT` and `SIGTERM` with bounded graceful shutdown that finalizes recordings, closes clients, and terminates or preserves child processes according to the session-lifetime policy. Unsupported native dependencies SHALL fail during startup with actionable platform and architecture guidance.
+The standalone foreground command SHALL report readiness and a clear data and log location. The pairing command SHALL ask the running server, through the owner-only socket inside its data root, for its live pairing handoff and SHALL print a short-lived secure pairing URL for each active exposure mode; every device that opens one MUST be approved on the host with the match code. The pairing command SHALL fail with a clear message when no server owns the data root. The runtime SHALL handle `SIGINT` and `SIGTERM` with bounded graceful shutdown that finalizes recordings, closes clients, and terminates or preserves child processes according to the session-lifetime policy. Unsupported native dependencies SHALL fail during startup with actionable platform and architecture guidance.
 
 #### Scenario: Foreground start
 
@@ -124,8 +160,14 @@ The standalone foreground command SHALL report readiness and a clear data and lo
 
 #### Scenario: Pairing command
 
-- **WHEN** the operator runs the pairing command
-- **THEN** a short-lived secure pairing URL is printed and the configured PIN or explicit approval is required
+- **WHEN** the operator runs the pairing command against a data root a live server owns
+- **THEN** the printed pairing URL belongs to a room that server has registered
+- **AND** a device that opens it reaches that server's approval queue and requires explicit approval
+
+#### Scenario: Pairing command with no running server
+
+- **WHEN** the operator runs the pairing command and no server owns the data root
+- **THEN** the command fails with a message that names the missing server and prints no pairing material
 
 #### Scenario: Termination signal
 
@@ -137,24 +179,49 @@ The standalone foreground command SHALL report readiness and a clear data and lo
 - **WHEN** a required native dependency is unsupported on the host
 - **THEN** startup fails with actionable platform and architecture guidance
 
+### Requirement: Live pairing lookup over the data-root socket
+
+The running standalone server SHALL answer a `pairing` request on the owner-only data-root socket with its current pairing handoff for each enabled exposure mode: the pairing URL, its expiry, the exposure mode, and the server id. A request MAY ask for a fresh room, in which case the server SHALL rotate the pairing room without disturbing live peers or reconnect availability. The response SHALL contain no host key, device record, or application credential beyond the URL fragment, and the socket SHALL remain unreachable from any network listener.
+
+#### Scenario: Current handoff
+
+- **WHEN** an owner of the data root sends a `pairing` request
+- **THEN** the response lists one live pairing URL per enabled exposure mode with its expiry
+
+#### Scenario: Fresh room requested
+
+- **WHEN** the request asks for a fresh room
+- **THEN** a replacement room is registered and its URL returned
+- **AND** live connections and reconnect registration are unchanged
+
+#### Scenario: Exposure disabled
+
+- **WHEN** no exposure mode is enabled
+- **THEN** the response says so and carries no pairing URL
+
 ### Requirement: Standalone configuration and diagnostics
 
-The foreground entry SHALL accept explicit `--data-root`, `--server-id`, `--endpoint`, `--log-sink`, and `--ui-bundle` values with corresponding `TERMINAY_*` environment variables as fallbacks, and command-line values SHALL take precedence over environment values. `--version` SHALL be diagnostic only. `--status` SHALL report phase, identity, version, runtime mode, and configured-resource metadata without workspace names, paths, terminal data, device records, or secrets. Health and version diagnostics SHALL similarly expose no workspace, terminal, device, or secret content.
+The foreground entry SHALL accept explicit `--data-root`, `--server-id`, `--endpoint`, `--log-sink`, `--ui-bundle`, `--hosted-domain`, `--expose`, and `--direct-origin` values with corresponding `TERMINAY_*` environment variables as fallbacks, and command-line values SHALL take precedence over environment values. `--hosted-domain` SHALL name the hosted signaling domain under which the server provisions its session origin and SHALL default to `terminay.com`. `--expose` SHALL accept `hosted`, `direct`, `hosted,direct`, or `off` and SHALL default to `off`. `--direct-origin` SHALL name the advertised HTTPS origin of the server's own signaling listener and SHALL be required when `direct` exposure is enabled. `--version` SHALL be diagnostic only. `--status` SHALL report phase, identity, version, runtime mode, enabled exposure modes, and configured-resource metadata without workspace names, paths, terminal data, device records, or secrets. Health and version diagnostics SHALL similarly expose no workspace, terminal, device, or secret content.
 
 #### Scenario: Conflicting configuration sources
 
 - **WHEN** both a command-line value and its `TERMINAY_*` environment variable are supplied
 - **THEN** the command-line value takes precedence
 
+#### Scenario: Direct exposure without an origin
+
+- **WHEN** `--expose` includes `direct` and no `--direct-origin` is configured
+- **THEN** startup fails before any listener opens and names the missing option
+
 #### Scenario: Status output
 
 - **WHEN** `--status` is invoked
-- **THEN** the output contains only redacted phase, identity, version, runtime-mode, and configured-resource metadata
+- **THEN** the output contains only redacted phase, identity, version, runtime-mode, exposure-mode, and configured-resource metadata
 
 #### Scenario: Readiness output
 
 - **WHEN** a normal foreground start emits readiness
-- **THEN** the local operator output may identify configured paths, the bound protocol endpoint, and one short-lived pairing handoff for that listener
+- **THEN** the local operator output may identify configured paths, the bound protocol endpoint, and one short-lived pairing handoff per active exposure mode
 
 ### Requirement: Supported runtime matrix
 
@@ -172,12 +239,27 @@ Terminay Desktop SHALL support macOS 12 Monterey or newer on Apple silicon throu
 
 ### Requirement: Release packaging validation
 
-Release packaging SHALL validate the standalone distribution manifest, pinned Node engine, required CLI entrypoints, payload hashes, and absence of Electron imports before publication. Native OS, architecture, and ABI probes SHALL remain release evidence, and this manifest check SHALL NOT claim signing or notarization. Native standalone release jobs SHALL establish a version-controlled checkout before building or probing the archive, and runner evidence SHALL be valid only when it binds the probed bytes to the checked-out commit and proves that worktree clean.
+Release packaging SHALL publish, for every tagged release, one self-contained server archive per supported Linux architecture, named `terminay-server-<version>-linux-<arch>.tar.gz`, together with a SHA-256 sidecar and an Ed25519 signature over the archive bytes made with the release signing key. Release packaging SHALL validate the standalone distribution manifest, pinned Node engine, required CLI entrypoints, payload hashes, native architecture of the bundled Node and `node-pty`, and absence of Electron imports before publication. Native OS, architecture, and ABI probes SHALL remain release evidence. Native standalone release jobs SHALL establish a version-controlled checkout before building or probing the archive, and runner evidence SHALL be valid only when it binds the probed bytes to the checked-out commit and proves that worktree clean. A `main` prerelease SHALL be rebuilt with the same archives, sidecars, and signatures on every merge to `main`, and its assets SHALL be replaced so a reader sees either the previous complete set or the new complete set.
+
+#### Scenario: Tagged release assets
+
+- **WHEN** a release tag is published
+- **THEN** the release carries a linux-x64 and a linux-arm64 server archive, each with a matching SHA-256 sidecar and Ed25519 signature
 
 #### Scenario: Electron import in a server payload
 
 - **WHEN** packaging detects an Electron import in the standalone payload
 - **THEN** publication fails
+
+#### Scenario: Architecture mismatch
+
+- **WHEN** the bundled Node binary or `node-pty` addon does not match the archive's declared architecture
+- **THEN** publication fails
+
+#### Scenario: Rolling main prerelease
+
+- **WHEN** a commit lands on `main`
+- **THEN** the `main` prerelease is rebuilt with archives whose manifests record that commit
 
 #### Scenario: Release evidence
 
@@ -186,7 +268,7 @@ Release packaging SHALL validate the standalone distribution manifest, pinned No
 
 ### Requirement: Deterministic artifact manifest verification
 
-Standalone packaging SHALL emit a deterministic `artifact-manifest.json` containing the package version, pinned Node engine, the exact `terminay-server` and `terminay-mcp` entrypoint paths, SHA-256 payload hashes, and provenance pointers. The verification script SHALL re-hash a candidate payload and fail on missing files, changed or additional executable bins, tampering, unsafe manifest paths, or Electron imports. This SHALL be a pre-release integrity check; signatures, notarization, and native release certification remain separate gates.
+Standalone packaging SHALL emit a deterministic `artifact-manifest.json` containing the package version, release channel (`tag` or `main`), built commit, target architecture, pinned Node engine, the exact `terminay-server` and `terminay-mcp` entrypoint paths, SHA-256 payload hashes, and provenance pointers. The verification script SHALL re-hash a candidate payload and fail on missing files, changed or additional executable bins, tampering, unsafe manifest paths, or Electron imports. This SHALL be a pre-release integrity check; signatures, notarization, and native release certification remain separate gates.
 
 #### Scenario: Tampered payload
 
@@ -197,6 +279,11 @@ Standalone packaging SHALL emit a deterministic `artifact-manifest.json` contain
 
 - **WHEN** a candidate payload adds or changes an executable bin relative to the manifest
 - **THEN** verification fails
+
+#### Scenario: Channel and revision recorded
+
+- **WHEN** an archive is built for a tag or for `main`
+- **THEN** its manifest records the channel, the version, the commit, and the architecture
 
 ### Requirement: Release artifact build graph
 
