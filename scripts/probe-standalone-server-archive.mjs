@@ -6,6 +6,7 @@ import { basename, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { assertElfArchitecture, assertSafeArtifactPath, describeArtifactFiles, sha256File, walkRegularTree } from './artifact-determinism.mjs'
 import { getPtyRuntimePlatform, PTY_RUNTIME_NODE_VERSION } from './pty-runtime-platforms.mjs'
+import { assertHostedUiEntry, HOSTED_UI_ENTRY } from './hosted-ui-entry.mjs'
 import { normalizeArtifactRelease } from './standalone-artifact.mjs'
 
 const execFileAsync = promisify(execFile)
@@ -29,6 +30,11 @@ export async function probeStandaloneServerArchive({ archivePath, target = nativ
     await execFileAsync('tar', ['-xzf', archive, '--no-same-owner', '--no-same-permissions', '-C', temporary])
     const root = join(temporary, rootName)
     const manifest = await validateExtractedArchive(root, target, { channel, revision })
+    // The archive's own manifest can validate while the bundle it staged is one
+    // this server cannot serve. A device would pair, connect, and receive a
+    // placeholder — every signal green, no workspace. Checked here because this
+    // probe is what the release runs before publishing.
+    await assertHostedUiEntry(join(root, 'ui'))
     const version = await executeVersion(root)
     // An installed archive must be able to say which release it is. If the
     // launcher reports anything but the version its own manifest records, the
@@ -45,6 +51,7 @@ export async function probeStandaloneServerArchive({ archivePath, target = nativ
       architecture: manifest.architecture,
       version,
       fileCount: manifest.files.length,
+      hostedUiEntry: HOSTED_UI_ENTRY,
     })
   } finally {
     await rm(temporary, { recursive: true, force: true })

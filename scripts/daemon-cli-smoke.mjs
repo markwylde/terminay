@@ -33,6 +33,7 @@ export function isSmokeEnabled(env = process.env) {
 /** The lifecycle the smoke drives, in order. */
 export const SMOKE_STEPS = Object.freeze([
 	'install',
+	'workspace UI',
 	'status',
 	'upgrade',
 	'qr-code --no-wait',
@@ -65,7 +66,9 @@ export async function buildArchive({ directory, version, revision }) {
   const root = join(directory, rootName)
   await mkdir(join(root, 'bin'), { recursive: true })
   await mkdir(join(root, 'ui'), { recursive: true })
-  await writeFile(join(root, 'ui', 'index.html'), '<!doctype html>\\n')
+  // Named for the entry the hosted archive loader reads, so the fixture stands
+  // in for a real archive rather than one that would serve a placeholder.
+  await writeFile(join(root, 'ui', 'server.html'), '<!doctype html>\\n')
 
   // A launcher that answers /readyz on the health port and then blocks, so
   // systemd supervises a process that behaves like the real server.
@@ -87,7 +90,7 @@ export async function buildArchive({ directory, version, revision }) {
   await chmod(join(root, 'bin', 'terminay-server'), 0o755)
 
   const files = []
-  for (const path of ['bin/terminay-server', 'ui/index.html']) {
+  for (const path of ['bin/terminay-server', 'ui/server.html']) {
     const absolute = join(root, path)
     const info = await stat(absolute)
     files.push({
@@ -128,7 +131,7 @@ export async function buildArchive({ directory, version, revision }) {
 export const CONTAINER_DRIVER = `
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -179,6 +182,15 @@ assert.equal(systemctl('is-enabled', 'terminay-server.service'), 'enabled')
 assert.equal(systemctl('is-active', 'terminay-server.service'), 'active')
 assert.equal((await readInstallRecord(layout)).version, '9.9.0')
 assert.equal(await activeVersion(layout), 'source-' + 'a'.repeat(12))
+
+write('--- workspace UI ---')
+// A device that pairs and then receives a placeholder is the defect this
+// asserts against: the environment must name the directory the server reads,
+// and the archive must carry the entry it will look for there.
+const environment = readFileSync('/etc/terminay/server.env', 'utf8')
+const renderer = /^TERMINAY_UI_RENDERER_DIRECTORY=(.*)$/m.exec(environment)?.[1]
+assert.ok(renderer, 'the install must name the renderer directory the server reads')
+assert.ok(existsSync(join(renderer, 'server.html')), 'the archive must ship the hosted UI entry at ' + renderer)
 
 write('--- status ---')
 const status = await runStatus(await resolveContext({ options, write }))
