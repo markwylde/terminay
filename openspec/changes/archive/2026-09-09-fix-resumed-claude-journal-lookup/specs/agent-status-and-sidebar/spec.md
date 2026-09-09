@@ -25,6 +25,13 @@ This resolution SHALL apply both to the initial binding and to a conversation sw
 
 A search that cannot single out one journal for a session SHALL leave the terminal unbound rather than bind a candidate. A journal whose first record names a different session SHALL be rejected. More than one surviving candidate SHALL bind nothing. A search stopped early by host listing limits SHALL bind nothing, and ordinary discovery retries SHALL remain free to resolve it later.
 
+The search SHALL declare the filename it is resolving, so that unrelated journals are neither considered nor charged against its limits. A project root holding many journals, or very large ones, SHALL NOT prevent the journal being resolved from being found.
+
+#### Scenario: Project root crowded with unrelated journals
+
+- **WHEN** the provider's project root holds hundreds of journals, or journals far larger than the one being resolved
+- **THEN** the journal for the named session is still found and bound
+
 #### Scenario: Journal names a different session
 
 - **WHEN** a candidate journal's first record names a session other than the one being resolved
