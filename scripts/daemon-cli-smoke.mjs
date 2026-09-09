@@ -35,6 +35,7 @@ export const SMOKE_STEPS = Object.freeze([
 	'install',
 	'workspace UI',
 	'status',
+	'advertise-address',
 	'upgrade',
 	'qr-code --no-wait',
 	'uninstall',
@@ -137,6 +138,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { buildArchive } from '/smoke/build-archive.mjs'
+import { parseCommandLine } from '/cli/dist/args.js'
 import { runInstall } from '/cli/dist/commands/install.js'
 import { runStart, runStatus, runStop } from '/cli/dist/commands/lifecycle.js'
 import { runPairing } from '/cli/dist/commands/pairing.js'
@@ -201,18 +203,38 @@ assert.equal(status.enabled, true)
 write('--- advertise-address ---')
 // Reinstalling with the flag is what an operator does to add one, and it must
 // reach the environment file the unit reads and the record status reports.
-await runInstall(undefined, { ...options, advertiseAddress: '127.0.0.1:51000' }, {
+// It must also reach the running process: enable --now does nothing to a
+// unit that is already up, which would leave the operator reading a new
+// address in the command's output while the old one is still being offered.
+const pidBefore = systemctl('show', 'terminay-server.service', '-p', 'MainPID', '--value')
+await runInstall(undefined, { ...options, advertiseAddress: '192.168.1.20:51000' }, {
   write,
   streams,
   localArchivePath: first,
   readinessTimeoutMs: 30000,
 })
 const advertisedEnvironment = readFileSync('/etc/terminay/server.env', 'utf8')
-assert.match(advertisedEnvironment, /TERMINAY_WEBRTC_ADVERTISE_ADDRESS=127.0.0.1:51000/)
-assert.equal((await readInstallRecord(layout)).advertiseAddress, '127.0.0.1:51000')
+assert.match(advertisedEnvironment, /TERMINAY_WEBRTC_ADVERTISE_ADDRESS=192.168.1.20:51000/)
+assert.equal((await readInstallRecord(layout)).advertiseAddress, '192.168.1.20:51000')
 assert.equal(systemctl('is-active', 'terminay-server.service'), 'active')
+const pidAfter = systemctl('show', 'terminay-server.service', '-p', 'MainPID', '--value')
+assert.notEqual(pidAfter, pidBefore, 'a running service must be restarted onto the new configuration')
 const advertisedStatus = await runStatus(await resolveContext({ options, write }))
-assert.equal(advertisedStatus.advertiseAddress, '127.0.0.1:51000')
+assert.equal(advertisedStatus.advertiseAddress, '192.168.1.20:51000')
+
+// A loopback address is refused rather than written. A browser need not send
+// connectivity checks to one, and Firefox does not, so it would produce a
+// server that pairs from Chromium and hangs elsewhere.
+let refused
+try {
+  parseCommandLine(['daemon', 'install', '--advertise-address', '127.0.0.1:51000'])
+} catch (error) {
+  refused = error
+}
+assert.ok(refused, 'a loopback advertised address must be refused')
+assert.match(refused.message, /loopback/)
+assert.match(refused.message, /routable address/)
+assert.match(readFileSync('/etc/terminay/server.env', 'utf8'), /TERMINAY_WEBRTC_ADVERTISE_ADDRESS=192.168.1.20:51000/)
 
 write('--- stop and start ---')
 const lifecycle = await resolveContext({ options, write })
