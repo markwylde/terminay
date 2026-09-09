@@ -426,3 +426,79 @@ test('binding reads the session file and the journal, and never the key sibling'
 		'only this process’s session file and its own journal are read',
 	);
 });
+
+test('switching to a conversation filed under another directory follows it', async () => {
+	// `/resume` inside the running process onto a conversation started
+	// elsewhere: the pid-keyed file names it, but its journal stayed under the
+	// directory it was created in, so the derived path has nothing.
+	const elsewhere = `/home/test/.claude/projects/-origin/${third}.jsonl`;
+	const harness = await createAgentExtensionHarness(extension);
+	try {
+		await harness.observe(
+			claudeTerminal({
+				sessionId: own,
+				journals: sharedJournals,
+				older: [live],
+				extraFiles: { [elsewhere]: titled(third, 'Resumed from elsewhere') },
+				fileRewrites: {
+					[sessionFilePath(PID)]: [
+						[
+							sessionFile({
+								sessionId: third,
+								startedAt: Date.parse('2026-09-06T11:00:00.000Z'),
+							}),
+						],
+					],
+				},
+			}),
+		);
+		assert.deepEqual(
+			harness
+				.events()
+				.filter((event) => event.kind === 'agent.metadata')
+				.map((event) => event.title),
+			['This terminal', 'Resumed from elsewhere'],
+			'the row follows the conversation the process moved to',
+		);
+	} finally {
+		await harness.dispose();
+	}
+});
+
+test('a switch to a conversation with no findable journal leaves the binding alone', async () => {
+	const harness = await createAgentExtensionHarness(extension);
+	try {
+		await harness.observe(
+			claudeTerminal({
+				sessionId: own,
+				journals: sharedJournals,
+				older: [live],
+				fileRewrites: {
+					[sessionFilePath(PID)]: [
+						[
+							sessionFile({
+								sessionId: third,
+								startedAt: Date.parse('2026-09-06T11:00:00.000Z'),
+							}),
+						],
+					],
+				},
+			}),
+		);
+		assert.deepEqual(
+			harness
+				.events()
+				.filter((event) => event.kind === 'agent.metadata')
+				.map((event) => event.title),
+			['This terminal'],
+			'an unresolvable switch retires nothing',
+		);
+		assert.equal(
+			harness.observation()?.binding?.providerSessionId,
+			own,
+			'the bound session is unchanged',
+		);
+	} finally {
+		await harness.dispose();
+	}
+});
