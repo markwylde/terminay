@@ -118,9 +118,12 @@ export async function verifySelectedSecureWeriftRuntime(
 
 /** Every governed patch, in order, with no additions or substitutions. */
 function matchesSelectedPatches(value: unknown): boolean {
-	if (!Array.isArray(value) || value.length !== SELECTED_PATCHES.length) return false;
+	if (!Array.isArray(value) || value.length !== SELECTED_PATCHES.length)
+		return false;
 	return SELECTED_PATCHES.every((expected, index) => {
-		const actual = value[index] as Partial<(typeof SELECTED_PATCHES)[number]> | undefined;
+		const actual = value[index] as
+			| Partial<(typeof SELECTED_PATCHES)[number]>
+			| undefined;
 		return (
 			actual?.path === expected.path &&
 			actual.sha256 === expected.sha256 &&
