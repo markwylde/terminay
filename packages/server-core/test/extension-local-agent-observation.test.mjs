@@ -180,6 +180,31 @@ test("opaque directory discovery is terminal-scoped, bounded, canonical and suff
   await assert.rejects(adapter.observe(current, "filesystem.list-directory", { root: { id: "directory-forged" }, options: { extensions: [".jsonl"], maxDepth: 0, maxEntries: 1, maxBytes: 1 } }, signal), /directory handle is unavailable/);
 });
 
+test("declared names bound the walk to the files asked for, before any limit is charged", async () => {
+  const system = fixtureSystem();
+  // One wanted journal, sorted last, behind files large enough to exhaust the
+  // byte budget on their own. An unfiltered walk stops before reaching it.
+  system.files.set("/home/mark/.claude/projects/a-project/aaa.jsonl", new Uint8Array(64));
+  system.files.set("/home/mark/.claude/projects/b-project/bbb.jsonl", new Uint8Array(64));
+  system.files.set("/home/mark/.claude/projects/z-project/wanted.jsonl", new Uint8Array([7]));
+  const originalStat = system.stat;
+  system.stat = async (path) => path.endsWith(".jsonl") ? originalStat(path) : { kind: "directory", size: 0 };
+  const adapter = new ThisServerAgentObservationAdapter({ homeDirectory: "/home/mark", system, resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }) });
+  const current = terminal("named-listing");
+  const root = await adapter.observe(current, "filesystem.resolve-home-directory", { relativePath: ".claude/projects", beneath: { homeRelative: ".claude" } }, signal);
+
+  const unfiltered = await adapter.observe(current, "filesystem.list-directory", { root, options: { extensions: [".jsonl"], maxDepth: 1, maxEntries: 10, maxBytes: 100 } }, signal);
+  assert.equal(unfiltered.truncated, true, "the budget is spent before the wanted file is reached");
+  assert.equal(unfiltered.entries.some((entry) => entry.relativePath.endsWith("wanted.jsonl")), false);
+
+  const named = await adapter.observe(current, "filesystem.list-directory", { root, options: { extensions: [".jsonl"], names: ["wanted.jsonl"], maxDepth: 1, maxEntries: 10, maxBytes: 100 } }, signal);
+  assert.deepEqual(named.entries.map((entry) => entry.relativePath), ["z-project/wanted.jsonl"]);
+  assert.equal(named.truncated, false, "unwanted files are never charged against the limits");
+
+  await assert.rejects(adapter.observe(current, "filesystem.list-directory", { root, options: { extensions: [".jsonl"], names: ["../escape.jsonl"], maxDepth: 1, maxEntries: 10, maxBytes: 100 } }, signal), /list request is invalid/, "a name is one path segment, never a traversal");
+  await assert.rejects(adapter.observe(current, "filesystem.list-directory", { root, options: { extensions: [".jsonl"], names: [], maxDepth: 1, maxEntries: 10, maxBytes: 100 } }, signal), /list request is invalid/);
+});
+
 test("file follow replays an equal-size metadata rewrite exactly once as replace", async () => {
   const system = fixtureSystem(); let modifiedAt = "2026-08-24T12:00:00.000Z";
   const originalStat = system.stat;

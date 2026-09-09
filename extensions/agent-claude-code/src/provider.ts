@@ -82,11 +82,10 @@ const SESSION_DIRECTORY = {
  * conversation resumed away from the directory it started in.
  *
  * Depth one is every project directory and no deeper, which keeps a session's
- * own `<session>/subagents/` tree out of the listing entirely. The host charges
- * each matching journal's size against the byte budget and stops the walk when
- * the next would exceed it, so these are chosen at its maximum: a directory
- * large enough to exhaust them reports a truncated snapshot, and a truncated
- * snapshot binds nothing rather than something plausible.
+ * own `<session>/subagents/` tree out of the listing entirely. The exact
+ * filename is declared per lookup, so the limits are charged only against the
+ * journal being resolved: a directory holding hundreds of unrelated journals,
+ * of any size, cannot exhaust the budget before the walk reaches this one.
  */
 const PROJECT_DIRECTORY = {
 	extensions: ['.jsonl'],
@@ -346,14 +345,15 @@ async function journalElsewhere(
 		{ signal: terminal.signal },
 	);
 	if (!directory) return undefined;
+	const named = `${sessionId}.jsonl`;
 	const listing = await terminal.observation.files.listDirectory(directory, {
 		...PROJECT_DIRECTORY,
+		names: [named],
 		signal: terminal.signal,
 	});
 	// A limit reached before the journal was seen makes the snapshot evidence of
 	// nothing. Discovery retries and topology polling remain free to try again.
 	if (listing.truncated) return undefined;
-	const named = `${sessionId}.jsonl`;
 	const candidates = listing.entries.filter(
 		(entry) => entry.relativePath.split('/').at(-1) === named,
 	);
