@@ -39,7 +39,12 @@ export function acceptSessionSignalingUpgrade(
 		throw new TypeError('manager and session origins must be distinct');
 	}
 	const signalingPath = options.signalingPath ?? '/signal';
-	if (!signalingPath.startsWith('/') || signalingPath.startsWith('//') || signalingPath.includes('?') || signalingPath.includes('#')) {
+	if (
+		!signalingPath.startsWith('/') ||
+		signalingPath.startsWith('//') ||
+		signalingPath.includes('?') ||
+		signalingPath.includes('#')
+	) {
 		throw new TypeError('signaling path is invalid');
 	}
 	if (request.upgrade?.trim().toLowerCase() !== 'websocket') {
@@ -70,11 +75,13 @@ export function acceptSessionSignalingUpgrade(
 }
 
 function isCanonicalHostHeader(value: string): boolean {
-	return value.trim() === value
-		&& ![...value].some((character) => {
+	return (
+		value.trim() === value &&
+		![...value].some((character) => {
 			const code = character.codePointAt(0) ?? 0;
-			return code <= 0x20 || code === 0x7f || character === ",";
-		});
+			return code <= 0x20 || code === 0x7f || character === ',';
+		})
+	);
 }
 
 function parseHttpsOrigin(value: string, name: string): URL {
@@ -84,7 +91,14 @@ function parseHttpsOrigin(value: string, name: string): URL {
 	} catch {
 		throw new TypeError(`${name} is invalid`);
 	}
-	if (parsed.protocol !== 'https:' || parsed.pathname !== '/' || parsed.search !== '' || parsed.hash !== '' || parsed.username !== '' || parsed.password !== '') {
+	if (
+		parsed.protocol !== 'https:' ||
+		parsed.pathname !== '/' ||
+		parsed.search !== '' ||
+		parsed.hash !== '' ||
+		parsed.username !== '' ||
+		parsed.password !== ''
+	) {
 		throw new TypeError(`${name} must be an HTTPS origin`);
 	}
 	return parsed;

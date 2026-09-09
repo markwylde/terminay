@@ -795,3 +795,288 @@ test('the binary never supplies its own release key', async () => {
 		'the shipped entry point must verify against the embedded key only',
 	);
 });
+
+test('install persists the advertised address and names the port to forward', async () => {
+	await withMachine(
+		{
+			releases: [
+				{
+					tag: 'v4.1.1',
+					version: '4.1.1',
+					revision: 'a'.repeat(40),
+					latest: true,
+				},
+			],
+		},
+		async ({ layout, installDependencies, lines }) => {
+			await runInstall(
+				undefined,
+				{
+					...OPTIONS,
+					scope: 'user',
+					expose: 'hosted',
+					advertiseAddress: '127.0.0.1:51000',
+				},
+				installDependencies,
+			);
+
+			const environment = parseEnvironmentFile(
+				await readFile(layout.environmentFile, 'utf8'),
+			);
+			assert.equal(
+				environment.TERMINAY_WEBRTC_ADVERTISE_ADDRESS,
+				'127.0.0.1:51000',
+			);
+			assert.equal(
+				(await readInstallRecord(layout)).advertiseAddress,
+				'127.0.0.1:51000',
+			);
+
+			// Forwarding the port is the one step the CLI cannot take, so it says so.
+			const output = lines.join('\n');
+			assert.match(output, /advertised {3}127\.0\.0\.1:51000/u);
+			assert.match(output, /UDP ports 51000-51003 must reach this machine/u);
+			assert.match(output, /-p 51000-51003:51000-51003\/udp/u);
+		},
+	);
+});
+
+test('an install without the flag mentions no advertised address', async () => {
+	await withMachine(
+		{
+			releases: [
+				{
+					tag: 'v4.1.1',
+					version: '4.1.1',
+					revision: 'a'.repeat(40),
+					latest: true,
+				},
+			],
+		},
+		async ({ layout, installDependencies, lines }) => {
+			await runInstall(
+				undefined,
+				{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+				installDependencies,
+			);
+			const environment = parseEnvironmentFile(
+				await readFile(layout.environmentFile, 'utf8'),
+			);
+			assert.equal(environment.TERMINAY_WEBRTC_ADVERTISE_ADDRESS, undefined);
+			assert.equal(
+				(await readInstallRecord(layout)).advertiseAddress,
+				undefined,
+			);
+			assert.doesNotMatch(lines.join('\n'), /advertised/u);
+		},
+	);
+});
+
+test('upgrade keeps the advertised address, and can change or clear it', async () => {
+	await withMachine(
+		{
+			releases: [
+				{
+					tag: 'v4.1.0',
+					version: '4.1.0',
+					revision: 'a'.repeat(40),
+					publishedAt: '2026-09-01T00:00:00Z',
+				},
+				{
+					tag: 'v4.1.1',
+					version: '4.1.1',
+					revision: 'b'.repeat(40),
+					latest: true,
+					publishedAt: '2026-09-08T00:00:00Z',
+				},
+			],
+		},
+		async ({ health, fake, layout, installDependencies, write }) => {
+			await runInstall(
+				'v4.1.0',
+				{
+					...OPTIONS,
+					scope: 'user',
+					expose: 'hosted',
+					advertiseAddress: '127.0.0.1:51000',
+				},
+				installDependencies,
+			);
+			await pointHealthAtFixture(layout, health.port);
+			const dependencies = {
+				apiBase: installDependencies.apiBase,
+				webBase: installDependencies.webBase,
+				architecture: 'x64',
+				releasePublicKeyPem: installDependencies.releasePublicKeyPem,
+				readinessTimeoutMs: 5_000,
+			};
+			const context = () =>
+				readInstallRecord(layout).then((record) => ({
+					layout,
+					record,
+					systemd: createSystemd({ scope: 'user', env: fake.env() }),
+					write,
+				}));
+
+			// Absent flag: an upgrade is not the moment to change how a server is
+			// reached, so the recorded value carries forward.
+			await runUpgrade(undefined, OPTIONS, await context(), dependencies);
+			assert.equal(
+				(await readInstallRecord(layout)).advertiseAddress,
+				'127.0.0.1:51000',
+			);
+			assert.equal(
+				parseEnvironmentFile(await readFile(layout.environmentFile, 'utf8'))
+					.TERMINAY_WEBRTC_ADVERTISE_ADDRESS,
+				'127.0.0.1:51000',
+			);
+
+			// Changing it rewrites the environment file, because that is where the
+			// running server reads it from.
+			await runUpgrade(
+				'v4.1.0',
+				{
+					...OPTIONS,
+					allowDowngrade: true,
+					advertiseAddress: '127.0.0.1:52000',
+				},
+				await context(),
+				dependencies,
+			);
+			assert.equal(
+				(await readInstallRecord(layout)).advertiseAddress,
+				'127.0.0.1:52000',
+			);
+			assert.equal(
+				parseEnvironmentFile(await readFile(layout.environmentFile, 'utf8'))
+					.TERMINAY_WEBRTC_ADVERTISE_ADDRESS,
+				'127.0.0.1:52000',
+			);
+
+			// Clearing removes it from both.
+			await runUpgrade(
+				'v4.1.1',
+				{ ...OPTIONS, advertiseAddress: '' },
+				await context(),
+				dependencies,
+			);
+			assert.equal(
+				(await readInstallRecord(layout)).advertiseAddress,
+				undefined,
+			);
+			assert.equal(
+				parseEnvironmentFile(await readFile(layout.environmentFile, 'utf8'))
+					.TERMINAY_WEBRTC_ADVERTISE_ADDRESS,
+				undefined,
+			);
+		},
+	);
+});
+
+test('editing the advertised address leaves the rest of the environment file alone', async () => {
+	await withMachine(
+		{
+			releases: [
+				{
+					tag: 'v4.1.0',
+					version: '4.1.0',
+					revision: 'a'.repeat(40),
+					publishedAt: '2026-09-01T00:00:00Z',
+				},
+				{
+					tag: 'v4.1.1',
+					version: '4.1.1',
+					revision: 'b'.repeat(40),
+					latest: true,
+					publishedAt: '2026-09-08T00:00:00Z',
+				},
+			],
+		},
+		async ({ health, fake, layout, installDependencies, write }) => {
+			await runInstall(
+				'v4.1.0',
+				{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+				installDependencies,
+			);
+			await pointHealthAtFixture(layout, health.port);
+
+			// The file is documented as editable, so an upgrade must not discard
+			// what an operator put in it.
+			await writeFile(
+				layout.environmentFile,
+				`${await readFile(layout.environmentFile, 'utf8')}TERMINAY_OPERATOR_NOTE=keep-me\n`,
+			);
+
+			await runUpgrade(
+				undefined,
+				{ ...OPTIONS, advertiseAddress: '127.0.0.1:51000' },
+				{
+					layout,
+					record: await readInstallRecord(layout),
+					systemd: createSystemd({ scope: 'user', env: fake.env() }),
+					write,
+				},
+				{
+					apiBase: installDependencies.apiBase,
+					webBase: installDependencies.webBase,
+					architecture: 'x64',
+					releasePublicKeyPem: installDependencies.releasePublicKeyPem,
+					readinessTimeoutMs: 5_000,
+				},
+			);
+
+			const environment = parseEnvironmentFile(
+				await readFile(layout.environmentFile, 'utf8'),
+			);
+			assert.equal(environment.TERMINAY_OPERATOR_NOTE, 'keep-me');
+			assert.equal(
+				environment.TERMINAY_WEBRTC_ADVERTISE_ADDRESS,
+				'127.0.0.1:51000',
+			);
+			assert.equal(environment.TERMINAY_SERVER_ID, 'test-box');
+		},
+	);
+});
+
+test('status reports the advertised address and still names nothing private', async () => {
+	await withMachine(
+		{
+			releases: [
+				{
+					tag: 'v4.1.1',
+					version: '4.1.1',
+					revision: 'a'.repeat(40),
+					latest: true,
+				},
+			],
+		},
+		async ({ health, fake, layout, installDependencies, lines, write }) => {
+			await runInstall(
+				undefined,
+				{
+					...OPTIONS,
+					scope: 'user',
+					expose: 'hosted',
+					advertiseAddress: '127.0.0.1:51000',
+				},
+				installDependencies,
+			);
+			await pointHealthAtFixture(layout, health.port);
+			lines.length = 0;
+
+			const context = {
+				layout,
+				record: await readInstallRecord(layout),
+				systemd: createSystemd({ scope: 'user', env: fake.env() }),
+				write,
+			};
+			const report = await runStatus(context);
+			assert.equal(report.advertiseAddress, '127.0.0.1:51000');
+
+			const output = lines.join('\n');
+			assert.match(output, /advertised {3}127\.0\.0\.1:51000/u);
+			assert.doesNotMatch(output, /\/home\/|\/var\/lib|\.local\/share/u);
+			assert.ok(!output.includes(context.record.runAs));
+		},
+	);
+});

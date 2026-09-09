@@ -1,6 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import { hostname as osHostname } from 'node:os';
-import { isMatchCode, PENDING_APPROVAL_LIFETIME_MS } from '@terminay/protocol';
+import {
+	formatHostedPairingUrl,
+	isMatchCode,
+	managerOriginFromSessionOrigin,
+	PENDING_APPROVAL_LIFETIME_MS,
+} from '@terminay/protocol';
 import type {
 	RemoteAuditLog,
 	RemoteAuditLogOptions,
@@ -14,17 +19,16 @@ import type {
 } from '@terminay/server-core/remote';
 import {
 	RemoteAuditLog as AuditLog,
-	RemoteDeviceAuthentication,
 	RemoteExposureController as ExposureController,
 	RemoteConnectionManager,
+	RemoteDeviceAuthentication,
 	RemotePairingStore,
 	RemoteRateLimiter,
 } from '@terminay/server-core/remote';
 import {
-	formatHostedPairingUrl,
-	managerOriginFromSessionOrigin,
-} from '@terminay/protocol';
-import { deriveHostedPairingSecrets, hostedSessionId } from './hostedPairingSecrets.js';
+	deriveHostedPairingSecrets,
+	hostedSessionId,
+} from './hostedPairingSecrets.js';
 
 const HOSTED_PAIRING_LIFETIME_MS = 5 * 60 * 1000;
 const HOSTED_RECONNECT_AVAILABILITY_MS = 25 * 60 * 1000;
@@ -55,10 +59,7 @@ export interface ServerRemoteExposureOptions {
 	readonly auditSink?: RemoteAuditLogOptions['sink'];
 	readonly cleanupIntervalMs?: number;
 	/** Hosted QR links are advertised on the manager origin; Local HTTP uses named fragment fields. */
-	readonly pairingUrlFormat?:
-		| 'standalone'
-		| 'direct-device'
-		| 'hosted-compact';
+	readonly pairingUrlFormat?: 'standalone' | 'direct-device' | 'hosted-compact';
 	/** Non-secret machine name shown as the default browser connection label. */
 	readonly hostName?: string;
 }
@@ -106,8 +107,12 @@ export type EnrollmentApprovalResolution =
 			approval: PendingEnrollmentApproval;
 	  }>;
 
-export type EnrollmentApprovalListener = (resolution: EnrollmentApprovalResolution) => void;
-export type PendingApprovalListener = (approval: PendingEnrollmentApprovalSummary) => void;
+export type EnrollmentApprovalListener = (
+	resolution: EnrollmentApprovalResolution,
+) => void;
+export type PendingApprovalListener = (
+	approval: PendingEnrollmentApprovalSummary,
+) => void;
 
 const MAX_PENDING_APPROVALS = 16;
 const APPROVAL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -146,7 +151,10 @@ export class ServerRemoteExposure {
 	private readonly hostName: string;
 	private readonly now: () => number;
 	private readonly pairingLifetimeMs: number;
-	private readonly pendingApprovals = new Map<string, PendingEnrollmentApproval>();
+	private readonly pendingApprovals = new Map<
+		string,
+		PendingEnrollmentApproval
+	>();
 	private readonly approvalListeners = new Set<EnrollmentApprovalListener>();
 	private readonly pendingListeners = new Set<PendingApprovalListener>();
 	private approvalSequence = 0;
@@ -326,13 +334,17 @@ export class ServerRemoteExposure {
 			secret: input.pairingToken,
 		};
 		this.pairing.assertAvailable(pairingAttempt);
-		if (!isMatchCode(input.matchCode)) throw new TypeError('pairing match code is invalid');
-		if (!APPROVAL_ID_PATTERN.test(input.peerId)) throw new TypeError('remote peer identity is invalid');
+		if (!isMatchCode(input.matchCode))
+			throw new TypeError('pairing match code is invalid');
+		if (!APPROVAL_ID_PATTERN.test(input.peerId))
+			throw new TypeError('remote peer identity is invalid');
 		const deviceName = normalizeDeviceName(input.deviceName);
 		assertEnrollablePublicKey(this.devices, input.publicKeyPem);
 		for (const pending of this.pendingApprovals.values()) {
 			if (pending.roomId === input.pairingSessionId) {
-				throw new Error('another device is already waiting for approval on this pairing link');
+				throw new Error(
+					'another device is already waiting for approval on this pairing link',
+				);
 			}
 		}
 		if (this.pendingApprovals.size >= MAX_PENDING_APPROVALS) {
@@ -351,7 +363,11 @@ export class ServerRemoteExposure {
 			expiresAt: createdAt + PENDING_APPROVAL_LIFETIME_MS,
 		});
 		this.pendingApprovals.set(approval.approvalId, approval);
-		this.audit.record({ action: 'approval-requested', roomId: approval.roomId, peerId: approval.peerId });
+		this.audit.record({
+			action: 'approval-requested',
+			roomId: approval.roomId,
+			peerId: approval.peerId,
+		});
 		const summary = summarizeApproval(approval);
 		for (const listener of this.pendingListeners) listener(summary);
 		return summary;
@@ -359,10 +375,13 @@ export class ServerRemoteExposure {
 
 	/** The administrator confirmed the match code. Enroll, consume the room, and
 	 * mint a ticket bound to the peer that asked. */
-	approveEnrollment(approvalId: string): Extract<EnrollmentApprovalResolution, { outcome: 'approved' }> {
+	approveEnrollment(
+		approvalId: string,
+	): Extract<EnrollmentApprovalResolution, { outcome: 'approved' }> {
 		this.expirePendingApprovals();
 		const approval = this.pendingApprovals.get(approvalId);
-		if (approval === undefined) throw new Error('pairing approval is no longer pending');
+		if (approval === undefined)
+			throw new Error('pairing approval is no longer pending');
 		this.pendingApprovals.delete(approvalId);
 		const device = this.enrollDevice({
 			pairingSessionId: approval.roomId,
@@ -370,8 +389,16 @@ export class ServerRemoteExposure {
 			deviceName: approval.deviceName,
 			publicKeyPem: approval.publicKeyPem,
 		});
-		const ticket = this.devices.issueConnectionTicket(device.deviceId, approval.peerId);
-		this.audit.record({ action: 'approval-approved', roomId: approval.roomId, deviceId: device.deviceId, peerId: approval.peerId });
+		const ticket = this.devices.issueConnectionTicket(
+			device.deviceId,
+			approval.peerId,
+		);
+		this.audit.record({
+			action: 'approval-approved',
+			roomId: approval.roomId,
+			deviceId: device.deviceId,
+			peerId: approval.peerId,
+		});
 		const resolution = Object.freeze({
 			outcome: 'approved' as const,
 			approval,
@@ -386,19 +413,28 @@ export class ServerRemoteExposure {
 	denyEnrollment(approvalId: string): PendingEnrollmentApproval {
 		this.expirePendingApprovals();
 		const approval = this.pendingApprovals.get(approvalId);
-		if (approval === undefined) throw new Error('pairing approval is no longer pending');
-		this.resolvePendingApprovals((pending) => pending.approvalId === approvalId, 'denied');
+		if (approval === undefined)
+			throw new Error('pairing approval is no longer pending');
+		this.resolvePendingApprovals(
+			(pending) => pending.approvalId === approvalId,
+			'denied',
+		);
 		return approval;
 	}
 
 	/** Discard requests whose peer went away; nothing is enrolled. */
 	cancelPendingApprovalsForPeer(peerId: string): number {
-		return this.resolvePendingApprovals((pending) => pending.peerId === peerId, 'closed');
+		return this.resolvePendingApprovals(
+			(pending) => pending.peerId === peerId,
+			'closed',
+		);
 	}
 
 	listPendingApprovals(): readonly PendingEnrollmentApprovalSummary[] {
 		this.expirePendingApprovals();
-		return Object.freeze([...this.pendingApprovals.values()].map(summarizeApproval));
+		return Object.freeze(
+			[...this.pendingApprovals.values()].map(summarizeApproval),
+		);
 	}
 
 	onApprovalResolved(listener: EnrollmentApprovalListener): () => void {
@@ -443,7 +479,10 @@ export class ServerRemoteExposure {
 			publicKeyPem: input.publicKeyPem,
 		});
 		this.pairing.consume(pairingAttempt);
-		this.audit.record({ action: 'device-registered', deviceId: device.deviceId });
+		this.audit.record({
+			action: 'device-registered',
+			deviceId: device.deviceId,
+		});
 		return device;
 	}
 
@@ -492,7 +531,10 @@ export class ServerRemoteExposure {
 
 	private expirePendingApprovals(): number {
 		const now = this.now();
-		return this.resolvePendingApprovals((pending) => pending.expiresAt <= now, 'expired');
+		return this.resolvePendingApprovals(
+			(pending) => pending.expiresAt <= now,
+			'expired',
+		);
 	}
 
 	private resolvePendingApprovals(
@@ -608,7 +650,9 @@ function toServerPairingHandoff(
 	});
 }
 
-function summarizeApproval(approval: PendingEnrollmentApproval): PendingEnrollmentApprovalSummary {
+function summarizeApproval(
+	approval: PendingEnrollmentApproval,
+): PendingEnrollmentApprovalSummary {
 	return Object.freeze({
 		approvalId: approval.approvalId,
 		deviceName: approval.deviceName,
@@ -618,13 +662,23 @@ function summarizeApproval(approval: PendingEnrollmentApproval): PendingEnrollme
 }
 
 function normalizeDeviceName(value: string): string {
-	const name = String(value ?? '').trim().replace(/[\0\r\n]/gu, '').slice(0, 128);
+	const name = String(value ?? '')
+		.trim()
+		.replace(/[\0\r\n]/gu, '')
+		.slice(0, 128);
 	return name.length === 0 ? 'Browser' : name;
 }
 
 /** Validate the device key up front so a malformed key never parks a request. */
-function assertEnrollablePublicKey(devices: RemoteDeviceAuthentication, publicKeyPem: string): void {
-	if (typeof publicKeyPem !== 'string' || publicKeyPem.length < 64 || publicKeyPem.length > 16_384) {
+function assertEnrollablePublicKey(
+	devices: RemoteDeviceAuthentication,
+	publicKeyPem: string,
+): void {
+	if (
+		typeof publicKeyPem !== 'string' ||
+		publicKeyPem.length < 64 ||
+		publicKeyPem.length > 16_384
+	) {
 		throw new TypeError('remote device public key is invalid');
 	}
 	for (const device of devices.list()) {
@@ -636,7 +690,8 @@ function assertEnrollablePublicKey(devices: RemoteDeviceAuthentication, publicKe
 
 function sanitizePairingHostName(value: string): string {
 	let name = value.trim();
-	if (name.toLowerCase().endsWith('.local')) name = name.slice(0, -'.local'.length);
+	if (name.toLowerCase().endsWith('.local'))
+		name = name.slice(0, -'.local'.length);
 	name = name.replaceAll('_', '-').slice(0, 80);
 	if (
 		name.length === 0 ||

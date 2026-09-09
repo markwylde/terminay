@@ -43,6 +43,7 @@ export interface StatusReport {
 	readonly ready: boolean;
 	readonly exposure: readonly string[] | 'off';
 	readonly activeVersion?: string;
+	readonly advertiseAddress?: string;
 }
 
 export async function runStatus(
@@ -82,6 +83,9 @@ export async function runStatus(
 		ready: snapshot?.ready === true,
 		exposure,
 		...(active === undefined ? {} : { activeVersion: active }),
+		...(context.record.advertiseAddress === undefined
+			? {}
+			: { advertiseAddress: context.record.advertiseAddress }),
 	});
 
 	context.write(
@@ -94,5 +98,10 @@ export async function runStatus(
 	context.write(
 		`exposure     ${report.exposure === 'off' ? 'off' : report.exposure.join(', ') || 'off'}`,
 	);
+	// Service configuration an operator needs when a connection fails, and it
+	// names no workspace, path, account, or device.
+	if (report.advertiseAddress !== undefined) {
+		context.write(`advertised   ${report.advertiseAddress}`);
+	}
 	return report;
 }

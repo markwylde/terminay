@@ -28,6 +28,9 @@ export interface DaemonOptions {
 	readonly runAs?: string;
 	readonly port?: number;
 	readonly directOrigin?: string;
+	/** An address and UDP port to offer as an additional ICE candidate. Empty
+	 * string clears a previously configured one. */
+	readonly advertiseAddress?: string;
 	readonly hostedDomain?: string;
 	readonly expose?: string;
 	readonly projectRoot?: string;
@@ -70,11 +73,15 @@ const VALUE_FLAGS = Object.freeze([
 	'--run-as',
 	'--port',
 	'--direct-origin',
+	'--advertise-address',
 	'--hosted-domain',
 	'--expose',
 	'--project-root',
 	'--mode',
 ]);
+
+/** Flags whose empty value means "remove what was configured before". */
+const CLEARABLE_FLAGS = Object.freeze(['--advertise-address']);
 
 const BOOLEAN_FLAGS = Object.freeze([
 	'--system',
@@ -98,11 +105,19 @@ const ACCEPTED: Readonly<Record<DaemonCommand, readonly string[]>> =
 			'--run-as',
 			'--port',
 			'--direct-origin',
+			'--advertise-address',
 			'--hosted-domain',
 			'--expose',
 			'--project-root',
 		],
-		upgrade: ['--system', '--user', '--allow-downgrade'],
+		upgrade: [
+			'--system',
+			'--user',
+			'--allow-downgrade',
+			// How a server is reached can change without changing its version,
+			// and an upgrade is the moment an operator is already editing it.
+			'--advertise-address',
+		],
 		uninstall: ['--system', '--user', '--purge', '--yes'],
 		start: ['--system', '--user'],
 		stop: ['--system', '--user'],
@@ -131,6 +146,36 @@ function parsePort(raw: string): number {
 	if (port < 1 || port > 65535)
 		fail('--port must be a whole number between 1 and 65535');
 	return port;
+}
+
+/**
+ * Validate `<host>:<port>` before anything is written.
+ *
+ * Literal addresses only: an ICE candidate is where a peer sends connectivity
+ * checks, and a hostname resolves on the peer's machine rather than naming the
+ * address an operator forwarded. Empty passes through as the clearing form.
+ */
+function parseAdvertiseAddress(raw: string): string {
+	if (raw === '') return raw;
+	const bracketed = /^\[([0-9A-Fa-f:.]+)\]:(\d{1,5})$/u.exec(raw.trim());
+	const plain = /^([0-9]{1,3}(?:\.[0-9]{1,3}){3}):(\d{1,5})$/u.exec(raw.trim());
+	const match = bracketed ?? plain;
+	if (match === null) {
+		fail(
+			`--advertise-address must be a literal address and port, such as 127.0.0.1:51000 or [::1]:51000 (got ${raw}). An ICE candidate is a destination for the other side's connectivity checks, so a hostname cannot stand in for it.`,
+		);
+	}
+	const port = Number(match[2]);
+	if (port < 1 || port > 65535) {
+		fail('--advertise-address port must be between 1 and 65535');
+	}
+	if (
+		bracketed === null &&
+		(match[1] as string).split('.').some((octet) => Number(octet) > 255)
+	) {
+		fail(`--advertise-address is not a valid IPv4 address: ${match[1]}`);
+	}
+	return raw.trim();
 }
 
 function parseMode(raw: string): PairingMode {
@@ -196,7 +241,11 @@ export function parseCommandLine(argv: readonly string[]): ParsedCommandLine {
 				value = next;
 				index += 1;
 			}
-			if (value.length === 0) fail(`${name} requires a value`);
+			// An empty value is a usage error everywhere except the advertised
+			// address, where it is how an operator removes one they set earlier.
+			if (value.length === 0 && !CLEARABLE_FLAGS.includes(name)) {
+				fail(`${name} requires a value`);
+			}
 			if (values.has(name)) fail(`${name} was given more than once`);
 			values.set(name, value);
 			continue;
@@ -244,6 +293,13 @@ export function parseCommandLine(argv: readonly string[]): ParsedCommandLine {
 			? { runAs: values.get('--run-as') as string }
 			: {}),
 		...(port === undefined ? {} : { port: parsePort(port) }),
+		...(values.has('--advertise-address')
+			? {
+					advertiseAddress: parseAdvertiseAddress(
+						values.get('--advertise-address') as string,
+					),
+				}
+			: {}),
 		...(values.has('--direct-origin')
 			? { directOrigin: values.get('--direct-origin') as string }
 			: {}),
@@ -297,6 +353,12 @@ Flags:
   --port <port>        Port the server listens on.
   --direct-origin <o>  Origin devices reach directly, such as
                        https://box.example.com:8443.
+  --advertise-address <addr:port>
+                       An address and UDP port to offer as an extra connection
+                       candidate, for a server reachable only at a forwarded
+                       address — a container, or behind a port forward. That
+                       port and the three above it must be forwarded to this
+                       machine. Pass an empty value to remove one set earlier.
   --hosted-domain <d>  Hosted signalling domain.
   --expose <modes>     off, hosted, direct, or hosted,direct.
   --project-root <p>   Directory the server opens projects from.
