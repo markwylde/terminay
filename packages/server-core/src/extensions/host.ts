@@ -179,6 +179,10 @@ export class ExtensionHost {
 	private agentPublicationsInFlight = 0;
 	/** The child's account of the error that is ending it, if it sent one. */
 	private fatalReport: ExtensionFatalErrorReport | undefined;
+	/** Whether this incarnation's death has already been counted as a crash. */
+	private deathCounted = false;
+	/** Whether an exit status has already been observed for this incarnation. */
+	private exitRecorded = false;
 	private readonly limits: Required<ExtensionHostLimits>;
 	private readonly now: () => number;
 
@@ -228,6 +232,8 @@ export class ExtensionHost {
 		this.descriptor = await validateExtensionLaunchDescriptor(descriptor);
 		this.stopping = false;
 		this.fatalReport = undefined;
+		this.deathCounted = false;
+		this.exitRecorded = false;
 		this.setState({
 			extensionId: this.extensionId,
 			state: 'starting',
@@ -610,7 +616,7 @@ export class ExtensionHost {
 				timer,
 				...(abort === undefined ? {} : { abort }),
 			});
-			if (!this.send(frame)) {
+			if (this.send(frame) !== 'sent') {
 				this.finishPending(
 					id,
 					undefined,
@@ -620,18 +626,48 @@ export class ExtensionHost {
 		});
 	}
 
-	private send(frame: HostFrame): boolean {
-		if (
-			this.child === undefined ||
-			!this.child.connected ||
-			frameByteLength(frame) > this.limits.maxMessageBytes
-		)
-			return false;
+	/**
+	 * Why a write did not happen, because the reasons are not alike.
+	 *
+	 * A frame over the message limit is the child and host disagreeing about
+	 * the protocol. A closed channel is just what a child that has ended looks
+	 * like from the writing side. Collapsing them into one boolean made every
+	 * caller report whichever it happened to name, and a dying child was
+	 * accused of misbehaving.
+	 */
+	private send(frame: HostFrame): 'sent' | 'channel-closed' | 'too-large' {
+		if (frameByteLength(frame) > this.limits.maxMessageBytes)
+			return 'too-large';
+		if (this.child === undefined || !this.child.connected)
+			return 'channel-closed';
 		try {
-			return this.child.send(frame);
+			return this.child.send(frame) ? 'sent' : 'channel-closed';
 		} catch {
+			// `send` throws once the channel is closing, which is the same fact.
+			return 'channel-closed';
+		}
+	}
+
+	/**
+	 * Write a frame the child is owed, and react only to a real violation.
+	 *
+	 * A frame too large for the channel is a protocol disagreement and is
+	 * contained as one. A closed channel is recorded and dropped: the child has
+	 * already ended, its exit is being handled by the path that owns it, and
+	 * accusing it here would count that one death again for every operation
+	 * that happened to be in flight.
+	 */
+	private sendOrViolate(frame: HostFrame, oversizeMessage: string): boolean {
+		const result = this.send(frame);
+		if (result === 'sent') return true;
+		if (result === 'too-large') {
+			this.protocolViolation(oversizeMessage);
 			return false;
 		}
+		this.recordDiagnostic('channel-closed', {
+			consecutiveFailures: this.state.consecutiveCrashes,
+		});
+		return false;
 	}
 
 	private receive(message: unknown): void {
@@ -1074,15 +1110,20 @@ export class ExtensionHost {
 			readonly failure?: string;
 		},
 	): void {
-		if (
-			this.send({
-				protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION,
-				kind: 'agent.observation.result',
-				id,
-				payload: result,
-			})
-		)
+		const delivery = this.send({
+			protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION,
+			kind: 'agent.observation.result',
+			id,
+			payload: result,
+		});
+		if (delivery === 'sent') return;
+		// Nobody is left to receive it, and the exit path owns that fact.
+		if (delivery === 'channel-closed') {
+			this.recordDiagnostic('channel-closed', {
+				consecutiveFailures: this.state.consecutiveCrashes,
+			});
 			return;
+		}
 		// A huge success payload is ordinary discovery evidence (lsof of a Node
 		// tree), not a protocol violation. Fail the pending observe() so the
 		// provider can retry; do not terminate the extension child.
@@ -1095,16 +1136,15 @@ export class ExtensionHost {
 			ok: false as const,
 			failure: 'agent observation result exceeds IPC limit',
 		};
-		if (
-			!this.send({
+		this.sendOrViolate(
+			{
 				protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION,
 				kind: 'agent.observation.result',
 				id,
 				payload: failure,
-			})
-		) {
-			this.protocolViolation('agent observation result exceeds IPC limit');
-		}
+			},
+			'agent observation result exceeds IPC limit',
+		);
 	}
 
 	private sendAgentLifecycleAck(
@@ -1117,17 +1157,15 @@ export class ExtensionHost {
 			readonly failure?: string;
 		},
 	): void {
-		if (
-			!this.send({
+		this.sendOrViolate(
+			{
 				protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION,
 				kind: 'agent.lifecycle.ack',
 				id,
 				payload: acknowledgement,
-			})
-		)
-			this.protocolViolation(
-				'agent lifecycle acknowledgement exceeds IPC limit',
-			);
+			},
+			'agent lifecycle acknowledgement exceeds IPC limit',
+		);
 	}
 
 	private async retireAgentContext(
@@ -1267,15 +1305,15 @@ export class ExtensionHost {
 	): void {
 		const payload =
 			failure === undefined ? { ok: true, value } : { ok: false, failure };
-		if (
-			!this.send({
+		this.sendOrViolate(
+			{
 				protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION,
 				kind: 'broker.result',
 				id,
 				payload,
-			})
-		)
-			this.protocolViolation('broker response exceeds IPC limit');
+			},
+			'broker response exceeds IPC limit',
+		);
 	}
 
 	private finishPending(id: string, result?: unknown, error?: Error): void {
@@ -1300,6 +1338,7 @@ export class ExtensionHost {
 		this.child = undefined;
 		// Recorded whatever the reason, and before the failure branch below, so a
 		// child that died without reporting still leaves its exit status behind.
+		this.exitRecorded = true;
 		this.recordDiagnostic('child-exited', {
 			exitCode: code,
 			signal,
@@ -1352,7 +1391,27 @@ export class ExtensionHost {
 		this.activeDependencyCalls.clear();
 	}
 
+	/**
+	 * Count one death, however many operations discover it.
+	 *
+	 * A child ending fails everything that was in flight at the time, and the
+	 * bridge admits dozens of publications per context. Counting each discovery
+	 * turned one death into ten crashes in two milliseconds, which cleared a
+	 * threshold meant to describe repeated deaths over a minute. The failure is
+	 * recorded either way; only the crash window is left alone once the child
+	 * for this incarnation has already gone.
+	 */
 	private recordFailure(error: Error): void {
+		if (this.child === undefined && this.deathCounted) {
+			this.recordDiagnostic('failed', {
+				consecutiveFailures: this.state.consecutiveCrashes,
+				error: extensionErrorDetail(error),
+				afterChildGone: true,
+			});
+			this.rejectPending(error);
+			return;
+		}
+		this.deathCounted = true;
 		const now = this.now();
 		this.crashTimes.push(now);
 		while ((this.crashTimes[0] ?? now) < now - this.limits.crashWindowMs)
@@ -1439,20 +1498,27 @@ export class ExtensionHost {
 		};
 	}
 
+	/**
+	 * Kill a child the host has given up on, without claiming to know how it
+	 * died.
+	 *
+	 * Detaching the listeners drops the `exit` event that carries the real code
+	 * or signal, so a child that had already ended used to be recorded as this
+	 * SIGKILL instead — the host's own kill overwriting the evidence of the
+	 * death it was reacting to. An exit already observed for this child is left
+	 * to stand, and this records only what it is: the host terminating it.
+	 */
 	private terminateChild(): void {
 		const child = this.child;
 		this.child = undefined;
 		if (child === undefined) return;
-		// Termination detaches the exit listener, so this is the only chance to
-		// record that the child stopped running.
-		this.recordDiagnostic('child-exited', {
-			exitCode: null,
-			signal: 'SIGKILL',
-			deliberate: this.stopping,
-			...(this.fatalReport === undefined
-				? {}
-				: { error: this.reportedFatalDetail() }),
-		});
+		if (!this.exitRecorded)
+			this.recordDiagnostic('child-terminated', {
+				deliberate: this.stopping,
+				...(this.fatalReport === undefined
+					? {}
+					: { error: this.reportedFatalDetail() }),
+			});
 		child.removeAllListeners();
 		child.kill('SIGKILL');
 	}

@@ -99,6 +99,8 @@ export const DIAGNOSTIC_EVENT_NAMES = [
 	'local-server.extension.spawned',
 	'local-server.extension.ready',
 	'local-server.extension.child-exited',
+	'local-server.extension.channel-closed',
+	'local-server.extension.child-terminated',
 	'local-server.extension.failed',
 	'local-server.extension.restart-scheduled',
 	'local-server.extension.restart-attempted',
