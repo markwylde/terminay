@@ -10,6 +10,16 @@ export type RendererDiagnostic =
 			readonly attempt: number;
 			readonly durationMs?: number;
 			readonly reason?: 'congestion' | 'attachment_closed' | 'hydration' | 'attach-error' | 'deadline';
+	  }
+	| {
+			/** The server refused to resume a display from the position it last
+			 * rendered. A resume is routed into recovery for a fresh presentation;
+			 * a fresh presentation that is itself refused becomes a retryable error. */
+			readonly kind: 'terminal-presentation-refused';
+			readonly attach: 'resume' | 'fresh';
+			readonly requestedFromPosition: number;
+			readonly replayFrom: number;
+			readonly outputPosition: number;
 	  };
 
 type RendererDiagnosticObserver = (

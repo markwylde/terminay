@@ -920,6 +920,12 @@ export const test = base.extend<ElectronFixtures>({
 				...(path.basename(testInfo.file) === 'remote-access.spec.ts'
 					? { TERMINAY_TEST_ALLOW_UNAVAILABLE_WEBRTC_UI: '1' }
 					: {}),
+				// A 16 KiB replay window so a sustained flood outruns it during the
+				// sub-second gap a Local transport loss leaves. Inert in production.
+				...(path.basename(testInfo.file) ===
+				'terminal-recovery-beyond-replay-window.spec.ts'
+					? { TERMINAY_TEST_TERMINAL_REPLAY_BYTES: '16384' }
+					: {}),
 				TERMINAY_USER_DATA_DIR: userDataDir,
 				TMP: tempDir,
 				TMPDIR: tempDir,
