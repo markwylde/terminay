@@ -2,7 +2,7 @@
 
 ### Requirement: Standalone server operation
 
-The standalone foreground command SHALL report readiness and a clear data and log location. A first-run or explicit pairing command SHALL print a short-lived secure pairing URL and SHALL require explicit host approval of each enrolling device's match code, announced as a metadata-only log line and decided through the owner-only approval socket in the data root. The runtime SHALL handle `SIGINT` and `SIGTERM` with bounded graceful shutdown that finalizes recordings, closes clients, and terminates or preserves child processes according to the session-lifetime policy. Unsupported native dependencies SHALL fail during startup with actionable platform and architecture guidance.
+The standalone foreground command SHALL report readiness and a clear data and log location. The pairing command SHALL ask the running server, through the owner-only socket inside its data root, for its live pairing handoff and SHALL print a short-lived secure pairing URL for each active exposure mode; every device that opens one MUST be approved on the host with the match code, announced as a metadata-only log line and decided through the owner-only approval socket in the data root. The pairing command SHALL fail with a clear message when no server owns the data root. The runtime SHALL handle `SIGINT` and `SIGTERM` with bounded graceful shutdown that finalizes recordings, closes clients, and terminates or preserves child processes according to the session-lifetime policy. Unsupported native dependencies SHALL fail during startup with actionable platform and architecture guidance.
 
 #### Scenario: Foreground start
 
@@ -11,8 +11,14 @@ The standalone foreground command SHALL report readiness and a clear data and lo
 
 #### Scenario: Pairing command
 
-- **WHEN** the operator runs the pairing command
-- **THEN** a short-lived secure pairing URL is printed and each enrolling device must be approved by its match code
+- **WHEN** the operator runs the pairing command against a data root a live server owns
+- **THEN** the printed pairing URL belongs to a room that server has registered
+- **AND** a device that opens it reaches that server's approval queue and requires explicit approval of its match code
+
+#### Scenario: Pairing command with no running server
+
+- **WHEN** the operator runs the pairing command and no server owns the data root
+- **THEN** the command fails with a message that names the missing server and prints no pairing material
 
 #### Scenario: Approval on a headless server
 

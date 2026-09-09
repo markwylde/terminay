@@ -832,12 +832,22 @@ The omp mapping SHALL map records as follows: a logical `type: "session"` header
 
 ### Requirement: Grok session roots and binding
 
-The `terminay-agent-grok` package SHALL own every Grok executable name, home-root rule, process and journal binding rule, mapping version, fixture, and compatibility test. Grok sessions SHALL live below the effective `GROK_HOME/sessions` root, or the host account's `.grok/sessions` root when `GROK_HOME` is unset, grouped by a URL-encoded working directory and named with Grok's session UUID. The lifecycle journal SHALL be that directory's `events.jsonl`; `chat_history.jsonl`, `updates.jsonl`, `signals.json`, memtrace, and MCP logs SHALL NOT be lifecycle sources. Because the journal carries no session-header record, the process-bound `events.jsonl` path SHALL supply the stable provider session ID after the host canonicalizes the writable handle. Home-relative containment SHALL NOT be required for that writer proof. Grok also writes `active_sessions.json` with `{session_id, pid, cwd}` rows for live processes, and where a descendant of the issued PTY has that exact pid the extension SHALL bind the corresponding journal even if the process is not holding `events.jsonl` open. CWD in that registry SHALL never be identity. A `turn_started.session_id` that does not equal the bound id SHALL be ignored. Where one writer holds multiple eligible root journals, the most recently modified eligible root SHALL be selected, and a journal whose first `turn_started` reports a `session_relationship` other than `primary` SHALL NOT be an eligible root.
+The `terminay-agent-grok` package SHALL own every Grok executable name, home-root rule, process and journal binding rule, mapping version, fixture, and compatibility test. Grok sessions SHALL live below the effective `GROK_HOME/sessions` root, or the host account's `.grok/sessions` root when `GROK_HOME` is unset, grouped by a URL-encoded working directory and named with Grok's session UUID. The lifecycle journal SHALL be that directory's `events.jsonl`; `chat_history.jsonl`, `updates.jsonl`, `signals.json`, memtrace, and MCP logs SHALL NOT be lifecycle sources. Because the journal carries no session-header record, the process-bound `events.jsonl` path SHALL supply the stable provider session ID after the host canonicalizes the writable handle. Home-relative containment SHALL NOT be required for that writer proof. Grok also writes `active_sessions.json` with `{session_id, pid, cwd}` rows for live processes, and where a descendant of the issued PTY has that exact pid the extension SHALL bind the corresponding journal even if the process is not holding `events.jsonl` open. When more than one listed descendant pid matches, the extension SHALL still bind: it SHALL admit each matching pid's eligible primary journal for that tree, and where several eligible primary journals match it SHALL select the most recently modified one. A journal whose first `turn_started` reports a `session_relationship` other than `primary` SHALL NOT be an eligible root. Match-count greater than one SHALL NOT leave the tree unbound. CWD in that registry SHALL never be identity. A `turn_started.session_id` that does not equal the bound id SHALL be ignored. Where one writer holds multiple eligible root journals, the most recently modified eligible root SHALL be selected.
 
 #### Scenario: Binding via the active sessions registry
 
 - **WHEN** `active_sessions.json` lists a pid that is a descendant of the issued PTY
 - **THEN** the corresponding journal binds even when that process does not hold `events.jsonl` open
+
+#### Scenario: Several descendant pids listed in the registry
+
+- **WHEN** `active_sessions.json` lists more than one pid that is a descendant of the issued PTY
+- **THEN** an eligible primary journal for that tree still binds, and a non-primary journal is not selected as the root
+
+#### Scenario: Two Grok terminals share one registry
+
+- **WHEN** two issued PTYs each have a descendant pid listed in the same `active_sessions.json`
+- **THEN** each terminal binds its own primary journal and neither row leaks into the other terminal
 
 #### Scenario: Missing HOME in process environment
 
@@ -1092,6 +1102,25 @@ Bound roots SHALL render the canonical RAG glyph on terminal tabs. The header SH
 
 - **WHEN** several unacknowledged entries exist
 - **THEN** waiting and blocked entries take priority in the header aggregate and done entries remain until acknowledged
+
+### Requirement: Header activity dropdown count badges are fixed-size circles
+
+The header activity dropdown button SHALL present up to three count badges, one each for attention, finished unviewed, and working terminals, each shown only when its count is above zero. Every count badge SHALL be a circle of one fixed size regardless of the number it displays, with the number centred both vertically and horizontally. The font size SHALL step down as the digit count grows so the circle never widens, and counts above 99 SHALL display as `99+`. The project tab activity count badge SHALL share the same circle size and text treatment so the two surfaces look identical.
+
+#### Scenario: Single digit
+
+- **WHEN** one terminal has finished unviewed activity
+- **THEN** the dropdown shows one green circular badge reading `1`, with the text centred and the badge width equal to its height
+
+#### Scenario: Two digits keep the same circle
+
+- **WHEN** twelve terminals are working
+- **THEN** the amber badge reads `12` in a smaller font and its width still equals its height
+
+#### Scenario: Count capped at 99+
+
+- **WHEN** more than 99 terminals have finished unviewed activity
+- **THEN** the green badge reads `99+` and its width still equals its height
 
 ### Requirement: Agent authority isolation between server instances
 
