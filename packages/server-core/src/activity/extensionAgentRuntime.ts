@@ -85,6 +85,8 @@ export interface ExtensionAgentRuntimeRegistryOptions {
 		signal: AbortSignal,
 	) => Promise<string | undefined>;
 	readonly topologyPollIntervalMs?: number;
+	/** Ceiling for the widening wait between sweeps that keep finding nothing. */
+	readonly maximumUnboundPollIntervalMs?: number;
 	readonly schedule?: (
 		callback: () => void,
 		milliseconds: number,
@@ -111,6 +113,9 @@ interface TrackedTerminal {
 	 * a journal is proven or the shell returns. The first sample after
 	 * exhaustion may be the first one that can see the provider's journal. */
 	unboundTopologyReobserve?: boolean;
+	/** Fast windows this terminal has exhausted without binding and without new
+	 * evidence. It widens the wait before the next one. */
+	unboundSweeps: number;
 	environmentBinding?: ProjectEnvironmentBinding;
 }
 
@@ -139,6 +144,7 @@ export class ExtensionAgentRuntimeRegistry {
 	>;
 	private readonly reobserveDebounceMs: number;
 	private readonly topologyPollIntervalMs: number;
+	private readonly maximumUnboundPollIntervalMs: number;
 	private readonly schedule: NonNullable<
 		ExtensionAgentRuntimeRegistryOptions['schedule']
 	>;
@@ -185,6 +191,10 @@ export class ExtensionAgentRuntimeRegistry {
 			100,
 			options.topologyPollIntervalMs ?? 1_500,
 		);
+		this.maximumUnboundPollIntervalMs = Math.max(
+			this.topologyPollIntervalMs,
+			options.maximumUnboundPollIntervalMs ?? 60_000,
+		);
 		this.schedule =
 			options.schedule ??
 			((callback, milliseconds) => setTimeout(callback, milliseconds));
@@ -206,6 +216,7 @@ export class ExtensionAgentRuntimeRegistry {
 			identity: Object.freeze({ ...identity }),
 			incarnation: (current?.incarnation ?? 0) + 1,
 			notBoundRetries: 0,
+			unboundSweeps: 0,
 			environmentBinding: this.bindEnvironment(identity),
 		});
 	}
@@ -226,6 +237,9 @@ export class ExtensionAgentRuntimeRegistry {
 		const terminal = this.requireTerminal(identity);
 		if (terminal.environmentBinding === undefined)
 			terminal.environmentBinding = this.bindEnvironment(identity);
+		// A different foreground process is new evidence, so a terminal that had
+		// backed off starts again at the base interval.
+		if (terminal.lastProcessName !== processName) terminal.unboundSweeps = 0;
 		terminal.lastProcessName = processName;
 		// A provider journal may be shared by a later `resume` in another
 		// Terminay authority.  Once this exact PTY returns to its shell, its
@@ -239,6 +253,7 @@ export class ExtensionAgentRuntimeRegistry {
 			terminal.context = undefined;
 			terminal.incarnation += 1;
 			terminal.notBoundRetries = 0;
+			terminal.unboundSweeps = 0;
 			terminal.unboundTopologyReobserve = false;
 			this.recordObservation(
 				terminal.identity,
@@ -472,6 +487,7 @@ export class ExtensionAgentRuntimeRegistry {
 					return;
 				}
 				terminal.notBoundRetries = 0;
+				terminal.unboundSweeps = 0;
 				terminal.unboundTopologyReobserve = false;
 				// A generic wrapper can have queued a fallback before its eventual
 				// provider opened the journal. Once that provider proves its binding,
@@ -723,6 +739,7 @@ export class ExtensionAgentRuntimeRegistry {
 			identity: Object.freeze({ ...identity }),
 			incarnation: 1,
 			notBoundRetries: 0,
+			unboundSweeps: 0,
 			environmentBinding: this.bindEnvironment(identity),
 		};
 		this.terminals.set(identity.sessionId, created);
@@ -739,7 +756,22 @@ export class ExtensionAgentRuntimeRegistry {
 		terminal.topologyTimer = this.schedule(() => {
 			terminal.topologyTimer = undefined;
 			void this.pollTopology(terminal);
-		}, this.topologyPollIntervalMs);
+		}, this.unboundPollDelay(terminal));
+	}
+
+	/**
+	 * How long to wait before arming discovery again.
+	 *
+	 * The base interval while anything is still changing, doubling for each
+	 * consecutive sweep that found nothing, to a ceiling. Any new evidence
+	 * resets the count, so a journal that appears late is still admitted at the
+	 * base interval rather than after a long wait.
+	 */
+	private unboundPollDelay(terminal: TrackedTerminal): number {
+		return Math.min(
+			this.topologyPollIntervalMs * 2 ** Math.min(terminal.unboundSweeps, 30),
+			this.maximumUnboundPollIntervalMs,
+		);
 	}
 
 	private async pollTopology(terminal: TrackedTerminal): Promise<void> {
@@ -762,6 +794,12 @@ export class ExtensionAgentRuntimeRegistry {
 				terminal.topologySignature !== undefined &&
 				terminal.topologySignature !== signature;
 			const retryUnbound = terminal.unboundTopologyReobserve === true;
+			// Something actually moved, so this is not the quiet case the backoff
+			// exists for: start again at the base interval. A sample that re-arms an
+			// unbound terminal while nothing has changed is another fruitless sweep,
+			// and the wait before the next one widens.
+			if (changed) terminal.unboundSweeps = 0;
+			else if (retryUnbound) terminal.unboundSweeps += 1;
 			terminal.topologySignature = signature;
 			if (changed || retryUnbound) {
 				this.topologyChanged(terminal.identity);
