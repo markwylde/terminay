@@ -210,3 +210,42 @@ test('the published CLI package ships only its compiled output and one dependenc
 	// inside its own archive.
 	assert.equal(manifest.engines.node, '>=20');
 });
+
+test('the archive job builds and stages the server-served workspace UI', async () => {
+	const workflow = await readFile(
+		resolve(root, '.github/workflows/trigger-release.yml'),
+		'utf8',
+	);
+	const jobStart = workflow.indexOf('  build-standalone-server:\n');
+	const notesStart = workflow.indexOf('  publish-cli:\n');
+	const job = workflow.slice(jobStart, notesStart);
+
+	// `build:app` produces both UI bundles; the archive must stage the one the
+	// hosted archive loader can serve. Staging the Desktop renderer bundle
+	// instead ships an artifact that pairs a device and then serves a
+	// placeholder, with every transport signal green.
+	assert.match(job, /npm run build:app/u);
+
+	const builder = await readFile(
+		resolve(root, 'scripts/build-standalone-server-artifact.mjs'),
+		'utf8',
+	);
+	assert.match(builder, /args\['ui-bundle'\] \?\? 'dist-web'/u);
+	assert.match(builder, /assertHostedUiEntry\(uiBundle\)/u);
+
+	// The probe the release already runs is the last gate before publishing.
+	const probe = await readFile(
+		resolve(root, 'scripts/probe-standalone-server-archive.mjs'),
+		'utf8',
+	);
+	assert.match(probe, /assertHostedUiEntry/u);
+	assert.match(job, /probe-standalone-server-archive\.mjs/u);
+});
+
+test('build:app produces the bundle the archive stages', async () => {
+	const manifest = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
+	// dist-web comes from the server-ui config; if that step ever leaves
+	// build:app, the archive would stage a directory nothing wrote.
+	assert.match(manifest.scripts['build:app'], /build:server-ui:bundle/u);
+	assert.match(manifest.scripts['build:server-ui:bundle'], /vite\.server-ui\.config\.ts/u);
+});
