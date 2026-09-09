@@ -195,6 +195,7 @@ import {
 	embeddedWorkspacePersistenceFault,
 	isEmbeddedWorkspacePersistenceError,
 } from './workspacePersistence';
+import { embeddedTerminalReplayBytesOverride } from './testTerminalLimits';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RELEASES_LATEST_URL =
@@ -1289,9 +1290,15 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 	);
 	endStartupPhase('workspace-restore');
 	beginStartupPhase('server-compose');
+	// E2E-only: a smaller retained replay window so a suite can outrun it during
+	// a real Local transport loss. Inert without the E2E marker.
+	const replayBytesOverride = embeddedTerminalReplayBytesOverride(process.env);
 	const authority: ServerTerminalAuthority = new ServerTerminalAuthority({
 		serverId: embeddedServerId,
 		dataRoot: app.getPath('userData'),
+		...(replayBytesOverride === undefined
+			? {}
+			: { maxReplayBytes: replayBytesOverride }),
 		extensionHostChildEntrypoint: path.join(MAIN_DIST, 'extensionHostEntry.js'),
 		builtInExtensionArtifactRoot: embeddedBuiltInExtensionArtifactRoot({
 			appRoot: process.env.APP_ROOT,
