@@ -542,6 +542,133 @@ test("topology polling keeps discovery armed after the fast not-bound window so 
   registry.terminalExited(identity); await agents.stop();
 });
 
+test("a terminal that never binds widens the wait between sweeps, and new evidence resets it", async () => {
+  // One terminal produced 6,673 observation records in a recorded session —
+  // one sweep of every installed provider every poll interval, for hours,
+  // because nothing there could ever bind. Discovery stays armed; it just
+  // stops asking at full speed.
+  const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
+  const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
+  const scheduled = []; let signature = "unchanged";
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: {
+      agentProviderContributions: () => [provider],
+      async admitAgentTerminal() { return { state: "not-bound" }; },
+      async cancelAgentTerminal() { return true; },
+      async drainAgentObservers() {},
+    },
+    reobserveDebounceMs: 0,
+    topologyPollIntervalMs: 100,
+    maximumUnboundPollIntervalMs: 800,
+    topologySignature: async () => signature,
+    schedule(callback, milliseconds) { const timer = { callback, milliseconds }; scheduled.push(timer); return timer; },
+    cancelSchedule() {},
+  });
+
+  const drainFastWindow = async () => {
+    for (let attempt = 0; attempt < 24; attempt += 1) {
+      const retry = scheduled.find((timer) => timer.milliseconds === 0);
+      if (retry === undefined) return;
+      scheduled.splice(scheduled.indexOf(retry), 1);
+      await retry.callback();
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  };
+  const nextPoll = () => {
+    const poll = scheduled.find((timer) => timer.milliseconds >= 100);
+    assert.ok(poll, "discovery must stay armed");
+    scheduled.splice(scheduled.indexOf(poll), 1);
+    return poll;
+  };
+
+  registry.register(identity); registry.terminalStarted(identity, 4321);
+  assert.equal(registry.foregroundProcessChanged(identity, "codex"), true);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const waits = [];
+  for (let sweep = 0; sweep < 4; sweep += 1) {
+    await drainFastWindow();
+    const poll = nextPoll();
+    waits.push(poll.milliseconds);
+    await poll.callback();
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.deepEqual(waits, [100, 200, 400, 800], "each fruitless sweep waits longer, up to the ceiling");
+
+  await drainFastWindow();
+  const held = nextPoll();
+  assert.equal(held.milliseconds, 800, "and stays at the ceiling rather than growing without bound");
+  signature = "a new descendant appeared";
+  await held.callback();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  await drainFastWindow();
+  assert.equal(nextPoll().milliseconds, 100, "new evidence returns discovery to its base interval");
+  registry.terminalExited(identity); await agents.stop();
+});
+
+test("returning to the shell resets a terminal that had backed off", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
+  const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
+  const scheduled = [];
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: {
+      agentProviderContributions: () => [provider],
+      async admitAgentTerminal() { return { state: "not-bound" }; },
+      async cancelAgentTerminal() { return true; },
+      async drainAgentObservers() {},
+    },
+    reobserveDebounceMs: 0,
+    topologyPollIntervalMs: 100,
+    topologySignature: async () => "unchanged",
+    schedule(callback, milliseconds) { const timer = { callback, milliseconds }; scheduled.push(timer); return timer; },
+    cancelSchedule() {},
+  });
+  const drainFastWindow = async () => {
+    for (let attempt = 0; attempt < 24; attempt += 1) {
+      const retry = scheduled.find((timer) => timer.milliseconds === 0);
+      if (retry === undefined) return;
+      scheduled.splice(scheduled.indexOf(retry), 1);
+      await retry.callback();
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  };
+  const takePoll = () => {
+    const poll = scheduled.find((timer) => timer.milliseconds >= 100);
+    assert.ok(poll, "discovery must stay armed");
+    scheduled.splice(scheduled.indexOf(poll), 1);
+    return poll;
+  };
+
+  registry.register(identity); registry.terminalStarted(identity, 4321);
+  registry.foregroundProcessChanged(identity, "codex");
+  await new Promise((resolve) => setImmediate(resolve));
+  for (let sweep = 0; sweep < 3; sweep += 1) {
+    await drainFastWindow();
+    const poll = takePoll();
+    await poll.callback();
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  await drainFastWindow();
+  const backedOff = takePoll();
+  assert.ok(backedOff.milliseconds > 100, "the terminal has backed off");
+  await backedOff.callback();
+  await new Promise((resolve) => setImmediate(resolve));
+  await drainFastWindow();
+  scheduled.splice(0, scheduled.length);
+
+  // The shell coming back ends this incarnation; whatever runs next deserves
+  // discovery at full speed again.
+  registry.foregroundProcessChanged(identity, "zsh", true);
+  registry.foregroundProcessChanged(identity, "codex");
+  await new Promise((resolve) => setImmediate(resolve));
+  await drainFastWindow();
+  assert.equal(takePoll().milliseconds, 100, "a new incarnation starts at the base interval");
+  registry.terminalExited(identity); await agents.stop();
+});
+
 test("topology polling is inert after a proven binding, including when workers change the topology", async () => {
   const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
   const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
