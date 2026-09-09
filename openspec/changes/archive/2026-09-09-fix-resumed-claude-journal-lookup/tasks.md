@@ -16,6 +16,14 @@
 - [x] 3.1 Resolve a switched-to conversation's journal through the same path, so `rootSource` follows a conversation whose journal is filed under another directory. Verified by a case in `test/lifecycle.test.mjs` (or `resume.test.mjs`) where the session file is rewritten to a session whose journal lives elsewhere and the row follows it.
 - [x] 3.2 Confirm an unresolvable switch leaves the existing binding alone rather than retiring it. Verified by a case asserting the bound row survives a switch record naming a session with no findable journal.
 
+## 5. The lookup is bounded by the file it asks for
+
+- [x] 5.1 Add an optional exact-name filter to `AgentDirectoryListOptions`, so a listing may declare the filenames it wants. Verified by typecheck and by the extension compiling against it.
+- [x] 5.2 Apply the filter in `localAgentObservation` before any limit is charged, and refuse a name that is not a single path segment. Verified by a case in `packages/server-core/test/extension-local-agent-observation.test.mjs` where an unfiltered walk truncates before the wanted file and the named walk returns it untruncated, plus rejection cases for a traversal name and an empty list.
+- [x] 5.3 Mirror the filter in the test harness so extension fixtures exercise the same rule the host applies. Verified by the Claude Code suite passing against it.
+- [x] 5.4 Declare the journal filename in the provider's lookup. Verified by a case where 300 unrelated journals sit before the target and it still binds.
+- [x] 5.5 Keep the fail-closed branch for a genuinely truncated listing. Verified by a case where 300 directories claim the same session id and nothing binds.
+
 ## 4. Verification
 
 - [x] 4.1 Run `npm run test --workspace terminay-agent-claude-code`. Verified by the suite passing.
