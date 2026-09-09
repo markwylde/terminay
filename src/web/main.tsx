@@ -129,7 +129,8 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 			run: (attempt, runOptions) => connectRef.current(attempt, runOptions),
 			recovering: () => connectionRef.current !== undefined,
 			onAttemptStart: ({ recovering }) => {
-				setError(undefined);
+				// The last attempt's error stays visible until one succeeds; clearing
+				// it here made the text blink on every retry.
 				if (recovering) {
 					// The workspace stays mounted under the reconnecting overlay.
 					setPhase('reconnecting');
@@ -169,8 +170,8 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 			attempt: SessionConnectAttempt,
 			options: Readonly<{ replaceDesktopEndpoint?: boolean }> = {},
 		) => {
-			setError(undefined);
-			if (connectionRef.current === undefined) setPhase('connecting');
+			// Phase and error belong to the recovery loop's callbacks alone. A
+			// second owner here flipped the surface to a cold connect mid-retry.
 			await clientRef.current?.close().catch(() => undefined);
 			heartbeatRef.current?.stop();
 
@@ -282,6 +283,7 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 				});
 				connectionRef.current = next;
 				setConnection(next);
+				setError(undefined);
 				setPhase('ready');
 			} catch (cause) {
 				await client.close().catch(() => undefined);

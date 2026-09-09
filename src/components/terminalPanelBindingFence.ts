@@ -26,8 +26,14 @@ export class TerminalPanelBindingFence {
 	}
 }
 
+/**
+ * Retry is hidden only when there is nothing to retry: the terminal exited or
+ * was interrupted. A refused presentation is retryable — Retry asks for a
+ * fresh presentation — so `presentationUnavailable` alone never hides it. It
+ * used to, which left a reconnected phone on a dead error with no way out.
+ */
 export function isTerminalRetryActionable(
-	presentationUnavailable: boolean,
+	state: Readonly<{ presentationUnavailable: boolean; sessionEnded: boolean }>,
 ): boolean {
-	return !presentationUnavailable;
+	return !state.sessionEnded;
 }
