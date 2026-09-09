@@ -41,7 +41,13 @@ function pipe() {
 async function withMachine(options, run) {
 	const home = await mkdtemp(join(tmpdir(), 'terminay-machine-'));
 	const fake = await createFakeBin();
-	fake.install('systemctl', '');
+	// A machine with nothing installed yet: `is-active` answers "inactive" by
+	// exiting non-zero, as the real tool does. A test that wants a running
+	// service reinstalls this stub.
+	fake.install(
+		'systemctl',
+		'case " $* " in *" is-active "*) echo inactive; exit 3;; esac',
+	);
 	fake.install('journalctl', 'echo "no log lines"');
 	fake.install('loginctl', '');
 	fake.install('getent', `echo "ada:x:1000:1000:Ada:${home}:/bin/bash"`);
@@ -815,7 +821,7 @@ test('install persists the advertised address and names the port to forward', as
 					...OPTIONS,
 					scope: 'user',
 					expose: 'hosted',
-					advertiseAddress: '127.0.0.1:51000',
+					advertiseAddress: '192.168.1.20:51000',
 				},
 				installDependencies,
 			);
@@ -825,16 +831,16 @@ test('install persists the advertised address and names the port to forward', as
 			);
 			assert.equal(
 				environment.TERMINAY_WEBRTC_ADVERTISE_ADDRESS,
-				'127.0.0.1:51000',
+				'192.168.1.20:51000',
 			);
 			assert.equal(
 				(await readInstallRecord(layout)).advertiseAddress,
-				'127.0.0.1:51000',
+				'192.168.1.20:51000',
 			);
 
 			// Forwarding the port is the one step the CLI cannot take, so it says so.
 			const output = lines.join('\n');
-			assert.match(output, /advertised {3}127\.0\.0\.1:51000/u);
+			assert.match(output, /advertised {3}192\.168\.1\.20:51000/u);
 			assert.match(output, /UDP ports 51000-51003 must reach this machine/u);
 			assert.match(output, /-p 51000-51003:51000-51003\/udp/u);
 		},
@@ -898,7 +904,7 @@ test('upgrade keeps the advertised address, and can change or clear it', async (
 					...OPTIONS,
 					scope: 'user',
 					expose: 'hosted',
-					advertiseAddress: '127.0.0.1:51000',
+					advertiseAddress: '192.168.1.20:51000',
 				},
 				installDependencies,
 			);
@@ -923,12 +929,12 @@ test('upgrade keeps the advertised address, and can change or clear it', async (
 			await runUpgrade(undefined, OPTIONS, await context(), dependencies);
 			assert.equal(
 				(await readInstallRecord(layout)).advertiseAddress,
-				'127.0.0.1:51000',
+				'192.168.1.20:51000',
 			);
 			assert.equal(
 				parseEnvironmentFile(await readFile(layout.environmentFile, 'utf8'))
 					.TERMINAY_WEBRTC_ADVERTISE_ADDRESS,
-				'127.0.0.1:51000',
+				'192.168.1.20:51000',
 			);
 
 			// Changing it rewrites the environment file, because that is where the
@@ -938,19 +944,19 @@ test('upgrade keeps the advertised address, and can change or clear it', async (
 				{
 					...OPTIONS,
 					allowDowngrade: true,
-					advertiseAddress: '127.0.0.1:52000',
+					advertiseAddress: '192.168.1.20:52000',
 				},
 				await context(),
 				dependencies,
 			);
 			assert.equal(
 				(await readInstallRecord(layout)).advertiseAddress,
-				'127.0.0.1:52000',
+				'192.168.1.20:52000',
 			);
 			assert.equal(
 				parseEnvironmentFile(await readFile(layout.environmentFile, 'utf8'))
 					.TERMINAY_WEBRTC_ADVERTISE_ADDRESS,
-				'127.0.0.1:52000',
+				'192.168.1.20:52000',
 			);
 
 			// Clearing removes it from both.
@@ -1009,7 +1015,7 @@ test('editing the advertised address leaves the rest of the environment file alo
 
 			await runUpgrade(
 				undefined,
-				{ ...OPTIONS, advertiseAddress: '127.0.0.1:51000' },
+				{ ...OPTIONS, advertiseAddress: '192.168.1.20:51000' },
 				{
 					layout,
 					record: await readInstallRecord(layout),
@@ -1031,7 +1037,7 @@ test('editing the advertised address leaves the rest of the environment file alo
 			assert.equal(environment.TERMINAY_OPERATOR_NOTE, 'keep-me');
 			assert.equal(
 				environment.TERMINAY_WEBRTC_ADVERTISE_ADDRESS,
-				'127.0.0.1:51000',
+				'192.168.1.20:51000',
 			);
 			assert.equal(environment.TERMINAY_SERVER_ID, 'test-box');
 		},
@@ -1057,7 +1063,7 @@ test('status reports the advertised address and still names nothing private', as
 					...OPTIONS,
 					scope: 'user',
 					expose: 'hosted',
-					advertiseAddress: '127.0.0.1:51000',
+					advertiseAddress: '192.168.1.20:51000',
 				},
 				installDependencies,
 			);
@@ -1071,10 +1077,10 @@ test('status reports the advertised address and still names nothing private', as
 				write,
 			};
 			const report = await runStatus(context);
-			assert.equal(report.advertiseAddress, '127.0.0.1:51000');
+			assert.equal(report.advertiseAddress, '192.168.1.20:51000');
 
 			const output = lines.join('\n');
-			assert.match(output, /advertised {3}127\.0\.0\.1:51000/u);
+			assert.match(output, /advertised {3}192\.168\.1\.20:51000/u);
 			assert.doesNotMatch(output, /\/home\/|\/var\/lib|\.local\/share/u);
 			assert.ok(!output.includes(context.record.runAs));
 		},
@@ -1206,6 +1212,97 @@ test('upgrade leaves an already-correct environment alone', async () => {
 
 			assert.equal(await readFile(layout.environmentFile, 'utf8'), before);
 			assert.doesNotMatch(lines.join('\n'), /workspace UI directory/u);
+		},
+	);
+});
+
+test('re-installing over a running service restarts it onto what was just written', async () => {
+	await withMachine(
+		{
+			releases: [
+				{
+					tag: 'v4.1.1',
+					version: '4.1.1',
+					revision: 'a'.repeat(40),
+					latest: true,
+					publishedAt: '2026-09-08T00:00:00Z',
+				},
+			],
+		},
+		async ({ fake, layout, installDependencies }) => {
+			await runInstall(
+				undefined,
+				{
+					...OPTIONS,
+					scope: 'user',
+					advertiseAddress: '192.168.1.20:51000',
+				},
+				installDependencies,
+			);
+
+			// The machine now has a running service. `enable --now` would start a
+			// stopped unit and do nothing to this one, leaving the operator reading
+			// a new advertised address in this command's output while the process
+			// serves the old one.
+			fake.install('systemctl', '');
+			const before = fake.invocations().length;
+
+			await runInstall(
+				undefined,
+				{
+					...OPTIONS,
+					scope: 'user',
+					advertiseAddress: '192.168.1.20:52000',
+				},
+				installDependencies,
+			);
+
+			const second = fake.invocations().slice(before);
+			assert.ok(
+				second.includes('systemctl --user restart terminay-server.service'),
+				'a running service must be restarted onto the new configuration',
+			);
+			assert.equal(
+				parseEnvironmentFile(await readFile(layout.environmentFile, 'utf8'))
+					.TERMINAY_WEBRTC_ADVERTISE_ADDRESS,
+				'192.168.1.20:52000',
+			);
+		},
+	);
+});
+
+test('a first install on a machine with no service starts it the usual way', async () => {
+	await withMachine(
+		{
+			releases: [
+				{
+					tag: 'v4.1.1',
+					version: '4.1.1',
+					revision: 'a'.repeat(40),
+					latest: true,
+					publishedAt: '2026-09-08T00:00:00Z',
+				},
+			],
+		},
+		async ({ fake, installDependencies }) => {
+			await runInstall(
+				undefined,
+				{ ...OPTIONS, scope: 'user' },
+				installDependencies,
+			);
+
+			const invocations = fake.invocations();
+			assert.ok(
+				invocations.includes(
+					'systemctl --user enable --now terminay-server.service',
+				),
+			);
+			assert.ok(
+				!invocations.includes(
+					'systemctl --user restart terminay-server.service',
+				),
+				'nothing is running yet, so there is nothing to restart',
+			);
 		},
 	);
 });
