@@ -149,6 +149,38 @@ function parsePort(raw: string): number {
 }
 
 /**
+ * Is this the address a machine uses to talk to itself?
+ *
+ * `127.0.0.0/8` and `::1` in every spelling. A peer decides for itself whether
+ * a candidate is worth probing, and a loopback address names the peer's own
+ * machine rather than this one, so it is within its rights to skip it.
+ */
+function isLoopbackHost(host: string): boolean {
+	const value = host.toLowerCase();
+	// `::ffff:127.0.0.1` is loopback wearing an IPv6 spelling.
+	const ipv4 = value.startsWith('::ffff:') ? value.slice(7) : value;
+	if (/^127(?:\.[0-9]{1,3}){3}$/u.test(ipv4)) return true;
+	if (!value.includes(':')) return false;
+	// Expand the one `::` so `::1`, `0:0:0:0:0:0:0:1`, and `0::1` all compare
+	// the same way.
+	let groups: string[];
+	if (value.includes('::')) {
+		const [head = '', tail = ''] = value.split('::', 2);
+		const left = head === '' ? [] : head.split(':');
+		const right = tail === '' ? [] : tail.split(':');
+		const filler = 8 - left.length - right.length;
+		if (filler < 1) return false;
+		groups = [...left, ...Array.from({ length: filler }, () => '0'), ...right];
+	} else {
+		groups = value.split(':');
+	}
+	if (groups.length !== 8) return false;
+	return groups.every(
+		(group, index) => Number.parseInt(group, 16) === (index === 7 ? 1 : 0),
+	);
+}
+
+/**
  * Validate `<host>:<port>` before anything is written.
  *
  * Literal addresses only: an ICE candidate is where a peer sends connectivity
@@ -162,7 +194,7 @@ function parseAdvertiseAddress(raw: string): string {
 	const match = bracketed ?? plain;
 	if (match === null) {
 		fail(
-			`--advertise-address must be a literal address and port, such as 127.0.0.1:51000 or [::1]:51000 (got ${raw}). An ICE candidate is a destination for the other side's connectivity checks, so a hostname cannot stand in for it.`,
+			`--advertise-address must be a literal address and port, such as 192.168.1.20:51000 or [2001:db8::20]:51000 (got ${raw}). An ICE candidate is a destination for the other side's connectivity checks, so a hostname cannot stand in for it.`,
 		);
 	}
 	const port = Number(match[2]);
@@ -174,6 +206,16 @@ function parseAdvertiseAddress(raw: string): string {
 		(match[1] as string).split('.').some((octet) => Number(octet) > 255)
 	) {
 		fail(`--advertise-address is not a valid IPv4 address: ${match[1]}`);
+	}
+	// Refused rather than warned about: the address is written here and the
+	// failure it causes arrives minutes later, in a browser, as a message about
+	// data channels. Firefox prunes a remote loopback candidate without sending
+	// a single connectivity check, so such a server pairs from Chromium and
+	// hangs everywhere else with nothing to read.
+	if (isLoopbackHost(match[1] as string)) {
+		fail(
+			`--advertise-address cannot be a loopback address (got ${raw}). A browser need not send connectivity checks to a loopback candidate and Firefox does not, so this server would pair from some browsers and hang in others. Use this machine's routable address, such as 192.168.1.20:${port} — it is the address the forwarded port already answers on.`,
+		);
 	}
 	return raw.trim();
 }
@@ -356,9 +398,12 @@ Flags:
   --advertise-address <addr:port>
                        An address and UDP port to offer as an extra connection
                        candidate, for a server reachable only at a forwarded
-                       address — a container, or behind a port forward. That
-                       port and the three above it must be forwarded to this
-                       machine. Pass an empty value to remove one set earlier.
+                       address — a container, or behind a port forward. Use the
+                       machine's routable address, such as 192.168.1.20:51000;
+                       a loopback address is refused because a browser need not
+                       send connectivity checks to one. That port and the three
+                       above it must be forwarded to this machine. Pass an
+                       empty value to remove one set earlier.
   --hosted-domain <d>  Hosted signalling domain.
   --expose <modes>     off, hosted, direct, or hosted,direct.
   --project-root <p>   Directory the server opens projects from.

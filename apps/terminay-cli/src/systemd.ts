@@ -79,6 +79,7 @@ export function createSystemd(options: SystemdOptions) {
 		enable: () => expect(['enable', UNIT_NAME]),
 		disable: () => systemctl(['disable', UNIT_NAME]),
 		start: () => expect(['start', UNIT_NAME]),
+		restart: () => expect(['restart', UNIT_NAME]),
 		stop: () => expect(['stop', UNIT_NAME]),
 		resetFailed: () => systemctl(['reset-failed', UNIT_NAME]),
 		async isActive(): Promise<boolean> {

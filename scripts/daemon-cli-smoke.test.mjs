@@ -23,6 +23,7 @@ test('the smoke drives the whole documented lifecycle', () => {
 			'install',
 			'workspace UI',
 			'status',
+			'advertise-address',
 			'upgrade',
 			'qr-code --no-wait',
 			'uninstall',
@@ -83,4 +84,26 @@ test('the container smoke passes when it is opted into', {
 	skip: !isSmokeEnabled(),
 }, async () => {
 	await runDaemonSmoke();
+});
+
+test('the smoke proves a re-install reaches the running process', () => {
+	// Writing the environment file is not the same as the server reading it.
+	// The unit's MainPID is the only thing that distinguishes the two.
+	assert.match(CONTAINER_DRIVER, /MainPID/u);
+	assert.match(
+		CONTAINER_DRIVER,
+		/must be restarted onto the new configuration/u,
+	);
+});
+
+test('the smoke proves a loopback advertised address is refused', () => {
+	assert.match(
+		CONTAINER_DRIVER,
+		/a loopback advertised address must be refused/u,
+	);
+	// And that the refusal left the previously written address in place.
+	assert.match(
+		CONTAINER_DRIVER,
+		/TERMINAY_WEBRTC_ADVERTISE_ADDRESS=192\.168\.1\.20:51000/u,
+	);
 });

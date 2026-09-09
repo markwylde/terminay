@@ -272,7 +272,16 @@ export async function runInstall(
 	});
 	await systemd.daemonReload();
 	if (scope === 'user') await systemd.enableLinger(selection.runAs);
-	await systemd.enableNow();
+	// `enable --now` starts a stopped unit and does nothing to a running one.
+	// Install rewrites the environment file every time, so on a machine whose
+	// service is already up the two would disagree: the operator reads the new
+	// configuration in this command's output while the process serves the old.
+	if (await systemd.isActive()) {
+		await systemd.enable();
+		await systemd.restart();
+	} else {
+		await systemd.enableNow();
+	}
 
 	const ready =
 		(await waitForReady(
