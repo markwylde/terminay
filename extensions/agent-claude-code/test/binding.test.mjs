@@ -249,21 +249,42 @@ test('two directories claiming one session id bind nothing', async () => {
 	assert.deepEqual(result.events, []);
 });
 
-test('a listing stopped by a host limit binds nothing', async () => {
-	// The host stops the walk when a declared limit is reached, so a snapshot
-	// that never reached the journal is evidence of nothing. Discovery retries
-	// remain free to resolve it later; a guessed binding would not be.
+test('hundreds of unrelated journals do not crowd out the one being resolved', async () => {
+	// The lookup declares the filename it wants, so the limits are charged
+	// against that journal alone. Unrelated journals — of any number or size —
+	// are never considered, so they cannot exhaust the budget before the walk
+	// reaches the target. Sorted last, so an unfiltered walk would miss it.
 	const crowded = {};
 	for (let index = 0; index < 300; index += 1) {
 		const id = `0000${String(index).padStart(4, '0')}-0000-4000-8000-00000000000${index % 10}`;
 		crowded[`/home/test/.claude/projects/-crowd/${id}.jsonl`] = [header(id)];
 	}
-	// Sorted last, so the entry cap is reached before the walk arrives at it.
-	crowded[`/home/test/.claude/projects/-zzz/${sessionId}.jsonl`] = [
-		header(sessionId),
-	];
+	crowded[`/home/test/.claude/projects/-zzz/${sessionId}.jsonl`] = titled(
+		sessionId,
+		'Found past the crowd',
+	);
 	const result = await observe(
 		claudeTerminal({ sessionId, extraFiles: crowded }),
+	);
+	assert.equal(result.sessionId, sessionId);
+	assert.deepEqual(
+		result.events.filter((event) => event.kind === 'agent.metadata'),
+		[{ kind: 'agent.metadata', title: 'Found past the crowd' }],
+	);
+});
+
+test('a listing stopped by a host limit still binds nothing', async () => {
+	// Only same-named journals are charged now, so reaching a limit takes many
+	// directories all claiming this one session. The snapshot is evidence of
+	// nothing either way, and discovery retries remain free to try again.
+	const claimants = {};
+	for (let index = 0; index < 300; index += 1) {
+		claimants[
+			`/home/test/.claude/projects/-claim${String(index).padStart(3, '0')}/${sessionId}.jsonl`
+		] = [header(sessionId)];
+	}
+	const result = await observe(
+		claudeTerminal({ sessionId, extraFiles: claimants }),
 	);
 	assert.equal(result.state, 'not-bound');
 	assert.deepEqual(result.events, []);
