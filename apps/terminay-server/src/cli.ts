@@ -292,8 +292,6 @@ else {
 				// Start journal observation before creating the default session.
 				await composition.start();
 				const health = await runtime!.start();
-				if (serverComposition.workspaceWasCreated)
-					await ensureDefaultTerminalSession(composition);
 				await waitForProtocolEndpoint(uiServer);
 				approvalSocket = await startApprovalSocket({
 					socketPath: approvalSocketPath(options.dataRoot),
@@ -722,6 +720,27 @@ async function createServerComposition(
 		},
 		workspaceOperations: {
 			prepareProjectRootUpdate: files.prepareProjectRootUpdate,
+		},
+		// What a restored workspace contains is server policy; this supplies only
+		// the act of making a session. Without it a restart republished the
+		// previous process's terminal panels as tabs that could say nothing but
+		// that they had exited.
+		workspaceStartup: {
+			firstRun: workspaceRepository.wasCreated,
+			createTerminal: async (request) => {
+				const resolver = composition.terminalLaunchResolver;
+				if (resolver === undefined)
+					throw new Error('canonical terminal launch resolver is unavailable');
+				const launch = await resolver.resolve({
+					identity: composition.terminal.allocateIdentity(
+						request.projectId,
+						request.sessionId,
+					),
+					cols: request.cols,
+					rows: request.rows,
+				});
+				return composition.terminal.createResolvedSession(launch);
+			},
 		},
 		fileObservations: files.observations,
 		settings,
@@ -1497,29 +1516,6 @@ async function runResetIdentityCommand(
 	process.stdout.write(
 		`${JSON.stringify({ serverId: options.serverId, identityReset: true, revokedDevices: revoked, hostPublicKey: key.publicKey })}\n`,
 	);
-}
-
-async function ensureDefaultTerminalSession(
-	composition: ServerCoreComposition,
-): Promise<void> {
-	if (
-		composition.terminal
-			.listSessions()
-			.some(
-				(session) =>
-					session.projectId === 'default' && session.sessionId === 'default',
-			)
-	)
-		return;
-	const resolver = composition.terminalLaunchResolver;
-	if (resolver === undefined)
-		throw new Error('canonical terminal launch resolver is unavailable');
-	const launch = await resolver.resolve({
-		identity: composition.terminal.allocateIdentity('default', 'default'),
-		cols: 100,
-		rows: 30,
-	});
-	await composition.terminal.createResolvedSession(launch);
 }
 
 function runtimeHealth(
