@@ -589,7 +589,11 @@ export function fixtureTerminal(
 							relativePath.split('/').length - 1 > request.maxDepth ||
 							!request.extensions.some((extension) =>
 								relativePath.endsWith(extension),
-							)
+							) ||
+							// Declared names narrow the walk before any limit is charged,
+							// exactly as the host does.
+							(request.names !== undefined &&
+								!request.names.includes(relativePath.split('/').at(-1)!))
 						)
 							continue;
 						const data = files.get(path)!;
