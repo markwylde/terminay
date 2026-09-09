@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import test from 'node:test';
 
 import { installLayout } from '../dist/layout.js';
@@ -110,6 +112,7 @@ TERMINAY_AGENT_INTEGRATION=enabled
 TERMINAY_AI_PROVIDERS=disabled
 TERMINAY_LOG_SINK=journal
 TERMINAY_UI_BUNDLE=/opt/terminay/current/ui
+TERMINAY_UI_RENDERER_DIRECTORY=/opt/terminay/current/ui
 `,
 	);
 });
@@ -174,4 +177,49 @@ test('comments and blank lines are ignored when parsing', () => {
 		'# comment\n\nA=1\n  B=two words  \nnot-a-pair\n',
 	);
 	assert.deepEqual({ ...values }, { A: '1', B: 'two words' });
+});
+
+test('the environment names both UI variables with one value', () => {
+	const values = parseEnvironmentFile(renderEnvironmentFile(configuration));
+	// Two settings that share a value: the local HTTP UI reads one, the archive
+	// a paired device receives is built from the other.
+	assert.equal(values.TERMINAY_UI_BUNDLE, '/opt/terminay/current/ui');
+	assert.equal(values.TERMINAY_UI_RENDERER_DIRECTORY, '/opt/terminay/current/ui');
+});
+
+test('the renderer directory is the variable the server actually reads', async () => {
+	// The defect this guards was writing the workspace UI under a name nothing
+	// read, so the server served a placeholder to every paired device. Read the
+	// server source rather than trusting the name to stay put.
+	const cli = await readFile(
+		resolve(
+			new URL('../../..', import.meta.url).pathname,
+			'apps/terminay-server/src/cli.ts',
+		),
+		'utf8',
+	);
+	assert.match(
+		cli,
+		/process\.env\.TERMINAY_UI_RENDERER_DIRECTORY/u,
+		'the server must read the variable the CLI writes for the hosted archive',
+	);
+
+	const environment = renderEnvironmentFile(configuration);
+	assert.match(environment, /^TERMINAY_UI_RENDERER_DIRECTORY=/mu);
+});
+
+test('an install without the renderer directory would serve a placeholder', async () => {
+	// Named for the symptom, so a future reader knows what removing it costs.
+	const host = await readFile(
+		resolve(
+			new URL('../../..', import.meta.url).pathname,
+			'apps/terminay-server/src/remote/hostedPairingHost.ts',
+		),
+		'utf8',
+	);
+	assert.match(host, /createMinimalUiArchive\(\)/u);
+	assert.match(host, /Terminay workspace is connected\./u);
+	// The fallback is reached only when getUiArchive is absent, which is exactly
+	// what a missing renderer directory produces.
+	assert.match(host, /options\.getUiArchive\s*\n?\s*\?\s*await options\.getUiArchive\(\)/u);
 });
