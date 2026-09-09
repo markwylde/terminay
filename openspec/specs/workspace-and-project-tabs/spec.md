@@ -50,17 +50,55 @@ The active project tab's colour SHALL continue into the panel tab strip and the 
 - **WHEN** panel tabs are shown
 - **THEN** the active tab is a solid 4px-cornered chip and inactive tabs stay quiet until hover
 
+### Requirement: Home control placement
+
+The project bar SHALL carry a Home control between the sidebar toggle and the first project tab. It SHALL be leading chrome rather than a project tab: it SHALL NEVER scroll, overflow, reorder, or be dragged, SHALL NEVER be closeable, and SHALL NEVER participate in project drag-and-drop as either a dragged item or a drop target. Dragging a project tab across it SHALL NOT displace it.
+
+#### Scenario: Home sits after the sidebar toggle
+
+- **WHEN** the project bar renders
+- **THEN** the Home control sits immediately after the sidebar toggle and before the first project tab
+
+#### Scenario: Dragging a project tab
+
+- **WHEN** a project tab is dragged across the Home control
+- **THEN** the Home control is neither a drop target nor displaced, and no project is reordered into its position
+
 ### Requirement: Trailing chrome is never displaced
 
-The project tab bar SHALL NEVER steal trailing chrome. The sidebar toggle, new-project control, activity, and the Local connection pill SHALL stay fully visible. Opening the environment chooser SHALL NOT grow or shift the tab bar.
+The project tab bar SHALL NEVER steal leading or trailing chrome. The sidebar toggle, the Home control, the new-project control, activity, and the Local connection pill SHALL stay fully visible. Opening the environment chooser SHALL NOT grow or shift the tab bar.
 
 #### Scenario: Crowded tab bar
 - **WHEN** many project tabs are open
-- **THEN** the sidebar toggle, new-project control, activity, and the Local connection pill remain fully visible
+- **THEN** the sidebar toggle, the Home control, the new-project control, activity, and the Local connection pill remain fully visible
 
 #### Scenario: Opening the environment chooser
 - **WHEN** the environment chooser opens
 - **THEN** the tab bar neither grows nor shifts
+
+### Requirement: Project activity count follows viewed terminals
+
+The project-tab activity count SHALL count the same terminals that currently show a visible activity indicator. Clicking a terminal tab, clicking into the terminal, or typing, or already interacting with it when finished or attention activity arrives, SHALL remove that terminal from the count. Activating the project SHALL NOT remove a terminal from the count. A working terminal SHALL remain in the count while it is working, including when its tab is focused. The count SHALL hide when it reaches zero.
+
+#### Scenario: Activating the project keeps the count
+
+- **WHEN** a project shows a green activity count of one because a single terminal has finished unviewed activity, and the user activates that project without clicking the terminal
+- **THEN** the project-tab activity count remains `1` and green
+
+#### Scenario: Focusing the last finished terminal
+
+- **WHEN** a project shows a green activity count of one because a single terminal has finished unviewed activity, and the user clicks that terminal tab
+- **THEN** the project-tab activity count hides
+
+#### Scenario: Completion on the focused terminal
+
+- **WHEN** the only activity in a project is structured or agent completion on the terminal the user is already viewing
+- **THEN** the project-tab activity count stays hidden
+
+#### Scenario: Working on the focused terminal
+
+- **WHEN** the focused terminal in a project is working and no other terminal in that project has an indicator
+- **THEN** the project tab keeps an amber activity count of one
 
 ### Requirement: Project tab activity count badge
 
@@ -447,19 +485,23 @@ Closing a native project-host window SHALL use the same bounded fresh foreground
 
 ### Requirement: Canonical workspace state and presentation-local selection
 
-Project identity, immutable environment binding, layout, panel membership, project-local sidebar layout, and logical workspace views SHALL be canonical server state. The ordered project list in a view and the ordered panels in a project SHALL be broadcast to every connected presentation. Which project tab is active, and which terminal or panel is active inside that project, SHALL be local to that presentation, so a desktop window and a web client on the same server can show different active tabs. Desktop windows and browser views SHALL also retain their own per-project sidebar visibility.
+Project identity, immutable environment binding, layout, panel membership, project-local sidebar layout, and logical workspace views SHALL be canonical server state. The ordered project list in a view and the ordered panels in a project SHALL be broadcast to every connected presentation. Which view is selected — the Home dashboard or a project — and which terminal or panel is active inside a selected project SHALL be local to that presentation, so a desktop window and a web client on the same server can show different selected views. Desktop windows and browser views SHALL also retain their own per-project sidebar visibility.
 
 #### Scenario: Two presentations of one server
 - **WHEN** a desktop window and a web client connect to the same server
-- **THEN** they keep independent active project tabs, active terminals, and per-project sidebar visibility while sharing the ordered project and panel lists
+- **THEN** they keep independent selected views, active terminals, and per-project sidebar visibility while sharing the ordered project and panel lists
 
 #### Scenario: Structural change broadcast
 - **WHEN** a project is created, reordered, or closed
-- **THEN** the change appears in every connected client's list without changing another client's active selection
+- **THEN** the change appears in every connected client's list without changing another client's selected view
 
 #### Scenario: Locally selected item disappears
 - **WHEN** a locally selected project or panel is removed
 - **THEN** that presentation falls back locally
+
+#### Scenario: Home selected on one device
+- **WHEN** one device selects the Home dashboard
+- **THEN** no server-owned workspace state changes and no other device's selected view changes
 
 ### Requirement: Authorization derives from server identities
 
