@@ -85,7 +85,6 @@ import {
 	ProjectEnvironmentRegistry,
 	ProjectEnvironmentRepository,
 	ProjectEnvironmentRouter,
-	ProjectEnvironmentRouteError,
 } from '../packages/server-core/src/projectEnvironment/index';
 import type { ServerSettingsRepository } from '../packages/server-core/src/settings/repository';
 import type { ServerVaultComposition } from '../packages/server-core/src/settings/vaultComposition';
@@ -116,7 +115,6 @@ import {
 	type WorkspaceProject,
 	WorkspaceStore,
 } from '../packages/server-core/src/workspace';
-import { resolveWorkspaceHydration } from '../packages/server-core/src/workspaceHydration';
 import type { WorkspaceRepository } from '../packages/server-core/src/workspaceRepository';
 import {
 	type ServerMessagePort,
@@ -398,7 +396,6 @@ export class ServerTerminalAuthority {
 	private serviceEventsUnsubscribe: Unsubscribe | undefined;
 	private shuttingDown = false;
 	private shutdownPromise: Promise<void> | undefined;
-	private readonly workspaceRepository: WorkspaceRepository | undefined;
 	/** Publishes asynchronous state changes from server-owned application features. */
 	private readonly eventJournal: OrderedEventJournal;
 	/** Undefined outside Docker/E2E runs so production performs no recording. */
@@ -415,7 +412,6 @@ export class ServerTerminalAuthority {
 			throw new TypeError('serverId is required');
 		}
 		this.options = options;
-		this.workspaceRepository = options.workspaceRepository;
 		this.workspace =
 			options.workspaceRepository?.workspace ??
 			new WorkspaceStore(createInitialWorkspace(options.serverId));
@@ -787,6 +783,22 @@ export class ServerTerminalAuthority {
 		this.composition = createServerCoreComposition({
 			serverId: options.serverId,
 			serverVersion: 'desktop',
+			// Restart recovery is server policy and lives in server-core. Desktop
+			// supplies only the two things that are genuinely its own: rebuilding
+			// its process-local project bindings, and making a session through the
+			// authority that owns replay buffers and consumer registration.
+			...(options.workspaceRepository === undefined
+				? {}
+				: {
+						workspaceStartup: {
+							firstRun: options.workspaceRepository.wasCreated,
+							prepare: () => this.rebuildProjectBindings(),
+							createTerminal: (request) => this.create(request),
+							onSeedFailure: (message) => {
+								console.error('[terminay-workspace-terminal-seed]', { message });
+							},
+						},
+					}),
 			onConnectionClosed: (_connectionId, clientId) => {
 				mdxRuntimeAdapter.closeClient(clientId);
 			},
@@ -1053,16 +1065,22 @@ export class ServerTerminalAuthority {
 		this.eventJournal.append('remote-access.changed', { changed: true });
 	}
 
-	/** Complete canonical workspace hydration before the host publishes readiness. */
+	/** Complete canonical workspace hydration before the host publishes readiness.
+	 * What a restored workspace contains is decided by the server; starting the
+	 * composition is what applies it. */
 	async initializeWorkspace(): Promise<void> {
 		await this.composition.start();
-		// File/Git/query authorities are process-local. Rebuild their bindings for
-		// every available persisted project before publishing the restored
-		// workspace; PTY creation is not the only operation that requires a
-		// canonical root. A deleted Local root is a recoverable project condition,
-		// not damaged workspace persistence: preserve the project identity so the
-		// user can repair it, but do not let it prevent the rest of Desktop from
-		// starting.
+	}
+
+	/**
+	 * File/Git/query authorities are process-local, so their bindings are rebuilt
+	 * for every available persisted project before the restored workspace is
+	 * published: PTY creation is not the only operation that requires a canonical
+	 * root. A deleted Local root is a recoverable project condition, not damaged
+	 * workspace persistence — preserve the project identity so the user can repair
+	 * it, but do not let it prevent the rest of Desktop from starting.
+	 */
+	private async rebuildProjectBindings(): Promise<ReadonlySet<string>> {
 		const unavailableProjectIds = new Set<string>();
 		for (const project of Object.values(this.workspace.state.projects)) {
 			if (!isHostFilesystemProject(project)) continue;
@@ -1073,127 +1091,7 @@ export class ServerTerminalAuthority {
 				unavailableProjectIds.add(project.id);
 			}
 		}
-		if (this.workspaceRepository?.wasCreated === false) {
-			// Local Desktop owns these PTYs. They cannot survive this authority
-			// generation, so reopening their persisted panels would manufacture a
-			// row of unusable interrupted tabs. Keep projects and non-terminal
-			// panels, then start one fresh terminal in every restored project so
-			// none is shown empty. This does not restore the previous tab count.
-			if (this.sessions.size === 0) {
-				this.workspace.discardStaleLocalTerminalState();
-			}
-			for (const project of this.restoredLocalProjects()) {
-				if (unavailableProjectIds.has(project.id)) continue;
-				if (this.projectHasTerminalPanel(project.id)) continue;
-				if (isHostFilesystemProject(project)) {
-					await this.create({
-						projectId: project.id,
-						cwd: project.root,
-						cols: 100,
-						rows: 30,
-					});
-					continue;
-				}
-				// Remote SSH/Puzed spawn waits on the target. Do not block the
-				// rest of Desktop behind that handshake; the project tab spins
-				// until the replacement PTY is published. A single attempt
-				// during `connecting` must not be the last: retry until the
-				// environment is ready or the seed deadline elapses.
-				void this.seedRemoteProjectTerminal(project);
-			}
-			return;
-		}
-		// Focused authority tests may inject no durable repository. Production
-		// Desktop always injects one, so only its persisted Local workspace takes
-		// the first-run or restart hydration branches below.
-		if (this.workspaceRepository === undefined) return;
-		const hydration = resolveWorkspaceHydration(this.workspace.state);
-		if (hydration.state !== 'ready')
-			throw new Error('fresh canonical workspace has no active terminal');
-		if (this.service.getSession(hydration.sessionId) !== undefined) return;
-		const project = this.workspace.state.projects[hydration.projectId];
-		if (project === undefined)
-			throw new Error('fresh canonical workspace project is unavailable');
-		try {
-			await this.create({
-				projectId: hydration.projectId,
-				sessionId: hydration.sessionId,
-				cwd: project.root,
-				projectRootOrigin: 'server-default',
-				cols: 100,
-				rows: 30,
-			});
-		} catch (error) {
-			this.workspace.markInterruptedSessions();
-			throw error;
-		}
-	}
-
-	/** Restored projects in presentation order: the selected view's active
-	 * project first, then remaining view membership, then any unattached
-	 * project. The active project is seeded first so the first shown tab is
-	 * ready before sibling projects get their replacement terminals. */
-	private restoredLocalProjects() {
-		const seen = new Set<string>();
-		const projects: WorkspaceProject[] = [];
-		const remember = (projectId: string | undefined) => {
-			if (projectId === undefined || seen.has(projectId)) return;
-			const project = this.workspace.state.projects[projectId];
-			if (project === undefined) return;
-			seen.add(project.id);
-			projects.push(project);
-		};
-		for (const viewId of this.workspace.state.viewOrder) {
-			const view = this.workspace.state.views[viewId];
-			remember(view?.activeProjectId);
-			for (const projectId of view?.projectIds ?? []) remember(projectId);
-		}
-		for (const project of Object.values(this.workspace.state.projects)) {
-			remember(project.id);
-		}
-		return projects;
-	}
-
-	private projectHasTerminalPanel(projectId: string): boolean {
-		const project = this.workspace.state.projects[projectId];
-		if (project === undefined) return false;
-		return project.panelIds.some(
-			(panelId) => this.workspace.state.panels[panelId]?.type === 'terminal',
-		);
-	}
-
-	private async seedRemoteProjectTerminal(
-		project: WorkspaceProject,
-	): Promise<void> {
-		const deadline = Date.now() + REMOTE_TERMINAL_SEED_DEADLINE_MS;
-		let delayMs = 250;
-		while (Date.now() < deadline) {
-			if (this.projectHasTerminalPanel(project.id)) return;
-			try {
-				await this.create({
-					projectId: project.id,
-					cwd: project.root,
-					cols: 100,
-					rows: 30,
-				});
-				return;
-			} catch (error: unknown) {
-				if (
-					!isRetryableRemoteTerminalSeedError(error) ||
-					Date.now() + delayMs >= deadline
-				) {
-					console.error('[terminay-workspace-terminal-seed]', {
-						message:
-							error instanceof Error
-								? error.message.replace(/[\r\n]/gu, ' ').slice(0, 300)
-								: 'remote terminal seed failed',
-					});
-					return;
-				}
-				await new Promise((resolve) => setTimeout(resolve, delayMs));
-				delayMs = Math.min(delayMs * 2, 2_000);
-			}
-		}
+		return unavailableProjectIds;
 	}
 
 	private async getFileDiff(
@@ -2062,33 +1960,6 @@ function isMissingProjectRootError(error: unknown): boolean {
 		'code' in error &&
 		(error as { readonly code?: unknown }).code === 'path_missing'
 	);
-}
-
-const REMOTE_TERMINAL_SEED_DEADLINE_MS = 60_000;
-const RETRYABLE_TERMINAL_SEED_CODES = new Set([
-	'environment-unavailable',
-	'provider-unavailable',
-	'provider-operation-failed',
-	'operation-timeout',
-	'spawn_failed',
-]);
-
-function isRetryableRemoteTerminalSeedError(error: unknown): boolean {
-	let current: unknown = error;
-	for (let i = 0; i < 8 && current !== undefined && current !== null; i++) {
-		if (current instanceof ProjectEnvironmentRouteError && current.retryable)
-			return true;
-		if (
-			typeof current === 'object' &&
-			current !== null &&
-			'code' in current &&
-			typeof (current as { code: unknown }).code === 'string' &&
-			RETRYABLE_TERMINAL_SEED_CODES.has((current as { code: string }).code)
-		)
-			return true;
-		current = current instanceof Error ? current.cause : undefined;
-	}
-	return false;
 }
 
 /** Electron's main-process MessagePortMain is EventEmitter-based, unlike the
