@@ -350,6 +350,49 @@ test('an answered probe on becoming visible changes nothing', async () => {
 	heartbeat.stop();
 });
 
+test('once connected, every later attempt is presented as recovering even after the host cleared its record', async () => {
+	let fail = false;
+	const harness = createLoop({
+		run: () =>
+			fail
+				? Promise.reject(new Error('Session transport closed during connect.'))
+				: Promise.resolve(),
+	});
+	// The host reports no live connection throughout: exactly what it does after
+	// a failed attempt clears its record. That must not turn a recovery into a
+	// cold connect, which is what flipped the surface between two panels.
+	harness.loop.start();
+	await settle();
+	assert.deepEqual(harness.events.at(-1), { type: 'start', recovering: false });
+
+	fail = true;
+	harness.loop.start();
+	await settle();
+	harness.clock.fire();
+	await settle();
+	harness.clock.fire();
+	await settle();
+
+	const starts = harness.events.filter((event) => event.type === 'start').slice(1);
+	assert.equal(starts.length, 3);
+	assert.equal(
+		starts.every((event) => event.recovering),
+		true,
+		`every attempt after a connection recovers: ${JSON.stringify(starts)}`,
+	);
+});
+
+test('before any connection, repeated attempts are presented as connecting', async () => {
+	const harness = createLoop();
+	harness.loop.start();
+	await settle();
+	harness.clock.fire();
+	await settle();
+	const starts = harness.events.filter((event) => event.type === 'start');
+	assert.equal(starts.length, 2);
+	assert.equal(starts.every((event) => !event.recovering), true);
+});
+
 /** Let the loop's awaited attempt settle without waiting on real time. */
 async function settle() {
 	for (let turn = 0; turn < 16; turn += 1) await Promise.resolve();
