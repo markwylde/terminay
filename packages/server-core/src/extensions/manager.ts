@@ -1,5 +1,6 @@
 import type { ProjectEnvironmentContribution } from '@terminay/extension-api';
 import type { ServerVaultService } from '../settings/vault.js';
+import type { ExtensionHostDiagnosticListener } from './diagnostics.js';
 import { ExtensionHost } from './host.js';
 import { ExtensionProviderVault } from './providerVault.js';
 import type {
@@ -28,6 +29,10 @@ export interface ExtensionHostManagerOptions {
 	readonly sshAgent?: ExtensionSshAgentBroker;
 	readonly agents?: ExtensionAgentBroker;
 	readonly vault?: ServerVaultService;
+	/** Passed to every host it creates; absent means nothing is recorded. */
+	readonly onDiagnostic?: ExtensionHostDiagnosticListener;
+	/** Observed after every host state transition, for restart supervision. */
+	readonly onStateChange?: (status: ExtensionHostStatus) => void;
 }
 
 /** Owns independent per-extension supervisors. No extension failure is allowed
@@ -240,6 +245,17 @@ export class ExtensionHostManager {
 		await this.mutateContributions(() =>
 			this.removeContributionOwnership(extensionId),
 		);
+	}
+
+	/**
+	 * Return a quarantined host to a startable state.
+	 *
+	 * Quarantine is deliberately sticky, so this exists only for the explicit
+	 * restart a person asks for. An extension with no host yet has nothing to
+	 * clear and is left alone.
+	 */
+	clearQuarantine(extensionId: string): void {
+		this.hosts.get(extensionId)?.clearQuarantine();
 	}
 
 	async shutdown(): Promise<void> {
