@@ -5,6 +5,7 @@ import {
 	collectHostIceAddresses,
 	createHandshakeJoinQueue,
 	DEFAULT_HOSTED_ICE_SERVERS,
+	ADVERTISED_PORT_SPAN,
 	hostedPeerConfiguration,
 	HostedPeerLifecycle,
 	parseHostedIceServers,
@@ -224,4 +225,64 @@ test('handshake joins run one at a time', async () => {
 	releaseFirst();
 	await Promise.all([first, second]);
 	assert.deepEqual(order, ['first-start', 'second-start']);
+});
+
+test('an advertised address is added to the gathered candidates, never in place of them', () => {
+	const gathered = ['192.168.1.20', '100.101.102.103'];
+	const without = hostedPeerConfiguration('example.terminay.com', undefined, gathered);
+	const with_ = hostedPeerConfiguration('example.terminay.com', undefined, gathered, {
+		host: '127.0.0.1',
+		port: 51000,
+	});
+
+	// Every address the server would have offered is still offered.
+	for (const address of without.iceAdditionalHostAddresses) {
+		assert.ok(
+			with_.iceAdditionalHostAddresses.includes(address),
+			`enabling the advertised address dropped ${address}`,
+		);
+	}
+	assert.ok(with_.iceAdditionalHostAddresses.includes('127.0.0.1'));
+	assert.equal(with_.iceUseIpv4, true);
+	assert.equal(with_.iceUseIpv6, true);
+});
+
+test('an advertised address pins the ICE socket to its port', () => {
+	const config = hostedPeerConfiguration('example.terminay.com', undefined, [], {
+		host: '203.0.113.7',
+		port: 51000,
+	});
+	// A candidate is only forwardable if its port is known in advance, so the
+	// range is pinned rather than ephemeral. It spans a few ports because the
+	// runtime rejects a single-port range and gives each candidate its own
+	// socket from it.
+	assert.deepEqual([...config.icePortRange], [51000, 51000 + ADVERTISED_PORT_SPAN - 1]);
+});
+
+test('no advertised address leaves the socket and candidates untouched', () => {
+	const config = hostedPeerConfiguration('example.terminay.com', undefined, ['192.168.1.20']);
+	assert.equal(config.icePortRange, undefined);
+	assert.deepEqual(config.iceAdditionalHostAddresses, ['192.168.1.20']);
+});
+
+test('an advertised address survives the loopback-signaling branch', () => {
+	// A server that signals over loopback still has to offer a media path a
+	// remote client can use; the advertised address is exactly that path.
+	const config = hostedPeerConfiguration('127.0.0.1', undefined, [], {
+		host: '198.51.100.9',
+		port: 51000,
+	});
+	assert.ok(config.iceAdditionalHostAddresses.includes('198.51.100.9'));
+	assert.deepEqual([...config.icePortRange], [51000, 51000 + ADVERTISED_PORT_SPAN - 1]);
+});
+
+test('an advertised address is offered even when it is not a gatherable local address', () => {
+	// The point of the option is naming an address the server cannot observe
+	// about itself, so it must not be filtered the way gathered addresses are.
+	const config = hostedPeerConfiguration('example.terminay.com', undefined, ['169.254.1.1'], {
+		host: '169.254.9.9',
+		port: 51000,
+	});
+	assert.ok(config.iceAdditionalHostAddresses.includes('169.254.9.9'));
+	assert.ok(!config.iceAdditionalHostAddresses.includes('169.254.1.1'), 'gathered link-local is still dropped');
 });

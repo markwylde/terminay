@@ -100,7 +100,40 @@ install and can be overridden:
 sudo npx terminay daemon install --direct-origin https://box.example.com:8443
 ```
 
-`--expose off|hosted|direct|hosted,direct` and `--port` control the rest.
+`--expose off|hosted|direct|hosted,direct` and `--port` control the rest. For a
+server reachable only at a forwarded address — a container, or a box behind a
+port forward — see [Trying it in a local container](#trying-it-in-a-local-container).
+
+## Trying it in a local container
+
+A server in a container on your own machine is not reachable from a client on
+that machine by default. Every address the server can see about itself is one
+the client cannot route to — on macOS and Windows the container runs inside a
+virtual machine, and `--network host` does not change that, because the host is
+the VM. Signalling succeeds and the connection then never forms.
+
+`--advertise-address` names an address the client can reach, and offers it as an
+additional connection candidate:
+
+```bash
+docker run -d --name terminay \
+  --privileged --tmpfs /run --tmpfs /run/lock \
+  --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+  -p 51000-51003:51000-51003/udp \
+  node:24-bookworm \
+  /bin/sh -c 'apt-get update -qq && apt-get install -y -qq systemd dbus && exec /lib/systemd/systemd'
+
+docker exec -it terminay bash
+npx terminay daemon install --system --run-as root \
+  --advertise-address 127.0.0.1:51000
+npx terminay daemon qr-code
+```
+
+Four consecutive UDP ports are published rather than one, because the WebRTC
+runtime gives each candidate its own socket from the range it is pinned to.
+
+This is for a server reachable only at a forwarded address. It is not a general
+answer to NAT — it works because someone forwarded a port.
 
 ## Where things live
 

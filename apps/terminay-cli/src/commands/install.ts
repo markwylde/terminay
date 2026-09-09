@@ -8,6 +8,7 @@ import {
 	selectScope,
 } from '../account.js';
 import { defaultDirectOrigin } from '../address.js';
+import { ADVERTISED_PORT_SPAN } from '../advertise.js';
 import type { DaemonOptions, InstallScope } from '../args.js';
 import {
 	discardDownloads,
@@ -86,6 +87,7 @@ export interface InstallResult {
 	readonly channel: string;
 	readonly revision: string;
 	readonly directOrigin?: string;
+	readonly advertiseAddress?: string;
 	readonly ready: boolean;
 }
 
@@ -217,6 +219,11 @@ export async function runInstall(
 	const directOrigin = wantsDirect
 		? (options.directOrigin ?? (await defaultDirectOrigin(port)))
 		: options.directOrigin;
+	// An empty value clears; undefined means the operator said nothing.
+	const advertised =
+		options.advertiseAddress === undefined
+			? undefined
+			: options.advertiseAddress;
 	if (wantsDirect && directOrigin === undefined) {
 		throw new Error(
 			'direct exposure needs an origin devices can reach, and this machine has no routable address to derive one from. Pass --direct-origin https://<host>:<port>.',
@@ -238,6 +245,7 @@ export async function runInstall(
 			expose,
 			hostedDomain: options.hostedDomain ?? DEFAULT_HOSTED_DOMAIN,
 			...(directOrigin === undefined ? {} : { directOrigin }),
+			...(advertised === undefined ? {} : { advertiseAddress: advertised }),
 			uiBundle: `${layout.currentLink}/ui`,
 		}),
 		{ mode: 0o640 },
@@ -289,6 +297,9 @@ export async function runInstall(
 		expose,
 		hostedDomain: options.hostedDomain ?? DEFAULT_HOSTED_DOMAIN,
 		...(directOrigin === undefined ? {} : { directOrigin }),
+		...(advertised === undefined || advertised === ''
+			? {}
+			: { advertiseAddress: advertised }),
 		installedAt: new Date().toISOString(),
 	};
 	await writeInstallRecord(layout, record);
@@ -308,6 +319,21 @@ export async function runInstall(
 	write(`  channel      ${resolved.channel}`);
 	write(`  data root    ${dataRoot}`);
 	write(`  exposure     ${expose}`);
+	if (advertised !== undefined && advertised !== '') {
+		const first = Number(advertised.slice(advertised.lastIndexOf(':') + 1));
+		const last = first + ADVERTISED_PORT_SPAN - 1;
+		write(`  advertised   ${advertised}`);
+		write('');
+		write(
+			`UDP ports ${first}-${last} must reach this machine for that address to work.`,
+		);
+		write(
+			'Forwarding them is the one step this command cannot take for you — in',
+		);
+		write(
+			`Docker, publish them with -p ${first}-${last}:${first}-${last}/udp.`,
+		);
+	}
 	if (directOrigin !== undefined) {
 		write(`  direct URL   ${directOrigin}`);
 		write('');
@@ -329,6 +355,9 @@ export async function runInstall(
 		channel: resolved.channel,
 		revision: installed.manifest.revision,
 		...(directOrigin === undefined ? {} : { directOrigin }),
+		...(advertised === undefined || advertised === ''
+			? {}
+			: { advertiseAddress: advertised }),
 		ready,
 	});
 }

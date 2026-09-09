@@ -145,3 +145,71 @@ test('remaining install flags reach the options', () => {
 	assert.equal(parsed.options.expose, 'hosted,direct');
 	assert.equal(parsed.options.projectRoot, '/srv/projects');
 });
+
+test('install and upgrade accept an advertised address', () => {
+	assert.equal(
+		parse('daemon', 'install', '--advertise-address', '127.0.0.1:51000').options
+			.advertiseAddress,
+		'127.0.0.1:51000',
+	);
+	assert.equal(
+		parse('daemon', 'upgrade', '--advertise-address=[::1]:51000').options
+			.advertiseAddress,
+		'[::1]:51000',
+	);
+});
+
+test('an empty advertised address is the clearing form, not a usage error', () => {
+	// Every other value flag rejects an empty value; this one is how an operator
+	// removes an address they set earlier.
+	assert.equal(
+		parse('daemon', 'upgrade', '--advertise-address', '').options
+			.advertiseAddress,
+		'',
+	);
+	assert.equal(
+		parse('daemon', 'upgrade', '--advertise-address=').options.advertiseAddress,
+		'',
+	);
+	usage('daemon', 'install', '--run-as=');
+});
+
+test('a hostname is refused, and the message says why', () => {
+	assert.throws(
+		() =>
+			parseCommandLine([
+				'daemon',
+				'install',
+				'--advertise-address',
+				'box.example.com:51000',
+			]),
+		(error) =>
+			error instanceof UsageError &&
+			/literal address and port/u.test(error.message),
+	);
+	usage('daemon', 'install', '--advertise-address', 'localhost:51000');
+});
+
+test('a malformed or out-of-range advertised address is refused', () => {
+	for (const value of [
+		'127.0.0.1',
+		'51000',
+		'127.0.0.1:',
+		'127.0.0.1:0',
+		'127.0.0.1:70000',
+		'300.0.0.1:51000',
+	]) {
+		usage('daemon', 'install', '--advertise-address', value);
+	}
+});
+
+test('commands that do not configure the server reject the flag', () => {
+	usage('daemon', 'status', '--advertise-address', '127.0.0.1:51000');
+	usage('daemon', 'qr-code', '--advertise-address', '127.0.0.1:51000');
+	usage('daemon', 'uninstall', '--advertise-address', '127.0.0.1:51000');
+});
+
+test('the help text documents the flag and that the port must be forwarded', () => {
+	assert.match(HELP_TEXT, /--advertise-address/u);
+	assert.match(HELP_TEXT, /forwarded/u);
+});

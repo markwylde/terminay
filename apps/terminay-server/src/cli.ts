@@ -93,6 +93,7 @@ import {
 } from './index.js';
 import { resolveTerminalProcessCwd } from './processCwd.js';
 import { parseHostedIceServers, startHostedPairingHost } from './remote/hostedPairingHost.js';
+import { assertAdvertisedPortIsBindable } from './remote/advertisedIcePort.js';
 import { createHostedDiagnosticLogger } from './remote/hostedDiagnosticLog.js';
 import { loadHostedUiArchive } from './remote/hostedUiArchive.js';
 import { loadOrCreateHostedHostKey, rotateHostedHostKey } from './remote/hostedHostKey.js';
@@ -166,6 +167,14 @@ else {
 	// Desktop does for its embedded server, rather than advertising the
 	// unroutable per-server placeholder.
 	const exposeHosted = options.exposeModes.includes('hosted');
+	// An advertised address exists because the addresses this server can observe
+	// about itself do not reach clients. Starting anyway, with a candidate whose
+	// port nothing is listening on, produces exactly the silent ICE failure the
+	// option was added to remove — so an unbindable port stops the server here,
+	// while the operator is still watching.
+	if (options.advertiseAddress !== undefined && options.command === 'start') {
+		await assertAdvertisedPortIsBindable(options.advertiseAddress);
+	}
 	const sessionOrigin =
 		exposeHosted && !options.remoteOriginExplicit && options.command === 'start'
 			? loadOrCreateSessionOrigin(options.dataRoot, options.hostedDomain)
@@ -332,6 +341,9 @@ else {
 						serverId: options.serverId,
 						signal,
 						iceServers: parseHostedIceServers(process.env.TERMINAY_WEBRTC_ICE_SERVERS),
+						...(options.advertiseAddress === undefined
+							? {}
+							: { advertiseAddress: options.advertiseAddress }),
 						webrtcRuntimeRoot: resolveWebRtcRuntimeRoot(process.cwd(), process.env),
 						...(rendererDirectory
 							? {

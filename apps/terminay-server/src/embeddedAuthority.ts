@@ -1,8 +1,8 @@
 import {
-  createServerCoreComposition,
-  type ServerCoreComposition,
-  type ServerCoreCompositionOptions,
-} from "@terminay/server-core";
+	createServerCoreComposition,
+	type ServerCoreComposition,
+	type ServerCoreCompositionOptions,
+} from '@terminay/server-core';
 
 /**
  * Electron-free authority surface for the embedded Desktop server.
@@ -15,7 +15,7 @@ import {
 export type EmbeddedDesktopAuthorityOptions = ServerCoreCompositionOptions;
 
 export function createEmbeddedDesktopAuthority(
-  options: EmbeddedDesktopAuthorityOptions,
+	options: EmbeddedDesktopAuthorityOptions,
 ): ServerCoreComposition {
-  return createServerCoreComposition(options);
+	return createServerCoreComposition(options);
 }
