@@ -57,7 +57,12 @@ export function renderEnvironmentFile(
 		'TERMINAY_AGENT_INTEGRATION=enabled',
 		'TERMINAY_AI_PROVIDERS=disabled',
 		'TERMINAY_LOG_SINK=journal',
+		// Two settings that happen to share a value. The local HTTP UI reads
+		// TERMINAY_UI_BUNDLE; the archive a paired device receives is built from
+		// TERMINAY_UI_RENDERER_DIRECTORY. Writing only the first leaves a server
+		// that pairs successfully and then serves a placeholder workspace.
 		`TERMINAY_UI_BUNDLE=${configuration.uiBundle}`,
+		`TERMINAY_UI_RENDERER_DIRECTORY=${configuration.uiBundle}`,
 	];
 	return `${lines.join('\n')}\n`;
 }
