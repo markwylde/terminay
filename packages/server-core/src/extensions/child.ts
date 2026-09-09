@@ -19,6 +19,8 @@ import type {
 } from './types.js';
 
 const MAX_MESSAGE_BYTES = 256 * 1024;
+/** How long a dying child waits for its fatal report to reach the host. */
+const FATAL_REPORT_FLUSH_MS = 100;
 const invocations = new Map<string, AbortController>();
 const brokerCalls = new Map<
 	string,
@@ -53,8 +55,64 @@ process.on('message', (message: unknown) => {
 	void receive(message);
 });
 process.on('disconnect', () => process.exit(0));
-process.on('uncaughtException', () => process.exit(70));
-process.on('unhandledRejection', () => process.exit(71));
+process.on('uncaughtException', (error) => reportFatal(error, 70));
+process.on('unhandledRejection', (reason) => reportFatal(reason, 71));
+
+/**
+ * Report the error that is ending this child, then exit with the code that
+ * names how it ended.
+ *
+ * Registering these handlers suppresses Node's own stack print, and a packaged
+ * child's stderr goes nowhere a person can read, so without this frame the host
+ * sees only an exit code. The send is best effort by design: the exit must not
+ * depend on the channel still being open.
+ */
+function reportFatal(cause: unknown, exitCode: number): void {
+	let exited = false;
+	const exit = (): void => {
+		if (exited) return;
+		exited = true;
+		process.exit(exitCode);
+	};
+	try {
+		const error =
+			cause instanceof Error
+				? cause
+				: new Error(typeof cause === 'string' ? cause : String(cause));
+		sequence += 1;
+		const report = (stack: string | undefined): ChildFrame => ({
+			protocolVersion: 1,
+			kind: 'fatal',
+			id: `fatal-${sequence}`,
+			payload: {
+				name: error.name,
+				message: error.message,
+				...(stack === undefined ? {} : { stack }),
+				exitCode,
+			},
+		});
+		// The error text is reported as it stands. Only a stack past the frame
+		// limit is dropped, because a frame the host must reject carries less
+		// than the same error with no stack at all.
+		const stack = typeof error.stack === 'string' ? error.stack : undefined;
+		const frame =
+			frameByteLength(report(stack)) > MAX_MESSAGE_BYTES
+				? report(undefined)
+				: report(stack);
+		if (typeof process.send !== 'function' || !process.connected) {
+			exit();
+			return;
+		}
+		// `process.send` can queue rather than flush, and `process.exit` would
+		// discard a queued frame. Exit once it is written, and on a short
+		// deadline so a wedged channel cannot keep a dying child alive.
+		process.send(frame, exit);
+		setTimeout(exit, FATAL_REPORT_FLUSH_MS);
+	} catch {
+		/* a failed report must never replace the exit code it describes */
+		exit();
+	}
+}
 
 async function receive(message: unknown): Promise<void> {
 	if (!isHostFrame(message) || frameByteLength(message) > MAX_MESSAGE_BYTES)

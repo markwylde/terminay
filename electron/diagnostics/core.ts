@@ -96,6 +96,20 @@ export const DIAGNOSTIC_EVENT_NAMES = [
 	'local-server.remote-webrtc.channel-state',
 	'local-server.remote-webrtc.application-lane',
 	'local-server.remote-webrtc.peer-closed',
+	'local-server.extension.spawned',
+	'local-server.extension.ready',
+	'local-server.extension.child-exited',
+	'local-server.extension.failed',
+	'local-server.extension.restart-scheduled',
+	'local-server.extension.restart-attempted',
+	'local-server.extension.quarantined',
+	'local-server.extension.quarantine-cleared',
+	'local-server.extension.stopped',
+	'local-server.agent.matched',
+	'local-server.agent.admitted',
+	'local-server.agent.bound',
+	'local-server.agent.admission-failed',
+	'local-server.agent.released',
 	'local-server.stopping',
 	'local-server.stopped',
 	'terminal.recovery.started',
@@ -156,8 +170,13 @@ const SECRET_FIELD_PATTERN =
 	/(?:authorization|cookie|api[-_ ]?key|access[-_ ]?token|refresh[-_ ]?token|password|passwd|secret|reconnect[-_ ]?grant|pairing[-_ ]?(?:pin|token))/i;
 
 /**
- * Defence-in-depth for arbitrary error text. Callers must still avoid sending user
- * content. URLs and absolute paths are deliberately reduced rather than "cleaned".
+ * Defence-in-depth for arbitrary error text.
+ *
+ * URLs and secret-shaped values are reduced; filesystem paths are kept. A
+ * stack whose file names have been removed cannot be read back to the code
+ * that threw, and this history is local, permission-restricted, and never
+ * uploaded automatically, so the path is worth more here than its absence.
+ * Callers must still avoid sending user content.
  */
 export function sanitizeDiagnosticText(value: string): string {
 	let result = value;
@@ -165,22 +184,6 @@ export function sanitizeDiagnosticText(value: string): string {
 		/\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"']+/gi,
 		'<url:redacted>',
 	);
-	result = result.replace(
-		/(?:^|[\s("'])\/(?:Users|home|private|tmp|var|opt|Volumes|mnt|srv)(?:\/[^\s:),;"']*)?/g,
-		(match) => {
-			const prefix = match[0] === '/' ? '' : match[0];
-			return `${prefix}<path:redacted>`;
-		},
-	);
-	result = result.replace(
-		/(?:^|[\s("'=])\/(?!\/)[^\s:),;"']+/g,
-		(match) => `${match[0] === '/' ? '' : match[0]}<path:redacted>`,
-	);
-	result = result.replace(
-		/\b[A-Za-z]:\\(?:[^\s:),;"']+\\)*[^\s:),;"']*/g,
-		'<path:redacted>',
-	);
-	result = result.replace(/\\\\[^\s\\]+\\[^\s:),;"']*/g, '<path:redacted>');
 	for (const [pattern, replacement] of secretPatterns)
 		result = result.replace(pattern, replacement);
 	return result;

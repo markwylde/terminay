@@ -1394,6 +1394,89 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 			},
 		},
 		onEvent: handleServerTerminalEvent,
+		// An extension host that dies is otherwise invisible: the child suppresses
+		// Node's own stack print so it can report the error itself, and a packaged
+		// child has no readable stderr. Extensions are trusted code and this
+		// history is local and never uploaded automatically, so the reported error
+		// is recorded as it was raised.
+		onExtensionHostDiagnostic: (diagnostic) => {
+			void desktopDiagnostics.record(
+				{
+					component: 'local-server',
+					event: `local-server.extension.${diagnostic.transition}`,
+					fields: {
+						extensionId: diagnostic.extensionId,
+						...(diagnostic.exitCode === undefined
+							? {}
+							: { exitCode: diagnostic.exitCode }),
+						...(diagnostic.signal === undefined
+							? {}
+							: { signal: diagnostic.signal }),
+						...(diagnostic.consecutiveFailures === undefined
+							? {}
+							: { consecutiveFailures: diagnostic.consecutiveFailures }),
+						...(diagnostic.restartAt === undefined
+							? {}
+							: { restartAt: diagnostic.restartAt }),
+						...(diagnostic.deliberate === undefined
+							? {}
+							: { deliberate: diagnostic.deliberate }),
+						...(diagnostic.error === undefined
+							? {}
+							: {
+									errorName: diagnostic.error.name,
+									errorMessage: diagnostic.error.message,
+									...(diagnostic.error.stack === undefined
+										? {}
+										: { errorStack: diagnostic.error.stack }),
+								}),
+					},
+					severity:
+						diagnostic.transition === 'failed' ||
+						diagnostic.transition === 'quarantined'
+							? 'error'
+							: 'info',
+					source: 'local-server-extensions',
+				},
+				{ channel: 'lifecycle' },
+			);
+		},
+		// Which terminals an agent provider reached, and where it stopped. A
+		// terminal that never shows an agent is otherwise indistinguishable from
+		// one no provider ever matched.
+		onAgentObservationDiagnostic: (diagnostic) => {
+			void desktopDiagnostics.record(
+				{
+					component: 'local-server',
+					event: `local-server.agent.${diagnostic.transition}`,
+					fields: {
+						providerId: diagnostic.providerId,
+						serverId: diagnostic.terminal.serverId,
+						projectId: diagnostic.terminal.projectId,
+						sessionId: diagnostic.terminal.sessionId,
+						...(diagnostic.failureClass === undefined
+							? {}
+							: { failureClass: diagnostic.failureClass }),
+						...(diagnostic.reason === undefined
+							? {}
+							: { reason: diagnostic.reason }),
+						...(diagnostic.error === undefined
+							? {}
+							: {
+									errorName: diagnostic.error.name,
+									errorMessage: diagnostic.error.message,
+									...(diagnostic.error.stack === undefined
+										? {}
+										: { errorStack: diagnostic.error.stack }),
+								}),
+					},
+					severity:
+						diagnostic.transition === 'admission-failed' ? 'warning' : 'info',
+					source: 'local-server-agents',
+				},
+				{ channel: 'lifecycle' },
+			);
+		},
 		onDeliveryDiagnostic: (diagnostic) => {
 			if (diagnostic.phase !== 'terminal_congestion') return;
 			void desktopDiagnostics.record(

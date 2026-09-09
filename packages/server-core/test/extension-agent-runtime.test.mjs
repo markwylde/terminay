@@ -480,13 +480,18 @@ test("a failed agent admission is observable before the sidebar falls back to no
   assert.equal(registry.foregroundProcessChanged(identity, "test-agent"), true, "the matched provider is claimed before asynchronous admission");
   await new Promise((resolve) => setImmediate(resolve));
 
-  assert.deepEqual(failures, [{
+  assert.equal(failures.length, 1, "a failed admission must be visible even though the sidebar has no provider entry");
+  const { error, ...metadata } = failures[0];
+  assert.deepEqual(metadata, {
     kind: "agent-admission-failed",
     providerId: provider.id,
     terminal: identity,
     failureClass: "host-failed",
     reason: "agent extension host does not exist: /private/provider-journal",
-  }], "a failed admission must be visible even though the sidebar has no provider entry");
+  });
+  assert.equal(error.name, "Error");
+  assert.equal(error.message, "agent extension host does not exist: /private/provider-journal");
+  assert.match(error.stack, /agent extension host does not exist/u, "the reported error is recorded as it was raised");
   assert.deepEqual(agents.getSnapshot().entries, {}, "the failed provider claim is released instead of leaving a phantom sidebar agent");
   assert.equal(registry.foregroundProcessChanged(identity, "test-agent"), true, "a failing diagnostics sink cannot prevent the terminal from retrying");
   await agents.stop();
@@ -773,6 +778,123 @@ test("two terminals running one provider are each admitted with their own contex
   );
   const [first, second] = admitted.map(({ context }) => context.contextId);
   assert.notEqual(first, second, "two live terminals must not share one context id");
+});
+
+test("observation records tell a bound terminal apart from one that never binds", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId });
+  activity.register(identity); activity.register(secondIdentity);
+  const agents = new AgentStatusService({ activity });
+  await agents.start(); agents.register(identity); agents.register(secondIdentity);
+  const observations = [];
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: {
+      agentProviderContributions: () => [provider],
+      // The first terminal's provider finds its session; the second's does not.
+      async admitAgentTerminal(value) {
+        return value.context.terminalSessionId === identity.sessionId
+          ? { state: "bound" }
+          : { state: "not-bound" };
+      },
+      async cancelAgentTerminal() { return true; },
+      async drainAgentObservers() {},
+    },
+    onObservation: (record) => observations.push(record),
+    reobserveDebounceMs: 0,
+  });
+
+  for (const [terminal, shellPid] of [[identity, 5321], [secondIdentity, 5322]]) {
+    registry.register(terminal);
+    registry.terminalStarted(terminal, shellPid);
+    registry.foregroundProcessChanged(terminal, "test-agent");
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  const forSession = (sessionId) => observations
+    .filter((record) => record.terminal.sessionId === sessionId)
+    .map((record) => record.transition);
+  assert.deepEqual(forSession(identity.sessionId), ["matched", "admitted", "bound"]);
+  assert.deepEqual(forSession(secondIdentity.sessionId), ["matched", "admitted"], "a terminal that never binds is distinguishable from one that was never matched");
+  assert.deepEqual(forSession("terminal-that-never-ran"), []);
+  for (const record of observations) {
+    assert.equal(record.providerId, provider.id);
+    assert.deepEqual(Object.keys(record.terminal).sort(), ["projectId", "serverId", "sessionId"]);
+    assert.equal(typeof record.at, "number");
+  }
+  await agents.stop();
+});
+
+test("observation records carry no journal, prompt, tool input, tool result, or observed-project path", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId });
+  activity.register(identity);
+  const agents = new AgentStatusService({ activity });
+  await agents.start(); agents.register(identity);
+  const observations = [];
+  const failures = [];
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: {
+      agentProviderContributions: () => [provider],
+      // Everything a provider could hand back that must never be copied into a
+      // record: the journal it opened, the prompt it read, and a tool result.
+      async admitAgentTerminal() {
+        return {
+          state: "bound",
+          journalPath: "/Users/canary/project/.claude/projects/session-canary.jsonl",
+          promptText: "prompt-canary",
+          tool: { input: "tool-input-canary", result: "tool-result-canary" },
+        };
+      },
+      async cancelAgentTerminal() { return true; },
+      async drainAgentObservers() {},
+    },
+    onObservation: (record) => observations.push(record),
+    onAdmissionFailure: (failure) => failures.push(failure),
+    reobserveDebounceMs: 0,
+  });
+
+  registry.register(identity);
+  registry.terminalStarted(identity, 7321);
+  registry.foregroundProcessChanged(identity, "test-agent");
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.ok(observations.length > 0, "the terminal produced records to check");
+  const encoded = JSON.stringify([...observations, ...failures]);
+  for (const canary of ["session-canary", "prompt-canary", "tool-input-canary", "tool-result-canary", "/Users/canary"]) {
+    assert.equal(encoded.includes(canary), false, canary);
+  }
+  for (const record of observations) {
+    assert.deepEqual(
+      Object.keys(record).filter((key) => !["failureClass", "reason", "error"].includes(key)).sort(),
+      ["at", "providerId", "terminal", "transition"],
+    );
+  }
+  await agents.stop();
+});
+
+test("releasing an observer is recorded with the reason it was released", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId });
+  activity.register(identity);
+  const agents = new AgentStatusService({ activity });
+  await agents.start(); agents.register(identity);
+  const observations = [];
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: admittingHost([], []),
+    onObservation: (record) => observations.push(record),
+    reobserveDebounceMs: 0,
+  });
+
+  registry.register(identity);
+  registry.terminalStarted(identity, 6321);
+  registry.foregroundProcessChanged(identity, "test-agent");
+  await new Promise((resolve) => setImmediate(resolve));
+  registry.foregroundProcessChanged(identity, "zsh", true);
+
+  const released = observations.filter((record) => record.transition === "released");
+  assert.equal(released.length, 1, "the terminal returning to its shell releases its observer");
+  assert.equal(released[0].reason, "shell-foreground");
+  await agents.stop();
 });
 
 test("the issued context id distinguishes terminals at the same incarnation", async () => {

@@ -144,7 +144,9 @@ test.describe('local Desktop diagnostics', () => {
 				events.some((event) => event.event === 'local-server.stopped'),
 			).toBe(true);
 			expect(text).not.toContain(secretCanary);
-			expect(text).not.toContain(pathCanary);
+			// A path inside recorded error text is part of that error: a stack
+			// whose file names are gone cannot be read back to the code that threw.
+			expect(text).toContain(pathCanary);
 
 			const directoryMetadata = await stat(
 				diagnosticsDirectory(launch.userData),
@@ -315,8 +317,20 @@ test.describe('local Desktop diagnostics', () => {
 			expect(
 				events.some((event) => event.event === 'renderer.process-gone'),
 			).toBe(true);
-			expect(await readDiagnosticText(launch.userData)).not.toContain(
-				preloadPathCanary,
+			// Bootstrap failures record module names rather than the paths behind
+			// them. Renderer console output is the renderer's own text and is
+			// recorded as written, so the assertion is on the bootstrap events.
+			const bootstrapEvents = events.filter((event) =>
+				[
+					'renderer.preload-failed',
+					'renderer.load-failed',
+					'renderer.navigation-failed',
+				].includes(event.event),
+			);
+			expect(bootstrapEvents.length).toBeGreaterThan(0);
+			expect(JSON.stringify(bootstrapEvents)).not.toContain(preloadPathCanary);
+			expect(JSON.stringify(bootstrapEvents)).toContain(
+				'PRELOAD_PATH_MUST_BE_REDACTED.cjs',
 			);
 		} finally {
 			await closeIfRunning(app);
