@@ -24,5 +24,5 @@
 ## 5. Gates and the honest limit
 
 - [x] 5.1 Run `openspec validate --all`, `npm run lint`, `npm run test:connection-menu`, and the new unit suites. Verified by all passing.
-- [ ] 5.2 Run the full Electron end-to-end suite through `npm run test:e2e` (Docker), not only the new spec. Verified by all shards passing.
-- [ ] 5.3 State in the PR exactly what was verified and that no phone ran it. Verified by the PR description carrying that sentence, and by the owner's on-device check being listed as the remaining step rather than claimed.
+- [x] 5.2 Run the full Electron end-to-end suite through `npm run test:e2e` (Docker), not only the new spec. Verified by all shards passing.
+- [x] 5.3 State in the PR exactly what was verified and that no phone ran it. Verified by the PR description carrying that sentence, and by the owner's on-device check being listed as the remaining step rather than claimed.
