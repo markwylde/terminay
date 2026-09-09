@@ -1045,12 +1045,14 @@ export class WorkspaceStore {
 		return this.state;
 	}
 
-	/** Privileged Local-server restart recovery. A persisted Local terminal
-	 * describes a PTY owned by the previous Electron process, so neither its
-	 * panel nor an unpresented session record can be restored as live state.
-	 * This deliberately is not a renderer command: it is used before the new
-	 * Local authority starts its one replacement terminal. */
-	discardStaleLocalTerminalState(): WorkspaceState {
+	/** Privileged server restart recovery. A persisted terminal describes a PTY
+	 * owned by the server process that created it, so once that process is gone
+	 * neither its panel nor an unpresented session record can be restored as live
+	 * state. What makes them stale is the restart, not which host was running, so
+	 * this applies equally to an embedded Desktop server and a standalone one.
+	 * This deliberately is not a renderer command: it is used before the server
+	 * starts its replacement terminals. */
+	discardStaleTerminalState(): WorkspaceState {
 		const next = clone(this.current) as MutableWorkspaceState;
 		const changedIds: ProtocolId[] = [];
 		const stalePanelIds = new Set(
@@ -1088,7 +1090,7 @@ export class WorkspaceStore {
 		this.history.push({
 			revision: next.revision,
 			cursor: next.cursor,
-			commandId: 'system:local-terminal-restart',
+			commandId: 'system:terminal-restart',
 			type: 'terminal.markInterrupted',
 			changedIds,
 		});

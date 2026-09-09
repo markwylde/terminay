@@ -85,6 +85,10 @@ import type {
 } from './types.js';
 import { WorkspaceStore } from './workspace.js';
 import {
+	restoreWorkspaceOnStartup,
+	type WorkspaceStartupRestoreOptions,
+} from './workspaceStartup.js';
+import {
 	createWorkspaceOperationRegistry,
 	type WorkspaceOperationRegistryOptions,
 } from './workspaceProtocol.js';
@@ -218,6 +222,25 @@ export interface ServerCoreCompositionOptions
 	readonly serviceLifecycle?: {
 		readonly start?: () => void | Promise<void>;
 		readonly stop?: () => void | Promise<void>;
+	};
+	/**
+	 * Startup restore for the workspace's terminals.
+	 *
+	 * The policy is server-owned and lives in `workspaceStartup.ts`; only the act
+	 * of creating a session differs by host, so a host supplies that and nothing
+	 * else. Omitted only by focused tests that inject no durable workspace.
+	 */
+	readonly workspaceStartup?: Pick<
+		WorkspaceStartupRestoreOptions,
+		'createTerminal' | 'firstRun' | 'remoteSeedDeadlineMs' | 'onSeedFailure'
+	> & {
+		/**
+		 * Host work that must happen before the restore reads the workspace —
+		 * rebuilding process-local project bindings, for instance. Returns the
+		 * projects whose roots could not be bound, which therefore get no
+		 * replacement terminal.
+		 */
+		readonly prepare?: () => Promise<ReadonlySet<string>> | ReadonlySet<string>;
 	};
 	/** Shared ordered journal used by terminal events and ServerConnection. */
 	readonly eventJournal?: OrderedEventJournalLike;
@@ -830,9 +853,46 @@ export function createServerCoreComposition(
 				await options.settings?.load();
 				await options.serviceLifecycle?.start?.();
 				await options.agents?.start();
+				// Every service the restore needs is now up, and a host's way of
+				// making a session may itself await `start()` — Desktop's does.
+				// Becoming ready before the restore keeps that re-entrant call
+				// from awaiting the promise it is running inside, while the
+				// restore is still awaited before `start()` resolves.
 				if (lifecycle === 'starting') lifecycle = 'ready';
+				// Terminals whose process did not survive the restart are reaped
+				// and replaced here, for every host. Doing it in a host bootstrap
+				// is how Desktop and the standalone server came to restore the
+				// same repository differently.
+				if (
+					options.workspaceStartup !== undefined &&
+					options.workspace !== undefined
+				) {
+					const unavailableProjectIds =
+						(await options.workspaceStartup.prepare?.()) ?? new Set<string>();
+					await restoreWorkspaceOnStartup({
+						workspace: options.workspace,
+						liveSessionCount: () => terminal.listSessions().length,
+						hasSession: (sessionId) =>
+							terminal.getSession(sessionId) !== undefined,
+						unavailableProjectIds,
+						firstRun: options.workspaceStartup.firstRun,
+						createTerminal: options.workspaceStartup.createTerminal,
+						...(options.workspaceStartup.remoteSeedDeadlineMs === undefined
+							? {}
+							: {
+									remoteSeedDeadlineMs:
+										options.workspaceStartup.remoteSeedDeadlineMs,
+								}),
+						...(options.workspaceStartup.onSeedFailure === undefined
+							? {}
+							: { onSeedFailure: options.workspaceStartup.onSeedFailure }),
+					});
+				}
 			} catch (error) {
-				if (lifecycle === 'starting') lifecycle = 'failed';
+				// Including the window above, where this start had already
+				// published readiness: a start that throws did not succeed.
+				if (lifecycle === 'starting' || lifecycle === 'ready')
+					lifecycle = 'failed';
 				throw error;
 			}
 		})();
