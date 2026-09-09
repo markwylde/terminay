@@ -1450,4 +1450,3 @@ SHALL offer it no means of implementing those host behaviours.
   evidence, provider home and journal resolution, supported mapping versions,
   title and model sources, lifecycle and subagent mappings, privacy exclusions,
   and honest fallback, and nothing else
->>>>>>> origin/main
