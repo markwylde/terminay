@@ -2,6 +2,7 @@ export * from './builtInArtifacts.js';
 export * from './catalog.js';
 export * from './composition.js';
 export * from './descriptor.js';
+export * from './diagnostics.js';
 export * from './host.js';
 export * from './installer.js';
 export * from './installerTypes.js';
