@@ -21,4 +21,4 @@
 ## 5. Verification
 
 - [x] 5.1 Run `openspec validate --all` and `npm run test:activity-store`. Verified by both green.
-- [ ] 5.2 Run the Docker-isolated Electron suite (`npm run test:e2e`) covering `e2e/terminal-signals.spec.ts` and `e2e/terminal.spec.ts`. Verified by that runner; do not run Playwright's Electron suite on the host.
+- [x] 5.2 Run the Docker-isolated Electron suite (`npm run test:e2e`) covering `e2e/terminal-signals.spec.ts` and `e2e/terminal.spec.ts`. Verified by that runner; do not run Playwright's Electron suite on the host.

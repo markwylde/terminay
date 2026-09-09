@@ -13,4 +13,4 @@
 ## 3. Prove and ship
 
 - [x] 3.1 Run the server, protocol, and affected script suites locally and push a branch, verified by Gitea CI green on the pull request
-- [ ] 3.2 Pair a browser against the running Desktop on the deployed relay once merged, verified by the workspace attaching without the authentication timeout
+- [x] 3.2 Pair a browser against the running Desktop on the deployed relay once merged, verified by the workspace attaching without the authentication timeout
