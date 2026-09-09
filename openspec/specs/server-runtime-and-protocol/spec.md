@@ -712,7 +712,7 @@ Local and remote workspace application traffic SHALL use the canonical framed `S
 
 ### Requirement: Authentication and pairing authority
 
-Local embedded bootstrap credentials SHALL be random, short-lived, scoped to the supervised server, and never placed in normal logs or persistent URLs. Remote first pairing SHALL require the one-time URL secret plus the configured PIN or an explicit approval policy, and the public server or session identifier SHALL NOT be sufficient authority. Reconnect SHALL prove possession of the registered origin-bound device key before receiving a fresh connection ticket.
+Local embedded bootstrap credentials SHALL be random, short-lived, scoped to the supervised server, and never placed in normal logs or persistent URLs. Remote first pairing SHALL require the one-time URL secret plus explicit host approval of the device-bound match code, and the public server or session identifier SHALL NOT be sufficient authority. Reconnect SHALL prove possession of the registered origin-bound device key before receiving a fresh connection ticket, and the ticket SHALL be valid only on the peer that received it.
 
 #### Scenario: Pairing with only a public identifier
 

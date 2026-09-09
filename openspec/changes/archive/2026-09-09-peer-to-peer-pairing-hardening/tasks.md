@@ -42,5 +42,5 @@
 ## 7. Security evidence and external contract
 
 - [x] 7.1 Extend the adversarial signaling harness with Desktop pairing and reconnect, a captured-QR race showing differing match codes, an unauthenticated `device-join` against a live peer, and ticket replay across peers, verified by every case failing closed
-- [ ] 7.2 Publish the version-2 contract (match code vectors, `device-join` proof, approval shapes) to the hosted browser shell and relay owners and record their conformance run under `openspec/adr/evidence/`, verified before this change is archived
+- [x] 7.2 Publish the version-2 contract (match code vectors, `device-join` proof, approval shapes) to the hosted browser shell and relay owners and record their conformance run under `openspec/adr/evidence/`, verified before this change is archived
 - [x] 7.3 Run `openspec validate --all` and the full security test lane, verified green in CI

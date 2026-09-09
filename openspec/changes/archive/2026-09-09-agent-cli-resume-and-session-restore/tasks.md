@@ -21,11 +21,11 @@
 ## 4. Conformance gestures and matrix honesty
 
 - [x] 4.1 Change each provider's conformance `resume()` to that CLI's documented restore command: Claude picker (`claude --resume` then select the just-quit session); Codex `codex resume --last`; Grok `grok --continue`; OpenCode `opencode --continue`. Verified by reading the descriptor files.
-- [ ] 4.2 Run each opt-in real-CLI conformance resume step. If it rebinds, leave Resume `Y`. If it does not, set that cell to `N` with the reason in the matrix and the descriptor. A skip SHALL NOT keep `Y`. Verified by the recorded run (pass or a written `N`) for Claude, Codex, Grok, and OpenCode.
+- [x] 4.2 Run each opt-in real-CLI conformance resume step. If it rebinds, leave Resume `Y`. If it does not, set that cell to `N` with the reason in the matrix and the descriptor. A skip SHALL NOT keep `Y`. Verified by the recorded run (pass or a written `N`) for Claude, Codex, Grok, and OpenCode.
 
 ## 5. Real-app coverage
 
-- [ ] 5.1 Extend `e2e/real-claude-code-agent-runtime.spec.ts` (still behind `TERMINAY_REAL_CLAUDE_CODE_E2E`) so after the first session is quit it types `claude --resume`, selects that session, and asserts the Agents row reappears as the same root, `done`, then working→done on further work. Verified by running that spec with the env var set.
+- [x] 5.1 Extend `e2e/real-claude-code-agent-runtime.spec.ts` (still behind `TERMINAY_REAL_CLAUDE_CODE_E2E`) so after the first session is quit it types `claude --resume`, selects that session, and asserts the Agents row reappears as the same root, `done`, then working→done on further work. Verified by running that spec with the env var set.
 - [x] 5.2 Add resume to the Codex real-app spec (`codex resume --last`) behind `TERMINAY_REAL_CODEX_E2E`. Verified by the spec existing and, when the env var is set, asserting the Agents row after resume — or by the matrix cell being `N` if 4.2 already proved it cannot bind.
 - [x] 5.3 Do not treat the stub Grok e2e (`grok --resume <hardcoded uuid>` against a fake binary) as Resume proof. Either drive a real `grok --continue` behind an opt-in env var, or leave Grok Resume claimed only from the real-CLI harness in 4.2. Verified by the stub spec no longer being the only resume coverage, or by a comment in that spec stating it is not Resume proof.
 

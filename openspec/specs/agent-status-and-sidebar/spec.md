@@ -73,7 +73,7 @@ SSH and other non-local environments SHALL NOT use the server host's process tre
 
 ### Requirement: Foreground process matching
 
-Process-name matching SHALL be a prompt rather than proof. `codex` and `codex-tui` SHALL bind Codex and `grok` SHALL bind Grok, while an unmatched `node` or `bun` wrapper SHALL try every capable provider until one proves a writer-held journal. Observation SHALL also inspect the PTY shell PID itself so an `exec`'d CLI still has its open files examined. The Grok CLI's `agent` symlink SHALL NOT be a Grok process matcher because Cursor owns the `agent` executable name.
+Process-name matching SHALL be a prompt rather than proof. `codex` and `codex-tui` SHALL bind Codex and `grok` SHALL bind Grok, while an unmatched `node` or `bun` wrapper SHALL try every capable provider until one proves a writer-held journal. Observation SHALL also inspect the PTY shell PID itself so an `exec`'d CLI still has its open files examined. The Grok CLI's `agent` symlink SHALL NOT be a Grok process matcher, because a bare `agent` name is not evidence of any particular provider.
 
 #### Scenario: Recognized provider name
 
@@ -130,7 +130,7 @@ If a running provider is matched and its terminal admission subsequently fails, 
 
 ### Requirement: Provider ids are extension contributions
 
-Provider ids SHALL be namespaced extension contributions rather than a closed core union. Terminay SHALL bundle enabled-by-default Codex, Claude Code, Cursor Agent, Grok, OpenCode, and omp providers. A third-party provider SHALL appear through the same validated manifest, hosted runtime, canonical event, Settings, and disablement contracts. Persisted unknown or disabled provider ids SHALL remain bounded metadata and SHALL NOT cause provider code to load in a client.
+Provider ids SHALL be namespaced extension contributions rather than a closed core union. Terminay SHALL bundle enabled-by-default Codex, Claude Code, Grok, OpenCode, and omp providers. A third-party provider SHALL appear through the same validated manifest, hosted runtime, canonical event, Settings, and disablement contracts. Persisted unknown or disabled provider ids SHALL remain bounded metadata and SHALL NOT cause provider code to load in a client.
 
 #### Scenario: Third-party provider
 
@@ -144,7 +144,7 @@ Provider ids SHALL be namespaced extension contributions rather than a closed co
 
 ### Requirement: Canonical agent states
 
-An agent entry SHALL carry one of five states. `working` means the agent is processing a turn or performing tool or subagent work and SHALL be indicated in yellow or amber with restrained motion. `waiting` means the provider explicitly requests approval, an answer, or other user input and SHALL be indicated in red. `blocked` means a supported record explicitly reports a blocking condition and SHALL be indicated in red with an accessible label distinct from waiting. `done` means the current turn or agent run completed, failed, or was cancelled and SHALL be indicated in green. `idle` means the live session exists without active work or a pending result and SHALL be neutral or hidden on compact surfaces.
+An agent entry SHALL carry one of five states. `working` means the agent is processing a turn or performing tool or subagent work and SHALL be indicated in yellow or amber with restrained motion, including on the focused terminal. `waiting` means the provider explicitly requests approval, an answer, or other user input and SHALL be indicated in red while unacknowledged. `blocked` means a supported record explicitly reports a blocking condition and SHALL be indicated in red with an accessible label distinct from waiting while unacknowledged. `done` means the current turn or agent run completed, failed, or was cancelled and SHALL be indicated in green while unacknowledged. `idle` means the live session exists without active work or a pending result and SHALL be neutral or hidden on compact surfaces. Viewing the bound terminal SHALL hide the waiting, blocked, and done tab indicators without rewriting those states. The Agents pane SHALL continue to present operational state independently of acknowledgement.
 
 #### Scenario: Approval requested
 
@@ -159,21 +159,41 @@ An agent entry SHALL carry one of five states. `working` means the agent is proc
 #### Scenario: Turn completes
 
 - **WHEN** a turn completes, fails, or is cancelled
-- **THEN** the entry is `done` and is indicated in green
+- **THEN** the entry is `done` and is indicated in green while unacknowledged
+
+#### Scenario: Viewing a done agent
+
+- **WHEN** the user views a terminal whose bound agent is `done`
+- **THEN** the tab's green indicator is hidden and the entry remains `done`
 
 ### Requirement: Acknowledgement independent of state
 
-Acknowledgement SHALL be independent of operational state. Viewing an entry SHALL clear its unread treatment without rewriting its provider-derived state, and a later meaningful transition SHALL be able to make it unread again.
+Acknowledgement SHALL be independent of operational state. Interacting with a terminal — clicking its tab, clicking into it, or typing — SHALL clear its unread treatment without rewriting its provider-derived state, and a later meaningful transition SHALL be able to make it unread again. Activating the project SHALL NOT clear unread treatment. A terminal the user is already interacting with when a meaningful `done`, `waiting`, or `blocked` transition arrives SHALL be treated as viewed for that transition.
 
 #### Scenario: Viewing an entry
 
-- **WHEN** the user views an agent entry
+- **WHEN** the user clicks the bound terminal tab, clicks into that terminal, or types into it
 - **THEN** its unread treatment clears and its provider-derived state is unchanged
+
+#### Scenario: Activating the project does not acknowledge an agent
+
+- **WHEN** a bound agent is `done` or needs attention and the user activates its project without interacting with that terminal
+- **THEN** the entry stays unread and the tab indicator remains
 
 #### Scenario: New transition after acknowledgement
 
 - **WHEN** a meaningful transition occurs after an entry was acknowledged
 - **THEN** the entry becomes unread again
+
+#### Scenario: Done while already viewing
+
+- **WHEN** a bound agent becomes `done` on the terminal the user is already clicking or typing in
+- **THEN** the entry is acknowledged, remains `done`, and no green tab or project activity indicator is shown for it
+
+#### Scenario: Waiting while already viewing
+
+- **WHEN** a bound agent becomes `waiting` or `blocked` on the terminal the user is already clicking or typing in
+- **THEN** the entry is acknowledged, its operational state is unchanged, and no red tab or project activity indicator is shown for it
 
 ### Requirement: Roots and children
 
@@ -189,9 +209,52 @@ A root SHALL represent one live provider session bound to a Terminay PTY. A prov
 - **WHEN** entries are correlated across records
 - **THEN** stable native ids are used and display text is not treated as an identity key
 
+### Requirement: Documented CLI restore commands bind
+
+Every bundled agent CLI that documents a resume, continue, or session-restore command SHALL bind the restored session to the exact terminal it was restored in, using that provider's own association, once the CLI is the foreground process of that terminal.
+
+The documented restore commands, taken from each CLI's own help, SHALL include at least:
+
+- Claude Code: `--continue` / `-c`; `--resume` / `-r` with a session UUID; `--resume` / `-r` with no value (the session picker).
+- Codex: `resume` (picker); `resume --last`; `resume` with a session id.
+- Grok: `--continue` / `-c`; `--resume` / `-r` with a session id or title; `--resume` / `-r` with no value.
+- OpenCode: `--continue` / `-c`; `--session` with a session id.
+- omp: `--continue` / `-c`; `--resume` with an id prefix or path; `--resume` with no value (picker).
+
+An explicit session identity on argv SHALL bind that session. A last-session shortcut (`--continue`, `resume --last`, omitted `--resume` that the CLI treats as most-recent) SHALL bind the session the CLI actually restored. A picker SHALL bind nothing until the user selects a session, and SHALL then bind the session the CLI restored, even when argv still carries no UUID.
+
+A restored session SHALL appear as the same root when it was already known, SHALL NOT replay earlier transitions as new activity, and SHALL be `done` when its last recorded lifecycle fact is a completion. Further work SHALL move that same root through its states. A provider whose CLI holds no persistent writable handle on the restored journal SHALL still bind it through that provider's documented association.
+
+#### Scenario: Resume picker with no UUID on argv
+
+- **WHEN** the user runs the CLI's session picker (`claude --resume`, `codex resume`, `omp --resume`, or Grok `--resume` with no value) and selects a session
+- **THEN** that session binds to the terminal and appears in the Agents pane even though argv carries no session UUID
+
+#### Scenario: Last-session shortcut
+
+- **WHEN** the user runs `--continue`, `codex resume --last`, or OpenCode `--continue` in a terminal
+- **THEN** the restored session binds to that terminal
+
+#### Scenario: Explicit session id
+
+- **WHEN** the user resumes with an explicit session id the CLI accepts
+- **THEN** that session binds and no other session is chosen in its place
+
+#### Scenario: Picker still open
+
+- **WHEN** a restore picker is on screen and no session has been selected
+- **THEN** no agent root is created for a guessed session
+
+#### Scenario: Codex resume without a writable handle
+
+- **WHEN** `codex resume --last` restores a session whose process holds no open writable rollout
+- **THEN** the session still binds through Codex's documented association
+
 ### Requirement: Exact terminal identity binding
 
-For an environment exposing proven native process observation, Terminay SHALL record the spawned shell PID for the immutable `serverId`/`projectId`/`projectEnvironmentId`/`sessionId` terminal identity. When a supported provider becomes the foreground process, that environment's privileged host SHALL obtain the provider's documented terminal identity evidence. Codex and Grok SHALL use an eligible writable journal below the exact PTY process tree, or Grok's pid-keyed `active_sessions.json` registry for that same process tree. OpenCode SHALL use its writable session store held by that same process tree. Claude Code and omp SHALL use their provider-specific terminal or session association. A provider whose CLI holds no persistent writable handle on its own journal SHALL NOT depend on open-handle evidence as its only binding rule. Environments without the required evidence SHALL use the terminal-activity fallback.
+For an environment exposing proven native process observation, Terminay SHALL record the spawned shell PID for the immutable `serverId`/`projectId`/`projectEnvironmentId`/`sessionId` terminal identity. When a supported provider becomes the foreground process, that environment's privileged host SHALL obtain the provider's documented terminal identity evidence. Codex and Grok SHALL use an eligible writable journal below the exact PTY process tree, or Grok's pid-keyed `active_sessions.json` registry for that same process tree. OpenCode SHALL use its writable session store held by that same process tree together with the `opencode` process's own command line, whose `--session <id>` names the root exactly and whose `--continue` is the CLI's own newest-in-directory rule; with neither proven and no row created after the process started, it SHALL bind nothing. Claude Code SHALL use its pid-keyed session file below `.claude/sessions`, joined to the exact `claude` descendant of the PTY. omp SHALL use its terminal-scoped session association. A provider whose CLI holds no persistent writable handle on its own journal SHALL NOT depend on open-handle evidence as its only binding rule. That same rule SHALL apply to a restored session: a resume, continue, or picker command SHALL NOT be refused solely because the restored journal is not held open. Environments without the required evidence SHALL use the terminal-activity fallback.
+
+Where a provider records which of its sessions a given OS process holds, that record SHALL be the binding evidence for that provider, and no rule that compares files to one another SHALL be consulted beside or beneath it.
 
 #### Scenario: Codex journal below the PTY tree
 
@@ -202,6 +265,16 @@ For an environment exposing proven native process observation, Terminay SHALL re
 
 - **WHEN** a provider appends to its journal and closes it rather than holding it open
 - **THEN** its binding rests on that provider's own documented association and not on open-handle evidence alone
+
+#### Scenario: Restored session that closes its journal between writes
+
+- **WHEN** a resume or continue command restores a session and the CLI does not hold that journal open
+- **THEN** the restored session still binds through that provider's documented association
+
+#### Scenario: Provider records its own process-to-session mapping
+
+- **WHEN** a provider writes a record naming the session held by an OS pid
+- **THEN** the terminal binds through that record joined to its own PTY descendant, and no file-comparison rule is consulted
 
 #### Scenario: Missing evidence
 
@@ -257,12 +330,17 @@ The search SHALL declare the filename it is resolving, so that unrelated journal
 
 ### Requirement: Heuristics never establish binding
 
-CWD, filename timestamps, terminal title, active tab, and closest-match logic SHALL NOT independently establish an authoritative binding. Claude Code SHALL use the pid-keyed session file its own descendant process wrote to name the session that process holds, and SHALL then resolve that exact session's journal — by the directory derived from the process CWD where it exists, otherwise by a bounded search for that session id whose result is verified against the journal's own first record. Neither the search nor the CWD selects between conversations: the process's own file names the session, and the journal must name it back. OMP SHALL use its own terminal-scoped breadcrumb whose terminal ID derives from the PTY TTY running OMP and whose target is validated under OMP's allowed session root. A host that cannot establish provider proof SHALL use terminal fallback.
+CWD, filename timestamps, terminal title, active tab, and closest-match logic SHALL NOT independently establish an authoritative binding. Claude Code SHALL NOT select among journals by creation time, modification time, or append order, whether as a primary rule, a tie-break, or a fallback; where its session file is absent or disagrees with the observed process, nothing SHALL be bound. Claude Code SHALL use the pid-keyed session file its own descendant process wrote to name the session that process holds, and SHALL then resolve that exact session's journal — by the directory derived from the process CWD where it exists, otherwise by a bounded search for that session id whose result is verified against the journal's own first record. Neither the search nor the CWD selects between conversations: the process's own file names the session, and the journal must name it back. OpenCode SHALL NOT bind the most recently updated session in a directory except under a proven `--continue`. Process snapshots SHALL carry each descendant's own bounded command line so a provider can read its CLI's flags from the process itself. OMP SHALL use its own terminal-scoped breadcrumb whose terminal ID derives from the PTY TTY running OMP and whose target is validated under OMP's allowed session root. A host that cannot establish provider proof SHALL use terminal fallback.
 
 #### Scenario: Nearest-timestamp candidate
 
 - **WHEN** a candidate journal matches only by timestamp, filename, terminal title, or proximity
 - **THEN** it is not admitted as an authoritative binding
+
+#### Scenario: Most recently appended journal in a shared directory
+
+- **WHEN** a Claude Code project directory holds several journals and one of them was appended more recently than the journal the observed process reports
+- **THEN** the process's own reported journal is bound and the more recently appended one is not
 
 #### Scenario: Session named by the process, journal named by itself
 
@@ -547,11 +625,13 @@ Codex subagents SHALL have separate rollout journals under the same effective se
 
 ### Requirement: Claude Code mapping
 
-The `terminay-agent-claude-code` package SHALL own the Claude Code mapping under the same zero-injection boundary. It SHALL bind an exact `claude --resume <uuid>` descendant to that UUID's root JSONL below the project directory in `~/.claude/projects`.
+The `terminay-agent-claude-code` package SHALL own the Claude Code mapping under the same zero-injection boundary.
 
-For a new `claude` process the primary rule SHALL be the provider-encoded project directory for the exact descendant process working directory: Terminay SHALL observe that directory and admit a root journal that appeared there after that process started. An open writable root journal SHALL remain an eligible fallback applied only after the primary rule finds no candidate, because the Claude Code CLI appends to its journal and closes it and so normally holds no writable handle.
+The Claude Code CLI writes one session file per interactive process at `.claude/sessions/<pid>.json` below the provider home, carrying at least `pid`, `sessionId`, `cwd`, and `startedAt` in epoch milliseconds; it rewrites the file when the process changes session and removes it when the process exits. That file SHALL be the sole binding rule. For each `claude` descendant of the registered PTY that reports a pid, the extension SHALL resolve `.claude/sessions/<pid>.json` beneath `.claude/sessions`, read it bounded, and accept it only when its `pid` equals the process pid, its `cwd` equals the observed process working directory, its `sessionId` is a session UUID, and, where the environment reports a process start time, its `startedAt` lies within a bounded tolerance of that start. The extension SHALL read only `pid`, `sessionId`, `cwd`, `startedAt`, `version`, `status`, and `statusUpdatedAt` from that file, and SHALL NOT read the sibling `.key` file or any socket or name field.
 
-One `claude` process writes a new root journal for each conversation it holds, so several post-process-start roots for one process SHALL be expected rather than treated as unresolvable. Among them the bound root SHALL be the one currently receiving appends, under the renewable root binding rules, and a root that stops receiving appends while another begins SHALL be retired in favour of it. Ambiguity SHALL bind nothing only where two candidates are being appended concurrently. Journals below a root session's `subagents/` directory and unrelated history SHALL NOT be eligible roots.
+The bound journal SHALL be the `<sessionId>.jsonl` that names the accepted session file's `sessionId` in its own first record. It SHALL be resolved below the provider-encoded project directory for that file's `cwd` under `.claude/projects` where it exists there, and otherwise by one bounded lookup for that exact filename below `.claude/projects`, because the CLI keeps a resumed conversation's journal under the directory the conversation originated in. Exactly one descendant with an accepted session file and a resolvable journal SHALL bind; zero or more than one SHALL bind nothing, and a lookup yielding more than one candidate or stopped by a host listing limit SHALL bind nothing. The extension SHALL NOT choose a root by creation time, modification time, append order, or proximity, SHALL NOT consult open writable handles, and SHALL NOT derive the session from a `--resume` or `--continue` argument; a resumed process's session file already names the resumed session.
+
+While bound, the extension SHALL watch the process's session file. When its `sessionId` changes, the current root SHALL be retired and the newly named journal bound in the same terminal under the renewable root binding rules. The file's `status` SHALL be authoritative for the root: when it is `idle`, at binding or later, an open turn SHALL close as cancelled and every subagent still open beneath the root SHALL complete as cancelled, and no record written at or before that `statusUpdatedAt` SHALL open a turn, tool, wait, or subagent, because the CLI's own word outranks a journal whose end was never written, journals are replayed in no fixed order, and a long replay must not paint finished turns as live. A root journal record of `[Request interrupted by user]` SHALL close the open turn as cancelled. A subagent journal ending on a `[Request interrupted by user]` record SHALL complete that subagent as cancelled. Journals below a root session's `subagents/` directory and unrelated history SHALL NOT be eligible roots.
 
 It SHALL use explicit `ai-title` records for the root label, the bounded `last-prompt` text and then the provider display name until such a record exists, assistant model metadata, and bounded tool lifecycle. Meta and local-command user records, tool-result content, assistant text, and reasoning SHALL never be projected.
 
@@ -576,28 +656,88 @@ Claude Code flushes an assistant record and its corresponding `tool_result` toge
 
 #### Scenario: Resumed Claude Code session
 
-- **WHEN** a `claude --resume <uuid>` descendant of the registered PTY is observed
-- **THEN** it binds to that UUID's root JSONL below the project directory
+- **WHEN** `claude --resume <uuid>` starts in a terminal while another terminal's `claude` is live in the same directory and appending to its own journal
+- **THEN** the resumed terminal binds the journal its own session file names, which is the resumed UUID, and the other terminal's binding does not move
+
+#### Scenario: Resume picker
+
+- **WHEN** a `claude --resume` descendant with no session UUID on argv has a session selected
+- **THEN** the restored root journal binds and appears in the Agents pane
+
+#### Scenario: Continue most recent
+
+- **WHEN** a `claude --continue` descendant of the registered PTY is observed
+- **THEN** the most recently restored root journal for that process binds
 
 #### Scenario: New Claude Code process
 
-- **WHEN** a new `claude` process starts in a terminal
-- **THEN** only a root journal that appeared in that exact working directory's project directory after the process started is admitted
+- **WHEN** a new `claude` process starts in a directory whose project directory already holds journals of other sessions, some of them live in other terminals
+- **THEN** the terminal binds the journal named by that process's own session file and none of the others
 
 #### Scenario: CLI holds no writable handle
 
 - **WHEN** a running `claude` process holds no open writable handle on its root journal
-- **THEN** the primary post-process-start rule still binds the session
+- **THEN** its session file still binds the session, and open handles are not consulted
 
 #### Scenario: One process, several conversations
 
-- **WHEN** one `claude` process has written several root journals and is appending to one of them
-- **THEN** the journal receiving appends is bound and the others are not
+- **WHEN** one `claude` process has written several root journals over its lifetime
+- **THEN** only the journal its session file currently names is bound
+
+#### Scenario: Session file not yet written
+
+- **WHEN** a `claude` descendant is observed before its session file exists
+- **THEN** nothing is bound and discovery keeps retrying under the bounded discovery window until the file appears or the process leaves the foreground
+
+#### Scenario: Session file left by a dead process
+
+- **WHEN** the session file for a pid reports a `startedAt` outside the tolerance of the observed process's start time
+- **THEN** it is rejected and nothing is bound
+
+#### Scenario: Session file disagrees with the process
+
+- **WHEN** the session file's `cwd` differs from the observed process working directory, or its `sessionId` names a journal whose first record carries a different session id
+- **THEN** it is rejected and nothing is bound
+
+#### Scenario: Journal older than the process
+
+- **WHEN** the journal named by the session file was created before the observed process started
+- **THEN** it is bound, because the file, not the journal's age, is the evidence
 
 #### Scenario: Conversation switched
 
-- **WHEN** appends move from the bound root to another post-process-start root of the same process
-- **THEN** the previous root is retired and the newly active one is bound in the same terminal
+- **WHEN** the bound process's session file comes to name a different `sessionId`
+- **THEN** the previous root is retired and the newly named journal is bound in the same terminal
+
+#### Scenario: Subagent stopped before it finished
+
+- **WHEN** a subagent's journal ends on a `[Request interrupted by user]` record with no completion after it
+- **THEN** that subagent completes as cancelled and does not hold the root `working`
+
+#### Scenario: Session file reports idle with a subagent open
+
+- **WHEN** the bound process's session file comes to report `status: "idle"` while a subagent beneath the root is still open
+- **THEN** that subagent completes as cancelled
+
+#### Scenario: CLI reports idle while its journal replays
+
+- **WHEN** a terminal binds a session whose file reports `status: "idle"` and whose journal holds completed turns before that mark
+- **THEN** the root is shown idle with its title from the moment it binds, and no historical turn is replayed as live
+
+#### Scenario: Root turn stopped by the user
+
+- **WHEN** the root journal records `[Request interrupted by user]` while a turn is open and no `turn_duration` follows
+- **THEN** the turn closes as cancelled
+
+#### Scenario: Session file already idle when the terminal binds
+
+- **WHEN** the session file reports `status: "idle"` at binding and a subagent's launch and journal records all predate its `statusUpdatedAt`
+- **THEN** that subagent is not shown as working, whatever order the journals replay in
+
+#### Scenario: Two claude descendants with valid session files
+
+- **WHEN** more than one `claude` descendant of one PTY carries an accepted session file
+- **THEN** nothing is bound
 
 #### Scenario: Subagent journal offered as root
 
@@ -692,58 +832,6 @@ measurement SHALL be recorded with it.
 
 - **WHEN** an assistant record carries `isApiErrorMessage` and no `turn_duration` follows
 - **THEN** the entry is `blocked`
-
-### Requirement: Cursor Agent binding and privacy
-
-The `terminay-agent-cursor` package SHALL own Cursor executable recognition, process-bound chat-store discovery, transcript mapping, metadata refresh, fixtures, compatibility tests, and its privacy boundary. Cursor Agent CLI chats live below `~/.cursor/chats` and their JSONL transcripts below `~/.cursor/projects`. Terminay SHALL NOT read Cursor's SQLite conversation payloads. It SHALL use only an exact writable `store.db` held by the registered PTY process tree, the bounded adjacent `meta.json` cwd, and the shared session UUID in the chat-store and transcript paths to bind the corresponding transcript, encoding the canonical cwd using Cursor's project directory convention. Paths outside either canonical Cursor root, malformed UUIDs, symlinks escaping those roots, and timestamp or nearest-file matches SHALL NOT be eligible.
-
-#### Scenario: Binding a Cursor transcript
-
-- **WHEN** the registered PTY process tree holds an exact writable `store.db`
-- **THEN** the shared session UUID and bounded adjacent `meta.json` cwd bind the corresponding transcript
-
-#### Scenario: Escaping symlink
-
-- **WHEN** a candidate path is a symlink escaping a canonical Cursor root or has a malformed UUID
-- **THEN** it is not eligible
-
-#### Scenario: Conversation payloads
-
-- **WHEN** Cursor stores conversation content in SQLite blobs
-- **THEN** Terminay does not read them
-
-### Requirement: Cursor Agent record mapping
-
-The first supported Cursor mapping SHALL be `(cursor, 0.1)`. Because Cursor transcripts carry no session header, the process-bound chat-store path SHALL supply the stable provider session ID. A bounded non-empty `meta.json` title SHALL be the root label and SHALL be refreshed while the transcript remains bound so renames update live. Terminay SHALL read only the bounded `lastUsedModel` field from the exact process-bound `store.db` metadata row in read-only mode and SHALL refresh that model metadata while bound. Where no title exists, a user record SHALL start a turn and its bounded `<user_query>` content, excluding Cursor's timestamp wrapper, SHALL become the root label. Assistant records SHALL keep the turn working without projecting assistant text, reasoning, tool arguments, or tool output. A `type: "turn_ended"` record SHALL map its status to a successful, failed, or cancelled `done` result.
-
-#### Scenario: Cursor rename
-
-- **WHEN** the bound chat's `meta.json` title changes
-- **THEN** the root label updates live
-
-#### Scenario: No Cursor title
-
-- **WHEN** no `meta.json` title exists
-- **THEN** a user record starts a turn and its bounded `<user_query>` content, without the timestamp wrapper, becomes the root label
-
-#### Scenario: Turn ends
-
-- **WHEN** a `type: "turn_ended"` record arrives
-- **THEN** the entry becomes `done` with a successful, failed, or cancelled result matching its status
-
-### Requirement: Cursor waiting states and task calls are not projected
-
-Cursor transcripts do not persist an unresolved permission or elicitation record, so they SHALL NOT authoritatively produce `waiting` or `blocked`, and generic terminal activity SHALL remain the fallback while such a prompt is on screen. Cursor persists `Task` tool calls without stable task IDs or matching completion records, so Terminay SHALL NOT project those calls as child agents.
-
-#### Scenario: Cursor permission prompt on screen
-
-- **WHEN** Cursor shows a permission prompt that is not persisted in the transcript
-- **THEN** the entry does not become `waiting` or `blocked` and terminal activity remains the fallback signal
-
-#### Scenario: Cursor Task tool call
-
-- **WHEN** Cursor persists a `Task` tool call without a stable id or completion record
-- **THEN** no child agent entry is created
 
 ### Requirement: omp session roots and data-root resolution
 
@@ -1091,12 +1179,22 @@ The agent status setting and observation pipeline SHALL be independent from the 
 
 ### Requirement: Terminal tab and header status surfaces
 
-Bound roots SHALL render the canonical RAG glyph on terminal tabs. The header SHALL aggregate unacknowledged meaningful entries, giving waiting and blocked priority, keeping done until acknowledged, and optionally showing working for navigation.
+Bound roots SHALL render the canonical RAG glyph on terminal tabs for `working` always, and for `waiting`, `blocked`, and `done` only while those entries are unacknowledged. The header SHALL aggregate unacknowledged meaningful entries, giving waiting and blocked priority, keeping done until acknowledged, and optionally showing working for navigation.
 
 #### Scenario: Bound root on a tab
 
-- **WHEN** a terminal has a bound agent root
-- **THEN** its tab renders the canonical RAG glyph for that root's state
+- **WHEN** a terminal has a bound agent root that is working
+- **THEN** its tab renders the canonical RAG glyph for working
+
+#### Scenario: Unacknowledged done on a tab
+
+- **WHEN** a background terminal has a bound agent root that is `done` and unacknowledged
+- **THEN** its tab renders the green RAG glyph
+
+#### Scenario: Acknowledged done on a tab
+
+- **WHEN** a terminal has a bound agent root that is `done` and acknowledged
+- **THEN** its tab does not render a done RAG glyph
 
 #### Scenario: Aggregating in the header
 
@@ -1140,6 +1238,8 @@ Every agent lifecycle entry SHALL belong to exactly one server authority. Two co
 
 Publication, acknowledgement, replay, and observation resolution SHALL each require the exact server, project, terminal session, and terminal incarnation issued by the owning authority. Equal project names and reused terminal ids SHALL NOT substitute for a server-instance match. A stale shell foreground transition SHALL revoke the claim, the incarnation, its timers, and every context it owns before any of them can publish, and the extension child SHALL receive that cancellation.
 
+The identifier the privileged host issues for a terminal observation context SHALL be derived from that full identity — server instance, project, terminal session, and incarnation together. Two contexts issued for different terminal sessions SHALL NOT share an identifier, whatever their incarnation counters hold. The identifier SHALL remain opaque to extensions and to clients.
+
 #### Scenario: Reused terminal id
 
 - **WHEN** an operation presents a terminal id that matches by value but belongs to another server instance
@@ -1149,6 +1249,37 @@ Publication, acknowledgement, replay, and observation resolution SHALL each requ
 
 - **WHEN** the shell's foreground process changes away from a bound provider
 - **THEN** the claim, incarnation, timers, and owned contexts are revoked before any further publication and the extension child is cancelled
+
+#### Scenario: Context identifiers for two terminal sessions
+
+- **WHEN** two terminal sessions are each issued an observation context at the same incarnation
+- **THEN** the two contexts carry different identifiers
+
+### Requirement: Concurrent agent terminals
+
+Terminay SHALL observe every terminal running a provider's CLI, not only the first. Where several terminals of one project each run the same provider, each SHALL be admitted, SHALL bind its own provider session, and SHALL hold its own root entry in the Agents pane with its own state, acknowledgement, and lifetime. One terminal's root SHALL NOT be displaced, retired, or restated by another terminal's admission, and closing or quitting one SHALL leave the others bound.
+
+A terminal SHALL NOT be refused admission because another terminal is already observed. Admission refusal SHALL be reserved for a context whose own identity is already admitted — a repeat of the same terminal at the same incarnation — and SHALL NOT be reachable through two distinct terminals.
+
+#### Scenario: Two terminals run one provider
+
+- **WHEN** two terminals in a project each run the same provider's CLI
+- **THEN** both are admitted and the Agents pane shows a root for each
+
+#### Scenario: Terminals of different providers
+
+- **WHEN** terminals in a project run different providers' CLIs concurrently
+- **THEN** each terminal is admitted by its own provider and holds its own root
+
+#### Scenario: One of several terminals quits
+
+- **WHEN** one of several concurrently observed terminals quits its CLI
+- **THEN** that terminal's root becomes inactive and every other terminal stays bound with its state unchanged
+
+#### Scenario: Admission refused for an already-admitted context
+
+- **WHEN** admission is attempted for a context identity that is already admitted
+- **THEN** it is refused, and that refusal is not reachable from two distinct terminal sessions
 
 ### Requirement: Bounded lifecycle publication flow control
 
