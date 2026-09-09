@@ -277,13 +277,20 @@ export function createRecoveryLoop(
 }> {
 	const gate = new SessionConnectGate();
 	const schedule = options.schedule ?? new RecoveryRetrySchedule();
+	// Recovering means the session has been connected at some point, not that a
+	// connection record exists right now. A failed attempt clears the host's
+	// record, and deciding from that alone presented every later attempt as a
+	// cold connect: the surface flipped between two panels on each retry.
+	let succeededOnce = false;
 
 	const start = (runOptions: RecoveryLoopRunOptions = {}): void => {
 		const attempt = gate.begin();
 		if (attempt === undefined) return;
 		// Retry means attempt now: a pending delay never outranks a fresh start.
 		schedule.cancel();
-		options.onAttemptStart({ recovering: options.recovering() });
+		options.onAttemptStart({
+			recovering: succeededOnce || options.recovering(),
+		});
 		void (async () => {
 			let failure: unknown;
 			try {
@@ -297,6 +304,7 @@ export function createRecoveryLoop(
 			}
 			gate.finish(attempt);
 			if (failure === undefined) {
+				succeededOnce = true;
 				schedule.reset();
 				return;
 			}

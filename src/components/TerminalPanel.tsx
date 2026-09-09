@@ -13,6 +13,7 @@ import type {
 	TerminayClient,
 	TerminayGitClient,
 } from '@terminay/client-core';
+import { presentationRefusalSkip } from './terminalPresentationRefusal';
 import {
 	isRecoverableSkip,
 	TerminalRecoveryController,
@@ -542,6 +543,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		null,
 	);
 	const [presentationUnavailable, setPresentationUnavailable] = useState(false);
+	// An exited or interrupted terminal has nothing to retry; a refused
+	// presentation does.
+	const [terminalSessionEnded, setTerminalSessionEnded] = useState(false);
 	const [terminalPresentation, setTerminalPresentation] =
 		useState<TerminalPresentationState | null>(null);
 	const [searchQuery, setSearchQuery] = useState('');
@@ -852,6 +856,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			);
 		};
 		let serverAttachmentFailed = false;
+		// Set when the server refused the last attach's position, so Retry asks
+		// for a fresh presentation instead of the same refused resume.
+		let lastAttachRefused = false;
 		if (terminalSessionUnavailable) {
 			setServerTerminalError(
 				props.params.terminalSessionStatus === 'interrupted'
@@ -859,12 +866,14 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 					: 'This terminal has exited. Open a new terminal to continue.',
 			);
 			setPresentationUnavailable(true);
+			setTerminalSessionEnded(true);
 			setTerminalPresentation(null);
 			terminalPresentationControllerRef.current = false;
 			setIsTerminalHydrating(false);
 		} else if (useServerTerminal) {
 			setServerTerminalError(null);
 			setPresentationUnavailable(false);
+			setTerminalSessionEnded(false);
 			setTerminalPresentation(null);
 			terminalPresentationControllerRef.current = false;
 			setIsTerminalHydrating(true);
@@ -1349,6 +1358,13 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			};
 			let queuedPresentationAction: 'acquire' | 'takeover' | null = null;
 			let latestPresentation: TerminalPresentationState | undefined;
+			// The request's clientId is the identity of the connection that built
+			// this panel. A rebind onto a recovered connection carries a new one,
+			// and every re-attach after that — congestion recovery, a refused
+			// resume, or manual Retry — must use it, or the server rejects the
+			// attach as a client identity mismatch.
+			let currentAttachClient = panelClient;
+			let currentAttachClientId = panelClientId;
 			const attachServerTerminal = ({
 				client,
 				clientId,
@@ -1366,6 +1382,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			}) => {
 				const binding = bindingFence.begin();
 				activeBinding = binding;
+				if (client !== undefined) currentAttachClient = client;
+				if (clientId !== undefined) currentAttachClientId = clientId;
 				serverInputQueue?.close();
 				serverInputQueue = new ServerTerminalInputQueue(
 					(error) => failServerTransport(error, binding),
@@ -1375,10 +1393,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 						),
 				);
 				cancelTerminalPasteRef.current = () => serverInputQueue?.cancelPaste();
-				const attachmentClient = client ?? panelClient;
+				const attachmentClient = client ?? currentAttachClient;
 				const nextRequest = {
 					...request,
-					...(clientId === undefined ? {} : { clientId }),
+					clientId: currentAttachClientId,
 					...(fromPosition === undefined ? {} : { fromPosition }),
 					...(freshPresentation ? { freshPresentation: true } : {}),
 				};
@@ -1577,6 +1595,29 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 									} else if (event.type === 'presentation') {
 										applyPresentation(event);
 									} else if (event.type === 'presentation_unavailable') {
+										recordRendererDiagnostic({
+											kind: 'terminal-presentation-refused',
+											attach: freshPresentation ? 'fresh' : 'resume',
+											requestedFromPosition: event.requestedFromPosition,
+											replayFrom: event.replayFrom,
+											outputPosition: event.outputPosition,
+										});
+										// A refused resume means the position this display rendered
+										// is no longer retained. That is a discontinuity, and it takes
+										// the same bounded recovery as a congestion skip: re-attach
+										// with a fresh presentation from the live head, keeping the
+										// last completed display visible meanwhile.
+										const refusal = presentationRefusalSkip(event, {
+											freshPresentation,
+										});
+										if (refusal !== undefined) {
+											lastAttachRefused = true;
+											beginTerminalResync(refusal);
+											return;
+										}
+										// A fresh presentation was itself refused: no better request
+										// exists, so this is a visible, retryable error.
+										lastAttachRefused = true;
 										setPresentationUnavailable(true);
 										setIsTerminalHydrating(false);
 										setServerTerminalError(
@@ -1632,6 +1673,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 							// A hydrated display is the definition of a completed recovery,
 							// and the only thing that returns the controller to streaming.
 							recoveryController.noteAttached();
+							lastAttachRefused = false;
 
 							serverInputQueue?.attach(attachment);
 							// Checkpoint restoration must use its saved grid, but that grid is
@@ -1667,6 +1709,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 							serverAttachmentFailed = true;
 							setIsTerminalHydrating(false);
 							setPresentationUnavailable(true);
+							setTerminalSessionEnded(true);
 							setServerTerminalError(
 								'This terminal has exited. Open a new terminal to continue.',
 							);
@@ -1717,6 +1760,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			requestRecoveryAttach = () => {
 				if (dataReplayDisposed || panelAttachment !== null) return 'declined';
 				attachServerTerminal({
+					client: currentAttachClient,
+					clientId: currentAttachClientId,
 					fromPosition: 0,
 					freshPresentation: true,
 					forceResume: true,
@@ -1743,9 +1788,15 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				setServerTerminalError(null);
 				setPresentationUnavailable(false);
 				setIsTerminalHydrating(true);
+				// A position the server already refused is not worth asking for
+				// again; after a refusal Retry requests a fresh presentation.
+				const refused = lastAttachRefused;
+				lastAttachRefused = false;
 				attachServerTerminal({
-					fromPosition: renderedPositionRef.current ?? 0,
-					freshPresentation: false,
+					client: currentAttachClient,
+					clientId: currentAttachClientId,
+					fromPosition: refused ? 0 : (renderedPositionRef.current ?? 0),
+					freshPresentation: refused,
 					forceResume: true,
 					recovery: false,
 				});
@@ -2883,7 +2934,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			{serverTerminalError ? (
 				<div className="terminal-panel-connection-error" role="alert">
 					<p>{serverTerminalError}</p>
-					{isTerminalRetryActionable(presentationUnavailable) ? (
+					{isTerminalRetryActionable({
+						presentationUnavailable,
+						sessionEnded: terminalSessionEnded,
+					}) ? (
 						<button
 							type="button"
 							onClick={() => retryServerAttachmentRef.current()}
