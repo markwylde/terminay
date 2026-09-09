@@ -78,6 +78,23 @@ const SESSION_DIRECTORY = {
 } as const;
 
 /**
+ * Bounded limits for the one look below `.claude/projects` that finds a
+ * conversation resumed away from the directory it started in.
+ *
+ * Depth one is every project directory and no deeper, which keeps a session's
+ * own `<session>/subagents/` tree out of the listing entirely. The exact
+ * filename is declared per lookup, so the limits are charged only against the
+ * journal being resolved: a directory holding hundreds of unrelated journals,
+ * of any size, cannot exhaust the budget before the walk reaches this one.
+ */
+const PROJECT_DIRECTORY = {
+	extensions: ['.jsonl'],
+	maxDepth: 1,
+	maxEntries: 256,
+	maxBytes: 1024 * 1024 * 1024,
+} as const;
+
+/**
  * Claude Code binds through the pid-keyed session file its own CLI writes, and
  * through nothing else. Every interactive `claude` writes
  * `~/.claude/sessions/<pid>.json` naming the conversation that process is
@@ -255,9 +272,18 @@ interface RootJournalHandle {
 }
 
 /**
- * The journal a session file names: `<encoded cwd>/<sessionId>.jsonl` below
- * `.claude/projects`. The path is derived, never searched for, and the
- * journal's own first record must name the same session.
+ * The journal for the session a session file names.
+ *
+ * `<encoded cwd>/<sessionId>.jsonl` below `.claude/projects` is where the CLI
+ * files a conversation it started here, so it is derived and tried first. It is
+ * not where every conversation lives: `claude --resume` in another directory
+ * keeps writing the journal under the directory the conversation *originated*
+ * in, and a terminal running one of those has a healthy session file naming a
+ * session whose journal the derived path will never find.
+ *
+ * So the session id, not the directory, is what is resolved. The id is never
+ * chosen here — it comes from the pid-keyed file the observed process wrote
+ * about itself — and whatever is found has to name that same session back.
  */
 async function journalFor(
 	terminal: AgentTerminalContext,
@@ -266,7 +292,7 @@ async function journalFor(
 ): Promise<RootJournalHandle | undefined> {
 	const relativePath = claudeProjectJournalPath(cwd, sessionId);
 	if (!relativePath) return undefined;
-	const handle = await terminal.observation.files.resolveHomeRelative(
+	const derived = await terminal.observation.files.resolveHomeRelative(
 		relativePath,
 		{
 			beneath: { homeRelative: CLAUDE_PROJECTS },
@@ -274,7 +300,19 @@ async function journalFor(
 			signal: terminal.signal,
 		},
 	);
-	if (!handle) return undefined;
+	const admitted =
+		derived === undefined
+			? undefined
+			: await admitJournal(terminal, derived, sessionId);
+	return admitted ?? (await journalElsewhere(terminal, sessionId));
+}
+
+/** A candidate is this session's journal only when it says so itself. */
+async function admitJournal(
+	terminal: AgentTerminalContext,
+	handle: AgentFileHandle,
+	sessionId: string,
+): Promise<RootJournalHandle | undefined> {
 	const header = await terminal.observation.files.readJsonLine<unknown>(
 		handle,
 		{
@@ -286,6 +324,42 @@ async function journalFor(
 	if (rootSessionId(header) !== sessionId) return undefined;
 	const version = providerVersion(header);
 	return { handle, ...(version ? { version } : {}) };
+}
+
+/**
+ * One bounded look for `<sessionId>.jsonl` in the provider's other project
+ * directories, for the conversation that was resumed away from its origin.
+ *
+ * This is a lookup by exact name for an id the process already named, not a
+ * search for a plausible journal: no timestamp, ordering, or proximity takes
+ * part, every candidate is still verified against its own first record, and
+ * anything ambiguous or unfinished binds nothing at all.
+ */
+async function journalElsewhere(
+	terminal: AgentTerminalContext,
+	sessionId: string,
+): Promise<RootJournalHandle | undefined> {
+	if (!SESSION_ID.test(sessionId)) return undefined;
+	const directory = await terminal.observation.files.resolveHomeDirectory(
+		CLAUDE_PROJECTS,
+		{ signal: terminal.signal },
+	);
+	if (!directory) return undefined;
+	const named = `${sessionId}.jsonl`;
+	const listing = await terminal.observation.files.listDirectory(directory, {
+		...PROJECT_DIRECTORY,
+		names: [named],
+		signal: terminal.signal,
+	});
+	// A limit reached before the journal was seen makes the snapshot evidence of
+	// nothing. Discovery retries and topology polling remain free to try again.
+	if (listing.truncated) return undefined;
+	const candidates = listing.entries.filter(
+		(entry) => entry.relativePath.split('/').at(-1) === named,
+	);
+	// Two directories claiming one session id is not a case worth guessing at.
+	if (candidates.length !== 1) return undefined;
+	return admitJournal(terminal, candidates[0]!.handle, sessionId);
 }
 
 const SWITCH_CHUNK: AgentFileWatchChunk = {
