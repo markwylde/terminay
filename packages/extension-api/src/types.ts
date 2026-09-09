@@ -815,6 +815,18 @@ export interface AgentDiscoveredFile {
 export interface AgentDirectoryListOptions {
 	/** Only these file suffixes are returned. At least one suffix is required. */
 	extensions: readonly string[];
+	/**
+	 * Only files with exactly these names are considered, and only they are
+	 * charged against the limits below.
+	 *
+	 * A caller that already knows the filename it wants — a provider resolving
+	 * one session's journal, say — would otherwise spend its whole byte budget
+	 * on unrelated files and be truncated before reaching the one file it asked
+	 * for. Declaring the name keeps the walk bounded by what was actually
+	 * requested rather than by everything that happens to share the directory.
+	 * Each entry is one path segment; omit the field to return every match.
+	 */
+	names?: readonly string[];
 	/** Directory nesting below the opaque root, where zero is the root itself. */
 	maxDepth: number;
 	maxEntries: number;

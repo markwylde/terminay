@@ -27,6 +27,8 @@ const MAX_WATCHERS_PER_TERMINAL = 32;
 const MAX_READ_BYTES = 4 * 1024 * 1024;
 const MAX_FOLLOW_CHUNK_BYTES = 256 * 1024;
 const MAX_DIRECTORY_LIST_DEPTH = 8;
+/** Exact filenames one listing may ask for. */
+const MAX_DIRECTORY_LIST_NAMES = 16;
 const MAX_DIRECTORY_LIST_ENTRIES = 256;
 /** A listing carries metadata only; reads have their own byte limit. Real
  * provider histories run to hundreds of megabytes per project. */
@@ -635,6 +637,20 @@ export class ThisServerAgentObservationAdapter {
 			)
 				? (options.extensions as string[])
 				: undefined;
+		// An explicit name list narrows what the walk considers at all, so a
+		// caller that knows the filename it wants is bounded by that file rather
+		// than by everything sharing the tree with it.
+		const names =
+			options?.names === undefined
+				? undefined
+				: Array.isArray(options.names) &&
+						options.names.length > 0 &&
+						options.names.length <= MAX_DIRECTORY_LIST_NAMES &&
+						options.names.every(
+							(name) => typeof name === 'string' && safeDirectoryEntryName(name),
+						)
+					? new Set(options.names as string[])
+					: null;
 		const maxDepth = boundedInteger(
 			options?.maxDepth,
 			0,
@@ -652,6 +668,7 @@ export class ThisServerAgentObservationAdapter {
 		);
 		if (
 			!extensions ||
+			names === null ||
 			maxDepth === undefined ||
 			maxEntries === undefined ||
 			maxBytes === undefined
@@ -676,7 +693,8 @@ export class ThisServerAgentObservationAdapter {
 				}
 				if (
 					child.kind !== 'file' ||
-					!extensions.some((extension) => child.name.endsWith(extension))
+					!extensions.some((extension) => child.name.endsWith(extension)) ||
+					(names !== undefined && !names.has(child.name))
 				)
 					continue;
 				const canonical = await this.system.realpath(candidate, signal);
