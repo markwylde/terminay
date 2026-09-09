@@ -13,6 +13,6 @@
 
 ## 3. Confirmation and closeout
 
-- [ ] 3.1 Confirm on the reporting iPhone, over remote access, that opening a Markdown document from the Documentation pane now shows the toolbar and document body. Verified by a screenshot from the device showing rendered content where the panel was previously blank.
-- [ ] 3.2 Confirm at a narrow desktop window (under 900px) with an `.mdx` document that the editor and live preview still stack vertically with usable height and a visible boundary between them. Verified by observation in the running app.
-- [ ] 3.3 Confirm at desktop width that the editor-plus-preview side-by-side layout and the editor-only layout are unchanged. Verified by observation in the running app.
+- [x] 3.1 Confirm on the reporting iPhone, over remote access, that opening a Markdown document from the Documentation pane now shows the toolbar and document body. Verified by a screenshot from the device showing rendered content where the panel was previously blank.
+- [x] 3.2 Confirm at a narrow desktop window (under 900px) with an `.mdx` document that the editor and live preview still stack vertically with usable height and a visible boundary between them. Verified by observation in the running app.
+- [x] 3.3 Confirm at desktop width that the editor-plus-preview side-by-side layout and the editor-only layout are unchanged. Verified by observation in the running app.

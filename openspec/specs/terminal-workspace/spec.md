@@ -688,12 +688,17 @@ View state SHALL NOT sync: which terminal tab is selected, which project tab is 
 
 ### Requirement: Per-device selection memory
 
-Each device SHALL remember its own selection per project and restore it on reconnect. That memory SHALL be treated as a hint: a remembered selection SHALL be validated against what exists and otherwise discarded. Storage that is unavailable, full, or disabled SHALL mean the device starts fresh rather than failing. A device with nothing selected SHALL take the first terminal it adopts. When the selected terminal is closed anywhere, each device SHALL independently select a neighbour.
+Each device SHALL remember its own selection per project and restore it on reconnect, and SHALL remember whether the Home dashboard rather than a project was the selected view. That memory SHALL be treated as a hint: a remembered selection SHALL be validated against what exists and otherwise discarded, and a remembered Home selection that cannot be restored SHALL fall back to a project. Storage that is unavailable, full, or disabled SHALL mean the device starts fresh rather than failing. A device with nothing selected SHALL take the first terminal it adopts. When the selected terminal is closed anywhere, each device SHALL independently select a neighbour.
 
 #### Scenario: Workspace changed while away
 
 - **WHEN** a device reconnects to a workspace whose projects and terminals have changed
 - **THEN** its remembered selection is validated against what exists and otherwise discarded
+
+#### Scenario: Home remembered
+
+- **WHEN** a device that had the Home dashboard selected reconnects
+- **THEN** the Home dashboard is selected again
 
 #### Scenario: Storage unavailable
 

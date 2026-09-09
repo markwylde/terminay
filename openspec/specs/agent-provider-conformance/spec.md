@@ -337,9 +337,15 @@ of the child work rather than a child state being synthesized from the root's.
 
 ### Requirement: Resume capability
 
-**Resume** SHALL mean that quitting the CLI and resuming the same provider
-session in a new process returns that session to the Agents surfaces, still
-bound to the terminal it was resumed in.
+**Resume** SHALL mean that quitting the CLI and restoring the same provider
+session in a new process, using that CLI's documented restore command, returns
+that session to the Agents surfaces, still bound to the terminal it was
+restored in.
+
+The restore command used to prove Resume SHALL be a command the CLI documents
+for that purpose — a session picker, a last-session shortcut (`--continue`,
+`resume --last`), or an explicit session id — not a new launch and not a
+fixture that injects a UUID the command does not put on argv.
 
 On quit, the root SHALL become inactive rather than being deleted or left
 reporting `working`. On resume, the extension SHALL rebind the same provider
@@ -359,8 +365,13 @@ to the newly active session and the previous root SHALL be retired.
 
 #### Scenario: Session resumed in a new process
 
-- **WHEN** the same provider session is resumed in a new process
+- **WHEN** the same provider session is restored with that CLI's documented restore command in a new process
 - **THEN** the same root rebinds, no second root is created, and earlier transitions are not replayed as new activity
+
+#### Scenario: Resume picker
+
+- **WHEN** Resume is proven for a CLI whose default restore command is a picker
+- **THEN** the test drives that picker, selects the session just quit, and asserts the same root rebinds
 
 #### Scenario: Resumed session that had completed
 
@@ -401,9 +412,24 @@ Each provider's test SHALL drive one session that:
 - reaches `blocked` on a halting fault;
 - is `done` with an outcome when the turn ends, and `idle` again before the next;
 - becomes inactive when the CLI is quit, rebinds to the same root when the
-  session is resumed in a new process without creating a second root or
-  replaying old transitions, and moves through `working` and `done` again on
-  further work.
+  session is restored with that CLI's documented restore command in a new
+  process without creating a second root or replaying old transitions, and
+  moves through `working` and `done` again on further work.
+
+The restore command in that last step SHALL be the CLI's documented resume,
+continue, or session-restore invocation. A test that relaunches the CLI as a
+new conversation, or that injects a session UUID the restore command does not
+place on argv, SHALL NOT count as proving Resume.
+
+Before the first session under test is launched, the harness SHALL seed the working directory with at least one earlier session of the same provider: it SHALL start a session there, drive one turn, and quit it. Every process under test therefore starts in a directory whose provider store already holds a journal that process did not write and that is older than it. A directory empty of prior sessions SHALL NOT be accepted as the conformance working directory.
+
+Each provider's test SHALL additionally drive a second concurrent session of the same provider, in its own PTY and in the same working directory as the first, and SHALL assert that both sessions are admitted, that each binds its own distinct provider session, that the first terminal's binding does not move when the second binds, that work in one moves only that session's state, and that quitting one leaves the other bound. A provider that binds only one of two concurrent sessions, or binds both to one session, SHALL fail.
+
+After quitting the first session's CLI, and while the second session is still bound, the test SHALL resume the first session by its provider session id in a fresh PTY and SHALL assert that the resumed process binds that id and not the second session's, and that the second terminal's binding does not move.
+
+A Resume `Y` in the matrix SHALL mean that opt-in real-CLI test passed for that
+restore command. A skipped test, a fixture-only test, or a test of a different
+argv SHALL NOT keep the cell at `Y`.
 
 An inferred (`Y*`) cell SHALL be exercised through the real condition — an
 actual permission prompt left outstanding, an actual halting fault — and never
@@ -435,8 +461,33 @@ completion, timeout, and failure alike.
 
 #### Scenario: Quit and resume
 
-- **WHEN** the test quits the CLI and resumes the same session in a new process
+- **WHEN** the test quits the CLI and restores the same session with that CLI's documented restore command in a new process
 - **THEN** the root becomes inactive and then rebinds without a second root or replayed transitions
+
+#### Scenario: Resume command matches the CLI
+
+- **WHEN** the conformance descriptor names a resume gesture
+- **THEN** that gesture is a documented restore command of that CLI, including a picker when the CLI's default restore is a picker
+
+#### Scenario: Two concurrent sessions of one provider
+
+- **WHEN** the test launches a second session of the same provider in its own PTY and the same working directory
+- **THEN** both sessions are admitted, each binds its own distinct provider session, and work in one moves only that session's state
+
+#### Scenario: Only one of two concurrent sessions binds
+
+- **WHEN** a provider binds one of two concurrent sessions and not the other, or binds both to one provider session
+- **THEN** its conformance test fails
+
+#### Scenario: Directory seeded with an earlier session
+
+- **WHEN** a conformance run begins
+- **THEN** its working directory already holds a quit session of the same provider, older than every process the run launches
+
+#### Scenario: Resume while another session runs
+
+- **WHEN** the first session's CLI has quit and that session is resumed by id in a fresh PTY while the second session is still bound
+- **THEN** the resumed process binds the first session's id, and the second terminal's binding does not move
 
 #### Scenario: Inferred cell exercised for real
 
@@ -470,7 +521,10 @@ rather than being reimplemented per extension. The harness SHALL own spawning a
 PTY and shell, launching a CLI in it, writing input to it, building a real
 terminal observation context over the live process tree and filesystem, running
 a provider's `observe` against it, collecting emitted lifecycle events, awaiting
-an expected state with a timeout, and tearing everything down.
+an expected state with a timeout, and tearing everything down. It SHALL be able
+to hold more than one such PTY and context at once so concurrent sessions of one
+provider can be driven together, and SHALL own seeding the working directory
+with a quit earlier session before the matrix begins.
 
 Each provider's test SHALL supply only what is provider-specific: how its CLI is
 launched, the prompt that starts subagents, the gesture that leaves an input
@@ -490,6 +544,44 @@ skipped for another.
 
 - **WHEN** a capability assertion changes
 - **THEN** it changes once in the harness and applies to every provider
+
+#### Scenario: Two sessions driven together
+
+- **WHEN** a conformance run drives two concurrent sessions of one provider
+- **THEN** the harness holds a PTY and observation context for each and reports their events separately
+
+### Requirement: Running end-to-end proof of the Agents pane
+
+Every provider that ships an agent extension SHALL have an Electron end-to-end specification that drives its CLI in the running application and asserts the resulting rows in the Agents pane. That specification SHALL run on every ordinary end-to-end run rather than only when a real-CLI credential gate is set, using a stub CLI that writes the provider's real journal format where a real authenticated CLI cannot run unattended.
+
+Each such specification SHALL drive at least two terminals of that provider in one project and assert a row for each, and SHALL start them in a project whose provider store already holds an earlier session of that provider. Where the provider binds through a per-process record — Claude Code's `sessions/<pid>.json`, Grok's `active_sessions.json` — the stub SHALL write that record with its own real pid, working directory, and start time, exactly as the CLI does, so a provider that ignores the record and guesses from journals cannot pass. The Claude Code specification SHALL additionally launch one terminal with `--resume` of the earlier session while the other terminal is live, and assert the resumed terminal's row is that session and the live terminal's row is unchanged.
+
+A provider whose extension ships without this specification SHALL be treated as unverified at the application surface, whatever its unit or conformance coverage states.
+
+#### Scenario: Ordinary end-to-end run
+
+- **WHEN** the end-to-end suite runs without any real-CLI credential gate set
+- **THEN** each agent extension's Agents-pane specification runs
+
+#### Scenario: Two terminals in the application
+
+- **WHEN** an agent extension's specification drives two terminals of its provider in one project that already holds an earlier session
+- **THEN** the Agents pane shows a row for each, and neither row is the earlier session
+
+#### Scenario: Stub writes the per-process record
+
+- **WHEN** a provider binds through a per-process record
+- **THEN** its stub CLI writes that record with its own pid, working directory, and start time
+
+#### Scenario: Resumed terminal beside a live one
+
+- **WHEN** the Claude Code specification resumes the earlier session in one terminal while another terminal's session is live
+- **THEN** the resumed terminal's row is the resumed session and the live terminal's row is unchanged
+
+#### Scenario: Extension without application coverage
+
+- **WHEN** an agent extension ships with no Agents-pane specification
+- **THEN** it is treated as unverified at the application surface
 
 ### Requirement: Inference tuning is evidence-based
 
@@ -518,6 +610,10 @@ present a record earlier than the real CLI writes it, and a provider whose real
 CLI holds no open writable journal handle SHALL NOT have its binding proven only
 by a fixture that supplies one.
 
+A restore-command fixture SHALL use the argv the real CLI presents for that
+command. A fixture that puts a session UUID on argv SHALL NOT be the only proof
+that a picker or `--continue` / `--last` restore binds.
+
 #### Scenario: Fixture supplies evidence the CLI never produces
 
 - **WHEN** a provider's real CLI does not present a form of binding evidence
@@ -527,3 +623,8 @@ by a fixture that supplies one.
 
 - **WHEN** a real CLI flushes a record only on completion
 - **THEN** no fixture presents that record as available beforehand
+
+#### Scenario: Resume fixture matches argv
+
+- **WHEN** a unit test claims a picker or last-session restore binds
+- **THEN** its fixture argv is that restore command, not an injected session UUID

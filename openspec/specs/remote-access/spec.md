@@ -30,13 +30,13 @@ Each server SHALL have exactly one stable session origin. Credentials created at
 
 ### Requirement: Ownership boundaries
 
-Terminay Server SHALL own pairing policy, device registration, public device keys, revocation, application authorization, workspace state, audit history, and the private host key for its session origin. The stable session origin SHALL own browser pairing, WebRTC lifecycle, server-bundle installation, reconnect, and challenge signing. `app.terminay.com` SHALL own the browser's list of manager profiles, the framed session iframe, and the origin-keyed device-credential vault, and SHALL NOT own pairing PIN entry, WebRTC, or the workspace. The signaling service SHALL route authenticated WebRTC offers, answers, and ICE candidates for one server session and is untrusted for confidentiality and integrity. TURN MAY relay encrypted WebRTC packets and SHALL NOT terminate the Terminay application protocol.
+Terminay Server SHALL own pairing policy, device registration, public device keys, revocation, pending pairing approvals, application authorization, workspace state, audit history, and the private host key for its session origin. The stable session origin SHALL own browser pairing, WebRTC lifecycle, server-bundle installation, reconnect, match-code display, and challenge signing. `app.terminay.com` SHALL own the browser's list of manager profiles, the framed session iframe, and the origin-keyed device-credential vault, and SHALL NOT own approval, WebRTC, or the workspace. The signaling service SHALL route authenticated WebRTC offers, answers, and ICE candidates for one server session and is untrusted for confidentiality and integrity. TURN MAY relay encrypted WebRTC packets and SHALL NOT terminate the Terminay application protocol.
 
 #### Scenario: Manager does not run the workspace
 
 - **WHEN** a user is on `app.terminay.com`
 - **THEN** the manager stores bookmarks, frames session origins, and holds framed-session credentials
-- **AND** it does not enter PINs, run WebRTC, or render the workspace
+- **AND** it does not show match codes, run WebRTC, or render the workspace
 
 #### Scenario: Signaling admits only authorized parties
 
@@ -106,12 +106,12 @@ Reconnect SHALL send a fresh client nonce before the server creates its offer. T
 
 ### Requirement: No data before transport authentication
 
-No PIN, approval response, device public key, device challenge signature, connection ticket, UI bundle, application frame, clipboard content, or terminal data SHALL cross a WebRTC data channel until transport authentication succeeds. The signaling service MAY replay, reorder, replace, or suppress signaling messages only to cause a bounded visible connection failure, and SHALL NOT obtain an authenticated plaintext position between the client and server.
+No approval response, match code, device public key, device challenge signature, connection ticket, UI bundle, host context beyond the non-secret bootstrap record, application frame, clipboard content, or terminal data SHALL cross a WebRTC data channel until transport authentication succeeds. The UI bundle and full host context SHALL additionally require a consumed connection ticket on that peer. The signaling service MAY replay, reorder, replace, or suppress signaling messages only to cause a bounded visible connection failure, and SHALL NOT obtain an authenticated plaintext position between the client and server.
 
 #### Scenario: Nothing released to an unauthenticated transport
 
 - **WHEN** transport authentication has not yet succeeded
-- **THEN** no PIN, approval, device key material, ticket, bundle, application frame, clipboard content, or terminal data is sent on any data channel
+- **THEN** no approval, match code, device key material, ticket, bundle, host context, application frame, clipboard content, or terminal data is sent on any data channel
 
 #### Scenario: Hostile signaling causes only denial of service
 
@@ -243,9 +243,88 @@ A standalone server MAY expose through a direct signaling endpoint that it serve
 - **WHEN** an attacker controls the network path to the direct endpoint
 - **THEN** they can only deny service or relay opaque DTLS packets to the authenticated host
 
+### Requirement: Host approval with a match code
+
+First pairing SHALL require the fragment plus explicit approval on the exposing host. After transport authentication succeeds and the client submits its enrollment request, the server SHALL derive a **match code** with HKDF-SHA256 over the pairing secret using a dedicated label and an info string binding the client nonce, the server host public key, and the SHA-256 of the device public key, rendered as five characters from a 32-symbol alphabet that excludes visually ambiguous glyphs. The server SHALL present a pending approval on the exposing host showing the requested device name and the match code, and the client SHALL compute and show the same code from the same inputs. The device SHALL be enrolled only when the administrator approves that exact pending request on the host; deny, expiry of the pending request after 120 seconds, closure of the peer, or rotation of the pairing room SHALL discard it and consume nothing. A pairing room SHALL hold at most one pending approval, and a second enrollment request on the same room while one is pending SHALL be refused. The match code, approval decision, and device public key SHALL travel only on the transport-authenticated data channels.
+
+#### Scenario: Codes match and the host approves
+
+- **WHEN** the phone shows the same five-character code as the exposing host and the administrator chooses **Approve**
+- **THEN** the device is enrolled, the pairing room is consumed, and a connection ticket is returned on the same peer
+
+#### Scenario: Host denies
+
+- **WHEN** the administrator chooses **Deny** or lets the pending request expire
+- **THEN** no device is enrolled, the pairing room is unchanged, and the client shows that approval was not given
+
+#### Scenario: Substituted device key changes the code
+
+- **WHEN** a party that observed the QR submits an enrollment with its own device key while the legitimate device is also pairing
+- **THEN** the code shown on the host differs from the code on the legitimate device, and the second request is refused while the first is pending
+
+#### Scenario: Match code never crosses an unauthenticated path
+
+- **WHEN** the match code is derived
+- **THEN** it appears in no signaling message, URL, log, or HTTP request
+
+### Requirement: Server identity reset
+
+The exposing host SHALL offer **Reset server identity** on Desktop and as the standalone `reset-identity` command. It SHALL generate a new server host key, revoke every registered device, close every live remote connection, and require a new pairing ceremony on each device. It SHALL require an explicit confirmation naming the number of devices that will lose trust.
+
+#### Scenario: Reset invalidates prior trust
+
+- **WHEN** the administrator confirms **Reset server identity**
+- **THEN** a new host key is in use, all devices are revoked, and every reconnect shows a server identity change requiring re-pairing
+
+### Requirement: Protected host key storage
+
+On Desktop the private server host key SHALL be stored through the same OS-protected storage that holds device credentials and SHALL NOT be written in plaintext. When OS-protected storage is unavailable, exposure SHALL be refused rather than falling back to a plaintext key. The standalone server SHALL store the key with owner-only permissions in the data root and SHALL document that the data root is the trust boundary.
+
+#### Scenario: Desktop without protected storage cannot expose
+
+- **WHEN** OS-protected storage is unavailable on Desktop
+- **THEN** exposure fails with a visible reason and no plaintext host key is written
+
+### Requirement: Ticket bound to its peer
+
+A connection ticket SHALL be usable only on the WebRTC peer whose authenticated data channel received it. Presenting a ticket on a different peer SHALL fail and SHALL consume the ticket.
+
+#### Scenario: Ticket replayed on another peer
+
+- **WHEN** a ticket issued to one peer is presented on a second peer's control channel
+- **THEN** application authentication fails on the second peer and the ticket is spent
+
+### Requirement: Bounded handshakes
+
+The host SHALL accept at most one in-progress handshake per pairing room and at most one per device session, and at most four in-progress handshakes across all rooms and sessions. Joins beyond those bounds SHALL be refused without retiring an existing handshake. A handshake that has not completed transport authentication and ticket consumption within 60 seconds SHALL be closed.
+
+#### Scenario: Join beyond the bound
+
+- **WHEN** a fifth concurrent join arrives
+- **THEN** it is refused and the four in-progress handshakes continue
+
+### Requirement: Application authentication is answered independently of handshake signaling
+
+The hosted host SHALL consume a connection ticket and answer `application-auth` on the control lane without waiting on any handshake signaling task: offers, answers, and ICE candidates for this or any other peer SHALL NOT delay the reply. A valid ticket presented on the peer that earned it SHALL be answered within 5 seconds of arrival on a healthy host. Ordering between a device's previous live peer and its replacement SHALL be kept per device only.
+
+#### Scenario: Slow ICE on another peer does not delay authentication
+
+- **WHEN** a handshake for another peer is waiting on an ICE candidate that never settles
+- **THEN** a valid `application-auth` on an authenticated peer is still answered and its workspace attaches
+
+#### Scenario: Late candidates on the same peer do not delay authentication
+
+- **WHEN** the client keeps trickling ICE candidates after its lanes opened and then sends `application-auth`
+- **THEN** the reply does not wait for those candidates to be applied
+
+#### Scenario: Replacement stays ordered per device
+
+- **WHEN** two peers for the same device consume tickets in quick succession
+- **THEN** the earlier one is retired and cleaned up before the later one attaches, and peers for other devices are unaffected
+
 ### Requirement: Opening a hosted pairing link
 
-Opening the advertised hosted pairing URL SHALL land on `app.terminay.com`. The manager SHALL consume the fragment in memory and strip query and hash from the visible URL and history, then ask whether to **Save and connect** with an optional title prefilled from `hostName` or the session id. Cancel SHALL discard the pairing material and save no profile. Confirm SHALL save or update the manager profile with that title, keep `https://app.terminay.com` as the top-level document, and load the reconstructed session pairing URL (`https://<session-id>.terminay.com/v1/#…`) in a fullscreen iframe without storing the fragment. The framed session origin SHALL perform enrollment: WebRTC, PIN or approval, device key, and workspace install, loading and saving that origin's device credential through the manager vault.
+Opening the advertised hosted pairing URL SHALL land on `app.terminay.com`. The manager SHALL consume the fragment in memory and strip query and hash from the visible URL and history, then ask whether to **Save and connect** with an optional title prefilled from `hostName` or the session id. Cancel SHALL discard the pairing material and save no profile. Confirm SHALL save or update the manager profile with that title, keep `https://app.terminay.com` as the top-level document, and load the reconstructed session pairing URL (`https://<session-id>.terminay.com/v1/#…`) in a fullscreen iframe without storing the fragment. The framed session origin SHALL perform enrollment: WebRTC, device key, enrollment request, match-code display while awaiting host approval, and workspace install, loading and saving that origin's device credential through the manager vault.
 
 #### Scenario: Cancel saves nothing
 
@@ -383,12 +462,17 @@ An iOS Home Screen PWA SHALL have storage isolated from Safari. Pairing in Safar
 
 ### Requirement: Desktop pairing journey
 
-Terminay Desktop **Add connection** SHALL accept the same pairing URL as the browser, including hosted `https://app.terminay.com/?s=…#…` links. The privileged connection host SHALL never treat `app.terminay.com` as the server: it SHALL read the session id from `s`, the one-time secret from the fragment, and the default profile label from `hostName` when present. It SHALL then pair against the stable session origin using the device-enroll exchange on that origin, keep the device key in OS-protected storage, save the remote profile as the session origin plus that label, and open the selected server's verified workspace bundle in a sandboxed window.
+Terminay Desktop **Add connection** SHALL accept the same pairing URL as the browser, including hosted `https://app.terminay.com/?s=…#…` links. The privileged connection host SHALL never treat `app.terminay.com` as the server: it SHALL read the session id from `s`, the one-time secret from the fragment, and the default profile label from `hostName` when present. For a hosted link it SHALL join the pairing room with the fragment-derived join credential, verify the pairing transport transcript, and run the device-enroll exchange and match-code display on the transport-authenticated `api` and `control` data channels; it SHALL NOT send the pairing token, device key, challenge signature, or ticket in any HTTP request to the session origin. It SHALL keep the device key and the verified host key in OS-protected storage, save the remote profile as the session origin plus that label, and open the selected server's verified workspace bundle in a sandboxed window. HTTP device endpoints SHALL be used only against a loopback local-UI origin.
 
 #### Scenario: Desktop never enrols against the manager origin
 
 - **WHEN** Desktop accepts a hosted pairing URL
 - **THEN** it pairs against the reconstructed stable session origin and never against `app.terminay.com`
+
+#### Scenario: Desktop enrols on the authenticated channel
+
+- **WHEN** Desktop pairs with a hosted link
+- **THEN** every enrollment message travels on a data channel whose offer transcript Desktop verified, and no request reaches the session origin over HTTPS
 
 #### Scenario: Secrets stay in the privileged host
 
@@ -577,12 +661,17 @@ The stable session origin SHALL own one WebRTC connection generation for its mou
 
 ### Requirement: One live connection per device
 
-The server SHALL hold at most one live connection per device. A successful pairing or `device-join` for a device SHALL replace that device's existing peer: the host SHALL close the previous peer and complete its server-side connection cleanup before accepting the replacement. A superseded connection SHALL never outlive, mute, or tear down the resources of the connection that replaced it. Closing a connection SHALL release only what that exact connection owns — its terminal attachments, subscriptions, leases, and checkpoints — and never state belonging to another connection from the same device. Device identity SHALL govern authentication, permissions, and revocation, and SHALL NOT govern connection lifetime.
+The server SHALL hold at most one live connection per device. A replacement peer for a device SHALL be accepted only after it has completed transport authentication and consumed a valid connection ticket; the host SHALL then close the previous peer and complete its server-side connection cleanup before attaching the replacement to the workspace. A `device-join`, offer, or answer that has not yet authenticated SHALL NOT close, mute, or disturb the device's existing live peer. A superseded connection SHALL never outlive, mute, or tear down the resources of the connection that replaced it. Closing a connection SHALL release only what that exact connection owns — its terminal attachments, subscriptions, leases, and checkpoints — and never state belonging to another connection from the same device. Device identity SHALL govern authentication, permissions, and revocation, and SHALL NOT govern connection lifetime.
 
 #### Scenario: Rejoin replaces the previous peer
 
-- **WHEN** the same device joins again
-- **THEN** the previous peer is closed and cleaned up before the replacement is accepted
+- **WHEN** the same device joins again and its replacement peer consumes a valid ticket
+- **THEN** the previous peer is closed and cleaned up before the replacement attaches to the workspace
+
+#### Scenario: Unauthenticated join leaves the live peer alone
+
+- **WHEN** a `device-join` for a live device arrives but the joiner never authenticates
+- **THEN** the live peer stays connected and its terminal output continues
 
 #### Scenario: Late failure of a superseded connection is inert
 
@@ -798,17 +887,22 @@ The host SHALL sign and signal one immutable SDP snapshot. WebRTC runtime mutati
 
 ### Requirement: Pairing credential security invariants
 
-Pairing URLs SHALL be short-lived and single-use. The fragment SHALL be consumed in memory and SHALL never be sent in an HTTP request. Pairing SHALL require the fragment plus a PIN or explicit approval, and pairing PIN fields SHALL use a password input so the six-digit code is not shown in the clear. A public session origin, server id, device id, or PIN alone SHALL grant no access.
+Pairing URLs SHALL be short-lived and single-use. The fragment SHALL be consumed in memory and SHALL never be sent in an HTTP request, and neither SHALL any value derived from it. Pairing SHALL require the fragment plus explicit approval of the matching code on the exposing host. A public session origin, server id, device id, or match code alone SHALL grant no access.
 
 #### Scenario: PIN entry is masked
 
-- **WHEN** the user enters a pairing PIN
-- **THEN** the field is a password input and the six-digit code is not shown in the clear
+- **WHEN** the user pairs a device
+- **THEN** no PIN field is presented; the only code shown is the match code, displayed in the clear on both devices so it can be compared
 
 #### Scenario: Public identifiers grant nothing
 
-- **WHEN** an attacker knows the session origin, server id, device id, or PIN alone
+- **WHEN** an attacker knows the session origin, server id, device id, or match code alone
 - **THEN** no access is granted
+
+#### Scenario: Captured QR without approval grants nothing
+
+- **WHEN** a party who captured the QR submits an enrollment
+- **THEN** no device is enrolled until the administrator approves that request's match code on the host
 
 #### Scenario: Fragment never travels over HTTP
 
