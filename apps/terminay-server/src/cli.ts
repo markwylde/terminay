@@ -313,6 +313,17 @@ else {
 					},
 				});
 				const rendererDirectory = process.env.TERMINAY_UI_RENDERER_DIRECTORY;
+				// A server nobody exposed may legitimately have no workspace UI: it
+				// is a protocol-only deployment. An exposed one may not. Without
+				// this, it pairs a device, connects every lane, and serves a
+				// placeholder — which from the device is indistinguishable from a
+				// broken network, and this process is the only party that knows
+				// the difference.
+				if (options.exposeModes.length > 0 && rendererDirectory === undefined) {
+					throw new Error(
+						'this server is exposed but has no workspace UI configured, so a paired device would receive an empty page. Set TERMINAY_UI_RENDERER_DIRECTORY to the ui directory shipped in this release.',
+					);
+				}
 				// Hosted and direct exposure share one host key, one device
 				// registry, and one approval queue: they are two ways for a client
 				// to reach the same room on the same server, not two servers.
