@@ -17,6 +17,7 @@ import {
 	getPtyRuntimePlatform,
 	PTY_RUNTIME_NODE_VERSION,
 } from './pty-runtime-platforms.mjs';
+import { assertHostedUiEntry } from './hosted-ui-entry.mjs';
 import { normalizeArtifactRelease } from './standalone-artifact.mjs';
 import { stageProductionDependencyClosure } from './standalone-runtime-dependencies.mjs';
 
@@ -28,7 +29,13 @@ const nodeArchive = resolve(required(args, 'node-archive'));
 const runtimeModules = resolve(required(args, 'runtime-modules'));
 const outputDirectory = resolve(required(args, 'output-dir'));
 const serverRoot = resolve(args['server-root'] ?? 'apps/terminay-server');
-const uiBundle = resolve(args['ui-bundle'] ?? 'dist');
+// The server-served workspace UI, not the Desktop renderer bundle. They are
+// different builds with different entries: `dist-web` carries `server.html`,
+// which is what the hosted UI archive loader reads and what an embedded server
+// passes as its renderer directory; `dist` carries `remote.html`. Staging the
+// wrong one produces an archive that pairs successfully and then serves no
+// workspace.
+const uiBundle = resolve(args['ui-bundle'] ?? 'dist-web');
 const serverCoreRoot = resolve(
 	args['server-core-root'] ?? 'packages/server-core',
 );
@@ -65,6 +72,7 @@ try {
 	await assertSafeTree(serverCoreRoot, 'server core runtime');
 	await assertSafeTree(protocolRoot, 'protocol runtime');
 	await assertSafeTree(uiBundle, 'web UI bundle');
+	await assertHostedUiEntry(uiBundle);
 	await assertSafeTree(webrtcRuntime, 'selected WebRTC runtime');
 
 	const nodeSource = join(temporary, 'node-source');
