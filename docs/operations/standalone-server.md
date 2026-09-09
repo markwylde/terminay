@@ -201,8 +201,12 @@ NAT, their reflexive addresses share a public address and would need router
 hairpinning, which consumer routers usually lack.
 
 `--advertise-address` answers this by naming an address the client *can* reach —
-a published port on the loopback interface — and offering it as an additional
-candidate:
+this machine's routable address, on which the published port answers — and
+offering it as an additional candidate. It must be a routable address, not a
+loopback one: a browser decides for itself which candidates are worth probing,
+and Firefox prunes a remote loopback candidate without sending a single
+connectivity check. A loopback address therefore produces a server that pairs
+from Chromium and hangs elsewhere, so the CLI refuses one.
 
 ```bash
 docker run -d --name terminay \
@@ -214,7 +218,7 @@ docker run -d --name terminay \
 
 docker exec -it terminay bash
 npx terminay daemon install --system --run-as root \
-  --advertise-address 127.0.0.1:51000
+  --advertise-address 192.168.1.20:51000
 npx terminay daemon qr-code
 ```
 
