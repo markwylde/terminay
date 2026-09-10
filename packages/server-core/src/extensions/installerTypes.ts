@@ -39,7 +39,6 @@ export interface ExtensionInstallPreview extends RegistryPackageResolution {
 	readonly official: boolean;
 	readonly trustedCodeWarning?: string;
 	readonly declaredPermissions: readonly string[];
-	readonly declaredProviderIds: readonly string[];
 }
 
 export interface ExtensionReceipt extends RegistryPackageResolution {
@@ -121,8 +120,6 @@ export interface BuiltInExtensionArtifactSource {
 }
 
 export interface ExtensionReferences {
-	readonly profiles?: number;
-	readonly environments?: number;
 	readonly projects?: number;
 	readonly dependants?: readonly string[];
 	readonly activeUses?: number;

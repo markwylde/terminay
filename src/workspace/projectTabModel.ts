@@ -2,35 +2,16 @@ import { defaultTerminalSettings } from '../terminalSettings.ts';
 import type { SidebarGroupId, SidebarPanelId, SidebarSettings } from '../types/settings';
 
 const PROJECT_TAB_COLOR_PALETTE_SIZE = 20;
-const BUSY_ENVIRONMENT_STATUSES = new Set([
-	'connecting',
-	'reconnecting',
-	'provisioning',
-	'starting',
-]);
-
 export function projectTabIsBusy(
-	project: Pick<
-		ProjectTab,
-		'creationStatus' | 'environmentStatus' | 'hydrating'
-	>,
+	project: Pick<ProjectTab, 'creationStatus' | 'hydrating'>,
 ): boolean {
-	if (project.creationStatus === 'loading' || project.hydrating === true)
-		return true;
-	return (
-		project.environmentStatus !== undefined &&
-		BUSY_ENVIRONMENT_STATUSES.has(project.environmentStatus)
-	);
+	return project.creationStatus === 'loading' || project.hydrating === true;
 }
 
 export type ProjectTab = {
 	creationError?: string;
 	creationStatus?: 'loading' | 'failed';
 	hydrating?: boolean;
-	projectEnvironmentId?: string;
-	environmentRevision?: number;
-	environmentLabel?: string;
-	environmentStatus?: string;
 	defaultShellProfileId?: string;
 	id: string;
 	title: string;
@@ -310,10 +291,6 @@ export function createProjectTab(
 ): ProjectTab {
 	const id = `project-${index}`;
 	return {
-		projectEnvironmentId: 'terminay:this-server',
-		environmentRevision: 1,
-		environmentLabel: 'This server',
-		environmentStatus: 'ready',
 		id,
 		title: `Project ${index}`,
 		color: getProjectTabColor(`${colorScope}:${id}`, usedColors, randomSource),

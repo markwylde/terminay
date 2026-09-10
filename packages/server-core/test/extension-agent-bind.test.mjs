@@ -14,7 +14,7 @@ import {
 } from "../dist/index.js";
 
 async function fixture(extensionId, source) {
-  const root = await mkdtemp(join(tmpdir(), "terminay-this-server-agent-"));
+  const root = await mkdtemp(join(tmpdir(), "terminay-agent-bind-"));
   await writeFile(join(root, "extension.js"), source, { mode: 0o600 });
   for (const name of ["config", "data", "cache"]) await mkdir(join(root, name));
   return {

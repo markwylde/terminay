@@ -12,16 +12,11 @@ import {
 	expect,
 	type Page,
 } from '@playwright/test';
-import {
-	FileProjectEnvironmentStateBackend,
-	ProjectEnvironmentRepository,
-} from '../packages/server-core/src/projectEnvironment/index';
 import { stageImmutableRendererArtifact } from '../scripts/immutable-renderer-artifact.mjs';
 import {
 	openChildWindow,
 	openMacroLauncher,
 	openMacrosWindow,
-	openProjectEnvironmentsWindow,
 	openRecordingsWindow,
 	openRemoteControlWindow,
 	openSettingsWindow,
@@ -47,7 +42,6 @@ type ElectronFixtures = {
 			options?: { attempts?: number },
 		) => Promise<void>;
 		openMacrosWindow: (page?: Page) => Promise<Page>;
-		openProjectEnvironmentsWindow: (page?: Page) => Promise<Page>;
 		openRecordingsWindow: (page?: Page) => Promise<Page>;
 		openRemoteControlWindow: (page?: Page) => Promise<Page>;
 		openSettingsWindow: (options?: {
@@ -711,162 +705,6 @@ export const test = base.extend<ElectronFixtures>({
 			specFile === 'claude-code-multi-terminal.spec.ts'
 				? await prepareNativeClaudeFixture(tempDir)
 				: undefined;
-		if (path.basename(testInfo.file) === 'mixed-project-environments.spec.ts') {
-			const now = Date.now();
-			const profile = (
-				id: string,
-				providerId: string,
-				name: string,
-				endpointSummary: string,
-				configuration: Record<string, string>,
-			) => ({
-				id,
-				providerId,
-				name,
-				endpointSummary,
-				activeRevision: 1,
-				recommendedRevision: 1,
-				revisions: {
-					'1': {
-						revision: 1,
-						createdAt: now,
-						configuration,
-						secretReferences: [],
-					},
-				},
-				archived: false,
-			});
-			const environment = (
-				id: string,
-				providerId: string,
-				profileId: string,
-				name: string,
-				endpointSummary: string,
-				defaultRoot: string,
-				providerState: Record<string, string>,
-			) => ({
-				id,
-				providerId,
-				profileId,
-				pinnedRevision: 1,
-				name,
-				endpointSummary,
-				defaultRoot,
-				declaredCapabilities: ['terminal', 'filesystem'],
-				availableCapabilities: [],
-				// This metadata-only fixture intentionally has no activated external
-				// provider. Provisioning records remain visible without pretending a
-				// live SSH/Puzed runtime is available; packed-provider E2E owns that.
-				status: 'provisioning',
-				operationReferences: [],
-				projectReferenceCount: 0,
-				archived: false,
-				builtIn: false,
-				providerState,
-				providerRevision: 1,
-			});
-			const thisServer = {
-				id: 'terminay:this-server',
-				providerId: 'terminay:this-server',
-				pinnedRevision: 1,
-				name: 'This server',
-				endpointSummary: 'Local to this Terminay Server',
-				declaredCapabilities: [
-					'terminal',
-					'filesystem',
-					'filesystem-observation',
-					'git',
-					'process-observation',
-					'agent-journal',
-					'shell-discovery',
-				],
-				availableCapabilities: [
-					'terminal',
-					'filesystem',
-					'filesystem-observation',
-					'git',
-					'process-observation',
-					'agent-journal',
-					'shell-discovery',
-				],
-				status: 'ready',
-				operationReferences: [],
-				projectReferenceCount: 0,
-				archived: false,
-				builtIn: true,
-				providerState: null,
-				providerRevision: 1,
-			};
-			const sshProviderId = 'com.terminay.ssh/connection';
-			const projectEnvironmentPath = path.join(
-				userDataDir,
-				'project-environments.v1.json',
-			);
-			await writeFile(
-				projectEnvironmentPath,
-				`${JSON.stringify(
-					{
-						schemaVersion: 2,
-						serverId: 'desktop-local',
-						revision: 7,
-						cursor: '7',
-						profiles: {
-							'profile:ssh-ci': profile(
-								'profile:ssh-ci',
-								sshProviderId,
-								'CI SSH',
-								'ssh-ci:22',
-								{ host: 'ssh-ci', user: 'terminay' },
-							),
-							'profile:puzed-ci': profile(
-								'profile:puzed-ci',
-								sshProviderId,
-								'CI Puzed VM',
-								'puzed-ci:22',
-								{ sshBindingId: 'puzed-ssh:machine-ci' },
-							),
-						},
-						operations: {},
-						environments: {
-							'terminay:this-server': thisServer,
-							'environment:ssh-ci': environment(
-								'environment:ssh-ci',
-								sshProviderId,
-								'profile:ssh-ci',
-								'CI SSH',
-								'ssh-ci:22',
-								'/home/terminay/ssh-project',
-								{ profile: 'profile:ssh-ci' },
-							),
-							'environment:puzed-ci': environment(
-								'environment:puzed-ci',
-								sshProviderId,
-								'profile:puzed-ci',
-								'CI Puzed VM',
-								'puzed-ci:22',
-								'/home/terminay/puzed-project',
-								{ sshBindingId: 'puzed-ssh:machine-ci' },
-							),
-						},
-					},
-					null,
-					2,
-				)}\n`,
-				{ mode: 0o600 },
-			);
-			// Fail the fixture before Electron launch if its durable registry does not
-			// satisfy the exact production repository schema.
-			const seededRepository = new ProjectEnvironmentRepository(
-				new FileProjectEnvironmentStateBackend(projectEnvironmentPath),
-				'desktop-local',
-			);
-			const seededState = await seededRepository.load();
-			if (Object.keys(seededState.environments).length !== 3) {
-				throw new Error(
-					'Mixed project environment fixture did not seed three canonical environments.',
-				);
-			}
-		}
 		const rendererArtifactParent = await mkdtemp(
 			path.join(os.tmpdir(), 'terminay-e2e-renderer-'),
 		);
@@ -965,8 +803,6 @@ export const test = base.extend<ElectronFixtures>({
 				openMacroLauncher(page, options),
 			openMacrosWindow: (page = mainWindow) =>
 				openMacrosWindow(electronApp, page),
-			openProjectEnvironmentsWindow: (page = mainWindow) =>
-				openProjectEnvironmentsWindow(electronApp, page),
 			openRecordingsWindow: (page = mainWindow) =>
 				openRecordingsWindow(electronApp, page),
 			openRemoteControlWindow: (page = mainWindow) =>

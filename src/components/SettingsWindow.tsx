@@ -668,7 +668,7 @@ export function SettingsWindow({
 				if (!navigator.mediaDevices?.enumerateDevices) {
 					setDictationMicrophoneDevices([]);
 					setDictationMicrophoneError(
-						'Microphone device listing is not available in this environment.',
+						'Microphone device listing is not available in this browser.',
 					);
 					return;
 				}

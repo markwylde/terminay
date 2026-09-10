@@ -1,9 +1,7 @@
-import { ProjectEnvironmentRouteError } from './projectEnvironment/index.js';
-import {
-	THIS_SERVER_ENVIRONMENT_ID,
-	type WorkspaceProject,
-	type WorkspaceState,
-	type WorkspaceStore,
+import type {
+	WorkspaceProject,
+	WorkspaceState,
+	WorkspaceStore,
 } from './workspace.js';
 import { resolveWorkspaceHydration } from './workspaceHydration.js';
 
@@ -21,17 +19,6 @@ import { resolveWorkspaceHydration } from './workspaceHydration.js';
  * workspace contains, and two hosts deciding it separately is how they came to
  * disagree.
  */
-
-/** How long a remote project's environment may still be connecting. */
-export const REMOTE_TERMINAL_SEED_DEADLINE_MS = 60_000;
-
-const RETRYABLE_TERMINAL_SEED_CODES = new Set([
-	'environment-unavailable',
-	'provider-unavailable',
-	'provider-operation-failed',
-	'operation-timeout',
-	'spawn_failed',
-]);
 
 export interface WorkspaceStartupTerminalRequest {
 	readonly projectId: string;
@@ -69,35 +56,10 @@ export interface WorkspaceStartupRestoreOptions {
 	 * exist before the workspace is shown; a restart is the reverse.
 	 */
 	readonly firstRun: boolean;
-	/** Overridden by tests so a retrying seed does not hold the suite open. */
-	readonly remoteSeedDeadlineMs?: number;
-	readonly onSeedFailure?: (message: string) => void;
 }
 
 const DEFAULT_COLS = 100;
 const DEFAULT_ROWS = 30;
-
-export function isHostFilesystemProject(project: WorkspaceProject): boolean {
-	return project.projectEnvironmentId === THIS_SERVER_ENVIRONMENT_ID;
-}
-
-export function isRetryableTerminalSeedError(error: unknown): boolean {
-	let current: unknown = error;
-	for (let i = 0; i < 8 && current !== undefined && current !== null; i += 1) {
-		if (current instanceof ProjectEnvironmentRouteError && current.retryable)
-			return true;
-		if (
-			typeof current === 'object' &&
-			current !== null &&
-			'code' in current &&
-			typeof (current as { code: unknown }).code === 'string' &&
-			RETRYABLE_TERMINAL_SEED_CODES.has((current as { code: string }).code)
-		)
-			return true;
-		current = current instanceof Error ? current.cause : undefined;
-	}
-	return false;
-}
 
 /**
  * Restored projects in presentation order: the selected view's active project
@@ -140,9 +102,8 @@ function projectHasTerminalPanel(
 /**
  * Reap the terminals of the previous process and seed replacements.
  *
- * Returns once every host-filesystem project has a live terminal. A remote
- * project's environment may still be connecting, so its seed is left running in
- * the background rather than holding the workspace closed behind a handshake.
+ * Returns once every project has a live terminal. Every project executes on
+ * this server, so there is nothing to wait on before a session can be made.
  */
 export async function restoreWorkspaceOnStartup(
 	options: WorkspaceStartupRestoreOptions,
@@ -161,19 +122,12 @@ export async function restoreWorkspaceOnStartup(
 	for (const project of restoredProjectsInPresentationOrder(workspace.state)) {
 		if (unavailable.has(project.id)) continue;
 		if (projectHasTerminalPanel(workspace.state, project.id)) continue;
-		if (isHostFilesystemProject(project)) {
-			await options.createTerminal({
-				projectId: project.id,
-				cwd: project.root,
-				cols: DEFAULT_COLS,
-				rows: DEFAULT_ROWS,
-			});
-			continue;
-		}
-		// A remote environment can still be connecting. The workspace is not held
-		// closed behind that handshake; the project's tab spins until its
-		// replacement session is published.
-		void seedRemoteProjectTerminal(project, options);
+		await options.createTerminal({
+			projectId: project.id,
+			cwd: project.root,
+			cols: DEFAULT_COLS,
+			rows: DEFAULT_ROWS,
+		});
 	}
 }
 
@@ -207,38 +161,3 @@ async function seedInitializedWorkspace(
 	}
 }
 
-async function seedRemoteProjectTerminal(
-	project: WorkspaceProject,
-	options: WorkspaceStartupRestoreOptions,
-): Promise<void> {
-	const deadline =
-		Date.now() +
-		(options.remoteSeedDeadlineMs ?? REMOTE_TERMINAL_SEED_DEADLINE_MS);
-	let delayMs = 250;
-	while (Date.now() < deadline) {
-		if (projectHasTerminalPanel(options.workspace.state, project.id)) return;
-		try {
-			await options.createTerminal({
-				projectId: project.id,
-				cwd: project.root,
-				cols: DEFAULT_COLS,
-				rows: DEFAULT_ROWS,
-			});
-			return;
-		} catch (error: unknown) {
-			if (
-				!isRetryableTerminalSeedError(error) ||
-				Date.now() + delayMs >= deadline
-			) {
-				options.onSeedFailure?.(
-					error instanceof Error
-						? error.message.replace(/[\r\n]/gu, ' ').slice(0, 300)
-						: 'remote terminal seed failed',
-				);
-				return;
-			}
-			await new Promise((resolve) => setTimeout(resolve, delayMs));
-			delayMs = Math.min(delayMs * 2, 2_000);
-		}
-	}
-}

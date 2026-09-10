@@ -12,7 +12,7 @@ import {
 
 const permission = () => new Set([EXTENSION_SECRET_RESOLVE_PERMISSION]);
 const principal = (extensionId, permissions = permission()) => ({ extensionId, permissions, sessionId: "host-session" });
-const binding = Object.freeze({ extensionId: "terminay-plugin-ssh", profileId: "prod", fieldId: "privateKey", secretId: "extensions.ssh.prod.privateKey" });
+const binding = Object.freeze({ extensionId: "terminay-extension-alpha", profileId: "prod", fieldId: "privateKey", secretId: "extensions.alpha.prod.privateKey" });
 
 class MemoryStorage {
   serialized;
@@ -73,7 +73,7 @@ test("broker denies absent permission, cross-extension, cross-profile, and autho
   const broker = new ExtensionSecretBroker(vault, [binding], { authorize: (_actor, owned) => owned.fieldId !== "denied" });
   const attempts = [
     [principal(binding.extensionId, new Set()), { profileId: binding.profileId, fieldId: binding.fieldId }],
-    [principal("terminay-plugin-puzed"), { profileId: binding.profileId, fieldId: binding.fieldId }],
+    [principal("terminay-extension-beta"), { profileId: binding.profileId, fieldId: binding.fieldId }],
     [principal(binding.extensionId), { profileId: "another", fieldId: binding.fieldId }],
   ];
   for (const [actor, request] of attempts) {

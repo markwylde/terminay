@@ -144,7 +144,6 @@ export * from './mdxRuntime/index.js';
 export * from './migration/index.js';
 export * from './outboundDelivery.js';
 export * from './platform.js';
-export * from './projectEnvironment/index.js';
 export * from './recordingService/index.js';
 export * from './remote/index.js';
 export * from './runtime.js';

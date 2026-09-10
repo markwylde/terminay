@@ -26,5 +26,4 @@ export * from "./settings.js";
 export * from "./macros.js";
 export * from "./health.js";
 export * from "./shellProfiles.js";
-export * from "./projectEnvironments.js";
 export * from "./extensions.js";

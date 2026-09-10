@@ -12,9 +12,9 @@ user's current working directory.
 
 Every supported Terminay Server artifact includes its pinned Node runtime and
 matching pinned npm installer. Operators do not install system Node/npm or a
-compiler. Every release carries verified, packed offline artifacts for SSH,
-Puzed, Codex, Claude Code, Cursor Agent, Grok, and omp. On first start Terminay
-copies those artifacts into ordinary immutable extension slots and enables them
+compiler. Every release carries verified, packed offline artifacts for Codex,
+Claude Code, Cursor Agent, Grok, and omp. On first start Terminay copies those
+artifacts into ordinary immutable extension slots and enables them
 unless that server already has a recorded enabled/disabled choice. Built-ins
 use the same host and manifest validation as every other extension; they are
 not a privileged runtime tier.
@@ -94,22 +94,21 @@ drained/restarted. Expanded permissions require a new confirmation. A failed or
 interrupted update leaves the prior active slot intact.
 
 At least one known-good slot is retained. **Rollback** selects and probes that
-slot; it does not undo VMs, files, connections, or other external actions. Data
+slot; it does not undo files, connections, or other external actions. Data
 migrations take a namespaced snapshot. Restoring incompatible old data is a
 separate explicit operation with a loss warning.
 
 ## Disable and uninstall
 
-Disable stops new provider use and makes dependent environments/projects
-explicitly unavailable; it never retargets them. Profiles, data, and secret
-references remain for re-enable/reinstall. Active sessions require an explicit
-drain/restart flow and become interrupted only when their provider transport is
-actually closed.
+Disable stops new provider use and makes dependent surfaces explicitly
+unavailable; it never retargets them. Data and secret references remain for
+re-enable/reinstall. Active sessions require an explicit drain/restart flow and
+become interrupted only when their provider transport is actually closed.
 
-Uninstall is blocked while enabled, referenced by another extension, profile,
-environment, or project, or used by an active operation. Code removal never
-cascade-deletes projects, provider data, secrets, VMs, or remote files. Bundled
-official baseline slots remain available for rollback even when disabled. For a
+Uninstall is blocked while enabled, referenced by another extension, or used by
+an active operation. Code removal never cascade-deletes projects, provider
+data, or secrets. Bundled official baseline slots remain available for rollback
+even when disabled. For a
 built-in with an npm-installed override, **Remove** removes that override and
 selects the bundled floor; it never removes the bundled artifact itself.
 
@@ -120,14 +119,14 @@ selects the bundled floor; it never removes the bundled artifact itself.
 - On restart, the server reconciles registry, staging, active pointers, and
   immutable slots before activation. It never executes an uncommitted slot.
 - A crashing extension uses bounded restart/backoff, then remains failed until
-  manual retry. This server and other extensions stay available.
+  manual retry. The server and its other extensions stay available.
 - An incompatible extension remains installed/disabled with its dependent
   projects represented. Upgrade, rollback, or reinstall resolves it.
 - Deleting extension files manually is unsupported; restore the server data
   root backup or reinstall the exact package through the manager.
 
-Backups include registry records, receipts, versioned extension data, profiles,
-trust records, and encrypted vault state according to normal server backup
+Backups include registry records, receipts, versioned extension data, trust
+records, and encrypted vault state according to normal server backup
 policy. Support bundles include only extension ids, versions, integrity/state,
 and bounded failure classes—not endpoints, roots, credentials, provider bodies,
 or terminal data.
@@ -138,14 +137,13 @@ Stop new administrative operations and record the server version before taking
 a consistent backup of the complete server data root. For Desktop this is the
 embedded server data root, not renderer storage; for standalone deployments it
 is the configured persistent volume. Include the extension registry, immutable
-package slots and receipts, namespaced data/migration snapshots, profiles,
-environment/project registry, trust records, and encrypted vault. Keep the
-vault's external unlock material separately; neither backup is useful as a
-substitute for the other.
+package slots and receipts, namespaced data/migration snapshots, the workspace
+state, trust records, and encrypted vault. Keep the vault's external unlock
+material separately; neither backup is useful as a substitute for the other.
 
 Restore into a stopped server of the recorded compatible version, with the same
 ownership/mode protections. Start without accepting clients, inspect recovery
-and compatibility diagnostics, then test one profile/environment per provider
+and compatibility diagnostics, then test one project per installed provider
 before reopening access. Never copy only `packages/` or rewrite active pointers
 by hand. If npmjs is unavailable, retained immutable slots can start, but a
 missing package cannot be freshly restored until the registry returns.
@@ -154,7 +152,7 @@ missing package cannot be freshly restored until the registry returns.
 
 Before updating Terminay, take the backup above and verify installed extensions'
 API/Node/Terminay ranges. The updated server preserves incompatible extensions
-and their projects as unavailable; it never falls back to This server. Allow
+as unavailable rather than silently dropping them. Allow
 registry/data migrations to finish before client admission. A failed activation
 leaves the extension failed and other providers available.
 
@@ -179,17 +177,17 @@ If an extension is suspected of compromise:
    the suspect entrypoint to collect evidence.
 3. Assume every file/network resource available to the server account and every
    secret intentionally brokered to that extension may be exposed. Rotate API
-   keys, SSH keys/agent identities, passwords, server access credentials, and
-   downstream tokens accordingly; revoke sessions and review provider audit.
-4. Inspect external resources for mutation. Uninstalling code does not undo VM,
+   keys, passwords, server access credentials, and downstream tokens
+   accordingly; revoke sessions and review provider audit.
+4. Inspect external resources for mutation. Uninstalling code does not undo
    filesystem, network, or credential actions.
 5. Install a reviewed exact replacement or restore a known-good pre-compromise
-   server backup, then explicitly re-enable and validate dependent environments.
+   server backup, then explicitly re-enable and validate every dependent
+   surface.
 
 Record package name/version/integrity, extension id, server ids, first/last
-known execution time, granted permissions, affected profile bindings, response
-actions, and credential rotation completion without copying secret values into
-the incident record.
+known execution time, granted permissions, response actions, and credential
+rotation completion without copying secret values into the incident record.
 
 ## Security posture
 
@@ -200,6 +198,6 @@ sandbox. npm integrity/provenance/audit metadata does not constitute Terminay or
 npm code approval.
 
 Install only packages whose source and publisher you trust. Rotate affected
-server/environment credentials and review audit records if an installed package
-is suspected of compromise; merely uninstalling it cannot retract data it may
+server credentials and review audit records if an installed package is
+suspected of compromise; merely uninstalling it cannot retract data it may
 already have accessed.

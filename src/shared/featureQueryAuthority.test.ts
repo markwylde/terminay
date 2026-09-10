@@ -33,8 +33,6 @@ const project = {
 	id: 'project-1',
 	serverId: 'server-1',
 	root: '/workspace/one',
-	projectEnvironmentId: 'environment-1',
-	environmentRevision: 7,
 };
 
 describe('project feature authority', () => {
@@ -45,8 +43,6 @@ describe('project feature authority', () => {
 		assert.deepEqual(result.authority.scope, {
 			serverId: 'server-1',
 			projectId: 'project-1',
-			projectEnvironmentId: 'environment-1',
-			environmentRevision: 7,
 			projectRoot: '/workspace/one',
 		});
 	});
@@ -152,15 +148,15 @@ describe('feature failures', () => {
 		});
 	});
 
-	it('does not treat missing remote file watch as an Explorer outage', () => {
-		const error = Object.assign(new ClientError('unavailable', 'project environment capability is unavailable: filesystem-observation', { retryable: true }), {
+	it('does not treat an unavailable file watch as an Explorer outage', () => {
+		const error = Object.assign(new ClientError('unavailable', 'file watch is unavailable', { retryable: true }), {
 			operation: 'files.watch.start',
 		});
 		assert.equal(isOptionalObservationFailure(error), true);
 		assert.equal(isCancelledFeatureFailure(error), false);
 	});
 
-	it('treats a remote deadline as a retryable outage', () => {
+	it('treats a query deadline as a retryable outage', () => {
 		const error = Object.assign(new ClientError('deadline', 'operation deadline exceeded', { retryable: true }), {
 			operation: 'git.worktrees.list',
 		});

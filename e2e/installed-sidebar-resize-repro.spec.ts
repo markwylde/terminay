@@ -84,7 +84,6 @@ test('installed 3.2 sidebar: rapid Agents/Git mouse release does not bounce', as
 	const installedProfile = path.dirname(installedWorkspace);
 	for (const filename of [
 		// 'workspace.v3.json',
-		// 'project-environments.v1.json',
 		// 'terminal-settings.json',
 	]) {
 		const source = path.join(installedProfile, filename);

@@ -107,7 +107,7 @@ function active(state, extensionId) {
 async function exercisePackagedRoot(label, artifactRoot) {
   const source = new DirectoryBuiltInExtensionArtifactSource(resolve(artifactRoot))
   const artifacts = await source.list()
-  assert.equal(artifacts.length, 7, `${label} must expose the complete built-in inventory`)
+  assert.equal(artifacts.length, 5, `${label} must expose the complete built-in inventory`)
   const codex = artifacts.find((artifact) => artifact.extensionId === CODEX_ID)
   assert.ok(codex)
   const registry = new OverrideRegistry(codex.manifestMetadata)
@@ -116,7 +116,7 @@ async function exercisePackagedRoot(label, artifactRoot) {
     const initialSource = new FilteredBuiltIns(source, new Set([LATE_BUNDLED_ID]))
     let installer = new ExtensionInstaller({ dataRoot, registryClient: registry, materializer: registry, builtIns: initialSource })
     let state = await installer.initialize()
-    assert.equal(Object.keys(state.extensions).length, 6)
+    assert.equal(Object.keys(state.extensions).length, 4)
     assert.ok(Object.values(state.extensions).every((record) => record.enabled))
 
     await installer.disable(CODEX_ID)
@@ -148,7 +148,7 @@ async function exercisePackagedRoot(label, artifactRoot) {
     const state = await installer.initialize()
     assert.equal(state.extensions[CODEX_ID].state, 'failed')
     assert.equal(Object.values(state.extensions).filter((record) => record.state === 'failed').length, 1, JSON.stringify(state.extensions))
-    assert.equal(Object.keys(state.extensions).length, 7)
+    assert.equal(Object.keys(state.extensions).length, 5)
   } finally {
     await rm(badRoot, { recursive: true, force: true })
   }
@@ -255,7 +255,6 @@ async function startEnabled(installer, hosts, dataRoot) {
       cacheDirectory: directories.cache,
       permissions: descriptor.manifest.permissions,
       agentProviders: descriptor.agentProviders,
-      projectEnvironmentProviders: descriptor.manifest.contributes.projectEnvironments ?? [],
       extensionDependencies: descriptor.manifest.extensionDependencies ?? [],
     })
   }
@@ -335,7 +334,6 @@ async function exercisePackagedHostRuntime(label, artifactRoot) {
         contextId: `${label}-codex-context`,
         serverId: identity.serverId,
         projectId: identity.projectId,
-        projectEnvironmentId: 'terminay.this-server',
         terminalSessionId: identity.sessionId,
         terminalIncarnationId: '1',
         providerId: CODEX_PROVIDER_ID,

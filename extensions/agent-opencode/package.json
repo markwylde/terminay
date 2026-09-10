@@ -36,10 +36,10 @@
 		"node": ">=24"
 	},
 	"peerDependencies": {
-		"@terminay/extension-api": "^1.2.0"
+		"@terminay/extension-api": "^2.0.0"
 	},
 	"devDependencies": {
-		"@terminay/extension-api": "^1.2.0",
+		"@terminay/extension-api": "^2.0.0",
 		"@types/node": "^24.0.0",
 		"typescript": "^6.0.0"
 	},
@@ -48,7 +48,7 @@
 		"id": "com.terminay.agent.opencode",
 		"displayName": "OpenCode",
 		"description": "Show OpenCode CLI sessions in Terminay's Agents sidebar.",
-		"api": "^1.2.0",
+		"api": "^2.0.0",
 		"engines": {
 			"terminay": ">=1.0.0",
 			"node": ">=24"
@@ -82,11 +82,6 @@
 							"mappingVersion": "0.1",
 							"providerVersionRange": ">=0"
 						}
-					],
-					"requiredEnvironmentCapabilities": [
-						"process-observation",
-						"filesystem-observation",
-						"agent-journal"
 					]
 				}
 			]

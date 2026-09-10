@@ -42,8 +42,8 @@ subagent rollouts have a non-`cli` source and cannot replace the root.
 
 For a local server the helper `effectiveCodexHome()` exposes the normal
 `CODEX_HOME` rule. It is documentation/local-Node support only. Runtime
-observation always uses the broker, so an SSH terminal never accidentally
-reads the local server's home directory.
+observation always uses the broker, so the provider never reads a home
+directory the terminal does not actually own.
 
 ## Sidebar mapping
 
@@ -125,6 +125,5 @@ it does not alter this repository.
 Codex ships built in, installed offline and enabled by default. Disable or
 re-enable it in **Extensions** settings without changing Codex sessions. Start
 or resume `codex` normally; a compatible npm release may override the bundled
-floor. It requires Extension API 1.2, Node.js 22+, and the Codex 0.1 mapping.
-If no row appears, verify foreground process and process/filesystem/journal
-capabilities. SSH requires the target helper and otherwise fails closed.
+floor. It requires Extension API 2.0, Node.js 22+, and the Codex 0.1 mapping.
+If no row appears, verify the foreground process is `codex`.

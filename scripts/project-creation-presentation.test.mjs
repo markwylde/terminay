@@ -36,9 +36,8 @@ test('project creation stays in a background pending tab until its terminal is r
 	);
 	assert.match(app, /createInitialTerminalForProject/u);
 	assert.match(app, /desiredProjectId === initialActiveProjectId/u);
-	assert.match(app, /setActiveProjectId\(operation\.projectId\)/u);
+	assert.match(app, /setActiveProjectId\(projectId\)/u);
 	assert.match(app, /else if \(desiredProjectId !== null\)/u);
-	assert.doesNotMatch(app, /Validating This server/u);
 	assert.match(projectCollection, /heldActiveProjectId/u);
 });
 
@@ -46,14 +45,13 @@ test('pending project tabs use a spinner and failures activate their error surfa
 	assert.match(projectTabs, /project-tab-creation-spinner/u);
 	assert.match(projectTabs, /projectTabIsBusy\(project\)/u);
 	assert.match(projectTabs, /project\.creationStatus !== 'loading'/u);
-	assert.match(projectTabs, /Connecting project/u);
+	assert.match(projectTabs, /Creating project/u);
 	assert.match(styles, /@keyframes project-tab-creation-spin/u);
 	assert.match(app, /creationStatus: 'failed'/u);
 	assert.match(app, /displayedActiveProjectId = isPendingProjectFailure/u);
 	assert.match(app, /Project creation failed\./u);
 	assert.match(app, /hydrating:/u);
 	assert.match(controller, /explorerMayLoad\(project\)/u);
-	assert.match(controller, /project\.hydrating === false/u);
 });
 
 test('terminal hydration stays in tab chrome and leaves a blank xterm surface', () => {

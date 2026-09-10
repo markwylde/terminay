@@ -33,13 +33,11 @@ import {
 	createProductionExtensionManagement,
 	createServerAiProviderAdapters,
 	createServerCoreComposition,
-	registerActivatedExtensionProjectEnvironmentRuntimes,
 	FileCatalog,
 	DocumentationCatalog,
 	MdxRuntime,
 	FileContentStreamService,
 	type FileObservationHost,
-	FileProjectEnvironmentStateBackend,
 	GitService,
 	MacroRepository,
 	type NodePtyModuleLike,
@@ -47,9 +45,6 @@ import {
 	OrderedEventJournal,
 	openCanonicalWorkspace,
 	ParakeetRuntime,
-	ProjectEnvironmentRegistry,
-	ProjectEnvironmentRepository,
-	ProjectEnvironmentRouter,
 	RecordingService,
 	type RemoteRegisteredDevice,
 	type ServerCoreComposition,
@@ -526,20 +521,6 @@ async function createServerComposition(
 		defaultProjectRoot: options.projectRoot,
 	});
 	const workspace = workspaceRepository.workspace;
-	const projectEnvironments = new ProjectEnvironmentRepository(
-		new FileProjectEnvironmentStateBackend(
-			join(options.dataRoot, 'project-environments.v1.json'),
-		),
-		options.serverId,
-	);
-	await projectEnvironments.load();
-	const projectEnvironmentRegistry = new ProjectEnvironmentRegistry();
-	const projectEnvironmentRouter = new ProjectEnvironmentRouter({
-		serverId: options.serverId,
-		workspaceSnapshot: () => workspace.state,
-		environmentSnapshot: () => projectEnvironments.state,
-		registry: projectEnvironmentRegistry,
-	});
 	const gitService = new GitService({
 		limits: {
 			maxOutputBytes: 512 * 1024,
@@ -592,15 +573,8 @@ async function createServerComposition(
 		authorityLabel: 'This server',
 		builtInArtifactRoot: resolveBuiltInExtensionArtifactRoot(),
 		vault,
-		projectEnvironments,
 	});
 	extensionHosts = extensions.hosts;
-	registerActivatedExtensionProjectEnvironmentRuntimes({
-		registry: projectEnvironmentRegistry,
-		hosts: extensions.hosts,
-		snapshot: () => projectEnvironments.state,
-		workspaceSnapshot: () => workspace.state,
-	});
 	const git = new ServerGitAdapter({
 		serverId: options.serverId,
 		git: gitService,
@@ -697,8 +671,6 @@ async function createServerComposition(
 			clientId: hello.clientId,
 			authScope: 'admin',
 			permissions: [
-				'environments:read',
-				'environments:manage',
 				'workspace:write',
 				'extensions:read',
 				'extensions:manage',
@@ -710,14 +682,6 @@ async function createServerComposition(
 		activity,
 		agents,
 		workspace,
-		projectEnvironmentRouter,
-		projectEnvironments: {
-			repository: projectEnvironments,
-			thisServerRoot: () => options.projectRoot,
-			...(extensions !== undefined && 'profiles' in extensions
-				? { providers: extensions.profiles }
-				: {}),
-		},
 		workspaceOperations: {
 			prepareProjectRootUpdate: files.prepareProjectRootUpdate,
 		},
@@ -1331,8 +1295,6 @@ function createProtocolServer(
 			clientId: credentials.clientId(credential) ?? clientId,
 			authScope: 'admin',
 			permissions: [
-				'environments:read',
-				'environments:manage',
 				'workspace:write',
 				'extensions:read',
 				'extensions:manage',

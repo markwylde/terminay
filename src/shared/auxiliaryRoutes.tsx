@@ -7,10 +7,6 @@ import type {
 
 export type AuxiliaryRouteRequest =
 	| { readonly kind: 'settings'; readonly sectionId?: string }
-	| {
-			readonly kind: 'project-environments';
-			readonly intent?: ProjectEnvironmentRouteIntent;
-	  }
 	| { readonly kind: 'macros' }
 	| { readonly kind: 'recordings' }
 	| { readonly kind: 'remote-control' }
@@ -32,9 +28,6 @@ export type AuxiliaryRouteRequestHandler = (
 
 export type AuxiliaryRouteController = Readonly<{
 	openSettings: (sectionId?: string) => Promise<void>;
-	openProjectEnvironments: (
-		intent?: ProjectEnvironmentRouteIntent,
-	) => Promise<void>;
 	openMacros: () => Promise<void>;
 	openRecordings: () => Promise<void>;
 	openRemoteControl: () => Promise<void>;
@@ -46,12 +39,6 @@ export type AuxiliaryRouteController = Readonly<{
 		state: Extract<EditWindowState, { readonly kind: 'terminal' }>,
 	) => Promise<TerminalEditWindowResult | null>;
 }>;
-export type ProjectEnvironmentRouteIntent = Readonly<{
-	providerId: string;
-	mode: 'profile' | 'environment';
-	profileId?: string;
-}>;
-
 export type AuxiliaryRouteControllerOptions = Readonly<{
 	onRequest?: AuxiliaryRouteRequestHandler;
 }>;
@@ -71,12 +58,6 @@ export function createAuxiliaryRouteController({
 	return Object.freeze({
 		async openSettings(sectionId) {
 			await requestInPage({ kind: 'settings', sectionId });
-		},
-		async openProjectEnvironments(intent) {
-			await requestInPage({
-				kind: 'project-environments',
-				...(intent === undefined ? {} : { intent }),
-			});
 		},
 		async openMacros() {
 			await requestInPage({ kind: 'macros' });

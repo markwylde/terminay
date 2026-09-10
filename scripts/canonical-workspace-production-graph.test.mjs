@@ -78,7 +78,7 @@ test('development builds the same generated server workspace used by releases', 
 		true,
 	);
 	assert.equal(
-		desktopViteTask.dependsOn.includes('terminay-plugin-ssh#compile'),
+		desktopViteTask.dependsOn.includes('terminay-agent-codex#compile'),
 		true,
 	);
 	assert.doesNotMatch(
@@ -212,7 +212,11 @@ test('renderer-owned workspace seeding is absent from Desktop production code', 
 	);
 	assert.doesNotMatch(main, /ensureLocalWorkspaceSeed/u);
 	assert.doesNotMatch(main, /localWorkspaceSeedPromise/u);
-	assert.match(main, /workspace\.v3\.json/u);
+	assert.match(
+		await read('electron/desktopInstanceIdentity.ts'),
+		/workspace\.v\d+\.json/u,
+		'the Desktop store paths must name the canonical persisted workspace file',
+	);
 	assert.match(main, /openCanonicalWorkspace/u);
 	assert.match(main, /workspaceRepository:\s*embeddedWorkspace/u);
 	const runtime = main.slice(
@@ -222,7 +226,7 @@ test('renderer-owned workspace seeding is absent from Desktop production code', 
 	assert.match(runtime, /createWindow\(\{ deferCanonicalLaunch: true \}\)/u);
 	assert.match(
 		runtime,
-		/openEmbeddedWorkspaceWithRecovery\(embeddedStartupWindow\)/u,
+		/openEmbeddedWorkspaceWithRecovery\(\s*embeddedStartupWindow\b/u,
 	);
 	const initialize = runtime.indexOf('() => authority.initializeWorkspace()');
 	const publish = runtime.indexOf('serverTerminalAuthority = authority');

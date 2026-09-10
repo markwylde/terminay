@@ -101,15 +101,6 @@ export async function openSettingsWindow(
   })
 }
 
-export async function openProjectEnvironmentsWindow(
-  electronApp: ElectronApplication,
-  page: Page,
-): Promise<Page> {
-  return openChildWindow(electronApp, () =>
-    presentNativeRoute(page, '/?auxiliary=project-environments', 'project-environments'),
-  )
-}
-
 export async function openRecordingsWindow(
   electronApp: ElectronApplication,
   page: Page,

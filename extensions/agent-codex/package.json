@@ -45,7 +45,7 @@
     "test:conformance": "npm run compile && node --test test/conformance.test.mjs"
   },
   "peerDependencies": {
-    "@terminay/extension-api": "^1.2.0"
+    "@terminay/extension-api": "^2.0.0"
   },
   "peerDependenciesMeta": {
     "@terminay/extension-api": {
@@ -53,7 +53,7 @@
     }
   },
   "devDependencies": {
-    "@terminay/extension-api": "^1.2.0",
+    "@terminay/extension-api": "^2.0.0",
     "@types/node": "^24.0.0",
     "typescript": "^6.0.0"
   },
@@ -62,7 +62,7 @@
     "id": "com.terminay.agent.codex",
     "displayName": "Codex",
     "description": "Shows process-bound Codex CLI sessions in Terminay's Agents panel.",
-    "api": "^1.2.0",
+    "api": "^2.0.0",
     "engines": {
       "terminay": ">=1.0.0",
       "node": ">=24"
@@ -95,11 +95,6 @@
           ],
           "requiredEnvironmentVariables": [
             "CODEX_HOME"
-          ],
-          "requiredEnvironmentCapabilities": [
-            "process-observation",
-            "filesystem-observation",
-            "agent-journal"
           ]
         }
       ]
