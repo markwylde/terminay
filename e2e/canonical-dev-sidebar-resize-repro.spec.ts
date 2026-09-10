@@ -407,7 +407,7 @@ test('canonical npm run dev retains a rapid Agents/Git resize after mouse-up', a
 	// while retaining the user-reported project/sidebar preference vector.
 	const liveWorkspaceRecord = path.join(
 		os.homedir(),
-		'Library/Application Support/Terminay/workspace.v3.json',
+		'Library/Application Support/Terminay/workspace.v4.json',
 	);
 	if (
 		await access(liveWorkspaceRecord).then(
@@ -417,7 +417,7 @@ test('canonical npm run dev retains a rapid Agents/Git resize after mouse-up', a
 	) {
 		await copyFile(
 			liveWorkspaceRecord,
-			path.join(profileRoot, 'workspace.v3.json'),
+			path.join(profileRoot, 'workspace.v4.json'),
 		);
 	}
 	const tempDir = path.join(profileRoot, 'temp');

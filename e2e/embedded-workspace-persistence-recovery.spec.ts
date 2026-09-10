@@ -56,7 +56,7 @@ for (const fault of ['unreadable', 'invalid', 'uncommittable'] as const) {
 
 		// A failed host startup cannot be repaired by renderer-created identities.
 		await expect(
-			stat(path.join(userDataDir, 'workspace.v3.json')),
+			stat(path.join(userDataDir, 'workspace.v4.json')),
 		).rejects.toMatchObject({ code: 'ENOENT' });
 	});
 }
