@@ -138,7 +138,17 @@ test.describe('file viewer language intelligence', () => {
     const typeError = markers.find((marker) => marker.startLineNumber === 3)
     expect(typeError, JSON.stringify(markers)).toBeDefined()
     expect(typeError?.severity).toBe(8)
-    expect(typeError?.resource).toContain('index.ts')
+    // The editor's model is anonymous (an in-memory URI); the marker must be
+    // on that model rather than on some other resource.
+    const modelUris = await mainWindow.evaluate(() => {
+      const monacoApi = (
+        window as Window & {
+          monaco?: { editor?: { getModels: () => readonly { uri: { toString: () => string } }[] } }
+        }
+      ).monaco
+      return monacoApi?.editor?.getModels().map((model) => model.uri.toString()) ?? []
+    })
+    expect(modelUris).toContain(typeError?.resource)
 
     await mainWindow.locator('.monaco-editor .inputarea').first().click()
     await mainWindow.keyboard.press('Control+End')
