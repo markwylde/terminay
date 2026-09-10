@@ -2,13 +2,13 @@
 
 ## Purpose
 
-Terminay ships its official extensions — SSH, Puzed, Codex, Claude Code, Grok, OpenCode, and omp — as independently publishable npm packages that use only the public Extension API. Every server release contains verified, self-contained artifacts for them so a fresh server materializes and enables them without network access.
+Terminay ships its official extensions — Codex, Claude Code, Grok, OpenCode, omp, and TypeScript — as independently publishable npm packages that use only the public Extension API. Every server release contains verified, self-contained artifacts for them so a fresh server materializes and enables them without network access.
 
 ## Requirements
 
 ### Requirement: Public API boundary for built-in extensions
 
-Terminay's official extensions SHALL live as independently publishable npm packages under the repository's top-level `extensions/` directory. SSH, Puzed, Codex, Claude Code, Grok, OpenCode, and omp SHALL use only the public `@terminay/extension-api`, and SHALL NOT import Server Core, Electron, renderer code, or private workspace modules. A repository boundary check SHALL fail when a built-in extension imports a private Terminay package or reaches a private source path. Public Node.js APIs and declared npm dependencies SHALL be valid extension implementation dependencies.
+Terminay's official extensions SHALL live as independently publishable npm packages under the repository's top-level `extensions/` directory. Codex, Claude Code, Grok, OpenCode, omp, and TypeScript language SHALL use only the public `@terminay/extension-api`, and SHALL NOT import Server Core, Electron, renderer code, or private workspace modules. A repository boundary check SHALL fail when a built-in extension imports a private Terminay package or reaches a private source path. Public Node.js APIs and declared npm dependencies SHALL be valid extension implementation dependencies.
 
 #### Scenario: Private import introduced
 
@@ -36,7 +36,7 @@ Built-in status SHALL describe distribution, not a more privileged runtime tier.
 
 ### Requirement: Package identity and repository participation
 
-Each directory below `extensions/` SHALL be one npm package with its own `package.json`, manifest, source, tests, README, licence, build output policy, and public-package conformance checks. `extensions/ssh` SHALL publish `terminay-plugin-ssh`; `extensions/puzed` SHALL publish `terminay-plugin-puzed`; `extensions/agent-codex` SHALL publish `terminay-agent-codex`; `extensions/agent-claude-code` SHALL publish `terminay-agent-claude-code`; `extensions/agent-grok` SHALL publish `terminay-agent-grok`; and `extensions/agent-omp` SHALL publish `terminay-agent-omp`. The directories SHALL participate in the repository's npm workspace graph while remaining packable and testable as ordinary public npm projects. Their runtime dependency on `@terminay/extension-api` SHALL follow the public peer and development dependency convention. Published packages SHALL contain no workspace-relative imports or undeclared files and SHALL pass conformance against their packed tarball.
+Each directory below `extensions/` SHALL be one npm package with its own `package.json`, manifest, source, tests, README, licence, build output policy, and public-package conformance checks. `extensions/agent-codex` SHALL publish `terminay-agent-codex`; `extensions/agent-claude-code` SHALL publish `terminay-agent-claude-code`; `extensions/agent-grok` SHALL publish `terminay-agent-grok`; `extensions/agent-omp` SHALL publish `terminay-agent-omp`; and `extensions/language-typescript` SHALL publish `terminay-language-typescript` under the extension id `com.terminay.language.typescript`. The directories SHALL participate in the repository's npm workspace graph while remaining packable and testable as ordinary public npm projects. Their runtime dependency on `@terminay/extension-api` SHALL follow the public peer and development dependency convention. Published packages SHALL contain no workspace-relative imports or undeclared files and SHALL pass conformance against their packed tarball.
 
 #### Scenario: Packing a built-in package
 
@@ -48,9 +48,14 @@ Each directory below `extensions/` SHALL be one npm package with its own `packag
 - **WHEN** the repository workspace graph is resolved
 - **THEN** each `extensions/` package participates while remaining independently packable and testable
 
+#### Scenario: TypeScript language package identity
+
+- **WHEN** the TypeScript language extension is resolved
+- **THEN** `extensions/language-typescript` publishes `terminay-language-typescript` under the extension id `com.terminay.language.typescript`
+
 ### Requirement: Agent extension package documentation
 
-The package README for every agent extension SHALL document the supported CLI and provider versions; foreground-process recognition and exact terminal-binding evidence; provider-owned files and bounded fields it reads; canonical lifecycle, model, title, tool, wait, and subagent mappings; privacy exclusions and information that never crosses the extension host; unsupported provider behaviour and fallback behaviour; platform assumptions and environment capabilities; and fixture, compatibility, and real-CLI verification commands.
+The package README for every agent extension SHALL document the supported CLI and provider versions; foreground-process recognition and exact terminal-binding evidence; provider-owned files and bounded fields it reads; canonical lifecycle, model, title, tool, wait, and subagent mappings; privacy exclusions and information that never crosses the extension host; unsupported provider behaviour and fallback behaviour; platform assumptions; and fixture, compatibility, and real-CLI verification commands.
 
 #### Scenario: Reviewing an agent package README
 
@@ -68,16 +73,21 @@ The five agent packages SHALL be the reference implementations for third-party a
 
 ### Requirement: Release artifact inventory
 
-The release build SHALL pack each built-in extension and its production dependency closure into a deterministic artifact inventory. The inventory SHALL record extension id, npm package name, and exact version; manifest and Extension API compatibility; package and unpacked-file digests; production dependency lock and inventory digests; permissions and contributions; and the release identity that contains the artifact.
+The release build SHALL pack each built-in extension and its production dependency closure into a deterministic artifact inventory. `terminay-language-typescript` SHALL be one of the packed built-ins, and its bundled TypeScript and language server SHALL be part of its production dependency closure. The inventory SHALL record extension id, npm package name, and exact version; manifest and Extension API compatibility; package and unpacked-file digests; production dependency lock and inventory digests; permissions and contributions; and the release identity that contains the artifact.
 
 #### Scenario: Building a release
 
 - **WHEN** the release build packs the built-in extensions
 - **THEN** the inventory records extension id, package name, exact version, manifest and API compatibility, package and unpacked-file digests, dependency lock and inventory digests, permissions and contributions, and the containing release identity
 
+#### Scenario: TypeScript language extension in the inventory
+
+- **WHEN** the release build packs the built-in extensions
+- **THEN** `terminay-language-typescript` appears in the inventory with its bundled TypeScript and language server inside its recorded production dependency closure
+
 ### Requirement: Identical artifacts across distributions
 
-The same inventory format and package bytes SHALL be used by the Electron and standalone Terminay Server archives. Release assembly SHALL fail when a built-in is missing, stale, non-conformant, contains an unapproved native or lifecycle requirement, differs between server distributions, or imports a private API. No build SHALL silently fetch a built-in extension from npm.
+The same inventory format and package bytes SHALL be used by the Electron and standalone Terminay Server archives, `terminay-language-typescript` included. Release assembly SHALL fail when a built-in is missing, stale, non-conformant, contains an unapproved native or lifecycle requirement, differs between server distributions, or imports a private API. No build SHALL silently fetch a built-in extension from npm.
 
 #### Scenario: Distribution drift
 
@@ -105,12 +115,12 @@ Built-ins SHALL use the normal immutable extension-slot format, public manifest 
 
 ### Requirement: First-run materialization
 
-On first start, the server SHALL materialize the release's verified artifacts into server-owned slots and SHALL record their origin as `built-in`. Materialization SHALL be idempotent and crash-safe. A clean Electron or standalone-server installation SHALL expose all seven built-ins without npm or network access.
+On first start, the server SHALL materialize the release's verified artifacts into server-owned slots and SHALL record their origin as `built-in`. Materialization SHALL be idempotent and crash-safe. A clean Electron or standalone-server installation SHALL expose all six built-ins, `terminay-language-typescript` among them, without npm or network access.
 
 #### Scenario: Clean installation
 
 - **WHEN** a clean Electron or standalone server starts for the first time
-- **THEN** all seven built-ins are materialized from verified release artifacts without npm or network access
+- **THEN** all six built-ins, including the TypeScript language extension, are materialized from verified release artifacts without npm or network access
 
 #### Scenario: Interrupted materialization
 
@@ -172,45 +182,17 @@ The immutable artifact shipped with the current release SHALL NOT be physically 
 
 ### Requirement: Failed built-in isolation and presentation
 
-An incompatible or failed built-in SHALL be represented like any other failed extension and SHALL NOT prevent **This server** or unrelated extensions from becoming ready. Dependent extensions SHALL show the ordinary dependency failure. Built-in extensions SHALL appear once in Settings with a **Built in** and **Official** origin, and SHALL NOT appear as duplicate catalogue and installed entries.
+An incompatible or failed built-in SHALL be represented like any other failed extension and SHALL NOT prevent the server or unrelated extensions from becoming ready. Dependent extensions SHALL show the ordinary dependency failure. Built-in extensions SHALL appear once in Settings with a **Built in** and **Official** origin, and SHALL NOT appear as duplicate catalogue and installed entries.
 
 #### Scenario: Incompatible built-in
 
 - **WHEN** a built-in is incompatible or fails to activate
-- **THEN** **This server** and unrelated extensions still become ready and dependent extensions show the ordinary dependency failure
+- **THEN** the server and unrelated extensions still become ready and dependent extensions show the ordinary dependency failure
 
 #### Scenario: Settings listing
 
 - **WHEN** a user views Settings
 - **THEN** each built-in appears exactly once, marked **Built in** and **Official**
-
-### Requirement: Agent extension composition with project environments
-
-Agent extensions SHALL contribute agent providers and SHALL NOT contribute project environments. At runtime they SHALL be composed with the exact project environment that owns a terminal, and the environment SHALL supply only the observation capabilities it actually implements. **This server** SHALL supply native local observation, and SSH or another provider MAY supply equivalent remote observation. Local admission SHALL expose only the capabilities that provider declared, even when **This server** offers additional observation capabilities.
-
-#### Scenario: Agent on a remote environment
-
-- **WHEN** an agent provider is composed with an SSH or other remote project environment
-- **THEN** it receives only the observation capabilities that environment implements
-
-#### Scenario: Declared capability limit
-
-- **WHEN** an agent provider is admitted locally
-- **THEN** only the capabilities that provider declared are exposed, even where **This server** offers more
-
-### Requirement: Disabling an agent extension
-
-Disabling an agent extension SHALL immediately stop its new admissions and bounded observers. Existing canonical entries for that provider SHALL be retired and the terminal SHALL return to generic activity fallback. Disabling SSH or Puzed SHALL affect their environments through the existing dependency and in-use rules and SHALL NOT implicitly disable unrelated agent packages.
-
-#### Scenario: Agent extension disabled
-
-- **WHEN** a user disables an agent extension
-- **THEN** new admissions and bounded observers stop immediately, existing canonical entries for that provider are retired, and affected terminals return to generic activity fallback
-
-#### Scenario: Disabling an environment extension
-
-- **WHEN** a user disables SSH or Puzed
-- **THEN** their environments follow the existing dependency and in-use rules and unrelated agent packages remain enabled
 
 ### Requirement: Re-evaluation when an agent host becomes available
 
@@ -316,3 +298,64 @@ The development launch path SHALL stage the packed built-in artifacts before Ele
 
 - **WHEN** an ordinary startup failure occurs
 - **THEN** it is reported as a startup failure rather than as persisted-workspace recovery
+
+### Requirement: Agent extension composition with the server host
+
+Agent extensions SHALL contribute agent providers only. At runtime they SHALL be
+composed with the server host that owns a terminal, and that host SHALL supply
+native observation for every terminal. Admission SHALL expose only the
+observation the provider declared it uses.
+
+#### Scenario: Agent composed with the server host
+
+- **WHEN** an agent provider is admitted for a terminal
+- **THEN** it is composed with the server host that owns that terminal and
+  receives native observation
+
+#### Scenario: Provider contributes only an agent provider
+
+- **WHEN** an agent extension's manifest is validated
+- **THEN** it contributes agent providers and no other provider kind
+
+### Requirement: Disabling an agent extension is scoped to that extension
+
+Disabling an agent extension SHALL immediately stop its new admissions and bounded observers. Existing canonical entries for that provider SHALL be retired and the terminal SHALL return to generic activity fallback. Disabling one agent extension SHALL NOT implicitly disable unrelated agent packages.
+
+#### Scenario: Agent extension disabled
+
+- **WHEN** a user disables an agent extension
+- **THEN** new admissions and bounded observers stop immediately, existing canonical entries for that provider are retired, and affected terminals return to generic activity fallback
+
+#### Scenario: Unrelated packages stay enabled
+
+- **WHEN** a user disables one agent extension
+- **THEN** unrelated agent packages remain enabled
+
+### Requirement: TypeScript language extension serves the project's TypeScript
+
+`terminay-language-typescript` SHALL contribute a language server that serves
+`.ts`, `.tsx`, `.js`, and `.jsx` files. It SHALL launch
+`typescript-language-server` against the TypeScript installed in the project when
+the project has one, and against the TypeScript bundled with the extension
+otherwise, and SHALL report which of the two it used. Its behaviour SHALL be
+proven against the real `typescript-language-server` in the package's
+conformance tests rather than against a stub.
+
+#### Scenario: Project with its own TypeScript
+
+- **WHEN** a language session starts for a project that has TypeScript installed
+- **THEN** `typescript-language-server` runs against the project's TypeScript and
+  the session reports that it used the project's TypeScript
+
+#### Scenario: Project without TypeScript
+
+- **WHEN** a language session starts for a project with no TypeScript installed
+- **THEN** the extension's bundled TypeScript is used and the session reports that
+  it used the bundled TypeScript
+
+#### Scenario: Conformance against the real language server
+
+- **WHEN** the package's conformance tests run
+- **THEN** they exercise the real `typescript-language-server` and assert
+  diagnostics, completion, hover, and definition for `.ts`, `.tsx`, `.js`, and
+  `.jsx` files

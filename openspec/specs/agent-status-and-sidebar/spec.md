@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Terminay composes installed coding-agent extension providers with project environments and reduces their canonical lifecycle events into provider-neutral agent entries that drive terminal-tab status, a project-scoped Agents pane with roots and in-process subagents, and the header activity dropdown.
+Terminay composes installed coding-agent extension providers with the server's own terminals and reduces their canonical lifecycle events into provider-neutral agent entries that drive terminal-tab status, a project-scoped Agents pane with roots and in-process subagents, and the header activity dropdown.
 
 ## Requirements
 
@@ -22,7 +22,7 @@ Terminay SHALL reduce provider lifecycle events into provider-neutral agent entr
 
 ### Requirement: Server-owned authorization and client subscription
 
-Terminal and project authorization, environment routing, canonical validation, ordering, snapshots, acknowledgement, and terminal/project mapping SHALL live in Terminay Server. Provider-specific discovery, process binding, incremental reading, version selection, and native-record normalization SHALL live in separately hosted extensions using only the public Extension API. Connected clients SHALL subscribe to the same ordered reduced snapshot and SHALL NOT read provider journals or create competing agent state.
+Terminal and project authorization, canonical validation, ordering, snapshots, acknowledgement, and terminal/project mapping SHALL live in Terminay Server. Provider-specific discovery, process binding, incremental reading, version selection, and native-record normalization SHALL live in separately hosted extensions using only the public Extension API. Connected clients SHALL subscribe to the same ordered reduced snapshot and SHALL NOT read provider journals or create competing agent state. A client that holds several connections SHALL subscribe once per connection and SHALL keep each server's ordered reduced snapshot separate; it SHALL NEVER merge two servers' snapshots into one ordered stream or acknowledge an entry through a connection other than the one that published it.
 
 #### Scenario: Client rendering agent state
 
@@ -33,6 +33,11 @@ Terminal and project authorization, environment routing, canonical validation, o
 
 - **WHEN** an extension observes a provider
 - **THEN** it uses only the public Extension API and does not perform terminal or project authorization
+
+#### Scenario: Subscriptions on several connections
+
+- **WHEN** a client attaches two servers that each publish agent entries
+- **THEN** it holds one subscription per connection, keeps each snapshot ordered by its own server, and acknowledges each entry on the connection that published it
 
 ### Requirement: Provider journal privacy boundary
 
@@ -45,31 +50,17 @@ Provider journals and stores SHALL be private privileged inputs. Their raw recor
 
 ### Requirement: Agent extension observation environment
 
-Foreground-process and journal discovery SHALL be public project-environment capabilities. Agent extensions SHALL be ordinary trusted Node.js programs that, on **This server**, combine the host-issued terminal context including the PTY shell PID with Node process and filesystem APIs through the public observation helpers. Those helpers run in the extension child, SHALL NOT be described as a sandbox, and SHALL NOT round-trip local process-listing snapshots through host IPC. The child SHALL inherit a bounded host environment covering `PATH`, `HOME`, and locale so the same process-inspection binaries still resolve, and installer-style sterile `NODE_OPTIONS` SHALL NOT be applied to agent observation.
+Foreground-process and journal discovery SHALL be observation the server provides for every terminal. Agent extensions SHALL be ordinary trusted Node.js programs that combine the host-issued terminal context including the PTY shell PID with Node process and filesystem APIs through the public observation helpers. Those helpers run in the extension child, SHALL NOT be described as a sandbox, and SHALL NOT round-trip local process-listing snapshots through host IPC. The child SHALL inherit a bounded host environment covering `PATH`, `HOME`, and locale so the same process-inspection binaries still resolve, and installer-style sterile `NODE_OPTIONS` SHALL NOT be applied to agent observation.
 
 #### Scenario: Observing on the server host
 
-- **WHEN** an agent extension observes a terminal on **This server**
+- **WHEN** an agent extension observes a terminal
 - **THEN** it inspects processes and files in its own child using the host-issued terminal context, without routing those snapshots through host IPC
 
 #### Scenario: Child environment
 
 - **WHEN** the extension child is spawned for agent observation
 - **THEN** it inherits a bounded `PATH`, `HOME`, and locale and is not given sterile `NODE_OPTIONS`
-
-### Requirement: Non-local environments use the observation broker
-
-SSH and other non-local environments SHALL NOT use the server host's process tree or home directory. They SHALL use the environment-routed observation broker when the environment advertises that capability; otherwise observation SHALL be unavailable.
-
-#### Scenario: SSH environment advertising observation
-
-- **WHEN** a project's SSH environment advertises the observation capability
-- **THEN** agent observation is routed through the environment-routed observation broker
-
-#### Scenario: Environment without the capability
-
-- **WHEN** a non-local environment does not advertise the observation capability
-- **THEN** agent observation is unavailable for its terminals and the server host's process tree is not used
 
 ### Requirement: Foreground process matching
 
@@ -252,7 +243,7 @@ A restored session SHALL appear as the same root when it was already known, SHAL
 
 ### Requirement: Exact terminal identity binding
 
-For an environment exposing proven native process observation, Terminay SHALL record the spawned shell PID for the immutable `serverId`/`projectId`/`projectEnvironmentId`/`sessionId` terminal identity. When a supported provider becomes the foreground process, that environment's privileged host SHALL obtain the provider's documented terminal identity evidence. Codex and Grok SHALL use an eligible writable journal below the exact PTY process tree, or Grok's pid-keyed `active_sessions.json` registry for that same process tree. OpenCode SHALL use its writable session store held by that same process tree together with the `opencode` process's own command line, whose `--session <id>` names the root exactly and whose `--continue` is the CLI's own newest-in-directory rule; with neither proven and no row created after the process started, it SHALL bind nothing. Claude Code SHALL use its pid-keyed session file below `.claude/sessions`, joined to the exact `claude` descendant of the PTY. omp SHALL use its terminal-scoped session association. A provider whose CLI holds no persistent writable handle on its own journal SHALL NOT depend on open-handle evidence as its only binding rule. That same rule SHALL apply to a restored session: a resume, continue, or picker command SHALL NOT be refused solely because the restored journal is not held open. Environments without the required evidence SHALL use the terminal-activity fallback.
+Terminay SHALL record the spawned shell PID for the immutable `serverId`/`projectId`/`sessionId` terminal identity. When a supported provider becomes the foreground process, the server's privileged host SHALL obtain the provider's documented terminal identity evidence. Codex and Grok SHALL use an eligible writable journal below the exact PTY process tree, or Grok's pid-keyed `active_sessions.json` registry for that same process tree. OpenCode SHALL use its writable session store held by that same process tree together with the `opencode` process's own command line, whose `--session <id>` names the root exactly and whose `--continue` is the CLI's own newest-in-directory rule; with neither proven and no row created after the process started, it SHALL bind nothing. Claude Code SHALL use its pid-keyed session file below `.claude/sessions`, joined to the exact `claude` descendant of the PTY. omp SHALL use its terminal-scoped session association. A provider whose CLI holds no persistent writable handle on its own journal SHALL NOT depend on open-handle evidence as its only binding rule. That same rule SHALL apply to a restored session: a resume, continue, or picker command SHALL NOT be refused solely because the restored journal is not held open. A session without the required evidence SHALL use the terminal-activity fallback.
 
 Where a provider records which of its sessions a given OS process holds, that record SHALL be the binding evidence for that provider, and no rule that compares files to one another SHALL be consulted beside or beneath it.
 
@@ -278,7 +269,7 @@ Where a provider records which of its sessions a given OS process holds, that re
 
 #### Scenario: Missing evidence
 
-- **WHEN** the environment cannot supply the required identity evidence
+- **WHEN** the required identity evidence cannot be obtained for a session
 - **THEN** the terminal uses terminal-activity fallback
 
 ### Requirement: A session's journal is resolved by the session its process names
@@ -1118,7 +1109,7 @@ Every bound root SHALL carry a label from the moment it is created. Until the pr
 
 ### Requirement: Agents pane presentation
 
-The **Agents** pane SHALL be the Agents sidebar group's collapsible pane. It SHALL show only roots whose exact activation terminal belongs to the current project and SHALL nest children beneath them. Rows SHALL use stable ordering and the existing tree geometry. Missing metadata SHALL be omitted and prompts SHALL be bounded. A generic terminal tab name SHALL NOT be used as the agent title: an untitled bound root SHALL use the provider label until a provider title, custom terminal name, or prompt is available. The provider label SHALL be the extension contribution `displayName`, and the Agents UI SHALL NOT keep a hardcoded map of provider ids.
+The **Agents** pane SHALL be the Agents sidebar group's collapsible pane. It SHALL show only roots whose exact activation terminal belongs to the current project on that project's own server, keyed by the pair of server and project, and SHALL nest children beneath them. Rows SHALL use stable ordering and the existing tree geometry. Missing metadata SHALL be omitted and prompts SHALL be bounded. A generic terminal tab name SHALL NOT be used as the agent title: an untitled bound root SHALL use the provider label until a provider title, custom terminal name, or prompt is available. The provider label SHALL be the extension contribution `displayName`, and the Agents UI SHALL NOT keep a hardcoded map of provider ids.
 
 #### Scenario: Root in another project
 
@@ -1129,6 +1120,11 @@ The **Agents** pane SHALL be the Agents sidebar group's collapsible pane. It SHA
 
 - **WHEN** a bound root has no provider title, custom terminal name, or prompt
 - **THEN** it displays the provider's extension contribution `displayName` rather than a generic terminal tab name
+
+#### Scenario: Same project id on another attached server
+
+- **WHEN** another attached server holds a project whose id equals the current project's id and has a bound root
+- **THEN** that root is not shown in the current project's Agents pane
 
 ### Requirement: Row activation
 
@@ -1179,7 +1175,7 @@ The agent status setting and observation pipeline SHALL be independent from the 
 
 ### Requirement: Terminal tab and header status surfaces
 
-Bound roots SHALL render the canonical RAG glyph on terminal tabs for `working` always, and for `waiting`, `blocked`, and `done` only while those entries are unacknowledged. The header SHALL aggregate unacknowledged meaningful entries, giving waiting and blocked priority, keeping done until acknowledged, and optionally showing working for navigation.
+Bound roots SHALL render the canonical RAG glyph on terminal tabs for `working` always, and for `waiting`, `blocked`, and `done` only while those entries are unacknowledged. The header SHALL aggregate unacknowledged meaningful entries from every attached connection, giving waiting and blocked priority, keeping done until acknowledged, and optionally showing working for navigation. Every aggregated entry SHALL stay keyed by its server and project, and activating one SHALL act on that entry's own server.
 
 #### Scenario: Bound root on a tab
 
@@ -1201,9 +1197,14 @@ Bound roots SHALL render the canonical RAG glyph on terminal tabs for `working` 
 - **WHEN** several unacknowledged entries exist
 - **THEN** waiting and blocked entries take priority in the header aggregate and done entries remain until acknowledged
 
+#### Scenario: Entries from two attached servers
+
+- **WHEN** two attached servers each hold an unacknowledged waiting entry
+- **THEN** the header aggregate includes both, each row keyed by its server and project, and activating one acts only on that server
+
 ### Requirement: Header activity dropdown count badges are fixed-size circles
 
-The header activity dropdown button SHALL present up to three count badges, one each for attention, finished unviewed, and working terminals, each shown only when its count is above zero. Every count badge SHALL be a circle of one fixed size regardless of the number it displays, with the number centred both vertically and horizontally. The font size SHALL step down as the digit count grows so the circle never widens, and counts above 99 SHALL display as `99+`. The project tab activity count badge SHALL share the same circle size and text treatment so the two surfaces look identical.
+The header activity dropdown button SHALL present up to three count badges, one each for attention, finished unviewed, and working terminals, each shown only when its count is above zero. Each count SHALL be the number of matching terminals across every attached connection, and the terminals behind it SHALL be listed as rows keyed by server and project. Every count badge SHALL be a circle of one fixed size regardless of the number it displays, with the number centred both vertically and horizontally. The font size SHALL step down as the digit count grows so the circle never widens, and counts above 99 SHALL display as `99+`. The project tab activity count badge SHALL share the same circle size and text treatment so the two surfaces look identical.
 
 #### Scenario: Single digit
 
@@ -1219,6 +1220,11 @@ The header activity dropdown button SHALL present up to three count badges, one 
 
 - **WHEN** more than 99 terminals have finished unviewed activity
 - **THEN** the green badge reads `99+` and its width still equals its height
+
+#### Scenario: Counting across attached servers
+
+- **WHEN** one attached server has two working terminals and another has one
+- **THEN** the amber badge reads `3` and the dropdown lists three rows, each naming its own server and project
 
 ### Requirement: Agent authority isolation between server instances
 
@@ -1375,20 +1381,6 @@ A provider SHALL publish a child only when its native data supplies a stable chi
 - **WHEN** a provider publishes a child's completion
 - **THEN** it does so from matching authoritative evidence rather than from position, title, prompt, or timing
 
-### Requirement: Typed unavailable outcome for unsupported environments
-
-When a terminal's project environment does not advertise an observation capability a provider requires, the provider SHALL return a typed unavailable outcome naming a safe reason, and SHALL NOT throw a raw SSH, filesystem, or provider error into the UI. Terminay SHALL keep generic terminal activity active for that terminal.
-
-#### Scenario: Missing environment capability
-
-- **WHEN** a required observation capability is absent from a terminal's environment
-- **THEN** the provider returns a typed unavailable outcome with a safe reason
-
-#### Scenario: Activity continues
-
-- **WHEN** authoritative agent observation is unavailable for a terminal
-- **THEN** generic terminal activity stays active for that terminal
-
 ### Requirement: Session identity comes only from provider evidence
 
 A display title, current working directory, timestamp, or nearest filename SHALL NOT be a provider session identity. A provider SHALL bind a session from evidence its own native data makes authoritative, and Terminay SHALL validate that every handle that evidence references was issued by the terminal context performing the binding.
@@ -1403,3 +1395,17 @@ A display title, current working directory, timestamp, or nearest filename SHALL
 - **WHEN** a provider binds a session referencing file or process handles
 - **THEN** Terminay validates each handle was issued by that terminal context
 >>>>>>> origin/main
+
+### Requirement: Typed unavailable outcome when a provider cannot observe
+
+When a provider cannot obtain the evidence it requires for a terminal, it SHALL return a typed unavailable outcome naming a safe reason, and SHALL NOT throw a raw filesystem or provider error into the UI. Terminay SHALL keep generic terminal activity active for that terminal.
+
+#### Scenario: Provider cannot obtain its evidence
+
+- **WHEN** a provider cannot obtain the observation evidence it requires for a terminal
+- **THEN** the provider returns a typed unavailable outcome with a safe reason
+
+#### Scenario: Activity continues
+
+- **WHEN** authoritative agent observation is unavailable for a terminal
+- **THEN** generic terminal activity stays active for that terminal
