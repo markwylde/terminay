@@ -11,12 +11,12 @@ const EXTENSION = "com.terminay.built-in-fixture";
 const INTEGRITY = `sha512-${Buffer.alloc(64, 3).toString("base64")}`;
 
 function manifest() {
-  return { manifestVersion: 1, id: EXTENSION, displayName: "Built in fixture", api: "^1.0.0", engines: { terminay: ">=1", node: ">=22" }, entrypoint: "dist/extension.js", permissions: ["network"], contributes: { projectEnvironments: [{ id: `${EXTENSION}/provider`, displayName: "Fixture", capabilities: ["terminal"] }] } };
+  return { manifestVersion: 1, id: EXTENSION, displayName: "Built in fixture", api: "^2.0.0", engines: { terminay: ">=1", node: ">=22" }, entrypoint: "dist/extension.js", permissions: ["agent-observation"], contributes: { agentProviders: [{ id: `${EXTENSION}/cli`, displayName: "Fixture" }] } };
 }
 
 function tree(version, metadata = manifest()) {
   const packageJson = JSON.stringify({ name: PACKAGE, version, type: "module", exports: { ".": "./dist/extension.js" }, terminay: metadata });
-  const source = `export function activate(context) { context.registerProjectEnvironmentProvider({ providerId: "${EXTENSION}/provider", displayName: "Fixture", capabilities: ["terminal"] }); }\n`;
+  const source = `export function activate(context) { context.agents.registerProvider("${EXTENSION}/cli", { mappingVersion: "v1", matchesForeground() { return true; }, async observe() { return { state: "not-bound" }; } }); }\n`;
   const lock = JSON.stringify({ lockfileVersion: 3, packages: { "": {}, [`node_modules/${PACKAGE}`]: { version, resolved: `file:${PACKAGE}-${version}.tgz`, integrity: INTEGRITY } } });
   const files = [["package-lock.json", lock], [`node_modules/${PACKAGE}/package.json`, packageJson], [`node_modules/${PACKAGE}/dist/extension.js`, source]];
   const inventory = files.map(([path, body]) => ({ path, size: Buffer.byteLength(body), hash: createHash("sha256").update(body).digest("hex") })).sort((a, b) => a.path.localeCompare(b.path));
@@ -72,7 +72,7 @@ test("post-start reconciliation hot-activates a newly materialized enabled built
     value.builtIns.available = false;
     const management = createDefaultExtensionManagement({ dataRoot: value.dataRoot, authorityLabel: "Test server", builtIns: value.builtIns });
     await management.initialize();
-    assert.deepEqual(management.hosts.providerDefinitions(), []);
+    assert.deepEqual(management.hosts.agentProviderContributions(), []);
 
     value.builtIns.available = true;
     // The installer is also used by release/runtime recovery paths, so its
@@ -80,7 +80,7 @@ test("post-start reconciliation hot-activates a newly materialized enabled built
     const state = await management.installer.reconcileBuiltIns();
     assert.equal(state.extensions[EXTENSION].state, "installed");
     assert.equal(state.extensions[EXTENSION].enabled, true);
-    assert.deepEqual(management.hosts.providerDefinitions().map(({ providerId }) => providerId), [`${EXTENSION}/provider`]);
+    assert.deepEqual(management.hosts.agentProviderContributions().map(({ id }) => id), [`${EXTENSION}/cli`]);
     await management.hosts.shutdown();
   } finally { await value.cleanup(); }
 });

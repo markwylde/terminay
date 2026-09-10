@@ -187,9 +187,8 @@ export async function createConformanceHarness(options) {
 
 	await options.extension.activate({
 		extensionId: options.providerId,
-		apiVersion: '1.2.0',
+		apiVersion: '2.0.0',
 		paths: { configuration: pty.cwd, data: pty.cwd, cache: pty.cwd },
-		registerProjectEnvironmentProvider() {},
 		agents: {
 			registerProvider(providerId, runtime) {
 				registrations.set(providerId, runtime);
@@ -240,13 +239,11 @@ export async function createConformanceHarness(options) {
 				contextId: randomUUID(),
 				serverId: 'conformance',
 				projectId: 'conformance',
-				projectEnvironmentId: 'this-server',
 				terminalSessionId: randomUUID(),
 				terminalIncarnationId: randomUUID(),
 				providerId: options.providerId,
 				shellPid: pty.shellPid,
 			},
-			['process-observation', 'filesystem-observation', 'agent-journal'],
 			controller.signal,
 		);
 		// The host supplies the foreground process and receives the binding over
@@ -275,7 +272,9 @@ export async function createConformanceHarness(options) {
 			return undefined;
 		}
 		if (result?.state !== 'bound' || !('source' in result)) {
-			log(`observe: ${result?.state ?? 'nothing'}${result?.reason ? ` (${result.reason})` : ''}`);
+			log(
+				`observe: ${result?.state ?? 'nothing'}${result?.reason ? ` (${result.reason})` : ''}`,
+			);
 			controller.abort();
 			return undefined;
 		}

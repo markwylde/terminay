@@ -348,22 +348,8 @@ export function ProjectTabList({
 									<span
 										className="project-tab-creation-spinner"
 										role="img"
-										aria-label={
-											project.creationStatus === 'loading'
-												? 'Creating project'
-												: 'Connecting project'
-										}
+										aria-label="Creating project"
 									/>
-								) : project.projectEnvironmentId &&
-									project.projectEnvironmentId !== 'terminay:this-server' ? (
-									<span
-										className={`project-tab-environment project-tab-environment--${project.environmentStatus ?? 'ready'}`}
-										role="img"
-										aria-label={`${project.environmentLabel ?? 'Remote environment'} — ${project.environmentStatus ?? 'ready'}`}
-										title={`${project.environmentLabel ?? 'Remote environment'} — ${project.environmentStatus ?? 'ready'}`}
-									>
-										⇄
-									</span>
 								) : null}
 								{project.creationStatus === undefined && project.emoji ? (
 									<span className="project-tab-emoji" aria-hidden="true">

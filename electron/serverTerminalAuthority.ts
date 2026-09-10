@@ -51,9 +51,8 @@ import type {
 } from '../packages/server-core/src/extensions/diagnostics';
 import {
 	createDefaultExtensionManagement,
-	createThisServerAgentObservationAdapter,
+	createLocalAgentObservationAdapter,
 	createProductionExtensionManagement,
-	registerActivatedExtensionProjectEnvironmentRuntimes,
 } from '../packages/server-core/src/extensions/index';
 import {
 	CanonicalProjectPathResolver,
@@ -80,12 +79,6 @@ import {
 	type MdxRuntimeProjectContext,
 	ServerMdxRuntimeAdapter,
 } from '../packages/server-core/src/mdxRuntime/index';
-import {
-	createInitialProjectEnvironmentState,
-	ProjectEnvironmentRegistry,
-	ProjectEnvironmentRepository,
-	ProjectEnvironmentRouter,
-} from '../packages/server-core/src/projectEnvironment/index';
 import type { ServerSettingsRepository } from '../packages/server-core/src/settings/repository';
 import type { ServerVaultComposition } from '../packages/server-core/src/settings/vaultComposition';
 import type { ShellProfileCatalogueService } from '../packages/server-core/src/shellProfiles/catalogue';
@@ -110,9 +103,7 @@ import type {
 } from '../packages/server-core/src/types';
 import {
 	createInitialWorkspace,
-	THIS_SERVER_ENVIRONMENT_ID,
 	type WorkspaceCommand,
-	type WorkspaceProject,
 	WorkspaceStore,
 } from '../packages/server-core/src/workspace';
 import type { WorkspaceRepository } from '../packages/server-core/src/workspaceRepository';
@@ -302,7 +293,6 @@ export interface ServerTerminalAuthorityOptions {
 	readonly defaultProjectRoot?: () => string;
 	/** Host-owned per-session environment added after profile resolution. */
 	readonly terminalLaunchEnvironmentFor?: ServerCoreCompositionOptions['terminalLaunchEnvironmentFor'];
-	readonly projectEnvironmentRepository?: ProjectEnvironmentRepository;
 	/** Already-loaded canonical repository. Production hosts must inject this;
 	 * the in-memory default remains available only to focused authority tests. */
 	readonly workspaceRepository?: WorkspaceRepository /** Desktop provider adapter retained behind the server protocol while the
@@ -505,25 +495,6 @@ export class ServerTerminalAuthority {
 				throw new TypeError('agent is invalid');
 			return agent;
 		};
-		const projectEnvironments =
-			options.projectEnvironmentRepository ??
-			new ProjectEnvironmentRepository(
-				{
-					async load() {
-						return undefined;
-					},
-					async commit() {},
-				},
-				options.serverId,
-				createInitialProjectEnvironmentState(options.serverId),
-			);
-		const projectEnvironmentRegistry = new ProjectEnvironmentRegistry();
-		const projectEnvironmentRouter = new ProjectEnvironmentRouter({
-			serverId: options.serverId,
-			workspaceSnapshot: () => this.workspace.state,
-			environmentSnapshot: () => projectEnvironments.state,
-			registry: projectEnvironmentRegistry,
-		});
 		const fileObservations = new ServerFileObservationAdapter({
 			serverId: options.serverId,
 			eventJournal,
@@ -623,7 +594,7 @@ export class ServerTerminalAuthority {
 			// No extension can acquire a terminal, PID, or local path through it.
 			(() => {
 				let extensionAgents: ExtensionAgentRuntimeRegistry | undefined;
-				const observation = createThisServerAgentObservationAdapter({
+				const observation = createLocalAgentObservationAdapter({
 					resolveTerminal: (context) => extensionAgents?.observationTerminal(context),
 				});
 				const broker = createExtensionAgentBroker(this.agents, {
@@ -661,13 +632,11 @@ export class ServerTerminalAuthority {
 									: { childEntrypoint: options.extensionHostChildEntrypoint }),
 								...(options.builtInExtensionArtifactRoot === undefined ? {} : { builtInArtifactRoot: options.builtInExtensionArtifactRoot }),
 								vault: options.vault,
-								projectEnvironments,
 							});
 				if (management !== undefined) {
 						extensionAgents = new ExtensionAgentRuntimeRegistry({
 						hosts: management.hosts,
 						agents: this.agents,
-						projectEnvironmentRouter,
 						topologySignature: (context, signal) => observation.topologySignature(context, signal),
 						onAdmissionFailure: (failure) => {
 							try { options.onAgentAdmissionFailure?.(failure); } catch { /* host diagnostics cannot affect terminal fallback */ }
@@ -686,21 +655,6 @@ export class ServerTerminalAuthority {
 		const extensionManagement = extensionRuntime.management;
 		const extensionAgentRuntime = extensionRuntime.extensionAgents;
 		extensionAgentRuntimeForLabels = extensionAgentRuntime;
-		if (extensionManagement !== undefined && options.vault !== undefined)
-			registerActivatedExtensionProjectEnvironmentRuntimes({
-				registry: projectEnvironmentRegistry,
-				hosts: extensionManagement.hosts,
-				snapshot: () => projectEnvironments.state,
-				workspaceSnapshot: () => this.workspace.state,
-			});
-		const extensionProfiles =
-			options.vault === undefined || extensionManagement === undefined
-				? undefined
-				: (
-						extensionManagement as ReturnType<
-							typeof createProductionExtensionManagement
-						>
-					).profiles;
 		const parakeetProvider =
 			options.parakeetRuntime === undefined
 				? undefined
@@ -794,9 +748,6 @@ export class ServerTerminalAuthority {
 							firstRun: options.workspaceRepository.wasCreated,
 							prepare: () => this.rebuildProjectBindings(),
 							createTerminal: (request) => this.create(request),
-							onSeedFailure: (message) => {
-								console.error('[terminay-workspace-terminal-seed]', { message });
-							},
 						},
 					}),
 			onConnectionClosed: (_connectionId, clientId) => {
@@ -818,8 +769,6 @@ export class ServerTerminalAuthority {
 				clientId: hello.clientId,
 				authScope: 'admin',
 				permissions: [
-					'environments:read',
-					'environments:manage',
 					'workspace:write',
 					'extensions:read',
 					'extensions:manage',
@@ -837,14 +786,6 @@ export class ServerTerminalAuthority {
 				: { extensionAgentRuntime }),
 			git: gitAdapter,
 			eventJournal,
-			projectEnvironmentRouter,
-			projectEnvironments: {
-				repository: projectEnvironments,
-				thisServerRoot: () => options.defaultProjectRoot?.() ?? process.cwd(),
-				...(extensionProfiles === undefined
-					? {}
-					: { providers: extensionProfiles }),
-			},
 			...(extensionManagement === undefined
 				? {}
 				: { extensions: extensionManagement }),
@@ -1083,7 +1024,6 @@ export class ServerTerminalAuthority {
 	private async rebuildProjectBindings(): Promise<ReadonlySet<string>> {
 		const unavailableProjectIds = new Set<string>();
 		for (const project of Object.values(this.workspace.state.projects)) {
-			if (!isHostFilesystemProject(project)) continue;
 			try {
 				await this.registerProjectRoot(project.id, project.root);
 			} catch (error) {
@@ -1275,8 +1215,6 @@ export class ServerTerminalAuthority {
 		projectId: string,
 		root: string,
 	): Promise<void> {
-		const project = this.workspace.state.projects[projectId];
-		if (project !== undefined && !isHostFilesystemProject(project)) return;
 		if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(projectId))
 			throw new TypeError('project id is invalid');
 		if (
@@ -1408,8 +1346,6 @@ export class ServerTerminalAuthority {
 				clientId: `embedded-renderer-${randomBytes(16).toString('hex')}`,
 				authScope: 'admin',
 				permissions: [
-					'environments:read',
-					'environments:manage',
 					'workspace:write',
 					'extensions:read',
 					'extensions:manage',
@@ -1944,13 +1880,6 @@ export class ServerTerminalAuthority {
 		});
 		if (!result.ok) throw new Error(result.conflict.message);
 	}
-}
-
-/** A Local project root may be deleted while Terminay is not running. Keep
- * that persisted project visible for its explicit repair flow, while allowing
- * other projects and workspace chrome to start normally. */
-function isHostFilesystemProject(project: WorkspaceProject): boolean {
-	return project.projectEnvironmentId === THIS_SERVER_ENVIRONMENT_ID;
 }
 
 function isMissingProjectRootError(error: unknown): boolean {

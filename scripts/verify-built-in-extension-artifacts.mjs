@@ -6,8 +6,6 @@ import { join, resolve } from 'node:path';
 import { DirectoryBuiltInExtensionArtifactSource } from '../packages/server-core/dist/extensions/index.js';
 
 const expected = [
-	'com.terminay.ssh',
-	'com.puzed.platform',
 	'com.terminay.agent.codex',
 	'com.terminay.agent.claude-code',
 	'com.terminay.agent.grok',
@@ -21,7 +19,7 @@ export async function verifyBuiltInExtensionArtifacts(root) {
 	assert.deepEqual(
 		artifacts.map((artifact) => artifact.extensionId).sort(),
 		expected,
-		'built-in inventory must contain exactly the eight official extensions',
+		'built-in inventory must contain exactly the five official extensions',
 	);
 	const temporary = await mkdtemp(join(tmpdir(), 'terminay-built-in-verify-'));
 	try {

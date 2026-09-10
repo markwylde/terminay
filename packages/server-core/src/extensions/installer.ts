@@ -202,11 +202,6 @@ export class ExtensionInstaller {
 			official: false,
 			trustedCodeWarning: WARNING,
 			declaredPermissions: Object.freeze([...manifest.permissions]),
-			declaredProviderIds: Object.freeze(
-				(manifest.contributes.projectEnvironments ?? []).map(
-					(provider) => provider.id,
-				),
-			),
 		});
 		this.previews.set(previewDigest, preview);
 		this.expirePreview(previewDigest, preview);
@@ -238,11 +233,6 @@ export class ExtensionInstaller {
 			expiresAt,
 			official,
 			declaredPermissions: Object.freeze([...manifest.permissions]),
-			declaredProviderIds: Object.freeze(
-				(manifest.contributes.projectEnvironments ?? []).map(
-					(provider) => provider.id,
-				),
-			),
 			...(!official ? { trustedCodeWarning: WARNING } : {}),
 		});
 		this.previews.set(previewDigest, preview);
@@ -456,8 +446,6 @@ export class ExtensionInstaller {
 				return this.removeOverride(state, current, bundled, refs);
 			const reasons = [
 				...(current.enabled ? ['enabled'] : []),
-				...((refs.profiles ?? 0) ? ['profiles'] : []),
-				...((refs.environments ?? 0) ? ['environments'] : []),
 				...((refs.projects ?? 0) ? ['projects'] : []),
 				...((refs.activeUses ?? 0) ? ['active uses'] : []),
 				...((refs.dependants?.length ?? 0) ? ['dependent extensions'] : []),
@@ -802,8 +790,6 @@ export class ExtensionInstaller {
 		if (active?.receipt.source === 'built-in')
 			throw new Error('built-in extension rollback floor cannot be removed');
 		const reasons = [
-			...((refs.profiles ?? 0) ? ['profiles'] : []),
-			...((refs.environments ?? 0) ? ['environments'] : []),
 			...((refs.projects ?? 0) ? ['projects'] : []),
 			...((refs.activeUses ?? 0) ? ['active uses'] : []),
 			...((refs.dependants?.length ?? 0) ? ['dependent extensions'] : []),

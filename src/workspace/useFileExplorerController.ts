@@ -85,12 +85,7 @@ function parentPath(path: string): string {
 }
 
 function explorerMayLoad(project: ProjectTab): boolean {
-	if (project.creationStatus === 'loading') return false;
-	const remote =
-		project.projectEnvironmentId !== undefined &&
-		project.projectEnvironmentId !== 'terminay:this-server';
-	if (!remote) return true;
-	return project.hydrating === false;
+	return project.creationStatus !== 'loading';
 }
 
 export function openTerminalAtWorktree(
@@ -937,8 +932,6 @@ export function useFileExplorerController({
 	}, [
 		loadDirectory,
 		project.creationStatus,
-		project.hydrating,
-		project.projectEnvironmentId,
 		project.rootFolder,
 		refreshGitStatusesForRoot,
 	]);

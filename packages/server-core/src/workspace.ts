@@ -1,10 +1,44 @@
 import type { JsonValue, ProtocolId } from '@terminay/protocol';
 
-export const WORKSPACE_SCHEMA_VERSION = 4;
-/** Stable binding used by every workspace created before project environments
- * existed. It is deliberately not derived from a client or host label. */
-export const THIS_SERVER_ENVIRONMENT_ID = 'terminay:this-server';
+export const WORKSPACE_SCHEMA_VERSION = 5;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+/** A persisted record is rejected when it carries a field this server does not
+ * define, so a state file written by a different shape is never half-read. */
+const PROJECT_KEYS = Object.freeze([
+	'id',
+	'serverId',
+	'viewId',
+	'root',
+	'rootOrigin',
+	'name',
+	'color',
+	'icon',
+	'defaultShellProfileId',
+	'sidebar',
+	'panelIds',
+	'activePanelId',
+	'layout',
+]);
+const TERMINAL_SESSION_KEYS = Object.freeze([
+	'id',
+	'serverId',
+	'projectId',
+	'status',
+	'createdAt',
+	'outputPosition',
+	'launch',
+	'exitCode',
+	'interruptedAt',
+]);
+function assertOnlyKnownKeys(
+	record: object,
+	known: readonly string[],
+	label: string,
+): void {
+	for (const key of Object.keys(record))
+		if (!known.includes(key))
+			throw new TypeError(`${label} has an unknown field: ${key}`);
+}
 
 export type PanelType = 'terminal' | 'file' | 'folder';
 export type TerminalStatus = 'running' | 'exited' | 'interrupted';
@@ -12,7 +46,6 @@ export type SplitDirection = 'horizontal' | 'vertical';
 export type ProjectRootOrigin =
 	| 'explicit'
 	| 'server-default'
-	| 'environment-default'
 	| 'legacy-unverified';
 
 export interface PanelBase {
@@ -114,8 +147,6 @@ export interface WorkspaceProject {
 	readonly id: ProtocolId;
 	readonly serverId: ProtocolId;
 	readonly viewId: ProtocolId;
-	readonly projectEnvironmentId: ProtocolId;
-	readonly environmentRevision: number;
 	readonly root: string;
 	readonly rootOrigin: ProjectRootOrigin;
 	readonly name: string;
@@ -131,8 +162,6 @@ export interface TerminalSession {
 	readonly id: ProtocolId;
 	readonly serverId: ProtocolId;
 	readonly projectId: ProtocolId;
-	readonly projectEnvironmentId: ProtocolId;
-	readonly environmentRevision: number;
 	readonly status: TerminalStatus;
 	readonly createdAt: number;
 	readonly outputPosition: number;
@@ -190,8 +219,6 @@ export function canonicalizeWorkspaceState(
 			id: project.id,
 			serverId: project.serverId,
 			viewId: project.viewId,
-			projectEnvironmentId: project.projectEnvironmentId,
-			environmentRevision: project.environmentRevision,
 			root: project.root,
 			rootOrigin: project.rootOrigin,
 			name: project.name,
@@ -257,8 +284,6 @@ export function canonicalizeWorkspaceState(
 			id: session.id,
 			serverId: session.serverId,
 			projectId: session.projectId,
-			projectEnvironmentId: session.projectEnvironmentId,
-			environmentRevision: session.environmentRevision,
 			status: session.status,
 			createdAt: session.createdAt,
 			outputPosition: session.outputPosition,
@@ -331,8 +356,6 @@ export type WorkspaceCommand =
 			readonly type: 'project.create';
 			readonly projectId: ProtocolId;
 			readonly viewId: ProtocolId;
-			readonly projectEnvironmentId?: ProtocolId;
-			readonly environmentRevision?: number;
 			readonly root: string;
 			readonly rootOrigin?: Exclude<ProjectRootOrigin, 'legacy-unverified'>;
 			/** Absent or blank means the server assigns the next unique default. */
@@ -650,16 +673,10 @@ export function validateWorkspace(state: WorkspaceState): void {
 			state.views[project.viewId] === undefined
 		)
 			throw new TypeError('project crosses server/view boundary');
-		assertId(project.projectEnvironmentId, 'projectEnvironmentId');
-		if (
-			!Number.isSafeInteger(project.environmentRevision) ||
-			project.environmentRevision < 1
-		)
-			throw new TypeError('project environment revision is invalid');
+		assertOnlyKnownKeys(project, PROJECT_KEYS, 'project');
 		if (
 			project.rootOrigin !== 'explicit' &&
 			project.rootOrigin !== 'server-default' &&
-			project.rootOrigin !== 'environment-default' &&
 			project.rootOrigin !== 'legacy-unverified'
 		)
 			throw new TypeError('project root origin is invalid');
@@ -699,15 +716,7 @@ export function validateWorkspace(state: WorkspaceState): void {
 			session.outputPosition < 0
 		)
 			throw new TypeError('invalid terminal session');
-		const project = state.projects[session.projectId];
-		if (
-			project === undefined ||
-			session.projectEnvironmentId !== project.projectEnvironmentId ||
-			session.environmentRevision !== project.environmentRevision
-		)
-			throw new TypeError(
-				'terminal session environment does not match project',
-			);
+		assertOnlyKnownKeys(session, TERMINAL_SESSION_KEYS, 'terminal session');
 		if (session.launch !== undefined) validateLaunchMetadata(session.launch);
 	}
 }
@@ -724,58 +733,6 @@ export function migrateWorkspaceState(
 	const value = input as Record<string, unknown>;
 	if (value.schemaVersion === WORKSPACE_SCHEMA_VERSION) {
 		return canonicalizeWorkspaceState(value as unknown as WorkspaceState);
-	}
-	const legacySchemaVersion = value.schemaVersion;
-	if (
-		legacySchemaVersion === 1 ||
-		legacySchemaVersion === 2 ||
-		legacySchemaVersion === 3
-	) {
-		const projects = Object.fromEntries(
-			Object.entries(
-				(value.projects ?? {}) as Record<string, WorkspaceProject>,
-			).map(([id, project]) => [
-				id,
-				{
-					...project,
-					rootOrigin:
-						legacySchemaVersion === 1
-							? ('legacy-unverified' as const)
-							: project.rootOrigin,
-					...(legacySchemaVersion < 3
-						? {
-								projectEnvironmentId: THIS_SERVER_ENVIRONMENT_ID,
-								environmentRevision: 1,
-							}
-						: {}),
-					sidebar: normalizeWorkspaceSidebarState(
-						(project as unknown as { sidebar?: unknown }).sidebar,
-					),
-				},
-			]),
-		);
-		const terminalSessions = Object.fromEntries(
-			Object.entries(
-				(value.terminalSessions ?? {}) as Record<string, TerminalSession>,
-			).map(([id, session]) => [
-				id,
-				{
-					...session,
-					...(legacySchemaVersion < 3
-						? {
-								projectEnvironmentId: THIS_SERVER_ENVIRONMENT_ID,
-								environmentRevision: 1,
-							}
-						: {}),
-				},
-			]),
-		);
-		return canonicalizeWorkspaceState({
-			...(value as unknown as WorkspaceState),
-			schemaVersion: WORKSPACE_SCHEMA_VERSION,
-			projects,
-			terminalSessions,
-		});
 	}
 	if (value.schemaVersion !== 0)
 		throw new Error('unsupported workspace schema');
@@ -803,8 +760,6 @@ export function migrateWorkspaceState(
 			id,
 			serverId,
 			viewId: defaultViewId,
-			projectEnvironmentId: THIS_SERVER_ENVIRONMENT_ID,
-			environmentRevision: 1,
 			root: project.root,
 			rootOrigin: 'legacy-unverified',
 			name,
@@ -1150,9 +1105,6 @@ export class WorkspaceStore {
 					id: command.projectId,
 					serverId: state.serverId,
 					viewId: command.viewId,
-					projectEnvironmentId:
-						command.projectEnvironmentId ?? THIS_SERVER_ENVIRONMENT_ID,
-					environmentRevision: command.environmentRevision ?? 1,
 					root: boundedPath(command.root),
 					rootOrigin: command.rootOrigin ?? 'explicit',
 					name:
@@ -1414,11 +1366,6 @@ export class WorkspaceStore {
 				const panel = requirePanel(state, command.panelId);
 				const from = requireProject(state, panel.projectId);
 				const to = requireProject(state, command.targetProjectId);
-				if (
-					from.projectEnvironmentId !== to.projectEnvironmentId ||
-					from.environmentRevision !== to.environmentRevision
-				)
-					throw new Error('panel move crosses project environment boundary');
 				const sourceIds = from.panelIds.filter((id) => id !== panel.id);
 				const targetIds = to.panelIds.filter((id) => id !== panel.id);
 				targetIds.splice(indexAt(command.index, targetIds.length), 0, panel.id);
@@ -1477,8 +1424,6 @@ export class WorkspaceStore {
 					id: command.sessionId,
 					serverId: state.serverId,
 					projectId: project.id,
-					projectEnvironmentId: project.projectEnvironmentId,
-					environmentRevision: project.environmentRevision,
 					status: 'running',
 					createdAt: command.createdAt ?? Date.now(),
 					outputPosition: 0,
@@ -1502,8 +1447,6 @@ export class WorkspaceStore {
 					id: command.sessionId,
 					serverId: state.serverId,
 					projectId: project.id,
-					projectEnvironmentId: project.projectEnvironmentId,
-					environmentRevision: project.environmentRevision,
 					status: 'running',
 					createdAt,
 					outputPosition: 0,

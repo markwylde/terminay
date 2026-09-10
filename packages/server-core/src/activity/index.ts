@@ -3,7 +3,6 @@ export * from './agentService.js';
 export * from './agentStore.js';
 export * from './agentTypes.js';
 export * from './extensionAgentBridge.js';
-export * from './extensionAgentObservationRouter.js';
 export * from './extensionAgentRuntime.js';
 export * from './parser.js';
 export * from './protocol.js';

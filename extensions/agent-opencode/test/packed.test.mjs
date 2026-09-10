@@ -43,9 +43,9 @@ test('the public package packs compiled code and no workspace source', async () 
 	);
 	const provider = manifest.terminay.contributes.agentProviders[0];
 	assert.equal(provider.id, 'com.terminay.agent.opencode/cli');
-	assert.deepEqual(provider.requiredEnvironmentCapabilities, [
-		'process-observation',
-		'filesystem-observation',
-		'agent-journal',
-	]);
+	assert.equal(
+		'requiredEnvironmentCapabilities' in provider,
+		false,
+		'observation capabilities are no longer declared',
+	);
 });

@@ -2,16 +2,6 @@
 	"schemaVersion": 1,
 	"extensions": [
 		{
-			"directory": "ssh",
-			"extensionId": "com.terminay.ssh",
-			"packageName": "terminay-plugin-ssh"
-		},
-		{
-			"directory": "puzed",
-			"extensionId": "com.puzed.platform",
-			"packageName": "terminay-plugin-puzed"
-		},
-		{
 			"directory": "agent-codex",
 			"extensionId": "com.terminay.agent.codex",
 			"packageName": "terminay-agent-codex"

@@ -1,15 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ThisServerAgentObservationAdapter } from "../dist/extensions/index.js";
+import { LocalAgentObservationAdapter } from "../dist/extensions/index.js";
 
 const signal = new AbortController().signal;
 
-function terminal(contextId, environmentId = "local") {
+function terminal(contextId) {
   return {
     contextId,
     serverId: "server-1",
     projectId: "project-1",
-    projectEnvironmentId: environmentId,
     terminalSessionId: `terminal-${contextId}`,
     terminalIncarnationId: `incarnation-${contextId}`,
     providerId: "example.agent/cli",
@@ -40,12 +39,10 @@ function fixtureSystem() {
 
 test("This-server observation adapter issues opaque terminal-scoped process and file facts", async () => {
   const system = fixtureSystem();
-  const adapter = new ThisServerAgentObservationAdapter({
+  const adapter = new LocalAgentObservationAdapter({
     homeDirectory: "/home/mark",
     system,
-    resolveTerminal: (value) => value.projectEnvironmentId === "local"
-      ? { environment: "this-server", shellPid: 10 }
-      : { environment: "remote", shellPid: 999 },
+    resolveTerminal: () => ({ shellPid: 10 }),
   });
   const current = terminal("one");
 
@@ -83,9 +80,9 @@ test("This-server observation adapter issues opaque terminal-scoped process and 
 test("This-server observation treats an empty host-issued descendant snapshot as no journal yet", async () => {
   const system = fixtureSystem();
   system.descendants = async () => [];
-  const adapter = new ThisServerAgentObservationAdapter({
+  const adapter = new LocalAgentObservationAdapter({
     homeDirectory: "/home/mark", system,
-    resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }),
+    resolveTerminal: () => ({ shellPid: 10 }),
   });
   const current = terminal("empty-descendants");
   const descendants = await adapter.observe(current, "process.descendants", {}, signal);
@@ -95,22 +92,19 @@ test("This-server observation treats an empty host-issued descendant snapshot as
   }, signal), []);
 });
 
-test("This-server adapter rejects remote contexts before consulting local processes or files", async () => {
+test("the adapter rejects an unknown terminal before consulting local processes or files", async () => {
   const system = fixtureSystem();
-  const adapter = new ThisServerAgentObservationAdapter({
-    system,
-    resolveTerminal: () => ({ environment: "remote", shellPid: 999 }),
-  });
-  await assert.rejects(adapter.observe(terminal("remote", "ssh"), "process.descendants", {}, signal), /unavailable for remote environment/);
-  await assert.rejects(adapter.observe(terminal("remote", "ssh"), "filesystem.read", { handle: { id: "file-1" }, options: { maxBytes: 1 } }, signal), /unavailable for remote environment/);
+  const adapter = new LocalAgentObservationAdapter({ system, resolveTerminal: () => undefined });
+  await assert.rejects(adapter.observe(terminal("unknown"), "process.descendants", {}, signal), /terminal is unavailable/);
+  await assert.rejects(adapter.observe(terminal("unknown"), "filesystem.read", { handle: { id: "file-1" }, options: { maxBytes: 1 } }, signal), /terminal is unavailable/);
   assert.deepEqual(system.calls, []);
 });
 
 test("This-server adapter rejects manufactured and cross-terminal handles and clears them on teardown", async () => {
   const system = fixtureSystem();
-  const adapter = new ThisServerAgentObservationAdapter({
+  const adapter = new LocalAgentObservationAdapter({
     homeDirectory: "/home/mark", system,
-    resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }),
+    resolveTerminal: () => ({ shellPid: 10 }),
   });
   const first = terminal("first"); const second = terminal("second");
   const descendants = await adapter.observe(first, "process.descendants", {}, signal);
@@ -122,7 +116,7 @@ test("This-server adapter rejects manufactured and cross-terminal handles and cl
 
 test("This-server adapter applies canonical home and extension constraints without widening a file handle", async () => {
   const system = fixtureSystem();
-  const adapter = new ThisServerAgentObservationAdapter({ homeDirectory: "/home/mark", system, resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }) });
+  const adapter = new LocalAgentObservationAdapter({ homeDirectory: "/home/mark", system, resolveTerminal: () => ({ shellPid: 10 }) });
   const current = terminal("constraint");
   const descendants = await adapter.observe(current, "process.descendants", {}, signal);
   const files = await adapter.observe(current, "process.open-files", { processes: descendants.map((entry) => entry.handle), options: { access: "writable" } }, signal);
@@ -141,7 +135,7 @@ test("home-relative resolution derives HOME from the admitted terminal process, 
     assert.equal(pid, 10); assert.deepEqual(names, ["HOME"]);
     return { HOME: "/terminal-home" };
   };
-  const adapter = new ThisServerAgentObservationAdapter({ system, resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }) });
+  const adapter = new LocalAgentObservationAdapter({ system, resolveTerminal: () => ({ shellPid: 10 }) });
   const handle = await adapter.observe(terminal("terminal-home"), "filesystem.resolve-home-relative", {
     relativePath: ".claude/projects/session.jsonl", beneath: { homeRelative: ".claude/projects" }, extension: ".jsonl",
   }, signal);
@@ -158,7 +152,7 @@ test("opaque directory discovery is terminal-scoped, bounded, canonical and suff
   system.stat = async (path) => path === "/home/mark/.codex/sessions" || path === "/home/mark/.codex/sessions/nested"
     ? { kind: "directory", size: 0 }
     : originalStat(path);
-  const adapter = new ThisServerAgentObservationAdapter({ homeDirectory: "/home/mark", system, resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }) });
+  const adapter = new LocalAgentObservationAdapter({ homeDirectory: "/home/mark", system, resolveTerminal: () => ({ shellPid: 10 }) });
   const current = terminal("directory");
   const root = await adapter.observe(current, "filesystem.resolve-home-directory", { relativePath: ".codex/sessions", beneath: { homeRelative: ".codex" } }, signal);
   assert.deepEqual(root, { id: "directory-1" });
@@ -189,7 +183,7 @@ test("declared names bound the walk to the files asked for, before any limit is 
   system.files.set("/home/mark/.claude/projects/z-project/wanted.jsonl", new Uint8Array([7]));
   const originalStat = system.stat;
   system.stat = async (path) => path.endsWith(".jsonl") ? originalStat(path) : { kind: "directory", size: 0 };
-  const adapter = new ThisServerAgentObservationAdapter({ homeDirectory: "/home/mark", system, resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }) });
+  const adapter = new LocalAgentObservationAdapter({ homeDirectory: "/home/mark", system, resolveTerminal: () => ({ shellPid: 10 }) });
   const current = terminal("named-listing");
   const root = await adapter.observe(current, "filesystem.resolve-home-directory", { relativePath: ".claude/projects", beneath: { homeRelative: ".claude" } }, signal);
 
@@ -212,7 +206,7 @@ test("file follow replays an equal-size metadata rewrite exactly once as replace
     const details = await originalStat(path);
     return details?.kind === "file" ? { ...details, modifiedAt } : details;
   };
-  const adapter = new ThisServerAgentObservationAdapter({ homeDirectory: "/home/mark", system, resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }) });
+  const adapter = new LocalAgentObservationAdapter({ homeDirectory: "/home/mark", system, resolveTerminal: () => ({ shellPid: 10 }) });
   const current = terminal("same-size");
   const descendants = await adapter.observe(current, "process.descendants", {}, signal);
   const files = await adapter.observe(current, "process.open-files", { processes: descendants, options: { access: "writable" } }, signal);
@@ -236,9 +230,9 @@ test("This-server open-file snapshots prefer journal paths and stay inside the I
     ...clutter,
     { path: "/home/mark/.codex/sessions/rollout.jsonl", access: "writable" },
   ];
-  const adapter = new ThisServerAgentObservationAdapter({
+  const adapter = new LocalAgentObservationAdapter({
     homeDirectory: "/home/mark", system,
-    resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }),
+    resolveTerminal: () => ({ shellPid: 10 }),
   });
   const current = terminal("journal-preference");
   const descendants = await adapter.observe(current, "process.descendants", {}, signal);
@@ -254,9 +248,9 @@ test("This-server open-file snapshots cap a journal-less lsof dump instead of th
     path: `/tmp/writable-${index}`,
     access: "writable",
   }));
-  const adapter = new ThisServerAgentObservationAdapter({
+  const adapter = new LocalAgentObservationAdapter({
     homeDirectory: "/home/mark", system,
-    resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }),
+    resolveTerminal: () => ({ shellPid: 10 }),
   });
   const current = terminal("capped-open-files");
   const descendants = await adapter.observe(current, "process.descendants", {}, signal);
@@ -275,7 +269,7 @@ test("file follow detects atomic same-path replacement from a host-private ident
     const details = await originalStat(path);
     return details?.kind === "file" ? { ...details, identity } : details;
   };
-  const adapter = new ThisServerAgentObservationAdapter({ homeDirectory: "/home/mark", system, resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }) });
+  const adapter = new LocalAgentObservationAdapter({ homeDirectory: "/home/mark", system, resolveTerminal: () => ({ shellPid: 10 }) });
   const current = terminal("atomic-replacement");
   const descendants = await adapter.observe(current, "process.descendants", {}, signal);
   const files = await adapter.observe(current, "process.open-files", { processes: descendants, options: { access: "writable" } }, signal);
@@ -301,10 +295,10 @@ test("environment-relative path facts are relative to the optional contained sub
     return { PROVIDER_HOME: "/data/provider-home" };
   };
   system.openFiles = async () => [{ path: journal, access: "writable" }];
-  const adapter = new ThisServerAgentObservationAdapter({
+  const adapter = new LocalAgentObservationAdapter({
     homeDirectory: "/home/mark",
     system,
-    resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }),
+    resolveTerminal: () => ({ shellPid: 10 }),
   });
   const current = terminal("provider-home");
   const descendants = await adapter.observe(current, "process.descendants", {}, signal);
@@ -339,10 +333,10 @@ test("HOME is read from a descendant when the shell exposes no environment", asy
     asked.push([pid, names]);
     return pid === 42 ? { HOME: "/terminal-home" } : {};
   };
-  const adapter = new ThisServerAgentObservationAdapter({
+  const adapter = new LocalAgentObservationAdapter({
     system,
     fallbackHomeDirectory: "/never-used",
-    resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }),
+    resolveTerminal: () => ({ shellPid: 10 }),
   });
   const handle = await adapter.observe(terminal("descendant-home"), "filesystem.resolve-home-relative", {
     relativePath: ".claude/projects/session.jsonl", beneath: { homeRelative: ".claude/projects" }, extension: ".jsonl",
@@ -351,27 +345,27 @@ test("HOME is read from a descendant when the shell exposes no environment", asy
   assert.deepEqual(asked, [[10, ["HOME"]], [42, ["HOME"]]]);
 });
 
-test("HOME falls back to the server's own home for a this-server terminal whose tree exposes none", async () => {
+test("HOME falls back to the server's own home for a terminal whose tree exposes none", async () => {
   const system = fixtureSystem();
   system.files.set("/server-home/.claude/projects/session.jsonl", new Uint8Array([1]));
   const originalStat = system.stat;
   system.stat = async (path) => path === "/server-home" ? { kind: "directory", size: 0 } : originalStat(path);
   system.descendants = async () => [{ pid: 10, executableName: "zsh" }];
   system.environment = async () => ({});
-  const adapter = new ThisServerAgentObservationAdapter({
+  const adapter = new LocalAgentObservationAdapter({
     system,
     fallbackHomeDirectory: "/server-home",
-    resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }),
+    resolveTerminal: () => ({ shellPid: 10 }),
   });
   const handle = await adapter.observe(terminal("fallback-home"), "filesystem.resolve-home-relative", {
     relativePath: ".claude/projects/session.jsonl", beneath: { homeRelative: ".claude/projects" }, extension: ".jsonl",
   }, signal);
   assert.deepEqual(handle, { id: "file-1" });
 
-  const disabled = new ThisServerAgentObservationAdapter({
+  const disabled = new LocalAgentObservationAdapter({
     system,
     fallbackHomeDirectory: false,
-    resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }),
+    resolveTerminal: () => ({ shellPid: 10 }),
   });
   assert.equal(await disabled.observe(terminal("no-home"), "filesystem.resolve-home-relative", {
     relativePath: ".claude/projects/session.jsonl", beneath: { homeRelative: ".claude/projects" }, extension: ".jsonl",
@@ -382,9 +376,9 @@ test("a provider environment value the shell does not expose is read from its de
   const system = fixtureSystem();
   system.descendants = async () => [{ pid: 10, executableName: "zsh" }, { pid: 42, executableName: "codex" }];
   system.environment = async (pid, names) => pid === 42 && names.includes("CODEX_HOME") ? { CODEX_HOME: "/codex-home" } : {};
-  const adapter = new ThisServerAgentObservationAdapter({
+  const adapter = new LocalAgentObservationAdapter({
     homeDirectory: "/home/mark", system,
-    resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }),
+    resolveTerminal: () => ({ shellPid: 10 }),
   });
   assert.deepEqual(
     await adapter.observe(terminal("descendant-env"), "process.environment", { names: ["CODEX_HOME"] }, signal),
@@ -402,8 +396,8 @@ test("the real process system reports each descendant's working directory and st
   const child = spawn("/bin/sh", ["-c", "sleep 30"], { cwd, stdio: "ignore" });
   try {
     await new Promise((resolve) => setTimeout(resolve, 300));
-    const adapter = new ThisServerAgentObservationAdapter({
-      resolveTerminal: () => ({ environment: "this-server", shellPid: process.pid }),
+    const adapter = new LocalAgentObservationAdapter({
+      resolveTerminal: () => ({ shellPid: process.pid }),
     });
     const descendants = await adapter.observe(terminal("real-facts"), "process.descendants", {}, signal);
     const shell = descendants.find((entry) => entry.pid === child.pid);
@@ -423,9 +417,9 @@ test("the real process system reports each descendant's working directory and st
 
 test("a follow without an explicit chunk limit uses the host ceiling rather than failing", async () => {
   const system = fixtureSystem();
-  const adapter = new ThisServerAgentObservationAdapter({
+  const adapter = new LocalAgentObservationAdapter({
     homeDirectory: "/home/mark", system,
-    resolveTerminal: () => ({ environment: "this-server", shellPid: 10 }),
+    resolveTerminal: () => ({ shellPid: 10 }),
   });
   const current = terminal("follow-default");
   const descendants = await adapter.observe(current, "process.descendants", {}, signal);

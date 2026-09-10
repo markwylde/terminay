@@ -3,7 +3,19 @@ import type {
 	ExtensionInstallPreviewDto,
 } from '@terminay/client-core';
 import { useMemo, useState } from 'react';
-import type { ExtensionSummaryDto } from './uiModel';
+export type ExtensionSummaryDto = Readonly<{
+	id: string;
+	packageName: string;
+	displayName: string;
+	description: string;
+	version?: string;
+	state: 'available' | 'installed' | 'disabled' | 'incompatible' | 'failed' | 'quarantined' | 'pending';
+	official: boolean;
+	permissions: readonly string[];
+	dependants: readonly string[];
+	provenance?: string;
+	failureMessage?: string;
+}>;
 
 export function ExtensionManager({
 	extensions,
@@ -155,7 +167,7 @@ export function ExtensionManager({
 
 			<section className="settings-section">
 				<div className="settings-section-title-row">
-					<h3 className="settings-section-title">Connection providers</h3>
+					<h3 className="settings-section-title">Installed extensions</h3>
 					<input
 						type="search"
 						className="settings-search-input extension-search-input"
