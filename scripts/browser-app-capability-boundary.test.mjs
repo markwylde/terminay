@@ -19,7 +19,7 @@ const [
 test('browser mounts the real App with the exact authenticated client context', () => {
 	assert.match(
 		webEntry,
-		/<ConnectedWebRendererWorkspace[\s\S]*connectionRoute=\{connectionRoute[\s\S]*hostContext=\{desktopContext\}[\s\S]*terminalClientContext=\{connection\.context\}/u,
+		/<ConnectedWebRendererWorkspace[\s\S]*connectionRoute=\{connectionRoute[\s\S]*hostContext=\{desktopContext\}[\s\S]*terminalClientContext=\{terminalClientContext\}/u,
 	);
 	assert.doesNotMatch(webEntry, /<ConnectedWebRendererWorkspace[\s\S]*client=/u);
 	assert.match(
@@ -28,7 +28,10 @@ test('browser mounts the real App with the exact authenticated client context', 
 	);
 	assert.match(
 		webWorkspace,
-		/const applicationClient = terminalClientContext\.applicationClient[\s\S]*applicationClient === undefined[\s\S]*requires its canonical application client/u,
+		// Per-server surfaces take the client of the connection they are showing,
+		// falling back to the workspace's own; either way it is a real
+		// authenticated client, never a fabricated one.
+		/const applicationClient =\s*selectedServer\.connection\?\.context\?\.applicationClient \?\?\s*terminalClientContext\.applicationClient[\s\S]*applicationClient === undefined[\s\S]*requires its canonical application client/u,
 	);
 	assert.match(
 		webWorkspace,
