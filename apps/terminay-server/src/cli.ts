@@ -22,7 +22,10 @@ import { createConnection } from 'node:net';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { JsonValue } from '@terminay/protocol';
-import { managerOriginFromSessionOrigin } from '@terminay/protocol';
+import {
+	FEATURE_CAPABILITIES,
+	managerOriginFromSessionOrigin,
+} from '@terminay/protocol';
 import {
 	AgentStatusService,
 	AiService,
@@ -656,12 +659,18 @@ async function createServerComposition(
 		serverId: options.serverId,
 		serverVersion: options.serverVersion,
 		capabilities: [
-			'terminal',
-			'workspace',
-			'files',
-			'agents',
-			'server.health',
-			'ai.dictation',
+			FEATURE_CAPABILITIES.terminal,
+			FEATURE_CAPABILITIES.workspace,
+			FEATURE_CAPABILITIES.files,
+			FEATURE_CAPABILITIES.agents,
+			FEATURE_CAPABILITIES.settings,
+			FEATURE_CAPABILITIES.macros,
+			FEATURE_CAPABILITIES.recording,
+			FEATURE_CAPABILITIES.extensions,
+			FEATURE_CAPABILITIES.git,
+			FEATURE_CAPABILITIES.dictation,
+			FEATURE_CAPABILITIES.health,
+			FEATURE_CAPABILITIES.heartbeat,
 		],
 		eventJournal,
 		onConnectionClosed: (_connectionId, clientId) => {

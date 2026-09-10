@@ -1,4 +1,5 @@
 import type {
+  ServerCompatibilityRequirements,
   TerminayBundleCompatibilityResult,
   TerminayHostCompatibilityRequirements,
 } from "@terminay/protocol";
@@ -26,6 +27,9 @@ export interface UiBundleManifest {
    * manifests remain readable only for bounded migration/recovery paths. */
   readonly bundleFormatVersion?: 1;
   readonly hostCompatibility?: TerminayHostCompatibilityRequirements;
+  /** What this bundle's client needs from any server it connects to. The host
+   * never evaluates it; the bundle's client does, once per connection. */
+  readonly serverCompatibility?: ServerCompatibilityRequirements;
   readonly assets: readonly UiBundleAsset[];
 }
 
@@ -45,6 +49,7 @@ export interface UiBundleIdentityMetadata {
   readonly protocolVersion: string;
   readonly serverVersion: string;
   readonly hostCompatibility: TerminayHostCompatibilityRequirements;
+  readonly serverCompatibility?: ServerCompatibilityRequirements;
 }
 
 export interface UiBundleAssetReader {

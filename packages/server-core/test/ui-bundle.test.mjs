@@ -189,8 +189,12 @@ test("bundle compatibility validates the manifest and exact bootstrap before lau
     compatible: true,
     unavailableOptionalCapabilities: ["nativeWindows"],
   });
-  assert.equal(evaluateUiBundleHostCompatibility(manifest, { ...bootstrap, bundleId: "another_bundle" }, support).component, "bundle-binding");
-  assert.equal(evaluateUiBundleHostCompatibility(manifest, { ...bootstrap, applicationProtocolVersion: "2" }, support).component, "application-protocol");
+  // One bundle serves many servers: neither the connected server's bundle id
+  // nor its application-protocol version binds the bundle any more. Server
+  // compatibility is judged by the bundle's client, once per connection.
+  assert.equal(evaluateUiBundleHostCompatibility(manifest, { ...bootstrap, bundleId: "another_bundle" }, support).compatible, true);
+  assert.equal(evaluateUiBundleHostCompatibility(manifest, { ...bootstrap, applicationProtocolVersion: "2" }, support).compatible, true);
+  assert.equal(evaluateUiBundleHostCompatibility(manifest, { ...bootstrap, schemaVersion: 2 }, support).component, "bundle-binding");
   assert.equal(evaluateUiBundleHostCompatibility({ ...manifest, unexpected: true }, bootstrap, support).component, "bundle-manifest");
 });
 

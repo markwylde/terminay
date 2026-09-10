@@ -60,13 +60,9 @@ export async function createDesktopBootstrappedWebRtcTransport(options: {
 		...options,
 		createConnection: options.createTransport === undefined
 			? undefined
-			: async (input) => ({ transport: await options.createTransport!(input), assets: unavailableAssetLane, serverId: input.serverId }),
+			: async (input) => ({ transport: await options.createTransport!(input), serverId: input.serverId }),
 	})).transport;
 }
-
-const unavailableAssetLane = Object.freeze({
-	getBundle: async (): Promise<never> => { throw new Error('Desktop WebRTC asset lane is unavailable.'); },
-});
 
 export async function createDesktopBootstrappedWebRtcConnection(options: {
 	readonly bootstrap: DesktopSignalingBootstrap;

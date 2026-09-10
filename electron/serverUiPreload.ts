@@ -8,7 +8,10 @@ import {
 	type TerminayHostContext,
 } from '@terminay/protocol';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { ServerUiHostBridge } from './serverUiHostContract';
+import type {
+	ServerUiByteBridge,
+	ServerUiHostBridge,
+} from './serverUiHostContract';
 
 const GET_CONTEXT = 'server-ui-host:get-context';
 const REQUEST_ACTION = 'server-ui-host:request-action';
@@ -181,8 +184,119 @@ ipcRenderer.on('server-ui-host:byte-endpoint', (event) => {
 	port.start();
 });
 
-const bytes = Object.freeze({
-	version: 1,
+const MAX_FRAME_BYTES = 16_777_216;
+
+// One attached connection, one dedicated MessagePort. Main creates the channel
+// while it handles `connections.attach` and posts its renderer half here with
+// the sanitized server identity that binds every packet on it. The primary
+// connection keeps the existing endpoint untouched, so an attached server can
+// never deliver frames on the window's bound server identity.
+type ConnectionEndpoint = {
+	readonly connectionId: string;
+	readonly serverId: string;
+	readonly port: MessagePort;
+	readonly listeners: Set<(frame: Uint8Array | null) => void>;
+};
+const connectionEndpoints = new Map<string, ConnectionEndpoint>();
+const connectionWaiters = new Map<string, Set<(endpoint: ConnectionEndpoint) => void>>();
+const CONNECTION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+
+const closeConnectionEndpoint = (endpoint: ConnectionEndpoint) => {
+	if (connectionEndpoints.get(endpoint.connectionId) === endpoint)
+		connectionEndpoints.delete(endpoint.connectionId);
+	for (const listener of [...endpoint.listeners]) listener(null);
+	endpoint.listeners.clear();
+	try {
+		endpoint.port.close();
+	} catch {
+		// A port already retired by main needs no renderer-side teardown.
+	}
+};
+
+ipcRenderer.on('server-ui-host:connection-endpoint', (event, payload: unknown) => {
+	const port = event.ports[0];
+	if (!port) return;
+	const record = payload as { connectionId?: unknown; serverId?: unknown };
+	if (
+		typeof record?.connectionId !== 'string' ||
+		!CONNECTION_ID.test(record.connectionId) ||
+		typeof record.serverId !== 'string' ||
+		!CONNECTION_ID.test(record.serverId)
+	) {
+		port.close();
+		return;
+	}
+	const connectionId = record.connectionId;
+	const serverId = record.serverId;
+	const existing = connectionEndpoints.get(connectionId);
+	if (existing !== undefined) closeConnectionEndpoint(existing);
+	const endpoint: ConnectionEndpoint = {
+		connectionId,
+		serverId,
+		port,
+		listeners: new Set(),
+	};
+	connectionEndpoints.set(connectionId, endpoint);
+	port.onmessage = (message) => {
+		try {
+			const packet = parseTerminayHostBytePacket(message.data, serverId);
+			for (const listener of [...endpoint.listeners]) listener(packet.frame);
+		} catch {
+			for (const listener of [...endpoint.listeners]) listener(null);
+		}
+	};
+	port.onmessageerror = () => {
+		for (const listener of [...endpoint.listeners]) listener(null);
+	};
+	port.start();
+	const waiters = connectionWaiters.get(connectionId);
+	if (waiters === undefined) return;
+	connectionWaiters.delete(connectionId);
+	for (const resolve of waiters) resolve(endpoint);
+});
+
+const waitForConnectionEndpoint = (
+	connectionId: string,
+): Promise<ConnectionEndpoint> => {
+	const existing = connectionEndpoints.get(connectionId);
+	if (existing !== undefined) return Promise.resolve(existing);
+	return new Promise((resolve) => {
+		const waiters = connectionWaiters.get(connectionId) ?? new Set();
+		waiters.add(resolve);
+		connectionWaiters.set(connectionId, waiters);
+	});
+};
+
+const bytes: ServerUiByteBridge = Object.freeze({
+	version: 2,
+	/** Bytes for one attached connection, on its own channel. */
+	openConnection: async (connectionId: string) => {
+		if (typeof connectionId !== 'string' || !CONNECTION_ID.test(connectionId))
+			throw new TypeError('connection id is invalid');
+		const endpoint = await waitForConnectionEndpoint(connectionId);
+		return Object.freeze({
+			send: async (frame: Uint8Array) => {
+				if (
+					!(frame instanceof Uint8Array) ||
+					frame.byteLength === 0 ||
+					frame.byteLength > MAX_FRAME_BYTES
+				)
+					throw new TypeError('server frame must be bounded bytes');
+				if (connectionEndpoints.get(connectionId) !== endpoint)
+					throw new Error('This attached connection is closed.');
+				endpoint.port.postMessage(
+					createTerminayHostBytePacket(endpoint.serverId, frame),
+				);
+			},
+			subscribe: (listener: (frame: Uint8Array | null) => void) => {
+				if (typeof listener !== 'function')
+					throw new TypeError('byte listener is invalid');
+				endpoint.listeners.add(listener);
+				return () => endpoint.listeners.delete(listener);
+			},
+			close: () => closeConnectionEndpoint(endpoint),
+		});
+	},
 	replaceEndpoint: async () => {
 		const generation = bytePortGeneration;
 		ipcRenderer.send('server-ui-host:replace-byte-endpoint');
@@ -193,7 +307,7 @@ const bytes = Object.freeze({
 		if (
 			!(frame instanceof Uint8Array) ||
 			frame.byteLength === 0 ||
-			frame.byteLength > 16_777_216
+			frame.byteLength > MAX_FRAME_BYTES
 		)
 			throw new TypeError('server frame must be bounded bytes');
 		const port = bytePort ?? (await waitForBytePort());
