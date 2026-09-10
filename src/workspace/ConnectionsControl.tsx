@@ -21,6 +21,10 @@ export type ConnectionsControlProps = Readonly<{
 	supportsAttach: boolean;
 	onAttach: (profileId: string) => void;
 	onDetach: (profileId: string) => void;
+	/** Choosing a connection brings that server's workspace to the front. */
+	onSelect?: (serverId: string) => void;
+	/** The server the window is working in: the checked row. */
+	activeServerId?: string;
 	/** Falls back to the old single-connection label when this host has no
 	 * `connections` capability at all. */
 	currentServerLabel: string;
@@ -83,10 +87,12 @@ export function attachableProfiles(
 }
 
 export function ConnectionsControl({
+	activeServerId,
 	connections,
 	currentServerLabel,
 	onAttach,
 	onDetach,
+	onSelect,
 	profiles,
 	supportsAttach,
 }: ConnectionsControlProps) {
@@ -104,6 +110,9 @@ export function ConnectionsControl({
 		<>
 			{connections.map((connection) => {
 				const described = describeConnection(connection);
+				const isCurrent =
+					connection.serverId !== undefined &&
+					connection.serverId === activeServerId;
 				return (
 					<div
 						key={connection.profileId}
@@ -111,12 +120,29 @@ export function ConnectionsControl({
 						data-connection-profile-id={connection.profileId}
 						data-connection-phase={connection.phase}
 					>
-						<span className="remote-access-menu__connection-device">
-							{connection.label}
-							{connection.role === 'primary' ? ' · this window' : ''}
-						</span>
-						<span className="remote-access-menu__meta">
-							{described.summary}
+						{/* This row is called by the server's own label and nothing
+						    else. Which window it is, and how it is doing, are secondary
+						    text beside the name rather than part of it. */}
+						<button
+							type="button"
+							className={`remote-access-menu__connection--button${isCurrent ? ' remote-access-menu__connection--selected' : ''}`}
+							role="menuitemradio"
+							aria-checked={isCurrent}
+							aria-label={connection.label}
+							disabled={connection.context === undefined}
+							onClick={() => {
+								if (connection.serverId !== undefined)
+									onSelect?.(connection.serverId);
+							}}
+						>
+							<span className="remote-access-menu__connection-device">
+								{connection.label}
+							</span>
+						</button>
+						<span className="remote-access-menu__meta" aria-hidden="true">
+							{isCurrent
+								? `${described.summary} · this window`
+								: described.summary}
 						</span>
 						{described.detail === undefined ? null : (
 							<p className="remote-access-menu__diagnostic">

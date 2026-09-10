@@ -196,6 +196,60 @@ test('a composition round-trips through storage and rejects a malformed one', ()
 	assert.equal(normalizeComposition('nonsense'), undefined)
 })
 
+test('every project of a connection renders, however stale the remembered order', () => {
+	// The strip once dropped every tab the remembered order did not name.
+	// Twenty projects, an order that knows two of them, and one entry for a
+	// project that no longer exists.
+	const projects = Array.from({ length: 20 }, (_, index) =>
+		project('a', `project-${index + 1}`, `Project ${index + 1}`),
+	)
+	const composed = composeProjectTabs(
+		[source('a', 'Local', projects)],
+		[
+			{ serverId: 'a', projectId: 'project-7' },
+			{ serverId: 'a', projectId: 'gone' },
+			{ serverId: 'a', projectId: 'project-2' },
+		],
+	)
+	assert.equal(composed.length, 20)
+	// Remembered tabs lead, in the remembered order; the rest keep server order.
+	assert.deepEqual(
+		composed.slice(0, 4).map((tab) => tab.id),
+		['project-7', 'project-2', 'project-1', 'project-3'],
+	)
+	assert.equal(new Set(composed.map((tab) => tab.handle)).size, projects.length)
+})
+
+test('a composition that names nothing keeps the server order exactly', () => {
+	const projects = Array.from({ length: 12 }, (_, index) =>
+		project('a', `project-${index + 1}`),
+	)
+	const composed = composeProjectTabs([source('a', 'Local', projects)], [])
+	assert.deepEqual(
+		composed.map((tab) => tab.id),
+		projects.map((tab) => tab.id),
+	)
+})
+
+test('a reorder is kept even when the server still reports the old order', () => {
+	const server = [
+		project('a', 'project-1', 'Project'),
+		project('a', 'project-2', 'Project 2'),
+	]
+	// The person drags the second tab in front of the first.
+	const reordered = moveCompositionTab(
+		server.map((tab) => ({ serverId: tab.serverId, projectId: tab.id })),
+		{ serverId: 'a', projectId: 'project-2' },
+		0,
+	)
+	// The next snapshot arrives in the server's own order and must not undo it.
+	const composed = composeProjectTabs([source('a', 'Local', server)], reordered)
+	assert.deepEqual(
+		composed.map((tab) => tab.title),
+		['Project 2', 'Project'],
+	)
+})
+
 test('ordering keeps unremembered tabs in their own order at the end', () => {
 	const ordered = orderCompositionTabs(
 		[

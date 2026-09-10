@@ -135,6 +135,45 @@ test('the tab strip identifies a tab by its server and project together', async 
 	// A tab whose server is unusable is visible and takes no action.
 	assert.match(list, /project-tab--inert/u)
 	assert.match(list, /aria-disabled=\{isInert\(project\) \|\| undefined\}/u)
+	// Overflowed tabs are still rendered, and the hidden set is keyed the same
+	// way the visible one is — mixing the two dropped them from the strip.
+	assert.match(list, /\.filter\(\(project\) => hidden\.has\(keyOf\(project\)\)\)/u)
+	// Every list rule is told that identity rather than assuming project id.
+	assert.doesNotMatch(
+		list,
+		/mergeVisibleProjectReorderByIds\(\s*(?:projects|items),\s*(?:nextVisibleIds),\s*(?:hiddenIds|hiddenNow),?\s*\)/u,
+	)
+})
+
+test('the switcher menu speaks the same tab identity as the strip', async () => {
+	const menu = await read('src/workspace/ProjectSwitcherMenu.tsx')
+	// The active row, edit, activate, and close all address a tab by handle;
+	// finding the active row by project id made long-press edit the wrong tab.
+	assert.match(menu, /keyOf\(project\) === activeProjectId/u)
+	assert.match(menu, /void onEdit\(keyOf\(active\)\)/u)
+	assert.match(menu, /void onEdit\(keyOf\(project\)\)/u)
+	assert.match(menu, /onClose\(keyOf\(project\)\)/u)
+	// Drag targeting reads the handle attribute, not the project id one.
+	assert.match(menu, /data-project-switcher-handle=/u)
+	assert.match(menu, /dataset\.projectSwitcherHandle/u)
+	// A caller that still speaks a bare project id is understood as one on the
+	// server the window is already working in.
+	const app = await read('src/App.tsx')
+	assert.match(
+		app,
+		/parseCompositionTabKey\(handle\) \?\? \{\s*serverId: currentServerId,\s*projectId: handle,/u,
+	)
+})
+
+test('a connection row is named by its server label alone', async () => {
+	const control = await read('src/workspace/ConnectionsControl.tsx')
+	// The connection menu is a radio group over attached servers. Its rows are
+	// called by the server's own label; status and "this window" sit beside
+	// the name rather than inside it.
+	assert.match(control, /role="menuitemradio"/u)
+	assert.match(control, /aria-checked=\{isCurrent\}/u)
+	assert.match(control, /aria-label=\{connection\.label\}/u)
+	assert.match(control, /className="remote-access-menu__meta" aria-hidden="true"/u)
 })
 
 test('per-server surfaces select a connection instead of merging servers', async () => {
