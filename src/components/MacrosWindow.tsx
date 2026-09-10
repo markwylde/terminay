@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Editor, { type Monaco } from '@monaco-editor/react'
+import './file-viewer/monacoRuntime'
 import { Reorder, useDragControls } from 'framer-motion'
 import { FileText, X } from 'lucide-react'
 import {

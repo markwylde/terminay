@@ -58,6 +58,50 @@ export function configureFileViewerMonaco(monaco: Monaco) {
     },
   })
 
+  // JSON highlighting is a tokenizer here, not Monaco's JSON language service,
+  // so no JSON worker is bundled or started.
+  if (!monaco.languages.getLanguages().some((language: { id: string }) => language.id === 'json')) {
+    monaco.languages.register({
+      id: 'json',
+      aliases: ['JSON', 'json'],
+      extensions: ['.json', '.jsonc', '.babelrc', '.eslintrc', '.prettierrc'],
+      mimetypes: ['application/json'],
+    })
+  }
+  monaco.languages.setLanguageConfiguration('json', {
+    comments: { lineComment: '//', blockComment: ['/*', '*/'] },
+    brackets: [
+      ['{', '}'],
+      ['[', ']'],
+    ],
+    autoClosingPairs: [
+      { open: '{', close: '}' },
+      { open: '[', close: ']' },
+      { open: '"', close: '"', notIn: ['string'] },
+    ],
+  })
+  monaco.languages.setMonarchTokensProvider('json', {
+    tokenPostfix: '.json',
+    tokenizer: {
+      root: [
+        [/"(?:[^"\\]|\\.)*"(?=\s*:)/, 'key'],
+        [/"(?:[^"\\]|\\.)*"/, 'string'],
+        [/-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/, 'number'],
+        [/\b(?:true|false|null)\b/, 'keyword'],
+        [/[{}\[\]]/, '@brackets'],
+        [/[,:]/, 'delimiter'],
+        [/\/\/.*$/, 'comment'],
+        [/\/\*/, 'comment', '@comment'],
+        [/\s+/, 'white'],
+      ],
+      comment: [
+        [/[^/*]+/, 'comment'],
+        [/\*\//, 'comment', '@pop'],
+        [/[/*]/, 'comment'],
+      ],
+    },
+  })
+
   if (!didDefineTheme) {
     didDefineTheme = true
     monaco.editor.defineTheme(FILE_VIEWER_THEME, {

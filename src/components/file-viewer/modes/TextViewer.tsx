@@ -1,5 +1,4 @@
-import Editor, { loader } from '@monaco-editor/react';
-import * as monaco from 'monaco-editor';
+import Editor from '@monaco-editor/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
 	FileRangeRequest,
@@ -7,13 +6,8 @@ import type {
 	FileViewerEngine,
 } from '../../../types/fileViewer';
 import { languageFromFilePath } from '../codeHighlight';
+import { monacoLanguageId } from '../monacoRuntime';
 import { configureFileViewerMonaco, FILE_VIEWER_THEME } from '../monacoSetup';
-
-// Desktop and hosted UI both enforce a network-restrictive CSP. Supplying the
-// bundled Monaco instance prevents @monaco-editor/react from attempting its
-// default jsDelivr loader, which otherwise leaves the editor blank offline.
-loader.config({ monaco });
-Object.assign(window, { monaco });
 
 type TextViewerProps = {
 	engine: FileViewerEngine;
@@ -312,7 +306,7 @@ export function TextViewer({
 	text,
 }: TextViewerProps) {
 	const monacoLanguage = useMemo(
-		() => languageFromFilePath(filePath ?? '') ?? language,
+		() => monacoLanguageId(languageFromFilePath(filePath ?? '') ?? language),
 		[filePath, language],
 	);
 	const textareaRef = useRef<HTMLTextAreaElement | null>(null);
