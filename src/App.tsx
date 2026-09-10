@@ -6334,9 +6334,16 @@ function App({
 			(project) => project.handle === displayedActiveHandle,
 		) ?? activeProject;
 	/** Going to a tab on another server is what binds the workspace to it. */
+	/** A strip control always hands back a `(serverId, projectId)` handle. A
+	 * caller that still speaks a bare project id means one on this server,
+	 * which is the only server it could have been looking at. */
+	const resolveTabHandle = (handle: string): CompositionTabHandle =>
+		parseCompositionTabKey(handle) ?? {
+			serverId: currentServerId,
+			projectId: handle,
+		};
 	const activateComposedTab = (handle: string) => {
-		const target = parseCompositionTabKey(handle);
-		if (target === undefined) return;
+		const target = resolveTabHandle(handle);
 		if (target.projectId === pendingProjectCreation?.tab.id) return;
 		if (target.serverId !== currentServerId) {
 			const connection = byServerId.get(target.serverId);
@@ -6352,8 +6359,8 @@ function App({
 	/** A handle that belongs to the server the window is currently working in,
 	 * or nothing: an operation on another server's tab has to go there first. */
 	const ownProjectIdFor = (handle: string): string | undefined => {
-		const target = parseCompositionTabKey(handle);
-		return target?.serverId === currentServerId ? target.projectId : undefined;
+		const target = resolveTabHandle(handle);
+		return target.serverId === currentServerId ? target.projectId : undefined;
 	};
 	const openEditComposedTab = async (handle: string) => {
 		const projectId = ownProjectIdFor(handle);
@@ -6399,8 +6406,7 @@ function App({
 		persistMovedProject(projectId);
 	};
 	const closeComposedTab = (handle: string) => {
-		const target = parseCompositionTabKey(handle);
-		if (target === undefined) return;
+		const target = resolveTabHandle(handle);
 		// Closing belongs to the server that owns the project; go there first.
 		if (target.serverId !== currentServerId) {
 			activateComposedTab(handle);

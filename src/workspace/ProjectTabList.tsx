@@ -270,7 +270,14 @@ export function ProjectTabList({
 			clientX,
 		);
 		if (sameIdList(currentVisible, nextVisibleIds)) return;
-		reorder(mergeVisibleProjectReorderByIds(items, nextVisibleIds, hiddenNow));
+		reorder(
+			mergeVisibleProjectReorderByIds(
+				items,
+				nextVisibleIds,
+				hiddenNow,
+				keyOf,
+			),
+		);
 	};
 
 	return (
@@ -293,6 +300,7 @@ export function ProjectTabList({
 								projects,
 								nextVisibleIds,
 								hiddenIds,
+								keyOf,
 							),
 						)
 					}
@@ -440,14 +448,20 @@ export function ProjectTabList({
 					) : null}
 				</Reorder.Group>
 				{projects
-					.filter((project) => hidden.has(project.id))
+					.filter((project) => hidden.has(keyOf(project)))
 					.map((project) => (
 						<div
-							key={project.id}
+							key={keyOf(project)}
 							className="project-tab project-tab--overflowed"
+							data-tab-handle={
+								project.creationStatus === undefined
+									? keyOf(project)
+									: undefined
+							}
 							data-project-id={
 								project.creationStatus === undefined ? project.id : undefined
 							}
+							data-server-id={project.serverId}
 							data-pending-project-id={
 								project.creationStatus === undefined ? undefined : project.id
 							}
