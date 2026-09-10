@@ -24,9 +24,9 @@
 ## 5. The editor consumes it
 
 - [x] 5.1 Add a language gateway in `src/services/fileViewer/` that opens and changes documents with the draft revision, issues debounced completion, hover, and definition queries with deadlines, aborts superseded queries, and drops stale results. Verified by unit tests for debounce, abort, and stale-drop.
-- [ ] 5.2 Register Monaco completion, hover, and definition providers in `TextViewer.tsx` that call the gateway, apply `language.diagnostics` as model markers keyed by revision, open definition targets through the ordinary file-viewer open path, and fall back to highlighting only with no error when no provider serves the file or the session is unavailable. Verified by the file-viewer end-to-end test opening a `.ts` file in a fixture project and asserting a resolved import shows no error, a real error shows a marker, and completion lists a member.
+- [x] 5.2 Register Monaco completion, hover, and definition providers in `TextViewer.tsx` that call the gateway, apply `language.diagnostics` as model markers keyed by revision, open definition targets through the ordinary file-viewer open path, and fall back to highlighting only with no error when no provider serves the file or the session is unavailable. Verified by the file-viewer end-to-end test opening a `.ts` file in a fixture project and asserting a resolved import shows no error, a real error shows a marker, and completion lists a member.
 
 ## 6. Close out
 
 - [x] 6.1 Update `docs/product-overview.md` pillars and boundaries to name language intelligence as a server-hosted extension capability. Verified by the document stating the client runs no language service.
-- [ ] 6.2 Run `openspec validate --all`, `npm run lint`, `npm run typecheck`, `npm run test:ci`, and the Desktop end-to-end suite through `npm run test:e2e`. Verified by all passing.
+- [x] 6.2 Run `openspec validate --all`, `npm run lint`, `npm run typecheck`, `npm run test:ci`, and the Desktop end-to-end suite through `npm run test:e2e`. Verified by all passing.
