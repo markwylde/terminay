@@ -22,7 +22,7 @@ test('Desktop presents canonical auxiliary routes through verified native window
 	assert.match(workspace, /window\.terminayHost\.requestAction/u);
 	assert.match(main, /presentCanonicalAuxiliaryRoute/u);
 	assert.match(main, /auxiliaryWindowsByPresentation/u);
-	assert.match(main, /prepareCanonicalHttpRemoteLaunch/u);
+	assert.match(main, /prepareCanonicalRemoteLaunch/u);
 	assert.match(main, /createDesktopReconnectTransport/u);
 	assert.match(main, /serverUiPreload\.cjs/u);
 	assert.doesNotMatch(

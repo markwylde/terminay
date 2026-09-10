@@ -95,6 +95,177 @@ test('production bootstrap copies a non-secret connection hostname onto the sess
 	assert.equal(host.hostName, 'Studio-Mac');
 });
 
+test('the attached-connection surface is optional, all-or-nothing, and framed-only', async () => {
+	const byteEndpoint = { send: async () => {}, subscribe: () => () => {} };
+	const authority = (overrides = {}) => ({
+		authenticatedTransportVersion: 2,
+		serverId: 'server-a',
+		hostContext: { serverId: 'server-a' },
+		readBundle: async () => new Uint8Array([1]),
+		byteEndpoint,
+		sessionId: 'room',
+		origin: 'https://room.terminay.com',
+		connect: async () => endpoint(),
+		...overrides,
+	});
+	const members = [
+		'connectAttached',
+		'listConnections',
+		'detachConnection',
+		'subscribeConnections',
+		'readComposition',
+		'writeComposition',
+	];
+	assert.deepEqual(contract.SESSION_TRANSPORT_CONNECTION_MEMBERS, members);
+
+	// An unframed session, and a framed one whose manager never announced the
+	// schema, get no attached-connection surface at all.
+	globalThis.window = { location: { origin: 'https://room.terminay.com' } };
+	const unframed = contract.installHostedBrowserSession(authority());
+	for (const name of members) assert.equal(unframed[name], undefined);
+
+	const listeners = [];
+	globalThis.window = {
+		location: { origin: 'https://room.terminay.com' },
+		parent: { postMessage: () => {} },
+		addEventListener: (_type, listener) => listeners.push(listener),
+		removeEventListener: () => {},
+	};
+	const framed = contract.installHostedBrowserSession(
+		authority({
+			managerUrl: 'https://app.terminay.com/',
+			managerConnectionsVersion: contract.FRAMED_CONNECTION_SCHEMA_VERSION,
+		}),
+	);
+	for (const name of members) assert.equal(typeof framed[name], 'function');
+	assert.equal(framed.managerConnectionsVersion, undefined);
+	assert.equal(listeners.length, 1);
+
+	// A partial surface is a broken contract, not a degraded one.
+	install({ listConnections: () => {} });
+	assert.throws(() => contract.getSessionTransportHost(), /incompatible/u);
+	install(Object.fromEntries(members.map((name) => [name, 'not a function'])));
+	assert.throws(() => contract.getSessionTransportHost(), /incompatible/u);
+	install(Object.fromEntries(members.map((name) => [name, () => {}])));
+	for (const name of members)
+		assert.equal(typeof contract.getSessionTransportHost()[name], 'function');
+});
+
+test('the framed connection surface speaks the closed manager schema over postMessage', async () => {
+	const posted = [];
+	let deliver;
+	const surface = contract.createFramedConnectionSurface({
+		managerOrigin: 'https://app.terminay.com',
+		timeoutMs: 0,
+		newRequestId: () => 'req-1',
+		win: {
+			parent: {
+				postMessage(message, targetOrigin) {
+					posted.push({ message, targetOrigin });
+				},
+			},
+			addEventListener: (_type, listener) => {
+				deliver = listener;
+			},
+			removeEventListener: () => {},
+		},
+	});
+
+	const listed = surface.listConnections();
+	assert.deepEqual(posted[0], {
+		message: { v: 1, type: 'connections.list', requestId: 'req-1' },
+		targetOrigin: 'https://app.terminay.com',
+	});
+	// A foreign origin cannot answer a request the frame made to its manager.
+	deliver({
+		origin: 'https://evil.example.test',
+		data: {
+			v: 1,
+			type: 'connections.result',
+			requestId: 'req-1',
+			result: { kind: 'profiles', profiles: [] },
+		},
+	});
+	deliver({
+		origin: 'https://app.terminay.com',
+		data: {
+			v: 1,
+			type: 'connections.result',
+			requestId: 'req-1',
+			result: {
+				kind: 'profiles',
+				profiles: [
+					{ id: 'profile-a', label: 'Build box', status: 'connected', serverId: 'server-a' },
+				],
+			},
+		},
+	});
+	assert.deepEqual(await listed, [
+		{ id: 'profile-a', label: 'Build box', status: 'connected', serverId: 'server-a' },
+	]);
+
+	const seen = [];
+	const stop = surface.subscribeConnections((profiles) => seen.push(profiles));
+	deliver({
+		origin: 'https://app.terminay.com',
+		data: {
+			v: 1,
+			type: 'connections.changed',
+			profiles: [{ id: 'profile-a', label: 'Build box', status: 'offline' }],
+		},
+	});
+	stop();
+	deliver({
+		origin: 'https://app.terminay.com',
+		data: { v: 1, type: 'connections.changed', profiles: [] },
+	});
+	assert.deepEqual(seen, [
+		[{ id: 'profile-a', label: 'Build box', status: 'offline' }],
+	]);
+
+	const attached = surface.connectAttached('profile-a');
+	assert.deepEqual(posted[1].message, {
+		v: 1,
+		type: 'connections.attach',
+		requestId: 'req-1',
+		profileId: 'profile-a',
+	});
+	const channel = new MessageChannel();
+	deliver({
+		origin: 'https://app.terminay.com',
+		ports: [channel.port2],
+		data: {
+			v: 1,
+			type: 'connections.result',
+			requestId: 'req-1',
+			result: { kind: 'attached', profileId: 'profile-a', serverId: 'server-a' },
+		},
+	});
+	const connection = await attached;
+	assert.equal(connection.serverId, 'server-a');
+	assert.equal(connection.transport.state, 'open');
+	const received = new Promise((resolve) => {
+		channel.port1.onmessage = (event) => resolve(event.data);
+	});
+	await connection.transport.send(new Uint8Array([4, 5]));
+	assert.deepEqual([...(await received)], [4, 5]);
+	await connection.transport.close();
+	channel.port1.close();
+
+	const refused = surface.detachConnection('profile-a');
+	deliver({
+		origin: 'https://app.terminay.com',
+		data: {
+			v: 1,
+			type: 'connections.error',
+			requestId: 'req-1',
+			code: 'detach-failed',
+			message: 'no such connection',
+		},
+	});
+	await assert.rejects(refused, /detach-failed/u);
+});
+
 test('rejects incompatible versions, origins, and missing capabilities', async () => {
 	for (const overrides of [
 		{ version: 2 },
@@ -135,15 +306,23 @@ test('remote production entry consumes hosted authority before workspace prepara
 
 test('the workspace never parses pairing credentials or performs browser enrollment', async () => {
 	const source = await readFile('src/web/main.tsx', 'utf8');
-	assert.match(source, /transport = await sessionHost\.connect/u);
+	// The host opens the transport; the bundle never holds a credential, for
+	// the primary connection or for any attached one.
+	assert.match(source, /await sessionHost\.connect\(/u);
 	assert.doesNotMatch(source, /deviceEnrollment|loadBrowserDeviceIdentity|authenticateDevice/u);
 });
 
 test('the workspace labels its connection from the session hostname, not the opaque origin', async () => {
 	const source = await readFile('src/web/main.tsx', 'utf8');
-	assert.match(source, /label = sessionHost\.hostName\?\.trim\(\) \|\| 'Remote'/u);
+	assert.match(source, /label: sessionHost\.hostName\?\.trim\(\) \|\| 'Remote'/u);
 	assert.doesNotMatch(source, /label = new URL\(origin\)\.host/u);
-	assert.match(source, /serverId: hello\.serverId/u);
+	// Each connection's server identity comes from that connection's own
+	// hello, which is now the registry's job rather than the entry's.
+	const registry = await readFile(
+		'src/shared/connections/connectionRegistry.ts',
+		'utf8',
+	);
+	assert.match(registry, /this\.serverId = hello\?\.serverId/u);
 });
 
 test('browser disconnect returns to the manager list instead of closing into a retry shell', async () => {

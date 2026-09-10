@@ -154,25 +154,26 @@ test('direct and WebRTC remote connections both launch the canonical server bund
 		main.indexOf('async function presentCanonicalAuxiliaryRoute('),
 		main.indexOf('\nasync function openEmbeddedWorkspaceWithRecovery'),
 	);
-	const httpLaunch = main.slice(
-		main.indexOf('async function prepareCanonicalHttpRemoteLaunch('),
-		main.indexOf('\nfunction bindServerUiWindow'),
+	const remoteLaunch = main.slice(
+		main.indexOf('async function readRemoteServerIdentity('),
+		main.indexOf('\n/** Consume a one-time pairing URL only in Electron.'),
 	);
 	assert.doesNotMatch(main, /function connectRemoteByteTransport/u);
 	assert.doesNotMatch(main, /postMessage\(\s*'server:connection'/u);
 	assert.match(presentation, /createDesktopReconnectTransport/u);
-	assert.match(presentation, /prepareCanonicalHttpRemoteLaunch/u);
+	assert.match(presentation, /prepareCanonicalRemoteLaunch/u);
 	assert.match(presentation, /createDesktopBootstrappedWebRtcConnection/u);
-	assert.match(presentation, /remoteServerUiBundleHost\.prepareRemote/u);
 	assert.match(presentation, /serverUiLaunch:\s*launch/u);
+	assert.match(presentation, /serverUiTransport:\s*lanes\.transport/u);
+	assert.match(remoteLaunch, /new URL\('\/host-bootstrap\.json', origin\)/u);
+	assert.match(remoteLaunch, /bootstrap\.streamPath !== '\/protocol\/stream'/u);
+	// Desktop runs the bundle packaged with it for every connection: a remote
+	// profile supplies a transport, never bundle bytes.
 	assert.match(
-		presentation,
-		/serverUiTransport:\s*(?:connected|webRtc)\.transport/u,
+		remoteLaunch,
+		/artifact: \{ rootDirectory: SERVER_UI_DIST \}/u,
 	);
-	assert.match(httpLaunch, /new URL\('\/host-bootstrap\.json', origin\)/u);
-	assert.match(httpLaunch, /bootstrap\.manifestPath !== '\/manifest\.json'/u);
-	assert.match(httpLaunch, /bootstrap\.streamPath !== '\/protocol\/stream'/u);
-	assert.match(httpLaunch, /remoteServerUiBundleHost\.prepareRemote/u);
+	assert.doesNotMatch(main, /prepareRemote|bundleCache|remoteBundle/u);
 	assert.match(server, /\/host-bootstrap\.json/u);
 	assert.match(
 		main,

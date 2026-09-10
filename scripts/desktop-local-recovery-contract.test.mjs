@@ -4,14 +4,30 @@ import test from 'node:test';
 
 test('Desktop transport recovery and terminal Retry connection share one replacement operation', async () => {
 	const source = await readFile('src/web/main.tsx', 'utf8');
+	const registry = await readFile(
+		'src/shared/connections/connectionRegistry.ts',
+		'utf8',
+	);
+	// Recovery is per connection now: one guarded retry per server, each
+	// asking its host for a fresh byte endpoint.
 	assert.match(
-		source,
-		/const recoverConnection = useCallback\([\s\S]*connectRef\s*\.current\(\{ replaceDesktopEndpoint: true \}\)/u,
+		registry,
+		/retry: \(\) => this\.start\(true\)/u,
+		'every connection must expose one guarded retry',
+	);
+	assert.match(
+		registry,
+		/start\(replaceEndpoint = false\)[\s\S]*replaceDesktopEndpoint: replaceEndpoint/u,
 		'Desktop recovery must replace the failed byte endpoint',
 	);
 	assert.match(
 		source,
-		/retryConnection:\s*\(\) => recoverConnection\(\)/u,
+		/const recoverConnection = useCallback\([\s\S]*primary\?\.retry\(\)/u,
+		'the shell retries through the primary connection',
+	);
+	assert.match(
+		source,
+		/retryConnection:\s*\(\) => primary\.retry\(\)/u,
 		'Terminal Retry connection must use the guarded Desktop recovery operation instead of directly closing and reconnecting the current client',
 	);
 	assert.match(
