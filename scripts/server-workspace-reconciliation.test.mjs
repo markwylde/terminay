@@ -41,7 +41,7 @@ function snapshot({
 		sidebarPanelOrder: ['explorer', 'agents', 'git', 'documentation'],
 	});
 	return {
-		schemaVersion: 4,
+		schemaVersion: 5,
 		serverId: 'server-a',
 		revision,
 		cursor: String(revision),
@@ -195,7 +195,7 @@ test('project and panel identity survives project switches and detach-reattach s
 			]),
 		);
 		return {
-			schemaVersion: 4,
+			schemaVersion: 5,
 			serverId: 'server-a',
 			revision,
 			cursor: String(revision),
