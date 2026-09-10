@@ -7,6 +7,7 @@ import {
 	listRegularRelativeFiles,
 } from './scripts/build-ui-bundle-manifest.mjs';
 import { developmentWorkspaceAliases } from './scripts/development-workspace-aliases.mjs';
+import { assertNoClientLanguageWorkers } from './scripts/server-ui-bundle-language-workers.mjs';
 
 const packageVersion = JSON.parse(
 	readFileSync(new URL('./package.json', import.meta.url), 'utf8'),
@@ -41,6 +42,9 @@ export default defineConfig({
 				const emitted = Object.values(bundle)
 					.map((entry) => entry.fileName)
 					.filter((fileName) => typeof fileName === 'string');
+				// The client runs no language service; a language worker in the
+				// output is a build defect, not a bigger download.
+				assertNoClientLanguageWorkers(emitted);
 				manifestPublication = manifestPublication.then(async () => {
 					const copiedPublic = await listRegularRelativeFiles('public');
 					await buildUiBundleManifest({
