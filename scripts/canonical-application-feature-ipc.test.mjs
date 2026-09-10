@@ -72,7 +72,7 @@ test('canonical host routes retain server-owned application operations', () => {
 		/case 'route\.present':\s*await presentCanonicalAuxiliaryRoute/u,
 	);
 	assert.match(main, /presentCanonicalAuxiliaryRoute/u);
-	assert.match(main, /prepareCanonicalHttpRemoteLaunch/u);
+	assert.match(main, /prepareCanonicalRemoteLaunch/u);
 	assert.match(main, /loadRememberedRemoteConnections\(\)/u);
 });
 
