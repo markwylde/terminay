@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { lstat, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { extname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import { CLIENT_SERVER_COMPATIBILITY } from "@terminay/protocol";
 
 export const UI_BUNDLE_CSP =
   "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' wss:; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
@@ -27,6 +28,11 @@ export const UI_BUNDLE_HOST_COMPATIBILITY = Object.freeze({
   }),
 });
 
+/** What the packaged workspace client needs from any server it attaches to.
+ * One bundle serves many servers, so this is a declaration about servers in
+ * general, never about the server that happens to host the bundle. */
+export const UI_BUNDLE_SERVER_COMPATIBILITY = CLIENT_SERVER_COMPATIBILITY;
+
 export async function listRegularRelativeFiles(rootDirectory) {
   return walkRegularFiles(resolve(rootDirectory));
 }
@@ -37,6 +43,7 @@ export async function buildUiBundleManifest({
   protocolVersion = "1",
   entryFile = "index.html",
   hostCompatibility = UI_BUNDLE_HOST_COMPATIBILITY,
+  serverCompatibility = UI_BUNDLE_SERVER_COMPATIBILITY,
   maxTotalBytes = UI_BUNDLE_MAX_TOTAL_BYTES,
   includeRelativePaths,
 }) {
@@ -95,6 +102,9 @@ export async function buildUiBundleManifest({
     protocolVersion: String(protocolVersion),
     serverVersion,
     hostCompatibility: canonicalHostCompatibility(hostCompatibility),
+    ...(serverCompatibility === undefined
+      ? {}
+      : { serverCompatibility: canonicalServerCompatibility(serverCompatibility) }),
   })}`;
   const bundleId = createHash("sha256")
     .update(canonical)
@@ -129,6 +139,7 @@ export async function buildUiBundleManifest({
     contentSecurityPolicy: UI_BUNDLE_CSP,
     bundleFormatVersion: 1,
     hostCompatibility,
+    ...(serverCompatibility === undefined ? {} : { serverCompatibility }),
     assets,
   };
   const manifestPath = join(root, manifestRelativePath);
@@ -155,6 +166,15 @@ function canonicalHostCompatibility(value) {
     byteEndpoint: value.byteEndpoint,
     requiredCapabilities: capabilities(value.requiredCapabilities),
     optionalCapabilities: capabilities(value.optionalCapabilities),
+  };
+}
+
+/** Sorted so two builds of the same declaration hash identically. */
+function canonicalServerCompatibility(value) {
+  return {
+    protocol: { minimum: value.protocol.minimum, maximum: value.protocol.maximum },
+    requiredCapabilities: [...value.requiredCapabilities].sort(),
+    optionalCapabilities: [...value.optionalCapabilities].sort(),
   };
 }
 

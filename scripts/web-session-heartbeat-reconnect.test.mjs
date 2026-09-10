@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { FEATURE_CAPABILITIES } from '@terminay/protocol';
 import {
 	createSessionHeartbeat,
 	SessionConnectGate,
@@ -156,24 +157,32 @@ test('heartbeat recovery is ignored while a connect is still in flight', () => {
 });
 
 test('the web workspace probes liveness and no longer infers it from traffic', async () => {
-	const [session, attempt] = await Promise.all([
+	// Liveness is proven per connection now: a window holds one heartbeat and
+	// one recovery loop for each server it is attached to.
+	const [session, registry, attempt] = await Promise.all([
 		readFile(new URL('../src/web/main.tsx', import.meta.url), 'utf8'),
+		readFile(
+			new URL('../src/shared/connections/connectionRegistry.ts', import.meta.url),
+			'utf8',
+		),
 		readFile(
 			new URL('../src/web/sessionConnectAttempt.ts', import.meta.url),
 			'utf8',
 		),
 	]);
-	assert.match(session, /createSessionHeartbeat/u);
-	assert.match(session, /connection\.ping/u);
+	assert.match(registry, /createSessionHeartbeat/u);
+	assert.match(registry, /connection\.ping/u);
 	// The server arms its inbound-silence reaper only for a client that promises
-	// to keep proving liveness.
-	assert.match(session, /'connection\.heartbeat'/u);
-	assert.match(session, /onLost[\s\S]*recoverConnection\(\)/u);
-	assert.match(session, /setError\(/u);
+	// to keep proving liveness. The promise is made through the capability
+	// registry now, so a renamed capability cannot silently stop making it.
+	assert.match(registry, /FEATURE_CAPABILITIES\.heartbeat/u);
+	assert.equal(FEATURE_CAPABILITIES.heartbeat, 'connection.heartbeat');
+	assert.match(registry, /onLost[\s\S]*recoverFromClose\(/u);
+	assert.match(registry, /this\.error = 'Connection lost/u);
 	assert.match(session, /Reconnecting/u);
 	assert.match(session, /session-workspace--reconnecting/u);
 	// Quiet output is not a liveness signal anywhere in the session client.
-	for (const source of [session, attempt]) {
+	for (const source of [session, registry, attempt]) {
 		assert.doesNotMatch(source, /stallClass|SilenceWatch|shouldRecoverFromSilence/u);
 	}
 });

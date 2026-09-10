@@ -609,10 +609,17 @@ export class AgentStatusStore {
 	}
 }
 
+/**
+ * One store per connection, never one per window.
+ *
+ * A window holds a connection to each attached server, and each server owns
+ * its own agents. A single module-level store would have merged two servers'
+ * agents into one list keyed by ids that are only unique per server, so the
+ * factory is the only way to make one and the connection registry is the only
+ * thing that calls it.
+ */
 export function createAgentStatusStore(
 	initialSnapshot?: AgentStatusSnapshot,
 ): AgentStatusStore {
 	return new AgentStatusStore(initialSnapshot);
 }
-
-export const agentStatusStore = createAgentStatusStore();

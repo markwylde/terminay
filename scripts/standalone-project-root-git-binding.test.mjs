@@ -27,10 +27,18 @@ test('standalone project root updates rebind the Git service', () => {
 })
 
 test('embedded desktop project root updates stay on the workspace and Git authority', () => {
-  assert.match(
-    desktopAuthority,
-    /capabilities: \['terminal', 'workspace', 'files', 'agents', 'git'\]/u,
-  )
+  // Versioned feature capability strings, one per feature the embedded server
+  // serves. The list is multi-line, so assert each entry rather than a shape.
+  const declared =
+    desktopAuthority.match(/capabilities: \[[\s\S]*?\n\t\t\t\],/u)?.[0] ?? ''
+  for (const capability of [
+    'terminal.v1',
+    'workspace.v1',
+    'files.v1',
+    'agents.v1',
+    'git.v1',
+  ])
+    assert.ok(declared.includes(`'${capability}'`), capability)
   assert.match(desktopAuthority, /this\.git = new GitService\(\{\s*limits: \{/u)
   assert.match(desktopAuthority, /maxStatusEntries: 128/u)
   assert.match(desktopAuthority, /maxWorktrees: 128/u)

@@ -11,7 +11,11 @@ import {
 	TerminayGitClient,
 	TerminayTerminalClient,
 } from '@terminay/client-core';
-import type { ServerHello } from '@terminay/protocol';
+import {
+	CLIENT_SERVER_COMPATIBILITY,
+	FEATURE_CAPABILITIES,
+	type ServerHello,
+} from '@terminay/protocol';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
 import {
 	type ServerMessagePort,
@@ -63,9 +67,13 @@ function createRendererClient(transport: ServerPortTransport) {
 	const client = new TerminayClient({
 		clientId: `desktop-renderer-${crypto.randomUUID()}`,
 		clientVersion: 'desktop-local',
-		capabilities: ['terminal'],
+		// Liveness and health are connection mechanics, not features. What this
+		// bundle needs from a server is one declaration, and the client puts it
+		// in the hello, so the two can never drift into a coarse literal again.
+		capabilities: [FEATURE_CAPABILITIES.health, FEATURE_CAPABILITIES.heartbeat],
 		transport,
 	});
+	client.declareServerCompatibility(CLIENT_SERVER_COMPATIBILITY);
 	return client;
 }
 

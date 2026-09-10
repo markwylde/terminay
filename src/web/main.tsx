@@ -1,5 +1,9 @@
-import { ConnectionProfileStore, TerminayClient } from '@terminay/client-core';
-import type { ByteTransport, TerminayHostContext } from '@terminay/protocol';
+import { ConnectionProfileStore } from '@terminay/client-core';
+import type {
+	ByteTransport,
+	TerminayHostContext,
+	TerminayWorkspaceComposition,
+} from '@terminay/protocol';
 import {
 	Component,
 	type ErrorInfo,
@@ -14,34 +18,36 @@ import { createRoot } from 'react-dom/client';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
 import { subscribePairingApproval } from '../host/nativeEvents';
 import { pairDesktopConnection } from '../host/nativeActions';
-import { createConnectedServerClientContext } from '../shared/rendererServerClient';
+import {
+	type CompositionPersistence,
+	ConnectionRegistry,
+	ConnectionsProvider,
+	createBrowserConnectionHost,
+	createDesktopConnectionHost,
+	createHostCompositionPersistence,
+	createLocalCompositionPersistence,
+	NO_ATTACHED_CONNECTIONS,
+	NO_COMPOSITION_PERSISTENCE,
+	useConnectionsSnapshot,
+	type ConnectionOpenResult,
+	type WorkspaceConnection,
+	type WorkspaceConnectionHost,
+} from '../shared/connections';
 import type { SharedConnectionsRouteBodyProps } from '../shared/SharedConnectionsRouteBody';
 import type { AppCommand } from '../types/terminay';
 import { ConnectedWebRendererWorkspace } from './ConnectedWebRendererWorkspace';
 import {
 	acquireDesktopServerBootstrap,
+	type DesktopByteBridge,
 	type DesktopHostBridge,
 } from './desktopByteTransport';
-import {
-	createRecoveryLoop,
-	createSessionHeartbeat,
-	logSessionLane,
-	RecoveryRetrySchedule,
-	type SessionConnectAttempt,
-} from './sessionConnectAttempt';
-import {
-	getSessionTransportHost,
-	leaveManagerSession,
-} from './sessionTransportHost';
+import { getSessionTransportHost, leaveManagerSession } from './sessionTransportHost';
 import { createWebClientId } from './webClientIdentity';
 import './index.css';
 
-type ConnectedSession = Readonly<{
-	context: Omit<TerminalPanelClientContextValue, 'projectId'>;
-	label: string;
-	origin?: string;
-	serverId: string;
-}>;
+/** The window's own connection. Desktop's primary is always Local; a browser
+ * session's is the server the manager opened. */
+const PRIMARY_PROFILE_ID = 'primary';
 
 function TerminayMark({
 	className,
@@ -98,216 +104,99 @@ class WorkspaceErrorBoundary extends Component<
 }
 
 /**
- * The server-bundled browser entry runs only at a selected session origin (or
- * inside a Desktop-bound document). Connection bookmarks belong to the public
- * PWA and never enter this workspace shell.
+ * The server-bundled browser entry runs one workspace bundle over as many
+ * server connections as the host will open. Connection bookmarks belong to the
+ * public PWA and never enter this workspace shell.
  */
 export default function SessionWorkspaceApp(): React.JSX.Element {
-	const clientRef = useRef<TerminayClient | undefined>(undefined);
-	const connectRef = useRef<
-		(
-			attempt: SessionConnectAttempt,
-			options?: Readonly<{ replaceDesktopEndpoint?: boolean }>,
-		) => Promise<void>
-	>(async () => undefined);
-	const startAttemptRef = useRef<
-		(options?: Readonly<{ replaceDesktopEndpoint?: boolean }>) => void
-	>(() => undefined);
-	const connectionRef = useRef<ConnectedSession | undefined>(undefined);
-	const heartbeatRef = useRef<
-		{ stop(): void; probeNow(): void } | undefined
-	>(undefined);
-	const [connection, setConnection] = useState<ConnectedSession>();
-	const [error, setError] = useState<string>();
-	const [phase, setPhase] = useState<'connecting' | 'reconnecting' | 'ready'>(
-		'connecting',
-	);
-	// One persistent loop owns every attempt: mount, automatic recovery, and
-	// Retry. A failed attempt schedules the next one itself.
-	const loopRef = useRef(
-		createRecoveryLoop({
-			run: (attempt, runOptions) => connectRef.current(attempt, runOptions),
-			recovering: () => connectionRef.current !== undefined,
-			onAttemptStart: ({ recovering }) => {
-				// The last attempt's error stays visible until one succeeds; clearing
-				// it here made the text blink on every retry.
-				if (recovering) {
-					// The workspace stays mounted under the reconnecting overlay.
-					setPhase('reconnecting');
-					return;
-				}
-				connectionRef.current = undefined;
-				setConnection(undefined);
-				setPhase('connecting');
-			},
-			onAttemptFailed: ({ message, retrying }) => {
-				connectionRef.current = undefined;
-				setConnection(undefined);
-				setError(message);
-				// A further attempt is already scheduled, so this stays a
-				// reconnecting session rather than an idle one awaiting a person.
-				setPhase(retrying ? 'reconnecting' : 'ready');
-			},
-			schedule: new RecoveryRetrySchedule({
-				isHidden: () =>
-					typeof document !== 'undefined' && document.visibilityState === 'hidden',
-			}),
-		}),
-	);
-	const gateRef = useRef(loopRef.current.gate);
 	const [desktopContext, setDesktopContext] = useState<TerminayHostContext>();
+	// The host that hands out attached connections, known only once the primary
+	// bootstrap says which host this is.
+	const connectionHostRef = useRef<WorkspaceConnectionHost>(
+		NO_ATTACHED_CONNECTIONS,
+	);
+	const [connectionHost, setConnectionHost] = useState<WorkspaceConnectionHost>(
+		NO_ATTACHED_CONNECTIONS,
+	);
+	const [compositionStore, setCompositionStore] =
+		useState<CompositionPersistence>(NO_COMPOSITION_PERSISTENCE);
+	const registry = useMemo(
+		() =>
+			new ConnectionRegistry({
+				createClientId: (role) =>
+					createWebClientId(role === 'primary' ? 'session' : 'attached'),
+				isDocumentHidden: () =>
+					typeof document !== 'undefined' &&
+					document.visibilityState === 'hidden',
+				open: async ({ profileId, role, replaceEndpoint, onTransportClosed }) => {
+					if (role === 'attached') {
+						const attached = await connectionHostRef.current.attach(profileId);
+						return Object.freeze({
+							transport: attached.transport,
+							label: attached.label,
+						}) satisfies ConnectionOpenResult;
+					}
+					return openPrimaryConnection(
+						{ replaceEndpoint, onTransportClosed },
+						(context, host) => {
+							setDesktopContext(context);
+							connectionHostRef.current = host;
+							setConnectionHost(host);
+						},
+					);
+				},
+			}),
+		[],
+	);
+	const snapshot = useConnectionsSnapshot(registry);
+	const primary = snapshot.primary;
 	const [desktopPairingApproval, setDesktopPairingApproval] = useState<
 		Readonly<{ deviceName: string; matchCode: string; expiresAt: string }> | null
 	>(null);
 	useEffect(() => subscribePairingApproval(setDesktopPairingApproval), []);
 
-	const recoverConnection = useCallback(() => {
-		startAttemptRef.current({ replaceDesktopEndpoint: true });
-	}, []);
-
-	const connect = useCallback(
-		async (
-			attempt: SessionConnectAttempt,
-			options: Readonly<{ replaceDesktopEndpoint?: boolean }> = {},
-		) => {
-			// Phase and error belong to the recovery loop's callbacks alone. A
-			// second owner here flipped the surface to a cold connect mid-retry.
-			await clientRef.current?.close().catch(() => undefined);
-			heartbeatRef.current?.stop();
-
-			const sessionHost = getSessionTransportHost();
-			let transport: ByteTransport;
-			let origin: string | undefined;
-			let label: string;
-			let hostContext: TerminayHostContext | undefined;
-			if (sessionHost !== undefined) {
-				origin = sessionHost.origin;
-				label = sessionHost.hostName?.trim() || 'Remote';
-				transport = await sessionHost.connect({
-					origin,
-					onStateChange: (state) => {
-						if (
-							state === 'closed' &&
-							gateRef.current.shouldRecoverFromClose(attempt)
-						) {
-							recoverConnection();
-						}
-					},
-				});
-			} else {
-				const desktop = await acquireDesktopServerBootstrap(
-					window.terminayHost as DesktopHostBridge | undefined,
-					window.terminayBytes,
-					{ replaceEndpoint: options.replaceDesktopEndpoint },
-				);
-				if (desktop === undefined)
-					throw new Error(
-						'This workspace must be opened from a Terminay session origin.',
-					);
-				transport = desktop.transport;
-				hostContext = desktop.context;
-				origin = undefined;
-				label = desktop.context.profile?.label ?? 'Local';
-				setDesktopContext(hostContext);
-			}
-
-			if (!gateRef.current.isCurrent(attempt)) return;
-			if (transport.state === 'closed' || transport.state === 'failed') {
-				throw new Error('Session transport closed during connect.');
-			}
-
-			const client = new TerminayClient({
-				transport,
-				clientId: createWebClientId('session'),
-				clientVersion: '0.0.0',
-				capabilities: [
-					'server.health',
-					'terminal',
-					'workspace',
-					'files',
-					'agents',
-					// Server-hosted language intelligence for the file viewer. The
-					// client runs no language service of its own.
-					'language.v1',
-					// This client promises to prove liveness on an interval, which
-					// also arms the server's inbound-silence reaper for it.
-					'connection.heartbeat',
-				],
-			});
-			clientRef.current = client;
-			try {
-				const hello = await client.connect();
-				if (!gateRef.current.isCurrent(attempt)) {
-					await client.close().catch(() => undefined);
-					if (clientRef.current === client) clientRef.current = undefined;
-					return;
-				}
-				const context = await createConnectedServerClientContext(
-					client,
-					hello,
-					{
-						onTransportClosed: () => {
-							if (gateRef.current.shouldRecoverFromClose(attempt)) {
-								recoverConnection();
-							}
-						},
-					},
-				);
-				if (!gateRef.current.isCurrent(attempt)) {
-					await client.close().catch(() => undefined);
-					if (clientRef.current === client) clientRef.current = undefined;
-					return;
-				}
-				gateRef.current.finish(attempt);
-				// Liveness is proven by asking, not by watching traffic: a WebRTC
-				// generation can stop delivering while every lane still reports open.
-				const heartbeat = createSessionHeartbeat({
-					ping: (signal) =>
-						client.query('connection.ping', { sentAt: Date.now() }, { signal }),
-					onLost: (snapshot) => {
-						logSessionLane('connection-heartbeat-lost', snapshot);
-						setError('Connection lost. Reconnecting…');
-						if (gateRef.current.shouldRecoverFromClose(attempt)) recoverConnection();
-					},
-				});
-				heartbeatRef.current?.stop();
-				heartbeatRef.current = heartbeat;
-				heartbeat.start();
-				const next = Object.freeze({
-					context: Object.freeze({
-						...context,
-						connectionLabel: label,
-						retryConnection: () => recoverConnection(),
-						canRetryConnection: () => true,
-					}),
-					label,
-					...(origin === undefined ? {} : { origin }),
-					serverId: hello.serverId,
-				});
-				connectionRef.current = next;
-				setConnection(next);
-				setError(undefined);
-				setPhase('ready');
-			} catch (cause) {
-				await client.close().catch(() => undefined);
-				if (clientRef.current === client) clientRef.current = undefined;
-				throw cause;
-			}
-		},
-		[recoverConnection],
-	);
-	connectRef.current = connect;
-	startAttemptRef.current = (options) => loopRef.current.start(options);
-
 	useEffect(() => {
-		const loop = loopRef.current;
-		loop.start();
+		registry.startPrimary(PRIMARY_PROFILE_ID);
 		return () => {
-			loop.dispose();
-			heartbeatRef.current?.stop();
-			void clientRef.current?.close().catch(() => undefined);
+			void registry.dispose();
 		};
-	}, []);
+	}, [registry]);
+
+	// The primary decides where the composition is kept: through the Desktop
+	// host, through the manager, or in this origin's storage keyed by server.
+	const primaryServerId = primary?.serverId;
+	useEffect(() => {
+		if (primaryServerId === undefined) return;
+		const host = connectionHostRef.current;
+		setCompositionStore(
+			host.supportsAttach
+				? createHostCompositionPersistence(
+						() => host.readComposition(),
+						(value) => host.writeComposition(value),
+					)
+				: createLocalCompositionPersistence(primaryServerId),
+		);
+	}, [primaryServerId]);
+
+	// Restore the attached set the window had last time. Servers that cannot be
+	// reached come back attached and unreachable, with their tabs greyed, rather
+	// than silently disappearing from the strip.
+	const restoredRef = useRef(false);
+	useEffect(() => {
+		if (restoredRef.current || primary?.phase !== 'ready') return;
+		if (compositionStore === NO_COMPOSITION_PERSISTENCE) return;
+		restoredRef.current = true;
+		void (async () => {
+			const composition: TerminayWorkspaceComposition | undefined =
+				await compositionStore.read();
+			for (const attachment of composition?.attached ?? [])
+				registry.attach(attachment.profileId);
+		})();
+	}, [compositionStore, primary?.phase, registry]);
+
+	const recoverConnection = useCallback(() => {
+		primary?.retry();
+	}, [primary]);
 
 	// Returning to the foreground is the moment to find out. A frozen document
 	// runs nothing, so its transport can have died with no probe outstanding and
@@ -317,8 +206,7 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 		if (typeof document === 'undefined') return;
 		const shown = () => {
 			if (document.visibilityState !== 'visible') return;
-			loopRef.current.resume();
-			heartbeatRef.current?.probeNow();
+			registry.resume();
 		};
 		document.addEventListener('visibilitychange', shown);
 		window.addEventListener('pageshow', shown);
@@ -326,23 +214,39 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 			document.removeEventListener('visibilitychange', shown);
 			window.removeEventListener('pageshow', shown);
 		};
-	}, []);
+	}, [registry]);
+
+	const phase = presentationPhase(primary);
+	const error = primary?.error;
+	const label = primary?.label ?? 'Local';
+	const terminalClientContext = useMemo<
+		Omit<TerminalPanelClientContextValue, 'projectId'> | undefined
+	>(() => {
+		if (primary?.context === undefined) return undefined;
+		return Object.freeze({
+			...primary.context,
+			connectionLabel: label,
+			retryConnection: () => primary.retry(),
+			canRetryConnection: () => true,
+		});
+	}, [label, primary]);
 
 	const profiles = useMemo(() => {
-		if (connection?.origin === undefined) return undefined;
+		if (primary?.origin === undefined || primary.serverId === undefined)
+			return undefined;
 		const store = new ConnectionProfileStore({ local: false });
 		store.import({
 			id: 'session-origin',
-			label: connection.label,
-			origin: connection.origin,
-			serverId: connection.serverId,
+			label: primary.label,
+			origin: primary.origin,
+			serverId: primary.serverId,
 			status: phase === 'reconnecting' ? 'connecting' : 'connected',
 		});
 		store.select('session-origin');
 		return store;
-	}, [connection, phase]);
+	}, [phase, primary]);
 
-	if (connection !== undefined) {
+	if (terminalClientContext !== undefined) {
 		const connectionRoute: Omit<SharedConnectionsRouteBodyProps, 'state'> = {
 			...(desktopContext === undefined
 				? {}
@@ -365,48 +269,52 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 		};
 		return (
 			<WorkspaceErrorBoundary>
-				<div
-					className={
-						phase === 'reconnecting'
-							? 'session-workspace session-workspace--reconnecting'
-							: 'session-workspace'
-					}
+				<ConnectionsProvider
+					composition={compositionStore}
+					host={connectionHost}
+					registry={registry}
 				>
-					{phase === 'reconnecting' && (
-						<div
-							className="session-workspace__reconnecting"
-							role="status"
-							aria-live="polite"
-							aria-busy="true"
-						>
-							<LoadingDots />
-							<p>
-								{error ?? 'Terminal stream stalled. Reconnecting…'}
-							</p>
-						</div>
-					)}
-					<ConnectedWebRendererWorkspace
-						connectionRoute={connectionRoute}
-						hostContext={desktopContext}
-						onBack={() => {
-							if (leaveManagerSession()) return;
-							void clientRef.current?.close().catch(() => undefined);
-						}}
-						subscribeAppCommands={
-							desktopContext === undefined || window.terminayHost === undefined
-								? undefined
-								: (listener: (command: AppCommand) => Promise<void> | void) =>
-										(
-											window.terminayHost as unknown as DesktopHostBridge
-										).subscribeEvent((event) => {
-											if (event.event.type === 'menu.command') {
-												return listener(event.event.command);
-											}
-										})
+					<div
+						className={
+							phase === 'reconnecting'
+								? 'session-workspace session-workspace--reconnecting'
+								: 'session-workspace'
 						}
-						terminalClientContext={connection.context}
-					/>
-				</div>
+					>
+						{phase === 'reconnecting' && (
+							<div
+								className="session-workspace__reconnecting"
+								role="status"
+								aria-live="polite"
+								aria-busy="true"
+							>
+								<LoadingDots />
+								<p>{error ?? 'Terminal stream stalled. Reconnecting…'}</p>
+							</div>
+						)}
+						<ConnectedWebRendererWorkspace
+							connectionRoute={connectionRoute}
+							hostContext={desktopContext}
+							onBack={() => {
+								if (leaveManagerSession()) return;
+								void registry.dispose();
+							}}
+							subscribeAppCommands={
+								desktopContext === undefined || window.terminayHost === undefined
+									? undefined
+									: (listener: (command: AppCommand) => Promise<void> | void) =>
+											(
+												window.terminayHost as unknown as DesktopHostBridge
+											).subscribeEvent((event) => {
+												if (event.event.type === 'menu.command') {
+													return listener(event.event.command);
+												}
+											})
+							}
+							terminalClientContext={terminalClientContext}
+						/>
+					</div>
+				</ConnectionsProvider>
 			</WorkspaceErrorBoundary>
 		);
 	}
@@ -434,19 +342,102 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 							? 'Connecting to Terminay…'
 							: phase === 'reconnecting'
 								? 'Reconnecting…'
-								: 'Connection unavailable'}
+								: primary?.phase === 'incompatible'
+									? 'This server needs updating'
+									: 'Connection unavailable'}
 					</h1>
 				)}
 				{error !== undefined && <p role="alert">{error}</p>}
 				{/* Recovery keeps trying on its own; this only asks for it now. */}
-				{(phase === 'ready' || error !== undefined) && (
-					<button type="button" onClick={recoverConnection}>
-						Retry connection
-					</button>
-				)}
+				{(phase === 'ready' || error !== undefined) &&
+					primary?.phase !== 'incompatible' && (
+						<button type="button" onClick={recoverConnection}>
+							Retry connection
+						</button>
+					)}
 			</section>
 		</main>
 	);
+}
+
+/** What the shell shows. An unreachable primary is presented as idle, as it
+ * was before: recovery keeps trying and the person may also ask. */
+function presentationPhase(
+	primary: WorkspaceConnection | undefined,
+): 'connecting' | 'reconnecting' | 'ready' {
+	switch (primary?.phase) {
+		case 'reconnecting':
+			return 'reconnecting';
+		case 'ready':
+			return 'ready';
+		case 'unreachable':
+		case 'incompatible':
+			return 'ready';
+		default:
+			return 'connecting';
+	}
+}
+
+/**
+ * The one connection whose bundle this window runs.
+ *
+ * A browser session takes it from the framed session host; Desktop takes it
+ * from its preload's byte endpoint. Both hand back an opaque transport, and
+ * the same call tells the shell which host it is talking to so attached
+ * connections can be opened later through that host's `connections`
+ * capability.
+ */
+async function openPrimaryConnection(
+	options: Readonly<{
+		replaceEndpoint: boolean;
+		onTransportClosed: () => void;
+	}>,
+	adopt: (
+		context: TerminayHostContext | undefined,
+		host: WorkspaceConnectionHost,
+	) => void,
+): Promise<ConnectionOpenResult> {
+	const sessionHost = getSessionTransportHost();
+	if (sessionHost !== undefined) {
+		const origin = sessionHost.origin;
+		const transport: ByteTransport = await sessionHost.connect({
+			origin,
+			onStateChange: (state) => {
+				if (state === 'closed') options.onTransportClosed();
+			},
+		});
+		adopt(undefined, createBrowserConnectionHost(sessionHost));
+		return Object.freeze({
+			transport,
+			label: sessionHost.hostName?.trim() || 'Remote',
+			origin,
+		});
+	}
+	const desktop = await acquireDesktopServerBootstrap(
+		window.terminayHost as DesktopHostBridge | undefined,
+		window.terminayBytes as DesktopByteBridge | undefined,
+		{ replaceEndpoint: options.replaceEndpoint },
+	);
+	if (desktop === undefined)
+		throw new Error(
+			'This workspace must be opened from a Terminay session origin.',
+		);
+	const host = window.terminayHost;
+	adopt(
+		desktop.context,
+		host === undefined
+			? NO_ATTACHED_CONNECTIONS
+			: createDesktopConnectionHost(
+					desktop.context,
+					host,
+					window.terminayBytes as DesktopByteBridge | undefined,
+				),
+	);
+	return Object.freeze({
+		transport: desktop.transport,
+		label: desktop.context.profile?.label ?? 'Local',
+		hostContext: desktop.context,
+	});
 }
 
 export function mountSessionWorkspace(root: HTMLElement): void {

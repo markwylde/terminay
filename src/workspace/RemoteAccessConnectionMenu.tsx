@@ -1,6 +1,8 @@
 import { ChevronDown, Play, Settings2, Square } from 'lucide-react';
 import type { RefObject } from 'react';
+import { useConnections } from '../shared/connections/ConnectionsContext';
 import type { RemoteAccessStatus } from '../types/terminay';
+import { ConnectionsControl } from './ConnectionsControl';
 
 export type ConnectionSwitcherEntry = {
 	id: string;
@@ -27,6 +29,8 @@ export function RemoteAccessConnectionMenu(props: {
 	tone: string;
 }) {
 	const { status } = props;
+	const { attach, connections, detach, profiles, supportsAttach } =
+		useConnections();
 	const switcherEntries = props.connectionSwitcherEntries ?? [];
 	const isExposed = Boolean(status?.isRunning);
 	const connectionCount = status?.connections.length ?? 0;
@@ -104,7 +108,18 @@ export function RemoteAccessConnectionMenu(props: {
 								<Settings2 size={14} aria-hidden="true" />
 							</button>
 						</div>
-						{switcherEntries.length ? (
+						{connections.length > 0 ? (
+							// A window holds several connections at once, so this lists
+							// what is attached rather than offering a switch between them.
+							<ConnectionsControl
+								connections={connections}
+								currentServerLabel={props.currentServerLabel}
+								onAttach={attach}
+								onDetach={(profileId) => void detach(profileId)}
+								profiles={profiles}
+								supportsAttach={supportsAttach}
+							/>
+						) : switcherEntries.length ? (
 							switcherEntries.map((entry) => (
 								<button
 									key={entry.id}
