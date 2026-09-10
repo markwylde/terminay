@@ -14,6 +14,13 @@ export type ProjectTab = {
 	hydrating?: boolean;
 	defaultShellProfileId?: string;
 	id: string;
+	/** The server that owns this project. Project ids are per-server
+	 * namespaces, so `id` alone does not identify a tab in a window whose strip
+	 * holds tabs from several servers. */
+	serverId: string;
+	/** How that server is named in the strip. Shown only when the window has
+	 * more than one server attached. */
+	serverLabel?: string;
 	title: string;
 	color: string;
 	emoji: string;
@@ -292,6 +299,9 @@ export function createProjectTab(
 	const id = `project-${index}`;
 	return {
 		id,
+		// The color scope is the connection's server identity: one namespace for
+		// ids, colors, and device-local sidebar state alike.
+		serverId: colorScope,
 		title: `Project ${index}`,
 		color: getProjectTabColor(`${colorScope}:${id}`, usedColors, randomSource),
 		emoji: '',
