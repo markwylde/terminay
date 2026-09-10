@@ -27,6 +27,7 @@ const expectedIds = new Set([
 	'com.terminay.agent.grok',
 	'com.terminay.agent.opencode',
 	'com.terminay.agent.omp',
+	'com.terminay.language.typescript',
 ]);
 
 /** Build, test, pack, and stage every official extension as a complete
@@ -277,10 +278,10 @@ async function loadCatalogue(path) {
 	if (
 		value?.schemaVersion !== 1 ||
 		!Array.isArray(value.extensions) ||
-		value.extensions.length !== 5
+		value.extensions.length !== 6
 	)
 		throw new Error(
-			'built-in extension catalogue must name exactly five extensions',
+			'built-in extension catalogue must name exactly six extensions',
 		);
 	const entries = value.extensions.map((entry) => {
 		if (
@@ -302,8 +303,8 @@ async function loadCatalogue(path) {
 		});
 	});
 	if (
-		new Set(entries.map((entry) => entry.extensionId)).size !== 5 ||
-		new Set(entries.map((entry) => entry.packageName)).size !== 5 ||
+		new Set(entries.map((entry) => entry.extensionId)).size !== 6 ||
+		new Set(entries.map((entry) => entry.packageName)).size !== 6 ||
 		!entries.every((entry) => expectedIds.has(entry.extensionId))
 	)
 		throw new Error(

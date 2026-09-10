@@ -15,6 +15,16 @@ export type ExtensionSummaryDto = Readonly<{
 	dependants: readonly string[];
 	provenance?: string;
 	failureMessage?: string;
+	/** Language servers this extension contributes. Present only for language
+	 * extensions; the server computes the languages and file extensions from the
+	 * contribution's selectors. */
+	languageServers?: readonly Readonly<{
+		id: string;
+		displayName: string;
+		languageIds: readonly string[];
+		fileExtensions: readonly string[];
+		runtimeNotes?: string;
+	}>[];
 }>;
 
 export function ExtensionManager({
@@ -238,6 +248,26 @@ function ExtensionCard({ extension, busy, onInstall, onUpdate, onAction }: Reado
 					)}
 				</div>
 			</div>
+			{extension.languageServers === undefined || extension.languageServers.length === 0 ? null : (
+				<div className="settings-group-footer extension-card-footer extension-card-languages">
+					<span className="settings-row-description">Languages</span>
+					{extension.languageServers.map((server) => (
+						<div className="extension-language-server" key={server.id}>
+							<div className="settings-chip-row">
+								{server.languageIds.map((languageId) => (
+									<span className="settings-chip" key={`${server.id}-language-${languageId}`}>{languageId}</span>
+								))}
+								{server.fileExtensions.map((fileExtension) => (
+									<span className="settings-chip settings-chip--muted" key={`${server.id}-extension-${fileExtension}`}>{fileExtension}</span>
+								))}
+							</div>
+							{server.runtimeNotes === undefined ? null : (
+								<span className="settings-row-description">{server.runtimeNotes}</span>
+							)}
+						</div>
+					))}
+				</div>
+			)}
 			{extension.permissions.length === 0 ? null : (
 				<div className="settings-group-footer extension-card-footer">
 					<span className="settings-row-description">Permissions</span>

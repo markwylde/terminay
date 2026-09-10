@@ -16,3 +16,6 @@
 .extension-state--failed,
 .extension-state--incompatible { color: var(--settings-danger); }
 .extension-card-footer { gap: 16px; }
+.extension-card-languages { flex-wrap: wrap; align-items: flex-start; }
+.extension-language-server { display: grid; gap: 4px; }
+.settings-chip--muted { background: color-mix(in srgb, var(--settings-text-muted) 14%, transparent); color: var(--settings-text-muted); }

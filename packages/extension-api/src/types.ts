@@ -46,6 +46,25 @@ export interface AgentProviderContribution {
 	requiredEnvironmentVariables?: string[];
 }
 
+/**
+ * Declarative metadata for one language server. The extension declares which
+ * languages and files it serves; the host owns spawning the server, stdio
+ * framing, LSP initialise, lifecycle, deadlines, and translation into core's
+ * bounded DTOs.
+ */
+export interface LanguageServerContribution {
+	/** Stable, extension-local, kebab-case, e.g. `typescript`. */
+	id: string;
+	displayName: string;
+	description?: string;
+	/** Language ids served, e.g. `typescript`, `javascriptreact`. */
+	languageIds: string[];
+	/** Lower-case file extensions including the leading dot, e.g. `.tsx`. */
+	fileExtensions: string[];
+	/** Shown in Settings, e.g. "Uses the project's TypeScript when installed". */
+	runtimeNotes?: string;
+}
+
 export interface TerminayExtensionManifest {
 	manifestVersion: 1;
 	id: string;
@@ -62,6 +81,7 @@ export interface TerminayExtensionManifest {
 	extensionDependencies?: ExtensionDependency[];
 	contributes: {
 		agentProviders?: AgentProviderContribution[];
+		languageServers?: LanguageServerContribution[];
 	};
 }
 
@@ -157,6 +177,37 @@ export interface CancellationSignal {
 	throwIfAborted(): void;
 }
 
+/** What the host asks the extension to launch: one project, on this server. */
+export interface LanguageServerLaunchRequest {
+	languageServerId: string;
+	/** Absolute path on the server. The host decides cwd; the extension may read it. */
+	projectRoot: string;
+}
+
+/** How to start one language server. The host spawns and owns the process. */
+export interface LanguageServerLaunch {
+	/** An absolute path, or an executable the host can resolve on PATH. */
+	command: string;
+	args: string[];
+	/** Overlaid on a minimal host environment, never inherited wholesale. */
+	env?: Record<string, string>;
+	initializationOptions?: JsonValue;
+	/** Bounded, safe detail for Settings, e.g. "project typescript 5.6.2". */
+	description?: string;
+}
+
+export interface LanguageServerProviderRuntime {
+	launch(
+		request: LanguageServerLaunchRequest,
+		signal: AbortSignal,
+	): Promise<LanguageServerLaunch>;
+}
+
+export interface LanguageServerRegistration {
+	id: string;
+	runtime: LanguageServerProviderRuntime;
+}
+
 export interface ExtensionContext {
 	extensionId: string;
 	apiVersion: string;
@@ -165,6 +216,11 @@ export interface ExtensionContext {
 	agents: AgentProviderRegistry;
 	/** Host-disposed registrations and observers owned by this activation. */
 	subscriptions: ExtensionSubscriptions;
+	/**
+	 * Registers a language server this manifest contributed. An undeclared id,
+	 * or a second registration of the same id, is refused.
+	 */
+	registerLanguageServerProvider(registration: LanguageServerRegistration): void;
 }
 
 export interface TerminayExtension {

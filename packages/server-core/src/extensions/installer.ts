@@ -501,6 +501,7 @@ export class ExtensionInstaller {
 			packageRoot: string;
 			entrypoint: string;
 			agentProviders: readonly import('@terminay/extension-api').AgentProviderContribution[];
+			languageServers: readonly import('@terminay/extension-api').LanguageServerContribution[];
 			manifest: ExtensionReceipt['manifest'];
 		}>
 	> {
@@ -516,6 +517,9 @@ export class ExtensionInstaller {
 			entrypoint: slot.receipt.manifest.entrypoint,
 			agentProviders: Object.freeze(
 				structuredClone(slot.receipt.manifest.contributes.agentProviders ?? []),
+			),
+			languageServers: Object.freeze(
+				structuredClone(slot.receipt.manifest.contributes.languageServers ?? []),
 			),
 			manifest: slot.receipt.manifest,
 		});

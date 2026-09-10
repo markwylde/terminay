@@ -1,8 +1,9 @@
 # `@terminay/extension-api`
 
 This dependency-free package is the public contract for server-side Terminay
-coding-agent extensions. It contains the closed v1 manifest validator, agent
-provider authoring types, the terminal-scoped observation contract, and fixed
+coding-agent and language server extensions. It contains the closed v1 manifest
+validator, agent provider authoring types, the language server contribution and
+launch contract, the terminal-scoped observation contract, and fixed
 application-protocol DTOs. It does not grant privileged server access.
 
 An extension exports `defineExtension({ activate, deactivate })`. Its
@@ -27,6 +28,26 @@ Terminay Server account; terminal evidence must use `terminal.observation`.
 The reusable workflow template covers packing, conformance, SBOM/license
 evidence, npm trusted publishing, and post-publication integrity checks for
 repositories maintained separately from Terminay.
+
+A language server extension contributes `contributes.languageServers` entries —
+an id, display name, the language ids and file extensions it serves, and the
+runtime notes Settings shows — and calls
+`context.registerLanguageServerProvider({ id, runtime })` during activation. Its
+`runtime.launch(request, signal)` receives one project root and returns the
+command, arguments, environment overlay, initialisation options, and a short
+description of what it resolved. Everything else belongs to the host: spawning
+the server with the project root as its working directory, stdio framing, LSP
+initialise, lifecycle, deadlines, crash accounting, and translation into core's
+bounded DTOs. No LSP JSON-RPC crosses the application protocol, and a language
+server extension contributes no UI and registers no protocol operations.
+
+`@terminay/extension-api/testing` carries the matching test tools:
+`createLanguageServerExtensionHarness` activates an extension and applies the
+host's registration rules, and `openLanguageServerSession` starts the launch it
+returned and speaks LSP to it over stdio — initialise, `didOpen`, diagnostics,
+completion, hover, and definition — so a package can prove its launch against a
+real server. [`fixtures/language-server`](fixtures/language-server) is a
+worked, packable example built on a stub server.
 
 Every project runs on the server that owns it, so a terminal context always
 offers the full observation broker: process, TTY, open-file, realpath, stat,

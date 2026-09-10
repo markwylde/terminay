@@ -6,6 +6,11 @@ import {
 	validateAgentProviderDefinition,
 } from '@terminay/extension-api';
 import { LocalAgentObservationAdapter } from './localAgentObservation.js';
+import { parseExtensionLanguageRequest } from './languageProtocol.js';
+import {
+	LanguageSessionRuntime,
+	type LanguageServerProviderLike,
+} from './languageSessionRuntime.js';
 import {
 	type ChildFrame,
 	EXTENSION_HOST_PROTOCOL_VERSION,
@@ -45,6 +50,9 @@ const agentTerminals = new Map<
 >();
 let subscriptions: Array<{ dispose(): unknown | Promise<unknown> }> = [];
 let sequence = 0;
+/** Every language server this extension runs, and their sessions. Created on
+ * activation so a child that contributes none carries no runtime at all. */
+let languageRuntime: LanguageSessionRuntime | undefined;
 
 process.on('message', (message: unknown) => {
 	void receive(message);
@@ -169,8 +177,13 @@ async function receive(message: unknown): Promise<void> {
 		await activateExtension(message);
 		return;
 	}
+	if (message.kind === 'language.request') {
+		await invokeLanguage(message);
+		return;
+	}
 	if (message.kind === 'deactivate') {
 		for (const controller of invocations.values()) controller.abort();
+		await languageRuntime?.stopAll().catch(() => undefined);
 		for (const terminal of agentTerminals.values()) terminal.controller.abort();
 		agentTerminals.clear();
 		try {
@@ -212,6 +225,32 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 		subscriptions = [];
 		for (const terminal of agentTerminals.values()) terminal.controller.abort();
 		agentTerminals.clear();
+		const declaredLanguageServers = new Set(
+			Array.isArray(payload.languageServers)
+				? payload.languageServers
+						.map((entry) => object(entry)?.id)
+						.filter((id): id is string => typeof id === 'string')
+				: [],
+		);
+		const languageServers: string[] = [];
+		languageRuntime = new LanguageSessionRuntime({
+			onDiagnostics: (notification) => {
+				send({
+					protocolVersion: 1,
+					kind: 'language.diagnostics',
+					id: `language-diagnostics:${++sequence}`,
+					payload: notification as unknown as Record<string, unknown>,
+				});
+			},
+			onSessionExit: (exit) => {
+				send({
+					protocolVersion: 1,
+					kind: 'language.session.exited',
+					id: `language-exit:${++sequence}`,
+					payload: exit as unknown as Record<string, unknown>,
+				});
+			},
+		});
 		const declaredAgentProviders = new Set(
 			Array.isArray(payload.agentProviders)
 				? payload.agentProviders
@@ -267,6 +306,35 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 						});
 					},
 				}),
+				registerLanguageServerProvider(registration: unknown) {
+					const value = object(registration);
+					const id = typeof value?.id === 'string' ? value.id : '';
+					const runtime = object(value?.runtime);
+					if (
+						!declaredLanguageServers.has(id) ||
+						languageRuntime === undefined ||
+						languageRuntime.has(id) ||
+						runtime === undefined ||
+						typeof runtime.launch !== 'function'
+					)
+						throw new Error(
+							'language server registration is undeclared or invalid',
+						);
+					languageRuntime.register(
+						id,
+						runtime as unknown as LanguageServerProviderLike,
+					);
+					languageServers.push(id);
+					let disposed = false;
+					return Object.freeze({
+						id,
+						dispose() {
+							if (disposed) return;
+							disposed = true;
+							languageRuntime?.unregister(id);
+						},
+					});
+				},
 				subscriptions: Object.freeze({
 					add(subscription: unknown) {
 						const value = object(subscription);
@@ -317,6 +385,7 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 			payload: {
 				methods: Object.keys(callbacks).sort(),
 				agentProviders,
+				languageServers,
 			},
 		});
 	} catch (error) {
@@ -947,6 +1016,41 @@ async function pollingDirectoryWatcher(
 	});
 }
 
+/**
+ * One private language invocation. It shares the invocation map with ordinary
+ * extension methods so the host's existing `cancel` frame aborts a superseded
+ * completion exactly as it aborts any other in-flight work.
+ */
+async function invokeLanguage(frame: HostFrame): Promise<void> {
+	const request = parseExtensionLanguageRequest(frame.payload);
+	if (request === undefined || languageRuntime === undefined) {
+		failure(frame.id, new Error('language request is invalid'));
+		return;
+	}
+	const controller = new AbortController();
+	invocations.set(frame.id, controller);
+	try {
+		const result = await languageRuntime.handle(
+			request.method,
+			request.input,
+			controller.signal,
+		);
+		if (
+			!send({
+				protocolVersion: 1,
+				kind: 'result',
+				id: frame.id,
+				payload: result,
+			})
+		)
+			process.exit(73);
+	} catch (error) {
+		failure(frame.id, error);
+	} finally {
+		invocations.delete(frame.id);
+	}
+}
+
 async function invoke(frame: HostFrame): Promise<void> {
 	const payload = object(frame.payload);
 	const method =
@@ -1122,6 +1226,7 @@ function isHostFrame(value: unknown): value is HostFrame {
 			frame.kind === 'agent.drain' ||
 			frame.kind === 'agent.observation.result' ||
 			frame.kind === 'agent.lifecycle.ack' ||
-			frame.kind === 'agent.lifecycle.backpressure')
+			frame.kind === 'agent.lifecycle.backpressure' ||
+			frame.kind === 'language.request')
 	);
 }

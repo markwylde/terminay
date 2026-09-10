@@ -11,6 +11,7 @@ const expected = [
 	'com.terminay.agent.grok',
 	'com.terminay.agent.opencode',
 	'com.terminay.agent.omp',
+	'com.terminay.language.typescript',
 ].sort();
 
 export async function verifyBuiltInExtensionArtifacts(root) {
@@ -19,7 +20,7 @@ export async function verifyBuiltInExtensionArtifacts(root) {
 	assert.deepEqual(
 		artifacts.map((artifact) => artifact.extensionId).sort(),
 		expected,
-		'built-in inventory must contain exactly the five official extensions',
+		'built-in inventory must contain exactly the six official extensions',
 	);
 	const temporary = await mkdtemp(join(tmpdir(), 'terminay-built-in-verify-'));
 	try {

@@ -1,4 +1,4 @@
-import type { JsonValue } from '@terminay/protocol';
+import { LANGUAGE_CAPABILITY, type JsonValue } from '@terminay/protocol';
 import {
 	type AgentOperationRegistry,
 	createAgentEventProjector,
@@ -27,6 +27,14 @@ import {
 	type ServerFileObservationAdapter,
 } from './fileService/observationAdapter.js';
 import type { ServerGitAdapter } from './gitService/adapter.js';
+import {
+	type LanguageAdapterOptions,
+	ServerLanguageAdapter,
+} from './languageService/adapter.js';
+import {
+	type LanguageExtensionBridge,
+	LanguageSessionManager,
+} from './languageService/sessions.js';
 import type { MacroRepository, MacroRunner } from './macroService/index.js';
 import {
 	createMacroOperationRegistry,
@@ -201,6 +209,32 @@ export interface ServerCoreCompositionOptions
 	readonly settings?: ServerSettingsRepository;
 	/** Optional project-scoped filesystem watch and folder-size authority. */
 	readonly fileObservations?: ServerFileObservationAdapter;
+	/**
+	 * Optional server-owned language intelligence.
+	 *
+	 * Present only when this server both owns project files and runs extensions:
+	 * a language session is a child of an extension on the server that owns the
+	 * project, and nowhere else.
+	 */
+	readonly language?: {
+		readonly extensions: LanguageExtensionBridge;
+		readonly projects: LanguageAdapterOptions['projects'];
+		/** Canonical absolute project root; defaults to the project resolver. */
+		readonly projectRoot?: (projectId: string) => Promise<string>;
+		readonly maxSessions?: number;
+		readonly idleMs?: number;
+		readonly diagnosticsDebounceMs?: number;
+		/** Disk changes fed into open sessions. */
+		readonly watch?: {
+			observe(
+				listener: (event: {
+					readonly projectId: string;
+					readonly resource: string;
+					readonly kind: string;
+				}) => void,
+			): () => void;
+		};
+	};
 	/** Host-neutral startup/cleanup for optional authorities that require
 	 * asynchronous binding before any transport listener becomes ready. */
 	readonly serviceLifecycle?: {
@@ -264,6 +298,7 @@ export interface ServerCoreComposition {
 		typeof createShellProfileOperationRegistry
 	>;
 	readonly workspaceOperations?: import('./workspaceProtocol.js').WorkspaceOperationRegistry;
+	readonly languageSessions?: LanguageSessionManager;
 	/** Start host-facing services that must be live before a terminal is
 	 * created. The composition, not ServerRuntime, owns these instances. */
 	readonly start: () => Promise<void>;
@@ -627,6 +662,7 @@ export function createServerCoreComposition(
 			}
 		});
 	}
+	const language = composeLanguageService(options, eventJournal);
 	const settingsOperations =
 		options.settings === undefined
 			? undefined
@@ -669,8 +705,11 @@ export function createServerCoreComposition(
 		),
 		mergeOperationRegistries(
 			mergeOperationRegistries(
-				recordingOperations ?? {},
-				settingsOperations?.operations ?? {},
+				mergeOperationRegistries(
+					recordingOperations ?? {},
+					settingsOperations?.operations ?? {},
+				),
+				language?.adapter.operations() ?? {},
 			),
 			shellProfileOperations?.operations ?? {},
 		),
@@ -834,6 +873,7 @@ export function createServerCoreComposition(
 			await attempt(() => agentOperations?.close());
 			await attempt(() => options.fileObservations?.close());
 			await attempt(() => options.activity?.shutdown());
+			await attempt(() => language?.dispose());
 			lifecycle = 'stopped';
 			if (failures.length > 0)
 				throw cleanupFailure('server composition shutdown failed', failures);
@@ -851,6 +891,7 @@ export function createServerCoreComposition(
 			? {}
 			: { workspace: options.workspace }),
 		...(workspaceOperations === undefined ? {} : { workspaceOperations }),
+		...(language === undefined ? {} : { languageSessions: language.sessions }),
 		...(options.activity === undefined ? {} : { activity: options.activity }),
 		...(options.agents === undefined ? {} : { agents: options.agents }),
 		...(options.extensionAgentRuntime === undefined
@@ -1080,8 +1121,89 @@ function uniqueCapabilities(
 			...(options.settings === undefined ? [] : ['settings']),
 			...(options.shellProfiles === undefined ? [] : ['shell-profiles']),
 			...(options.fileObservations === undefined ? [] : ['files.observe']),
+			...(options.language === undefined ? [] : [LANGUAGE_CAPABILITY]),
 		]),
 	]) as readonly string[];
+}
+
+/**
+ * Compose the language session manager, its protocol adapter, and the disk
+ * changes they consume. The order matters: the adapter is the only thing that
+ * writes diagnostics to the journal, and it must exist before the session
+ * manager can publish one.
+ */
+function composeLanguageService(
+	options: ServerCoreCompositionOptions,
+	eventJournal: OrderedEventJournalLike,
+):
+	| {
+			readonly sessions: LanguageSessionManager;
+			readonly adapter: ServerLanguageAdapter;
+			readonly dispose: () => void;
+	  }
+	| undefined {
+	const language = options.language;
+	if (language === undefined) return undefined;
+	let adapter: ServerLanguageAdapter | undefined;
+	const projects = language.projects as ReadonlyMap<
+		string,
+		{ readonly resolver: { root(): Promise<string> } }
+	>;
+	const sessions = new LanguageSessionManager({
+		extensions: language.extensions,
+		projectRoot:
+			language.projectRoot ??
+			(async (projectId) => {
+				const project =
+					typeof projects.get === 'function'
+						? projects.get(projectId)
+						: (
+								language.projects as Readonly<
+									Record<string, { readonly resolver: { root(): Promise<string> } }>
+								>
+							)[projectId];
+				if (project === undefined)
+					throw new Error('language project is unavailable');
+				return project.resolver.root();
+			}),
+		onDiagnostics: (event) => adapter?.publishDiagnostics(event),
+		...(language.maxSessions === undefined
+			? {}
+			: { maxSessions: language.maxSessions }),
+		...(language.idleMs === undefined ? {} : { idleMs: language.idleMs }),
+	});
+	adapter = new ServerLanguageAdapter({
+		serverId: options.serverId,
+		sessions,
+		projects: language.projects,
+		eventJournal,
+		...(language.diagnosticsDebounceMs === undefined
+			? {}
+			: { diagnosticsDebounceMs: language.diagnosticsDebounceMs }),
+	});
+	const unwatch = language.watch?.observe((event) => {
+		if (event.resource.length === 0) return;
+		sessions.notifyWatchedFiles(event.projectId, [
+			{
+				path: event.resource,
+				kind:
+					event.kind === 'created'
+						? 'created'
+						: event.kind === 'deleted'
+							? 'deleted'
+							: 'changed',
+			},
+		]);
+	});
+	return {
+		sessions,
+		adapter,
+		dispose: () => {
+			unwatch?.();
+			adapter?.dispose();
+			void sessions.shutdown();
+		},
+	};
 }
 
 function composeProjectEventProjectors(

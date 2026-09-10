@@ -226,6 +226,9 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 					'workspace',
 					'files',
 					'agents',
+					// Server-hosted language intelligence for the file viewer. The
+					// client runs no language service of its own.
+					'language.v1',
 					// This client promises to prove liveness on an interval, which
 					// also arms the server's inbound-silence reaper for it.
 					'connection.heartbeat',

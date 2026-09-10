@@ -1,7 +1,7 @@
 {
   "name": "@terminay/extension-api",
-  "version": "2.0.0",
-  "description": "Public authoring contract for Terminay coding-agent extensions.",
+  "version": "2.1.0",
+  "description": "Public authoring contract for Terminay coding-agent and language server extensions.",
   "type": "module",
   "license": "MIT",
   "exports": {
@@ -19,7 +19,14 @@
   "bin": {
     "terminay-extension-conformance": "./dist/conformance.js"
   },
-  "files": ["dist", "fixtures", "examples", "templates", "scripts", "README.md"],
+  "files": [
+    "dist",
+    "fixtures",
+    "examples",
+    "templates",
+    "scripts",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
