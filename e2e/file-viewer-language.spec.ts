@@ -74,6 +74,9 @@ test.describe('file viewer language intelligence', () => {
     createWorkspace,
     mainWindow,
   }) => {
+    // The first request starts a real TypeScript language server against the
+    // fixture project; give the whole journey room beyond the default budget.
+    test.setTimeout(180_000)
     const workspace = await createWorkspace({
       name: 'file-viewer-language',
       seed: {

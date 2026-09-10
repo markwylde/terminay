@@ -71,6 +71,10 @@ const MAX_RESULT_BYTES = 192 * 1024;
 const INHERITED_ENVIRONMENT = Object.freeze([
 	'PATH',
 	'HOME',
+	// Under Desktop the extension child is Electron running as Node; a language
+	// server launched through `process.execPath` needs the same flag or it
+	// starts a GUI instead of a server.
+	'ELECTRON_RUN_AS_NODE',
 	'LANG',
 	'LC_ALL',
 	'LC_CTYPE',
