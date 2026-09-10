@@ -116,16 +116,17 @@ export function ConnectionsControl({
 				return (
 					<div
 						key={connection.profileId}
-						className={`remote-access-menu__connection remote-access-menu__connection--compact remote-access-menu__connection--${described.tone}`}
+						className={`remote-access-menu__connection-group remote-access-menu__connection--${described.tone}`}
 						data-connection-profile-id={connection.profileId}
 						data-connection-phase={connection.phase}
 					>
-						{/* This row is called by the server's own label and nothing
-						    else. Which window it is, and how it is doing, are secondary
-						    text beside the name rather than part of it. */}
+						{/* One ordinary menu row, like every other row in this menu:
+						    the server's own label on the left, how it is doing on the
+						    right. The row is named by the label alone, so the status
+						    text stays secondary rather than becoming part of the name. */}
 						<button
 							type="button"
-							className={`remote-access-menu__connection--button${isCurrent ? ' remote-access-menu__connection--selected' : ''}`}
+							className={`remote-access-menu__item${isCurrent ? ' remote-access-menu__item--current' : ''}`}
 							role="menuitemradio"
 							aria-checked={isCurrent}
 							aria-label={connection.label}
@@ -138,12 +139,13 @@ export function ConnectionsControl({
 							<span className="remote-access-menu__connection-device">
 								{connection.label}
 							</span>
+							<span
+								className={`remote-access-menu__meta${described.tone === 'ready' ? ' remote-access-menu__meta--live' : ''}`}
+								aria-hidden="true"
+							>
+								{described.summary}
+							</span>
 						</button>
-						<span className="remote-access-menu__meta" aria-hidden="true">
-							{isCurrent
-								? `${described.summary} · this window`
-								: described.summary}
-						</span>
 						{described.detail === undefined ? null : (
 							<p className="remote-access-menu__diagnostic">
 								{described.detail}

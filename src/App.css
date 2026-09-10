@@ -625,21 +625,20 @@
   background: transparent;
 }
 
-.remote-access-menu__connection--button {
-  cursor: pointer;
+/* One connection and anything that belongs to it: the row itself, a
+   diagnostic line, and a Detach action. The row is an ordinary menu item, so
+   it sits flush with the rest of the menu rather than as a chip inside it. */
+.remote-access-menu__connection-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 
-.remote-access-menu__connection--button:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.055);
-}
-
-.remote-access-menu__connection--selected {
-  background: rgba(87, 183, 255, 0.1);
-  color: #bfe7ff;
-}
-
-.remote-access-menu__connection--selected .remote-access-menu__connection-device {
-  color: #bfe7ff;
+/* The window's own connection. Marked the way a selected menu row is marked,
+   by weight and colour, rather than by a box around the label. */
+.remote-access-menu__item--current .remote-access-menu__connection-device {
+  color: #eaf4ff;
+  font-weight: 620;
 }
 
 .remote-access-menu__connection:disabled {
