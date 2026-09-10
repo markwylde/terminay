@@ -17,6 +17,7 @@ import {
 } from '../shared/rendererAgentConnection';
 import type { AgentStatusSnapshot } from '../types/agentStatus';
 import type { ActivityCountBadge } from './activityCountBadge.ts';
+import { subscriptionKey } from './connectionSubscriptionIdentity.ts';
 import {
 	agentBadgesForOtherServers,
 	type AgentSnapshotsByServer,
@@ -34,10 +35,13 @@ export function useConnectionAgentSnapshots(
 	connections: readonly WorkspaceConnection[],
 ): AgentSnapshotsByServer {
 	const [snapshots, setSnapshots] = useState<AgentSnapshotsByServer>({});
-	const identity = connections
-		.map((connection) => connection.serverId ?? '')
-		.filter((serverId) => serverId.length > 0)
-		.join(' ');
+	// Keyed on the live agent clients, not only on the servers: a reconnect
+	// replaces the client behind the same server id, and a subscription to the
+	// old one would never speak again.
+	const identity = subscriptionKey(
+		connections,
+		(connection) => connection.context?.agentStatusClient,
+	);
 	useEffect(() => {
 		let disposed = false;
 		const unsubscribes: Array<() => void> = [];

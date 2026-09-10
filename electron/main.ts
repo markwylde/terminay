@@ -922,6 +922,46 @@ const desktopWindowCompositions = new DesktopWindowCompositionStore(
 	path.join(app.getPath('userData'), 'window-composition.v1.json'),
 );
 
+/**
+ * Two open windows can share a presentation identity — two Local windows show
+ * the same profile and the same default view — and their compositions must not
+ * overwrite each other. Each window takes the lowest free slot beside that
+ * identity and gives it back when it closes, so reopening the same windows
+ * finds the same records rather than a BrowserWindow id that no restart keeps.
+ */
+const desktopCompositionSlotsInUse = new Map<string, Set<number>>();
+const desktopCompositionSlotByWebContents = new Map<
+	number,
+	Readonly<{ identity: string; slot: number }>
+>();
+
+function claimDesktopCompositionSlot(
+	webContentsId: number,
+	identity: string,
+): number {
+	releaseDesktopCompositionSlot(webContentsId);
+	let used = desktopCompositionSlotsInUse.get(identity);
+	if (used === undefined) {
+		used = new Set<number>();
+		desktopCompositionSlotsInUse.set(identity, used);
+	}
+	let slot = 0;
+	while (used.has(slot)) slot += 1;
+	used.add(slot);
+	desktopCompositionSlotByWebContents.set(webContentsId, { identity, slot });
+	return slot;
+}
+
+function releaseDesktopCompositionSlot(webContentsId: number): void {
+	const held = desktopCompositionSlotByWebContents.get(webContentsId);
+	if (held === undefined) return;
+	desktopCompositionSlotByWebContents.delete(webContentsId);
+	const used = desktopCompositionSlotsInUse.get(held.identity);
+	if (used === undefined) return;
+	used.delete(held.slot);
+	if (used.size === 0) desktopCompositionSlotsInUse.delete(held.identity);
+}
+
 /** The non-secret profile records the `connections` capability may name. */
 function desktopConnectionProfileRecords(): readonly DesktopConnectionProfileRecord[] {
 	loadRememberedRemoteConnections();
@@ -976,9 +1016,13 @@ async function openDesktopConnectionLane(
 		if (serverTerminalAuthority === null)
 			throw new Error('The Local server is unavailable.');
 		const channel = new MessageChannelMain();
+		// One window holds several Local lanes at once — its primary document
+		// endpoint and every attached connection — and the authority evicts an
+		// owner slot when it is claimed again. Each connection owns its own slot,
+		// so replacing one endpoint never closes another connection's port.
 		serverTerminalAuthority.acceptRendererPort(
 			channel.port1 as unknown as ServerMessagePort,
-			{ ownerId },
+			{ ownerId: `${ownerId}:${connectionId}` },
 		);
 		try {
 			deliver(embeddedServerId, channel.port2);
@@ -3544,6 +3588,7 @@ function createWindow(options?: {
 			?.dispose()
 			.catch(() => undefined);
 		windowConnectionsByWebContents.delete(windowWebContentsId);
+		releaseDesktopCompositionSlot(windowWebContentsId);
 		releaseServerUiWindowBinding(
 			windowWebContentsId,
 			isQuitting ? 'application-quit' : 'window-close',
@@ -3643,6 +3688,13 @@ function createWindow(options?: {
 		const compositionKey = desktopWindowCompositionKey(
 			launch.context.profileId,
 			options?.workspaceViewId,
+			claimDesktopCompositionSlot(
+				windowWebContentsId,
+				desktopWindowCompositionKey(
+					launch.context.profileId,
+					options?.workspaceViewId,
+				),
+			),
 		);
 		const restoredComposition = desktopWindowCompositions.read(compositionKey);
 		// The window's primary stays the profile it was bound with; `attach`

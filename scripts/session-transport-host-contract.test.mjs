@@ -428,3 +428,40 @@ test('Desktop composition withholds Switch connections unless a manager session 
 	);
 	assert.doesNotMatch(workspace, /onSwitchConnections:\s*onBack/u);
 });
+
+test('a port answering a request nobody is waiting for is closed, not dropped', async () => {
+	let deliver
+	const surface = contract.createFramedConnectionSurface({
+		managerOrigin: 'https://app.terminay.com',
+		timeoutMs: 0,
+		newRequestId: () => 'req-late',
+		win: {
+			parent: { postMessage() {} },
+			addEventListener: (_type, listener) => {
+				deliver = listener
+			},
+			removeEventListener: () => {},
+		},
+	})
+	// Nothing asked for this — the request behind it has already timed out — so
+	// the transferred port has no owner. Leaving it open leaves the manager
+	// pumping an attached server's bytes into a port nothing reads.
+	const channel = new MessageChannel()
+	let closed = false
+	channel.port2.close = () => {
+		closed = true
+	}
+	deliver({
+		origin: 'https://app.terminay.com',
+		ports: [channel.port2],
+		data: {
+			v: 1,
+			type: 'connections.result',
+			requestId: 'req-late',
+			result: { kind: 'attached', profileId: 'profile-a', serverId: 'server-a' },
+		},
+	})
+	assert.equal(closed, true)
+	assert.equal(typeof surface.connectAttached, 'function')
+	channel.port1.close()
+})

@@ -1,12 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-	activityBadgesByServer,
-	buildCrossServerAgentRows,
 	buildCrossServerDashboardRows,
 	namesServers,
 	scopeRowsByServer,
-	summarizeCrossServerActivityBadge,
 } from '../src/workspace/crossServerRows.ts'
 import {
 	resolveSelectedServer,
@@ -61,51 +58,6 @@ test('one attached server leaves rows unnamed', () => {
 	assert.deepEqual(
 		rows.map((row) => row.serverId),
 		['a', 'a'],
-	)
-})
-
-test('the header badge totals across servers and takes the most urgent state', () => {
-	const badge = summarizeCrossServerActivityBadge([
-		{ serverId: 'a', serverLabel: 'Laptop', rows: ['working', 'unviewed'] },
-		{ serverId: 'b', serverLabel: 'Build box', rows: ['waiting'] },
-	])
-	assert.deepEqual(badge, { count: 3, state: 'attention' })
-	assert.equal(
-		summarizeCrossServerActivityBadge([
-			{ serverId: 'a', serverLabel: 'Laptop', rows: [] },
-		]),
-		null,
-	)
-})
-
-test('per-server badges omit servers with nothing to report', () => {
-	const badges = activityBadgesByServer([
-		{ serverId: 'a', serverLabel: 'Laptop', rows: ['working'] },
-		{ serverId: 'b', serverLabel: 'Build box', rows: [] },
-	])
-	assert.deepEqual(badges, [
-		{ serverId: 'a', serverLabel: 'Laptop', badge: { count: 1, state: 'recent' } },
-	])
-})
-
-test('agent rows from two servers keep colliding entry ids apart', () => {
-	const item = (projectId, entryId) => ({
-		projectId,
-		entry: { entryId, kind: 'root' },
-	})
-	const rows = buildCrossServerAgentRows([
-		{ serverId: 'a', serverLabel: 'Laptop', rows: [item('project-1', 'agent-1')] },
-		{
-			serverId: 'b',
-			serverLabel: 'Build box',
-			rows: [item('project-1', 'agent-1')],
-		},
-	])
-	assert.equal(rows.length, 2)
-	assert.notEqual(rows[0].key, rows[1].key)
-	assert.deepEqual(
-		rows.map((row) => row.serverId),
-		['a', 'b'],
 	)
 })
 

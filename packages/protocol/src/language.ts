@@ -64,7 +64,10 @@ export interface LanguageCapabilitiesDto {
 	readonly languageServerId?: string;
 	readonly languageId?: string;
 	readonly state: LanguageSessionState;
-	/** Safe, bounded reason for `unavailable`. */
+	/** Why the session is `unavailable`, from a fixed vocabulary the server
+	 * chooses: `launch-failed`, `crashed`, `stopped`, or `capacity`. The
+	 * underlying failure text can name host paths and never crosses the wire,
+	 * so a client shows this as a code, not as a message. */
 	readonly reason?: string;
 	readonly features: LanguageFeatureSet;
 }
@@ -326,7 +329,10 @@ export function parseLanguageDiagnosticsEventDto(value: unknown): LanguageDiagno
 }
 
 /** Truncates a JSON-serialisable result to the language byte cap by dropping
- * trailing items from `key`, marking the result. Callers pass the array key. */
+ * trailing items from `key`, marking the result. Callers pass the array key.
+ * A result that is still over the cap with no items left is returned empty and
+ * marked truncated: a client is better served by a marked empty answer than by
+ * a thrown request. */
 export function truncateLanguageResult<T extends Record<string, JsonValue> & { readonly isTruncated: boolean }>(
 	result: T,
 	key: keyof T & string,
@@ -337,7 +343,7 @@ export function truncateLanguageResult<T extends Record<string, JsonValue> & { r
 	while (encoder.encode(JSON.stringify(current)).byteLength > maxBytes) {
 		const items = current[key];
 		if (!Array.isArray(items) || items.length === 0) {
-			throw new RangeError('language result exceeds the byte cap');
+			return { ...current, [key]: [], isTruncated: true } as T;
 		}
 		current = { ...current, [key]: items.slice(0, Math.max(0, Math.floor(items.length / 2))), isTruncated: true };
 	}

@@ -269,3 +269,48 @@ test('Desktop declares the connections host capability and keeps no bundle cache
 	assert.doesNotMatch(main, /prepareRemote|installRemoteArchive/u);
 	assert.doesNotMatch(hostState, /readonly bundleCache/u);
 });
+
+test('two windows on one profile keep separate compositions', async () => {
+	const { DesktopWindowCompositionStore, desktopWindowCompositionKey } =
+		await loadModule(
+			'electron/desktopWindowComposition.ts',
+			'desktopWindowComposition.mjs',
+		);
+	const { directory } = await compiled;
+	const file = join(directory, 'window-composition-two-windows.v1.json');
+	const composition = (profileId) => ({
+		version: 1,
+		primaryProfileId: 'local:one',
+		attached: [{ profileId }],
+		tabOrder: [],
+	});
+	// Two Local windows share a profile and a view; without the window slot in
+	// the key they would share one record and overwrite each other's attached
+	// set and tab order.
+	const first = desktopWindowCompositionKey('local:one', undefined, 0);
+	const second = desktopWindowCompositionKey('local:one', undefined, 1);
+	assert.notEqual(first, second);
+	// The first window keys exactly as a single window always did, so records
+	// written before the slot existed are still found.
+	assert.equal(first, desktopWindowCompositionKey('local:one'));
+
+	const store = new DesktopWindowCompositionStore(file);
+	store.write(first, composition('remote:build'));
+	store.write(second, composition('remote:vps'));
+	const reopened = new DesktopWindowCompositionStore(file);
+	assert.deepEqual(reopened.read(first).attached, [{ profileId: 'remote:build' }]);
+	assert.deepEqual(reopened.read(second).attached, [{ profileId: 'remote:vps' }]);
+});
+
+test('an attached Local lane owns its own port slot in the authority', async () => {
+	const main = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8');
+	// The authority evicts an owner slot when it is claimed again. The window's
+	// primary document endpoint claims the webContents id, so an attached lane
+	// claiming the same id would silently close the connection it replaced.
+	assert.match(main, /ownerId: `\$\{ownerId\}:\$\{connectionId\}`/u);
+	const authority = await readFile(
+		new URL('../electron/serverTerminalAuthority.ts', import.meta.url),
+		'utf8',
+	);
+	assert.match(authority, /rendererConnectionsByOwner/u);
+});

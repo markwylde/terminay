@@ -26,7 +26,9 @@ import type {
 import {
 	buildComposition,
 	type CompositionPersistence,
+	type CompositionSession,
 	type CompositionTabHandle,
+	createCompositionSession,
 	NO_COMPOSITION_PERSISTENCE,
 } from './composition';
 import type {
@@ -129,23 +131,37 @@ export function ConnectionsProvider({
 	const [tabOrder, setRememberedTabOrder] = useState<
 		readonly CompositionTabHandle[]
 	>(EMPTY.tabOrder);
-	const [compositionRestored, setCompositionRestored] = useState(false);
+	// Restoring the composition has exactly one owner: this effect. It reads the
+	// record, re-attaches the servers the window had, and only then declares the
+	// composition restored. The session refuses to persist until then, so no
+	// render order can write an empty attached set over a real one, and a window
+	// that changes where its composition lives starts a new session rather than
+	// carrying the old one's open gate.
+	const session = useMemo(
+		() => createCompositionSession(composition),
+		[composition],
+	);
+	const [restoredSession, setRestoredSession] = useState<CompositionSession>();
+	const compositionRestored = restoredSession === session;
 	useEffect(() => {
 		let cancelled = false;
-		void composition
-			.read()
-			.then((restored) => {
+		void session
+			.restore((restored) => {
 				if (cancelled) return;
-				if (restored !== undefined) setRememberedTabOrder(restored.tabOrder);
-				setCompositionRestored(true);
+				setRememberedTabOrder(restored.tabOrder);
+				// Servers that cannot be reached come back attached and
+				// unreachable, with their tabs greyed, rather than silently
+				// disappearing from the strip.
+				for (const attachment of restored.attached)
+					registry.attach(attachment.profileId);
 			})
-			.catch(() => {
-				if (!cancelled) setCompositionRestored(true);
+			.then(() => {
+				if (!cancelled) setRestoredSession(() => session);
 			});
 		return () => {
 			cancelled = true;
 		};
-	}, [composition]);
+	}, [registry, session]);
 	const primaryProfileId = snapshot.primary?.profileId;
 	const attachedProfileIds = snapshot.connections
 		.filter((connection) => connection.role === 'attached')
@@ -161,7 +177,7 @@ export function ConnectionsProvider({
 	// attached set, or the order the tabs are in.
 	useEffect(() => {
 		if (!compositionRestored || primaryProfileId === undefined) return;
-		void composition.write(
+		session.persist(
 			buildComposition(
 				primaryProfileId,
 				attachedProfileIds.length === 0
@@ -174,9 +190,9 @@ export function ConnectionsProvider({
 		);
 	}, [
 		attachedProfileIds,
-		composition,
 		compositionRestored,
 		primaryProfileId,
+		session,
 		tabOrder,
 	]);
 	const value = useMemo<ConnectionsContextValue>(
