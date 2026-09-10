@@ -6342,6 +6342,16 @@ function App({
 			serverId: currentServerId,
 			projectId: handle,
 		};
+	/** Go to a server the window already holds, without naming a project: the
+	 * connections list does this, and it is the same binding a cross-server tab
+	 * activation performs. */
+	const goToServer = (serverId: string) => {
+		if (serverId === currentServerId) return;
+		const connection = byServerId.get(serverId);
+		// An unreachable or incompatible server takes no operations.
+		if (connection?.context === undefined) return;
+		setRequestedServerId(serverId);
+	};
 	const activateComposedTab = (handle: string) => {
 		const target = resolveTabHandle(handle);
 		if (target.projectId === pendingProjectCreation?.tab.id) return;
@@ -6621,6 +6631,7 @@ function App({
 						}
 						onOpenPairingQr={() => void openPairingQr()}
 						onSelectConnection={selectConnectionProfile}
+						onSelectServer={goToServer}
 						onSwitchConnections={onSwitchConnections}
 						onToggleExposure={() => void toggleRemoteAccess()}
 						onToggleMenu={() => {

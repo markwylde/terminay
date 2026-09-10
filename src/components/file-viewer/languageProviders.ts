@@ -19,11 +19,56 @@ export const LANGUAGE_MARKER_OWNER = 'terminay'
 
 const COMPLETION_TRIGGER_CHARACTERS = ['.', '"', "'", '/', '@', '<', ':']
 
-/** Definition targets in other files open through the ordinary file-viewer open
+/**
+ * Definition targets in other files open through the ordinary file-viewer open
  * path. The requested range is left here for the panel that renders the file to
- * pick up, because that panel may still be mounting. */
-const pendingReveals = new Map<string, LanguageRange>()
+ * pick up, because that panel may still be mounting.
+ *
+ * A window holds several connections, and an absolute path is not unique across
+ * them: two servers restored from one data root have the same file at the same
+ * path. Entries are therefore keyed by the language session that asked for them
+ * as well as the path, so one server's jump cannot be claimed by another's
+ * panel. Unclaimed entries expire: a target whose panel never mounted must not
+ * reveal a range in some file opened minutes later.
+ */
+const PENDING_REVEAL_TTL_MS = 30_000
+const pendingReveals = new Map<
+  string,
+  Readonly<{ range: LanguageRange; expiresAt: number }>
+>()
 const REVEAL_EVENT = 'terminay-file-reveal-range'
+
+/** One opaque id per gateway, so the key names the connection without the
+ * providers having to learn what a connection is. */
+const revealScopes = new WeakMap<object, string>()
+let revealScopesIssued = 0
+
+export function revealScopeFor(gateway: object): string {
+  const existing = revealScopes.get(gateway)
+  if (existing !== undefined) return existing
+  revealScopesIssued += 1
+  const scope = `lang-${revealScopesIssued}`
+  revealScopes.set(gateway, scope)
+  return scope
+}
+
+function pendingRevealKey(scope: string, absolutePath: string): string {
+  return `${scope}\u0000${absolutePath}`
+}
+
+function prunePendingReveals(now: number): void {
+  for (const [key, entry] of pendingReveals)
+    if (entry.expiresAt <= now) pendingReveals.delete(key)
+}
+
+function takePendingReveal(key: string): LanguageRange | undefined {
+  const now = Date.now()
+  prunePendingReveals(now)
+  const entry = pendingReveals.get(key)
+  if (entry === undefined) return undefined
+  pendingReveals.delete(key)
+  return entry.range
+}
 
 export function toMonacoCompletionKind(
   monaco: Monaco,
@@ -101,15 +146,24 @@ function joinProjectPath(projectRoot: string, relativePath: string): string {
 
 /** Opens a definition target the ordinary way: the same window event the file
  * explorer and Markdown links use, followed by a reveal request for the range. */
-export function openDefinitionTarget(absolutePath: string, range: LanguageRange): void {
-  pendingReveals.set(absolutePath, range)
+export function openDefinitionTarget(
+  absolutePath: string,
+  range: LanguageRange,
+  scope: string,
+): void {
+  const now = Date.now()
+  prunePendingReveals(now)
+  pendingReveals.set(pendingRevealKey(scope, absolutePath), {
+    range,
+    expiresAt: now + PENDING_REVEAL_TTL_MS,
+  })
   window.dispatchEvent(
     new CustomEvent('terminay-open-file', {
       detail: { initialMode: 'text', path: absolutePath },
     }),
   )
   window.dispatchEvent(
-    new CustomEvent(REVEAL_EVENT, { detail: { path: absolutePath, range } }),
+    new CustomEvent(REVEAL_EVENT, { detail: { path: absolutePath, range, scope } }),
   )
 }
 
@@ -137,6 +191,8 @@ export function attachLanguageIntelligence(
 ): LanguageAttachment {
   const { absolutePath, editor: codeEditor, gateway, languageId, monaco, path, projectId, projectRoot } = options
   const model = codeEditor.getModel()
+  const revealScope = revealScopeFor(gateway)
+  const revealKey = pendingRevealKey(revealScope, absolutePath)
   const disposables: IDisposable[] = []
   let unsubscribeDiagnostics: (() => void) | undefined
   let stopped = false
@@ -181,7 +237,11 @@ export function attachLanguageIntelligence(
       revealRange(location.range)
       return
     }
-    openDefinitionTarget(joinProjectPath(projectRoot, location.path), location.range)
+    openDefinitionTarget(
+      joinProjectPath(projectRoot, location.path),
+      location.range,
+      revealScope,
+    )
   }
 
   const applyDiagnostics = (event: LanguageDiagnosticsEventDto): void => {
@@ -195,11 +255,13 @@ export function attachLanguageIntelligence(
   }
 
   const revealListener = (event: Event): void => {
-    const detail = (event as CustomEvent<{ path?: unknown; range?: unknown }>).detail
+    const detail = (event as CustomEvent<{ path?: unknown; range?: unknown; scope?: unknown }>).detail
     if (typeof detail?.path !== 'string' || detail.path !== absolutePath) return
-    const range = pendingReveals.get(absolutePath) ?? (detail.range as LanguageRange | undefined)
+    // Another connection's jump to the same path is not this panel's.
+    if (detail.scope !== revealScope) return
+    const range =
+      takePendingReveal(revealKey) ?? (detail.range as LanguageRange | undefined)
     if (range === undefined) return
-    pendingReveals.delete(absolutePath)
     revealRange(range)
   }
 
@@ -320,11 +382,8 @@ export function attachLanguageIntelligence(
 
   window.addEventListener(REVEAL_EVENT, revealListener)
   disposables.push({ dispose: () => window.removeEventListener(REVEAL_EVENT, revealListener) })
-  const queued = pendingReveals.get(absolutePath)
-  if (queued !== undefined) {
-    pendingReveals.delete(absolutePath)
-    revealRange(queued)
-  }
+  const queued = takePendingReveal(revealKey)
+  if (queued !== undefined) revealRange(queued)
 
   return { dispose }
 }

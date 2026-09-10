@@ -114,7 +114,7 @@ test("a request beyond the session cap returns a typed unavailable outcome", asy
     .openDocument("second", "a.ts", "typescript", "const a = 1;", 1)
     .then(() => undefined, (error) => error);
   assert.equal(failure.code, "unavailable");
-  assert.match(failure.message, /session limit/u);
+  assert.match(failure.message, /capacity/u);
   assert.equal(extensions.calls.filter((call) => call.method === "language.session.start").length, 1);
   await sessions.shutdown();
 });
@@ -124,7 +124,9 @@ test("a session that cannot start is unavailable rather than retried on every ke
   const sessions = manager(extensions, { failureCooldownMs: 60_000 });
   await assert.rejects(
     sessions.positionRequest("default", "a.ts", "language.hover", { line: 0, character: 0 }),
-    /refused/u,
+    // The reason a client sees is from a fixed vocabulary: the failure text can
+    // name host paths and never crosses the wire.
+    /launch-failed/u,
   );
   await assert.rejects(
     sessions.positionRequest("default", "a.ts", "language.hover", { line: 0, character: 0 }),
@@ -173,4 +175,28 @@ test("an extension that stops ends its sessions", async () => {
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(sessions.states(), []);
   await sessions.shutdown();
+});
+
+test("a session that is still starting is told to stop rather than orphaned", async () => {
+  let release = () => {};
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const extensions = bridge();
+  const started = extensions.invokeLanguage.bind(extensions);
+  extensions.invokeLanguage = async (extensionId, invocation) => {
+    if (invocation.method === "language.session.start") await gate;
+    return started(extensionId, invocation);
+  };
+  const sessions = manager(extensions);
+  // `describe` starts a session fire-and-forget; shutdown lands mid-start.
+  assert.equal(sessions.describe("default", "a.ts").state, "starting");
+  const shutdown = sessions.shutdown();
+  release();
+  await shutdown;
+  assert.ok(
+    extensions.calls.some((call) => call.method === "language.session.stop"),
+    "a starting session must still be stopped",
+  );
+  assert.deepEqual(sessions.states(), []);
 });

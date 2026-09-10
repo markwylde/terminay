@@ -393,7 +393,20 @@ export function createFramedConnectionSurface(
 			return;
 		}
 		const waiter = pending.get(response.requestId);
-		if (waiter === undefined) return;
+		if (waiter === undefined) {
+			// A late answer — the request already timed out — still carries the
+			// port the manager opened for it. Nothing will ever read it, so close
+			// it here rather than leaving an attached transport pumping bytes into
+			// a port with no owner.
+			for (const port of event.ports ?? []) {
+				try {
+					(port as Partial<MessagePort>).close?.();
+				} catch {
+					// Port teardown is best effort.
+				}
+			}
+			return;
+		}
 		pending.delete(response.requestId);
 		if (waiter.timer !== undefined) clearTimeout(waiter.timer);
 		if (response.type === 'connections.error') {

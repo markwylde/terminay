@@ -96,12 +96,19 @@ function isCompositionKey(value: string): boolean {
 	return COMPOSITION_KEY.test(value);
 }
 
-/** A window's stable presentation identity: its primary profile and the
- * workspace view it shows. BrowserWindow ids never appear here, so a record
- * survives a restart. */
+/** A window's stable presentation identity: its primary profile, the workspace
+ * view it shows, and which of the windows sharing that pair it is. Two Local
+ * windows show the same profile and view, so without the slot they would share
+ * one record and overwrite each other's attached set and tab order.
+ *
+ * BrowserWindow ids never appear here, so a record survives a restart: the
+ * slot is the position among the windows holding that identity, and the first
+ * such window keys exactly as a single window always did. */
 export function desktopWindowCompositionKey(
 	profileId: string,
 	workspaceViewId?: string,
+	windowSlot = 0,
 ): string {
-	return `${profileId}:${workspaceViewId ?? 'primary'}`;
+	const identity = `${profileId}:${workspaceViewId ?? 'primary'}`;
+	return windowSlot === 0 ? identity : `${identity}:w${windowSlot}`;
 }

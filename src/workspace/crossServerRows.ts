@@ -1,23 +1,20 @@
 /**
- * The three surfaces that look across every attached server.
+ * Home, over every attached server.
  *
- * Home, the activity badges, and the agent sidebar are the only places a
- * window shows more than one server at once, and they aggregate — they never
- * merge. Every row keeps the server that owns it, because a project id, a
- * panel id, and an agent entry id are all per-server namespaces: two servers
+ * Home is where a window shows more than one server at once, and it
+ * aggregates — it never merges. Every row keeps the server that owns it,
+ * because a project id and a panel id are per-server namespaces: two servers
  * restored from one data root produce the same ids for different things.
+ *
+ * The activity badges the tab strip shows for other servers come from their
+ * agent projections instead (`useCrossServerAgentBadges`), which is all a
+ * window knows about a server it is not currently working in.
  *
  * The server is named on a row only when the window has more than one
  * attached. With one server, saying its name on every row is noise.
  */
 
-import type { AgentsSidebarItem } from '../components/AgentsSidebar';
 import { compositionTabKey } from '../shared/connections/composition.ts';
-import {
-	type ActivityBadgeSourceState,
-	type ActivityCountBadge,
-	summarizeActivityBadge,
-} from './activityCountBadge.ts';
 import type { DashboardProjectSource, DashboardRow } from './dashboardRows.ts';
 import { buildDashboardRows } from './dashboardRows.ts';
 import type { WorkspaceInventoryEntry } from './workspaceInventory';
@@ -96,60 +93,5 @@ export function buildCrossServerDashboardRows(
 			row.kind === 'project'
 				? `project:${row.projectId}`
 				: `panel:${row.projectId}:${row.panelId}`,
-	);
-}
-
-/**
- * The header's activity badge over every attached server.
- *
- * One badge for the window, because there is one header. Its count is the
- * total across servers and its state is the most urgent of them, which is the
- * same rule the single-server badge already uses.
- */
-export function summarizeCrossServerActivityBadge(
-	sources: readonly ServerRowSource<ActivityBadgeSourceState>[],
-): ActivityCountBadge | null {
-	return summarizeActivityBadge(sources.flatMap((source) => [...source.rows]));
-}
-
-/** Per-server badge counts, for a control that lists servers rather than
- * summing them. Servers with nothing to report are omitted. */
-export function activityBadgesByServer(
-	sources: readonly ServerRowSource<ActivityBadgeSourceState>[],
-): readonly Readonly<{
-	serverId: string;
-	serverLabel: string;
-	badge: ActivityCountBadge;
-}>[] {
-	const badges: Array<
-		Readonly<{ serverId: string; serverLabel: string; badge: ActivityCountBadge }>
-	> = [];
-	for (const source of sources) {
-		const badge = summarizeActivityBadge(source.rows);
-		if (badge === null) continue;
-		badges.push(
-			Object.freeze({
-				serverId: source.serverId,
-				serverLabel: source.serverLabel,
-				badge,
-			}),
-		);
-	}
-	return Object.freeze(badges);
-}
-
-/**
- * The agent sidebar over every attached server.
- *
- * Agent entry ids are unique only within one server's projection, so the row
- * key carries the server. Acknowledging a row therefore reaches exactly one
- * server's agent store, which is the one that owns the entry.
- */
-export function buildCrossServerAgentRows(
-	sources: readonly ServerRowSource<AgentsSidebarItem>[],
-): readonly ServerScopedRow<AgentsSidebarItem>[] {
-	return scopeRowsByServer(
-		sources,
-		(item) => `${item.projectId}:${item.entry.entryId}`,
 	);
 }

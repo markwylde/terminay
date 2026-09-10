@@ -67,11 +67,24 @@ export interface LanguageSessionManagerOptions {
 	readonly cancelSchedule?: (timer: ReturnType<typeof setTimeout>) => void;
 }
 
+/**
+ * Why a session cannot serve, in the small fixed vocabulary a client sees.
+ *
+ * Deliberately a closed set: the underlying failure text can name host paths,
+ * argv, and environment, none of which belongs on the wire. The detail stays
+ * server-side on the record for logs and diagnostics.
+ */
+export type LanguageUnavailableReason =
+	| 'launch-failed'
+	| 'crashed'
+	| 'stopped'
+	| 'capacity';
+
 export interface LanguageSessionDescription {
 	readonly state: LanguageSessionState;
 	readonly languageServerId?: string;
 	readonly languageId?: string;
-	readonly reason?: string;
+	readonly reason?: LanguageUnavailableReason;
 }
 
 const DEFAULT_MAX_SESSIONS = 8;
@@ -85,7 +98,9 @@ interface SessionRecord {
 	readonly provider: LanguageServerProvider;
 	readonly sessionId: string;
 	state: LanguageSessionState;
-	reason?: string;
+	reason?: LanguageUnavailableReason;
+	/** The unbounded failure text, kept server-side for logs and diagnostics. */
+	detail?: string;
 	starting?: Promise<void>;
 	readonly openDocuments: Map<string, number>;
 	inFlight: number;
@@ -143,6 +158,11 @@ export class LanguageSessionManager {
 			options.extensions.onLanguageSessionExit((exit) =>
 				this.failSession(
 					exit.sessionId,
+					exit.reason === 'stopped'
+						? 'stopped'
+						: exit.reason === 'start-failed'
+							? 'launch-failed'
+							: 'crashed',
 					exit.failure ??
 						(exit.reason === 'start-failed'
 							? 'language server failed to start'
@@ -302,6 +322,8 @@ export class LanguageSessionManager {
 		readonly languageServerId: string;
 		readonly state: LanguageSessionState;
 		readonly openDocuments: number;
+		/** The failure text behind `reason`, for logs and support bundles. */
+		readonly detail?: string;
 	}[] {
 		return Object.freeze(
 			[...this.sessions.values()].map((record) =>
@@ -310,6 +332,7 @@ export class LanguageSessionManager {
 					languageServerId: record.provider.languageServerId,
 					state: record.state,
 					openDocuments: record.openDocuments.size,
+					...(record.detail === undefined ? {} : { detail: record.detail }),
 				}),
 			),
 		);
@@ -346,7 +369,7 @@ export class LanguageSessionManager {
 			}
 		}
 		if (this.sessions.size >= this.maxSessions)
-			throw unavailable('language session limit reached on this server');
+			throw unavailable('capacity');
 		this.sequence += 1;
 		const record: SessionRecord = {
 			key,
@@ -375,7 +398,10 @@ export class LanguageSessionManager {
 				if (record.state === 'starting') record.state = 'ready';
 			} catch (error) {
 				record.state = 'unavailable';
-				record.reason = boundedReason(error);
+				// The client is told only that the launch failed; the text, which can
+				// name host paths and argv, stays on the record for logs.
+				record.reason = 'launch-failed';
+				record.detail = boundedReason(error);
 				record.retryAfter = this.now() + this.failureCooldownMs;
 			} finally {
 				record.starting = undefined;
@@ -432,26 +458,33 @@ export class LanguageSessionManager {
 
 	private failSession(
 		sessionId: string,
-		reason: string,
+		reason: LanguageUnavailableReason,
+		detail: string,
 		cooldown: boolean,
 	): void {
 		const record = this.bySessionId.get(sessionId);
 		if (record === undefined) return;
 		record.state = 'unavailable';
-		record.reason = reason.slice(0, 200);
+		record.reason = reason;
+		record.detail = detail.slice(0, 500);
 		record.openDocuments.clear();
-		record.retryAfter = cooldown ? this.now() + this.failureCooldownMs : 0;
-		if (!cooldown) this.forget(record);
+		if (cooldown) record.retryAfter = this.now() + this.failureCooldownMs;
+		else this.forget(record);
 	}
 
 	private async stopSession(
 		record: SessionRecord,
-		reason: string,
+		detail: string,
 	): Promise<void> {
 		this.forget(record);
+		// A session started fire-and-forget by `describe()` may still be starting:
+		// its child is alive, so it has to be told to stop or it is orphaned.
+		if (record.starting !== undefined)
+			await record.starting.catch(() => undefined);
 		if (record.state !== 'ready') return;
 		record.state = 'unavailable';
-		record.reason = reason;
+		record.reason = 'stopped';
+		record.detail = detail;
 		await this.options.extensions
 			.invokeLanguage(record.provider.extensionId, {
 				method: 'language.session.stop',
@@ -488,7 +521,7 @@ export class LanguageSessionManager {
 }
 
 function sessionKey(projectId: string, provider: LanguageServerProvider): string {
-	return `${projectId} ${provider.languageServerId}`;
+	return `${projectId}\u0000${provider.languageServerId}`;
 }
 
 function fileExtension(path: string): string | undefined {

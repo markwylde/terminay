@@ -221,3 +221,63 @@ test('both halves of the schema validate the same closed message names', () => {
 	);
 	assert.throws(() => parseFramedConnectionResponse({ v: 1, type: 'connections.result', requestId: 'r', result: { kind: 'credential' } }), /unknown/u);
 });
+
+test('two attaches for one profile open exactly one connection', async (t) => {
+	// The loser of the race used to be answered with a port of its own, and the
+	// transport it had opened was left running with nothing holding it.
+	const opens = [];
+	const { posted, send } = harness(t, {
+		openConnection: async (profileId) => {
+			const opened = fakeTransport();
+			opens.push(opened);
+			await new Promise((resolve) => setTimeout(resolve, 5));
+			return { serverId: 'server-a', transport: opened.transport };
+		},
+	});
+	const first = send({ v: 1, type: 'connections.attach', requestId: 'a1', profileId: 'profile-a' });
+	const second = send({ v: 1, type: 'connections.attach', requestId: 'a2', profileId: 'profile-a' });
+	await Promise.all([first, second]);
+	await new Promise((resolve) => setTimeout(resolve, 20));
+	assert.equal(opens.length, 1);
+	const codes = posted.map((entry) => entry.message.code ?? entry.message.result.kind);
+	assert.deepEqual(codes.sort(), ['attach-failed', 'attached']);
+	for (const opened of opens) opened.end();
+});
+
+test('a failed attached transport is closed and the manager is told', async (t) => {
+	const closedProfiles = [];
+	let transportClosed = false;
+	// A transport whose incoming stream is already finished: the server side
+	// went away between opening and the first frame.
+	const dead = {
+		state: 'open',
+		queuedBytes: 0,
+		bufferedBytes: 0,
+		async open() {},
+		async close() {
+			transportClosed = true;
+		},
+		onStateChange() {
+			return () => {};
+		},
+		async send() {},
+		get incoming() {
+			return {
+				// biome-ignore lint/correctness/useYield: an already-closed stream
+				async *[Symbol.asyncIterator]() {},
+			};
+		},
+	};
+	const { send } = harness(t, {
+		openConnection: async () => ({ serverId: 'server-a', transport: dead }),
+		closeConnection: async (profileId) => {
+			closedProfiles.push(profileId);
+		},
+	});
+	await send({ v: 1, type: 'connections.attach', requestId: 'b1', profileId: 'profile-a' });
+	await new Promise((resolve) => setTimeout(resolve, 10));
+	// Neither the transport nor the manager's record of the connection may be
+	// left behind by a lane that has stopped working.
+	assert.equal(transportClosed, true);
+	assert.deepEqual(closedProfiles, ['profile-a']);
+});
