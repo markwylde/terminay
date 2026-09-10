@@ -4,7 +4,7 @@ import test from 'node:test';
 
 const root = new URL('../', import.meta.url);
 
-test('auxiliary route controller keeps settings and environments in the canonical presenter', async () => {
+test('auxiliary route controller keeps settings in the canonical presenter', async () => {
 	const [
 		app,
 		controller,
@@ -21,26 +21,22 @@ test('auxiliary route controller keeps settings and environments in the canonica
 
 	assert.match(controller, /export type AuxiliaryRouteController/u);
 	assert.match(controller, /openSettings/u);
-	assert.match(controller, /openProjectEnvironments/u);
 	assert.match(controller, /openMacros/u);
 	assert.match(controller, /openRecordings/u);
 	assert.match(controller, /editProjectTab/u);
 	assert.match(controller, /editTerminalTab/u);
 	assert.doesNotMatch(controller, /terminaySettingsWindowHost/u);
-	assert.doesNotMatch(controller, /terminayProjectEnvironmentsHost/u);
 	assert.doesNotMatch(controller, /window\.|terminay(?:Recordings|ProjectEdit|TerminalEdit)Host/u);
 
 	assert.match(app, /createAuxiliaryRouteController\(\)/u);
 	assert.match(app, /auxiliaryRoutes\.openRecordings\(\)/u);
 	assert.match(app, /auxiliaryRoutes\.openSettings\('git-push-agent'\)/u);
 	assert.match(app, /auxiliaryRouteController\.openSettings\('extensions'\)/u);
-	assert.match(app, /auxiliaryRouteController\.openProjectEnvironments\(\)/u);
 	assert.match(app, /auxiliaryRoutes\.editTerminalTab\(/u);
 	assert.match(projectEditor, /auxiliaryRoutes\.editProjectTab\(/u);
 
 	assert.doesNotMatch(app, /window\.terminayRecordingsHost\?\.open\(/u);
 	assert.doesNotMatch(app, /window\.terminayTerminalEditHost\?\.open\(/u);
-	assert.doesNotMatch(app, /ProjectEnvironmentSurfaceDialog/u);
 	assert.doesNotMatch(projectEditor, /window\.terminayProjectEditHost\?\.open\(/u);
 
 	assert.match(sharedWorkspace, /auxiliaryRoutes\?: AuxiliaryRouteController/u);
@@ -51,6 +47,5 @@ test('auxiliary route controller keeps settings and environments in the canonica
 	assert.doesNotMatch(webWorkspace, /window\.terminay(?:SettingsWindowHost|RecordingsHost|ProjectEditHost|TerminalEditHost)/u);
 	assert.match(webWorkspace, /SharedEditTabRouteBody/u);
 	assert.match(webWorkspace, /SettingsWindow/u);
-	assert.match(webWorkspace, /ProjectEnvironmentsWindow/u);
 	assert.match(webWorkspace, /RecordingsWindow/u);
 });

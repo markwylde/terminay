@@ -5,7 +5,7 @@ import {
 	validateAgentChildJournalSources,
 	validateAgentProviderDefinition,
 } from '@terminay/extension-api';
-import { ThisServerAgentObservationAdapter } from './localAgentObservation.js';
+import { LocalAgentObservationAdapter } from './localAgentObservation.js';
 import {
 	type ChildFrame,
 	EXTENSION_HOST_PROTOCOL_VERSION,
@@ -34,11 +34,6 @@ let callbacks: Record<
 		context: { signal: AbortSignal },
 	) => unknown | Promise<unknown>
 > = {};
-const providerRuntimes = new Map<string, Record<string, unknown>>();
-const dependencyRuntimes = new Map<
-	string,
-	{ call(request: unknown, context: unknown): Promise<unknown> }
->();
 const agentRuntimes = new Map<string, Record<string, unknown>>();
 const agentTerminals = new Map<
 	string,
@@ -212,10 +207,7 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 			extension?.activate ?? imported.activate ?? imported.default;
 		if (typeof activate !== 'function')
 			throw new Error('extension must export activate(context)');
-		const providers: unknown[] = [];
 		const agentProviders: string[] = [];
-		providerRuntimes.clear();
-		dependencyRuntimes.clear();
 		agentRuntimes.clear();
 		subscriptions = [];
 		for (const terminal of agentTerminals.values()) terminal.controller.abort();
@@ -239,31 +231,6 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 					data: payload.dataDirectory,
 					cache: payload.cacheDirectory,
 				}),
-				registerProjectEnvironmentProvider(registration: unknown) {
-					const value = object(registration);
-					const definition = object(value?.definition) ?? value;
-					const runtime = object(value?.runtime);
-					if (definition === undefined)
-						throw new Error('invalid provider registration');
-					providers.push(structuredClone(definition));
-					if (
-						runtime !== undefined &&
-						typeof definition.providerId === 'string'
-					)
-						providerRuntimes.set(definition.providerId, runtime);
-					const dependencyOperations = object(value?.dependencyOperations);
-					if (
-						dependencyOperations !== undefined &&
-						typeof dependencyOperations.call === 'function' &&
-						typeof definition.providerId === 'string'
-					)
-						dependencyRuntimes.set(
-							definition.providerId,
-							dependencyOperations as unknown as {
-								call(request: unknown, context: unknown): Promise<unknown>;
-							},
-						);
-				},
 				agents: Object.freeze({
 					registerProvider(providerId: string, runtime: unknown) {
 						if (
@@ -336,8 +303,6 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 				throw new Error('extension returned an invalid method definition');
 			callbacks[name] = callback as (typeof callbacks)[string];
 		}
-		callbacks['provider.invoke'] = invokeProvider;
-		callbacks['dependency.invoke'] = invokeDependency;
 		if (
 			definition.deactivate !== undefined &&
 			typeof definition.deactivate !== 'function'
@@ -351,9 +316,7 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 			id: frame.id,
 			payload: {
 				methods: Object.keys(callbacks).sort(),
-				providers,
 				agentProviders,
-				dependencyProviders: [...dependencyRuntimes.keys()].sort(),
 			},
 		});
 	} catch (error) {
@@ -687,8 +650,8 @@ export async function createAgentTerminalContext(
 	// which of several terminals it is looking at, and the broker has always
 	// exposed this operation while nothing ever asked it for one.
 	//
-	// A terminal with no device, or an environment that cannot prove one, simply
-	// leaves the fact absent: it is enrichment, never a precondition for binding.
+	// A terminal with no device simply leaves the fact absent: it is
+	// enrichment, never a precondition for binding.
 	const tty = await (async () => {
 		// The device is read straight from the admission context where the host
 		// proved one, and otherwise only through a local adapter — never as an
@@ -699,10 +662,10 @@ export async function createAgentTerminalContext(
 		if (local === undefined || !capabilities.includes('process-observation'))
 			return undefined;
 		try {
-			// Bounded, because this must never hold up admission. An environment
-			// that cannot answer — or does not answer at all — leaves the fact
-			// absent, which is the documented contract: enrichment, never a
-			// precondition for binding.
+			// Bounded, because this must never hold up admission. A host that
+			// cannot answer — or does not answer at all — leaves the fact absent,
+			// which is the documented contract: enrichment, never a precondition
+			// for binding.
 			const answered = await Promise.race([
 				request('terminal.tty', null),
 				new Promise<undefined>((resolve) => {
@@ -725,7 +688,7 @@ export async function createAgentTerminalContext(
 		terminal: Object.freeze({ id: context.terminalSessionId }),
 		...(tty === undefined ? {} : { tty }),
 		project: Object.freeze({ id: context.projectId }),
-		environment: Object.freeze({ id: context.projectEnvironmentId }),
+		environment: Object.freeze({ id: context.serverId }),
 		process: Object.freeze({ id: context.contextId }),
 		foreground: Object.freeze({ executableName: '' }),
 		capabilities: new Set(
@@ -984,185 +947,6 @@ async function pollingDirectoryWatcher(
 	});
 }
 
-async function invokeProvider(
-	input: unknown,
-	invocationContext: { signal: AbortSignal },
-): Promise<unknown> {
-	const payload = object(input);
-	const providerId =
-		typeof payload?.providerId === 'string' ? payload.providerId : '';
-	const callback = typeof payload?.method === 'string' ? payload.method : '';
-	const callId = typeof payload?.callId === 'string' ? payload.callId : '';
-	const runtime = providerRuntimes.get(providerId);
-	const method = runtime?.[callback];
-	if (typeof method !== 'function')
-		throw new Error('provider callback is unavailable');
-	const deadlineAt =
-		typeof payload?.deadlineAt === 'string' ? payload.deadlineAt : '';
-	if (
-		!Number.isFinite(Date.parse(deadlineAt)) ||
-		Date.parse(deadlineAt) <= Date.now()
-	)
-		throw new Error('provider callback deadline expired');
-	const context = Object.freeze({
-		deadlineAt,
-		signal: invocationContext.signal,
-		...(typeof payload?.idempotencyKey === 'string'
-			? { idempotencyKey: payload.idempotencyKey }
-			: {}),
-		...(Number.isSafeInteger(payload?.expectedRevision)
-			? { expectedRevision: payload?.expectedRevision }
-			: {}),
-		dependencies: Object.freeze({
-			call(request: unknown, dependencyContext: unknown) {
-				const requested = object(dependencyContext);
-				const requestedDeadline =
-					typeof requested?.deadlineAt === 'string'
-						? requested.deadlineAt
-						: deadlineAt;
-				const boundedDeadline =
-					Date.parse(requestedDeadline) < Date.parse(deadlineAt)
-						? requestedDeadline
-						: deadlineAt;
-				return brokerRequest(
-					'provider.call',
-					{
-						callerProviderId: providerId,
-						request,
-						context: {
-							deadlineAt: boundedDeadline,
-							...(typeof requested?.idempotencyKey === 'string'
-								? { idempotencyKey: requested.idempotencyKey }
-								: {}),
-							...(Number.isSafeInteger(requested?.expectedRevision)
-								? { expectedRevision: requested?.expectedRevision }
-								: {}),
-						},
-					},
-					invocationContext.signal,
-				);
-			},
-		}),
-		profiles: Object.freeze({
-			get(profileId: string) {
-				return brokerRequest('profile.get', { providerId, profileId });
-			},
-		}),
-		secrets: Object.freeze({
-			async withValue<T>(
-				request: { profileId: string; fieldId: string; purpose: string },
-				use: (bytes: Uint8Array) => T | Promise<T>,
-			): Promise<T> {
-				const raw = await brokerRequest('secret.resolve', request);
-				if (
-					!Array.isArray(raw) ||
-					raw.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)
-				)
-					throw new Error('secret broker returned invalid bytes');
-				const secret = new Uint8Array(raw);
-				try {
-					return await use(secret);
-				} finally {
-					secret.fill(0);
-				}
-			},
-		}),
-		sshAgent: Object.freeze({
-			listIdentities(request: {
-				profileId: string;
-				purpose: 'ssh-user-authentication';
-			}) {
-				return brokerRequest('agent.list', request);
-			},
-			sign(request: {
-				profileId: string;
-				purpose: 'ssh-user-authentication';
-				identityId: string;
-				algorithm: string;
-				challenge: Uint8Array;
-			}) {
-				return brokerRequest('agent.sign', {
-					...request,
-					challenge: [...request.challenge],
-				});
-			},
-		}),
-	});
-	const result = await (
-		method as (request: unknown, context: unknown) => unknown
-	).call(runtime, payload?.request, context);
-	return { callId, ok: true, result };
-}
-
-async function invokeDependency(
-	input: unknown,
-	invocationContext: { signal: AbortSignal },
-): Promise<unknown> {
-	const payload = object(input);
-	const providerId =
-		typeof payload?.providerId === 'string' ? payload.providerId : '';
-	const runtime = dependencyRuntimes.get(providerId);
-	const callToken =
-		typeof payload?.callToken === 'string' ? payload.callToken : '';
-	if (runtime === undefined || !callToken)
-		throw new Error('dependency target is unavailable');
-	const timing = object(payload?.context);
-	const deadlineAt =
-		typeof timing?.deadlineAt === 'string' ? timing.deadlineAt : '';
-	const vault = Object.freeze({
-		put(request: unknown) {
-			const value = object(request);
-			const bytes = value?.value;
-			return brokerRequest('vault.put', {
-				callToken,
-				request: {
-					...value,
-					...(bytes instanceof Uint8Array ? { value: [...bytes] } : {}),
-				},
-			});
-		},
-		async withSecret<T>(
-			request: unknown,
-			use: (copy: Uint8Array) => T | Promise<T>,
-		): Promise<T> {
-			if (typeof use !== 'function')
-				throw new Error('provider vault callback is required');
-			const raw = await brokerRequest('vault.withSecret', {
-				callToken,
-				request,
-			});
-			if (
-				!Array.isArray(raw) ||
-				raw.length > 1024 * 1024 ||
-				raw.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)
-			)
-				throw new Error('provider vault returned invalid bytes');
-			const copy = new Uint8Array(raw);
-			try {
-				return await use(copy);
-			} finally {
-				copy.fill(0);
-				raw.fill(0);
-			}
-		},
-		remove(request: unknown) {
-			return brokerRequest('vault.remove', { callToken, request });
-		},
-	});
-	const context = Object.freeze({
-		deadlineAt,
-		signal: invocationContext.signal,
-		...(typeof timing?.idempotencyKey === 'string'
-			? { idempotencyKey: timing.idempotencyKey }
-			: {}),
-		...(Number.isSafeInteger(timing?.expectedRevision)
-			? { expectedRevision: timing?.expectedRevision }
-			: {}),
-		vault,
-	});
-	return runtime.call(payload?.request, context);
-}
-
 async function invoke(frame: HostFrame): Promise<void> {
 	const payload = object(frame.payload);
 	const method =
@@ -1192,30 +976,11 @@ async function invoke(frame: HostFrame): Promise<void> {
 }
 
 function brokerRequest(
-	operation:
-		| 'log'
-		| 'secret.resolve'
-		| 'profile.get'
-		| 'agent.list'
-		| 'agent.sign'
-		| 'provider.call'
-		| 'vault.put'
-		| 'vault.withSecret'
-		| 'vault.remove',
+	operation: 'log' | 'secret.resolve',
 	payload: unknown,
 	signal?: AbortSignal,
 ): Promise<unknown> {
-	if (
-		operation !== 'log' &&
-		operation !== 'secret.resolve' &&
-		operation !== 'profile.get' &&
-		operation !== 'agent.list' &&
-		operation !== 'agent.sign' &&
-		operation !== 'provider.call' &&
-		operation !== 'vault.put' &&
-		operation !== 'vault.withSecret' &&
-		operation !== 'vault.remove'
-	)
+	if (operation !== 'log' && operation !== 'secret.resolve')
 		return Promise.reject(new Error('unsupported broker operation'));
 	const id = `broker:${++sequence}`;
 	return new Promise((resolve, reject) => {
@@ -1319,7 +1084,6 @@ function localObservationContext(
 		contextId: String(context.contextId),
 		serverId: String(context.serverId),
 		projectId: String(context.projectId),
-		projectEnvironmentId: String(context.projectEnvironmentId),
 		terminalSessionId: String(context.terminalSessionId),
 		terminalIncarnationId: String(context.terminalIncarnationId),
 		providerId: String(context.providerId),
@@ -1329,14 +1093,13 @@ function localObservationContext(
 }
 function localObservationAdapter(
 	context: Record<string, unknown>,
-): ThisServerAgentObservationAdapter | undefined {
+): LocalAgentObservationAdapter | undefined {
 	const shellPid = localPid(context.shellPid);
 	if (shellPid === undefined) return undefined;
 	const ttyPath =
 		typeof context.ttyPath === 'string' ? context.ttyPath : undefined;
-	return new ThisServerAgentObservationAdapter({
+	return new LocalAgentObservationAdapter({
 		resolveTerminal: () => ({
-			environment: 'this-server',
 			shellPid,
 			...(ttyPath === undefined ? {} : { ttyPath }),
 		}),

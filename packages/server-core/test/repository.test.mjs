@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { THIS_SERVER_ENVIRONMENT_ID, WorkspaceRepository } from "../dist/index.js";
+import { WorkspaceRepository } from "../dist/index.js";
 
 test("workspace repository migrates, backs up before commit, and keeps revision conflicts explicit", async () => {
   let persisted;
@@ -20,21 +20,22 @@ test("workspace repository migrates, backs up before commit, and keeps revision 
   assert.equal(repository.state.revision, 1);
 });
 
-test("workspace repository durably commits a v2 environment migration exactly once", async () => {
-  let persisted = {
-    schemaVersion: 2, serverId: "server-a", revision: 0, cursor: "0", viewOrder: ["view-a"],
+test("a previous-version repository is preserved and reported unreadable", async () => {
+  const previous = {
+    schemaVersion: 4, serverId: "server-a", revision: 0, cursor: "0", viewOrder: ["view-a"],
     views: { "view-a": { id: "view-a", serverId: "server-a", name: "Workspace", projectIds: ["project-a"], activeProjectId: "project-a" } },
-    projects: { "project-a": { id: "project-a", serverId: "server-a", viewId: "view-a", root: "/tmp/a", rootOrigin: "legacy-unverified", name: "A", panelIds: [], layout: { kind: "stack", panelIds: [] } } },
+    projects: { "project-a": { id: "project-a", serverId: "server-a", viewId: "view-a", projectEnvironmentId: "terminay:this-server", environmentRevision: 1, root: "/tmp/a", rootOrigin: "legacy-unverified", name: "A", panelIds: [], layout: { kind: "stack", panelIds: [] } } },
     panels: {}, terminalSessions: {},
   };
+  let persisted = structuredClone(previous);
   let commits = 0;
   const backend = { async load() { return structuredClone(persisted); }, async commit(state) { commits += 1; persisted = structuredClone(state); } };
-  const first = new WorkspaceRepository(backend, "server-a");
-  const migrated = await first.load();
-  assert.equal(migrated.schemaVersion, 4);
-  assert.equal(migrated.projects["project-a"].projectEnvironmentId, THIS_SERVER_ENVIRONMENT_ID);
-  assert.equal(commits, 1);
-  const second = new WorkspaceRepository(backend, "server-a");
-  assert.deepEqual(await second.load(), migrated);
-  assert.equal(commits, 1);
+  const repository = new WorkspaceRepository(backend, "server-a");
+  await assert.rejects(repository.load(), (error) => {
+    assert.equal(error.code, "persistence_invalid");
+    assert.equal(error.retryable, false);
+    return true;
+  });
+  assert.equal(commits, 0);
+  assert.deepEqual(persisted, previous);
 });

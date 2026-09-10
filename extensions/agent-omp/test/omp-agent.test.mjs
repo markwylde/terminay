@@ -163,7 +163,7 @@ test("binds the exact PTY breadcrumb and attaches only direct writer-proven chil
   const terminal = {
     terminal: { id: "terminal" }, project: { id: "project" }, environment: { id: "environment" }, process: { id: "process" },
     foreground: { executableName: "omp" }, tty: { deviceId: "ttys000" },
-    capabilities: new Set(["process-observation", "filesystem-observation", "agent-journal"]), signal: { aborted: false, throwIfAborted() {} },
+    signal: { aborted: false, throwIfAborted() {} },
     async bindSession(request) { return { providerSessionId: request.providerSessionId, mappingVersion: request.mappingVersion, journal: request.journal }; },
     observation: {
       processes: {
@@ -206,7 +206,7 @@ function ompObservationFixture(sessionId, title, options = {}) {
   let bindingRequest;
   const terminal = {
     terminal: { id: "terminal" }, project: { id: "project" }, environment: { id: "environment" }, process: { id: "process" }, foreground: { executableName: "omp", arguments: options.arguments }, tty: { deviceId: "ttys000" },
-    capabilities: new Set(["process-observation", "filesystem-observation", "agent-journal"]), signal: { aborted: false, throwIfAborted() {} },
+    signal: { aborted: false, throwIfAborted() {} },
     async bindSession(request) { bindingRequest = request; return { providerSessionId: request.providerSessionId, mappingVersion: request.mappingVersion, journal: request.journal }; },
     observation: {
       processes: {

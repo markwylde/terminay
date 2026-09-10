@@ -97,17 +97,6 @@ export const grokAgentProvider = defineAgentProvider({
 	},
 
 	async observe(terminal) {
-		if (
-			!terminal.capabilities.has('process-observation') ||
-			!terminal.capabilities.has('filesystem-observation') ||
-			!terminal.capabilities.has('agent-journal')
-		) {
-			return {
-				state: 'unavailable' as const,
-				reason: 'environment-capability-missing' as const,
-			};
-		}
-
 		const root =
 			(await findProcessBoundRoot(terminal)) ??
 			(await findActiveSessionRoot(terminal));

@@ -39,7 +39,6 @@ test("generic agent core and renderer contain no provider implementation details
     join(root, "packages/server-core/src/activity"),
     join(root, "packages/server-core/src/terminalService/types.ts"),
     join(root, "packages/server-core/src/terminalService/service.ts"),
-    join(root, "packages/server-core/src/extensions/projectEnvironmentRuntime.ts"),
     join(root, "packages/server-core/src/extensions/localAgentObservation.ts"),
     join(root, "packages/client-core/src/agentStatus.ts"),
     join(root, "src/agentStatusStore.ts"),
@@ -56,7 +55,7 @@ test("generic agent core and renderer contain no provider implementation details
   assert.deepEqual(violations, [], "provider CLI names, journal schemas, roots, and mappings belong in extensions only");
 });
 
-test("production source has no leftover hard-coded agent drivers or private SSH/Puzed composition", async () => {
+test("production source has no leftover hard-coded agent drivers", async () => {
   const productionRoots = [
     join(root, "packages/server-core/src"),
     join(root, "packages/client-core/src"),
@@ -66,7 +65,7 @@ test("production source has no leftover hard-coded agent drivers or private SSH/
     join(root, "apps/terminay-desktop/src"),
   ];
   const forbiddenNames = new Set(["agentDrivers.ts", "agentJournal.ts", "ptyAgentBridge.ts", "ptyAgent.ts"]);
-  const forbidden = /findProcessBoundCodexRollout|agentDriverRegistry|legacyPtyAgent|puzedSshComposition|composePuzedWithSsh/u;
+  const forbidden = /findProcessBoundCodexRollout|agentDriverRegistry|legacyPtyAgent/u;
   const violations = [];
   for (const directory of productionRoots) {
     for (const file of await sourceFiles(directory)) {
@@ -75,5 +74,5 @@ test("production source has no leftover hard-coded agent drivers or private SSH/
       if (forbidden.test(source)) violations.push(relative(root, file));
     }
   }
-  assert.deepEqual(violations, [], "hard-coded agent drivers, journal sources, and private SSH/Puzed composition must not remain in production source");
+  assert.deepEqual(violations, [], "hard-coded agent drivers and journal sources must not remain in production source");
 });

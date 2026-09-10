@@ -36,13 +36,6 @@ import type {
 	MacroExecutionEnvironment,
 	MacroTarget,
 } from './macroService/types.js';
-import {
-	createEnvironmentRoutedPtyFactory,
-	createProjectEnvironmentOperationHandlers,
-	type ProjectEnvironmentOperationOptions,
-	type ProjectEnvironmentRouter,
-	routeProjectOperationRegistries,
-} from './projectEnvironment/index.js';
 import type { RecordingAdapter } from './recordingService/adapter.js';
 import {
 	createSettingsOperationRegistry,
@@ -208,15 +201,6 @@ export interface ServerCoreCompositionOptions
 	readonly settings?: ServerSettingsRepository;
 	/** Optional project-scoped filesystem watch and folder-size authority. */
 	readonly fileObservations?: ServerFileObservationAdapter;
-	/** Canonical environment router. When present every project-scoped file,
-	 * Git, observation, agent and shell operation is routed before a local host
-	 * adapter can run. */
-	readonly projectEnvironmentRouter?: ProjectEnvironmentRouter;
-	/** Canonical selected-server environment management authority. */
-	readonly projectEnvironments?: Omit<
-		ProjectEnvironmentOperationOptions,
-		'workspace' | 'onChanged'
-	>;
 	/** Host-neutral startup/cleanup for optional authorities that require
 	 * asynchronous binding before any transport listener becomes ready. */
 	readonly serviceLifecycle?: {
@@ -232,7 +216,7 @@ export interface ServerCoreCompositionOptions
 	 */
 	readonly workspaceStartup?: Pick<
 		WorkspaceStartupRestoreOptions,
-		'createTerminal' | 'firstRun' | 'remoteSeedDeadlineMs' | 'onSeedFailure'
+		'createTerminal' | 'firstRun'
 	> & {
 		/**
 		 * Host work that must happen before the restore reads the workspace —
@@ -337,9 +321,6 @@ export function createServerCoreComposition(
 					profiles: options.terminalProfiles,
 					workspaceSnapshot: () =>
 						options.workspace?.state as import('./workspace.js').WorkspaceState,
-					...(options.projectEnvironmentRouter === undefined
-						? {}
-						: { projectEnvironmentRouter: options.projectEnvironmentRouter }),
 					observeTerminalCwd: async (sessionId) => {
 						const session = terminal.getSession(sessionId);
 						return session === undefined
@@ -387,18 +368,6 @@ export function createServerCoreComposition(
 			? undefined
 			: createWorkspaceOperationRegistry(options.workspace, {
 					...options.workspaceOperations,
-					...(options.workspaceOperations?.prepareProjectRootUpdate ===
-						undefined || options.projectEnvironmentRouter === undefined
-						? {}
-						: {
-								prepareProjectRootUpdate: (projectId: string, root: string) =>
-									prepareRoutedProjectRoot(
-										options.projectEnvironmentRouter!,
-										options.workspaceOperations!.prepareProjectRootUpdate!,
-										projectId,
-										root,
-									),
-							}),
 					closeTerminalSessions: async (sessionIds) => {
 						await Promise.allSettled(
 							sessionIds.map((sessionId) => terminal.kill(sessionId)),
@@ -675,64 +644,28 @@ export function createServerCoreComposition(
 						eventJournal.append('extensions.changed', payload);
 					},
 				});
-	const projectEnvironmentOperations =
-		options.projectEnvironments === undefined || options.workspace === undefined
-			? undefined
-			: createProjectEnvironmentOperationHandlers({
-					...options.projectEnvironments,
-					workspace: options.workspace,
-					...(options.workspaceOperations?.prepareProjectRootUpdate ===
-					undefined
-						? {}
-						: {
-								// Project-environment creation prepares the built-in This-server
-								// root before its workspace object exists; routing by project id at
-								// that point would reject the legitimate new identity.
-								prepareProjectRootUpdate:
-									options.workspaceOperations.prepareProjectRootUpdate,
-							}),
-					...(options.projectEnvironments.providerDefinitions !== undefined ||
-					options.extensions?.hosts === undefined
-						? {}
-						: {
-								providerDefinitions: () =>
-									options
-										.extensions!.hosts!.statuses()
-										.flatMap((status) => status.providers ?? []),
-							}),
-					...(options.projectEnvironments.providerRuntime !== undefined ||
-					options.extensions?.hosts === undefined
-						? {}
-						: { providerRuntime: options.extensions.hosts }),
-					onChanged: (payload) => {
-						eventJournal.append('project-environments.changed', payload);
-					},
-				});
 	const operations = mergeOperationRegistries(
 		mergeOperationRegistries(
 			mergeOperationRegistries(
 				mergeOperationRegistries(
 					mergeOperationRegistries(
 						mergeOperationRegistries(
-							mergeOperationRegistries(
-								mergeOperationRegistries(
-									options.operations ?? {},
-									extensionOperations ?? {},
-								),
-								projectEnvironmentOperations ?? {},
-							),
-							options.fileObservations?.operations ?? {},
+							options.operations ?? {},
+							extensionOperations ?? {},
 						),
-						macroOperations?.operations ?? {},
+						options.fileObservations?.operations ?? {},
 					),
-					workspaceOperations?.operations ?? {},
+					macroOperations?.operations ?? {},
 				),
+				workspaceOperations?.operations ?? {},
+			),
+			mergeOperationRegistries(
 				mergeOperationRegistries(
 					activityOperations?.operations ?? {},
 					agentOperations?.operations ?? {},
 				),
+				mergeOperationRegistries(aiOperations ?? {}, gitOperations ?? {}),
 			),
-			mergeOperationRegistries(aiOperations ?? {}, gitOperations ?? {}),
 		),
 		mergeOperationRegistries(
 			mergeOperationRegistries(
@@ -742,15 +675,8 @@ export function createServerCoreComposition(
 			shellProfileOperations?.operations ?? {},
 		),
 	);
-	const routedOperations =
-		options.projectEnvironmentRouter === undefined
-			? operations
-			: routeProjectOperationRegistries(
-					operations,
-					options.projectEnvironmentRouter,
-				);
 	const completeOperations = mergeOperationRegistries(
-		routedOperations,
+		operations,
 		terminalOperations.operations,
 	);
 	const onConnectionClosed = (connectionId: string, clientId: string): void => {
@@ -814,18 +740,6 @@ export function createServerCoreComposition(
 		| 'failed' = 'created';
 	let startPromise: Promise<void> | undefined;
 	let shutdownPromise: Promise<void> | undefined;
-	// Durable provider operations belong to the server, not to whichever client
-	// happens to open the Project Environments view. Keep a server-owned context
-	// for startup recovery so a Puzed job can advance after an embedded server
-	// restart even when no renderer has connected yet.
-	const environmentRecoveryAbort = new AbortController();
-	const environmentRecoveryContext = {
-		connectionId: `server:${options.serverId}`,
-		clientId: `server:${options.serverId}`,
-		authScope: 'admin' as const,
-		permissions: ['environments:read', 'environments:manage'],
-		signal: environmentRecoveryAbort.signal,
-	};
 	const start = (): Promise<void> => {
 		if (lifecycle === 'ready') return Promise.resolve();
 		if (lifecycle === 'starting' && startPromise !== undefined)
@@ -841,15 +755,6 @@ export function createServerCoreComposition(
 					await options.extensions?.installer.initialize();
 					await options.extensions?.activateEnabled?.();
 				}
-				// Extensions provide the runtime required to resume their durable
-				// operations, so recovery must follow activation but precede normal
-				// client-facing service startup.
-				// A VM can still be waiting for SSH when the server starts. Recovery is
-				// durable background work, not a prerequisite for serving the workspace;
-				// blocking here made the entire desktop appear unable to open.
-				void projectEnvironmentOperations
-					?.recoverPending(environmentRecoveryContext)
-					.catch(() => undefined);
 				await options.settings?.load();
 				await options.serviceLifecycle?.start?.();
 				await options.agents?.start();
@@ -877,15 +782,6 @@ export function createServerCoreComposition(
 						unavailableProjectIds,
 						firstRun: options.workspaceStartup.firstRun,
 						createTerminal: options.workspaceStartup.createTerminal,
-						...(options.workspaceStartup.remoteSeedDeadlineMs === undefined
-							? {}
-							: {
-									remoteSeedDeadlineMs:
-										options.workspaceStartup.remoteSeedDeadlineMs,
-								}),
-						...(options.workspaceStartup.onSeedFailure === undefined
-							? {}
-							: { onSeedFailure: options.workspaceStartup.onSeedFailure }),
 					});
 				}
 			} catch (error) {
@@ -905,7 +801,6 @@ export function createServerCoreComposition(
 		shutdownPromise = (async () => {
 			// If startup was still binding a hook receiver, wait for it before
 			// teardown so it cannot resurrect after shutdown begins.
-			environmentRecoveryAbort.abort();
 			await startPromise?.catch(() => undefined);
 			const failures: unknown[] = [];
 			const attempt = async (
@@ -973,48 +868,6 @@ export function createServerCoreComposition(
 	};
 }
 
-async function prepareRoutedProjectRoot(
-	router: ProjectEnvironmentRouter,
-	local: NonNullable<
-		WorkspaceOperationRegistryOptions['prepareProjectRootUpdate']
-	>,
-	projectId: string,
-	root: string,
-): Promise<import('./workspaceProtocol.js').PreparedProjectRootUpdate> {
-	return router
-		.route(projectId, 'filesystem', 'prepare-project-root', { root }, () =>
-			local(projectId, root),
-		)
-		.then((prepared) => {
-			if (
-				typeof prepared === 'object' &&
-				prepared !== null &&
-				'commit' in prepared &&
-				typeof prepared.commit === 'function'
-			)
-				return prepared as import('./workspaceProtocol.js').PreparedProjectRootUpdate;
-			const remote = prepared as {
-				readonly canonicalRoot?: unknown;
-				readonly preparationId?: unknown;
-			};
-			if (
-				typeof remote.canonicalRoot !== 'string' ||
-				typeof remote.preparationId !== 'string'
-			)
-				throw new Error(
-					'project environment returned an invalid prepared root',
-				);
-			return {
-				canonicalRoot: remote.canonicalRoot,
-				commit: async () => {
-					await router.invoke(projectId, 'filesystem', 'commit-project-root', {
-						preparationId: remote.preparationId,
-					});
-				},
-			};
-		});
-}
-
 function cleanupFailure(message: string, failures: readonly unknown[]): Error {
 	const error = new Error(message);
 	Object.defineProperty(error, 'errors', {
@@ -1049,13 +902,7 @@ function composeTerminal(
 	const terminal = new TerminalService({
 		...terminalOptions,
 		serverId: options.serverId,
-		ptyFactory:
-			options.projectEnvironmentRouter === undefined
-				? options.ptyFactory
-				: createEnvironmentRoutedPtyFactory(
-						options.projectEnvironmentRouter,
-						options.ptyFactory,
-					),
+		ptyFactory: options.ptyFactory,
 		...(options.activity === undefined &&
 		options.agents === undefined &&
 		options.extensionAgentRuntime === undefined

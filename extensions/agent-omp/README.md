@@ -73,12 +73,7 @@ The package declares one provider:
 ```json
 {
   "id": "com.terminay.agent.omp/cli",
-  "displayName": "omp",
-  "requiredEnvironmentCapabilities": [
-    "process-observation",
-    "filesystem-observation",
-    "agent-journal"
-  ]
+  "displayName": "omp"
 }
 ```
 
@@ -112,8 +107,7 @@ Docker-isolated Electron suite once the generic extension host is wired.
 
 The mapping targets OMP journal schema v0.1 and selects only durable record
 shapes. Unknown records are ignored. Malformed title slots, breadcrumbs,
-headers, records, and unsupported environment capabilities fail closed without
-creating an unrelated sidebar row. The provider supports macOS and Linux;
+headers, and records fail closed without creating an unrelated sidebar row. The provider supports macOS and Linux;
 Windows does not currently expose the PTY and journal evidence required for
 safe binding.
 
@@ -122,7 +116,6 @@ safe binding.
 OMP ships built in, installed offline and enabled by default. Disable or
 re-enable it in **Extensions** settings without changing profiles or journals.
 Start or resume `omp` normally; a compatible npm release may override the
-bundled floor. It requires Extension API 1.1, Node.js 22+, and mapping 0.1. If
-no row appears, verify foreground executable, terminal-scoped profile variables,
-and observation capabilities. Remote sessions require the same scoped
-breadcrumb/journal adapter and otherwise fail closed.
+bundled floor. It requires Extension API 2.0, Node.js 22+, and mapping 0.1. If
+no row appears, verify the foreground executable and the terminal-scoped
+profile variables.

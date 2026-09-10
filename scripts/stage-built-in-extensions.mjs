@@ -22,8 +22,6 @@ const repository = resolve(new URL('..', import.meta.url).pathname);
 const npmCli = join(repository, 'node_modules', 'npm', 'bin', 'npm-cli.js');
 const SDK = '@terminay/extension-api';
 const expectedIds = new Set([
-	'com.terminay.ssh',
-	'com.puzed.platform',
 	'com.terminay.agent.codex',
 	'com.terminay.agent.claude-code',
 	'com.terminay.agent.grok',
@@ -279,10 +277,10 @@ async function loadCatalogue(path) {
 	if (
 		value?.schemaVersion !== 1 ||
 		!Array.isArray(value.extensions) ||
-		value.extensions.length !== 7
+		value.extensions.length !== 5
 	)
 		throw new Error(
-			'built-in extension catalogue must name exactly seven extensions',
+			'built-in extension catalogue must name exactly five extensions',
 		);
 	const entries = value.extensions.map((entry) => {
 		if (
@@ -304,8 +302,8 @@ async function loadCatalogue(path) {
 		});
 	});
 	if (
-		new Set(entries.map((entry) => entry.extensionId)).size !== 7 ||
-		new Set(entries.map((entry) => entry.packageName)).size !== 7 ||
+		new Set(entries.map((entry) => entry.extensionId)).size !== 5 ||
+		new Set(entries.map((entry) => entry.packageName)).size !== 5 ||
 		!entries.every((entry) => expectedIds.has(entry.extensionId))
 	)
 		throw new Error(

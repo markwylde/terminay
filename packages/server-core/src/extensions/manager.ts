@@ -1,22 +1,16 @@
-import type { ProjectEnvironmentContribution } from '@terminay/extension-api';
 import type { ServerVaultService } from '../settings/vault.js';
 import type { ExtensionHostDiagnosticListener } from './diagnostics.js';
 import { ExtensionHost } from './host.js';
-import { ExtensionProviderVault } from './providerVault.js';
 import type {
 	ExtensionAgentBroker,
 	ExtensionAgentTerminalAdmission,
 	ExtensionAgentTerminalCancellation,
 	ExtensionBroker,
-	ExtensionDependencyCall,
 	ExtensionHostLimits,
 	ExtensionHostStatus,
 	ExtensionInvocation,
 	ExtensionLaunchDescriptor,
-	ExtensionProfileBroker,
-	ExtensionProviderInvocation,
 	ExtensionSecretAccessBroker,
-	ExtensionSshAgentBroker,
 } from './types.js';
 
 export interface ExtensionHostManagerOptions {
@@ -24,9 +18,7 @@ export interface ExtensionHostManagerOptions {
 	readonly childEntrypoint?: string;
 	readonly limits?: ExtensionHostLimits;
 	readonly nodeExecutable?: string;
-	readonly profiles?: ExtensionProfileBroker;
 	readonly secrets?: ExtensionSecretAccessBroker;
-	readonly sshAgent?: ExtensionSshAgentBroker;
 	readonly agents?: ExtensionAgentBroker;
 	readonly vault?: ServerVaultService;
 	/** Passed to every host it creates; absent means nothing is recorded. */
@@ -39,7 +31,6 @@ export interface ExtensionHostManagerOptions {
  * to escape manager lifecycle methods or affect another host. */
 export class ExtensionHostManager {
 	private readonly hosts = new Map<string, ExtensionHost>();
-	private readonly providerOwners = new Map<string, string>();
 	private readonly agentProviderOwners = new Map<string, string>();
 	private readonly publishedExtensions = new Set<string>();
 	private readonly contributionListeners = new Set<
@@ -47,13 +38,7 @@ export class ExtensionHostManager {
 	>();
 	private readonly starts = new Map<string, Promise<ExtensionHostStatus>>();
 	private contributionMutation: Promise<void> = Promise.resolve();
-	private readonly providerVault: ExtensionProviderVault | undefined;
-	constructor(private readonly options: ExtensionHostManagerOptions) {
-		this.providerVault =
-			options.vault === undefined
-				? undefined
-				: new ExtensionProviderVault(options.vault);
-	}
+	constructor(private readonly options: ExtensionHostManagerOptions) {}
 
 	statuses(): readonly ExtensionHostStatus[] {
 		return Object.freeze(
@@ -91,13 +76,7 @@ export class ExtensionHostManager {
 	): Promise<ExtensionHostStatus> {
 		let host = this.hosts.get(descriptor.extensionId);
 		if (host === undefined) {
-			host = new ExtensionHost(descriptor.extensionId, {
-				...this.options,
-				dependencies: { call: (request) => this.callDependency(request) },
-				...(this.providerVault === undefined
-					? {}
-					: { providerVault: this.providerVault }),
-			});
+			host = new ExtensionHost(descriptor.extensionId, { ...this.options });
 			this.hosts.set(descriptor.extensionId, host);
 		}
 		await host.start(descriptor);
@@ -107,8 +86,6 @@ export class ExtensionHostManager {
 				if (status.state !== 'running')
 					throw new Error('extension host stopped before provider publication');
 				this.assertContributionOwnership(status, descriptor.extensionId);
-				for (const provider of status.providers ?? [])
-					this.providerOwners.set(provider.providerId, descriptor.extensionId);
 				for (const provider of status.agentProviders ?? [])
 					this.agentProviderOwners.set(provider.id, descriptor.extensionId);
 				this.publishedExtensions.add(descriptor.extensionId);
@@ -121,25 +98,6 @@ export class ExtensionHostManager {
 		}
 	}
 
-	providerDefinitions() {
-		return Object.freeze(
-			this.statuses().flatMap((status) =>
-				status.state === 'running' &&
-				this.publishedExtensions.has(status.extensionId)
-					? (status.providers ?? [])
-					: [],
-			),
-		);
-	}
-	/** Public-manifest contributions that have an active, matching provider
-	 * registration. Disabled, failed, and merely installed extensions are absent. */
-	activatedProjectEnvironmentContributions(): readonly ProjectEnvironmentContribution[] {
-		return Object.freeze(
-			[...this.hosts.values()]
-				.filter((host) => this.publishedExtensions.has(host.extensionId))
-				.flatMap((host) => host.activatedProjectEnvironmentContributions()),
-		);
-	}
 	agentProviderContributions() {
 		return Object.freeze(
 			this.statuses().flatMap((status) =>
@@ -179,16 +137,6 @@ export class ExtensionHostManager {
 		);
 	}
 
-	invokeProvider(invocation: ExtensionProviderInvocation): Promise<unknown> {
-		const owner = this.providerOwners.get(invocation.providerId);
-		if (owner === undefined)
-			return Promise.reject(new Error('extension provider is unavailable'));
-		const host = this.hosts.get(owner);
-		if (host === undefined)
-			return Promise.reject(new Error('extension host does not exist'));
-		return host.invokeProvider(invocation);
-	}
-
 	invoke(
 		extensionId: string,
 		invocation: ExtensionInvocation,
@@ -197,47 +145,6 @@ export class ExtensionHostManager {
 		if (host === undefined)
 			return Promise.reject(new Error('extension host does not exist'));
 		return host.invoke(invocation);
-	}
-
-	private callDependency(call: ExtensionDependencyCall) {
-		const owner = this.providerOwners.get(call.request.providerId);
-		if (owner === undefined)
-			return Promise.reject(
-				new Error('provider dependency target is unavailable'),
-			);
-		if (owner === call.callerExtensionId)
-			return Promise.reject(
-				new Error(
-					'provider dependency target must be a declared external extension',
-				),
-			);
-		const caller = this.hosts.get(call.callerExtensionId);
-		const target = this.hosts.get(owner);
-		const callerDescriptor = caller?.launchDescriptor();
-		if (callerDescriptor === undefined || target === undefined)
-			return Promise.reject(
-				new Error('provider dependency host is unavailable'),
-			);
-		const dependency = callerDescriptor.extensionDependencies?.find(
-			(value) => value.extensionId === owner,
-		);
-		if (dependency === undefined)
-			return Promise.reject(
-				new Error('provider dependency extension is not declared'),
-			);
-		return target.invokeDependency(
-			call.request.providerId,
-			{
-				operation: call.request.operation,
-				payload: call.request.payload,
-				caller: {
-					extensionId: call.callerExtensionId,
-					providerId: call.callerProviderId,
-				},
-			},
-			call.context,
-			call.signal,
-		);
 	}
 
 	async stop(extensionId: string): Promise<void> {
@@ -264,7 +171,6 @@ export class ExtensionHostManager {
 			[...this.hosts.values()].map((host) => host.stop()),
 		);
 		await this.mutateContributions(() => {
-			this.providerOwners.clear();
 			this.agentProviderOwners.clear();
 			this.publishedExtensions.clear();
 			this.notifyContributionListeners();
@@ -283,13 +189,6 @@ export class ExtensionHostManager {
 		status: ExtensionHostStatus,
 		extensionId: string,
 	): void {
-		for (const provider of status.providers ?? []) {
-			const owner = this.providerOwners.get(provider.providerId);
-			if (owner !== undefined && owner !== extensionId)
-				throw new Error(
-					`project environment provider already registered: ${provider.providerId}`,
-				);
-		}
 		for (const provider of status.agentProviders ?? []) {
 			const owner = this.agentProviderOwners.get(provider.id);
 			if (owner !== undefined && owner !== extensionId)
@@ -299,8 +198,6 @@ export class ExtensionHostManager {
 
 	private removeContributionOwnership(extensionId: string): void {
 		const wasPublished = this.publishedExtensions.delete(extensionId);
-		for (const [providerId, owner] of this.providerOwners)
-			if (owner === extensionId) this.providerOwners.delete(providerId);
 		for (const [providerId, owner] of this.agentProviderOwners)
 			if (owner === extensionId) this.agentProviderOwners.delete(providerId);
 		if (wasPublished) this.notifyContributionListeners();

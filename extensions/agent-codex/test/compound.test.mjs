@@ -52,11 +52,6 @@ function terminalFor(files) {
 		environment: { id: 'environment' },
 		process: { id: 'process' },
 		foreground: { executableName: 'codex' },
-		capabilities: new Set([
-			'process-observation',
-			'filesystem-observation',
-			'agent-journal',
-		]),
 		signal: { aborted: false, throwIfAborted() {} },
 		observation: {
 			processes: {

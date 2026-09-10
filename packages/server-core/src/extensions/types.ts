@@ -3,27 +3,21 @@ import type {
 	AgentProviderContribution,
 	ExtensionDependency,
 	JsonValue,
-	ProjectEnvironmentContribution,
-	ProviderDefinition,
-	ProviderDependencyCallContext,
-	ProviderDependencyRequest,
-	ProviderRuntimeMethod,
 } from '@terminay/extension-api';
 
 /**
  * Server-issued identity for one terminal incarnation. Lifecycle publication
- * is scoped to this context. On This server the child also receives `shellPid`
- * so it can observe the PTY with Node.
+ * is scoped to this context. The child also receives `shellPid` so it can
+ * observe the PTY with Node.
  */
 export interface ExtensionAgentTerminalContext {
 	readonly contextId: string;
 	readonly serverId: string;
 	readonly projectId: string;
-	readonly projectEnvironmentId: string;
 	readonly terminalSessionId: string;
 	readonly terminalIncarnationId: string;
 	readonly providerId: string;
-	/** Present for This-server PTYs so the extension child can observe with Node. */
+	/** Present so the extension child can observe the PTY with Node. */
 	readonly shellPid?: number;
 	readonly ttyPath?: string;
 }
@@ -46,9 +40,8 @@ export interface ExtensionAgentTerminalCancellation {
 }
 
 /**
- * A request made by an admitted agent runtime. The host routes it through the
- * terminal's project environment and validates both the operation and payload
- * before exposing any process or filesystem facts.
+ * A request made by an admitted agent runtime. The host validates both the
+ * operation and payload before exposing any process or filesystem facts.
  */
 export type ExtensionAgentObservationOperation =
 	| 'process.foreground'
@@ -149,7 +142,6 @@ export interface ExtensionLaunchDescriptor {
 	 * after public manifest validation; the host uses it to reject undeclared
 	 * child registrations before they become live. */
 	readonly agentProviders?: readonly AgentProviderContribution[];
-	readonly projectEnvironmentProviders?: readonly ProjectEnvironmentContribution[];
 	readonly extensionDependencies?: readonly ExtensionDependency[];
 }
 
@@ -159,7 +151,6 @@ export interface ExtensionHostStatus {
 	readonly consecutiveCrashes: number;
 	readonly restartAt?: number;
 	readonly failure?: string;
-	readonly providers?: readonly ProviderDefinition[];
 	readonly agentProviders?: readonly AgentProviderContribution[];
 }
 
@@ -170,77 +161,10 @@ export interface ExtensionInvocation {
 	readonly signal?: AbortSignal;
 }
 
-export type ExtensionProviderCallback = ProviderRuntimeMethod;
-
-export interface ExtensionProviderInvocation {
-	readonly providerId: string;
-	readonly callback: ExtensionProviderCallback;
-	readonly request: JsonValue;
-	readonly deadlineMs?: number;
-	readonly idempotencyKey?: string;
-	readonly expectedRevision?: number;
-	readonly signal?: AbortSignal;
-}
-
 export interface ExtensionBrokerRequest {
 	readonly extensionId: string;
-	readonly operation:
-		| 'log'
-		| 'secret.resolve'
-		| 'profile.get'
-		| 'agent.list'
-		| 'agent.sign'
-		| 'provider.call';
+	readonly operation: 'log' | 'secret.resolve';
 	readonly payload: unknown;
-}
-
-export interface ExtensionDependencyCall {
-	readonly callerExtensionId: string;
-	readonly callerProviderId: string;
-	readonly request: ProviderDependencyRequest;
-	readonly context: Omit<ProviderDependencyCallContext, 'signal'>;
-	readonly signal: AbortSignal;
-}
-
-export interface ExtensionDependencyRouter {
-	call(request: ExtensionDependencyCall): Promise<JsonValue>;
-}
-
-export interface ExtensionProfileSnapshot {
-	readonly profileId: string;
-	readonly providerId: string;
-	readonly revision: number;
-	readonly values: JsonValue;
-	readonly secretFields: readonly string[];
-}
-
-export interface ExtensionProfileBroker {
-	get(
-		extensionId: string,
-		providerId: string,
-		profileId: string,
-		signal: AbortSignal,
-	): Promise<ExtensionProfileSnapshot>;
-}
-
-export interface ExtensionSshAgentBroker {
-	listIdentities(
-		principal: {
-			extensionId: string;
-			profileId: string;
-			purpose: 'ssh-user-authentication';
-		},
-		signal: AbortSignal,
-	): Promise<unknown>;
-	sign(
-		principal: {
-			extensionId: string;
-			profileId: string;
-			purpose: 'ssh-user-authentication';
-		},
-		request: { identityId: string; challenge: Uint8Array; algorithm: string },
-		signal: AbortSignal,
-	): Promise<unknown>;
 }
 
 export interface ExtensionSecretAccessBroker {
@@ -259,9 +183,9 @@ export interface ExtensionBroker {
 }
 
 /** Private host bridge for public agent-runtime operations. It deliberately
- * accepts already validated public DTOs and keeps environment routing,
- * binding ownership, canonical sequencing, and store reduction in Server
- * Core. Installed extensions never receive this bridge directly. */
+ * accepts already validated public DTOs and keeps binding ownership, canonical
+ * sequencing, and store reduction in Server Core. Installed extensions never
+ * receive this bridge directly. */
 export interface ExtensionAgentBroker {
 	observe(
 		request: Readonly<{

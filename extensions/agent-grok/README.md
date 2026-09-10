@@ -42,8 +42,8 @@ wins.
 
 For a local server the helper `effectiveGrokHome()` exposes the normal
 `GROK_HOME` rule. It is documentation/local-Node support only. Runtime
-observation always uses the broker, so an SSH terminal never accidentally
-reads the local server's home directory.
+observation always uses the broker, so the provider never reads a home
+directory the terminal does not actually own.
 
 ## Sidebar mapping
 
@@ -97,5 +97,4 @@ re-enable it in **Extensions** settings without changing Grok sessions. Start
 or resume `grok` normally. Quitting the CLI removes the Agents row; a later
 `grok --resume` in the same terminal binds again once the new process holds
 `events.jsonl`. If no row appears, verify the foreground process is `grok`
-(not `agent`) and that process/filesystem/journal capabilities are available.
-SSH requires the target helper and otherwise fails closed.
+(not `agent`).

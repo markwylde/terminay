@@ -144,12 +144,12 @@ test('every phase id has a distinct product-authored label', () => {
 test('currentLabel reports the most recently opened running phase', () => {
 	const timeline = new StartupTimeline({ now: createClock().now });
 	timeline.begin('server-compose');
-	timeline.begin('project-environments-load');
+	timeline.begin('shell-profiles-load');
 	assert.equal(
 		timeline.currentLabel(),
-		startupPhaseLabel('project-environments-load'),
+		startupPhaseLabel('shell-profiles-load'),
 	);
-	timeline.end('project-environments-load');
+	timeline.end('shell-profiles-load');
 	assert.equal(timeline.currentLabel(), startupPhaseLabel('server-compose'));
 	timeline.end('server-compose');
 	assert.equal(timeline.currentLabel(), undefined);

@@ -343,11 +343,6 @@ function grokRegistryTerminal(options) {
 	let binding;
 	return {
 		foreground: { executableName: 'grok', arguments: options.arguments ?? [] },
-		capabilities: new Set([
-			'process-observation',
-			'filesystem-observation',
-			'agent-journal',
-		]),
 		signal: { aborted: false, throwIfAborted() {} },
 		async bindSession(request) {
 			binding = request;

@@ -9,7 +9,7 @@ context: |
     apps/terminay-server/  Terminay Server (workspace, PTY, protocol, extensions)
     electron/              Terminay Desktop privileged main process
     src/                   Shared responsive workspace UI bundled by the server
-    extensions/            Official project-environment extensions (SSH, Puzed)
+    extensions/            Official extensions (coding-agent providers)
     packages/              Shared libraries
     e2e/                   Playwright end-to-end suites
     scripts/               Build, release, and supply-chain governance scripts
@@ -22,12 +22,11 @@ context: |
 
   Architecture boundaries that specs must respect:
     - Terminay Server owns terminal-session lifecycle, workspace state,
-      persistence, project-environment routing, extensions, filesystem and Git
+      persistence, extensions, filesystem and Git
       authorization, recordings, agents, MCP, automation, server-scoped
       settings and secrets, device trust, and remote exposure.
     - Desktop and browser hosts are protocol-blind connection hosts around the
-      server-bundled workspace UI. They never install project-environment
-      extensions nor hold their credentials.
+      server-bundled workspace UI.
     - Renderer and client code is untrusted at every privileged boundary. It
       gets no Node access and no ambient Electron IPC.
     - Project/window and terminal-session boundaries are security boundaries for

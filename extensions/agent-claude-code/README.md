@@ -33,8 +33,8 @@ foreground command and that Claude process's observed cwd to derive the one
 provider-owned `~/.claude/projects/<project>/<UUID>.jsonl` path. The public
 environment-scoped resolver returns an opaque handle only if the file exists
 beneath that root; its first record must still prove the same non-sidechain
-UUID. This works before Claude opens the resumed journal for writing and works
-through an environment such as SSH without local filesystem scanning.
+UUID. This works before Claude opens the resumed journal for writing, and it
+never scans the local filesystem.
 
 ## Lifecycle mapping
 
@@ -94,7 +94,6 @@ the exact session.
 Claude Code ships built in, installed offline and enabled by default. Disable
 or re-enable it in **Extensions** settings without changing Claude journals.
 Start `claude` or `claude --resume UUID` normally; a compatible npm release may
-override the bundled floor. It requires Extension API 1.1, Node.js 22+, and the
+override the bundled floor. It requires Extension API 2.0, Node.js 22+, and the
 Claude Code 2.1.x/0.1 mapping. If no row appears, verify foreground command,
-resume UUID, and observation capabilities. Remote environments require
-equivalent canonical file observation and otherwise fail closed.
+resume UUID, and that the journal exists beneath the Claude projects root.

@@ -12,8 +12,6 @@ export * from './npmClient.js';
 export * from './npmPackArchive.js';
 export * from './operations.js';
 export * from './packageValidation.js';
-export * from './profileService.js';
-export * from './projectEnvironmentRuntime.js';
 export * from './protocol.js';
 export * from './providerVault.js';
 export * from './types.js';

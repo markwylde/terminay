@@ -21,7 +21,6 @@ export type WorkspaceHydration =
 			projectId: string;
 			panelId: string;
 			sessionId: string;
-			projectEnvironmentId: string;
 	  }>
 	| Readonly<{ state: 'empty' }>;
 
@@ -103,7 +102,6 @@ export function resolveWorkspaceHydration(
 				projectId: project.id,
 				panelId: panel.id,
 				sessionId: panel.sessionId,
-				projectEnvironmentId: project.projectEnvironmentId,
 			};
 		}
 	}

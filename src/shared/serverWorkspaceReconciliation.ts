@@ -21,8 +21,6 @@ export type ServerWorkspaceProject = Readonly<{
 	color?: string;
 	icon?: string;
 	viewId: string;
-	projectEnvironmentId: string;
-	environmentRevision: number;
 	panelIds: readonly string[];
 	activePanelId?: string;
 	defaultShellProfileId?: string;
@@ -69,8 +67,6 @@ export type ServerWorkspaceSnapshot = Readonly<{
 				id: string;
 				serverId: string;
 				projectId: string;
-				projectEnvironmentId: string;
-				environmentRevision: number;
 				status: 'running' | 'exited' | 'interrupted';
 			}>
 		>
@@ -196,14 +192,11 @@ export function parseServerWorkspaceSnapshot(
 		if (
 			project.id !== id ||
 			project.serverId !== expectedServerId ||
-			typeof project.projectEnvironmentId !== 'string' ||
-			!isPositiveSafeInteger(project.environmentRevision) ||
 			typeof project.name !== 'string' ||
 			typeof project.root !== 'string' ||
 			![
 				'explicit',
 				'server-default',
-				'environment-default',
 				'legacy-unverified',
 			].includes(project.rootOrigin) ||
 			(project.color !== undefined && typeof project.color !== 'string') ||
@@ -255,8 +248,6 @@ export function parseServerWorkspaceSnapshot(
 			session.id !== id ||
 			session.serverId !== expectedServerId ||
 			project === undefined ||
-			session.projectEnvironmentId !== project.projectEnvironmentId ||
-			session.environmentRevision !== project.environmentRevision ||
 			!['running', 'exited', 'interrupted'].includes(session.status)
 		)
 			throw new Error('The server returned an invalid terminal session.');
@@ -330,9 +321,6 @@ function isWorkspaceSidebarState(value: unknown): value is ServerWorkspaceSideba
 	const order = value.sidebarPanelOrder;
 	const ids = ['explorer', 'agents', 'git', 'documentation'];
 	return isStringArray(order) && order.length === ids.length && new Set(order).size === ids.length && ids.every((id) => order.includes(id));
-}
-function isPositiveSafeInteger(value: unknown): value is number {
-	return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 }
 
 import {
