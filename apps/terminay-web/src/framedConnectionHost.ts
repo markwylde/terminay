@@ -426,6 +426,9 @@ export class FramedConnectionManagerHost {
 		string,
 		Readonly<{ port: FramedBytePortLike; transport: ByteTransport }>
 	>();
+	/** Profiles whose transport is being opened. The claim is taken before the
+	 * await so two attaches for one profile cannot both open one. */
+	private readonly opening = new Set<string>();
 	private listening = false;
 
 	constructor(private readonly options: FramedConnectionManagerHostOptions) {
@@ -445,7 +448,7 @@ export class FramedConnectionManagerHost {
 			this.options.messageTarget.removeEventListener('message', this.listener);
 		}
 		for (const profileId of [...this.attached.keys()]) {
-			this.releasePort(profileId);
+			this.releasePort(profileId, { closeConnection: false });
 			try {
 				await this.options.delegate.closeConnection(profileId);
 			} catch {
@@ -532,7 +535,11 @@ export class FramedConnectionManagerHost {
 	}
 
 	private async attach(requestId: string, profileId: string): Promise<void> {
-		if (this.attached.has(profileId)) {
+		// The claim is taken before opening, not after: two attaches for one
+		// profile would otherwise both pass this check while the first is still
+		// opening, and the transport the loser opened would be orphaned with
+		// nothing left holding it.
+		if (this.attached.has(profileId) || this.opening.has(profileId)) {
 			this.fail(
 				requestId,
 				'attach-failed',
@@ -540,12 +547,15 @@ export class FramedConnectionManagerHost {
 			);
 			return;
 		}
+		this.opening.add(profileId);
 		let opened: Readonly<{ serverId: string; transport: ByteTransport }>;
 		try {
 			opened = await this.options.delegate.openConnection(profileId);
 		} catch (error) {
 			this.fail(requestId, 'attach-failed', message(error));
 			return;
+		} finally {
+			this.opening.delete(profileId);
 		}
 		const serverId = identifier(opened.serverId, 'server id');
 		const channel = (this.options.createChannel ?? defaultChannel)();
@@ -566,7 +576,7 @@ export class FramedConnectionManagerHost {
 	}
 
 	private async detach(requestId: string, profileId: string): Promise<void> {
-		this.releasePort(profileId);
+		this.releasePort(profileId, { closeConnection: false });
 		try {
 			await this.options.delegate.closeConnection(profileId);
 		} catch (error) {
@@ -600,7 +610,20 @@ export class FramedConnectionManagerHost {
 		})();
 	}
 
-	private releasePort(profileId: string): void {
+	/**
+	 * Drop one attached connection: its port, its transport, and the manager's
+	 * record of it.
+	 *
+	 * A transport left open here keeps a server session alive for a workspace
+	 * that can no longer reach it, and a manager that is never told keeps
+	 * offering the profile as attached. `detach` and `stop` close the connection
+	 * through the delegate themselves and pass `closeConnection: false`; every
+	 * other caller is a failure the manager has not heard about.
+	 */
+	private releasePort(
+		profileId: string,
+		options: Readonly<{ closeConnection?: boolean }> = {},
+	): void {
 		const entry = this.attached.get(profileId);
 		if (entry === undefined) return;
 		this.attached.delete(profileId);
@@ -610,6 +633,11 @@ export class FramedConnectionManagerHost {
 		} catch {
 			// Port teardown is best effort.
 		}
+		void entry.transport.close({ code: 'normal' }).catch(() => undefined);
+		if (options.closeConnection === false) return;
+		void this.options.delegate
+			.closeConnection(profileId)
+			.catch(() => undefined);
 	}
 
 	private reply(requestId: string, result: FramedConnectionResult): void {

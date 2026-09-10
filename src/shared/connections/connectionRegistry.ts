@@ -440,10 +440,14 @@ export class ConnectionRegistry {
 		};
 	}
 
-	/** The connection whose bundle this window runs. Created exactly once. */
+	/** The connection whose bundle this window runs. Created exactly once per
+	 * life of the registry: `dispose()` ends one life, and the next
+	 * `startPrimary` — a StrictMode remount, or returning from the manager —
+	 * starts another rather than crashing the shell. */
 	startPrimary(profileId: string): WorkspaceConnection {
 		if (this.primaryProfileId !== undefined)
 			throw new Error('This window already has a primary connection.');
+		this.disposed = false;
 		this.primaryProfileId = profileId;
 		// The primary is the selected profile, and selecting attaches it: a
 		// workspace always runs against one server it chose.
@@ -457,7 +461,10 @@ export class ConnectionRegistry {
 
 	/** Attach a remembered profile. Attaching twice is a no-op, not an error:
 	 * the connections control and a restored composition can both ask. */
-	attach(profileId: string): WorkspaceConnection {
+	attach(profileId: string): WorkspaceConnection | undefined {
+		// A disposed registry owns no connections: attaching to one would create
+		// an entry nothing will ever tear down.
+		if (this.disposed) return undefined;
 		const existing = this.entries.get(profileId);
 		if (existing !== undefined) return existing.snapshot();
 		if (
@@ -502,6 +509,9 @@ export class ConnectionRegistry {
 
 	async dispose(): Promise<void> {
 		this.disposed = true;
+		// The primary slot is freed with everything else, so a remount can start
+		// this registry over instead of throwing.
+		this.primaryProfileId = undefined;
 		const entries = [...this.entries.values()];
 		this.entries.clear();
 		this.publish();

@@ -7,10 +7,18 @@ import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 
 const crashOn = process.argv.includes("--crash-on-hover") ? "textDocument/hover" : undefined;
+// A server that accepts the connection and then never answers initialize: the
+// host has to give up on its own deadline rather than wait forever.
+const hangOnInitialize = process.argv.includes("--hang-on-initialize");
+// A server whose stdout is not framed at all: the host must not buffer it
+// without bound.
+const floodStdout = process.argv.includes("--flood-stdout");
 let root = process.cwd();
 let buffer = Buffer.alloc(0);
 
 function send(message) {
+  // A flooding server speaks no frames at all.
+  if (floodStdout) return;
   const body = Buffer.from(JSON.stringify(message), "utf8");
   process.stdout.write(`Content-Length: ${body.byteLength}\r\n\r\n`);
   process.stdout.write(body);
@@ -23,6 +31,7 @@ function range(line, character, endCharacter) {
 function handle(message) {
   const { id, method, params } = message;
   if (method === "initialize") {
+    if (hangOnInitialize) return;
     root = params?.rootPath ?? root;
     send({ jsonrpc: "2.0", id, result: { capabilities: { textDocumentSync: 1, completionProvider: {}, hoverProvider: true, definitionProvider: true } } });
     return;
@@ -72,6 +81,15 @@ function handle(message) {
     return;
   }
   if (id !== undefined) send({ jsonrpc: "2.0", id, error: { code: -32601, message: "method not found" } });
+}
+
+if (floodStdout) {
+  const noise = Buffer.alloc(64 * 1024, 0x61);
+  const flood = () => {
+    if (!process.stdout.write(noise)) process.stdout.once("drain", flood);
+    else setImmediate(flood);
+  };
+  flood();
 }
 
 process.stdin.on("data", (chunk) => {

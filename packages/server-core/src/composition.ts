@@ -1160,7 +1160,7 @@ function composeLanguageService(
 	| {
 			readonly sessions: LanguageSessionManager;
 			readonly adapter: ServerLanguageAdapter;
-			readonly dispose: () => void;
+			readonly dispose: () => Promise<void>;
 	  }
 	| undefined {
 	const language = options.language;
@@ -1219,10 +1219,12 @@ function composeLanguageService(
 	return {
 		sessions,
 		adapter,
-		dispose: () => {
+		dispose: async () => {
 			unwatch?.();
 			adapter?.dispose();
-			void sessions.shutdown();
+			// Shutdown has to drain: every live session is told to stop, and a
+			// disposal that returned early would leave language servers running.
+			await sessions.shutdown();
 		},
 	};
 }

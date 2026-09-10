@@ -2,7 +2,6 @@ import { ConnectionProfileStore } from '@terminay/client-core';
 import type {
 	ByteTransport,
 	TerminayHostContext,
-	TerminayWorkspaceComposition,
 } from '@terminay/protocol';
 import {
 	Component,
@@ -178,21 +177,9 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 		);
 	}, [primaryServerId]);
 
-	// Restore the attached set the window had last time. Servers that cannot be
-	// reached come back attached and unreachable, with their tabs greyed, rather
-	// than silently disappearing from the strip.
-	const restoredRef = useRef(false);
-	useEffect(() => {
-		if (restoredRef.current || primary?.phase !== 'ready') return;
-		if (compositionStore === NO_COMPOSITION_PERSISTENCE) return;
-		restoredRef.current = true;
-		void (async () => {
-			const composition: TerminayWorkspaceComposition | undefined =
-				await compositionStore.read();
-			for (const attachment of composition?.attached ?? [])
-				registry.attach(attachment.profileId);
-		})();
-	}, [compositionStore, primary?.phase, registry]);
+	// Restoring the attached set is the ConnectionsProvider's job: it owns the
+	// same composition record it writes back, so the restore cannot race the
+	// write that would flatten it.
 
 	const recoverConnection = useCallback(() => {
 		primary?.retry();

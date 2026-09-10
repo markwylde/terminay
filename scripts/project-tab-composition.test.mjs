@@ -3,6 +3,8 @@ import test from 'node:test'
 import {
 	buildComposition,
 	compositionTabKey,
+	createCompositionSession,
+	createLocalCompositionPersistence,
 	moveCompositionTab,
 	normalizeComposition,
 	orderCompositionTabs,
@@ -263,4 +265,89 @@ test('ordering keeps unremembered tabs in their own order at the end', () => {
 		ordered.map((tab) => `${tab.serverId}:${tab.projectId}`),
 		['a:two', 'a:one', 'b:one'],
 	)
+})
+
+function fakeStorage(initial = {}) {
+	const items = new Map(Object.entries(initial))
+	return {
+		getItem: (key) => (items.has(key) ? items.get(key) : null),
+		setItem: (key, value) => items.set(key, value),
+		read: (key) => items.get(key),
+	}
+}
+
+const TWO_ATTACHED = buildComposition(
+	'local',
+	[{ profileId: 'build-box' }, { profileId: 'vps' }],
+	[{ serverId: 'server-a', projectId: 'project-1' }],
+)
+
+test('a stored composition with two attached profiles survives a mount', async () => {
+	const storage = fakeStorage({
+		'terminay.workspace.composition.v1:server-a': JSON.stringify(TWO_ATTACHED),
+	})
+	const persistence = createLocalCompositionPersistence('server-a', storage)
+	const session = createCompositionSession(persistence)
+
+	// A window mounts with nothing attached yet, so its first idea of its own
+	// composition is empty. Writing that before the record is read is what used
+	// to wipe every attached server.
+	assert.equal(session.persist(buildComposition('local', [], [])), false)
+	assert.equal(session.restored, false)
+
+	const attached = []
+	await session.restore((restored) => {
+		for (const entry of restored.attached) attached.push(entry.profileId)
+	})
+	assert.deepEqual(attached, ['build-box', 'vps'])
+	assert.equal(session.restored, true)
+
+	// The record is intact on disk: the refused write left it alone.
+	assert.deepEqual(
+		JSON.parse(storage.read('terminay.workspace.composition.v1:server-a'))
+			.attached,
+		[{ profileId: 'build-box' }, { profileId: 'vps' }],
+	)
+
+	// Once restored, the window persists what it actually holds.
+	assert.equal(session.persist(TWO_ATTACHED), true)
+	assert.deepEqual(
+		await createLocalCompositionPersistence('server-a', storage).read(),
+		TWO_ATTACHED,
+	)
+})
+
+test('changing where the composition lives re-closes the restore gate', async () => {
+	const storage = fakeStorage({
+		'terminay.workspace.composition.v1:server-a': JSON.stringify(TWO_ATTACHED),
+	})
+	// A window starts with no persistence at all and takes a real store once its
+	// primary knows its server. The second session has restored nothing yet.
+	const first = createCompositionSession({
+		read: async () => undefined,
+		write: async () => undefined,
+	})
+	await first.restore(() => assert.fail('nothing to restore'))
+	assert.equal(first.restored, true)
+
+	const second = createCompositionSession(
+		createLocalCompositionPersistence('server-a', storage),
+	)
+	assert.equal(second.persist(buildComposition('local', [], [])), false)
+	assert.deepEqual(
+		JSON.parse(storage.read('terminay.workspace.composition.v1:server-a'))
+			.attached,
+		[{ profileId: 'build-box' }, { profileId: 'vps' }],
+	)
+})
+
+test('a composition that cannot be read still lets the window persist one', async () => {
+	const session = createCompositionSession({
+		read: async () => {
+			throw new Error('storage is gone')
+		},
+		write: async () => undefined,
+	})
+	await session.restore(() => assert.fail('nothing to restore'))
+	assert.equal(session.persist(buildComposition('local', [], [])), true)
 })

@@ -67,6 +67,9 @@ const MAX_DIAGNOSTICS = 500;
 const MAX_TEXT_FIELD = 8 * 1024;
 /** Bounded well below the private IPC frame limit so a result always fits. */
 const MAX_RESULT_BYTES = 192 * 1024;
+/** How much unframed stdout is buffered before the session is given up on.
+ * Well above the largest legal frame, so no real message is ever refused. */
+const MAX_STDOUT_BUFFER_BYTES = MAX_RESULT_BYTES * 8;
 /** Names of the environment a language server inherits before `launch.env`. */
 const INHERITED_ENVIRONMENT = Object.freeze([
 	'PATH',
@@ -138,11 +141,31 @@ class LanguageSession {
 	private readonly documents = new Map<string, OpenDocument>();
 	private readonly pending = new Map<number, PendingRequest>();
 	private buffer = Buffer.alloc(0);
+	/** How far the buffer has already been searched for a frame header. */
+	private scanned = 0;
 	private nextId = 0;
 	private child: ChildProcess | undefined;
 	private ended = false;
 	private stoppedDeliberately = false;
+	private startFailure: string | undefined;
 	description: string | undefined;
+
+	/** Whether this session's single exit has already been reported. */
+	get exitReported(): boolean {
+		return this.ended;
+	}
+
+	/**
+	 * Mark a start that failed with the child already alive.
+	 *
+	 * The teardown that follows is not a deliberate stop, whatever it looks
+	 * like from the outside: the one exit this session reports has to say
+	 * `start-failed`, or the manager's failure cooldown is cleared by a
+	 * `stopped` it never asked for and the server respawns on every keystroke.
+	 */
+	markStartFailed(failure: string): void {
+		this.startFailure = failure;
+	}
 
 	constructor(
 		readonly sessionId: string,
@@ -509,10 +532,31 @@ class LanguageSession {
 	}
 
 	private receive(chunk: Buffer): void {
-		this.buffer = Buffer.concat([this.buffer, chunk]);
+		this.buffer =
+			this.buffer.byteLength === 0
+				? chunk
+				: Buffer.concat([this.buffer, chunk]);
 		for (;;) {
-			const headerEnd = headerTerminator(this.buffer);
-			if (headerEnd < 0) return;
+			const headerEnd = headerTerminator(this.buffer, this.scanned);
+			if (headerEnd < 0) {
+				// Only the last three bytes can still begin a terminator, so the next
+				// chunk resumes there instead of rescanning everything seen so far.
+				this.scanned = Math.max(0, this.buffer.byteLength - 3);
+				if (this.buffer.byteLength > MAX_STDOUT_BUFFER_BYTES) {
+					this.buffer = Buffer.alloc(0);
+					this.scanned = 0;
+					// A stream this large with no frame header is not going to become
+					// framed, and buffering it is a memory hazard.
+					this.die('exited', {
+						failure: 'language server stdout exceeded the framing limit',
+					});
+					// This death is the host's decision, not one it observed, so the
+					// child it gave up on has to be reaped here.
+					this.child?.kill('SIGKILL');
+				}
+				return;
+			}
+			this.scanned = 0;
 			const header = this.buffer.subarray(0, headerEnd).toString('ascii');
 			const match = /content-length:\s*(\d+)/i.exec(header);
 			if (match === null) {
@@ -627,8 +671,16 @@ class LanguageSession {
 		this.options.onSessionExit({
 			sessionId: this.sessionId,
 			languageServerId: this.languageServerId,
-			reason: this.stoppedDeliberately ? 'stopped' : reason,
+			reason:
+				this.startFailure !== undefined
+					? 'start-failed'
+					: this.stoppedDeliberately
+						? 'stopped'
+						: reason,
 			...detail,
+			...(this.startFailure === undefined
+				? {}
+				: { failure: detail.failure ?? this.startFailure }),
 		});
 	}
 }
@@ -796,17 +848,23 @@ export class LanguageSessionRuntime {
 			await session.start(launch, signal);
 		} catch (error) {
 			this.sessions.delete(sessionId);
+			const failure =
+				boundedText(
+					error instanceof Error ? error.message : 'language server failed to start',
+					512,
+				) ?? 'language server failed to start';
+			// Exactly one exit is reported for a failed start: the teardown below
+			// would otherwise report `stopped` first, and a `stopped` clears the
+			// manager's failure cooldown.
+			session.markStartFailed(failure);
 			await session.stop().catch(() => undefined);
-			this.options.onSessionExit({
-				sessionId,
-				languageServerId,
-				reason: 'start-failed',
-				failure:
-					boundedText(
-						error instanceof Error ? error.message : 'language server failed to start',
-						512,
-					) ?? 'language server failed to start',
-			});
+			if (!session.exitReported)
+				this.options.onSessionExit({
+					sessionId,
+					languageServerId,
+					reason: 'start-failed',
+					failure,
+				});
 			throw error;
 		}
 		return {
@@ -991,9 +1049,11 @@ function boundByBytes(items: readonly LanguageCompletionItemDto[]): {
 	return { items: current, truncated };
 }
 
-/** Index of the CRLFCRLF that ends a frame's headers, or -1. */
-function headerTerminator(buffer: Buffer): number {
-	for (let index = 0; index + 3 < buffer.byteLength; index += 1) {
+/** Index of the CRLFCRLF that ends a frame's headers, or -1. Scanning resumes
+ * at `from` so a stream that arrives in many chunks is read once, not once per
+ * chunk. */
+function headerTerminator(buffer: Buffer, from = 0): number {
+	for (let index = Math.max(0, from); index + 3 < buffer.byteLength; index += 1) {
 		if (
 			buffer[index] === 13 &&
 			buffer[index + 1] === 10 &&
