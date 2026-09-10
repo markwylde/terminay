@@ -326,6 +326,10 @@ function extensionDto(
 			value.extensionId,
 		official,
 		...(uploaded ? { provenance: 'Uploaded package · Unverified' } : {}),
+		...languageServersDto(
+			active?.receipt.manifest.contributes?.languageServers ??
+				bundled?.receipt.manifest.contributes?.languageServers,
+		),
 		enabled: value.enabled,
 		compatible: value.state !== 'incompatible',
 		runtimeState: runtimeState(value, hosts),
@@ -333,6 +337,28 @@ function extensionDto(
 		revision: revisionValue,
 	} as JsonValue;
 }
+/** What Settings shows for a language server extension: the languages it
+ * serves and the runtime note the extension wrote for a person. Nothing about
+ * how it launches, and no host path. */
+function languageServersDto(
+	value:
+		| readonly import('@terminay/extension-api').LanguageServerContribution[]
+		| undefined,
+): Record<string, JsonValue> {
+	if (value === undefined || value.length === 0) return {};
+	return {
+		languageServers: value.slice(0, 32).map((contribution) => ({
+			id: contribution.id,
+			displayName: contribution.displayName,
+			languageIds: [...(contribution.languageIds ?? [])],
+			fileExtensions: [...(contribution.fileExtensions ?? [])],
+			...(contribution.runtimeNotes === undefined
+				? {}
+				: { runtimeNotes: contribution.runtimeNotes }),
+		})),
+	} as Record<string, JsonValue>;
+}
+
 function runtimeState(
 	value: InstalledExtensionRecord,
 	hosts?: ExtensionHostManager,

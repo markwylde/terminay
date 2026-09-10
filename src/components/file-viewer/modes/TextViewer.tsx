@@ -5,15 +5,32 @@ import type {
 	FileTextWindow,
 	FileViewerEngine,
 } from '../../../types/fileViewer';
+import type { LanguageGateway } from '../../../services/fileViewer/languageGateway';
 import { languageFromFilePath } from '../codeHighlight';
+import {
+	attachLanguageIntelligence,
+	type LanguageAttachment,
+} from '../languageProviders';
 import { monacoLanguageId } from '../monacoRuntime';
 import { configureFileViewerMonaco, FILE_VIEWER_THEME } from '../monacoSetup';
+
+/** Everything Text mode needs to consume the server's language intelligence
+ * for this file. Absent when the connection advertises no language capability
+ * or the panel has no project, which leaves the editor highlighting-only. */
+export type TextViewerLanguageIntelligence = Readonly<{
+	gateway: LanguageGateway;
+	/** Project-relative POSIX path of the open file. */
+	path: string;
+	projectId: string;
+	projectRoot: string;
+}>;
 
 type TextViewerProps = {
 	engine: FileViewerEngine;
 	filePath?: string;
 	fileSize?: number;
 	language?: string;
+	languageIntelligence?: TextViewerLanguageIntelligence;
 	onChangeText: (text: string) => void;
 	onCurrentTextGetterChange?: (getter: (() => string) | null) => void;
 	onPerformantEditChange?: (isDirty: boolean) => void;
@@ -299,6 +316,7 @@ export function TextViewer({
 	filePath,
 	fileSize,
 	language,
+	languageIntelligence,
 	onChangeText,
 	onCurrentTextGetterChange,
 	onPerformantEditChange,
@@ -310,6 +328,15 @@ export function TextViewer({
 		[filePath, language],
 	);
 	const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+	const languageAttachmentRef = useRef<LanguageAttachment | null>(null);
+	const languageIntelligenceRef = useRef(languageIntelligence);
+	languageIntelligenceRef.current = languageIntelligence;
+	useEffect(() => {
+		return () => {
+			languageAttachmentRef.current?.dispose();
+			languageAttachmentRef.current = null;
+		};
+	}, []);
 	const useWindowedEngine =
 		engine === 'performant' &&
 		(fileSize ?? 0) > LARGE_FILE_THRESHOLD_BYTES &&
@@ -367,6 +394,24 @@ export function TextViewer({
 					}
 					monaco.editor.setTheme(FILE_VIEWER_THEME);
 					onCurrentTextGetterChange?.(() => editor.getValue());
+					// Language features are the server's. When no provider serves
+					// this file the attachment does nothing and Text mode stays a
+					// highlighting and editing surface.
+					const intelligence = languageIntelligenceRef.current;
+					languageAttachmentRef.current?.dispose();
+					languageAttachmentRef.current =
+						intelligence === undefined || model === null || !monacoLanguage
+							? null
+							: attachLanguageIntelligence({
+									absolutePath: filePath ?? intelligence.path,
+									editor,
+									gateway: intelligence.gateway,
+									languageId: monacoLanguage,
+									monaco,
+									path: intelligence.path,
+									projectId: intelligence.projectId,
+									projectRoot: intelligence.projectRoot,
+								});
 					const node = editor.getDomNode();
 					if (node) {
 						const colorizeWhenVisible = () => {

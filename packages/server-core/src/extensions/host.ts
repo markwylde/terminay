@@ -4,6 +4,7 @@ import {
 	type AgentProviderContribution,
 	EXTENSION_API_VERSION,
 	isNamespacedId,
+	type LanguageServerContribution,
 	validateAgentLifecycleEvent,
 } from '@terminay/extension-api';
 import { validateExtensionLaunchDescriptor } from './descriptor.js';
@@ -14,6 +15,13 @@ import {
 	type ExtensionHostDiagnosticListener,
 	type ExtensionHostTransition,
 } from './diagnostics.js';
+import {
+	type ExtensionLanguageDiagnosticsNotification,
+	type ExtensionLanguageMethod,
+	type ExtensionLanguageSessionExit,
+	parseExtensionLanguageDiagnostics,
+	parseExtensionLanguageSessionExit,
+} from './languageProtocol.js';
 import {
 	type ChildFrame,
 	EXTENSION_HOST_PROTOCOL_VERSION,
@@ -58,6 +66,25 @@ export interface ExtensionHostOptions {
 	/** Observed after every state transition, so a supervisor can act on a
 	 * failure without polling. Observers cannot change the transition. */
 	readonly onStateChange?: (status: ExtensionHostStatus) => void;
+	/** Translated `publishDiagnostics` from one of this extension's language
+	 * sessions. Core fans them out onto the workspace journal. */
+	readonly onLanguageDiagnostics?: (
+		notification: ExtensionLanguageDiagnosticsNotification & {
+			readonly extensionId: string;
+		},
+	) => void;
+	/** One language session ending, reported exactly once by the child. */
+	readonly onLanguageSessionExit?: (
+		exit: ExtensionLanguageSessionExit & { readonly extensionId: string },
+	) => void;
+}
+
+/** One private language invocation on this extension's child. */
+export interface ExtensionLanguageInvocation {
+	readonly method: ExtensionLanguageMethod;
+	readonly input: Readonly<Record<string, unknown>>;
+	readonly deadlineMs?: number;
+	readonly signal?: AbortSignal;
 }
 
 const DEFAULTS = Object.freeze({
@@ -136,6 +163,9 @@ export class ExtensionHost {
 		string,
 		ExtensionAgentTerminalContext
 	>();
+	private languageServers: readonly LanguageServerContribution[] = Object.freeze(
+		[],
+	);
 	private agentPublicationsInFlight = 0;
 	/** The child's account of the error that is ending it, if it sent one. */
 	private fatalReport: ExtensionFatalErrorReport | undefined;
@@ -159,6 +189,7 @@ export class ExtensionHost {
 		return Object.freeze({
 			...this.state,
 			agentProviders: this.agentProviders,
+			languageServers: this.languageServers,
 		});
 	}
 	launchDescriptor(): ExtensionLaunchDescriptor | undefined {
@@ -221,6 +252,10 @@ export class ExtensionHost {
 						this.descriptor.agentProviders === undefined
 							? []
 							: structuredClone(this.descriptor.agentProviders),
+					languageServers:
+						this.descriptor.languageServers === undefined
+							? []
+							: structuredClone(this.descriptor.languageServers),
 				},
 				this.limits.startupTimeoutMs,
 				undefined,
@@ -228,6 +263,10 @@ export class ExtensionHost {
 			);
 			this.agentProviders = validateAgentProviders(
 				record(activated)?.agentProviders,
+				this.descriptor,
+			);
+			this.languageServers = validateLanguageServers(
+				record(activated)?.languageServers,
 				this.descriptor,
 			);
 			this.setState({
@@ -266,6 +305,34 @@ export class ExtensionHost {
 		);
 	}
 
+	/**
+	 * Invoke one language operation on this extension's child.
+	 *
+	 * It is deliberately a distinct frame kind rather than an ordinary method
+	 * invocation: core owns these operations, and an extension can neither
+	 * declare nor shadow them.
+	 */
+	async invokeLanguage(
+		invocation: ExtensionLanguageInvocation,
+	): Promise<unknown> {
+		if (this.state.state !== 'running' || this.child === undefined)
+			throw unavailable('extension is not running');
+		if (this.pending.size >= this.limits.maxConcurrentInvocations)
+			throw unavailable('extension invocation admission limit reached');
+		if (this.languageServers.length === 0)
+			throw unavailable('extension contributes no language server');
+		return this.call(
+			'language.request',
+			{ method: invocation.method, input: invocation.input },
+			invocation.deadlineMs ?? this.limits.invocationTimeoutMs,
+			invocation.signal,
+		);
+	}
+
+	languageServerContributions(): readonly LanguageServerContribution[] {
+		return this.languageServers;
+	}
+
 	async stop(): Promise<void> {
 		this.stopping = true;
 		const child = this.child;
@@ -299,6 +366,7 @@ export class ExtensionHost {
 			consecutiveFailures: this.state.consecutiveCrashes,
 		});
 		this.agentProviders = Object.freeze([]);
+		this.languageServers = Object.freeze([]);
 	}
 
 	/**
@@ -513,6 +581,39 @@ export class ExtensionHost {
 		}
 		if (message.kind === 'agent.lifecycle.publish') {
 			void this.handleAgentLifecyclePublication(message);
+			return;
+		}
+		if (message.kind === 'language.diagnostics') {
+			const notification = parseExtensionLanguageDiagnostics(message.payload);
+			if (notification === undefined) {
+				this.protocolViolation('language diagnostics notification is invalid');
+				return;
+			}
+			try {
+				this.options.onLanguageDiagnostics?.({
+					...notification,
+					extensionId: this.extensionId,
+				});
+			} catch {
+				/* a diagnostics observer cannot affect the extension it observes */
+			}
+			return;
+		}
+		if (message.kind === 'language.session.exited') {
+			const exit = parseExtensionLanguageSessionExit(message.payload);
+			if (exit === undefined) {
+				this.protocolViolation('language session exit is invalid');
+				return;
+			}
+			try {
+				this.options.onLanguageSessionExit?.({
+					...exit,
+					extensionId: this.extensionId,
+				});
+			} catch {
+				/* an observer cannot affect the extension it observes */
+			}
+			if (exit.reason === 'exited') this.recordLanguageServerCrash(exit);
 			return;
 		}
 		if (message.kind === 'agent.provider.disposed') {
@@ -916,6 +1017,45 @@ export class ExtensionHost {
 		error === undefined ? pending.resolve(result) : pending.reject(error);
 	}
 
+	/**
+	 * Count one language server death against this extension.
+	 *
+	 * A language server is a child of the extension child, so its death does not
+	 * end the extension. It is still this extension's failure: the crash window
+	 * is the same one that decides quarantine, and the child reports each death
+	 * exactly once, so nothing here can count one death twice.
+	 */
+	private recordLanguageServerCrash(exit: ExtensionLanguageSessionExit): void {
+		const error = new Error(
+			`language server ${exit.languageServerId} exited (${exit.exitCode ?? exit.signal ?? 'unknown'})`,
+		);
+		const now = this.now();
+		this.crashTimes.push(now);
+		while ((this.crashTimes[0] ?? now) < now - this.limits.crashWindowMs)
+			this.crashTimes.shift();
+		const crashes = this.crashTimes.length;
+		this.recordDiagnostic('failed', {
+			consecutiveFailures: crashes,
+			error: extensionErrorDetail(error),
+		});
+		if (crashes < this.limits.maxCrashesInWindow) return;
+		// Repeated language server deaths are a crash loop like any other, and
+		// quarantine is what stops one. Ending the child ends its sessions, and
+		// nothing it still owed can arrive afterwards, so settle it all here.
+		this.terminateChild();
+		this.rejectPending(error);
+		this.setState({
+			extensionId: this.extensionId,
+			state: 'quarantined',
+			consecutiveCrashes: crashes,
+			failure: safeFailure(error),
+		});
+		this.recordDiagnostic('quarantined', {
+			consecutiveFailures: crashes,
+			error: extensionErrorDetail(error),
+		});
+	}
+
 	private protocolViolation(message: string): void {
 		this.terminateChild();
 		this.recordFailure(new Error(message));
@@ -1150,6 +1290,45 @@ function validateAgentProviders(
 		result.push(structuredClone(contribution));
 	}
 	return Object.freeze(result);
+}
+
+/** Every language server the child registered must be one the manifest
+ * contributed, exactly as agent providers are. An undeclared registration is
+ * an activation failure, not a silently ignored contribution. */
+function validateLanguageServers(
+	value: unknown,
+	descriptor: ExtensionLaunchDescriptor,
+): readonly LanguageServerContribution[] {
+	if (value === undefined) return Object.freeze([]);
+	if (!Array.isArray(value) || value.length > 32)
+		throw new Error('extension returned invalid language server registrations');
+	const declared = new Map(
+		(descriptor.languageServers ?? []).map((contribution) => [
+			contribution.id,
+			contribution,
+		]),
+	);
+	const seen = new Set<string>();
+	const result: LanguageServerContribution[] = [];
+	for (const id of value) {
+		if (typeof id !== 'string' || seen.has(id))
+			throw new Error(
+				'extension returned invalid language server registrations',
+			);
+		const contribution = declared.get(id);
+		if (contribution === undefined)
+			throw new Error('extension registered an undeclared language server');
+		seen.add(id);
+		result.push(structuredClone(contribution));
+	}
+	return Object.freeze(result);
+}
+
+function unavailable(message: string): Error {
+	return Object.assign(new Error(message), {
+		code: 'unavailable',
+		retryable: true,
+	});
 }
 
 function validateAgentTerminalAdmission(

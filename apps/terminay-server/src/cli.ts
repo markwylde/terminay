@@ -707,6 +707,13 @@ async function createServerComposition(
 			},
 		},
 		fileObservations: files.observations,
+		// Language intelligence exists only where both the project files and the
+		// extensions live, which on this server is the same process.
+		language: {
+			extensions: extensions.hosts,
+			projects: files.projects,
+			watch: files.observations,
+		},
 		settings,
 		terminalProfiles: shellProfiles,
 		shellProfiles,
@@ -954,6 +961,14 @@ function createDefaultProjectFileServices(
 	eventJournal: InstanceType<typeof OrderedEventJournal>,
 	gitService: GitService,
 ): {
+	/** The canonical per-project resolvers, shared with language sessions. */
+	readonly projects: ReadonlyMap<
+		string,
+		{
+			readonly projectId: string;
+			readonly resolver: CanonicalProjectPathResolver;
+		}
+	>;
 	readonly session: ServerFileAdapter;
 	readonly content: ServerFileContentAdapter;
 	readonly catalog: ServerFileCatalogAdapter;
@@ -1070,6 +1085,7 @@ function createDefaultProjectFileServices(
 		projects: mdxRuntimeProjects,
 	});
 	return {
+		projects: sessionProjects,
 		session: new ServerFileAdapter({
 			serverId,
 			projects: sessionProjects,

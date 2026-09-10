@@ -25,6 +25,11 @@
 			"directory": "agent-omp",
 			"extensionId": "com.terminay.agent.omp",
 			"packageName": "terminay-agent-omp"
+		},
+		{
+			"directory": "language-typescript",
+			"extensionId": "com.terminay.language.typescript",
+			"packageName": "terminay-language-typescript"
 		}
 	]
 }

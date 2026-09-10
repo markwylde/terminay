@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { EXTENSION_API_VERSION } from "@terminay/extension-api";
 import {
   ExtensionHost,
   ExtensionHostManager,
@@ -79,7 +80,7 @@ test("one extension child activates, invokes methods, and uses an identity-scope
   const runtime = await host.invoke({ method: "runtime" });
   assert.equal(runtime.electronRunAsNode, "1");
   assert.equal(runtime.nodeEnv, "production");
-  assert.equal(runtime.apiVersion, "2.0.0");
+  assert.equal(runtime.apiVersion, EXTENSION_API_VERSION);
   assert.equal(typeof runtime.path, "string");
   assert.match(runtime.path, /\/usr\/sbin|\/usr\/bin|\/bin/u);
   if (process.env.HOME) assert.equal(runtime.home, process.env.HOME);

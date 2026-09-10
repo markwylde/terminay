@@ -142,6 +142,7 @@ export function createDefaultExtensionManagement(
 				cacheDirectory: directories.cache,
 				permissions: manifest.permissions,
 				agentProviders: manifest.contributes.agentProviders ?? [],
+				languageServers: manifest.contributes.languageServers ?? [],
 				extensionDependencies: manifest.extensionDependencies ?? [],
 			});
 			await hosts.stop(extensionId);
@@ -173,6 +174,7 @@ export function createDefaultExtensionManagement(
 			cacheDirectory: directories.cache,
 			permissions: descriptor.manifest.permissions,
 			agentProviders: descriptor.agentProviders,
+			languageServers: descriptor.languageServers,
 			extensionDependencies: descriptor.manifest.extensionDependencies ?? [],
 		});
 	};
