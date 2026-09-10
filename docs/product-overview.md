@@ -9,8 +9,9 @@ so development work can stay in one focused application.
 
 A Terminay Desktop installation includes Terminay Server for local use. The
 same server runs headlessly on another workstation, VPS, or dedicated machine.
-Desktop and browser clients connect to one selected server and render the
-complete responsive workspace UI bundled by that server.
+A Desktop window or browser session runs one workspace UI bundle and attaches
+to as many servers as the user wants: project tabs from a laptop, a build box,
+and a VPS sit side by side in one tab strip.
 
 ## Core model
 
@@ -23,6 +24,11 @@ complete responsive workspace UI bundled by that server.
 - A **workspace view** is a server-owned logical grouping of projects. Desktop
   can present it as a native window; a web client presents it through browser
   navigation.
+- A **composition** is a window's client-owned arrangement of connections: the
+  primary connection whose bundle it runs, the attached connections with the
+  workspace view each shows, and the interleaved project tab order. It is
+  device-local presentation state persisted by the host; servers never see it
+  and never talk to each other.
 - A **project** is a user-facing workspace with a root on its server's
   filesystem, a name, colour, icon, sidebar state, and one or more docked
   panels. Nothing else decides where it executes.
@@ -79,10 +85,16 @@ terminal streams, and bounded content over authenticated local or WebRTC
 transports.
 
 Every server bundles the complete responsive workspace UI and matching client
-library for its runtime and application-protocol version. That bundle is the
-only full workspace application: browser and Desktop hosts bootstrap, verify,
-and run the selected server's bundle instead of supplying an independently
-versioned workspace renderer.
+library for its runtime and application-protocol version. A window runs one
+such bundle, from its **primary connection**: Desktop always runs the bundle
+packaged with its embedded Local server, and a browser session runs the bundle
+of the server it opened. That one bundle then talks to every **attached
+connection** as well. Compatibility is a protocol contract, negotiated per
+connection: the bundle declares the application-protocol range and the feature
+capabilities its client requires, the server answers in its hello, and the
+client classifies the connection as compatible, degraded, or incompatible. An
+incompatible server stays attached with its tabs greyed and inert, naming which
+side must be upgraded; it receives no operations.
 
 ### Client hosts
 
@@ -93,11 +105,15 @@ they do not interpret or persist application-protocol workspace state.
 
 Desktop adds native windows, embedded-server supervision, application updates,
 operating-system integration, and secure credential storage. It opens on the
-embedded server connection named **Local** and can open other server
-connections in separate windows. Every Local or remote connection window runs
-the selected server's exact verified bundle over an opaque host-provided byte
-transport. A separate, capability-negotiated host bridge provides optional
-native presentation without becoming a server or workspace API.
+embedded server connection named **Local**, which is every window's primary
+connection, and attaches remembered remote connections into the same window.
+The host owns every credential and every transport and hands the bundle one
+opaque byte endpoint per connection through a versioned `connections` host
+capability; the bundle never holds a device key. The host also persists each
+window's **composition**, the attached connections and the interleaved project
+tab order, as device-local presentation state beside window geometry. A
+separate, capability-negotiated host bridge provides optional native
+presentation without becoming a server or workspace API.
 
 The web host has no local server. `app.terminay.com` adds, remembers, opens, and
 manages bookmarks to remote servers. **Open** keeps the manager as the

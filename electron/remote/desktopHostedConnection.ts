@@ -28,7 +28,6 @@ import { establishDevicePairing } from '../../src/remote/services/devicePairingF
 import type { RemoteApiTransport } from '../../src/remote/services/transport';
 import { createDesktopAuthenticatedOfferGate, createDesktopClientNonce } from './desktopAuthenticatedWebRtc';
 import type { DesktopDeviceCredentialStore } from './deviceCredentialStore';
-import { DesktopWebRtcAssetLane } from './desktopWebRtcTransport';
 
 /**
  * Desktop as a hosted client, on exactly the contract the browser shell uses:
@@ -93,7 +92,6 @@ export interface DesktopHostedPeer {
 
 export interface DesktopHostedConnection {
 	readonly transport: HeadlessChannelTransport;
-	readonly assets: DesktopWebRtcAssetLane;
 	readonly serverId: string;
 	readonly hostContext: unknown;
 }
@@ -412,14 +410,12 @@ export async function connectDesktopHostedRemote(options: Readonly<{
 		}
 		const hostContext = await peer.api.postJson<unknown>('/api/host-context', {});
 		const application = peer.channels.get('application')!;
-		const assets = peer.channels.get('assets')!;
 		const transport = new HeadlessChannelTransport(application);
 		transport.onStateChange((state) => {
 			if (state === 'closed' || state === 'failed') peer.close();
 		});
 		return Object.freeze({
 			transport,
-			assets: new DesktopWebRtcAssetLane(assets),
 			serverId: peer.serverId,
 			hostContext,
 		});

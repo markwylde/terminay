@@ -2,12 +2,14 @@ import type {
   ByteTransport,
   ClientHello,
   CommandResultEnvelope,
+  IncompatibleVersionEnvelope,
   JsonValue,
   NegotiatedProtocol,
   ProtocolError,
   ProtocolId,
   ProtocolLimits,
   QueryResultEnvelope,
+  ServerCompatibilityRequirements,
   ServerHello,
 } from "@terminay/protocol";
 
@@ -49,6 +51,23 @@ export class ClientError extends Error {
     if (options.details !== undefined) this.details = options.details;
     this.retryable = options.retryable === true;
     if (options.cause !== undefined) this.cause = options.cause;
+  }
+}
+
+/** The server refused the hello because no protocol version is shared. The
+ * envelope is carried so the caller can classify the pair and name the side
+ * that has to move instead of reporting an opaque handshake failure. */
+export class ProtocolIncompatibleError extends ClientError {
+  readonly envelope: IncompatibleVersionEnvelope;
+
+  constructor(envelope: IncompatibleVersionEnvelope) {
+    super(
+      "incompatible",
+      `server supports protocol ${envelope.supportedMin}-${envelope.supportedMax}`,
+      { retryable: false },
+    );
+    this.name = "ProtocolIncompatibleError";
+    this.envelope = envelope;
   }
 }
 
@@ -178,6 +197,10 @@ export interface TerminayClientOptions {
   readonly handshakeTimeoutMs?: number;
   readonly reconnect?: ReconnectOptions | false;
   readonly hostCapabilities?: HostCapabilitySet | HostCapabilityProvider;
+	/** What this client needs from the server it is about to talk to. Its
+	 * required and optional capabilities are carried in the hello, and the
+	 * server's answer is classified against them. */
+	readonly serverCompatibility?: ServerCompatibilityRequirements;
 	/** Last server-confirmed application watermark from a retired connection.
 	 * A reconnect creates a new client/transport and resumes subscriptions from
 	 * this point; it never reopens the retired transport. */

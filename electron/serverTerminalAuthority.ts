@@ -757,13 +757,21 @@ export class ServerTerminalAuthority {
 			options.shellProfiles === undefined
 				? { allowUnresolvedTestSessions: true }
 				: {}),
+			// Versioned per-feature capability strings. The bundle's client
+			// negotiates these in the hello; Desktop composes the registries
+			// behind settings, macros, recording, and extensions, so the embedded
+			// server declares them alongside the workspace features.
 			capabilities: [
-				'terminal',
-				'workspace',
-				'files',
-				'agents',
-				'git',
-				...(dictationAi === undefined ? [] : ['ai.dictation']),
+				'terminal.v1',
+				'workspace.v1',
+				'files.v1',
+				'agents.v1',
+				'git.v1',
+				'settings.v1',
+				'macros.v1',
+				'recording.v1',
+				'extensions.v1',
+				...(dictationAi === undefined ? [] : ['dictation.v1']),
 			],
 			authenticate: ({ hello }) => ({
 				clientId: hello.clientId,

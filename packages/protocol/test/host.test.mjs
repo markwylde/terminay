@@ -579,6 +579,88 @@ test('opaque byte packets preserve unknown future application operations unchang
 	assert.deepEqual(packet.frame, futureFrame);
 });
 
+test('one bundle serves many servers: host bootstrap identity no longer binds the bundle', () => {
+	const manifest = {
+		schemaVersion: 1,
+		bundleId: 'bundle_12345678',
+		entryPath: '/remote-app/bundle_12345678/index.html',
+		protocolVersion: '1',
+		serverVersion: '3.0.0',
+		contentSecurityPolicy: "default-src 'self'",
+		bundleFormatVersion: 1,
+		hostCompatibility: requirements,
+		assets: [
+			{
+				path: '/remote-app/bundle_12345678/index.html',
+				size: 1,
+				hash: 'x',
+				contentType: 'text/html',
+			},
+		],
+	};
+	// Another server's bundle id and another application-protocol version. The
+	// bundle is judged against its host only; server compatibility belongs to
+	// the bundle client's hello, once per connection.
+	const bootstrap = {
+		schemaVersion: 1,
+		bootstrapVersion: 1,
+		sourceId: 'source-a',
+		windowId: 'window-a',
+		serverId: 'server-b',
+		profileId: 'profile-b',
+		bundleId: 'bundle_87654321',
+		applicationProtocolVersion: '2',
+		hostKind: 'desktop',
+		hostBridgeVersion: 1,
+		byteEndpointVersion: 1,
+		capabilities: { clipboardWrite: 1 },
+	};
+	assert.deepEqual(
+		evaluateTerminayBundleCompatibility(manifest, bootstrap, {
+			bootstrapVersion: 1,
+			bundleFormatVersion: 1,
+			hostBridgeVersion: 1,
+			byteEndpointVersion: 1,
+			capabilities: { clipboardWrite: 1 },
+		}),
+		{ compatible: true, unavailableOptionalCapabilities: ['nativeWindows'] },
+	);
+});
+
+test('an unparseable host bootstrap is still refused', () => {
+	const manifest = {
+		schemaVersion: 1,
+		bundleId: 'bundle_12345678',
+		entryPath: '/remote-app/bundle_12345678/index.html',
+		protocolVersion: '1',
+		serverVersion: '3.0.0',
+		contentSecurityPolicy: "default-src 'self'",
+		bundleFormatVersion: 1,
+		hostCompatibility: requirements,
+		assets: [
+			{
+				path: '/remote-app/bundle_12345678/index.html',
+				size: 1,
+				hash: 'x',
+				contentType: 'text/html',
+			},
+		],
+	};
+	const result = evaluateTerminayBundleCompatibility(
+		manifest,
+		{ schemaVersion: 2 },
+		{
+			bootstrapVersion: 1,
+			bundleFormatVersion: 1,
+			hostBridgeVersion: 1,
+			byteEndpointVersion: 1,
+			capabilities: { clipboardWrite: 1 },
+		},
+	);
+	assert.equal(result.compatible, false);
+	assert.equal(result.component, 'bundle-binding');
+});
+
 test('browser-safe bundle compatibility accepts the canonical manifest wire shape', () => {
 	const manifest = {
 		schemaVersion: 1,
