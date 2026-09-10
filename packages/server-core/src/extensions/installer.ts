@@ -138,11 +138,66 @@ export class ExtensionInstaller {
 					});
 				}
 			}
-			return state;
+			return this.retireWithdrawnBuiltIns(state, artifacts);
 		});
 		if (before !== undefined)
 			await this.options.onBuiltInsReconciled?.(before, reconciled);
 		return this.snapshot();
+	}
+
+	/**
+	 * Forget a built-in this release no longer ships.
+	 *
+	 * A record whose only slots came from the release artifact has no floor to
+	 * roll back to once the artifact is gone: leaving it behind means an
+	 * extension the product no longer contains keeps its Settings row, and,
+	 * when it was written against an API that has since changed, fails to
+	 * activate on every start. A record carrying an npm or uploaded override is
+	 * left alone — the user installed that themselves, and it is now an
+	 * ordinary extension rather than a built-in.
+	 */
+	private async retireWithdrawnBuiltIns(
+		state: ExtensionRegistrySnapshot,
+		artifacts: readonly BuiltInExtensionArtifact[],
+	): Promise<ExtensionRegistrySnapshot> {
+		const shipped = new Set(artifacts.map((artifact) => artifact.extensionId));
+		let next = state;
+		for (const record of Object.values(state.extensions)) {
+			if (shipped.has(record.extensionId)) continue;
+			// A record with no slot at all is the same orphan: a built-in whose
+			// install or activation failed, with nothing of the user's in it.
+			const slots = Object.values(record.slots);
+			if (slots.some((slot) => slot.receipt.source !== 'built-in')) continue;
+			next = await this.forget(next, record, 'extension.built_in_withdrawn');
+		}
+		return next;
+	}
+
+	private async forget(
+		state: ExtensionRegistrySnapshot,
+		record: InstalledExtensionRecord,
+		kind: string,
+	): Promise<ExtensionRegistrySnapshot> {
+		const extensions = { ...state.extensions };
+		delete extensions[record.extensionId];
+		const next = await this.write({
+			schemaVersion: 1,
+			revision: state.revision + 1,
+			extensions,
+		});
+		await this.options.audit?.({
+			kind,
+			extensionId: record.extensionId,
+			revision: next.revision,
+		});
+		// The slots this record owned are unreferenced once it is gone; the
+		// registry is authoritative, so a failed unlink only leaves bytes behind.
+		for (const slot of Object.values(record.slots))
+			await rm(join(this.root, 'packages', slot.slotId), {
+				recursive: true,
+				force: true,
+			}).catch(() => undefined);
+		return next;
 	}
 
 	async previewArchive(
