@@ -3,6 +3,7 @@ export * from "./errors.js";
 export * from "./frame.js";
 export * from "./host.js";
 export * from "./json.js";
+export * from "./language.js";
 export * from "./limits.js";
 export * from "./hostedPairingUrl.js";
 export * from "./managerOrigins.js";

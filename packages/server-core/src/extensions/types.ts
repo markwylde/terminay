@@ -3,6 +3,7 @@ import type {
 	AgentProviderContribution,
 	ExtensionDependency,
 	JsonValue,
+	LanguageServerContribution,
 } from '@terminay/extension-api';
 
 /**
@@ -142,6 +143,9 @@ export interface ExtensionLaunchDescriptor {
 	 * after public manifest validation; the host uses it to reject undeclared
 	 * child registrations before they become live. */
 	readonly agentProviders?: readonly AgentProviderContribution[];
+	/** Declared language servers. The host refuses a child registration that
+	 * this array does not contain. */
+	readonly languageServers?: readonly LanguageServerContribution[];
 	readonly extensionDependencies?: readonly ExtensionDependency[];
 }
 
@@ -152,6 +156,7 @@ export interface ExtensionHostStatus {
 	readonly restartAt?: number;
 	readonly failure?: string;
 	readonly agentProviders?: readonly AgentProviderContribution[];
+	readonly languageServers?: readonly LanguageServerContribution[];
 }
 
 export interface ExtensionInvocation {

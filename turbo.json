@@ -52,6 +52,11 @@
       "outputs": [],
       "cache": false
     },
+    "terminay-language-typescript#test:ci": {
+      "dependsOn": ["compile", "^build"],
+      "outputs": [],
+      "cache": false
+    },
     "lint": {
       "outputs": []
     },
@@ -71,7 +76,8 @@
         "terminay-agent-codex#compile",
         "terminay-agent-grok#compile",
         "terminay-agent-omp#compile",
-        "terminay-agent-opencode#compile"
+        "terminay-agent-opencode#compile",
+        "terminay-language-typescript#compile"
       ],
       "inputs": [
         "electron/**",

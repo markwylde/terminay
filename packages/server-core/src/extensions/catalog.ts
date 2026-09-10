@@ -50,4 +50,13 @@ export const OFFICIAL_EXTENSION_CATALOGUE: readonly OfficialExtensionCatalogueRe
 			publisher: 'Terminay',
 			official: true,
 		}),
+		Object.freeze({
+			extensionId: 'com.terminay.language.typescript',
+			packageName: 'terminay-language-typescript',
+			displayName: 'TypeScript',
+			description:
+				'Diagnostics, completion, hover, and go-to-definition for TypeScript and JavaScript.',
+			publisher: 'Terminay',
+			official: true,
+		}),
 	]);

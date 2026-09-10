@@ -1,0 +1,93 @@
+{
+  "name": "terminay-language-typescript",
+  "version": "0.1.0",
+  "description": "Official TypeScript and JavaScript language server extension for Terminay",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/terminay/terminay.git",
+    "directory": "extensions/language-typescript"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./resolve": {
+      "types": "./dist/resolve.d.ts",
+      "import": "./dist/resolve.js",
+      "default": "./dist/resolve.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "compile": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run compile && node --test test/*.test.mjs",
+    "test:ci": "node --test test/*.test.mjs",
+    "pack": "node -e \"require('node:fs').mkdirSync('.tmp-pack', { recursive: true })\" && npm pack --json --pack-destination .tmp-pack"
+  },
+  "dependencies": {
+    "typescript": "^5.9.2",
+    "typescript-language-server": "^5.0.0"
+  },
+  "peerDependencies": {
+    "@terminay/extension-api": "^2.1.0"
+  },
+  "devDependencies": {
+    "@terminay/extension-api": "^2.1.0",
+    "@types/node": "^24.0.0"
+  },
+  "terminay": {
+    "manifestVersion": 1,
+    "id": "com.terminay.language.typescript",
+    "displayName": "TypeScript",
+    "description": "Diagnostics, completion, hover, and go-to-definition for TypeScript and JavaScript.",
+    "api": "^2.1.0",
+    "engines": {
+      "terminay": ">=1.0.0",
+      "node": ">=22"
+    },
+    "entrypoint": "dist/index.js",
+    "permissions": [],
+    "contributes": {
+      "languageServers": [
+        {
+          "id": "typescript",
+          "displayName": "TypeScript",
+          "description": "Runs typescript-language-server for TypeScript and JavaScript files.",
+          "languageIds": [
+            "typescript",
+            "typescriptreact",
+            "javascript",
+            "javascriptreact"
+          ],
+          "fileExtensions": [
+            ".ts",
+            ".tsx",
+            ".mts",
+            ".cts",
+            ".js",
+            ".jsx",
+            ".mjs",
+            ".cjs"
+          ],
+          "runtimeNotes": "Uses the project's TypeScript when it is installed, and a bundled TypeScript otherwise."
+        }
+      ]
+    }
+  }
+}

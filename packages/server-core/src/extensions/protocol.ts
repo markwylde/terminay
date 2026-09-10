@@ -31,7 +31,8 @@ export type HostFrame = ExtensionHostFrameBase & {
 		| 'agent.drain'
 		| 'agent.observation.result'
 		| 'agent.lifecycle.ack'
-		| 'agent.lifecycle.backpressure';
+		| 'agent.lifecycle.backpressure'
+		| 'language.request';
 };
 
 /** Messages initiated by an extension child. */
@@ -49,6 +50,8 @@ export type ChildFrame = ExtensionChildFrameBase & {
 		| 'agent.terminal.admitted'
 		| 'agent.terminal.cancelled'
 		| 'agent.drain.completed'
+		| 'language.diagnostics'
+		| 'language.session.exited'
 		| 'fatal';
 };
 
@@ -134,6 +137,8 @@ export function isChildFrame(value: unknown): value is ChildFrame {
 			frame.kind === 'agent.terminal.admitted' ||
 			frame.kind === 'agent.terminal.cancelled' ||
 			frame.kind === 'agent.drain.completed' ||
+			frame.kind === 'language.diagnostics' ||
+			frame.kind === 'language.session.exited' ||
 			frame.kind === 'fatal')
 	);
 }

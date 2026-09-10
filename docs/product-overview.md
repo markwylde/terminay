@@ -41,14 +41,17 @@ complete responsive workspace UI bundled by that server.
 ## Product pillars
 
 1. Fast native terminals on the owning server and flexible project layouts.
-2. Project navigation, file editing/previewing, folder views, and task views.
+2. Project navigation, file editing/previewing, folder views, and task views,
+   with diagnostics, completion, hover, and definition supplied by the owning
+   server. The client runs no language service.
 3. Git worktree awareness and reviewed AI-assisted Quick Push workflows.
 4. Automation through macros, dictation, AI tab metadata, and local MCP tools.
 5. Clear agent/activity state and optional local terminal recording.
 6. Secure connections to embedded or standalone Terminay Servers.
 7. One responsive, server-bundled workspace UI across desktop and browser
    hosts.
-8. Server-installed extensions for coding-agent awareness.
+8. Server-installed extensions for coding-agent awareness and language
+   intelligence.
 
 ## Architecture boundaries
 
@@ -60,6 +63,15 @@ agents, MCP, automation, server-scoped settings and secrets, device trust, and
 remote exposure. Privileged project work executes against the server's own host
 through the canonical project resolver; nothing at the dispatch boundary
 chooses a machine.
+
+Language intelligence is one of those server-hosted extension capabilities. A
+language-server extension declares the languages and file selectors it serves;
+the server runs one language session per project and language, shared by every
+client, behind a bounded core-owned protocol surface. No Language Server
+Protocol traffic and no editor language worker crosses the application
+protocol, and the client runs no language service of its own: diagnostics,
+completion, hover, and definition are computed on the server that owns the
+project or are absent.
 
 It runs either as a Desktop-supervised Local child or as a standalone headless
 process. One runtime-validated application protocol carries commands, events,

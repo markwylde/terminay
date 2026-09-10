@@ -323,9 +323,11 @@ export class TerminayClient {
     let accepted = false;
     let cancellationSent = false;
     const sendCancellation = (): void => {
-      if (envelope.type !== "command" || !accepted || pending.settled || cancellationSent) return;
+      // Queries and commands both hold server work; an aborted query must
+      // cancel it too, keyed by the id the server registered it under.
+      if ((envelope.type !== "command" && envelope.type !== "query") || !accepted || pending.settled || cancellationSent) return;
       cancellationSent = true;
-      const cancel: CancelEnvelope = { type: "cancel", correlationId: envelope.correlationId, reason: "client-abort" };
+      const cancel: CancelEnvelope = { type: "cancel", correlationId: key, reason: "client-abort" };
       try {
         void this.transport.send(encodeFrame(cancel, new Uint8Array(), this.options.limits ?? DEFAULT_PROTOCOL_LIMITS)).catch(() => undefined);
       } catch {
@@ -334,7 +336,7 @@ export class TerminayClient {
       }
     };
     const abortSignal = signal;
-    const onAbort = envelope.type === "command" && abortSignal !== undefined ? sendCancellation : undefined;
+    const onAbort = (envelope.type === "command" || envelope.type === "query") && abortSignal !== undefined ? sendCancellation : undefined;
     try {
       const preAbort = abortError(signal);
       if (preAbort !== undefined) throw preAbort;

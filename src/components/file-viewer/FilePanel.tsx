@@ -1,4 +1,5 @@
 import type { IDockviewPanelProps } from 'dockview';
+import { LANGUAGE_CAPABILITY, TerminayClientFacade } from '@terminay/client-core';
 import {
 	type CSSProperties,
 	useCallback,
@@ -12,6 +13,7 @@ import { useTerminalSettings } from '../../hooks/useTerminalSettings';
 import {
 	createFileDraftBuffer,
 	createFileSessionStore,
+	createLanguageGateway,
 	createServerFileGateway,
 	detectFileCapabilities,
 	isFileViewerModeAvailable,
@@ -186,6 +188,27 @@ function CanonicalFilePanel(
 			terminalClientContext.projectId,
 		],
 	);
+	// Language intelligence is a server capability. Without the negotiated
+	// `language.v1` hello capability the editor stays highlighting-only.
+	const languageGateway = useMemo(() => {
+		const applicationClient = terminalClientContext.applicationClient;
+		if (
+			applicationClient === undefined ||
+			terminalClientContext.serverCapabilities?.includes(LANGUAGE_CAPABILITY) !==
+				true
+		) {
+			return undefined;
+		}
+		return createLanguageGateway({
+			transport: new TerminayClientFacade(applicationClient),
+		});
+	}, [
+		terminalClientContext.applicationClient,
+		terminalClientContext.serverCapabilities,
+	]);
+	useEffect(() => {
+		return () => languageGateway?.dispose();
+	}, [languageGateway]);
 	const [fileInfo, setFileInfo] = useState<FileInfo | null>(
 		props.params.fileInfo ?? null,
 	);
@@ -275,6 +298,28 @@ function CanonicalFilePanel(
 		() => orderedSparseEntries.map(([, edit]) => edit),
 		[orderedSparseEntries],
 	);
+	const languageIntelligence = useMemo(() => {
+		if (languageGateway === undefined || fileInfo === null || fileInfo.isDirectory) {
+			return undefined;
+		}
+		try {
+			return {
+				gateway: languageGateway,
+				path: toProjectRelativePath(projectRoot, fileInfo.path),
+				projectId: terminalClientContext.projectId,
+				projectRoot,
+			};
+		} catch {
+			// A file outside the project root has no project-relative path, so no
+			// language session can serve it.
+			return undefined;
+		}
+	}, [
+		fileInfo,
+		languageGateway,
+		projectRoot,
+		terminalClientContext.projectId,
+	]);
 
 	const handleHexValidationChange = useCallback((isValid: boolean) => {
 		setIsHexValid(isValid);
@@ -1335,6 +1380,7 @@ function CanonicalFilePanel(
 							engine={engine}
 							filePath={fileInfo.path}
 							language={fileInfo.extension.replace(/^\./, '')}
+							languageIntelligence={languageIntelligence}
 							text={draftText}
 							onCurrentTextGetterChange={handleCurrentTextGetterChange}
 							onChangeText={(text) => {
