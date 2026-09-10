@@ -40,4 +40,4 @@
 ## 7. Close out
 
 - [x] 7.1 Run `openspec validate --all`, `npm run lint`, `npm run typecheck`, `npm run test:ci`, rebuild the packaged app, and confirm the built-in inventory lists five agent extensions and nothing else. Verified by all passing and by reading `built-in-extensions/inventory.v1.json` from the build output.
-- [ ] 7.2 Run the Desktop end-to-end suite through `npm run test:e2e`. Verified by the suite passing.
+- [x] 7.2 Run the Desktop end-to-end suite through `npm run test:e2e`. Verified by the suite passing.

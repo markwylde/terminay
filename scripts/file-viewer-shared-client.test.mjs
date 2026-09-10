@@ -382,13 +382,16 @@ test('Monaco uses the bundled runtime under the renderer content-security policy
 		'src/components/file-viewer/modes/TextViewer.tsx',
 		'utf8',
 	);
-	assert.match(
-		viewer,
-		/import Editor, \{ loader \} from '@monaco-editor\/react'/u,
+	const runtime = await readFile(
+		'src/components/file-viewer/monacoRuntime.ts',
+		'utf8',
 	);
-	assert.match(viewer, /import \* as monaco from 'monaco-editor'/u);
-	assert.match(viewer, /loader\.config\(\{ monaco \}\)/u);
-	assert.match(viewer, /Object\.assign\(window, \{ monaco \}\)/u);
+	assert.match(viewer, /from '\.\.\/monacoRuntime'/u);
+	assert.doesNotMatch(viewer, /from 'monaco-editor'/u);
+	assert.match(runtime, /import \{ loader \} from '@monaco-editor\/react'/u);
+	assert.match(runtime, /from 'monaco-editor\/esm\/vs\/editor\/editor\.api\.js'/u);
+	assert.match(runtime, /loader\.config\(\{ monaco \}\)/u);
+	assert.match(runtime, /Object\.assign\(window, \{ monaco \}\)/u);
 });
 
 test('connected performant text windows stay bounded and cancellable on the canonical client', async () => {
