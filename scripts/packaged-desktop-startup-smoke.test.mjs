@@ -33,7 +33,7 @@ test(
 			if (process.env.TERMINAY_SEED_WORKSPACE_FILE) {
 				await copyFile(
 					resolve(process.env.TERMINAY_SEED_WORKSPACE_FILE),
-					join(userData, 'workspace.v3.json'),
+					join(userData, 'workspace.v4.json'),
 				);
 			}
 			if (!developmentLaunch) await requireCanonicalArtifactInventory();
