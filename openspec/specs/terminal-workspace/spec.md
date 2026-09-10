@@ -2,13 +2,13 @@
 
 ## Purpose
 
-Terminay provides terminal sessions inside the project workspace, where Terminay Server creates and owns each session through the exact project's environment and Xterm renders it in a client panel that forwards input, resize, and lifecycle commands through the application protocol.
+Terminay provides terminal sessions inside the project workspace, where Terminay Server creates and owns each session with its native terminal runtime and Xterm renders it in a client panel that forwards input, resize, and lifecycle commands through the application protocol.
 
 ## Requirements
 
 ### Requirement: Server-owned terminal sessions
 
-Terminay Server SHALL create and own each terminal session through the exact project's environment: This server uses a native PTY, while providers MAY control a remote PTY. Xterm SHALL be a client renderer that forwards input, resize, and lifecycle commands through the application protocol. Terminay Server SHALL own PTY creation, output replay, input, resize, activity, and termination. A PTY SHALL survive browser reload, transport loss, and Electron-window close while its server remains alive. Local and remote clients SHALL use the same terminal command and stream contract, differing only in transport.
+Terminay Server SHALL create and own each terminal session with a native PTY on its own host. Xterm SHALL be a client renderer that forwards input, resize, and lifecycle commands through the application protocol. Terminay Server SHALL own PTY creation, output replay, input, resize, activity, and termination. A PTY SHALL survive browser reload, transport loss, and Electron-window close while its server remains alive. Local and remote clients SHALL use the same terminal command and stream contract, differing only in transport.
 
 #### Scenario: Client goes away
 
@@ -22,7 +22,7 @@ Terminay Server SHALL create and own each terminal session through the exact pro
 
 ### Requirement: Canonical shell and working-directory resolution
 
-New sessions SHALL resolve a server-owned shell profile and working directory through the canonical shell profiles and terminal launch policy. Startup, new-project, new-tab, split, local, and remote creation SHALL NOT maintain separate shell or cwd fallbacks. System-default resolution SHALL happen in the exact project environment that will own the PTY, and Desktop and browser clients SHALL NOT supply their host shell as a fallback.
+New sessions SHALL resolve a server-owned shell profile and working directory through the canonical shell profiles and terminal launch policy. Startup, new-project, new-tab, split, local, and remote creation SHALL NOT maintain separate shell or cwd fallbacks. System-default resolution SHALL happen on the server that will own the PTY, and Desktop and browser clients SHALL NOT supply their host shell as a fallback.
 
 #### Scenario: Any creation route
 
@@ -32,7 +32,7 @@ New sessions SHALL resolve a server-owned shell profile and working directory th
 #### Scenario: System default shell
 
 - **WHEN** the system default shell is resolved
-- **THEN** resolution happens in the exact project environment that will own the PTY
+- **THEN** resolution happens on the server that will own the PTY
 - **AND** the client host's own shell is not used as a fallback
 
 ### Requirement: Protected emulator environment
@@ -156,7 +156,6 @@ On touch devices, xterm SHALL own scrollback and the terminal mouse and key sequ
 - **THEN** its bytes are sent through the terminal panel's normal input boundary
 - **AND** the accessory implements no scrolling or gesture translation
 
-
 ### Requirement: File drop behaviour
 
 Dropping operating-system files onto a Desktop terminal SHALL insert their native paths without copying the files. Dropping browser-local files onto a web terminal SHALL upload bounded file contents into the selected server project's root and insert the resulting server paths. Browser clients SHALL NOT receive or infer a local absolute path.
@@ -205,16 +204,6 @@ PTY output SHALL fan out in Terminay Server to authorized clients and to recordi
 - **WHEN** recording, activity, and agent integrations consume a session's PTY output
 - **THEN** the terminal stream delivered to authorized clients is unchanged
 
-### Requirement: Provider-governed process observation
-
-Provider capabilities SHALL govern current-directory and foreground-process observation. Missing observation SHALL be an explicit limited state and SHALL NOT inspect a similarly named process on the Terminay Server host.
-
-#### Scenario: Provider lacks observation
-
-- **WHEN** a project's environment does not provide current-directory or foreground-process observation
-- **THEN** an explicit limited state is shown
-- **AND** no similarly named process on the Terminay Server host is inspected
-
 ### Requirement: Terminal link and input safety
 
 Terminal content SHALL be treated as untrusted text. Modifier-clicking a detected or OSC-8 HTTP or HTTPS link SHALL open that credential-free URL in the system browser; other schemes and URLs with credentials SHALL be rejected. Paste and external drop behaviour SHALL remain user initiated. Screen-reader and reduced-motion settings SHALL be honoured. Secrets typed in a terminal SHALL NOT be collected by default; recording has its own explicit policy.
@@ -228,21 +217,6 @@ Terminal content SHALL be treated as untrusted text. Modifier-clicking a detecte
 
 - **WHEN** a terminal link uses another scheme or contains credentials
 - **THEN** opening it is rejected
-
-### Requirement: Terminal authorization boundary
-
-The server terminal boundary SHALL use immutable `{serverId, projectId, sessionId}` identity. Input SHALL be accepted only for that exact live session and SHALL be bounded by the negotiated input-byte limit; resize and termination SHALL use the same authorization boundary. The server SHALL also verify that the session's stored environment equals its canonical project. Clients SHALL NOT choose the terminal adapter with an environment id.
-
-#### Scenario: Input for another session
-
-- **WHEN** input, resize, or termination is addressed to a session other than the exact live authorized one
-- **THEN** it is rejected
-
-#### Scenario: Client supplies an environment id
-
-- **WHEN** a client supplies an environment id with a terminal command
-- **THEN** it cannot choose the terminal adapter
-- **AND** the server verifies the session's stored environment equals its canonical project
 
 ### Requirement: Bounded output framing and replay window
 
@@ -723,3 +697,21 @@ High-volume delivery, slow-renderer isolation, attachment-scoped resync, and rec
 
 - **WHEN** a terminal's presentation becomes congested
 - **THEN** the shared workspace connection remains valid
+
+### Requirement: Current-directory and foreground-process observation
+
+Current-directory and foreground-process observation SHALL inspect the session's own PTY process on the server that owns it.
+
+#### Scenario: Observing a session
+
+- **WHEN** a terminal session's current directory or foreground process is observed
+- **THEN** the server inspects that session's own PTY process
+
+### Requirement: Terminal authorization identity
+
+The server terminal boundary SHALL use immutable `{serverId, projectId, sessionId}` identity. Input SHALL be accepted only for that exact live session and SHALL be bounded by the negotiated input-byte limit; resize and termination SHALL use the same authorization boundary.
+
+#### Scenario: Input for another session
+
+- **WHEN** input, resize, or termination is addressed to a session other than the exact live authorized one
+- **THEN** it is rejected

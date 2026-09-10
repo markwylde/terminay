@@ -76,20 +76,6 @@ The control endpoint SHALL be local to the server machine. It SHALL NOT use WebR
 - **WHEN** a request attempts to reach the control endpoint using remote-device credentials or the hosted signalling service
 - **THEN** it is not served
 
-### Requirement: Environment eligibility for MCP
-
-The initial capability SHALL be available only to project environments that can provide a proven server-local control transport. An environment that cannot provide that transport SHALL report MCP unavailable and SHALL NOT fall back to the local machine or a similarly named project or terminal. A remote environment MAY support MCP only through an authenticated environment bridge that preserves the same project and session scope.
-
-#### Scenario: Environment without a local control transport
-
-- **WHEN** a project environment cannot provide a proven server-local control transport
-- **THEN** MCP is reported unavailable for it and no fallback to the local machine or a similarly named project or terminal occurs
-
-#### Scenario: Remote environment bridge
-
-- **WHEN** a remote environment supports MCP
-- **THEN** it does so through an authenticated environment bridge preserving the same project and session scope
-
 ### Requirement: Registration management surface
 
 Terminay SHALL expose an **Install Terminay MCP** action whose management surface detects the registration state for each supported agent, distinguishes not installed, installed, changed, unavailable, and error states, installs and removes Claude Code, Codex, Cursor CLI, Gemini CLI, and OpenCode independently, and identifies the provider-owned configuration scope being changed.
@@ -607,11 +593,11 @@ Missing, changed, or invalid provider registration SHALL be reported without cha
 
 ### Requirement: MCP verification coverage
 
-Registrations SHALL install and uninstall independently while preserving unrelated provider configuration, and install, uninstall, enable, disable, and repair operations SHALL create no provider hooks and SHALL NOT mutate provider hook, trust, or agent-status configuration. An installed agent inside a Terminay terminal SHALL be able to list and control only sibling terminals in its exact canonical project, and a copied token, title, panel id, cwd, or terminal name SHALL NOT cross project, environment, or server boundaries. Reads SHALL work without an attached renderer and pending waits SHALL survive renderer reload. Writes SHALL use the canonical terminal input boundary including correct multiline command submission. Disablement, terminal exit, project transfer, and server shutdown SHALL revoke old capabilities and release pending waits. The local endpoint SHALL never listen on a network interface and SHALL reject malformed, oversized, unauthenticated, stale, and cross-scope requests. Packaged Desktop and standalone-server artifacts SHALL start the same bounded stdio MCP adapter using their supported runtime layout.
+Registrations SHALL install and uninstall independently while preserving unrelated provider configuration, and install, uninstall, enable, disable, and repair operations SHALL create no provider hooks and SHALL NOT mutate provider hook, trust, or agent-status configuration. An installed agent inside a Terminay terminal SHALL be able to list and control only sibling terminals in its exact canonical project, and a copied token, title, panel id, cwd, or terminal name SHALL NOT cross project or server boundaries. Reads SHALL work without an attached renderer and pending waits SHALL survive renderer reload. Writes SHALL use the canonical terminal input boundary including correct multiline command submission. Disablement, terminal exit, project transfer, and server shutdown SHALL revoke old capabilities and release pending waits. The local endpoint SHALL never listen on a network interface and SHALL reject malformed, oversized, unauthenticated, stale, and cross-scope requests. Packaged Desktop and standalone-server artifacts SHALL start the same bounded stdio MCP adapter using their supported runtime layout.
 
 #### Scenario: Copied identifier
 
-- **WHEN** a token, title, panel id, cwd, or terminal name is copied to another project, environment, or server
+- **WHEN** a token, title, panel id, cwd, or terminal name is copied to another project or server
 - **THEN** it does not grant access there
 
 #### Scenario: Project transfer during a wait
@@ -642,3 +628,42 @@ MCP SHALL NOT provide provider hooks of any kind, agent lifecycle detection, Age
 
 - **WHEN** a request presents a matching terminal title, process name, or cwd instead of a valid capability
 - **THEN** no trust is established
+
+### Requirement: MCP eligibility on the server
+
+MCP SHALL be available to every project on the server, because the server provides a proven server-local control transport for the sessions it owns. MCP SHALL NOT fall back to another machine or to a similarly named project or terminal.
+
+#### Scenario: Project on the server
+
+- **WHEN** a project on the server enables MCP
+- **THEN** it is served through the proven server-local control transport
+
+#### Scenario: Similarly named project or terminal
+
+- **WHEN** a request names a project or terminal that merely resembles the scoped one
+- **THEN** it is not served and no fallback to that project, terminal, or another machine occurs
+
+### Requirement: One MCP socket per server and no cross-server addressing
+
+Each Terminay Server SHALL expose its own MCP control socket and capability
+tokens, and a client SHALL reach a server's MCP only over that server's own
+connection. A server SHALL refuse a request naming a project, terminal, or
+capability token issued by another server, and SHALL NEVER forward it. No socket,
+token, or tool listing SHALL span attached servers.
+
+#### Scenario: Two attached servers
+
+- **WHEN** a window attaches two servers that both enable MCP
+- **THEN** each server exposes its own socket and tokens, and neither lists the
+  other's projects or terminals
+
+#### Scenario: Token from another server
+
+- **WHEN** a request presents a capability token issued by a different server
+- **THEN** the request is refused and is not forwarded to the issuing server
+
+#### Scenario: Colliding ids
+
+- **WHEN** two attached servers hold a terminal with the same id and a request
+  names that id
+- **THEN** it resolves only on the server it was sent to
