@@ -131,6 +131,40 @@ test("an already-materialized pending built-in becomes active after its use drai
   } finally { await value.cleanup(); }
 });
 
+test("a built-in this release no longer ships is forgotten rather than left failing", async () => {
+  const value = await fixture();
+  try {
+    let state = await value.installer.reconcileBuiltIns();
+    assert.ok(state.extensions[EXTENSION], "the built-in installs while the release ships it");
+
+    // The release stops shipping it. Its only slot came from that artifact, so
+    // there is no floor left to roll back to and nothing for the user to keep.
+    value.builtIns.available = false;
+    state = await value.installer.reconcileBuiltIns();
+    assert.equal(state.extensions[EXTENSION], undefined, "a withdrawn built-in leaves no record behind");
+
+    // A restart agrees, so the row cannot come back from disk.
+    const restarted = new ExtensionInstaller({ dataRoot: value.dataRoot, registryClient: new Npm(), materializer: new Npm(), builtIns: value.builtIns });
+    const after = await restarted.initialize();
+    assert.equal(after.extensions[EXTENSION], undefined);
+  } finally { await value.cleanup(); }
+});
+
+test("a withdrawn built-in the user overrode from npm stays installed", async () => {
+  const value = await fixture();
+  try {
+    await value.installer.initialize();
+    // The user installed their own version over the bundled floor.
+    const preview = await value.installer.preview(`${PACKAGE}@2.0.0`);
+    await value.installer.confirm(preview.previewDigest);
+    value.builtIns.available = false;
+    const state = await value.installer.reconcileBuiltIns();
+    const record = state.extensions[EXTENSION];
+    assert.ok(record, "an extension the user installed themselves is not retired with the artifact");
+    assert.ok(Object.values(record.slots).some((slot) => slot.receipt.source !== "built-in"));
+  } finally { await value.cleanup(); }
+});
+
 test("an external npm version overrides a bundled floor and remove restores the floor without changing enablement", async () => {
   const value = await fixture();
   try {
