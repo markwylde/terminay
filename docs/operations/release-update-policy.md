@@ -97,6 +97,20 @@ host validates those fields and the artifact manifest before activation. A
 candidate with an incompatible protocol or matched UI/server version is
 rejected while the current artifact remains active.
 
+## Protocol compatibility window
+
+The workspace bundle a Desktop release packages is the client every attached
+server is spoken to with. Its manifest declares the application-protocol range
+and the feature capabilities that client requires (`serverCompatibility`),
+generated from the client's own constants at build time. A release MUST keep
+that declared protocol range at least one version wide, so a server one
+protocol version behind the newest Desktop still attaches as compatible or
+degraded rather than incompatible. Dropping the oldest version from the range
+is a deliberate release decision recorded in the release notes, never a side
+effect of bumping the newest. An attached server outside the range is shown
+per tab as incompatible with the side to upgrade named; it is never updated
+implicitly.
+
 ## Install, upgrade, and rollback
 
 1. Verify the `.sha256` sidecar and the `.sig` detached signature against the

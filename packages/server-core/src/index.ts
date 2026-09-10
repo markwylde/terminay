@@ -1,6 +1,7 @@
 export * from './activity/index.js';
 export * from './aiService/index.js';
 export * from './auth.js';
+export * from './capabilities.js';
 export * from './composition.js';
 export * from './connection.js';
 export * from './control/index.js';

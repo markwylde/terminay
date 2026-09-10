@@ -7,6 +7,7 @@ export * from "./terminalRecovery.js";
 export * from "./workspace.js";
 export * from "./optimistic.js";
 export * from "./connections.js";
+export * from "./compatibility.js";
 export * from "./queryCommand.js";
 export * from "./terminal.js";
 export * from "./terminalPanel.js";

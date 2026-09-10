@@ -15,6 +15,10 @@ export const TERMINAY_HOST_CAPABILITY_NAMES = [
 	'notifications',
 	'updater',
 	'osIntegration',
+	/** Many server connections per window: list, attach, detach, and a
+	 * host-persisted composition. Bytes for an attached connection travel on
+	 * the host's byte bridge keyed by connection id. */
+	'connections',
 ] as const;
 
 export type TerminayHostKind = 'browser' | 'desktop';
@@ -67,13 +71,44 @@ export interface TerminayHostContext {
 	 * origins, credentials, pairing fragments, and all workspace data. */
 	readonly profile?: TerminayHostConnectionProfile;
 	readonly profiles?: readonly TerminayHostConnectionProfile[];
+	/** Present when the host supports the `connections` capability. */
+	readonly composition?: TerminayWorkspaceComposition;
 }
+
+export type TerminayHostConnectionStatus =
+	| 'connected'
+	| 'connecting'
+	| 'offline'
+	| 'unavailable'
+	| 'unauthenticated'
+	| 'incompatible';
 
 export interface TerminayHostConnectionProfile {
 	readonly id: string;
 	readonly isLocal: boolean;
 	readonly label: string;
-	readonly status: 'connected' | 'offline' | 'unavailable';
+	readonly status: TerminayHostConnectionStatus;
+	/** Stable server identity when the host knows it; absent before first pairing completes. */
+	readonly serverId?: string;
+	/** True while this window holds a live or pending connection to the profile. */
+	readonly attached?: boolean;
+}
+
+/** One window's client-owned composition: the primary connection whose bundle
+ * runs, the attached connections with the workspace view each shows, and the
+ * interleaved project tab order. Persisted by the host like window geometry;
+ * never sent to a server. */
+export interface TerminayWorkspaceComposition {
+	readonly version: 1;
+	readonly primaryProfileId: string;
+	readonly attached: readonly Readonly<{
+		profileId: string;
+		viewId?: string;
+	}>[];
+	readonly tabOrder: readonly Readonly<{
+		serverId: string;
+		projectId: string;
+	}>[];
 }
 
 export type TerminayHostCompatibilityFailure = Readonly<{
@@ -198,6 +233,11 @@ export type TerminayHostEvent = Readonly<{
 				deviceName: string;
 				matchCode: string;
 				expiresAt: string;
+		  }>
+		| Readonly<{
+				/** The host's remembered profiles or their status changed. */
+				type: 'connections.changed';
+				profiles: readonly TerminayHostConnectionProfile[];
 		  }>;
 }>;
 
@@ -255,7 +295,26 @@ export type TerminayHostAction =
 			type: 'diagnostics.performance-logging.set';
 			enabled: boolean;
 	  }>
-	| Readonly<{ type: 'diagnostics.performance-snapshot.read' }>;
+	| Readonly<{ type: 'diagnostics.performance-snapshot.read' }>
+	| Readonly<{ type: 'connections.list' }>
+	| Readonly<{
+			/** Open a transport to a remembered profile for this window. The host
+			 * answers with a connection id whose bytes flow on the byte bridge. */
+			type: 'connections.attach';
+			profileId: string;
+	  }>
+	| Readonly<{ type: 'connections.detach'; profileId: string }>
+	| Readonly<{
+			type: 'connections.composition.write';
+			composition: TerminayWorkspaceComposition;
+	  }>;
+
+/** Result of `connections.attach`. */
+export interface TerminayHostConnectionAttachment {
+	readonly connectionId: string;
+	readonly profileId: string;
+	readonly serverId?: string;
+}
 
 export interface TerminayHostActionRequest {
 	readonly schemaVersion: typeof TERMINAY_HOST_CONTEXT_SCHEMA_VERSION;
@@ -389,6 +448,12 @@ export function parseTerminayHostEvent(
 			matchCode: event.matchCode,
 			expiresAt: event.expiresAt,
 		});
+	} else if (event.type === 'connections.changed') {
+		exactKeys(event, ['type', 'profiles'], 'host connections event');
+		parsedEvent = Object.freeze({
+			type: 'connections.changed',
+			profiles: parseTerminayHostConnectionProfiles(event.profiles),
+		});
 	} else {
 		throw new TypeError('host event type is invalid');
 	}
@@ -421,7 +486,7 @@ export function parseTerminayHostContext(value: unknown): TerminayHostContext {
 			'byteEndpointVersion',
 			'capabilities',
 		],
-		['profile', 'profiles'],
+		['profile', 'profiles', 'composition'],
 		'host context',
 	);
 	if (input.schemaVersion !== TERMINAY_HOST_CONTEXT_SCHEMA_VERSION)
@@ -460,6 +525,10 @@ export function parseTerminayHostContext(value: unknown): TerminayHostContext {
 		input.profiles === undefined
 			? undefined
 			: parseTerminayHostConnectionProfiles(input.profiles);
+	const composition =
+		input.composition === undefined
+			? undefined
+			: parseTerminayWorkspaceComposition(input.composition);
 	return Object.freeze({
 		schemaVersion: TERMINAY_HOST_CONTEXT_SCHEMA_VERSION,
 		bootstrapVersion: TERMINAY_HOST_BOOTSTRAP_VERSION,
@@ -475,6 +544,7 @@ export function parseTerminayHostContext(value: unknown): TerminayHostContext {
 		capabilities,
 		...(profile === undefined ? {} : { profile }),
 		...(profiles === undefined ? {} : { profiles }),
+		...(composition === undefined ? {} : { composition }),
 	});
 }
 
@@ -496,8 +566,19 @@ function parseTerminayHostConnectionProfile(
 	name: string,
 ): TerminayHostConnectionProfile {
 	const profile = record(value, name);
-	exactKeys(profile, ['id', 'isLocal', 'label', 'status'], name);
+	exactOptionalKeys(
+		profile,
+		['id', 'isLocal', 'label', 'status'],
+		['serverId', 'attached'],
+		name,
+	);
 	const id = identifier(profile.id, `${name} id`, ID);
+	const serverId =
+		profile.serverId === undefined
+			? undefined
+			: identifier(profile.serverId, `${name} server id`, ID);
+	if (profile.attached !== undefined && typeof profile.attached !== 'boolean')
+		throw new TypeError(`${name} attached flag is invalid`);
 	if (
 		typeof profile.label !== 'string' ||
 		profile.label.trim().length === 0 ||
@@ -508,16 +589,66 @@ function parseTerminayHostConnectionProfile(
 	if (typeof profile.isLocal !== 'boolean')
 		throw new TypeError(`${name} local flag is invalid`);
 	if (
-		profile.status !== 'connected' &&
-		profile.status !== 'offline' &&
-		profile.status !== 'unavailable'
+		typeof profile.status !== 'string' ||
+		!CONNECTION_STATUSES.has(profile.status)
 	)
 		throw new TypeError(`${name} status is invalid`);
 	return Object.freeze({
 		id,
 		isLocal: profile.isLocal,
 		label: profile.label,
-		status: profile.status,
+		status: profile.status as TerminayHostConnectionStatus,
+		...(serverId === undefined ? {} : { serverId }),
+		...(profile.attached === undefined ? {} : { attached: profile.attached }),
+	});
+}
+
+const CONNECTION_STATUSES = new Set<string>([
+	'connected',
+	'connecting',
+	'offline',
+	'unavailable',
+	'unauthenticated',
+	'incompatible',
+]);
+
+export function parseTerminayWorkspaceComposition(
+	value: unknown,
+): TerminayWorkspaceComposition {
+	const input = record(value, 'workspace composition');
+	exactKeys(input, ['version', 'primaryProfileId', 'attached', 'tabOrder'], 'workspace composition');
+	if (input.version !== 1)
+		throw new TypeError('workspace composition version is unsupported');
+	const primaryProfileId = identifier(input.primaryProfileId, 'primary profile id', ID);
+	if (!Array.isArray(input.attached) || input.attached.length > 64)
+		throw new TypeError('workspace composition attachments are invalid');
+	const attached = input.attached.map((entry) => {
+		const attachment = record(entry, 'workspace composition attachment');
+		exactOptionalKeys(attachment, ['profileId'], ['viewId'], 'workspace composition attachment');
+		const profileId = identifier(attachment.profileId, 'attached profile id', ID);
+		const viewId =
+			attachment.viewId === undefined
+				? undefined
+				: identifier(attachment.viewId, 'attached view id', ID);
+		return Object.freeze({ profileId, ...(viewId === undefined ? {} : { viewId }) });
+	});
+	if (new Set(attached.map((entry) => entry.profileId)).size !== attached.length)
+		throw new TypeError('workspace composition attaches a profile twice');
+	if (!Array.isArray(input.tabOrder) || input.tabOrder.length > 4_096)
+		throw new TypeError('workspace composition tab order is invalid');
+	const tabOrder = input.tabOrder.map((entry) => {
+		const tab = record(entry, 'workspace composition tab');
+		exactKeys(tab, ['serverId', 'projectId'], 'workspace composition tab');
+		return Object.freeze({
+			serverId: identifier(tab.serverId, 'tab server id', ID),
+			projectId: identifier(tab.projectId, 'tab project id', ID),
+		});
+	});
+	return Object.freeze({
+		version: 1,
+		primaryProfileId,
+		attached: Object.freeze(attached),
+		tabOrder: Object.freeze(tabOrder),
 	});
 }
 
@@ -691,9 +822,13 @@ export function evaluateTerminayBundleCompatibility(
 					: 'UI bundle manifest is invalid',
 		});
 	}
-	let bootstrap: TerminayHostContext;
+	// One workspace bundle serves many servers, so the bundle is never bound to
+	// the identity or application-protocol version of whichever server the host
+	// happens to have connected. Server compatibility is the bundle client's
+	// own per-connection hello check (see `evaluateServerCompatibility`); this
+	// evaluation keeps only bundle-to-host checks.
 	try {
-		bootstrap = parseTerminayHostContext(bootstrapValue);
+		parseTerminayHostContext(bootstrapValue);
 	} catch (error) {
 		return Object.freeze({
 			compatible: false,
@@ -703,21 +838,6 @@ export function evaluateTerminayBundleCompatibility(
 				error instanceof Error ? error.message : 'host bootstrap is invalid',
 		});
 	}
-	if (bootstrap.bundleId !== manifest.bundleId)
-		return Object.freeze({
-			compatible: false,
-			component: 'bundle-binding',
-			code: 'identity-mismatch',
-			message: 'host bootstrap belongs to another UI bundle',
-		});
-	if (bootstrap.applicationProtocolVersion !== manifest.protocolVersion)
-		return Object.freeze({
-			compatible: false,
-			component: 'application-protocol',
-			code: 'version-mismatch',
-			message:
-				'host bootstrap application protocol does not match the UI bundle',
-		});
 	return evaluateTerminayHostCompatibility(
 		manifest.hostCompatibility,
 		supportValue,
@@ -985,6 +1105,27 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 		case 'diagnostics.performance-snapshot.read':
 			exactKeys(action, ['type'], 'performance snapshot action');
 			return Object.freeze({ type: 'diagnostics.performance-snapshot.read' });
+		case 'connections.list':
+			exactKeys(action, ['type'], 'connections list action');
+			return Object.freeze({ type: 'connections.list' });
+		case 'connections.attach':
+			exactKeys(action, ['type', 'profileId'], 'connections attach action');
+			return Object.freeze({
+				type: 'connections.attach',
+				profileId: identifier(action.profileId, 'connection profile id', ID),
+			});
+		case 'connections.detach':
+			exactKeys(action, ['type', 'profileId'], 'connections detach action');
+			return Object.freeze({
+				type: 'connections.detach',
+				profileId: identifier(action.profileId, 'connection profile id', ID),
+			});
+		case 'connections.composition.write':
+			exactKeys(action, ['type', 'composition'], 'workspace composition action');
+			return Object.freeze({
+				type: 'connections.composition.write',
+				composition: parseTerminayWorkspaceComposition(action.composition),
+			});
 		default:
 			throw new TypeError('host action is not allowed');
 	}
@@ -1076,6 +1217,11 @@ export function requiredTerminayHostCapability(
 		case 'diagnostics.performance-logging.set':
 		case 'diagnostics.performance-snapshot.read':
 			return 'nativeMenus';
+		case 'connections.list':
+		case 'connections.attach':
+		case 'connections.detach':
+		case 'connections.composition.write':
+			return 'connections';
 	}
 }
 

@@ -78,7 +78,10 @@ export function desktopLocalServerUiPartitionKey(
 export function desktopEmbeddedStorePaths(identity: DesktopInstanceIdentity): {
 	readonly recordingLibrary: string;
 	readonly recordings: string;
-	readonly uiBundles: string;
+	/** Retired per-server verified bundle cache. Desktop runs its packaged
+	 * bundle for every connection; this path exists only so startup can delete
+	 * a cache left by an older version. */
+	readonly retiredUiBundleCache: string;
 	readonly workspace: string;
 } {
 	assertDesktopInstanceId(identity.id);
@@ -86,7 +89,7 @@ export function desktopEmbeddedStorePaths(identity: DesktopInstanceIdentity): {
 	return Object.freeze({
 		recordingLibrary: path.join(root, 'server-recording-roots.v1.json'),
 		recordings: path.join(root, 'server-recordings'),
-		uiBundles: path.join(root, 'ui-bundles'),
+		retiredUiBundleCache: path.join(root, 'ui-bundles'),
 		workspace: path.join(root, 'workspace.v3.json'),
 	});
 }

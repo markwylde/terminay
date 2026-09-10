@@ -10,12 +10,14 @@ import {
   type Envelope,
   type JsonValue,
   type QueryResultEnvelope,
+  type ServerCompatibilityRequirements,
   type ServerHello,
 } from "@terminay/protocol";
 import {
   ClientDisconnectedError,
   ClientError,
   CommandOutcomeUnknownError,
+  ProtocolIncompatibleError,
   type ClientCommandResult,
   type ClientEvent,
   type ClientQueryResult,
@@ -99,10 +101,12 @@ export class TerminayClient {
   private closed = false;
   private transportClosePromise: Promise<void> | undefined;
   private commandCounter = 0;
+  private serverCompatibilityRequirements: ServerCompatibilityRequirements | undefined;
 
   constructor(options: TerminayClientOptions) {
     this.transport = options.transport;
     this.options = options;
+    this.serverCompatibilityRequirements = options.serverCompatibility;
 		if (options.initialWatermark !== undefined) {
 			if (
 				!Number.isSafeInteger(options.initialWatermark.revision) ||
@@ -114,6 +118,15 @@ export class TerminayClient {
 			this.current = { ...this.current, revision: options.initialWatermark.revision, cursor: options.initialWatermark.cursor, stale: true };
 		}
   }
+
+  /** Declare what this client needs from the server before the hello. It is
+   * refused once connected: the hello is the only place the pair is judged. */
+  declareServerCompatibility(requirements: ServerCompatibilityRequirements): void {
+    if (this.current.state === "connected") throw new Error("server compatibility must be declared before connecting");
+    this.serverCompatibilityRequirements = requirements;
+  }
+
+  get serverCompatibility(): ServerCompatibilityRequirements | undefined { return this.serverCompatibilityRequirements; }
 
   get snapshot(): ConnectionSnapshot { return this.current; }
   get state(): ConnectionState { return this.current.state; }
@@ -140,6 +153,11 @@ export class TerminayClient {
 		capabilities: [
 			...new Set([
 				...(this.options.capabilities ?? []),
+				// The bundle's declared requirements travel in the hello so the
+				// server sees both what this client cannot do without and what it
+				// merely prefers.
+				...(this.serverCompatibilityRequirements?.requiredCapabilities ?? []),
+				...(this.serverCompatibilityRequirements?.optionalCapabilities ?? []),
 				"events.resync",
 				"terminal.binary-output",
 			]),
@@ -388,6 +406,14 @@ export class TerminayClient {
     }).__terminayClientDiagnostic;
     diagnostic?.(`client.process.${envelope.type}`);
     if (envelope.type === "server_hello") { this.handshake?.resolve(envelope); this.handshake = undefined; return; }
+    // A refused hello is an answer, not silence. Rejecting the handshake with
+    // the envelope lets the caller say which side has to be upgraded instead
+    // of waiting for the transport to close with a generic failure.
+    if (envelope.type === "incompatible_version") {
+      this.handshake?.reject(new ProtocolIncompatibleError(envelope));
+      this.handshake = undefined;
+      return;
+    }
     if (envelope.type === "query_result" || envelope.type === "command_result") {
       this.pending.get(envelope.type === "query_result" ? envelope.queryId : envelope.correlationId)?.resolve({ envelope, body });
       diagnostic?.(`client.complete.${envelope.type}`);
