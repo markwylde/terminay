@@ -22,6 +22,7 @@ COPY --chown=node:node extensions/agent-codex/package.json extensions/agent-code
 COPY --chown=node:node extensions/agent-grok/package.json extensions/agent-grok/package.json
 COPY --chown=node:node extensions/agent-omp/package.json extensions/agent-omp/package.json
 COPY --chown=node:node extensions/agent-opencode/package.json extensions/agent-opencode/package.json
+COPY --chown=node:node extensions/language-typescript/package.json extensions/language-typescript/package.json
 COPY --chown=node:node packages/client-core/package.json packages/client-core/package.json
 COPY --chown=node:node packages/extension-api/package.json packages/extension-api/package.json
 COPY --chown=node:node packages/protocol-conformance/package.json packages/protocol-conformance/package.json

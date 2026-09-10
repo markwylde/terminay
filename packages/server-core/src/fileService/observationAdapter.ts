@@ -9,6 +9,7 @@ import type {
 	QueryRequest,
 } from '../types.js';
 import {
+	type FileWatchEvent,
 	type FileWatchEventInput,
 	FileWatchRegistry,
 } from './watchRegistry.js';
@@ -119,6 +120,13 @@ export class ServerFileObservationAdapter {
 				[FILE_OBSERVATION_OPERATIONS.folderSizeCancel]: { scope: 'read' },
 			},
 		};
+	}
+
+	/** Observe every canonical change this server publishes, for server-owned
+	 * consumers such as a language session that must be told a file it did not
+	 * open changed on disk. Observers are not client subscriptions. */
+	observe(listener: (event: FileWatchEvent) => void): () => void {
+		return this.watches.observe(listener);
 	}
 
 	closeConnection(connectionId: string): void {

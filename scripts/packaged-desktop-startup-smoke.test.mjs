@@ -298,6 +298,7 @@ async function requireBuiltInExtensionsInstalled(electronApp, window, failures) 
 			'terminay-agent-grok',
 			'terminay-agent-opencode',
 			'terminay-agent-omp',
+			'terminay-language-typescript',
 		]) {
 			const card = settings.locator('.extension-card').filter({ hasText: packageName });
 			await card.waitFor({ state: 'visible', timeout: 15_000 });

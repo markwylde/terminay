@@ -3,9 +3,10 @@ export const EXTENSION_MANIFEST_VERSION = 1 as const;
  * The public extension SDK version implemented by this host. 2.0 removed the
  * project-environment provider contribution kind, its declarative form and
  * status surfaces, and the agent observation capability model, so every
- * extension declaring `^1.x` is incompatible with this host.
+ * extension declaring `^1.x` is incompatible with this host. 2.1 adds the
+ * language server contribution kind, which is purely additive.
  */
-export const EXTENSION_API_VERSION = '2.0.0' as const;
+export const EXTENSION_API_VERSION = '2.1.0' as const;
 
 export const EXTENSION_LIMITS = Object.freeze({
 	manifestBytes: 64 * 1024,
@@ -61,7 +62,19 @@ export const EXTENSION_LIMITS = Object.freeze({
 	agentDirectoryListDepth: 8,
 	agentDirectoryListEntries: 256,
 	agentDirectoryListBytes: 16 * 1024 * 1024,
+	/** Language server contributions and the launch they may describe. */
+	maxLanguageServers: 8,
+	maxLanguageIds: 32,
+	maxFileExtensions: 32,
+	maxLaunchArgs: 64,
+	maxLaunchEnvEntries: 32,
+	maxLaunchDescriptionLength: 200,
 } as const);
+
+/** A language id such as `typescriptreact`; never a path or a selector. */
+export const LANGUAGE_ID_PATTERN = /^[a-z][a-z0-9+#._-]{0,63}$/;
+/** A lower-case file extension with its leading dot, e.g. `.tsx`. */
+export const FILE_EXTENSION_PATTERN = /^\.[a-z0-9][a-z0-9._-]{0,63}$/;
 
 export const EXTENSION_ID_PATTERN = /^[a-z0-9](?:[a-z0-9.-]{1,126}[a-z0-9])?$/;
 export const LOCAL_ID_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;

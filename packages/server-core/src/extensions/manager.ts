@@ -1,6 +1,11 @@
+import type { LanguageServerContribution } from '@terminay/extension-api';
 import type { ServerVaultService } from '../settings/vault.js';
 import type { ExtensionHostDiagnosticListener } from './diagnostics.js';
-import { ExtensionHost } from './host.js';
+import { ExtensionHost, type ExtensionLanguageInvocation } from './host.js';
+import type {
+	ExtensionLanguageDiagnosticsNotification,
+	ExtensionLanguageSessionExit,
+} from './languageProtocol.js';
 import type {
 	ExtensionAgentBroker,
 	ExtensionAgentTerminalAdmission,
@@ -27,6 +32,29 @@ export interface ExtensionHostManagerOptions {
 	readonly onStateChange?: (status: ExtensionHostStatus) => void;
 }
 
+/**
+ * One contributed language server, and the extension that owns it.
+ *
+ * `languageServerId` is namespaced by the owning extension so two extensions
+ * can each contribute a `typescript` server without colliding in a session key
+ * or in a client-visible capability answer.
+ */
+export interface LanguageServerProvider {
+	readonly extensionId: string;
+	readonly languageServerId: string;
+	readonly contribution: LanguageServerContribution;
+}
+
+export type ExtensionLanguageDiagnosticsListener = (
+	notification: ExtensionLanguageDiagnosticsNotification & {
+		readonly extensionId: string;
+	},
+) => void;
+
+export type ExtensionLanguageSessionExitListener = (
+	exit: ExtensionLanguageSessionExit & { readonly extensionId: string },
+) => void;
+
 /** Owns independent per-extension supervisors. No extension failure is allowed
  * to escape manager lifecycle methods or affect another host. */
 export class ExtensionHostManager {
@@ -37,6 +65,13 @@ export class ExtensionHostManager {
 		() => void | Promise<void>
 	>();
 	private readonly starts = new Map<string, Promise<ExtensionHostStatus>>();
+	private readonly languageDiagnosticsListeners =
+		new Set<ExtensionLanguageDiagnosticsListener>();
+	private readonly languageSessionExitListeners =
+		new Set<ExtensionLanguageSessionExitListener>();
+	private readonly hostStateListeners = new Set<
+		(status: ExtensionHostStatus) => void
+	>();
 	private contributionMutation: Promise<void> = Promise.resolve();
 	constructor(private readonly options: ExtensionHostManagerOptions) {}
 
@@ -76,7 +111,27 @@ export class ExtensionHostManager {
 	): Promise<ExtensionHostStatus> {
 		let host = this.hosts.get(descriptor.extensionId);
 		if (host === undefined) {
-			host = new ExtensionHost(descriptor.extensionId, { ...this.options });
+			host = new ExtensionHost(descriptor.extensionId, {
+				...this.options,
+				onStateChange: (status) => {
+					for (const listener of this.hostStateListeners) {
+						try {
+							listener(status);
+						} catch {
+							/* observers cannot change a lifecycle transition */
+						}
+					}
+					this.options.onStateChange?.(status);
+				},
+				onLanguageDiagnostics: (notification) => {
+					for (const listener of this.languageDiagnosticsListeners)
+						listener(notification);
+				},
+				onLanguageSessionExit: (exit) => {
+					for (const listener of this.languageSessionExitListeners)
+						listener(exit);
+				},
+			});
 			this.hosts.set(descriptor.extensionId, host);
 		}
 		await host.start(descriptor);
@@ -107,6 +162,86 @@ export class ExtensionHostManager {
 					: [],
 			),
 		);
+	}
+
+	/** Every language server contributed by a running, published extension. */
+	languageServerContributions(): readonly LanguageServerProvider[] {
+		return Object.freeze(
+			this.statuses().flatMap((status) =>
+				status.state === 'running' &&
+				this.publishedExtensions.has(status.extensionId)
+					? (status.languageServers ?? []).map((contribution) =>
+							Object.freeze({
+								extensionId: status.extensionId,
+								languageServerId: `${status.extensionId}:${contribution.id}`,
+								contribution,
+							}),
+						)
+					: [],
+			),
+		);
+	}
+
+	/**
+	 * The language servers that serve a file extension or a language id.
+	 *
+	 * A selector beginning with a dot is a file extension; anything else is
+	 * matched against language ids first and then against the same extension
+	 * list, so a caller with only `ts` in hand does not have to know which.
+	 */
+	languageServersFor(selector: string): readonly LanguageServerProvider[] {
+		if (typeof selector !== 'string' || selector.length === 0)
+			return Object.freeze([]);
+		const value = selector.toLowerCase();
+		const extension = value.startsWith('.') ? value : `.${value}`;
+		return Object.freeze(
+			this.languageServerContributions().filter(
+				(provider) =>
+					provider.contribution.fileExtensions?.some(
+						(candidate) => candidate.toLowerCase() === extension,
+					) === true ||
+					(!value.startsWith('.') &&
+						provider.contribution.languageIds?.some(
+							(candidate) => candidate.toLowerCase() === value,
+						) === true),
+			),
+		);
+	}
+
+	invokeLanguage(
+		extensionId: string,
+		invocation: ExtensionLanguageInvocation,
+	): Promise<unknown> {
+		const host = this.hosts.get(extensionId);
+		if (host === undefined)
+			return Promise.reject(
+				Object.assign(new Error('extension host does not exist'), {
+					code: 'unavailable',
+					retryable: true,
+				}),
+			);
+		return host.invokeLanguage(invocation);
+	}
+
+	onLanguageDiagnostics(
+		listener: ExtensionLanguageDiagnosticsListener,
+	): () => void {
+		this.languageDiagnosticsListeners.add(listener);
+		return () => this.languageDiagnosticsListeners.delete(listener);
+	}
+
+	onLanguageSessionExit(
+		listener: ExtensionLanguageSessionExitListener,
+	): () => void {
+		this.languageSessionExitListeners.add(listener);
+		return () => this.languageSessionExitListeners.delete(listener);
+	}
+
+	/** Observes every supervised host transition, for consumers that must end
+	 * their own work when an extension stops, fails, or is quarantined. */
+	onHostStateChanged(listener: (status: ExtensionHostStatus) => void): () => void {
+		this.hostStateListeners.add(listener);
+		return () => this.hostStateListeners.delete(listener);
 	}
 
 	async admitAgentTerminal(

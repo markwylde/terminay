@@ -1,0 +1,30 @@
+{
+  "name": "@terminay/language-server-conformance-fixture",
+  "version": "1.0.0",
+  "description": "Independent third-party language server extension conformance fixture.",
+  "license": "MIT",
+  "type": "module",
+  "exports": { ".": "./dist/extension.js" },
+  "files": ["dist", "README.md"],
+  "peerDependencies": { "@terminay/extension-api": "^2.1.0" },
+  "terminay": {
+    "manifestVersion": 1,
+    "id": "dev.terminay.language-fixture",
+    "displayName": "Fixture Language",
+    "description": "A portable language-server conformance fixture.",
+    "api": "^2.1.0",
+    "engines": { "terminay": ">=1.0.0", "node": ">=24" },
+    "entrypoint": "dist/extension.js",
+    "permissions": [],
+    "contributes": {
+      "languageServers": [{
+        "id": "fixture-language",
+        "displayName": "Fixture Language",
+        "description": "A stub language server that answers over stdio.",
+        "languageIds": ["fixturelang"],
+        "fileExtensions": [".fixture"],
+        "runtimeNotes": "Runs the stub server bundled with this fixture."
+      }]
+    }
+  }
+}

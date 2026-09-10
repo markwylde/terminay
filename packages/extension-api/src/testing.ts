@@ -1,3 +1,5 @@
+import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import {
 	createAgentLifecyclePublisher,
 	createJsonlRecordDecoder,
@@ -28,6 +30,11 @@ import type {
 	CancellationSignal,
 	Disposable,
 	ExtensionContext,
+	JsonValue,
+	LanguageServerLaunch,
+	LanguageServerLaunchRequest,
+	LanguageServerProviderRuntime,
+	LanguageServerRegistration,
 	ProviderVaultBinding,
 	ProviderVaultBroker,
 	TerminayExtension,
@@ -865,6 +872,11 @@ export async function createAgentExtensionHarness(
 				return subscription;
 			},
 		},
+		registerLanguageServerProvider() {
+			throw new Error(
+				'this harness observes agents; use createLanguageServerExtensionHarness',
+			);
+		},
 	};
 	await extension.activate(context);
 	const emitted: AgentLifecycleEvent[] = [];
@@ -991,4 +1003,382 @@ async function replaySource(
 	} finally {
 		await watcher.dispose();
 	}
+}
+
+export interface LanguageServerExtensionHarness {
+	/** Ids the extension actually registered, in registration order. */
+	registeredIds(): readonly string[];
+	launch(
+		request: LanguageServerLaunchRequest,
+		signal?: AbortSignal,
+	): Promise<LanguageServerLaunch>;
+	dispose(): Promise<void>;
+}
+
+export interface LanguageServerExtensionHarnessOptions {
+	manifest?: TerminayExtensionManifest;
+}
+
+/**
+ * Activates a language server extension in memory and applies the host's
+ * registration rules: an id the manifest did not contribute, or a second
+ * registration of the same id, is refused.
+ */
+export async function createLanguageServerExtensionHarness(
+	extension: TerminayExtension,
+	options: LanguageServerExtensionHarnessOptions = {},
+): Promise<LanguageServerExtensionHarness> {
+	const registrations = new Map<string, LanguageServerProviderRuntime>();
+	const order: string[] = [];
+	const subscriptions: Disposable[] = [];
+	const declared = new Set(
+		options.manifest?.contributes.languageServers?.map((server) => server.id) ??
+			[],
+	);
+	const context: ExtensionContext = {
+		extensionId: options.manifest?.id ?? 'test.extension',
+		apiVersion: EXTENSION_API_VERSION,
+		paths: {
+			configuration: '/fixture/config',
+			data: '/fixture/data',
+			cache: '/fixture/cache',
+		},
+		agents: {
+			registerProvider() {
+				throw new Error(
+					'this harness serves language servers; use createAgentExtensionHarness',
+				);
+			},
+		},
+		subscriptions: {
+			add(subscription) {
+				subscriptions.push(subscription);
+				return subscription;
+			},
+		},
+		registerLanguageServerProvider(registration: LanguageServerRegistration) {
+			if (options.manifest && !declared.has(registration.id))
+				throw new Error(
+					'language server registration is undeclared or invalid',
+				);
+			if (registrations.has(registration.id))
+				throw new Error(`Duplicate language server: ${registration.id}`);
+			registrations.set(registration.id, registration.runtime);
+			order.push(registration.id);
+		},
+	};
+	await extension.activate(context);
+	return {
+		registeredIds() {
+			return [...order];
+		},
+		async launch(request, signal) {
+			const runtime = registrations.get(request.languageServerId);
+			if (!runtime)
+				throw new Error(`Unknown language server: ${request.languageServerId}`);
+			return runtime.launch(request, signal ?? new AbortController().signal);
+		},
+		async dispose() {
+			const owned = subscriptions.splice(0, subscriptions.length);
+			for (const subscription of owned.reverse()) await subscription.dispose();
+			registrations.clear();
+			order.length = 0;
+		},
+	};
+}
+
+export interface LanguageServerPosition {
+	line: number;
+	character: number;
+}
+
+export interface LanguageServerSessionOptions {
+	/** The working directory the host would give the server. */
+	projectRoot: string;
+	/** Overlaid on the launch's own environment overlay. */
+	env?: Record<string, string>;
+	timeoutMs?: number;
+}
+
+export interface LanguageServerOpenDocument {
+	/** Absolute path of the document on disk. */
+	path: string;
+	languageId: string;
+	text: string;
+	version?: number;
+}
+
+/**
+ * A minimal LSP client over stdio, exactly as much protocol as a conformance
+ * test needs. The host owns the real one; this exists so an extension package
+ * can prove its launch actually starts a language server that answers.
+ */
+export interface LanguageServerSession {
+	initialize(): Promise<JsonValue>;
+	request(method: string, params: JsonValue): Promise<JsonValue>;
+	notify(method: string, params: JsonValue): void;
+	didOpen(document: LanguageServerOpenDocument): void;
+	completion(path: string, position: LanguageServerPosition): Promise<JsonValue>;
+	hover(path: string, position: LanguageServerPosition): Promise<JsonValue>;
+	definition(path: string, position: LanguageServerPosition): Promise<JsonValue>;
+	/** Resolves with the first published diagnostics for `path` that match. */
+	waitForDiagnostics(
+		path: string,
+		predicate?: (diagnostics: JsonValue[]) => boolean,
+		timeoutMs?: number,
+	): Promise<JsonValue[]>;
+	dispose(): Promise<void>;
+}
+
+interface PendingCall {
+	resolve(value: JsonValue): void;
+	reject(error: Error): void;
+}
+
+function documentUri(path: string): string {
+	return pathToFileURL(path).href;
+}
+
+/** Starts the launch an extension returned and speaks LSP to it over stdio. */
+export async function openLanguageServerSession(
+	launch: LanguageServerLaunch,
+	options: LanguageServerSessionOptions,
+): Promise<LanguageServerSession> {
+	const timeout = options.timeoutMs ?? 60_000;
+	const child: ChildProcessWithoutNullStreams = spawn(
+		launch.command,
+		launch.args,
+		{
+			cwd: options.projectRoot,
+			env: {
+				PATH: process.env.PATH ?? '',
+				HOME: process.env.HOME ?? options.projectRoot,
+				...launch.env,
+				...options.env,
+			} as unknown as NodeJS.ProcessEnv,
+			stdio: ['pipe', 'pipe', 'pipe'],
+		},
+	);
+	const pending = new Map<number, PendingCall>();
+	const diagnostics = new Map<string, JsonValue[]>();
+	const diagnosticWaiters: Array<{
+		uri: string;
+		predicate: (value: JsonValue[]) => boolean;
+		resolve(value: JsonValue[]): void;
+	}> = [];
+	let nextId = 0;
+	let buffer = Buffer.alloc(0);
+	let exited: Error | undefined;
+
+	function handle(message: Record<string, JsonValue>): void {
+		if (typeof message.id === 'number' && !('method' in message)) {
+			const call = pending.get(message.id);
+			pending.delete(message.id);
+			if (!call) return;
+			if (message.error)
+				call.reject(new Error(JSON.stringify(message.error)));
+			else call.resolve((message.result ?? null) as JsonValue);
+			return;
+		}
+		if (message.method !== 'textDocument/publishDiagnostics') return;
+		const parameters = message.params as
+			| { uri?: unknown; diagnostics?: unknown }
+			| undefined;
+		if (!parameters || typeof parameters.uri !== 'string') return;
+		const published = Array.isArray(parameters.diagnostics)
+			? (parameters.diagnostics as JsonValue[])
+			: [];
+		diagnostics.set(parameters.uri, published);
+		for (let index = diagnosticWaiters.length - 1; index >= 0; index--) {
+			const waiter = diagnosticWaiters[index];
+			if (waiter.uri !== parameters.uri || !waiter.predicate(published))
+				continue;
+			diagnosticWaiters.splice(index, 1);
+			waiter.resolve(published);
+		}
+	}
+
+	child.stdout.on('data', (chunk: Buffer) => {
+		buffer = Buffer.concat([buffer, chunk]);
+		for (;;) {
+			const separator = buffer.indexOf('\r\n\r\n');
+			if (separator < 0) return;
+			const header = buffer.subarray(0, separator).toString('utf8');
+			const match = /content-length:\s*(\d+)/i.exec(header);
+			if (!match) {
+				buffer = buffer.subarray(separator + 4);
+				continue;
+			}
+			const length = Number(match[1]);
+			if (buffer.length < separator + 4 + length) return;
+			const body = buffer
+				.subarray(separator + 4, separator + 4 + length)
+				.toString('utf8');
+			buffer = buffer.subarray(separator + 4 + length);
+			try {
+				handle(JSON.parse(body) as Record<string, JsonValue>);
+			} catch {
+				// A frame this client cannot parse is not this test's business.
+			}
+		}
+	});
+	child.stderr.resume();
+	child.on('exit', (code, signal) => {
+		exited = new Error(
+			`language server exited (code ${String(code)}, signal ${String(signal)})`,
+		);
+		for (const call of pending.values()) call.reject(exited);
+		pending.clear();
+	});
+	child.on('error', (error: Error) => {
+		exited = error;
+		for (const call of pending.values()) call.reject(error);
+		pending.clear();
+	});
+
+	function send(payload: Record<string, JsonValue>): void {
+		if (exited) throw exited;
+		const body = Buffer.from(JSON.stringify(payload), 'utf8');
+		child.stdin.write(`Content-Length: ${body.length}\r\n\r\n`);
+		child.stdin.write(body);
+	}
+
+	function request(method: string, parameters: JsonValue): Promise<JsonValue> {
+		nextId += 1;
+		const id = nextId;
+		return new Promise<JsonValue>((resolve, reject) => {
+			const timer = setTimeout(() => {
+				pending.delete(id);
+				reject(new Error(`language server request timed out: ${method}`));
+			}, timeout);
+			pending.set(id, {
+				resolve(value) {
+					clearTimeout(timer);
+					resolve(value);
+				},
+				reject(error) {
+					clearTimeout(timer);
+					reject(error);
+				},
+			});
+			try {
+				send({ jsonrpc: '2.0', id, method, params: parameters });
+			} catch (error) {
+				clearTimeout(timer);
+				pending.delete(id);
+				reject(error as Error);
+			}
+		});
+	}
+
+	function notify(method: string, parameters: JsonValue): void {
+		send({ jsonrpc: '2.0', method, params: parameters });
+	}
+
+	const session: LanguageServerSession = {
+		async initialize() {
+			const result = await request('initialize', {
+				processId: process.pid,
+				rootUri: documentUri(options.projectRoot),
+				workspaceFolders: [
+					{
+						uri: documentUri(options.projectRoot),
+						name: 'fixture',
+					},
+				],
+				capabilities: {
+					textDocument: {
+						synchronization: { dynamicRegistration: false },
+						completion: { completionItem: { snippetSupport: false } },
+						hover: { contentFormat: ['plaintext', 'markdown'] },
+						definition: { linkSupport: false },
+						publishDiagnostics: {},
+					},
+				},
+				initializationOptions:
+					launch.initializationOptions === undefined
+						? null
+						: launch.initializationOptions,
+			});
+			notify('initialized', {});
+			return result;
+		},
+		request,
+		notify,
+		didOpen(document) {
+			notify('textDocument/didOpen', {
+				textDocument: {
+					uri: documentUri(document.path),
+					languageId: document.languageId,
+					version: document.version ?? 1,
+					text: document.text,
+				},
+			});
+		},
+		completion(path, position) {
+			return request('textDocument/completion', {
+				textDocument: { uri: documentUri(path) },
+				position: { line: position.line, character: position.character },
+			});
+		},
+		hover(path, position) {
+			return request('textDocument/hover', {
+				textDocument: { uri: documentUri(path) },
+				position: { line: position.line, character: position.character },
+			});
+		},
+		definition(path, position) {
+			return request('textDocument/definition', {
+				textDocument: { uri: documentUri(path) },
+				position: { line: position.line, character: position.character },
+			});
+		},
+		waitForDiagnostics(path, predicate, timeoutMs) {
+			const uri = documentUri(path);
+			const matches = predicate ?? ((value: JsonValue[]) => value.length > 0);
+			const already = diagnostics.get(uri);
+			if (already && matches(already)) return Promise.resolve(already);
+			return new Promise<JsonValue[]>((resolve, reject) => {
+				const waiter = {
+					uri,
+					predicate: matches,
+					resolve(value: JsonValue[]) {
+						clearTimeout(timer);
+						resolve(value);
+					},
+				};
+				const timer = setTimeout(() => {
+					const index = diagnosticWaiters.indexOf(waiter);
+					if (index >= 0) diagnosticWaiters.splice(index, 1);
+					reject(new Error(`no matching diagnostics for ${path}`));
+				}, timeoutMs ?? timeout);
+				diagnosticWaiters.push(waiter);
+			});
+		},
+		async dispose() {
+			if (!exited) {
+				try {
+					await request('shutdown', null);
+					notify('exit', null);
+				} catch {
+					// A server that is already gone needs no polite shutdown.
+				}
+			}
+			await new Promise<void>((resolve) => {
+				if (child.exitCode !== null || child.signalCode !== null) {
+					resolve();
+					return;
+				}
+				const timer = setTimeout(() => {
+					child.kill('SIGKILL');
+					resolve();
+				}, 2_000);
+				child.once('exit', () => {
+					clearTimeout(timer);
+					resolve();
+				});
+			});
+		},
+	};
+	return session;
 }

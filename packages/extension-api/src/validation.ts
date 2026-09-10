@@ -2,7 +2,10 @@ import {
 	ENVIRONMENT_VARIABLE_NAME_PATTERN,
 	EXTENSION_ID_PATTERN,
 	EXTENSION_LIMITS,
+	FILE_EXTENSION_PATTERN,
 	isNamespacedId,
+	LANGUAGE_ID_PATTERN,
+	LOCAL_ID_PATTERN,
 	PROVIDER_VAULT_BINDING_REF_PATTERN,
 	PROVIDER_VAULT_KEY_PATTERN,
 } from './constants.js';
@@ -25,6 +28,8 @@ import type {
 	AgentSessionBindingRequest,
 	AgentTerminalTtyFact,
 	ExtensionPermission,
+	LanguageServerContribution,
+	LanguageServerLaunch,
 	ProviderVaultPutRequest,
 	ProviderVaultPutResult,
 	ProviderVaultRemoveRequest,
@@ -235,13 +240,14 @@ export function validateExtensionManifest(
 	else {
 		closed(
 			value.contributes,
-			new Set(['agentProviders']),
+			new Set(['agentProviders', 'languageServers']),
 			'$.contributes',
 			out,
 		);
 		const extensionId = typeof value.id === 'string' ? value.id : '';
 		const agentProviders = value.contributes.agentProviders;
-		if (agentProviders === undefined) {
+		const languageServers = value.contributes.languageServers;
+		if (agentProviders === undefined && languageServers === undefined) {
 			out.push({
 				path: '$.contributes',
 				code: 'missing_contribution',
@@ -250,6 +256,8 @@ export function validateExtensionManifest(
 		}
 		if (agentProviders !== undefined)
 			validateAgentContributions(agentProviders, extensionId, out);
+		if (languageServers !== undefined)
+			validateLanguageServerContributions(languageServers, out);
 		if (
 			Array.isArray(agentProviders) &&
 			agentProviders.length > 0 &&
@@ -347,6 +355,211 @@ function validateAgentContributions(
 		if (record(item)) ids.push(item.id);
 	});
 	unique(ids, '$.contributes.agentProviders', out);
+}
+
+function validateLanguageServerContributions(
+	value: unknown,
+	out: SchemaIssue[],
+): void {
+	if (
+		!Array.isArray(value) ||
+		value.length === 0 ||
+		value.length > EXTENSION_LIMITS.maxLanguageServers
+	) {
+		out.push({
+			path: '$.contributes.languageServers',
+			code: 'invalid_array',
+			message: 'Expected one or more bounded contributions',
+		});
+		return;
+	}
+	const ids: unknown[] = [];
+	value.forEach((item, index) => {
+		const result = validateLanguageServerContribution(item);
+		if (!result.ok)
+			out.push(
+				...result.issues.map((issue) => ({
+					...issue,
+					path: `$.contributes.languageServers[${index}]${issue.path.slice(1)}`,
+				})),
+			);
+		if (record(item)) ids.push(item.id);
+	});
+	unique(ids, '$.contributes.languageServers', out);
+}
+
+/** Validates a standalone language server manifest contribution. */
+export function validateLanguageServerContribution(
+	value: unknown,
+): ValidationResult<LanguageServerContribution> {
+	const out: SchemaIssue[] = [];
+	if (!record(value)) return invalidObject();
+	closed(
+		value,
+		new Set([
+			'id',
+			'displayName',
+			'description',
+			'languageIds',
+			'fileExtensions',
+			'runtimeNotes',
+		]),
+		'$',
+		out,
+	);
+	if (string(value.id, '$.id', out, 64) && !LOCAL_ID_PATTERN.test(value.id))
+		out.push({
+			path: '$.id',
+			code: 'invalid_id',
+			message: 'Language server id must be lower-case kebab-case',
+		});
+	string(
+		value.displayName,
+		'$.displayName',
+		out,
+		EXTENSION_LIMITS.displayNameLength,
+	);
+	if (value.description !== undefined)
+		string(
+			value.description,
+			'$.description',
+			out,
+			EXTENSION_LIMITS.descriptionLength,
+		);
+	if (value.runtimeNotes !== undefined)
+		string(
+			value.runtimeNotes,
+			'$.runtimeNotes',
+			out,
+			EXTENSION_LIMITS.descriptionLength,
+		);
+	validateBoundedStringList(
+		value.languageIds,
+		'$.languageIds',
+		EXTENSION_LIMITS.maxLanguageIds,
+		LANGUAGE_ID_PATTERN,
+		'invalid_language_id',
+		'Expected a language id such as typescript',
+		out,
+	);
+	validateBoundedStringList(
+		value.fileExtensions,
+		'$.fileExtensions',
+		EXTENSION_LIMITS.maxFileExtensions,
+		FILE_EXTENSION_PATTERN,
+		'invalid_file_extension',
+		'Expected a lower-case extension beginning with a dot and free of slashes and whitespace',
+		out,
+	);
+	return out.length === 0
+		? { ok: true, value: value as unknown as LanguageServerContribution }
+		: { ok: false, issues: out };
+}
+
+function validateBoundedStringList(
+	value: unknown,
+	path: string,
+	maximum: number,
+	pattern: RegExp,
+	code: string,
+	message: string,
+	out: SchemaIssue[],
+): void {
+	if (!Array.isArray(value) || value.length === 0 || value.length > maximum) {
+		out.push({
+			path,
+			code: 'invalid_array',
+			message: `Expected one to ${maximum} entries`,
+		});
+		return;
+	}
+	value.forEach((item, index) => {
+		if (typeof item !== 'string' || !pattern.test(item))
+			out.push({ path: `${path}[${index}]`, code, message });
+	});
+	unique(value, path, out);
+}
+
+/**
+ * Validates a launch an extension returned. The host applies this before it
+ * spawns anything: the launch is extension-authored data, never a command line
+ * the host trusts unbounded.
+ */
+export function validateLanguageServerLaunch(
+	value: unknown,
+): ValidationResult<LanguageServerLaunch> {
+	const out: SchemaIssue[] = [];
+	if (!record(value)) return invalidObject();
+	closed(
+		value,
+		new Set([
+			'command',
+			'args',
+			'env',
+			'initializationOptions',
+			'description',
+		]),
+		'$',
+		out,
+	);
+	if (
+		string(value.command, '$.command', out, EXTENSION_LIMITS.stringLength) &&
+		/[\r\n]/u.test(value.command)
+	)
+		out.push({
+			path: '$.command',
+			code: 'invalid_command',
+			message: 'Command must be a single-line executable path or name',
+		});
+	if (
+		!Array.isArray(value.args) ||
+		value.args.length > EXTENSION_LIMITS.maxLaunchArgs
+	)
+		out.push({
+			path: '$.args',
+			code: 'invalid_array',
+			message: `Expected at most ${EXTENSION_LIMITS.maxLaunchArgs} arguments`,
+		});
+	else
+		value.args.forEach((argument, index) => {
+			string(argument, `$.args[${index}]`, out);
+		});
+	if (value.env !== undefined) {
+		if (!record(value.env))
+			out.push({
+				path: '$.env',
+				code: 'invalid_type',
+				message: 'Expected an object',
+			});
+		else {
+			const entries = Object.entries(value.env);
+			if (entries.length > EXTENSION_LIMITS.maxLaunchEnvEntries)
+				out.push({
+					path: '$.env',
+					code: 'invalid_object',
+					message: `Expected at most ${EXTENSION_LIMITS.maxLaunchEnvEntries} environment entries`,
+				});
+			for (const [name, entry] of entries) {
+				if (!ENVIRONMENT_VARIABLE_NAME_PATTERN.test(name))
+					out.push({
+						path: `$.env.${name}`,
+						code: 'invalid_environment_variable_name',
+						message: 'Invalid environment variable name',
+					});
+				string(entry, `$.env.${name}`, out);
+			}
+		}
+	}
+	if (value.description !== undefined)
+		string(
+			value.description,
+			'$.description',
+			out,
+			EXTENSION_LIMITS.maxLaunchDescriptionLength,
+		);
+	return out.length === 0
+		? { ok: true, value: value as unknown as LanguageServerLaunch }
+		: { ok: false, issues: out };
 }
 
 /** Validates a standalone agent-provider manifest contribution. */

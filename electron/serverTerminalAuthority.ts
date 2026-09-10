@@ -788,7 +788,16 @@ export class ServerTerminalAuthority {
 			eventJournal,
 			...(extensionManagement === undefined
 				? {}
-				: { extensions: extensionManagement }),
+				: {
+						extensions: extensionManagement,
+						// Language intelligence lives where the project files and the
+						// extensions live, which for the embedded server is this process.
+						language: {
+							extensions: extensionManagement.hosts,
+							projects: this.fileSessionProjects,
+							watch: fileObservations,
+						},
+					}),
 			...(extensionManagement === undefined &&
 			options.vault === undefined &&
 			parakeetProvider === undefined

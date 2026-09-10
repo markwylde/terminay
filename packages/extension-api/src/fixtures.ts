@@ -1,6 +1,7 @@
 import { namespacedId } from './constants.js';
 import type {
 	AgentProviderContribution,
+	LanguageServerContribution,
 	TerminayExtensionManifest,
 } from './types.js';
 
@@ -31,6 +32,35 @@ export const validManifestFixture: TerminayExtensionManifest = Object.freeze({
 /** The agent manifest under its historical name, kept for existing callers. */
 export const validAgentManifestFixture: TerminayExtensionManifest =
 	validManifestFixture;
+
+export const languageServerFixtureExtensionId = 'dev.terminay.language-fixture';
+export const languageServerFixtureId = 'fixture-language';
+
+/** A language-neutral manifest contribution for public language SDK conformance. */
+export const validLanguageServerContributionFixture: LanguageServerContribution =
+	Object.freeze({
+		id: languageServerFixtureId,
+		displayName: 'Fixture Language',
+		description: 'A portable language server conformance fixture.',
+		languageIds: ['fixturelang'],
+		fileExtensions: ['.fixture'],
+		runtimeNotes: 'Runs a stub language server bundled with the fixture.',
+	} satisfies LanguageServerContribution);
+
+export const validLanguageServerManifestFixture: TerminayExtensionManifest =
+	Object.freeze({
+		manifestVersion: 1,
+		id: languageServerFixtureExtensionId,
+		displayName: 'Fixture Language Extension',
+		description: 'A portable language server conformance fixture.',
+		api: '^2.1.0',
+		engines: { terminay: '>=1.0.0', node: '>=22' },
+		entrypoint: 'dist/extension.js',
+		permissions: [],
+		contributes: {
+			languageServers: [validLanguageServerContributionFixture],
+		},
+	} satisfies TerminayExtensionManifest);
 
 export const hostileManifestFixtures: Readonly<Record<string, unknown>> =
 	Object.freeze({
@@ -72,5 +102,30 @@ export const hostileManifestFixtures: Readonly<Record<string, unknown>> =
 		unknownPermission: {
 			...validManifestFixture,
 			permissions: ['server:everything'],
+		},
+		/** A file selector is an extension, never a path or a glob. */
+		languageServerPathSelector: {
+			...validLanguageServerManifestFixture,
+			contributes: {
+				languageServers: [
+					{
+						...validLanguageServerContributionFixture,
+						fileExtensions: ['src/**/*.fixture'],
+					},
+				],
+			},
+		},
+		/** A language server serves at least one language and one extension. */
+		languageServerEmptySelectors: {
+			...validLanguageServerManifestFixture,
+			contributes: {
+				languageServers: [
+					{
+						...validLanguageServerContributionFixture,
+						languageIds: [],
+						fileExtensions: [],
+					},
+				],
+			},
 		},
 	});
