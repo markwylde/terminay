@@ -202,3 +202,60 @@ test('menu drop reorders before and after the hovered row', () => {
 		['a', 'b', 'c'],
 	)
 })
+
+/**
+ * A strip holding tabs from several servers identifies a tab by
+ * `(serverId, projectId)`, because project ids are per-server namespaces.
+ * Every list rule here has to be told that identity, or it silently matches
+ * nothing: hidden tabs stop being recognised and a reorder drops every tab.
+ */
+const handled = [
+	{ id: 'one', serverId: 'a', handle: 'a:one' },
+	{ id: 'one', serverId: 'b', handle: 'b:one' },
+	{ id: 'two', serverId: 'a', handle: 'a:two' },
+]
+const byHandle = (item) => item.handle
+
+test('a reorder by handle keeps every tab, including colliding project ids', () => {
+	assert.deepEqual(
+		mergeVisibleProjectReorderByIds(
+			handled,
+			['b:one', 'a:one', 'a:two'],
+			[],
+			byHandle,
+		).map(byHandle),
+		['b:one', 'a:one', 'a:two'],
+	)
+	// Without the accessor nothing matches, and the old order comes back
+	// rather than a truncated list.
+	assert.deepEqual(
+		mergeVisibleProjectReorderByIds(handled, ['b:one', 'a:one', 'a:two'], [])
+			.map(byHandle),
+		['a:one', 'b:one', 'a:two'],
+	)
+})
+
+test('hidden tabs are recognised by handle, not by project id', () => {
+	assert.deepEqual(
+		mergeVisibleProjectReorder(
+			handled,
+			[handled[2], handled[0]],
+			['b:one'],
+			byHandle,
+		).map(byHandle),
+		// The hidden tab stays put; the two visible ones swap around it.
+		['a:two', 'b:one', 'a:one'],
+	)
+})
+
+test('a switcher drop moves the dragged tab by handle', () => {
+	assert.deepEqual(
+		moveItemByDrop(handled, 'a:two', 'a:one', 'before', byHandle).map(byHandle),
+		['a:two', 'a:one', 'b:one'],
+	)
+	// Two tabs sharing a project id are not interchangeable.
+	assert.deepEqual(
+		moveItemByDrop(handled, 'b:one', 'a:two', 'after', byHandle).map(byHandle),
+		['a:one', 'a:two', 'b:one'],
+	)
+})

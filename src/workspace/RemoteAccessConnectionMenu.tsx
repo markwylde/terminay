@@ -29,8 +29,14 @@ export function RemoteAccessConnectionMenu(props: {
 	tone: string;
 }) {
 	const { status } = props;
-	const { attach, connections, detach, profiles, supportsAttach } =
-		useConnections();
+	const {
+		activeServerId,
+		attach,
+		connections,
+		detach,
+		profiles,
+		supportsAttach,
+	} = useConnections();
 	const switcherEntries = props.connectionSwitcherEntries ?? [];
 	const isExposed = Boolean(status?.isRunning);
 	const connectionCount = status?.connections.length ?? 0;
@@ -112,6 +118,7 @@ export function RemoteAccessConnectionMenu(props: {
 							// A window holds several connections at once, so this lists
 							// what is attached rather than offering a switch between them.
 							<ConnectionsControl
+								{...(activeServerId === undefined ? {} : { activeServerId })}
 								connections={connections}
 								currentServerLabel={props.currentServerLabel}
 								onAttach={attach}
