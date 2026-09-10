@@ -40,6 +40,7 @@ function ProjectSwitcherItemButton({
 			type="button"
 			className="project-switcher-menu__item"
 			data-project-switcher-item={project.id}
+			data-project-switcher-handle={keyOfProjectTab(project)}
 			role="menuitem"
 			onPointerDown={longPress.onPointerDown}
 			onPointerMove={longPress.onPointerMove}
@@ -81,6 +82,14 @@ function ProjectSwitcherItemButton({
 	);
 }
 
+/** A tab's identity in the strip: the project id in a single-server window,
+ * `(serverId, projectId)` once tabs come from several servers. */
+function keyOfProjectTab(
+	project: ProjectTab & { readonly handle?: string },
+): string {
+	return project.handle ?? project.id;
+}
+
 export function ProjectSwitcherMenu({
 	activeProjectId,
 	activityBadgesByProject,
@@ -110,6 +119,10 @@ export function ProjectSwitcherMenu({
 	onReorderCommit?: (movedId: string) => void;
 	projects: ProjectTab[];
 }) {
+	// The switcher speaks the same tab identity as the strip: the project id in
+	// a single-server window, `(serverId, projectId)` once tabs come from
+	// several servers. Its callbacks hand that identity straight back.
+	const keyOf = keyOfProjectTab;
 	const [open, setOpen] = useState(false);
 	const [draggedId, setDraggedId] = useState<string | null>(null);
 	const [dropTarget, setDropTarget] = useState<{
@@ -132,7 +145,8 @@ export function ProjectSwitcherMenu({
 		targetPosition?: 'before' | 'after';
 	} | null>(null);
 	const active =
-		projects.find((project) => project.id === activeProjectId) ?? projects[0];
+		projects.find((project) => keyOf(project) === activeProjectId) ??
+		projects[0];
 	const badgeCount = compact ? projects.length : hiddenCount;
 	const label = compact
 		? (active?.title ?? 'Projects')
@@ -207,7 +221,7 @@ export function ProjectSwitcherMenu({
 			event.preventDefault();
 			const rows = [
 				...(rootRef.current?.querySelectorAll<HTMLElement>(
-					'[data-project-switcher-row]',
+					'[data-project-switcher-handle]',
 				) ?? []),
 			];
 			let nearest: { element: HTMLElement; distance: number } | undefined;
@@ -222,7 +236,7 @@ export function ProjectSwitcherMenu({
 				if (!nearest || distance < nearest.distance)
 					nearest = { element, distance };
 			}
-			const targetId = nearest?.element.dataset.projectSwitcherRow;
+			const targetId = nearest?.element.dataset.projectSwitcherHandle;
 			if (!nearest || !targetId || targetId === drag.sourceId) {
 				drag.targetId = undefined;
 				drag.targetPosition = undefined;
@@ -250,6 +264,7 @@ export function ProjectSwitcherMenu({
 						drag.sourceId,
 						drag.targetId,
 						drag.targetPosition,
+						keyOfProjectTab,
 					),
 				);
 				onReorderCommitRef.current?.(drag.sourceId);
@@ -280,7 +295,7 @@ export function ProjectSwitcherMenu({
 		() => {
 			if (active === undefined || active.creationStatus !== undefined) return;
 			setOpen(false);
-			void onEdit(active.id);
+			void onEdit(keyOf(active));
 		},
 		{
 			disabled: active === undefined || active.creationStatus !== undefined,
@@ -381,33 +396,34 @@ export function ProjectSwitcherMenu({
 					</div>
 					{projects.map((project) => (
 						<div
-							key={project.id}
-							className={`project-switcher-menu__row${project.id === activeProjectId ? ' project-switcher-menu__row--active' : ''}${draggedId === project.id ? ' project-switcher-menu__row--dragging' : ''}${dropTarget?.id === project.id ? ` project-switcher-menu__row--drop-${dropTarget.position}` : ''}`}
+							key={keyOf(project)}
+							className={`project-switcher-menu__row${keyOf(project) === activeProjectId ? ' project-switcher-menu__row--active' : ''}${draggedId === keyOf(project) ? ' project-switcher-menu__row--dragging' : ''}${dropTarget?.id === keyOf(project) ? ` project-switcher-menu__row--drop-${dropTarget.position}` : ''}`}
 							style={{ '--project-color': project.color } as CSSProperties}
 							data-project-switcher-row={project.id}
+							data-project-switcher-handle={keyOf(project)}
 						>
 							<button
 								type="button"
 								className="project-switcher-menu__grip"
 								disabled={project.creationStatus !== undefined}
-								onPointerDown={(event) => beginReorder(event, project.id)}
+								onPointerDown={(event) => beginReorder(event, keyOf(project))}
 								aria-label={`Reorder ${project.title}`}
 								title="Drag to reorder"
 							>
 								<GripVertical size={12} aria-hidden="true" />
 							</button>
 							<ProjectSwitcherItemButton
-								badge={activityBadgesByProject?.[project.id]}
+								badge={activityBadgesByProject?.[keyOf(project)]}
 								disabled={project.creationStatus === 'loading'}
-								isActive={project.id === activeProjectId}
+								isActive={keyOf(project) === activeProjectId}
 								onActivate={() => {
-									onActivate(project.id);
+									onActivate(keyOf(project));
 									setOpen(false);
 								}}
 								onEdit={() => {
 									if (project.creationStatus !== undefined) return;
 									setOpen(false);
-									void onEdit(project.id);
+									void onEdit(keyOf(project));
 								}}
 								project={project}
 							/>
@@ -416,7 +432,7 @@ export function ProjectSwitcherMenu({
 								className="project-switcher-menu__close"
 								onClick={(event) => {
 									event.stopPropagation();
-									onClose(project.id);
+									onClose(keyOf(project));
 								}}
 								disabled={
 									projects.length <= 1 || project.creationStatus === 'loading'
