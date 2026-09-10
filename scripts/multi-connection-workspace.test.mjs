@@ -169,12 +169,15 @@ test('the switcher menu speaks the same tab identity as the strip', async () => 
 test('a connection row is named by its server label alone', async () => {
 	const control = await read('src/workspace/ConnectionsControl.tsx')
 	// The connection menu is a radio group over attached servers. Its rows are
-	// called by the server's own label; status and "this window" sit beside
-	// the name rather than inside it.
+	// called by the server's own label, and each row is an ordinary menu item
+	// so it sits flush with the rest of the menu: label on the left, status on
+	// the right, never a chip with loose text beside it.
 	assert.match(control, /role="menuitemradio"/u)
 	assert.match(control, /aria-checked=\{isCurrent\}/u)
 	assert.match(control, /aria-label=\{connection\.label\}/u)
-	assert.match(control, /className="remote-access-menu__meta" aria-hidden="true"/u)
+	assert.match(control, /className=\{`remote-access-menu__item\$\{isCurrent \? ' remote-access-menu__item--current' : ''\}`\}/u)
+	assert.match(control, /remote-access-menu__meta[\s\S]{0,120}?aria-hidden="true"/u)
+	assert.doesNotMatch(control, /remote-access-menu__connection--button/u)
 })
 
 test('per-server surfaces select a connection instead of merging servers', async () => {
