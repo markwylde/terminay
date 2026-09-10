@@ -34,21 +34,6 @@ Macro definitions, normalization, execution scheduling, inactivity waits, and se
 - **WHEN** a user edits macro fields in the client
 - **THEN** the client renders only a safe preview and never receives plaintext secrets in order to write them back to a PTY
 
-### Requirement: Macro writes follow the terminal's project environment
-
-Macro terminal writes SHALL follow the terminal's canonical project environment, and file fields SHALL browse through that environment's filesystem capability. A remote path SHALL never be read from the Terminay Server filesystem.
-
-#### Scenario: File field in a remote environment
-
-- **WHEN** a macro file field is used on a terminal whose project environment is not the Terminay Server host
-- **THEN** the field browses through that environment's filesystem capability rather than the server filesystem
-
-#### Scenario: Missing provider capability
-
-- **WHEN** the terminal's project environment does not advertise the required filesystem capability
-- **THEN** the field or action is unavailable
-- **AND** the operation never falls back to another machine
-
 ### Requirement: Eta template syntax for type steps
 
 Type steps SHALL support Eta templates configured for plain terminal text. Eta tags such as `<% if (message === 'one') { %>...<% } %>` SHALL control output and interpolations such as `<%= message %>` SHALL insert values. Field names SHALL be available as top-level identifiers so a user writes `message` rather than `it.message`. XML escaping SHALL be disabled because macro output is terminal input. `{{Field Name}}` placeholders SHALL also render.
@@ -259,3 +244,41 @@ Finished macro runs SHALL remain visible in the run queue until the user clears 
 
 - **WHEN** the user clears finished runs from the macro queue
 - **THEN** those completed entries are removed from the queue
+
+### Requirement: Macro writes follow the terminal's server
+
+Macro terminal writes SHALL follow the terminal's canonical server, and file fields SHALL browse through that server's filesystem. A path SHALL never be read from a filesystem other than the one belonging to the server that owns the terminal.
+
+#### Scenario: File field browsing
+
+- **WHEN** a macro file field is used on a terminal
+- **THEN** the field browses through the filesystem of the server that owns that terminal
+
+#### Scenario: Writes reach the owning server
+
+- **WHEN** a macro types its rendered steps into a terminal
+- **THEN** the write goes to the server that owns that terminal
+- **AND** the operation never falls back to another machine
+
+### Requirement: Macros surface selects a server
+
+The Macros surface SHALL carry a server selector listing every attached
+connection, defaulting to the server that owns the active project tab. It SHALL
+list, create, edit, run, and delete only macros of the selected server, and SHALL
+NEVER present two servers' macros as one list. Selecting a connection that is
+unavailable or incompatible SHALL show that connection's state instead of macros.
+
+#### Scenario: Default selection
+
+- **WHEN** the user opens Macros while a project of an attached server is active
+- **THEN** the selector starts on that server and lists that server's macros
+
+#### Scenario: Macros are not merged
+
+- **WHEN** two attached servers each hold macros
+- **THEN** the surface shows only the selected server's macros and no combined list
+
+#### Scenario: Editing applies to one server
+
+- **WHEN** the user creates, edits, or deletes a macro
+- **THEN** the command is sent only to the selected server

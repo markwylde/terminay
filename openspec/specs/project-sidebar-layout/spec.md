@@ -368,7 +368,7 @@ A separator SHALL communicate when movement in one or both directions is exhaust
 
 ### Requirement: Layout controller boundaries
 
-Pane content SHALL remain owned by its feature and project environment. The layout controller SHALL know pane identity, title geometry, expansion state, preferred size, and resize constraints, and SHALL NOT read files, Git state, agent state, or Documentation content. This capability SHALL NOT make sidebar preferences global, SHALL NOT write them into project files, and SHALL NOT introduce renderer filesystem authority. The stack SHALL provide only Terminay's vertical project-sidebar behaviour and SHALL NOT reproduce a general-purpose SplitView API, snapping modes, or an unrelated workbench layout system.
+Pane content SHALL remain owned by its feature and project. The layout controller SHALL know pane identity, title geometry, expansion state, preferred size, and resize constraints, and SHALL NOT read files, Git state, agent state, or Documentation content. This capability SHALL NOT make sidebar preferences global, SHALL NOT write them into project files, and SHALL NOT introduce renderer filesystem authority. The stack SHALL provide only Terminay's vertical project-sidebar behaviour and SHALL NOT reproduce a general-purpose SplitView API, snapping modes, or an unrelated workbench layout system.
 
 #### Scenario: Controller inputs
 

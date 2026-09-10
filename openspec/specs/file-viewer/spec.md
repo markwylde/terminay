@@ -272,12 +272,18 @@ Preview SHALL support Markdown, images, and PDF. Markdown links and relative ass
 
 ### Requirement: Text mode engines
 
-Text mode SHALL provide a Monaco engine for normal files and an explicitly selected rich large-file path, and a Performant engine for ranged, virtualized access. Monaco SHALL provide language detection, syntax highlighting, and standard editing for a complete bounded text model.
+Text mode SHALL provide a Monaco engine for normal files and an explicitly selected rich large-file path, and a Performant engine for ranged, virtualized access. Monaco SHALL provide language detection, syntax highlighting, and standard editing for a complete bounded text model through language tokenizers. No language service SHALL run in the client: the editor SHALL compute no diagnostics, completions, hovers, signature help, or semantic analysis.
 
 #### Scenario: Normal file in Text mode
 
 - **WHEN** a normal-sized file opens in Text mode
 - **THEN** Monaco provides language detection, syntax highlighting, and standard editing over a complete bounded text model
+
+#### Scenario: Source file with project-level references
+
+- **WHEN** a source file that references other files, packages, or compiler configuration opens in Text mode
+- **THEN** it is tokenized and highlighted
+- **AND** the client computes no diagnostics, completions, hovers, signature help, or semantic analysis for it
 
 ### Requirement: Performant text engine behaviour
 
@@ -580,14 +586,57 @@ Filesystem operations SHALL use canonical server-side path validation at the fin
 
 ### Requirement: File viewer non-goals
 
-The file viewer SHALL NOT provide a language-server or IDE contract beyond Monaco's built-in features, editing in Preview or Diff, simultaneous collaborative editing, a remembered large-file engine choice, or a redesigned full file tree.
+The file viewer SHALL NOT run a language service in the client, nor provide an IDE contract beyond the editor's built-in highlighting and editing features together with the language features the server provides, editing in Preview or Diff, simultaneous collaborative editing, a remembered large-file engine choice, or a redesigned full file tree.
 
 #### Scenario: Language server requested
 
-- **WHEN** a capability beyond Monaco's built-in features is expected
-- **THEN** the file viewer does not provide it
+- **WHEN** diagnostics, completions, hovers, or definitions are expected from the file viewer
+- **THEN** they come from the server's language intelligence capability when a contributed language server serves the file, and are absent otherwise
+- **AND** the client runs no language service of its own
 
 #### Scenario: Two users editing one file
 
 - **WHEN** two clients edit the same file at once
 - **THEN** they are coordinated by ordered draft revisions and conflicts, not by simultaneous collaborative editing
+
+### Requirement: TypeScript and JavaScript React files highlight as their base language
+
+Text mode SHALL highlight `.tsx` files with the TypeScript grammar and `.jsx` files with the JavaScript grammar, because those grammars cover JSX syntax.
+
+#### Scenario: TypeScript React file
+
+- **WHEN** a `.tsx` file opens in Text mode
+- **THEN** it is highlighted with the TypeScript grammar, including its JSX syntax
+
+#### Scenario: JavaScript React file
+
+- **WHEN** a `.jsx` file opens in Text mode
+- **THEN** it is highlighted with the JavaScript grammar, including its JSX syntax
+
+### Requirement: The workspace bundle carries no client language workers
+
+The server-served workspace UI bundle SHALL contain no TypeScript, CSS, HTML, or JSON language worker and no language mode that starts one. Only the editor's base worker SHALL be emitted. A build check SHALL fail when any such language worker or language mode is emitted into the bundle.
+
+#### Scenario: Language worker emitted into the bundle
+
+- **WHEN** a build emits a TypeScript, CSS, HTML, or JSON language worker or language mode into the workspace UI bundle
+- **THEN** the build check fails
+
+### Requirement: Text mode consumes server language features
+
+Text mode SHALL present the server's language intelligence for the open file. `language.diagnostics` events SHALL be applied as editor markers keyed by the document revision they were computed against. Completion, hover, and definition SHALL be provided through the editor's provider hooks, which SHALL call a language gateway that is the only client code naming the language operations. Every request SHALL carry the current draft revision, and a result for a stale revision SHALL be dropped rather than applied. When no provider serves the file, or the language session is unavailable, Text mode SHALL fall back to highlighting and editing with no error surfaced. Choosing a definition result SHALL open the target file through the ordinary file-viewer open path.
+
+#### Scenario: Diagnostics arrive
+
+- **WHEN** a `language.diagnostics` event arrives for the open file at the current draft revision
+- **THEN** its diagnostics are applied as editor markers
+
+#### Scenario: Stale result
+
+- **WHEN** a completion, hover, definition, or diagnostics result names a revision older than the current draft revision
+- **THEN** the result is dropped and the editor is left unchanged
+
+#### Scenario: Go to definition
+
+- **WHEN** the user follows a definition result that names another project file
+- **THEN** that file opens through the ordinary file-viewer open path

@@ -34,8 +34,8 @@
 
 - [x] 6.1 Rewrite `docs/product-overview.md` core model, pillars, and architecture boundaries for one server type, and update the `context` block in `openspec/config.yaml` so it no longer names project-environment routing or environment extensions. Verified by both files containing no "project environment" wording.
 - [x] 6.2 Update `README.md`, `docs/operations/*`, and `AGENTS.md` where they describe SSH or Puzed projects. Verified by `grep -rni "puzed\|ssh project" README.md docs AGENTS.md` returning nothing.
-- [ ] 6.3 Delete the `project-environments`, `ssh-project-environments`, and `puzed-project-environments` spec directories when this change is archived, since every requirement is removed. Verified by `openspec validate --all` passing after archive.
-- [ ] 6.4 When syncing or archiving, rewrite the `## Purpose` paragraphs of `extension-platform`, `built-in-extensions`, `agent-status-and-sidebar`, and `file-explorer-and-folder-tabs`, which delta files cannot express, so they name no project environments, SSH, or Puzed. Verified by `grep -n -i "project environment\|ssh\|puzed\|this server" openspec/specs/*/spec.md` returning nothing.
+- [x] 6.3 Delete the `project-environments`, `ssh-project-environments`, and `puzed-project-environments` spec directories when this change is archived, since every requirement is removed. Verified by `openspec validate --all` passing after archive.
+- [x] 6.4 When syncing or archiving, rewrite the `## Purpose` paragraphs of `extension-platform`, `built-in-extensions`, `agent-status-and-sidebar`, and `file-explorer-and-folder-tabs`, which delta files cannot express, so they name no project environments, SSH, or Puzed. Verified by `grep -n -i "project environment\|ssh\|puzed\|this server" openspec/specs/*/spec.md` returning nothing.
 
 ## 7. Close out
 
