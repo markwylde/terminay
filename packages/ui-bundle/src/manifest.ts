@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   evaluateTerminayBundleCompatibility,
+  parseServerCompatibilityRequirements,
   parseTerminayHostCompatibilityRequirements,
 } from "@terminay/protocol";
 import type { TerminayHostRuntimeSupport } from "@terminay/protocol";
@@ -72,7 +73,7 @@ export function validateUiBundleManifest(
   const allowedFields = new Set([
     "schemaVersion", "bundleId", "entryPath", "protocolVersion",
     "serverVersion", "contentSecurityPolicy", "bundleFormatVersion",
-    "hostCompatibility", "assets",
+    "hostCompatibility", "serverCompatibility", "assets",
   ]);
   if (Object.keys(value).some((field) => !allowedFields.has(field)))
     throw new UiBundleError("validation", "UI bundle manifest fields are invalid");
@@ -130,6 +131,24 @@ export function validateUiBundleManifest(
         error instanceof Error
           ? error.message
           : "UI bundle host compatibility metadata is invalid",
+      );
+    }
+  }
+  // Optional: a bundle that declares nothing about servers is judged only
+  // against its host, and its client falls back to its own built-in
+  // requirements when it connects.
+  let serverCompatibility: UiBundleManifest["serverCompatibility"];
+  if (value.serverCompatibility !== undefined) {
+    try {
+      serverCompatibility = parseServerCompatibilityRequirements(
+        value.serverCompatibility,
+      );
+    } catch (error) {
+      throw new UiBundleError(
+        "validation",
+        error instanceof Error
+          ? error.message
+          : "UI bundle server compatibility metadata is invalid",
       );
     }
   }
@@ -209,6 +228,7 @@ export function validateUiBundleManifest(
           protocolVersion,
           serverVersion,
           hostCompatibility,
+          ...(serverCompatibility === undefined ? {} : { serverCompatibility }),
         };
   const derivedBundleId = deriveUiBundleId(assets, bundleId, identity);
   if (derivedBundleId !== bundleId)
@@ -226,6 +246,7 @@ export function validateUiBundleManifest(
     ...(hostCompatibility === undefined
       ? {}
       : { bundleFormatVersion: 1 as const, hostCompatibility }),
+    ...(serverCompatibility === undefined ? {} : { serverCompatibility }),
     assets: Object.freeze(assets),
   });
 }
@@ -266,6 +287,9 @@ export function uiBundleIdentity(
     protocolVersion: manifest.protocolVersion,
     serverVersion: manifest.serverVersion,
     hostCompatibility: manifest.hostCompatibility,
+    ...(manifest.serverCompatibility === undefined
+      ? {}
+      : { serverCompatibility: manifest.serverCompatibility }),
   });
 }
 
@@ -467,7 +491,24 @@ function canonicalBundleIdentity(identity: UiBundleIdentityMetadata): string {
       requiredCapabilities: capabilities(requirements.requiredCapabilities),
       optionalCapabilities: capabilities(requirements.optionalCapabilities),
     },
+    ...(identity.serverCompatibility === undefined
+      ? {}
+      : {
+          serverCompatibility: canonicalServerCompatibility(
+            identity.serverCompatibility,
+          ),
+        }),
   });
+}
+
+/** Sorted so two builds of the same declaration hash identically. */
+function canonicalServerCompatibility(value: unknown) {
+  const requirements = parseServerCompatibilityRequirements(value);
+  return {
+    protocol: requirements.protocol,
+    requiredCapabilities: [...requirements.requiredCapabilities].sort(),
+    optionalCapabilities: [...requirements.optionalCapabilities].sort(),
+  };
 }
 
 function assertBundlePath(

@@ -1,4 +1,8 @@
-import { LANGUAGE_CAPABILITY, type JsonValue } from '@terminay/protocol';
+import {
+	FEATURE_CAPABILITIES,
+	LANGUAGE_CAPABILITY,
+	type JsonValue,
+} from '@terminay/protocol';
 import {
 	type AgentOperationRegistry,
 	createAgentEventProjector,
@@ -1113,14 +1117,31 @@ function uniqueCapabilities(
 	return Object.freeze([
 		...new Set([
 			...options.capabilities,
-			'terminal',
-			...(options.macros === undefined ? [] : ['macros']),
-			...(options.ai === undefined ? [] : ['ai']),
-			...(options.git === undefined ? [] : ['git']),
-			...(options.recordings === undefined ? [] : ['recordings']),
-			...(options.settings === undefined ? [] : ['settings']),
-			...(options.shellProfiles === undefined ? [] : ['shell-profiles']),
-			...(options.fileObservations === undefined ? [] : ['files.observe']),
+			FEATURE_CAPABILITIES.terminal,
+			...(options.workspace === undefined
+				? []
+				: [FEATURE_CAPABILITIES.workspace]),
+			...(options.activity === undefined && options.agents === undefined
+				? []
+				: [FEATURE_CAPABILITIES.agents]),
+			...(options.macros === undefined ? [] : [FEATURE_CAPABILITIES.macros]),
+			...(options.ai === undefined ? [] : [FEATURE_CAPABILITIES.dictation]),
+			...(options.git === undefined ? [] : [FEATURE_CAPABILITIES.git]),
+			...(options.recordings === undefined
+				? []
+				: [FEATURE_CAPABILITIES.recording]),
+			...(options.settings === undefined
+				? []
+				: [FEATURE_CAPABILITIES.settings]),
+			...(options.shellProfiles === undefined
+				? []
+				: [FEATURE_CAPABILITIES.settings]),
+			...(options.extensions === undefined
+				? []
+				: [FEATURE_CAPABILITIES.extensions]),
+			...(options.fileObservations === undefined
+				? []
+				: [FEATURE_CAPABILITIES.files]),
 			...(options.language === undefined ? [] : [LANGUAGE_CAPABILITY]),
 		]),
 	]) as readonly string[];

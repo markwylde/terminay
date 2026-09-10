@@ -1,4 +1,4 @@
-import type { ProtocolId } from "@terminay/protocol";
+import { parseTerminayWorkspaceComposition, type ProtocolId, type TerminayWorkspaceComposition } from "@terminay/protocol";
 import { normalizeWindowGeometry, type WindowGeometry } from "../presentation.js";
 
 export type { WindowGeometry } from "../presentation.js";
@@ -8,6 +8,10 @@ export interface WorkspaceViewBinding {
   readonly connectionId: string;
   readonly workspaceViewId?: ProtocolId;
   readonly geometry?: WindowGeometry;
+  /** Client-owned device-local presentation state for this window: its
+   * attached connection set, the workspace view chosen per attached server,
+   * and its tab order. Never sent to a server. */
+  readonly composition?: TerminayWorkspaceComposition;
 }
 
 /** Host-local native geometry. It is deliberately not part of the server
@@ -32,7 +36,7 @@ function assertId(value: string, name: string): void {
 function normalizeBinding(value: unknown): WorkspaceViewBinding {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("window binding is required");
   const input = value as Record<string, unknown>;
-  const allowed = new Set(["windowId", "connectionId", "workspaceViewId", "geometry"]);
+  const allowed = new Set(["windowId", "connectionId", "workspaceViewId", "geometry", "composition"]);
   for (const key of Object.keys(input)) if (!allowed.has(key)) throw new TypeError(`window binding field is not allowed: ${key}`);
   if (typeof input.windowId !== "string") throw new TypeError("window id is invalid");
   if (typeof input.connectionId !== "string") throw new TypeError("connection id is invalid");
@@ -43,11 +47,13 @@ function normalizeBinding(value: unknown): WorkspaceViewBinding {
     assertId(input.workspaceViewId, "workspace view id");
   }
   const geometry = input.geometry === undefined ? undefined : normalizeWindowGeometry(input.geometry);
+  const composition = input.composition === undefined ? undefined : parseTerminayWorkspaceComposition(input.composition);
   return Object.freeze({
     windowId: input.windowId,
     connectionId: input.connectionId,
     ...(input.workspaceViewId === undefined ? {} : { workspaceViewId: input.workspaceViewId }),
     ...(geometry === undefined ? {} : { geometry }),
+    ...(composition === undefined ? {} : { composition }),
   });
 }
 
@@ -114,6 +120,17 @@ export class WindowViewRegistry {
   get(windowId: string): WorkspaceViewBinding | undefined {
     assertId(windowId, "window id");
     return this.byWindow.get(windowId);
+  }
+
+  /** Store this window's composition beside its geometry. Unreachable profiles
+   * stay in the record: the renderer greys them rather than dropping tabs. */
+  setComposition(windowId: string, composition: TerminayWorkspaceComposition): WorkspaceViewBinding {
+    const prior = this.get(windowId);
+    if (prior === undefined) throw new Error(`unknown window: ${windowId}`);
+    const next = normalizeBinding({ ...prior, composition });
+    this.byWindow.set(windowId, next);
+    this.persist();
+    return next;
   }
 
   updateGeometry(windowId: string, geometry: WindowGeometry): WorkspaceViewBinding {
