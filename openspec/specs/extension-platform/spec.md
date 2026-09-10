@@ -32,7 +32,7 @@ the server's matching UI bundle and MUST NOT load extension code.
 ### Requirement: Bounded API scope
 
 The public API SHALL support the capabilities needed by the official Codex,
-Claude Code, Cursor Agent, Grok, and omp extensions and the official language
+Claude Code, Grok, OpenCode, and omp agent extensions and the official language
 server extensions. Themes, editor plugins, autocomplete sources, arbitrary
 commands, renderer components, and generic Server Core operation registration
 SHALL be out of scope.
@@ -64,7 +64,8 @@ Desktop's embedded server.
 ### Requirement: Official catalogue and release-bundled artifacts
 
 Terminay SHALL ship an official catalogue containing the built-in Codex, Claude
-Code, Cursor Agent, Grok, and omp npm packages and their expected metadata.
+Code, Grok, OpenCode, omp, and TypeScript language npm packages and their
+expected metadata.
 Verified package artifacts for that exact release SHALL be embedded in Electron
 and standalone server distributions, installed without network access, and
 enabled by default. Official packages SHALL use the same public manifest,
@@ -896,7 +897,7 @@ groups, rows, fields, buttons, badges, and disclosure patterns.
 ### Requirement: Extensions section content
 
 The Extensions section SHALL name the selected Terminay Server as the authority
-and SHALL show built-in Codex, Claude Code, Cursor Agent, Grok, omp, and
+and SHALL show built-in Codex, Claude Code, Grok, OpenCode, omp, and
 TypeScript language cards, installed and disabled states, available explicit
 updates, compatibility and failure details, permissions, dependants, and
 **Install from npm…**. A language server extension's card SHALL show the
