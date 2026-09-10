@@ -16,4 +16,4 @@
 
 ## 4. Close out
 
-- [ ] 4.1 Run `openspec validate --all`, `npm run lint`, `npm run test:ci`, and the file-viewer end-to-end suite through `npm run test:e2e`. Verified by all passing.
+- [x] 4.1 Run `openspec validate --all`, `npm run lint`, `npm run test:ci`, and the file-viewer end-to-end suite through `npm run test:e2e`. Verified by all passing.
