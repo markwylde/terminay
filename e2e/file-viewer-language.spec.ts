@@ -150,7 +150,7 @@ test.describe('file viewer language intelligence', () => {
     })
     expect(modelUris).toContain(typeError?.resource)
 
-    await mainWindow.locator('.monaco-editor .inputarea').first().click()
+    await mainWindow.locator('.monaco-editor .view-lines').first().click()
     await mainWindow.keyboard.press('Control+End')
     await mainWindow.keyboard.type('\nutil.')
     const suggestions = mainWindow.locator('.suggest-widget .monaco-list-row')
