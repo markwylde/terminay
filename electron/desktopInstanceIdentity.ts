@@ -90,7 +90,13 @@ export function desktopEmbeddedStorePaths(identity: DesktopInstanceIdentity): {
 		recordingLibrary: path.join(root, 'server-recording-roots.v1.json'),
 		recordings: path.join(root, 'server-recordings'),
 		retiredUiBundleCache: path.join(root, 'ui-bundles'),
-		workspace: path.join(root, 'workspace.v3.json'),
+		// The workspace record carries its own schema version, and a record the
+		// current server cannot read is preserved rather than rewritten. Naming
+		// the file for its generation keeps that preservation out of the startup
+		// path: an older generation is simply a different file, so a data root
+		// written by an earlier Terminay opens on a fresh workspace instead of
+		// refusing to start, and the earlier file stays on disk untouched.
+		workspace: path.join(root, 'workspace.v4.json'),
 	});
 }
 
