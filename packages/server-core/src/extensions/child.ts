@@ -418,13 +418,7 @@ async function admitAgentTerminal(frame: HostFrame): Promise<void> {
 		return;
 	}
 	const controller = new AbortController();
-	const bridge = await createAgentTerminalContext(
-		context,
-		Array.isArray(payload?.observationCapabilities)
-			? payload.observationCapabilities
-			: [],
-		controller.signal,
-	);
+	const bridge = await createAgentTerminalContext(context, controller.signal);
 	agentTerminals.set(contextId, { providerId, controller, context });
 	try {
 		const result = await (
@@ -517,7 +511,6 @@ function ttyFactFor(path: string): Readonly<{
 
 export async function createAgentTerminalContext(
 	context: Record<string, unknown>,
-	capabilities: unknown[],
 	signal: AbortSignal,
 ): Promise<{
 	readonly terminal: Record<string, unknown>;
@@ -728,8 +721,7 @@ export async function createAgentTerminalContext(
 		// did not make on every admission.
 		const issued = typeof context.ttyPath === 'string' ? context.ttyPath : undefined;
 		if (issued) return ttyFactFor(issued);
-		if (local === undefined || !capabilities.includes('process-observation'))
-			return undefined;
+		if (local === undefined) return undefined;
 		try {
 			// Bounded, because this must never hold up admission. A host that
 			// cannot answer — or does not answer at all — leaves the fact absent,
@@ -760,11 +752,6 @@ export async function createAgentTerminalContext(
 		environment: Object.freeze({ id: context.serverId }),
 		process: Object.freeze({ id: context.contextId }),
 		foreground: Object.freeze({ executableName: '' }),
-		capabilities: new Set(
-			capabilities.filter(
-				(value): value is string => typeof value === 'string',
-			),
-		),
 		observation,
 		signal,
 		async bindSession(binding: unknown) {
