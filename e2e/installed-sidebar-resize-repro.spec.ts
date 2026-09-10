@@ -14,7 +14,7 @@ const installedWorkspace =
 		'Library',
 		'Application Support',
 		'Terminay',
-		'workspace.v3.json',
+		'workspace.v4.json',
 	);
 
 type BoundarySample = Readonly<{
@@ -64,7 +64,7 @@ async function setExpanded(
 
 /**
  * Reproduces the exact user-facing release in the currently installed package,
- * not the worktree implementation. It gets a copy of workspace.v3.json in a
+ * not the worktree implementation. It gets a copy of workspace.v4.json in a
  * freshly-created profile, so the real profile is read-only input.
  */
 test('installed 3.2 sidebar: rapid Agents/Git mouse release does not bounce', async () => {
@@ -83,7 +83,7 @@ test('installed 3.2 sidebar: rapid Agents/Git mouse release does not bounce', as
 	// browser storage, caches, or any other part of the real profile.
 	const installedProfile = path.dirname(installedWorkspace);
 	for (const filename of [
-		// 'workspace.v3.json',
+		// 'workspace.v4.json',
 		// 'terminal-settings.json',
 	]) {
 		const source = path.join(installedProfile, filename);

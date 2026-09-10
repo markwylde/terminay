@@ -26,7 +26,7 @@ async function withDataRoot(run) {
 
 /** One server generation: open the persisted workspace, restore, seed, commit. */
 async function startGeneration(root, sessionIds) {
-	const backend = new FileWorkspaceStateBackend(join(root, 'workspace.v3.json'));
+	const backend = new FileWorkspaceStateBackend(join(root, 'workspace.v4.json'));
 	const repository = await openCanonicalWorkspace({
 		backend,
 		serverId: 'restart-server',
@@ -82,7 +82,7 @@ test('a restarted server publishes no terminal whose process is gone', async () 
 
 		// The process ends. Its sessions end with it; the file does not.
 		const persisted = JSON.parse(
-			await readFile(join(root, 'workspace.v3.json'), 'utf8'),
+			await readFile(join(root, 'workspace.v4.json'), 'utf8'),
 		);
 		assert.equal(
 			Object.values(persisted.panels).filter(
@@ -125,7 +125,7 @@ test('projects and non-terminal panels survive the restart', async () => {
 		await startGeneration(root, new Set());
 
 		const backend = new FileWorkspaceStateBackend(
-			join(root, 'workspace.v3.json'),
+			join(root, 'workspace.v4.json'),
 		);
 		const repository = await openCanonicalWorkspace({
 			backend,
