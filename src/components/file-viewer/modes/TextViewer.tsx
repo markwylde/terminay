@@ -1,4 +1,4 @@
-import Editor from '@monaco-editor/react';
+import Editor, { type OnMount } from '@monaco-editor/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
 	FileRangeRequest,
@@ -329,12 +329,43 @@ export function TextViewer({
 	);
 	const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 	const languageAttachmentRef = useRef<LanguageAttachment | null>(null);
-	const languageIntelligenceRef = useRef(languageIntelligence);
-	languageIntelligenceRef.current = languageIntelligence;
+	const mountedEditorRef = useRef<Readonly<{
+		editor: Parameters<OnMount>[0];
+		monaco: Parameters<OnMount>[1];
+	}> | null>(null);
+	// Language features are the server's, and the connection that serves them is
+	// replaced on every reconnect. Attaching only in `onMount` would leave an
+	// open panel holding a disposed gateway for as long as it stays open, so the
+	// attachment follows the gateway's identity instead.
+	const attachLanguage = useCallback(() => {
+		languageAttachmentRef.current?.dispose();
+		languageAttachmentRef.current = null;
+		const mounted = mountedEditorRef.current;
+		if (mounted === null) return;
+		const model = mounted.editor.getModel();
+		// When no provider serves this file the attachment does nothing and Text
+		// mode stays a highlighting and editing surface.
+		if (languageIntelligence === undefined || model === null || !monacoLanguage)
+			return;
+		languageAttachmentRef.current = attachLanguageIntelligence({
+			absolutePath: filePath ?? languageIntelligence.path,
+			editor: mounted.editor,
+			gateway: languageIntelligence.gateway,
+			languageId: monacoLanguage,
+			monaco: mounted.monaco,
+			path: languageIntelligence.path,
+			projectId: languageIntelligence.projectId,
+			projectRoot: languageIntelligence.projectRoot,
+		});
+	}, [filePath, languageIntelligence, monacoLanguage]);
+	useEffect(() => {
+		attachLanguage();
+	}, [attachLanguage]);
 	useEffect(() => {
 		return () => {
 			languageAttachmentRef.current?.dispose();
 			languageAttachmentRef.current = null;
+			mountedEditorRef.current = null;
 		};
 	}, []);
 	const useWindowedEngine =
@@ -394,24 +425,8 @@ export function TextViewer({
 					}
 					monaco.editor.setTheme(FILE_VIEWER_THEME);
 					onCurrentTextGetterChange?.(() => editor.getValue());
-					// Language features are the server's. When no provider serves
-					// this file the attachment does nothing and Text mode stays a
-					// highlighting and editing surface.
-					const intelligence = languageIntelligenceRef.current;
-					languageAttachmentRef.current?.dispose();
-					languageAttachmentRef.current =
-						intelligence === undefined || model === null || !monacoLanguage
-							? null
-							: attachLanguageIntelligence({
-									absolutePath: filePath ?? intelligence.path,
-									editor,
-									gateway: intelligence.gateway,
-									languageId: monacoLanguage,
-									monaco,
-									path: intelligence.path,
-									projectId: intelligence.projectId,
-									projectRoot: intelligence.projectRoot,
-								});
+					mountedEditorRef.current = Object.freeze({ editor, monaco });
+					attachLanguage();
 					const node = editor.getDomNode();
 					if (node) {
 						const colorizeWhenVisible = () => {

@@ -6,6 +6,7 @@ import {
 	agentBadgesForOtherServers,
 	crossServerAgentStates,
 } from '../src/workspace/crossServerAgentBadges.ts'
+import { subscriptionKey } from '../src/workspace/connectionSubscriptionIdentity.ts'
 import { defaultTerminalSettings } from '../src/terminalSettings.ts'
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8')
@@ -185,4 +186,52 @@ test('per-server surfaces select a connection instead of merging servers', async
 		workspace,
 		/const applicationClient =\s*selectedServer\.connection\?\.context\?\.applicationClient/u,
 	)
+})
+
+test('replacing a connection context re-subscribes the tab and agent hooks', () => {
+	const store = () => ({ snapshot: null, subscribe: () => () => {} })
+	const context = () => ({
+		workspaceSnapshotStore: store(),
+		agentStatusClient: { refresh: async () => {} },
+	})
+	const first = context()
+	const connection = { serverId: 'server-a', context: first }
+	const pick = (entry) => entry.context?.workspaceSnapshotStore
+	const before = subscriptionKey([connection], pick)
+
+	// The same context resubscribes for no reason: the key must not move.
+	assert.equal(subscriptionKey([{ serverId: 'server-a', context: first }], pick), before)
+
+	// A reconnect keeps the server id and hands out a fresh store, so the
+	// subscription has to follow it.
+	const reconnected = subscriptionKey(
+		[{ serverId: 'server-a', context: context() }],
+		pick,
+	)
+	assert.notEqual(reconnected, before)
+
+	// The fail-then-succeed path clears the context first, keeping the id.
+	const failed = subscriptionKey([{ serverId: 'server-a' }], pick)
+	assert.notEqual(failed, before)
+	assert.notEqual(failed, reconnected)
+
+	// The agent client is its own subscription target on the same connection.
+	assert.notEqual(
+		subscriptionKey([connection], (entry) => entry.context?.agentStatusClient),
+		before,
+	)
+})
+
+test('the connection menu wires its rows to the active-server setter', async () => {
+	const menu = await read('src/workspace/RemoteAccessConnectionMenu.tsx')
+	// Without `onSelect` every row in the list is a no-op and there is no way
+	// to switch server from the menu at all.
+	assert.match(menu, /onSelect=\{\(serverId\) =>/u)
+	assert.match(menu, /setActiveServerId\(serverId\)/u)
+	assert.match(menu, /props\.onSelectServer\(serverId\)/u)
+	// The workspace hands it the same path a cross-server tab activation takes.
+	const app = await read('src/App.tsx')
+	assert.match(app, /onSelectServer=\{goToServer\}/u)
+	assert.match(app, /const goToServer = \(serverId: string\) => \{/u)
+	assert.match(app, /setRequestedServerId\(serverId\);/u)
 })

@@ -192,6 +192,57 @@ export function createLocalCompositionPersistence(
 	return Object.freeze(persistence);
 }
 
+/**
+ * One window's use of one composition record, in the order the two halves have
+ * to happen in: restore, then persist.
+ *
+ * Restoring and persisting are the same record read and written by the same
+ * owner, so the gate lives here rather than in a flag some other component
+ * sets. Until `restore` has finished, `persist` refuses — a window that
+ * persisted its default (nothing attached, no order) before reading would
+ * overwrite the real record with an empty one, and every attached server would
+ * be lost on reload.
+ *
+ * A window that changes where its composition lives — the primary decides once
+ * it knows its server — takes a new session, which closes the gate again.
+ */
+export interface CompositionSession {
+	restore(
+		apply: (composition: TerminayWorkspaceComposition) => void,
+	): Promise<void>;
+	/** True when the composition was written; false while still ungated. */
+	persist(composition: TerminayWorkspaceComposition): boolean;
+	readonly restored: boolean;
+}
+
+export function createCompositionSession(
+	persistence: CompositionPersistence,
+): CompositionSession {
+	let restored = false;
+	const session: CompositionSession = {
+		restore: async (apply) => {
+			try {
+				const stored = await persistence.read();
+				if (stored !== undefined) apply(stored);
+			} catch {
+				// A record that cannot be read is a window with no remembered
+				// composition, not a window that may never persist one.
+			} finally {
+				restored = true;
+			}
+		},
+		persist: (composition) => {
+			if (!restored) return false;
+			void persistence.write(composition);
+			return true;
+		},
+		get restored() {
+			return restored;
+		},
+	};
+	return session;
+}
+
 export const NO_COMPOSITION_PERSISTENCE: CompositionPersistence = Object.freeze(
 	{
 		read: async () => undefined,

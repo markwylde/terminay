@@ -238,3 +238,28 @@ test('detaching drops the connection and never touches the primary', async () =>
 	await assert.rejects(() => registry.detach('local'), /primary/)
 	await registry.dispose()
 })
+
+test('a disposed registry can be started again, and attaches nothing meanwhile', async () => {
+	// React StrictMode mounts, tears down, and mounts again, and leaving the
+	// manager disposes the registry the shell then remounts. A second
+	// `startPrimary` must not throw the whole shell away.
+	const { registry } = registryFor([hello('server-a'), hello('server-a'), hello('server-b')])
+	registry.startPrimary('local')
+	await settled(registry, (current) => current.primary?.phase === 'ready')
+	await registry.dispose()
+
+	// Nothing may be attached to a registry that owns no connections: the entry
+	// would have nothing left to tear it down.
+	assert.equal(registry.attach('build-box'), undefined)
+	assert.deepEqual(registry.snapshot.connections, [])
+
+	registry.startPrimary('local')
+	const revived = await settled(registry, (current) => current.primary?.phase === 'ready')
+	assert.equal(revived.primary.profileId, 'local')
+	registry.attach('build-box')
+	await settled(
+		registry,
+		(current) => current.connections.length === 2,
+	)
+	await registry.dispose()
+})

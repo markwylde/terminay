@@ -22,6 +22,9 @@ export function RemoteAccessConnectionMenu(props: {
 	onOpenConnection: () => void;
 	onOpenPairingQr: () => void;
 	onSelectConnection?: (profileId: string) => void;
+	/** Go to a server the window already holds: the same act as activating one
+	 * of its tabs. Absent hosts fall back to publishing the active server. */
+	onSelectServer?: (serverId: string) => void;
 	onSwitchConnections?: () => void;
 	onToggleExposure: () => void;
 	onToggleMenu: () => void;
@@ -35,6 +38,7 @@ export function RemoteAccessConnectionMenu(props: {
 		connections,
 		detach,
 		profiles,
+		setActiveServerId,
 		supportsAttach,
 	} = useConnections();
 	const switcherEntries = props.connectionSwitcherEntries ?? [];
@@ -123,6 +127,15 @@ export function RemoteAccessConnectionMenu(props: {
 								currentServerLabel={props.currentServerLabel}
 								onAttach={attach}
 								onDetach={(profileId) => void detach(profileId)}
+								// Choosing a row is the same act as activating one of that
+								// server's tabs: the window starts working in it.
+								onSelect={(serverId) => {
+									if (props.onSelectServer === undefined) {
+										setActiveServerId(serverId);
+										return;
+									}
+									props.onSelectServer(serverId);
+								}}
 								profiles={profiles}
 								supportsAttach={supportsAttach}
 							/>
