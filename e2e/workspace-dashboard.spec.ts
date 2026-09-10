@@ -73,7 +73,7 @@ test.describe('workspace dashboard', () => {
 		await openFileExplorer(mainWindow);
 		await fileExplorerItem(mainWindow, 'notes.txt').dblclick();
 		await expect(mainWindow.locator('.file-preview-text')).toBeVisible();
-		await mainWindow.getByLabel('Create project on This server').click();
+		await mainWindow.getByLabel('Create project').click();
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 		const secondProjectId = await activeProjectId(mainWindow);
@@ -162,7 +162,7 @@ test.describe('workspace dashboard', () => {
 		mainWindow,
 	}) => {
 		const firstProjectId = await activeProjectId(mainWindow);
-		await mainWindow.getByLabel('Create project on This server').click();
+		await mainWindow.getByLabel('Create project').click();
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 
@@ -210,7 +210,7 @@ test.describe('workspace dashboard', () => {
 		mainWindow,
 	}) => {
 		const firstProjectId = await activeProjectId(mainWindow);
-		await mainWindow.getByLabel('Create project on This server').click();
+		await mainWindow.getByLabel('Create project').click();
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 		const secondProjectId = await activeProjectId(mainWindow);
@@ -251,7 +251,7 @@ test.describe('workspace dashboard', () => {
 		electronApp,
 		mainWindow,
 	}) => {
-		await mainWindow.getByLabel('Create project on This server').click();
+		await mainWindow.getByLabel('Create project').click();
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 

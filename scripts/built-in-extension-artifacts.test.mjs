@@ -12,7 +12,7 @@ test('all eight built-ins stage as verified offline trees and Electron/standalon
   try {
     const staged = join(root, 'staged');
     const result = await stageBuiltInExtensions({ outputDirectory: staged, skipChecks: true });
-    assert.equal(result.inventory.artifacts.length, 7);
+    assert.equal(result.inventory.artifacts.length, 5);
     assert.equal(result.inventory.artifacts.some((artifact) => artifact.files.some((file) => file.path.endsWith('/.npmignore'))), false);
     await verifyBuiltInExtensionArtifacts(staged);
     const electron = join(root, 'electron-resource');

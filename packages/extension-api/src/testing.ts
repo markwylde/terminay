@@ -12,7 +12,6 @@ import type {
 	AgentForegroundProcess,
 	AgentLifecycleEvent,
 	AgentModelMetadata,
-	AgentObservationCapability,
 	AgentObservationResult,
 	AgentOpenFile,
 	AgentProcessHandle,
@@ -29,10 +28,6 @@ import type {
 	CancellationSignal,
 	Disposable,
 	ExtensionContext,
-	JsonValue,
-	ProviderDependencyHandler,
-	ProviderDependencyTargetContext,
-	ProviderDependencyTargetRequest,
 	ProviderVaultBinding,
 	ProviderVaultBroker,
 	TerminayExtension,
@@ -40,20 +35,14 @@ import type {
 } from './types.js';
 import {
 	ExtensionSchemaError,
-	validateProviderDependencyHandler,
-	validateProviderDependencyResult,
-	validateProviderDependencyTargetContext,
-	validateProviderDependencyTargetRequest,
 	validateProviderVaultPutRequest,
 	validateProviderVaultRemoveRequest,
 	validateProviderVaultWithSecretRequest,
 } from './validation.js';
 
-export type FixtureEnvironmentKind = 'this-server' | 'ssh';
 export type ObservationCancelReason =
 	| 'process-exit'
 	| 'terminal-close'
-	| 'environment-change'
 	| 'extension-disable';
 export type ExtensionReleaseReason =
 	| 'disabled'
@@ -72,7 +61,6 @@ export interface FixtureTerminalOptions {
 	pid?: number;
 	/** Values exposed only through `processes.environment(requestedNames)`. */
 	environment?: Record<string, string>;
-	capabilities?: AgentObservationCapability[];
 	files?: Record<string, unknown[]>;
 	/**
 	 * Creation times per fixture file path, so a provider's post-process-start
@@ -120,12 +108,6 @@ export interface FixtureTerminalOptions {
 	openFilePaths?: readonly string[];
 	/** Opaque handle namespace; two fixtures never share provenance. */
 	terminalId?: string;
-	/**
-	 * Routes observation the same way the host does: **This server** is backed by
-	 * the server account, SSH by the environment's advertised capability. Files
-	 * exist only inside this broker — never on the Node filesystem.
-	 */
-	environmentKind?: FixtureEnvironmentKind;
 	signal?: CancellationSignal;
 }
 
@@ -159,55 +141,6 @@ const notCancelled: CancellationSignal = Object.freeze({
 	aborted: false,
 	throwIfAborted(): void {},
 });
-
-export interface ProviderDependencyTargetHarness {
-	/** Validates and invokes a public dependency target as the host would. */
-	call(
-		request: ProviderDependencyTargetRequest,
-		context?: Partial<
-			Omit<ProviderDependencyTargetContext, 'signal' | 'vault'>
-		> & { signal?: CancellationSignal; vault?: ProviderVaultBroker },
-	): Promise<JsonValue>;
-}
-
-/**
- * Creates an in-memory target-side dependency boundary for public extension
- * tests. It deliberately does not emulate authorization; hosts authorize the
- * caller manifest dependency and target contribution before this boundary.
- */
-export function createProviderDependencyTargetHarness(
-	handler: ProviderDependencyHandler,
-): ProviderDependencyTargetHarness {
-	assertValid(
-		validateProviderDependencyHandler(handler),
-		'Invalid provider dependency handler',
-	);
-	const vault = createProviderVaultHarness();
-	return {
-		async call(request, overrides = {}): Promise<JsonValue> {
-			assertValid(
-				validateProviderDependencyTargetRequest(request),
-				'Invalid provider dependency target request',
-			);
-			const context: ProviderDependencyTargetContext = {
-				deadlineAt: new Date(Date.now() + 60_000).toISOString(),
-				signal: notCancelled,
-				vault,
-				...overrides,
-			};
-			assertValid(
-				validateProviderDependencyTargetContext(context),
-				'Invalid provider dependency target context',
-			);
-			const result = await handler.call(request, context);
-			assertValid(
-				validateProviderDependencyResult(result),
-				'Invalid provider dependency result',
-			);
-			return result;
-		},
-	};
-}
 
 interface FixtureVaultEntry {
 	binding: ProviderVaultBinding;
@@ -410,13 +343,6 @@ export function fixtureTerminal(
 	const scope =
 		options.terminalId ??
 		`fixture-terminal-${(++fixtureTerminalSequence).toString(36)}`;
-	const capabilities = new Set<AgentObservationCapability>(
-		options.capabilities ?? [
-			'process-observation',
-			'filesystem-observation',
-			'agent-journal',
-		],
-	);
 	const signal = options.signal ?? notCancelled;
 	const issue = <T>(kind: string, path: string): T =>
 		Object.freeze({ id: `${scope}:${kind}:${path}` }) as T;
@@ -438,12 +364,6 @@ export function fixtureTerminal(
 		executableName: options.foregroundExecutable,
 		arguments: options.arguments,
 	};
-	const requireCapability = (capability: AgentObservationCapability): void => {
-		if (!capabilities.has(capability))
-			throw new Error(
-				`agent observation is unavailable: ${capability} is not advertised`,
-			);
-	};
 	const lookup = (handle: AgentFileHandle): Uint8Array => {
 		const path = pathOf(handle, 'file', 'agent file handle');
 		options.onFileRead?.(path);
@@ -460,12 +380,11 @@ export function fixtureTerminal(
 		terminal: issue<AgentTerminalHandle>('terminal', scope),
 		project: { id: 'fixture-project' } as unknown as AgentProjectHandle,
 		environment: {
-			id: options.environmentKind === 'ssh' ? 'ssh-environment' : 'this-server',
-		} as AgentTerminalContext['environment'],
+			id: `${scope}:environment`,
+		} as unknown as AgentTerminalContext['environment'],
 		process,
 		foreground,
 		tty: options.tty,
-		capabilities,
 		signal,
 		async bindSession(
 			request: AgentSessionBindingRequest,
@@ -484,7 +403,6 @@ export function fixtureTerminal(
 		observation: {
 			processes: {
 				async descendants(): Promise<AgentProcessSnapshot[]> {
-					requireCapability('process-observation');
 					signal.throwIfAborted();
 					return [
 						{
@@ -517,7 +435,6 @@ export function fixtureTerminal(
 					];
 				},
 				async openFiles(processes, request): Promise<AgentOpenFile[]> {
-					requireCapability('process-observation');
 					signal.throwIfAborted();
 					for (const item of processes)
 						pathOf(processHandleOf(item), 'process', 'agent process handle');
@@ -530,7 +447,6 @@ export function fixtureTerminal(
 				async environment(
 					names: readonly string[],
 				): Promise<Record<string, string>> {
-					requireCapability('process-observation');
 					signal.throwIfAborted();
 					const values = options.environment ?? {};
 					return Object.fromEntries(
@@ -542,7 +458,6 @@ export function fixtureTerminal(
 			},
 			files: {
 				async resolveHomeDirectory(relativePath: string) {
-					requireCapability('filesystem-observation');
 					signal.throwIfAborted();
 					const root = `/home/test/${relativePath.replace(/\/$/, '')}`;
 					return [...files.keys()].some(
@@ -555,7 +470,6 @@ export function fixtureTerminal(
 					relativePath: string,
 					request: { environmentVariable: string },
 				) {
-					requireCapability('filesystem-observation');
 					signal.throwIfAborted();
 					const environmentRoot = options.environment?.[
 						request.environmentVariable
@@ -574,7 +488,6 @@ export function fixtureTerminal(
 					root: AgentDirectoryHandle,
 					request: AgentDirectoryListOptions,
 				) {
-					requireCapability('filesystem-observation');
 					signal.throwIfAborted();
 					const prefix = `${pathOf(root, 'dir', 'agent directory handle').replace(/\/$/, '')}/`;
 					let bytes = 0;
@@ -621,7 +534,6 @@ export function fixtureTerminal(
 					root: AgentDirectoryHandle,
 					request: AgentDirectoryListOptions,
 				) {
-					requireCapability('filesystem-observation');
 					signal.throwIfAborted();
 					const prefix = `${pathOf(root, 'dir', 'agent directory handle').replace(/\/$/, '')}/`;
 					const list = () => this.listDirectory(root, request);
@@ -658,7 +570,6 @@ export function fixtureTerminal(
 					relativePath: string,
 					request: { environmentVariable: string },
 				) {
-					requireCapability('filesystem-observation');
 					signal.throwIfAborted();
 					const root =
 						request.environmentVariable &&
@@ -675,7 +586,6 @@ export function fixtureTerminal(
 					providerPath: string,
 					request: { environmentVariable: string; beneathRelative?: string },
 				) {
-					requireCapability('filesystem-observation');
 					signal.throwIfAborted();
 					const root =
 						request.environmentVariable &&
@@ -694,7 +604,6 @@ export function fixtureTerminal(
 					handle: AgentFileHandle,
 					request: { environmentVariable: string; beneathRelative?: string },
 				) {
-					requireCapability('filesystem-observation');
 					signal.throwIfAborted();
 					const path = pathOf(handle, 'file', 'agent file handle');
 					const root =
@@ -711,7 +620,6 @@ export function fixtureTerminal(
 						: undefined;
 				},
 				async resolveHomeRelative(relativePath: string) {
-					requireCapability('filesystem-observation');
 					signal.throwIfAborted();
 					const exact = `/home/test/${relativePath}`;
 					return files.has(exact)
@@ -724,7 +632,6 @@ export function fixtureTerminal(
 					providerPath: string,
 					request: { beneath: { homeRelative: string } },
 				) {
-					requireCapability('filesystem-observation');
 					signal.throwIfAborted();
 					const allowedPrefix = `/home/test/${request.beneath.homeRelative}/`;
 					return providerPath.startsWith(allowedPrefix) &&
@@ -736,7 +643,6 @@ export function fixtureTerminal(
 					handle: AgentFileHandle,
 					request: { beneath: { homeRelative: string } },
 				) {
-					requireCapability('filesystem-observation');
 					signal.throwIfAborted();
 					const path = pathOf(handle, 'file', 'agent file handle');
 					const allowedPrefix = `/home/test/${request.beneath.homeRelative}/`;
@@ -745,7 +651,6 @@ export function fixtureTerminal(
 						: undefined;
 				},
 				async canonicalFile(handle: AgentFileHandle) {
-					requireCapability('filesystem-observation');
 					signal.throwIfAborted();
 					const path = pathOf(handle, 'file', 'agent file handle');
 					return files.has(path) ? handle : undefined;
@@ -754,7 +659,6 @@ export function fixtureTerminal(
 					return this.canonicalFile(handle);
 				},
 				async stat(handle: AgentFileHandle) {
-					requireCapability('filesystem-observation');
 					signal.throwIfAborted();
 					const path = pathOf(handle, 'file', 'agent file handle');
 					if (!files.has(path)) return undefined;
@@ -769,7 +673,6 @@ export function fixtureTerminal(
 					};
 				},
 				async read(handle: AgentFileHandle, request: { maxBytes: number }) {
-					requireCapability('filesystem-observation');
 					signal.throwIfAborted();
 					return lookup(handle).slice(0, request.maxBytes);
 				},
@@ -777,7 +680,6 @@ export function fixtureTerminal(
 					handle: AgentFileHandle,
 					request: { maxBytes: number },
 				): Promise<T | undefined> {
-					requireCapability('filesystem-observation');
 					signal.throwIfAborted();
 					try {
 						return JSON.parse(
@@ -793,7 +695,6 @@ export function fixtureTerminal(
 					handle: AgentFileHandle,
 					request: { maxBytes: number; position: 'first' | 'last' },
 				): Promise<T | undefined> {
-					requireCapability('agent-journal');
 					signal.throwIfAborted();
 					const lines = new TextDecoder()
 						.decode(lookup(handle).slice(0, request.maxBytes))
@@ -808,7 +709,6 @@ export function fixtureTerminal(
 					}
 				},
 				async follow(handle: AgentFileHandle): Promise<AgentFileWatcher> {
-					requireCapability('agent-journal');
 					signal.throwIfAborted();
 					const bytes = lookup(handle).slice();
 					return createIdempotentWatcher(
@@ -934,10 +834,6 @@ export async function createAgentExtensionHarness(
 			(provider) => provider.id,
 		) ?? [],
 	);
-	const requiredCapabilities =
-		options.manifest?.contributes.agentProviders?.flatMap(
-			(provider) => provider.requiredEnvironmentCapabilities,
-		) ?? [];
 	const context: ExtensionContext = {
 		extensionId: options.manifest?.id ?? 'test.extension',
 		apiVersion: EXTENSION_API_VERSION,
@@ -946,7 +842,6 @@ export async function createAgentExtensionHarness(
 			data: '/fixture/data',
 			cache: '/fixture/cache',
 		},
-		registerProjectEnvironmentProvider(): void {},
 		agents: {
 			registerProvider(providerId, runtime) {
 				if (options.manifest && !declared.has(providerId))
@@ -1003,9 +898,6 @@ export async function createAgentExtensionHarness(
 			projectionState.activeToolIds = [];
 			projectionState.title = undefined;
 			projectionState.model = undefined;
-			const missing = requiredCapabilities.filter(
-				(capability) => !terminal.capabilities.has(capability),
-			);
 			for (const runtime of registrations.values()) {
 				if (!runtime.matchesForeground(terminal.foreground)) continue;
 				const result = await runtime.observe(terminal);
@@ -1051,11 +943,6 @@ export async function createAgentExtensionHarness(
 						);
 					}
 				}
-			}
-			if (missing.length > 0 && emitted.length > 0) {
-				throw new Error(
-					'harness: mapping produced events without required environment capabilities',
-				);
 			}
 		},
 		events() {

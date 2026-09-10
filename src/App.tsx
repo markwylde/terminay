@@ -3,9 +3,6 @@ import type { JsonValue } from '@terminay/protocol';
 import {
 	type ActivitySessionSnapshot,
 	MacroClient,
-	type ProjectEnvironmentClientProfile,
-	type ProjectEnvironmentProviderDescriptor,
-	ProjectEnvironmentsClient,
 	SettingsClient,
 	type ShellProfileCatalogueEntry,
 	ShellProfilesClient,
@@ -111,8 +108,6 @@ import {
 } from './keyboardShortcuts';
 import { tryRenderMacroTemplate } from './macroSettings';
 import { getPathRelativeToRoot } from './pathUtils';
-import { ProjectEnvironmentSplitButton } from './projectEnvironments/ProjectEnvironmentSplitButton';
-import type { ProjectEnvironmentSummaryDto } from './projectEnvironments/uiModel';
 import {
 	createServerMcpInstallClient,
 	createServerRemoteAccessClients,
@@ -1248,7 +1243,7 @@ const ProjectWorkspace = forwardRef<
 				[project.id, project.rootFolder, terminalClientContext],
 			);
 		const serverActivityClient = terminalClientContext?.activityClient;
-		// Agent status is a selected-server projection, not a project-environment
+		// Agent status is a selected-server projection, not a project-scoped
 		// feature. A newly-created terminal can emit journal records before its
 		// project feature snapshot is hydrated, so bind its presentation scope to
 		// the canonical server client directly.
@@ -5516,41 +5511,6 @@ function App({
 		useState<AppUpdateStatus | null>(null);
 	const activityMenuRef = useRef<HTMLDivElement | null>(null);
 	const [isActivityMenuOpen, setIsActivityMenuOpen] = useState(false);
-	const projectEnvironmentsClient = useMemo(
-		() =>
-			terminalClientContext?.applicationClient === undefined
-				? null
-				: new ProjectEnvironmentsClient(
-						new TerminayClientFacade(terminalClientContext.applicationClient),
-					),
-		[terminalClientContext?.applicationClient],
-	);
-	const [projectEnvironmentChoices, setProjectEnvironmentChoices] = useState<
-		readonly ProjectEnvironmentSummaryDto[]
-	>([]);
-	const [projectEnvironmentProviders, setProjectEnvironmentProviders] =
-		useState<readonly ProjectEnvironmentProviderDescriptor[]>([]);
-	const [projectEnvironmentProfiles, setProjectEnvironmentProfiles] = useState<
-		readonly ProjectEnvironmentClientProfile[]
-	>([]);
-	const applyProjectEnvironmentSnapshot = useCallback(
-		(snapshot: Awaited<ReturnType<ProjectEnvironmentsClient['snapshot']>>) => {
-			setProjectEnvironmentChoices(snapshot.environments);
-			setProjectEnvironmentProviders(snapshot.providers);
-			setProjectEnvironmentProfiles(snapshot.profiles);
-		},
-		[],
-	);
-	const refreshProjectEnvironmentChoices = useCallback(async () => {
-		if (projectEnvironmentsClient === null) return;
-		try {
-			const snapshot = await projectEnvironmentsClient.snapshot();
-			applyProjectEnvironmentSnapshot(snapshot);
-		} catch {
-			// Preserve the last authenticated inventory during connection recovery.
-			// Opening the chooser retries against the current server transport.
-		}
-	}, [applyProjectEnvironmentSnapshot, projectEnvironmentsClient]);
 	const createInitialTerminalForProject = useCallback(
 		async (projectId: string) => {
 			const terminalClient = terminalClientContext?.client;
@@ -5601,171 +5561,100 @@ function App({
 		],
 	);
 	useEffect(() => {
-		let active = true;
-		if (projectEnvironmentsClient === null) return;
-		void projectEnvironmentsClient.snapshot().then(
-			(snapshot) => {
-				if (active) applyProjectEnvironmentSnapshot(snapshot);
-			},
-			() => undefined,
-		);
-		return () => {
-			active = false;
-		};
-	}, [applyProjectEnvironmentSnapshot, projectEnvironmentsClient]);
-	useEffect(() => {
-		const openEnvironments = () => {
-			void auxiliaryRouteController.openProjectEnvironments();
-		};
 		const openExtensions = () => {
 			void auxiliaryRouteController.openSettings('extensions');
 		};
-		window.addEventListener(
-			'terminay-open-project-environments',
-			openEnvironments,
-		);
 		window.addEventListener('terminay-open-extensions', openExtensions);
 		return () => {
-			window.removeEventListener(
-				'terminay-open-project-environments',
-				openEnvironments,
-			);
 			window.removeEventListener('terminay-open-extensions', openExtensions);
 		};
 	}, [auxiliaryRouteController]);
-	const createProjectForEnvironment = useCallback(
-		async (environment: ProjectEnvironmentSummaryDto) => {
-			if (projectEnvironmentsClient === null || boundWorkspaceViewId === null) {
-				return;
-			}
-			if (
-				pendingProjectCreation !== null ||
-				projectCreationInFlightRef.current
-			) {
-				return;
-			}
-			projectCreationInFlightRef.current = true;
-			const initialActiveProjectId = activeProjectIdRef.current;
-			heldActiveProjectIdRef.current = initialActiveProjectId;
-			const projectNumber =
-				Object.keys(
-					terminalClientContext?.workspaceSnapshotStore?.snapshot?.projects ?? {},
-				).length + 1;
-			const pendingId = `pending-project-${Date.now().toString(36)}`;
-			const pendingTab: ProjectTab = {
-				...createProjectTab(
-					projectNumber,
-					environment.defaultRoot ?? '',
-					projectsRef.current.map((project) => project.color),
-					settings.sidebar,
-					currentServerId,
-					Math.random,
-				),
-				creationStatus: 'loading',
-				environmentLabel: environment.name,
-				environmentStatus: 'connecting',
-				id: pendingId,
-				projectEnvironmentId: environment.id,
-				title: `Project ${projectNumber}`,
-			};
-			const pending: PendingProjectCreation = {
-				initialActiveProjectId,
-				tab: pendingTab,
-			};
-			setPendingProjectCreation(pending);
-			try {
-				const operation = await projectEnvironmentsClient.createProject({
-					environmentId: environment.id,
-					viewId: boundWorkspaceViewId,
-					...(environment.defaultRoot === undefined
-						? {}
-						: { root: environment.defaultRoot }),
-				});
-				if (operation.projectId === undefined) {
-					throw new Error(
-						'The selected server did not return the new project identity.',
-					);
-				}
-				setPendingProjectCreation({
-					...pending,
-					projectId: operation.projectId,
-				});
-				const sessionId = await createInitialTerminalForProject(
-					operation.projectId,
-				);
-				await terminalClientContext?.workspaceSnapshotStore?.refresh();
-				const desiredProjectId = heldActiveProjectIdRef.current;
-				heldActiveProjectIdRef.current = null;
-				projectCreationInFlightRef.current = false;
-				setPendingProjectCreation(null);
-				if (desiredProjectId === initialActiveProjectId) {
-					activeProjectIdRef.current = operation.projectId;
-					setActiveProjectId(operation.projectId);
-					window.requestAnimationFrame(() =>
-						scheduleCreatedTerminalFocus(sessionId),
-					);
-				} else if (desiredProjectId !== null) {
-					activateProject(desiredProjectId);
-				}
-			} catch (error) {
-				heldActiveProjectIdRef.current = null;
-				setPendingProjectCreation((current) => ({
-					...(current ?? pending),
-					tab: {
-						...(current?.tab ?? pendingTab),
-						creationError:
-							error instanceof Error ? error.message : String(error),
-						creationStatus: 'failed',
-					},
-				}));
-			}
-		},
-		[
-			activateProject,
-			activeProjectIdRef,
-			boundWorkspaceViewId,
-			createInitialTerminalForProject,
-			currentServerId,
-			pendingProjectCreation,
-			projectEnvironmentsClient,
-			projectsRef,
-			settings.sidebar,
-			setActiveProjectId,
-			terminalClientContext?.workspaceSnapshotStore,
-		],
-	);
-	const chooseProjectEnvironment = useCallback(
-		(environment: ProjectEnvironmentSummaryDto) => {
-			void createProjectForEnvironment(environment);
-		},
-		[createProjectForEnvironment],
-	);
-	const createThisServerProject = useCallback(async () => {
-		if (projectEnvironmentsClient === null || boundWorkspaceViewId === null) {
+	const createServerProject = useCallback(async () => {
+		const workspaceStore = terminalClientContext?.workspaceSnapshotStore;
+		if (workspaceStore === undefined || boundWorkspaceViewId === null) {
 			// Disconnected workspaces retain their existing local-only
 			// creation path; authenticated server workspaces never bypass validation.
 			addProject();
 			return;
 		}
-		const thisServer = projectEnvironmentChoices.find(
-			(environment) => environment.id === 'terminay:this-server',
-		) ?? {
-			endpointSummary: 'Local embedded server',
-			id: 'terminay:this-server',
-			isThisServer: true,
-			name: 'This server',
-			providerId: 'terminay:this-server',
-			providerLabel: 'This Terminay Server',
-			referencedProjectCount: 0,
-			status: 'ready' as const,
+		if (pendingProjectCreation !== null || projectCreationInFlightRef.current) {
+			return;
+		}
+		projectCreationInFlightRef.current = true;
+		const initialActiveProjectId = activeProjectIdRef.current;
+		heldActiveProjectIdRef.current = initialActiveProjectId;
+		const projectNumber =
+			Object.keys(workspaceStore.snapshot?.projects ?? {}).length + 1;
+		const pendingId = `pending-project-${Date.now().toString(36)}`;
+		const projectId = `project-${Date.now().toString(36)}-${projectNumber}`;
+		const presentation = createProjectTab(
+			projectNumber,
+			homePath,
+			projectsRef.current.map((project) => project.color),
+			settings.sidebar,
+			currentServerId,
+			Math.random,
+		);
+		const pendingTab: ProjectTab = {
+			...presentation,
+			creationStatus: 'loading',
+			id: pendingId,
+			title: `Project ${projectNumber}`,
 		};
-		await createProjectForEnvironment(thisServer);
+		const pending: PendingProjectCreation = {
+			initialActiveProjectId,
+			tab: pendingTab,
+		};
+		setPendingProjectCreation(pending);
+		try {
+			await workspaceStore.createProject({
+				projectId,
+				viewId: boundWorkspaceViewId,
+				root: homePath,
+				color: presentation.color,
+				icon: presentation.emoji,
+			});
+			setPendingProjectCreation({ ...pending, projectId });
+			const sessionId = await createInitialTerminalForProject(projectId);
+			await workspaceStore.refresh();
+			const desiredProjectId = heldActiveProjectIdRef.current;
+			heldActiveProjectIdRef.current = null;
+			projectCreationInFlightRef.current = false;
+			setPendingProjectCreation(null);
+			if (desiredProjectId === initialActiveProjectId) {
+				activeProjectIdRef.current = projectId;
+				setActiveProjectId(projectId);
+				window.requestAnimationFrame(() =>
+					scheduleCreatedTerminalFocus(sessionId),
+				);
+			} else if (desiredProjectId !== null) {
+				activateProject(desiredProjectId);
+			}
+		} catch (error) {
+			heldActiveProjectIdRef.current = null;
+			setPendingProjectCreation((current) => ({
+				...(current ?? pending),
+				tab: {
+					...(current?.tab ?? pendingTab),
+					creationError:
+						error instanceof Error ? error.message : String(error),
+					creationStatus: 'failed',
+				},
+			}));
+		}
 	}, [
+		activateProject,
+		activeProjectIdRef,
 		addProject,
 		boundWorkspaceViewId,
-		createProjectForEnvironment,
-		projectEnvironmentChoices,
-		projectEnvironmentsClient,
+		createInitialTerminalForProject,
+		currentServerId,
+		homePath,
+		pendingProjectCreation,
+		projectsRef,
+		settings.sidebar,
+		setActiveProjectId,
+		terminalClientContext?.workspaceSnapshotStore,
 	]);
 	const [inventoryByProject, setInventoryByProject] = useState<
 		Record<string, WorkspaceInventoryEntry[]>
@@ -6016,9 +5905,6 @@ function App({
 				selectHome();
 				return Promise.resolve();
 			}
-			if (command === 'open-project-environments') {
-				return auxiliaryRouteController.openProjectEnvironments();
-			}
 			if (command === 'open-extensions') {
 				return auxiliaryRouteController.openSettings('extensions');
 			}
@@ -6245,31 +6131,7 @@ function App({
 			]
 		: projects
 	).map((project) => {
-		const environment = projectEnvironmentChoices.find(
-			(candidate) => candidate.id === project.projectEnvironmentId,
-		);
-		const serverProject = workspaceSnapshot?.projects[project.id];
-		const hasTerminal =
-			serverProject?.panelIds.some(
-				(panelId) => workspaceSnapshot?.panels[panelId]?.type === 'terminal',
-			);
-		const remote =
-			project.projectEnvironmentId !== undefined &&
-			project.projectEnvironmentId !== 'terminay:this-server';
-		return {
-			...project,
-			...(environment === undefined
-				? {}
-				: {
-						environmentLabel: environment.name,
-						environmentStatus: environment.status,
-					}),
-			hydrating:
-				project.creationStatus !== 'loading' &&
-				project.creationStatus !== 'failed' &&
-				remote &&
-				!hasTerminal,
-		};
+		return { ...project, hydrating: false };
 	});
 	const displayedActiveProject =
 		displayedProjects.find(
@@ -6389,31 +6251,20 @@ function App({
 					canCreateProject={
 						canAddProject && pendingProjectCreation === null
 					}
-					onCreateProject={() => void createThisServerProject()}
+					onCreateProject={() => void createServerProject()}
 					projects={displayedProjects}
 				/>
 				<div className="project-tab-add-box">
-					<ProjectEnvironmentSplitButton
-						canCreate={canAddProject && pendingProjectCreation === null}
-						environments={projectEnvironmentChoices}
-						providers={projectEnvironmentProviders}
-						profiles={projectEnvironmentProfiles}
-						onCreateProvider={(action) =>
-							void auxiliaryRouteController.openProjectEnvironments({
-								providerId: action.providerId,
-								mode: action.mode,
-								...(action.profileId === undefined
-									? {}
-									: { profileId: action.profileId }),
-							})
-						}
-						onCreateThisServer={() => void createThisServerProject()}
-						onChoose={chooseProjectEnvironment}
-						onOpen={() => void refreshProjectEnvironmentChoices()}
-						onManageEnvironments={() =>
-							void auxiliaryRouteController.openProjectEnvironments()
-						}
-					/>
+					<button
+						type="button"
+						className="project-tab-add"
+						aria-label="Create project"
+						title="Create project"
+						disabled={!canAddProject || pendingProjectCreation !== null}
+						onClick={() => void createServerProject()}
+					>
+						+
+					</button>
 				</div>
 				<div className="header-actions">
 					{hasAppUpdate ? (
@@ -6535,7 +6386,7 @@ function App({
 						}
 						isMac={isMac}
 						macros={macros}
-						onAddProject={createThisServerProject}
+						onAddProject={createServerProject}
 						onShowDashboard={selectHome}
 						onCloseProject={closeProject}
 						onEditProject={openEditProjectWindow}

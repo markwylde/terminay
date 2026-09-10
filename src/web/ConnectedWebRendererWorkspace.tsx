@@ -22,7 +22,6 @@ import {
 	createServerTerminalSettingsClient,
 	TerminalSettingsClientProvider,
 } from '../hooks/useTerminalSettings';
-import { ProjectEnvironmentsWindow } from '../projectEnvironments/ProjectEnvironmentSurfaces';
 import type { RemoteAccessStatusClient } from '../services/remoteAccessStatusClient';
 import { createServerRemoteAccessClients } from '../services/serverApplicationFeatureClients';
 import {
@@ -82,24 +81,6 @@ function initialAuxiliaryRoute(): AuxiliaryRouteRequest | null {
 			return { kind: 'remote-control' };
 		case 'performance-log':
 			return { kind: 'performance-log' };
-		case 'project-environments': {
-			const providerId = params.get('provider');
-			const mode = params.get('mode');
-			const profileId = params.get('profile');
-			return {
-				kind: 'project-environments',
-				...(providerId !== null &&
-				(mode === 'profile' || mode === 'environment')
-					? {
-							intent: {
-								providerId,
-								mode,
-								...(profileId === null ? {} : { profileId }),
-							},
-						}
-					: {}),
-			};
-		}
 		default:
 			return null;
 	}
@@ -118,15 +99,6 @@ function nativeAuxiliaryRoute(request: AuxiliaryRouteRequest): string | null {
 		case 'remote-control':
 		case 'performance-log':
 			params.set('auxiliary', request.kind);
-			break;
-		case 'project-environments':
-			params.set('auxiliary', 'project-environments');
-			if (request.intent !== undefined) {
-				params.set('provider', request.intent.providerId);
-				params.set('mode', request.intent.mode);
-				if (request.intent.profileId !== undefined)
-					params.set('profile', request.intent.profileId);
-			}
 			break;
 		case 'edit-tab':
 			return null;
@@ -387,15 +359,6 @@ export function ConnectedWebRendererWorkspace({
 				onCancel={cancelAuxiliaryRoute}
 				onSubmit={submitEditTabRoute}
 			/>
-		) : route.kind === 'project-environments' ? (
-			<ProjectEnvironmentsWindow
-				applicationClient={terminalClientContext.applicationClient}
-				initialIntent={route.intent}
-				serverName={
-					terminalClientContext.connectionLabel ??
-					terminalClientContext.serverId
-				}
-			/>
 		) : (
 			<TerminalSettingsClientProvider client={serverSettingsClient}>
 				{route.kind === 'settings' ? (
@@ -629,14 +592,6 @@ function ConnectedBrowserMenuBar({
 					label: 'Remote Control',
 					startsGroup: true,
 					onSelect: () => onOpenAuxiliaryRoute('remote-control'),
-				},
-				{
-					id: 'project-environments',
-					label: 'Project Environments…',
-					onSelect: () =>
-						window.dispatchEvent(
-							new Event('terminay-open-project-environments'),
-						),
 				},
 				{
 					id: 'extensions',
@@ -945,8 +900,6 @@ function getAuxiliaryRouteTitle(route: AuxiliaryRouteRequest): string {
 			return 'Macros';
 		case 'recordings':
 			return 'Recordings';
-		case 'project-environments':
-			return 'Project Environments';
 		case 'remote-control':
 			return 'Remote Control';
 		case 'performance-log':

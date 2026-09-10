@@ -8,20 +8,20 @@
   "terminay": {
     "manifestVersion": 1,
     "id": "dev.terminay.fixture",
-    "displayName": "Fixture Environment",
+    "displayName": "Fixture Agent Extension",
     "description": "A portable extension host fixture.",
-    "api": "^1.1.0",
+    "api": "^2.0.0",
     "engines": {
       "terminay": ">=1.0.0",
       "node": ">=22"
     },
     "entrypoint": "dist/extension.js",
-    "permissions": ["configuration:read", "data:write"],
+    "permissions": ["agent-observation"],
     "contributes": {
-      "projectEnvironments": [{
-        "id": "dev.terminay.fixture/fixture",
-        "displayName": "Fixture",
-        "capabilities": ["terminal", "filesystem"]
+      "agentProviders": [{
+        "id": "dev.terminay.fixture/agent",
+        "displayName": "Fixture Agent",
+        "processMatchers": [{ "executableName": "fixture-agent" }]
       }]
     }
   }

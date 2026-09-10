@@ -13,7 +13,7 @@ test('Desktop presents canonical auxiliary routes through verified native window
 		'settings',
 		'macros',
 		'recordings',
-		'project-environments',
+		'remote-control',
 	]) {
 		assert.match(workspace, new RegExp(`['"]${route}['"]`));
 	}

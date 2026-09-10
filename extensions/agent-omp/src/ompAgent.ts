@@ -98,12 +98,6 @@ export const ompAgentProvider = defineAgentProvider({
   matchesForeground: isOmpForeground,
 
   async observe(terminal) {
-    if (!terminal.capabilities.has("process-observation")
-      || !terminal.capabilities.has("filesystem-observation")
-      || !terminal.capabilities.has("agent-journal")) {
-      return { state: "unavailable", reason: "environment-capability-missing" } as const;
-    }
-
     // The OMP breadcrumb is authoritative, survives an atomic journal
     // replacement, and binds to the exact PTY. Use it whenever the environment
     // supplies the public terminal/home operations.

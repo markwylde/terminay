@@ -293,8 +293,6 @@ async function requireBuiltInExtensionsInstalled(electronApp, window, failures) 
 	try {
 		await settings.getByRole('heading', { name: 'Settings' }).waitFor({ timeout: 15_000 });
 		for (const packageName of [
-			'terminay-plugin-ssh',
-			'terminay-plugin-puzed',
 			'terminay-agent-codex',
 			'terminay-agent-claude-code',
 			'terminay-agent-grok',

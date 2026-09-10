@@ -269,19 +269,3 @@ test('Claude Code rejects a journal whose root header does not prove the named s
 		await harness.dispose();
 	}
 });
-
-test('Claude Code reports an unavailable environment instead of using local paths', async () => {
-	const harness = await createAgentExtensionHarness(extension);
-	try {
-		await harness.observe(
-			claudeFixture({
-				foregroundExecutable: 'claude',
-				capabilities: ['agent-journal'],
-				files: { [journal]: [{ type: 'permission-mode', sessionId }] },
-			}),
-		);
-		assert.deepEqual(harness.events(), []);
-	} finally {
-		await harness.dispose();
-	}
-});

@@ -1,0 +1,18 @@
+.extension-preview-value { max-width: 55%; color: var(--settings-text-muted); font-size: 13px; text-align: right; overflow-wrap: anywhere; }
+.extension-settings { display: contents; }
+.extension-trust-row { border-left: 3px solid #d9a441; }
+.extension-install-control { display: flex; align-items: center; gap: 8px; width: min(420px, 55%); }
+.extension-install-control .settings-input-text { flex: 1; min-width: 150px; }
+.extension-package-file-row { cursor: pointer; }
+.extension-package-file-input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.extension-package-file-row:focus-within .settings-secondary-button { outline: 2px solid var(--settings-accent); outline-offset: 2px; }
+.extension-search-input { width: 180px; padding-block: 6px; }
+.extension-card-list { display: grid; gap: 12px; }
+.extension-card { overflow: hidden; }
+.extension-card-title { display: flex; align-items: center; gap: 8px; font-size: 15px; }
+.extension-card-heading { background: color-mix(in srgb, var(--settings-card-bg) 88%, var(--settings-bg)); }
+.extension-state { flex-shrink: 0; color: var(--settings-text-muted); font-size: 11px; text-transform: capitalize; }
+.extension-state--running { color: var(--settings-success); }
+.extension-state--failed,
+.extension-state--incompatible { color: var(--settings-danger); }
+.extension-card-footer { gap: 16px; }

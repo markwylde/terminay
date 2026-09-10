@@ -9,7 +9,7 @@ const INTEGRITY = `sha512-${Buffer.alloc(64, 7).toString("base64")}`;
 function resolution(version = "1.0.0") { return { packageName: "fixture-extension", version, integrity: INTEGRITY, tarballUrl: `https://registry.npmjs.org/fixture-extension/-/fixture-extension-${version}.tgz`, provenance: "unavailable", manifestMetadata: packageJson(version).terminay }; }
 function packageJson(version, extra = {}) { return {
   name: "fixture-extension", version, type: "module", exports: { ".": "./dist/extension.js" },
-  terminay: { manifestVersion: 1, id: "dev.example.fixture", displayName: "Fixture", api: "^1.0.0", engines: { terminay: ">=1", node: ">=22" }, entrypoint: "dist/extension.js", permissions: ["network"], contributes: { projectEnvironments: [{ id: "dev.example.fixture/fixture", displayName: "Fixture", capabilities: ["terminal", "filesystem"] }] }, },
+  terminay: { manifestVersion: 1, id: "dev.example.fixture", displayName: "Fixture", api: "^2.0.0", engines: { terminay: ">=1", node: ">=22" }, entrypoint: "dist/extension.js", permissions: ["agent-observation"], contributes: { agentProviders: [{ id: "dev.example.fixture/cli", displayName: "Fixture" }] }, },
   ...extra,
 }; }
 
@@ -87,9 +87,9 @@ test("disable/remove is reference-aware and never cascades namespaced data", asy
   const fixture = await harness({ references: async () => references });
   try {
     const preview = await fixture.installer.preview("fixture-extension"); await fixture.installer.confirm(preview.previewDigest);
-    references = { profiles: 1, projects: 2 };
+    references = { projects: 2 };
     await fixture.installer.disable("dev.example.fixture");
-    await assert.rejects(fixture.installer.remove("dev.example.fixture"), /profiles, projects/u);
+    await assert.rejects(fixture.installer.remove("dev.example.fixture"), /projects/u);
     const data = join(fixture.dataRoot, "extensions", "data", "dev.example.fixture"); await mkdir(data, { recursive: true }); await writeFile(join(data, "state.json"), "{}\n");
     references = {}; const state = await fixture.installer.remove("dev.example.fixture");
     assert.equal(state.extensions["dev.example.fixture"], undefined);
@@ -107,7 +107,7 @@ test("hostile npm specifications, missing integrity, install scripts, and public
 });
 
 test("official catalogue is hardcoded metadata without a privileged install path", () => {
-  assert.deepEqual(OFFICIAL_EXTENSION_CATALOGUE.map((item) => item.packageName), ["terminay-plugin-ssh", "terminay-plugin-puzed", "terminay-agent-codex", "terminay-agent-claude-code", "terminay-agent-grok", "terminay-agent-opencode", "terminay-agent-omp"]);
+  assert.deepEqual(OFFICIAL_EXTENSION_CATALOGUE.map((item) => item.packageName), ["terminay-agent-codex", "terminay-agent-claude-code", "terminay-agent-grok", "terminay-agent-opencode", "terminay-agent-omp"]);
   assert.ok(OFFICIAL_EXTENSION_CATALOGUE.every((item) => item.official));
 });
 

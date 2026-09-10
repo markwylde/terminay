@@ -4,9 +4,8 @@ import {
 	type TerminayClient,
 } from '@terminay/client-core';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ExtensionManager } from '../projectEnvironments/ExtensionManager';
-import type { ExtensionSummaryDto } from '../projectEnvironments/uiModel';
-import '../projectEnvironments/projectEnvironments.css';
+import { ExtensionManager, type ExtensionSummaryDto } from './ExtensionManager';
+import './extensionManager.css';
 
 export function ExtensionSettingsSection({
 	applicationClient,
@@ -67,7 +66,7 @@ export function ExtensionSettingsSection({
 			<div className="settings-category-header">
 				<h2>Extensions</h2>
 				<p>
-					Install and manage project connection providers on <strong>{authorityLabel}</strong>.
+					Install and manage extensions on <strong>{authorityLabel}</strong>.
 				</p>
 			</div>
 			{error ? (

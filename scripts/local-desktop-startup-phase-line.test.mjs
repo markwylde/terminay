@@ -46,7 +46,7 @@ describe('the phase line never overlaps the dots or the mark', async () => {
 
 		// Reveal one line the way Electron will, then measure the layout.
 		await page.addStyleTag({
-			content: '.phase[data-phase="project-environments-load"]{display:block}',
+			content: '.phase[data-phase="shell-profiles-load"]{display:block}',
 		});
 
 		const layout = await page.evaluate(() => {

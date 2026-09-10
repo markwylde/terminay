@@ -59,10 +59,6 @@ import type { AgentLifecycleEvent } from '../packages/extension-api/src/index';
 import { ParakeetRuntime } from '../packages/server-core/src/aiService/parakeetRuntime';
 import { MacroRepository } from '../packages/server-core/src/macroService/repository';
 import {
-	FileProjectEnvironmentStateBackend,
-	ProjectEnvironmentRepository,
-} from '../packages/server-core/src/projectEnvironment/index';
-import {
 	RecordingService,
 	ServerRecordingAdapter,
 } from '../packages/server-core/src/recordingService/index';
@@ -105,7 +101,6 @@ import { showCanonicalLaunchRecovery } from './canonicalLaunchRecovery';
 import {
 	desktopEmbeddedStorePaths,
 	desktopLocalServerUiPartitionKey,
-	migrateLegacyEmbeddedProjectEnvironmentServerId,
 	migrateLegacyEmbeddedRecordingServerId,
 	migrateLegacyEmbeddedWorkspaceServerId,
 	resolveDesktopInstanceIdentity,
@@ -143,7 +138,6 @@ import {
 	type McpServerCommand,
 	uninstallMcpAgent,
 } from './mcpInstall';
-import { MigratingProjectEnvironmentStateBackend } from './projectEnvironmentPersistence';
 import { TerminalRecordingService } from './recording/service';
 import {
 	connectDesktopHostedRemote,
@@ -1219,17 +1213,6 @@ await desktopDiagnostics.record(
 	},
 	{ channel: 'lifecycle' },
 );
-const embeddedProjectEnvironments = new ProjectEnvironmentRepository(
-	new MigratingProjectEnvironmentStateBackend(
-		new FileProjectEnvironmentStateBackend(
-			embeddedStorePaths.projectEnvironments,
-		),
-		(state) =>
-			migrateLegacyEmbeddedProjectEnvironmentServerId(state, embeddedServerId),
-	),
-	embeddedServerId,
-);
-await embeddedProjectEnvironments.load();
 const embeddedVaultAdapter = await ElectronSafeStorageVaultAdapter.open({
 	repository: new FileSafeStorageVaultRepository(
 		path.join(app.getPath('userData'), 'vault', 'safe-storage.v1.json'),
@@ -1308,7 +1291,6 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		vault: embeddedVault,
 		parakeetRuntime,
 		defaultProjectRoot: () => app.getPath('home'),
-		projectEnvironmentRepository: embeddedProjectEnvironments,
 		shellProfiles: embeddedShellProfiles,
 		terminalLaunchEnvironmentFor: (intent) => {
 			if (!mcpCapabilities.isEnabled()) return undefined;
@@ -2787,10 +2769,6 @@ function createAppMenu(
 					click: () => sendCommandToFocusedWindow('open-remote-control'),
 				},
 				{
-					label: 'Project Environments…',
-					click: () => sendCommandToFocusedWindow('open-project-environments'),
-				},
-				{
 					label: 'Extensions…',
 					click: () => sendCommandToFocusedWindow('open-extensions'),
 				},
@@ -2966,7 +2944,6 @@ function createAppMenu(
 const AUXILIARY_TITLES: Readonly<Record<string, string>> = Object.freeze({
 	macros: 'Macros',
 	'performance-log': 'Performance Log',
-	'project-environments': 'Project Environments',
 	recordings: 'Recordings',
 	'remote-control': 'Remote Control',
 	settings: 'Settings',

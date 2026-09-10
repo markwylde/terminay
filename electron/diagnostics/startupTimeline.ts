@@ -34,7 +34,6 @@ export type StartupPhaseId = (typeof STARTUP_PHASE_IDS)[number];
  * top-level phase that was running when it began. */
 export const STARTUP_SUB_PHASE_IDS = [
 	'vault-open',
-	'project-environments-load',
 	'shell-profiles-load',
 	'extension-host-start',
 	'built-in-extensions-stage',
@@ -63,7 +62,6 @@ const STARTUP_PHASE_LABELS: Readonly<
 	'agent-integration': 'Applying agent settings',
 	'ui-handoff': 'Loading the workspace',
 	'vault-open': 'Opening secure storage',
-	'project-environments-load': 'Loading project environments',
 	'shell-profiles-load': 'Loading shell profiles',
 	'extension-host-start': 'Starting extensions',
 	'built-in-extensions-stage': 'Preparing built-in extensions',

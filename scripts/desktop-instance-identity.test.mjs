@@ -10,11 +10,6 @@ const directory = await mkdtemp(join(tmpdir(), 'terminay-desktop-instance-'));
 const output = join(directory, 'desktopInstanceIdentity.mjs');
 const workspaceOutput = join(directory, 'workspacePersistence.mjs');
 const workspaceHydrationOutput = join(directory, 'workspaceHydration.mjs');
-const environmentsOutput = join(directory, 'projectEnvironmentPersistence.mjs');
-const environmentRepositoryOutput = join(
-	directory,
-	'projectEnvironmentRepository.mjs',
-);
 const recordingServiceOutput = join(directory, 'recordingService.mjs');
 await build({
 	bundle: true,
@@ -46,24 +41,6 @@ await Promise.all([
 	}),
 	build({
 		bundle: true,
-		entryPoints: ['electron/projectEnvironmentPersistence.ts'],
-		format: 'esm',
-		logLevel: 'silent',
-		outfile: environmentsOutput,
-		platform: 'node',
-		target: 'node20',
-	}),
-	build({
-		bundle: true,
-		entryPoints: ['packages/server-core/src/projectEnvironment/repository.ts'],
-		format: 'esm',
-		logLevel: 'silent',
-		outfile: environmentRepositoryOutput,
-		platform: 'node',
-		target: 'node20',
-	}),
-	build({
-		bundle: true,
 		entryPoints: ['packages/server-core/src/recordingService/service.ts'],
 		format: 'esm',
 		logLevel: 'silent',
@@ -76,10 +53,6 @@ const identity = await import(pathToFileURL(output).href);
 const workspacePersistence = await import(pathToFileURL(workspaceOutput).href);
 const workspaceHydration = await import(
 	pathToFileURL(workspaceHydrationOutput).href
-);
-const environments = await import(pathToFileURL(environmentsOutput).href);
-const environmentRepository = await import(
-	pathToFileURL(environmentRepositoryOutput).href
 );
 const recordingService = await import(
 	pathToFileURL(recordingServiceOutput).href
@@ -132,11 +105,11 @@ test('two Electron user-data roots keep identical workspace object ids in isolat
 	assert.notDeepEqual(
 		identity.desktopEmbeddedStorePaths(first),
 		identity.desktopEmbeddedStorePaths(second),
-		'workspace, recording, bundle and environment stores must remain under their exact roots',
+		'workspace, recording, and bundle stores must remain under their exact roots',
 	);
 });
 
-test('legacy embedded workspace, environment, and recording ownership migrates once without changing project or terminal identities', async () => {
+test('legacy embedded workspace and recording ownership migrates once without changing project or terminal identities', async () => {
 	const root = await mkdtemp(join(directory, 'legacy-profile-'));
 	const instance = identity.resolveDesktopInstanceIdentity(root);
 	const workspace = legacyWorkspace('project-a', 'terminal-a');
@@ -155,13 +128,6 @@ test('legacy embedded workspace, environment, and recording ownership migrates o
 	assert.equal(
 		migratedWorkspace.terminalSessions['terminal-a'].id,
 		'terminal-a',
-	);
-	assert.deepEqual(
-		identity.migrateLegacyEmbeddedProjectEnvironmentServerId(
-			{ cursor: '1', serverId: 'desktop-local' },
-			instance.id,
-		),
-		{ cursor: '1', serverId: instance.id },
 	);
 	assert.deepEqual(
 		identity.migrateLegacyEmbeddedRecordingServerId(
@@ -216,28 +182,6 @@ test('compatibility transforms are atomically persisted before their repositorie
 		JSON.parse(await readFile(paths.workspace, 'utf8')).terminalSessions[
 			'default'
 		].serverId,
-		instance.id,
-	);
-
-	await writeFile(
-		paths.projectEnvironments,
-		JSON.stringify({ cursor: '0', serverId: 'desktop-local' }),
-		'utf8',
-	);
-	const environmentBackend =
-		new environments.MigratingProjectEnvironmentStateBackend(
-			new environmentRepository.FileProjectEnvironmentStateBackend(
-				paths.projectEnvironments,
-			),
-			(state) =>
-				identity.migrateLegacyEmbeddedProjectEnvironmentServerId(
-					state,
-					instance.id,
-				),
-		);
-	assert.equal((await environmentBackend.load()).serverId, instance.id);
-	assert.equal(
-		JSON.parse(await readFile(paths.projectEnvironments, 'utf8')).serverId,
 		instance.id,
 	);
 });

@@ -175,7 +175,7 @@ test.describe('terminal activity signals', () => {
     await expect(tab).toHaveAttribute('data-terminal-activity', 'unviewed')
     await expect(mainWindow.locator('.project-tab--active .project-tab-activity-badge')).toHaveText('1')
 
-    await mainWindow.getByLabel('Create project on This server').click()
+    await mainWindow.getByLabel('Create project').click()
     await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 2')
     await expect(
       mainWindow.locator('.project-tab:not(.project-tab--active) .project-tab-activity-badge'),

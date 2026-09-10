@@ -76,7 +76,6 @@ export function desktopLocalServerUiPartitionKey(
  * new services opt into the exact user-data-root boundary rather than recreate
  * a name-derived authority. */
 export function desktopEmbeddedStorePaths(identity: DesktopInstanceIdentity): {
-	readonly projectEnvironments: string;
 	readonly recordingLibrary: string;
 	readonly recordings: string;
 	readonly uiBundles: string;
@@ -85,7 +84,6 @@ export function desktopEmbeddedStorePaths(identity: DesktopInstanceIdentity): {
 	assertDesktopInstanceId(identity.id);
 	const root = path.resolve(identity.dataRoot);
 	return Object.freeze({
-		projectEnvironments: path.join(root, 'project-environments.v1.json'),
 		recordingLibrary: path.join(root, 'server-recording-roots.v1.json'),
 		recordings: path.join(root, 'server-recordings'),
 		uiBundles: path.join(root, 'ui-bundles'),
@@ -113,16 +111,6 @@ export function migrateLegacyEmbeddedWorkspaceServerId(
 			serverId,
 		),
 	};
-}
-
-export function migrateLegacyEmbeddedProjectEnvironmentServerId(
-	input: unknown,
-	serverId: string,
-): unknown {
-	assertDesktopInstanceId(serverId);
-	if (!record(input) || input.serverId !== LEGACY_EMBEDDED_SERVER_ID)
-		return input;
-	return { ...input, serverId };
 }
 
 export function migrateLegacyEmbeddedRecordingServerId<

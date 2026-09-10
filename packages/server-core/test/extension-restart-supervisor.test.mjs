@@ -15,12 +15,12 @@ function manifest() {
     manifestVersion: 1,
     id: EXTENSION,
     displayName: "Crashing fixture",
-    api: "^1.0.0",
+    api: "^2.0.0",
     engines: { terminay: ">=1", node: ">=22" },
     entrypoint: "dist/extension.js",
-    permissions: ["network"],
+    permissions: ["agent-observation"],
     contributes: {
-      projectEnvironments: [{ id: `${EXTENSION}/provider`, displayName: "Fixture", capabilities: ["terminal"] }],
+      agentProviders: [{ id: `${EXTENSION}/cli`, displayName: "Fixture" }],
     },
   };
 }
@@ -45,7 +45,7 @@ function tree(version, counterPath, crashes) {
   const source = `
     import { readFileSync, writeFileSync } from "node:fs";
     export function activate(context) {
-      context.registerProjectEnvironmentProvider({ providerId: "${EXTENSION}/provider", displayName: "Fixture", capabilities: ["terminal"] });
+      context.agents.registerProvider("${EXTENSION}/cli", { mappingVersion: "v1", matchesForeground() { return true; }, async observe() { return { state: "not-bound" }; } });
       let attempts = 0;
       try { attempts = Number(readFileSync(${JSON.stringify(counterPath)}, "utf8")) || 0; } catch {}
       writeFileSync(${JSON.stringify(counterPath)}, String(attempts + 1));
@@ -188,20 +188,20 @@ test("a supervised restart re-publishes contributions so running terminals are o
     // an already-running CLI binds again without a new terminal.
     const republished = [];
     value.management.hosts.onContributionsChanged(() => {
-      republished.push(value.management.hosts.providerDefinitions().map((provider) => provider.providerId));
+      republished.push(value.management.hosts.agentProviderContributions().map((provider) => provider.id));
     });
     await value.management.initialize();
     await value.waitForFailures(1);
-    assert.deepEqual(value.management.hosts.providerDefinitions(), [], "a crashed host publishes nothing");
+    assert.deepEqual(value.management.hosts.agentProviderContributions(), [], "a crashed host publishes nothing");
 
     await value.timers.runNext();
     assert.deepEqual(
-      value.management.hosts.providerDefinitions().map((provider) => provider.providerId),
-      [`${EXTENSION}/provider`],
+      value.management.hosts.agentProviderContributions().map((provider) => provider.id),
+      [`${EXTENSION}/cli`],
       "the restarted host publishes its provider again",
     );
     assert.ok(
-      republished.some((providers) => providers.includes(`${EXTENSION}/provider`)),
+      republished.some((providers) => providers.includes(`${EXTENSION}/cli`)),
       "contribution listeners are notified, so existing terminals are re-observed",
     );
   } finally {
