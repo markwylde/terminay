@@ -139,7 +139,7 @@ export function parseServerWorkspaceSnapshot(
 		terminalSessions,
 	} = value;
 	if (
-		schemaVersion !== 4 ||
+		schemaVersion !== 5 ||
 		serverId !== expectedServerId ||
 		typeof revision !== 'number' ||
 		!Number.isSafeInteger(revision) ||

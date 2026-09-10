@@ -17,7 +17,7 @@ test.after(async () => { await rm(outputDirectory, { recursive: true, force: tru
 function state(revision, panelIds = ['panel-a']) {
 	const sidebar = { fileExplorerWidth: 280, isFileExplorerOpen: false, isExplorerPaneCollapsed: false, isAgentsPaneCollapsed: false, isGitPaneCollapsed: false, isDocumentationPaneCollapsed: true, expandedAgentEntryIds: [], expandedDocumentationFolderIds: [], sidebarAgentsHeight: 200, sidebarExplorerHeight: 320, sidebarGitHeight: 240, sidebarDocumentationHeight: 220, sidebarPanelOrder: ['explorer', 'agents', 'git', 'documentation'] }
 	return {
-		schemaVersion: 4,
+		schemaVersion: 5,
 		serverId: 'server-a',
 		revision,
 		cursor: String(revision),
