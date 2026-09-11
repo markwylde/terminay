@@ -205,33 +205,9 @@ There SHALL be no Electron Quick Push service or renderer host client. Proposal 
 - **WHEN** a client proposes or approves a Quick Push plan
 - **THEN** the request goes through the selected server's canonical Git application client rather than an Electron or renderer host service
 
-### Requirement: Git execution safety and environment boundary
-
-Git commands SHALL run through the exact project's declared environment Git capability, authorized by Terminay Server and never in the client. **This server** SHALL use its native Git service; remote providers SHALL supply their own bounded runner and path adapter or Git SHALL be unavailable. A remote-looking path SHALL NOT be passed to local Git. Quick Push SHALL send only the bounded context needed to the selected provider, SHALL require explicit user confirmation before mutation, and SHALL report the exact failed Git or remote step. Credentials SHALL remain within the exact environment's bounded Git, SSH, or CLI runner or its scoped server vault references, and SHALL NOT be copied into renderer state or generic Terminay settings.
-
-#### Scenario: Remote project environment without a Git runner
-
-- **WHEN** a project's environment provider supplies no bounded Git runner and path adapter
-- **THEN** Git is reported as unavailable rather than run locally
-
-#### Scenario: Remote-looking path
-
-- **WHEN** a path belonging to a remote environment is encountered
-- **THEN** it is never passed to local Git
-
-#### Scenario: Failed step reporting
-
-- **WHEN** a Git or remote step of a Quick Push plan fails
-- **THEN** the exact failed step is reported
-
-#### Scenario: Credential containment
-
-- **WHEN** Git or provider credentials are used
-- **THEN** they stay in the environment's bounded runner or scoped server vault references and never enter renderer state or generic Terminay settings
-
 ### Requirement: Server-routed Git ownership
 
-Git, worktree, provider CLI, and Quick Push execution SHALL be routed by the selected Terminay Server to the project environment under server-owned workspace state. Local and remote clients SHALL submit the same scoped commands. Review and confirmation SHALL remain a client interaction, while the server SHALL revalidate repository state and authorization immediately before every mutation.
+Git, worktree, provider CLI, and Quick Push execution SHALL be performed by the selected Terminay Server under server-owned workspace state. Local and remote clients SHALL submit the same scoped commands. Review and confirmation SHALL remain a client interaction, while the server SHALL revalidate repository state and authorization immediately before every mutation.
 
 #### Scenario: Local and remote clients submit identical commands
 
@@ -386,3 +362,22 @@ The current project SHALL show the correct repository and worktree state without
 
 - **WHEN** several projects or windows are open
 - **THEN** each shows its own repository and worktree state
+
+### Requirement: Git execution safety and server boundary
+
+Git commands SHALL run through the server's native Git service, authorized by Terminay Server and never in the client. Quick Push SHALL send only the bounded context needed to the selected provider, SHALL require explicit user confirmation before mutation, and SHALL report the exact failed Git step. Credentials SHALL remain within the server's bounded Git or CLI runner or its scoped server vault references, and SHALL NOT be copied into renderer state or generic Terminay settings.
+
+#### Scenario: Git runs on the server
+
+- **WHEN** a Git command is issued for a project
+- **THEN** it runs through the native Git service of the server that owns the project, authorized by Terminay Server and never in the client
+
+#### Scenario: Failed step reporting
+
+- **WHEN** a Git step of a Quick Push plan fails
+- **THEN** the exact failed step is reported
+
+#### Scenario: Credential containment
+
+- **WHEN** Git or provider credentials are used
+- **THEN** they stay in the server's bounded runner or scoped server vault references and never enter renderer state or generic Terminay settings

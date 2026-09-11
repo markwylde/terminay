@@ -1,6 +1,5 @@
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { ProjectEnvironmentRepository } from '../projectEnvironment/repository.js';
 import type { ServerVaultComposition } from '../settings/vaultComposition.js';
 import { DirectoryBuiltInExtensionArtifactSource } from './builtInArtifacts.js';
 import type {
@@ -15,12 +14,10 @@ import type {
 import { ExtensionHostManager } from './manager.js';
 import { NpmCliRegistryClient } from './npmClient.js';
 import type { ExtensionOperationOptions } from './operations.js';
-import { ExtensionProfileService } from './profileService.js';
 import type {
 	ExtensionAgentBroker,
 	ExtensionBroker,
 	ExtensionHostStatus,
-	ExtensionProfileBroker,
 	ExtensionSecretAccessBroker,
 } from './types.js';
 
@@ -30,7 +27,6 @@ export interface DefaultExtensionManagementOptions {
 	readonly broker?: ExtensionBroker;
 	readonly childEntrypoint?: string;
 	readonly secrets?: ExtensionSecretAccessBroker;
-	readonly profiles?: ExtensionProfileBroker;
 	readonly agents?: ExtensionAgentBroker;
 	readonly vault?: ServerVaultComposition /** Host-owned immutable release resource directory. */;
 	readonly builtInArtifactRoot?: string /** Test/composition seam for a host-owned verified inventory. Production uses builtInArtifactRoot. */;
@@ -93,7 +89,6 @@ export function createDefaultExtensionManagement(
 			? {}
 			: { childEntrypoint: options.childEntrypoint }),
 		...(options.secrets === undefined ? {} : { secrets: options.secrets }),
-		...(options.profiles === undefined ? {} : { profiles: options.profiles }),
 		...(options.agents === undefined ? {} : { agents: options.agents }),
 		...(options.vault === undefined ? {} : { vault: options.vault.vault }),
 	});
@@ -147,8 +142,7 @@ export function createDefaultExtensionManagement(
 				cacheDirectory: directories.cache,
 				permissions: manifest.permissions,
 				agentProviders: manifest.contributes.agentProviders ?? [],
-				projectEnvironmentProviders:
-					manifest.contributes.projectEnvironments ?? [],
+				languageServers: manifest.contributes.languageServers ?? [],
 				extensionDependencies: manifest.extensionDependencies ?? [],
 			});
 			await hosts.stop(extensionId);
@@ -180,8 +174,7 @@ export function createDefaultExtensionManagement(
 			cacheDirectory: directories.cache,
 			permissions: descriptor.manifest.permissions,
 			agentProviders: descriptor.agentProviders,
-			projectEnvironmentProviders:
-				descriptor.manifest.contributes.projectEnvironments ?? [],
+			languageServers: descriptor.languageServers,
 			extensionDependencies: descriptor.manifest.extensionDependencies ?? [],
 		});
 	};
@@ -352,34 +345,23 @@ function shouldActivateAfterReconciliation(
 	);
 }
 
-/** Production composition for ordinary public project-environment extensions.
- * Provider dependencies are authorized and routed by ExtensionHostManager;
- * this layer contains no SSH/Puzed identities or operation knowledge. */
+/** Production composition for ordinary public extensions. This layer holds no
+ * extension identities or operation knowledge of its own. */
 export function createProductionExtensionManagement(
 	options: Readonly<{
 		dataRoot: string;
 		authorityLabel: string;
 		childEntrypoint?: string;
 		vault: ServerVaultComposition;
-		projectEnvironments: ProjectEnvironmentRepository;
 		agents?: ExtensionAgentBroker;
 		builtInArtifactRoot?: string;
 		onHostDiagnostic?: ExtensionHostDiagnosticListener;
 	}>,
 ) {
-	let profileService: ExtensionProfileService | undefined;
-	const profiles: ExtensionProfileBroker = {
-		async get(extensionId, providerId, profileId, signal) {
-			if (profileService === undefined)
-				throw new Error('extension profile access is unavailable');
-			return profileService.get(extensionId, providerId, profileId, signal);
-		},
-	};
 	const management = createDefaultExtensionManagement({
 		dataRoot: options.dataRoot,
 		authorityLabel: options.authorityLabel,
 		secrets: options.vault.extensionSecrets,
-		profiles,
 		vault: options.vault,
 		...(options.childEntrypoint === undefined
 			? {}
@@ -392,14 +374,8 @@ export function createProductionExtensionManagement(
 			? {}
 			: { onHostDiagnostic: options.onHostDiagnostic }),
 	});
-	profileService = new ExtensionProfileService(
-		options.projectEnvironments,
-		management.hosts,
-		options.vault,
-	);
 	return Object.freeze({
 		...management,
-		profiles: profileService,
 		vault: options.vault,
 	});
 }

@@ -74,7 +74,6 @@ test('canonical preload exposes only protocol-validated semantic host events', a
 		'open-settings',
 		'open-macros',
 		'open-recordings',
-		'open-project-environments',
 		'open-extensions',
 		'open-remote-control',
 	]) {

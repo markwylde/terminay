@@ -78,20 +78,6 @@ Terminay Server SHALL validate the device and exact target session, enforce inde
 - **WHEN** transcription completes
 - **THEN** the server revalidates the target terminal and request identity before writing the transcript through the normal PTY input path
 
-### Requirement: Environment binding for transcript insertion
-
-The PTY input path SHALL resolve the terminal's immutable project-environment binding. Dictation SHALL NOT connect to a project host itself, change environment selection, or fall back to a local PTY when a remote environment is unavailable.
-
-#### Scenario: Remote-backed terminal
-
-- **WHEN** the target terminal is bound to a remote project environment
-- **THEN** the transcript is written through that environment's input path
-
-#### Scenario: Remote environment unavailable
-
-- **WHEN** the target terminal's project environment is unavailable
-- **THEN** the write fails and dictation does not fall back to a local PTY
-
 ### Requirement: Provider credential isolation
 
 The server-side provider adapter SHALL resolve its configured vault entry only through a scoped callback. The callback SHALL NOT be part of any client or status DTO, and no vault value SHALL be included in the selected-server/provider disclosure shown before capture.
@@ -396,3 +382,38 @@ Local and remote clients SHALL dictate into a live authorized terminal using the
 
 - **WHEN** client snapshots, localStorage, logs, and application-protocol payloads returned to the client are inspected
 - **THEN** the provider key appears in none of them
+
+### Requirement: Server binding for transcript insertion
+
+The PTY input path SHALL resolve the terminal's canonical server binding. Dictation SHALL NOT connect to a project host itself, change server selection, or fall back to another PTY when the target terminal's session is unavailable.
+
+#### Scenario: Transcript reaches the owning server
+
+- **WHEN** a transcript is inserted into the target terminal
+- **THEN** it is written through the input path of the server that owns that terminal
+
+#### Scenario: Target session unavailable
+
+- **WHEN** the target terminal's session is unavailable
+- **THEN** the write fails and dictation does not fall back to another PTY
+
+### Requirement: Dictation resolves its server from the target terminal
+
+Dictation availability, provider and credential configuration, transcription, and
+insertion SHALL all resolve against the server that owns the target terminal, not
+against the window's primary connection or any other attached connection. Where
+the owning server has no dictation provider or credential configured, dictation
+SHALL be unavailable for that terminal even when another attached server has one.
+
+#### Scenario: Dictating into an attached server's terminal
+
+- **WHEN** the user dictates while a terminal of an attached server is active
+- **THEN** the audio is transcribed by that terminal's own server and the
+  transcript is inserted into that terminal
+
+#### Scenario: Only another server is configured
+
+- **WHEN** the target terminal's server has no dictation provider or credential
+  configured while another attached server has one
+- **THEN** dictation is unavailable for that terminal and no other server
+  transcribes for it

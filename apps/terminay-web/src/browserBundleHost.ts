@@ -17,10 +17,13 @@ export interface VerifiedBrowserBundle {
 	readonly assets: ReadonlyMap<string, Uint8Array>;
 }
 
+/** Keyed by the primary session origin, never by a server identity: a browser
+ * window installs exactly one bundle, the one its primary connection's session
+ * origin serves. An attached server delivers no bundle. */
 export interface BrowserBundleStore {
-	current(serverId: string): Promise<VerifiedBrowserBundle | undefined>;
+	current(sessionOrigin: string): Promise<VerifiedBrowserBundle | undefined>;
 	/** Implementations publish the active pointer only after every asset commits. */
-	commit(serverId: string, bundle: VerifiedBrowserBundle): Promise<void>;
+	commit(sessionOrigin: string, bundle: VerifiedBrowserBundle): Promise<void>;
 }
 
 export interface OpaqueBrowserByteEndpoint {
@@ -44,11 +47,11 @@ export interface BrowserBundleLaunch {
 
 export class MemoryBrowserBundleStore implements BrowserBundleStore {
 	private readonly bundles = new Map<string, VerifiedBrowserBundle>();
-	async current(serverId: string): Promise<VerifiedBrowserBundle | undefined> {
-		return this.bundles.get(serverId);
+	async current(sessionOrigin: string): Promise<VerifiedBrowserBundle | undefined> {
+		return this.bundles.get(sessionOrigin);
 	}
-	async commit(serverId: string, bundle: VerifiedBrowserBundle): Promise<void> {
-		this.bundles.set(serverId, bundle);
+	async commit(sessionOrigin: string, bundle: VerifiedBrowserBundle): Promise<void> {
+		this.bundles.set(sessionOrigin, bundle);
 	}
 }
 
@@ -61,9 +64,9 @@ export class CacheStorageBrowserBundleStore implements BrowserBundleStore {
 		private readonly namespace = 'terminay.session-archives.v1',
 	) {}
 
-	async current(serverId: string): Promise<VerifiedBrowserBundle | undefined> {
+	async current(sessionOrigin: string): Promise<VerifiedBrowserBundle | undefined> {
 		const metadataCache = await this.cacheStorage.open(`${this.namespace}.active`);
-		const response = await metadataCache.match(this.metadataRequest(serverId));
+		const response = await metadataCache.match(this.metadataRequest(sessionOrigin));
 		if (response === undefined) return undefined;
 		const value = await response.json();
 		if (!record(value) || !Array.isArray(value.paths)) return undefined;
@@ -71,7 +74,7 @@ export class CacheStorageBrowserBundleStore implements BrowserBundleStore {
 		try { metadata = parseStoredMetadata(value.metadata); } catch { return undefined; }
 		const paths = value.paths;
 		if (paths.length === 0 || paths.some((path) => typeof path !== 'string')) return undefined;
-		const cache = await this.cacheStorage.open(this.bundleCache(serverId, metadata.bundleId));
+		const cache = await this.cacheStorage.open(this.bundleCache(sessionOrigin, metadata.bundleId));
 		const assets = new Map<string, Uint8Array>();
 		for (const path of paths) {
 			const asset = await cache.match(this.assetRequest(path));
@@ -81,23 +84,23 @@ export class CacheStorageBrowserBundleStore implements BrowserBundleStore {
 		return Object.freeze({ metadata, assets: readonlyAssets(assets) });
 	}
 
-	async commit(serverId: string, bundle: VerifiedBrowserBundle): Promise<void> {
-		const cacheName = this.bundleCache(serverId, bundle.metadata.bundleId);
+	async commit(sessionOrigin: string, bundle: VerifiedBrowserBundle): Promise<void> {
+		const cacheName = this.bundleCache(sessionOrigin, bundle.metadata.bundleId);
 		const cache = await this.cacheStorage.open(cacheName);
 		try {
 			for (const [path, bytes] of bundle.assets)
 				await cache.put(this.assetRequest(path), new Response(bytes as BodyInit, { headers: { 'Content-Type': contentType(path) } }));
 			const active = await this.cacheStorage.open(`${this.namespace}.active`);
-			await active.put(this.metadataRequest(serverId), new Response(JSON.stringify({ metadata: bundle.metadata, paths: [...bundle.assets.keys()] }), { headers: { 'Content-Type': 'application/json' } }));
+			await active.put(this.metadataRequest(sessionOrigin), new Response(JSON.stringify({ metadata: bundle.metadata, paths: [...bundle.assets.keys()] }), { headers: { 'Content-Type': 'application/json' } }));
 		} catch (error) {
 			await this.cacheStorage.delete(cacheName);
 			throw error;
 		}
 	}
 
-	private metadataRequest(serverId: string): Request { return new Request(`https://terminay.invalid/${this.namespace}/active/${encodeURIComponent(serverId)}`); }
+	private metadataRequest(sessionOrigin: string): Request { return new Request(`https://terminay.invalid/${this.namespace}/active/${encodeURIComponent(sessionOrigin)}`); }
 	private assetRequest(path: string): Request { return new Request(`https://terminay.invalid${path}`); }
-	private bundleCache(serverId: string, bundleId: string): string { return `${this.namespace}.bundle.${encodeURIComponent(serverId)}.${bundleId}`; }
+	private bundleCache(sessionOrigin: string, bundleId: string): string { return `${this.namespace}.bundle.${encodeURIComponent(sessionOrigin)}.${bundleId}`; }
 }
 
 export class BrowserSessionBundleHost {
@@ -113,19 +116,21 @@ export class BrowserSessionBundleHost {
 		const origin = exactSessionOrigin(input.sessionOrigin);
 		const archive = extractTerminayArchive(await decompressTerminayArchive(input.compressedArchive, MAX_COMPRESSED_BYTES));
 		const suppliedContext = parseTerminayHostContext(input.context);
+		// Bundle-to-host checks only. The bundle is not bound to a server
+		// identity or an application-protocol version: one bundle drives the
+		// primary connection and every attached one, and compatibility with each
+		// server is negotiated by the bundle's client, not by the host.
 		if (
 			suppliedContext.hostKind !== 'browser' ||
-			suppliedContext.serverId !== input.expectedServerId ||
-			suppliedContext.bundleId !== archive.metadata.bundleId ||
-			suppliedContext.applicationProtocolVersion !== archive.metadata.applicationProtocolVersion
-		) throw new TypeError('browser host context does not match the server UI archive');
+			suppliedContext.serverId !== input.expectedServerId
+		) throw new TypeError('browser host context does not match this session');
 		const prefix = `/remote-app/${archive.metadata.bundleId}/`;
 		const assets = new Map<string, Uint8Array>();
 		for (const entry of archive.entries) assets.set(`${prefix}${entry.path}`, Uint8Array.from(entry.bytes));
 		const entryPath = `${prefix}${archive.metadata.entryPath}`;
 		if (!assets.has(entryPath)) throw new TypeError('server UI archive entry is missing');
 		const bundle = Object.freeze({ metadata: archive.metadata, assets: readonlyAssets(assets) });
-		await this.options.store.commit(input.expectedServerId, bundle);
+		await this.options.store.commit(origin, bundle);
 		return Object.freeze({ context: suppliedContext, bundle, entryUrl: new URL(entryPath, origin).toString(), endpoint: input.endpoint });
 	}
 }

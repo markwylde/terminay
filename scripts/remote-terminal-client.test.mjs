@@ -3,15 +3,18 @@ import { access, readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 test('the session-owned browser transport mounts the opaque workspace client', async () => {
-	const [entry, manager, transport] = await Promise.all([
+	const [entry, manager, registry, transport] = await Promise.all([
 		readFile('src/remote/main.tsx', 'utf8'),
 		readFile('src/web/main.tsx', 'utf8'),
+		readFile('src/shared/connections/connectionRegistry.ts', 'utf8'),
 		readFile('src/web/sessionTransportHost.ts', 'utf8'),
 	]);
 	assert.match(entry, /mountSessionWorkspace\(root\)/u);
 	assert.doesNotMatch(entry, /authenticateDevice|loadBrowserDeviceIdentity|apiChannel|terminalChannel|createDataChannel|getChannel|RTCDataChannel/u);
-	assert.match(manager, /new TerminayClient/u);
-	assert.match(manager, /createConnectedServerClientContext/u);
+	// The client and its feature projections are built once per connection.
+	assert.match(registry, /new TerminayClient/u);
+	assert.match(registry, /createConnectedServerClientContext/u);
+	assert.match(manager, /ConnectionRegistry/u);
 	assert.doesNotMatch(manager, /legacyRemote|session-list|session-opened|attach-session/u);
 	assert.match(transport, /ByteTransport/u);
 	assert.match(transport, /connect\(\s*options/u);

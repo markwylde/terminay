@@ -1,10 +1,12 @@
 export const EXTENSION_MANIFEST_VERSION = 1 as const;
 /**
- * The public extension SDK version implemented by this host. New optional
- * agent directory discovery and dynamic child-source observation landed in
- * 1.2, so extensions that call those APIs must declare `^1.2.0`.
+ * The public extension SDK version implemented by this host. 2.0 removed the
+ * project-environment provider contribution kind, its declarative form and
+ * status surfaces, and the agent observation capability model, so every
+ * extension declaring `^1.x` is incompatible with this host. 2.1 adds the
+ * language server contribution kind, which is purely additive.
  */
-export const EXTENSION_API_VERSION = '1.2.0' as const;
+export const EXTENSION_API_VERSION = '2.1.0' as const;
 
 export const EXTENSION_LIMITS = Object.freeze({
 	manifestBytes: 64 * 1024,
@@ -15,33 +17,17 @@ export const EXTENSION_LIMITS = Object.freeze({
 	contributions: 32,
 	permissions: 32,
 	dependencies: 32,
-	/** Public target operations declared by one project-environment provider. */
-	providerDependencyOperations: 32,
-	providerDependencyOperationNameLength: 128,
-	/** JSON data sent to, or returned from, a dependency provider. */
-	providerDependencyPayloadBytes: 256 * 1024,
-	providerDependencyResultBytes: 256 * 1024,
 	/** Target-owned opaque vault keys and purposes; never vault paths or ids. */
 	providerVaultBindingKeyLength: 256,
 	providerVaultBindingRefLength: 256,
 	providerVaultPurposeLength: 128,
 	providerVaultSecretBytes: 64 * 1024,
 	providerVaultIdempotencyKeyLength: 256,
-	formSections: 32,
-	formFields: 128,
-	fieldOptions: 256,
 	stringLength: 4_096,
-	progressStages: 64,
-	actions: 32,
 	messageBytes: 1024 * 1024,
 	deadlineMs: 120_000,
-	sshAgentIdentities: 64,
-	sshAgentPublicKeyBytes: 16 * 1024,
-	sshAgentChallengeBytes: 256 * 1024,
-	sshAgentSignatureBytes: 16 * 1024,
 	agentProcessMatchers: 16,
 	agentMappings: 32,
-	agentRequiredCapabilities: 16,
 	agentProviderVersionLength: 64,
 	agentSessionIdLength: 256,
 	agentNativeIdLength: 256,
@@ -76,13 +62,22 @@ export const EXTENSION_LIMITS = Object.freeze({
 	agentDirectoryListDepth: 8,
 	agentDirectoryListEntries: 256,
 	agentDirectoryListBytes: 16 * 1024 * 1024,
+	/** Language server contributions and the launch they may describe. */
+	maxLanguageServers: 8,
+	maxLanguageIds: 32,
+	maxFileExtensions: 32,
+	maxLaunchArgs: 64,
+	maxLaunchEnvEntries: 32,
+	maxLaunchDescriptionLength: 200,
 } as const);
+
+/** A language id such as `typescriptreact`; never a path or a selector. */
+export const LANGUAGE_ID_PATTERN = /^[a-z][a-z0-9+#._-]{0,63}$/;
+/** A lower-case file extension with its leading dot, e.g. `.tsx`. */
+export const FILE_EXTENSION_PATTERN = /^\.[a-z0-9][a-z0-9._-]{0,63}$/;
 
 export const EXTENSION_ID_PATTERN = /^[a-z0-9](?:[a-z0-9.-]{1,126}[a-z0-9])?$/;
 export const LOCAL_ID_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
-/** Dot-separated, provider-owned public operation names; never commands. */
-export const PROVIDER_DEPENDENCY_OPERATION_PATTERN =
-	/^[a-z][a-z0-9-]{0,63}(?:\.[a-z][a-z0-9-]{0,63})*$/;
 /** A durable opaque token, never a vault path or a host-global secret id. */
 export const PROVIDER_VAULT_BINDING_REF_PATTERN = /^[A-Za-z0-9_-]{16,256}$/;
 /** A provider-owned logical key/purpose; never a filesystem or vault path. */

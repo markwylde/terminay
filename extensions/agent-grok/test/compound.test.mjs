@@ -89,11 +89,6 @@ test('new, resumed and branched roots rebind only to the newest exact writable G
 	let bindingRequest;
 	const terminal = {
 		foreground: { executableName: 'grok' },
-		capabilities: new Set([
-			'process-observation',
-			'filesystem-observation',
-			'agent-journal',
-		]),
 		signal: { aborted: false, throwIfAborted() {} },
 		observation: {
 			processes: {
@@ -218,11 +213,6 @@ test('IPC number-array follow chunks still replay turn_ended', async () => {
 	const handle = { id: path };
 	const terminal = {
 		foreground: { executableName: 'grok' },
-		capabilities: new Set([
-			'process-observation',
-			'filesystem-observation',
-			'agent-journal',
-		]),
 		signal: { aborted: false, throwIfAborted() {} },
 		observation: {
 			processes: {
@@ -332,11 +322,6 @@ test('chunked replay of a resumed journal still applies a later turn_ended as do
 	const handle = { id: path };
 	const terminal = {
 		foreground: { executableName: 'grok' },
-		capabilities: new Set([
-			'process-observation',
-			'filesystem-observation',
-			'agent-journal',
-		]),
 		signal: { aborted: false, throwIfAborted() {} },
 		observation: {
 			processes: {
@@ -438,11 +423,6 @@ test('binds a writer-held events journal when the shell cannot expose HOME', asy
 	let bindingRequest;
 	const terminal = {
 		foreground: { executableName: 'grok' },
-		capabilities: new Set([
-			'process-observation',
-			'filesystem-observation',
-			'agent-journal',
-		]),
 		signal: { aborted: false, throwIfAborted() {} },
 		observation: {
 			processes: {
@@ -539,11 +519,6 @@ test('binds from active_sessions.json when the writer does not hold events.jsonl
 	let bindingRequest;
 	const terminal = {
 		foreground: { executableName: 'grok' },
-		capabilities: new Set([
-			'process-observation',
-			'filesystem-observation',
-			'agent-journal',
-		]),
 		signal: { aborted: false, throwIfAborted() {} },
 		observation: {
 			processes: {
@@ -675,11 +650,6 @@ test('a later summary.json rewrite updates the bound root title without stalling
 	let hanging = false;
 	const terminal = {
 		foreground: { executableName: 'grok' },
-		capabilities: new Set([
-			'process-observation',
-			'filesystem-observation',
-			'agent-journal',
-		]),
 		signal: { aborted: false, throwIfAborted() {} },
 		observation: {
 			processes: {

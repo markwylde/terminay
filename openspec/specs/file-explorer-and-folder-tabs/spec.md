@@ -5,8 +5,8 @@
 Expose each project's root folder in a resizable Files pane in the Explorer
 sidebar group and open directories as dockable Folder tabs, with all listing,
 search, mutation, watching, preview classification, and Markdown task
-aggregation authorized and executed by Terminay Server on the exact project's
-environment.
+aggregation authorized and executed by the Terminay Server that owns the
+project.
 
 ## Requirements
 
@@ -53,27 +53,6 @@ delete events, and temporarily unavailable paths.
 - **WHEN** a file changes externally while an unrelated entry is selected
 - **THEN** the change becomes visible without losing that selection and without
   opening a duplicate tab
-
-### Requirement: Explorer entry actions
-
-Users SHALL be able to open files and folders, drag them to the tab area,
-create, rename, and delete entries, copy paths, and set a project root from a
-terminal working directory. The set-root shortcut SHALL use the selected
-project's environment: a This-server working directory is validated on that
-host, and an SSH or Puzed working directory is validated on that remote
-filesystem. A remote path MUST NOT be treated as a missing local folder.
-
-#### Scenario: Set root from a remote terminal cwd
-
-- **WHEN** the user sets the project root from the working directory of a
-  terminal in an SSH or Puzed project
-- **THEN** the path is validated on that remote filesystem
-- **AND** it is never reported as a missing local folder
-
-#### Scenario: Drag a file to the tab area
-
-- **WHEN** the user drags an Explorer entry onto the tab area
-- **THEN** that file or folder opens as a tab
 
 ### Requirement: Reveal in OS requires an opaque reveal token
 
@@ -125,33 +104,6 @@ NOT be relativized into a traversal request against the new server root.
 - **WHEN** a project root update has not yet reconciled into the renderer
 - **THEN** Explorer path calculations use the latest hydrated server root
 - **AND** no traversal request derived from the stale root is issued
-
-### Requirement: Bounded typed Explorer failures
-
-When a filesystem query fails, the server SHALL return a bounded typed protocol
-error rather than a generic dispatcher failure. The Explorer SHALL keep its last
-successful tree while a refresh fails, and SHALL clear its own visible failure
-once a later refresh succeeds. An unrelated feature failure SHALL remain
-visible.
-
-#### Scenario: Distinguishable failure causes
-
-- **WHEN** a missing project binding, vanished folder, rejected path, or
-  unexpected directory-read failure occurs
-- **THEN** each produces a distinguishable bounded Explorer failure
-- **AND** none renders only `query failed`
-
-#### Scenario: Failed refresh followed by a successful refresh
-
-- **WHEN** an Explorer refresh fails and a later refresh succeeds
-- **THEN** the tree is retained throughout the failure
-- **AND** only the stale Explorer failure notice is removed
-
-#### Scenario: Missing watch capability does not block listing
-
-- **WHEN** the environment does not provide `files.watch.*`
-- **THEN** the missing capability neither occupies the Explorer failure banner
-  nor blocks directory listing
 
 ### Requirement: Folder tab presentations
 
@@ -209,35 +161,13 @@ device-local preference keyed by the selected server and project.
 - **THEN** another device's presentation for the same server and project is
   unchanged
 
-### Requirement: Environment-routed filesystem ownership
-
-Filesystem listing, search, mutation, watch, and folder-task aggregation SHALL
-run on the exact project's environment adapter, authorized and routed by
-Terminay Server. Canonical paths and roots SHALL be interpreted only by that
-environment. A provider without filesystem observation SHALL present manual
-refresh or unavailable observation and MUST NOT watch the same path on the
-Terminay Server.
-
-#### Scenario: Provider lacks filesystem observation
-
-- **WHEN** a project's environment provides no filesystem observation capability
-- **THEN** the Explorer presents manual refresh or an unavailable-observation
-  state
-- **AND** the Terminay Server does not watch the same path as a substitute
-
-#### Scenario: Disconnect preserves state
-
-- **WHEN** the environment disconnects
-- **THEN** project state and dirty drafts are preserved
-- **AND** ambiguous remote mutations are not blindly retried
-
 ### Requirement: Bounded directory catalog, search, and size traversal
 
 The server catalog SHALL expose project-relative bounded directory pages,
 filename search, non-following folder-size traversal, and create, rename, and
-delete commands. Ordinary files and directories MAY reuse the environment
-adapter's contained listing metadata so a remote tree does not re-stat every
-child. Symlink children SHALL still be canonicalized; escaped symlinks SHALL be
+delete commands. Ordinary files and directories MAY reuse the contained listing
+metadata the server already holds so a tree does not re-stat every child.
+Symlink children SHALL still be canonicalized; escaped symlinks SHALL be
 reported as inaccessible metadata and MUST NOT be traversed or mutated. Search
 and size traversal SHALL enforce entry, depth, and byte caps, honour
 ignored-directory patterns, and accept cancellation.
@@ -323,3 +253,63 @@ events.
 
 - **WHEN** an adapter reports the same watcher fact repeatedly
 - **THEN** the server deduplicates it and paginates the resulting event batches
+
+### Requirement: Server-owned filesystem ownership
+
+Filesystem listing, search, mutation, watch, and folder-task aggregation SHALL
+run on the server that owns the project, authorized by Terminay Server.
+Canonical paths and roots SHALL be interpreted only by that server, and the
+Explorer MUST NOT interpret or watch a path itself.
+
+#### Scenario: Explorer operation is server-executed
+
+- **WHEN** the Explorer lists, searches, mutates, watches, or aggregates folder
+  tasks
+- **THEN** the operation runs on the server that owns the project, authorized by
+  Terminay Server
+- **AND** canonical paths and roots are interpreted only by that server
+
+#### Scenario: Disconnect preserves state
+
+- **WHEN** the connection to the server drops
+- **THEN** project state and dirty drafts are preserved
+- **AND** ambiguous mutations are not blindly retried
+
+### Requirement: Explorer entry actions and project root selection
+
+Users SHALL be able to open files and folders, drag them to the tab area,
+create, rename, and delete entries, copy paths, and set a project root from a
+terminal working directory. The set-root shortcut SHALL validate the working
+directory on the server that owns the selected project.
+
+#### Scenario: Set root from a terminal cwd
+
+- **WHEN** the user sets the project root from the working directory of a
+  terminal
+- **THEN** the path is validated on the server that owns the selected project
+
+#### Scenario: Drag an entry to the tab area
+
+- **WHEN** the user drags an Explorer entry onto the tab area
+- **THEN** that file or folder opens as a tab
+
+### Requirement: Bounded typed Explorer failure reporting
+
+When a filesystem query fails, the server SHALL return a bounded typed protocol
+error rather than a generic dispatcher failure. The Explorer SHALL keep its last
+successful tree while a refresh fails, and SHALL clear its own visible failure
+once a later refresh succeeds. An unrelated feature failure SHALL remain
+visible.
+
+#### Scenario: Distinguishable failure causes
+
+- **WHEN** a missing project binding, vanished folder, rejected path, or
+  unexpected directory-read failure occurs
+- **THEN** each produces a distinguishable bounded Explorer failure
+- **AND** none renders only `query failed`
+
+#### Scenario: Failed refresh followed by a successful refresh
+
+- **WHEN** an Explorer refresh fails and a later refresh succeeds
+- **THEN** the tree is retained throughout the failure
+- **AND** only the stale Explorer failure notice is removed

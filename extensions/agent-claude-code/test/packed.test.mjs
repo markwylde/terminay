@@ -88,7 +88,6 @@ test('the Claude Code extension packs as a self-contained public package', async
 					return value;
 				},
 			},
-			registerProjectEnvironmentProvider() {},
 		});
 		assert.equal(
 			providers[0]?.providerId,

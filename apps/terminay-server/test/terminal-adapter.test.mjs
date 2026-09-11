@@ -466,8 +466,6 @@ test("open_terminal resolves a canonical launch before spawn and reconciles its 
   assert.equal(launchResolver.intents[0].activePanelId, "panel-caller");
   assert.deepEqual(pty.processes[1].options, {
     projectId: "project-a",
-    projectEnvironmentId: undefined,
-    environmentRevision: undefined,
     shellPath: "/bin/test-shell",
     shell: "/bin/test-shell",
     args: ["--login"],

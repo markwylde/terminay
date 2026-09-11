@@ -138,120 +138,6 @@ function tar(entries) {
 	return Buffer.concat([...records, Buffer.alloc(1024)]);
 }
 
-test('Local and remote use one verified preparation boundary with server-isolated cache', async () => {
-	const root = await mkdtemp(join(tmpdir(), 'terminay-desktop-bundle-host-'));
-	try {
-		const host = new DesktopServerBundleHost({
-			cacheRoot: join(root, 'cache'),
-			capabilities: {},
-		});
-		const one = fixture();
-		const localRoot = join(root, 'local');
-		await mkdir(localRoot);
-		await writeFile(
-			join(localRoot, 'manifest.json'),
-			JSON.stringify(one.manifest),
-		);
-		await writeFile(join(localRoot, 'index.html'), one.bytes);
-		const local = await host.prepareLocal({
-			profileId: 'local:one',
-			serverId: 'server-one',
-			origin: 'http://127.0.0.1:1234',
-			windowId: 'window-one',
-			artifact: { rootDirectory: localRoot },
-		});
-		assert.equal(local.source, 'embedded');
-		assert.equal(local.context.serverId, 'server-one');
-		assert.equal(
-			local.compatibility.unavailableOptionalCapabilities[0],
-			'notifications',
-		);
-		const remote = await host.prepareRemote({
-			profileId: 'remote:one',
-			serverId: 'server-two',
-			origin: 'https://two.example',
-			windowId: 'window-two',
-			lane: { manifest: async () => one.manifest, read: async () => one.bytes },
-		});
-		assert.equal(remote.source, 'remote-cache');
-		assert.notEqual(remote.partitionKey, local.partitionKey);
-		assert.equal(remote.context.bundleId, one.manifest.bundleId);
-		const recovered = await host.prepareRemote({
-			profileId: 'remote:one',
-			serverId: 'server-two',
-			origin: 'https://two.example',
-			windowId: 'window-three',
-			lane: {
-				manifest: async () => {
-					throw new Error('interrupted');
-				},
-				read: async () => {
-					throw new Error('interrupted');
-				},
-			},
-		});
-		assert.equal(recovered.source, 'remote-cache-recovery');
-		await assert.rejects(
-			host.prepareRemote({
-				profileId: 'remote:other',
-				serverId: 'server-other',
-				origin: 'https://other.example',
-				windowId: 'window-four',
-				lane: {
-					manifest: async () => {
-						throw new Error('offline');
-					},
-					read: async () => one.bytes,
-				},
-			}),
-			/offline/,
-		);
-	} finally {
-		await rm(root, { recursive: true, force: true });
-	}
-});
-
-test('remote Desktop consumes one authenticated archive, materializes arbitrary names, and retains the prior archive on interruption', async () => {
-	const root = await mkdtemp(join(tmpdir(), 'terminay-desktop-archive-host-'));
-	try {
-		const host = new DesktopServerBundleHost({
-			cacheRoot: join(root, 'cache'),
-			capabilities: {},
-		});
-		const first = archiveFixture('first');
-		const launch = await host.prepareRemote({
-			profileId: 'remote:archive',
-			serverId: 'server-archive',
-			origin: 'https://archive.example',
-			windowId: 'archive-window',
-			lane: { getBundle: async () => first.bytes },
-		});
-		assert.equal(launch.entryPath, 'nested/generated/server-entry.html');
-		assert.equal(launch.context.bundleId, first.bundleId);
-		assert.equal(
-			(
-				await readFile(join(launch.assetRoot, launch.entryPath), 'utf8')
-			).startsWith('<!doctype html>'),
-			true,
-		);
-		const recovered = await host.prepareRemote({
-			profileId: 'remote:archive',
-			serverId: 'server-archive',
-			origin: 'https://archive.example',
-			windowId: 'archive-recovery',
-			lane: {
-				getBundle: async () => {
-					throw new Error('transport interrupted');
-				},
-			},
-		});
-		assert.equal(recovered.source, 'remote-cache-recovery');
-		assert.equal(recovered.context.bundleId, first.bundleId);
-	} finally {
-		await rm(root, { recursive: true, force: true });
-	}
-});
-
 test('Local UI session verifies once per window and never owns a listener or credential', async () => {
 	const root = await mkdtemp(join(tmpdir(), 'terminay-local-ui-session-'));
 	try {
@@ -374,10 +260,7 @@ test('actual Local Desktop, remote Desktop, and session browser compositions lau
 		);
 		await writeFile(join(localRoot, 'index.html'), selected.bytes);
 		const archive = archiveFixture('shared', selected.manifest.bundleId);
-		const desktop = new DesktopServerBundleHost({
-			cacheRoot: join(root, 'cache'),
-			capabilities: {},
-		});
+		const desktop = new DesktopServerBundleHost({ capabilities: {} });
 		const local = await desktop.prepareLocal({
 			profileId,
 			serverId,
@@ -385,12 +268,14 @@ test('actual Local Desktop, remote Desktop, and session browser compositions lau
 			windowId: 'local-window',
 			artifact: { rootDirectory: localRoot },
 		});
-		const remote = await desktop.prepareRemote({
+		// A remote window runs the packaged bundle too; only its server identity
+		// and transport differ from Local.
+		const remote = await desktop.prepareLocal({
 			profileId,
 			serverId,
 			origin: 'https://shared.example',
 			windowId: 'remote-window',
-			lane: { getBundle: async () => archive.bytes },
+			artifact: { rootDirectory: localRoot },
 		});
 		const browserContext = (sourceId) => ({
 			schemaVersion: 1,

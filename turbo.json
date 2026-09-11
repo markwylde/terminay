@@ -52,8 +52,8 @@
       "outputs": [],
       "cache": false
     },
-    "terminay-plugin-ssh#test:ci": {
-      "dependsOn": ["compile", "^build", "@terminay/server-core#build"],
+    "terminay-language-typescript#test:ci": {
+      "dependsOn": ["compile", "^build"],
       "outputs": [],
       "cache": false
     },
@@ -77,8 +77,7 @@
         "terminay-agent-grok#compile",
         "terminay-agent-omp#compile",
         "terminay-agent-opencode#compile",
-        "terminay-plugin-puzed#compile",
-        "terminay-plugin-ssh#compile"
+        "terminay-language-typescript#compile"
       ],
       "inputs": [
         "electron/**",

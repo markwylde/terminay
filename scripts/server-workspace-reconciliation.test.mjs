@@ -41,7 +41,7 @@ function snapshot({
 		sidebarPanelOrder: ['explorer', 'agents', 'git', 'documentation'],
 	});
 	return {
-		schemaVersion: 4,
+		schemaVersion: 5,
 		serverId: 'server-a',
 		revision,
 		cursor: String(revision),
@@ -62,8 +62,6 @@ function snapshot({
 					id,
 					serverId: 'server-a',
 					viewId: 'view-a',
-					projectEnvironmentId: 'terminay:this-server',
-					environmentRevision: 1,
 					name: id,
 					root: `/workspace/${id}`,
 					rootOrigin: 'explicit',
@@ -93,8 +91,6 @@ function snapshot({
 					id: `session-${id}`,
 					serverId: 'server-a',
 					projectId: 'project-a',
-					projectEnvironmentId: 'terminay:this-server',
-					environmentRevision: 1,
 					status: 'running',
 				},
 			]),
@@ -194,14 +190,12 @@ test('project and panel identity survives project switches and detach-reattach s
 					id: panel.sessionId,
 					serverId: 'server-a',
 					projectId: panel.projectId,
-					projectEnvironmentId: 'terminay:this-server',
-					environmentRevision: 1,
 					status: 'running',
 				},
 			]),
 		);
 		return {
-			schemaVersion: 4,
+			schemaVersion: 5,
 			serverId: 'server-a',
 			revision,
 			cursor: String(revision),
@@ -222,8 +216,6 @@ test('project and panel identity survives project switches and detach-reattach s
 						id: projectId,
 						serverId: 'server-a',
 						viewId: 'view-a',
-						projectEnvironmentId: 'terminay:this-server',
-						environmentRevision: 1,
 						name: projectId,
 						root: `/workspace/${projectId}`,
 						rootOrigin: 'explicit',
@@ -307,8 +299,6 @@ test('project and panel identity survives project switches and detach-reattach s
 		id: 'session-panel-b',
 		serverId: 'server-a',
 		projectId: 'project-b',
-		projectEnvironmentId: 'terminay:this-server',
-		environmentRevision: 1,
 		status: 'running',
 	});
 });

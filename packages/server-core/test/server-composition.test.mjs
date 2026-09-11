@@ -11,8 +11,6 @@ import {
   ServerSettingsRepository,
   WorkspaceStore,
   createInitialWorkspace,
-  ProjectEnvironmentRepository,
-  createProjectEnvironmentOperationHandlers,
 } from "../dist/index.js";
 
 async function publishAgentLifecycle(agents, identity, events) {
@@ -81,7 +79,7 @@ test("composition owns TerminalService and exposes a complete merged registry", 
   assert.equal(composition.operations.queries.get("terminal.presentation-checkpoint") !== undefined, true);
   assert.equal(composition.operations.commands.get("terminal.attach") !== undefined, true);
   assert.equal(composition.operations.queries.get("workspace.ping") !== undefined, true);
-  assert.deepEqual(composition.coreOptions.capabilities, ["workspace", "terminal"]);
+  assert.deepEqual(composition.coreOptions.capabilities, ["workspace", "terminal.v1"]);
   assert.equal(composition.coreOptions.commands.get("terminal.input") !== undefined, true);
 
   const identity = {
@@ -183,7 +181,7 @@ test("composition enumerates every server-ready AI, Git, recording, and settings
     }
     assert.deepEqual(
       composition.coreOptions.capabilities,
-      ["terminal", "ai", "git", "recordings", "settings"],
+      ["terminal.v1", "dictation.v1", "git.v1", "recording.v1", "settings.v1"],
     );
   } finally {
     await composition.shutdown();
@@ -199,7 +197,7 @@ test("composition does not advertise optional authorities that are absent", asyn
     ptyFactory: createPtyFactory(),
   });
   try {
-    assert.deepEqual(composition.coreOptions.capabilities, ["terminal"]);
+    assert.deepEqual(composition.coreOptions.capabilities, ["terminal.v1"]);
     for (const prefix of ["ai.", "git.", "recordings.", "settings.", "macros."]) {
       assert.equal(
         [...composition.operations.queries.keys(), ...composition.operations.commands.keys()]
@@ -252,7 +250,7 @@ test("the composed core serves terminal operations through its transport-neutral
     await pair.open();
     const hello = await client.connect();
     assert.equal(hello.serverId, identity.serverId);
-    assert.deepEqual(hello.capabilities, ["desktop", "terminal"]);
+    assert.deepEqual(hello.capabilities, ["desktop", "terminal.v1"]);
 
     const listed = await client.query("terminal.list", { projectId: identity.projectId });
     assert.equal(listed.result.sessions[0].sessionId, identity.sessionId);
@@ -633,63 +631,6 @@ test("composition coalesces concurrent lifecycle calls and cannot restart after 
   await Promise.all([composition.shutdown(), composition.shutdown()]);
   assert.equal(stops, 1);
   await assert.rejects(() => composition.start(), /stopped/u);
-});
-
-test("composition resumes pending provider environments during server startup", async () => {
-  let persisted;
-  const repository = new ProjectEnvironmentRepository({
-    async load() { return persisted; },
-    async commit(state) { persisted = structuredClone(state); },
-  }, "environment-recovery-server");
-  const workspace = new WorkspaceStore(createInitialWorkspace("environment-recovery-server"));
-  const providers = () => [{
-    providerId: "example.recovery/vm",
-    displayName: "Recovery VM",
-    capabilities: ["terminal", "filesystem"],
-    createForm: { id: "create", title: "Create", sections: [], submitLabel: "Create" },
-  }];
-  let resumes = 0;
-  const providerRuntime = {
-    async invokeProvider(invocation) {
-      if (invocation.callback === "testProfile") return [];
-      if (invocation.callback === "createEnvironment") {
-        return {
-          state: "pending", operationId: "provider-job", providerState: { machineId: "vm-1" },
-          progress: { operationId: "provider-job", title: "Provisioning", resumable: true, stages: [] },
-        };
-      }
-      if (invocation.callback === "resumeOperation") {
-        resumes += 1;
-        return { state: "ready", providerState: { machineId: "vm-1" }, status: { state: "available", defaultRoot: "/work", revision: 1 } };
-      }
-      throw new Error(`unexpected ${invocation.callback}`);
-    },
-  };
-  const seed = createProjectEnvironmentOperationHandlers({
-    repository, workspace, thisServerRoot: () => "/server", providerDefinitions: providers, providerRuntime,
-  });
-  const context = {
-    connectionId: "seed", clientId: "seed", authScope: "admin", permissions: ["environments:read", "environments:manage"], signal: new AbortController().signal,
-  };
-  await seed.commands["project-environments.create"]({
-    envelope: { type: "command", commandId: "create", correlationId: "create", operation: "project-environments.create", payload: { providerId: "example.recovery/vm", values: { name: "VM" } } },
-    body: new Uint8Array(), context,
-  });
-
-  const composition = createServerCoreComposition({
-    allowUnresolvedTestSessions: true,
-    serverId: "environment-recovery-server", serverVersion: "1.0.0", capabilities: ["workspace"],
-    ptyFactory: createPtyFactory(), workspace,
-    projectEnvironments: { repository, thisServerRoot: () => "/server", providerDefinitions: providers, providerRuntime },
-  });
-  try {
-    await composition.start();
-    await eventually(() => repository.state.operations.create?.state === "succeeded");
-    assert.equal(resumes, 1);
-    assert.equal(repository.state.environments["env:create"].status, "ready");
-  } finally {
-    await composition.shutdown();
-  }
 });
 
 test("activity acknowledgement survives a real client reconnect and remains project/session-bound", async () => {

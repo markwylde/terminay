@@ -58,7 +58,6 @@ async function fixture() {
       agentProviders: [{
         id: PROVIDER,
         displayName: "Channel loss",
-        requiredEnvironmentCapabilities: ["process-observation"],
       }],
     },
   };
@@ -96,7 +95,6 @@ test("a child dying with publications in flight counts one death, not one per ac
       contextId: CONTEXT,
       serverId: "server-1",
       projectId: "project-1",
-      projectEnvironmentId: "terminay.this-server",
       terminalSessionId: "terminal-1",
       terminalIncarnationId: "1",
       providerId: PROVIDER,

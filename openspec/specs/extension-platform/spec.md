@@ -3,7 +3,7 @@
 ## Purpose
 
 Define how npm-distributed, server-installed extension packages add
-project-environment and coding-agent providers to a selected Terminay Server,
+coding-agent and language-server providers to a selected Terminay Server,
 covering their manifest contract, public API, declarative UI contributions,
 isolated host lifecycle, transactional installation, secrets, and permissions.
 
@@ -12,10 +12,9 @@ isolated host lifecycle, transactional installation, secrets, and permissions.
 ### Requirement: Extensions execute only on the selected server
 
 Terminay extensions SHALL be npm-distributed, server-installed packages that add
-project-environment or coding-agent providers. They SHALL execute only on the
-selected Terminay Server. Desktop and browser clients SHALL render bounded
-declarative contributions from the server's matching UI bundle and MUST NOT load
-extension code.
+coding-agent providers. They SHALL execute only on the selected Terminay Server.
+Desktop and browser clients SHALL render bounded declarative contributions from
+the server's matching UI bundle and MUST NOT load extension code.
 
 #### Scenario: Client renders an extension contribution
 
@@ -32,16 +31,22 @@ extension code.
 
 ### Requirement: Bounded API scope
 
-The public API SHALL support the capabilities needed by the official SSH, Puzed,
-Codex, Claude Code, Cursor Agent, Grok, and omp extensions. Themes, editor
-plugins, autocomplete, arbitrary commands, renderer components, and generic
-Server Core operation registration SHALL be out of scope.
+The public API SHALL support the capabilities needed by the official Codex,
+Claude Code, Grok, OpenCode, and omp agent extensions and the official language
+server extensions. Themes, editor plugins, autocomplete sources, arbitrary
+commands, renderer components, and generic Server Core operation registration
+SHALL be out of scope.
 
 #### Scenario: Unsupported contribution kind
 
 - **WHEN** a package declares a theme, editor plugin, autocomplete source,
   arbitrary command, renderer component, or generic Server Core operation
 - **THEN** the contribution is not supported and validation rejects it
+
+#### Scenario: Language server contribution
+
+- **WHEN** a package declares a language server contribution
+- **THEN** it is a supported contribution kind and validation accepts it
 
 ### Requirement: Server-wide installation scope
 
@@ -58,11 +63,12 @@ Desktop's embedded server.
 
 ### Requirement: Official catalogue and release-bundled artifacts
 
-Terminay SHALL ship an official catalogue containing the built-in SSH, Puzed,
-Codex, Claude Code, Cursor Agent, Grok, and omp npm packages and their expected
-metadata. Verified package artifacts for that exact release SHALL be embedded in
-Electron and standalone server distributions, installed without network access,
-and enabled by default. Official packages SHALL use the same public manifest,
+Terminay SHALL ship an official catalogue containing the built-in Codex, Claude
+Code, Grok, OpenCode, omp, and TypeScript language npm packages and their
+expected metadata.
+Verified package artifacts for that exact release SHALL be embedded in Electron
+and standalone server distributions, installed without network access, and
+enabled by default. Official packages SHALL use the same public manifest,
 extension host, broker, and compatibility checks as custom packages. The
 **Official** badge SHALL be catalogue metadata, not a privileged runtime tier.
 
@@ -180,8 +186,7 @@ One npm package SHALL contribute one immutable extension identity. Its
 display name and bounded description; a Terminay Extension API range and Terminay
 and Node engine compatibility; one relative ESM entrypoint exported inside the
 package; declared permissions; Terminay extension dependencies and compatible
-contribution ranges; and namespaced project-environment and coding-agent provider
-contributions.
+contribution ranges; and namespaced coding-agent provider contributions.
 
 #### Scenario: Closed manifest object
 
@@ -195,59 +200,30 @@ contributions.
 
 ### Requirement: Contribution arrays
 
-`contributes.projectEnvironments` and `contributes.agentProviders` SHALL be
-independently optional arrays, and at least one supported contribution SHALL be
-required. An agent package MUST NOT be required to register a project
-environment merely to satisfy the manifest.
+`contributes.agentProviders` and `contributes.languageServers` SHALL be the
+supported contribution arrays, and at least one supported contribution SHALL be
+required.
 
 #### Scenario: Agent-only package
 
-- **WHEN** a package contributes only agent providers
-- **THEN** it validates without declaring a project environment
+- **WHEN** a package contributes one or more agent providers
+- **THEN** it passes contribution validation
 
 #### Scenario: No contributions
 
-- **WHEN** a package declares neither contribution array
+- **WHEN** a package declares no contribution array
 - **THEN** validation fails
 
-### Requirement: Server-derived provider registration
+#### Scenario: Language-server-only package
 
-An activated project-environment contribution SHALL register its declared
-capabilities with the selected server's environment router. The server SHALL
-derive this registration from the activated manifest and extension pair. Desktop,
-standalone composition, and generic Server Core MUST NOT name an extension or
-provider id.
-
-#### Scenario: Registration source
-
-- **WHEN** an extension activates
-- **THEN** its provider registration is derived from the activated manifest and
-  extension pair, with no host or composition code naming that provider id
-
-### Requirement: Explicit environment creation on profile save
-
-A contribution MAY opt into `profileSave: { createEnvironment: true }`. Saving a
-profile otherwise SHALL persist only the profile. The opt-in SHALL create one
-environment bound to the just-saved profile and SHALL call the public
-`createEnvironment` callback. This behaviour MUST NOT be inferred from a provider
-id, form, or capability.
-
-#### Scenario: Provider without the opt-in
-
-- **WHEN** a profile is saved for a contribution that has not opted in
-- **THEN** only the profile is persisted and no environment is created
-
-#### Scenario: Provider with the opt-in
-
-- **WHEN** a profile is saved for a contribution declaring
-  `profileSave: { createEnvironment: true }`
-- **THEN** one environment bound to that just-saved profile is created through
-  the public `createEnvironment` callback
+- **WHEN** a package contributes one or more language servers and no agent
+  provider
+- **THEN** it passes contribution validation
 
 ### Requirement: Identity separation and namespacing
 
 Package name and extension id SHALL be separate so repository or package
-ownership can change without breaking persisted environment identities. Provider,
+ownership can change without breaking persisted extension identities. Provider,
 action, and form ids SHALL be namespaced by the immutable extension id. Unknown
 manifest fields, duplicate identities, core-operation collisions, absolute or
 escaping entry paths, symlinks, non-regular entrypoints, incompatible versions,
@@ -295,40 +271,6 @@ host bridges.
   bridge
 - **THEN** that import is prohibited by the public Extension API contract
 
-### Requirement: Public extension API capabilities
-
-The API SHALL permit an extension to define redacted profile and environment
-types and project-environment provider capabilities; contribute declarative
-profile, create, browse, status, progress, confirmation, and lifecycle surfaces;
-receive its own namespaced configuration, data, and cache directories; request
-resolution of its own profile-bound secret fields through a scoped broker; make
-bounded provider-dependency calls; implement provider runtime callbacks through
-bounded typed IPC with cancellation, deadlines, and concurrency limits;
-contribute a coding-agent provider and register its provider-specific observation
-runtime; use a terminal-scoped, environment-routed observation broker for bounded
-process, TTY, open-file, realpath, stat, read, and append or replace evidence;
-and publish validated provider-neutral root, turn, tool, wait, model, completion,
-exit, and subagent lifecycle events to the host-owned canonical projection.
-
-#### Scenario: Provider dependency call
-
-- **WHEN** the Puzed extension asks the SSH extension to validate or open an
-  environment
-- **THEN** the bounded provider-dependency call is made through the public
-  provider contract
-
-#### Scenario: Runtime callback bounds
-
-- **WHEN** a provider runtime callback runs
-- **THEN** it is subject to cancellation, deadlines, and concurrency limits over
-  bounded typed IPC
-
-#### Scenario: Publishing agent lifecycle events
-
-- **WHEN** an agent provider publishes root, turn, tool, wait, model, completion,
-  exit, or subagent events
-- **THEN** they are validated and written to the host-owned canonical projection
-
 ### Requirement: Public extension API exclusions
 
 The API MUST NOT expose raw application-protocol handlers, operation policies,
@@ -350,10 +292,9 @@ host APIs.
 
 ### Requirement: Agent observation permission
 
-An agent provider SHALL declare the `agent-observation` permission and each
-required environment observation capability. The permission SHALL authorize
-agent-context delivery and canonical publication, and MUST NOT grant client
-authority or direct canonical-store mutation.
+An agent provider SHALL declare the `agent-observation` permission. The
+permission SHALL authorize agent-context delivery and canonical publication, and
+MUST NOT grant client authority or direct canonical-store mutation.
 
 #### Scenario: Missing permission
 
@@ -386,57 +327,16 @@ presented as an operating-system security sandbox.
 - **THEN** it describes the extension's broader filesystem and network authority
   rather than promising sandbox protection
 
-### Requirement: Environment-appropriate observation
-
-For This server, an agent extension MAY combine its host-issued terminal context
-with Node process and filesystem APIs. For SSH and other non-local environments,
-local Node APIs MUST NOT establish remote terminal or journal identity; the
-extension SHALL use the environment-routed observation broker when the
-environment advertises that capability. The host SHALL accept canonical events
-only for the terminal context it issued.
-
-#### Scenario: Remote environment observation
-
-- **WHEN** an agent extension observes a terminal in an SSH environment
-- **THEN** it uses the environment-routed observation broker rather than local
-  Node APIs to establish terminal or journal identity
-
-#### Scenario: Event for an unissued terminal context
-
-- **WHEN** an extension publishes a canonical event for a terminal context the
-  host did not issue
-- **THEN** the event is rejected
-
-### Requirement: Extension dependencies are distinct from npm dependencies
-
-Extension dependencies SHALL be distinct from npm library dependencies. A
-dependent extension SHALL declare a compatible extension dependency and call its
-public provider contract; it MUST NOT import the other extension's internals,
-duplicate its transport, or silently install another extension without
-administrator confirmation.
-
-#### Scenario: Puzed depends on SSH
-
-- **WHEN** Puzed requires SSH functionality
-- **THEN** it declares a compatible SSH extension dependency and calls its public
-  provider contract without importing SSH internals
-
-#### Scenario: Implicit dependency install
-
-- **WHEN** installing an extension would require installing another extension
-- **THEN** it is not installed silently without administrator confirmation
-
 ### Requirement: Declarative UI contribution surface
 
-Extension code MUST NOT enter the renderer. Fixed `extensions.*` and
-`project-environments.*` application-protocol operations SHALL return bounded
-schemas and safe status data. The server-bundled generic UI SHALL support
-sections and accessible disclosures; text, number, URL, secret, checkbox, switch,
-and textarea fields; searchable asynchronous selectors with deadlines and
-cancellation; radio-like preset cards; conditional visibility and disabled
-reasons; inline validation plus an error summary; progress stages and resumable
-operation status; ordinary and destructive confirmations; and guarded
-credential-free HTTPS links.
+Extension code MUST NOT enter the renderer. Fixed `extensions.*`
+application-protocol operations SHALL return bounded schemas and safe status
+data. The server-bundled generic UI SHALL support sections and accessible
+disclosures; text, number, URL, secret, checkbox, switch, and textarea fields;
+searchable asynchronous selectors with deadlines and cancellation; radio-like
+preset cards; conditional visibility and disabled reasons; inline validation plus
+an error summary; progress stages and resumable operation status; ordinary and
+destructive confirmations; and guarded credential-free HTTPS links.
 
 #### Scenario: Asynchronous selector
 
@@ -467,7 +367,7 @@ colours, or sizing.
 
 #### Scenario: Native appearance across hosts
 
-- **WHEN** the same contribution schema renders for SSH, Puzed, or a third-party
+- **WHEN** the same contribution schema renders for a built-in or a third-party
   provider on Desktop or in a browser
 - **THEN** it looks native to Terminay through the shared Settings primitives
 
@@ -478,7 +378,7 @@ its package passes a probe. After the immutable slot is committed, the Terminay
 Server SHALL activate that exact slot and SHALL keep its provider process
 running. On server startup every enabled, compatible active slot SHALL be
 restored before provider catalogues are served. Activation failure SHALL be
-represented explicitly and MUST NOT fall back to This server.
+represented explicitly.
 
 #### Scenario: Startup restore order
 
@@ -489,8 +389,8 @@ represented explicitly and MUST NOT fall back to This server.
 #### Scenario: Activation fails
 
 - **WHEN** activation of an extension fails
-- **THEN** the failure is represented explicitly and its environments do not fall
-  back to This server
+- **THEN** the failure is represented explicitly rather than presented as a
+  running extension
 
 ### Requirement: Built-in reconciliation includes activation
 
@@ -601,16 +501,16 @@ stopped, starting, running, and failed, quarantined, and pending update.
 
 ### Requirement: Crash containment
 
-One crash SHALL mark only that extension and its environments unavailable. It
-MUST NOT prevent This server readiness or crash another provider. Every crash
-SHALL be recorded in the local diagnostic history with the extension id, the
-observed exit code or signal, and the error the child reported.
+One crash SHALL mark only that extension unavailable. It MUST NOT prevent server
+readiness or crash another provider. Every crash SHALL be recorded in the local
+diagnostic history with the extension id, the observed exit code or signal, and
+the error the child reported.
 
 #### Scenario: Provider crash
 
 - **WHEN** an extension host process crashes
-- **THEN** only that extension and its environments are marked unavailable, and
-  This server and other providers remain usable
+- **THEN** only that extension is marked unavailable, and the server and other
+  providers remain usable
 
 #### Scenario: Crash leaves evidence
 
@@ -751,7 +651,7 @@ diagnostic reader can tell how a child actually ended.
 
 Shutdown SHALL stop new admissions, cancel bounded work, call deactivate, then
 terminate an unresponsive child. Disabling or replacing code MUST NOT stop or
-delete external virtual machines implicitly.
+delete external resources implicitly.
 
 #### Scenario: Unresponsive child at shutdown
 
@@ -760,8 +660,8 @@ delete external virtual machines implicitly.
 
 #### Scenario: Disabling a provider with external resources
 
-- **WHEN** an extension managing external VMs is disabled or replaced
-- **THEN** those external VMs are not stopped or deleted implicitly
+- **WHEN** an extension managing external resources is disabled or replaced
+- **THEN** those external resources are not stopped or deleted implicitly
 
 ### Requirement: Self-contained sterile npm installer
 
@@ -850,14 +750,13 @@ advisory facts, not claims of Terminay or npm approval.
 
 An update SHALL install side-by-side into a new exact slot. It MUST NOT mutate
 the active `node_modules` or run `npm update`. Permission expansion SHALL require
-fresh confirmation. When active environments or sessions use the provider,
-activation SHALL wait for an explicit drain or restart rather than hot-swapping
-code beneath live PTY or filesystem state.
+fresh confirmation. When active sessions use the provider, activation SHALL wait
+for an explicit drain or restart rather than hot-swapping code beneath live PTY
+or filesystem state.
 
 #### Scenario: Update while sessions are live
 
-- **WHEN** an update is installed while active environments or sessions use the
-  provider
+- **WHEN** an update is installed while active sessions use the provider
 - **THEN** activation waits for an explicit drain or restart
 
 #### Scenario: Update expands permissions
@@ -900,15 +799,14 @@ explicitly failed or incompatible.
 
 ### Requirement: Disable, uninstall, and retention
 
-Disable SHALL preserve profiles, environment records, data, and secret
-references. Uninstall SHALL be blocked while the extension is enabled, referenced
-by profiles or projects, required by another extension, or in use. Code removal
-MUST NOT cascade-delete projects, external resources, credentials, or provider
-data. An installed official version MAY be disabled and retained as a rollback
-floor under the same slot-retention policy as a custom extension. A
-release-bundled slot SHALL be an immutable rollback floor: it MAY be disabled or
-superseded by a compatible external slot but MUST NOT be physically removed from
-that release.
+Disable SHALL preserve profiles, data, and secret references. Uninstall SHALL be
+blocked while the extension is enabled, referenced by profiles or projects,
+required by another extension, or in use. Code removal MUST NOT cascade-delete
+projects, external resources, credentials, or provider data. An installed
+official version MAY be disabled and retained as a rollback floor under the same
+slot-retention policy as a custom extension. A release-bundled slot SHALL be an
+immutable rollback floor: it MAY be disabled or superseded by a compatible
+external slot but MUST NOT be physically removed from that release.
 
 #### Scenario: Uninstall blocked
 
@@ -919,7 +817,8 @@ that release.
 #### Scenario: Disabled provider projects
 
 - **WHEN** a provider is disabled or incompatible
-- **THEN** its projects remain represented and never fall back to Local
+- **THEN** the projects that used it remain represented and the extension is
+  shown explicitly as disabled or incompatible
 
 #### Scenario: Release-bundled slot removal
 
@@ -962,11 +861,11 @@ than promising sandbox protection.
 ### Requirement: Transport-bound server permissions
 
 Transport-bound server permissions SHALL separately cover extension management,
-environment and profile management and use, secret management, SSH trust
-override, and provider lifecycle and destructive actions. A client-asserted id or
-admin scope MUST NOT be accepted. Revoking the initiating principal SHALL cancel
-its in-flight administrative command before activation when possible, and MUST NOT
-silently destroy shared environments.
+profile management and use, secret management, and provider lifecycle and
+destructive actions. A client-asserted id or admin scope MUST NOT be accepted.
+Revoking the initiating principal SHALL cancel its in-flight administrative
+command before activation when possible, and MUST NOT silently destroy shared
+provider state.
 
 #### Scenario: Forged admin scope
 
@@ -978,7 +877,7 @@ silently destroy shared environments.
 
 - **WHEN** the initiating principal is revoked during an administrative command
 - **THEN** the in-flight command is cancelled before activation when possible and
-  shared environments are not destroyed
+  shared provider state is not destroyed
 
 ### Requirement: Extensions as a Settings section
 
@@ -998,10 +897,11 @@ groups, rows, fields, buttons, badges, and disclosure patterns.
 ### Requirement: Extensions section content
 
 The Extensions section SHALL name the selected Terminay Server as the authority
-and SHALL show built-in SSH, Puzed, Codex, Claude Code, Cursor Agent, Grok, and
-omp cards, installed and disabled states, available explicit updates,
-compatibility and failure details, permissions, dependants, and **Install from
-npm…**.
+and SHALL show built-in Codex, Claude Code, Grok, OpenCode, omp, and
+TypeScript language cards, installed and disabled states, available explicit
+updates, compatibility and failure details, permissions, dependants, and
+**Install from npm…**. A language server extension's card SHALL show the
+languages it serves and an enable toggle for that extension.
 
 #### Scenario: Viewing extension state
 
@@ -1010,14 +910,19 @@ npm…**.
   installed and disabled state, available explicit updates, compatibility and
   failure detail, permissions, dependants, and **Install from npm…** are shown
 
+#### Scenario: Viewing a language server extension
+
+- **WHEN** the user views a language server extension's card
+- **THEN** it shows the languages that extension serves and a per-extension enable
+  toggle
+
 ### Requirement: Extensions entry points
 
 **File → Extensions…** and the Command Bar action SHALL open or focus Settings at
-its **Extensions** section. The project-bar environment chooser MUST NOT duplicate
-that action. On Desktop this SHALL use the established Settings auxiliary window;
-in a browser it SHALL use the established in-page Settings route and select the
-same section. Repeated invocation SHALL focus the existing Settings presentation
-rather than stacking another dialog.
+its **Extensions** section. On Desktop this SHALL use the established Settings
+auxiliary window; in a browser it SHALL use the established in-page Settings
+route and select the same section. Repeated invocation SHALL focus the existing
+Settings presentation rather than stacking another dialog.
 
 #### Scenario: Repeated invocation
 
@@ -1089,10 +994,9 @@ disposable registration. Registration SHALL fail closed for a provider id the
 manifest did not contribute, a duplicate provider id, or a registration
 attempted after deactivation. Each provider contribution SHALL declare a
 namespaced provider id, display metadata, supported platforms, executable and
-process matchers, provider version and mapping declarations, and the
-environment-observation capabilities it requires. The host SHALL issue a
-terminal context bound to the exact server, project, terminal session, and
-process incarnation, and SHALL reject publications, acknowledgements,
+process matchers, and provider version and mapping declarations. The host SHALL
+issue a terminal context bound to the exact server, project, terminal session,
+and process incarnation, and SHALL reject publications, acknowledgements,
 cancellations, and observation requests that name a stale context, another
 terminal, or an undeclared provider. Oversized or malformed host messages SHALL
 be rejected without reaching the canonical store.
@@ -1123,13 +1027,13 @@ be rejected without reaching the canonical store.
 
 ### Requirement: Exact-once observer retirement
 
-Terminal exit, provider disable, provider update, project removal,
-project-environment revision change, extension child crash, and server shutdown
-SHALL each retire the affected observation contexts exactly once, and a repeated
-cause SHALL NOT retire them again. Retirement SHALL cancel the extension's
-observers and SHALL permit a fresh admission afterwards. A stalled or crashed
-retirement for one provider SHALL leave unrelated providers' contexts usable,
-and per-extension process isolation with restart and backoff SHALL be preserved.
+Terminal exit, provider disable, provider update, project removal, extension
+child crash, and server shutdown SHALL each retire the affected observation
+contexts exactly once, and a repeated cause SHALL NOT retire them again.
+Retirement SHALL cancel the extension's observers and SHALL permit a fresh
+admission afterwards. A stalled or crashed retirement for one provider SHALL
+leave unrelated providers' contexts usable, and per-extension process isolation
+with restart and backoff SHALL be preserved.
 
 #### Scenario: Repeated retirement cause
 
@@ -1147,47 +1051,12 @@ and per-extension process isolation with restart and backoff SHALL be preserved.
 - **THEN** unrelated providers' contexts remain usable and the crashed extension
   restarts under the ordinary backoff
 
-### Requirement: Target-owned vault references in provider-dependency calls
-
-A provider-dependency call SHALL authenticate both the calling and target
-extension, SHALL require the caller's declared extension dependency and the
-target's declared operation, and SHALL forward bounded deadlines, cancellation,
-idempotency keys, and the environment revision. Secret material created for a
-dependency SHALL be owned by the target extension: the target SHALL hold it in
-the Terminay Server vault under its own scope and SHALL return only an opaque
-reference scoped to that extension installation and provider. A dependency
-reference SHALL NOT expose secret bytes to the caller. Vault writes SHALL be
-revisioned and SHALL atomically replace the durable binding, transient copies
-handed to a bounded callback SHALL be zeroized when it completes, and pending
-removal SHALL block new uses while allowing active work to finish.
-
-#### Scenario: Managed binding returns no secret bytes
-
-- **WHEN** a dependent extension asks its declared target to create or use a
-  managed credential
-- **THEN** it receives an opaque scoped reference and never the secret bytes or
-  a vault id it can enumerate
-
-#### Scenario: Undeclared dependency call
-
-- **WHEN** an extension calls a target it did not declare, or an operation the
-  target did not declare
-- **THEN** the call fails closed
-
-#### Scenario: Pending removal
-
-- **WHEN** a managed binding is pending removal
-- **THEN** new uses are refused while the active bounded callback completes,
-  after which cleanup finishes
-
 ### Requirement: Terminal-scoped directory list and watch operations
 
 The public observation broker SHALL offer terminal-scoped directory listing and
-directory watching for the exact terminal's environment, with bounded results,
-cancellation, and atomic-replacement handling. These operations SHALL be
-available only through the broker, SHALL be routed through the terminal's
-project environment, and SHALL NOT read a directory outside the broker-issued
-scope.
+directory watching for the exact terminal, with bounded results, cancellation,
+and atomic-replacement handling. These operations SHALL be available only through
+the broker and SHALL NOT read a directory outside the broker-issued scope.
 
 A listing MAY declare the exact filenames it is looking for. Where it does,
 only files with those names SHALL be considered, and only they SHALL be charged
@@ -1228,12 +1097,11 @@ and follow, incomplete-line buffering, truncation and atomic-replacement
 detection including inode or device replacement, over-limit discard,
 cancellation helpers, versioned mapping selection, safe string handling, and
 canonical event builders with validation. The toolkit SHALL accept public
-adapters and plain data so an extension MAY back it with Node APIs for **This
-server** or with the environment-routed broker for a remote environment, and a
-provider MAY implement another bounded format without using the toolkit.
-Diagnostics produced through the toolkit SHALL be typed and safe to display,
-carrying no paths, prompts, credentials, native payloads, or arbitrary provider
-errors.
+adapters and plain data so an extension MAY back it with Node APIs or with the
+observation broker, and a provider MAY implement another bounded format without
+using the toolkit. Diagnostics produced through the toolkit SHALL be typed and
+safe to display, carrying no paths, prompts, credentials, native payloads, or
+arbitrary provider errors.
 
 #### Scenario: Split record across chunks
 
@@ -1341,62 +1209,17 @@ resources.
 - **THEN** no further teardown coordination is required of the extension for
   that registration
 
-### Requirement: Terminal-scoped handles are opaque and non-transferable
-
-File and process handles supplied through a terminal observation context SHALL
-be opaque values scoped to the terminal context that issued them. Terminay SHALL
-validate that every handle an extension references was issued by that same
-terminal context, and SHALL refuse a handle reused with another terminal context
-or synthesised by the extension. Path resolution helpers SHALL apply the
-selected project environment's path rules rather than the server host's.
-
-#### Scenario: Handle reused across terminals
-
-- **WHEN** an extension passes a handle issued for one terminal context into
-  another terminal context
-- **THEN** the call is refused
-
-#### Scenario: Environment-appropriate resolution
-
-- **WHEN** an extension canonicalises a file handle through the observation API
-- **THEN** resolution applies the terminal's project-environment path rules,
-  backed by the server host's filesystem on **This server** and by the
-  environment's advertised capability otherwise
-
-### Requirement: Node APIs and the observation boundary
-
-An extension MAY use public Node.js APIs and its declared npm dependencies for
-ordinary work on the Terminay Server account. Such access SHALL NOT constitute
-terminal identity evidence on its own and SHALL NOT reach a non-local project
-environment's filesystem or process tree. An operation that must target the
-terminal's project environment SHALL use the observation API. An extension MUST
-NOT import a private Terminay module to obtain internal services.
-
-#### Scenario: Reading extension preferences
-
-- **WHEN** an extension reads its own configuration file from the Terminay
-  Server account with Node APIs
-- **THEN** the read is permitted and is not accepted as terminal identity
-  evidence
-
-#### Scenario: Targeting a remote project environment
-
-- **WHEN** an extension needs evidence from a terminal whose project environment
-  is not **This server**
-- **THEN** it must use the observation API, because Node filesystem access
-  reaches only the server host
-
 ### Requirement: Cancellation and disposal on every long-running API
 
 Each terminal observation context SHALL carry a cancellation signal that fires
-when the foreground process leaves, the terminal closes, the environment
-changes, or the extension is disabled. Every long-running API SHALL accept that
-signal, and watchers SHALL be asynchronously disposable and idempotent to close.
+when the foreground process leaves, the terminal closes, or the extension is
+disabled. Every long-running API SHALL accept that signal, and watchers SHALL be
+asynchronously disposable and idempotent to close.
 
 #### Scenario: Foreground process leaves
 
-- **WHEN** the observed process exits, the terminal closes, the environment
-  changes, or the extension is disabled
+- **WHEN** the observed process exits, the terminal closes, or the extension is
+  disabled
 - **THEN** the terminal context's cancellation signal fires and every
   long-running call it was passed to stops
 
@@ -1450,4 +1273,165 @@ SHALL offer it no means of implementing those host behaviours.
   evidence, provider home and journal resolution, supported mapping versions,
   title and model sources, lifecycle and subagent mappings, privacy exclusions,
   and honest fallback, and nothing else
->>>>>>> origin/main
+
+### Requirement: Host-issued terminal context for observation
+
+An agent extension MAY combine its host-issued terminal context with Node
+process and filesystem APIs to establish terminal or journal identity. The host
+SHALL accept canonical events only for the terminal context it issued.
+
+#### Scenario: Observing a terminal
+
+- **WHEN** an agent extension observes a terminal
+- **THEN** it establishes terminal or journal identity from the host-issued
+  terminal context together with Node process and filesystem APIs
+
+#### Scenario: Event for an unissued terminal context
+
+- **WHEN** an extension publishes a canonical event for a terminal context the
+  host did not issue
+- **THEN** the event is rejected
+
+### Requirement: Public extension API capabilities for agent extensions
+
+The API SHALL permit an extension to define redacted profile types; contribute
+declarative status, progress, confirmation, and lifecycle surfaces; receive its
+own namespaced configuration, data, and cache directories; request resolution of
+its own profile-bound secret fields through a scoped broker; implement provider
+runtime callbacks through bounded typed IPC with cancellation, deadlines, and
+concurrency limits; contribute a coding-agent provider and register its
+provider-specific observation runtime; use a terminal-scoped observation broker
+for bounded process, TTY, open-file, realpath, stat, read, and append or replace
+evidence; and publish validated provider-neutral root, turn, tool, wait, model,
+completion, exit, and subagent lifecycle events to the host-owned canonical
+projection.
+
+#### Scenario: Runtime callback bounds
+
+- **WHEN** a provider runtime callback runs
+- **THEN** it is subject to cancellation, deadlines, and concurrency limits over
+  bounded typed IPC
+
+#### Scenario: Publishing agent lifecycle events
+
+- **WHEN** an agent provider publishes root, turn, tool, wait, model, completion,
+  exit, or subagent events
+- **THEN** they are validated and written to the host-owned canonical projection
+
+### Requirement: Extension dependencies are declared, not imported
+
+Extension dependencies SHALL be distinct from npm library dependencies. A
+dependent extension SHALL declare a compatible extension dependency; it MUST NOT
+import the other extension's internals, duplicate its transport, or silently
+install another extension without administrator confirmation.
+
+#### Scenario: Declared extension dependency
+
+- **WHEN** an extension requires functionality another extension owns
+- **THEN** it declares a compatible extension dependency and does not import that
+  extension's internals or duplicate its transport
+
+#### Scenario: Implicit dependency install
+
+- **WHEN** installing an extension would require installing another extension
+- **THEN** it is not installed silently without administrator confirmation
+
+### Requirement: Terminal-scoped handles are opaque and scoped to one terminal
+
+File and process handles supplied through a terminal observation context SHALL
+be opaque values scoped to the terminal context that issued them. Terminay SHALL
+validate that every handle an extension references was issued by that same
+terminal context, and SHALL refuse a handle reused with another terminal context
+or synthesised by the extension. Path resolution helpers SHALL apply the server
+host's path rules.
+
+#### Scenario: Handle reused across terminals
+
+- **WHEN** an extension passes a handle issued for one terminal context into
+  another terminal context
+- **THEN** the call is refused
+
+#### Scenario: Path resolution through the observation API
+
+- **WHEN** an extension canonicalises a file handle through the observation API
+- **THEN** resolution applies the server host's filesystem path rules
+
+### Requirement: Node APIs and the terminal-evidence boundary
+
+An extension MAY use public Node.js APIs and its declared npm dependencies for
+ordinary work on the Terminay Server account. Such access SHALL NOT constitute
+terminal identity evidence on its own. An operation that establishes evidence
+about the terminal SHALL use the observation API. An extension MUST NOT import a
+private Terminay module to obtain internal services.
+
+#### Scenario: Reading extension preferences
+
+- **WHEN** an extension reads its own configuration file from the Terminay
+  Server account with Node APIs
+- **THEN** the read is permitted and is not accepted as terminal identity
+  evidence
+
+#### Scenario: Establishing terminal evidence
+
+- **WHEN** an extension needs evidence about a terminal it is observing
+- **THEN** it uses the observation API rather than an unscoped Node read
+
+### Requirement: Language server contribution and registration
+
+A language server contribution SHALL declare a namespaced language server id, the
+language ids it serves, the file selectors it matches, a display name, and the
+runtime notes Settings shows for it. At activation the extension SHALL register
+that contribution with a `launch` callback that, given a project root, returns the
+argv, cwd policy, environment, and optional initialisation options for the
+language server. The host SHALL own everything else: spawning the language server
+as a child of the extension process with the project root as its working
+directory, stdio framing, initialise, lifecycle, deadlines, and translation into
+core's bounded DTOs. A language server extension SHALL contribute no UI, register
+no protocol operations, and never enter the renderer.
+
+#### Scenario: Registering a declared language server
+
+- **WHEN** an extension registers a language server id its manifest contributed,
+  supplying a `launch` callback
+- **THEN** the registration is accepted and returns a disposable registration
+
+#### Scenario: Undeclared language server id
+
+- **WHEN** an extension registers a language server id its manifest did not
+  contribute, or registers the same id twice
+- **THEN** the registration is refused
+
+#### Scenario: Host owns the language server process
+
+- **WHEN** a language session starts for a project
+- **THEN** the host spawns the language server as a child of the extension process
+  with the project root as its working directory and owns its stdio framing,
+  initialise, lifecycle, deadlines, and translation
+
+### Requirement: Language session lifecycle in the extension host
+
+Language sessions SHALL be counted and reaped as child resources of the
+extension that contributed them, under the same supervision, cancellation, and
+shutdown rules as the extension's other bounded work. A language server child
+that dies SHALL count against that extension's crash accounting exactly once.
+When an extension is quarantined, disabled, or shut down, its language sessions
+SHALL end and their pending and subsequent requests SHALL return a typed
+unavailable outcome.
+
+#### Scenario: Language server child dies
+
+- **WHEN** a language server child process exits unexpectedly
+- **THEN** the death counts once against the contributing extension's crash
+  accounting and the diagnostic history records it
+
+#### Scenario: Extension quarantined
+
+- **WHEN** a language server extension is quarantined or disabled
+- **THEN** its language sessions end and requests for them return a typed
+  unavailable outcome
+
+#### Scenario: Shutdown
+
+- **WHEN** the extension host shuts down
+- **THEN** its language sessions are cancelled and their language server children
+  are terminated with the extension's other bounded work

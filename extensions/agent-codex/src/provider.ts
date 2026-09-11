@@ -73,12 +73,6 @@ export const codexAgentProvider = defineAgentProvider({
   },
 
   async observe(terminal) {
-    if (!terminal.capabilities.has("process-observation")
-      || !terminal.capabilities.has("filesystem-observation")
-      || !terminal.capabilities.has("agent-journal")) {
-      return { state: "unavailable" as const, reason: "environment-capability-missing" as const };
-    }
-
     const restore = codexRestoreCommand(terminal.foreground.arguments);
     const rollout = restore
       ? (await findRestoredRootRollout(terminal, restore)) ?? (await findProcessBoundRootRollout(terminal))

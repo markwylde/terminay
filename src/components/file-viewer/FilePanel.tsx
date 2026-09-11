@@ -1,4 +1,5 @@
 import type { IDockviewPanelProps } from 'dockview';
+import { LANGUAGE_CAPABILITY, TerminayClientFacade } from '@terminay/client-core';
 import {
 	type CSSProperties,
 	useCallback,
@@ -19,7 +20,12 @@ import {
 	resolveFileViewerEngine,
 	resolveFileViewerMode,
 } from '../../services/fileViewer';
+import type { LanguageGateway } from '../../services/fileViewer/languageGateway';
 import { toProjectRelativePath } from '../../services/fileViewer/serverFileGateway';
+import {
+	acquireLanguageGateway,
+	createLanguageGateway,
+} from './sharedLanguageGateway';
 import {
 	decodeSparseEdit,
 	mapProjectedOffset,
@@ -186,6 +192,39 @@ function CanonicalFilePanel(
 			terminalClientContext.projectId,
 		],
 	);
+	// Language intelligence is a server capability. Without the negotiated
+	// `language.v1` hello capability the editor stays highlighting-only.
+	//
+	// The gateway's diagnostics subscription is connection-wide, so every panel
+	// on one connection leases the same gateway rather than opening its own; the
+	// last panel to close disposes it. A reconnect replaces the application
+	// client, which is what the lease is keyed by, so the panel picks up the new
+	// connection's gateway instead of holding a disposed one.
+	const applicationClient = terminalClientContext.applicationClient;
+	const speaksLanguage =
+		terminalClientContext.serverCapabilities?.includes(LANGUAGE_CAPABILITY) ===
+		true;
+	const [languageGateway, setLanguageGateway] = useState<
+		LanguageGateway | undefined
+	>();
+	useEffect(() => {
+		if (applicationClient === undefined || !speaksLanguage) {
+			setLanguageGateway(undefined);
+			return;
+		}
+		const lease = acquireLanguageGateway(applicationClient, (client) =>
+			createLanguageGateway({
+				transport: new TerminayClientFacade(
+					client as typeof applicationClient,
+				),
+			}),
+		);
+		setLanguageGateway(lease.gateway);
+		return () => {
+			setLanguageGateway(undefined);
+			lease.release();
+		};
+	}, [applicationClient, speaksLanguage]);
 	const [fileInfo, setFileInfo] = useState<FileInfo | null>(
 		props.params.fileInfo ?? null,
 	);
@@ -275,6 +314,28 @@ function CanonicalFilePanel(
 		() => orderedSparseEntries.map(([, edit]) => edit),
 		[orderedSparseEntries],
 	);
+	const languageIntelligence = useMemo(() => {
+		if (languageGateway === undefined || fileInfo === null || fileInfo.isDirectory) {
+			return undefined;
+		}
+		try {
+			return {
+				gateway: languageGateway,
+				path: toProjectRelativePath(projectRoot, fileInfo.path),
+				projectId: terminalClientContext.projectId,
+				projectRoot,
+			};
+		} catch {
+			// A file outside the project root has no project-relative path, so no
+			// language session can serve it.
+			return undefined;
+		}
+	}, [
+		fileInfo,
+		languageGateway,
+		projectRoot,
+		terminalClientContext.projectId,
+	]);
 
 	const handleHexValidationChange = useCallback((isValid: boolean) => {
 		setIsHexValid(isValid);
@@ -1335,6 +1396,7 @@ function CanonicalFilePanel(
 							engine={engine}
 							filePath={fileInfo.path}
 							language={fileInfo.extension.replace(/^\./, '')}
+							languageIntelligence={languageIntelligence}
 							text={draftText}
 							onCurrentTextGetterChange={handleCurrentTextGetterChange}
 							onChangeText={(text) => {

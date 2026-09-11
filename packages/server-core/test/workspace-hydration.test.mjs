@@ -34,7 +34,6 @@ test('fresh canonical workspace is committed once with a complete active project
     projectId: DEFAULT_WORKSPACE_IDENTITIES.projectId,
     panelId: DEFAULT_WORKSPACE_IDENTITIES.panelId,
     sessionId: DEFAULT_WORKSPACE_IDENTITIES.sessionId,
-    projectEnvironmentId: 'terminay:this-server',
   });
   assert.equal(repository.state.projects.default.root, '/home/a');
   assert.equal(repository.state.terminalSessions.default.status, 'running');

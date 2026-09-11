@@ -4,7 +4,7 @@
 
 Launch every terminal from a server-owned shell profile through one canonical
 launch policy that resolves the program, arguments, environment, and working
-directory against the exact project environment, so startup, new-project,
+directory on the server that owns the project, so startup, new-project,
 new-tab, split, Desktop, browser, local, and remote creation all pass the same
 boundary.
 
@@ -32,47 +32,12 @@ creation SHALL all resolve through this same boundary.
 - **THEN** only terminals created after the change are affected, and no existing
   session's shell or working directory changes
 
-### Requirement: Environment-scoped catalogues and defaults
-
-Shell catalogue, System default, account home, executable validation, startup
-mode, working directory, and launch environment SHALL resolve against the exact
-project environment. Shell-profile catalogues SHALL belong to one Terminay
-Server and SHALL be scoped by project-environment capability. A client connected
-to another server SHALL see that server's catalogues and MUST NOT send a local
-executable path as another environment's default. Project defaults SHALL be
-valid for their environment; unavailable discovery or launch capability SHALL be
-reported rather than substituted.
-
-#### Scenario: SSH project exposes only its provider's catalogue
-
-- **WHEN** a terminal is created in an SSH project
-- **THEN** it uses that provider's Remote system default
-- **AND** no local profile is executed with a remote root
-
-#### Scenario: Server-local profiles remain valid locally
-
-- **WHEN** a terminal is created in a This server project
-- **THEN** existing server-local profiles resolve normally
-
-#### Scenario: Discovery capability unavailable
-
-- **WHEN** an environment cannot perform discovery or launch for a requested
-  profile
-- **THEN** the unavailability is reported and no substitute profile is used
-
-#### Scenario: Cross-host boundary cannot be widened
-
-- **WHEN** a remote client attempts to select a local-only profile
-- **THEN** the request is rejected and its server, project, and session scope is
-  unchanged, including across reconnect
-
 ### Requirement: Profile catalogue composition
 
 The profile catalogue SHALL contain one reserved, undeletable **System default**
 profile, read-only profiles discovered from the server operating system, and
 durable custom profiles created or copied by the user. System default SHALL
-require no configuration. Named custom profiles SHALL be supported where the
-project environment permits them.
+require no configuration. Named custom profiles SHALL be supported.
 
 #### Scenario: System default cannot be deleted
 
@@ -102,26 +67,6 @@ NOT change its identity. User-facing order SHALL be durable.
 - **THEN** validation reports the duplicate name inline and the record is not
   persisted
 
-### Requirement: This server launch targets
-
-A This server launch target SHALL be one of `system`, resolved from the server
-account at launch time; `executable`, containing a native executable path or a
-platform-valid executable name; or `wsl`, containing a Windows Subsystem for
-Linux distribution and optional shell path. The WSL target's fields MUST NOT be
-encoded into one command string.
-
-#### Scenario: Executable target
-
-- **WHEN** a profile uses an `executable` target
-- **THEN** the server validates that native executable path or platform-valid
-  name before spawn
-
-#### Scenario: WSL target stays structured
-
-- **WHEN** a profile uses a `wsl` target
-- **THEN** the distribution and optional shell path remain separate structured
-  fields, so spaces and command arguments cannot alter the selected distribution
-
 ### Requirement: Startup modes and argument handling
 
 The startup mode SHALL be **Shell default**, **Login**, or **Non-login**. Shell
@@ -143,30 +88,6 @@ execution.
 - **WHEN** an argument contains spaces, quotes, or shell metacharacters
 - **THEN** it is passed to the program as one array element without parsing,
   interpolation, or command-string execution
-
-### Requirement: This server System default platform policy
-
-For This server, the reserved System default profile SHALL follow the host's
-platform policy. On macOS it SHALL launch a supported POSIX account shell as a
-login shell, matching a normal terminal login and allowing the user's login
-startup files to establish `PATH` and related command-discovery environment.
-This policy MUST NOT inspect or hard-code installed tool paths. An explicit
-custom profile's Shell default mode SHALL remain the selected shell's unmodified
-default behaviour. Other providers SHALL define their own bounded catalogue and
-system-default semantics.
-
-#### Scenario: macOS default gives a login shell
-
-- **WHEN** a macOS user whose account shell is zsh creates a terminal with
-  default settings
-- **THEN** an interactive login zsh starts in the project or inherited working
-  directory, with the login-file environment available for discovering
-  user-installed commands
-
-#### Scenario: Custom profile is not silently upgraded to login
-
-- **WHEN** a custom profile uses Shell default mode
-- **THEN** the selected shell runs with its unmodified default behaviour
 
 ### Requirement: WSL profile constraints
 
@@ -246,27 +167,6 @@ executed.
   bound
 - **THEN** the server reports the violation and neither persists nor executes the
   record
-
-### Requirement: Environment-routed shell discovery
-
-Discovery SHALL execute through the target project environment and SHALL return
-capability data rather than persisted settings. Refreshing discovery MAY add,
-remove, or mark candidates unavailable without rewriting a custom profile or
-changing the selected default. Providers MAY expose a smaller provider-owned
-catalogue.
-
-#### Scenario: Refresh does not rewrite configuration
-
-- **WHEN** discovery is refreshed and a candidate disappears
-- **THEN** custom profiles and the selected default are unchanged and the
-  candidate is marked unavailable
-
-#### Scenario: Discovery lists only the PTY host's profiles
-
-- **WHEN** discovery runs for a Linux, macOS, Windows native, Windows WSL, or
-  remote-server environment
-- **THEN** only profiles available on the machine that will run the PTY are
-  exposed
 
 ### Requirement: POSIX discovery and fallback order
 
@@ -448,9 +348,8 @@ or panel** (the default), which inherits the active terminal's live working
 directory, the active folder, or the containing directory of the active file in
 the target project; **Project folder**, which uses the canonical root of the
 target project; and **Home folder**, which uses the verified account home
-reported by the exact project environment. Working-directory selection SHALL be
-part of the canonical launch resolver but SHALL be configured separately from
-shell profiles.
+reported by the server. Working-directory selection SHALL be part of the
+canonical launch resolver but SHALL be configured separately from shell profiles.
 
 #### Scenario: Current terminal or panel
 
@@ -461,20 +360,19 @@ shell profiles.
 #### Scenario: Home folder
 
 - **WHEN** the policy is Home folder
-- **THEN** the new terminal starts in the account home verified by the exact
-  project environment
+- **THEN** the new terminal starts in the account home verified by the server
 
 ### Requirement: Working-directory resolution order
 
 For the default policy, the resolver SHALL consider inputs in this order: an
 explicit working directory from an authorized user action; a verified live
 working directory from the active terminal, folder, or file panel; the target
-project's canonical root; then the project environment's verified account home,
-only when the project has no usable root by design. An explicitly requested
-missing or non-directory path SHALL fail and MUST NOT be retargeted. A stale
-observed panel working directory MAY fall through to the canonical project root.
-A configured project root that has become missing or inaccessible SHALL remain a
-recoverable project error and MUST NOT be silently replaced with home.
+project's canonical root; then the server's verified account home, only when the
+project has no usable root by design. An explicitly requested missing or
+non-directory path SHALL fail and MUST NOT be retargeted. A stale observed panel
+working directory MAY fall through to the canonical project root. A configured
+project root that has become missing or inaccessible SHALL remain a recoverable
+project error and MUST NOT be silently replaced with home.
 
 #### Scenario: Explicit path is missing
 
@@ -828,3 +726,111 @@ directory of an already running terminal.
 
 - **WHEN** a profile or working-directory setting changes while a terminal runs
 - **THEN** that terminal's shell and working directory are unchanged
+
+### Requirement: Server-scoped catalogues and defaults
+
+Shell catalogue, System default, account home, executable validation, startup
+mode, working directory, and launch environment SHALL resolve against the server
+that owns the project. Shell-profile catalogues SHALL belong to one Terminay
+Server. A client connected to another server SHALL see that server's catalogues
+and MUST NOT send a local executable path as another server's default.
+
+#### Scenario: Server profiles resolve normally
+
+- **WHEN** a terminal is created in a project
+- **THEN** the owning server's profiles resolve normally
+
+#### Scenario: Cross-host boundary cannot be widened
+
+- **WHEN** a remote client attempts to select a local-only profile
+- **THEN** the request is rejected and its server, project, and session scope is
+  unchanged, including across reconnect
+
+### Requirement: Launch targets
+
+A launch target SHALL be one of `system`, resolved from the server account at
+launch time; `executable`, containing a native executable path or a
+platform-valid executable name; or `wsl`, containing a Windows Subsystem for
+Linux distribution and optional shell path. The WSL target's fields MUST NOT be
+encoded into one command string.
+
+#### Scenario: Executable target
+
+- **WHEN** a profile uses an `executable` target
+- **THEN** the server validates that native executable path or platform-valid
+  name before spawn
+
+#### Scenario: WSL target stays structured
+
+- **WHEN** a profile uses a `wsl` target
+- **THEN** the distribution and optional shell path remain separate structured
+  fields, so spaces and command arguments cannot alter the selected distribution
+
+### Requirement: System default platform policy
+
+The reserved System default profile SHALL follow the server host's platform
+policy. On macOS it SHALL launch a supported POSIX account shell as a login
+shell, matching a normal terminal login and allowing the user's login startup
+files to establish `PATH` and related command-discovery environment. This policy
+MUST NOT inspect or hard-code installed tool paths. An explicit custom profile's
+Shell default mode SHALL remain the selected shell's unmodified default
+behaviour.
+
+#### Scenario: macOS default gives a login shell
+
+- **WHEN** a macOS user whose account shell is zsh creates a terminal with
+  default settings
+- **THEN** an interactive login zsh starts in the project or inherited working
+  directory, with the login-file environment available for discovering
+  user-installed commands
+
+#### Scenario: Custom profile is not silently upgraded to login
+
+- **WHEN** a custom profile uses Shell default mode
+- **THEN** the selected shell runs with its unmodified default behaviour
+
+### Requirement: Shell discovery
+
+Discovery SHALL execute on the server and SHALL return capability data rather
+than persisted settings. Refreshing discovery MAY add, remove, or mark candidates
+unavailable without rewriting a custom profile or changing the selected default.
+
+#### Scenario: Refresh does not rewrite configuration
+
+- **WHEN** discovery is refreshed and a candidate disappears
+- **THEN** custom profiles and the selected default are unchanged and the
+  candidate is marked unavailable
+
+#### Scenario: Discovery lists only the PTY host's profiles
+
+- **WHEN** discovery runs for a Linux, macOS, Windows native, or Windows WSL
+  server
+- **THEN** only profiles available on the machine that will run the PTY are
+  exposed
+
+### Requirement: Shell profiles surface selects a server
+
+The shell-profiles surface SHALL carry a server selector listing every attached
+connection, defaulting to the server that owns the active project tab. It SHALL
+present the catalogue, System default, and discovered shells of exactly the
+selected server, and SHALL NEVER combine two servers' catalogues into one list.
+An executable path validated for one server SHALL NEVER be offered as another
+server's profile.
+
+#### Scenario: Default selection
+
+- **WHEN** the user opens shell profiles while a project of an attached server is
+  active
+- **THEN** the selector starts on that server and shows that server's catalogue
+
+#### Scenario: Catalogues are not merged
+
+- **WHEN** two attached servers each expose discovered shells
+- **THEN** only the selected server's shells are listed
+
+#### Scenario: A path is not carried across servers
+
+- **WHEN** the user selects another attached connection after validating an
+  executable path
+- **THEN** that path is not offered as the newly selected server's profile and is
+  revalidated on that server before use

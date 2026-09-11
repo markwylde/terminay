@@ -24,7 +24,6 @@ const terminal = Object.freeze({
 	contextId: 'context-rebind',
 	serverId: identity.serverId,
 	projectId: identity.projectId,
-	projectEnvironmentId: 'terminay.this-server',
 	terminalSessionId: identity.sessionId,
 	terminalIncarnationId: '1',
 	providerId,
