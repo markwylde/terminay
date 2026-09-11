@@ -167,3 +167,67 @@ test("the E2E image copies a manifest for every workspace", async () => {
   );
   assert.deepEqual(missing, [], `Dockerfile.e2e must copy each workspace manifest; missing: ${missing.join(", ")}`);
 });
+
+/**
+ * A runner's Docker store outlives its jobs. Without cleanup, the rebuilt
+ * ":local" images and one E2E image per commit filled a runner host's disk
+ * within days and the node evicted everything on it.
+ */
+test("every CI job that builds or pulls images frees them when it ends", async () => {
+  const [ci, conformance] = await Promise.all([
+    text(".gitea/workflows/ci.yml"),
+    text(".gitea/workflows/agent-conformance.yml"),
+  ]);
+  const cleanup = (keep) => new RegExp(
+    `- name: Free this job's Docker images\\n\\s+if: \\$\\{\\{ always\\(\\)[^\\n]*\\}\\}\\n[\\s\\S]*?run: sh scripts/prune-ci-docker-images\\.sh${keep}\\n`,
+    "u",
+  );
+  const lastStep = (block) => block.slice(block.lastIndexOf("\n      - name: "));
+
+  assert.match(lastStep(job(ci, "mcp-cli-compatibility")), cleanup(""));
+  assert.match(lastStep(job(ci, "e2e-image")), cleanup(' "\\$IMAGE_TAG"'));
+  assert.match(lastStep(job(ci, "e2e-image")), /IMAGE_TAG: \$\{\{ steps\.image\.outputs\.tag \}\}/u);
+  assert.match(lastStep(job(ci, "e2e-test")), cleanup(' "\\$IMAGE_TAG"'));
+  assert.match(lastStep(job(ci, "e2e-test")), /IMAGE_TAG: \$\{\{ needs\.e2e-image\.outputs\.image \}\}/u);
+  assert.match(lastStep(job(conformance, "conformance")), cleanup(""));
+  assert.match(lastStep(job(conformance, "conformance")), /always\(\) && steps\.selected\.outputs\.run == 'true'/u);
+});
+
+test("CI image cleanup keeps the newest and the named E2E image and never fails the job", async () => {
+  const { mkdtemp, writeFile, chmod, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { spawnSync } = await import("node:child_process");
+  const { fileURLToPath } = await import("node:url");
+
+  const bin = await mkdtemp(join(tmpdir(), "prune-ci-docker-"));
+  const log = join(bin, "calls");
+  const repository = "git.i.wylde.net/markwylde/terminay-e2e";
+  await writeFile(join(bin, "docker"), [
+    "#!/bin/sh",
+    `echo "$*" >> "${log}"`,
+    `if [ "$1 $2" = "image ls" ]; then printf '%s\\n' ${repository}:newest ${repository}:current ${repository}:old1 ${repository}:old2; fi`,
+    // Every mutating call fails, so the script must shrug off daemon errors.
+    `case "$1 $2" in "image ls") ;; *) exit 1 ;; esac`,
+  ].join("\n"));
+  await chmod(join(bin, "docker"), 0o755);
+
+  try {
+    const script = fileURLToPath(new URL("scripts/prune-ci-docker-images.sh", root));
+    const result = spawnSync("sh", [script, `${repository}:current`], {
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+
+    const calls = (await readFile(log, "utf8")).trim().split("\n");
+    assert.equal(calls[0], "container prune --force", "stopped containers must go first; they pin images");
+    assert.deepEqual(
+      calls.filter((call) => call.startsWith("image rm")),
+      [`image rm ${repository}:old1`, `image rm ${repository}:old2`],
+    );
+    assert.equal(calls.at(-1), "image prune --force");
+  } finally {
+    await rm(bin, { recursive: true, force: true });
+  }
+});
