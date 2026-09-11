@@ -109,7 +109,14 @@ function clock() {
       queued.push(timer);
       return timer;
     },
-    cancel: (timer) => { timer.cancelled = true; },
+    cancel: (timer) => {
+      // Mirror clearTimeout: a cancelled timer leaves the schedule entirely.
+      // Leaving it queued let a later runNext() shift a dead timer and trip on
+      // it, which is how this test failed in CI and passed everywhere else.
+      timer.cancelled = true;
+      const at = queued.indexOf(timer);
+      if (at !== -1) queued.splice(at, 1);
+    },
     async runNext() {
       const timer = queued.shift();
       assert.ok(timer !== undefined, "no restart was scheduled");
