@@ -15,7 +15,10 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
 	type ByteTransport,
+	createTerminayHostBytePacket,
+	parseTerminayHostBytePacket,
 	type TerminayHostActionRequest,
+	type TerminayHostConnectionProfile,
 	type TerminayHostContext,
 } from '@terminay/protocol';
 import {
@@ -26,6 +29,7 @@ import {
 	crashReporter,
 	dialog,
 	ipcMain,
+	MessageChannelMain,
 	Menu,
 	Notification,
 	nativeImage,
@@ -37,7 +41,6 @@ import {
 } from 'electron';
 import { LocalServerUiSession } from '../apps/terminay-desktop/src/main/localServerUiSession';
 import {
-	type DesktopAuthenticatedAssetLane,
 	type DesktopBundleLaunch,
 	DesktopServerBundleHost,
 } from '../apps/terminay-desktop/src/main/serverBundleHost';
@@ -58,10 +61,6 @@ import { loadOrCreateSessionOrigin } from '../apps/terminay-server/src/remote/se
 import type { AgentLifecycleEvent } from '../packages/extension-api/src/index';
 import { ParakeetRuntime } from '../packages/server-core/src/aiService/parakeetRuntime';
 import { MacroRepository } from '../packages/server-core/src/macroService/repository';
-import {
-	FileProjectEnvironmentStateBackend,
-	ProjectEnvironmentRepository,
-} from '../packages/server-core/src/projectEnvironment/index';
 import {
 	RecordingService,
 	ServerRecordingAdapter,
@@ -105,7 +104,6 @@ import { showCanonicalLaunchRecovery } from './canonicalLaunchRecovery';
 import {
 	desktopEmbeddedStorePaths,
 	desktopLocalServerUiPartitionKey,
-	migrateLegacyEmbeddedProjectEnvironmentServerId,
 	migrateLegacyEmbeddedRecordingServerId,
 	migrateLegacyEmbeddedWorkspaceServerId,
 	resolveDesktopInstanceIdentity,
@@ -127,6 +125,15 @@ import {
 	StartupTimeline,
 } from './diagnostics/startupTimeline';
 import { TerminalResourceSampler } from './diagnostics/terminalResources';
+import {
+	desktopWindowCompositionKey,
+	DesktopWindowCompositionStore,
+} from './desktopWindowComposition';
+import {
+	type DesktopConnectionLane,
+	type DesktopConnectionProfileRecord,
+	DesktopWindowConnections,
+} from './desktopWindowConnections';
 import { normalizeExternalUrl } from './externalUrl';
 import { FileBufferService } from './fileViewer/fileBufferService';
 import { FileWatchService } from './fileViewer/fileWatchService';
@@ -143,7 +150,6 @@ import {
 	type McpServerCommand,
 	uninstallMcpAgent,
 } from './mcpInstall';
-import { MigratingProjectEnvironmentStateBackend } from './projectEnvironmentPersistence';
 import { TerminalRecordingService } from './recording/service';
 import {
 	connectDesktopHostedRemote,
@@ -240,6 +246,18 @@ const embeddedServerId = embeddedDesktopInstance.id;
 const embeddedStorePaths = desktopEmbeddedStorePaths(embeddedDesktopInstance);
 const embeddedLocalProfileId =
 	LocalServerUiSession.profileIdFor(embeddedServerId);
+
+// Desktop runs the bundle packaged with it for every connection, so the
+// per-server verified bundle cache written by older versions is dead material.
+// Remove it rather than leave verified remote code on disk.
+try {
+	rmSync(embeddedStorePaths.retiredUiBundleCache, {
+		force: true,
+		recursive: true,
+	});
+} catch {
+	// A cache directory that cannot be removed must never prevent startup.
+}
 
 try {
 	if (process.env.TERMINAY_TEST === '1' && resolvedUserDataPath) {
@@ -891,6 +909,193 @@ const workspaceViewByWebContents = new Map<number, string>();
 // can race to deliver a port and the new document can reconnect to Local.
 const documentEndpointUnbindByWebContents = new Map<number, () => void>();
 
+// One window holds one primary connection plus an attached set. The registry
+// is per native window and is torn down with it, so no attached transport can
+// outlive the document that asked for it.
+const windowConnectionsByWebContents = new Map<
+	number,
+	DesktopWindowConnections
+>();
+
+/** Device-local window composition, persisted beside geometry. */
+const desktopWindowCompositions = new DesktopWindowCompositionStore(
+	path.join(app.getPath('userData'), 'window-composition.v1.json'),
+);
+
+/**
+ * Two open windows can share a presentation identity — two Local windows show
+ * the same profile and the same default view — and their compositions must not
+ * overwrite each other. Each window takes the lowest free slot beside that
+ * identity and gives it back when it closes, so reopening the same windows
+ * finds the same records rather than a BrowserWindow id that no restart keeps.
+ */
+const desktopCompositionSlotsInUse = new Map<string, Set<number>>();
+const desktopCompositionSlotByWebContents = new Map<
+	number,
+	Readonly<{ identity: string; slot: number }>
+>();
+
+function claimDesktopCompositionSlot(
+	webContentsId: number,
+	identity: string,
+): number {
+	releaseDesktopCompositionSlot(webContentsId);
+	let used = desktopCompositionSlotsInUse.get(identity);
+	if (used === undefined) {
+		used = new Set<number>();
+		desktopCompositionSlotsInUse.set(identity, used);
+	}
+	let slot = 0;
+	while (used.has(slot)) slot += 1;
+	used.add(slot);
+	desktopCompositionSlotByWebContents.set(webContentsId, { identity, slot });
+	return slot;
+}
+
+function releaseDesktopCompositionSlot(webContentsId: number): void {
+	const held = desktopCompositionSlotByWebContents.get(webContentsId);
+	if (held === undefined) return;
+	desktopCompositionSlotByWebContents.delete(webContentsId);
+	const used = desktopCompositionSlotsInUse.get(held.identity);
+	if (used === undefined) return;
+	used.delete(held.slot);
+	if (used.size === 0) desktopCompositionSlotsInUse.delete(held.identity);
+}
+
+/** The non-secret profile records the `connections` capability may name. */
+function desktopConnectionProfileRecords(): readonly DesktopConnectionProfileRecord[] {
+	loadRememberedRemoteConnections();
+	return Object.freeze([
+		Object.freeze({
+			id: embeddedLocalProfileId,
+			isLocal: true,
+			label: 'Local',
+			serverId: embeddedServerId,
+		}),
+		...[...rememberedRemoteConnections.values()]
+			.sort((left, right) => left.label.localeCompare(right.label))
+			.map((remote) =>
+				Object.freeze({
+					id: remote.id,
+					isLocal: false,
+					label: remote.label,
+					...(remote.serverId === undefined
+						? {}
+						: { serverId: remote.serverId }),
+				}),
+			),
+	]);
+}
+
+/**
+ * Open one attached connection for a window and hand its document a dedicated
+ * byte endpoint.
+ *
+ * Local uses the same private MessagePort the embedded authority already
+ * speaks; a remote profile reuses the existing per-profile transport
+ * establishment, so its device credential is consumed here in main and never
+ * reaches the renderer. The renderer receives an opaque `MessagePort` and the
+ * sanitized server identity that binds every packet on it.
+ */
+async function openDesktopConnectionLane(
+	target: BrowserWindow,
+	ownerId: number,
+	profile: DesktopConnectionProfileRecord,
+	connectionId: string,
+	onLost: () => void,
+): Promise<DesktopConnectionLane> {
+	const deliver = (serverId: string, port: Electron.MessagePortMain) => {
+		if (target.isDestroyed()) throw new Error('Desktop window is closed.');
+		target.webContents.postMessage(
+			'server-ui-host:connection-endpoint',
+			{ connectionId, serverId },
+			[port],
+		);
+	};
+	if (profile.isLocal) {
+		if (serverTerminalAuthority === null)
+			throw new Error('The Local server is unavailable.');
+		const channel = new MessageChannelMain();
+		// One window holds several Local lanes at once — its primary document
+		// endpoint and every attached connection — and the authority evicts an
+		// owner slot when it is claimed again. Each connection owns its own slot,
+		// so replacing one endpoint never closes another connection's port.
+		serverTerminalAuthority.acceptRendererPort(
+			channel.port1 as unknown as ServerMessagePort,
+			{ ownerId: `${ownerId}:${connectionId}` },
+		);
+		try {
+			deliver(embeddedServerId, channel.port2);
+		} catch (error) {
+			channel.port1.close();
+			channel.port2.close();
+			throw error;
+		}
+		return Object.freeze({
+			serverId: embeddedServerId,
+			close: () => channel.port1.close(),
+		});
+	}
+	loadRememberedRemoteConnections();
+	const remote = rememberedRemoteConnections.get(profile.id);
+	if (remote === undefined)
+		throw new Error('That connection profile is no longer available.');
+	const lanes = await openDesktopRemoteLanes(remote);
+	try {
+		const serverId =
+			lanes.serverId ??
+			remote.serverId ??
+			(await readRemoteServerIdentity(remote.origin));
+		const channel = new MessageChannelMain();
+		let closed = false;
+		const close = async () => {
+			if (closed) return;
+			closed = true;
+			channel.port1.close();
+			await lanes.transport.close({ code: 'normal' }).catch(() => undefined);
+		};
+		channel.port1.on('message', ({ data }) => {
+			if (closed) return;
+			try {
+				const packet = parseTerminayHostBytePacket(data, serverId);
+				void lanes.transport.send(packet.frame).catch(() => {
+					void close().finally(onLost);
+				});
+			} catch {
+				void close().finally(onLost);
+			}
+		});
+		channel.port1.start();
+		await lanes.transport.open();
+		void (async () => {
+			for await (const frame of lanes.transport.incoming) {
+				if (closed) return;
+				channel.port1.postMessage(
+					createTerminayHostBytePacket(serverId, frame),
+				);
+			}
+		})()
+			.catch(() => undefined)
+			.finally(() => {
+				if (closed) return;
+				void close().finally(onLost);
+			});
+		try {
+			deliver(serverId, channel.port2);
+		} catch (error) {
+			closed = true;
+			channel.port1.close();
+			channel.port2.close();
+			await lanes.transport.close({ code: 'normal' }).catch(() => undefined);
+			throw error;
+		}
+		return Object.freeze({ serverId, close });
+	} catch (error) {
+		await lanes.transport.close({ code: 'normal' }).catch(() => undefined);
+		throw error;
+	}
+}
+
 function sanitizedDesktopConnectionProfiles(
 	selectedProfileId: string,
 ): Readonly<{
@@ -1219,17 +1424,6 @@ await desktopDiagnostics.record(
 	},
 	{ channel: 'lifecycle' },
 );
-const embeddedProjectEnvironments = new ProjectEnvironmentRepository(
-	new MigratingProjectEnvironmentStateBackend(
-		new FileProjectEnvironmentStateBackend(
-			embeddedStorePaths.projectEnvironments,
-		),
-		(state) =>
-			migrateLegacyEmbeddedProjectEnvironmentServerId(state, embeddedServerId),
-	),
-	embeddedServerId,
-);
-await embeddedProjectEnvironments.load();
 const embeddedVaultAdapter = await ElectronSafeStorageVaultAdapter.open({
 	repository: new FileSafeStorageVaultRepository(
 		path.join(app.getPath('userData'), 'vault', 'safe-storage.v1.json'),
@@ -1308,7 +1502,6 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		vault: embeddedVault,
 		parakeetRuntime,
 		defaultProjectRoot: () => app.getPath('home'),
-		projectEnvironmentRepository: embeddedProjectEnvironments,
 		shellProfiles: embeddedShellProfiles,
 		terminalLaunchEnvironmentFor: (intent) => {
 			if (!mcpCapabilities.isEnabled()) return undefined;
@@ -1557,11 +1750,9 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 	beginStartupPhase('bundle-hosts');
 	localServerUiSession = new LocalServerUiSession({
 		bundleRoot: SERVER_UI_DIST,
-		cacheRoot: embeddedStorePaths.uiBundles,
 		serverId: authority.service.serverId,
 	});
 	remoteServerUiBundleHost = new DesktopServerBundleHost({
-		cacheRoot: embeddedStorePaths.uiBundles,
 		capabilities: {
 			clipboardWrite: 1,
 			filePicker: 1,
@@ -1570,6 +1761,7 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 			notifications: 1,
 			osIntegration: 1,
 			updater: 1,
+			connections: 1,
 		},
 	});
 	endStartupPhase('bundle-hosts');
@@ -2787,10 +2979,6 @@ function createAppMenu(
 					click: () => sendCommandToFocusedWindow('open-remote-control'),
 				},
 				{
-					label: 'Project Environments…',
-					click: () => sendCommandToFocusedWindow('open-project-environments'),
-				},
-				{
 					label: 'Extensions…',
 					click: () => sendCommandToFocusedWindow('open-extensions'),
 				},
@@ -2966,7 +3154,6 @@ function createAppMenu(
 const AUXILIARY_TITLES: Readonly<Record<string, string>> = Object.freeze({
 	macros: 'Macros',
 	'performance-log': 'Performance Log',
-	'project-environments': 'Project Environments',
 	recordings: 'Recordings',
 	'remote-control': 'Remote Control',
 	settings: 'Settings',
@@ -3044,32 +3231,12 @@ async function presentCanonicalAuxiliaryRoute(
 				throw new Error('The selected remote profile is no longer available.');
 			const lanes = await openDesktopRemoteLanes(profile);
 			try {
-				if (lanes.kind === 'http') {
-					const launch = await prepareCanonicalHttpRemoteLaunch(
-						profile.origin,
-						profile,
-					);
-					workspaceWindow = createWindow({
-						bounds: { x, y },
-						workspaceViewId,
-						serverUiLaunch: launch,
-						serverUiTransport: lanes.transport,
-					});
-				} else {
-					const launch = await remoteServerUiBundleHost.prepareRemote({
-						lane: lanes.webRtc.assets,
-						origin: profile.origin,
-						profileId: profile.id,
-						serverId: lanes.webRtc.serverId,
-						windowId: `window-${randomUUID()}`,
-					});
-					workspaceWindow = createWindow({
-						bounds: { x, y },
-						workspaceViewId,
-						serverUiLaunch: launch,
-						serverUiTransport: lanes.webRtc.transport,
-					});
-				}
+				workspaceWindow = createWindow({
+					bounds: { x, y },
+					workspaceViewId,
+					serverUiLaunch: await prepareCanonicalRemoteLaunch(profile, lanes),
+					serverUiTransport: lanes.transport,
+				});
 			} catch (error) {
 				await lanes.transport.close({ code: 'normal' }).catch(() => undefined);
 				throw error;
@@ -3130,34 +3297,15 @@ async function presentCanonicalAuxiliaryRoute(
 		if (profile === undefined)
 			throw new Error('The selected remote profile is no longer available.');
 		const lanes = await openDesktopRemoteLanes(profile);
-		if (lanes.kind === 'http') {
-			const launch = await prepareCanonicalHttpRemoteLaunch(
-				profile.origin,
-				profile,
-			);
+		try {
 			auxiliaryWindow = createWindow({
 				auxiliary: { ...auxiliary, presentationId },
-				serverUiLaunch: launch,
+				serverUiLaunch: await prepareCanonicalRemoteLaunch(profile, lanes),
 				serverUiTransport: lanes.transport,
 			});
-		} else {
-			try {
-				const launch = await remoteServerUiBundleHost.prepareRemote({
-					lane: lanes.webRtc.assets,
-					origin: profile.origin,
-					profileId: profile.id,
-					serverId: lanes.webRtc.serverId,
-					windowId: `window-${randomUUID()}`,
-				});
-				auxiliaryWindow = createWindow({
-					auxiliary: { ...auxiliary, presentationId },
-					serverUiLaunch: launch,
-					serverUiTransport: lanes.webRtc.transport,
-				});
-			} catch (error) {
-				await lanes.transport.close({ code: 'normal' }).catch(() => undefined);
-				throw error;
-			}
+		} catch (error) {
+			await lanes.transport.close({ code: 'normal' }).catch(() => undefined);
+			throw error;
 		}
 		if (auxiliaryWindow !== null) {
 			remoteProfileBindingsByWebContents.set(
@@ -3435,6 +3583,12 @@ function createWindow(options?: {
 	window.on('closed', () => {
 		documentEndpointUnbindByWebContents.get(windowWebContentsId)?.();
 		documentEndpointUnbindByWebContents.delete(windowWebContentsId);
+		void windowConnectionsByWebContents
+			.get(windowWebContentsId)
+			?.dispose()
+			.catch(() => undefined);
+		windowConnectionsByWebContents.delete(windowWebContentsId);
+		releaseDesktopCompositionSlot(windowWebContentsId);
 		releaseServerUiWindowBinding(
 			windowWebContentsId,
 			isQuitting ? 'application-quit' : 'window-close',
@@ -3530,15 +3684,64 @@ function createWindow(options?: {
 		if (options?.workspaceViewId) {
 			entryUrl.searchParams.set('view', options.workspaceViewId);
 		}
-		const connectionProfiles = sanitizedDesktopConnectionProfiles(
+		void windowConnectionsByWebContents.get(windowWebContentsId)?.dispose();
+		const compositionKey = desktopWindowCompositionKey(
+			launch.context.profileId,
+			options?.workspaceViewId,
+			claimDesktopCompositionSlot(
+				windowWebContentsId,
+				desktopWindowCompositionKey(
+					launch.context.profileId,
+					options?.workspaceViewId,
+				),
+			),
+		);
+		const restoredComposition = desktopWindowCompositions.read(compositionKey);
+		// The window's primary stays the profile it was bound with; `attach`
+		// only ever adds to the attached set beside it.
+		const connections = new DesktopWindowConnections({
+			primaryProfileId: launch.context.profileId,
+			primaryServerId: launch.context.serverId,
+			listProfiles: desktopConnectionProfileRecords,
+			openLane: (profile, connectionId, onLost) =>
+				openDesktopConnectionLane(
+					window,
+					windowWebContentsId,
+					profile,
+					connectionId,
+					onLost,
+				),
+			onChanged: (profiles) => {
+				if (window.isDestroyed()) return;
+				window.webContents.send('server-ui-host:event', {
+					type: 'connections.changed',
+					profiles,
+				});
+			},
+			persistComposition: (composition) =>
+				desktopWindowCompositions.write(compositionKey, composition),
+			...(restoredComposition === undefined
+				? {}
+				: { composition: restoredComposition }),
+		});
+		windowConnectionsByWebContents.set(windowWebContentsId, connections);
+		const profiles = connections.list();
+		const primaryProfile: TerminayHostConnectionProfile | undefined =
+			profiles.find(
+				(candidate) => candidate.id === launch.context.profileId,
+			);
+		const fallbackProfiles = sanitizedDesktopConnectionProfiles(
 			launch.context.profileId,
 		);
 		bindServerUiWindow({
 			window,
 			context: {
 				...launch.context,
-				profile: connectionProfiles.profile,
-				profiles: connectionProfiles.profiles,
+				profile: primaryProfile ?? fallbackProfiles.profile,
+				profiles: primaryProfile === undefined ? fallbackProfiles.profiles : profiles,
+				...(restoredComposition === undefined
+					? {}
+					: { composition: restoredComposition }),
 			},
 			expectedOrigin: entryUrl.toString(),
 			hostPartitionKey: launch.partitionKey,
@@ -3656,6 +3859,16 @@ function createWindow(options?: {
 						return;
 					case 'workspace.drag.end':
 						return endCanonicalProjectDrag();
+					case 'connections.list':
+						return { profiles: connections.list() };
+					case 'connections.attach':
+						return await connections.attach(action.profileId);
+					case 'connections.detach':
+						await connections.detach(action.profileId);
+						return;
+					case 'connections.composition.write':
+						connections.writeComposition(action.composition);
+						return;
 					case 'diagnostics.performance-logging.set':
 						return {
 							enabled: await desktopPerformanceLogging.setEnabled(
@@ -3802,10 +4015,9 @@ async function launchDeferredCanonicalWindow(
 
 const REMOTE_SERVER_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 
-async function prepareCanonicalHttpRemoteLaunch(
-	origin: string,
-	profile: RememberedRemoteConnection,
-): Promise<DesktopBundleLaunch> {
+/** Learn a standalone server's stable identity from its unauthenticated host
+ * bootstrap. Only identity is read: Desktop never downloads a remote bundle. */
+async function readRemoteServerIdentity(origin: string): Promise<string> {
 	const bootstrapUrl = new URL('/host-bootstrap.json', origin);
 	const response = await fetch(bootstrapUrl, {
 		headers: { accept: 'application/json' },
@@ -3818,57 +4030,28 @@ async function prepareCanonicalHttpRemoteLaunch(
 		bootstrap.schemaVersion !== 1 ||
 		typeof bootstrap.serverId !== 'string' ||
 		!REMOTE_SERVER_ID.test(bootstrap.serverId) ||
-		bootstrap.manifestPath !== '/manifest.json' ||
 		bootstrap.streamPath !== '/protocol/stream'
 	) {
 		throw new Error('The remote server host bootstrap is invalid.');
 	}
-	const manifestPath = bootstrap.manifestPath;
-	const serverId = bootstrap.serverId;
-	const manifestUrl = new URL(manifestPath, origin);
-	const manifestResponse = await fetch(manifestUrl, { redirect: 'error' });
-	// A standalone protocol server is allowed to expose no renderer artifact.
-	// Desktop still has a verified, host-compatible application bundle, so bind
-	// that trusted local artifact to the authenticated remote server instead of
-	// abandoning the pairing after credentials have been enrolled.  Do this
-	// only for a missing manifest: an advertised but malformed or unverifiable
-	// remote bundle remains a hard failure.
-	if (manifestResponse.status === 404 || manifestResponse.status === 503) {
-		return remoteServerUiBundleHost.prepareLocal({
-			artifact: { rootDirectory: SERVER_UI_DIST },
-			origin,
-			profileId: profile.id,
-			serverId,
-			windowId: `window-${randomUUID()}`,
-		});
-	}
-	if (!manifestResponse.ok)
-		throw new Error(
-			`The remote UI manifest is unavailable (${manifestResponse.status}).`,
-		);
-	const manifest = JSON.parse(
-		new TextDecoder().decode(
-			new Uint8Array(await manifestResponse.arrayBuffer()),
-		),
-	) as unknown;
-	const fetchBytes = async (pathname: string): Promise<Uint8Array> => {
-		const url = new URL(pathname, origin);
-		if (url.origin !== new URL(origin).origin)
-			throw new Error('The remote UI asset escaped its server origin.');
-		const assetResponse = await fetch(url, { redirect: 'error' });
-		if (!assetResponse.ok)
-			throw new Error(
-				`The remote UI asset is unavailable (${assetResponse.status}).`,
-			);
-		return new Uint8Array(await assetResponse.arrayBuffer());
-	};
-	const lane: DesktopAuthenticatedAssetLane = {
-		manifest: async () => manifest,
-		read: fetchBytes,
-	};
-	return remoteServerUiBundleHost.prepareRemote({
-		lane,
-		origin,
+	return bootstrap.serverId;
+}
+
+/** Desktop runs the workspace bundle packaged with it for every connection, so
+ * a remote profile supplies a transport and a server identity and never bundle
+ * bytes. The packaged artifact keeps its own verification; there is no remote
+ * download lane and no per-server bundle cache. */
+async function prepareCanonicalRemoteLaunch(
+	profile: RememberedRemoteConnection,
+	lanes: DesktopRemoteLanes,
+): Promise<DesktopBundleLaunch> {
+	const serverId =
+		lanes.serverId ??
+		profile.serverId ??
+		(await readRemoteServerIdentity(profile.origin));
+	return remoteServerUiBundleHost.prepareLocal({
+		artifact: { rootDirectory: SERVER_UI_DIST },
+		origin: profile.origin,
 		profileId: profile.id,
 		serverId,
 		windowId: `window-${randomUUID()}`,
@@ -3920,17 +4103,13 @@ async function enrollPairedDesktopRemoteProfile(
 	});
 }
 
-type DesktopRemoteLanes =
-	| Readonly<{ kind: 'http'; transport: ByteTransport }>
-	| Readonly<{
-			kind: 'webrtc';
-			transport: ByteTransport;
-			webRtc: Readonly<{
-				transport: ByteTransport;
-				assets: DesktopAuthenticatedAssetLane;
-				serverId: string;
-			}>;
-	  }>;
+/** One authenticated remote lane. A remote profile supplies a transport and,
+ * where the peer proved it, the stable server identity it is bound to. */
+type DesktopRemoteLanes = Readonly<{
+	kind: 'http' | 'webrtc';
+	transport: ByteTransport;
+	serverId?: string;
+}>;
 
 /** Hosted signaling overrides for development relays; production uses none. */
 function desktopHostedSignalOptions(): DesktopHostedSignalOptions | undefined {
@@ -3976,9 +4155,9 @@ async function openDesktopRemoteLanes(
 			...(signal === undefined ? {} : { signal }),
 		});
 		return Object.freeze({
-			kind: 'webrtc',
+			kind: 'webrtc' as const,
 			transport: webRtc.transport,
-			webRtc,
+			serverId: webRtc.serverId,
 		});
 	}
 	const connected = await createDesktopReconnectTransport({
@@ -3986,7 +4165,13 @@ async function openDesktopRemoteLanes(
 		store: createDesktopDeviceCredentialStore(),
 	});
 	if (connected.signalingBootstrap === undefined) {
-		return Object.freeze({ kind: 'http', transport: connected.transport });
+		return Object.freeze({
+			kind: 'http' as const,
+			transport: connected.transport,
+			...(profile.serverId === undefined
+				? {}
+				: { serverId: profile.serverId }),
+		});
 	}
 	try {
 		const remoteWebRtcRuntimeRoot = resolveDesktopWebRtcRuntimeRoot({
@@ -4004,9 +4189,9 @@ async function openDesktopRemoteLanes(
 		});
 		await connected.transport.close({ code: 'normal' });
 		return Object.freeze({
-			kind: 'webrtc',
+			kind: 'webrtc' as const,
 			transport: webRtc.transport,
-			webRtc,
+			serverId: webRtc.serverId,
 		});
 	} catch (error) {
 		await connected.transport.close({ code: 'normal' }).catch(() => undefined);
@@ -4027,36 +4212,19 @@ function desktopWebRtcReconnectAuth(connected: DesktopReconnectTransport) {
 	});
 }
 
-/** Prepare one authenticated remote lane and its verified server bundle for a
- * Desktop document. This is shared by initial pairing, auxiliary windows and
- * reconnection; the renderer never sees enrollment or reconnect material. */
+/** Prepare one authenticated remote lane and bind Desktop's packaged bundle to
+ * it. This is shared by initial pairing, auxiliary windows and reconnection;
+ * the renderer never sees enrollment or reconnect material. */
 async function prepareCanonicalDesktopRemoteConnection(
 	profile: RememberedRemoteConnection,
 ): Promise<
 	Readonly<{ launch: DesktopBundleLaunch; transport: ByteTransport }>
 > {
 	const lanes = await openDesktopRemoteLanes(profile);
-	if (lanes.kind === 'http') {
-		try {
-			return Object.freeze({
-				launch: await prepareCanonicalHttpRemoteLaunch(profile.origin, profile),
-				transport: lanes.transport,
-			});
-		} catch (error) {
-			await lanes.transport.close({ code: 'normal' }).catch(() => undefined);
-			throw error;
-		}
-	}
 	try {
 		return Object.freeze({
-			launch: await remoteServerUiBundleHost.prepareRemote({
-				lane: lanes.webRtc.assets,
-				origin: profile.origin,
-				profileId: profile.id,
-				serverId: lanes.webRtc.serverId,
-				windowId: `window-${randomUUID()}`,
-			}),
-			transport: lanes.webRtc.transport,
+			launch: await prepareCanonicalRemoteLaunch(profile, lanes),
+			transport: lanes.transport,
 		});
 	} catch (error) {
 		await lanes.transport.close({ code: 'normal' }).catch(() => undefined);

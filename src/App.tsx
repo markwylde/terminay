@@ -3,9 +3,6 @@ import type { JsonValue } from '@terminay/protocol';
 import {
 	type ActivitySessionSnapshot,
 	MacroClient,
-	type ProjectEnvironmentClientProfile,
-	type ProjectEnvironmentProviderDescriptor,
-	ProjectEnvironmentsClient,
 	SettingsClient,
 	type ShellProfileCatalogueEntry,
 	ShellProfilesClient,
@@ -111,8 +108,6 @@ import {
 } from './keyboardShortcuts';
 import { tryRenderMacroTemplate } from './macroSettings';
 import { getPathRelativeToRoot } from './pathUtils';
-import { ProjectEnvironmentSplitButton } from './projectEnvironments/ProjectEnvironmentSplitButton';
-import type { ProjectEnvironmentSummaryDto } from './projectEnvironments/uiModel';
 import {
 	createServerMcpInstallClient,
 	createServerRemoteAccessClients,
@@ -177,6 +172,21 @@ import {
 	withProjectSidebarVisibility,
 } from './workspace/projectTabModel';
 import {
+	composeProjectTabs,
+	type ComposedProjectTab,
+	panelMoveTargets,
+	projectTabSourceFor,
+	shouldNameServers,
+} from './workspace/projectTabComposition';
+import { useConnectionProjectTabs } from './workspace/useConnectionProjectTabs';
+import { useCrossServerAgentBadges } from './workspace/useConnectionAgentSnapshots';
+import { useConnections } from './shared/connections/ConnectionsContext';
+import {
+	type CompositionTabHandle,
+	compositionTabKey,
+	parseCompositionTabKey,
+} from './shared/connections/composition';
+import {
 	type ConnectionSwitcherEntry,
 	RemoteAccessConnectionMenu,
 } from './workspace/RemoteAccessConnectionMenu';
@@ -229,6 +239,7 @@ import {
 	type DashboardRow,
 	resolveDashboardActivation,
 } from './workspace/dashboardRows';
+import type { DashboardServerSource } from './workspace/crossServerRows';
 import { useProjectEditor } from './workspace/useProjectEditor';
 import { useProjectTabTransfer } from './workspace/useProjectTabTransfer';
 import { useProjectTerminalCwd } from './workspace/useProjectTerminalCwd';
@@ -1248,7 +1259,7 @@ const ProjectWorkspace = forwardRef<
 				[project.id, project.rootFolder, terminalClientContext],
 			);
 		const serverActivityClient = terminalClientContext?.activityClient;
-		// Agent status is a selected-server projection, not a project-environment
+		// Agent status is a selected-server projection, not a project-scoped
 		// feature. A newly-created terminal can emit journal records before its
 		// project feature snapshot is hydrated, so bind its presentation scope to
 		// the canonical server client directly.
@@ -1520,14 +1531,14 @@ const ProjectWorkspace = forwardRef<
 
 		const getProjectsForTerminalMove =
 			useCallback((): TerminalTabMoveProject[] => {
-				return projects
-					.filter((candidate) => candidate.id !== project.id)
-					.map((candidate) => ({
-						emoji: candidate.emoji,
-						id: candidate.id,
-						title: candidate.title,
-					}));
-			}, [project.id, projects]);
+				// Same server only. A panel cannot move to a project another server
+				// owns, and that is enforced by never offering it as a target.
+				return panelMoveTargets(project, projects).map((candidate) => ({
+					emoji: candidate.emoji,
+					id: candidate.id,
+					title: candidate.title,
+				}));
+			}, [project, projects]);
 
 		const getActiveSessionId = useCallback(() => {
 			return getActiveTerminalSessionId(dockviewApiRef.current);
@@ -5233,8 +5244,45 @@ function App({
 	onOpenConnectionManager,
 	onSwitchConnections,
 	subscribeAppCommands,
-	terminalClientContext,
+	terminalClientContext: primaryClientContext,
 }: AppProps) {
+	const {
+		connections,
+		byServerId,
+		primary,
+		tabOrder: rememberedTabOrder,
+		setTabOrder,
+		setActiveServerId,
+	} = useConnections();
+	// The window works in one server at a time: the one whose tab is active.
+	// Every surface below reads its client from here, so switching tabs across
+	// servers rebinds the whole workspace to the server that owns what is
+	// shown, and nothing has to be told twice.
+	const [requestedServerId, setRequestedServerId] = useState<string>();
+	const activeConnection =
+		(requestedServerId === undefined
+			? undefined
+			: byServerId.get(requestedServerId)) ?? primary;
+	// The registry's context is the raw client context; the workspace also needs
+	// the connection's label and retry so the header and terminal banners name
+	// the server the active tab belongs to instead of a generic remote.
+	const terminalClientContext = useMemo<
+		typeof primaryClientContext
+	>(() => {
+		if (activeConnection?.context === undefined) return primaryClientContext;
+		if (activeConnection === primary && primaryClientContext !== undefined)
+			return primaryClientContext;
+		return Object.freeze({
+			...activeConnection.context,
+			connectionLabel: activeConnection.label,
+			retryConnection: () => activeConnection.retry(),
+			canRetryConnection: () => true,
+		});
+	}, [activeConnection, primary, primaryClientContext]);
+	const activeServerId = activeConnection?.serverId ?? terminalClientContext?.serverId;
+	// A pending activation survives the remount that switching servers causes:
+	// the target project only exists once its collection has mounted.
+	const pendingServerActivationRef = useRef<CompositionTabHandle | null>(null);
 	const auxiliaryRouteController = useMemo(
 		() => auxiliaryRoutes ?? createAuxiliaryRouteController(),
 		[auxiliaryRoutes],
@@ -5419,6 +5467,85 @@ function App({
 	});
 	const [pendingProjectCreation, setPendingProjectCreation] =
 		useState<PendingProjectCreation | null>(null);
+	// Switching servers rebinds every workspace surface, so the project the
+	// person clicked is only reachable once this server's collection has it.
+	useEffect(() => {
+		const pending = pendingServerActivationRef.current;
+		if (pending === null || pending.serverId !== currentServerId) return;
+		if (!projects.some((project) => project.id === pending.projectId)) return;
+		pendingServerActivationRef.current = null;
+		activateProject(pending.projectId);
+	}, [activateProject, currentServerId, projects]);
+	const ownProjects = (pendingProjectCreation
+		? [
+				...projects.filter(
+					(project) => project.id !== pendingProjectCreation.projectId,
+				),
+				pendingProjectCreation.tab,
+			]
+		: projects
+	).map((project) => {
+		return { ...project, hydrating: false, serverId: currentServerId };
+	});
+	// The strip is one composition over every attached server: this server's
+	// live collection, plus each other connection's projects read from its own
+	// workspace projection.
+	const activeTabSource = useMemo(
+		() =>
+			activeConnection === undefined
+				? undefined
+				: projectTabSourceFor(activeConnection, ownProjects),
+		// `ownProjects` is rebuilt every render by design; the identity of what
+		// it describes is the project list and the pending creation.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[activeConnection, projects, pendingProjectCreation],
+	);
+	const projectTabSources = useConnectionProjectTabs(
+		connections,
+		activeServerId,
+		activeTabSource,
+		settings.sidebar,
+	);
+	const namesServers = shouldNameServers(projectTabSources);
+	// Every per-server surface — Settings, Macros, Recordings, Shell profiles,
+	// Extensions — defaults to the server the window is working in.
+	useEffect(() => {
+		setActiveServerId(currentServerId);
+	}, [currentServerId, setActiveServerId]);
+	// Creating a project chooses which attached server will own it. The
+	// default is the active tab's server; choosing another one goes there
+	// first, because a project is created in the workspace of its own server.
+	const pendingServerCreationRef = useRef<string | null>(null);
+	const [projectServerMenu, setProjectServerMenu] = useState<
+		Readonly<{ x: number; y: number }> | null
+	>(null);
+	const createProjectOnServer = useCallback(
+		(serverId: string) => {
+			setProjectServerMenu(null);
+			if (serverId === currentServerId) {
+				void createServerProjectRef.current();
+				return;
+			}
+			if (byServerId.get(serverId)?.context === undefined) return;
+			pendingServerCreationRef.current = serverId;
+			setRequestedServerId(serverId);
+		},
+		[byServerId, currentServerId],
+	);
+	useEffect(() => {
+		if (pendingServerCreationRef.current !== currentServerId) return;
+		pendingServerCreationRef.current = null;
+		void createServerProjectRef.current();
+	}, [currentServerId]);
+	// A detached server takes its tabs with it. The window falls back to the
+	// connection it always has, rather than showing an empty workspace bound to
+	// a server that is gone.
+	useEffect(() => {
+		if (requestedServerId === undefined) return;
+		if (byServerId.has(requestedServerId)) return;
+		pendingServerActivationRef.current = null;
+		setRequestedServerId(undefined);
+	}, [byServerId, requestedServerId]);
 	const {
 		draggingProjectId,
 		dropPreview,
@@ -5516,41 +5643,6 @@ function App({
 		useState<AppUpdateStatus | null>(null);
 	const activityMenuRef = useRef<HTMLDivElement | null>(null);
 	const [isActivityMenuOpen, setIsActivityMenuOpen] = useState(false);
-	const projectEnvironmentsClient = useMemo(
-		() =>
-			terminalClientContext?.applicationClient === undefined
-				? null
-				: new ProjectEnvironmentsClient(
-						new TerminayClientFacade(terminalClientContext.applicationClient),
-					),
-		[terminalClientContext?.applicationClient],
-	);
-	const [projectEnvironmentChoices, setProjectEnvironmentChoices] = useState<
-		readonly ProjectEnvironmentSummaryDto[]
-	>([]);
-	const [projectEnvironmentProviders, setProjectEnvironmentProviders] =
-		useState<readonly ProjectEnvironmentProviderDescriptor[]>([]);
-	const [projectEnvironmentProfiles, setProjectEnvironmentProfiles] = useState<
-		readonly ProjectEnvironmentClientProfile[]
-	>([]);
-	const applyProjectEnvironmentSnapshot = useCallback(
-		(snapshot: Awaited<ReturnType<ProjectEnvironmentsClient['snapshot']>>) => {
-			setProjectEnvironmentChoices(snapshot.environments);
-			setProjectEnvironmentProviders(snapshot.providers);
-			setProjectEnvironmentProfiles(snapshot.profiles);
-		},
-		[],
-	);
-	const refreshProjectEnvironmentChoices = useCallback(async () => {
-		if (projectEnvironmentsClient === null) return;
-		try {
-			const snapshot = await projectEnvironmentsClient.snapshot();
-			applyProjectEnvironmentSnapshot(snapshot);
-		} catch {
-			// Preserve the last authenticated inventory during connection recovery.
-			// Opening the chooser retries against the current server transport.
-		}
-	}, [applyProjectEnvironmentSnapshot, projectEnvironmentsClient]);
 	const createInitialTerminalForProject = useCallback(
 		async (projectId: string) => {
 			const terminalClient = terminalClientContext?.client;
@@ -5601,172 +5693,103 @@ function App({
 		],
 	);
 	useEffect(() => {
-		let active = true;
-		if (projectEnvironmentsClient === null) return;
-		void projectEnvironmentsClient.snapshot().then(
-			(snapshot) => {
-				if (active) applyProjectEnvironmentSnapshot(snapshot);
-			},
-			() => undefined,
-		);
-		return () => {
-			active = false;
-		};
-	}, [applyProjectEnvironmentSnapshot, projectEnvironmentsClient]);
-	useEffect(() => {
-		const openEnvironments = () => {
-			void auxiliaryRouteController.openProjectEnvironments();
-		};
 		const openExtensions = () => {
 			void auxiliaryRouteController.openSettings('extensions');
 		};
-		window.addEventListener(
-			'terminay-open-project-environments',
-			openEnvironments,
-		);
 		window.addEventListener('terminay-open-extensions', openExtensions);
 		return () => {
-			window.removeEventListener(
-				'terminay-open-project-environments',
-				openEnvironments,
-			);
 			window.removeEventListener('terminay-open-extensions', openExtensions);
 		};
 	}, [auxiliaryRouteController]);
-	const createProjectForEnvironment = useCallback(
-		async (environment: ProjectEnvironmentSummaryDto) => {
-			if (projectEnvironmentsClient === null || boundWorkspaceViewId === null) {
-				return;
-			}
-			if (
-				pendingProjectCreation !== null ||
-				projectCreationInFlightRef.current
-			) {
-				return;
-			}
-			projectCreationInFlightRef.current = true;
-			const initialActiveProjectId = activeProjectIdRef.current;
-			heldActiveProjectIdRef.current = initialActiveProjectId;
-			const projectNumber =
-				Object.keys(
-					terminalClientContext?.workspaceSnapshotStore?.snapshot?.projects ?? {},
-				).length + 1;
-			const pendingId = `pending-project-${Date.now().toString(36)}`;
-			const pendingTab: ProjectTab = {
-				...createProjectTab(
-					projectNumber,
-					environment.defaultRoot ?? '',
-					projectsRef.current.map((project) => project.color),
-					settings.sidebar,
-					currentServerId,
-					Math.random,
-				),
-				creationStatus: 'loading',
-				environmentLabel: environment.name,
-				environmentStatus: 'connecting',
-				id: pendingId,
-				projectEnvironmentId: environment.id,
-				title: `Project ${projectNumber}`,
-			};
-			const pending: PendingProjectCreation = {
-				initialActiveProjectId,
-				tab: pendingTab,
-			};
-			setPendingProjectCreation(pending);
-			try {
-				const operation = await projectEnvironmentsClient.createProject({
-					environmentId: environment.id,
-					viewId: boundWorkspaceViewId,
-					...(environment.defaultRoot === undefined
-						? {}
-						: { root: environment.defaultRoot }),
-				});
-				if (operation.projectId === undefined) {
-					throw new Error(
-						'The selected server did not return the new project identity.',
-					);
-				}
-				setPendingProjectCreation({
-					...pending,
-					projectId: operation.projectId,
-				});
-				const sessionId = await createInitialTerminalForProject(
-					operation.projectId,
-				);
-				await terminalClientContext?.workspaceSnapshotStore?.refresh();
-				const desiredProjectId = heldActiveProjectIdRef.current;
-				heldActiveProjectIdRef.current = null;
-				projectCreationInFlightRef.current = false;
-				setPendingProjectCreation(null);
-				if (desiredProjectId === initialActiveProjectId) {
-					activeProjectIdRef.current = operation.projectId;
-					setActiveProjectId(operation.projectId);
-					window.requestAnimationFrame(() =>
-						scheduleCreatedTerminalFocus(sessionId),
-					);
-				} else if (desiredProjectId !== null) {
-					activateProject(desiredProjectId);
-				}
-			} catch (error) {
-				heldActiveProjectIdRef.current = null;
-				setPendingProjectCreation((current) => ({
-					...(current ?? pending),
-					tab: {
-						...(current?.tab ?? pendingTab),
-						creationError:
-							error instanceof Error ? error.message : String(error),
-						creationStatus: 'failed',
-					},
-				}));
-			}
-		},
-		[
-			activateProject,
-			activeProjectIdRef,
-			boundWorkspaceViewId,
-			createInitialTerminalForProject,
-			currentServerId,
-			pendingProjectCreation,
-			projectEnvironmentsClient,
-			projectsRef,
-			settings.sidebar,
-			setActiveProjectId,
-			terminalClientContext?.workspaceSnapshotStore,
-		],
-	);
-	const chooseProjectEnvironment = useCallback(
-		(environment: ProjectEnvironmentSummaryDto) => {
-			void createProjectForEnvironment(environment);
-		},
-		[createProjectForEnvironment],
-	);
-	const createThisServerProject = useCallback(async () => {
-		if (projectEnvironmentsClient === null || boundWorkspaceViewId === null) {
+	const createServerProjectRef = useRef<() => Promise<void>>(async () => undefined);
+	const createServerProject = useCallback(async () => {
+		const workspaceStore = terminalClientContext?.workspaceSnapshotStore;
+		if (workspaceStore === undefined || boundWorkspaceViewId === null) {
 			// Disconnected workspaces retain their existing local-only
 			// creation path; authenticated server workspaces never bypass validation.
 			addProject();
 			return;
 		}
-		const thisServer = projectEnvironmentChoices.find(
-			(environment) => environment.id === 'terminay:this-server',
-		) ?? {
-			endpointSummary: 'Local embedded server',
-			id: 'terminay:this-server',
-			isThisServer: true,
-			name: 'This server',
-			providerId: 'terminay:this-server',
-			providerLabel: 'This Terminay Server',
-			referencedProjectCount: 0,
-			status: 'ready' as const,
+		if (pendingProjectCreation !== null || projectCreationInFlightRef.current) {
+			return;
+		}
+		projectCreationInFlightRef.current = true;
+		const initialActiveProjectId = activeProjectIdRef.current;
+		heldActiveProjectIdRef.current = initialActiveProjectId;
+		const projectNumber =
+			Object.keys(workspaceStore.snapshot?.projects ?? {}).length + 1;
+		const pendingId = `pending-project-${Date.now().toString(36)}`;
+		const projectId = `project-${Date.now().toString(36)}-${projectNumber}`;
+		const presentation = createProjectTab(
+			projectNumber,
+			homePath,
+			projectsRef.current.map((project) => project.color),
+			settings.sidebar,
+			currentServerId,
+			Math.random,
+		);
+		const pendingTab: ProjectTab = {
+			...presentation,
+			creationStatus: 'loading',
+			id: pendingId,
+			title: `Project ${projectNumber}`,
 		};
-		await createProjectForEnvironment(thisServer);
+		const pending: PendingProjectCreation = {
+			initialActiveProjectId,
+			tab: pendingTab,
+		};
+		setPendingProjectCreation(pending);
+		try {
+			await workspaceStore.createProject({
+				projectId,
+				viewId: boundWorkspaceViewId,
+				root: homePath,
+				color: presentation.color,
+				icon: presentation.emoji,
+			});
+			setPendingProjectCreation({ ...pending, projectId });
+			const sessionId = await createInitialTerminalForProject(projectId);
+			await workspaceStore.refresh();
+			const desiredProjectId = heldActiveProjectIdRef.current;
+			heldActiveProjectIdRef.current = null;
+			projectCreationInFlightRef.current = false;
+			setPendingProjectCreation(null);
+			if (desiredProjectId === initialActiveProjectId) {
+				activeProjectIdRef.current = projectId;
+				setActiveProjectId(projectId);
+				window.requestAnimationFrame(() =>
+					scheduleCreatedTerminalFocus(sessionId),
+				);
+			} else if (desiredProjectId !== null) {
+				activateProject(desiredProjectId);
+			}
+		} catch (error) {
+			heldActiveProjectIdRef.current = null;
+			setPendingProjectCreation((current) => ({
+				...(current ?? pending),
+				tab: {
+					...(current?.tab ?? pendingTab),
+					creationError:
+						error instanceof Error ? error.message : String(error),
+					creationStatus: 'failed',
+				},
+			}));
+		}
 	}, [
+		activateProject,
+		activeProjectIdRef,
 		addProject,
 		boundWorkspaceViewId,
-		createProjectForEnvironment,
-		projectEnvironmentChoices,
-		projectEnvironmentsClient,
+		createInitialTerminalForProject,
+		currentServerId,
+		homePath,
+		pendingProjectCreation,
+		projectsRef,
+		settings.sidebar,
+		setActiveProjectId,
+		terminalClientContext?.workspaceSnapshotStore,
 	]);
+	createServerProjectRef.current = createServerProject;
 	const [inventoryByProject, setInventoryByProject] = useState<
 		Record<string, WorkspaceInventoryEntry[]>
 	>({});
@@ -6016,9 +6039,6 @@ function App({
 				selectHome();
 				return Promise.resolve();
 			}
-			if (command === 'open-project-environments') {
-				return auxiliaryRouteController.openProjectEnvironments();
-			}
 			if (command === 'open-extensions') {
 				return auxiliaryRouteController.openSettings('extensions');
 			}
@@ -6073,19 +6093,78 @@ function App({
 
 	const hasTerminalActivityOverview = terminalActivityItems.items.length > 0;
 
+	// Which project a terminal belongs to, on any attached server. Session ids
+	// are per-server, so the server has to be part of the question.
+	const projectForSession = useCallback(
+		(serverId: string, sessionId: string): string | undefined =>
+			byServerId.get(serverId)?.context?.workspaceSnapshotStore?.snapshot
+				?.terminalSessions[sessionId]?.projectId,
+		[byServerId],
+	);
+	// Another attached server has no live panel inventory in this window, but
+	// its agent projection still says which of its projects are waiting on a
+	// person — which is the thing worth showing across a server boundary.
+	const otherServerBadges = useCrossServerAgentBadges(
+		connections,
+		currentServerId,
+		projectForSession,
+	);
+	// Badges are keyed by `(serverId, projectId)`: the strip holds tabs from
+	// several servers whose project ids can be the same string.
 	const activityBadgesByProject = useMemo(() => {
-		const badges: Record<string, ActivityCountBadge> = {};
+		const badges: Record<string, ActivityCountBadge> = {
+			...otherServerBadges,
+		};
 		for (const [projectId, entries] of Object.entries(inventoryByProject)) {
 			const badge = summarizeActivityBadge(
 				selectNotableEntries(entries).map((item) => item.state),
 			);
-			if (badge) badges[projectId] = badge;
+			if (badge) badges[compositionTabKey(currentServerId, projectId)] = badge;
 		}
 		return badges;
-	}, [inventoryByProject]);
+	}, [currentServerId, inventoryByProject, otherServerBadges]);
 
+	/**
+	 * Home aggregates every attached server.
+	 *
+	 * The server the window is working in contributes its live inventory —
+	 * what each panel is doing right now. Every other attached server
+	 * contributes what its own workspace projection says exists. Nothing is
+	 * summed across servers: each row still belongs to one.
+	 */
+	const dashboardSources = useMemo<readonly DashboardServerSource[]>(
+		() =>
+			projectTabSources.map((source) =>
+				source.serverId === currentServerId
+					? {
+							serverId: source.serverId,
+							serverLabel: source.serverLabel,
+							projects: source.projects,
+							inventoryByProject,
+						}
+					: {
+							serverId: source.serverId,
+							serverLabel: source.serverLabel,
+							projects: source.projects,
+							inventoryByProject: {},
+						},
+			),
+		[currentServerId, inventoryByProject, projectTabSources],
+	);
 	const activateDashboardRow = useCallback(
-		(row: DashboardRow) => {
+		(serverId: string, row: DashboardRow) => {
+			// A row on another server is a place to go: bind the workspace there
+			// first, and let the tab activation land once its projects arrive.
+			if (serverId !== currentServerId) {
+				const connection = byServerId.get(serverId);
+				if (connection?.context === undefined) return;
+				pendingServerActivationRef.current = {
+					serverId,
+					projectId: row.projectId,
+				};
+				setRequestedServerId(serverId);
+				return;
+			}
 			// Resolve at click time: a row rendered before a project or panel went
 			// away must not act on it.
 			const activation = resolveDashboardActivation(
@@ -6102,7 +6181,13 @@ function App({
 					?.activateTerminal(activation.panelId, activation.sessionId);
 			});
 		},
-		[activateProject, inventoryByProject, projectsRef],
+		[
+			activateProject,
+			byServerId,
+			currentServerId,
+			inventoryByProject,
+			projectsRef,
+		],
 	);
 
 	const activateTerminalFromOverview = useCallback(
@@ -6236,50 +6321,108 @@ function App({
 	const displayedActiveProjectId = isPendingProjectFailure
 		? pendingProjectCreation.tab.id
 		: activeProjectId;
-	const displayedProjects = (pendingProjectCreation
-		? [
-				...projects.filter(
-					(project) => project.id !== pendingProjectCreation.projectId,
-				),
-				pendingProjectCreation.tab,
-			]
-		: projects
-	).map((project) => {
-		const environment = projectEnvironmentChoices.find(
-			(candidate) => candidate.id === project.projectEnvironmentId,
-		);
-		const serverProject = workspaceSnapshot?.projects[project.id];
-		const hasTerminal =
-			serverProject?.panelIds.some(
-				(panelId) => workspaceSnapshot?.panels[panelId]?.type === 'terminal',
-			);
-		const remote =
-			project.projectEnvironmentId !== undefined &&
-			project.projectEnvironmentId !== 'terminay:this-server';
-		return {
-			...project,
-			...(environment === undefined
-				? {}
-				: {
-						environmentLabel: environment.name,
-						environmentStatus: environment.status,
-					}),
-			hydrating:
-				project.creationStatus !== 'loading' &&
-				project.creationStatus !== 'failed' &&
-				remote &&
-				!hasTerminal,
-		};
-	});
+	const displayedProjects: ComposedProjectTab[] = useMemo(
+		() => [...composeProjectTabs(projectTabSources, rememberedTabOrder)],
+		[projectTabSources, rememberedTabOrder],
+	);
+	const displayedActiveHandle = compositionTabKey(
+		currentServerId,
+		displayedActiveProjectId,
+	);
 	const displayedActiveProject =
 		displayedProjects.find(
-			(project) => project.id === displayedActiveProjectId,
+			(project) => project.handle === displayedActiveHandle,
 		) ?? activeProject;
-	const activateDisplayedProject = (projectId: string) => {
-		if (projectId === pendingProjectCreation?.tab.id) return;
-		activateProject(projectId);
+	/** Going to a tab on another server is what binds the workspace to it. */
+	/** A strip control always hands back a `(serverId, projectId)` handle. A
+	 * caller that still speaks a bare project id means one on this server,
+	 * which is the only server it could have been looking at. */
+	const resolveTabHandle = (handle: string): CompositionTabHandle =>
+		parseCompositionTabKey(handle) ?? {
+			serverId: currentServerId,
+			projectId: handle,
+		};
+	/** Go to a server the window already holds, without naming a project: the
+	 * connections list does this, and it is the same binding a cross-server tab
+	 * activation performs. */
+	const goToServer = (serverId: string) => {
+		if (serverId === currentServerId) return;
+		const connection = byServerId.get(serverId);
+		// An unreachable or incompatible server takes no operations.
+		if (connection?.context === undefined) return;
+		setRequestedServerId(serverId);
 	};
-	const closeDisplayedProject = (projectId: string) => {
+	const activateComposedTab = (handle: string) => {
+		const target = resolveTabHandle(handle);
+		if (target.projectId === pendingProjectCreation?.tab.id) return;
+		if (target.serverId !== currentServerId) {
+			const connection = byServerId.get(target.serverId);
+			// An unreachable or incompatible server takes no operations, so its
+			// tabs are visible and inert rather than a way to a blank workspace.
+			if (connection?.context === undefined) return;
+			pendingServerActivationRef.current = target;
+			setRequestedServerId(target.serverId);
+			return;
+		}
+		activateProject(target.projectId);
+	};
+	/** A handle that belongs to the server the window is currently working in,
+	 * or nothing: an operation on another server's tab has to go there first. */
+	const ownProjectIdFor = (handle: string): string | undefined => {
+		const target = resolveTabHandle(handle);
+		return target.serverId === currentServerId ? target.projectId : undefined;
+	};
+	const openEditComposedTab = async (handle: string) => {
+		const projectId = ownProjectIdFor(handle);
+		if (projectId === undefined) {
+			activateComposedTab(handle);
+			return;
+		}
+		await openEditProjectWindow(projectId);
+	};
+	// Tearing a tab into its own native window binds that window to one
+	// profile, so it is offered only for the server this window is working in.
+	const startComposedTabDrag = (handle: string) => {
+		const projectId = ownProjectIdFor(handle);
+		if (projectId !== undefined) handleProjectTabDragStart(projectId);
+	};
+	const moveComposedTabDrag = (handle: string, offsetY: number) => {
+		const projectId = ownProjectIdFor(handle);
+		if (projectId !== undefined) handleProjectTabDragMove(projectId, offsetY);
+	};
+	const endComposedTabDrag = async (handle: string) => {
+		const projectId = ownProjectIdFor(handle);
+		if (projectId !== undefined) await handleProjectTabDragEnd(projectId);
+	};
+	/**
+	 * Reordering writes the window's composition, which is client-owned and
+	 * spans servers. When the window is showing one server, the same order is
+	 * also the server's own project order, so it keeps being persisted there.
+	 */
+	const onReorderComposed = (nextTabs: readonly ProjectTab[]) => {
+		const order = nextTabs.map((tab) => ({
+			serverId: tab.serverId,
+			projectId: tab.id,
+		}));
+		setTabOrder(order);
+		if (namesServers) return;
+		onReorder(
+			nextTabs.filter((tab) => tab.serverId === currentServerId) as ProjectTab[],
+		);
+	};
+	const persistMovedComposedTab = (handle: string) => {
+		const projectId = ownProjectIdFor(handle);
+		if (projectId === undefined || namesServers) return;
+		persistMovedProject(projectId);
+	};
+	const closeComposedTab = (handle: string) => {
+		const target = resolveTabHandle(handle);
+		// Closing belongs to the server that owns the project; go there first.
+		if (target.serverId !== currentServerId) {
+			activateComposedTab(handle);
+			return;
+		}
+		const projectId = target.projectId;
 		if (projectId !== pendingProjectCreation?.tab.id) {
 			closeProject(projectId);
 			return;
@@ -6363,25 +6506,29 @@ function App({
 					</button>
 				</div>
 				<ProjectTabList
-					activeProjectId={isHomeSelected ? '' : displayedActiveProjectId}
+					activeProjectId={isHomeSelected ? '' : displayedActiveHandle}
 					activityBadgesByProject={activityBadgesByProject}
-					draggingProjectId={draggingProjectId}
+					draggingProjectId={
+						draggingProjectId === null
+							? null
+							: compositionTabKey(currentServerId, draggingProjectId)
+					}
 					dropPreview={dropPreview}
 					isDraggingTabTornOff={isDraggingTabTornOff}
-					onActivate={activateDisplayedProject}
-					onClose={closeDisplayedProject}
-					onDragEnd={handleProjectTabDragEnd}
-					onDragMove={handleProjectTabDragMove}
-					onDragStart={handleProjectTabDragStart}
-					onEdit={openEditProjectWindow}
+					onActivate={activateComposedTab}
+					onClose={closeComposedTab}
+					onDragEnd={endComposedTabDrag}
+					onDragMove={moveComposedTabDrag}
+					onDragStart={startComposedTabDrag}
+					onEdit={openEditComposedTab}
 					onReorder={(nextProjects) =>
-						onReorder(
+						onReorderComposed(
 							nextProjects.filter(
 								(project) => project.creationStatus === undefined,
 							),
 						)
 					}
-					onReorderCommit={persistMovedProject}
+					onReorderCommit={persistMovedComposedTab}
 					onSwitcherOpen={() => {
 						setIsRemoteMenuOpen(false);
 						setIsActivityMenuOpen(false);
@@ -6389,31 +6536,55 @@ function App({
 					canCreateProject={
 						canAddProject && pendingProjectCreation === null
 					}
-					onCreateProject={() => void createThisServerProject()}
+					onCreateProject={() => void createServerProject()}
 					projects={displayedProjects}
 				/>
 				<div className="project-tab-add-box">
-					<ProjectEnvironmentSplitButton
-						canCreate={canAddProject && pendingProjectCreation === null}
-						environments={projectEnvironmentChoices}
-						providers={projectEnvironmentProviders}
-						profiles={projectEnvironmentProfiles}
-						onCreateProvider={(action) =>
-							void auxiliaryRouteController.openProjectEnvironments({
-								providerId: action.providerId,
-								mode: action.mode,
-								...(action.profileId === undefined
-									? {}
-									: { profileId: action.profileId }),
-							})
+					<button
+						type="button"
+						className="project-tab-add"
+						aria-label={
+							namesServers ? 'Create project on a server' : 'Create project'
 						}
-						onCreateThisServer={() => void createThisServerProject()}
-						onChoose={chooseProjectEnvironment}
-						onOpen={() => void refreshProjectEnvironmentChoices()}
-						onManageEnvironments={() =>
-							void auxiliaryRouteController.openProjectEnvironments()
+						title={
+							namesServers
+								? 'Create project — choose a server'
+								: 'Create project'
 						}
-					/>
+						aria-haspopup={namesServers ? 'menu' : undefined}
+						disabled={!canAddProject || pendingProjectCreation !== null}
+						onClick={(event) => {
+							// A project belongs to one server. With several attached the
+							// window asks which, defaulting to the tab in front.
+							if (!namesServers) {
+								void createServerProject();
+								return;
+							}
+							const rect = event.currentTarget.getBoundingClientRect();
+							setProjectServerMenu({ x: rect.left, y: rect.bottom });
+						}}
+					>
+						+
+					</button>
+					{projectServerMenu === null ? null : (
+						<ContextMenu
+							x={projectServerMenu.x}
+							y={projectServerMenu.y}
+							onClose={() => setProjectServerMenu(null)}
+							items={[
+								{ label: 'New project on', heading: true, key: 'heading' },
+								...projectTabSources.map((source) => ({
+									key: source.serverId,
+									label:
+										source.serverId === currentServerId
+											? `${source.serverLabel} (current)`
+											: source.serverLabel,
+									disabled: !source.usable,
+									onClick: () => createProjectOnServer(source.serverId),
+								})),
+							]}
+						/>
+					)}
 				</div>
 				<div className="header-actions">
 					{hasAppUpdate ? (
@@ -6460,6 +6631,7 @@ function App({
 						}
 						onOpenPairingQr={() => void openPairingQr()}
 						onSelectConnection={selectConnectionProfile}
+						onSelectServer={goToServer}
 						onSwitchConnections={onSwitchConnections}
 						onToggleExposure={() => void toggleRemoteAccess()}
 						onToggleMenu={() => {
@@ -6515,9 +6687,8 @@ function App({
 				) : null}
 				{isHomeSelected ? (
 					<WorkspaceDashboard
-						inventoryByProject={inventoryByProject}
 						onActivate={activateDashboardRow}
-						projects={displayedProjects}
+						sources={dashboardSources}
 					/>
 				) : null}
 				{projects.map((project) => (
@@ -6535,7 +6706,7 @@ function App({
 						}
 						isMac={isMac}
 						macros={macros}
-						onAddProject={createThisServerProject}
+						onAddProject={createServerProject}
 						onShowDashboard={selectHome}
 						onCloseProject={closeProject}
 						onEditProject={openEditProjectWindow}

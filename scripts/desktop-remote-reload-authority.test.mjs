@@ -45,14 +45,10 @@ test('normal workspace windows always load the canonical selected-server bundle'
 test('reload reconnect uses the remembered OS-protected credential path', () => {
 	assert.match(presentation, /createDesktopReconnectTransport/u);
 	assert.match(presentation, /createDesktopDeviceCredentialStore\(\)/u);
-	assert.match(presentation, /prepareCanonicalHttpRemoteLaunch/u);
+	assert.match(presentation, /prepareCanonicalRemoteLaunch/u);
 	assert.match(presentation, /createDesktopBootstrappedWebRtcConnection/u);
-	assert.match(presentation, /remoteServerUiBundleHost\.prepareRemote/u);
 	assert.match(presentation, /serverUiLaunch:\s*launch/u);
-	assert.match(
-		presentation,
-		/serverUiTransport:\s*(?:connected|webRtc)\.transport/u,
-	);
+	assert.match(presentation, /serverUiTransport:\s*lanes\.transport/u);
 	assert.doesNotMatch(presentation, /connectRemoteByteTransport/u);
 	assert.doesNotMatch(
 		presentation,

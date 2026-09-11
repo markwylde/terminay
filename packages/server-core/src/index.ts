@@ -1,6 +1,7 @@
 export * from './activity/index.js';
 export * from './aiService/index.js';
 export * from './auth.js';
+export * from './capabilities.js';
 export * from './composition.js';
 export * from './connection.js';
 export * from './control/index.js';
@@ -139,12 +140,12 @@ export {
 	validIgnorePattern,
 } from './fileService/index.js';
 export * from './gitService/index.js';
+export * from './languageService/index.js';
 export * from './macroService/index.js';
 export * from './mdxRuntime/index.js';
 export * from './migration/index.js';
 export * from './outboundDelivery.js';
 export * from './platform.js';
-export * from './projectEnvironment/index.js';
 export * from './recordingService/index.js';
 export * from './remote/index.js';
 export * from './runtime.js';

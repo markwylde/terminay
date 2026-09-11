@@ -11,23 +11,6 @@ export interface OfficialExtensionCatalogueRecord {
 export const OFFICIAL_EXTENSION_CATALOGUE: readonly OfficialExtensionCatalogueRecord[] =
 	Object.freeze([
 		Object.freeze({
-			extensionId: 'com.terminay.ssh',
-			packageName: 'terminay-plugin-ssh',
-			displayName: 'SSH',
-			description: 'Open Terminay projects on SSH servers.',
-			publisher: 'Terminay',
-			official: true,
-		}),
-		Object.freeze({
-			extensionId: 'com.puzed.platform',
-			packageName: 'terminay-plugin-puzed',
-			displayName: 'Puzed Platform',
-			description:
-				'Create and open Terminay projects on Puzed virtual machines.',
-			publisher: 'Terminay',
-			official: true,
-		}),
-		Object.freeze({
 			extensionId: 'com.terminay.agent.codex',
 			packageName: 'terminay-agent-codex',
 			displayName: 'Codex',
@@ -64,6 +47,15 @@ export const OFFICIAL_EXTENSION_CATALOGUE: readonly OfficialExtensionCatalogueRe
 			packageName: 'terminay-agent-omp',
 			displayName: 'omp',
 			description: 'Show omp sessions in the Agents sidebar.',
+			publisher: 'Terminay',
+			official: true,
+		}),
+		Object.freeze({
+			extensionId: 'com.terminay.language.typescript',
+			packageName: 'terminay-language-typescript',
+			displayName: 'TypeScript',
+			description:
+				'Diagnostics, completion, hover, and go-to-definition for TypeScript and JavaScript.',
 			publisher: 'Terminay',
 			official: true,
 		}),

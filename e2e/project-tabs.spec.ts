@@ -116,7 +116,7 @@ test.describe('project tabs', () => {
 		electronApp,
 		mainWindow,
 	}) => {
-		await mainWindow.getByLabel('Create project on This server').click();
+		await mainWindow.getByLabel('Create project').click();
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
 			0,
@@ -204,7 +204,7 @@ test.describe('project tabs', () => {
 		electronApp,
 		mainWindow,
 	}) => {
-		await mainWindow.getByLabel('Create project on This server').click();
+		await mainWindow.getByLabel('Create project').click();
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
 			0,
@@ -277,7 +277,7 @@ test.describe('project tabs', () => {
 		const initialProjectTab = mainWindow.locator('.project-tab').first();
 		await expect(initialProjectTab).toContainText('Project');
 
-		await mainWindow.getByLabel('Create project on This server').click();
+		await mainWindow.getByLabel('Create project').click();
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
 			0,
@@ -337,7 +337,7 @@ test.describe('project tabs', () => {
 		mainWindow,
 	}) => {
 		const addProjectButton = mainWindow.getByLabel(
-			'Create project on This server',
+			'Create project',
 		);
 
 		for (let index = 0; index < 19; index += 1) {
@@ -364,7 +364,7 @@ test.describe('project tabs', () => {
 		electronApp,
 	}) => {
 		const addProjectButton = mainWindow.getByLabel(
-			'Create project on This server',
+			'Create project',
 		);
 		for (let index = 0; index < 11; index += 1) {
 			await addProjectButton.click();
@@ -459,7 +459,7 @@ test.describe('project tabs', () => {
 		).toBeVisible();
 		await expect(add).toBeHidden();
 		const compactCreate = compactMenu.getByRole('menuitem', {
-			name: 'Create project on This server',
+			name: /^Create project/u,
 		});
 		await expect(compactCreate).toBeVisible();
 		const compactSwitcherBox = await mainWindow
@@ -483,7 +483,7 @@ test.describe('project tabs', () => {
 		electronApp,
 	}) => {
 		const addProjectButton = mainWindow.getByLabel(
-			'Create project on This server',
+			'Create project',
 		);
 		for (let index = 0; index < 11; index += 1) {
 			await addProjectButton.click();
@@ -597,7 +597,7 @@ test.describe('project tabs', () => {
 	test('reorders visible project tabs when one is dragged along the strip', async ({
 		mainWindow,
 	}) => {
-		await mainWindow.getByLabel('Create project on This server').click();
+		await mainWindow.getByLabel('Create project').click();
 		const tabs = mainWindow.locator(
 			'.project-tab:not(.project-tab--overflowed)',
 		);
@@ -635,7 +635,7 @@ test.describe('project tabs', () => {
 	test('creating a project focuses the new terminal', async ({
 		mainWindow,
 	}) => {
-		await mainWindow.getByLabel('Create project on This server').click();
+		await mainWindow.getByLabel('Create project').click();
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
 			0,
@@ -671,7 +671,7 @@ test.describe('project tabs', () => {
 		mainWindow,
 	}) => {
 		const addProjectButton = mainWindow.getByLabel(
-			'Create project on This server',
+			'Create project',
 		);
 		for (let index = 0; index < 5; index += 1) {
 			await addProjectButton.click();
@@ -745,7 +745,7 @@ test.describe('project tabs', () => {
 		electronApp,
 		mainWindow,
 	}) => {
-		await mainWindow.getByLabel('Create project on This server').click();
+		await mainWindow.getByLabel('Create project').click();
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
 			0,
 		);

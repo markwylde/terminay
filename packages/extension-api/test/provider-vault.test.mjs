@@ -2,29 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   EXTENSION_LIMITS,
-  createProviderDependencyTargetHarness,
   createProviderVaultHarness,
-  validateProviderDependencyTargetContext,
   validateProviderVaultPutRequest,
   validateProviderVaultRemoveRequest,
   validateProviderVaultWithSecretRequest,
 } from "../dist/index.js";
-
-test("target context has only its vault broker and preserves typed cancellation", async () => {
-  const cancelled = { aborted: true, throwIfAborted() { throw new Error("cancelled"); } };
-  const harness = createProviderDependencyTargetHarness({
-    async call(_request, context) {
-      assert.equal(typeof context.vault.put, "function");
-      assert.equal("profiles" in context, false);
-      assert.equal("secrets" in context, false);
-      assert.equal("sshAgent" in context, false);
-      context.signal.throwIfAborted();
-      return null;
-    },
-  });
-  const request = { operation: "resource.read", payload: null, caller: { extensionId: "dev.terminay.caller", providerId: "dev.terminay.caller/source" } };
-  await assert.rejects(() => harness.call(request, { signal: cancelled }), /cancelled/);
-});
 
 test("target vault is atomic, opaque, generic, and zeroizes callback copies", async () => {
   const vault = createProviderVaultHarness();
@@ -53,10 +35,7 @@ test("target vault pending removal denies new uses and cleans up after an active
   await assert.rejects(() => vault.withSecret({ binding, purpose: "ssh.authentication" }, () => null), /Vault binding unavailable/);
 });
 
-test("target context and vault DTO validators reject malformed or unbounded public input", () => {
-  const timing = { deadlineAt: "2030-01-01T00:00:00.000Z", signal: { aborted: false, throwIfAborted() {} }, vault: { unexpected: true } };
-  assert.equal(validateProviderDependencyTargetContext(timing).ok, true, "the runtime vault is not serialized or inspected");
-  assert.equal(validateProviderDependencyTargetContext({ ...timing, signal: { aborted: false } }).ok, false);
+test("vault DTO validators reject malformed or unbounded public input", () => {
   assert.equal(validateProviderVaultPutRequest({ bindingKey: "connection.primary", purpose: "ssh.authentication", value: new Uint8Array([1]), idempotencyKey: "put-1" }).ok, true);
   assert.equal(validateProviderVaultWithSecretRequest({ binding: { bindingRef: "fixture_vault_ref_0000000000000001" }, purpose: "ssh.authentication" }).ok, true);
   assert.equal(validateProviderVaultRemoveRequest({ binding: { bindingRef: "fixture_vault_ref_0000000000000001" }, idempotencyKey: "remove-1" }).ok, true);

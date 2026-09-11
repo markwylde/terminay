@@ -98,7 +98,7 @@ test("rename, archive, forget, and revoke remain distinct host-local management 
 test("browser profile stores do not fabricate a Local server", () => {
   const store = new ConnectionProfileStore({ local: false });
   assert.equal(store.currentProfile, undefined);
-  assert.deepEqual(store.snapshot(), { revision: 0, profiles: [] });
+  assert.deepEqual(store.snapshot(), { revision: 0, attachedProfileIds: [], profiles: [] });
   const profile = store.remember({ id: "browser-prod", serverId: "srv-prod", label: "Production", origin: "https://prod.example.test" });
   assert.equal(store.select(profile.id).id, "browser-prod");
   assert.equal(store.currentProfile?.label, "Production");

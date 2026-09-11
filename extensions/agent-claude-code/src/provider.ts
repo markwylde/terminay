@@ -113,12 +113,6 @@ export const claudeCodeProvider = defineAgentProvider({
 	async observe(
 		terminal: AgentTerminalContext,
 	): Promise<AgentObservationResult> {
-		if (
-			!terminal.capabilities.has('process-observation') ||
-			!terminal.capabilities.has('agent-journal')
-		) {
-			return { state: 'unavailable', reason: 'environment-capability-missing' };
-		}
 		const descendants = await terminal.observation.processes.descendants({
 			signal: terminal.signal,
 		});

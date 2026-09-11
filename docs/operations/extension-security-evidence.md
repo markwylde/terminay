@@ -13,47 +13,27 @@ node --test \
   packages/server-core/test/extension-host.test.mjs \
   packages/server-core/test/extension-installer.test.mjs \
   packages/server-core/test/extension-secret-broker.test.mjs \
-  packages/server-core/test/project-environment-router.test.mjs \
-  packages/server-core/test/remote-file-protocol.test.mjs \
-  packages/server-core/test/remote-mcp-bridge.test.mjs \
   packages/server-core/test/terminal-claim-release-boundaries.test.mjs
 ```
 
 These suites reject hostile npm specifications, integrity/lock/script/native/
 path inputs, malformed and oversized IPC, unsafe callback DTOs, provider-id
-collisions, forged/replayed/cross-environment MCP requests, forged project and
-terminal-session claims, and cross-extension/profile/field secret access. They
-also prove deadline/cancellation/admission limits, crash/quarantine isolation,
-secret zeroization/redaction, remote SFTP-only routing, immutable long-lived
-bindings, and no fallback to local PTY/filesystem when a provider fails.
+collisions, forged and replayed MCP requests, forged project and
+terminal-session claims, and cross-extension/field secret access. They also
+prove deadline/cancellation/admission limits, crash/quarantine isolation, and
+secret zeroization/redaction.
 
-## Official SSH extension
-
-```sh
-npm run compile
-node --test test/profile-trust.test.mjs test/filesystem.test.mjs test/pool-terminal.test.mjs
-```
-
-These suites prove strict first-use approval, exact fingerprint persistence,
-mismatch/replace/replay behavior, profile-local explicit bypass, logical-host
-identity, root and symlink traversal rejection, per-root/revision isolation,
-bounded channel pooling, disconnect `outcome-unknown`, and no replacement/local
-terminal after loss.
-
-## Official Puzed extension
+## Official agent extensions
 
 ```sh
-npm run build
-node --test test/puzed.test.mjs test/provisioning.test.mjs
+npm run compile --workspaces --if-present
+node --test extensions/agent-*/test/*.test.mjs
 ```
 
-These suites prove exact-origin URL validation, manual redirect rejection before
-authorization forwarding, transient zeroized API-key use, bounded/paginated
-forms, exact system tag filtering, public-key-only creation, durable idempotency,
-restart/resume boundaries, non-destructive failure, and one ref-counted SSE
-stream per profile/organization.
+These suites prove that a provider observes only the terminals it was admitted
+to, that observation stays inside the broker's permitted operations, and that a
+crashing or failing provider never widens its own authority.
 
 The Docker acceptance suite remains separate: Electron E2E must be invoked only
-through `npm run test:e2e`, and real Puzed smoke is opt-in. Unit/contract evidence
-must not be represented as published-artifact, Docker, or real-infrastructure
-evidence.
+through `npm run test:e2e`. Unit/contract evidence must not be represented as
+published-artifact, Docker, or real-infrastructure evidence.

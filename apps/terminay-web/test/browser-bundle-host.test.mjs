@@ -77,17 +77,17 @@ test('archive extraction is atomic: malformed or interrupted replacement retains
 	await host.installAndPrepare({ expectedServerId: 'server-prod', sessionOrigin: 'https://prod.example.test', context: context(first.bundleId), endpoint: endpoint(), compressedArchive: first.archive });
 	const broken = fixture('broken'); broken.archive[broken.archive.length - 3] ^= 0xff;
 	await assert.rejects(host.installAndPrepare({ expectedServerId: 'server-prod', sessionOrigin: 'https://prod.example.test', context: context(broken.bundleId), endpoint: endpoint(), compressedArchive: broken.archive }), /gzip|archive/u);
-	assert.equal((await store.current('server-prod'))?.metadata.bundleId, first.bundleId);
+	assert.equal((await store.current('https://prod.example.test'))?.metadata.bundleId, first.bundleId);
 });
 
 test('cache storage publishes archive metadata last and restores only the exact server bundle', async () => {
 	const cacheStorage = new MemoryCacheStorage(); const store = new CacheStorageBrowserBundleStore(cacheStorage);
 	const selected = fixture('durable'); const host = new BrowserSessionBundleHost({ store });
 	await host.installAndPrepare({ expectedServerId: 'server-prod', sessionOrigin: 'https://prod.example.test', context: context(selected.bundleId), endpoint: endpoint(), compressedArchive: selected.archive });
-	const restored = await store.current('server-prod');
+	const restored = await store.current('https://prod.example.test');
 	assert.equal(restored?.metadata.bundleId, selected.bundleId);
 	assert.ok(restored?.assets.has(`/remote-app/${selected.bundleId}/generated/workspace.html`));
-	assert.equal(await store.current('server-other'), undefined);
+	assert.equal(await store.current('https://other.example.test'), undefined);
 });
 
 test('the session bundle host never gates on browser brand or generated filenames', async () => {
@@ -118,6 +118,34 @@ test('tar extraction rejects traversal, links, duplicates, metadata drift, and e
 	assert.throws(() => extractTerminayArchive(tar([...good(), ['large.bin', Buffer.alloc(8)]]), { maxEntryBytes: 4 }), /size limit/u);
 	assert.throws(() => extractTerminayArchive(tar(good()), { maxExpandedBytes: 1 }), /expanded size/u);
 	assert.throws(() => extractTerminayArchive(tar([['terminay-bundle.json', metadata], ['a'.repeat(20), 'x'], ['index.html', 'ok']]), { maxPathBytes: 10 }), /unsafe/u);
+});
+
+test('the browser installs only the primary session origin bundle and never binds it to a server', async () => {
+	const store = new MemoryBrowserBundleStore();
+	const host = new BrowserSessionBundleHost({ store });
+	const selected = fixture('primary-only');
+	// No bundle-to-server identity binding: the context's bundle id and
+	// application-protocol version are not compared against the archive, because
+	// one bundle drives the primary connection and every attached server.
+	const launch = await host.installAndPrepare({
+		expectedServerId: 'server-prod',
+		sessionOrigin: 'https://prod.example.test',
+		context: context('archive_some-other-build_0001', { applicationProtocolVersion: '7' }),
+		endpoint: endpoint(),
+		compressedArchive: selected.archive,
+	});
+	assert.equal(launch.bundle.metadata.bundleId, selected.bundleId);
+	// The store is keyed by the primary session origin, so there is no path that
+	// installs a second server's bundle.
+	assert.equal((await store.current('https://prod.example.test'))?.metadata.bundleId, selected.bundleId);
+	assert.equal(await store.current('server-prod'), undefined);
+	await assert.rejects(host.installAndPrepare({
+		expectedServerId: 'server-attached',
+		sessionOrigin: 'https://prod.example.test',
+		context: context(selected.bundleId),
+		endpoint: endpoint(),
+		compressedArchive: selected.archive,
+	}), /does not match this session/u);
 });
 
 test('browser archive handling imports only the browser-safe shared archive subpath', async () => {

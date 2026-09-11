@@ -3,6 +3,7 @@ import {
   jsonlSession,
   safeAgentString,
   type AgentFileHandle,
+  type AgentProcessSnapshot,
   type AgentRecordContext,
   type AgentTerminalContext,
 } from "@terminay/extension-api";
@@ -12,6 +13,8 @@ import { basename, dirname, join, resolve } from "node:path";
 /** OMP reserves this fixed prefix for a mutable JSON title record. */
 export const OMP_TITLE_SLOT_BYTES = 256;
 const MAX_HEADER_BYTES = 64 * 1024;
+/** Slack for a boot-clock-derived process start time. */
+const STALE_BREADCRUMB_TOLERANCE_MS = 1_000;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -98,12 +101,6 @@ export const ompAgentProvider = defineAgentProvider({
   matchesForeground: isOmpForeground,
 
   async observe(terminal) {
-    if (!terminal.capabilities.has("process-observation")
-      || !terminal.capabilities.has("filesystem-observation")
-      || !terminal.capabilities.has("agent-journal")) {
-      return { state: "unavailable", reason: "environment-capability-missing" } as const;
-    }
-
     // The OMP breadcrumb is authoritative, survives an atomic journal
     // replacement, and binds to the exact PTY. Use it whenever the environment
     // supplies the public terminal/home operations.
@@ -140,9 +137,120 @@ async function bindFromBreadcrumb(terminal: AgentTerminalContext) {
     // The extension never turns it into a local filesystem capability.
     const journal = await resolveScopedProviderPath(terminal, root.sessions, parsed.sessionFile);
     if (!journal || !await isOmpRootJournal(terminal, journal)) continue;
+
+    if (!await isThisTerminalsSession(terminal, journal)) continue;
     return boundSession(terminal, journal, breadcrumb, root.sessions);
   }
   return undefined;
+}
+
+/**
+ * OMP keys its breadcrumb on the TTY device alone, and a device name is reused
+ * the moment the PTY holding it closes. A breadcrumb can therefore still name
+ * the session an *earlier* process wrote in this same terminal, right up until
+ * the process now running replaces it — a container that recycles `pts` numbers
+ * hits this every time. Binding then attaches this terminal to a finished
+ * session somebody else wrote.
+ *
+ * A journal created before this terminal's process started was not written by
+ * it, unless a descendant of this exact PTY is holding the journal open for
+ * writing: that is what resuming an earlier session looks like, and it is exact
+ * process evidence rather than a timestamp. When the environment cannot prove
+ * either time, the breadcrumb stands as it did before.
+ */
+async function isThisTerminalsSession(
+  terminal: AgentTerminalContext,
+  journal: AgentFileHandle,
+): Promise<boolean> {
+  const processes = await terminal.observation.processes.descendants({
+    signal: terminal.signal,
+  });
+  // A resume flag on the process's own command line says this run was started
+  // to reopen a session it did not write, so an older journal is exactly what
+  // it should bind. That is per-process evidence, not a guess about the file.
+  if (isOmpResumeLaunch(terminal, processes)) return true;
+  const startedAt = ompStartTime(terminal, processes);
+  const stat = await terminal.observation.files.stat(journal, {
+    signal: terminal.signal,
+  });
+  const createdAt = parseTime(stat?.createdAt);
+  if (startedAt === undefined || createdAt === undefined) return true;
+  // A process start time derived from the boot clock carries tens of
+  // milliseconds of jitter, so only a journal clearly older than the process
+  // counts as one the process cannot have created.
+  const since = startedAt - STALE_BREADCRUMB_TOLERANCE_MS;
+  if (createdAt >= since) return true;
+  // An older journal still written since this process started is one it
+  // resumed. A session that ended before this process started never is.
+  const modifiedAt = parseTime(stat?.modifiedAt);
+  if (modifiedAt !== undefined && modifiedAt >= since) return true;
+  return isHeldOpenByDescendant(terminal, journal, processes);
+}
+
+/** OMP's flags for reopening an earlier session rather than starting one. */
+const OMP_RESUME_FLAGS = new Set(["-c", "--continue", "-r", "--resume"]);
+
+/** True when the OMP process in this terminal was launched to resume a session. */
+function isOmpResumeLaunch(
+  terminal: AgentTerminalContext,
+  processes: readonly AgentProcessSnapshot[],
+): boolean {
+  const commands = [
+    ...processes
+      .filter((process) => isOmpForeground(process))
+      .map((process) => process.arguments),
+    terminal.foreground.arguments,
+  ];
+  return commands.some((argumentList) =>
+    (argumentList ?? []).some((argument) =>
+      OMP_RESUME_FLAGS.has(argument.split("=", 1)[0] ?? argument),
+    ),
+  );
+}
+
+/**
+ * When the OMP process in this terminal started. The environment proves a start
+ * time per descendant rather than for the foreground sample, so take the oldest
+ * OMP process below this PTY: a session it wrote cannot predate it.
+ */
+function ompStartTime(
+  terminal: AgentTerminalContext,
+  processes: readonly AgentProcessSnapshot[],
+): number | undefined {
+  const times = [
+    ...processes
+      .filter((process) => isOmpForeground(process))
+      .map((process) => parseTime(process.startedAt)),
+    parseTime(terminal.foreground.startedAt),
+  ].filter((value): value is number => value !== undefined);
+  return times.length === 0 ? undefined : Math.min(...times);
+}
+
+function parseTime(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/** Exact process evidence that this terminal is the journal's current writer. */
+async function isHeldOpenByDescendant(
+  terminal: AgentTerminalContext,
+  journal: AgentFileHandle,
+  processes: readonly AgentProcessSnapshot[],
+): Promise<boolean> {
+  const files = await terminal.observation.processes.openFiles(processes, {
+    access: "writable",
+    signal: terminal.signal,
+  });
+  for (const openFile of files) {
+    if (!openFile.path.endsWith(".jsonl")) continue;
+    const canonical = await terminal.observation.files.canonicalFile(
+      openFile.handle,
+      { extension: ".jsonl", signal: terminal.signal },
+    );
+    if (canonical?.id === journal.id) return true;
+  }
+  return false;
 }
 
 function ompObservationRoots(environment: Record<string, string>): readonly OmpObservationRoot[] {

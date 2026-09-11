@@ -106,16 +106,6 @@ Provider adapters SHALL expose a common server interface to list available model
 - **WHEN** a provider returns its own envelope, stderr, or exit code
 - **THEN** those details stay inside the adapter and do not cross its boundary
 
-### Requirement: Provider execution stays on the server machine
-
-Provider execution location SHALL NOT change when the target terminal is SSH- or Puzed-backed. Bounded context SHALL come from the server-owned terminal stream, and the adapter SHALL NOT be given a remote project path as a local filesystem path.
-
-#### Scenario: Remote-backed terminal
-
-- **WHEN** the target terminal is backed by an SSH or Puzed project environment
-- **THEN** the provider still executes on the server machine using context from the server-owned terminal stream
-- **AND** no remote project path is passed to the adapter as a local filesystem path
-
 ### Requirement: Bounded provider process execution
 
 The server implementation SHALL build Codex and Claude Code adapters through `createServerAiProviderAdapters` in `packages/server-core`, owning the bounded child-process environment, model-catalog cache, CLI output cap, timeout, and credential callback. A credential callback MAY inject a vault secret into the short-lived provider environment, but the secret SHALL NOT be part of an adapter model or status snapshot or any client payload. Provider output SHALL be bounded and credential-redacted before it crosses the adapter boundary. A cancelled or timed-out child SHALL be terminated and, if necessary, force-killed, with a typed server error.
@@ -313,3 +303,13 @@ Title and note commands SHALL operate only on the exact active terminal captured
 
 - **WHEN** a provider is disabled, unavailable, invalid, or working
 - **THEN** Settings and the Command Bar each present that state clearly
+
+### Requirement: AI provider execution happens on the server machine
+
+Provider execution SHALL happen on the server machine. Bounded context SHALL come from the server-owned terminal stream, and the adapter SHALL NOT be given a project path it cannot resolve on the server's own filesystem.
+
+#### Scenario: Metadata request for a terminal
+
+- **WHEN** an AI metadata request targets a terminal
+- **THEN** the provider executes on the server machine using context from the server-owned terminal stream
+- **AND** no path outside the server's own filesystem is passed to the adapter

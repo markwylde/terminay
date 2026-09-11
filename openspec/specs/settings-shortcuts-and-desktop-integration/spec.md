@@ -107,12 +107,12 @@ The Command Bar SHALL search built-in commands and saved macros. Built-ins SHALL
 
 ### Requirement: Semantic secondary-route presentation
 
-The server-bundled UI SHALL request semantic secondary-route presentation. When its negotiated `nativeWindows` capability is present, Desktop SHALL open dedicated native windows for settings — including its Extensions section — project-environment management, macros, and recordings, and SHALL use modal editing only for tab and project editing. Browser hosts and compatible Desktop shells without that capability SHALL present the same routes in-page with route or editing semantics appropriate to the viewport.
+The server-bundled UI SHALL request semantic secondary-route presentation. When its negotiated `nativeWindows` capability is present, Desktop SHALL open dedicated native windows for settings — including its Extensions section — macros, and recordings, and SHALL use modal editing only for tab and project editing. Browser hosts and compatible Desktop shells without that capability SHALL present the same routes in-page with route or editing semantics appropriate to the viewport.
 
 #### Scenario: Desktop with native windows
 
 - **WHEN** the Desktop host negotiates the `nativeWindows` capability
-- **THEN** settings, project-environment management, macros, and recordings open as dedicated native windows and only tab and project editing use modals
+- **THEN** settings, macros, and recordings open as dedicated native windows and only tab and project editing use modals
 
 #### Scenario: Host without native windows
 
@@ -164,7 +164,7 @@ In a macOS Desktop terminal, **Cmd+V** SHALL use the bound Electron smart-paste 
 
 ### Requirement: Management surface commands
 
-File and the Command Bar SHALL expose **Create a new terminal tab**, **Create a new project**, and then the management surfaces **Remote Control**, **Project Environments…**, **Extensions…**, **Macros**, **Recordings**, and **Settings** through the same semantic route and command model. **Remote Control** SHALL open or focus the connection-management window on Desktop. **Project Environments…** SHALL open or focus its dedicated management window on Desktop, and **Extensions…** SHALL open or focus the established Settings window at the Extensions section. Web SHALL use the corresponding in-page routes. These surfaces SHALL manage the selected Terminay Server or host connection list, not project or tab editor sheet chrome.
+File and the Command Bar SHALL expose **Create a new terminal tab**, **Create a new project**, and then the management surfaces **Remote Control**, **Extensions…**, **Macros**, **Recordings**, and **Settings** through the same semantic route and command model. **Remote Control** SHALL open or focus the connection-management window on Desktop, and **Extensions…** SHALL open or focus the established Settings window at the Extensions section. Web SHALL use the corresponding in-page routes. These surfaces SHALL manage the selected Terminay Server or host connection list, not project or tab editor sheet chrome.
 
 #### Scenario: Opening Remote Control on Desktop
 
@@ -234,17 +234,22 @@ Terminay Desktop SHALL own native menus, windows, updater, clipboard, dialogs, a
 
 ### Requirement: Server settings client boundary
 
-The shared terminal-settings hook SHALL read and observe server settings through the transport-neutral `SettingsClient` bundled with the selected server UI. The host bridge SHALL NOT answer or translate server settings operations. Shared components SHALL NOT subscribe to preload events directly. No terminal-settings preload global or snapshot adapter SHALL exist, and missing selected-server settings authority SHALL be reported as unavailable rather than falling back to device-local settings.
+The shared terminal-settings hook SHALL read and observe server settings through the transport-neutral `SettingsClient` held for the connection whose server is selected. The host bridge SHALL NOT answer or translate server settings operations. Shared components SHALL NOT subscribe to preload events directly. No terminal-settings preload global or snapshot adapter SHALL exist, and a missing settings authority on the selected connection SHALL be reported as unavailable rather than falling back to device-local settings or to another connection.
 
 #### Scenario: Reading server settings
 
 - **WHEN** a shared component reads or observes server settings
-- **THEN** it uses the `SettingsClient` bundled with the selected server UI
+- **THEN** it uses the `SettingsClient` of the connection whose server is selected
 
 #### Scenario: Settings authority missing
 
 - **WHEN** the selected server's settings authority is unavailable
 - **THEN** the condition is reported as unavailable and no device-local fallback is used
+
+#### Scenario: Another connection is not a fallback
+
+- **WHEN** the selected connection cannot answer a settings operation
+- **THEN** the operation is not retried on any other attached connection
 
 ### Requirement: Server-authoritative file and macro settings
 
@@ -304,7 +309,7 @@ A setting change SHALL reach every affected open renderer predictably. Server se
 
 ### Requirement: Extensions presentation in Settings
 
-Extensions SHALL appear within the ordinary Settings navigation, and all extension commands SHALL focus that section rather than creating an Extensions-only modal. Project Environments and Remote Control SHALL open as reusable management windows consistent with Settings, Macros, and Recordings on Desktop, and as the equivalent shared in-page routes on web.
+Extensions SHALL appear within the ordinary Settings navigation, and all extension commands SHALL focus that section rather than creating an Extensions-only modal. Remote Control SHALL open as a reusable management window consistent with Settings, Macros, and Recordings on Desktop, and as the equivalent shared in-page route on web.
 
 #### Scenario: Extension command invoked
 
@@ -313,7 +318,7 @@ Extensions SHALL appear within the ordinary Settings navigation, and all extensi
 
 #### Scenario: Management window reuse
 
-- **WHEN** Project Environments or Remote Control is invoked repeatedly on Desktop
+- **WHEN** Remote Control is invoked repeatedly on Desktop
 - **THEN** the same reusable management window is focused, consistent with Settings, Macros, and Recordings
 
 ### Requirement: Embedded Desktop AI bridge error fidelity
@@ -354,3 +359,36 @@ Web menu actions and tab or project double-click or long-press editing SHALL ope
 
 - **WHEN** a web menu action targets settings, macros, or recordings
 - **THEN** the corresponding in-page route opens rather than no-oping
+
+### Requirement: Settings and Extensions surfaces select a server
+
+The Settings surface, including its Extensions section, SHALL carry a server
+selector listing every attached connection. It SHALL default to the server that
+owns the active project tab, and it SHALL present the settings, secrets, and
+extension inventory of exactly the selected server. Values from two servers SHALL
+NEVER be merged, summed, or shown as one list, and a change SHALL be committed
+only on the selected server. Selecting a connection that is unavailable or
+incompatible SHALL show that connection's state instead of settings.
+
+#### Scenario: Default selection
+
+- **WHEN** the user opens Settings while a project of an attached server is active
+- **THEN** the server selector starts on that server and shows its settings
+
+#### Scenario: Switching servers
+
+- **WHEN** the user selects another attached connection
+- **THEN** the surface shows only that server's settings and extensions, and no
+  value from the previous server remains visible
+
+#### Scenario: Editing applies to one server
+
+- **WHEN** the user changes a setting while a server is selected
+- **THEN** the change is committed on that server alone and no other attached
+  server's settings change
+
+#### Scenario: Selected connection is unavailable
+
+- **WHEN** the selected connection is offline or incompatible
+- **THEN** the surface reports that connection's state and sends it no settings
+  operation

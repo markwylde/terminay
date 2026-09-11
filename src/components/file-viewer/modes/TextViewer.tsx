@@ -1,25 +1,36 @@
-import Editor, { loader } from '@monaco-editor/react';
-import * as monaco from 'monaco-editor';
+import Editor, { type OnMount } from '@monaco-editor/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
 	FileRangeRequest,
 	FileTextWindow,
 	FileViewerEngine,
 } from '../../../types/fileViewer';
+import type { LanguageGateway } from '../../../services/fileViewer/languageGateway';
 import { languageFromFilePath } from '../codeHighlight';
+import {
+	attachLanguageIntelligence,
+	type LanguageAttachment,
+} from '../languageProviders';
+import { monacoLanguageId } from '../monacoRuntime';
 import { configureFileViewerMonaco, FILE_VIEWER_THEME } from '../monacoSetup';
 
-// Desktop and hosted UI both enforce a network-restrictive CSP. Supplying the
-// bundled Monaco instance prevents @monaco-editor/react from attempting its
-// default jsDelivr loader, which otherwise leaves the editor blank offline.
-loader.config({ monaco });
-Object.assign(window, { monaco });
+/** Everything Text mode needs to consume the server's language intelligence
+ * for this file. Absent when the connection advertises no language capability
+ * or the panel has no project, which leaves the editor highlighting-only. */
+export type TextViewerLanguageIntelligence = Readonly<{
+	gateway: LanguageGateway;
+	/** Project-relative POSIX path of the open file. */
+	path: string;
+	projectId: string;
+	projectRoot: string;
+}>;
 
 type TextViewerProps = {
 	engine: FileViewerEngine;
 	filePath?: string;
 	fileSize?: number;
 	language?: string;
+	languageIntelligence?: TextViewerLanguageIntelligence;
 	onChangeText: (text: string) => void;
 	onCurrentTextGetterChange?: (getter: (() => string) | null) => void;
 	onPerformantEditChange?: (isDirty: boolean) => void;
@@ -305,6 +316,7 @@ export function TextViewer({
 	filePath,
 	fileSize,
 	language,
+	languageIntelligence,
 	onChangeText,
 	onCurrentTextGetterChange,
 	onPerformantEditChange,
@@ -312,10 +324,50 @@ export function TextViewer({
 	text,
 }: TextViewerProps) {
 	const monacoLanguage = useMemo(
-		() => languageFromFilePath(filePath ?? '') ?? language,
+		() => monacoLanguageId(languageFromFilePath(filePath ?? '') ?? language),
 		[filePath, language],
 	);
 	const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+	const languageAttachmentRef = useRef<LanguageAttachment | null>(null);
+	const mountedEditorRef = useRef<Readonly<{
+		editor: Parameters<OnMount>[0];
+		monaco: Parameters<OnMount>[1];
+	}> | null>(null);
+	// Language features are the server's, and the connection that serves them is
+	// replaced on every reconnect. Attaching only in `onMount` would leave an
+	// open panel holding a disposed gateway for as long as it stays open, so the
+	// attachment follows the gateway's identity instead.
+	const attachLanguage = useCallback(() => {
+		languageAttachmentRef.current?.dispose();
+		languageAttachmentRef.current = null;
+		const mounted = mountedEditorRef.current;
+		if (mounted === null) return;
+		const model = mounted.editor.getModel();
+		// When no provider serves this file the attachment does nothing and Text
+		// mode stays a highlighting and editing surface.
+		if (languageIntelligence === undefined || model === null || !monacoLanguage)
+			return;
+		languageAttachmentRef.current = attachLanguageIntelligence({
+			absolutePath: filePath ?? languageIntelligence.path,
+			editor: mounted.editor,
+			gateway: languageIntelligence.gateway,
+			languageId: monacoLanguage,
+			monaco: mounted.monaco,
+			path: languageIntelligence.path,
+			projectId: languageIntelligence.projectId,
+			projectRoot: languageIntelligence.projectRoot,
+		});
+	}, [filePath, languageIntelligence, monacoLanguage]);
+	useEffect(() => {
+		attachLanguage();
+	}, [attachLanguage]);
+	useEffect(() => {
+		return () => {
+			languageAttachmentRef.current?.dispose();
+			languageAttachmentRef.current = null;
+			mountedEditorRef.current = null;
+		};
+	}, []);
 	const useWindowedEngine =
 		engine === 'performant' &&
 		(fileSize ?? 0) > LARGE_FILE_THRESHOLD_BYTES &&
@@ -373,6 +425,8 @@ export function TextViewer({
 					}
 					monaco.editor.setTheme(FILE_VIEWER_THEME);
 					onCurrentTextGetterChange?.(() => editor.getValue());
+					mountedEditorRef.current = Object.freeze({ editor, monaco });
+					attachLanguage();
 					const node = editor.getDomNode();
 					if (node) {
 						const colorizeWhenVisible = () => {

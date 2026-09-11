@@ -64,12 +64,6 @@ export const appCommandMetadata: AppCommandMetadata[] = [
     keywords: 'open macros commands snippets',
   },
   {
-    command: 'open-project-environments',
-    title: 'Open Project Environments',
-    description: 'Manage environments on the selected Terminay Server.',
-    keywords: 'project environment connections ssh puzed server',
-  },
-  {
     command: 'open-performance-log',
     title: 'Open Performance Log',
     description: 'See startup timing and live CPU, memory, and disk use.',
@@ -145,7 +139,6 @@ export const defaultKeyboardShortcuts: KeyboardShortcutSettings = {
   'open-recordings': '',
   'open-settings': '',
   'open-macros': '',
-  'open-project-environments': '',
   'open-performance-log': '',
   'open-remote-control': '',
   'open-extensions': '',

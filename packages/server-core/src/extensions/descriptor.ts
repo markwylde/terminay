@@ -51,7 +51,7 @@ export async function extensionLaunchDescriptor(
 		cacheDirectory: input.cacheDirectory,
 		permissions: manifest.permissions,
 		agentProviders: manifest.contributes.agentProviders ?? [],
-		projectEnvironmentProviders: manifest.contributes.projectEnvironments ?? [],
+		languageServers: manifest.contributes.languageServers ?? [],
 		extensionDependencies: manifest.extensionDependencies ?? [],
 	});
 	return Object.freeze({ descriptor, manifest });
@@ -166,6 +166,17 @@ export async function validateExtensionLaunchDescriptor(
 		if (!isAbsolute(path) || path.includes('\0'))
 			throw new TypeError('extension directories must be absolute');
 	}
+	if (
+		descriptor.languageServers !== undefined &&
+		(descriptor.languageServers.length > 32 ||
+			descriptor.languageServers.some(
+				(contribution) =>
+					typeof contribution?.id !== 'string' ||
+					contribution.id.length === 0 ||
+					contribution.id.length > 100,
+			))
+	)
+		throw new TypeError('invalid extension language server contributions');
 	if (
 		descriptor.permissions.length > 64 ||
 		descriptor.permissions.some(

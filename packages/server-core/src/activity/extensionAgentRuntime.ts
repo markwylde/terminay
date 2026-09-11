@@ -1,16 +1,11 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { AgentProviderContribution } from '@terminay/extension-api';
-import type { ThisServerAgentTerminal } from '../extensions/localAgentObservation.js';
+import type { LocalAgentTerminal } from '../extensions/localAgentObservation.js';
 import type { ExtensionHostManager } from '../extensions/manager.js';
 import type {
 	ExtensionAgentTerminalCancellationReason,
 	ExtensionAgentTerminalContext,
 } from '../extensions/types.js';
-import type {
-	ProjectEnvironmentBinding,
-	ProjectEnvironmentRouter,
-} from '../projectEnvironment/router.js';
-import { THIS_SERVER_ENVIRONMENT_ID } from '../workspace.js';
 import type {
 	AgentObservationDiagnosticListener,
 	AgentObservationTransition,
@@ -57,10 +52,6 @@ export interface ExtensionAgentRuntimeRegistryOptions {
 		| 'drainAgentObservers'
 	>;
 	readonly agents: AgentStatusService;
-	/** The canonical router supplies the immutable environment binding. Local
-	 * observation is admitted only for This Server until a remote environment
-	 * contributes a corresponding observation adapter. */
-	readonly projectEnvironmentRouter?: ProjectEnvironmentRouter;
 	readonly localObservationCapabilities?: readonly string[];
 	readonly platform?: 'darwin' | 'linux' | 'win32';
 	readonly contextId?: (
@@ -116,7 +107,6 @@ interface TrackedTerminal {
 	/** Fast windows this terminal has exhausted without binding and without new
 	 * evidence. It widens the wait before the next one. */
 	unboundSweeps: number;
-	environmentBinding?: ProjectEnvironmentBinding;
 }
 
 const LOCAL_CAPABILITIES = Object.freeze([
@@ -217,7 +207,6 @@ export class ExtensionAgentRuntimeRegistry {
 			incarnation: (current?.incarnation ?? 0) + 1,
 			notBoundRetries: 0,
 			unboundSweeps: 0,
-			environmentBinding: this.bindEnvironment(identity),
 		});
 	}
 
@@ -235,8 +224,6 @@ export class ExtensionAgentRuntimeRegistry {
 		shellForeground = false,
 	): boolean {
 		const terminal = this.requireTerminal(identity);
-		if (terminal.environmentBinding === undefined)
-			terminal.environmentBinding = this.bindEnvironment(identity);
 		// A different foreground process is new evidence, so a terminal that had
 		// backed off starts again at the base interval.
 		if (terminal.lastProcessName !== processName) terminal.unboundSweeps = 0;
@@ -277,7 +264,7 @@ export class ExtensionAgentRuntimeRegistry {
 				.catch(() => undefined);
 			return false;
 		}
-		const queue = this.discoveryQueue(processName, identity);
+		const queue = this.discoveryQueue(processName);
 		if (terminal.context !== undefined) {
 			// A TUI can alternate between its launcher, runtime, and helper process
 			// names while the same PTY-owned journal writer remains live. A proven
@@ -286,7 +273,7 @@ export class ExtensionAgentRuntimeRegistry {
 			// A different explicitly matched provider is a genuine replacement.
 			// Process-topology changes from collaboration workers keep the proven
 			// root observer alive; their native journals are discovered beneath it.
-			const matched = this.match(processName, identity);
+			const matched = this.match(processName);
 			if (matched === undefined) return true;
 			if (matched.id === terminal.context.providerId) {
 				// The shell edge between a short-lived CLI session and a later resume
@@ -324,10 +311,7 @@ export class ExtensionAgentRuntimeRegistry {
 				terminal.lastProcessName === undefined
 			)
 				continue;
-			const contribution = this.discoveryQueue(
-				terminal.lastProcessName,
-				terminal.identity,
-			)[0];
+			const contribution = this.discoveryQueue(terminal.lastProcessName)[0];
 			if (
 				contribution !== undefined &&
 				this.claimAndAdmit(terminal, contribution, terminal.lastProcessName)
@@ -402,10 +386,7 @@ export class ExtensionAgentRuntimeRegistry {
 		// a bound context; topology polling remains the recovery path only until
 		// a provider has actually bound.
 		if (terminal.unboundTopologyReobserve !== true) return;
-		const queue = this.discoveryQueue(
-			terminal.lastProcessName ?? '',
-			terminal.identity,
-		);
+		const queue = this.discoveryQueue(terminal.lastProcessName ?? '');
 		const contribution =
 			queue.find((provider) => provider.id === terminal.context!.providerId) ??
 			queue[0] ??
@@ -441,7 +422,6 @@ export class ExtensionAgentRuntimeRegistry {
 			contextId: this.makeContextId(identity, terminal.incarnation),
 			serverId: identity.serverId,
 			projectId: identity.projectId,
-			projectEnvironmentId: this.projectEnvironmentId(identity),
 			terminalSessionId: identity.sessionId,
 			terminalIncarnationId: String(terminal.incarnation),
 			providerId: contribution.id,
@@ -452,12 +432,9 @@ export class ExtensionAgentRuntimeRegistry {
 		terminal.context = context;
 		terminal.lastProcessName = processName;
 		this.recordObservation(identity, contribution.id, 'matched');
-		const observationCapabilities =
-			context.projectEnvironmentId === THIS_SERVER_ENVIRONMENT_ID
-				? contribution.requiredEnvironmentCapabilities.filter((capability) =>
-						this.localObservationCapabilities.includes(capability),
-					)
-				: contribution.requiredEnvironmentCapabilities;
+		// The server always executes its own projects, so every observation
+		// capability the local adapter implements is present for every terminal.
+		const observationCapabilities = this.localObservationCapabilities;
 		void this.options.hosts
 			.admitAgentTerminal({ context, observationCapabilities })
 			.then((result) => {
@@ -469,18 +446,14 @@ export class ExtensionAgentRuntimeRegistry {
 				if (state === 'bound')
 					this.recordObservation(identity, contribution.id, 'bound');
 				if (state === 'not-bound') {
-					const next = this.nextDiscoveryProvider(
-						terminal,
-						contribution,
-						processName,
-					);
+					const next = this.nextDiscoveryProvider(contribution, processName);
 					if (next !== undefined && next.id !== contribution.id) {
 						this.scheduleReobserve(terminal, next, processName);
 						return;
 					}
 					this.scheduleDiscoveryRetry(
 						terminal,
-						this.discoveryQueue(processName, terminal.identity)[0] ??
+						this.discoveryQueue(processName)[0] ??
 							contribution,
 						processName,
 					);
@@ -505,11 +478,7 @@ export class ExtensionAgentRuntimeRegistry {
 				// away from a later provider that can bind.
 				if (terminal.context !== context) return;
 				this.reportAdmissionFailure(identity, contribution.id, error);
-				const next = this.nextDiscoveryProvider(
-					terminal,
-					contribution,
-					processName,
-				);
+				const next = this.nextDiscoveryProvider(contribution, processName);
 				if (next !== undefined && next.id !== contribution.id) {
 					this.scheduleReobserve(terminal, next, processName);
 					return;
@@ -682,34 +651,17 @@ export class ExtensionAgentRuntimeRegistry {
 		return true;
 	}
 
-	/** Environment revisions are immutable terminal bindings. A revision change
-	 * invalidates the old observer instead of silently following the project. */
-	environmentRevisionChanged(projectId: string): void {
-		for (const terminal of [...this.terminals.values()])
-			if (terminal.identity.projectId === projectId)
-				this.terminalExited(terminal.identity, 'terminal-replaced');
-	}
-
 	projectRemoved(projectId: string): void {
 		for (const terminal of [...this.terminals.values()])
 			if (terminal.identity.projectId === projectId)
 				this.terminalExited(terminal.identity, 'terminal-closed');
 	}
 
-	environmentBinding(
-		context: ExtensionAgentTerminalContext,
-	): ProjectEnvironmentBinding | undefined {
-		const terminal = this.terminals.get(context.terminalSessionId);
-		return terminal?.context?.contextId === context.contextId
-			? terminal.environmentBinding
-			: undefined;
-	}
-
 	/** Resolve only a currently admitted, exact terminal context for the local
 	 * observation adapter. The extension never calls this directly. */
 	observationTerminal(
 		context: ExtensionAgentTerminalContext,
-	): ThisServerAgentTerminal | undefined {
+	): LocalAgentTerminal | undefined {
 		const terminal = this.terminals.get(context.terminalSessionId);
 		if (
 			terminal?.context === undefined ||
@@ -721,10 +673,6 @@ export class ExtensionAgentRuntimeRegistry {
 		)
 			return undefined;
 		return Object.freeze({
-			environment:
-				context.projectEnvironmentId === THIS_SERVER_ENVIRONMENT_ID
-					? 'this-server'
-					: 'remote',
 			...(terminal.shellPid === undefined
 				? {}
 				: { shellPid: terminal.shellPid }),
@@ -740,7 +688,6 @@ export class ExtensionAgentRuntimeRegistry {
 			incarnation: 1,
 			notBoundRetries: 0,
 			unboundSweeps: 0,
-			environmentBinding: this.bindEnvironment(identity),
 		};
 		this.terminals.set(identity.sessionId, created);
 		return created;
@@ -829,13 +776,10 @@ export class ExtensionAgentRuntimeRegistry {
 		terminal.pendingReobserve = undefined;
 	}
 
-	private match(
-		processName: string,
-		identity: ActivitySessionIdentity,
-	): AgentProviderContribution | undefined {
+	private match(processName: string): AgentProviderContribution | undefined {
 		const executable = executableName(processName);
 		if (executable.length === 0) return undefined;
-		return this.capableProviders(identity).find(
+		return this.capableProviders().find(
 			(provider) =>
 				provider.processMatchers?.some(
 					(matcher) =>
@@ -849,21 +793,17 @@ export class ExtensionAgentRuntimeRegistry {
 	 * provider, rather than selecting only the first contribution and missing a
 	 * later provider that can prove its journal binding. An empty name is not a
 	 * leave-shell edge. */
-	private discoveryQueue(
-		processName: string,
-		identity: ActivitySessionIdentity,
-	): AgentProviderContribution[] {
+	private discoveryQueue(processName: string): AgentProviderContribution[] {
 		if (executableName(processName).length === 0) return [];
-		const matched = this.match(processName, identity);
-		return matched === undefined ? this.capableProviders(identity) : [matched];
+		const matched = this.match(processName);
+		return matched === undefined ? this.capableProviders() : [matched];
 	}
 
 	private nextDiscoveryProvider(
-		terminal: TrackedTerminal,
 		current: AgentProviderContribution,
 		processName: string,
 	): AgentProviderContribution | undefined {
-		const queue = this.discoveryQueue(processName, terminal.identity);
+		const queue = this.discoveryQueue(processName);
 		if (queue.length === 0) return undefined;
 		const index = queue.findIndex((provider) => provider.id === current.id);
 		// A generic wrapper (such as a Node CLI shim) has no provider identity.
@@ -873,52 +813,14 @@ export class ExtensionAgentRuntimeRegistry {
 		return index >= 0 ? queue[(index + 1) % queue.length] : queue[0];
 	}
 
-	private capableProviders(
-		identity: ActivitySessionIdentity,
-	): AgentProviderContribution[] {
-		const tracked = this.terminals.get(identity.sessionId);
-		if (
-			this.options.projectEnvironmentRouter !== undefined &&
-			tracked?.environmentBinding === undefined
-		)
-			return [];
+	private capableProviders(): AgentProviderContribution[] {
 		return this.options.hosts
 			.agentProviderContributions()
 			.filter(
 				(provider) =>
-					(provider.platforms === undefined ||
-						provider.platforms.includes(this.platform)) &&
-					(this.projectEnvironmentId(identity) !== THIS_SERVER_ENVIRONMENT_ID ||
-						requiredCapabilitiesAvailable(
-							provider,
-							this.localObservationCapabilities,
-						)),
+					provider.platforms === undefined ||
+					provider.platforms.includes(this.platform),
 			);
-	}
-
-	private projectEnvironmentId(identity: ActivitySessionIdentity): string {
-		try {
-			return (
-				this.terminals.get(identity.sessionId)?.environmentBinding
-					?.projectEnvironmentId ??
-				this.options.projectEnvironmentRouter?.bindProject(identity.projectId)
-					.projectEnvironmentId ??
-				THIS_SERVER_ENVIRONMENT_ID
-			);
-		} catch {
-			return 'terminay:environment-unavailable';
-		}
-	}
-	private bindEnvironment(
-		identity: ActivitySessionIdentity,
-	): ProjectEnvironmentBinding | undefined {
-		try {
-			return this.options.projectEnvironmentRouter?.bindProject(
-				identity.projectId,
-			);
-		} catch {
-			return undefined;
-		}
 	}
 
 	private reportAdmissionFailure(
@@ -992,14 +894,6 @@ export class ExtensionAgentRuntimeRegistry {
 	}
 }
 
-function requiredCapabilitiesAvailable(
-	provider: AgentProviderContribution,
-	available: readonly string[],
-): boolean {
-	return provider.requiredEnvironmentCapabilities.every((capability) =>
-		available.includes(capability),
-	);
-}
 function executableName(value: string): string {
 	return value.trim().split(/[\\/]/u).pop()?.toLowerCase() ?? '';
 }

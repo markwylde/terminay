@@ -5,8 +5,6 @@ import type { ServerWorkspaceProject } from './serverWorkspaceReconciliation';
 export type FeatureQueryScope = Readonly<{
 	serverId: string;
 	projectId: string;
-	projectEnvironmentId: string;
-	environmentRevision: number;
 	projectRoot: string;
 }>;
 
@@ -42,8 +40,8 @@ export function featureProjectRoot(
 
 /**
  * Bind feature clients to an identity proven by the latest hydrated workspace
- * snapshot.  UI components must not manufacture project/environment scope from
- * tab labels or host state.
+ * snapshot.  UI components must not manufacture project scope from tab labels
+ * or host state.
  */
 export function resolveProjectFeatureAuthority(
 	context: Omit<TerminalPanelClientContextValue, 'projectId'> | undefined,
@@ -199,8 +197,6 @@ function scopeForProject(serverId: string, project: ServerWorkspaceProject): Fea
 	return {
 		serverId,
 		projectId: project.id,
-		projectEnvironmentId: project.projectEnvironmentId,
-		environmentRevision: project.environmentRevision,
 		projectRoot: project.root,
 	};
 }
@@ -231,8 +227,8 @@ export function isCancelledFeatureFailure(error: unknown): boolean {
 	return source instanceof ClientError && source.code === 'cancelled';
 }
 
-/** SSH/Puzed advertise no portable watch. A missing `files.watch.*` or
- * `files.folder-size.*` capability is manual refresh, not an Explorer outage. */
+/** A transient `files.watch.*` or `files.folder-size.*` failure degrades the
+ * Explorer to manual refresh; it is not an Explorer outage. */
 export function isOptionalObservationFailure(error: unknown): boolean {
 	const operation = readOperation(error);
 	if (
