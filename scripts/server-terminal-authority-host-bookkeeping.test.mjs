@@ -6,7 +6,6 @@ import test from 'node:test';
 import { MessageChannel } from 'node:worker_threads';
 import {
 	FileViewerClient,
-	ProjectEnvironmentsClient,
 	TerminayClient,
 	TerminayClientFacade,
 	TerminayTerminalClient,
@@ -548,78 +547,6 @@ test('Local reopening preserves a missing persisted root without aborting the re
 	}
 });
 
-test('Local reopening seeds a remote project even when its root is not on this host', async () => {
-	const pty = createPtyFactory();
-	const workspace = new WorkspaceStore(
-		createInitialWorkspace('desktop-remote-reopen'),
-	);
-	const viewId = workspace.state.viewOrder[0];
-	if (viewId === undefined)
-		throw new Error('Expected the initial Local workspace view.');
-	const apply = (commandId, command) => {
-		const result = workspace.apply({ commandId, command });
-		assert.equal(
-			result.ok,
-			true,
-			result.ok ? undefined : result.conflict.message,
-		);
-	};
-	apply('seed-remote-project', {
-		type: 'project.create',
-		projectId: 'remote-project',
-		viewId,
-		root: '/home/vms-not-on-this-host',
-		name: 'Remote',
-		projectEnvironmentId: 'ssh-env',
-		environmentRevision: 4,
-	});
-	apply('seed-remote-terminal', {
-		type: 'terminal.createPanel',
-		projectId: 'remote-project',
-		sessionId: 'stale-remote',
-		panelId: 'stale-remote-panel',
-		title: 'Terminal 1',
-		cwd: '/home/vms-not-on-this-host',
-		createdAt: 1,
-	});
-
-	const authority = new ServerTerminalAuthority({
-		serverId: 'desktop-remote-reopen',
-		terminalService: new TerminalService({
-			serverId: 'desktop-remote-reopen',
-			ptyFactory: pty,
-			generateSessionId: () => 'fresh-remote',
-		}),
-		workspaceRepository: { wasCreated: false, workspace },
-	});
-	try {
-		await authority.initializeWorkspace();
-		const deadline = Date.now() + 2_000;
-		while (
-			(pty.processes.length === 0 ||
-				(workspace.state.projects['remote-project']?.panelIds.length ?? 0) ===
-					0) &&
-			Date.now() < deadline
-		) {
-			await new Promise((resolve) => setImmediate(resolve));
-		}
-		assert.equal(pty.processes.length, 1);
-		assert.equal(
-			workspace.state.projects['remote-project']?.panelIds.length,
-			1,
-		);
-		assert.equal(workspace.state.terminalSessions['stale-remote'], undefined);
-		assert.equal(
-			Object.values(workspace.state.terminalSessions).some(
-				(session) => session.projectId === 'remote-project',
-			),
-			true,
-		);
-	} finally {
-		await authority.shutdown();
-	}
-});
-
 test('Desktop production authority projects a real PTY foreground process onto its exact activity session', async () => {
 	const authority = new ServerTerminalAuthority({
 		serverId: 'desktop-real-foreground',
@@ -935,7 +862,7 @@ test('embedded framed clients receive canonical agent and folder projections', a
 	}
 });
 
-test('a newly created This-server project can list its Explorer root immediately', async () => {
+test('a newly created project can list its Explorer root immediately', async () => {
 	const root = await mkdtemp(join(tmpdir(), 'terminay-new-project-explorer-'));
 	await writeFile(join(root, 'README.md'), '# Explorer root\n');
 	const authority = new ServerTerminalAuthority({
@@ -981,23 +908,18 @@ test('a newly created This-server project can list its Explorer root immediately
 		await protocol.connect();
 		const facade = new TerminayClientFacade(protocol);
 		const workspace = new WorkspaceClient(protocol);
-		const environments = new ProjectEnvironmentsClient(facade);
 		const files = new FileViewerClient(facade);
 		const viewId = (await workspace.snapshot()).viewOrder[0];
 		assert.ok(viewId, 'Local workspace must expose an initial view');
 
-		const created = await environments.createProject({
-			environmentId: 'terminay:this-server',
-			viewId,
-			root,
-		});
-		assert.equal(created.state, 'succeeded');
+		const projectId = 'explorer-project';
+		await workspace.createProject({ projectId, viewId, root });
 		assert.ok(
-			created.projectId,
-			'project creation must return the canonical project id',
+			(await workspace.snapshot()).projects[projectId],
+			'project creation must publish the canonical project',
 		);
 
-		const listing = await files.listFolder('.', created.projectId);
+		const listing = await files.listFolder('.', projectId);
 		assert.deepEqual(
 			listing.entries.map((entry) => entry.name),
 			['README.md'],
@@ -1060,26 +982,20 @@ test('a stale Explorer root after a server root update reproduces the forbidden 
 		await protocol.connect();
 		const facade = new TerminayClientFacade(protocol);
 		const workspace = new WorkspaceClient(protocol);
-		const environments = new ProjectEnvironmentsClient(facade);
 		const files = new FileViewerClient(facade);
 		const viewId = (await workspace.snapshot()).viewOrder[0];
 		assert.ok(viewId);
-		const created = await environments.createProject({
-			environmentId: 'terminay:this-server',
-			viewId,
-			root: formerRoot,
-		});
-		assert.equal(created.state, 'succeeded');
-		assert.ok(created.projectId);
+		const projectId = 'stale-root-project';
+		await workspace.createProject({ projectId, viewId, root: formerRoot });
 		await workspace.updateProjectRoot({
-			projectId: created.projectId,
+			projectId,
 			root: currentRoot,
 		});
 
 		const stalePath = getPathRelativeToRoot(formerRoot, currentRoot);
 		assert.equal(stalePath, '../former');
 		await assert.rejects(
-			files.listFolder(stalePath, created.projectId),
+			files.listFolder(stalePath, projectId),
 			(error) =>
 				error?.operation === 'files.list' && error?.cause?.code === 'forbidden',
 		);

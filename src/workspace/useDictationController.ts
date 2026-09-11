@@ -182,7 +182,7 @@ export function useDictationController({
 				typeof MediaRecorder === 'undefined'
 			) {
 				throw new Error(
-					'Microphone recording is not available in this environment.',
+					'Microphone recording is not available in this browser.',
 				);
 			}
 

@@ -31,10 +31,17 @@ declare global {
 			readTerminalClipboard?(): Promise<string>;
 		};
 		terminayBytes?: {
-			readonly version: 1;
+			/** Version 2 adds `openConnection`; a version 1 preload carries the
+			 * window's primary endpoint only and can reach no attached server. */
+			readonly version: 1 | 2;
 			replaceEndpoint(): Promise<void>;
 			send(frame: Uint8Array): Promise<void>;
 			subscribe(listener: (frame: Uint8Array | null) => void): () => void;
+			openConnection?(connectionId: string): Promise<{
+				send(frame: Uint8Array): Promise<void>;
+				subscribe(listener: (frame: Uint8Array | null) => void): () => void;
+				close?(): void;
+			}>;
 		};
 		terminayTest?: TerminayTestApi;
 		terminayWorkspaceTest?: {

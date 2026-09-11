@@ -379,7 +379,7 @@ test.describe('terminal behavior', () => {
 			mainWindow.locator('.project-workspace--active .terminal-tab-title'),
 		).toHaveText('Move Me');
 
-		await mainWindow.getByLabel('Create project on This server').click();
+		await mainWindow.getByLabel('Create project').click();
 		await expect(mainWindow.locator('.project-tab--active')).toContainText(
 			'Project 2',
 		);
@@ -434,7 +434,7 @@ test.describe('terminal behavior', () => {
 
 		// Move the terminal to a new project — its xterm panel is destroyed and
 		// recreated, which must restore scrollback from the buffer (not start blank).
-		await mainWindow.getByLabel('Create project on This server').click();
+		await mainWindow.getByLabel('Create project').click();
 		await expect(mainWindow.locator('.project-tab--active')).toContainText(
 			'Project 2',
 		);
@@ -814,7 +814,7 @@ test.describe('terminal behavior', () => {
 			.fill('Wrong Project Shell');
 		await submitEditWindow(firstProjectEditWindow);
 
-		await mainWindow.getByLabel('Create project on This server').click();
+		await mainWindow.getByLabel('Create project').click();
 		await expect(mainWindow.locator('.project-tab--active')).toContainText(
 			'Project 2',
 		);
@@ -1173,7 +1173,7 @@ test.describe('terminal behavior', () => {
 			.filter({ hasText: 'Terminal 1' })
 			.click();
 
-		await mainWindow.getByLabel('Create project on This server').click();
+		await mainWindow.getByLabel('Create project').click();
 		await expect(mainWindow.locator('.project-tab--active')).toContainText(
 			'Project 2',
 		);

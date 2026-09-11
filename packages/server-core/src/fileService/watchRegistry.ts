@@ -110,6 +110,7 @@ export class FileWatchRegistry {
 	private readonly maxBatchEvents: number;
 	private readonly maxResourceLength: number;
 	private readonly subscriptions = new Map<string, SubscriptionState>();
+	private readonly observers = new Set<(event: FileWatchEvent) => void>();
 	private readonly subscriptionsByKey = new Map<string, string>();
 	private readonly eventHistory: FileWatchEvent[] = [];
 	private readonly recentFingerprints = new Set<string>();
@@ -137,6 +138,21 @@ export class FileWatchRegistry {
 		);
 		if (this.maxBatchEvents > this.maxQueueEvents)
 			throw new RangeError('maxBatchEvents cannot exceed maxQueueEvents');
+	}
+
+	/**
+	 * Observe every accepted change, without being a client subscription.
+	 *
+	 * Server-owned consumers — a language session that must be told a sibling
+	 * file changed on disk — need the same canonical facts clients get, but they
+	 * have no cursor, no queue, and no backpressure of their own. Observers are
+	 * exactly that: notified after the fact, unable to affect fanout.
+	 */
+	observe(listener: (event: FileWatchEvent) => void): () => void {
+		if (typeof listener !== 'function')
+			throw new TypeError('file watch observer must be a function');
+		this.observers.add(listener);
+		return () => this.observers.delete(listener);
 	}
 
 	get sequence(): number {
@@ -275,6 +291,13 @@ export class FileWatchRegistry {
 			subscribers += 1;
 			subscriptions.push(state.subscription);
 			this.enqueue(state, event);
+		}
+		for (const observer of this.observers) {
+			try {
+				observer(event);
+			} catch {
+				/* an observer is not a fanout participant */
+			}
 		}
 		return {
 			accepted: true,

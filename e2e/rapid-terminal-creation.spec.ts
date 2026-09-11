@@ -166,7 +166,7 @@ test('keeps terminals added to a second project while the first still holds its 
 	await addTabButton(mainWindow).click();
 	await expect(terminalTabs(mainWindow)).toHaveCount(3, { timeout: 15_000 });
 
-	await mainWindow.getByLabel('Create project on This server').click();
+	await mainWindow.getByLabel('Create project').click();
 	await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 	await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 	await expect(terminalTabs(mainWindow)).toHaveCount(1, { timeout: 15_000 });
@@ -221,7 +221,7 @@ test('keeps terminals created while another window presents a project', async ({
 	await recordWorkspaceDiagnostics(mainWindow);
 	await expect(terminalTabs(mainWindow)).toHaveCount(1);
 
-	await mainWindow.getByLabel('Create project on This server').click();
+	await mainWindow.getByLabel('Create project').click();
 	await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 	await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 

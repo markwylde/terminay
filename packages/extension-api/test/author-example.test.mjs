@@ -30,7 +30,6 @@ function declaredManifest(providerId = "com.example.agent/cli") {
       agentProviders: [{
         id: providerId,
         displayName: "Example Agent",
-        requiredEnvironmentCapabilities: ["filesystem-observation", "agent-journal"],
       }],
     },
   };
@@ -131,8 +130,8 @@ test("2.1 a foreground match starts observation and does not bind by itself", as
   await harness.dispose();
 });
 
-test("2.2 process exit, terminal close, environment change, and disable cancel in-flight observation", async () => {
-  for (const reason of ["process-exit", "terminal-close", "environment-change", "extension-disable"]) {
+test("2.2 process exit, terminal close, and disable cancel in-flight observation", async () => {
+  for (const reason of ["process-exit", "terminal-close", "extension-disable"]) {
     const cancellation = createObservationCancellation();
     let mapped = 0;
     const harness = await createAgentExtensionHarness(defineExtension({
@@ -167,31 +166,6 @@ test("2.2 process exit, terminal close, environment change, and disable cancel i
   }
 });
 
-test("2.3 missing environment capability is a typed unavailable outcome, not a raw error", async () => {
-  const harness = await createAgentExtensionHarness(defineExtension({
-    activate(context) {
-      context.subscriptions.add(context.agents.registerProvider("com.example.agent/cli", defineAgentProvider({
-        mappingVersion: "0.1",
-        matchesForeground: () => true,
-        async observe(terminal) {
-          if (!terminal.capabilities.has("agent-journal")) {
-            return { state: "unavailable", reason: "environment-capability-missing" };
-          }
-          throw new Error("ENOENT: ssh journal /home/other/.secrets");
-        },
-      })));
-    },
-  }));
-  await harness.observe(fixtureTerminal({
-    foregroundExecutable: "example-agent",
-    capabilities: ["process-observation"],
-    environmentKind: "ssh",
-  }));
-  assert.deepEqual(harness.observation(), { state: "unavailable", reason: "environment-capability-missing" });
-  assert.deepEqual(harness.events(), []);
-  await harness.dispose();
-});
-
 test("3.1 a handle issued for one terminal is refused by another", async () => {
   const first = fixtureTerminal({
     foregroundExecutable: "example-agent",
@@ -213,11 +187,10 @@ test("3.1 a handle issued for one terminal is refused by another", async () => {
   }), /file handle is unavailable/);
 });
 
-test("3.2 descendants, open-file, canonicalisation, JSON, JSONL, and follow are environment-routed", async () => {
-  for (const environmentKind of ["this-server", "ssh"]) {
+test("3.2 descendants, open-file, canonicalisation, JSON, JSONL, and follow go through the broker", async () => {
+  {
     const terminal = fixtureTerminal({
       foregroundExecutable: "example-agent",
-      environmentKind,
       files: {
         "/home/test/.example-agent/sessions/current.jsonl": [{ type: "session", id: "sess-1" }, { ok: true }],
         "/home/test/.example-agent/sessions/meta.json": [{ id: "meta-1" }],
@@ -241,17 +214,6 @@ test("3.2 descendants, open-file, canonicalisation, JSON, JSONL, and follow are 
     await watcher.dispose();
     void opened;
   }
-
-  const sshMissing = fixtureTerminal({
-    foregroundExecutable: "example-agent",
-    environmentKind: "ssh",
-    capabilities: ["process-observation"],
-    files: { "/home/test/.example-agent/sessions/current.jsonl": [{ type: "session", id: "sess-1" }] },
-  });
-  await assert.rejects(
-    () => sshMissing.observation.files.resolveHomeRelative(".example-agent/sessions/current.jsonl"),
-    /not advertised/,
-  );
 });
 
 test("3.3 watchers are asynchronously disposable and idempotent, and a cancelled signal stops iteration", async () => {
@@ -384,12 +346,11 @@ test("4.4 a child without a stable native id is not published", async () => {
   await harness.dispose();
 });
 
-test("5.1 a Node filesystem provider fails on a non-local fixture that observation can still read", async () => {
+test("5.1 a Node filesystem provider cannot read what the observation broker can", async () => {
   const { readFile } = await import("node:fs/promises");
-  const remote = fixtureTerminal({
+  const brokerOnly = fixtureTerminal({
     foregroundExecutable: "example-agent",
-    environmentKind: "ssh",
-    files: { "/home/test/.example-agent/sessions/current.jsonl": [{ type: "session", id: "sess-1", title: "Remote" }] },
+    files: { "/home/test/.example-agent/sessions/current.jsonl": [{ type: "session", id: "sess-1", title: "Broker" }] },
   });
 
   const nodeProvider = await createAgentExtensionHarness(defineExtension({
@@ -402,14 +363,14 @@ test("5.1 a Node filesystem provider fails on a non-local fixture that observati
             await readFile("/home/test/.example-agent/sessions/current.jsonl");
             return { state: "not-bound" };
           } catch {
-            return { state: "unavailable", reason: "environment-capability-missing" };
+            return { state: "unavailable", reason: "session-not-found" };
           }
         },
       })));
     },
   }));
-  await nodeProvider.observe(remote);
-  assert.deepEqual(nodeProvider.observation(), { state: "unavailable", reason: "environment-capability-missing" });
+  await nodeProvider.observe(brokerOnly);
+  assert.deepEqual(nodeProvider.observation(), { state: "unavailable", reason: "session-not-found" });
   await nodeProvider.dispose();
 
   const observationProvider = await createAgentExtensionHarness(defineExtension({
@@ -434,7 +395,7 @@ test("5.1 a Node filesystem provider fails on a non-local fixture that observati
       })));
     },
   }));
-  await observationProvider.observe(remote);
+  await observationProvider.observe(brokerOnly);
   assert.deepEqual(observationProvider.events().map((event) => event.kind), ["session.started"]);
   await observationProvider.dispose();
 });
@@ -545,30 +506,3 @@ test("7.1 example package tests pass against the published SDK with no private i
   assert.equal(result.status, 0, result.stdout + result.stderr);
 });
 
-test("7.2 harness asserts no events when a declared required capability is missing", async () => {
-  const manifest = declaredManifest();
-  const dishonest = defineExtension({
-    activate(context) {
-      context.subscriptions.add(context.agents.registerProvider("com.example.agent/cli", defineAgentProvider({
-        mappingVersion: "0.1",
-        matchesForeground: () => true,
-        async observe(terminal) {
-          const binding = await terminal.bindSession({
-            providerSessionId: "s", mappingVersion: "0.1", fingerprint: { kind: "test", process: terminal.process },
-          });
-          return jsonlSession({
-            binding,
-            source: { async *[Symbol.asyncIterator]() { yield { type: "append", bytes: bytes('{"type":"session"}\n') }; }, async dispose() {} },
-            mapRecord(_record, session) { session.publish.sessionStarted({ title: "should not publish" }); },
-          });
-        },
-      })));
-    },
-  });
-  const harness = await createAgentExtensionHarness(dishonest, { manifest });
-  await assert.rejects(() => harness.observe(fixtureTerminal({
-    foregroundExecutable: "example-agent",
-    capabilities: ["process-observation"],
-  })), /required environment capabilities/);
-  await harness.dispose();
-});

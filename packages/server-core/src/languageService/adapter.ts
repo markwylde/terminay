@@ -1,0 +1,467 @@
+import {
+	type AuthScope,
+	type JsonValue,
+	LANGUAGE_OPERATIONS,
+	type LanguageCompletionResultDto,
+	type LanguageDefinitionResultDto,
+	type LanguageDiagnosticDto,
+	type LanguageDiagnosticsEventDto,
+	type LanguageHoverResultDto,
+	MAX_LANGUAGE_COMPLETION_ITEMS,
+	MAX_LANGUAGE_DEFINITION_LOCATIONS,
+	MAX_LANGUAGE_DIAGNOSTICS_PER_FILE,
+	parseLanguageDocumentChangeRequest,
+	parseLanguageDocumentOpenRequest,
+	parseLanguageDocumentRef,
+	parseLanguagePositionRequest,
+	truncateLanguageResult,
+} from '@terminay/protocol';
+import { scopeAllows } from '../auth.js';
+import { CanonicalProjectPathResolver } from '../fileService/pathResolver.js';
+import { FileServiceError } from '../fileService/types.js';
+import type {
+	CommandHandler,
+	CommandRequest,
+	OperationRegistries,
+	OrderedEventJournalLike,
+	QueryHandler,
+	QueryRequest,
+	RequestContext,
+} from '../types.js';
+import type {
+	LanguageDiagnosticsFanoutEvent,
+	LanguageSessionManager,
+} from './sessions.js';
+
+export interface LanguageProjectContext {
+	readonly projectId: string;
+	readonly resolver: CanonicalProjectPathResolver;
+}
+
+export interface LanguageAdapterOptions {
+	readonly serverId: string;
+	readonly sessions: LanguageSessionManager;
+	readonly projects:
+		| ReadonlyMap<string, LanguageProjectContext>
+		| Readonly<Record<string, LanguageProjectContext>>;
+	/** Where `language.diagnostics` events are written. */
+	readonly eventJournal?: OrderedEventJournalLike;
+	/** Per-file debounce for diagnostics fan-out. */
+	readonly diagnosticsDebounceMs?: number;
+	readonly schedule?: (
+		callback: () => void,
+		milliseconds: number,
+	) => ReturnType<typeof setTimeout>;
+	readonly cancelSchedule?: (timer: ReturnType<typeof setTimeout>) => void;
+}
+
+const DEFAULT_DIAGNOSTICS_DEBOUNCE_MS = 100;
+
+/**
+ * The application-protocol boundary for language intelligence.
+ *
+ * Core owns these operations: it resolves every path through the canonical
+ * project resolver, chooses the provider by file selector, bounds every
+ * result, and answers `state: 'none'` rather than an error when no language
+ * server serves a file. No Language Server Protocol message crosses here.
+ */
+export class ServerLanguageAdapter {
+	readonly serverId: string;
+	private readonly pendingDiagnostics = new Map<
+		string,
+		{
+			event: LanguageDiagnosticsFanoutEvent;
+			timer: ReturnType<typeof setTimeout>;
+		}
+	>();
+	private readonly debounceMs: number;
+	private readonly schedule: (
+		callback: () => void,
+		milliseconds: number,
+	) => ReturnType<typeof setTimeout>;
+	private readonly cancelSchedule: (
+		timer: ReturnType<typeof setTimeout>,
+	) => void;
+
+	constructor(private readonly options: LanguageAdapterOptions) {
+		if (typeof options?.serverId !== 'string' || options.serverId.length === 0)
+			throw new TypeError('language server id is invalid');
+		this.serverId = options.serverId;
+		this.debounceMs =
+			options.diagnosticsDebounceMs ?? DEFAULT_DIAGNOSTICS_DEBOUNCE_MS;
+		this.schedule =
+			options.schedule ??
+			((callback, milliseconds) => {
+				const timer = setTimeout(callback, milliseconds);
+				timer.unref?.();
+				return timer;
+			});
+		this.cancelSchedule =
+			options.cancelSchedule ?? ((timer) => clearTimeout(timer));
+	}
+
+	/**
+	 * Accept one translated `publishDiagnostics` for fan-out.
+	 *
+	 * A language server republishes a file's diagnostics on every keystroke it
+	 * reacts to. One journal event per file per debounce window is what a
+	 * reconnecting client can resync cheaply; a burst is not.
+	 */
+	publishDiagnostics(event: LanguageDiagnosticsFanoutEvent): void {
+		const key = `${event.projectId}\u0000${event.path}`;
+		const pending = this.pendingDiagnostics.get(key);
+		if (pending !== undefined) {
+			pending.event = event;
+			return;
+		}
+		this.pendingDiagnostics.set(key, {
+			event,
+			timer: this.schedule(() => {
+				const entry = this.pendingDiagnostics.get(key);
+				this.pendingDiagnostics.delete(key);
+				if (entry !== undefined) this.appendDiagnostics(entry.event);
+			}, this.debounceMs),
+		});
+	}
+
+	operations(): OperationRegistries {
+		const queries: Record<string, QueryHandler> = {
+			[LANGUAGE_OPERATIONS.capabilities]: (request) =>
+				this.capabilities(request),
+			[LANGUAGE_OPERATIONS.completion]: (request) => this.completion(request),
+			[LANGUAGE_OPERATIONS.hover]: (request) => this.hover(request),
+			[LANGUAGE_OPERATIONS.definition]: (request) => this.definition(request),
+		};
+		const commands: Record<string, CommandHandler> = {
+			[LANGUAGE_OPERATIONS.documentOpen]: (request) =>
+				this.documentOpen(request),
+			[LANGUAGE_OPERATIONS.documentChange]: (request) =>
+				this.documentChange(request),
+			[LANGUAGE_OPERATIONS.documentClose]: (request) =>
+				this.documentClose(request),
+		};
+		const policies = Object.fromEntries([
+			...Object.keys(queries).map((operation) => [operation, { scope: 'read' }]),
+			...Object.keys(commands).map((operation) => [
+				operation,
+				{ scope: 'write' },
+			]),
+		]) as OperationRegistries['policies'];
+		return { queries, commands, policies };
+	}
+
+	dispose(): void {
+		for (const pending of this.pendingDiagnostics.values())
+			this.cancelSchedule(pending.timer);
+		this.pendingDiagnostics.clear();
+	}
+
+	private async capabilities(request: QueryRequest): Promise<JsonValue> {
+		const reference = parseLanguageDocumentRef({
+			revision: 0,
+			...asRecord(request.envelope.payload),
+		});
+		const projectId = await this.resolvePath(
+			request.context,
+			'read',
+			reference.projectId,
+			reference.path,
+		);
+		const description = this.options.sessions.describe(
+			projectId,
+			reference.path,
+		);
+		return {
+			projectId,
+			path: reference.path,
+			...(description.languageServerId === undefined
+				? {}
+				: { languageServerId: description.languageServerId }),
+			...(description.languageId === undefined
+				? {}
+				: { languageId: description.languageId }),
+			state: description.state,
+			...(description.reason === undefined ? {} : { reason: description.reason }),
+			features: {
+				completion: description.state !== 'none',
+				hover: description.state !== 'none',
+				definition: description.state !== 'none',
+				diagnostics: description.state !== 'none',
+			},
+		} as unknown as JsonValue;
+	}
+
+	private async completion(request: QueryRequest): Promise<JsonValue> {
+		const parsed = parseLanguagePositionRequest(request.envelope.payload);
+		const projectId = await this.resolvePath(
+			request.context,
+			'read',
+			parsed.projectId,
+			parsed.path,
+		);
+		const value = asRecord(
+			await this.options.sessions.positionRequest(
+				projectId,
+				parsed.path,
+				'language.completion',
+				parsed.position,
+				{
+					signal: request.context.signal,
+					...(request.context.deadline === undefined
+						? {}
+						: { deadlineMs: Math.max(1, request.context.deadline - Date.now()) }),
+				},
+			),
+		);
+		const items = Array.isArray(value?.items) ? value.items : [];
+		const result: LanguageCompletionResultDto = {
+			projectId,
+			path: parsed.path,
+			revision: parsed.revision,
+			items: items.slice(
+				0,
+				MAX_LANGUAGE_COMPLETION_ITEMS,
+			) as LanguageCompletionResultDto['items'],
+			isIncomplete: value?.isIncomplete === true,
+			isTruncated:
+				value?.isTruncated === true || items.length > MAX_LANGUAGE_COMPLETION_ITEMS,
+		};
+		return truncateLanguageResult(
+			result as unknown as Record<string, JsonValue> & {
+				readonly isTruncated: boolean;
+			},
+			'items',
+		) as unknown as JsonValue;
+	}
+
+	private async hover(request: QueryRequest): Promise<JsonValue> {
+		const parsed = parseLanguagePositionRequest(request.envelope.payload);
+		const projectId = await this.resolvePath(
+			request.context,
+			'read',
+			parsed.projectId,
+			parsed.path,
+		);
+		const value = asRecord(
+			await this.options.sessions.positionRequest(
+				projectId,
+				parsed.path,
+				'language.hover',
+				parsed.position,
+				{
+					signal: request.context.signal,
+					...(request.context.deadline === undefined
+						? {}
+						: { deadlineMs: Math.max(1, request.context.deadline - Date.now()) }),
+				},
+			),
+		);
+		const result: LanguageHoverResultDto = {
+			projectId,
+			path: parsed.path,
+			revision: parsed.revision,
+			contents: typeof value?.contents === 'string' ? value.contents : null,
+			...(isRange(value?.range)
+				? { range: value?.range as LanguageHoverResultDto['range'] }
+				: {}),
+			isTruncated: value?.isTruncated === true,
+		};
+		return result as unknown as JsonValue;
+	}
+
+	private async definition(request: QueryRequest): Promise<JsonValue> {
+		const parsed = parseLanguagePositionRequest(request.envelope.payload);
+		const projectId = await this.resolvePath(
+			request.context,
+			'read',
+			parsed.projectId,
+			parsed.path,
+		);
+		const value = asRecord(
+			await this.options.sessions.positionRequest(
+				projectId,
+				parsed.path,
+				'language.definition',
+				parsed.position,
+				{
+					signal: request.context.signal,
+					...(request.context.deadline === undefined
+						? {}
+						: { deadlineMs: Math.max(1, request.context.deadline - Date.now()) }),
+				},
+			),
+		);
+		const locations = Array.isArray(value?.locations) ? value.locations : [];
+		const result: LanguageDefinitionResultDto = {
+			projectId,
+			path: parsed.path,
+			revision: parsed.revision,
+			locations: locations.slice(
+				0,
+				MAX_LANGUAGE_DEFINITION_LOCATIONS,
+			) as LanguageDefinitionResultDto['locations'],
+			isTruncated:
+				value?.isTruncated === true ||
+				locations.length > MAX_LANGUAGE_DEFINITION_LOCATIONS,
+		};
+		return truncateLanguageResult(
+			result as unknown as Record<string, JsonValue> & {
+				readonly isTruncated: boolean;
+			},
+			'locations',
+		) as unknown as JsonValue;
+	}
+
+	private async documentOpen(request: CommandRequest): Promise<JsonValue> {
+		const parsed = parseLanguageDocumentOpenRequest(request.envelope.payload);
+		const projectId = await this.resolvePath(
+			request.context,
+			'write',
+			parsed.projectId,
+			parsed.path,
+		);
+		await this.options.sessions.openDocument(
+			projectId,
+			parsed.path,
+			parsed.languageId,
+			parsed.text,
+			parsed.revision,
+		);
+		return { projectId, path: parsed.path, revision: parsed.revision };
+	}
+
+	private async documentChange(request: CommandRequest): Promise<JsonValue> {
+		const parsed = parseLanguageDocumentChangeRequest(request.envelope.payload);
+		const projectId = await this.resolvePath(
+			request.context,
+			'write',
+			parsed.projectId,
+			parsed.path,
+		);
+		await this.options.sessions.changeDocument(
+			projectId,
+			parsed.path,
+			parsed.text,
+			parsed.revision,
+		);
+		return { projectId, path: parsed.path, revision: parsed.revision };
+	}
+
+	private async documentClose(request: CommandRequest): Promise<JsonValue> {
+		const parsed = parseLanguageDocumentRef(request.envelope.payload);
+		const projectId = await this.resolvePath(
+			request.context,
+			'write',
+			parsed.projectId,
+			parsed.path,
+		);
+		await this.options.sessions.closeDocument(projectId, parsed.path);
+		return { projectId, path: parsed.path, revision: parsed.revision };
+	}
+
+	/**
+	 * Prove the project, the scope, and the path before anything else happens.
+	 *
+	 * The canonical resolver is the only authority on containment: a lexical
+	 * check would pass a symlink that leaves the project, and a language server
+	 * reads whatever it is pointed at.
+	 */
+	private async resolvePath(
+		context: RequestContext,
+		required: AuthScope,
+		projectId: string,
+		path: string,
+	): Promise<string> {
+		if (!scopeAllows(context.authScope, required))
+			throw new FileServiceError(
+				'invalid_path',
+				`language operation requires ${required} scope`,
+			);
+		const claimed = claimsProject(context.claims);
+		if (claimed !== undefined && claimed !== projectId)
+			throw new FileServiceError(
+				'path_escape',
+				'language request is outside the authorized project',
+			);
+		const project = this.project(projectId);
+		await project.resolver.resolve(path, { allowMissing: true });
+		return projectId;
+	}
+
+	private project(projectId: string): LanguageProjectContext {
+		const projects = this.options.projects as ReadonlyMap<
+			string,
+			LanguageProjectContext
+		>;
+		const project =
+			typeof projects.get === 'function'
+				? projects.get(projectId)
+				: (
+						this.options.projects as Readonly<
+							Record<string, LanguageProjectContext>
+						>
+					)[projectId];
+		if (
+			project === undefined ||
+			project.projectId !== projectId ||
+			!(project.resolver instanceof CanonicalProjectPathResolver)
+		)
+			throw new FileServiceError(
+				'invalid_path',
+				'language project is unavailable',
+			);
+		return project;
+	}
+
+	private appendDiagnostics(event: LanguageDiagnosticsFanoutEvent): void {
+		const journal = this.options.eventJournal;
+		if (journal === undefined) return;
+		const payload: LanguageDiagnosticsEventDto = {
+			serverId: this.serverId,
+			projectId: event.projectId,
+			path: event.path,
+			...(event.revision === undefined ? {} : { revision: event.revision }),
+			diagnostics: event.diagnostics.slice(
+				0,
+				MAX_LANGUAGE_DIAGNOSTICS_PER_FILE,
+			) as readonly LanguageDiagnosticDto[],
+			isTruncated:
+				event.isTruncated ||
+				event.diagnostics.length > MAX_LANGUAGE_DIAGNOSTICS_PER_FILE,
+		};
+		try {
+			journal.append(
+				LANGUAGE_OPERATIONS.diagnosticsEvent,
+				truncateLanguageResult(
+					payload as unknown as Record<string, JsonValue> & {
+						readonly isTruncated: boolean;
+					},
+					'diagnostics',
+				) as unknown as JsonValue,
+			);
+		} catch {
+			/* a diagnostics event that cannot be journaled is dropped, not fatal */
+		}
+	}
+}
+
+/** Convenience for hosts that only want the dispatch tables. */
+export function createLanguageOperationHandlers(
+	options: LanguageAdapterOptions,
+): OperationRegistries {
+	return new ServerLanguageAdapter(options).operations();
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+	return typeof value === 'object' && value !== null && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: undefined;
+}
+function isRange(value: unknown): boolean {
+	const range = asRecord(value);
+	return asRecord(range?.start) !== undefined && asRecord(range?.end) !== undefined;
+}
+function claimsProject(value: unknown): string | undefined {
+	const claims = asRecord(value);
+	return typeof claims?.projectId === 'string' ? claims.projectId : undefined;
+}

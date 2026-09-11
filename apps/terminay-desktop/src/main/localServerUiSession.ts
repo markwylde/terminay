@@ -6,7 +6,6 @@ const SERVER_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 
 export interface LocalServerUiSessionOptions {
 	readonly bundleRoot: string;
-	readonly cacheRoot: string;
 	readonly serverId: string;
 }
 
@@ -19,7 +18,7 @@ export class LocalServerUiSession {
   private readonly launches = new Map<number, DesktopBundleLaunch>();
 
   constructor(private readonly options: LocalServerUiSessionOptions) {
-    this.bundleHost = new DesktopServerBundleHost({ cacheRoot: options.cacheRoot, capabilities: {
+    this.bundleHost = new DesktopServerBundleHost({ capabilities: {
       clipboardWrite: 1,
       filePicker: 1,
       nativeMenus: 1,
@@ -27,6 +26,7 @@ export class LocalServerUiSession {
       notifications: 1,
       osIntegration: 1,
       updater: 1,
+      connections: 1,
     } });
   }
 

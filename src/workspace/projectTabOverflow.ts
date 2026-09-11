@@ -139,15 +139,21 @@ export function sameIdList(
 	);
 }
 
+/** A tab's identity in the strip. It is the project id in a single-server
+ * window and `(serverId, projectId)` once the strip holds tabs from several
+ * servers, so every list here takes the same accessor rather than assuming. */
+export type ProjectTabIdentity<T> = (item: T) => string;
+
 export function mergeVisibleProjectReorder<T extends { id: string }>(
 	items: readonly T[],
 	visibleOrder: readonly T[],
 	hiddenIds: readonly string[],
+	identityOf: ProjectTabIdentity<T> = (item) => item.id,
 ): T[] {
 	const hidden = new Set(hiddenIds);
-	const queue = visibleOrder.filter((item) => !hidden.has(item.id));
+	const queue = visibleOrder.filter((item) => !hidden.has(identityOf(item)));
 	return items.map((item) => {
-		if (hidden.has(item.id)) return item;
+		if (hidden.has(identityOf(item))) return item;
 		return queue.shift() ?? item;
 	});
 }
@@ -156,8 +162,9 @@ export function mergeVisibleProjectReorderByIds<T extends { id: string }>(
 	items: readonly T[],
 	visibleIds: readonly string[],
 	hiddenIds: readonly string[],
+	identityOf: ProjectTabIdentity<T> = (item) => item.id,
 ): T[] {
-	const byId = new Map(items.map((item) => [item.id, item]));
+	const byId = new Map(items.map((item) => [identityOf(item), item]));
 	return mergeVisibleProjectReorder(
 		items,
 		visibleIds.flatMap((id) => {
@@ -165,6 +172,7 @@ export function mergeVisibleProjectReorderByIds<T extends { id: string }>(
 			return item === undefined ? [] : [item];
 		}),
 		hiddenIds,
+		identityOf,
 	);
 }
 
@@ -199,14 +207,15 @@ export function moveItemByDrop<T extends { id: string }>(
 	sourceId: string,
 	targetId: string,
 	position: 'before' | 'after',
+	identityOf: ProjectTabIdentity<T> = (item) => item.id,
 ): T[] {
 	if (sourceId === targetId) return [...items];
-	const from = items.findIndex((item) => item.id === sourceId);
+	const from = items.findIndex((item) => identityOf(item) === sourceId);
 	if (from < 0) return [...items];
 	const next = items.slice();
 	const [moved] = next.splice(from, 1);
 	if (moved === undefined) return [...items];
-	const insertion = next.findIndex((item) => item.id === targetId);
+	const insertion = next.findIndex((item) => identityOf(item) === targetId);
 	if (insertion < 0) return [...items];
 	next.splice(insertion + (position === 'after' ? 1 : 0), 0, moved);
 	return next;

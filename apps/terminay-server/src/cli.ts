@@ -22,7 +22,10 @@ import { createConnection } from 'node:net';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { JsonValue } from '@terminay/protocol';
-import { managerOriginFromSessionOrigin } from '@terminay/protocol';
+import {
+	FEATURE_CAPABILITIES,
+	managerOriginFromSessionOrigin,
+} from '@terminay/protocol';
 import {
 	AgentStatusService,
 	AiService,
@@ -33,13 +36,11 @@ import {
 	createProductionExtensionManagement,
 	createServerAiProviderAdapters,
 	createServerCoreComposition,
-	registerActivatedExtensionProjectEnvironmentRuntimes,
 	FileCatalog,
 	DocumentationCatalog,
 	MdxRuntime,
 	FileContentStreamService,
 	type FileObservationHost,
-	FileProjectEnvironmentStateBackend,
 	GitService,
 	MacroRepository,
 	type NodePtyModuleLike,
@@ -47,9 +48,6 @@ import {
 	OrderedEventJournal,
 	openCanonicalWorkspace,
 	ParakeetRuntime,
-	ProjectEnvironmentRegistry,
-	ProjectEnvironmentRepository,
-	ProjectEnvironmentRouter,
 	RecordingService,
 	type RemoteRegisteredDevice,
 	type ServerCoreComposition,
@@ -526,20 +524,6 @@ async function createServerComposition(
 		defaultProjectRoot: options.projectRoot,
 	});
 	const workspace = workspaceRepository.workspace;
-	const projectEnvironments = new ProjectEnvironmentRepository(
-		new FileProjectEnvironmentStateBackend(
-			join(options.dataRoot, 'project-environments.v1.json'),
-		),
-		options.serverId,
-	);
-	await projectEnvironments.load();
-	const projectEnvironmentRegistry = new ProjectEnvironmentRegistry();
-	const projectEnvironmentRouter = new ProjectEnvironmentRouter({
-		serverId: options.serverId,
-		workspaceSnapshot: () => workspace.state,
-		environmentSnapshot: () => projectEnvironments.state,
-		registry: projectEnvironmentRegistry,
-	});
 	const gitService = new GitService({
 		limits: {
 			maxOutputBytes: 512 * 1024,
@@ -592,15 +576,8 @@ async function createServerComposition(
 		authorityLabel: 'This server',
 		builtInArtifactRoot: resolveBuiltInExtensionArtifactRoot(),
 		vault,
-		projectEnvironments,
 	});
 	extensionHosts = extensions.hosts;
-	registerActivatedExtensionProjectEnvironmentRuntimes({
-		registry: projectEnvironmentRegistry,
-		hosts: extensions.hosts,
-		snapshot: () => projectEnvironments.state,
-		workspaceSnapshot: () => workspace.state,
-	});
 	const git = new ServerGitAdapter({
 		serverId: options.serverId,
 		git: gitService,
@@ -682,12 +659,18 @@ async function createServerComposition(
 		serverId: options.serverId,
 		serverVersion: options.serverVersion,
 		capabilities: [
-			'terminal',
-			'workspace',
-			'files',
-			'agents',
-			'server.health',
-			'ai.dictation',
+			FEATURE_CAPABILITIES.terminal,
+			FEATURE_CAPABILITIES.workspace,
+			FEATURE_CAPABILITIES.files,
+			FEATURE_CAPABILITIES.agents,
+			FEATURE_CAPABILITIES.settings,
+			FEATURE_CAPABILITIES.macros,
+			FEATURE_CAPABILITIES.recording,
+			FEATURE_CAPABILITIES.extensions,
+			FEATURE_CAPABILITIES.git,
+			FEATURE_CAPABILITIES.dictation,
+			FEATURE_CAPABILITIES.health,
+			FEATURE_CAPABILITIES.heartbeat,
 		],
 		eventJournal,
 		onConnectionClosed: (_connectionId, clientId) => {
@@ -697,8 +680,6 @@ async function createServerComposition(
 			clientId: hello.clientId,
 			authScope: 'admin',
 			permissions: [
-				'environments:read',
-				'environments:manage',
 				'workspace:write',
 				'extensions:read',
 				'extensions:manage',
@@ -710,14 +691,6 @@ async function createServerComposition(
 		activity,
 		agents,
 		workspace,
-		projectEnvironmentRouter,
-		projectEnvironments: {
-			repository: projectEnvironments,
-			thisServerRoot: () => options.projectRoot,
-			...(extensions !== undefined && 'profiles' in extensions
-				? { providers: extensions.profiles }
-				: {}),
-		},
 		workspaceOperations: {
 			prepareProjectRootUpdate: files.prepareProjectRootUpdate,
 		},
@@ -743,6 +716,13 @@ async function createServerComposition(
 			},
 		},
 		fileObservations: files.observations,
+		// Language intelligence exists only where both the project files and the
+		// extensions live, which on this server is the same process.
+		language: {
+			extensions: extensions.hosts,
+			projects: files.projects,
+			watch: files.observations,
+		},
 		settings,
 		terminalProfiles: shellProfiles,
 		shellProfiles,
@@ -990,6 +970,14 @@ function createDefaultProjectFileServices(
 	eventJournal: InstanceType<typeof OrderedEventJournal>,
 	gitService: GitService,
 ): {
+	/** The canonical per-project resolvers, shared with language sessions. */
+	readonly projects: ReadonlyMap<
+		string,
+		{
+			readonly projectId: string;
+			readonly resolver: CanonicalProjectPathResolver;
+		}
+	>;
 	readonly session: ServerFileAdapter;
 	readonly content: ServerFileContentAdapter;
 	readonly catalog: ServerFileCatalogAdapter;
@@ -1106,6 +1094,7 @@ function createDefaultProjectFileServices(
 		projects: mdxRuntimeProjects,
 	});
 	return {
+		projects: sessionProjects,
 		session: new ServerFileAdapter({
 			serverId,
 			projects: sessionProjects,
@@ -1331,8 +1320,6 @@ function createProtocolServer(
 			clientId: credentials.clientId(credential) ?? clientId,
 			authScope: 'admin',
 			permissions: [
-				'environments:read',
-				'environments:manage',
 				'workspace:write',
 				'extensions:read',
 				'extensions:manage',

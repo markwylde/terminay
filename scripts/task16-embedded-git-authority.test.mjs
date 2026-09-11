@@ -8,6 +8,6 @@ test('embedded Desktop composes and binds the server-owned Git authority', () =>
 	assert.match(source, /this\.git = new GitService\(\)/u);
 	assert.match(source, /new ServerGitAdapter\(\{[\s\S]*git: this\.git/u);
 	assert.match(source, /git: gitAdapter/u);
-	assert.match(source, /capabilities: \[[^\]]*'git'/u);
+	assert.match(source, /capabilities: \[[^\]]*'git\.v1'/u);
 	assert.match(source, /await this\.git\.bindProject\(projectId, canonicalRoot\)/u);
 });

@@ -1,0 +1,5 @@
+schema: spec-driven-with-adr
+created: 2026-09-09
+# Project environments, SSH, and Puzed lose every requirement in this change,
+# so their capabilities are retired rather than left as empty specs.
+retire_capabilities: true

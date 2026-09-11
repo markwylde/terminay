@@ -1,11 +1,10 @@
 /** Per-terminal resource sampling for terminals backed by the embedded Local
  * server.
  *
- * This never crosses the project-environment boundary. It reads the shell pid
- * the in-process authority already reports and walks that pid's descendants
- * with the platform's own process table. A session routed to an SSH or other
- * remote environment has no local pid at all, so it reports an unavailable
- * outcome rather than measuring a local proxy process.
+ * It reads the shell pid the in-process authority already reports and walks
+ * that pid's descendants with the platform's own process table. A session with
+ * no readable process tree reports an unavailable outcome rather than
+ * measuring a substituted process.
  *
  * Nothing here reads a title, command line, argument, working directory, or
  * environment value: the readers request only pid, parent pid, CPU and memory,
@@ -36,8 +35,6 @@ export interface ProcessTableReader {
 }
 
 export type TerminalResourceUnavailableReason =
-	/** Running, but with no local process: an SSH or other remote environment. */
-	| 'remote-environment'
 	/** The session is not running, so there is nothing to measure. */
 	| 'not-running'
 	/** A local pid exists but its process tree could not be read this tick. */
@@ -306,15 +303,11 @@ export class TerminalResourceSampler {
 				};
 				continue;
 			}
-			if (session.pid === undefined) {
-				// A running session with no local process is routed elsewhere.
-				outcomes[session.sessionId] = {
-					available: false,
-					reason: 'remote-environment',
-				};
-				continue;
-			}
-			if (table === undefined || !table.has(session.pid)) {
+			if (
+				session.pid === undefined ||
+				table === undefined ||
+				!table.has(session.pid)
+			) {
 				outcomes[session.sessionId] = {
 					available: false,
 					reason: 'unreadable',

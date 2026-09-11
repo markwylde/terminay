@@ -9,16 +9,28 @@ import {
 	validateTransportFrame,
 } from '@terminay/protocol';
 
-export interface DesktopByteBridge {
-	readonly version: 1;
+/** One opaque byte endpoint. The primary connection's endpoint is the bridge
+ * itself; an attached connection gets its own channel from `openConnection`. */
+export interface DesktopByteChannel {
+	send(frame: Uint8Array): Promise<void>;
+	subscribe(listener: (frame: Uint8Array | null) => void): () => void;
+	/** Present on a per-connection channel, which the renderer owns and closes. */
+	close?(): void;
+}
+
+export interface DesktopByteBridge extends DesktopByteChannel {
+	/** Version 2 adds `openConnection`; version 1 preloads carry the primary
+	 * endpoint only and cannot reach an attached server. */
+	readonly version: 1 | 2;
 	/**
 	 * Present only in preloads that can replace a failed Desktop document port.
 	 * A normal bootstrap uses the port already handed to the document, so a
 	 * renderer hot update remains compatible with the currently loaded preload.
 	 */
 	replaceEndpoint?(): Promise<void>;
-	send(frame: Uint8Array): Promise<void>;
-	subscribe(listener: (frame: Uint8Array | null) => void): () => void;
+	/** Bytes for the connection the host attached under this id, on their own
+	 * channel. The primary endpoint is untouched. */
+	openConnection?(connectionId: string): Promise<DesktopByteChannel>;
 }
 
 export interface DesktopHostBridge {
@@ -33,7 +45,8 @@ export type DesktopServerBootstrap = Readonly<{
 
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 
-/** Renderer-side adapter for the one private server byte endpoint supplied by Desktop. */
+/** Renderer-side adapter for one private server byte endpoint supplied by
+ * Desktop: the window primary bridge, or one attached connection channel. */
 export class DesktopByteTransport implements ByteTransport {
 	private currentState: TransportState = 'opening';
 	private readonly inbound: Uint8Array[] = [];
@@ -46,7 +59,7 @@ export class DesktopByteTransport implements ByteTransport {
 	>();
 	private unsubscribe: (() => void) | undefined;
 
-	constructor(private readonly bridge: DesktopByteBridge) {}
+	constructor(private readonly bridge: DesktopByteChannel) {}
 
 	get state(): TransportState {
 		return this.currentState;
@@ -139,6 +152,7 @@ export class DesktopByteTransport implements ByteTransport {
 		this.notify(reason);
 		this.unsubscribe?.();
 		this.unsubscribe = undefined;
+		this.bridge.close?.();
 		this.finish();
 		this.currentState = 'closed';
 		this.notify(reason);
@@ -167,6 +181,7 @@ export class DesktopByteTransport implements ByteTransport {
 			return;
 		this.unsubscribe?.();
 		this.unsubscribe = undefined;
+		this.bridge.close?.();
 		this.currentState = 'failed';
 		this.finish(
 			new Error(reason.message ?? 'Desktop server transport failed.'),
@@ -193,7 +208,11 @@ export async function acquireDesktopServerBootstrap(
 	options: Readonly<{ replaceEndpoint?: boolean }> = {},
 ): Promise<DesktopServerBootstrap | undefined> {
 	if (host === undefined && bytes === undefined) return undefined;
-	if (host === undefined || bytes === undefined || bytes.version !== 1)
+	if (
+		host === undefined ||
+		bytes === undefined ||
+		(bytes.version !== 1 && bytes.version !== 2)
+	)
 		throw new Error('Desktop server bootstrap is incomplete.');
 	if (options.replaceEndpoint === true) {
 		if (typeof bytes.replaceEndpoint !== 'function')
@@ -206,4 +225,23 @@ export async function acquireDesktopServerBootstrap(
 	if (context.hostKind !== 'desktop')
 		throw new Error('Desktop server bootstrap has the wrong host kind.');
 	return Object.freeze({ context, transport: new DesktopByteTransport(bytes) });
+}
+
+/** Open the byte endpoint the host created for an already-attached connection.
+ * The renderer never learns the profile's origin, credential, or transport: it
+ * holds one opaque channel keyed by the connection id `connections.attach`
+ * returned. The window's primary endpoint is unaffected. */
+export async function acquireDesktopAttachedTransport(
+	bridge: DesktopByteBridge | undefined,
+	connectionId: string,
+): Promise<ByteTransport> {
+	if (bridge === undefined)
+		throw new Error('Desktop byte bridge is unavailable.');
+	if (bridge.version < 2 || typeof bridge.openConnection !== 'function')
+		throw new Error(
+			'This Desktop version cannot open an attached server connection.',
+		);
+	if (typeof connectionId !== 'string' || connectionId.length === 0)
+		throw new TypeError('connection id is invalid.');
+	return new DesktopByteTransport(await bridge.openConnection(connectionId));
 }

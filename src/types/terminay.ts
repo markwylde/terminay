@@ -539,10 +539,6 @@ export type QuickPushApplyResult = {
 export type ProjectEditWindowDraft = {
 	color: string;
 	defaultShellProfileId: string | null;
-	environmentLabel: string;
-	environmentStatus: string;
-	environmentDefaultRoot: string | null;
-	projectEnvironmentId: string;
 	emoji: string;
 	rootFolder: string;
 	shellProfileOptions: Array<{ id: string; name: string; available: boolean }>;
@@ -551,11 +547,7 @@ export type ProjectEditWindowDraft = {
 
 export type ProjectEditWindowResult = Omit<
 	ProjectEditWindowDraft,
-	| 'shellProfileOptions'
-	| 'environmentLabel'
-	| 'environmentStatus'
-	| 'environmentDefaultRoot'
-	| 'projectEnvironmentId'
+	'shellProfileOptions'
 >;
 
 export type TerminalEditWindowDraft = {

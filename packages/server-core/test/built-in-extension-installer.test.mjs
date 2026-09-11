@@ -11,12 +11,12 @@ const EXTENSION = "com.terminay.built-in-fixture";
 const INTEGRITY = `sha512-${Buffer.alloc(64, 3).toString("base64")}`;
 
 function manifest() {
-  return { manifestVersion: 1, id: EXTENSION, displayName: "Built in fixture", api: "^1.0.0", engines: { terminay: ">=1", node: ">=22" }, entrypoint: "dist/extension.js", permissions: ["network"], contributes: { projectEnvironments: [{ id: `${EXTENSION}/provider`, displayName: "Fixture", capabilities: ["terminal"] }] } };
+  return { manifestVersion: 1, id: EXTENSION, displayName: "Built in fixture", api: "^2.0.0", engines: { terminay: ">=1", node: ">=22" }, entrypoint: "dist/extension.js", permissions: ["agent-observation"], contributes: { agentProviders: [{ id: `${EXTENSION}/cli`, displayName: "Fixture" }] } };
 }
 
 function tree(version, metadata = manifest()) {
   const packageJson = JSON.stringify({ name: PACKAGE, version, type: "module", exports: { ".": "./dist/extension.js" }, terminay: metadata });
-  const source = `export function activate(context) { context.registerProjectEnvironmentProvider({ providerId: "${EXTENSION}/provider", displayName: "Fixture", capabilities: ["terminal"] }); }\n`;
+  const source = `export function activate(context) { context.agents.registerProvider("${EXTENSION}/cli", { mappingVersion: "v1", matchesForeground() { return true; }, async observe() { return { state: "not-bound" }; } }); }\n`;
   const lock = JSON.stringify({ lockfileVersion: 3, packages: { "": {}, [`node_modules/${PACKAGE}`]: { version, resolved: `file:${PACKAGE}-${version}.tgz`, integrity: INTEGRITY } } });
   const files = [["package-lock.json", lock], [`node_modules/${PACKAGE}/package.json`, packageJson], [`node_modules/${PACKAGE}/dist/extension.js`, source]];
   const inventory = files.map(([path, body]) => ({ path, size: Buffer.byteLength(body), hash: createHash("sha256").update(body).digest("hex") })).sort((a, b) => a.path.localeCompare(b.path));
@@ -72,7 +72,7 @@ test("post-start reconciliation hot-activates a newly materialized enabled built
     value.builtIns.available = false;
     const management = createDefaultExtensionManagement({ dataRoot: value.dataRoot, authorityLabel: "Test server", builtIns: value.builtIns });
     await management.initialize();
-    assert.deepEqual(management.hosts.providerDefinitions(), []);
+    assert.deepEqual(management.hosts.agentProviderContributions(), []);
 
     value.builtIns.available = true;
     // The installer is also used by release/runtime recovery paths, so its
@@ -80,7 +80,7 @@ test("post-start reconciliation hot-activates a newly materialized enabled built
     const state = await management.installer.reconcileBuiltIns();
     assert.equal(state.extensions[EXTENSION].state, "installed");
     assert.equal(state.extensions[EXTENSION].enabled, true);
-    assert.deepEqual(management.hosts.providerDefinitions().map(({ providerId }) => providerId), [`${EXTENSION}/provider`]);
+    assert.deepEqual(management.hosts.agentProviderContributions().map(({ id }) => id), [`${EXTENSION}/cli`]);
     await management.hosts.shutdown();
   } finally { await value.cleanup(); }
 });
@@ -128,6 +128,40 @@ test("an already-materialized pending built-in becomes active after its use drai
     assert.equal(state.extensions[EXTENSION].activeSlotId, pending);
     assert.equal(state.extensions[EXTENSION].pendingSlotId, undefined);
     assert.equal(state.extensions[EXTENSION].state, "installed");
+  } finally { await value.cleanup(); }
+});
+
+test("a built-in this release no longer ships is forgotten rather than left failing", async () => {
+  const value = await fixture();
+  try {
+    let state = await value.installer.reconcileBuiltIns();
+    assert.ok(state.extensions[EXTENSION], "the built-in installs while the release ships it");
+
+    // The release stops shipping it. Its only slot came from that artifact, so
+    // there is no floor left to roll back to and nothing for the user to keep.
+    value.builtIns.available = false;
+    state = await value.installer.reconcileBuiltIns();
+    assert.equal(state.extensions[EXTENSION], undefined, "a withdrawn built-in leaves no record behind");
+
+    // A restart agrees, so the row cannot come back from disk.
+    const restarted = new ExtensionInstaller({ dataRoot: value.dataRoot, registryClient: new Npm(), materializer: new Npm(), builtIns: value.builtIns });
+    const after = await restarted.initialize();
+    assert.equal(after.extensions[EXTENSION], undefined);
+  } finally { await value.cleanup(); }
+});
+
+test("a withdrawn built-in the user overrode from npm stays installed", async () => {
+  const value = await fixture();
+  try {
+    await value.installer.initialize();
+    // The user installed their own version over the bundled floor.
+    const preview = await value.installer.preview(`${PACKAGE}@2.0.0`);
+    await value.installer.confirm(preview.previewDigest);
+    value.builtIns.available = false;
+    const state = await value.installer.reconcileBuiltIns();
+    const record = state.extensions[EXTENSION];
+    assert.ok(record, "an extension the user installed themselves is not retired with the artifact");
+    assert.ok(Object.values(record.slots).some((slot) => slot.receipt.source !== "built-in"));
   } finally { await value.cleanup(); }
 });
 

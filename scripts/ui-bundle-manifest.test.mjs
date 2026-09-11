@@ -15,6 +15,7 @@ import {
   UI_BUNDLE_CSP,
   UI_BUNDLE_HOST_COMPATIBILITY,
   UI_BUNDLE_MAX_TOTAL_BYTES,
+  UI_BUNDLE_SERVER_COMPATIBILITY,
 } from "./build-ui-bundle-manifest.mjs";
 
 test("production UI manifest deterministically includes every emitted application asset and compatibility field", async () => {
@@ -48,6 +49,29 @@ test("production UI manifest deterministically includes every emitted applicatio
     assert.equal(manifest.contentSecurityPolicy, UI_BUNDLE_CSP);
     assert.equal(manifest.bundleFormatVersion, 1);
     assert.deepEqual(manifest.hostCompatibility, UI_BUNDLE_HOST_COMPATIBILITY);
+    // One bundle, many servers: the manifest declares what its client needs
+    // from any server it attaches to, and the validator keeps it verbatim.
+    assert.deepEqual(
+      manifest.serverCompatibility,
+      JSON.parse(JSON.stringify(UI_BUNDLE_SERVER_COMPATIBILITY)),
+    );
+    assert.deepEqual(
+      validateUiBundleManifest(JSON.parse(JSON.stringify(manifest)))
+        .serverCompatibility,
+      JSON.parse(JSON.stringify(UI_BUNDLE_SERVER_COMPATIBILITY)),
+    );
+    assert.throws(
+      () =>
+        validateUiBundleManifest({
+          ...JSON.parse(JSON.stringify(manifest)),
+          serverCompatibility: {
+            protocol: { minimum: 2, maximum: 1 },
+            requiredCapabilities: [],
+            optionalCapabilities: [],
+          },
+        }),
+      /protocol range/u,
+    );
     assert.deepEqual(
       manifest.assets.map((asset) =>
         asset.path.slice(`/remote-app/${manifest.bundleId}/`.length),

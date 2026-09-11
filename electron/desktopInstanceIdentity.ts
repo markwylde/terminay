@@ -76,20 +76,27 @@ export function desktopLocalServerUiPartitionKey(
  * new services opt into the exact user-data-root boundary rather than recreate
  * a name-derived authority. */
 export function desktopEmbeddedStorePaths(identity: DesktopInstanceIdentity): {
-	readonly projectEnvironments: string;
 	readonly recordingLibrary: string;
 	readonly recordings: string;
-	readonly uiBundles: string;
+	/** Retired per-server verified bundle cache. Desktop runs its packaged
+	 * bundle for every connection; this path exists only so startup can delete
+	 * a cache left by an older version. */
+	readonly retiredUiBundleCache: string;
 	readonly workspace: string;
 } {
 	assertDesktopInstanceId(identity.id);
 	const root = path.resolve(identity.dataRoot);
 	return Object.freeze({
-		projectEnvironments: path.join(root, 'project-environments.v1.json'),
 		recordingLibrary: path.join(root, 'server-recording-roots.v1.json'),
 		recordings: path.join(root, 'server-recordings'),
-		uiBundles: path.join(root, 'ui-bundles'),
-		workspace: path.join(root, 'workspace.v3.json'),
+		retiredUiBundleCache: path.join(root, 'ui-bundles'),
+		// The workspace record carries its own schema version, and a record the
+		// current server cannot read is preserved rather than rewritten. Naming
+		// the file for its generation keeps that preservation out of the startup
+		// path: an older generation is simply a different file, so a data root
+		// written by an earlier Terminay opens on a fresh workspace instead of
+		// refusing to start, and the earlier file stays on disk untouched.
+		workspace: path.join(root, 'workspace.v4.json'),
 	});
 }
 
@@ -113,16 +120,6 @@ export function migrateLegacyEmbeddedWorkspaceServerId(
 			serverId,
 		),
 	};
-}
-
-export function migrateLegacyEmbeddedProjectEnvironmentServerId(
-	input: unknown,
-	serverId: string,
-): unknown {
-	assertDesktopInstanceId(serverId);
-	if (!record(input) || input.serverId !== LEGACY_EMBEDDED_SERVER_ID)
-		return input;
-	return { ...input, serverId };
 }
 
 export function migrateLegacyEmbeddedRecordingServerId<

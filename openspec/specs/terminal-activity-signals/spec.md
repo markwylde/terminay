@@ -20,21 +20,6 @@ Agent status SHALL describe the lifecycle of a recognized AI agent, with a proce
 - **WHEN** a shell or build tool runs in a terminal with no journal-backed agent entry
 - **THEN** terminal activity describes it from structured signals and raw output
 
-### Requirement: Environment-scoped signal sources
-
-PTY-byte signals SHALL work at the server-owned terminal stream boundary for Local, SSH, and Puzed-backed sessions. Native foreground-process and journal signals SHALL be used only when the exact project environment advertises and proves those capabilities. The Terminay Server's local SSH client process SHALL never be treated as the remote terminal's foreground process.
-
-#### Scenario: SSH-backed session
-
-- **WHEN** a session runs through an SSH-backed environment
-- **THEN** PTY-byte signals are parsed at the server-owned stream boundary
-- **AND** the local SSH client process is not reported as that terminal's foreground process
-
-#### Scenario: Environment without proven native capability
-
-- **WHEN** an environment does not advertise and prove native foreground-process or journal capability
-- **THEN** those signals are not used for that session
-
 ### Requirement: Authority and fallback order
 
 For a terminal session Terminay SHALL use the first available source in order: process-bound provider journals for a recognized Codex session, which produce canonical agent events and are the sole source of that agent's operational state; structured terminal signals (`OSC 9;4` progress, `OSC 133`/`633` shell command markers, notifications, `BEL`, and foreground-process changes) when no journal-backed agent entry exists; and recent raw output only when neither an authoritative agent entry nor a claimed structured-signal interpreter is available.
@@ -194,15 +179,6 @@ The canonical activity snapshot SHALL expose a `foregroundBusy` boolean that is 
 
 - **WHEN** a client evaluates destructive close protection
 - **THEN** it uses `foregroundBusy` and does not infer it from terminal output
-
-### Requirement: Foreground observation availability
-
-The activity snapshot SHALL identify foreground observation as `available` or `limited`. `limited` SHALL mean the exact environment cannot provide a current safe foreground answer and SHALL NOT mean that the terminal is idle.
-
-#### Scenario: Environment cannot answer
-
-- **WHEN** the exact environment cannot provide a current safe foreground answer
-- **THEN** the snapshot reports `limited` and this is not treated as idle
 
 ### Requirement: Session-owned bounded foreground observation
 
@@ -503,3 +479,26 @@ Terminay SHALL NOT infer canonical agent states from raw text, terminal titles, 
 
 - **WHEN** `OSC 9;4;1;50` is received
 - **THEN** fallback activity is working and no progress percentage is rendered
+
+### Requirement: Signal sources for every session
+
+PTY-byte signals SHALL work at the server-owned terminal stream boundary for every session. Native foreground-process and journal signals SHALL be available for every session, because every session runs on the server that owns its project.
+
+#### Scenario: Terminal session signals
+
+- **WHEN** a session runs in a project
+- **THEN** PTY-byte signals are parsed at the server-owned stream boundary
+
+#### Scenario: Native signals
+
+- **WHEN** foreground-process or journal evidence is needed for a session
+- **THEN** the server's native foreground-process and journal signals are available for it
+
+### Requirement: Foreground observation availability states
+
+The activity snapshot SHALL identify foreground observation as `available` or `limited`. `limited` SHALL mean the session's observation cannot provide a current safe foreground answer and SHALL NOT mean that the terminal is idle.
+
+#### Scenario: Observation cannot answer
+
+- **WHEN** a session's observation cannot provide a current safe foreground answer
+- **THEN** the snapshot reports `limited` and this is not treated as idle

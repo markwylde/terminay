@@ -6,7 +6,10 @@ import {
 	TerminayClientFacade,
 	TerminayTerminalPanelClient,
 } from '@terminay/client-core';
-import type { TerminayHostContext } from '@terminay/protocol';
+import {
+	FEATURE_CAPABILITIES,
+	type TerminayHostContext,
+} from '@terminay/protocol';
 import type { AppCommand } from '../types/terminay';
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -22,7 +25,6 @@ import {
 	createServerTerminalSettingsClient,
 	TerminalSettingsClientProvider,
 } from '../hooks/useTerminalSettings';
-import { ProjectEnvironmentsWindow } from '../projectEnvironments/ProjectEnvironmentSurfaces';
 import type { RemoteAccessStatusClient } from '../services/remoteAccessStatusClient';
 import { createServerRemoteAccessClients } from '../services/serverApplicationFeatureClients';
 import {
@@ -31,6 +33,10 @@ import {
 	createAuxiliaryRouteController,
 } from '../shared/auxiliaryRoutes';
 import { ConnectedRendererWorkspace } from '../shared/ConnectedRendererWorkspace';
+import {
+	ServerSelector,
+	useSelectedServerConnection,
+} from '../shared/ServerSelector';
 import {
 	ResponsiveWorkspaceEntry,
 	sharedRouteForView,
@@ -82,24 +88,6 @@ function initialAuxiliaryRoute(): AuxiliaryRouteRequest | null {
 			return { kind: 'remote-control' };
 		case 'performance-log':
 			return { kind: 'performance-log' };
-		case 'project-environments': {
-			const providerId = params.get('provider');
-			const mode = params.get('mode');
-			const profileId = params.get('profile');
-			return {
-				kind: 'project-environments',
-				...(providerId !== null &&
-				(mode === 'profile' || mode === 'environment')
-					? {
-							intent: {
-								providerId,
-								mode,
-								...(profileId === null ? {} : { profileId }),
-							},
-						}
-					: {}),
-			};
-		}
 		default:
 			return null;
 	}
@@ -118,15 +106,6 @@ function nativeAuxiliaryRoute(request: AuxiliaryRouteRequest): string | null {
 		case 'remote-control':
 		case 'performance-log':
 			params.set('auxiliary', request.kind);
-			break;
-		case 'project-environments':
-			params.set('auxiliary', 'project-environments');
-			if (request.intent !== undefined) {
-				params.set('provider', request.intent.providerId);
-				params.set('mode', request.intent.mode);
-				if (request.intent.profileId !== undefined)
-					params.set('profile', request.intent.profileId);
-			}
 			break;
 		case 'edit-tab':
 			return null;
@@ -197,7 +176,24 @@ export function ConnectedWebRendererWorkspace({
 		resolve: (result: SharedEditTabResult | null) => void;
 	} | null>(null);
 	const auxiliaryFocusReturnRef = useRef<HTMLElement | null>(null);
-	const applicationClient = terminalClientContext.applicationClient;
+	// Settings, Macros, Recordings, Shell profiles, and Extensions each belong
+	// to one server. They select a connection — defaulting to the active tab's
+	// — and show only that server's state; they never merge two servers' rows.
+	const selectedServer = useSelectedServerConnection();
+	const serverSelector =
+		selectedServer.showsSelector ? (
+			<ServerSelector
+				label="Server"
+				connections={selectedServer.connections}
+				onSelect={selectedServer.select}
+				{...(selectedServer.connection?.serverId === undefined
+					? {}
+					: { selectedServerId: selectedServer.connection.serverId })}
+			/>
+		) : null;
+	const applicationClient =
+		selectedServer.connection?.context?.applicationClient ??
+		terminalClientContext.applicationClient;
 	const macroSettingsClient = useMemo(() => {
 		if (applicationClient === undefined) {
 			throw new Error(
@@ -387,17 +383,11 @@ export function ConnectedWebRendererWorkspace({
 				onCancel={cancelAuxiliaryRoute}
 				onSubmit={submitEditTabRoute}
 			/>
-		) : route.kind === 'project-environments' ? (
-			<ProjectEnvironmentsWindow
-				applicationClient={terminalClientContext.applicationClient}
-				initialIntent={route.intent}
-				serverName={
-					terminalClientContext.connectionLabel ??
-					terminalClientContext.serverId
-				}
-			/>
 		) : (
 			<TerminalSettingsClientProvider client={serverSettingsClient}>
+				{route.kind === 'performance-log' || route.kind === 'remote-control'
+					? null
+					: serverSelector}
 				{route.kind === 'settings' ? (
 					<SettingsWindow
 						applicationClient={applicationClient}
@@ -410,6 +400,7 @@ export function ConnectedWebRendererWorkspace({
 						settingsClient={serverSettingsClient}
 						shellProfilesClient={shellProfilesClient}
 						serverIdentity={
+							selectedServer.connection?.label ??
 							terminalClientContext.connectionLabel ??
 							terminalClientContext.serverId
 						}
@@ -440,7 +431,9 @@ export function ConnectedWebRendererWorkspace({
 				return (
 					<SharedGitRouteBody
 						capabilityAvailable={
-							terminalClientContext.serverCapabilities?.includes('git') === true
+							terminalClientContext.serverCapabilities?.includes(
+								FEATURE_CAPABILITIES.git,
+							) === true
 						}
 						gitClient={terminalClientContext.gitClient}
 						projectId={sharedProjectId}
@@ -629,14 +622,6 @@ function ConnectedBrowserMenuBar({
 					label: 'Remote Control',
 					startsGroup: true,
 					onSelect: () => onOpenAuxiliaryRoute('remote-control'),
-				},
-				{
-					id: 'project-environments',
-					label: 'Project Environments…',
-					onSelect: () =>
-						window.dispatchEvent(
-							new Event('terminay-open-project-environments'),
-						),
 				},
 				{
 					id: 'extensions',
@@ -945,8 +930,6 @@ function getAuxiliaryRouteTitle(route: AuxiliaryRouteRequest): string {
 			return 'Macros';
 		case 'recordings':
 			return 'Recordings';
-		case 'project-environments':
-			return 'Project Environments';
 		case 'remote-control':
 			return 'Remote Control';
 		case 'performance-log':

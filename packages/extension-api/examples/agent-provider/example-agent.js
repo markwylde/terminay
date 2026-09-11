@@ -1,7 +1,5 @@
 import { defineAgentProvider, jsonlSession } from "@terminay/extension-api";
 
-const REQUIRED_CAPABILITIES = ["filesystem-observation", "agent-journal"];
-
 export const exampleAgentProvider = defineAgentProvider({
   mappingVersion: "0.1",
 
@@ -10,12 +8,6 @@ export const exampleAgentProvider = defineAgentProvider({
   },
 
   async observe(terminal) {
-    for (const capability of REQUIRED_CAPABILITIES) {
-      if (!terminal.capabilities.has(capability)) {
-        return { state: "unavailable", reason: "environment-capability-missing" };
-      }
-    }
-
     // terminal.tty is an optional host fact, never a path or file capability.
     const ttyDeviceId = terminal.tty?.deviceId;
     const journal = await terminal.observation.files.resolveHomeRelative(

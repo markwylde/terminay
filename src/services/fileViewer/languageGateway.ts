@@ -1,0 +1,268 @@
+import { LanguageClient, type LanguageTransport } from '@terminay/client-core'
+import type {
+  LanguageCapabilitiesDto,
+  LanguageCompletionResultDto,
+  LanguageDefinitionResultDto,
+  LanguageDiagnosticsEventDto,
+  LanguageHoverResultDto,
+  LanguagePosition,
+} from '@terminay/protocol'
+
+/**
+ * Client-side projection of the server's language intelligence. This module is
+ * the only client code that names the `language.*` operations: the editor sees
+ * bounded DTOs and never the Language Server Protocol.
+ *
+ * Every document carries a client-owned revision. Requests are debounced per
+ * document and kind, a newer request aborts the in-flight older one of the same
+ * kind, and a result computed against a stale revision is dropped rather than
+ * applied. Failures resolve to `null` so the editor degrades to highlighting
+ * with no error surfaced.
+ */
+
+export const LANGUAGE_COMPLETION_DEBOUNCE_MS = 80
+export const LANGUAGE_HOVER_DEBOUNCE_MS = 150
+export const LANGUAGE_DEFINITION_DEBOUNCE_MS = 0
+export const LANGUAGE_COMPLETION_DEADLINE_MS = 1500
+export const LANGUAGE_HOVER_DEADLINE_MS = 1500
+export const LANGUAGE_DEFINITION_DEADLINE_MS = 3000
+
+export type LanguageRequestKind = 'completion' | 'hover' | 'definition'
+
+export type LanguageGatewayTimings = Readonly<{
+  debounceMs: Readonly<Record<LanguageRequestKind, number>>
+  deadlineMs: Readonly<Record<LanguageRequestKind, number>>
+}>
+
+export const DEFAULT_LANGUAGE_GATEWAY_TIMINGS: LanguageGatewayTimings = Object.freeze({
+  debounceMs: Object.freeze({
+    completion: LANGUAGE_COMPLETION_DEBOUNCE_MS,
+    definition: LANGUAGE_DEFINITION_DEBOUNCE_MS,
+    hover: LANGUAGE_HOVER_DEBOUNCE_MS,
+  }),
+  deadlineMs: Object.freeze({
+    completion: LANGUAGE_COMPLETION_DEADLINE_MS,
+    definition: LANGUAGE_DEFINITION_DEADLINE_MS,
+    hover: LANGUAGE_HOVER_DEADLINE_MS,
+  }),
+})
+
+export type LanguageDocumentTarget = Readonly<{ projectId: string; path: string }>
+
+export interface LanguageGateway {
+  /** Reports whether a contributed language server serves this file. */
+  capabilities(projectId: string, path: string): Promise<LanguageCapabilitiesDto | null>
+  /** Opens the document at a fresh revision. Resolves false when the server
+   * declined it; the caller stays a highlighting-only editor. */
+  open(projectId: string, path: string, languageId: string, text: string): Promise<boolean>
+  change(projectId: string, path: string, text: string): Promise<void>
+  close(projectId: string, path: string): Promise<void>
+  /** The revision the next request will be made against. */
+  revision(projectId: string, path: string): number
+  completion(projectId: string, path: string, position: LanguagePosition): Promise<LanguageCompletionResultDto | null>
+  hover(projectId: string, path: string, position: LanguagePosition): Promise<LanguageHoverResultDto | null>
+  definition(projectId: string, path: string, position: LanguagePosition): Promise<LanguageDefinitionResultDto | null>
+  /** Diagnostics for one file of one project. The gateway keeps a single
+   * connection-wide subscription and filters events for each listener. */
+  subscribeDiagnostics(
+    target: LanguageDocumentTarget,
+    listener: (event: LanguageDiagnosticsEventDto) => void,
+  ): () => void
+  dispose(): void
+}
+
+type PendingRequest = Readonly<{ cancel: () => void }>
+
+type DocumentState = {
+  revision: number
+  isOpen: boolean
+  pending: Map<LanguageRequestKind, PendingRequest>
+}
+
+type DiagnosticsRegistration = Readonly<{
+  projectId: string
+  path: string
+  listener: (event: LanguageDiagnosticsEventDto) => void
+}>
+
+function documentKey(projectId: string, path: string): string {
+  return `${projectId}\u0000${path}`
+}
+
+export function createLanguageGateway(options: Readonly<{
+  transport: LanguageTransport
+  timings?: LanguageGatewayTimings
+}>): LanguageGateway {
+  const client = new LanguageClient(options.transport)
+  const timings = options.timings ?? DEFAULT_LANGUAGE_GATEWAY_TIMINGS
+  const documents = new Map<string, DocumentState>()
+  const diagnosticsListeners = new Set<DiagnosticsRegistration>()
+  let diagnosticsStop: (() => void) | undefined
+  let diagnosticsSubscribing = false
+  let disposed = false
+
+  const documentState = (projectId: string, path: string): DocumentState => {
+    const key = documentKey(projectId, path)
+    const existing = documents.get(key)
+    if (existing !== undefined) return existing
+    const created: DocumentState = { isOpen: false, pending: new Map(), revision: 0 }
+    documents.set(key, created)
+    return created
+  }
+
+  const cancelPending = (state: DocumentState): void => {
+    for (const pending of [...state.pending.values()]) pending.cancel()
+    state.pending.clear()
+  }
+
+  const request = <T extends { readonly revision: number }>(
+    kind: LanguageRequestKind,
+    projectId: string,
+    path: string,
+    run: (revision: number, deadlineMs: number, signal: AbortSignal) => Promise<T>,
+  ): Promise<T | null> => {
+    if (disposed) return Promise.resolve(null)
+    const state = documentState(projectId, path)
+    // A newer request of the same kind supersedes the older one: its timer is
+    // cleared, its in-flight query is aborted, and its caller sees null.
+    state.pending.get(kind)?.cancel()
+    return new Promise<T | null>((resolve) => {
+      let settled = false
+      const controller = new AbortController()
+      const finish = (value: T | null): void => {
+        if (settled) return
+        settled = true
+        if (state.pending.get(kind) === entry) state.pending.delete(kind)
+        resolve(value)
+      }
+      const timer = setTimeout(() => {
+        const revision = state.revision
+        run(revision, timings.deadlineMs[kind], controller.signal)
+          .then((result) => finish(result.revision < state.revision ? null : result))
+          .catch(() => finish(null))
+      }, timings.debounceMs[kind])
+      const entry: PendingRequest = {
+        cancel: () => {
+          clearTimeout(timer)
+          if (!controller.signal.aborted) controller.abort(new Error('superseded language request'))
+          finish(null)
+        },
+      }
+      state.pending.set(kind, entry)
+    })
+  }
+
+  const dispatchDiagnostics = (event: LanguageDiagnosticsEventDto): void => {
+    for (const registration of [...diagnosticsListeners]) {
+      if (registration.projectId !== event.projectId || registration.path !== event.path) continue
+      registration.listener(event)
+    }
+  }
+
+  const ensureDiagnosticsSubscription = (): void => {
+    if (disposed || diagnosticsStop !== undefined || diagnosticsSubscribing) return
+    diagnosticsSubscribing = true
+    void client
+      .subscribeDiagnostics(dispatchDiagnostics)
+      .then((stop) => {
+        if (disposed || diagnosticsListeners.size === 0) {
+          stop()
+          return
+        }
+        diagnosticsStop = stop
+      })
+      // Diagnostics are an optional server feature; an absent event stream
+      // leaves the editor highlighting-only with no error surfaced.
+      .catch(() => undefined)
+      .finally(() => {
+        diagnosticsSubscribing = false
+      })
+  }
+
+  return {
+    async capabilities(projectId, path) {
+      if (disposed) return null
+      try {
+        return await client.capabilities({ path, projectId })
+      } catch {
+        return null
+      }
+    },
+    async change(projectId, path, text) {
+      const state = documentState(projectId, path)
+      if (disposed || !state.isOpen) return
+      state.revision += 1
+      try {
+        await client.changeDocument({ path, projectId, revision: state.revision, text })
+      } catch {
+        // A refused change means the session is gone. Stop pushing text so the
+        // editor never retries an unavailable session in a tight loop.
+        state.isOpen = false
+      }
+    },
+    async close(projectId, path) {
+      const key = documentKey(projectId, path)
+      const state = documents.get(key)
+      if (state === undefined) return
+      documents.delete(key)
+      cancelPending(state)
+      if (!state.isOpen) return
+      state.isOpen = false
+      try {
+        await client.closeDocument({ path, projectId, revision: state.revision })
+      } catch {
+        // Closing is best effort; the session reaps the document when idle.
+      }
+    },
+    completion(projectId, path, position) {
+      return request<LanguageCompletionResultDto>('completion', projectId, path, (revision, deadlineMs, signal) =>
+        client.completion({ path, position, projectId, revision }, { deadlineMs, signal }),
+      )
+    },
+    definition(projectId, path, position) {
+      return request<LanguageDefinitionResultDto>('definition', projectId, path, (revision, deadlineMs, signal) =>
+        client.definition({ path, position, projectId, revision }, { deadlineMs, signal }),
+      )
+    },
+    dispose() {
+      disposed = true
+      for (const state of documents.values()) cancelPending(state)
+      documents.clear()
+      diagnosticsListeners.clear()
+      diagnosticsStop?.()
+      diagnosticsStop = undefined
+    },
+    hover(projectId, path, position) {
+      return request<LanguageHoverResultDto>('hover', projectId, path, (revision, deadlineMs, signal) =>
+        client.hover({ path, position, projectId, revision }, { deadlineMs, signal }),
+      )
+    },
+    async open(projectId, path, languageId, text) {
+      if (disposed) return false
+      const state = documentState(projectId, path)
+      state.revision += 1
+      try {
+        await client.openDocument({ languageId, path, projectId, revision: state.revision, text })
+        state.isOpen = true
+        return true
+      } catch {
+        state.isOpen = false
+        return false
+      }
+    },
+    revision(projectId, path) {
+      return documentState(projectId, path).revision
+    },
+    subscribeDiagnostics(target, listener) {
+      const registration: DiagnosticsRegistration = { listener, path: target.path, projectId: target.projectId }
+      diagnosticsListeners.add(registration)
+      ensureDiagnosticsSubscription()
+      return () => {
+        diagnosticsListeners.delete(registration)
+        if (diagnosticsListeners.size > 0) return
+        diagnosticsStop?.()
+        diagnosticsStop = undefined
+      }
+    },
+  }
+}

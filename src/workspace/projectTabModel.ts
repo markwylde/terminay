@@ -2,37 +2,25 @@ import { defaultTerminalSettings } from '../terminalSettings.ts';
 import type { SidebarGroupId, SidebarPanelId, SidebarSettings } from '../types/settings';
 
 const PROJECT_TAB_COLOR_PALETTE_SIZE = 20;
-const BUSY_ENVIRONMENT_STATUSES = new Set([
-	'connecting',
-	'reconnecting',
-	'provisioning',
-	'starting',
-]);
-
 export function projectTabIsBusy(
-	project: Pick<
-		ProjectTab,
-		'creationStatus' | 'environmentStatus' | 'hydrating'
-	>,
+	project: Pick<ProjectTab, 'creationStatus' | 'hydrating'>,
 ): boolean {
-	if (project.creationStatus === 'loading' || project.hydrating === true)
-		return true;
-	return (
-		project.environmentStatus !== undefined &&
-		BUSY_ENVIRONMENT_STATUSES.has(project.environmentStatus)
-	);
+	return project.creationStatus === 'loading' || project.hydrating === true;
 }
 
 export type ProjectTab = {
 	creationError?: string;
 	creationStatus?: 'loading' | 'failed';
 	hydrating?: boolean;
-	projectEnvironmentId?: string;
-	environmentRevision?: number;
-	environmentLabel?: string;
-	environmentStatus?: string;
 	defaultShellProfileId?: string;
 	id: string;
+	/** The server that owns this project. Project ids are per-server
+	 * namespaces, so `id` alone does not identify a tab in a window whose strip
+	 * holds tabs from several servers. */
+	serverId: string;
+	/** How that server is named in the strip. Shown only when the window has
+	 * more than one server attached. */
+	serverLabel?: string;
 	title: string;
 	color: string;
 	emoji: string;
@@ -310,11 +298,10 @@ export function createProjectTab(
 ): ProjectTab {
 	const id = `project-${index}`;
 	return {
-		projectEnvironmentId: 'terminay:this-server',
-		environmentRevision: 1,
-		environmentLabel: 'This server',
-		environmentStatus: 'ready',
 		id,
+		// The color scope is the connection's server identity: one namespace for
+		// ids, colors, and device-local sidebar state alike.
+		serverId: colorScope,
 		title: `Project ${index}`,
 		color: getProjectTabColor(`${colorScope}:${id}`, usedColors, randomSource),
 		emoji: '',

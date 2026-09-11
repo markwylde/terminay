@@ -64,7 +64,6 @@ interface PerformanceSnapshot {
 }
 
 const UNAVAILABLE_REASONS: Readonly<Record<string, string>> = {
-	'remote-environment': 'Runs on a remote environment',
 	'not-running': 'Not running',
 	unreadable: 'Could not be read',
 };

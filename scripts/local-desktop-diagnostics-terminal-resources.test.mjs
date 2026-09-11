@@ -110,14 +110,14 @@ test('disk is reported as a rate between samples', async () => {
 	assert.equal(second.sessions.s1.diskReadBytesPerSecond, 2_000);
 });
 
-test('a running session with no local pid is a remote environment', async () => {
+test('a running session with no readable pid reports an unavailable outcome', async () => {
 	const sampler = new TerminalResourceSampler({ reader: createReader() });
 	const snapshot = await sampler.sample([
-		{ sessionId: 'ssh', status: 'running' },
+		{ sessionId: 'no-pid', status: 'running' },
 	]);
-	assert.deepEqual(snapshot.sessions.ssh, {
+	assert.deepEqual(snapshot.sessions['no-pid'], {
 		available: false,
-		reason: 'remote-environment',
+		reason: 'unreadable',
 	});
 });
 
@@ -238,8 +238,7 @@ test('the sampler never reads a title, command line, cwd, or environment', async
 	}
 	// The macOS reader requests exactly the four permitted columns.
 	assert.ok(source.includes("'-Ao', 'pid=,ppid=,pcpu=,rss='"));
-	// No project-environment adapter is consulted.
-	assert.ok(!source.includes('projectEnvironment'));
+	// No routing adapter is consulted; the server reads its own host.
 	assert.ok(!source.includes('adapter'));
 });
 

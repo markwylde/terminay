@@ -19,8 +19,6 @@ const project = {
 	color: '#123456',
 	icon: '🚀',
 	viewId: 'view:one',
-	projectEnvironmentId: 'terminay:this-server',
-	environmentRevision: 1,
 	panelIds: [],
 	defaultShellProfileId: 'profile:zsh',
 };

@@ -2,9 +2,10 @@ import {
 	ENVIRONMENT_VARIABLE_NAME_PATTERN,
 	EXTENSION_ID_PATTERN,
 	EXTENSION_LIMITS,
+	FILE_EXTENSION_PATTERN,
 	isNamespacedId,
+	LANGUAGE_ID_PATTERN,
 	LOCAL_ID_PATTERN,
-	PROVIDER_DEPENDENCY_OPERATION_PATTERN,
 	PROVIDER_VAULT_BINDING_REF_PATTERN,
 	PROVIDER_VAULT_KEY_PATTERN,
 } from './constants.js';
@@ -26,33 +27,15 @@ import type {
 	AgentRelativeToEnvironmentRequest,
 	AgentSessionBindingRequest,
 	AgentTerminalTtyFact,
-	DeclarativeForm,
-	EnvironmentActionResult,
 	ExtensionPermission,
-	FormField,
-	JsonValue,
-	OptionSourceResult,
-	ProgressPresentation,
-	ProjectEnvironmentContribution,
-	ProviderDefinition,
-	ProviderDependencyCallContext,
-	ProviderDependencyCaller,
-	ProviderDependencyHandler,
-	ProviderDependencyOperation,
-	ProviderDependencyRequest,
-	ProviderDependencyTargetContext,
-	ProviderDependencyTargetRequest,
-	ProviderEnvironmentStatus,
+	LanguageServerContribution,
+	LanguageServerLaunch,
 	ProviderVaultPutRequest,
 	ProviderVaultPutResult,
 	ProviderVaultRemoveRequest,
 	ProviderVaultRemoveResult,
 	ProviderVaultWithSecretRequest,
-	ProvisioningResult,
-	SshAgentIdentity,
-	SshAgentSignature,
 	TerminayExtensionManifest,
-	ValidationIssue,
 } from './types.js';
 
 export interface SchemaIssue {
@@ -73,21 +56,7 @@ const permissions = new Set<ExtensionPermission>([
 	'cache:write',
 	'network',
 	'secrets:resolve',
-	'provider:depend',
-	'external-resources:manage',
-	'ssh-agent:use',
 	'agent-observation',
-]);
-const capabilities = new Set([
-	'terminal',
-	'filesystem',
-	'filesystem-observation',
-	'git',
-	'process-observation',
-	'agent-journal',
-	'mcp-bridge',
-	'infrastructure',
-	'shell-discovery',
 ]);
 const manifestKeys = new Set([
 	'manifestVersion',
@@ -102,30 +71,6 @@ const manifestKeys = new Set([
 	'extensionDependencies',
 	'contributes',
 ]);
-const fieldKeys = new Set([
-	'id',
-	'type',
-	'label',
-	'description',
-	'required',
-	'disabledReason',
-	'visibleWhen',
-	'defaultValue',
-	'suggestionSource',
-	'suggestionLabel',
-	'placeholder',
-	'minLength',
-	'maxLength',
-	'pattern',
-	'minimum',
-	'maximum',
-	'step',
-	'options',
-	'optionSource',
-	'searchable',
-	'multiple',
-]);
-
 function record(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -295,24 +240,24 @@ export function validateExtensionManifest(
 	else {
 		closed(
 			value.contributes,
-			new Set(['projectEnvironments', 'agentProviders']),
+			new Set(['agentProviders', 'languageServers']),
 			'$.contributes',
 			out,
 		);
 		const extensionId = typeof value.id === 'string' ? value.id : '';
-		const projectEnvironments = value.contributes.projectEnvironments;
 		const agentProviders = value.contributes.agentProviders;
-		if (projectEnvironments === undefined && agentProviders === undefined) {
+		const languageServers = value.contributes.languageServers;
+		if (agentProviders === undefined && languageServers === undefined) {
 			out.push({
 				path: '$.contributes',
 				code: 'missing_contribution',
 				message: 'Declare at least one supported contribution',
 			});
 		}
-		if (projectEnvironments !== undefined)
-			validateContributions(projectEnvironments, extensionId, out);
 		if (agentProviders !== undefined)
 			validateAgentContributions(agentProviders, extensionId, out);
+		if (languageServers !== undefined)
+			validateLanguageServerContributions(languageServers, out);
 		if (
 			Array.isArray(agentProviders) &&
 			agentProviders.length > 0 &&
@@ -380,111 +325,6 @@ function validateDependencies(value: unknown, out: SchemaIssue[]): void {
 	unique(ids, '$.extensionDependencies', out);
 }
 
-function validateContributions(
-	value: unknown,
-	extensionId: string,
-	out: SchemaIssue[],
-): void {
-	if (
-		!Array.isArray(value) ||
-		value.length === 0 ||
-		value.length > EXTENSION_LIMITS.contributions
-	) {
-		out.push({
-			path: '$.contributes.projectEnvironments',
-			code: 'invalid_array',
-			message: 'Expected one or more bounded contributions',
-		});
-		return;
-	}
-	const ids: unknown[] = [];
-	value.forEach((item, index) => {
-		const path = `$.contributes.projectEnvironments[${index}]`;
-		if (!record(item)) {
-			out.push({ path, code: 'invalid_type', message: 'Expected an object' });
-			return;
-		}
-		closed(
-			item,
-			new Set([
-				'id',
-				'displayName',
-				'description',
-				'icon',
-				'capabilities',
-				'profileSave',
-				'dependencyOperations',
-			]),
-			path,
-			out,
-		);
-		if (
-			string(item.id, `${path}.id`, out, EXTENSION_LIMITS.providerIdLength) &&
-			!isNamespacedId(item.id, extensionId)
-		)
-			out.push({
-				path: `${path}.id`,
-				code: 'invalid_namespace',
-				message: 'Provider id must be namespaced by the extension id',
-			});
-		string(
-			item.displayName,
-			`${path}.displayName`,
-			out,
-			EXTENSION_LIMITS.displayNameLength,
-		);
-		if (!Array.isArray(item.capabilities) || item.capabilities.length === 0)
-			out.push({
-				path: `${path}.capabilities`,
-				code: 'invalid_array',
-				message: 'Expected capabilities',
-			});
-		else {
-			unique(item.capabilities, `${path}.capabilities`, out);
-			item.capabilities.forEach((capability, capabilityIndex) => {
-				if (!capabilities.has(String(capability)))
-					out.push({
-						path: `${path}.capabilities[${capabilityIndex}]`,
-						code: 'unknown_capability',
-						message: 'Unknown capability',
-					});
-			});
-		}
-		if (item.profileSave !== undefined)
-			validateProfileSaveContribution(
-				item.profileSave,
-				`${path}.profileSave`,
-				out,
-			);
-		if (item.dependencyOperations !== undefined)
-			validateProviderDependencyOperationsInto(
-				item.dependencyOperations,
-				`${path}.dependencyOperations`,
-				out,
-			);
-		ids.push(item.id);
-	});
-	unique(ids, '$.contributes.projectEnvironments', out);
-}
-
-function validateProfileSaveContribution(
-	value: unknown,
-	path: string,
-	out: SchemaIssue[],
-): void {
-	if (!record(value)) {
-		out.push({ path, code: 'invalid_type', message: 'Expected an object' });
-		return;
-	}
-	closed(value, new Set(['createEnvironment']), path, out);
-	if (value.createEnvironment !== true)
-		out.push({
-			path: `${path}.createEnvironment`,
-			code: 'explicit_opt_in_required',
-			message: 'Profile-save environment creation requires explicit true',
-		});
-}
-
 function validateAgentContributions(
 	value: unknown,
 	extensionId: string,
@@ -517,6 +357,211 @@ function validateAgentContributions(
 	unique(ids, '$.contributes.agentProviders', out);
 }
 
+function validateLanguageServerContributions(
+	value: unknown,
+	out: SchemaIssue[],
+): void {
+	if (
+		!Array.isArray(value) ||
+		value.length === 0 ||
+		value.length > EXTENSION_LIMITS.maxLanguageServers
+	) {
+		out.push({
+			path: '$.contributes.languageServers',
+			code: 'invalid_array',
+			message: 'Expected one or more bounded contributions',
+		});
+		return;
+	}
+	const ids: unknown[] = [];
+	value.forEach((item, index) => {
+		const result = validateLanguageServerContribution(item);
+		if (!result.ok)
+			out.push(
+				...result.issues.map((issue) => ({
+					...issue,
+					path: `$.contributes.languageServers[${index}]${issue.path.slice(1)}`,
+				})),
+			);
+		if (record(item)) ids.push(item.id);
+	});
+	unique(ids, '$.contributes.languageServers', out);
+}
+
+/** Validates a standalone language server manifest contribution. */
+export function validateLanguageServerContribution(
+	value: unknown,
+): ValidationResult<LanguageServerContribution> {
+	const out: SchemaIssue[] = [];
+	if (!record(value)) return invalidObject();
+	closed(
+		value,
+		new Set([
+			'id',
+			'displayName',
+			'description',
+			'languageIds',
+			'fileExtensions',
+			'runtimeNotes',
+		]),
+		'$',
+		out,
+	);
+	if (string(value.id, '$.id', out, 64) && !LOCAL_ID_PATTERN.test(value.id))
+		out.push({
+			path: '$.id',
+			code: 'invalid_id',
+			message: 'Language server id must be lower-case kebab-case',
+		});
+	string(
+		value.displayName,
+		'$.displayName',
+		out,
+		EXTENSION_LIMITS.displayNameLength,
+	);
+	if (value.description !== undefined)
+		string(
+			value.description,
+			'$.description',
+			out,
+			EXTENSION_LIMITS.descriptionLength,
+		);
+	if (value.runtimeNotes !== undefined)
+		string(
+			value.runtimeNotes,
+			'$.runtimeNotes',
+			out,
+			EXTENSION_LIMITS.descriptionLength,
+		);
+	validateBoundedStringList(
+		value.languageIds,
+		'$.languageIds',
+		EXTENSION_LIMITS.maxLanguageIds,
+		LANGUAGE_ID_PATTERN,
+		'invalid_language_id',
+		'Expected a language id such as typescript',
+		out,
+	);
+	validateBoundedStringList(
+		value.fileExtensions,
+		'$.fileExtensions',
+		EXTENSION_LIMITS.maxFileExtensions,
+		FILE_EXTENSION_PATTERN,
+		'invalid_file_extension',
+		'Expected a lower-case extension beginning with a dot and free of slashes and whitespace',
+		out,
+	);
+	return out.length === 0
+		? { ok: true, value: value as unknown as LanguageServerContribution }
+		: { ok: false, issues: out };
+}
+
+function validateBoundedStringList(
+	value: unknown,
+	path: string,
+	maximum: number,
+	pattern: RegExp,
+	code: string,
+	message: string,
+	out: SchemaIssue[],
+): void {
+	if (!Array.isArray(value) || value.length === 0 || value.length > maximum) {
+		out.push({
+			path,
+			code: 'invalid_array',
+			message: `Expected one to ${maximum} entries`,
+		});
+		return;
+	}
+	value.forEach((item, index) => {
+		if (typeof item !== 'string' || !pattern.test(item))
+			out.push({ path: `${path}[${index}]`, code, message });
+	});
+	unique(value, path, out);
+}
+
+/**
+ * Validates a launch an extension returned. The host applies this before it
+ * spawns anything: the launch is extension-authored data, never a command line
+ * the host trusts unbounded.
+ */
+export function validateLanguageServerLaunch(
+	value: unknown,
+): ValidationResult<LanguageServerLaunch> {
+	const out: SchemaIssue[] = [];
+	if (!record(value)) return invalidObject();
+	closed(
+		value,
+		new Set([
+			'command',
+			'args',
+			'env',
+			'initializationOptions',
+			'description',
+		]),
+		'$',
+		out,
+	);
+	if (
+		string(value.command, '$.command', out, EXTENSION_LIMITS.stringLength) &&
+		/[\r\n]/u.test(value.command)
+	)
+		out.push({
+			path: '$.command',
+			code: 'invalid_command',
+			message: 'Command must be a single-line executable path or name',
+		});
+	if (
+		!Array.isArray(value.args) ||
+		value.args.length > EXTENSION_LIMITS.maxLaunchArgs
+	)
+		out.push({
+			path: '$.args',
+			code: 'invalid_array',
+			message: `Expected at most ${EXTENSION_LIMITS.maxLaunchArgs} arguments`,
+		});
+	else
+		value.args.forEach((argument, index) => {
+			string(argument, `$.args[${index}]`, out);
+		});
+	if (value.env !== undefined) {
+		if (!record(value.env))
+			out.push({
+				path: '$.env',
+				code: 'invalid_type',
+				message: 'Expected an object',
+			});
+		else {
+			const entries = Object.entries(value.env);
+			if (entries.length > EXTENSION_LIMITS.maxLaunchEnvEntries)
+				out.push({
+					path: '$.env',
+					code: 'invalid_object',
+					message: `Expected at most ${EXTENSION_LIMITS.maxLaunchEnvEntries} environment entries`,
+				});
+			for (const [name, entry] of entries) {
+				if (!ENVIRONMENT_VARIABLE_NAME_PATTERN.test(name))
+					out.push({
+						path: `$.env.${name}`,
+						code: 'invalid_environment_variable_name',
+						message: 'Invalid environment variable name',
+					});
+				string(entry, `$.env.${name}`, out);
+			}
+		}
+	}
+	if (value.description !== undefined)
+		string(
+			value.description,
+			'$.description',
+			out,
+			EXTENSION_LIMITS.maxLaunchDescriptionLength,
+		);
+	return out.length === 0
+		? { ok: true, value: value as unknown as LanguageServerLaunch }
+		: { ok: false, issues: out };
+}
+
 /** Validates a standalone agent-provider manifest contribution. */
 export function validateAgentProviderContribution(
 	value: unknown,
@@ -535,7 +580,6 @@ export function validateAgentProviderContribution(
 			'processMatchers',
 			'mappings',
 			'requiredEnvironmentVariables',
-			'requiredEnvironmentCapabilities',
 		]),
 		'$',
 		out,
@@ -592,39 +636,6 @@ export function validateAgentProviderContribution(
 		out,
 		true,
 	);
-	if (
-		!Array.isArray(value.requiredEnvironmentCapabilities) ||
-		value.requiredEnvironmentCapabilities.length === 0 ||
-		value.requiredEnvironmentCapabilities.length >
-			EXTENSION_LIMITS.agentRequiredCapabilities
-	) {
-		out.push({
-			path: '$.requiredEnvironmentCapabilities',
-			code: 'invalid_array',
-			message: 'Expected bounded required environment capabilities',
-		});
-	} else {
-		unique(
-			value.requiredEnvironmentCapabilities,
-			'$.requiredEnvironmentCapabilities',
-			out,
-		);
-		value.requiredEnvironmentCapabilities.forEach((capability, index) => {
-			if (
-				![
-					'process-observation',
-					'filesystem-observation',
-					'agent-journal',
-				].includes(String(capability))
-			) {
-				out.push({
-					path: `$.requiredEnvironmentCapabilities[${index}]`,
-					code: 'invalid_capability',
-					message: 'Unsupported agent observation capability',
-				});
-			}
-		});
-	}
 	return out.length === 0
 		? { ok: true, value: value as unknown as AgentProviderContribution }
 		: { ok: false, issues: out };
@@ -1008,260 +1019,6 @@ function validateEnvironmentVariableName(
 	}
 }
 
-export function validateDeclarativeForm(
-	value: unknown,
-): ValidationResult<DeclarativeForm> {
-	const out: SchemaIssue[] = [];
-	if (!record(value))
-		return {
-			ok: false,
-			issues: [
-				{ path: '$', code: 'invalid_type', message: 'Expected an object' },
-			],
-		};
-	closed(
-		value,
-		new Set(['id', 'title', 'description', 'sections', 'submitLabel']),
-		'$',
-		out,
-	);
-	if (string(value.id, '$.id', out, 64) && !LOCAL_ID_PATTERN.test(value.id))
-		out.push({ path: '$.id', code: 'invalid_id', message: 'Invalid form id' });
-	string(value.title, '$.title', out, 128);
-	string(value.submitLabel, '$.submitLabel', out, 64);
-	if (
-		!Array.isArray(value.sections) ||
-		value.sections.length > EXTENSION_LIMITS.formSections
-	)
-		out.push({
-			path: '$.sections',
-			code: 'invalid_array',
-			message: 'Expected bounded sections',
-		});
-	else {
-		const allFields: unknown[] = [];
-		for (const [sectionIndex, section] of value.sections.entries()) {
-			const path = `$.sections[${sectionIndex}]`;
-			if (!record(section)) {
-				out.push({ path, code: 'invalid_type', message: 'Expected an object' });
-				continue;
-			}
-			closed(
-				section,
-				new Set(['id', 'title', 'description', 'disclosure', 'fields']),
-				path,
-				out,
-			);
-			string(section.id, `${path}.id`, out, 64);
-			string(section.title, `${path}.title`, out, 128);
-			if (!Array.isArray(section.fields)) {
-				out.push({
-					path: `${path}.fields`,
-					code: 'invalid_array',
-					message: 'Expected fields',
-				});
-				continue;
-			}
-			for (const [fieldIndex, field] of section.fields.entries()) {
-				validateField(field, `${path}.fields[${fieldIndex}]`, out);
-				if (record(field)) allFields.push(field.id);
-			}
-		}
-		if (allFields.length > EXTENSION_LIMITS.formFields)
-			out.push({
-				path: '$.sections',
-				code: 'limit_exceeded',
-				message: 'Too many fields',
-			});
-		unique(allFields, '$.sections[*].fields', out);
-	}
-	return out.length === 0
-		? { ok: true, value: value as unknown as DeclarativeForm }
-		: { ok: false, issues: out };
-}
-
-export function validateProviderDefinition(
-	value: unknown,
-): ValidationResult<ProviderDefinition> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	closed(
-		value,
-		new Set([
-			'providerId',
-			'displayName',
-			'description',
-			'icon',
-			'capabilities',
-			'profileForm',
-			'createForm',
-			'browseForm',
-		]),
-		'$',
-		out,
-	);
-	string(
-		value.providerId,
-		'$.providerId',
-		out,
-		EXTENSION_LIMITS.providerIdLength,
-	);
-	string(
-		value.displayName,
-		'$.displayName',
-		out,
-		EXTENSION_LIMITS.displayNameLength,
-	);
-	if (value.description !== undefined)
-		string(
-			value.description,
-			'$.description',
-			out,
-			EXTENSION_LIMITS.descriptionLength,
-		);
-	if (
-		!Array.isArray(value.capabilities) ||
-		value.capabilities.length === 0 ||
-		value.capabilities.some((item) => !capabilities.has(String(item)))
-	)
-		out.push({
-			path: '$.capabilities',
-			code: 'invalid_capabilities',
-			message: 'Expected supported capabilities',
-		});
-	for (const key of ['profileForm', 'createForm', 'browseForm'] as const)
-		if (value[key] !== undefined) {
-			const result = validateDeclarativeForm(value[key]);
-			if (!result.ok)
-				out.push(
-					...result.issues.map((issue) => ({
-						...issue,
-						path: `$.${key}${issue.path.slice(1)}`,
-					})),
-				);
-		}
-	return out.length === 0
-		? { ok: true, value: value as unknown as ProviderDefinition }
-		: { ok: false, issues: out };
-}
-
-/** Validates one manifest-declared, provider-owned dependency operation. */
-export function validateProviderDependencyOperation(
-	value: unknown,
-): ValidationResult<ProviderDependencyOperation> {
-	const out: SchemaIssue[] = [];
-	validateProviderDependencyOperationInto(value, '$', out);
-	return out.length === 0
-		? { ok: true, value: value as ProviderDependencyOperation }
-		: { ok: false, issues: out };
-}
-
-/** Validates a closed caller-side request before the host routes it. */
-export function validateProviderDependencyRequest(
-	value: unknown,
-): ValidationResult<ProviderDependencyRequest> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	closed(value, new Set(['providerId', 'operation', 'payload']), '$', out);
-	validateProviderDependencyProviderId(value.providerId, '$.providerId', out);
-	validateProviderDependencyOperationName(value.operation, '$.operation', out);
-	ensureProviderDependencyJson(
-		value.payload,
-		'$.payload',
-		EXTENSION_LIMITS.providerDependencyPayloadBytes,
-		out,
-	);
-	return out.length === 0
-		? { ok: true, value: value as unknown as ProviderDependencyRequest }
-		: { ok: false, issues: out };
-}
-
-/** Validates the host-authenticated caller identity delivered to a target. */
-export function validateProviderDependencyCaller(
-	value: unknown,
-): ValidationResult<ProviderDependencyCaller> {
-	const out: SchemaIssue[] = [];
-	validateProviderDependencyCallerInto(value, '$', out);
-	return out.length === 0
-		? { ok: true, value: value as ProviderDependencyCaller }
-		: { ok: false, issues: out };
-}
-
-/** Validates a closed target-side request. Caller identity is host-supplied. */
-export function validateProviderDependencyTargetRequest(
-	value: unknown,
-): ValidationResult<ProviderDependencyTargetRequest> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	closed(value, new Set(['operation', 'payload', 'caller']), '$', out);
-	validateProviderDependencyOperationName(value.operation, '$.operation', out);
-	ensureProviderDependencyJson(
-		value.payload,
-		'$.payload',
-		EXTENSION_LIMITS.providerDependencyPayloadBytes,
-		out,
-	);
-	validateProviderDependencyCallerInto(value.caller, '$.caller', out);
-	return out.length === 0
-		? { ok: true, value: value as unknown as ProviderDependencyTargetRequest }
-		: { ok: false, issues: out };
-}
-
-/** Validates host-propagated deadline, cancellation, and mutation context. */
-export function validateProviderDependencyCallContext(
-	value: unknown,
-): ValidationResult<ProviderDependencyCallContext> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	closed(
-		value,
-		new Set(['deadlineAt', 'signal', 'idempotencyKey', 'expectedRevision']),
-		'$',
-		out,
-	);
-	validateProviderDependencyTimingContextInto(value, out);
-	if (
-		!record(value.signal) ||
-		typeof value.signal.aborted !== 'boolean' ||
-		typeof value.signal.throwIfAborted !== 'function'
-	)
-		out.push({
-			path: '$.signal',
-			code: 'invalid_signal',
-			message: 'Expected a cancellation signal',
-		});
-	return out.length === 0
-		? { ok: true, value: value as unknown as ProviderDependencyCallContext }
-		: { ok: false, issues: out };
-}
-
-/**
- * Validates base timing/mutation fields and the runtime cancellation shape.
- * `vault` is an injected runtime capability, not DTO data, so a public
- * validator must never inspect or serialize it.
- */
-export function validateProviderDependencyTargetContext(
-	value: unknown,
-): ValidationResult<ProviderDependencyTargetContext> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	validateProviderDependencyTimingContextInto(value, out);
-	if (
-		!record(value.signal) ||
-		typeof value.signal.aborted !== 'boolean' ||
-		typeof value.signal.throwIfAborted !== 'function'
-	)
-		out.push({
-			path: '$.signal',
-			code: 'invalid_signal',
-			message: 'Expected a cancellation signal',
-		});
-	return out.length === 0
-		? { ok: true, value: value as unknown as ProviderDependencyTargetContext }
-		: { ok: false, issues: out };
-}
-
-/** Validates an atomic target-vault write DTO without exposing a secret value. */
 export function validateProviderVaultPutRequest(
 	value: unknown,
 ): ValidationResult<ProviderVaultPutRequest> {
@@ -1380,25 +1137,6 @@ export function validateProviderVaultRemoveResult(
 		: { ok: false, issues: out };
 }
 
-function validateProviderDependencyTimingContextInto(
-	value: Record<string, unknown>,
-	out: SchemaIssue[],
-): void {
-	if (
-		typeof value.deadlineAt !== 'string' ||
-		value.deadlineAt.length > 64 ||
-		Number.isNaN(Date.parse(value.deadlineAt))
-	)
-		out.push({
-			path: '$.deadlineAt',
-			code: 'invalid_deadline',
-			message: 'Expected an ISO-8601 deadline',
-		});
-	if (value.idempotencyKey !== undefined)
-		string(value.idempotencyKey, '$.idempotencyKey', out, 256);
-	validateExpectedRevision(value.expectedRevision, '$.expectedRevision', out);
-}
-
 function validateExpectedRevision(
 	value: unknown,
 	path: string,
@@ -1477,585 +1215,6 @@ function validateProviderVaultBindingInto(
 }
 
 /** Validates provider-owned JSON returned through the target dependency boundary. */
-export function validateProviderDependencyResult(
-	value: unknown,
-): ValidationResult<JsonValue> {
-	const out: SchemaIssue[] = [];
-	ensureProviderDependencyJson(
-		value,
-		'$',
-		EXTENSION_LIMITS.providerDependencyResultBytes,
-		out,
-	);
-	return out.length === 0
-		? { ok: true, value: value as JsonValue }
-		: { ok: false, issues: out };
-}
-
-/** Runtime shape validation for an activation-time dependency target handler. */
-export function validateProviderDependencyHandler(
-	value: unknown,
-): ValidationResult<ProviderDependencyHandler> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	closed(value, new Set(['call']), '$', out);
-	if (typeof value.call !== 'function')
-		out.push({
-			path: '$.call',
-			code: 'invalid_type',
-			message: 'Expected a dependency handler function',
-		});
-	return out.length === 0
-		? { ok: true, value: value as unknown as ProviderDependencyHandler }
-		: { ok: false, issues: out };
-}
-
-function validateProviderDependencyOperationsInto(
-	value: unknown,
-	path: string,
-	out: SchemaIssue[],
-): void {
-	if (
-		!Array.isArray(value) ||
-		value.length === 0 ||
-		value.length > EXTENSION_LIMITS.providerDependencyOperations
-	) {
-		out.push({
-			path,
-			code: 'invalid_array',
-			message: 'Expected one or more bounded dependency operations',
-		});
-		return;
-	}
-	const names: unknown[] = [];
-	value.forEach((operation, index) => {
-		validateProviderDependencyOperationInto(
-			operation,
-			`${path}[${index}]`,
-			out,
-		);
-		if (record(operation)) names.push(operation.name);
-	});
-	unique(names, path, out);
-}
-
-function validateProviderDependencyOperationInto(
-	value: unknown,
-	path: string,
-	out: SchemaIssue[],
-): void {
-	if (!record(value)) {
-		out.push({
-			path,
-			code: 'invalid_type',
-			message: 'Expected an operation object',
-		});
-		return;
-	}
-	closed(value, new Set(['name']), path, out);
-	validateProviderDependencyOperationName(value.name, `${path}.name`, out);
-}
-
-function validateProviderDependencyOperationName(
-	value: unknown,
-	path: string,
-	out: SchemaIssue[],
-): void {
-	if (
-		string(
-			value,
-			path,
-			out,
-			EXTENSION_LIMITS.providerDependencyOperationNameLength,
-		) &&
-		!PROVIDER_DEPENDENCY_OPERATION_PATTERN.test(value)
-	) {
-		out.push({
-			path,
-			code: 'invalid_operation',
-			message: 'Expected a bounded dot-separated provider operation name',
-		});
-	}
-}
-
-function validateProviderDependencyProviderId(
-	value: unknown,
-	path: string,
-	out: SchemaIssue[],
-): void {
-	if (!string(value, path, out, EXTENSION_LIMITS.providerIdLength)) return;
-	const separator = value.lastIndexOf('/');
-	if (
-		separator <= 0 ||
-		!EXTENSION_ID_PATTERN.test(value.slice(0, separator)) ||
-		!LOCAL_ID_PATTERN.test(value.slice(separator + 1))
-	) {
-		out.push({
-			path,
-			code: 'invalid_provider_id',
-			message: 'Expected an extension-namespaced provider id',
-		});
-	}
-}
-
-function validateProviderDependencyCallerInto(
-	value: unknown,
-	path: string,
-	out: SchemaIssue[],
-): void {
-	if (!record(value)) {
-		out.push({
-			path,
-			code: 'invalid_type',
-			message: 'Expected a caller identity',
-		});
-		return;
-	}
-	closed(value, new Set(['extensionId', 'providerId']), path, out);
-	if (
-		string(
-			value.extensionId,
-			`${path}.extensionId`,
-			out,
-			EXTENSION_LIMITS.extensionIdLength,
-		) &&
-		!EXTENSION_ID_PATTERN.test(value.extensionId)
-	) {
-		out.push({
-			path: `${path}.extensionId`,
-			code: 'invalid_extension_id',
-			message: 'Expected a valid extension id',
-		});
-	}
-	validateProviderDependencyProviderId(
-		value.providerId,
-		`${path}.providerId`,
-		out,
-	);
-	if (
-		typeof value.extensionId === 'string' &&
-		typeof value.providerId === 'string' &&
-		!value.providerId.startsWith(`${value.extensionId}/`)
-	) {
-		out.push({
-			path: `${path}.providerId`,
-			code: 'caller_provider_mismatch',
-			message: 'Caller provider must be owned by the caller extension',
-		});
-	}
-}
-
-function ensureProviderDependencyJson(
-	value: unknown,
-	path: string,
-	maximumBytes: number,
-	out: SchemaIssue[],
-): void {
-	const initialIssueCount = out.length;
-	ensureJson(value, path, out);
-	if (out.length !== initialIssueCount) return;
-	if (!hasOnlyJsonContainers(value)) {
-		out.push({
-			path,
-			code: 'invalid_json',
-			message: 'Expected plain JSON arrays and objects',
-		});
-		return;
-	}
-	let serialized: string;
-	try {
-		serialized = JSON.stringify(value);
-	} catch {
-		out.push({
-			path,
-			code: 'invalid_json',
-			message: 'Expected serializable JSON-safe data',
-		});
-		return;
-	}
-	if (
-		serialized === undefined ||
-		new TextEncoder().encode(serialized).byteLength > maximumBytes
-	) {
-		out.push({
-			path,
-			code: 'limit_exceeded',
-			message: `JSON data exceeds ${maximumBytes} bytes`,
-		});
-	}
-}
-
-function hasOnlyJsonContainers(
-	value: unknown,
-	seen = new WeakSet<object>(),
-): boolean {
-	if (value === null || typeof value !== 'object') return true;
-	if (seen.has(value)) return true;
-	seen.add(value);
-	if (Array.isArray(value))
-		return value.every((item) => hasOnlyJsonContainers(item, seen));
-	const prototype = Object.getPrototypeOf(value);
-	if (prototype !== Object.prototype && prototype !== null) return false;
-	return Object.values(value).every((item) =>
-		hasOnlyJsonContainers(item, seen),
-	);
-}
-
-export function validateOptionSourceResult(
-	value: unknown,
-): ValidationResult<OptionSourceResult> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	closed(value, new Set(['options', 'nextCursor']), '$', out);
-	if (
-		!Array.isArray(value.options) ||
-		value.options.length > EXTENSION_LIMITS.fieldOptions
-	)
-		out.push({
-			path: '$.options',
-			code: 'invalid_array',
-			message: 'Expected bounded options',
-		});
-	else
-		value.options.forEach((option, index) => {
-			validateOption(option, `$.options[${index}]`, out);
-		});
-	if (value.nextCursor !== undefined)
-		string(value.nextCursor, '$.nextCursor', out, 512);
-	return out.length === 0
-		? { ok: true, value: value as unknown as OptionSourceResult }
-		: { ok: false, issues: out };
-}
-
-export function validateValidationIssues(
-	value: unknown,
-): ValidationResult<ValidationIssue[]> {
-	const out: SchemaIssue[] = [];
-	if (!Array.isArray(value) || value.length > 128)
-		out.push({
-			path: '$',
-			code: 'invalid_array',
-			message: 'Expected bounded validation issues',
-		});
-	else
-		value.forEach((issue, index) => {
-			const path = `$[${index}]`;
-			if (!record(issue)) {
-				out.push({ path, code: 'invalid_type', message: 'Expected object' });
-				return;
-			}
-			closed(issue, new Set(['fieldId', 'code', 'message']), path, out);
-			if (issue.fieldId !== undefined)
-				string(issue.fieldId, `${path}.fieldId`, out, 64);
-			string(issue.code, `${path}.code`, out, 64);
-			string(issue.message, `${path}.message`, out, 1024);
-		});
-	return out.length === 0
-		? { ok: true, value: value as ValidationIssue[] }
-		: { ok: false, issues: out };
-}
-
-const sshSignatureAlgorithms = new Set([
-	'ssh-ed25519',
-	'rsa-sha2-256',
-	'rsa-sha2-512',
-	'ecdsa-sha2-nistp256',
-	'ecdsa-sha2-nistp384',
-	'ecdsa-sha2-nistp521',
-]);
-
-export function validateSshAgentIdentities(
-	value: unknown,
-): ValidationResult<SshAgentIdentity[]> {
-	const out: SchemaIssue[] = [];
-	if (
-		!Array.isArray(value) ||
-		value.length > EXTENSION_LIMITS.sshAgentIdentities
-	)
-		out.push({
-			path: '$',
-			code: 'invalid_array',
-			message: 'Expected bounded agent identities',
-		});
-	else
-		value.forEach((identity, index) => {
-			const path = `$[${index}]`;
-			if (!record(identity)) {
-				out.push({ path, code: 'invalid_type', message: 'Expected object' });
-				return;
-			}
-			closed(
-				identity,
-				new Set([
-					'identityId',
-					'algorithm',
-					'publicKey',
-					'fingerprint',
-					'comment',
-				]),
-				path,
-				out,
-			);
-			string(identity.identityId, `${path}.identityId`, out, 256);
-			string(identity.fingerprint, `${path}.fingerprint`, out, 256);
-			if (!sshSignatureAlgorithms.has(String(identity.algorithm)))
-				out.push({
-					path: `${path}.algorithm`,
-					code: 'invalid_algorithm',
-					message: 'Unsupported signing algorithm',
-				});
-			bytes(
-				identity.publicKey,
-				`${path}.publicKey`,
-				EXTENSION_LIMITS.sshAgentPublicKeyBytes,
-				out,
-			);
-			if (identity.comment !== undefined)
-				string(identity.comment, `${path}.comment`, out, 512);
-		});
-	return out.length === 0
-		? { ok: true, value: value as SshAgentIdentity[] }
-		: { ok: false, issues: out };
-}
-
-export function validateSshAgentSignature(
-	value: unknown,
-): ValidationResult<SshAgentSignature> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	closed(value, new Set(['algorithm', 'signature']), '$', out);
-	if (!sshSignatureAlgorithms.has(String(value.algorithm)))
-		out.push({
-			path: '$.algorithm',
-			code: 'invalid_algorithm',
-			message: 'Unsupported signing algorithm',
-		});
-	bytes(
-		value.signature,
-		'$.signature',
-		EXTENSION_LIMITS.sshAgentSignatureBytes,
-		out,
-	);
-	return out.length === 0
-		? { ok: true, value: value as unknown as SshAgentSignature }
-		: { ok: false, issues: out };
-}
-
-export function validateProgressPresentation(
-	value: unknown,
-): ValidationResult<ProgressPresentation> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	closed(
-		value,
-		new Set(['operationId', 'title', 'stages', 'resumable']),
-		'$',
-		out,
-	);
-	string(value.operationId, '$.operationId', out, 256);
-	string(value.title, '$.title', out, 128);
-	if (typeof value.resumable !== 'boolean')
-		out.push({
-			path: '$.resumable',
-			code: 'invalid_type',
-			message: 'Expected boolean',
-		});
-	if (
-		!Array.isArray(value.stages) ||
-		value.stages.length > EXTENSION_LIMITS.progressStages
-	)
-		out.push({
-			path: '$.stages',
-			code: 'invalid_array',
-			message: 'Expected bounded stages',
-		});
-	else
-		value.stages.forEach((stage, index) => {
-			const path = `$.stages[${index}]`;
-			if (!record(stage)) {
-				out.push({ path, code: 'invalid_type', message: 'Expected object' });
-				return;
-			}
-			closed(stage, new Set(['id', 'label', 'state', 'detail']), path, out);
-			string(stage.id, `${path}.id`, out, 64);
-			string(stage.label, `${path}.label`, out, 128);
-			if (
-				!['pending', 'active', 'complete', 'failed'].includes(
-					String(stage.state),
-				)
-			)
-				out.push({
-					path: `${path}.state`,
-					code: 'invalid_state',
-					message: 'Unknown progress state',
-				});
-			if (stage.detail !== undefined)
-				string(stage.detail, `${path}.detail`, out, 1024);
-		});
-	return out.length === 0
-		? { ok: true, value: value as unknown as ProgressPresentation }
-		: { ok: false, issues: out };
-}
-
-export function validateProviderEnvironmentStatus(
-	value: unknown,
-): ValidationResult<ProviderEnvironmentStatus> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	closed(
-		value,
-		new Set([
-			'state',
-			'message',
-			'defaultRoot',
-			'card',
-			'progress',
-			'revision',
-		]),
-		'$',
-		out,
-	);
-	if (
-		!['available', 'connecting', 'unavailable', 'failed', 'deleting'].includes(
-			String(value.state),
-		)
-	)
-		out.push({
-			path: '$.state',
-			code: 'invalid_state',
-			message: 'Unknown environment state',
-		});
-	if (!Number.isSafeInteger(value.revision) || Number(value.revision) < 0)
-		out.push({
-			path: '$.revision',
-			code: 'invalid_revision',
-			message: 'Expected a non-negative integer',
-		});
-	if (value.message !== undefined)
-		string(value.message, '$.message', out, 1024);
-	if (value.defaultRoot !== undefined)
-		string(value.defaultRoot, '$.defaultRoot', out, 4096);
-	if (value.card !== undefined)
-		validateStatusCardInto(value.card, '$.card', out);
-	if (value.progress !== undefined) {
-		const result = validateProgressPresentation(value.progress);
-		if (!result.ok)
-			out.push(
-				...result.issues.map((issue) => ({
-					...issue,
-					path: `$.progress${issue.path.slice(1)}`,
-				})),
-			);
-	}
-	return out.length === 0
-		? { ok: true, value: value as unknown as ProviderEnvironmentStatus }
-		: { ok: false, issues: out };
-}
-
-export function validateProvisioningResult(
-	value: unknown,
-): ValidationResult<ProvisioningResult> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	if (value.state === 'ready') {
-		closed(value, new Set(['state', 'providerState', 'status']), '$', out);
-		ensureJson(value.providerState, '$.providerState', out);
-		const status = validateProviderEnvironmentStatus(value.status);
-		if (!status.ok)
-			out.push(
-				...status.issues.map((issue) => ({
-					...issue,
-					path: `$.status${issue.path.slice(1)}`,
-				})),
-			);
-	} else if (value.state === 'pending') {
-		closed(
-			value,
-			new Set([
-				'state',
-				'operationId',
-				'providerState',
-				'progress',
-				'pollAfterMs',
-			]),
-			'$',
-			out,
-		);
-		string(value.operationId, '$.operationId', out, 256);
-		ensureJson(value.providerState, '$.providerState', out);
-		const progress = validateProgressPresentation(value.progress);
-		if (!progress.ok)
-			out.push(
-				...progress.issues.map((issue) => ({
-					...issue,
-					path: `$.progress${issue.path.slice(1)}`,
-				})),
-			);
-		if (
-			value.pollAfterMs !== undefined &&
-			(!Number.isSafeInteger(value.pollAfterMs) ||
-				Number(value.pollAfterMs) < 100 ||
-				Number(value.pollAfterMs) > EXTENSION_LIMITS.deadlineMs)
-		)
-			out.push({
-				path: '$.pollAfterMs',
-				code: 'invalid_poll_interval',
-				message: 'Poll interval is out of bounds',
-			});
-	} else
-		out.push({
-			path: '$.state',
-			code: 'invalid_state',
-			message: 'Unknown provisioning result state',
-		});
-	return out.length === 0
-		? { ok: true, value: value as unknown as ProvisioningResult }
-		: { ok: false, issues: out };
-}
-
-export function validateEnvironmentActionResult(
-	value: unknown,
-): ValidationResult<EnvironmentActionResult> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	ensureJson(value.providerState, '$.providerState', out);
-	if (value.state === 'complete') {
-		closed(value, new Set(['state', 'providerState', 'status']), '$', out);
-		const status = validateProviderEnvironmentStatus(value.status);
-		if (!status.ok)
-			out.push(
-				...status.issues.map((issue) => ({
-					...issue,
-					path: `$.status${issue.path.slice(1)}`,
-				})),
-			);
-	} else if (value.state === 'pending') {
-		closed(
-			value,
-			new Set(['state', 'operationId', 'providerState', 'progress']),
-			'$',
-			out,
-		);
-		string(value.operationId, '$.operationId', out, 256);
-		const progress = validateProgressPresentation(value.progress);
-		if (!progress.ok)
-			out.push(
-				...progress.issues.map((issue) => ({
-					...issue,
-					path: `$.progress${issue.path.slice(1)}`,
-				})),
-			);
-	} else
-		out.push({
-			path: '$.state',
-			code: 'invalid_state',
-			message: 'Unknown action result state',
-		});
-	return out.length === 0
-		? { ok: true, value: value as unknown as EnvironmentActionResult }
-		: { ok: false, issues: out };
-}
-
 function invalidObject<T>(): ValidationResult<T> {
 	return {
 		ok: false,
@@ -2063,143 +1222,6 @@ function invalidObject<T>(): ValidationResult<T> {
 			{ path: '$', code: 'invalid_type', message: 'Expected an object' },
 		],
 	};
-}
-function validateOption(
-	value: unknown,
-	path: string,
-	out: SchemaIssue[],
-): void {
-	if (!record(value)) {
-		out.push({ path, code: 'invalid_type', message: 'Expected object' });
-		return;
-	}
-	closed(
-		value,
-		new Set([
-			'value',
-			'label',
-			'description',
-			'disabledReason',
-			'icon',
-			'default',
-		]),
-		path,
-		out,
-	);
-	string(value.value, `${path}.value`, out, 1024);
-	string(value.label, `${path}.label`, out, 128);
-	if (value.description !== undefined)
-		string(value.description, `${path}.description`, out, 1024);
-	if (value.disabledReason !== undefined)
-		string(value.disabledReason, `${path}.disabledReason`, out, 1024);
-	if (value.default !== undefined && typeof value.default !== 'boolean')
-		out.push({
-			path: `${path}.default`,
-			code: 'invalid_type',
-			message: 'Expected a boolean',
-		});
-}
-function validateStatusCardInto(
-	value: unknown,
-	path: string,
-	out: SchemaIssue[],
-): void {
-	if (!record(value)) {
-		out.push({ path, code: 'invalid_type', message: 'Expected object' });
-		return;
-	}
-	closed(
-		value,
-		new Set([
-			'id',
-			'title',
-			'summary',
-			'icon',
-			'tone',
-			'facts',
-			'actions',
-			'httpsLink',
-		]),
-		path,
-		out,
-	);
-	string(value.id, `${path}.id`, out, 64);
-	string(value.title, `${path}.title`, out, 128);
-	string(value.summary, `${path}.summary`, out, 1024);
-	if (
-		value.actions !== undefined &&
-		(!Array.isArray(value.actions) ||
-			value.actions.length > EXTENSION_LIMITS.actions)
-	)
-		out.push({
-			path: `${path}.actions`,
-			code: 'invalid_array',
-			message: 'Expected bounded actions',
-		});
-	if (value.httpsLink !== undefined) {
-		if (
-			!record(value.httpsLink) ||
-			typeof value.httpsLink.url !== 'string' ||
-			!value.httpsLink.url.startsWith('https://')
-		)
-			out.push({
-				path: `${path}.httpsLink`,
-				code: 'unsafe_url',
-				message: 'Only credential-free HTTPS links are supported',
-			});
-		else if (/^[^/]*\/\/[^/]*@/.test(value.httpsLink.url))
-			out.push({
-				path: `${path}.httpsLink.url`,
-				code: 'credentialed_url',
-				message: 'URL credentials are forbidden',
-			});
-	}
-}
-function ensureJson(
-	value: unknown,
-	path: string,
-	out: SchemaIssue[],
-	depth = 0,
-): void {
-	if (depth > 24) {
-		out.push({
-			path,
-			code: 'json_depth',
-			message: 'JSON nesting limit exceeded',
-		});
-		return;
-	}
-	if (value === null || typeof value === 'string' || typeof value === 'boolean')
-		return;
-	if (typeof value === 'number') {
-		if (!Number.isFinite(value))
-			out.push({
-				path,
-				code: 'invalid_number',
-				message: 'Expected finite number',
-			});
-		return;
-	}
-	if (Array.isArray(value)) {
-		if (value.length > 1024)
-			out.push({ path, code: 'json_size', message: 'Array is too large' });
-		else
-			value.forEach((item, index) => {
-				ensureJson(item, `${path}[${index}]`, out, depth + 1);
-			});
-		return;
-	}
-	if (record(value)) {
-		const entries = Object.entries(value);
-		if (entries.length > 1024)
-			out.push({ path, code: 'json_size', message: 'Object is too large' });
-		else
-			entries.forEach(([key, item]) => {
-				ensureJson(item, `${path}.${key}`, out, depth + 1);
-			});
-		return;
-	}
-	out.push({ path, code: 'invalid_json', message: 'Expected JSON-safe data' });
 }
 function bytes(
 	value: unknown,
@@ -3128,86 +2150,6 @@ function validateOccurredAt(value: unknown, out: SchemaIssue[]): void {
 		});
 }
 
-function validateField(value: unknown, path: string, out: SchemaIssue[]): void {
-	if (!record(value)) {
-		out.push({ path, code: 'invalid_type', message: 'Expected an object' });
-		return;
-	}
-	closed(value, fieldKeys, path, out);
-	if (
-		string(value.id, `${path}.id`, out, 64) &&
-		!LOCAL_ID_PATTERN.test(value.id)
-	)
-		out.push({
-			path: `${path}.id`,
-			code: 'invalid_id',
-			message: 'Invalid field id',
-		});
-	string(value.label, `${path}.label`, out, 128);
-	const types = [
-		'text',
-		'url',
-		'secret',
-		'textarea',
-		'number',
-		'checkbox',
-		'switch',
-		'select',
-		'preset-cards',
-	];
-	if (!types.includes(String(value.type)))
-		out.push({
-			path: `${path}.type`,
-			code: 'unknown_field_type',
-			message: 'Unsupported field type',
-		});
-	if (
-		(value.type === 'select' || value.type === 'preset-cards') &&
-		value.options === undefined &&
-		value.optionSource === undefined
-	)
-		out.push({
-			path,
-			code: 'missing_options',
-			message: 'Select fields need options or an option source',
-		});
-	if (
-		value.options !== undefined &&
-		(!Array.isArray(value.options) ||
-			value.options.length > EXTENSION_LIMITS.fieldOptions)
-	)
-		out.push({
-			path: `${path}.options`,
-			code: 'invalid_array',
-			message: 'Expected bounded options',
-		});
-	if (value.visibleWhen !== undefined && !record(value.visibleWhen))
-		out.push({
-			path: `${path}.visibleWhen`,
-			code: 'invalid_type',
-			message: 'Expected visibility condition',
-		});
-	if (
-		value.defaultValue !== undefined &&
-		!['string', 'number', 'boolean'].includes(typeof value.defaultValue) &&
-		value.defaultValue !== null
-	)
-		out.push({
-			path: `${path}.defaultValue`,
-			code: 'invalid_type',
-			message: 'Expected a JSON primitive',
-		});
-	if (
-		value.suggestionSource !== undefined &&
-		!['text', 'url'].includes(String(value.type))
-	)
-		out.push({
-			path: `${path}.suggestionSource`,
-			code: 'invalid_field',
-			message: 'Suggestions are supported only by text and URL fields',
-		});
-}
-
 export function parseExtensionManifest(
 	value: unknown,
 ): TerminayExtensionManifest {
@@ -3272,5 +2214,3 @@ export function assertManifestMatchesPackage(
 			},
 		]);
 }
-
-export type { FormField, ProjectEnvironmentContribution };
