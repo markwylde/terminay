@@ -3,6 +3,7 @@ import {
   jsonlSession,
   safeAgentString,
   type AgentFileHandle,
+  type AgentProcessSnapshot,
   type AgentRecordContext,
   type AgentTerminalContext,
 } from "@terminay/extension-api";
@@ -161,7 +162,10 @@ async function isThisTerminalsSession(
   terminal: AgentTerminalContext,
   journal: AgentFileHandle,
 ): Promise<boolean> {
-  const startedAt = parseTime(terminal.foreground.startedAt);
+  const processes = await terminal.observation.processes.descendants({
+    signal: terminal.signal,
+  });
+  const startedAt = ompStartTime(terminal, processes);
   const stat = await terminal.observation.files.stat(journal, {
     signal: terminal.signal,
   });
@@ -176,7 +180,25 @@ async function isThisTerminalsSession(
   // resumed. A session that ended before this process started never is.
   const modifiedAt = parseTime(stat?.modifiedAt);
   if (modifiedAt !== undefined && modifiedAt >= since) return true;
-  return isHeldOpenByDescendant(terminal, journal);
+  return isHeldOpenByDescendant(terminal, journal, processes);
+}
+
+/**
+ * When the OMP process in this terminal started. The environment proves a start
+ * time per descendant rather than for the foreground sample, so take the oldest
+ * OMP process below this PTY: a session it wrote cannot predate it.
+ */
+function ompStartTime(
+  terminal: AgentTerminalContext,
+  processes: readonly AgentProcessSnapshot[],
+): number | undefined {
+  const times = [
+    ...processes
+      .filter((process) => isOmpForeground(process))
+      .map((process) => parseTime(process.startedAt)),
+    parseTime(terminal.foreground.startedAt),
+  ].filter((value): value is number => value !== undefined);
+  return times.length === 0 ? undefined : Math.min(...times);
 }
 
 function parseTime(value: string | undefined): number | undefined {
@@ -189,10 +211,8 @@ function parseTime(value: string | undefined): number | undefined {
 async function isHeldOpenByDescendant(
   terminal: AgentTerminalContext,
   journal: AgentFileHandle,
+  processes: readonly AgentProcessSnapshot[],
 ): Promise<boolean> {
-  const processes = await terminal.observation.processes.descendants({
-    signal: terminal.signal,
-  });
   const files = await terminal.observation.processes.openFiles(processes, {
     access: "writable",
     signal: terminal.signal,
