@@ -117,10 +117,9 @@ test("a breadcrumb left by an earlier session in the same PTY is refused", async
   assert.equal(fixture.bindingRequest, undefined);
 });
 
-test("an earlier journal this process is still writing is its resumed session", async () => {
+test("an earlier journal written since this process started is still live", async () => {
   const fixture = ompObservationFixture("resumed-session", "Resumed", {
     writer: false,
-    arguments: ["--continue"],
     createdAt: "2026-01-01T00:00:00.000Z",
     modifiedAt: "2026-01-01T00:05:02.000Z",
     startedAt: "2026-01-01T00:05:00.000Z",
@@ -130,9 +129,8 @@ test("an earlier journal this process is still writing is its resumed session", 
   assert.equal(result.binding.providerSessionId, "resumed-session");
 });
 
-test("an earlier journal held open by this PTY is its resumed session", async () => {
+test("an earlier journal held open by this PTY is still live", async () => {
   const fixture = ompObservationFixture("reopened-session", "Reopened", {
-    arguments: ["--continue"],
     createdAt: "2026-01-01T00:00:00.000Z",
     modifiedAt: "2026-01-01T00:00:10.000Z",
     startedAt: "2026-01-01T00:05:00.000Z",
@@ -140,6 +138,21 @@ test("an earlier journal held open by this PTY is its resumed session", async ()
   const result = await ompAgentProvider.observe(fixture.terminal);
   assert.equal(result.state, "bound");
   assert.equal(result.binding.providerSessionId, "reopened-session");
+});
+
+// `omp --continue` exists to reopen a session this process did not write, so
+// the journal predating it is the point rather than a sign of a stale crumb.
+test("a resume flag admits the earlier session the breadcrumb names", async () => {
+  const fixture = ompObservationFixture("continued-session", "Continued", {
+    writer: false,
+    arguments: ["--continue"],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    modifiedAt: "2026-01-01T00:00:10.000Z",
+    startedAt: "2026-01-01T00:05:00.000Z",
+  });
+  const result = await ompAgentProvider.observe(fixture.terminal);
+  assert.equal(result.state, "bound");
+  assert.equal(result.binding.providerSessionId, "continued-session");
 });
 
 test("a malformed breadcrumb and unrelated non-writer journal fail closed", async () => {
@@ -251,7 +264,7 @@ function ompObservationFixture(sessionId, title, options = {}) {
     async bindSession(request) { bindingRequest = request; return { providerSessionId: request.providerSessionId, mappingVersion: request.mappingVersion, journal: request.journal }; },
     observation: {
       processes: {
-        async descendants() { return [{ handle: { id: "process" }, executableName: "omp", ...(options.startedAt === undefined ? {} : { startedAt: options.startedAt }) }]; },
+        async descendants() { return [{ handle: { id: "process" }, executableName: "omp", ...(options.arguments === undefined ? {} : { arguments: options.arguments }), ...(options.startedAt === undefined ? {} : { startedAt: options.startedAt }) }]; },
         async openFiles() { return options.writer === false ? [] : [{ handle: handle(rootPath), path: rootPath, access: "writable" }]; },
         async environment() { return {}; },
       },
