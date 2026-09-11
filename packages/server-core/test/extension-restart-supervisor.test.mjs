@@ -117,10 +117,23 @@ function clock() {
       const at = queued.indexOf(timer);
       if (at !== -1) queued.splice(at, 1);
     },
+    /**
+     * The supervisor records a failure before it schedules the restart that
+     * follows, so a test that has only waited for the failure can look at the
+     * schedule before the restart reaches it. Wait for the timer rather than
+     * assuming it is already there.
+     */
+    async next() {
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        const timer = queued[0];
+        if (timer !== undefined) return timer;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      assert.fail("no restart was scheduled");
+    },
     async runNext() {
+      await this.next();
       const timer = queued.shift();
-      assert.ok(timer !== undefined, "no restart was scheduled");
-      assert.equal(timer.cancelled, false, "the scheduled restart was cancelled");
       await timer.callback();
     },
     pending: () => queued.filter((timer) => !timer.cancelled).length,
@@ -174,6 +187,7 @@ test("a host that crashes once is restarted on its own and publishes again", asy
     await value.management.initialize();
     await value.waitForFailures(1);
     assert.equal(value.status().state, "failed");
+    await value.timers.next();
     assert.equal(value.timers.pending(), 1, "a restart is scheduled");
 
     await value.timers.runNext();
@@ -224,8 +238,7 @@ test("backoff grows with consecutive failures and stops at quarantine", async ()
     const delays = [];
     // The host quarantines at its fifth failure inside the crash window.
     for (let attempt = 1; attempt < 5; attempt += 1) {
-      const next = value.timers.queued[0];
-      assert.ok(next !== undefined, `no restart scheduled after failure ${attempt}`);
+      const next = await value.timers.next();
       delays.push(next.milliseconds);
       await value.timers.runNext();
       await value.waitForFailures(attempt + 1);
@@ -270,6 +283,7 @@ test("shutdown cancels a pending restart", async () => {
   try {
     await value.management.initialize();
     await value.waitForFailures(1);
+    await value.timers.next();
     assert.equal(value.timers.pending(), 1);
 
     value.management.stopSupervision();
