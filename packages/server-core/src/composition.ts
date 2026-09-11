@@ -1,4 +1,8 @@
-import type { JsonValue } from '@terminay/protocol';
+import {
+	FEATURE_CAPABILITIES,
+	LANGUAGE_CAPABILITY,
+	type JsonValue,
+} from '@terminay/protocol';
 import {
 	type AgentOperationRegistry,
 	createAgentEventProjector,
@@ -27,6 +31,14 @@ import {
 	type ServerFileObservationAdapter,
 } from './fileService/observationAdapter.js';
 import type { ServerGitAdapter } from './gitService/adapter.js';
+import {
+	type LanguageAdapterOptions,
+	ServerLanguageAdapter,
+} from './languageService/adapter.js';
+import {
+	type LanguageExtensionBridge,
+	LanguageSessionManager,
+} from './languageService/sessions.js';
 import type { MacroRepository, MacroRunner } from './macroService/index.js';
 import {
 	createMacroOperationRegistry,
@@ -36,13 +48,6 @@ import type {
 	MacroExecutionEnvironment,
 	MacroTarget,
 } from './macroService/types.js';
-import {
-	createEnvironmentRoutedPtyFactory,
-	createProjectEnvironmentOperationHandlers,
-	type ProjectEnvironmentOperationOptions,
-	type ProjectEnvironmentRouter,
-	routeProjectOperationRegistries,
-} from './projectEnvironment/index.js';
 import type { RecordingAdapter } from './recordingService/adapter.js';
 import {
 	createSettingsOperationRegistry,
@@ -208,15 +213,32 @@ export interface ServerCoreCompositionOptions
 	readonly settings?: ServerSettingsRepository;
 	/** Optional project-scoped filesystem watch and folder-size authority. */
 	readonly fileObservations?: ServerFileObservationAdapter;
-	/** Canonical environment router. When present every project-scoped file,
-	 * Git, observation, agent and shell operation is routed before a local host
-	 * adapter can run. */
-	readonly projectEnvironmentRouter?: ProjectEnvironmentRouter;
-	/** Canonical selected-server environment management authority. */
-	readonly projectEnvironments?: Omit<
-		ProjectEnvironmentOperationOptions,
-		'workspace' | 'onChanged'
-	>;
+	/**
+	 * Optional server-owned language intelligence.
+	 *
+	 * Present only when this server both owns project files and runs extensions:
+	 * a language session is a child of an extension on the server that owns the
+	 * project, and nowhere else.
+	 */
+	readonly language?: {
+		readonly extensions: LanguageExtensionBridge;
+		readonly projects: LanguageAdapterOptions['projects'];
+		/** Canonical absolute project root; defaults to the project resolver. */
+		readonly projectRoot?: (projectId: string) => Promise<string>;
+		readonly maxSessions?: number;
+		readonly idleMs?: number;
+		readonly diagnosticsDebounceMs?: number;
+		/** Disk changes fed into open sessions. */
+		readonly watch?: {
+			observe(
+				listener: (event: {
+					readonly projectId: string;
+					readonly resource: string;
+					readonly kind: string;
+				}) => void,
+			): () => void;
+		};
+	};
 	/** Host-neutral startup/cleanup for optional authorities that require
 	 * asynchronous binding before any transport listener becomes ready. */
 	readonly serviceLifecycle?: {
@@ -232,7 +254,7 @@ export interface ServerCoreCompositionOptions
 	 */
 	readonly workspaceStartup?: Pick<
 		WorkspaceStartupRestoreOptions,
-		'createTerminal' | 'firstRun' | 'remoteSeedDeadlineMs' | 'onSeedFailure'
+		'createTerminal' | 'firstRun'
 	> & {
 		/**
 		 * Host work that must happen before the restore reads the workspace —
@@ -280,6 +302,7 @@ export interface ServerCoreComposition {
 		typeof createShellProfileOperationRegistry
 	>;
 	readonly workspaceOperations?: import('./workspaceProtocol.js').WorkspaceOperationRegistry;
+	readonly languageSessions?: LanguageSessionManager;
 	/** Start host-facing services that must be live before a terminal is
 	 * created. The composition, not ServerRuntime, owns these instances. */
 	readonly start: () => Promise<void>;
@@ -337,9 +360,6 @@ export function createServerCoreComposition(
 					profiles: options.terminalProfiles,
 					workspaceSnapshot: () =>
 						options.workspace?.state as import('./workspace.js').WorkspaceState,
-					...(options.projectEnvironmentRouter === undefined
-						? {}
-						: { projectEnvironmentRouter: options.projectEnvironmentRouter }),
 					observeTerminalCwd: async (sessionId) => {
 						const session = terminal.getSession(sessionId);
 						return session === undefined
@@ -387,18 +407,6 @@ export function createServerCoreComposition(
 			? undefined
 			: createWorkspaceOperationRegistry(options.workspace, {
 					...options.workspaceOperations,
-					...(options.workspaceOperations?.prepareProjectRootUpdate ===
-						undefined || options.projectEnvironmentRouter === undefined
-						? {}
-						: {
-								prepareProjectRootUpdate: (projectId: string, root: string) =>
-									prepareRoutedProjectRoot(
-										options.projectEnvironmentRouter!,
-										options.workspaceOperations!.prepareProjectRootUpdate!,
-										projectId,
-										root,
-									),
-							}),
 					closeTerminalSessions: async (sessionIds) => {
 						await Promise.allSettled(
 							sessionIds.map((sessionId) => terminal.kill(sessionId)),
@@ -658,6 +666,7 @@ export function createServerCoreComposition(
 			}
 		});
 	}
+	const language = composeLanguageService(options, eventJournal);
 	const settingsOperations =
 		options.settings === undefined
 			? undefined
@@ -675,82 +684,42 @@ export function createServerCoreComposition(
 						eventJournal.append('extensions.changed', payload);
 					},
 				});
-	const projectEnvironmentOperations =
-		options.projectEnvironments === undefined || options.workspace === undefined
-			? undefined
-			: createProjectEnvironmentOperationHandlers({
-					...options.projectEnvironments,
-					workspace: options.workspace,
-					...(options.workspaceOperations?.prepareProjectRootUpdate ===
-					undefined
-						? {}
-						: {
-								// Project-environment creation prepares the built-in This-server
-								// root before its workspace object exists; routing by project id at
-								// that point would reject the legitimate new identity.
-								prepareProjectRootUpdate:
-									options.workspaceOperations.prepareProjectRootUpdate,
-							}),
-					...(options.projectEnvironments.providerDefinitions !== undefined ||
-					options.extensions?.hosts === undefined
-						? {}
-						: {
-								providerDefinitions: () =>
-									options
-										.extensions!.hosts!.statuses()
-										.flatMap((status) => status.providers ?? []),
-							}),
-					...(options.projectEnvironments.providerRuntime !== undefined ||
-					options.extensions?.hosts === undefined
-						? {}
-						: { providerRuntime: options.extensions.hosts }),
-					onChanged: (payload) => {
-						eventJournal.append('project-environments.changed', payload);
-					},
-				});
 	const operations = mergeOperationRegistries(
 		mergeOperationRegistries(
 			mergeOperationRegistries(
 				mergeOperationRegistries(
 					mergeOperationRegistries(
 						mergeOperationRegistries(
-							mergeOperationRegistries(
-								mergeOperationRegistries(
-									options.operations ?? {},
-									extensionOperations ?? {},
-								),
-								projectEnvironmentOperations ?? {},
-							),
-							options.fileObservations?.operations ?? {},
+							options.operations ?? {},
+							extensionOperations ?? {},
 						),
-						macroOperations?.operations ?? {},
+						options.fileObservations?.operations ?? {},
 					),
-					workspaceOperations?.operations ?? {},
+					macroOperations?.operations ?? {},
 				),
+				workspaceOperations?.operations ?? {},
+			),
+			mergeOperationRegistries(
 				mergeOperationRegistries(
 					activityOperations?.operations ?? {},
 					agentOperations?.operations ?? {},
 				),
+				mergeOperationRegistries(aiOperations ?? {}, gitOperations ?? {}),
 			),
-			mergeOperationRegistries(aiOperations ?? {}, gitOperations ?? {}),
 		),
 		mergeOperationRegistries(
 			mergeOperationRegistries(
-				recordingOperations ?? {},
-				settingsOperations?.operations ?? {},
+				mergeOperationRegistries(
+					recordingOperations ?? {},
+					settingsOperations?.operations ?? {},
+				),
+				language?.adapter.operations() ?? {},
 			),
 			shellProfileOperations?.operations ?? {},
 		),
 	);
-	const routedOperations =
-		options.projectEnvironmentRouter === undefined
-			? operations
-			: routeProjectOperationRegistries(
-					operations,
-					options.projectEnvironmentRouter,
-				);
 	const completeOperations = mergeOperationRegistries(
-		routedOperations,
+		operations,
 		terminalOperations.operations,
 	);
 	const onConnectionClosed = (connectionId: string, clientId: string): void => {
@@ -814,18 +783,6 @@ export function createServerCoreComposition(
 		| 'failed' = 'created';
 	let startPromise: Promise<void> | undefined;
 	let shutdownPromise: Promise<void> | undefined;
-	// Durable provider operations belong to the server, not to whichever client
-	// happens to open the Project Environments view. Keep a server-owned context
-	// for startup recovery so a Puzed job can advance after an embedded server
-	// restart even when no renderer has connected yet.
-	const environmentRecoveryAbort = new AbortController();
-	const environmentRecoveryContext = {
-		connectionId: `server:${options.serverId}`,
-		clientId: `server:${options.serverId}`,
-		authScope: 'admin' as const,
-		permissions: ['environments:read', 'environments:manage'],
-		signal: environmentRecoveryAbort.signal,
-	};
 	const start = (): Promise<void> => {
 		if (lifecycle === 'ready') return Promise.resolve();
 		if (lifecycle === 'starting' && startPromise !== undefined)
@@ -841,15 +798,6 @@ export function createServerCoreComposition(
 					await options.extensions?.installer.initialize();
 					await options.extensions?.activateEnabled?.();
 				}
-				// Extensions provide the runtime required to resume their durable
-				// operations, so recovery must follow activation but precede normal
-				// client-facing service startup.
-				// A VM can still be waiting for SSH when the server starts. Recovery is
-				// durable background work, not a prerequisite for serving the workspace;
-				// blocking here made the entire desktop appear unable to open.
-				void projectEnvironmentOperations
-					?.recoverPending(environmentRecoveryContext)
-					.catch(() => undefined);
 				await options.settings?.load();
 				await options.serviceLifecycle?.start?.();
 				await options.agents?.start();
@@ -877,15 +825,6 @@ export function createServerCoreComposition(
 						unavailableProjectIds,
 						firstRun: options.workspaceStartup.firstRun,
 						createTerminal: options.workspaceStartup.createTerminal,
-						...(options.workspaceStartup.remoteSeedDeadlineMs === undefined
-							? {}
-							: {
-									remoteSeedDeadlineMs:
-										options.workspaceStartup.remoteSeedDeadlineMs,
-								}),
-						...(options.workspaceStartup.onSeedFailure === undefined
-							? {}
-							: { onSeedFailure: options.workspaceStartup.onSeedFailure }),
 					});
 				}
 			} catch (error) {
@@ -905,7 +844,6 @@ export function createServerCoreComposition(
 		shutdownPromise = (async () => {
 			// If startup was still binding a hook receiver, wait for it before
 			// teardown so it cannot resurrect after shutdown begins.
-			environmentRecoveryAbort.abort();
 			await startPromise?.catch(() => undefined);
 			const failures: unknown[] = [];
 			const attempt = async (
@@ -939,6 +877,7 @@ export function createServerCoreComposition(
 			await attempt(() => agentOperations?.close());
 			await attempt(() => options.fileObservations?.close());
 			await attempt(() => options.activity?.shutdown());
+			await attempt(() => language?.dispose());
 			lifecycle = 'stopped';
 			if (failures.length > 0)
 				throw cleanupFailure('server composition shutdown failed', failures);
@@ -956,6 +895,7 @@ export function createServerCoreComposition(
 			? {}
 			: { workspace: options.workspace }),
 		...(workspaceOperations === undefined ? {} : { workspaceOperations }),
+		...(language === undefined ? {} : { languageSessions: language.sessions }),
 		...(options.activity === undefined ? {} : { activity: options.activity }),
 		...(options.agents === undefined ? {} : { agents: options.agents }),
 		...(options.extensionAgentRuntime === undefined
@@ -971,48 +911,6 @@ export function createServerCoreComposition(
 		start,
 		shutdown,
 	};
-}
-
-async function prepareRoutedProjectRoot(
-	router: ProjectEnvironmentRouter,
-	local: NonNullable<
-		WorkspaceOperationRegistryOptions['prepareProjectRootUpdate']
-	>,
-	projectId: string,
-	root: string,
-): Promise<import('./workspaceProtocol.js').PreparedProjectRootUpdate> {
-	return router
-		.route(projectId, 'filesystem', 'prepare-project-root', { root }, () =>
-			local(projectId, root),
-		)
-		.then((prepared) => {
-			if (
-				typeof prepared === 'object' &&
-				prepared !== null &&
-				'commit' in prepared &&
-				typeof prepared.commit === 'function'
-			)
-				return prepared as import('./workspaceProtocol.js').PreparedProjectRootUpdate;
-			const remote = prepared as {
-				readonly canonicalRoot?: unknown;
-				readonly preparationId?: unknown;
-			};
-			if (
-				typeof remote.canonicalRoot !== 'string' ||
-				typeof remote.preparationId !== 'string'
-			)
-				throw new Error(
-					'project environment returned an invalid prepared root',
-				);
-			return {
-				canonicalRoot: remote.canonicalRoot,
-				commit: async () => {
-					await router.invoke(projectId, 'filesystem', 'commit-project-root', {
-						preparationId: remote.preparationId,
-					});
-				},
-			};
-		});
 }
 
 function cleanupFailure(message: string, failures: readonly unknown[]): Error {
@@ -1049,13 +947,7 @@ function composeTerminal(
 	const terminal = new TerminalService({
 		...terminalOptions,
 		serverId: options.serverId,
-		ptyFactory:
-			options.projectEnvironmentRouter === undefined
-				? options.ptyFactory
-				: createEnvironmentRoutedPtyFactory(
-						options.projectEnvironmentRouter,
-						options.ptyFactory,
-					),
+		ptyFactory: options.ptyFactory,
 		...(options.activity === undefined &&
 		options.agents === undefined &&
 		options.extensionAgentRuntime === undefined
@@ -1225,16 +1117,116 @@ function uniqueCapabilities(
 	return Object.freeze([
 		...new Set([
 			...options.capabilities,
-			'terminal',
-			...(options.macros === undefined ? [] : ['macros']),
-			...(options.ai === undefined ? [] : ['ai']),
-			...(options.git === undefined ? [] : ['git']),
-			...(options.recordings === undefined ? [] : ['recordings']),
-			...(options.settings === undefined ? [] : ['settings']),
-			...(options.shellProfiles === undefined ? [] : ['shell-profiles']),
-			...(options.fileObservations === undefined ? [] : ['files.observe']),
+			FEATURE_CAPABILITIES.terminal,
+			...(options.workspace === undefined
+				? []
+				: [FEATURE_CAPABILITIES.workspace]),
+			...(options.activity === undefined && options.agents === undefined
+				? []
+				: [FEATURE_CAPABILITIES.agents]),
+			...(options.macros === undefined ? [] : [FEATURE_CAPABILITIES.macros]),
+			...(options.ai === undefined ? [] : [FEATURE_CAPABILITIES.dictation]),
+			...(options.git === undefined ? [] : [FEATURE_CAPABILITIES.git]),
+			...(options.recordings === undefined
+				? []
+				: [FEATURE_CAPABILITIES.recording]),
+			...(options.settings === undefined
+				? []
+				: [FEATURE_CAPABILITIES.settings]),
+			...(options.shellProfiles === undefined
+				? []
+				: [FEATURE_CAPABILITIES.settings]),
+			...(options.extensions === undefined
+				? []
+				: [FEATURE_CAPABILITIES.extensions]),
+			...(options.fileObservations === undefined
+				? []
+				: [FEATURE_CAPABILITIES.files]),
+			...(options.language === undefined ? [] : [LANGUAGE_CAPABILITY]),
 		]),
 	]) as readonly string[];
+}
+
+/**
+ * Compose the language session manager, its protocol adapter, and the disk
+ * changes they consume. The order matters: the adapter is the only thing that
+ * writes diagnostics to the journal, and it must exist before the session
+ * manager can publish one.
+ */
+function composeLanguageService(
+	options: ServerCoreCompositionOptions,
+	eventJournal: OrderedEventJournalLike,
+):
+	| {
+			readonly sessions: LanguageSessionManager;
+			readonly adapter: ServerLanguageAdapter;
+			readonly dispose: () => Promise<void>;
+	  }
+	| undefined {
+	const language = options.language;
+	if (language === undefined) return undefined;
+	let adapter: ServerLanguageAdapter | undefined;
+	const projects = language.projects as ReadonlyMap<
+		string,
+		{ readonly resolver: { root(): Promise<string> } }
+	>;
+	const sessions = new LanguageSessionManager({
+		extensions: language.extensions,
+		projectRoot:
+			language.projectRoot ??
+			(async (projectId) => {
+				const project =
+					typeof projects.get === 'function'
+						? projects.get(projectId)
+						: (
+								language.projects as Readonly<
+									Record<string, { readonly resolver: { root(): Promise<string> } }>
+								>
+							)[projectId];
+				if (project === undefined)
+					throw new Error('language project is unavailable');
+				return project.resolver.root();
+			}),
+		onDiagnostics: (event) => adapter?.publishDiagnostics(event),
+		...(language.maxSessions === undefined
+			? {}
+			: { maxSessions: language.maxSessions }),
+		...(language.idleMs === undefined ? {} : { idleMs: language.idleMs }),
+	});
+	adapter = new ServerLanguageAdapter({
+		serverId: options.serverId,
+		sessions,
+		projects: language.projects,
+		eventJournal,
+		...(language.diagnosticsDebounceMs === undefined
+			? {}
+			: { diagnosticsDebounceMs: language.diagnosticsDebounceMs }),
+	});
+	const unwatch = language.watch?.observe((event) => {
+		if (event.resource.length === 0) return;
+		sessions.notifyWatchedFiles(event.projectId, [
+			{
+				path: event.resource,
+				kind:
+					event.kind === 'created'
+						? 'created'
+						: event.kind === 'deleted'
+							? 'deleted'
+							: 'changed',
+			},
+		]);
+	});
+	return {
+		sessions,
+		adapter,
+		dispose: async () => {
+			unwatch?.();
+			adapter?.dispose();
+			// Shutdown has to drain: every live session is told to stop, and a
+			// disposal that returned early would leave language servers running.
+			await sessions.shutdown();
+		},
+	};
 }
 
 function composeProjectEventProjectors(

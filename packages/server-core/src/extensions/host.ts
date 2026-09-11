@@ -4,28 +4,8 @@ import {
 	type AgentProviderContribution,
 	EXTENSION_API_VERSION,
 	isNamespacedId,
-	type JsonValue,
-	type ProjectEnvironmentContribution,
-	type ProviderDefinition,
-	type ProviderDependencyCallContext,
-	type ProviderDependencyTargetRequest,
+	type LanguageServerContribution,
 	validateAgentLifecycleEvent,
-	validateDeclarativeForm,
-	validateEnvironmentActionResult,
-	validateOptionSourceResult,
-	validateProviderDefinition,
-	validateProviderDependencyCallContext,
-	validateProviderDependencyRequest,
-	validateProviderDependencyResult,
-	validateProviderDependencyTargetRequest,
-	validateProviderEnvironmentStatus,
-	validateProviderVaultPutRequest,
-	validateProviderVaultRemoveRequest,
-	validateProviderVaultWithSecretRequest,
-	validateProvisioningResult,
-	validateSshAgentIdentities,
-	validateSshAgentSignature,
-	validateValidationIssues,
 } from '@terminay/extension-api';
 import { validateExtensionLaunchDescriptor } from './descriptor.js';
 import {
@@ -36,6 +16,13 @@ import {
 	type ExtensionHostTransition,
 } from './diagnostics.js';
 import {
+	type ExtensionLanguageDiagnosticsNotification,
+	type ExtensionLanguageMethod,
+	type ExtensionLanguageSessionExit,
+	parseExtensionLanguageDiagnostics,
+	parseExtensionLanguageSessionExit,
+} from './languageProtocol.js';
+import {
 	type ChildFrame,
 	EXTENSION_HOST_PROTOCOL_VERSION,
 	type ExtensionFatalErrorReport,
@@ -44,10 +31,6 @@ import {
 	isChildFrame,
 	isExtensionFatalErrorReport,
 } from './protocol.js';
-import {
-	ExtensionProviderVault,
-	type ProviderVaultPrincipal,
-} from './providerVault.js';
 import type {
 	ExtensionAgentBroker,
 	ExtensionAgentLifecyclePublication,
@@ -56,15 +39,11 @@ import type {
 	ExtensionAgentTerminalCancellation,
 	ExtensionAgentTerminalContext,
 	ExtensionBroker,
-	ExtensionDependencyRouter,
 	ExtensionHostLimits,
 	ExtensionHostStatus,
 	ExtensionInvocation,
 	ExtensionLaunchDescriptor,
-	ExtensionProfileBroker,
-	ExtensionProviderInvocation,
 	ExtensionSecretAccessBroker,
-	ExtensionSshAgentBroker,
 } from './types.js';
 
 interface PendingCall {
@@ -80,17 +59,32 @@ export interface ExtensionHostOptions {
 	readonly nodeExecutable?: string;
 	readonly childEntrypoint?: string;
 	readonly now?: () => number;
-	readonly profiles?: ExtensionProfileBroker;
 	readonly secrets?: ExtensionSecretAccessBroker;
-	readonly sshAgent?: ExtensionSshAgentBroker;
 	readonly agents?: ExtensionAgentBroker;
-	readonly dependencies?: ExtensionDependencyRouter;
-	readonly providerVault?: ExtensionProviderVault;
 	/** Where lifecycle records go. Absent means they are not recorded. */
 	readonly onDiagnostic?: ExtensionHostDiagnosticListener;
 	/** Observed after every state transition, so a supervisor can act on a
 	 * failure without polling. Observers cannot change the transition. */
 	readonly onStateChange?: (status: ExtensionHostStatus) => void;
+	/** Translated `publishDiagnostics` from one of this extension's language
+	 * sessions. Core fans them out onto the workspace journal. */
+	readonly onLanguageDiagnostics?: (
+		notification: ExtensionLanguageDiagnosticsNotification & {
+			readonly extensionId: string;
+		},
+	) => void;
+	/** One language session ending, reported exactly once by the child. */
+	readonly onLanguageSessionExit?: (
+		exit: ExtensionLanguageSessionExit & { readonly extensionId: string },
+	) => void;
+}
+
+/** One private language invocation on this extension's child. */
+export interface ExtensionLanguageInvocation {
+	readonly method: ExtensionLanguageMethod;
+	readonly input: Readonly<Record<string, unknown>>;
+	readonly deadlineMs?: number;
+	readonly signal?: AbortSignal;
 }
 
 const DEFAULTS = Object.freeze({
@@ -121,8 +115,8 @@ const INHERITED_CHILD_ENV = Object.freeze([
 const UNIX_PATH = '/usr/sbin:/usr/bin:/bin:/sbin';
 
 /** Bounded host environment for an extension child. npm's sterile env stays
- * on the installer; This-server agent observation needs PATH/HOME so `ps` and
- * `lsof` resolve the same way they did in the Electron process on main. */
+ * on the installer; agent observation needs PATH/HOME so `ps` and `lsof`
+ * resolve the same way they did in the Electron process on main. */
 export function extensionChildEnvironment(
 	source: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
@@ -161,21 +155,17 @@ export class ExtensionHost {
 	private readonly activeBrokerCalls = new Map<string, AbortController>();
 	private readonly crashTimes: number[] = [];
 	private sequence = 0;
-	private providerSequence = 0;
 	private stopping = false;
-	private providers: readonly ProviderDefinition[] = Object.freeze([]);
 	private agentProviders: readonly AgentProviderContribution[] = Object.freeze(
 		[],
 	);
-	private dependencyProviders = new Set<string>();
-	private readonly activeDependencyCalls = new Map<
-		string,
-		{ readonly principal: ProviderVaultPrincipal; readonly signal: AbortSignal }
-	>();
 	private readonly agentContexts = new Map<
 		string,
 		ExtensionAgentTerminalContext
 	>();
+	private languageServers: readonly LanguageServerContribution[] = Object.freeze(
+		[],
+	);
 	private agentPublicationsInFlight = 0;
 	/** The child's account of the error that is ending it, if it sent one. */
 	private fatalReport: ExtensionFatalErrorReport | undefined;
@@ -198,26 +188,12 @@ export class ExtensionHost {
 	status(): ExtensionHostStatus {
 		return Object.freeze({
 			...this.state,
-			providers: this.providers,
 			agentProviders: this.agentProviders,
+			languageServers: this.languageServers,
 		});
 	}
 	launchDescriptor(): ExtensionLaunchDescriptor | undefined {
 		return this.descriptor;
-	}
-	/** Only manifest contributions whose provider actually registered during
-	 * this running activation may receive host routing or profile-save effects. */
-	activatedProjectEnvironmentContributions(): readonly ProjectEnvironmentContribution[] {
-		if (this.state.state !== 'running' || this.descriptor === undefined)
-			return Object.freeze([]);
-		const registered = new Set(
-			this.providers.map((provider) => provider.providerId),
-		);
-		return Object.freeze(
-			(this.descriptor.projectEnvironmentProviders ?? [])
-				.filter((contribution) => registered.has(contribution.id))
-				.map((contribution) => structuredClone(contribution)),
-		);
 	}
 
 	async start(descriptor: ExtensionLaunchDescriptor): Promise<void> {
@@ -276,23 +252,21 @@ export class ExtensionHost {
 						this.descriptor.agentProviders === undefined
 							? []
 							: structuredClone(this.descriptor.agentProviders),
+					languageServers:
+						this.descriptor.languageServers === undefined
+							? []
+							: structuredClone(this.descriptor.languageServers),
 				},
 				this.limits.startupTimeoutMs,
 				undefined,
 				true,
 			);
-			this.providers = validateProviders(
-				record(activated)?.providers,
-				this.extensionId,
-				this.descriptor,
-			);
 			this.agentProviders = validateAgentProviders(
 				record(activated)?.agentProviders,
 				this.descriptor,
 			);
-			this.dependencyProviders = validateDependencyProviders(
-				record(activated)?.dependencyProviders,
-				this.providers,
+			this.languageServers = validateLanguageServers(
+				record(activated)?.languageServers,
 				this.descriptor,
 			);
 			this.setState({
@@ -331,49 +305,32 @@ export class ExtensionHost {
 		);
 	}
 
-	async invokeProvider(
-		invocation: ExtensionProviderInvocation,
+	/**
+	 * Invoke one language operation on this extension's child.
+	 *
+	 * It is deliberately a distinct frame kind rather than an ordinary method
+	 * invocation: core owns these operations, and an extension can neither
+	 * declare nor shadow them.
+	 */
+	async invokeLanguage(
+		invocation: ExtensionLanguageInvocation,
 	): Promise<unknown> {
-		if (
-			!this.providers.some(
-				(provider) => provider.providerId === invocation.providerId,
-			)
-		)
-			throw new Error('extension provider is not registered');
-		const timeoutMs = invocation.deadlineMs ?? this.limits.invocationTimeoutMs;
-		const callId = `${this.extensionId}:provider:${++this.providerSequence}`;
-		const reply = record(
-			await this.invoke({
-				method: 'provider.invoke',
-				input: {
-					callId,
-					providerId: invocation.providerId,
-					method: invocation.callback,
-					request: invocation.request,
-					deadlineAt: new Date(this.now() + timeoutMs).toISOString(),
-					...(invocation.idempotencyKey === undefined
-						? {}
-						: { idempotencyKey: invocation.idempotencyKey }),
-					...(invocation.expectedRevision === undefined
-						? {}
-						: { expectedRevision: invocation.expectedRevision }),
-				},
-				deadlineMs: timeoutMs,
-				signal: invocation.signal,
-			}),
+		if (this.state.state !== 'running' || this.child === undefined)
+			throw unavailable('extension is not running');
+		if (this.pending.size >= this.limits.maxConcurrentInvocations)
+			throw unavailable('extension invocation admission limit reached');
+		if (this.languageServers.length === 0)
+			throw unavailable('extension contributes no language server');
+		return this.call(
+			'language.request',
+			{ method: invocation.method, input: invocation.input },
+			invocation.deadlineMs ?? this.limits.invocationTimeoutMs,
+			invocation.signal,
 		);
-		if (
-			reply === undefined ||
-			reply.callId !== callId ||
-			reply.ok !== true ||
-			!('result' in reply)
-		)
-			throw new Error('provider returned an invalid runtime reply');
-		return validateProviderResult(
-			invocation.callback,
-			reply.result,
-			invocation.request,
-		);
+	}
+
+	languageServerContributions(): readonly LanguageServerContribution[] {
+		return this.languageServers;
 	}
 
 	async stop(): Promise<void> {
@@ -392,7 +349,6 @@ export class ExtensionHost {
 			return;
 		}
 		await this.drainAgentObservers('extension-stopped').catch(() => undefined);
-		await this.cleanupProviderVault();
 		try {
 			await this.call('deactivate', undefined, this.limits.shutdownTimeoutMs);
 		} catch {
@@ -409,76 +365,8 @@ export class ExtensionHost {
 			deliberate: true,
 			consecutiveFailures: this.state.consecutiveCrashes,
 		});
-		this.providers = Object.freeze([]);
 		this.agentProviders = Object.freeze([]);
-		this.dependencyProviders.clear();
-	}
-
-	async invokeDependency(
-		providerId: string,
-		request: ProviderDependencyTargetRequest,
-		context: Omit<ProviderDependencyCallContext, 'signal'>,
-		signal: AbortSignal,
-	): Promise<JsonValue> {
-		if (
-			!this.dependencyProviders.has(providerId) ||
-			this.descriptor === undefined
-		)
-			throw new Error('dependency target is unavailable');
-		const target = validated(
-			validateProviderDependencyTargetRequest(request),
-			'dependency target request is invalid',
-		);
-		const timing = runtimeValidated(
-			validateProviderDependencyCallContext({
-				...context,
-				signal: cancellationSignal(signal),
-			}),
-			'dependency call context is invalid',
-		);
-		const declared =
-			this.descriptor.projectEnvironmentProviders?.find(
-				(provider) => provider.id === providerId,
-			)?.dependencyOperations ?? [];
-		if (!declared.some((operation) => operation.name === target.operation))
-			throw new Error('dependency target operation is not declared');
-		const remaining = Date.parse(timing.deadlineAt) - this.now();
-		if (!Number.isFinite(remaining) || remaining <= 0 || remaining > 300_000)
-			throw new Error('dependency call deadline is invalid');
-		const callToken = `${this.extensionId}:dependency:${++this.providerSequence}`;
-		const principal = {
-			extensionId: this.extensionId,
-			providerId,
-			dataDirectory: this.descriptor.dataDirectory,
-		};
-		this.activeDependencyCalls.set(callToken, { principal, signal });
-		try {
-			const result = await this.invoke({
-				method: 'dependency.invoke',
-				input: {
-					callToken,
-					providerId,
-					request: target,
-					context: {
-						deadlineAt: timing.deadlineAt,
-						...(timing.idempotencyKey === undefined
-							? {}
-							: { idempotencyKey: timing.idempotencyKey }),
-						...(timing.expectedRevision === undefined
-							? {}
-							: { expectedRevision: timing.expectedRevision }),
-					},
-				},
-				deadlineMs: remaining,
-				signal,
-			});
-			return validated(
-				validateProviderDependencyResult(result),
-				'dependency target returned an invalid result',
-			);
-		} finally {
-			this.activeDependencyCalls.delete(callToken);
-		}
+		this.languageServers = Object.freeze([]);
 	}
 
 	/**
@@ -695,6 +583,39 @@ export class ExtensionHost {
 			void this.handleAgentLifecyclePublication(message);
 			return;
 		}
+		if (message.kind === 'language.diagnostics') {
+			const notification = parseExtensionLanguageDiagnostics(message.payload);
+			if (notification === undefined) {
+				this.protocolViolation('language diagnostics notification is invalid');
+				return;
+			}
+			try {
+				this.options.onLanguageDiagnostics?.({
+					...notification,
+					extensionId: this.extensionId,
+				});
+			} catch {
+				/* a diagnostics observer cannot affect the extension it observes */
+			}
+			return;
+		}
+		if (message.kind === 'language.session.exited') {
+			const exit = parseExtensionLanguageSessionExit(message.payload);
+			if (exit === undefined) {
+				this.protocolViolation('language session exit is invalid');
+				return;
+			}
+			try {
+				this.options.onLanguageSessionExit?.({
+					...exit,
+					extensionId: this.extensionId,
+				});
+			} catch {
+				/* an observer cannot affect the extension it observes */
+			}
+			if (exit.reason === 'exited') this.recordLanguageServerCrash(exit);
+			return;
+		}
 		if (message.kind === 'agent.provider.disposed') {
 			void this.handleAgentProviderDisposed(message);
 			return;
@@ -734,17 +655,7 @@ export class ExtensionHost {
 		}
 		const payload = record(frame.payload);
 		const operation = payload?.operation;
-		if (
-			operation !== 'log' &&
-			operation !== 'secret.resolve' &&
-			operation !== 'profile.get' &&
-			operation !== 'agent.list' &&
-			operation !== 'agent.sign' &&
-			operation !== 'provider.call' &&
-			operation !== 'vault.put' &&
-			operation !== 'vault.withSecret' &&
-			operation !== 'vault.remove'
-		) {
+		if (operation !== 'log' && operation !== 'secret.resolve') {
 			this.sendBrokerResult(
 				frame.id,
 				undefined,
@@ -756,34 +667,16 @@ export class ExtensionHost {
 		this.activeBrokerCalls.set(frame.id, controller);
 		try {
 			const result =
-				operation === 'provider.call'
-					? await this.callDependency(payload?.payload, controller.signal)
-					: operation === 'vault.put' ||
-							operation === 'vault.withSecret' ||
-							operation === 'vault.remove'
-						? await this.useProviderVault(
+				operation === 'secret.resolve'
+					? await this.resolveSecret(payload?.payload, controller.signal)
+					: await this.options.broker.request(
+							{
+								extensionId: this.extensionId,
 								operation,
-								payload?.payload,
-								controller.signal,
-							)
-						: operation === 'profile.get'
-							? await this.readProfile(payload?.payload, controller.signal)
-							: operation === 'secret.resolve'
-								? await this.resolveSecret(payload?.payload, controller.signal)
-								: operation === 'agent.list' || operation === 'agent.sign'
-									? await this.useSshAgent(
-											operation,
-											payload?.payload,
-											controller.signal,
-										)
-									: await this.options.broker.request(
-											{
-												extensionId: this.extensionId,
-												operation,
-												payload: payload?.payload,
-											},
-											controller.signal,
-										);
+								payload: payload?.payload,
+							},
+							controller.signal,
+						);
 			this.sendBrokerResult(frame.id, result);
 		} catch (error) {
 			this.sendBrokerResult(
@@ -794,129 +687,6 @@ export class ExtensionHost {
 		} finally {
 			this.activeBrokerCalls.delete(frame.id);
 		}
-	}
-
-	private async callDependency(
-		input: unknown,
-		signal: AbortSignal,
-	): Promise<JsonValue> {
-		const payload = record(input);
-		const callerProviderId = boundedId(payload?.callerProviderId);
-		if (
-			this.descriptor !== undefined &&
-			this.descriptor.extensionDependencies === undefined &&
-			!this.descriptor.permissions.includes('provider:depend')
-		) {
-			return this.options.broker.request(
-				{ extensionId: this.extensionId, operation: 'provider.call', payload },
-				signal,
-			) as Promise<JsonValue>;
-		}
-		if (
-			this.options.dependencies === undefined ||
-			this.descriptor === undefined ||
-			!this.descriptor.permissions.includes('provider:depend')
-		)
-			throw new Error('provider dependency access is denied');
-		if (
-			callerProviderId === undefined ||
-			!this.providers.some(
-				(provider) => provider.providerId === callerProviderId,
-			)
-		)
-			throw new Error('provider dependency caller is denied');
-		const request = validated(
-			validateProviderDependencyRequest(payload?.request),
-			'provider dependency request is invalid',
-		);
-		const timing = runtimeValidated(
-			validateProviderDependencyCallContext({
-				...record(payload?.context),
-				signal: cancellationSignal(signal),
-			}),
-			'provider dependency context is invalid',
-		);
-		const dependencyOwner = request.providerId.split('/')[0];
-		const dependency = this.descriptor.extensionDependencies?.find(
-			(candidate) => candidate.extensionId === dependencyOwner,
-		);
-		if (dependency === undefined)
-			throw new Error('provider dependency is not declared');
-		return this.options.dependencies.call({
-			callerExtensionId: this.extensionId,
-			callerProviderId,
-			request,
-			context: {
-				deadlineAt: timing.deadlineAt,
-				...(timing.idempotencyKey === undefined
-					? {}
-					: { idempotencyKey: timing.idempotencyKey }),
-				...(timing.expectedRevision === undefined
-					? {}
-					: { expectedRevision: timing.expectedRevision }),
-			},
-			signal,
-		});
-	}
-
-	private async useProviderVault(
-		operation: 'vault.put' | 'vault.withSecret' | 'vault.remove',
-		input: unknown,
-		signal: AbortSignal,
-	): Promise<unknown> {
-		if (this.options.providerVault === undefined)
-			throw new Error('provider vault is unavailable');
-		const payload = record(input);
-		const callToken = boundedId(payload?.callToken);
-		const active =
-			callToken === undefined
-				? undefined
-				: this.activeDependencyCalls.get(callToken);
-		if (active === undefined || active.signal.aborted)
-			throw new Error('provider vault call scope is unavailable');
-		const combined = AbortSignal.any([signal, active.signal]);
-		if (operation === 'vault.put') {
-			const raw = record(payload?.request);
-			const bytes = raw?.value;
-			const request = {
-				...raw,
-				...(Array.isArray(bytes) &&
-				bytes.length <= 1024 * 1024 &&
-				bytes.every(
-					(byte) =>
-						Number.isInteger(byte) && Number(byte) >= 0 && Number(byte) <= 255,
-				)
-					? { value: new Uint8Array(bytes as number[]) }
-					: {}),
-			};
-			return this.options.providerVault.put(
-				active.principal,
-				validated(
-					validateProviderVaultPutRequest(request),
-					'provider vault put request is invalid',
-				),
-				combined,
-			);
-		}
-		if (operation === 'vault.remove')
-			return this.options.providerVault.remove(
-				active.principal,
-				validated(
-					validateProviderVaultRemoveRequest(payload?.request),
-					'provider vault remove request is invalid',
-				),
-				combined,
-			);
-		const request = validated(
-			validateProviderVaultWithSecretRequest(payload?.request),
-			'provider vault secret request is invalid',
-		);
-		return this.options.providerVault.withSecret(
-			active.principal,
-			request,
-			combined,
-			(secret) => [...secret],
-		);
 	}
 
 	private async handleAgentObservationRequest(
@@ -1183,86 +953,6 @@ export class ExtensionHost {
 		});
 	}
 
-	private async readProfile(
-		input: unknown,
-		signal: AbortSignal,
-	): Promise<unknown> {
-		if (this.options.profiles === undefined)
-			throw new Error('extension profile broker is unavailable');
-		const request = record(input);
-		const providerId = boundedId(request?.providerId);
-		const profileId = boundedId(request?.profileId);
-		if (
-			providerId === undefined ||
-			profileId === undefined ||
-			!this.providers.some((provider) => provider.providerId === providerId)
-		)
-			throw new Error('extension profile access is denied');
-		return this.options.profiles.get(
-			this.extensionId,
-			providerId,
-			profileId,
-			signal,
-		);
-	}
-
-	private async useSshAgent(
-		operation: 'agent.list' | 'agent.sign',
-		input: unknown,
-		signal: AbortSignal,
-	): Promise<unknown> {
-		if (
-			this.options.sshAgent === undefined ||
-			this.descriptor === undefined ||
-			!this.descriptor.permissions.includes('ssh-agent:use')
-		)
-			throw new Error('SSH agent access is denied');
-		const request = record(input);
-		const profileId = boundedId(request?.profileId);
-		if (profileId === undefined) throw new Error('SSH agent access is denied');
-		if (request?.purpose !== 'ssh-user-authentication')
-			throw new Error('SSH agent access is denied');
-		const principal = {
-			extensionId: this.extensionId,
-			profileId,
-			purpose: 'ssh-user-authentication' as const,
-		};
-		if (operation === 'agent.list')
-			return validated(
-				validateSshAgentIdentities(
-					await this.options.sshAgent.listIdentities(principal, signal),
-				),
-				'SSH agent returned invalid identities',
-			);
-		const identityId = boundedId(request?.identityId);
-		const bytes = request?.challenge;
-		if (
-			identityId === undefined ||
-			typeof request?.algorithm !== 'string' ||
-			!Array.isArray(bytes) ||
-			bytes.length > 64 * 1024 ||
-			bytes.some(
-				(byte) =>
-					!Number.isInteger(byte) || Number(byte) < 0 || Number(byte) > 255,
-			)
-		)
-			throw new Error('SSH agent signing request is invalid');
-		return validated(
-			validateSshAgentSignature(
-				await this.options.sshAgent.sign(
-					principal,
-					{
-						identityId,
-						challenge: new Uint8Array(bytes as number[]),
-						algorithm: request.algorithm,
-					},
-					signal,
-				),
-			),
-			'SSH agent returned invalid signature',
-		);
-	}
-
 	private async resolveSecret(
 		input: unknown,
 		signal: AbortSignal,
@@ -1327,6 +1017,45 @@ export class ExtensionHost {
 		error === undefined ? pending.resolve(result) : pending.reject(error);
 	}
 
+	/**
+	 * Count one language server death against this extension.
+	 *
+	 * A language server is a child of the extension child, so its death does not
+	 * end the extension. It is still this extension's failure: the crash window
+	 * is the same one that decides quarantine, and the child reports each death
+	 * exactly once, so nothing here can count one death twice.
+	 */
+	private recordLanguageServerCrash(exit: ExtensionLanguageSessionExit): void {
+		const error = new Error(
+			`language server ${exit.languageServerId} exited (${exit.exitCode ?? exit.signal ?? 'unknown'})`,
+		);
+		const now = this.now();
+		this.crashTimes.push(now);
+		while ((this.crashTimes[0] ?? now) < now - this.limits.crashWindowMs)
+			this.crashTimes.shift();
+		const crashes = this.crashTimes.length;
+		this.recordDiagnostic('failed', {
+			consecutiveFailures: crashes,
+			error: extensionErrorDetail(error),
+		});
+		if (crashes < this.limits.maxCrashesInWindow) return;
+		// Repeated language server deaths are a crash loop like any other, and
+		// quarantine is what stops one. Ending the child ends its sessions, and
+		// nothing it still owed can arrive afterwards, so settle it all here.
+		this.terminateChild();
+		this.rejectPending(error);
+		this.setState({
+			extensionId: this.extensionId,
+			state: 'quarantined',
+			consecutiveCrashes: crashes,
+			failure: safeFailure(error),
+		});
+		this.recordDiagnostic('quarantined', {
+			consecutiveFailures: crashes,
+			error: extensionErrorDetail(error),
+		});
+	}
+
 	private protocolViolation(message: string): void {
 		this.terminateChild();
 		this.recordFailure(new Error(message));
@@ -1360,7 +1089,6 @@ export class ExtensionHost {
 			controller.abort();
 		this.activeBrokerCalls.clear();
 		void this.drainAgentObservers('extension-stopped');
-		void this.cleanupProviderVault();
 		if (
 			!this.stopping &&
 			this.state.state !== 'failed' &&
@@ -1369,26 +1097,6 @@ export class ExtensionHost {
 			this.recordFailure(
 				new Error(`extension child exited (${code ?? signal ?? 'unknown'})`),
 			);
-	}
-
-	private async cleanupProviderVault(): Promise<void> {
-		if (
-			this.options.providerVault === undefined ||
-			this.descriptor === undefined
-		)
-			return;
-		await Promise.all(
-			[...this.dependencyProviders].map((providerId) =>
-				this.options
-					.providerVault!.cleanup({
-						extensionId: this.extensionId,
-						providerId,
-						dataDirectory: this.descriptor!.dataDirectory,
-					})
-					.catch(() => undefined),
-			),
-		);
-		this.activeDependencyCalls.clear();
 	}
 
 	/**
@@ -1418,7 +1126,6 @@ export class ExtensionHost {
 			this.crashTimes.shift();
 		const crashes = this.crashTimes.length;
 		this.rejectPending(error);
-		this.providers = Object.freeze([]);
 		this.agentProviders = Object.freeze([]);
 		// The child's own report is the only account of what actually threw; the
 		// host-side error is usually just the exit that followed it.
@@ -1548,76 +1255,6 @@ function boundedId(value: unknown): string | undefined {
 		? value
 		: undefined;
 }
-function cancellationSignal(
-	signal: AbortSignal,
-): import('@terminay/extension-api').CancellationSignal {
-	return Object.freeze({
-		get aborted() {
-			return signal.aborted;
-		},
-		throwIfAborted() {
-			if (signal.aborted) throw new Error('provider dependency call cancelled');
-		},
-	});
-}
-function validateProviders(
-	value: unknown,
-	extensionId: string,
-	descriptor: ExtensionLaunchDescriptor,
-): readonly ProviderDefinition[] {
-	if (!Array.isArray(value) || value.length > 32)
-		throw new Error('extension returned invalid provider registrations');
-	const seen = new Set<string>();
-	const providers: ProviderDefinition[] = [];
-	for (const item of value) {
-		const provider = record(item);
-		const validation = validateProviderDefinition(item);
-		if (
-			provider === undefined ||
-			!validation.ok ||
-			typeof provider.providerId !== 'string' ||
-			!isNamespacedId(provider.providerId, extensionId) ||
-			seen.has(provider.providerId)
-		)
-			throw new Error('extension returned invalid provider registrations');
-		const contribution = descriptor.projectEnvironmentProviders?.find(
-			(candidate) => candidate.id === provider.providerId,
-		);
-		if (
-			descriptor.projectEnvironmentProviders !== undefined &&
-			(contribution === undefined ||
-				contribution.displayName !== provider.displayName ||
-				!sameValues(
-					contribution.capabilities,
-					provider.capabilities as string[],
-				))
-		)
-			throw new Error(
-				'extension provider registration does not match its manifest contribution',
-			);
-		for (const form of [
-			provider.profileForm,
-			provider.createForm,
-			provider.browseForm,
-		]) {
-			if (form !== undefined && !validateDeclarativeForm(form).ok)
-				throw new Error('extension returned an invalid declarative form');
-		}
-		seen.add(provider.providerId);
-		providers.push(structuredClone(item) as ProviderDefinition);
-	}
-	return Object.freeze(providers);
-}
-function sameValues(
-	left: readonly string[],
-	right: readonly string[],
-): boolean {
-	return (
-		left.length === right.length &&
-		left.every((value, index) => value === right[index])
-	);
-}
-
 function validateAgentProviders(
 	value: unknown,
 	descriptor: ExtensionLaunchDescriptor,
@@ -1655,36 +1292,43 @@ function validateAgentProviders(
 	return Object.freeze(result);
 }
 
-function validateDependencyProviders(
+/** Every language server the child registered must be one the manifest
+ * contributed, exactly as agent providers are. An undeclared registration is
+ * an activation failure, not a silently ignored contribution. */
+function validateLanguageServers(
 	value: unknown,
-	providers: readonly ProviderDefinition[],
 	descriptor: ExtensionLaunchDescriptor,
-): Set<string> {
+): readonly LanguageServerContribution[] {
+	if (value === undefined) return Object.freeze([]);
 	if (!Array.isArray(value) || value.length > 32)
-		throw new Error(
-			'extension returned invalid dependency target registrations',
-		);
+		throw new Error('extension returned invalid language server registrations');
 	const declared = new Map(
-		(descriptor.projectEnvironmentProviders ?? []).map((provider) => [
-			provider.id,
-			provider,
+		(descriptor.languageServers ?? []).map((contribution) => [
+			contribution.id,
+			contribution,
 		]),
 	);
-	const result = new Set<string>();
-	for (const providerId of value) {
-		const contribution =
-			typeof providerId === 'string' ? declared.get(providerId) : undefined;
-		if (
-			contribution === undefined ||
-			!providers.some((provider) => provider.providerId === providerId) ||
-			!Array.isArray(contribution.dependencyOperations) ||
-			contribution.dependencyOperations.length === 0 ||
-			result.has(providerId)
-		)
-			throw new Error('extension registered an undeclared dependency target');
-		result.add(providerId);
+	const seen = new Set<string>();
+	const result: LanguageServerContribution[] = [];
+	for (const id of value) {
+		if (typeof id !== 'string' || seen.has(id))
+			throw new Error(
+				'extension returned invalid language server registrations',
+			);
+		const contribution = declared.get(id);
+		if (contribution === undefined)
+			throw new Error('extension registered an undeclared language server');
+		seen.add(id);
+		result.push(structuredClone(contribution));
 	}
-	return result;
+	return Object.freeze(result);
+}
+
+function unavailable(message: string): Error {
+	return Object.assign(new Error(message), {
+		code: 'unavailable',
+		retryable: true,
+	});
 }
 
 function validateAgentTerminalAdmission(
@@ -1698,7 +1342,6 @@ function validateAgentTerminalAdmission(
 		!boundedId(context.contextId) ||
 		!boundedId(context.serverId) ||
 		!boundedId(context.projectId) ||
-		!boundedId(context.projectEnvironmentId) ||
 		!boundedId(context.terminalSessionId) ||
 		!boundedId(context.terminalIncarnationId) ||
 		!boundedId(context.providerId) ||
@@ -1738,16 +1381,6 @@ function validateAgentTerminalAdmission(
 			'agent terminal admission has invalid observation capabilities',
 		);
 	}
-	const provider = providers.find(
-		(candidate) => candidate.id === context.providerId,
-	)!;
-	if (
-		value.observationCapabilities.some(
-			(capability) =>
-				!provider.requiredEnvironmentCapabilities.includes(capability as never),
-		)
-	)
-		throw new Error('agent terminal admission exceeds provider capabilities');
 	// The manager is the only API that calls this method; this check documents
 	// and enforces the same extension/provider namespace ownership at runtime.
 	if (!isNamespacedId(context.providerId, extensionId))
@@ -1868,719 +1501,4 @@ function jsonValue(
 	return Object.entries(objectValue).every(
 		([key, item]) => key.length <= 256 && jsonValue(item, depth + 1),
 	);
-}
-function validateProviderResult(
-	callback: ExtensionProviderInvocation['callback'],
-	result: unknown,
-	request?: unknown,
-): unknown {
-	if (callback === 'invokeService')
-		return validateServiceResult(result, request);
-	if (callback === 'resolveOptions')
-		return validated(
-			validateOptionSourceResult(result),
-			'provider returned invalid options',
-		);
-	if (callback === 'getStatus')
-		return validated(
-			validateProviderEnvironmentStatus(result),
-			'provider returned invalid status',
-		);
-	if (callback === 'testProfile')
-		return validated(
-			validateValidationIssues(result),
-			'provider returned invalid validation issues',
-		);
-	if (callback === 'createEnvironment' || callback === 'resumeOperation')
-		return validated(
-			validateProvisioningResult(result),
-			'provider returned an invalid provisioning result',
-		);
-	return validated(
-		validateEnvironmentActionResult(result),
-		'provider returned an invalid action result',
-	);
-}
-function validateServiceResult(result: unknown, request: unknown): unknown {
-	const call = record(request);
-	const value = record(result);
-	const capability = call?.capability;
-	const operation = call?.operation;
-	if (value === undefined || hasExecutable(value))
-		throw new Error('provider returned an invalid service result');
-	if (capability === 'terminal') {
-		if (
-			operation === 'create' &&
-			(!exactKeys(value, [
-				'sessionId',
-				'profileId',
-				'revision',
-				'root',
-				'shellProfile',
-				'capabilities',
-			]) ||
-				!boundedText(value.sessionId, 256) ||
-				!boundedText(value.profileId, 256) ||
-				!positive(value.revision) ||
-				!boundedText(value.root, 4096) ||
-				value.shellProfile !== 'remote-system-default' ||
-				record(value.capabilities) === undefined)
-		)
-			throw new Error('provider returned an invalid terminal create result');
-		else if (
-			operation === 'read' &&
-			(!exactKeys(value, ['data', 'encoding', 'exit']) ||
-				value.encoding !== 'base64' ||
-				typeof value.data !== 'string' ||
-				value.data.length > 220_000 ||
-				!base64(value.data) ||
-				(value.exit !== undefined && !terminalExit(value.exit)))
-		)
-			throw new Error('provider returned an invalid terminal read result');
-		else if (
-			['input', 'resize', 'kill', 'dispose'].includes(String(operation)) &&
-			(!exactKeys(value, ['accepted']) || value.accepted !== true)
-		)
-			throw new Error('provider returned an invalid terminal acknowledgement');
-		else if (
-			!['create', 'read', 'input', 'resize', 'kill', 'dispose'].includes(
-				String(operation),
-			)
-		)
-			throw new Error('provider returned an unknown terminal operation');
-	} else if (capability === 'filesystem') {
-		if (
-			![
-				'resolveRoot',
-				'browse',
-				'realpath',
-				'stat',
-				'list',
-				'read',
-				'write',
-				'createDirectory',
-				'rename',
-				'remove',
-			].includes(String(operation))
-		)
-			throw new Error('provider returned an unknown filesystem operation');
-		if (
-			operation === 'resolveRoot' &&
-			(!exactKeys(value, ['root']) || !boundedText(value.root, 4096))
-		)
-			throw new Error('provider returned an invalid root result');
-		else if (
-			operation === 'realpath' &&
-			(!exactKeys(value, ['path']) || !boundedText(value.path, 4096))
-		)
-			throw new Error('provider returned an invalid realpath result');
-		else if (
-			operation === 'read' &&
-			(!exactKeys(value, ['path', 'data', 'encoding', 'metadata']) ||
-				!boundedText(value.path, 4096) ||
-				value.encoding !== 'base64' ||
-				typeof value.data !== 'string' ||
-				value.data.length > 220_000 ||
-				!base64(value.data) ||
-				!metadata(value.metadata))
-		)
-			throw new Error('provider returned an invalid filesystem read result');
-		else if (
-			operation === 'stat' &&
-			(!exactKeys(value, [
-				'path',
-				'size',
-				'mode',
-				'mtimeMs',
-				'atimeMs',
-				'type',
-			]) ||
-				!metadata(value))
-		)
-			throw new Error('provider returned invalid metadata');
-		else if (
-			(operation === 'browse' || operation === 'list') &&
-			(!exactKeys(value, ['path', 'entries']) ||
-				!boundedText(value.path, 4096) ||
-				!Array.isArray(value.entries) ||
-				value.entries.length > 10_000 ||
-				value.entries.some((entry) => !directoryEntry(entry)))
-		) {
-			console.error(
-				'[terminay-extension-invalid-directory-result]',
-				directoryResultDiagnostic(value),
-			);
-			throw new Error('provider returned an invalid directory result');
-		} else if (
-			operation === 'write' &&
-			(!exactKeys(value, ['outcome', 'metadata', 'atomic']) ||
-				value.outcome !== 'written' ||
-				typeof value.atomic !== 'boolean' ||
-				!metadata(value.metadata))
-		)
-			throw new Error('provider returned an invalid write result');
-		else if (
-			operation === 'createDirectory' &&
-			(!exactKeys(value, ['outcome', 'path']) ||
-				value.outcome !== 'created' ||
-				!boundedText(value.path, 4096))
-		)
-			throw new Error('provider returned an invalid create result');
-		else if (
-			operation === 'rename' &&
-			(!exactKeys(value, ['outcome', 'from', 'to']) ||
-				value.outcome !== 'renamed' ||
-				!boundedText(value.from, 4096) ||
-				!boundedText(value.to, 4096))
-		)
-			throw new Error('provider returned an invalid rename result');
-		else if (
-			operation === 'remove' &&
-			(!exactKeys(value, ['outcome', 'path']) ||
-				value.outcome !== 'removed' ||
-				!boundedText(value.path, 4096))
-		)
-			throw new Error('provider returned an invalid remove result');
-	} else if (capability === 'filesystem-observation') {
-		if (
-			operation === 'observe' &&
-			(!exactKeys(value, [
-				'observationId',
-				'mode',
-				'minimumPollMs',
-				'state',
-				'root',
-			]) ||
-				!boundedId(value.observationId) ||
-				value.mode !== 'bounded-polling' ||
-				!positive(value.minimumPollMs) ||
-				value.state !== 'resync-required' ||
-				!boundedText(value.root, 4096))
-		)
-			throw new Error('provider returned an invalid filesystem observation');
-		else if (operation === 'poll' && !filesystemObservationPoll(value))
-			throw new Error(
-				'provider returned an invalid filesystem observation poll',
-			);
-		else if (
-			operation === 'stop' &&
-			(!exactKeys(value, ['observationId', 'stopped']) ||
-				!boundedId(value.observationId) ||
-				value.stopped !== true)
-		)
-			throw new Error(
-				'provider returned an invalid filesystem observation stop',
-			);
-		else if (
-			operation === 'manualRefresh' &&
-			(!exactKeys(value, ['observationId', 'accepted', 'state']) ||
-				!boundedId(value.observationId) ||
-				value.accepted !== true ||
-				value.state !== 'resync-required')
-		)
-			throw new Error('provider returned an invalid filesystem refresh');
-		else if (
-			!['observe', 'poll', 'stop', 'manualRefresh'].includes(String(operation))
-		)
-			throw new Error(
-				'provider returned an unknown filesystem observation operation',
-			);
-	} else if (capability === 'process-observation') {
-		if (
-			operation === 'observe' &&
-			(!exactKeys(value, ['observationId', 'protocol', 'version', 'state']) ||
-				!boundedId(value.observationId) ||
-				value.protocol !== 'terminay-target-helper/process-v1' ||
-				value.version !== 1 ||
-				value.state !== 'starting')
-		)
-			throw new Error('provider returned an invalid process observation');
-		else if (operation === 'poll' && !processObservationPoll(value))
-			throw new Error('provider returned an invalid process observation poll');
-		else if (
-			operation === 'stop' &&
-			(!exactKeys(value, ['observationId', 'stopped']) ||
-				!boundedId(value.observationId) ||
-				value.stopped !== true)
-		)
-			throw new Error('provider returned an invalid process observation stop');
-		else if (!['observe', 'poll', 'stop'].includes(String(operation)))
-			throw new Error(
-				'provider returned an unknown process observation operation',
-			);
-	} else if (capability === 'git') {
-		if (
-			![
-				'discover',
-				'status',
-				'branches',
-				'worktrees',
-				'diff',
-				'fetch',
-				'quickPush',
-				'cancel',
-			].includes(String(operation)) ||
-			!gitServiceResult(String(operation), value)
-		) {
-			console.error('[terminay-extension-invalid-git-result]', {
-				operation,
-				keys: Object.keys(value).sort(),
-				state: value.state,
-				projectIdType: typeof value.projectId,
-			});
-			throw new Error('provider returned an invalid Git service result');
-		}
-	} else throw new Error('provider returned an unsupported service capability');
-	const encoded = JSON.stringify(result);
-	if (encoded === undefined || Buffer.byteLength(encoded) > 768 * 1024)
-		throw new Error('provider returned an oversized service result');
-	return structuredClone(result);
-}
-function base64(value: string): boolean {
-	try {
-		return Buffer.from(value, 'base64').toString('base64') === value;
-	} catch {
-		return false;
-	}
-}
-function exactKeys(value: Record<string, unknown>, allowed: string[]): boolean {
-	return Object.keys(value).every((key) => allowed.includes(key));
-}
-function boundedText(value: unknown, max: number): value is string {
-	return (
-		typeof value === 'string' &&
-		value.length > 0 &&
-		value.length <= max &&
-		!value.includes('\0')
-	);
-}
-function positive(value: unknown): boolean {
-	return Number.isSafeInteger(value) && Number(value) > 0;
-}
-function metadata(value: unknown): boolean {
-	const item = record(value);
-	return (
-		item !== undefined &&
-		exactKeys(item, ['path', 'size', 'mode', 'mtimeMs', 'atimeMs', 'type']) &&
-		(item.path === undefined || boundedText(item.path, 4096)) &&
-		Number.isFinite(item.size) &&
-		Number(item.size) >= 0 &&
-		Number.isFinite(item.mode) &&
-		Number.isFinite(item.mtimeMs) &&
-		Number.isFinite(item.atimeMs) &&
-		['directory', 'symlink', 'file'].includes(String(item.type))
-	);
-}
-function directoryEntry(value: unknown): boolean {
-	const item = record(value);
-	return (
-		item !== undefined &&
-		exactKeys(item, [
-			'name',
-			'path',
-			'size',
-			'mode',
-			'mtimeMs',
-			'atimeMs',
-			'type',
-		]) &&
-		boundedText(item.name, 1024) &&
-		// Reuse the metadata contract without asking it to reject the directory
-		// entry's required `name` field.
-		metadata({
-			path: item.path,
-			size: item.size,
-			mode: item.mode,
-			mtimeMs: item.mtimeMs,
-			atimeMs: item.atimeMs,
-			type: item.type,
-		})
-	);
-}
-function directoryResultDiagnostic(
-	value: Record<string, unknown>,
-): Record<string, unknown> {
-	const entries = Array.isArray(value.entries) ? value.entries : [];
-	const badIndex = entries.findIndex((entry) => {
-		const item = record(entry);
-		return !directoryEntry(item);
-	});
-	const entry = badIndex < 0 ? undefined : record(entries[badIndex]);
-	return {
-		pathType: typeof value.path,
-		entryCount: entries.length,
-		...(badIndex < 0
-			? {}
-			: {
-					badIndex,
-					entryKeys:
-						entry === undefined ? 'not-an-object' : Object.keys(entry).sort(),
-					entryName:
-						typeof entry?.name === 'string'
-							? entry.name.slice(0, 128)
-							: typeof entry?.name,
-					metadata:
-						entry === undefined
-							? undefined
-							: {
-									pathType: typeof entry.path,
-									size: entry.size,
-									mode: entry.mode,
-									mtimeMs: entry.mtimeMs,
-									atimeMs: entry.atimeMs,
-									type: entry.type,
-								},
-				}),
-	};
-}
-function terminalExit(value: unknown): boolean {
-	const item = record(value);
-	return (
-		item !== undefined &&
-		exactKeys(item, ['code', 'signal', 'interrupted', 'reason']) &&
-		(item.code === null || Number.isInteger(item.code)) &&
-		(item.signal === null || boundedText(item.signal, 64)) &&
-		typeof item.interrupted === 'boolean' &&
-		(item.reason === undefined || item.reason === 'transport-lost')
-	);
-}
-function filesystemObservationPoll(value: Record<string, unknown>): boolean {
-	if (
-		!exactKeys(value, [
-			'observationId',
-			'state',
-			'revision',
-			'events',
-			'root',
-			'manualRefreshAvailable',
-			'reason',
-		]) ||
-		!boundedId(value.observationId) ||
-		!['resync', 'changes', 'coalesced', 'degraded'].includes(
-			String(value.state),
-		) ||
-		!Number.isSafeInteger(value.revision) ||
-		Number(value.revision) < 0 ||
-		!Array.isArray(value.events) ||
-		value.events.length > 1000
-	)
-		return false;
-	if (value.root !== undefined && !boundedText(value.root, 4096)) return false;
-	if (
-		value.manualRefreshAvailable !== undefined &&
-		typeof value.manualRefreshAvailable !== 'boolean'
-	)
-		return false;
-	if (value.reason !== undefined && !boundedText(value.reason, 1000))
-		return false;
-	return value.events.every((entry) => {
-		const event = record(entry);
-		return (
-			event !== undefined &&
-			exactKeys(event, ['kind', 'path']) &&
-			['created', 'changed', 'removed'].includes(String(event.kind)) &&
-			boundedText(event.path, 4096)
-		);
-	});
-}
-function processObservationPoll(value: Record<string, unknown>): boolean {
-	if (
-		!exactKeys(value, [
-			'observationId',
-			'state',
-			'cwd',
-			'foregroundProcess',
-			'observedAt',
-			'lastObservedAt',
-			'reason',
-		]) ||
-		!boundedId(value.observationId) ||
-		!['available', 'stale', 'unavailable', 'starting'].includes(
-			String(value.state),
-		)
-	)
-		return false;
-	if (value.state === 'available')
-		return (
-			boundedText(value.cwd, 4096) &&
-			(value.foregroundProcess === null ||
-				boundedText(value.foregroundProcess, 512)) &&
-			Number.isFinite(value.observedAt)
-		);
-	if (value.reason !== undefined && !boundedText(value.reason, 256))
-		return false;
-	return (
-		value.cwd === null &&
-		value.foregroundProcess === null &&
-		(value.lastObservedAt === undefined ||
-			Number.isFinite(value.lastObservedAt))
-	);
-}
-function nullableId(value: unknown): boolean {
-	return value === null || Boolean(boundedId(value));
-}
-function nullablePath(value: unknown): boolean {
-	return value === null || boundedText(value, 4096);
-}
-function gitDiscoveryState(value: unknown): boolean {
-	return [
-		'ready',
-		'not-repository',
-		'git-unavailable',
-		'missing-gitfile',
-		'command-error',
-	].includes(String(value));
-}
-function gitError(value: unknown): boolean {
-	if (value === undefined) return true;
-	const item = record(value);
-	return (
-		item !== undefined &&
-		exactKeys(item, ['code', 'message', 'stderr', 'operation']) &&
-		boundedText(item.code, 64) &&
-		boundedText(item.message, 1000) &&
-		(item.stderr === undefined ||
-			(typeof item.stderr === 'string' && item.stderr.length <= 4096)) &&
-		(item.operation === undefined || boundedText(item.operation, 64))
-	);
-}
-function gitBranchStatus(value: unknown): boolean {
-	const item = record(value);
-	return (
-		item !== undefined &&
-		exactKeys(item, [
-			'name',
-			'detached',
-			'head',
-			'upstream',
-			'upstreamState',
-			'ahead',
-			'behind',
-		]) &&
-		(item.name === null || boundedText(item.name, 256)) &&
-		typeof item.detached === 'boolean' &&
-		(item.head === null || boundedText(item.head, 256)) &&
-		(item.upstream === null || boundedText(item.upstream, 256)) &&
-		['none', 'configured', 'missing'].includes(String(item.upstreamState)) &&
-		(item.ahead === null ||
-			(Number.isSafeInteger(item.ahead) && Number(item.ahead) >= 0)) &&
-		(item.behind === null ||
-			(Number.isSafeInteger(item.behind) && Number(item.behind) >= 0))
-	);
-}
-function gitStatusResult(
-	value: Record<string, unknown>,
-	extra: readonly string[] = [],
-): boolean {
-	return (
-		exactKeys(value, [
-			'projectId',
-			'repositoryId',
-			'repositoryRoot',
-			'worktreeId',
-			'worktreeRoot',
-			'state',
-			'branch',
-			'entries',
-			'head',
-			'bounded',
-			'error',
-			...extra,
-		]) &&
-		Boolean(boundedId(value.projectId)) &&
-		nullableId(value.repositoryId) &&
-		nullablePath(value.repositoryRoot) &&
-		nullableId(value.worktreeId) &&
-		nullablePath(value.worktreeRoot) &&
-		gitDiscoveryState(value.state) &&
-		gitBranchStatus(value.branch) &&
-		Array.isArray(value.entries) &&
-		value.entries.length <= 10000 &&
-		(value.head === null || boundedText(value.head, 256)) &&
-		typeof value.bounded === 'boolean' &&
-		gitError(value.error)
-	);
-}
-function gitWorktreeSummary(value: unknown): boolean {
-	const item = record(value);
-	return (
-		item !== undefined &&
-		exactKeys(item, [
-			'id',
-			'repositoryId',
-			'path',
-			'branch',
-			'detached',
-			'head',
-			'isMain',
-			'isBare',
-			'isPrunable',
-			'locked',
-			'state',
-			'aheadOfDefaultBranchCount',
-			'lineAdditions',
-			'lineDeletions',
-			'hasCommittedChanges',
-			'entries',
-			'error',
-		]) &&
-		Boolean(boundedId(item.id)) &&
-		Boolean(boundedId(item.repositoryId)) &&
-		boundedText(item.path, 4096) &&
-		(item.branch === null || boundedText(item.branch, 256)) &&
-		typeof item.detached === 'boolean' &&
-		(item.head === null || boundedText(item.head, 256)) &&
-		typeof item.isMain === 'boolean' &&
-		typeof item.isBare === 'boolean' &&
-		typeof item.isPrunable === 'boolean' &&
-		typeof item.locked === 'boolean' &&
-		['clean', 'dirty', 'unmerged', 'detached', 'prunable', 'unknown'].includes(
-			String(item.state),
-		) &&
-		(item.aheadOfDefaultBranchCount === null ||
-			(Number.isSafeInteger(item.aheadOfDefaultBranchCount) &&
-				Number(item.aheadOfDefaultBranchCount) >= 0)) &&
-		(item.lineAdditions === null ||
-			(Number.isSafeInteger(item.lineAdditions) &&
-				Number(item.lineAdditions) >= 0)) &&
-		(item.lineDeletions === null ||
-			(Number.isSafeInteger(item.lineDeletions) &&
-				Number(item.lineDeletions) >= 0)) &&
-		(item.hasCommittedChanges === null ||
-			typeof item.hasCommittedChanges === 'boolean') &&
-		Array.isArray(item.entries) &&
-		item.entries.length <= 10000 &&
-		gitError(item.error)
-	);
-}
-/** Provider Git results must match the application protocol the renderer already
- * consumes from This server. Extra-short shapes were rejected as a failed load
- * even when the remote root was a normal non-repository. */
-function gitServiceResult(
-	operation: string,
-	value: Record<string, unknown>,
-): boolean {
-	if (operation === 'discover')
-		return (
-			exactKeys(value, [
-				'state',
-				'repositoryRoot',
-				'repositoryId',
-				'worktreeId',
-			]) &&
-			['ready', 'not-repository', 'git-unavailable'].includes(
-				String(value.state),
-			) &&
-			nullablePath(value.repositoryRoot) &&
-			nullableId(value.repositoryId) &&
-			nullableId(value.worktreeId)
-		);
-	if (operation === 'status') return gitStatusResult(value);
-	if (operation === 'branches')
-		return (
-			gitStatusResult(value, ['operation']) && value.operation === 'branch'
-		);
-	if (operation === 'worktrees')
-		return (
-			exactKeys(value, [
-				'projectId',
-				'repositoryId',
-				'repositoryRoot',
-				'defaultBranch',
-				'state',
-				'worktrees',
-				'bounded',
-				'error',
-			]) &&
-			Boolean(boundedId(value.projectId)) &&
-			nullableId(value.repositoryId) &&
-			nullablePath(value.repositoryRoot) &&
-			(value.defaultBranch === null || boundedText(value.defaultBranch, 256)) &&
-			gitDiscoveryState(value.state) &&
-			Array.isArray(value.worktrees) &&
-			value.worktrees.length <= 256 &&
-			value.worktrees.every(gitWorktreeSummary) &&
-			typeof value.bounded === 'boolean' &&
-			gitError(value.error)
-		);
-	if (operation === 'diff')
-		return (
-			exactKeys(value, [
-				'projectId',
-				'repositoryId',
-				'worktreeId',
-				'state',
-				'compareTarget',
-				'path',
-				'files',
-				'hunks',
-				'patch',
-				'binary',
-				'bounded',
-				'error',
-			]) &&
-			Boolean(boundedId(value.projectId)) &&
-			nullableId(value.repositoryId) &&
-			nullableId(value.worktreeId) &&
-			gitDiscoveryState(value.state) &&
-			value.compareTarget === 'HEAD' &&
-			(value.path === null || boundedText(value.path, 4096)) &&
-			Array.isArray(value.files) &&
-			value.files.length <= 10000 &&
-			Array.isArray(value.hunks) &&
-			value.hunks.length <= 10000 &&
-			typeof value.patch === 'string' &&
-			Buffer.byteLength(value.patch) <= 4 * 1024 * 1024 &&
-			typeof value.binary === 'boolean' &&
-			typeof value.bounded === 'boolean' &&
-			gitError(value.error)
-		);
-	if (operation === 'fetch')
-		return (
-			exactKeys(value, ['applied', 'head', 'detail']) &&
-			value.applied === true &&
-			boundedText(value.head, 256) &&
-			typeof value.detail === 'string' &&
-			value.detail.length <= 2048
-		);
-	if (operation === 'quickPush')
-		return (
-			exactKeys(value, ['proposalId', 'head', 'actions', 'expiresAt']) ||
-			exactKeys(value, ['applied', 'completed', 'head'])
-		);
-	return false;
-}
-function hasExecutable(value: unknown, seen = new Set<unknown>()): boolean {
-	if (
-		typeof value === 'function' ||
-		typeof value === 'symbol' ||
-		typeof value === 'bigint' ||
-		value === undefined
-	)
-		return true;
-	if (value === null || typeof value !== 'object') return false;
-	if (seen.has(value)) return true;
-	seen.add(value);
-	if (
-		Object.getPrototypeOf(value) !== Object.prototype &&
-		!Array.isArray(value)
-	)
-		return true;
-	return Object.values(value as Record<string, unknown>).some((item) =>
-		hasExecutable(item, seen),
-	);
-}
-function validated<T>(
-	result: { readonly ok: true; readonly value: T } | { readonly ok: false },
-	message: string,
-): T {
-	if (!result.ok) throw new Error(message);
-	return structuredClone(result.value);
-}
-function runtimeValidated<T>(
-	result: { readonly ok: true; readonly value: T } | { readonly ok: false },
-	message: string,
-): T {
-	if (!result.ok) throw new Error(message);
-	return result.value;
 }

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { assertJsonValue } from "@terminay/protocol";
-import { THIS_SERVER_ENVIRONMENT_ID, WORKSPACE_SCHEMA_VERSION, WorkspaceStore, canonicalizeWorkspaceState, createInitialWorkspace, defaultWorkspaceSidebarState, migrateWorkspaceState, validateWorkspace } from "../dist/index.js";
+import { WORKSPACE_SCHEMA_VERSION, WorkspaceStore, canonicalizeWorkspaceState, createInitialWorkspace, defaultWorkspaceSidebarState, migrateWorkspaceState, validateWorkspace } from "../dist/index.js";
 
 test("workspace store creates, moves, and atomically commits canonical objects", () => {
   const store = new WorkspaceStore(createInitialWorkspace("server-a"));
@@ -59,11 +59,8 @@ test("project sidebar state is independently durable, bounded, and migrates with
   assert.equal(store.apply({ commandId: "invalid-sidebar", command: { type: "project.sidebar.update", projectId: "project-a", sidebar: { sidebarPanelOrder: ["explorer"] } } }).ok, false);
   assert.equal(store.state.revision, beforeInvalid);
 
-  const legacy = { ...store.state, schemaVersion: 3, projects: Object.fromEntries(Object.entries(store.state.projects).map(([id, { sidebar, ...project }]) => [id, project])) };
-  const migrated = migrateWorkspaceState(legacy, "server-a");
-  assert.equal(migrated.schemaVersion, WORKSPACE_SCHEMA_VERSION);
-  assert.equal(migrated.projects["project-a"].sidebar.isFileExplorerOpen, false);
-  assert.deepEqual(migrated.projects["project-a"].panelIds, store.state.projects["project-a"].panelIds);
+  const previousVersion = { ...store.state, schemaVersion: WORKSPACE_SCHEMA_VERSION - 1 };
+  assert.throws(() => migrateWorkspaceState(previousVersion, "server-a"), /unsupported workspace schema/);
 });
 
 test("restart recovery marks running sessions interrupted without changing identity", () => {
@@ -73,10 +70,10 @@ test("restart recovery marks running sessions interrupted without changing ident
   const project = store.apply({ commandId: "project", command: { type: "project.create", projectId, viewId, root: "/tmp/a", name: "A" } });
   assert.equal(project.ok, true);
   const state = store.state;
-  state.terminalSessions["session-a"] = { id: "session-a", serverId: "server-a", projectId, projectEnvironmentId: THIS_SERVER_ENVIRONMENT_ID, environmentRevision: 1, status: "running", createdAt: 1, outputPosition: 4 };
+  state.terminalSessions["session-a"] = { id: "session-a", serverId: "server-a", projectId, status: "running", createdAt: 1, outputPosition: 4 };
   // The immutable snapshot API prevents callers from mutating the store; use a
   // fresh valid state to model a persisted repository load for this unit.
-  const loaded = new WorkspaceStore({ ...state, terminalSessions: { "session-a": { id: "session-a", serverId: "server-a", projectId, projectEnvironmentId: THIS_SERVER_ENVIRONMENT_ID, environmentRevision: 1, status: "running", createdAt: 1, outputPosition: 4 } } });
+  const loaded = new WorkspaceStore({ ...state, terminalSessions: { "session-a": { id: "session-a", serverId: "server-a", projectId, status: "running", createdAt: 1, outputPosition: 4 } } });
   const interrupted = loaded.markInterruptedSessions(10);
   assert.equal(interrupted.terminalSessions["session-a"].status, "interrupted");
   assert.equal(interrupted.terminalSessions["session-a"].id, "session-a");
@@ -201,45 +198,29 @@ test("v0 workspace snapshots migrate idempotently without terminal content", () 
   const migrated = migrateWorkspaceState({ schemaVersion: 0, serverId: "server-a", projects: { "project-a": { root: "/tmp/a", name: "A", output: "must-not-copy" } } }, "fallback");
   assert.equal(migrated.schemaVersion, WORKSPACE_SCHEMA_VERSION);
   assert.equal(migrated.projects["project-a"].root, "/tmp/a");
-  assert.equal(migrated.projects["project-a"].projectEnvironmentId, THIS_SERVER_ENVIRONMENT_ID);
   assert.equal(Object.keys(migrated.terminalSessions).length, 0);
   assert.deepEqual(migrateWorkspaceState(migrated, "fallback"), migrated);
   validateWorkspace(migrated);
 });
 
-test("v2 snapshots migrate project and terminal environment bindings once without changing ids", () => {
+test("a previous-version snapshot is refused rather than migrated", () => {
   const store = new WorkspaceStore(createInitialWorkspace("server-a"));
   const viewId = store.state.viewOrder[0];
   store.apply({ commandId: "project", command: { type: "project.create", projectId: "project-a", viewId, root: "/tmp/a", name: "A" } });
   store.apply({ commandId: "terminal", command: { type: "terminal.createPanel", projectId: "project-a", sessionId: "session-a", panelId: "panel-a", createdAt: 1 } });
-  const current = store.state;
-  const legacy = {
-    ...current,
-    schemaVersion: 2,
-    projects: Object.fromEntries(Object.entries(current.projects).map(([id, { projectEnvironmentId, environmentRevision, ...project }]) => [id, project])),
-    terminalSessions: Object.fromEntries(Object.entries(current.terminalSessions).map(([id, { projectEnvironmentId, environmentRevision, ...session }]) => [id, session])),
-  };
-  const migrated = migrateWorkspaceState(legacy, "fallback");
-  assert.equal(migrated.projects["project-a"].projectEnvironmentId, THIS_SERVER_ENVIRONMENT_ID);
-  assert.equal(migrated.terminalSessions["session-a"].projectEnvironmentId, THIS_SERVER_ENVIRONMENT_ID);
-  assert.deepEqual(Object.keys(migrated.projects), Object.keys(current.projects));
-  assert.deepEqual(Object.keys(migrated.panels), Object.keys(current.panels));
-  assert.deepEqual(Object.keys(migrated.terminalSessions), Object.keys(current.terminalSessions));
-  assert.deepEqual(migrateWorkspaceState(migrated, "fallback"), migrated);
+  for (const schemaVersion of [1, 2, 3, WORKSPACE_SCHEMA_VERSION - 1])
+    assert.throws(() => migrateWorkspaceState({ ...store.state, schemaVersion }, "fallback"), /unsupported workspace schema/);
 });
 
-test("terminal environment mismatch and cross-environment panel moves fail atomically", () => {
+test("a record carrying a removed environment field is rejected as unknown", () => {
   const store = new WorkspaceStore(createInitialWorkspace("server-a"));
   const viewId = store.state.viewOrder[0];
-  store.apply({ commandId: "local", command: { type: "project.create", projectId: "project-local", viewId, root: "/tmp/local", name: "Local" } });
-  store.apply({ commandId: "remote", command: { type: "project.create", projectId: "project-remote", viewId, projectEnvironmentId: "ssh:remote", environmentRevision: 3, root: "/remote", name: "Remote" } });
-  store.apply({ commandId: "terminal", command: { type: "terminal.createPanel", projectId: "project-local", sessionId: "session-a", panelId: "panel-a", createdAt: 1 } });
-  const before = store.state;
-  const moved = store.apply({ commandId: "move", command: { type: "panel.move", panelId: "panel-a", targetProjectId: "project-remote" } });
-  assert.equal(moved.ok, false);
-  assert.equal(store.state.revision, before.revision);
-  assert.equal(store.state.panels["panel-a"].projectId, "project-local");
-  assert.throws(() => validateWorkspace({ ...before, terminalSessions: { ...before.terminalSessions, "session-a": { ...before.terminalSessions["session-a"], projectEnvironmentId: "ssh:forged" } } }), /environment does not match/);
+  store.apply({ commandId: "project", command: { type: "project.create", projectId: "project-a", viewId, root: "/tmp/a", name: "A" } });
+  store.apply({ commandId: "terminal", command: { type: "terminal.createPanel", projectId: "project-a", sessionId: "session-a", panelId: "panel-a", createdAt: 1 } });
+  const state = store.state;
+  assert.throws(() => validateWorkspace({ ...state, projects: { ...state.projects, "project-a": { ...state.projects["project-a"], projectEnvironmentId: "terminay:this-server" } } }), /unknown field: projectEnvironmentId/);
+  assert.throws(() => validateWorkspace({ ...state, projects: { ...state.projects, "project-a": { ...state.projects["project-a"], environmentRevision: 1 } } }), /unknown field: environmentRevision/);
+  assert.throws(() => validateWorkspace({ ...state, terminalSessions: { ...state.terminalSessions, "session-a": { ...state.terminalSessions["session-a"], projectEnvironmentId: "ssh:forged" } } }), /unknown field: projectEnvironmentId/);
 });
 
 test("canonical persistence strips transient renderer fields and terminal content", () => {

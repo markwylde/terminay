@@ -1,6 +1,8 @@
 import { ChevronDown, Play, Settings2, Square } from 'lucide-react';
 import type { RefObject } from 'react';
+import { useConnections } from '../shared/connections/ConnectionsContext';
 import type { RemoteAccessStatus } from '../types/terminay';
+import { ConnectionsControl } from './ConnectionsControl';
 
 export type ConnectionSwitcherEntry = {
 	id: string;
@@ -20,6 +22,9 @@ export function RemoteAccessConnectionMenu(props: {
 	onOpenConnection: () => void;
 	onOpenPairingQr: () => void;
 	onSelectConnection?: (profileId: string) => void;
+	/** Go to a server the window already holds: the same act as activating one
+	 * of its tabs. Absent hosts fall back to publishing the active server. */
+	onSelectServer?: (serverId: string) => void;
 	onSwitchConnections?: () => void;
 	onToggleExposure: () => void;
 	onToggleMenu: () => void;
@@ -27,6 +32,15 @@ export function RemoteAccessConnectionMenu(props: {
 	tone: string;
 }) {
 	const { status } = props;
+	const {
+		activeServerId,
+		attach,
+		connections,
+		detach,
+		profiles,
+		setActiveServerId,
+		supportsAttach,
+	} = useConnections();
 	const switcherEntries = props.connectionSwitcherEntries ?? [];
 	const isExposed = Boolean(status?.isRunning);
 	const connectionCount = status?.connections.length ?? 0;
@@ -104,7 +118,28 @@ export function RemoteAccessConnectionMenu(props: {
 								<Settings2 size={14} aria-hidden="true" />
 							</button>
 						</div>
-						{switcherEntries.length ? (
+						{connections.length > 0 ? (
+							// A window holds several connections at once, so this lists
+							// what is attached rather than offering a switch between them.
+							<ConnectionsControl
+								{...(activeServerId === undefined ? {} : { activeServerId })}
+								connections={connections}
+								currentServerLabel={props.currentServerLabel}
+								onAttach={attach}
+								onDetach={(profileId) => void detach(profileId)}
+								// Choosing a row is the same act as activating one of that
+								// server's tabs: the window starts working in it.
+								onSelect={(serverId) => {
+									if (props.onSelectServer === undefined) {
+										setActiveServerId(serverId);
+										return;
+									}
+									props.onSelectServer(serverId);
+								}}
+								profiles={profiles}
+								supportsAttach={supportsAttach}
+							/>
+						) : switcherEntries.length ? (
 							switcherEntries.map((entry) => (
 								<button
 									key={entry.id}

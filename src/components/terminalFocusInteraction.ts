@@ -7,7 +7,7 @@
  */
 
 export const TERMINAL_CREATION_CHROME_SELECTOR =
-	'.terminay-add-tab-button, .project-tab-add, .project-tab-add-box, .project-environment-split';
+	'.terminay-add-tab-button, .project-tab-add, .project-tab-add-box';
 
 type ClosableElement = {
 	closest?: (selector: string) => unknown;

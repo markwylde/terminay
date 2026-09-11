@@ -3,21 +3,23 @@
 ## Purpose
 
 Terminay Server owns the canonical workspace model and every privileged service
-that acts on its own host or a bound project environment, so that Desktop and
-browser clients only render that model, submit validated commands, and keep
-device-local presentation and connection state.
+that acts on its own host, so that Desktop and browser clients only render that
+model, submit validated commands, and keep device-local presentation and
+connection state.
 
 ## Requirements
 
 ### Requirement: Canonical model ownership and client role
 
 Terminay Server SHALL own the canonical workspace model and every privileged
-service acting on its own host or a bound project environment. Desktop and
-browser clients SHALL render that model, submit validated commands, and keep
-only device-local presentation and connection state. The model SHALL preserve
-the current project, panel, and immutable terminal-session boundaries while
-allowing multiple clients to observe one server, and process lifetime MUST NOT
-be tied to any renderer.
+service acting on its own host. Desktop and browser clients SHALL render that
+model, submit validated commands, and keep only device-local presentation and
+connection state. A client MAY observe several servers at once; each server SHALL
+be canonical for its own model alone, and no server SHALL hold, route, or
+reconcile another server's workspace. The model SHALL preserve the current
+project, panel, and immutable terminal-session boundaries while allowing multiple
+clients to observe one server, and process lifetime MUST NOT be tied to any
+renderer.
 
 #### Scenario: Multiple clients observe one server
 
@@ -30,52 +32,11 @@ be tied to any renderer.
 - **WHEN** every renderer disconnects
 - **THEN** the server's workspace state and terminal processes continue
 
-### Requirement: Canonical object definitions
+#### Scenario: One client observes several servers
 
-A **server** SHALL be one workspace, trust, persistence, extension, and
-project-environment routing authority with one data root, whose own machine is
-the built-in This server environment and not the only possible project target. A
-**workspace view** SHALL be a server-owned logical grouping of projects
-presentable as an Electron native window or an in-browser view or tab. A
-**project environment** SHALL be a stable server-owned execution binding held in
-the separate environment registry; workspace state SHALL store its opaque id and
-MUST NOT store provider credentials or configuration. A **project** SHALL have a
-stable id, immutable project-environment id, root folder interpreted by that
-environment, name, colour, icon, optional default shell-profile id, sidebar
-layout, ordered panels, and logical layout. A **panel** SHALL have a stable id,
-type, project ownership, presentation metadata, and type-specific state.
-
-#### Scenario: Workspace state stores only an environment id
-
-- **WHEN** a project is persisted
-- **THEN** its environment binding is stored as an opaque id and no provider
-  credentials or configuration are stored in workspace state
-
-#### Scenario: Project fields survive a reconnect
-
-- **WHEN** a fresh client connects
-- **THEN** it receives each project's id, environment id, root, name, colour,
-  icon, default shell-profile reference, sidebar layout, ordered panels, and
-  logical layout from the server
-
-### Requirement: Terminal sessions have immutable server-issued identity
-
-A terminal session SHALL have an immutable server-issued id and a runtime
-lifecycle independent of panel mounts. It SHALL snapshot its project's
-environment id, and validation SHALL require them to match. A terminal panel
-SHALL reference a session; moving the panel MUST NOT recreate the session.
-
-#### Scenario: Moving a terminal panel
-
-- **WHEN** a terminal panel is moved
-- **THEN** it continues to reference the same session id and no new session is
-  created
-
-#### Scenario: Environment id mismatch
-
-- **WHEN** a session's snapshotted environment id does not match its project's
-  environment id
-- **THEN** validation fails
+- **WHEN** a client holds connections to several servers
+- **THEN** each server publishes and validates only its own workspace model, and
+  no server is asked for another server's projects, panels, or sessions
 
 ### Requirement: File and folder panel scope
 
@@ -93,27 +54,35 @@ state.
 
 Workspace views MUST NOT use an Electron `BrowserWindow` id as product identity.
 Electron MAY map a view to a native window and web clients MAY render the same
-view through a view switcher. Closing a client window and deleting a logical
-workspace view SHALL be separate actions.
+view through a view switcher. A window SHALL attach one workspace view on each
+attached server, and each of those views SHALL stay owned by its own server.
+Closing a client window and deleting a logical workspace view SHALL be separate
+actions.
 
 #### Scenario: Closing a native window
 
 - **WHEN** the user closes the native window presenting a workspace view
 - **THEN** the logical workspace view is not deleted
 
+#### Scenario: One attached view per server
+
+- **WHEN** a window attaches two servers
+- **THEN** it holds one workspace view on each, and neither server is aware of the
+  other's view
+
 ### Requirement: Server-persisted state inventory
 
 The server SHALL persist and publish ordered workspace views and their project
 membership; projects, roots, names, colours, icons, default shell-profile
-references, immutable environment references, and sidebar layout configuration;
-logical panel layout, splits, order, notes, and appearance; terminal identity,
-lifecycle, metadata, bounded output position, activity, and recording state;
-file and folder navigation and modes where they are part of the shared
-workspace; settings affecting shells, project services, terminal behaviour,
-recording, remote exposure, agents, AI providers, macros, and server automation;
-macros and server-held secrets; authoritative agent and activity state and
-acknowledgement; paired devices, public device keys, exposure state, and audit
-records; and schema and revision metadata needed for safe migration and resync.
+references, and sidebar layout configuration; logical panel layout, splits,
+order, notes, and appearance; terminal identity, lifecycle, metadata, bounded
+output position, activity, and recording state; file and folder navigation and
+modes where they are part of the shared workspace; settings affecting shells,
+project services, terminal behaviour, recording, remote exposure, agents, AI
+providers, macros, and server automation; macros and server-held secrets;
+authoritative agent and activity state and acknowledgement; paired devices,
+public device keys, exposure state, and audit records; and schema and revision
+metadata needed for safe migration and resync.
 
 #### Scenario: Fresh client rebuilds the workspace
 
@@ -143,13 +112,16 @@ connected presentation.
 Desktop and browser hosts SHALL keep only state inherently local to that device:
 remembered server labels and non-secret connection metadata; encrypted device
 keys and reconnect credentials; native window geometry and the mapping from
-local windows to server and view ids; which project tab and which terminal or
-panel is active in each connected presentation; sidebar visibility for each
-selected server and project pair; transient dialogs, menus, selection, drag
-previews, and optimistic UI state; hardware and host capabilities such as
+local windows to server and view ids; the window's composition, being its primary
+connection, its set of attached connections, the workspace view attached on each
+of them, and the order of the project tabs drawn from them; which project tab and
+which terminal or panel is active in each connected presentation; sidebar
+visibility for each server and project pair; transient dialogs, menus, selection,
+drag previews, and optimistic UI state; hardware and host capabilities such as
 microphone permission; and explicitly device-specific accessibility or input
-overrides. Client-local state MUST NOT be required to recover project
-membership, panel identity, or a live terminal after reconnect.
+overrides. The composition MUST NOT be sent to any server. Client-local state
+MUST NOT be required to recover project membership, panel identity, or a live
+terminal after reconnect.
 
 #### Scenario: Active selections differ per client
 
@@ -163,17 +135,23 @@ membership, panel identity, or a live terminal after reconnect.
 - **THEN** project membership, panel identity, and live terminals are recovered
   from the server
 
+#### Scenario: Composition is device-local
+
+- **WHEN** a window attaches a server, reorders its tabs, and another device
+  connects to the same servers
+- **THEN** the composition is stored only on the first device, no server records
+  it, and the second device keeps its own composition
+
 ### Requirement: Desktop persistence allowlist
 
 Desktop persistence SHALL be allowlisted to non-secret connection profiles,
-OS-protected device credentials, native window geometry, exact
-window-to-server/view bindings, verified content-addressed bundle caches,
-application update state, operating-system permission decisions, and explicitly
-device-specific preferences. It MUST NOT persist workspace snapshots,
+OS-protected device credentials, native window geometry, each window's
+composition, application update state, operating-system permission decisions, and
+explicitly device-specific preferences. It MUST NOT persist workspace snapshots,
 application-protocol DTOs, project roots, panel state, terminal state, server
 settings, or server capability projections as a second authority. A cached
 projection used while connected SHALL be disposable and SHALL always be
-resynchronized from the selected server.
+resynchronized from the server that owns it.
 
 #### Scenario: No second authority on disk
 
@@ -186,18 +164,33 @@ resynchronized from the selected server.
 - **WHEN** Desktop reconnects to a server
 - **THEN** any cached projection is discarded in favour of the server's state
 
+#### Scenario: Composition survives restart
+
+- **WHEN** Desktop restarts a window that had attached servers and a chosen tab
+  order
+- **THEN** the primary connection, the attached set, the attached view on each,
+  and the tab order are restored from local persistence, while every project,
+  panel, and terminal is resynchronized from its owning server
+
 ### Requirement: Browser connection-host persistence
 
-Browser connection-host persistence SHALL follow the same ownership rule.
-Manager storage SHALL contain only sanitized profiles. Origin-bound credentials,
-verified bundle caches, and ephemeral renderer state SHALL remain partitioned by
-the exact server session origin.
+Browser connection-host persistence SHALL follow the same ownership rule. Manager
+storage SHALL contain only sanitized profiles and each session's composition.
+Origin-bound credentials, verified bundle caches, and ephemeral renderer state
+SHALL remain partitioned by the exact server session origin.
 
 #### Scenario: Manager storage contents
 
 - **WHEN** the browser manager stores a remembered server
 - **THEN** only a sanitized profile is stored, and credentials and bundle caches
   stay partitioned by that server's session origin
+
+#### Scenario: Composition is not a workspace snapshot
+
+- **WHEN** the browser manager stores a session's composition
+- **THEN** it stores only the primary and attached connection identities, the
+  attached view on each, and the tab order, and no workspace snapshot, project
+  root, panel, or terminal state
 
 ### Requirement: Snapshot, revision, and named commands
 
@@ -340,15 +333,23 @@ and snapshot convergence SHALL share a bounded 10-second lifecycle budget.
 
 ### Requirement: Consistency scope
 
-The workspace consistency contract SHALL be multi-client consistency, not
-collaborative document editing. File editing SHALL continue to use the
-file-viewer conflict contract.
+The workspace consistency contract SHALL be multi-client consistency within one
+server, not collaborative document editing and not consistency across servers.
+Each server SHALL order its own revisions independently, and a client MUST NOT
+sequence, compare, or reconcile one server's revisions against another's. File
+editing SHALL continue to use the file-viewer conflict contract.
 
 #### Scenario: Concurrent file edits
 
 - **WHEN** two clients edit the same file
 - **THEN** the file-viewer conflict contract governs the outcome rather than the
   workspace command protocol
+
+#### Scenario: Revisions are per server
+
+- **WHEN** a client holds projections of two attached servers
+- **THEN** it tracks a separate revision per server and never compares or orders
+  them against each other
 
 ### Requirement: Logical layout without host handles
 
@@ -397,11 +398,12 @@ browser popup windows.
 
 ### Requirement: Native project-host window binding
 
-A native project-host window SHALL bind to one exact server-owned workspace view
-and SHALL derive its project tabs only from that view's ordered project ids. The
-host MAY reattach terminal presentation streams between renderers but MUST NOT
-synthesize a replacement project id or treat a cross-view move as a project
-close.
+A native project-host window SHALL bind to one primary connection and to one
+exact server-owned workspace view on that connection and on each attached
+connection. It SHALL derive its project tabs only from the ordered project ids of
+those bound views. The host MAY reattach terminal presentation streams between
+renderers but MUST NOT synthesize a replacement project id or treat a cross-view
+move as a project close.
 
 #### Scenario: Cross-view move
 
@@ -409,33 +411,37 @@ close.
 - **THEN** the host treats it as a move, not a project close, and synthesizes no
   replacement project id
 
+#### Scenario: Tabs come only from bound views
+
+- **WHEN** a window is bound to a primary connection and one attached connection
+- **THEN** its project tabs are exactly the projects of the bound view on each of
+  those two servers
+
 ### Requirement: Privileged services owned by the server
 
-PTY and remote-terminal creation, input, resize, working-directory inspection
-where supported, output replay, and termination; terminal signal parsing and
-fallback activity reduction; filesystem listing, search, read, write, watch, and
-file-conflict detection; Git status, diff, worktree lifecycle, Quick Push, and
-provider CLI execution; recording capture, persistence, listing, replay reads,
-and deletion; process-bound agent-journal discovery, versioned provider
-normalization, status, and lifecycle; MCP and control socket, per-session
-capability tokens, and project-scoped tools; settings, macros, AI metadata
-generation, and secret-backed automation; and remote pairing, WebRTC
-availability, device authentication, revocation, and audit SHALL be authorized,
-routed, and lifecycle-owned by Terminay Server and reached only through the
-application protocol. Their concrete execution adapter SHALL be resolved from the
-canonical project environment.
+PTY creation, input, resize, working-directory inspection, output replay, and
+termination; terminal signal parsing and fallback activity reduction; filesystem
+listing, search, read, write, watch, and file-conflict detection; Git status,
+diff, worktree lifecycle, Quick Push, and provider CLI execution; recording
+capture, persistence, listing, replay reads, and deletion; process-bound
+agent-journal discovery, versioned provider normalization, status, and lifecycle;
+MCP and control socket, per-session capability tokens, and project-scoped tools;
+settings, macros, AI metadata generation, and secret-backed automation; and
+remote pairing, WebRTC availability, device authentication, revocation, and audit
+SHALL be authorized and lifecycle-owned by Terminay Server and reached only
+through the application protocol. They SHALL execute against the server's own
+host.
 
 #### Scenario: Feature parity locally and remotely
 
 - **WHEN** files, Git, recordings, agents, MCP, macros, or settings are used
 - **THEN** they work through the same server boundary for local and remote
-  project environments
+  clients
 
 #### Scenario: Adapter resolution
 
 - **WHEN** a privileged operation runs for a project
-- **THEN** its execution adapter is resolved from that project's canonical
-  environment
+- **THEN** it executes against the host of the server that owns that project
 
 ### Requirement: Client-host native-only operations
 
@@ -448,18 +454,6 @@ confirmation, and local credential storage.
 - **WHEN** the user triggers an application update or an OS dialog
 - **THEN** the client host performs it without becoming an authority over
   workspace state
-
-### Requirement: Provider capability honesty
-
-The This server provider SHALL use native host services. SSH and other providers
-SHALL implement declared capabilities or return unavailable. An identical path or
-executable on the Terminay Server MUST NOT be used as a fallback.
-
-#### Scenario: Provider lacks a capability
-
-- **WHEN** a provider does not implement a requested capability
-- **THEN** it returns unavailable and no Terminay Server path or executable is
-  substituted
 
 ### Requirement: Window mapping is presentation metadata
 
@@ -488,20 +482,20 @@ insertion into the intended terminal remain server-authorized operations.
 
 ### Requirement: Identity-based authority for requests
 
-Every project SHALL have one exact environment binding, and every panel and
-terminal SHALL belong to an exact server, project, and view identity consistent
-with it. Requests SHALL carry ids; titles, labels, and client-selected roots MUST
-NOT be authority. Project-scoped requests SHALL derive environment routing from
-the canonical project; a supplied environment, provider, hostname, IP, or URL
-MUST NOT be authority. A connected device MUST NOT refer to a session or object
-from another server using a copied id.
+Every panel and terminal SHALL belong to an exact server, project, and view
+identity. Every request SHALL name the connection whose server owns the object it
+addresses, and SHALL be sent only over that connection. Requests SHALL carry ids;
+titles, labels, and client-selected roots MUST NOT be authority. Project-scoped
+requests SHALL be resolved from the canonical project; a supplied hostname, IP, or
+URL MUST NOT be authority. A client MUST NOT send an id issued by one server to
+another server, and a connected device MUST NOT refer to a session or object from
+another server using a copied id.
 
 #### Scenario: Client supplies a hostname
 
-- **WHEN** a client includes an environment id, provider, hostname, IP, or URL in
-  a project-scoped request
-- **THEN** routing is derived from the canonical project and the supplied value is
-  ignored as authority
+- **WHEN** a client includes a hostname, IP, or URL in a project-scoped request
+- **THEN** the operation is resolved from the canonical project and the supplied
+  value is ignored as authority
 
 #### Scenario: Copied id from another server
 
@@ -513,25 +507,12 @@ from another server using a copied id.
 - **WHEN** a remote client changes titles, paths, or local state
 - **THEN** it obtains no plaintext secrets and no wider project or session scope
 
-### Requirement: Server-side path resolution and boundaries
+#### Scenario: Request is routed by its object's server
 
-Filesystem paths SHALL be resolved and validated on the server against the
-operation's allowed scope. Symlinks, worktrees, renames, deleted roots, and
-platform case rules SHALL be handled at the final canonical-path boundary. MCP
-capability tokens SHALL resolve directly to a server terminal and its project;
-renderer focus MUST NOT widen scope. Panel movement between unequal environment
-ids SHALL fail before mutation.
-
-#### Scenario: Panel move across environments
-
-- **WHEN** a panel is moved between projects with unequal environment ids
-- **THEN** the command fails before any mutation
-
-#### Scenario: MCP token scope
-
-- **WHEN** an MCP capability token is used
-- **THEN** it resolves to its own server terminal and project regardless of
-  renderer focus
+- **WHEN** the user acts on a project, panel, or terminal while several servers
+  are attached
+- **THEN** the request is issued over the connection to the server that owns that
+  object, and no other attached server receives it
 
 ### Requirement: Settings classification and revisioned broadcast
 
@@ -642,13 +623,15 @@ MUST NOT migrate or otherwise mutate an installed Desktop release's profile.
 
 ### Requirement: Disconnect and restart lifecycle
 
-Client disconnect MUST NOT delete projects, close panels, or kill PTYs. Terminal
-exit SHALL update all referencing panels and connected clients once. A
-successful-exit close decision SHALL use the terminal surface's already-observed
-setting at the exit boundary and MUST NOT wait for another settings request after
-the session has ended. Server restart SHALL reload durable workspace state and
-SHALL mark formerly live PTYs interrupted unless the process can be safely
-reattached.
+Client disconnect MUST NOT delete projects, close panels, or kill PTYs. The
+lifecycle of each connection SHALL be independent: a connection that drops,
+reconnects, or fails authorization SHALL leave every other connection of the same
+window connected and operable. Terminal exit SHALL update all referencing panels
+and connected clients once. A successful-exit close decision SHALL use the
+terminal surface's already-observed setting at the exit boundary and MUST NOT wait
+for another settings request after the session has ended. Server restart SHALL
+reload durable workspace state and SHALL mark formerly live PTYs interrupted
+unless the process can be safely reattached.
 
 #### Scenario: Client disconnects
 
@@ -666,6 +649,12 @@ reattached.
 - **WHEN** the server restarts and a formerly live PTY cannot be safely
   reattached
 - **THEN** durable workspace state reloads and that session is marked interrupted
+
+#### Scenario: One connection of several drops
+
+- **WHEN** one attached connection of a window drops or restarts
+- **THEN** the window's other connections stay connected and operable, and their
+  projects, panels, and terminals are untouched
 
 ### Requirement: Recoverable path errors and migration safety
 
@@ -694,10 +683,10 @@ equivalent rollback point and SHALL be idempotent.
 
 A new server data root SHALL be initialized through the canonical repository,
 not by a renderer or host adapter. Initialization SHALL atomically commit one
-workspace view, one This server project rooted at the server-authorized home,
-one terminal panel, and its terminal session before reporting the workspace
-ready. Initialization SHALL be idempotent: a client reload, additional native
-window, or reconnect MUST NOT create another default project or terminal.
+workspace view, one project rooted at the server-authorized home, one terminal
+panel, and its terminal session before reporting the workspace ready.
+Initialization SHALL be idempotent: a client reload, additional native window, or
+reconnect MUST NOT create another default project or terminal.
 
 The server SHALL seed that first terminal on the same startup path that restores
 a non-empty repository, so a host cannot make first-run and restart behave
@@ -706,8 +695,8 @@ differently by seeding on only one of them.
 #### Scenario: New data root
 
 - **WHEN** a new server data root is initialized
-- **THEN** exactly one workspace view, This server project, terminal panel, and
-  terminal session are committed before any client renders the workspace as ready
+- **THEN** exactly one workspace view, project, terminal panel, and terminal
+  session are committed before any client renders the workspace as ready
 
 #### Scenario: Reload after initialization
 
@@ -721,7 +710,7 @@ terminal panel describes a process owned by the server process that created it,
 so a restart MUST NOT restore terminal tabs: the server SHALL remove their stale
 panels and sessions and SHALL create one fresh terminal in each restored project
 with a valid root before the workspace is shown. Previous tab counts MUST NOT be
-restored. A This-server project whose persisted root is missing SHALL instead
+restored. A project whose persisted root is missing on the server SHALL instead
 stay represented with its recoverable error until repaired.
 
 This restore SHALL be performed by the server for every host. A connection host
@@ -752,38 +741,9 @@ same repository.
 
 #### Scenario: Restored project with a missing root
 
-- **WHEN** a restored This-server project's persisted root is missing
+- **WHEN** a restored project's persisted root is missing on the server
 - **THEN** it stays represented with its recoverable error and receives no
   replacement terminal until repaired
-
-### Requirement: Remote project restoration
-
-A remote SSH or Puzed project's root SHALL be interpreted only by that
-environment, so a path such as `/home/vms` MUST NOT be treated as a missing local
-folder and SHALL still receive a replacement terminal. A remote seed that fails
-while the environment is still connecting SHALL be retried until the environment
-is ready. Explorer SHALL wait until that terminal exists so SFTP cannot occupy
-the session channel first. A remote server that remains alive SHALL retain its
-live terminal sessions across reconnect.
-
-#### Scenario: Remote root resembles a local path
-
-- **WHEN** a restored SSH or Puzed project's root is a path that does not exist
-  on the Terminay Server
-- **THEN** it is interpreted only by that environment and still receives a
-  replacement terminal
-
-#### Scenario: Environment still connecting
-
-- **WHEN** a remote terminal seed fails because the environment is still
-  connecting
-- **THEN** it is retried until the environment is ready, and Explorer waits until
-  that terminal exists before using the session channel
-
-#### Scenario: Reconnect to a live remote server
-
-- **WHEN** a client reconnects to a remote server that remained alive
-- **THEN** its live terminal sessions are retained
 
 ### Requirement: Authoritative recovery from bad snapshots
 
@@ -802,12 +762,14 @@ use that same host-owned recovery surface.
 
 ### Requirement: Workspace state non-goals
 
-There SHALL be no cloud synchronization of workspace state, no cross-server
-project or terminal identity, no transparent simultaneous editing of one file by
-several users, no durable persistence of every ephemeral UI interaction, no
-dependence on Electron window ids, browser tab ids, tab titles, or current focus
-for authorization, and no Electron-owned mirror of server workspace state or
-feature-specific compatibility database.
+There SHALL be no cloud synchronization of workspace state, no workspace that
+spans several servers, no server-to-server routing of workspace, terminal, or
+filesystem operations, no cross-server project or terminal identity, no
+transparent simultaneous editing of one file by several users, no durable
+persistence of every ephemeral UI interaction, no dependence on Electron window
+ids, browser tab ids, tab titles, or current focus for authorization, and no
+Electron-owned mirror of server workspace state or feature-specific compatibility
+database.
 
 #### Scenario: Authorization never depends on focus
 
@@ -821,11 +783,19 @@ feature-specific compatibility database.
 - **THEN** it maintains no Electron-owned mirror of server workspace state or
   feature-specific compatibility database
 
+#### Scenario: Servers do not talk to each other
+
+- **WHEN** a window presents projects from several servers
+- **THEN** no server holds a workspace referencing another server's projects and
+  no server forwards an operation to another server
+
 ### Requirement: Cross-client convergence for panel changes
 
-When either client creates, closes, or moves a panel, the other client SHALL
-reach the same workspace revision and panel and session identities without
-polling, reload, or an independently manufactured renderer panel.
+When either client of one server creates, closes, or moves a panel, the other
+client of that server SHALL reach the same workspace revision and panel and
+session identities without polling, reload, or an independently manufactured
+renderer panel. Convergence SHALL be scoped to the server that owns the panel and
+SHALL NOT change any other server's revision or projection.
 
 #### Scenario: One client moves a panel
 
@@ -833,24 +803,11 @@ polling, reload, or an independently manufactured renderer panel.
 - **THEN** the other client converges to the same revision and panel and session
   identities without polling or reload
 
-### Requirement: Typed sidebar feature query state
+#### Scenario: Convergence does not cross servers
 
-A valid active project SHALL enable sidebar feature queries with its canonical
-server, project, and environment identity. An unscoped query SHALL fail with a
-typed, actionable state rather than a generic `query failed` projection. Remote
-project-environment routing failures — cancelled, deadline, unavailable, and
-capability — SHALL keep those protocol codes through the dispatcher.
-
-#### Scenario: Unscoped sidebar query
-
-- **WHEN** a sidebar feature query is issued without a valid active project scope
-- **THEN** it fails with a typed actionable state, not a generic `query failed`
-
-#### Scenario: Remote routing failure
-
-- **WHEN** a remote project-environment routing failure is cancelled, times out,
-  is unavailable, or lacks capability
-- **THEN** that protocol code is preserved through the dispatcher
+- **WHEN** a panel changes on one attached server
+- **THEN** only that server's revision and projection advance, and every other
+  attached server's projection is unchanged
 
 ### Requirement: Server-derived default project names
 
@@ -867,3 +824,102 @@ see the authoritative set.
 #### Scenario: Command supplies a name
 - **WHEN** a client applies `project.create` with a non-blank name
 - **THEN** the project is created with that name unchanged
+
+### Requirement: Canonical workspace objects
+
+A **server** SHALL be one workspace, trust, persistence, and extension authority
+with one data root, and SHALL execute every project it owns on its own machine. A
+**workspace view** SHALL be a server-owned logical grouping of projects
+presentable as an Electron native window or an in-browser view or tab. A
+**project** SHALL have a stable id, a root folder on the server's filesystem,
+name, colour, icon, optional default shell-profile id, sidebar layout, ordered
+panels, and logical layout. A **panel** SHALL have a stable id, type, project
+ownership, presentation metadata, and type-specific state.
+
+#### Scenario: A project root is a path on the server
+
+- **WHEN** a project is persisted
+- **THEN** its root is stored as a folder on the server's filesystem and no
+  credentials or connection configuration are stored in workspace state
+
+#### Scenario: Project fields survive a reconnect
+
+- **WHEN** a fresh client connects
+- **THEN** it receives each project's id, root, name, colour, icon, default
+  shell-profile reference, sidebar layout, ordered panels, and logical layout
+  from the server
+
+### Requirement: Terminal session identity is immutable and server-issued
+
+A terminal session SHALL have an immutable server-issued id and a runtime
+lifecycle independent of panel mounts. A terminal panel SHALL reference a
+session; moving the panel MUST NOT recreate the session.
+
+#### Scenario: Moving a terminal panel
+
+- **WHEN** a terminal panel is moved
+- **THEN** it continues to reference the same session id and no new session is
+  created
+
+### Requirement: Server-side path resolution
+
+Filesystem paths SHALL be resolved and validated on the server against the
+operation's allowed scope. Symlinks, worktrees, renames, deleted roots, and
+platform case rules SHALL be handled at the final canonical-path boundary. MCP
+capability tokens SHALL resolve directly to a server terminal and its project;
+renderer focus MUST NOT widen scope.
+
+#### Scenario: MCP token scope
+
+- **WHEN** an MCP capability token is used
+- **THEN** it resolves to its own server terminal and project regardless of
+  renderer focus
+
+#### Scenario: Path outside the allowed scope
+
+- **WHEN** a request resolves to a path outside the operation's allowed scope
+- **THEN** the command fails before any mutation
+
+### Requirement: Typed sidebar feature query scope
+
+A valid active project SHALL enable sidebar feature queries with its canonical
+server and project identity. An unscoped query SHALL fail with a typed,
+actionable state rather than a generic `query failed` projection.
+
+#### Scenario: Unscoped sidebar query
+
+- **WHEN** a sidebar feature query is issued without a valid active project scope
+- **THEN** it fails with a typed actionable state, not a generic `query failed`
+
+### Requirement: Reconnecting to a live server
+
+A server that remains alive SHALL retain its live terminal sessions across a
+client reconnect.
+
+#### Scenario: Reconnect to a live server
+
+- **WHEN** a client reconnects to a server that remained alive
+- **THEN** its live terminal sessions are retained
+
+### Requirement: Ids are namespaced by server
+
+Every id a client holds SHALL be keyed by the pair of a server identity and that
+server's id. A project, view, panel, terminal-session, recording, macro, or
+setting id SHALL be a name in its own server's namespace, and identical id values
+on two attached servers SHALL denote different objects. Routes, deep links, and
+persisted client presentation state SHALL carry the server identity alongside the
+id.
+
+#### Scenario: Colliding ids on two attached servers
+
+- **WHEN** a window attaches two servers whose workspaces hold a project with the
+  same id value
+- **THEN** the client presents them as two distinct projects, each addressed by
+  its own server identity, and an operation on one is sent only to that server
+
+#### Scenario: Deep link carries the server
+
+- **WHEN** the client resolves a route or deep link to a project, panel, or
+  terminal
+- **THEN** the route names the owning server identity, and no id is resolved
+  against a server that did not issue it

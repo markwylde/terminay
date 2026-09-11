@@ -8,7 +8,6 @@ const provider = Object.freeze({
   displayName: "Test Agent",
   processMatchers: [{ executableName: "test-agent" }],
   mappings: [{ mappingVersion: "test-v1", providerVersionRange: ">=1" }],
-  requiredEnvironmentCapabilities: ["process-observation", "filesystem-observation", "agent-journal"],
 });
 
 test("extension provider claims one terminal incarnation before host admission", async () => {
@@ -778,14 +777,13 @@ test("a topology change does not tear down a proven writer; terminal replacement
   registry.terminalExited(identity); await agents.stop();
 });
 
-test("remote terminals admit through declared capabilities without a local fallback", async () => {
+test("every terminal admits with the server's full observation capability set", async () => {
   const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
   const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
   const admitted=[];
-  const registry=new ExtensionAgentRuntimeRegistry({agents,projectEnvironmentRouter:{bindProject(){return {serverId:identity.serverId,projectId:identity.projectId,projectEnvironmentId:"remote-1",environmentRevision:9};}},hosts:{agentProviderContributions:()=>[provider],async admitAgentTerminal(value){admitted.push(value);},async cancelAgentTerminal(){return true;},async drainAgentObservers(){}}});
+  const registry=new ExtensionAgentRuntimeRegistry({agents,hosts:{agentProviderContributions:()=>[provider],async admitAgentTerminal(value){admitted.push(value);},async cancelAgentTerminal(){return true;},async drainAgentObservers(){}}});
   registry.register(identity); assert.equal(registry.foregroundProcessChanged(identity,"test-agent"),true); await new Promise((resolve)=>setImmediate(resolve));
-  assert.equal(admitted[0].context.projectEnvironmentId,"remote-1"); assert.deepEqual(admitted[0].observationCapabilities,provider.requiredEnvironmentCapabilities);
-  assert.equal(registry.environmentBinding(admitted[0].context).environmentRevision,9);
+  assert.deepEqual(admitted[0].observationCapabilities,["process-observation","filesystem-observation","agent-journal"]);
   registry.terminalExited(identity); await agents.stop();
 });
 
@@ -826,7 +824,6 @@ test("teardown causes retire each context exactly once", async (t) => {
     ["provider disable",(registry,_id,context)=>registry.retireProvider(context.providerId,"provider-disabled"),"provider-disabled",1],
     ["provider update",(registry,_id,context)=>registry.retireProvider(context.providerId,"extension-stopped"),"extension-stopped",1],
     ["project removal",(registry,id)=>registry.projectRemoved(id.projectId),"terminal-closed",1],
-    ["environment revision",(registry,id)=>registry.environmentRevisionChanged(id.projectId),"terminal-replaced",1],
     ["child crash",(registry,_id,context)=>registry.contextRetired(context.contextId,context.providerId),undefined,0],
     ["server shutdown",(registry)=>registry.drain("server-stopping"),undefined,0],
   ];
@@ -848,9 +845,9 @@ test("a stalled provider retirement does not disturb a healthy provider context"
   const registry=new ExtensionAgentRuntimeRegistry({agents,hosts:{agentProviderContributions:()=>[provider,otherProvider],async admitAgentTerminal(value){admitted.push(value);},async cancelAgentTerminal(value){if(value.contextId===admitted[0].context.contextId)await new Promise((resolve)=>{unblock=resolve;});return true;},async drainAgentObservers(){}}});
   registry.register(identity);registry.register(otherIdentity);registry.foregroundProcessChanged(identity,"test-agent");registry.foregroundProcessChanged(otherIdentity,"other-agent");await new Promise((resolve)=>setImmediate(resolve));
   const retiring=registry.retireProvider(provider.id);await new Promise((resolve)=>setImmediate(resolve));
-  assert.equal(registry.observationTerminal(admitted[1].context)?.environment,"this-server");
+  assert.notEqual(registry.observationTerminal(admitted[1].context),undefined);
   assert.equal(registry.foregroundProcessChanged(otherIdentity,"other-agent"),true);unblock();await retiring;
-  assert.equal(registry.observationTerminal(admitted[1].context)?.environment,"this-server");await agents.stop();
+  assert.notEqual(registry.observationTerminal(admitted[1].context),undefined);await agents.stop();
 });
 
 /**

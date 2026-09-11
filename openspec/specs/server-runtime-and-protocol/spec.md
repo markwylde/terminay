@@ -22,11 +22,11 @@ The same `terminay-server` runtime SHALL run either embedded and supervised by T
 
 ### Requirement: Servers bundle their own workspace UI
 
-Every server SHALL bundle the complete responsive Terminay workspace UI built from the same source as the desktop experience, together with the application-protocol client matching that server. A browser or desktop connection SHALL run the UI version shipped with the selected server rather than an independently deployed workspace build.
+Every server SHALL bundle the complete responsive Terminay workspace UI built from the same source as the desktop experience, together with the application-protocol client matching that server. A browser connection SHALL run the UI version shipped with the server it opened, which is that session's primary connection, rather than an independently deployed workspace build.
 
 #### Scenario: Connecting to a server
 
-- **WHEN** a browser or Desktop host connects to a selected server
+- **WHEN** a browser host opens a server as its primary connection
 - **THEN** it runs that server's bundled workspace UI and matching application-protocol client
 
 #### Scenario: Direct session URL
@@ -78,20 +78,6 @@ The complete server-owned session entry SHALL be a separate artifact from the `a
 
 - **WHEN** a user opens a pairing link
 - **THEN** enrollment and the workspace open from the server's own session entry while the public manager remains a small application-protocol-blind bootstrap
-
-### Requirement: Runtime roles
-
-Terminay SHALL have four distinct runtime roles: Terminay Server owning workspace, trust, extension, project-environment routing, and privileged-service authority; Terminay Desktop owning native windows, local-server supervision, OS integration, connection credentials, verified bundle installation, and opaque transport delivery; the PWA connection manager owning browser-local stable-origin bookmarks and navigation; and the hosted session and signaling service owning origin-isolated session bootstrap, WebRTC signaling, and operational relay state. The hosted service SHALL never become a terminal, filesystem, or application-data proxy.
-
-#### Scenario: Server host is one environment among others
-
-- **WHEN** a project is executed
-- **THEN** the Terminay Server host is treated as one built-in environment rather than the only execution machine
-
-#### Scenario: Hosted service handling traffic
-
-- **WHEN** a remote client connects through hosted signaling
-- **THEN** no terminal, filesystem, or application data becomes hosted application data
 
 ### Requirement: Declared contract gates across components
 
@@ -348,7 +334,7 @@ A server SHALL have a stable random identity distinct from its mutable display n
 
 ### Requirement: Server data root
 
-Workspace state, settings, macros, registered device public keys, audit events, extension packages, receipts and data, project-environment profiles, and service metadata SHALL live under one documented server data root. Workspace and project files and configured recording directories SHALL remain at their user-selected filesystem locations.
+Workspace state, settings, macros, registered device public keys, audit events, extension packages, receipts and data, and service metadata SHALL live under one documented server data root. Workspace and project files and configured recording directories SHALL remain at their user-selected filesystem locations.
 
 #### Scenario: Locating canonical state
 
@@ -390,12 +376,12 @@ Writes that define canonical state SHALL be transactional or atomically replacea
 
 ### Requirement: Versioned application protocol
 
-Terminay SHALL use one versioned application protocol above every transport as the canonical client/server contract across local and remote connections. It SHALL include a handshake carrying protocol version, server version, stable server identity, client identity, authorization scope, and capability set; correlated commands and responses with runtime-validated payloads; revisioned workspace snapshots and ordered mutation events; resumable terminal output with per-session sequence positions and bounded snapshots; typed activity, agent, file-watch, settings, recording, and connection events; bounded binary transfer for files, previews, recordings, dictation audio, and server-bundled assets; and cancellation, deadlines, backpressure, and explicit resource limits.
+Terminay SHALL use one versioned application protocol above every transport as the canonical client/server contract across local and remote connections. It SHALL carry a supported version range rather than a single version, and SHALL express features as versioned capability strings such as `workspace.v1`, `terminal.v1`, `files.v1`, `git.v1`, `agents.v1`, `settings.v1`, and `language.v1`. Every registered operation SHALL belong to exactly one declared capability. The handshake SHALL negotiate both: the client hello SHALL carry the client's supported protocol range and its required and optional capability sets, and the server hello SHALL answer with its protocol version, server version, stable server identity, client identity, authorization scope, and declared capability set. It SHALL include correlated commands and responses with runtime-validated payloads; revisioned workspace snapshots and ordered mutation events; resumable terminal output with per-session sequence positions and bounded snapshots; read-scoped `language.capabilities`, `language.completion`, `language.hover`, and `language.definition` queries; typed activity, agent, file-watch, settings, recording, connection, and `language.diagnostics` events; bounded binary transfer for files, previews, recordings, dictation audio, and server-bundled assets; and cancellation, deadlines, backpressure, and explicit resource limits.
 
 #### Scenario: Opening a connection
 
 - **WHEN** a client opens an application connection
-- **THEN** the handshake carries the protocol version, server version, stable server identity, client identity, authorization scope, and capability set
+- **THEN** the client hello carries its supported protocol range and required and optional capabilities, and the server hello answers with the protocol version, server version, stable server identity, client identity, authorization scope, and declared capability set
 
 #### Scenario: Invalid command payload
 
@@ -406,6 +392,16 @@ Terminay SHALL use one versioned application protocol above every transport as t
 
 - **WHEN** a client resubscribes to a terminal session with a sequence position
 - **THEN** output resumes from that position with a bounded snapshot
+
+#### Scenario: Every operation belongs to a capability
+
+- **WHEN** an operation is registered on the server
+- **THEN** it belongs to exactly one declared capability string
+
+#### Scenario: Language operations and events
+
+- **WHEN** a client uses language intelligence
+- **THEN** it does so through the protocol's read-scoped `language.capabilities`, `language.completion`, `language.hover`, and `language.definition` queries and the `language.diagnostics` event, under the same validation, deadline, and resource limits as every other operation
 
 ### Requirement: Structured protocol errors and resync rules
 
@@ -430,23 +426,9 @@ Protocol types and runtime validators SHALL live in a dependency-light shared pa
 - **WHEN** workspace UI code performs a server operation
 - **THEN** it goes through the `TerminayClient` interface rather than Electron IPC, WebRTC, WebSocket, or server internals
 
-### Requirement: Bounded extension and environment protocol operations
-
-Fixed `extensions.*` and `project-environments.*` operations SHALL expose bounded management, status, and declarative-form DTOs. Extensions SHALL NOT register arbitrary public application operations. Every project operation SHALL derive its environment from canonical server state before dispatch.
-
-#### Scenario: Extension attempting to expose an operation
-
-- **WHEN** an extension attempts to register a public application operation
-- **THEN** the request is refused and only the fixed bounded operations are exposed
-
-#### Scenario: Dispatching a project operation
-
-- **WHEN** a project operation is dispatched
-- **THEN** its environment is derived from canonical server state rather than from client-supplied values
-
 ### Requirement: Extension runtime hosting
 
-The server SHALL include the pinned npm installer needed by the extension platform while standalone support continues to require no system Node, npm, compiler, or browser. Official pinned extension tarballs SHALL be release inputs. Installed packages SHALL live under the writable server data root and SHALL NOT mutate the signed or content-addressed UI and application bundle. Each enabled extension SHALL run in a supervised server child process with bounded private IPC, and extension failure SHALL be provider-scoped and SHALL NOT prevent core or **This server** readiness. Custom extensions remain trusted server-account code; process separation SHALL NOT be described as hostile-code sandboxing.
+The server SHALL include the pinned npm installer needed by the extension platform while standalone support continues to require no system Node, npm, compiler, or browser. Official pinned extension tarballs SHALL be release inputs. Installed packages SHALL live under the writable server data root and SHALL NOT mutate the signed or content-addressed UI and application bundle. Each enabled extension SHALL run in a supervised server child process with bounded private IPC, and extension failure SHALL be provider-scoped and SHALL NOT prevent core or server readiness. Custom extensions remain trusted server-account code; process separation SHALL NOT be described as hostile-code sandboxing.
 
 #### Scenario: Installing an extension
 
@@ -456,25 +438,11 @@ The server SHALL include the pinned npm installer needed by the extension platfo
 #### Scenario: Extension crash
 
 - **WHEN** an enabled extension's child process fails
-- **THEN** the failure is provider-scoped and core and **This server** readiness are unaffected
-
-### Requirement: Environment routing authority
-
-The server-owned environment router SHALL resolve terminal, filesystem, Git, shell, agent, MCP, and lifecycle capabilities by canonical project identity. Renderer input, host bridges, paths, and labels SHALL NOT select an adapter. Missing or failed capabilities SHALL NOT fall back to the server machine.
-
-#### Scenario: Client-supplied environment hint
-
-- **WHEN** a client supplies an environment id, hostname, or path in a request
-- **THEN** the router ignores it and resolves the adapter from canonical project identity
-
-#### Scenario: Failed provider capability
-
-- **WHEN** a project's environment capability is missing or fails
-- **THEN** the operation fails rather than executing on the Terminay Server machine
+- **THEN** the failure is provider-scoped and core and server readiness are unaffected
 
 ### Requirement: Host supplies transport and presentation bridge only
 
-The host SHALL supply two independent boundaries: an opaque framed byte transport connected to the authenticated server, and a versioned capability-negotiated presentation bridge for optional native host actions. The host SHALL forward valid bounded frames without decoding feature operations, workspace DTOs, or application events. Authentication material, reconnect grants, private keys, signaling credentials, and transport handles SHALL remain in the host's privileged connection runtime, and the workspace renderer SHALL receive only the scoped byte endpoint and sanitized connection identity needed to construct its bundled `TerminayClient`.
+The host SHALL supply two independent boundaries: one opaque framed byte transport per connection, each connected to its own authenticated server, and a versioned capability-negotiated presentation bridge for optional native host actions. The host SHALL forward valid bounded frames without decoding feature operations, workspace DTOs, or application events, and SHALL keep each connection's frames on its own endpoint. Authentication material, reconnect grants, private keys, signaling credentials, and transport handles SHALL remain in the host's privileged connection runtime, and the workspace renderer SHALL receive only the scoped byte endpoints and sanitized connection identities needed to construct one `TerminayClient` per connection.
 
 #### Scenario: Forwarding application traffic
 
@@ -484,7 +452,12 @@ The host SHALL supply two independent boundaries: an opaque framed byte transpor
 #### Scenario: Renderer construction
 
 - **WHEN** the workspace renderer is launched
-- **THEN** it receives only the scoped byte endpoint and sanitized connection identity, not credentials, keys, or raw transport handles
+- **THEN** it receives only the scoped byte endpoints and sanitized connection identities, not credentials, keys, or raw transport handles
+
+#### Scenario: Several connections in one window
+
+- **WHEN** a window holds three connections
+- **THEN** the host supplies three independent byte endpoints and no frame crosses between them
 
 ### Requirement: Presentation bridge capability declaration
 
@@ -539,17 +512,22 @@ Feature-owned client facades inside the server bundle MAY reduce the shared quer
 
 ### Requirement: Desktop byte endpoint binds server identity
 
-The Desktop byte endpoint SHALL wrap each framed byte message in a stable versioned packet bound to the exact server identity before it reaches `TerminayClient`. The privileged host SHALL fix that identity when constructing the endpoint. Inbound packets for another server or with an invalid bounded shape SHALL be rejected while feature-level frame contents remain opaque to the host. The renderer SHALL receive no raw native transport or credential authority, and the canonical renderer SHALL accept only that selected-server byte endpoint.
+The Desktop byte endpoint SHALL wrap each framed byte message in a stable versioned packet bound to the exact server identity of the connection it serves before it reaches that connection's `TerminayClient`. The privileged host SHALL fix that identity when constructing each endpoint. Inbound packets for another server or with an invalid bounded shape SHALL be rejected while feature-level frame contents remain opaque to the host. The renderer SHALL receive no raw native transport or credential authority, and SHALL reach a server only through that server's own byte endpoint.
 
 #### Scenario: Packet for another server
 
-- **WHEN** an inbound packet names a server identity other than the endpoint's fixed identity
+- **WHEN** an inbound packet names a server identity other than its endpoint's fixed identity
 - **THEN** it is rejected
 
 #### Scenario: Malformed packet
 
 - **WHEN** an inbound packet has an invalid bounded shape
 - **THEN** it is rejected without the host inspecting feature-level frame contents
+
+#### Scenario: One endpoint per attached server
+
+- **WHEN** a window attaches a second server
+- **THEN** a second endpoint is constructed with that server's fixed identity and neither endpoint accepts the other's packets
 
 ### Requirement: Transport neutrality and conformance
 
@@ -637,7 +615,7 @@ The server distribution SHALL contain a complete production build of the respons
 
 ### Requirement: Bundle manifest declarations govern launch
 
-The WebRTC archive metadata SHALL declare its application protocol, bundle format, supported host-bridge range, and required and optional host capabilities. The host SHALL validate those declarations and protocol and schema revisions and SHALL NOT use browser brand, user agent, or numeric browser or Chromium runtime-version ranges. Optional native capabilities SHALL NOT become requirements merely because the bundle runs inside Desktop.
+The WebRTC archive metadata SHALL declare its supported application-protocol version range, the server capabilities its client requires and those it treats as optional, its bundle format, its supported host-bridge range, and its required and optional host capabilities. The host SHALL validate the bundle format, host-bridge range, and host capabilities, and SHALL NOT use browser brand, user agent, or numeric browser or Chromium runtime-version ranges. The declared protocol range and server capabilities SHALL be evaluated by the bundle's client during the hello for each connection rather than by the host. Optional native capabilities SHALL NOT become requirements merely because the bundle runs inside Desktop.
 
 #### Scenario: Bundle running in Desktop
 
@@ -648,6 +626,11 @@ The WebRTC archive metadata SHALL declare its application protocol, bundle forma
 
 - **WHEN** the host bridge version falls outside the archive's supported range
 - **THEN** launch fails before the workspace starts
+
+#### Scenario: Declared server contract is negotiated, not gated by the host
+
+- **WHEN** the manifest declares a protocol range and required server capabilities
+- **THEN** the bundle's client evaluates them per connection during the hello and the host does not
 
 ### Requirement: Bundle snapshot integrity and transfer
 
@@ -681,25 +664,6 @@ The authenticated local UI origin SHALL apply a restrictive response policy to b
 
 - **WHEN** the local UI origin serves bundle, handshake, or event responses
 - **THEN** the response policy restricts scripts and connections to same origin, forbids objects and framing, sends no referrer, and grants no camera, microphone, geolocation, payment, USB, serial, or Bluetooth permission
-
-### Requirement: Bundle acquisition per connection kind
-
-Local Desktop SHALL obtain the bundle from its pinned embedded-server artifact and launch it through the same verification and host-context contract used for remote bundles, without requiring a network listener. A Desktop remote connection SHALL download and commit the selected server's bundle before opening its sandboxed connection window, and Desktop SHALL NOT run its embedded server's UI against a different remote server version. `app.terminay.com` SHALL be the connection manager only: it stores stable-origin bookmarks and frames them and SHALL NOT execute a server's workspace bundle as manager-origin script. A server UI SHALL remain usable when opened directly at its session origin.
-
-#### Scenario: Opening a remote connection from Desktop
-
-- **WHEN** Desktop opens a remote server connection
-- **THEN** it downloads and commits that server's bundle before opening the sandboxed connection window
-
-#### Scenario: Manager framing a server
-
-- **WHEN** `app.terminay.com` opens a bookmarked server
-- **THEN** it frames the stable session origin and does not execute the server's bundle as manager-origin script
-
-#### Scenario: Local Desktop launch
-
-- **WHEN** Desktop launches the Local connection
-- **THEN** the bundle comes from the pinned embedded-server artifact and is verified through the same contract used for remote bundles, with no network listener opened
 
 ### Requirement: Application traffic uses the framed connection protocol
 
@@ -862,12 +826,12 @@ A transport that disconnects while the server is publishing an event SHALL be cl
 
 ### Requirement: Contract and bootstrap failure reporting
 
-An invalid protocol or capability contract SHALL receive a clear error before the application connection opens. Bootstrap failure SHALL identify the failing session-origin contract without exposing endpoint credentials, pairing fragments, or renderer state.
+An invalid protocol or capability contract SHALL be reported per connection with a clear error before that connection's application traffic begins, and the message SHALL name whether that server or the client's bundle must be upgraded. Bootstrap failure SHALL identify the failing session-origin contract without exposing endpoint credentials, pairing fragments, or renderer state.
 
 #### Scenario: Invalid capability contract
 
-- **WHEN** a capability contract fails validation
-- **THEN** a clear error is returned before the application connection opens
+- **WHEN** a capability contract fails validation for a connection
+- **THEN** a clear error naming the side that must be upgraded is reported for that connection before its application traffic begins
 
 #### Scenario: Bootstrap failure message
 
@@ -904,11 +868,11 @@ Terminay SHALL NOT provide cloud storage or proxying of workspace and applicatio
 #### Scenario: Workspace data storage
 
 - **WHEN** workspace or application data is persisted
-- **THEN** it is stored by the selected server and not in cloud storage or proxied through hosted infrastructure
+- **THEN** it is stored by the server that owns it and not in cloud storage or proxied through hosted infrastructure
 
 ### Requirement: Data-root-scoped server authority identity
 
-Every implicit embedded or standalone server SHALL derive a durable identity scoped to its own data root, so two `terminay-server` processes with separate data roots and endpoints never default to one shared identity. That resolved identity SHALL thread the server's terminal, workspace, environment, recording, local UI, profile, cache, and exposure composition, and SHALL remain stable across restarts. An explicit `--server-id` SHALL remain an intentional operator choice and SHALL be rejected when its endpoint or data-root ownership is inconsistent. An identity record belonging to another data root SHALL fail closed rather than being adopted.
+Every implicit embedded or standalone server SHALL derive a durable identity scoped to its own data root, so two `terminay-server` processes with separate data roots and endpoints never default to one shared identity. That resolved identity SHALL thread the server's terminal, workspace, recording, local UI, profile, cache, and exposure composition, and SHALL remain stable across restarts. An explicit `--server-id` SHALL remain an intentional operator choice and SHALL be rejected when its endpoint or data-root ownership is inconsistent. An identity record belonging to another data root SHALL fail closed rather than being adopted.
 
 #### Scenario: Two implicit servers
 
@@ -929,3 +893,74 @@ Every implicit embedded or standalone server SHALL derive a durable identity sco
 
 - **WHEN** an identity record belonging to another data root is found
 - **THEN** it fails closed and is not adopted
+
+### Requirement: Bounded extension protocol operations
+
+Fixed `extensions.*` operations SHALL expose bounded management, status, and declarative-form DTOs. Extensions SHALL NOT register arbitrary public application operations. Every project operation SHALL derive its project identity from canonical server state before dispatch.
+
+#### Scenario: Extension attempting to expose an operation
+
+- **WHEN** an extension attempts to register a public application operation
+- **THEN** the request is refused and only the fixed bounded operations are exposed
+
+#### Scenario: Dispatching a project operation
+
+- **WHEN** a project operation is dispatched
+- **THEN** its project identity is derived from canonical server state rather than from client-supplied values
+
+### Requirement: Runtime roles and execution ownership
+
+Terminay SHALL have four distinct runtime roles: Terminay Server owning workspace, trust, extension, and privileged-service authority; Terminay Desktop owning native windows, local-server supervision, OS integration, connection credentials, verified bundle installation, and opaque transport delivery; the PWA connection manager owning browser-local stable-origin bookmarks and navigation; and the hosted session and signaling service owning origin-isolated session bootstrap, WebRTC signaling, and operational relay state. The hosted service SHALL never become a terminal, filesystem, or application-data proxy.
+
+#### Scenario: Executing a project
+
+- **WHEN** a project is executed
+- **THEN** it runs on the host of the Terminay Server that owns it
+
+#### Scenario: Hosted service handling traffic
+
+- **WHEN** a remote client connects through hosted signaling
+- **THEN** no terminal, filesystem, or application data becomes hosted application data
+
+### Requirement: Bundle acquisition per host
+
+Desktop SHALL obtain the workspace bundle from its pinned embedded-server artifact, launch it through the declared verification and host-context contract, and run it for every connection the window holds, without requiring a network listener and without downloading a bundle from any server. A browser session SHALL obtain the bundle from its primary connection's stable session origin through that origin's verified asset flow; an attached server SHALL deliver no bundle. `app.terminay.com` SHALL be the connection manager only: it stores stable-origin bookmarks, frames them, opens transports for attached servers, and SHALL NOT execute a server's workspace bundle as manager-origin script. A server UI SHALL remain usable when opened directly at its session origin.
+
+#### Scenario: Desktop attaches a remote server
+
+- **WHEN** Desktop attaches a remote server connection
+- **THEN** it runs the bundle from its pinned embedded-server artifact and downloads no bundle for that server
+
+#### Scenario: Manager framing a server
+
+- **WHEN** `app.terminay.com` opens a bookmarked server
+- **THEN** it frames the stable session origin and does not execute the server's bundle as manager-origin script
+
+#### Scenario: Browser attaches a second server
+
+- **WHEN** a framed browser session attaches a second server
+- **THEN** the primary origin's bundle keeps serving the window and the attached server delivers no bundle
+
+#### Scenario: Desktop launch
+
+- **WHEN** Desktop launches a window
+- **THEN** the bundle comes from the pinned embedded-server artifact and is verified through the declared contract, with no network listener opened
+
+### Requirement: Query cancellation reaches the server
+
+An aborted query SHALL emit a cancel envelope on the application protocol, exactly as an aborted command does. On receiving it the server SHALL abort the signal passed to that query's handler so the handler stops its work. A cancelled query SHALL return no result to the client. A protocol conformance test SHALL abort a query and assert that the server observed the cancellation.
+
+#### Scenario: Client aborts a query
+
+- **WHEN** a client aborts an in-flight query
+- **THEN** a cancel envelope is sent for that correlation and the server aborts the handler's signal
+
+#### Scenario: Result of a cancelled query
+
+- **WHEN** a query is cancelled
+- **THEN** no result is delivered to the client for it
+
+#### Scenario: Conformance coverage
+
+- **WHEN** the protocol conformance suite runs
+- **THEN** it aborts a query and asserts the server observed the cancel envelope

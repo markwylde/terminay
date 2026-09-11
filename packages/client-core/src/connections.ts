@@ -1,4 +1,4 @@
-import type { ProtocolId } from "@terminay/protocol";
+import type { ConnectionCompatibility, ProtocolId } from "@terminay/protocol";
 
 /** Connection state is deliberately independent from terminal/agent activity. */
 export type ConnectionStatus =
@@ -12,6 +12,14 @@ export type ConnectionStatus =
   | "identity-mismatch"
   | "incompatible"
   | "unreachable";
+
+/** A degraded server is still usable, so it stays connected; only a server the
+ * bundle's client cannot talk to at all becomes `incompatible`. */
+export function compatibilityToConnectionStatus(
+  compatibility: ConnectionCompatibility,
+): ConnectionStatus {
+  return compatibility.state === "incompatible" ? "incompatible" : "connected";
+}
 
 export interface ConnectionProfile {
   readonly id: ProtocolId;
@@ -50,6 +58,9 @@ export interface ConnectionProfileStoreOptions {
 export interface ConnectionProfileSnapshot {
   readonly revision: number;
   readonly currentProfileId?: ProtocolId;
+  /** Every profile this workspace is running against, primary first. The
+   * primary is always attached; the rest are attached on request. */
+  readonly attachedProfileIds: readonly ProtocolId[];
   readonly profiles: readonly ConnectionProfile[];
 }
 
@@ -73,6 +84,9 @@ export class ConnectionProfileStore {
   private readonly localId?: ProtocolId;
   private revisionValue = 0;
   private currentId: ProtocolId | undefined;
+  /** Insertion-ordered: the workspace shows attached servers in the order the
+   * user attached them, with the primary first. */
+  private readonly attachedIds = new Set<ProtocolId>();
 
   constructor(options: ConnectionProfileStoreOptions = {}) {
     this.now = options.now ?? (() => Date.now());
@@ -90,18 +104,55 @@ export class ConnectionProfileStore {
       this.localId = local.id;
       this.currentId = local.id;
       this.profilesById.set(local.id, local);
+      this.attachedIds.add(local.id);
     }
   }
 
   get revision(): number { return this.revisionValue; }
   get currentProfile(): ConnectionProfile | undefined { return this.currentId === undefined ? undefined : this.profilesById.get(this.currentId); }
 
+  get attachedProfiles(): readonly ConnectionProfile[] {
+    return Object.freeze(this.attachedProfileIds().map((profileId) => Object.freeze({ ...this.require(profileId) })));
+  }
+
+  isAttached(profileId: ProtocolId): boolean { return this.attachedIds.has(profileId); }
+
+  /** Run the workspace against another server without giving up the primary. */
+  attach(profileId: ProtocolId): ConnectionProfile {
+    const profile = this.require(profileId);
+    if (profile.archived === true) throw new Error("archived connection profile cannot be attached");
+    if (this.attachedIds.has(profile.id)) return profile;
+    this.attachedIds.add(profile.id);
+    const opened = Object.freeze({ ...profile, lastOpenedAt: this.now() });
+    this.profilesById.set(profile.id, opened);
+    this.bump();
+    return opened;
+  }
+
+  /** Detaching leaves the profile remembered. The primary cannot be detached:
+   * a workspace always runs against one server it selected. */
+  detach(profileId: ProtocolId): ConnectionProfile {
+    const profile = this.require(profileId);
+    if (profile.id === this.currentId) throw new Error("the primary connection cannot be detached");
+    if (!this.attachedIds.delete(profile.id)) return profile;
+    this.bump();
+    return profile;
+  }
+
   snapshot(): ConnectionProfileSnapshot {
     return Object.freeze({
       revision: this.revisionValue,
       ...(this.currentId === undefined ? {} : { currentProfileId: this.currentId }),
+      attachedProfileIds: Object.freeze(this.attachedProfileIds()),
       profiles: Object.freeze([...this.profilesById.values()].map((profile) => Object.freeze({ ...profile }))),
     });
+  }
+
+  /** The primary is always first so consumers never have to special-case it. */
+  private attachedProfileIds(): ProtocolId[] {
+    const attached = [...this.attachedIds].filter((profileId) => this.profilesById.has(profileId));
+    if (this.currentId === undefined) return attached;
+    return [this.currentId, ...attached.filter((profileId) => profileId !== this.currentId)];
   }
 
   get(profileId: ProtocolId): ConnectionProfile | undefined { return this.profilesById.get(profileId); }
@@ -141,6 +192,7 @@ export class ConnectionProfileStore {
     const profile = this.require(profileId);
     if (profile.archived === true) throw new Error("archived connection profile cannot be selected");
     this.currentId = profile.id;
+    this.attachedIds.add(profile.id);
     const opened = Object.freeze({ ...profile, lastOpenedAt: this.now() });
     this.profilesById.set(profile.id, opened);
     this.bump();
@@ -172,6 +224,7 @@ export class ConnectionProfileStore {
     if (profile.isLocal === true || profile.id === this.localId) throw new Error("the Local profile cannot be archived");
     const next = Object.freeze({ ...profile, archived: true });
     this.profilesById.set(profile.id, next);
+    this.attachedIds.delete(profile.id);
     if (this.currentId === profile.id) this.currentId = this.localId;
     this.bump();
     return next;
@@ -195,6 +248,7 @@ export class ConnectionProfileStore {
     if (profile.isLocal === true || profile.id === this.localId) throw new Error("the Local profile cannot be forgotten");
     if (!confirmed) throw new Error("forget requires confirmation");
     this.profilesById.delete(profile.id);
+    this.attachedIds.delete(profile.id);
     if (this.currentId === profile.id) {
       this.currentId = this.localId;
     }

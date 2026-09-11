@@ -78,7 +78,7 @@ test('development builds the same generated server workspace used by releases', 
 		true,
 	);
 	assert.equal(
-		desktopViteTask.dependsOn.includes('terminay-plugin-ssh#compile'),
+		desktopViteTask.dependsOn.includes('terminay-agent-codex#compile'),
 		true,
 	);
 	assert.doesNotMatch(
@@ -154,25 +154,26 @@ test('direct and WebRTC remote connections both launch the canonical server bund
 		main.indexOf('async function presentCanonicalAuxiliaryRoute('),
 		main.indexOf('\nasync function openEmbeddedWorkspaceWithRecovery'),
 	);
-	const httpLaunch = main.slice(
-		main.indexOf('async function prepareCanonicalHttpRemoteLaunch('),
-		main.indexOf('\nfunction bindServerUiWindow'),
+	const remoteLaunch = main.slice(
+		main.indexOf('async function readRemoteServerIdentity('),
+		main.indexOf('\n/** Consume a one-time pairing URL only in Electron.'),
 	);
 	assert.doesNotMatch(main, /function connectRemoteByteTransport/u);
 	assert.doesNotMatch(main, /postMessage\(\s*'server:connection'/u);
 	assert.match(presentation, /createDesktopReconnectTransport/u);
-	assert.match(presentation, /prepareCanonicalHttpRemoteLaunch/u);
+	assert.match(presentation, /prepareCanonicalRemoteLaunch/u);
 	assert.match(presentation, /createDesktopBootstrappedWebRtcConnection/u);
-	assert.match(presentation, /remoteServerUiBundleHost\.prepareRemote/u);
 	assert.match(presentation, /serverUiLaunch:\s*launch/u);
+	assert.match(presentation, /serverUiTransport:\s*lanes\.transport/u);
+	assert.match(remoteLaunch, /new URL\('\/host-bootstrap\.json', origin\)/u);
+	assert.match(remoteLaunch, /bootstrap\.streamPath !== '\/protocol\/stream'/u);
+	// Desktop runs the bundle packaged with it for every connection: a remote
+	// profile supplies a transport, never bundle bytes.
 	assert.match(
-		presentation,
-		/serverUiTransport:\s*(?:connected|webRtc)\.transport/u,
+		remoteLaunch,
+		/artifact: \{ rootDirectory: SERVER_UI_DIST \}/u,
 	);
-	assert.match(httpLaunch, /new URL\('\/host-bootstrap\.json', origin\)/u);
-	assert.match(httpLaunch, /bootstrap\.manifestPath !== '\/manifest\.json'/u);
-	assert.match(httpLaunch, /bootstrap\.streamPath !== '\/protocol\/stream'/u);
-	assert.match(httpLaunch, /remoteServerUiBundleHost\.prepareRemote/u);
+	assert.doesNotMatch(main, /prepareRemote|bundleCache|remoteBundle/u);
 	assert.match(server, /\/host-bootstrap\.json/u);
 	assert.match(
 		main,
@@ -212,7 +213,11 @@ test('renderer-owned workspace seeding is absent from Desktop production code', 
 	);
 	assert.doesNotMatch(main, /ensureLocalWorkspaceSeed/u);
 	assert.doesNotMatch(main, /localWorkspaceSeedPromise/u);
-	assert.match(main, /workspace\.v3\.json/u);
+	assert.match(
+		await read('electron/desktopInstanceIdentity.ts'),
+		/workspace\.v\d+\.json/u,
+		'the Desktop store paths must name the canonical persisted workspace file',
+	);
 	assert.match(main, /openCanonicalWorkspace/u);
 	assert.match(main, /workspaceRepository:\s*embeddedWorkspace/u);
 	const runtime = main.slice(
@@ -222,7 +227,7 @@ test('renderer-owned workspace seeding is absent from Desktop production code', 
 	assert.match(runtime, /createWindow\(\{ deferCanonicalLaunch: true \}\)/u);
 	assert.match(
 		runtime,
-		/openEmbeddedWorkspaceWithRecovery\(embeddedStartupWindow\)/u,
+		/openEmbeddedWorkspaceWithRecovery\(\s*embeddedStartupWindow\b/u,
 	);
 	const initialize = runtime.indexOf('() => authority.initializeWorkspace()');
 	const publish = runtime.indexOf('serverTerminalAuthority = authority');

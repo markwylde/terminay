@@ -270,28 +270,6 @@ Terminay Desktop main SHALL maintain a lightweight runtime metrics collector tha
 - **WHEN** no Performance Log window is open
 - **THEN** lightweight sampling is not running
 
-### Requirement: Per-terminal local resource sampling
-
-While a Performance Log window is open, Desktop main SHALL sample per-terminal resource usage for terminal sessions backed by the embedded Local server, reporting CPU percent, resident memory, and cumulative disk bytes read and written for each session's shell process tree, keyed by the server, project, and session identity the requesting window already holds. Sampling SHALL be bounded and SHALL fail closed: a session whose process tree cannot be read SHALL report an unavailable outcome rather than a substituted or stale value. A terminal session routed to an SSH or other remote project environment SHALL report an unavailable outcome with a stable reason, and Desktop SHALL NOT introduce a resource-reporting protocol surface into project-environment adapters. Terminal titles, command lines, arguments, working directories, environment values, and PTY bytes SHALL NOT be collected or reported.
-
-#### Scenario: Local terminal
-
-- **WHEN** a terminal session backed by the embedded Local server is sampled
-- **THEN** its CPU percent, resident memory, and cumulative disk bytes read and written are reported for its shell process tree
-- **AND** no title, command line, argument, working directory, environment value, or PTY byte is reported
-
-#### Scenario: Remote project environment
-
-- **WHEN** a terminal session routed to an SSH or other remote project environment is sampled
-- **THEN** it reports an unavailable outcome with a stable reason
-- **AND** no resource-reporting request is made to the project-environment adapter
-
-#### Scenario: Unreadable process tree
-
-- **WHEN** a local session's shell process tree cannot be read
-- **THEN** that session reports an unavailable outcome
-- **AND** no substituted or stale value is presented as a measurement
-
 ### Requirement: Performance Log window
 
 The Desktop Help menu SHALL provide **Performance Log**, which opens or focuses a native auxiliary window in the same presentation family as Settings, Macros, and Recordings, bound to the embedded Local profile. The window SHALL present the startup phase timeline as a proportional breakdown whose phases can be expanded to their recorded sub-phases, the live process and event-loop samples, and a per-terminal table of CPU, memory, and disk that names sessions from the workspace state the window already holds. The window SHALL make the phase that dominated startup identifiable without reading a log file. Opening it SHALL NOT enable the opt-in performance-logging collector, and its content SHALL remain available while that collector is off.
@@ -596,3 +574,19 @@ Main and renderer test exceptions SHALL appear once with useful application fram
 - **WHEN** a main-process or renderer test exception is raised
 - **THEN** it appears once with useful application frames
 - **AND** the existing fatal and recovery behaviour is unchanged
+
+### Requirement: Per-terminal resource sampling for local sessions
+
+While a Performance Log window is open, Desktop main SHALL sample per-terminal resource usage for terminal sessions backed by the embedded Local server, reporting CPU percent, resident memory, and cumulative disk bytes read and written for each session's shell process tree, keyed by the server, project, and session identity the requesting window already holds. Sampling SHALL be bounded and SHALL fail closed: a session whose process tree cannot be read SHALL report an unavailable outcome rather than a substituted or stale value. Terminal titles, command lines, arguments, working directories, environment values, and PTY bytes SHALL NOT be collected or reported.
+
+#### Scenario: Local terminal is sampled
+
+- **WHEN** a terminal session backed by the embedded Local server is sampled
+- **THEN** its CPU percent, resident memory, and cumulative disk bytes read and written are reported for its shell process tree
+- **AND** no title, command line, argument, working directory, environment value, or PTY byte is reported
+
+#### Scenario: Process tree cannot be read
+
+- **WHEN** a local session's shell process tree cannot be read
+- **THEN** that session reports an unavailable outcome
+- **AND** no substituted or stale value is presented as a measurement

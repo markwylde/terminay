@@ -37,8 +37,7 @@ const MAX_DIRECTORY_LIST_BYTES = 1024 * 1024 * 1024;
 /** A server-owned lookup for one admitted terminal.  This is intentionally
  * separate from the public terminal context: extensions never receive the
  * shell PID, local path, or a way to resolve another terminal. */
-export interface ThisServerAgentTerminal {
-	readonly environment: 'this-server' | 'remote';
+export interface LocalAgentTerminal {
 	readonly shellPid?: number;
 	readonly foreground?: Readonly<{
 		executableName: string;
@@ -48,24 +47,24 @@ export interface ThisServerAgentTerminal {
 	readonly ttyPath?: string;
 }
 
-export type ThisServerAgentTerminalResolver = (
+export type LocalAgentTerminalResolver = (
 	terminal: ExtensionAgentTerminalContext,
 	signal: AbortSignal,
 ) =>
-	| Promise<ThisServerAgentTerminal | undefined>
-	| ThisServerAgentTerminal
+	| Promise<LocalAgentTerminal | undefined>
+	| LocalAgentTerminal
 	| undefined;
 
-export interface ThisServerAgentObservationSystem {
+export interface LocalAgentObservationSystem {
 	descendants(
 		shellPid: number,
 		signal: AbortSignal,
-	): Promise<readonly ThisServerAgentProcess[]>;
+	): Promise<readonly LocalAgentProcess[]>;
 	openFiles(
 		processIds: readonly number[],
 		access: 'writable' | 'readable',
 		signal: AbortSignal,
-	): Promise<readonly ThisServerAgentOpenFile[]>;
+	): Promise<readonly LocalAgentOpenFile[]>;
 	tty(shellPid: number, signal: AbortSignal): Promise<string | undefined>;
 	foreground(
 		shellPid: number,
@@ -87,11 +86,11 @@ export interface ThisServerAgentObservationSystem {
 	stat(
 		path: string,
 		signal: AbortSignal,
-	): Promise<ThisServerAgentFileStat | undefined>;
+	): Promise<LocalAgentFileStat | undefined>;
 	readDirectory(
 		path: string,
 		signal: AbortSignal,
-	): Promise<readonly ThisServerAgentDirectoryEntry[] | undefined>;
+	): Promise<readonly LocalAgentDirectoryEntry[] | undefined>;
 	read(
 		path: string,
 		position: number,
@@ -100,7 +99,7 @@ export interface ThisServerAgentObservationSystem {
 	): Promise<Uint8Array | undefined>;
 }
 
-export interface ThisServerAgentProcess {
+export interface LocalAgentProcess {
 	readonly pid: number;
 	readonly executableName: string;
 	readonly startedAt?: string;
@@ -121,12 +120,12 @@ function boundedArguments(
 		.slice(0, MAX_PROCESS_ARGUMENTS);
 }
 
-export interface ThisServerAgentOpenFile {
+export interface LocalAgentOpenFile {
 	readonly path: string;
 	readonly access: 'readable' | 'writable' | 'read-write';
 }
 
-export interface ThisServerAgentFileStat {
+export interface LocalAgentFileStat {
 	readonly kind: 'file' | 'directory' | 'other';
 	readonly size: number;
 	readonly modifiedAt?: string;
@@ -136,20 +135,20 @@ export interface ThisServerAgentFileStat {
 	readonly identity?: string;
 }
 
-export interface ThisServerAgentDirectoryEntry {
+export interface LocalAgentDirectoryEntry {
 	readonly name: string;
 	readonly kind: 'file' | 'directory' | 'other';
 }
 
-export interface ThisServerAgentObservationAdapterOptions {
-	readonly resolveTerminal: ThisServerAgentTerminalResolver;
-	readonly system?: ThisServerAgentObservationSystem;
+export interface LocalAgentObservationAdapterOptions {
+	readonly resolveTerminal: LocalAgentTerminalResolver;
+	readonly system?: LocalAgentObservationSystem;
 	/** Supplying this makes homeRelative checks deterministic in tests and on
 	 * service accounts whose HOME is intentionally unset. */
 	readonly homeDirectory?: string;
 	/** Home used when no process in the terminal's tree exposes `HOME`. A
-	 * this-server terminal's shell is spawned by this server as this user, so
-	 * the server's own home is the default. `false` disables the fallback. */
+	 * terminal's shell is spawned by this server as this user, so the server's
+	 * own home is the default. `false` disables the fallback. */
 	readonly fallbackHomeDirectory?: string | false;
 	readonly maximumReadBytes?: number;
 	readonly maximumFollowChunkBytes?: number;
@@ -193,19 +192,19 @@ interface TerminalState {
 }
 
 /**
- * Adapter for exactly the local Terminay Server environment.  It is a narrow
- * broker primitive, not an extension sandbox.  In particular, a remote
- * terminal is rejected before any local PID, TTY, or path is touched.
+ * Agent observation against the server's own host.  It is a narrow broker
+ * primitive, not an extension sandbox: an unknown terminal is rejected before
+ * any local PID, TTY, or path is touched.
  */
-export class ThisServerAgentObservationAdapter {
+export class LocalAgentObservationAdapter {
 	private readonly states = new Map<string, TerminalState>();
-	private readonly system: ThisServerAgentObservationSystem;
+	private readonly system: LocalAgentObservationSystem;
 	private readonly homeDirectory: string | undefined;
 	private readonly maximumReadBytes: number;
 	private readonly maximumFollowChunkBytes: number;
 
 	constructor(
-		private readonly options: ThisServerAgentObservationAdapterOptions,
+		private readonly options: LocalAgentObservationAdapterOptions,
 	) {
 		this.system = options.system ?? nodeSystem;
 		// A supplied directory is a test-only deterministic override. Production
@@ -330,16 +329,12 @@ export class ThisServerAgentObservationAdapter {
 	private async requireLocalTerminal(
 		terminal: ExtensionAgentTerminalContext,
 		signal: AbortSignal,
-	): Promise<ThisServerAgentTerminal> {
+	): Promise<LocalAgentTerminal> {
 		throwIfAborted(signal);
 		const resolved = await this.options.resolveTerminal(terminal, signal);
 		throwIfAborted(signal);
 		if (resolved === undefined)
 			throw new Error('agent observation terminal is unavailable');
-		if (resolved.environment !== 'this-server')
-			throw new Error(
-				'agent observation is unavailable for remote environment',
-			);
 		return resolved;
 	}
 
@@ -360,7 +355,7 @@ export class ThisServerAgentObservationAdapter {
 	}
 
 	private async foreground(
-		terminal: ThisServerAgentTerminal,
+		terminal: LocalAgentTerminal,
 		signal: AbortSignal,
 	): Promise<JsonValue> {
 		if (terminal.foreground !== undefined)
@@ -371,7 +366,7 @@ export class ThisServerAgentObservationAdapter {
 	}
 
 	private async descendants(
-		terminal: ThisServerAgentTerminal,
+		terminal: LocalAgentTerminal,
 		state: TerminalState,
 		signal: AbortSignal,
 	): Promise<JsonValue> {
@@ -440,7 +435,7 @@ export class ThisServerAgentObservationAdapter {
 	}
 
 	private async environment(
-		terminal: ThisServerAgentTerminal,
+		terminal: LocalAgentTerminal,
 		payload: JsonValue,
 		signal: AbortSignal,
 	): Promise<JsonValue> {
@@ -464,7 +459,7 @@ export class ThisServerAgentObservationAdapter {
 	}
 
 	private async tty(
-		terminal: ThisServerAgentTerminal,
+		terminal: LocalAgentTerminal,
 		signal: AbortSignal,
 	): Promise<JsonValue> {
 		const path =
@@ -523,7 +518,7 @@ export class ThisServerAgentObservationAdapter {
 	}
 
 	private async resolveDirectoryRelativeToEnvironment(
-		terminal: ThisServerAgentTerminal,
+		terminal: LocalAgentTerminal,
 		state: TerminalState,
 		payload: JsonValue,
 		signal: AbortSignal,
@@ -819,7 +814,7 @@ export class ThisServerAgentObservationAdapter {
 	}
 
 	private async resolveRelativeToEnvironment(
-		terminal: ThisServerAgentTerminal,
+		terminal: LocalAgentTerminal,
 		state: TerminalState,
 		payload: JsonValue,
 		signal: AbortSignal,
@@ -850,7 +845,7 @@ export class ThisServerAgentObservationAdapter {
 	}
 
 	private async resolvePathUnderEnvironment(
-		terminal: ThisServerAgentTerminal,
+		terminal: LocalAgentTerminal,
 		state: TerminalState,
 		payload: JsonValue,
 		signal: AbortSignal,
@@ -890,7 +885,7 @@ export class ThisServerAgentObservationAdapter {
 	}
 
 	private async environmentRelativePath(
-		terminal: ThisServerAgentTerminal,
+		terminal: LocalAgentTerminal,
 		state: TerminalState,
 		payload: JsonValue,
 		signal: AbortSignal,
@@ -927,7 +922,7 @@ export class ThisServerAgentObservationAdapter {
 	}
 
 	private async environmentRoot(
-		terminal: ThisServerAgentTerminal,
+		terminal: LocalAgentTerminal,
 		name: JsonValue | undefined,
 		signal: AbortSignal,
 	): Promise<string | undefined> {
@@ -963,7 +958,7 @@ export class ThisServerAgentObservationAdapter {
 	}
 
 	private async homeDirectoryFor(
-		terminal: ThisServerAgentTerminal,
+		terminal: LocalAgentTerminal,
 		signal: AbortSignal,
 	): Promise<string | undefined> {
 		if (this.homeDirectory !== undefined) return this.homeDirectory;
@@ -990,7 +985,7 @@ export class ThisServerAgentObservationAdapter {
 	 * journals were written under.
 	 */
 	private async terminalEnvironment(
-		terminal: ThisServerAgentTerminal,
+		terminal: LocalAgentTerminal,
 		names: readonly string[],
 		signal: AbortSignal,
 	): Promise<Record<string, string>> {
@@ -1013,7 +1008,7 @@ export class ThisServerAgentObservationAdapter {
 		if (missing().length === 0) return found;
 		const descendants = await this.system
 			.descendants(shellPid, signal)
-			.catch(() => [] as readonly ThisServerAgentProcess[]);
+			.catch(() => [] as readonly LocalAgentProcess[]);
 		for (const process of descendants.slice(0, MAX_ENVIRONMENT_PROBES)) {
 			if (process.pid === shellPid) continue;
 			await collect(process.pid);
@@ -1248,13 +1243,13 @@ export class ThisServerAgentObservationAdapter {
 
 /** Convenience hook for a composed agent broker.  Publication deliberately
  * remains host-owned; this adapter only answers terminal-scoped observations. */
-export function createThisServerAgentObservationAdapter(
-	options: ThisServerAgentObservationAdapterOptions,
-): ThisServerAgentObservationAdapter {
-	return new ThisServerAgentObservationAdapter(options);
+export function createLocalAgentObservationAdapter(
+	options: LocalAgentObservationAdapterOptions,
+): LocalAgentObservationAdapter {
+	return new LocalAgentObservationAdapter(options);
 }
 
-const nodeSystem: ThisServerAgentObservationSystem = {
+const nodeSystem: LocalAgentObservationSystem = {
 	descendants: nodeDescendants,
 	openFiles: nodeOpenFiles,
 	tty: nodeTty,
@@ -1314,7 +1309,7 @@ function fileIdentity(value: object): string | undefined {
 async function nodeDescendants(
 	shellPid: number,
 	signal: AbortSignal,
-): Promise<readonly ThisServerAgentProcess[]> {
+): Promise<readonly LocalAgentProcess[]> {
 	throwIfAborted(signal);
 	if (process.platform === 'linux') return linuxDescendants(shellPid, signal);
 	let output: string;
@@ -1351,9 +1346,9 @@ async function nodeDescendants(
  * fact absent rather than failing the whole snapshot.
  */
 async function darwinProcessFacts(
-	processes: readonly ThisServerAgentProcess[],
+	processes: readonly LocalAgentProcess[],
 	signal: AbortSignal,
-): Promise<readonly ThisServerAgentProcess[]> {
+): Promise<readonly LocalAgentProcess[]> {
 	if (processes.length === 0) return processes;
 	const pids = processes.map((process) => process.pid);
 	const [startedAt, cwd, argv] = await Promise.all([
@@ -1466,7 +1461,7 @@ async function darwinWorkingDirectories(
 async function linuxDescendants(
 	shellPid: number,
 	signal: AbortSignal,
-): Promise<readonly ThisServerAgentProcess[]> {
+): Promise<readonly LocalAgentProcess[]> {
 	const entries = await commandText(
 		unixTool('sh'),
 		['-c', "printf '%s\\n' /proc/[0-9]*"],
@@ -1498,8 +1493,8 @@ const LINUX_CLOCK_TICKS_PER_SECOND = 100;
  * it never postdates the true start.
  */
 async function linuxProcessFacts(
-	processes: readonly ThisServerAgentProcess[],
-): Promise<readonly ThisServerAgentProcess[]> {
+	processes: readonly LocalAgentProcess[],
+): Promise<readonly LocalAgentProcess[]> {
 	if (processes.length === 0) return processes;
 	const bootedAt = await linuxBootTime();
 	return Promise.all(
@@ -1558,7 +1553,7 @@ async function nodeOpenFiles(
 	processIds: readonly number[],
 	access: 'writable' | 'readable',
 	signal: AbortSignal,
-): Promise<readonly ThisServerAgentOpenFile[]> {
+): Promise<readonly LocalAgentOpenFile[]> {
 	if (processIds.length === 0) return [];
 	if (process.platform === 'linux')
 		return linuxOpenFiles(processIds, access, signal);
@@ -1594,7 +1589,7 @@ async function linuxOpenFiles(
 	processIds: readonly number[],
 	access: 'writable' | 'readable',
 	signal: AbortSignal,
-): Promise<readonly ThisServerAgentOpenFile[]> {
+): Promise<readonly LocalAgentOpenFile[]> {
 	const result = accumulateObservedOpenFiles();
 	for (const pid of processIds) {
 		throwIfAborted(signal);
@@ -1819,7 +1814,7 @@ function sessionProcesses(
 	shellPid: number,
 	children: ReadonlyMap<number, readonly number[]>,
 	names: ReadonlyMap<number, string>,
-): ThisServerAgentProcess[] {
+): LocalAgentProcess[] {
 	const pids = [
 		shellPid,
 		...descend(shellPid, children).filter((pid) => pid !== shellPid),
@@ -1865,7 +1860,7 @@ function foregroundValue(
 		...(startedAt === undefined ? {} : { startedAt }),
 	};
 }
-function requiredPid(terminal: ThisServerAgentTerminal): number {
+function requiredPid(terminal: LocalAgentTerminal): number {
 	if (!validPid(terminal.shellPid))
 		throw new Error('agent terminal process observation is unavailable');
 	return terminal.shellPid;
@@ -1947,11 +1942,11 @@ function isAgentJournalPath(path: string): boolean {
 	return path.endsWith('.jsonl') || path.includes('/sessions/');
 }
 function accumulateObservedOpenFiles(): {
-	add(file: ThisServerAgentOpenFile): void;
-	snapshot(): ThisServerAgentOpenFile[];
+	add(file: LocalAgentOpenFile): void;
+	snapshot(): LocalAgentOpenFile[];
 } {
-	const journals: ThisServerAgentOpenFile[] = [];
-	const others: ThisServerAgentOpenFile[] = [];
+	const journals: LocalAgentOpenFile[] = [];
+	const others: LocalAgentOpenFile[] = [];
 	return {
 		add(file) {
 			const path = safePath(file.path);
@@ -1967,8 +1962,8 @@ function accumulateObservedOpenFiles(): {
 	};
 }
 function selectObservedOpenFiles(
-	files: readonly ThisServerAgentOpenFile[],
-): ThisServerAgentOpenFile[] {
+	files: readonly LocalAgentOpenFile[],
+): LocalAgentOpenFile[] {
 	const collected = accumulateObservedOpenFiles();
 	for (const file of files) collected.add(file);
 	return collected.snapshot();

@@ -33,7 +33,7 @@ test(
 			if (process.env.TERMINAY_SEED_WORKSPACE_FILE) {
 				await copyFile(
 					resolve(process.env.TERMINAY_SEED_WORKSPACE_FILE),
-					join(userData, 'workspace.v3.json'),
+					join(userData, 'workspace.v4.json'),
 				);
 			}
 			if (!developmentLaunch) await requireCanonicalArtifactInventory();
@@ -293,13 +293,12 @@ async function requireBuiltInExtensionsInstalled(electronApp, window, failures) 
 	try {
 		await settings.getByRole('heading', { name: 'Settings' }).waitFor({ timeout: 15_000 });
 		for (const packageName of [
-			'terminay-plugin-ssh',
-			'terminay-plugin-puzed',
 			'terminay-agent-codex',
 			'terminay-agent-claude-code',
 			'terminay-agent-grok',
 			'terminay-agent-opencode',
 			'terminay-agent-omp',
+			'terminay-language-typescript',
 		]) {
 			const card = settings.locator('.extension-card').filter({ hasText: packageName });
 			await card.waitFor({ state: 'visible', timeout: 15_000 });

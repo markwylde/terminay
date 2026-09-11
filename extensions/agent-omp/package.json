@@ -40,10 +40,10 @@
     "test:conformance": "npm run compile && node --test test/conformance.test.mjs"
   },
   "peerDependencies": {
-    "@terminay/extension-api": "^1.1.0"
+    "@terminay/extension-api": "^2.0.0"
   },
   "devDependencies": {
-    "@terminay/extension-api": "^1.1.0",
+    "@terminay/extension-api": "^2.0.0",
     "@types/node": "^24.0.0",
     "typescript": "^5.9.2"
   },
@@ -52,7 +52,7 @@
     "id": "com.terminay.agent.omp",
     "displayName": "omp",
     "description": "Shows oh-my-pi CLI sessions in Terminay's Agents sidebar.",
-    "api": "^1.1.0",
+    "api": "^2.0.0",
     "engines": {
       "terminay": ">=1.0.0",
       "node": ">=22"
@@ -99,11 +99,6 @@
             "PI_CODING_AGENT_DIR",
             "XDG_DATA_HOME",
             "XDG_STATE_HOME"
-          ],
-          "requiredEnvironmentCapabilities": [
-            "process-observation",
-            "filesystem-observation",
-            "agent-journal"
           ]
         }
       ]

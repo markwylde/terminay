@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createExtensionAgentBroker } from "../dist/index.js";
 
-const terminal = Object.freeze({ contextId:"context-1",serverId:"server-1",projectId:"project-1",projectEnvironmentId:"terminay.this-server",terminalSessionId:"terminal-1",terminalIncarnationId:"1",providerId:"example.agent/test" });
+const terminal = Object.freeze({ contextId:"context-1",serverId:"server-1",projectId:"project-1",terminalSessionId:"terminal-1",terminalIncarnationId:"1",providerId:"example.agent/test" });
 const request = Object.freeze({ extensionId:"example.agent",providerId:"example.agent/test",terminal,publicationId:"publication-1",mappingVersion:"1",events:[] });
 
 test("publication queue coalesces concurrent idempotent retries and caches acknowledgements", async () => {

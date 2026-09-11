@@ -469,11 +469,6 @@ function openCodeObserveTerminal(
 	let binding;
 	return {
 		foreground: { executableName: 'opencode', arguments: arguments_ },
-		capabilities: new Set([
-			'process-observation',
-			'filesystem-observation',
-			'agent-journal',
-		]),
 		signal: controller.signal,
 		async bindSession(request) {
 			binding = request;

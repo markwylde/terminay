@@ -130,11 +130,11 @@ test('embedded vault can unlock after safeStorage becomes available at app readi
 	await adapter.unlock({ secret: new Uint8Array() });
 	assert.equal(adapter.status(), 'unlocked');
 	await adapter.put({
-		id: 'puzed.api-key',
-		value: new TextEncoder().encode('puzed-secret-sentinel'),
+		id: 'provider.api-key',
+		value: new TextEncoder().encode('provider-secret-sentinel'),
 	});
-	assert.equal(adapter.list()[0]?.id, 'puzed.api-key');
-	assert.doesNotMatch(JSON.stringify(repository.value), /puzed-secret-sentinel/);
+	assert.equal(adapter.list()[0]?.id, 'provider.api-key');
+	assert.doesNotMatch(JSON.stringify(repository.value), /provider-secret-sentinel/);
 });
 
 test('file repository atomically writes an owner-only encrypted record', async () => {
@@ -146,7 +146,7 @@ test('file repository atomically writes an owner-only encrypted record', async (
 	});
 	await adapter.unlock({ secret: new Uint8Array() });
 	await adapter.put({
-		id: 'puzed.api-key',
+		id: 'provider.api-key',
 		value: new TextEncoder().encode('api-key-sentinel'),
 	});
 	const serialized = await readFile(file, 'utf8');

@@ -12,64 +12,13 @@ export type ExtensionPermission =
 	| 'cache:write'
 	| 'network'
 	| 'secrets:resolve'
-	| 'ssh-agent:use'
-	| 'provider:depend'
-	| 'external-resources:manage'
 	| 'agent-observation';
-
-export type EnvironmentCapability =
-	| 'terminal'
-	| 'filesystem'
-	| 'filesystem-observation'
-	| 'git'
-	| 'process-observation'
-	| 'agent-journal'
-	| 'mcp-bridge'
-	| 'infrastructure'
-	| 'shell-discovery';
 
 export interface ExtensionDependency {
 	extensionId: string;
 	apiRange: string;
 	optional?: boolean;
 }
-
-export interface ProjectEnvironmentContribution {
-	id: string;
-	displayName: string;
-	description?: string;
-	icon?: ExtensionIcon;
-	capabilities: EnvironmentCapability[];
-	/**
-	 * Optional, declarative behaviour after a successfully saved profile. The
-	 * absence of this object is an explicit no-side-effect default: providers
-	 * must not have an environment created merely because a profile was saved.
-	 */
-	profileSave?: ProfileSaveContribution;
-	/**
-	 * Provider-owned public operations that compatible dependent extensions may
-	 * request through the host. The operation DTO schemas remain provider-owned
-	 * JSON; this declaration is the host authorization allowlist.
-	 */
-	dependencyOperations?: ProviderDependencyOperation[];
-}
-
-/** A profile-save action which an environment provider must opt into. */
-export interface ProfileSaveContribution {
-	/** Creates one provider environment bound to the just-saved profile. */
-	createEnvironment: true;
-}
-
-/** One public, host-authorized operation exposed by a provider dependency. */
-export interface ProviderDependencyOperation {
-	name: string;
-}
-
-/** A capability an agent extension needs from the terminal's exact environment. */
-export type AgentObservationCapability =
-	| 'process-observation'
-	| 'filesystem-observation'
-	| 'agent-journal';
 
 /** A deliberately small, safe foreground-process matcher declared in a manifest. */
 export interface AgentProcessMatcher {
@@ -95,7 +44,25 @@ export interface AgentProviderContribution {
 	mappings?: AgentMappingDeclaration[];
 	/** Names requested from the exact foreground/descendant process only. */
 	requiredEnvironmentVariables?: string[];
-	requiredEnvironmentCapabilities: AgentObservationCapability[];
+}
+
+/**
+ * Declarative metadata for one language server. The extension declares which
+ * languages and files it serves; the host owns spawning the server, stdio
+ * framing, LSP initialise, lifecycle, deadlines, and translation into core's
+ * bounded DTOs.
+ */
+export interface LanguageServerContribution {
+	/** Stable, extension-local, kebab-case, e.g. `typescript`. */
+	id: string;
+	displayName: string;
+	description?: string;
+	/** Language ids served, e.g. `typescript`, `javascriptreact`. */
+	languageIds: string[];
+	/** Lower-case file extensions including the leading dot, e.g. `.tsx`. */
+	fileExtensions: string[];
+	/** Shown in Settings, e.g. "Uses the project's TypeScript when installed". */
+	runtimeNotes?: string;
 }
 
 export interface TerminayExtensionManifest {
@@ -113,8 +80,8 @@ export interface TerminayExtensionManifest {
 	permissions: ExtensionPermission[];
 	extensionDependencies?: ExtensionDependency[];
 	contributes: {
-		projectEnvironments?: ProjectEnvironmentContribution[];
 		agentProviders?: AgentProviderContribution[];
+		languageServers?: LanguageServerContribution[];
 	};
 }
 
@@ -128,175 +95,6 @@ export type ExtensionIcon =
 	| 'database'
 	| 'warning'
 	| 'info';
-
-export interface VisibilityCondition {
-	fieldId: string;
-	equals?: JsonPrimitive;
-	notEquals?: JsonPrimitive;
-}
-
-export interface SelectOption {
-	value: string;
-	label: string;
-	description?: string;
-	disabledReason?: string;
-	default?: boolean;
-}
-
-interface BaseField {
-	id: string;
-	label: string;
-	description?: string;
-	required?: boolean;
-	disabledReason?: string;
-	visibleWhen?: VisibilityCondition;
-	defaultValue?: JsonPrimitive;
-}
-
-export interface TextField extends BaseField {
-	type: 'text' | 'url' | 'secret' | 'textarea';
-	placeholder?: string;
-	minLength?: number;
-	maxLength?: number;
-	pattern?: string;
-	suggestionSource?: string;
-	suggestionLabel?: string;
-}
-
-export interface NumberField extends BaseField {
-	type: 'number';
-	minimum?: number;
-	maximum?: number;
-	step?: number;
-}
-
-export interface BooleanField extends BaseField {
-	type: 'checkbox' | 'switch';
-}
-
-export interface SelectField extends BaseField {
-	type: 'select';
-	options?: SelectOption[];
-	optionSource?: string;
-	searchable?: boolean;
-	multiple?: boolean;
-}
-
-export interface PresetCardsField extends BaseField {
-	type: 'preset-cards';
-	options?: Array<SelectOption & { icon?: ExtensionIcon }>;
-	optionSource?: string;
-}
-
-export type FormField =
-	| TextField
-	| NumberField
-	| BooleanField
-	| SelectField
-	| PresetCardsField;
-
-export interface FormSection {
-	id: string;
-	title: string;
-	description?: string;
-	disclosure?: 'always' | 'expanded' | 'collapsed';
-	fields: FormField[];
-}
-
-export interface DeclarativeForm {
-	id: string;
-	title: string;
-	description?: string;
-	sections: FormSection[];
-	submitLabel: string;
-}
-
-export interface ValidationIssue {
-	fieldId?: string;
-	code: string;
-	message: string;
-}
-
-export interface ProgressStage {
-	id: string;
-	label: string;
-	state: 'pending' | 'active' | 'complete' | 'failed';
-	detail?: string;
-}
-
-export interface ProgressPresentation {
-	operationId: string;
-	title: string;
-	stages: ProgressStage[];
-	resumable: boolean;
-}
-
-export interface ConfirmationPresentation {
-	title: string;
-	message: string;
-	kind: 'ordinary' | 'destructive';
-	confirmLabel: string;
-	expectedRevision: number;
-}
-
-export interface PresentationAction {
-	id: string;
-	label: string;
-	kind?: 'primary' | 'secondary' | 'destructive';
-	disabledReason?: string;
-	confirmation?: ConfirmationPresentation;
-}
-
-export interface StatusCard {
-	id: string;
-	title: string;
-	summary: string;
-	icon?: ExtensionIcon;
-	tone?: 'neutral' | 'positive' | 'warning' | 'danger';
-	facts?: Array<{ label: string; value: string }>;
-	actions?: PresentationAction[];
-	httpsLink?: { label: string; url: string };
-}
-
-export interface ProviderDefinition {
-	providerId: string;
-	displayName: string;
-	description?: string;
-	icon?: ExtensionIcon;
-	capabilities: EnvironmentCapability[];
-	profileForm?: DeclarativeForm;
-	createForm?: DeclarativeForm;
-	/** Provider-scoped inventory selection, distinct from VM provisioning. */
-	browseForm?: DeclarativeForm;
-}
-
-export interface ProviderCallContext {
-	/** Absolute ISO-8601 deadline assigned by the host. */
-	deadlineAt: string;
-	signal: CancellationSignal;
-	/** Present for retryable mutations and stable across retries. */
-	idempotencyKey?: string;
-	/** Optimistic-concurrency revision for mutations of existing state. */
-	expectedRevision?: number;
-	dependencies: ProviderDependencyBroker;
-	profiles: ProviderProfileBroker;
-	secrets: ProviderSecretBroker;
-	sshAgent: ProviderSshAgentBroker;
-}
-
-export interface ProviderProfileSnapshot {
-	profileId: string;
-	providerId: string;
-	/** Non-secret persisted values only; secret fields are omitted. */
-	values: Record<string, JsonValue>;
-	secretFields: string[];
-	revision: number;
-}
-
-export interface ProviderProfileBroker {
-	/** Reads an own-provider profile after host ownership/permission checks. */
-	get(profileId: string): Promise<ProviderProfileSnapshot>;
-}
 
 export interface ProviderSecretRequest {
 	profileId: string;
@@ -315,71 +113,6 @@ export interface ProviderSecretBroker {
 		request: ProviderSecretRequest,
 		use: (bytes: Uint8Array) => T | Promise<T>,
 	): Promise<T>;
-}
-
-export type SshSignatureAlgorithm =
-	| 'ssh-ed25519'
-	| 'rsa-sha2-256'
-	| 'rsa-sha2-512'
-	| 'ecdsa-sha2-nistp256'
-	| 'ecdsa-sha2-nistp384'
-	| 'ecdsa-sha2-nistp521';
-
-export interface SshAgentIdentity {
-	/** Host-issued opaque id; never a filesystem/socket/keychain identifier. */
-	identityId: string;
-	algorithm: SshSignatureAlgorithm;
-	publicKey: Uint8Array;
-	fingerprint: string;
-	comment?: string;
-}
-
-export interface SshAgentScope {
-	profileId: string;
-	purpose: 'ssh-user-authentication';
-}
-
-export interface SshAgentSignRequest extends SshAgentScope {
-	identityId: string;
-	algorithm: SshSignatureAlgorithm;
-	/** SSH user-authentication challenge; bounded by the child/parent broker. */
-	challenge: Uint8Array;
-}
-
-export interface SshAgentSignature {
-	algorithm: SshSignatureAlgorithm;
-	signature: Uint8Array;
-}
-
-export interface ProviderSshAgentBroker {
-	/** Lists bounded public identity metadata from the selected Terminay Server. */
-	listIdentities(scope: SshAgentScope): Promise<SshAgentIdentity[]>;
-	/** Signs one bounded SSH authentication challenge after profile authorization. */
-	sign(request: SshAgentSignRequest): Promise<SshAgentSignature>;
-}
-
-export interface ProviderDependencyRequest {
-	/** The manifest-contributed provider to call, not an extension module path. */
-	providerId: string;
-	operation: string;
-	payload: JsonValue;
-}
-
-/** Host-authenticated identity of the extension/provider making a dependency call. */
-export interface ProviderDependencyCaller {
-	extensionId: string;
-	providerId: string;
-}
-
-/** Bounded call context propagated unchanged to the target handler. */
-export interface ProviderDependencyCallContext {
-	/** Absolute ISO-8601 deadline assigned by the host. */
-	deadlineAt: string;
-	signal: CancellationSignal;
-	/** Present for retryable mutations and stable across retries. */
-	idempotencyKey?: string;
-	/** Optimistic-concurrency revision for mutations of existing target state. */
-	expectedRevision?: number;
 }
 
 /**
@@ -439,209 +172,55 @@ export interface ProviderVaultBroker {
 	): Promise<ProviderVaultRemoveResult>;
 }
 
-/**
- * Target-side context. `vault` is runtime-provided and is intentionally the
- * only target-owned broker: target handlers do not receive profiles, secrets,
- * or an SSH agent.
- */
-export interface ProviderDependencyTargetContext
-	extends ProviderDependencyCallContext {
-	vault: ProviderVaultBroker;
-}
-
-/** Request delivered to a target provider after host authorization. */
-export interface ProviderDependencyTargetRequest {
-	operation: string;
-	payload: JsonValue;
-	/** Supplied by the host; a target must not trust caller-provided identity. */
-	caller: ProviderDependencyCaller;
-}
-
-/**
- * Target-side public contract for a provider dependency. The host dispatches
- * only operations declared by the target provider's manifest contribution and
- * only from an extension that declares a compatible dependency.
- */
-export interface ProviderDependencyHandler {
-	call(
-		request: ProviderDependencyTargetRequest,
-		context: ProviderDependencyTargetContext,
-	): Promise<JsonValue>;
-}
-
-export interface ProviderDependencyBroker {
-	call(
-		request: ProviderDependencyRequest,
-		context: ProviderDependencyCallContext,
-	): Promise<JsonValue>;
-}
-
-export interface ProfileValuesRequest {
-	profileId?: string;
-	values: Record<string, JsonValue>;
-}
-
-export interface ResolveOptionsRequest {
-	sourceId: string;
-	profileId?: string;
-	query?: string;
-	cursor?: string;
-	values: Record<string, JsonValue>;
-}
-
-export interface OptionSourceResult {
-	options: SelectOption[];
-	nextCursor?: string;
-}
-
-export interface EnvironmentRuntimeRequest {
-	environmentId: string;
-	profileId?: string;
-	providerState: JsonValue;
-}
-
-export interface EnvironmentCreateRequest extends ProfileValuesRequest {
-	environmentId: string;
-	displayName: string;
-}
-
-export interface ProviderEnvironmentStatus {
-	state: 'available' | 'connecting' | 'unavailable' | 'failed' | 'deleting';
-	message?: string;
-	defaultRoot?: string;
-	card?: StatusCard;
-	progress?: ProgressPresentation;
-	revision: number;
-}
-
-export type ProvisioningResult =
-	| {
-			state: 'ready';
-			providerState: JsonValue;
-			status: ProviderEnvironmentStatus;
-	  }
-	| {
-			state: 'pending';
-			operationId: string;
-			providerState: JsonValue;
-			progress: ProgressPresentation;
-			pollAfterMs?: number;
-	  };
-
-export interface ResumeOperationRequest extends EnvironmentRuntimeRequest {
-	operationId: string;
-}
-
-export interface InvokeEnvironmentActionRequest
-	extends EnvironmentRuntimeRequest {
-	actionId: string;
-	values?: Record<string, JsonValue>;
-}
-
-/** Server-internal, environment-bound service call. This is deliberately not
- * an arbitrary extension command surface: the host derives the provider state
- * and binding, while each provider accepts only its documented capability and
- * operation DTOs. */
-export interface EnvironmentServiceRequest extends EnvironmentRuntimeRequest {
-	capability: EnvironmentCapability;
-	operation: string;
-	projectId: string;
-	environmentRevision: number;
-	input: JsonValue;
-}
-
-export type EnvironmentActionResult =
-	| {
-			state: 'complete';
-			providerState: JsonValue;
-			status: ProviderEnvironmentStatus;
-	  }
-	| {
-			state: 'pending';
-			operationId: string;
-			providerState: JsonValue;
-			progress: ProgressPresentation;
-	  };
-
-export interface ProviderRuntime {
-	testProfile(
-		request: ProfileValuesRequest,
-		context: ProviderCallContext,
-	): Promise<ValidationIssue[]>;
-	resolveOptions(
-		request: ResolveOptionsRequest,
-		context: ProviderCallContext,
-	): Promise<OptionSourceResult>;
-	createEnvironment(
-		request: EnvironmentCreateRequest,
-		context: ProviderCallContext,
-	): Promise<ProvisioningResult>;
-	resumeOperation(
-		request: ResumeOperationRequest,
-		context: ProviderCallContext,
-	): Promise<ProvisioningResult>;
-	getStatus(
-		request: EnvironmentRuntimeRequest,
-		context: ProviderCallContext,
-	): Promise<ProviderEnvironmentStatus>;
-	invokeAction(
-		request: InvokeEnvironmentActionRequest,
-		context: ProviderCallContext,
-	): Promise<EnvironmentActionResult>;
-	invokeService?(
-		request: EnvironmentServiceRequest,
-		context: ProviderCallContext,
-	): Promise<JsonValue>;
-	updateEnvironment?(
-		request: EnvironmentRuntimeRequest & { values: Record<string, JsonValue> },
-		context: ProviderCallContext,
-	): Promise<EnvironmentActionResult>;
-	deleteEnvironment?(
-		request: EnvironmentRuntimeRequest,
-		context: ProviderCallContext,
-	): Promise<EnvironmentActionResult>;
-}
-
-export type ProviderRuntimeMethod = keyof ProviderRuntime;
-
-export interface ProviderRuntimeCall {
-	callId: string;
-	providerId: string;
-	method: ProviderRuntimeMethod;
-	deadlineAt: string;
-	idempotencyKey?: string;
-	expectedRevision?: number;
-	request: JsonValue;
-}
-
-export interface ProviderRuntimeReply {
-	callId: string;
-	ok: boolean;
-	result?: JsonValue;
-	error?: { code: string; message: string; retryable: boolean };
-}
-
-export interface ProviderRegistration {
-	definition: ProviderDefinition;
-	runtime: ProviderRuntime;
-	/** Optional target handler for this provider's manifest-declared dependency operations. */
-	dependencyOperations?: ProviderDependencyHandler;
-}
-
 export interface CancellationSignal {
 	readonly aborted: boolean;
 	throwIfAborted(): void;
+}
+
+/** What the host asks the extension to launch: one project, on this server. */
+export interface LanguageServerLaunchRequest {
+	languageServerId: string;
+	/** Absolute path on the server. The host decides cwd; the extension may read it. */
+	projectRoot: string;
+}
+
+/** How to start one language server. The host spawns and owns the process. */
+export interface LanguageServerLaunch {
+	/** An absolute path, or an executable the host can resolve on PATH. */
+	command: string;
+	args: string[];
+	/** Overlaid on a minimal host environment, never inherited wholesale. */
+	env?: Record<string, string>;
+	initializationOptions?: JsonValue;
+	/** Bounded, safe detail for Settings, e.g. "project typescript 5.6.2". */
+	description?: string;
+}
+
+export interface LanguageServerProviderRuntime {
+	launch(
+		request: LanguageServerLaunchRequest,
+		signal: AbortSignal,
+	): Promise<LanguageServerLaunch>;
+}
+
+export interface LanguageServerRegistration {
+	id: string;
+	runtime: LanguageServerProviderRuntime;
 }
 
 export interface ExtensionContext {
 	extensionId: string;
 	apiVersion: string;
 	paths: { configuration: string; data: string; cache: string };
-	registerProjectEnvironmentProvider(registration: ProviderRegistration): void;
 	/** Agent observation is available only to manifests granted agent-observation. */
 	agents: AgentProviderRegistry;
 	/** Host-disposed registrations and observers owned by this activation. */
 	subscriptions: ExtensionSubscriptions;
+	/**
+	 * Registers a language server this manifest contributed. An undeclared id,
+	 * or a second registration of the same id, is refused.
+	 */
+	registerLanguageServerProvider(registration: LanguageServerRegistration): void;
 }
 
 export interface TerminayExtension {
@@ -735,7 +314,7 @@ export interface AgentProcessSnapshot {
 
 export interface AgentOpenFile {
 	handle: AgentFileHandle;
-	/** A safe environment-routed display path, never an authority to read a local path. */
+	/** A safe display path, never an authority to read a local path. */
 	path: string;
 	access: 'readable' | 'writable' | 'read-write';
 }
@@ -1057,7 +636,7 @@ export interface AgentFileObservationBroker {
 	): Promise<AgentFileWatcher>;
 }
 
-/** All observation operations are terminal-scoped and environment-routed. */
+/** All observation operations are terminal-scoped and run on the server host. */
 export interface AgentObservationBroker {
 	processes: AgentProcessObservationBroker;
 	files: AgentFileObservationBroker;
@@ -1088,7 +667,6 @@ export interface AgentSessionBinding {
 }
 
 export type AgentUnavailableReason =
-	| 'environment-capability-missing'
 	| 'process-not-recognized'
 	| 'session-not-found'
 	| 'session-not-bound'
@@ -1116,7 +694,6 @@ export interface AgentTerminalContext {
 	foreground: AgentForegroundProcess;
 	/** Present only when the environment can prove the registered PTY's TTY. */
 	tty?: AgentTerminalTtyFact;
-	capabilities: ReadonlySet<AgentObservationCapability>;
 	observation: AgentObservationBroker;
 	signal: CancellationSignal;
 	bindSession(

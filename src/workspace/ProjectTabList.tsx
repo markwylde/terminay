@@ -97,14 +97,34 @@ export function ProjectTabList({
 	canCreateProject = true,
 	projects,
 }: ProjectTabListProps) {
+	// A tab's identity is `(serverId, projectId)`, because project ids are
+	// per-server namespaces: two attached servers restored from one data root
+	// hand out the same ids for different projects. Composed tabs carry that
+	// handle; a plain single-server list still identifies by project id.
+	const keyOf = (project: ProjectTab & { readonly handle?: string }) =>
+		project.handle ?? project.id;
+	// A tab whose server is unreachable, reconnecting, or incompatible stays in
+	// the strip so the composition is stable, greyed and taking no action.
+	const isInert = (project: ProjectTab & { readonly inert?: boolean }) =>
+		project.inert === true;
+	const inertReason = (
+		project: ProjectTab & { readonly inert?: boolean; readonly statusMessage?: string },
+	) => (project.inert === true ? project.statusMessage : undefined);
+	const namesServers =
+		new Set(projects.map((project) => project.serverId)).size > 1;
+	const serverLabelOf = (
+		project: ProjectTab & { readonly serverLabel?: string },
+	) => (namesServers ? (project.serverLabel ?? project.serverId) : undefined);
 	const rootRef = useRef<HTMLDivElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
 	const widthsRef = useRef(new Map<string, number>());
 	const [hiddenIds, setHiddenIds] = useState<string[]>([]);
 	const [compact, setCompact] = useState(false);
 	const hidden = new Set(hiddenIds);
-	const visibleProjects = projects.filter((project) => !hidden.has(project.id));
-	const visibleIds = visibleProjects.map((project) => project.id);
+	const visibleProjects = projects.filter(
+		(project) => !hidden.has(keyOf(project)),
+	);
+	const visibleIds = visibleProjects.map(keyOf);
 	const dropStateRef = useRef({
 		hiddenIds,
 		onReorder,
@@ -128,9 +148,9 @@ export function ProjectTabList({
 			if (draggingProjectId !== null) return;
 			const nextCompact = isProjectTabBarCompact(tabbar.clientWidth);
 			for (const element of list.querySelectorAll<HTMLElement>(
-				'[data-project-id]',
+				'[data-tab-handle]',
 			)) {
-				const id = element.dataset.projectId;
+				const id = element.dataset.tabHandle;
 				if (!id || element.classList.contains('project-tab--overflowed'))
 					continue;
 				if (element.offsetWidth > 0)
@@ -158,9 +178,9 @@ export function ProjectTabList({
 				`${Math.max(PROJECT_TAB_OVERFLOW_FADE_WIDTH, Math.round(switcherWidth * 0.85))}px`,
 			);
 			const items = projects.map((project) => ({
-				id: project.id,
+				id: keyOf(project),
 				width:
-					widthsRef.current.get(project.id) ??
+					widthsRef.current.get(keyOf(project)) ??
 					PROJECT_TAB_OVERFLOW_ESTIMATED_WIDTH,
 			}));
 			const result = fitProjectTabOverflow({
@@ -200,7 +220,7 @@ export function ProjectTabList({
 		event.preventDefault();
 		const sequence = visibleProjects.length > 0 ? visibleProjects : projects;
 		const projectIndex = sequence.findIndex(
-			(project) => project.id === projectId,
+			(project) => keyOf(project) === projectId,
 		);
 		if (projectIndex < 0) return;
 		const nextIndex =
@@ -214,11 +234,11 @@ export function ProjectTabList({
 						sequence.length;
 		const next = sequence[nextIndex];
 		if (next === undefined) return;
-		onActivate(next.id);
+		onActivate(keyOf(next));
 		requestAnimationFrame(() =>
 			document
 				.querySelector<HTMLElement>(
-					`[data-project-id="${CSS.escape(next.id)}"]`,
+					`[data-tab-handle="${CSS.escape(keyOf(next))}"]`,
 				)
 				?.focus(),
 		);
@@ -233,12 +253,12 @@ export function ProjectTabList({
 			visibleIds: currentVisible,
 		} = dropStateRef.current;
 		if (!list) return;
-		const centers = [...list.querySelectorAll<HTMLElement>('[data-project-id]')]
+		const centers = [...list.querySelectorAll<HTMLElement>('[data-tab-handle]')]
 			.filter(
 				(element) => !element.classList.contains('project-tab--overflowed'),
 			)
 			.flatMap((element) => {
-				const id = element.dataset.projectId;
+				const id = element.dataset.tabHandle;
 				if (!id) return [];
 				const rect = element.getBoundingClientRect();
 				return [{ id, center: rect.left + rect.width / 2 }];
@@ -250,7 +270,14 @@ export function ProjectTabList({
 			clientX,
 		);
 		if (sameIdList(currentVisible, nextVisibleIds)) return;
-		reorder(mergeVisibleProjectReorderByIds(items, nextVisibleIds, hiddenNow));
+		reorder(
+			mergeVisibleProjectReorderByIds(
+				items,
+				nextVisibleIds,
+				hiddenNow,
+				keyOf,
+			),
+		);
 	};
 
 	return (
@@ -273,6 +300,7 @@ export function ProjectTabList({
 								projects,
 								nextVisibleIds,
 								hiddenIds,
+								keyOf,
 							),
 						)
 					}
@@ -282,25 +310,36 @@ export function ProjectTabList({
 				>
 					{visibleProjects.flatMap((project) => [
 						dropPreview?.index ===
-						projects.findIndex((item) => item.id === project.id) ? (
+						projects.findIndex((item) => keyOf(item) === keyOf(project)) ? (
 							<ProjectTabPreview
 								key="__drop-placeholder"
 								project={dropPreview.preview}
 							/>
 						) : null,
 						<Reorder.Item
-							key={project.id}
-							value={project.id}
+							key={keyOf(project)}
+							value={keyOf(project)}
+							data-tab-handle={
+								project.creationStatus === undefined
+									? keyOf(project)
+									: undefined
+							}
 							data-project-id={
 								project.creationStatus === undefined ? project.id : undefined
 							}
+							data-server-id={project.serverId}
 							data-pending-project-id={
 								project.creationStatus === undefined ? undefined : project.id
 							}
-							className={`project-tab${project.id === activeProjectId ? ' project-tab--active' : ''}${project.id === draggingProjectId ? ' project-tab--dragging' : ''}${project.id === draggingProjectId && isDraggingTabTornOff ? ' project-tab--torn-off' : ''}${project.creationStatus ? ` project-tab--creation-${project.creationStatus}` : ''}${projectTabIsBusy(project) && project.creationStatus !== 'failed' ? ' project-tab--creation-loading' : ''}`}
+							className={`project-tab${keyOf(project) === activeProjectId ? ' project-tab--active' : ''}${keyOf(project) === draggingProjectId ? ' project-tab--dragging' : ''}${keyOf(project) === draggingProjectId && isDraggingTabTornOff ? ' project-tab--torn-off' : ''}${project.creationStatus ? ` project-tab--creation-${project.creationStatus}` : ''}${projectTabIsBusy(project) && project.creationStatus !== 'failed' ? ' project-tab--creation-loading' : ''}${isInert(project) ? ' project-tab--inert' : ''}`}
 							role="tab"
-							aria-selected={project.id === activeProjectId}
-							tabIndex={project.id === activeProjectId ? 0 : -1}
+							aria-selected={keyOf(project) === activeProjectId}
+							aria-disabled={isInert(project) || undefined}
+							title={
+								inertReason(project) ??
+								'Double-click or long-press to edit tab'
+							}
+							tabIndex={keyOf(project) === activeProjectId ? 0 : -1}
 							style={{ '--project-color': project.color } as CSSProperties}
 							dragMomentum={false}
 							dragListener={project.creationStatus === undefined}
@@ -308,32 +347,33 @@ export function ProjectTabList({
 							onDragStart={() => {
 								if (project.creationStatus !== undefined) return;
 								document.body.classList.add('project-tabbar-reordering');
-								onDragStart(project.id);
+								onDragStart(keyOf(project));
 							}}
-							onDrag={(_event, info) => onDragMove?.(project.id, info.offset.y)}
+							onDrag={(_event, info) =>
+								onDragMove?.(keyOf(project), info.offset.y)
+							}
 							onDragEnd={(_event, info) => {
-								commitVisibleDrop(project.id, info.point.x);
+								commitVisibleDrop(keyOf(project), info.point.x);
 								document.body.classList.remove('project-tabbar-reordering');
-								void onDragEnd(project.id);
+								void onDragEnd(keyOf(project));
 							}}
 							onClick={() => {
 								if (project.creationStatus !== 'loading')
-									onActivate(project.id);
+									onActivate(keyOf(project));
 							}}
 							onDoubleClick={() => {
-								if (project.creationStatus === undefined)
-									void onEdit(project.id);
+								if (project.creationStatus === undefined && !isInert(project))
+									void onEdit(keyOf(project));
 							}}
 							onKeyDown={(event) => {
 								if (event.key === 'Enter' || event.key === ' ') {
 									event.preventDefault();
-									onActivate(project.id);
+									onActivate(keyOf(project));
 									return;
 								}
-								handleTabKeyDown(event, project.id);
+								handleTabKeyDown(event, keyOf(project));
 							}}
 							whileDrag={{ scale: 1.05, zIndex: 50 }}
-							title="Double-click or long-press to edit tab"
 						>
 							<span className="project-tab-main">
 								{project.creationStatus === 'failed' ? (
@@ -348,22 +388,8 @@ export function ProjectTabList({
 									<span
 										className="project-tab-creation-spinner"
 										role="img"
-										aria-label={
-											project.creationStatus === 'loading'
-												? 'Creating project'
-												: 'Connecting project'
-										}
+										aria-label="Creating project"
 									/>
-								) : project.projectEnvironmentId &&
-									project.projectEnvironmentId !== 'terminay:this-server' ? (
-									<span
-										className={`project-tab-environment project-tab-environment--${project.environmentStatus ?? 'ready'}`}
-										role="img"
-										aria-label={`${project.environmentLabel ?? 'Remote environment'} — ${project.environmentStatus ?? 'ready'}`}
-										title={`${project.environmentLabel ?? 'Remote environment'} — ${project.environmentStatus ?? 'ready'}`}
-									>
-										⇄
-									</span>
 								) : null}
 								{project.creationStatus === undefined && project.emoji ? (
 									<span className="project-tab-emoji" aria-hidden="true">
@@ -371,9 +397,16 @@ export function ProjectTabList({
 									</span>
 								) : null}
 								<span className="project-tab-title">{project.title}</span>
+								{/* The server is named only when the window is showing
+								    more than one; with one server it is noise. */}
+								{serverLabelOf(project) === undefined ? null : (
+									<span className="project-tab-server">
+										{serverLabelOf(project)}
+									</span>
+								)}
 							</span>
 							<ProjectTabActivityBadge
-								badge={activityBadgesByProject?.[project.id]}
+								badge={activityBadgesByProject?.[keyOf(project)]}
 							/>
 							<button
 								type="button"
@@ -381,7 +414,7 @@ export function ProjectTabList({
 								className="project-tab-close"
 								onClick={(event) => {
 									event.stopPropagation();
-									onClose(project.id);
+									onClose(keyOf(project));
 								}}
 								aria-label={`Close ${project.title}`}
 								title={
@@ -415,14 +448,20 @@ export function ProjectTabList({
 					) : null}
 				</Reorder.Group>
 				{projects
-					.filter((project) => hidden.has(project.id))
+					.filter((project) => hidden.has(keyOf(project)))
 					.map((project) => (
 						<div
-							key={project.id}
+							key={keyOf(project)}
 							className="project-tab project-tab--overflowed"
+							data-tab-handle={
+								project.creationStatus === undefined
+									? keyOf(project)
+									: undefined
+							}
 							data-project-id={
 								project.creationStatus === undefined ? project.id : undefined
 							}
+							data-server-id={project.serverId}
 							data-pending-project-id={
 								project.creationStatus === undefined ? undefined : project.id
 							}
@@ -436,9 +475,16 @@ export function ProjectTabList({
 									</span>
 								) : null}
 								<span className="project-tab-title">{project.title}</span>
+								{/* The server is named only when the window is showing
+								    more than one; with one server it is noise. */}
+								{serverLabelOf(project) === undefined ? null : (
+									<span className="project-tab-server">
+										{serverLabelOf(project)}
+									</span>
+								)}
 							</span>
 							<ProjectTabActivityBadge
-								badge={activityBadgesByProject?.[project.id]}
+								badge={activityBadgesByProject?.[keyOf(project)]}
 							/>
 						</div>
 					))}

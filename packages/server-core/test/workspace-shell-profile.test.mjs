@@ -31,10 +31,9 @@ test("bulk replacement updates all matching project defaults in one workspace re
   assert.equal(store.state.projects.project.defaultShellProfileId, "new");
 });
 
-test("v1 workspace snapshots migrate without inventing project defaults", () => {
+test("a snapshot from a previous schema version is refused", () => {
   const current = storeWithProject().state;
-  const migrated = migrateWorkspaceState({ ...current, schemaVersion: 1 }, "server");
-  assert.equal(migrated.schemaVersion, WORKSPACE_SCHEMA_VERSION);
-  assert.equal(migrated.projects.project.defaultShellProfileId, undefined);
+  assert.throws(() => migrateWorkspaceState({ ...current, schemaVersion: 1 }, "server"), /unsupported workspace schema/);
+  assert.equal(migrateWorkspaceState(current, "server").projects.project.defaultShellProfileId, undefined);
 });
 

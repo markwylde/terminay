@@ -13,13 +13,12 @@ test('narrow release builds materialize their workspace dependencies through Tur
 		await readFile(resolve(root, 'packages/server-core/package.json'), 'utf8'),
 	);
 	const builtInPackages = [
-		['ssh', 'terminay-plugin-ssh'],
-		['puzed', 'terminay-plugin-puzed'],
 		['agent-codex', 'terminay-agent-codex'],
 		['agent-claude-code', 'terminay-agent-claude-code'],
 		['agent-grok', 'terminay-agent-grok'],
 		['agent-opencode', 'terminay-agent-opencode'],
 		['agent-omp', 'terminay-agent-omp'],
+		['language-typescript', 'terminay-language-typescript'],
 	];
 
 	assert.equal(serverCorePackage.scripts.build, 'tsc -p tsconfig.json');

@@ -20,7 +20,7 @@ await build({
   platform: 'node',
   target: 'node20',
 })
-const { createDesktopWebRtcConnection, createDesktopWebRtcTransport } = await import(pathToFileURL(output).href)
+const { createDesktopWebRtcTransport } = await import(pathToFileURL(output).href)
 test.after(async () => rm(directory, { force: true, recursive: true }))
 const identity = {
   deviceId: 'desktop-device',
@@ -90,33 +90,6 @@ test('Desktop native offerer establishes four isolated lanes and exposes the fra
   assert.deepEqual([...(await transport.incoming[Symbol.asyncIterator]().next()).value], [4, 5])
   await transport.close()
   assert.ok([...Peer.instance.channels.values()].every(channel => channel.closed))
-})
-
-test('Desktop authenticated assets lane requests one archive and reassembles binary acknowledged chunks', async () => {
-  let signalListener = () => {}
-  const signaling = {
-    onMessage(listener) { signalListener = listener; return () => { signalListener = () => {} } },
-    send(message) { if (message.type === 'offer') queueMicrotask(() => signalListener({ type: 'answer', sdp: 'answer-sdp' })) },
-    encode: (signal) => signal, decode: (message) => message,
-  }
-  const connection = await createDesktopWebRtcConnection({ peerId: 'desktop-assets', ...identity, signaling, loadModule: async () => ({ PeerConnection: Peer }) })
-  const assets = Peer.instance.channels.get('assets')
-  const decode = (frame) => JSON.parse(new TextDecoder().decode(frame))
-  const encode = (value) => new TextEncoder().encode(JSON.stringify(value))
-
-  const bundlePromise = connection.assets.getBundle()
-  const request = decode(assets.sent.at(-1))
-  assert.deepEqual({ type: request.type, archiveFormatVersion: request.archiveFormatVersion }, { type: 'asset:get-bundle', archiveFormatVersion: 1 })
-  assets.emit(encode({ id: request.id, type: 'asset:bundle-start', archiveFormatVersion: 1, bundleId: 'bundle_1234', compressedBytes: 5, chunkBytes: 3, chunks: 2 }))
-  const chunk = (index, body) => { const frame = new Uint8Array(8 + body.length); frame.set([0x54, 0x42, 0x01, 0x01]); new DataView(frame.buffer).setUint32(4, index); frame.set(body, 8); return frame }
-  assets.emit(chunk(0, new Uint8Array([1, 2, 3])))
-  assets.emit(chunk(1, new Uint8Array([4, 5])))
-  assets.emit(encode({ id: request.id, type: 'asset:bundle-complete' }))
-  assert.deepEqual([...(await bundlePromise)], [1, 2, 3, 4, 5])
-  assert.deepEqual(assets.sent.slice(-2).map(decode).map(({ type, index }) => ({ type, index })), [
-    { type: 'asset:bundle-ack', index: 0 }, { type: 'asset:bundle-ack', index: 1 },
-  ])
-  await connection.transport.close()
 })
 
 test('Desktop close discards application frames queued behind a stalled consumer', async () => {
