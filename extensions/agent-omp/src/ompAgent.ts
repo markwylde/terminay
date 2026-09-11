@@ -165,6 +165,10 @@ async function isThisTerminalsSession(
   const processes = await terminal.observation.processes.descendants({
     signal: terminal.signal,
   });
+  // A resume flag on the process's own command line says this run was started
+  // to reopen a session it did not write, so an older journal is exactly what
+  // it should bind. That is per-process evidence, not a guess about the file.
+  if (isOmpResumeLaunch(terminal, processes)) return true;
   const startedAt = ompStartTime(terminal, processes);
   const stat = await terminal.observation.files.stat(journal, {
     signal: terminal.signal,
@@ -181,6 +185,27 @@ async function isThisTerminalsSession(
   const modifiedAt = parseTime(stat?.modifiedAt);
   if (modifiedAt !== undefined && modifiedAt >= since) return true;
   return isHeldOpenByDescendant(terminal, journal, processes);
+}
+
+/** OMP's flags for reopening an earlier session rather than starting one. */
+const OMP_RESUME_FLAGS = new Set(["-c", "--continue", "-r", "--resume"]);
+
+/** True when the OMP process in this terminal was launched to resume a session. */
+function isOmpResumeLaunch(
+  terminal: AgentTerminalContext,
+  processes: readonly AgentProcessSnapshot[],
+): boolean {
+  const commands = [
+    ...processes
+      .filter((process) => isOmpForeground(process))
+      .map((process) => process.arguments),
+    terminal.foreground.arguments,
+  ];
+  return commands.some((argumentList) =>
+    (argumentList ?? []).some((argument) =>
+      OMP_RESUME_FLAGS.has(argument.split("=", 1)[0] ?? argument),
+    ),
+  );
 }
 
 /**
