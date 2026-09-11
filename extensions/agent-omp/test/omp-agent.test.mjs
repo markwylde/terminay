@@ -101,6 +101,47 @@ test("resume and topology rebind follow the exact current PTY breadcrumb", async
   assert.notEqual(first.bindingRequest.journal.id, second.bindingRequest.journal.id);
 });
 
+// OMP keys its breadcrumb on the TTY device name alone, and a container hands
+// the same `pts` number to the next terminal it opens. The crumb an earlier
+// session left therefore still names that session when a new one starts, and
+// binding it would attach this terminal to work it never did.
+test("a breadcrumb left by an earlier session in the same PTY is refused", async () => {
+  const fixture = ompObservationFixture("earlier-session", "Earlier", {
+    writer: false,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    modifiedAt: "2026-01-01T00:00:10.000Z",
+    startedAt: "2026-01-01T00:05:00.000Z",
+  });
+  const result = await ompAgentProvider.observe(fixture.terminal);
+  assert.equal(result.state, "not-bound");
+  assert.equal(fixture.bindingRequest, undefined);
+});
+
+test("an earlier journal this process is still writing is its resumed session", async () => {
+  const fixture = ompObservationFixture("resumed-session", "Resumed", {
+    writer: false,
+    arguments: ["--continue"],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    modifiedAt: "2026-01-01T00:05:02.000Z",
+    startedAt: "2026-01-01T00:05:00.000Z",
+  });
+  const result = await ompAgentProvider.observe(fixture.terminal);
+  assert.equal(result.state, "bound");
+  assert.equal(result.binding.providerSessionId, "resumed-session");
+});
+
+test("an earlier journal held open by this PTY is its resumed session", async () => {
+  const fixture = ompObservationFixture("reopened-session", "Reopened", {
+    arguments: ["--continue"],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    modifiedAt: "2026-01-01T00:00:10.000Z",
+    startedAt: "2026-01-01T00:05:00.000Z",
+  });
+  const result = await ompAgentProvider.observe(fixture.terminal);
+  assert.equal(result.state, "bound");
+  assert.equal(result.binding.providerSessionId, "reopened-session");
+});
+
 test("a malformed breadcrumb and unrelated non-writer journal fail closed", async () => {
   const fixture = ompObservationFixture("root", "No leak", { breadcrumb: "not-a-provider-breadcrumb", writer: false });
   const result = await ompAgentProvider.observe(fixture.terminal);
@@ -205,7 +246,7 @@ function ompObservationFixture(sessionId, title, options = {}) {
   const handle = (id) => ({ id });
   let bindingRequest;
   const terminal = {
-    terminal: { id: "terminal" }, project: { id: "project" }, environment: { id: "environment" }, process: { id: "process" }, foreground: { executableName: "omp", arguments: options.arguments }, tty: { deviceId: "ttys000" },
+    terminal: { id: "terminal" }, project: { id: "project" }, environment: { id: "environment" }, process: { id: "process" }, foreground: { executableName: "omp", arguments: options.arguments, ...(options.startedAt === undefined ? {} : { startedAt: options.startedAt }) }, tty: { deviceId: "ttys000" },
     signal: { aborted: false, throwIfAborted() {} },
     async bindSession(request) { bindingRequest = request; return { providerSessionId: request.providerSessionId, mappingVersion: request.mappingVersion, journal: request.journal }; },
     observation: {
@@ -219,7 +260,7 @@ function ompObservationFixture(sessionId, title, options = {}) {
         async resolvePathUnderHome(providerPath, request) { const prefix = `/home/test/${request.beneath.homeRelative}/`; return providerPath.startsWith(prefix) && files.has(providerPath) ? handle(providerPath) : undefined; },
         async homeRelativePath(file, request) { const prefix = `/home/test/${request.beneath.homeRelative}/`; return file.id.startsWith(prefix) ? file.id.slice(prefix.length) : undefined; },
         async canonicalFile(file) { return files.has(file.id) ? file : undefined; }, async realpath(file) { return file; },
-        async stat(file) { return files.has(file.id) ? { handle: file, kind: "file", size: files.get(file.id).byteLength } : undefined; },
+        async stat(file) { return files.has(file.id) ? { handle: file, kind: "file", size: files.get(file.id).byteLength, ...(file.id === rootPath && options.createdAt !== undefined ? { createdAt: options.createdAt } : {}), ...(file.id === rootPath && options.modifiedAt !== undefined ? { modifiedAt: options.modifiedAt } : {}) } : undefined; },
         async read(file, request) { return (files.get(file.id) ?? Buffer.alloc(0)).subarray(0, request.maxBytes); },
         async readJson() { return undefined; }, async readJsonLine() { return undefined; },
         async follow(file) { const bytes = files.get(file.id); return { async *[Symbol.asyncIterator]() { if (bytes) yield { type: "append", bytes }; }, dispose() {} }; },
