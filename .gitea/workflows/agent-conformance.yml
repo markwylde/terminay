@@ -144,3 +144,7 @@ jobs:
           done
           echo "::error title=$extension conformance failed::Failed $attempts consecutive attempts. At that point it is the provider or the descriptor, not model non-determinism."
           exit 1
+
+      - name: Free this job's Docker images
+        if: ${{ always() && steps.selected.outputs.run == 'true' }}
+        run: sh scripts/prune-ci-docker-images.sh
