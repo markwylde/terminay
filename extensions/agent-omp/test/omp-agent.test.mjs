@@ -246,12 +246,12 @@ function ompObservationFixture(sessionId, title, options = {}) {
   const handle = (id) => ({ id });
   let bindingRequest;
   const terminal = {
-    terminal: { id: "terminal" }, project: { id: "project" }, environment: { id: "environment" }, process: { id: "process" }, foreground: { executableName: "omp", arguments: options.arguments, ...(options.startedAt === undefined ? {} : { startedAt: options.startedAt }) }, tty: { deviceId: "ttys000" },
+    terminal: { id: "terminal" }, project: { id: "project" }, environment: { id: "environment" }, process: { id: "process" }, foreground: { executableName: "omp", arguments: options.arguments }, tty: { deviceId: "ttys000" },
     signal: { aborted: false, throwIfAborted() {} },
     async bindSession(request) { bindingRequest = request; return { providerSessionId: request.providerSessionId, mappingVersion: request.mappingVersion, journal: request.journal }; },
     observation: {
       processes: {
-        async descendants() { return [{ handle: { id: "process" }, executableName: "omp" }]; },
+        async descendants() { return [{ handle: { id: "process" }, executableName: "omp", ...(options.startedAt === undefined ? {} : { startedAt: options.startedAt }) }]; },
         async openFiles() { return options.writer === false ? [] : [{ handle: handle(rootPath), path: rootPath, access: "writable" }]; },
         async environment() { return {}; },
       },
