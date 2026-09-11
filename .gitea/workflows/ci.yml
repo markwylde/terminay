@@ -143,6 +143,10 @@ jobs:
       - name: Test latest MCP clients in Docker
         run: npm run e2e:mcp-cli-real-tests
 
+      - name: Free this job's Docker images
+        if: ${{ always() }}
+        run: sh scripts/prune-ci-docker-images.sh
+
   e2e-image:
     name: Build E2E image
     runs-on: ubuntu-latest
@@ -208,6 +212,12 @@ jobs:
             .
           docker push "$IMAGE_TAG"
 
+      - name: Free this job's Docker images
+        if: ${{ always() }}
+        env:
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+        run: sh scripts/prune-ci-docker-images.sh "$IMAGE_TAG"
+
   e2e-test:
     name: E2E (${{ matrix.shard }}/10)
     runs-on: ubuntu-latest
@@ -267,3 +277,9 @@ jobs:
           path: .docker-cache/e2e/shard-${{ matrix.shard }}-of-10
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Free this job's Docker images
+        if: ${{ always() }}
+        env:
+          IMAGE_TAG: ${{ needs.e2e-image.outputs.image }}
+        run: sh scripts/prune-ci-docker-images.sh "$IMAGE_TAG"
