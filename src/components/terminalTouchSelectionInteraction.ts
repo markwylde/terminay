@@ -229,9 +229,11 @@ export function createTerminalTouchSelectionDriver({
  * at the tap position. Resolution is asynchronous, so the release is deferred
  * by one frame; when the tap was not on a link both events are inert.
  *
- * A program in mouse tracking mode owns its own clicks — a synthesised release
- * would reach it as a button report it never saw pressed — so taps are left
- * alone there.
+ * This runs whatever the foreground program is doing, including one in mouse
+ * tracking mode — which is exactly where the links worth tapping tend to be.
+ * Neither event becomes a button report the program never saw pressed: xterm
+ * binds its mouse-up reporting inside its own mousedown handler, and no
+ * mousedown is synthesised here.
  */
 export function activateTerminalLinkAtTouch({
 	afterFrame = (run) =>
@@ -240,19 +242,11 @@ export function activateTerminalLinkAtTouch({
 			: void setTimeout(run, 16),
 	point,
 	screenElement,
-	terminal,
 }: {
 	afterFrame?: (run: () => void) => void;
 	point: TouchSelectionPoint;
 	screenElement: MouseEventTarget;
-	terminal: unknown;
 }): void {
-	if (
-		(terminal as SelectionCapableTerminal).modes?.mouseTrackingMode !== 'none'
-	) {
-		return;
-	}
-
 	screenElement.dispatchEvent(
 		new MouseEvent('mousemove', {
 			...mouseEventInit(point, 0),

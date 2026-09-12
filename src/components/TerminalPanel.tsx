@@ -2018,11 +2018,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		};
 
 		const openTouchLinkAt = (point: TouchSelectionPoint) => {
-			activateTerminalLinkAtTouch({
-				point,
-				screenElement: touchEventTarget,
-				terminal,
-			});
+			activateTerminalLinkAtTouch({ point, screenElement: touchEventTarget });
 		};
 
 		const handleTouchPointerDown = (event: PointerEvent) => {

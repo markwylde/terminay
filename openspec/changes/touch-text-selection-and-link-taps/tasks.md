@@ -37,8 +37,10 @@
 ## 3. Link activation on touch
 
 - [x] 3.1 Add `activateTerminalLinkAtTouch`, replaying the `mousemove` and the
-      next-frame `mouseup` xterm's linkifier needs, and skipping a program in
-      mouse tracking mode. Verified by the two activation tests.
+      next-frame `mouseup` xterm's linkifier needs, whatever the foreground
+      program is doing. Verified by the two activation tests, and on device: an
+      earlier revision skipped mouse tracking mode and so did nothing in the
+      interactive programs whose output carries the links.
 - [x] 3.2 Allow modifier-free activation in `createTerminalLinkInteraction` for
       a touch-originated gesture only, and drive it from the panel's pointer
       type. Verified by the link interaction test asserting a pointer click

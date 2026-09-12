@@ -274,7 +274,6 @@ test('a tap replays the move and release xterm needs to activate a link', async 
     afterFrame: (run) => deferred.push(run),
     point: point(12, 34),
     screenElement: element,
-    terminal: { modes: { mouseTrackingMode: 'none' } },
   })
 
   assert.deepEqual(dispatched, [['screen', 'mousemove', 0]])
@@ -287,19 +286,25 @@ test('a tap replays the move and release xterm needs to activate a link', async 
   ])
 })
 
-test('a tap inside a mouse-tracking program is left to the program', async () => {
+test('a tap activates a link inside a mouse-tracking program too', async () => {
   const { touchSelection } = await loadModules()
   fakeMouseEvent()
   const { dispatched, element } = recordingElement()
 
+  // An interactive program having mouse tracking on is the common case — it is
+  // where the links worth tapping are. Neither synthesised event reaches the
+  // program as a button report: xterm binds its mouse-up reporting inside its
+  // own mousedown handler, and no mousedown is synthesised.
   touchSelection.activateTerminalLinkAtTouch({
     afterFrame: (run) => run(),
     point: point(12, 34),
     screenElement: element,
-    terminal: { modes: { mouseTrackingMode: 'any' } },
   })
 
-  assert.deepEqual(dispatched, [], 'a synthesised release would be a phantom button report')
+  assert.deepEqual(dispatched, [
+    ['screen', 'mousemove', 0],
+    ['screen', 'mouseup', 1],
+  ])
 })
 
 test('the copy pill stays inside the panel, and below the finger when the top is out of room', async () => {

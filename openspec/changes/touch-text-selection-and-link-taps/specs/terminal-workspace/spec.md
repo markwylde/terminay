@@ -39,7 +39,7 @@ On touch devices, xterm SHALL own scrollback and the terminal mouse and key sequ
 
 ### Requirement: Terminal link and input safety
 
-Terminal content SHALL be treated as untrusted text. Activating a detected or OSC-8 HTTP or HTTPS link SHALL open that credential-free URL in the system browser; other schemes and URLs with credentials SHALL be rejected. A pointer device SHALL require a modifier click to activate a link. A touch SHALL activate a link with a tap, since a touch device has no modifier key to hold, and SHALL NOT do so while the foreground program is in mouse tracking mode. A browser client SHALL open an external URL and write the clipboard within the user activation that requested it. Paste and external drop behaviour SHALL remain user initiated. Screen-reader and reduced-motion settings SHALL be honoured. Secrets typed in a terminal SHALL NOT be collected by default; recording has its own explicit policy.
+Terminal content SHALL be treated as untrusted text. Activating a detected or OSC-8 HTTP or HTTPS link SHALL open that credential-free URL in the system browser; other schemes and URLs with credentials SHALL be rejected. A pointer device SHALL require a modifier click to activate a link. A touch SHALL activate a link with a tap, since a touch device has no modifier key to hold, whatever the foreground program is doing, and that tap SHALL NOT reach the program as a button report it never saw pressed. A browser client SHALL open an external URL and write the clipboard within the user activation that requested it. Paste and external drop behaviour SHALL remain user initiated. Screen-reader and reduced-motion settings SHALL be honoured. Secrets typed in a terminal SHALL NOT be collected by default; recording has its own explicit policy.
 
 #### Scenario: Modifier-clicking a link
 
@@ -56,10 +56,11 @@ Terminal content SHALL be treated as untrusted text. Activating a detected or OS
 - **WHEN** a user taps a detected or OSC-8 `http://` or `https://` terminal link on a touch device
 - **THEN** the credential-free URL is opened in the system browser
 
-#### Scenario: Tapping inside a mouse tracking program
+#### Scenario: Tapping a link inside a mouse tracking program
 
-- **WHEN** a user taps the terminal while the foreground program is in mouse tracking mode
-- **THEN** no link is activated and no button report the program never saw pressed is sent
+- **WHEN** a user taps a terminal link while the foreground program is in mouse tracking mode
+- **THEN** the credential-free URL is opened in the system browser
+- **AND** no button report the program never saw pressed is sent
 
 #### Scenario: Unsafe link
 
