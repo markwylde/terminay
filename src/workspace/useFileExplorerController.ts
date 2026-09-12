@@ -212,6 +212,44 @@ export async function loadGitWorkspaceFromServer(
 	return await loadServerGitWorkspace(gitClient, project.id);
 }
 
+/**
+ * Reconcile one Git workspace refresh. A refresh that survives to publish a
+ * projection also repairs the Git feature banner: a transport outage (sleep,
+ * a network drop) leaves a `Git is temporarily unavailable` notice behind, and
+ * only the next successful refresh proves the server is reachable again.
+ */
+export async function applyGitWorkspaceRefresh({
+	gitClient,
+	project,
+	isCurrent,
+	publish,
+	preserveLastProjection,
+	onOperationError,
+	onOperationSucceeded,
+}: {
+	gitClient: TerminayGitClient | undefined;
+	project: Pick<ProjectTab, 'id' | 'rootFolder'>;
+	isCurrent: () => boolean;
+	publish: (projection: GitWorkspaceProjection) => void;
+	preserveLastProjection: () => void;
+	onOperationError: (feature: 'Explorer' | 'Git', error: unknown) => string;
+	onOperationSucceeded: (feature: 'Explorer' | 'Git') => void;
+}): Promise<void> {
+	try {
+		const projection = await loadGitWorkspaceFromServer(gitClient, project);
+		if (!isCurrent()) return;
+		publish(projection);
+		onOperationSucceeded('Git');
+	} catch (error) {
+		if (!isCurrent()) return;
+		// Preserve the last good projection. If there has not been a successful
+		// projection yet, publish a stable empty state instead of leaving the Git
+		// sidebar in an indefinite loading state.
+		preserveLastProjection();
+		onOperationError('Git', error);
+	}
+}
+
 export function beginDirectoryLoad(
 	versions: Map<string, number>,
 	path: string,
@@ -450,41 +488,34 @@ export function useFileExplorerController({
 		}
 		gitRefreshRequestIdRef.current += 1;
 		const requestId = gitRefreshRequestIdRef.current;
-		try {
-			const projection = await loadGitWorkspaceFromServer(gitClient, {
-				id: project.id,
-				rootFolder: targetRootFolder,
-			});
-			if (
-				gitRefreshRequestIdRef.current !== requestId ||
-				latestGitRootRef.current !== targetRootFolder
-			) {
-				return;
-			}
-			referencesRef.current = projection.referencesByPath;
-			setGitStatuses((current) =>
-				sameGitStatuses(current, projection.statuses)
-					? current
-					: projection.statuses,
-			);
-			setWorktreePanelStatus((current) =>
-				sameWorktreePanelStatus(current, projection.worktrees)
-					? current
-					: projection.worktrees,
-			);
-		} catch (error) {
-			if (
-				gitRefreshRequestIdRef.current !== requestId ||
-				latestGitRootRef.current !== targetRootFolder
-			)
-				return;
-			// Preserve the last good projection. If there has not been a successful
-			// projection yet, publish a stable empty state instead of leaving the Git
-			// sidebar in an indefinite loading state.
-			setWorktreePanelStatus((current) => current ?? EMPTY_WORKTREE_PANEL_STATUS);
-			onOperationError('Git', error);
-		}
-	}, [gitClient, onOperationError, project.id]);
+		await applyGitWorkspaceRefresh({
+			gitClient,
+			project: { id: project.id, rootFolder: targetRootFolder },
+			isCurrent: () =>
+				gitRefreshRequestIdRef.current === requestId &&
+				latestGitRootRef.current === targetRootFolder,
+			publish: (projection) => {
+				referencesRef.current = projection.referencesByPath;
+				setGitStatuses((current) =>
+					sameGitStatuses(current, projection.statuses)
+						? current
+						: projection.statuses,
+				);
+				setWorktreePanelStatus((current) =>
+					sameWorktreePanelStatus(current, projection.worktrees)
+						? current
+						: projection.worktrees,
+				);
+			},
+			preserveLastProjection: () => {
+				setWorktreePanelStatus(
+					(current) => current ?? EMPTY_WORKTREE_PANEL_STATUS,
+				);
+			},
+			onOperationError,
+			onOperationSucceeded,
+		});
+	}, [gitClient, onOperationError, onOperationSucceeded, project.id]);
 	const scheduleDirectoryRefresh = useCallback(
 		(dirPath: string) => {
 			const existing = refreshTimersRef.current.get(dirPath);
