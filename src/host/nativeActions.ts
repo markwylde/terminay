@@ -51,6 +51,14 @@ export async function pairDesktopConnection(
 /** Clipboard writes are semantic user actions. Desktop owns the privileged
  * write; browser sessions use their exact-origin Clipboard API. */
 export async function writeClipboardText(text: string): Promise<void> {
+	// Safari grants the clipboard only to a call made synchronously inside the
+	// gesture that asked for it; awaiting an absent Desktop bridge first spends
+	// that activation and the write is refused. With no bridge there is nothing
+	// to ask, so go straight to the browser.
+	if (bridge() === undefined) {
+		await navigator.clipboard.writeText(text);
+		return;
+	}
 	if ((await request({ type: 'clipboard.write', text })).handled) return;
 	await navigator.clipboard.writeText(text);
 }
@@ -105,6 +113,13 @@ export function resolveDesktopDroppedFilePath(file: unknown): string | undefined
  * navigation elsewhere. Only credential-free HTTP and HTTPS URLs pass the
  * protocol parser. */
 export async function openExternalUrl(url: string): Promise<void> {
+	// Safari treats a window opened after an await as an unrequested popup and
+	// blocks it silently, so a browser client must open inside the activation
+	// that is still live. Only Desktop has a bridge worth asking first.
+	if (bridge() === undefined) {
+		window.open(url, '_blank', 'noopener,noreferrer');
+		return;
+	}
 	if ((await request({ type: 'os.open-external', url })).handled) return;
 	window.open(url, '_blank', 'noopener,noreferrer');
 }

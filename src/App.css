@@ -3108,6 +3108,29 @@ body.project-tabbar-reordering .project-tabbar {
   overflow: hidden;
 }
 
+/* Touch has no right click, so a selection made by holding is copied from a
+   pill floating just above where the finger lifted. */
+.terminal-touch-selection-copy {
+  position: absolute;
+  z-index: 6;
+  min-width: 84px;
+  height: 36px;
+  padding: 0 16px;
+  font: inherit;
+  font-weight: 600;
+  color: #f2f5f8;
+  background: rgba(28, 32, 38, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 18px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.terminal-touch-selection-copy:active {
+  background: rgba(52, 58, 66, 0.97);
+}
+
 .terminal-mobile-keyboard-accessory {
   display: none;
 }
