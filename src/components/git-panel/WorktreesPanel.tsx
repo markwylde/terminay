@@ -26,6 +26,7 @@ import './gitPanel.css';
 export type WorktreesPanelProps = {
 	activePushMenuWorktreePath?: string | null;
 	deletingWorktreePaths?: ReadonlySet<string>;
+	pullingWorktreePaths?: ReadonlySet<string>;
 	status: WorktreePanelStatus | null;
 	viewMode: 'list' | 'tree';
 	onDeleteWorktree: (worktree: GitWorktreeStatus) => void;
@@ -100,6 +101,7 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 	const {
 		activePushMenuWorktreePath,
 		deletingWorktreePaths,
+		pullingWorktreePaths,
 		status,
 		viewMode,
 		onDeletePath,
@@ -220,6 +222,7 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 		<div className="worktrees-panel">
 			{status.worktrees.map((worktree) => {
 				const isDeleting = deletingWorktreePaths?.has(worktree.path) ?? false;
+				const isPulling = pullingWorktreePaths?.has(worktree.path) ?? false;
 				const collapsed = collapsedWorktrees.has(worktree.path);
 				const hasUnmergedOrUncommittedWork =
 					!isDeleting &&
@@ -244,8 +247,8 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 						key={worktree.path}
 						className={`worktrees-panel__worktree${
 							isDeleting ? ' worktrees-panel__worktree--deleting' : ''
-						}`}
-						aria-busy={isDeleting}
+						}${isPulling ? ' worktrees-panel__worktree--pulling' : ''}`}
+						aria-busy={isDeleting || isPulling}
 					>
 						<div
 							className={[
@@ -271,7 +274,9 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 							title={
 								isDeleting
 									? `${worktree.path}\nDeleting…`
-									: getWorktreeTitle(worktree)
+									: isPulling
+										? `${worktree.path}\nPulling…`
+										: getWorktreeTitle(worktree)
 							}
 						>
 							<button
@@ -317,6 +322,8 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 											<span className="worktrees-panel__deleting">
 												deleting…
 											</span>
+										) : isPulling ? (
+											<span className="worktrees-panel__pulling">pulling…</span>
 										) : hasLineChanges ? (
 											<>
 												<span className="worktrees-panel__delta worktrees-panel__delta--additions">
@@ -398,6 +405,8 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 					y={contextMenu.y}
 					onClose={() => setContextMenu(null)}
 					items={buildWorktreeContextMenuItems({
+						isPulling:
+							pullingWorktreePaths?.has(contextMenu.worktree.path) ?? false,
 						onDeleteWorktree,
 						onOpenTerminal,
 						onPullFromOrigin,
@@ -413,7 +422,8 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 	);
 }
 
-function buildWorktreeContextMenuItems(options: {
+export function buildWorktreeContextMenuItems(options: {
+	isPulling?: boolean;
 	onDeleteWorktree: (worktree: GitWorktreeStatus) => void;
 	onOpenTerminal: (worktree: GitWorktreeStatus) => void;
 	onPullFromOrigin: (worktree: GitWorktreeStatus) => void;
@@ -424,6 +434,7 @@ function buildWorktreeContextMenuItems(options: {
 	worktree: GitWorktreeStatus;
 }): ContextMenuItem[] {
 	const {
+		isPulling = false,
 		onDeleteWorktree,
 		onOpenTerminal,
 		onPullFromOrigin,
@@ -439,9 +450,10 @@ function buildWorktreeContextMenuItems(options: {
 
 	return [
 		{
-			label: 'Pull from origin',
+			label: isPulling ? 'Pulling from origin…' : 'Pull from origin',
 			icon: <Download size={14} />,
 			disabled:
+				isPulling ||
 				unavailable ||
 				worktree.isDetached ||
 				!worktree.branch ||

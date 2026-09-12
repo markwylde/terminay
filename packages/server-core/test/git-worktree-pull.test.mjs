@@ -47,6 +47,64 @@ test("GitService pulls a clean attached worktree from its reviewed upstream", as
   }
 });
 
+test("GitService pulls a branch that tracks no upstream but matches a remote branch", async () => {
+  const { GitService } = await import("../dist/gitService/index.js");
+  const root = await mkdtemp(join(tmpdir(), "terminay-git-pull-no-upstream-"));
+  const remote = join(root, "remote.git");
+  const repo = join(root, "repo");
+  const other = join(root, "other");
+  try {
+    await mkdir(remote);
+    await git(["init", "--bare", remote], root);
+    await initialise(repo);
+    await git(["remote", "add", "origin", remote], repo);
+    await git(["push", "origin", "main"], repo);
+    // A repository pushed without -u has a remote branch but no configured
+    // upstream, which is the state `git pull origin main` leaves behind.
+    assert.equal(await gitConfig(repo, "branch.main.remote"), null);
+    await git(["clone", remote, other], root);
+    await git(["config", "user.email", "test@example.invalid"], other);
+    await git(["config", "user.name", "Terminay Test"], other);
+    await writeFile(join(other, "remote.txt"), "pulled\n");
+    await git(["add", "remote.txt"], other);
+    await git(["commit", "-m", "remote update"], other);
+    await git(["push"], other);
+
+    const service = new GitService();
+    const binding = await service.bindProject("project-a", repo);
+    const result = await service.pullWorktree({ projectId: "project-a", repositoryId: binding.repositoryId, worktreeId: binding.worktreeId });
+    assert.equal(result.error ?? null, null);
+    assert.equal(result.applied, true);
+    assert.equal(result.state, "pulled");
+    assert.equal(await readFile(join(repo, "remote.txt"), "utf8"), "pulled\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("GitService reports a branch with no matching remote branch as unpullable", async () => {
+  const { GitService } = await import("../dist/gitService/index.js");
+  const root = await mkdtemp(join(tmpdir(), "terminay-git-pull-unmatched-"));
+  const remote = join(root, "remote.git");
+  const repo = join(root, "repo");
+  try {
+    await mkdir(remote);
+    await git(["init", "--bare", remote], root);
+    await initialise(repo);
+    await git(["remote", "add", "origin", remote], repo);
+    await git(["switch", "-c", "local-only"], repo);
+
+    const service = new GitService();
+    const binding = await service.bindProject("project-a", repo);
+    const result = await service.pullWorktree({ projectId: "project-a", repositoryId: binding.repositoryId, worktreeId: binding.worktreeId });
+    assert.equal(result.applied, false);
+    assert.equal(result.state, "command-error");
+    assert.match(result.error.message, /no matching remote branch/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("GitService reports a missing worktree upstream without invoking a path supplied by a client", async () => {
   const { GitService } = await import("../dist/gitService/index.js");
   const root = await mkdtemp(join(tmpdir(), "terminay-git-pull-no-remote-"));
@@ -57,7 +115,7 @@ test("GitService reports a missing worktree upstream without invoking a path sup
     const result = await service.pullWorktree({ projectId: "project-a", repositoryId: binding.repositoryId, worktreeId: binding.worktreeId });
     assert.equal(result.applied, false);
     assert.equal(result.state, "command-error");
-    assert.match(result.error.message, /upstream/);
+    assert.match(result.error.message, /no remote to pull from/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -71,6 +129,15 @@ async function initialise(root) {
   await writeFile(join(root, "file.txt"), "base\n");
   await git(["add", "file.txt"], root);
   await git(["commit", "-m", "initial"], root);
+}
+
+async function gitConfig(cwd, key) {
+  try {
+    const { stdout } = await execFileAsync("git", ["config", "--get", key], { cwd });
+    return stdout.trim();
+  } catch {
+    return null;
+  }
 }
 
 async function git(args, cwd) {
