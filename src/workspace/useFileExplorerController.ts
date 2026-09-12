@@ -151,6 +151,31 @@ export function assertWorktreeRemoved(result: unknown): void {
 	throw new Error(error);
 }
 
+export function assertWorktreePulled(result: unknown): void {
+	if (
+		typeof result === 'object' &&
+		result !== null &&
+		'applied' in result &&
+		result.applied === true &&
+		'state' in result &&
+		result.state === 'pulled'
+	) {
+		return;
+	}
+
+	const error =
+		typeof result === 'object' &&
+		result !== null &&
+		'error' in result &&
+		typeof result.error === 'object' &&
+		result.error !== null &&
+		'message' in result.error &&
+		typeof result.error.message === 'string'
+			? result.error.message
+			: 'The server did not pull the worktree.';
+	throw new Error(error);
+}
+
 function sameGitStatuses(
 	left: Record<string, FileExplorerGitStatus>,
 	right: Record<string, FileExplorerGitStatus>,
@@ -239,6 +264,9 @@ export function useFileExplorerController({
 	const [deletingWorktreePaths, setDeletingWorktreePaths] = useState<
 		Set<string>
 	>(() => new Set());
+	const [pullingWorktreePaths, setPullingWorktreePaths] = useState<Set<string>>(
+		() => new Set(),
+	);
 	const [loadingPaths, setLoadingPaths] = useState<Record<string, boolean>>({});
 	const [pendingGitFilesystemAction, setPendingGitFilesystemAction] =
 		useState<PendingGitFilesystemAction | null>(null);
@@ -807,16 +835,25 @@ export function useFileExplorerController({
 	);
 	const handlePullWorktreeFromOrigin = useCallback(
 		async (worktree: GitWorktreeStatus) => {
+			setPullingWorktreePaths((current) => new Set(current).add(worktree.path));
 			try {
 				const reference = referencesRef.current.get(worktree.path);
 				if (gitClient === undefined || reference === undefined) {
 					throw new Error('Git worktree controls are unavailable.');
 				}
-				await gitClient.pull(reference);
+				// The client resolves with the server's result, so a pull the
+				// server refused has to be raised here or it reads as a success.
+				assertWorktreePulled(await gitClient.pull(reference));
 				onSetError(null);
 			} catch (error) {
+				console.error('[terminay] git.worktree.pull failed', error);
 				onOperationError('Git', error);
 			} finally {
+				setPullingWorktreePaths((current) => {
+					const next = new Set(current);
+					next.delete(worktree.path);
+					return next;
+				});
 				refreshFileExplorerTree();
 			}
 		},
@@ -1071,6 +1108,7 @@ export function useFileExplorerController({
 		handleSwitchProjectRootToWorktree,
 		loadDirectory,
 		loadingPaths,
+		pullingWorktreePaths,
 		refreshFileExplorerTree,
 		refreshGitStatusesForRoot,
 		submitFileExplorerNameDialog,

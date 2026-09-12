@@ -460,6 +460,30 @@
 	font-weight: 600;
 }
 
+.worktrees-panel__pulling {
+	flex: 0 0 auto;
+	color: rgba(220, 226, 240, 0.72);
+	font-style: italic;
+	font-weight: 600;
+	animation: worktrees-panel-pulling-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes worktrees-panel-pulling-pulse {
+	0%,
+	100% {
+		opacity: 0.55;
+	}
+	50% {
+		opacity: 1;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.worktrees-panel__pulling {
+		animation: none;
+	}
+}
+
 .worktrees-panel__changes {
 	position: relative;
 	display: flex;
