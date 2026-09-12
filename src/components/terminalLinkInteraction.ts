@@ -28,14 +28,20 @@ export function createTerminalLinkInteraction(options: {
   openExternal(uri: string): Promise<unknown> | unknown
   pointerTarget: PointerStyleTarget
   now?: () => number
+  /**
+   * A touch device has no modifier key to hold, so requiring one there makes a
+   * link unopenable rather than deliberate. A tap is the deliberate gesture.
+   */
+  isTouchActivation?(): boolean
 }): TerminalLinkInteraction {
   const now = options.now ?? (() => performance.now())
+  const isTouchActivation = options.isTouchActivation ?? (() => false)
   let lastOpenedLink: { uri: string; openedAt: number } | undefined
 
   return {
     activate(event, uri) {
       const modifierKey = options.isMac ? event.metaKey : event.ctrlKey
-      if (!modifierKey) {
+      if (!modifierKey && !isTouchActivation()) {
         return
       }
 

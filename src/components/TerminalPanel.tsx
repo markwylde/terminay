@@ -51,6 +51,7 @@ import {
 } from '../host/nativeActions';
 import { subscribeTerminalZoom } from '../host/nativeEvents';
 import { recordRendererDiagnostic } from '../shared/rendererDiagnostics';
+import { isTouchTextSelectionEnabled } from '../shared/touchTextSelectionPreference';
 import type { WorkspaceSnapshotStore } from '../shared/WorkspaceSnapshotStore';
 import { formatBracketedPaste } from '../terminalInput';
 import {
@@ -96,6 +97,13 @@ import {
 import { suppressNonFiniteMouseReportCoords } from './terminalMouseReportCoords';
 import { shouldInsertTerminalMultilineNewline } from './terminalMultilineInteraction';
 import { shouldReturnFocusToTerminalFromNote } from './terminalNoteInteraction';
+import {
+	activateTerminalLinkAtTouch,
+	createTerminalTouchSelectionDriver,
+	createTerminalTouchSelectionSession,
+	touchSelectionCopyAnchor,
+	type TouchSelectionPoint,
+} from './terminalTouchSelectionInteraction';
 import {
 	isTerminalRetryActionable,
 	type TerminalPanelBinding,
@@ -417,6 +425,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	);
 	const webglCustomGlyphsRef = useRef<boolean | null>(null);
 	const hoveredLinkRef = useRef<string | null>(null);
+	const lastPointerWasTouchRef = useRef(false);
 	const terminalPanelResizeRef = useRef<(cols: number, rows: number) => void>(
 		() => {},
 	);
@@ -566,6 +575,12 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		y: number;
 		link: string | null;
 		hasSelection: boolean;
+	} | null>(null);
+	// Touch has no right click, so a selection made by holding needs its own way
+	// to be copied. The pill is the only affordance that gesture creates.
+	const [touchSelectionCopy, setTouchSelectionCopy] = useState<{
+		x: number;
+		y: number;
 	} | null>(null);
 	const hasTerminalNote = typeof props.params.terminalNote === 'string';
 
@@ -754,6 +769,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			// workspace's terminal renderer a broad preload API.
 			openExternal: openExternalUrl,
 			pointerTarget: document.body,
+			isTouchActivation: () => lastPointerWasTouchRef.current,
 		});
 		const openTerminalLink = terminalLinkInteraction.activate;
 		const linkHover = (_event: MouseEvent, uri: string) => {
@@ -1948,38 +1964,116 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			};
 		};
 
+		// Both touch gestures need somewhere to aim their synthesised mouse
+		// events. xterm's screen element is where it listens for them; the root
+		// is a harmless stand-in if xterm's markup ever moves, since the events
+		// then reach no listener rather than the wrong one.
+		const touchEventTarget: HTMLElement = screenElement ?? root;
+		const touchSelectionDriver = createTerminalTouchSelectionDriver({
+			screenElement: touchEventTarget,
+			terminal,
+		});
+		const touchSelection = createTerminalTouchSelectionSession({
+			isEnabled: isTouchTextSelectionEnabled,
+			moveThresholdPx: LONG_PRESS_MOVE_THRESHOLD_PX,
+			onSelectionStart: (point) => {
+				setTouchSelectionCopy(null);
+				touchSelectionDriver.begin(point);
+			},
+			onSelectionMove: (point) => touchSelectionDriver.extend(point),
+			onSelectionEnd: (point) => {
+				touchSelectionDriver.end(point);
+				if (!terminal.hasSelection()) return;
+				// The pill is positioned against the panel, which is what establishes
+				// the containing block for everything the panel overlays.
+				const bounds = container.getBoundingClientRect();
+				setTouchSelectionCopy(
+					touchSelectionCopyAnchor({
+						height: bounds.height,
+						point: {
+							x: point.clientX - bounds.left,
+							y: point.clientY - bounds.top,
+						},
+						width: bounds.width,
+					}),
+				);
+			},
+		});
+
+		// While the hold owns the gesture, xterm must not also pan. Swallowing
+		// touchmove in the capture phase keeps it from reaching xterm's
+		// document-level gesture listener at all; touchstart and touchend are
+		// left alone so that listener's own bookkeeping stays consistent.
+		const suppressPanDuringSelection = (event: TouchEvent) => {
+			if (!touchSelection.isSelecting()) return;
+			// Stopping here also denies the bubble-phase touch handlers below, which
+			// are how a browser without pointer events feeds the gesture. Feed it
+			// directly before the event goes no further.
+			if (shouldFocusTerminalForTouchStart('PointerEvent' in window)) {
+				const point = legacyTouchPoint(event);
+				if (point !== null) touchSelection.pointerMove(point);
+			}
+			event.preventDefault();
+			event.stopPropagation();
+		};
+
+		const openTouchLinkAt = (point: TouchSelectionPoint) => {
+			activateTerminalLinkAtTouch({ point, screenElement: touchEventTarget });
+		};
+
 		const handleTouchPointerDown = (event: PointerEvent) => {
-			if (!shouldFocusTerminalForTouchPointer(event.pointerType)) return;
+			lastPointerWasTouchRef.current = shouldFocusTerminalForTouchPointer(
+				event.pointerType,
+			);
+			if (!lastPointerWasTouchRef.current) return;
+			setTouchSelectionCopy(null);
 			tapSession.pointerDown(event);
+			touchSelection.pointerDown(event);
 		};
 		const handleTouchPointerMove = (event: PointerEvent) => {
 			tapSession.pointerMove(event);
+			touchSelection.pointerMove(event);
 		};
 		const handleTouchPointerUp = (event: PointerEvent) => {
-			if (!tapSession.pointerUp(event)) return;
+			// A hold that became a selection is not a tap: it must not claim focus
+			// and raise the software keyboard over the text just selected.
+			const wasSelecting = touchSelection.isSelecting();
+			touchSelection.pointerUp(event);
+			const isTap = tapSession.pointerUp(event);
+			if (wasSelecting || !isTap) return;
+			openTouchLinkAt(event);
 			focusTerminalFromTouch();
 		};
 		const handleTouchPointerCancel = (event: PointerEvent) => {
 			tapSession.pointerCancel(event);
+			touchSelection.pointerCancel(event);
 		};
 
 		const handleTouchStart = (event: TouchEvent) => {
 			if (!shouldFocusTerminalForTouchStart('PointerEvent' in window)) return;
 			const point = legacyTouchPoint(event);
 			if (point === null) return;
+			lastPointerWasTouchRef.current = true;
+			setTouchSelectionCopy(null);
 			tapSession.pointerDown(point);
+			touchSelection.pointerDown(point);
 		};
 		const handleTouchMove = (event: TouchEvent) => {
 			if (!shouldFocusTerminalForTouchStart('PointerEvent' in window)) return;
 			const point = legacyTouchPoint(event);
 			if (point === null) return;
 			tapSession.pointerMove(point);
+			touchSelection.pointerMove(point);
 		};
 		const handleTouchEnd = (event: TouchEvent) => {
 			if (!shouldFocusTerminalForTouchStart('PointerEvent' in window)) return;
 			const point = legacyTouchPoint(event);
 			if (point === null) return;
-			if (!tapSession.pointerUp(point)) return;
+			const wasSelecting = touchSelection.isSelecting();
+			touchSelection.pointerUp(point);
+			const isTap = tapSession.pointerUp(point);
+			if (wasSelecting || !isTap) return;
+			openTouchLinkAt(point);
 			focusTerminalFromTouch();
 		};
 		const handleTouchCancel = (event: TouchEvent) => {
@@ -1987,6 +2081,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			const point = legacyTouchPoint(event);
 			if (point === null) return;
 			tapSession.pointerCancel(point);
+			touchSelection.pointerCancel(point);
 		};
 
 		const reassertTerminalFocus = () => {
@@ -2268,6 +2363,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		root.addEventListener('pointermove', handleTouchPointerMove);
 		root.addEventListener('pointerup', handleTouchPointerUp);
 		root.addEventListener('pointercancel', handleTouchPointerCancel);
+		root.addEventListener('touchmove', suppressPanDuringSelection, {
+			capture: true,
+			passive: false,
+		});
 		root.addEventListener('touchstart', handleTouchStart);
 		root.addEventListener('touchmove', handleTouchMove);
 		root.addEventListener('touchend', handleTouchEnd);
@@ -2323,7 +2422,11 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			root.removeEventListener('touchmove', handleTouchMove);
 			root.removeEventListener('touchend', handleTouchEnd);
 			root.removeEventListener('touchcancel', handleTouchCancel);
+			root.removeEventListener('touchmove', suppressPanDuringSelection, {
+				capture: true,
+			});
 			tapSession.dispose();
+			touchSelection.dispose();
 			window.removeEventListener('focus', handleWindowRefocus);
 			window.removeEventListener('focus', repaintTerminalOnWindowFocus);
 			if (refocusFrame !== null) {
@@ -2604,6 +2707,13 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		'--terminal-note-color': props.params.color || settings.theme.cursor,
 	} as CSSProperties;
 
+	const copyTouchSelection = () => {
+		const selectedText = terminalRef.current?.getSelection() ?? '';
+		setTouchSelectionCopy(null);
+		terminalRef.current?.clearSelection();
+		void copyTerminalSelection(selectedText, writeClipboardText);
+	};
+
 	const copyContextMenuSelection = () => {
 		const selectedText = terminalRef.current?.getSelection() ?? '';
 		void copyTerminalSelection(selectedText, writeClipboardText);
@@ -2778,7 +2888,22 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 					</button>
 				</div>
 			) : null}
+			{/* A sibling, not a child: the terminal effect clears the xterm root's
+			    own markup, so nothing React renders may live inside it. */}
 			<div className="terminal-panel-root" ref={xtermRootRef} />
+			{touchSelectionCopy ? (
+				<button
+					type="button"
+					className="terminal-touch-selection-copy"
+					style={{
+						left: `${touchSelectionCopy.x}px`,
+						top: `${touchSelectionCopy.y}px`,
+					}}
+					onClick={copyTouchSelection}
+				>
+					Copy
+				</button>
+			) : null}
 			{terminalPasteProgress ? (
 				<div className="terminal-paste-progress">
 					<span

@@ -55,6 +55,11 @@ import { SharedTerminalRouteBody } from '../shared/SharedTerminalRouteBody';
 import type { RemoteAccessStatus } from '../types/terminay';
 import { createBrowserMacroSettingsClient } from './browserRendererHostAdapters';
 import './connectedRendererWorkspace.css';
+import {
+	isTouchTextSelectionEnabled,
+	setTouchTextSelectionEnabled,
+	subscribeTouchTextSelectionEnabled,
+} from '../shared/touchTextSelectionPreference';
 import { isProjectEditCommitted } from './projectEditSettlement';
 import { canLeaveManagerSession } from './sessionTransportHost';
 
@@ -120,6 +125,8 @@ type BrowserMenuItem = Readonly<{
 	label: string;
 	onSelect: () => void;
 	startsGroup?: boolean;
+	/** Present only on items that toggle; renders and announces as a check. */
+	checked?: boolean;
 }>;
 
 const menuOrder: readonly BrowserMenuId[] = ['file', 'edit', 'view', 'help'];
@@ -553,6 +560,13 @@ function ConnectedBrowserMenuBar({
 	const menuButtonRefs = useRef(new Map<BrowserMenuId, HTMLButtonElement>());
 	const itemRefs = useRef(new Map<string, HTMLButtonElement>());
 	const isMac = useMemo(() => navigator.userAgent.includes('Mac'), []);
+	const [touchTextSelection, setTouchTextSelection] = useState(
+		isTouchTextSelectionEnabled,
+	);
+	useEffect(
+		() => subscribeTouchTextSelectionEnabled(setTouchTextSelection),
+		[],
+	);
 
 	const dispatchShortcut = useCallback(
 		(key: string, options: KeyboardEventInit = {}) => {
@@ -604,6 +618,13 @@ function ConnectedBrowserMenuBar({
 					id: 'select-all',
 					label: 'Select All',
 					onSelect: () => document.execCommand('selectAll'),
+				},
+				{
+					id: 'touch-text-selection',
+					label: 'Enable Text Selection',
+					startsGroup: true,
+					checked: touchTextSelection,
+					onSelect: () => setTouchTextSelectionEnabled(!touchTextSelection),
 				},
 			],
 			file: [
@@ -678,7 +699,7 @@ function ConnectedBrowserMenuBar({
 				},
 			],
 		}),
-		[dispatchShortcut, onBack, onOpenAuxiliaryRoute],
+		[dispatchShortcut, onBack, onOpenAuxiliaryRoute, touchTextSelection],
 	);
 
 	const focusMenuButton = useCallback((menuId: BrowserMenuId) => {
@@ -851,13 +872,28 @@ function ConnectedBrowserMenuBar({
 										}}
 										key={item.id}
 										type="button"
-										className={`connected-web-menu__item${item.startsGroup === true ? ' connected-web-menu__item--group' : ''}`}
-										role="menuitem"
+										className={`connected-web-menu__item${item.startsGroup === true ? ' connected-web-menu__item--group' : ''}${item.checked === undefined ? '' : ' connected-web-menu__item--checkable'}`}
+										role={
+											item.checked === undefined
+												? 'menuitem'
+												: 'menuitemcheckbox'
+										}
+										{...(item.checked === undefined
+											? {}
+											: { 'aria-checked': item.checked })}
 										onClick={() => activateItem(menuId, item)}
 										onKeyDown={(event) =>
 											onMenuItemKeyDown(event, menuId, index)
 										}
 									>
+										{item.checked === undefined ? null : (
+											<span
+												className="connected-web-menu__check"
+												aria-hidden="true"
+											>
+												{item.checked ? '✓' : ''}
+											</span>
+										)}
 										{item.label}
 									</button>
 								))}
