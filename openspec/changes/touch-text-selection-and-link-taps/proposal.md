@@ -29,7 +29,8 @@ listens for:
 - A finished touch selection offers a Copy affordance, since a touch device has
   no right click to reach the existing context menu with.
 - A tap on a link opens it, without the modifier key a touch device cannot
-  hold. A tap inside a program in mouse tracking mode is left to the program.
+  hold, whatever the foreground program is doing — an interactive program with
+  mouse tracking on is where the links worth tapping usually are.
 - Browser clients open external links and write the clipboard inside the user
   activation that asked for it, rather than after awaiting a Desktop bridge
   that is not there.

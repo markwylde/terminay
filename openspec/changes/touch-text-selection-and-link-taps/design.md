@@ -64,9 +64,16 @@ no inertia and scrolls nothing.
 `Linkifier` activates on `mouseup`, but only for a link a prior `mousemove`
 resolved, and resolution is asynchronous. A tap therefore dispatches
 `mousemove` immediately and `mouseup` on the next frame. When the tap was not
-on a link both events are inert. A tap inside a program in mouse tracking mode
-is skipped entirely: a synthesised release would reach the program as a button
-report it never saw pressed.
+on a link both events are inert.
+
+This runs whatever the foreground program is doing. An earlier revision skipped
+a program in mouse tracking mode, on the theory that a synthesised release
+would reach it as a button report it never saw pressed. That was wrong on both
+counts. `MouseService` binds its mouse-up reporting inside its own `mousedown`
+handler, and no `mousedown` is synthesised here, so the release reaches no
+reporting listener at all — and skipping mouse tracking mode disabled link taps
+in exactly the interactive programs whose output carries the links worth
+tapping.
 
 ### The toggle is per-device, not a workspace setting
 
