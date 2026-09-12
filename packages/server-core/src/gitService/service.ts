@@ -1016,7 +1016,20 @@ export class GitService {
 					actualHead: fresh.head,
 				},
 			);
-		if (fresh.branch.upstreamState !== 'configured')
+		// A branch pushed without `-u`, or only ever updated with
+		// `git pull <remote> <branch>`, has no configured upstream even though
+		// the remote branch it belongs to exists. Ask Git which remote carries
+		// the branch rather than assuming one, so an ambiguous repository is
+		// reported instead of guessed at.
+		const source =
+			fresh.branch.upstreamState === 'configured'
+				? { args: [] as readonly string[] }
+				: await this.resolveWorktreePullSource(
+						selected.path,
+						selected.branch,
+						request.signal,
+					);
+		if ('message' in source)
 			return {
 				...base,
 				applied: false,
@@ -1025,16 +1038,13 @@ export class GitService {
 				headAfter: fresh.head,
 				error: {
 					code: 'command-error',
-					message:
-						fresh.branch.upstreamState === 'missing'
-							? 'worktree upstream remote is unavailable'
-							: 'worktree has no configured upstream remote',
+					message: source.message,
 					operation: 'worktree.pull',
 				},
 			};
 
 		const result = await this.runGit(
-			['pull', '--ff-only'],
+			['pull', '--ff-only', ...source.args],
 			selected.path,
 			request.signal,
 		);
@@ -1084,6 +1094,51 @@ export class GitService {
 			headBefore: fresh.head,
 			headAfter: after.head,
 		};
+	}
+
+	/** Decide which remote branch an unconfigured branch fast-forwards from.
+	 * Returns the extra `git pull` arguments, or the reason no single remote
+	 * branch answers for it. */
+	private async resolveWorktreePullSource(
+		path: string,
+		branch: string,
+		signal?: AbortSignal,
+	): Promise<
+		{ readonly args: readonly string[] } | { readonly message: string }
+	> {
+		const remotes = await this.runGit(['remote'], path, signal);
+		if (remotes.exitCode !== 0 || remotes.truncated)
+			return { message: 'worktree remotes could not be listed' };
+		const names = remotes.stdout
+			.split('\n')
+			.map((name) => name.trim())
+			.filter((name) => name.length > 0);
+		if (names.length === 0)
+			return { message: 'worktree repository has no remote to pull from' };
+		const patterns = names.map((name) => `refs/remotes/${name}/${branch}`);
+		const refs = await this.runGit(
+			['for-each-ref', '--format=%(refname)', ...patterns],
+			path,
+			signal,
+		);
+		if (refs.exitCode !== 0 || refs.truncated)
+			return { message: 'worktree remote branches could not be listed' };
+		const present = refs.stdout
+			.split('\n')
+			.map((line) => line.trim())
+			.filter((line) => line.length > 0);
+		const matches = names.filter((name) =>
+			present.includes(`refs/remotes/${name}/${branch}`),
+		);
+		const [only] = matches;
+		if (only === undefined || matches.length > 1)
+			return {
+				message:
+					only === undefined
+						? `worktree branch "${branch}" has no configured upstream and no matching remote branch`
+						: `worktree branch "${branch}" has no configured upstream and matches more than one remote branch`,
+			};
+		return { args: [only, branch] };
 	}
 
 	pullWorktreeFromOrigin(
