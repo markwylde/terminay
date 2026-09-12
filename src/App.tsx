@@ -2305,6 +2305,7 @@ const ProjectWorkspace = forwardRef<
 			handleRevealWorktree,
 			handleSwitchProjectRootToWorktree,
 			loadingPaths,
+			pullingWorktreePaths,
 			refreshFileExplorerTree,
 			refreshGitStatusesForRoot,
 			submitFileExplorerNameDialog,
@@ -4505,6 +4506,7 @@ const ProjectWorkspace = forwardRef<
 									gitPushMenuPosition?.target?.worktreePath ?? null
 								}
 								deletingWorktreePaths={deletingWorktreePaths}
+								pullingWorktreePaths={pullingWorktreePaths}
 								status={worktreePanelStatus}
 								viewMode={settings.sidebar.gitPanelViewMode}
 								onDeletePath={handleDelete}
