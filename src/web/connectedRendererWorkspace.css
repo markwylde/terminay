@@ -199,6 +199,20 @@ html.is-framed .responsive-workspace-shell {
 	white-space: nowrap;
 }
 
+/* A checkable item reserves its tick column whether or not it is ticked, so
+   toggling it does not shift the label. */
+.connected-web-menu__item--checkable {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.connected-web-menu__check {
+	flex: 0 0 auto;
+	width: 12px;
+	text-align: center;
+}
+
 .connected-web-menu__item--group {
 	margin-top: 4px;
 	padding-top: 10px;
