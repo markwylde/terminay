@@ -16,7 +16,7 @@ test("GitService pulls a clean attached worktree from its reviewed upstream", as
   const other = join(root, "other");
   try {
     await mkdir(remote);
-    await git(["init", "--bare", remote], root);
+    await git(["init", "--bare", "-b", "main", remote], root);
     await initialise(join(root, "repo"));
     const repo = join(root, "repo");
     await git(["remote", "add", "origin", remote], repo);
@@ -55,7 +55,7 @@ test("GitService pulls a branch that tracks no upstream but matches a remote bra
   const other = join(root, "other");
   try {
     await mkdir(remote);
-    await git(["init", "--bare", remote], root);
+    await git(["init", "--bare", "-b", "main", remote], root);
     await initialise(repo);
     await git(["remote", "add", "origin", remote], repo);
     await git(["push", "origin", "main"], repo);
@@ -76,6 +76,7 @@ test("GitService pulls a branch that tracks no upstream but matches a remote bra
     assert.equal(result.error ?? null, null);
     assert.equal(result.applied, true);
     assert.equal(result.state, "pulled");
+    assert.notEqual(result.headAfter, result.headBefore);
     assert.equal(await readFile(join(repo, "remote.txt"), "utf8"), "pulled\n");
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -89,7 +90,7 @@ test("GitService reports a branch with no matching remote branch as unpullable",
   const repo = join(root, "repo");
   try {
     await mkdir(remote);
-    await git(["init", "--bare", remote], root);
+    await git(["init", "--bare", "-b", "main", remote], root);
     await initialise(repo);
     await git(["remote", "add", "origin", remote], repo);
     await git(["switch", "-c", "local-only"], repo);
