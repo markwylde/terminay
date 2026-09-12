@@ -68,13 +68,17 @@ test('file explorer git status is stable across transient refresh churn', () => 
   assert.doesNotMatch(source, /projection = localProjection/u)
   assert.match(source, /setGitStatuses\(\(current\) =>[\s\S]*sameGitStatuses\(current, projection\.statuses\)[\s\S]*\? current[\s\S]*: projection\.statuses/u)
   assert.match(source, /setWorktreePanelStatus\(\(current\) =>[\s\S]*sameWorktreePanelStatus\(current, projection\.worktrees\)[\s\S]*\? current[\s\S]*: projection\.worktrees/u)
-  assert.match(source, /const projection = await loadGitWorkspaceFromServer\(gitClient, \{\s*id: project\.id,\s*rootFolder: targetRootFolder,\s*\}\)/u)
+  assert.match(source, /const projection = await loadGitWorkspaceFromServer\(gitClient, project\)/u)
+  assert.match(source, /project: \{ id: project\.id, rootFolder: targetRootFolder \}/u)
+  // A refresh that publishes a projection also retires the Git outage banner a
+  // suspend or network drop left behind.
+  assert.match(source, /publish\(projection\);\s*onOperationSucceeded\('Git'\);/u)
   assert.match(source, /const targetRootFolder = markAsCurrent\s*\? rootFolder\s*: latestGitRootRef\.current;/u)
   const refreshPrefix = source.match(/const refreshGitStatusesForRoot = useCallback\(async \([\s\S]*?gitRefreshRequestIdRef\.current \+= 1/u)?.[0] ?? ''
   assert.ok(refreshPrefix.length > 0, 'expected Git refresh request id increment')
   assert.match(refreshPrefix, /const targetRootFolder = markAsCurrent[\s\S]*if \(!targetRootFolder\) \{[\s\S]*gitRefreshRequestIdRef\.current \+= 1/u)
   assert.match(source, /rootFolder: targetRootFolder/u)
-  assert.match(source, /latestGitRootRef\.current !== targetRootFolder/u)
+  assert.match(source, /latestGitRootRef\.current === targetRootFolder/u)
   assert.match(source, /\.subscribeStatusChanges\(/u)
   assert.match(source, /unavailableWatchFallbacksRef/u)
   assert.match(source, /!unavailableWatchFallbacksRef\.current\.has\(path\)/u)
