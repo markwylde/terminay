@@ -1641,6 +1641,29 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 				{ channel: 'lifecycle' },
 			);
 		},
+		// A published lifecycle event the canonical store refused. A lost
+		// completion leaves an agent row working for ever, so the transition
+		// that was dropped has to be recorded where it was dropped.
+		onAgentLifecycleRejected: (rejection) => {
+			void desktopDiagnostics.record(
+				{
+					component: 'local-server',
+					event: 'local-server.agent.lifecycle-rejected',
+					fields: {
+						providerId: rejection.provider,
+						serverId: rejection.terminal.serverId,
+						projectId: rejection.terminal.projectId,
+						sessionId: rejection.terminal.sessionId,
+						eventKind: rejection.eventKind,
+						sequence: rejection.sequence,
+						reason: rejection.reason,
+					},
+					severity: 'warning',
+					source: 'local-server-agents',
+				},
+				{ channel: 'lifecycle' },
+			);
+		},
 		// Which terminals an agent provider reached, and where it stopped. A
 		// terminal that never shows an agent is otherwise indistinguishable from
 		// one no provider ever matched.

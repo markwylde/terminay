@@ -17,8 +17,17 @@ const reference = JSON.parse(
 	),
 );
 
+/**
+ * `waitingFor` is written only while the session is actually waiting, so a
+ * file captured from a busy session does not carry it. Everything else is
+ * present in every file the CLI writes.
+ */
+const OPTIONAL_FIELDS = new Set(['waitingFor']);
+
 test('the reference session file carries every field the provider reads', () => {
-	for (const field of CLAUDE_SESSION_FILE_FIELDS)
+	for (const field of CLAUDE_SESSION_FILE_FIELDS.filter(
+		(candidate) => !OPTIONAL_FIELDS.has(candidate),
+	))
 		assert.equal(
 			Object.hasOwn(reference, field),
 			true,
@@ -35,7 +44,7 @@ test('the reference session file carries every field the provider reads', () => 
 	assert.equal(typeof reference.version, 'string');
 });
 
-test('the allowed field set is exactly the five documented fields', () => {
+test('the allowed field set is exactly the documented fields', () => {
 	assert.deepEqual(
 		[...CLAUDE_SESSION_FILE_FIELDS],
 		[
@@ -46,6 +55,7 @@ test('the allowed field set is exactly the five documented fields', () => {
 			'version',
 			'status',
 			'statusUpdatedAt',
+			'waitingFor',
 		],
 	);
 });
