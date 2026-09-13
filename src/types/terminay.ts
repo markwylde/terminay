@@ -311,6 +311,8 @@ export type GitFileState =
 export type GitChangeEntry = {
 	/** Absolute path to the changed file. */
 	path: string;
+	/** True when the change is a directory, including a symlink to one. */
+	isDirectory: boolean;
 	/** Path relative to the repository root, using forward slashes. */
 	relativePath: string;
 	state: GitFileState;

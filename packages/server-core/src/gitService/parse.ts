@@ -149,8 +149,13 @@ function makeStatusEntry(
 	// A plain staged/unstaged deletion (D  or  D) is not a conflict.
 	const unmerged = isUnmergedStatus(indexStatus, worktreeStatus);
 	const kind = statusKind(indexStatus, worktreeStatus, unmerged);
+	// Git marks an untracked directory it did not descend into with a trailing
+	// separator. A symlinked directory carries no such marker, so the service
+	// confirms directory state against the worktree afterwards.
+	const isDirectory = path.endsWith('/');
 	return {
-		path,
+		path: isDirectory ? path.slice(0, -1) : path,
+		isDirectory,
 		previousPath,
 		indexStatus,
 		worktreeStatus,
