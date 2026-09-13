@@ -18,9 +18,9 @@ import {
 import {
 	CONVERSATION_SWITCH_RECORD,
 	createClaudeRecordMapper,
-	sessionIdleRecord,
+	isClaudeSessionStatus,
+	sessionStatusRecord,
 } from './mapping.js';
-import { withQuiescence } from './quiescence.js';
 import {
 	claudeProjectDirectoryPath,
 	claudeProjectJournalPath,
@@ -50,9 +50,9 @@ export const SESSION_START_TOLERANCE_MS = 5_000;
 
 /**
  * Every field this provider reads from a `.claude/sessions/<pid>.json` file.
- * The file also carries a peer token path, a socket path, a display name and a
- * live status; none of them is read, and the sibling `<pid>.<digest>.key` is
- * never opened at all. `fixtures/session-file-v01.json` is the captured shape
+ * The file also carries a peer token path, a socket path and a display name;
+ * none of them is read, and the sibling `<pid>.<digest>.key` is never opened
+ * at all. `fixtures/session-file-v01.json` is the captured shape
  * this set is held against.
  */
 export const CLAUDE_SESSION_FILE_FIELDS = Object.freeze([
@@ -63,6 +63,7 @@ export const CLAUDE_SESSION_FILE_FIELDS = Object.freeze([
 	'version',
 	'status',
 	'statusUpdatedAt',
+	'waitingFor',
 ] as const);
 
 /**
@@ -104,7 +105,7 @@ const PROJECT_DIRECTORY = {
  * record says which journal in it belongs to which terminal.
  */
 export const claudeCodeProvider = defineAgentProvider({
-	mappingVersion: '0.1',
+	mappingVersion: '0.2',
 
 	matchesForeground(process: AgentForegroundProcess): boolean {
 		return process.executableName === 'claude';
@@ -128,7 +129,7 @@ export const claudeCodeProvider = defineAgentProvider({
 		if (!journal) return { state: 'not-bound' };
 		const binding = await terminal.bindSession({
 			providerSessionId: file.sessionId,
-			mappingVersion: '0.1',
+			mappingVersion: '0.2',
 			journal: journal.handle,
 			fingerprint: {
 				kind: 'claude-session-file-for-pty-descendant-pid',
@@ -147,10 +148,7 @@ export const claudeCodeProvider = defineAgentProvider({
 		const sources = children.map((child) => child.source);
 		return jsonlSession({
 			binding,
-			source: withQuiescence(rootSource(terminal, file, journal.handle), {
-				terminal,
-				providerExecutable: 'claude',
-			}),
+			source: rootSource(terminal, file, journal.handle),
 			mapRecord: createClaudeRecordMapper(),
 			...(sources.length === 0 ? {} : { childSources: sources }),
 			...(subagents === undefined
@@ -174,10 +172,12 @@ interface SessionFile {
 	readonly sessionId: string;
 	readonly cwd: string;
 	readonly version?: string;
-	/** The CLI's own `idle` / `busy` word, rewritten as the process changes. */
+	/** The CLI's own `busy` / `idle` / `waiting` word about itself. */
 	readonly status?: string;
 	/** When that word was last written, epoch milliseconds. */
 	readonly statusUpdatedAt?: number;
+	/** What a `waiting` session is waiting for, when the CLI says. */
+	readonly waitingFor?: string;
 }
 
 /**
@@ -234,6 +234,10 @@ function acceptSessionFile(
 	const version = safeAgentString(read<unknown>('version'))?.slice(0, 100);
 	const status = safeAgentString(read<unknown>('status'))?.slice(0, 32);
 	const statusUpdatedAt = read<unknown>('statusUpdatedAt');
+	const waitingFor = safeAgentString(read<unknown>('waitingFor'))?.slice(
+		0,
+		200,
+	);
 	if (pid !== process.pid) return undefined;
 	if (!cwd || cwd !== process.cwd) return undefined;
 	if (!sessionId || !SESSION_ID.test(sessionId)) return undefined;
@@ -257,6 +261,7 @@ function acceptSessionFile(
 		...(typeof statusUpdatedAt === 'number' && Number.isFinite(statusUpdatedAt)
 			? { statusUpdatedAt }
 			: {}),
+		...(waitingFor ? { waitingFor } : {}),
 	};
 }
 
@@ -365,11 +370,19 @@ const SWITCH_CHUNK: AgentFileWatchChunk = {
 	),
 };
 
-function idleChunk(file: SessionFile): AgentFileWatchChunk {
+/**
+ * The session file's own status word, as a record for the mapper. This is the
+ * root's state: it is published on binding and again on every change, so the
+ * row follows the CLI rather than trailing whatever its journal last wrote.
+ */
+function statusChunk(file: SessionFile): AgentFileWatchChunk | undefined {
+	if (!isClaudeSessionStatus(file.status)) return undefined;
 	return {
 		type: 'append',
 		bytes: new TextEncoder().encode(
-			`${JSON.stringify(sessionIdleRecord(file.statusUpdatedAt))}\n`,
+			`${JSON.stringify(
+				sessionStatusRecord(file.status, file.statusUpdatedAt, file.waitingFor),
+			)}\n`,
 		),
 	};
 }
@@ -456,9 +469,10 @@ function rootSource(
 
 	async function* iterate(): AsyncGenerator<AgentFileWatchChunk> {
 		let bound = file.sessionId;
-		// The CLI's idle mark goes first, ahead of any replayed record, so every
-		// lane knows from its first record which launches are already history.
-		if (file.status === 'idle') yield idleChunk(file);
+		// The status goes first, ahead of any replayed record: it is the root's
+		// state, and it also tells every lane which launches are already history.
+		const opening = statusChunk(file);
+		if (opening) yield opening;
 		follower = await terminal.observation.files.follow(journal, {
 			signal: terminal.signal,
 		});
@@ -509,9 +523,10 @@ function rootSource(
 				continue;
 			}
 			if (settled.session.sessionId === bound) {
-				// Same conversation, new status word. Only `idle` carries a fact the
-				// journal cannot: a subagent whose end was never written is over.
-				if (settled.session.status === 'idle') yield idleChunk(settled.session);
+				// Same conversation, new status word — the only thing that moves
+				// the root between working, waiting and done.
+				const changed = statusChunk(settled.session);
+				if (changed) yield changed;
 				continue;
 			}
 			const moved = await journalFor(

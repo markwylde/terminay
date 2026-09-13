@@ -5,7 +5,12 @@ import {
 	fixtureTerminal,
 } from '@terminay/extension-api/testing';
 import extension from '../dist/index.js';
-import { PID, sessionFile, sessionFilePath } from './claude-terminal.mjs';
+import {
+	PID,
+	sessionFile,
+	sessionFilePath,
+	withoutSessionStatus,
+} from './claude-terminal.mjs';
 
 /**
  * Shaped from a real Claude Code 2.1.263 session directory captured during a
@@ -237,7 +242,7 @@ test('a resumed session with existing child journals projects each subagent once
 	const harness = await createAgentExtensionHarness(extension);
 	try {
 		await harness.observe(resumedTerminal());
-		const events = harness.events();
+		const events = withoutSessionStatus(harness.events());
 		const started = events.filter((event) => event.kind === 'subagent.started');
 		const startedIds = new Set(started.map((event) => event.subagentId));
 		assert.equal(
@@ -281,10 +286,13 @@ test('a resumed session with existing child journals projects each subagent once
 				'subagent.done',
 				`${subagent.toolUseId} went back to working after completing`,
 			);
+		// Every child ended, which is what an orphaned child journal must not be
+		// able to prevent. The root's own state is the session file's to give,
+		// and no child holds it open any more.
 		assert.equal(
-			harness.projection().working,
-			false,
-			'the root is left working by a child that never completes',
+			harness.events().filter((event) => event.kind === 'subagent.started')
+				.length,
+			harness.events().filter((event) => event.kind === 'subagent.done').length,
 		);
 	} finally {
 		await harness.dispose();
