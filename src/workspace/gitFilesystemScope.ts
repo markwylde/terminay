@@ -29,6 +29,23 @@ export function owningWorktreeForPath(
 	return best;
 }
 
+/**
+ * The project root to return to once a Git-tree action has settled, or null
+ * when there is nothing to hand back. A mutation borrows the owning worktree's
+ * root only to authorize itself, so the sidebar must end on the project the
+ * user chose; opening an entry is navigation, and deliberately stays put.
+ */
+export function rootFolderToRestoreAfter(action: {
+	readonly kind: string;
+	readonly restoreRootFolder: string;
+	readonly worktreeRoot: string;
+}): string | null {
+	if (action.kind === 'open-entry') return null;
+	return sameFilesystemPath(action.restoreRootFolder, action.worktreeRoot)
+		? null
+		: action.restoreRootFolder;
+}
+
 /** Returns the listed worktree root that must become the project root before
  * an Explorer mutation, or undefined when `path` is already in scope. */
 export function gitFilesystemActionWorktreeRoot(
