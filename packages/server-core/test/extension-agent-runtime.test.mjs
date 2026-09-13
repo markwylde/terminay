@@ -910,6 +910,12 @@ test("observation records tell a bound terminal apart from one that never binds"
   const agents = new AgentStatusService({ activity });
   await agents.start(); agents.register(identity); agents.register(secondIdentity);
   const observations = [];
+  // A terminal the provider never binds is swept again on the registry's own
+  // timers, and each sweep records `released` and re-admits. This test is about
+  // the transitions one observation produces, so the schedule is held: nothing
+  // fires unless this test fires it. With real timers a loaded runner slipped a
+  // sweep into the window and the exact sequence below became unprovable.
+  const heldTimers = [];
   const registry = new ExtensionAgentRuntimeRegistry({
     agents,
     hosts: {
@@ -925,18 +931,35 @@ test("observation records tell a bound terminal apart from one that never binds"
     },
     onObservation: (record) => observations.push(record),
     reobserveDebounceMs: 0,
+    schedule: (callback, milliseconds) => {
+      const timer = { callback, milliseconds };
+      heldTimers.push(timer);
+      return timer;
+    },
+    cancelSchedule: (timer) => {
+      const at = heldTimers.indexOf(timer);
+      if (at !== -1) heldTimers.splice(at, 1);
+    },
   });
-
-  for (const [terminal, shellPid] of [[identity, 5321], [secondIdentity, 5322]]) {
-    registry.register(terminal);
-    registry.terminalStarted(terminal, shellPid);
-    registry.foregroundProcessChanged(terminal, "test-agent");
-    await new Promise((resolve) => setImmediate(resolve));
-  }
 
   const forSession = (sessionId) => observations
     .filter((record) => record.terminal.sessionId === sessionId)
     .map((record) => record.transition);
+
+  for (const [terminal, shellPid, settled] of [
+    [identity, 5321, ["matched", "admitted", "bound"]],
+    [secondIdentity, 5322, ["matched", "admitted"]],
+  ]) {
+    registry.register(terminal);
+    registry.terminalStarted(terminal, shellPid);
+    registry.foregroundProcessChanged(terminal, "test-agent");
+    // Admission is several awaits deep, so wait for the observation to land
+    // rather than for a fixed number of turns.
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      if (forSession(terminal.sessionId).length >= settled.length) break;
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  }
   assert.deepEqual(forSession(identity.sessionId), ["matched", "admitted", "bound"]);
   assert.deepEqual(forSession(secondIdentity.sessionId), ["matched", "admitted"], "a terminal that never binds is distinguishable from one that was never matched");
   assert.deepEqual(forSession("terminal-that-never-ran"), []);
