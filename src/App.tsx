@@ -47,6 +47,7 @@ import {
 } from 'react';
 import {
 	EMPTY_AGENT_STATUS_SNAPSHOT,
+	selectLiveAgentStatusEntries,
 	selectLiveAgentStatusesForTerminal,
 } from './agentStatusStore';
 import {
@@ -179,7 +180,10 @@ import {
 	shouldNameServers,
 } from './workspace/projectTabComposition';
 import { useConnectionProjectTabs } from './workspace/useConnectionProjectTabs';
-import { useCrossServerAgentBadges } from './workspace/useConnectionAgentSnapshots';
+import {
+	agentBadgesForOtherServers,
+	useConnectionAgentSnapshots,
+} from './workspace/useConnectionAgentSnapshots';
 import { useConnections } from './shared/connections/ConnectionsContext';
 import {
 	type CompositionTabHandle,
@@ -236,7 +240,10 @@ import { useMacroRunController } from './workspace/useMacroRunController';
 import { useProjectCollection } from './workspace/useProjectCollection';
 import { WorkspaceDashboard } from './workspace/WorkspaceDashboard';
 import {
+	type DashboardActivation,
+	type DashboardAgent,
 	type DashboardRow,
+	resolveAgentActivation,
 	resolveDashboardActivation,
 } from './workspace/dashboardRows';
 import type { DashboardServerSource } from './workspace/crossServerRows';
@@ -6103,14 +6110,51 @@ function App({
 				?.terminalSessions[sessionId]?.projectId,
 		[byServerId],
 	);
+	// One subscription to every attached server's agent projection, read by two
+	// surfaces: the tab badges for the servers this window is not working in,
+	// and the dashboard, which shows every server's agents.
+	const agentSnapshotsByServer = useConnectionAgentSnapshots(connections);
 	// Another attached server has no live panel inventory in this window, but
 	// its agent projection still says which of its projects are waiting on a
 	// person — which is the thing worth showing across a server boundary.
-	const otherServerBadges = useCrossServerAgentBadges(
-		connections,
-		currentServerId,
-		projectForSession,
+	const otherServerBadges = useMemo(
+		() =>
+			agentBadgesForOtherServers(
+				agentSnapshotsByServer,
+				currentServerId,
+				projectForSession,
+			),
+		[agentSnapshotsByServer, currentServerId, projectForSession],
 	);
+	/**
+	 * Every server's live agents, assigned to the project that owns the terminal
+	 * they were started in. Keyed by server first: an agent entry id is unique
+	 * only inside one server's projection, and two servers restored from one
+	 * data root produce the same project ids for different projects.
+	 */
+	const agentsByServerProject = useMemo(() => {
+		const byServer: Record<
+			string,
+			Record<string, AgentStatusEntry[]>
+		> = {};
+		for (const [serverId, snapshot] of Object.entries(agentSnapshotsByServer)) {
+			const byProject: Record<string, AgentStatusEntry[]> = {};
+			for (const entry of selectLiveAgentStatusEntries(snapshot)) {
+				const projectId = projectForSession(
+					serverId,
+					entry.activationTerminalSessionId,
+				);
+				// An agent whose terminal this window cannot place in a project is
+				// not dropped into the wrong one.
+				if (projectId === undefined) continue;
+				const bucket = byProject[projectId] ?? [];
+				bucket.push(entry);
+				byProject[projectId] = bucket;
+			}
+			byServer[serverId] = byProject;
+		}
+		return byServer;
+	}, [agentSnapshotsByServer, projectForSession]);
 	// Badges are keyed by `(serverId, projectId)`: the strip holds tabs from
 	// several servers whose project ids can be the same string.
 	const activityBadgesByProject = useMemo(() => {
@@ -6130,50 +6174,47 @@ function App({
 	 * Home aggregates every attached server.
 	 *
 	 * The server the window is working in contributes its live inventory —
-	 * what each panel is doing right now. Every other attached server
-	 * contributes what its own workspace projection says exists. Nothing is
-	 * summed across servers: each row still belongs to one.
+	 * what each panel is doing right now. Every attached server, that one
+	 * included, contributes its agents: a server whose panels this window does
+	 * not hold can still say which of its projects has an agent waiting.
+	 * Nothing is summed across servers: each row still belongs to one.
 	 */
 	const dashboardSources = useMemo<readonly DashboardServerSource[]>(
 		() =>
-			projectTabSources.map((source) =>
-				source.serverId === currentServerId
-					? {
-							serverId: source.serverId,
-							serverLabel: source.serverLabel,
-							projects: source.projects,
-							inventoryByProject,
-						}
-					: {
-							serverId: source.serverId,
-							serverLabel: source.serverLabel,
-							projects: source.projects,
-							inventoryByProject: {},
-						},
-			),
-		[currentServerId, inventoryByProject, projectTabSources],
+			projectTabSources.map((source) => ({
+				serverId: source.serverId,
+				serverLabel: source.serverLabel,
+				projects: source.projects,
+				inventoryByProject:
+					source.serverId === currentServerId ? inventoryByProject : {},
+				agentsByProject: agentsByServerProject[source.serverId] ?? {},
+			})),
+		[
+			agentsByServerProject,
+			currentServerId,
+			inventoryByProject,
+			projectTabSources,
+		],
 	);
-	const activateDashboardRow = useCallback(
-		(serverId: string, row: DashboardRow) => {
-			// A row on another server is a place to go: bind the workspace there
-			// first, and let the tab activation land once its projects arrive.
-			if (serverId !== currentServerId) {
-				const connection = byServerId.get(serverId);
-				if (connection?.context === undefined) return;
-				pendingServerActivationRef.current = {
-					serverId,
-					projectId: row.projectId,
-				};
+	/**
+	 * A dashboard activation on another server is a place to go: bind the
+	 * workspace there first, and let the tab activation land once its projects
+	 * arrive. Returns whether it took the activation.
+	 */
+	const activateAnotherServer = useCallback(
+		(serverId: string, projectId: string): boolean => {
+			if (serverId === currentServerId) return false;
+			const connection = byServerId.get(serverId);
+			if (connection?.context !== undefined) {
+				pendingServerActivationRef.current = { serverId, projectId };
 				setRequestedServerId(serverId);
-				return;
 			}
-			// Resolve at click time: a row rendered before a project or panel went
-			// away must not act on it.
-			const activation = resolveDashboardActivation(
-				row,
-				projectsRef.current,
-				inventoryByProject,
-			);
+			return true;
+		},
+		[byServerId, currentServerId],
+	);
+	const applyDashboardActivation = useCallback(
+		(activation: DashboardActivation) => {
 			if (activation.kind === 'stale') return;
 			activateProject(activation.projectId);
 			if (activation.kind === 'project') return;
@@ -6183,10 +6224,45 @@ function App({
 					?.activateTerminal(activation.panelId, activation.sessionId);
 			});
 		},
+		[activateProject],
+	);
+	const activateDashboardRow = useCallback(
+		(serverId: string, row: DashboardRow) => {
+			if (activateAnotherServer(serverId, row.projectId)) return;
+			// Resolve at click time: a row rendered before a project or panel went
+			// away must not act on it.
+			applyDashboardActivation(
+				resolveDashboardActivation(
+					row,
+					projectsRef.current,
+					inventoryByProject,
+				),
+			);
+		},
 		[
-			activateProject,
-			byServerId,
-			currentServerId,
+			activateAnotherServer,
+			applyDashboardActivation,
+			inventoryByProject,
+			projectsRef,
+		],
+	);
+	// Activating an agent is activating the panel it runs in, resolved the same
+	// way and at the same moment, so a finished agent is as safe as a stale row.
+	const activateDashboardAgent = useCallback(
+		(serverId: string, projectId: string, agent: DashboardAgent) => {
+			if (activateAnotherServer(serverId, projectId)) return;
+			applyDashboardActivation(
+				resolveAgentActivation(
+					agent,
+					projectId,
+					projectsRef.current,
+					inventoryByProject,
+				),
+			);
+		},
+		[
+			activateAnotherServer,
+			applyDashboardActivation,
 			inventoryByProject,
 			projectsRef,
 		],
@@ -6690,6 +6766,7 @@ function App({
 				{isHomeSelected ? (
 					<WorkspaceDashboard
 						onActivate={activateDashboardRow}
+						onActivateAgent={activateDashboardAgent}
 						sources={dashboardSources}
 					/>
 				) : null}
