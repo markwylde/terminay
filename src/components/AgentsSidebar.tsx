@@ -1,5 +1,6 @@
 import { ChevronDown } from 'lucide-react';
 import { memo, useMemo } from 'react';
+import { resolveAgentPresentation } from '../agents/agentPresentation';
 import type { AgentStatusEntry } from '../types/agentStatus';
 import { AgentStatusIndicator } from './AgentStatusIndicator';
 import './AgentsSidebar.css';
@@ -48,12 +49,6 @@ export function activateAgentFromSnapshot(
 	}
 }
 
-function providerLabel(entry: AgentStatusEntry): string {
-	if (entry.providerDisplayName?.trim()) return entry.providerDisplayName.trim();
-	const name = entry.provider.split('/').at(-1) ?? entry.provider;
-	return name.replace(/[-_.]+/gu, ' ').replace(/\b\w/gu, (value) => value.toUpperCase());
-}
-
 function buildAgentTree(items: readonly AgentsSidebarItem[]): AgentTreeNode[] {
 	const nodes = new Map<string, AgentTreeNode>();
 
@@ -83,111 +78,32 @@ function buildAgentTree(items: readonly AgentsSidebarItem[]): AgentTreeNode[] {
 	return roots;
 }
 
-function getEntryName(entry: AgentStatusEntry): string {
-	if (entry.displayName?.trim()) {
-		return entry.displayName.trim();
-	}
-
-	if (entry.kind === 'subagent') {
-		return 'Subagent';
-	}
-
-	return providerLabel(entry);
-}
-
-function cleanText(value: string | undefined): string | undefined {
-	const cleaned = value?.replace(/\s+/g, ' ').trim();
-	return cleaned || undefined;
-}
-
-function meaningfulDisplayName(entry: AgentStatusEntry): string | undefined {
-	const displayName = cleanText(entry.displayName);
-	if (!displayName) {
-		return undefined;
-	}
-	const normalized = displayName.toLowerCase();
-	const provider = providerLabel(entry).toLowerCase();
-	return normalized === 'default' ||
-		normalized === 'agent' ||
-		normalized === 'subagent' ||
-		normalized === provider
-		? undefined
-		: displayName;
-}
-
-function isGenericTerminalTitle(value: string | undefined): boolean {
-	return /^terminal(?:\s+\d+)?$/i.test(value ?? '');
-}
-
-function uniqueParts(parts: Array<string | undefined>): string[] {
-	const seen = new Set<string>();
-	const result: string[] = [];
-	for (const part of parts) {
-		const cleaned = cleanText(part);
-		if (!cleaned) {
-			continue;
-		}
-		const key = cleaned.toLowerCase();
-		if (seen.has(key)) {
-			continue;
-		}
-		seen.add(key);
-		result.push(cleaned);
-	}
-	return result;
-}
-
+/**
+ * The sidebar's view of the shared naming rule: it knows the terminal title
+ * and the parent item, and hands both to the resolver every surface uses.
+ */
 function getPresentation(
 	node: AgentTreeNode,
 	siblingIndex: number,
 	parent?: AgentsSidebarItem,
-): {
-	metadata?: string;
-	name: string;
-	prompt?: string;
-} {
-	const { entry } = node.item;
-	const provider = providerLabel(entry);
-	const displayName = meaningfulDisplayName(entry);
-	const prompt = cleanText(node.item.prompt);
-	const terminalTitle = cleanText(node.item.terminalTitle);
-
-	if (entry.kind === 'root') {
-		const customTerminalTitle =
-			terminalTitle && !isGenericTerminalTitle(terminalTitle)
-				? terminalTitle
-				: undefined;
-		const name =
-			displayName ??
-			customTerminalTitle ??
-			prompt ??
-			getEntryName(entry);
-		const metadata = uniqueParts([
-			name === terminalTitle ? undefined : terminalTitle,
-			name.toLowerCase() === provider.toLowerCase() ? undefined : provider,
-			name.toLowerCase() === node.item.model?.toLowerCase()
-				? undefined
-				: node.item.model,
-		]).join(' · ');
-		return {
-			name,
-			...(metadata ? { metadata } : {}),
-			...(prompt && prompt !== name ? { prompt } : {}),
-		};
-	}
-
-	const name = displayName ?? prompt ?? `Subagent ${siblingIndex + 1}`;
-	const metadata = uniqueParts([
-		parent?.entry.provider !== entry.provider ? provider : undefined,
-		node.item.model && node.item.model !== parent?.model
-			? node.item.model
-			: undefined,
-	]).join(' · ');
-	return {
-		name,
-		...(metadata ? { metadata } : {}),
-		...(prompt && prompt !== name ? { prompt } : {}),
-	};
+) {
+	return resolveAgentPresentation(
+		node.item.entry,
+		{
+			...(node.item.model === undefined ? {} : { model: node.item.model }),
+			...(node.item.prompt === undefined ? {} : { prompt: node.item.prompt }),
+			...(node.item.terminalTitle === undefined
+				? {}
+				: { terminalTitle: node.item.terminalTitle }),
+		},
+		{
+			...(parent?.model === undefined ? {} : { parentModel: parent.model }),
+			...(parent === undefined
+				? {}
+				: { parentProvider: parent.entry.provider }),
+			siblingIndex,
+		},
+	);
 }
 
 function AgentRow({
