@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { statSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -955,6 +956,16 @@ function mapPorcelainStateChar(char: string): GitFileState | null {
   }
 }
 
+function isDirectoryPath(absolutePath: string): boolean {
+  try {
+    // `stat` follows symlinks, so a linked directory reads as the folder the
+    // user sees on disk rather than as a plain file.
+    return statSync(absolutePath).isDirectory()
+  } catch {
+    return false
+  }
+}
+
 function buildPanelEntry(
   repoRoot: string,
   porcelainPath: string,
@@ -962,10 +973,18 @@ function buildPanelEntry(
   staged: boolean,
   originalPorcelainPath: string | null,
 ): GitChangeEntry {
-  const relativePath = porcelainPath.replace(/\\/g, '/')
+  const trailingSeparator = /[\\/]$/.test(porcelainPath)
+  const normalizedPath = trailingSeparator
+    ? porcelainPath.slice(0, -1)
+    : porcelainPath
+  const relativePath = normalizedPath.replace(/\\/g, '/')
+  const absolutePath = path.resolve(repoRoot, normalizedPath)
   const entry: GitChangeEntry = {
-    path: path.resolve(repoRoot, porcelainPath),
+    path: absolutePath,
     relativePath,
+    // Git marks an untracked directory with a trailing separator; a symlinked
+    // directory carries no marker, so the link is followed to classify it.
+    isDirectory: trailingSeparator || isDirectoryPath(absolutePath),
     state,
     staged,
   }

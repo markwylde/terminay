@@ -141,6 +141,7 @@ function toChangeEntry(
 	return {
 		path: joinPath(worktreeRoot, relativePath),
 		relativePath,
+		isDirectory: value.isDirectory === true,
 		state,
 		staged: boolean(value.staged, 'Git staged state'),
 		...(previousPath === null
