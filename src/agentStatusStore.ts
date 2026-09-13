@@ -450,15 +450,16 @@ function isEndedAgentStatusEntry(entry: AgentStatusEntry): boolean {
 	);
 }
 
-/** Select live roster entries while retaining completed history in the snapshot. */
-export function selectLiveAgentStatusesForTerminal(
-	snapshot: AgentStatusSnapshot,
-	activationTerminalSessionId: string,
+/**
+ * Live roster entries while completed history is retained in the snapshot.
+ *
+ * One definition of "live", applied to whatever set of entries a surface is
+ * asking about: an entry whose own stream ended, and any child of a root whose
+ * stream ended, is history rather than roster.
+ */
+function selectLiveAgentStatuses(
+	entries: readonly AgentStatusEntry[],
 ): readonly AgentStatusEntry[] {
-	const entries = selectAgentStatusesForTerminal(
-		snapshot,
-		activationTerminalSessionId,
-	);
 	const endedRootEntryIds = new Set(
 		entries
 			.filter(
@@ -472,6 +473,22 @@ export function selectLiveAgentStatusesForTerminal(
 			!isEndedAgentStatusEntry(entry) &&
 			(entry.kind === 'root' || !endedRootEntryIds.has(entry.parentEntryId)),
 	);
+}
+
+export function selectLiveAgentStatusesForTerminal(
+	snapshot: AgentStatusSnapshot,
+	activationTerminalSessionId: string,
+): readonly AgentStatusEntry[] {
+	return selectLiveAgentStatuses(
+		selectAgentStatusesForTerminal(snapshot, activationTerminalSessionId),
+	);
+}
+
+/** Every live entry in a snapshot, for a surface that spans terminals. */
+export function selectLiveAgentStatusEntries(
+	snapshot: AgentStatusSnapshot,
+): readonly AgentStatusEntry[] {
+	return selectLiveAgentStatuses(selectAgentStatusEntries(snapshot));
 }
 
 export function selectAgentStatusesByState(

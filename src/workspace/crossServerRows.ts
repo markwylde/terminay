@@ -7,7 +7,7 @@
  * restored from one data root produce the same ids for different things.
  *
  * The activity badges the tab strip shows for other servers come from their
- * agent projections instead (`useCrossServerAgentBadges`), which is all a
+ * agent projections instead (`agentBadgesForOtherServers`), which is all a
  * window knows about a server it is not currently working in.
  *
  * The server is named on a row only when the window has more than one
@@ -15,8 +15,16 @@
  */
 
 import { compositionTabKey } from '../shared/connections/composition.ts';
-import type { DashboardProjectSource, DashboardRow } from './dashboardRows.ts';
-import { buildDashboardRows } from './dashboardRows.ts';
+import type { AgentStatusEntry } from '../types/agentStatus';
+import type {
+	DashboardProjectGroup,
+	DashboardProjectSource,
+	DashboardRow,
+} from './dashboardRows.ts';
+import {
+	buildDashboardGroups,
+	flattenDashboardGroups,
+} from './dashboardRows.ts';
 import type { WorkspaceInventoryEntry } from './workspaceInventory';
 
 /** One connection's contribution to a cross-server surface. */
@@ -69,6 +77,12 @@ export type DashboardServerSource = Readonly<{
 	serverLabel: string;
 	projects: readonly DashboardProjectSource[];
 	inventoryByProject: Readonly<Record<string, WorkspaceInventoryEntry[]>>;
+	/**
+	 * This server's live agents, already assigned to one of its projects.
+	 * Absent for a connection whose agent projection has not arrived, which is
+	 * a server with no agents to show rather than an error.
+	 */
+	agentsByProject?: Readonly<Record<string, readonly AgentStatusEntry[]>>;
 }>;
 
 /**
@@ -78,20 +92,49 @@ export type DashboardServerSource = Readonly<{
  * concatenated in connection order. Nothing is interleaved or summed across
  * servers: a project row still counts only its own server's panels.
  */
-export function buildCrossServerDashboardRows(
+export function buildCrossServerDashboardGroups(
 	sources: readonly DashboardServerSource[],
-): readonly ServerScopedRow<DashboardRow>[] {
+): readonly ServerScopedRow<DashboardProjectGroup>[] {
 	return scopeRowsByServer(
 		sources.map((source) =>
 			Object.freeze({
 				serverId: source.serverId,
 				serverLabel: source.serverLabel,
-				rows: buildDashboardRows(source.projects, source.inventoryByProject),
+				rows: buildDashboardGroups(
+					source.projects,
+					source.inventoryByProject,
+					source.agentsByProject,
+				),
 			}),
 		),
-		(row) =>
-			row.kind === 'project'
-				? `project:${row.projectId}`
-				: `panel:${row.projectId}:${row.panelId}`,
+		(group) => `project:${group.project.projectId}`,
+	);
+}
+
+/** The List view's flat rows, each still tagged with the server that owns it. */
+export function flattenCrossServerDashboardGroups(
+	groups: readonly ServerScopedRow<DashboardProjectGroup>[],
+): readonly ServerScopedRow<DashboardRow>[] {
+	return groups.flatMap((scoped) =>
+		flattenDashboardGroups([scoped.row]).map((row) =>
+			Object.freeze({
+				...scoped,
+				key: compositionTabKey(
+					scoped.serverId,
+					row.kind === 'project'
+						? `project:${row.projectId}`
+						: `panel:${row.projectId}:${row.panelId}`,
+				),
+				row,
+			}),
+		),
+	);
+}
+
+export function buildCrossServerDashboardRows(
+	sources: readonly DashboardServerSource[],
+): readonly ServerScopedRow<DashboardRow>[] {
+	return flattenCrossServerDashboardGroups(
+		buildCrossServerDashboardGroups(sources),
 	);
 }
