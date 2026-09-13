@@ -2,6 +2,7 @@ import {
 	ChevronDown,
 	Copy,
 	FileEdit,
+	Folder,
 	FolderPlus,
 	PlusSquare,
 	Terminal,
@@ -78,23 +79,28 @@ function getRowTitle(entry: GitChangeEntry): string {
 function GitPanelRow({
 	entry,
 	onOpenEntry,
+	onOpenFolder,
 	onContextMenu,
 }: {
 	entry: GitChangeEntry;
 	onOpenEntry: (entry: GitChangeEntry) => void;
+	onOpenFolder: (path: string) => void;
 	onContextMenu: (event: MouseEvent<HTMLElement>, path: string, relativePath: string, isDirectory: boolean) => void;
 }) {
 	const badge = STATE_BADGES[entry.state];
 	const { dir, name } = splitName(entry.relativePath);
 	const title = getRowTitle(entry);
+	const isDirectory = entry.isDirectory;
 
 	return (
 		<button
 			type="button"
 			className="git-panel__row"
-			onClick={() => onOpenEntry(entry)}
+			onClick={() =>
+				isDirectory ? onOpenFolder(entry.path) : onOpenEntry(entry)
+			}
 			onContextMenu={(event) =>
-				onContextMenu(event, entry.path, entry.relativePath, false)
+				onContextMenu(event, entry.path, entry.relativePath, isDirectory)
 			}
 			title={title}
 		>
@@ -102,7 +108,7 @@ function GitPanelRow({
 				className={`git-panel__icon git-panel__icon--${entry.state}`}
 				aria-hidden="true"
 			>
-				<FileTypeIcon name={name} />
+				{isDirectory ? <Folder size={14} /> : <FileTypeIcon name={name} />}
 			</span>
 			<span className="git-panel__name">{name}</span>
 			{dir ? <span className="git-panel__dir">{dir}</span> : null}
@@ -188,15 +194,18 @@ function GitTreeNode({
 		const { entry } = node;
 		const badge = STATE_BADGES[entry.state];
 		const title = getRowTitle(entry);
+		const isDirectory = entry.isDirectory;
 
 		return (
 			<button
 				type="button"
 				className="git-panel__row"
 				style={{ paddingLeft: depth * FOLDER_INDENT + ROW_BASE_INDENT }}
-				onClick={() => onOpenEntry(entry)}
+				onClick={() =>
+					isDirectory ? onOpenFolder(entry.path) : onOpenEntry(entry)
+				}
 				onContextMenu={(event) =>
-					onContextMenu(event, entry.path, entry.relativePath, false)
+					onContextMenu(event, entry.path, entry.relativePath, isDirectory)
 				}
 				title={title}
 			>
@@ -204,7 +213,7 @@ function GitTreeNode({
 					className={`git-panel__icon git-panel__icon--${entry.state}`}
 					aria-hidden="true"
 				>
-					<FileTypeIcon name={node.name} />
+					{isDirectory ? <Folder size={14} /> : <FileTypeIcon name={node.name} />}
 				</span>
 				<span className="git-panel__name">{node.name}</span>
 				<span className={`git-panel__badge git-panel__badge--${entry.state}`}>
@@ -409,6 +418,7 @@ export function GitPanel(props: GitPanelProps): JSX.Element {
 									key={`${group.key}:${entry.relativePath}`}
 									entry={entry}
 									onOpenEntry={onOpenEntry}
+									onOpenFolder={onOpenFolder}
 									onContextMenu={openContextMenu}
 								/>
 							))}

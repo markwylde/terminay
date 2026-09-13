@@ -155,6 +155,9 @@ export type GitChangeKind =
 
 export interface GitStatusEntry {
 	readonly path: string;
+	/** True when the entry is a directory, including a symlink to one. Git
+	 * reports both as plain paths, so the UI cannot infer this from the name. */
+	readonly isDirectory: boolean;
 	readonly previousPath: string | null;
 	readonly indexStatus: string;
 	readonly worktreeStatus: string;
