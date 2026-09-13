@@ -119,6 +119,8 @@ export interface FileCatalogEntry {
   readonly name: string;
   readonly relativePath: string;
   readonly kind: FileCatalogEntryKind;
+  /** For an accessible symlink, what the link resolves to. */
+  readonly targetKind?: FileCatalogEntryKind;
   readonly isSymbolicLink: boolean;
   readonly accessible: boolean;
   readonly size: number;
@@ -785,6 +787,7 @@ function decodeBase64(value: string, maxBytes = 4 * 1024 * 1024): Uint8Array {
 }
 function bytesToBase64(value: Uint8Array): string { let binary = ""; for (const byte of value) binary += String.fromCharCode(byte); return btoa(binary); }
 function boundedText(value: string, name: string): string { if (typeof value !== "string" || value.length > 100 * 1024 * 1024) throw new RangeError(`${name} is invalid`); return value; }
+function isCatalogEntryKindOrUndefined(value: unknown): value is FileCatalogEntryKind | undefined { return value === undefined || value === "file" || value === "directory" || value === "symlink" || value === "other"; }
 function isPreviewKind(value: unknown): value is FileViewerPreviewKind { return value === "markdown" || value === "image" || value === "pdf" || value === "text" || value === "hex" || value === "unsupported"; }
 function isPreferredMode(value: unknown): value is "preview" | "text" | "hex" { return value === "preview" || value === "text" || value === "hex"; }
 function isContentKind(value: unknown): value is FileViewerContentKind { return value === "text" || value === "markdown" || value === "image" || value === "pdf" || value === "binary"; }
@@ -817,8 +820,8 @@ function validateCatalogPage(value: JsonValue): FileCatalogPage {
   if (!isRecord(value) || typeof value.root !== "string" || !safeUInt(value.offset) || typeof value.truncated !== "boolean" || !Array.isArray(value.entries) || value.entries.length > 25_000) throw new TypeError("file catalog page is invalid");
   if (value.nextOffset !== undefined && (!safeUInt(value.nextOffset) || value.nextOffset <= value.offset)) throw new TypeError("file catalog next offset is invalid");
   const entries = value.entries.map((entry) => {
-    if (!isRecord(entry) || typeof entry.name !== "string" || entry.name.length === 0 || entry.name.length > 1_024 || typeof entry.relativePath !== "string" || entry.relativePath.length === 0 || entry.relativePath.length > 4_096 || (entry.kind !== "file" && entry.kind !== "directory" && entry.kind !== "symlink" && entry.kind !== "other") || typeof entry.isSymbolicLink !== "boolean" || typeof entry.accessible !== "boolean" || !safeUInt(entry.size) || (entry.mtimeMs !== undefined && !finiteNumber(entry.mtimeMs)) || (entry.mode !== undefined && !safeUInt(entry.mode))) throw new TypeError("file catalog entry is invalid");
-    return Object.freeze({ name: entry.name, relativePath: entry.relativePath, kind: entry.kind, isSymbolicLink: entry.isSymbolicLink, accessible: entry.accessible, size: entry.size, ...(entry.mtimeMs === undefined ? {} : { mtimeMs: entry.mtimeMs }), ...(entry.mode === undefined ? {} : { mode: entry.mode }) });
+    if (!isRecord(entry) || typeof entry.name !== "string" || entry.name.length === 0 || entry.name.length > 1_024 || typeof entry.relativePath !== "string" || entry.relativePath.length === 0 || entry.relativePath.length > 4_096 || (entry.kind !== "file" && entry.kind !== "directory" && entry.kind !== "symlink" && entry.kind !== "other") || !isCatalogEntryKindOrUndefined(entry.targetKind) || typeof entry.isSymbolicLink !== "boolean" || typeof entry.accessible !== "boolean" || !safeUInt(entry.size) || (entry.mtimeMs !== undefined && !finiteNumber(entry.mtimeMs)) || (entry.mode !== undefined && !safeUInt(entry.mode))) throw new TypeError("file catalog entry is invalid");
+    return Object.freeze({ name: entry.name, relativePath: entry.relativePath, kind: entry.kind, ...(entry.targetKind === undefined ? {} : { targetKind: entry.targetKind }), isSymbolicLink: entry.isSymbolicLink, accessible: entry.accessible, size: entry.size, ...(entry.mtimeMs === undefined ? {} : { mtimeMs: entry.mtimeMs }), ...(entry.mode === undefined ? {} : { mode: entry.mode }) });
   });
   return Object.freeze({ root: value.root, offset: value.offset, entries: Object.freeze(entries), truncated: value.truncated, ...(value.nextOffset === undefined ? {} : { nextOffset: value.nextOffset }) });
 }
