@@ -79,6 +79,9 @@ export interface FileCatalogEntry {
 	/** Project-relative; the project root is represented as `.`. */
 	readonly relativePath: string;
 	readonly kind: FileCatalogEntryKind;
+	/** For an accessible symlink, what the link resolves to. A link to a
+	 * directory is presented as a folder rather than a file. */
+	readonly targetKind?: FileCatalogEntryKind;
 	readonly isSymbolicLink: boolean;
 	/** False for a symlink whose target is outside the authorized project. */
 	readonly accessible: boolean;
@@ -687,7 +690,15 @@ export class FileCatalog {
 				'path_escape',
 				'project root cannot be deleted',
 			);
-		await this.assertNotSymlink(relativePath, options.signal);
+		// Removing a symlink unlinks the link itself and never touches its
+		// target, so a link inside the project may be deleted even when it
+		// points outside. The link is addressed through its canonical parent so
+		// no intermediate symlink can redirect the removal out of the project.
+		const link = await this.symlinkLeafPath(relativePath, options.signal);
+		if (link !== undefined) {
+			await this.storage.remove(link, { recursive: false }, options.signal);
+			return;
+		}
 		await this.storage.remove(
 			await this.resolver.resolve(relativePath),
 			{ recursive: options.recursive === true },
@@ -735,11 +746,13 @@ export class FileCatalog {
 		try {
 			const canonical = await this.resolver.resolve(relativePath);
 			const stat = await this.storage.stat(canonical);
-			const kind = symbolic ? 'symlink' : classify(stat, raw);
+			const resolvedKind = classify(stat, raw);
+			const kind = symbolic ? 'symlink' : resolvedKind;
 			return Object.freeze({
 				name: raw.name,
 				relativePath,
 				kind,
+				...(symbolic ? { targetKind: resolvedKind } : {}),
 				isSymbolicLink: symbolic,
 				accessible: true,
 				size: safeSize(stat.size),
@@ -802,6 +815,36 @@ export class FileCatalog {
 		} catch (error) {
 			if (error instanceof FileServiceError) throw error;
 			throw error;
+		}
+	}
+
+	/** Canonical-parent path of `relativePath` when its leaf is a symlink, else
+	 * undefined. The parent is canonicalized and containment-checked, so the
+	 * returned path is inside the project even when the link is not. */
+	private async symlinkLeafPath(
+		relativePath: string,
+		signal?: AbortSignal,
+	): Promise<string | undefined> {
+		if (this.storage.lstat === undefined) return undefined;
+		throwIfAborted(signal);
+		const separatorIndex = relativePath.lastIndexOf('/');
+		const parent =
+			separatorIndex < 0 ? '.' : relativePath.slice(0, separatorIndex);
+		const name = relativePath.slice(separatorIndex + 1);
+		if (name.length === 0 || name === '.' || name === '..')
+			throw new FileServiceError('invalid_path', 'requested path is invalid', {
+				requested: relativePath,
+			});
+		const canonicalParent = await this.resolver.resolve(parent, {
+			requireDirectory: true,
+		});
+		const separator = canonicalParent.includes('\\') ? '\\' : '/';
+		const leaf = `${canonicalParent.replace(/[\\/]$/u, '')}${separator}${name}`;
+		try {
+			const stat = await this.storage.lstat(leaf);
+			return stat.isSymbolicLink === true ? leaf : undefined;
+		} catch {
+			return undefined;
 		}
 	}
 

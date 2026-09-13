@@ -21,8 +21,10 @@ import type {
 } from '../types/terminay';
 import type { ProjectTab } from './projectTabModel';
 import { getOrCreateDirectoryLoad } from './directoryLoadCoordinator';
+import { isDirectoryEntry } from './fileExplorerEntries';
 import {
 	gitFilesystemActionWorktreeRoot,
+	rootFolderToRestoreAfter,
 	sameFilesystemPath,
 } from './gitFilesystemScope';
 
@@ -84,6 +86,7 @@ function parentPath(path: string): string {
 	return trimmed.slice(0, slash);
 }
 
+
 function explorerMayLoad(project: ProjectTab): boolean {
 	return project.creationStatus !== 'loading';
 }
@@ -95,7 +98,7 @@ export function openTerminalAtWorktree(
 	void onOpenTerminalAt(worktree.path, true);
 }
 
-type PendingGitFilesystemAction =
+type PendingGitFilesystemActionKind =
 	| {
 			readonly kind: 'open-entry';
 			readonly entry: GitChangeEntry;
@@ -125,6 +128,15 @@ type PendingGitFilesystemAction =
 			readonly dirPath: string;
 			readonly worktreeRoot: string;
 	  };
+
+/** A filesystem mutation is authorized against the project root, so a path in
+ * another worktree can only be reached by pointing the project at that
+ * worktree first. `restoreRootFolder` records where the user actually was, so
+ * the borrowed root is handed back once the mutation settles. */
+type PendingGitFilesystemAction = PendingGitFilesystemActionKind & {
+	readonly restoreRootFolder: string;
+};
+
 
 export function assertWorktreeRemoved(result: unknown): void {
 	if (
@@ -339,7 +351,7 @@ export function useFileExplorerController({
 	const queueOwningWorktreeAction = useCallback(
 		(
 			path: string,
-			createAction: (worktreeRoot: string) => PendingGitFilesystemAction,
+			createAction: (worktreeRoot: string) => PendingGitFilesystemActionKind,
 		): boolean => {
 			const worktreeRoot = gitFilesystemActionWorktreeRoot(
 				path,
@@ -347,7 +359,10 @@ export function useFileExplorerController({
 				worktreePanelStatus?.worktrees,
 			);
 			if (worktreeRoot === undefined) return false;
-			setPendingGitFilesystemAction(createAction(worktreeRoot));
+			setPendingGitFilesystemAction({
+				...createAction(worktreeRoot),
+				restoreRootFolder: project.rootFolder,
+			});
 			onUpdateProject(project.id, { rootFolder: worktreeRoot });
 			return true;
 		},
@@ -411,7 +426,7 @@ export function useFileExplorerController({
 						setDirectoryChildren((current) => ({
 							...current,
 							[dirPath]: page.entries.map((entry) => ({
-								isDirectory: entry.kind === 'directory',
+								isDirectory: isDirectoryEntry(entry),
 								isSymbolicLink: entry.isSymbolicLink,
 								mode: entry.mode ?? null,
 								modifiedAtMs: entry.mtimeMs ?? null,
@@ -944,29 +959,34 @@ export function useFileExplorerController({
 			);
 			return;
 		}
-		if (action.kind === 'delete') {
-			void deleteEntryAtPath(action.path);
-			return;
-		}
-		if (action.kind === 'rename') {
-			void renameEntryAtPath(
-				action.oldPath,
-				action.nextPath,
-				action.parentPath,
-			);
-			return;
-		}
-		if (action.kind === 'create-file') {
-			void createFileAtPath(action.path, action.dirPath);
-			return;
-		}
-		void createDirectoryAtPath(action.path, action.dirPath);
+		const completed =
+			action.kind === 'delete'
+				? deleteEntryAtPath(action.path)
+				: action.kind === 'rename'
+					? renameEntryAtPath(
+							action.oldPath,
+							action.nextPath,
+							action.parentPath,
+						)
+					: action.kind === 'create-file'
+						? createFileAtPath(action.path, action.dirPath)
+						: createDirectoryAtPath(action.path, action.dirPath);
+		// The worktree root was borrowed only to authorize this mutation. Hand it
+		// back once the mutation settles so the sidebar stays on the project the
+		// user chose, whether or not the mutation succeeded.
+		const restoreRootFolder = rootFolderToRestoreAfter(action);
+		if (restoreRootFolder === null) return;
+		void completed.finally(() => {
+			onUpdateProject(project.id, { rootFolder: restoreRootFolder });
+		});
 	}, [
 		createDirectoryAtPath,
 		createFileAtPath,
 		deleteEntryAtPath,
 		onOpenFile,
+		onUpdateProject,
 		pendingGitFilesystemAction,
+		project.id,
 		project.rootFolder,
 		renameEntryAtPath,
 	]);
