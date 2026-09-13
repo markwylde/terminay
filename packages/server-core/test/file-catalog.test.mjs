@@ -51,7 +51,7 @@ function memoryCatalog() {
     atomicWrite(path, bytes) { entries.set(path, { isFile: true, size: bytes.byteLength }); },
     makeDirectory(path) { entries.set(path, { isDirectory: true, size: 0 }); children.set(path, []); },
     rename(from, to) { const value = entries.get(from); if (!value) throw missing(from); entries.delete(from); entries.set(to, value); },
-    remove(path) { entries.delete(path); children.delete(path); },
+    remove(path) { if (links.delete(path)) return; entries.delete(path); children.delete(path); },
   };
   const resolver = new CanonicalProjectPathResolver("/project", storage);
   return { catalog: new FileCatalog(resolver, storage, { maxEntries: 32, maxDepth: 8 }), storage };
@@ -95,7 +95,12 @@ test("catalog mutations require canonical parents and reject root/traversal oper
   await catalog.delete("src/renamed.ts");
   assert.throws(() => storage.stat("/project/src/renamed.ts"), /ENOENT/);
   await assert.rejects(() => catalog.delete("."), (error) => error instanceof FileServiceError && error.code === "path_escape");
-  await assert.rejects(() => catalog.delete("internal-link"), (error) => error instanceof FileServiceError && error.code === "path_escape");
+  // Deleting a link unlinks the link and leaves its target untouched, so a link
+  // inside the project may go even when it points outside.
+  await assert.rejects(() => catalog.rename("internal-link", "renamed-link"), (error) => error instanceof FileServiceError && error.code === "path_escape");
+  await catalog.delete("internal-link");
+  assert.throws(() => storage.lstat("/project/internal-link"), /ENOENT/);
+  assert.equal(storage.stat("/project/src").isDirectory, true);
   await assert.rejects(() => catalog.createFile("../escape"), (error) => error instanceof FileServiceError && error.code === "path_escape");
 });
 
