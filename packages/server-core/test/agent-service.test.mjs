@@ -6,10 +6,10 @@ const identity = Object.freeze({ serverId: "server-1", projectId: "project-1", s
 const providerId = "example.agent/test";
 const binding = Object.freeze({ providerSessionId: "provider-session-1", mappingVersion: "1", fingerprint: { kind: "test", process: { id: "process-1" }, metadata: { proof: "fixture" } } });
 
-async function fixture() {
+async function fixture(options = {}) {
   const activity = new TerminalActivityService({ serverId: identity.serverId });
   activity.register(identity);
-  const agents = new AgentStatusService({ activity, now: () => 1_000 });
+  const agents = new AgentStatusService({ activity, now: () => 1_000, ...options });
   await agents.start(); agents.register(identity);
   assert.equal(agents.claimExtensionProvider(identity, providerId), true);
   return { agents };
@@ -106,33 +106,51 @@ test("a resumed native child reuses its exact row and preserves root isolation",
   await agents.stop();
 });
 
-test("lifecycle publications reject invalid transitions atomically with sequence state unchanged", async () => {
-  const { agents } = await fixture();
-  const before = agents.getSnapshot();
-  const rejected = await agents.ingestExtensionLifecycle(identity, providerId, "1", binding, [
+test("an inadmissible event is dropped on its own and never withholds the rest of its batch", async () => {
+  const rejections = [];
+  const { agents } = await fixture({ onLifecycleRejected: (rejection) => rejections.push(rejection) });
+  // The bug this guards: a stale tool.finished sharing a batch with the
+  // completion used to reject the whole publication, leaving the row working.
+  const mixed = await agents.ingestExtensionLifecycle(identity, providerId, "1", binding, [
     { kind: "session.started" },
-    { kind: "tool.finished", toolId: "missing" },
+    { kind: "turn.started", turnId: "turn-1" },
+    { kind: "tool.finished", toolId: "never-started" },
+    { kind: "agent.done", outcome: "success" },
   ]);
-  assert.match(rejected.failure, /transition/);
-  assert.strictEqual(agents.getSnapshot(), before);
-  const accepted = await agents.ingestExtensionLifecycle(identity, providerId, "1", binding, [
-    { kind: "session.started" }, { kind: "turn.started", turnId: "turn-1" }, { kind: "tool.started", toolId: "tool-1", name: "shell" },
-  ]);
-  assert.deepEqual(accepted, { acceptedEventCount: 3, rejectedEventCount: 0 });
+  assert.deepEqual(mixed, { acceptedEventCount: 3, rejectedEventCount: 1 });
   const [entry] = Object.values(agents.getSnapshot().entries);
-  assert.equal(entry.lastEventSequence, 3);
+  assert.equal(entry.state, "done");
+  assert.equal(rejections.length, 1);
+  assert.equal(rejections[0].kind, "agent-lifecycle-rejected");
+  assert.equal(rejections[0].eventKind, "tool.finished");
+  assert.equal(rejections[0].reason, "precondition");
+  assert.equal(rejections[0].terminal.sessionId, identity.sessionId);
+  // Sequence numbers are spent whether or not the event was admitted, so the
+  // dropped event leaves a gap rather than a number a later event reuses.
+  assert.equal(entry.lastEventSequence, 4);
   const revision = agents.getSnapshot().revision;
   for (const events of [
-    [{ kind: "session.started" }],
-    [{ kind: "tool.started", toolId: "tool-1", name: "duplicate" }],
+    [{ kind: "tool.started", toolId: "tool-1", name: "first" }, { kind: "tool.started", toolId: "tool-1", name: "duplicate" }],
     [{ kind: "tool.finished", toolId: "wrong" }],
-    [{ kind: "wait.finished" }],
     [{ kind: "subagent.done", subagentId: "unknown", outcome: "success" }],
   ]) {
     const result = await agents.ingestExtensionLifecycle(identity, providerId, "1", undefined, events);
-    assert.match(result.failure, /(transition|event is invalid)/);
-    assert.equal(agents.getSnapshot().revision, revision);
+    assert.equal(result.rejectedEventCount, 1);
   }
+  assert.notEqual(agents.getSnapshot().revision, revision);
+  await agents.stop();
+});
+
+test("a publication of nothing but inadmissible events changes no state", async () => {
+  const { agents } = await fixture();
+  await agents.ingestExtensionLifecycle(identity, providerId, "1", binding, [{ kind: "session.started" }]);
+  const before = agents.getSnapshot();
+  const rejected = await agents.ingestExtensionLifecycle(identity, providerId, "1", undefined, [
+    { kind: "tool.finished", toolId: "missing" },
+    { kind: "tool.finished", toolId: "also-missing" },
+  ]);
+  assert.deepEqual(rejected, { acceptedEventCount: 0, rejectedEventCount: 2 });
+  assert.strictEqual(agents.getSnapshot(), before);
   await agents.stop();
 });
 

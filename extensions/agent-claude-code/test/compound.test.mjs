@@ -152,7 +152,7 @@ test('topology replacement re-observes a new exact writer rather than retaining 
 		assert.deepEqual(
 			harness
 				.events()
-				.filter((event) => event.kind === 'turn.started')
+				.filter((event) => event.kind === 'agent.metadata' && event.promptText)
 				.map((event) => event.promptText),
 			['first topology', 'second topology'],
 		);

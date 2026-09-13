@@ -111,6 +111,7 @@ export const DIAGNOSTIC_EVENT_NAMES = [
 	'local-server.agent.admitted',
 	'local-server.agent.bound',
 	'local-server.agent.admission-failed',
+	'local-server.agent.lifecycle-rejected',
 	'local-server.agent.released',
 	'local-server.stopping',
 	'local-server.stopped',
