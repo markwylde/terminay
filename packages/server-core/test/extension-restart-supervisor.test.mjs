@@ -166,9 +166,18 @@ async function fixture(crashes) {
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
     },
+    /**
+     * The failure diagnostic is recorded before the host's own status leaves
+     * `running`, and `agentProviderContributions()` is derived from that
+     * status. Waiting for the record alone let a loaded CI runner observe a
+     * crashed host still publishing its providers, so wait for the status the
+     * assertions actually read.
+     */
     waitForFailures: async (count) => {
       for (let attempt = 0; attempt < 200; attempt += 1) {
-        if (records.filter((record) => record.transition === "failed").length >= count) return;
+        const failures = records.filter((record) => record.transition === "failed").length;
+        const settled = management.hosts.statuses().every((status) => status.state !== "running");
+        if (failures >= count && settled) return;
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
       assert.fail(`only ${records.filter((r) => r.transition === "failed").length} failures were recorded, wanted ${count}`);
