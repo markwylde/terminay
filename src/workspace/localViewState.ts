@@ -17,6 +17,12 @@
  * disabled is a normal condition, not an error worth surfacing.
  */
 
+import {
+	DEFAULT_DASHBOARD_VIEW_MODE,
+	type DashboardViewMode,
+	isDashboardViewMode,
+} from './dashboardViewMode.ts';
+
 const STORAGE_KEY = 'terminay.view.active-session.v1';
 /** Bounded so a long-lived browser profile cannot accumulate dead projects. */
 const MAX_REMEMBERED_PROJECTS = 64;
@@ -149,6 +155,38 @@ export function recallHomeSelected(
 	if (serverId.length === 0 || viewId === null || viewId.length === 0)
 		return false;
 	return readHomeSelections()[homeSelectionKey(serverId, viewId)] === true;
+}
+
+/**
+ * Which shape this device shows the dashboard in.
+ *
+ * The same kind of fact as which tab it has selected: it belongs to the person
+ * at the screen, not to the workspace. It is stored once per device rather than
+ * per server, because the dashboard spans every attached server and there is no
+ * one server whose key it could hang from.
+ *
+ * A hint like everything else here — an unreadable, disabled, or nonsense value
+ * is the List view and no error.
+ */
+const DASHBOARD_VIEW_MODE_STORAGE_KEY = 'terminay.view.dashboard-mode.v1';
+
+export function rememberDashboardViewMode(mode: DashboardViewMode): void {
+	try {
+		globalThis.localStorage?.setItem(DASHBOARD_VIEW_MODE_STORAGE_KEY, mode);
+	} catch {
+		/* A device that cannot remember still works; it just starts on List. */
+	}
+}
+
+export function recallDashboardViewMode(): DashboardViewMode {
+	try {
+		const raw = globalThis.localStorage?.getItem(
+			DASHBOARD_VIEW_MODE_STORAGE_KEY,
+		);
+		return isDashboardViewMode(raw) ? raw : DEFAULT_DASHBOARD_VIEW_MODE;
+	} catch {
+		return DEFAULT_DASHBOARD_VIEW_MODE;
+	}
 }
 
 export interface AdoptedTerminalActivation {

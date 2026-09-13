@@ -16,9 +16,23 @@ const projectRow = (page: Page, projectId: string) =>
 	page.locator(`[data-terminay-dashboard-project="${projectId}"]`);
 const panelRows = (page: Page) => page.locator('[data-terminay-dashboard-panel]');
 
+const viewMode = (page: Page, mode: 'list' | 'board' | 'projects') =>
+	page.locator(`[data-terminay-dashboard-mode="${mode}"]`);
+const dashboardFilter = (page: Page) =>
+	page.locator('[data-terminay-dashboard-filter]');
+
+/**
+ * The view mode is remembered per device, so a suite that switches it would
+ * otherwise leak that choice into the next test. Every entry starts on List.
+ */
 async function showDashboard(page: Page): Promise<void> {
 	await homeControl(page).click();
 	await expect(dashboard(page)).toBeVisible();
+	await viewMode(page, 'list').click();
+	await expect(dashboard(page)).toHaveAttribute(
+		'data-terminay-dashboard-view',
+		'list',
+	);
 }
 
 async function activeProjectId(page: Page): Promise<string> {
@@ -306,5 +320,106 @@ test.describe('workspace dashboard', () => {
 		expect(squeezed.x + squeezed.width).toBeLessThanOrEqual(
 			barBox.x + barBox.width + 1,
 		);
+	});
+
+	test('the dashboard switches between its three views and remembers the choice', async ({
+		mainWindow,
+	}) => {
+		const projectId = await activeProjectId(mainWindow);
+		await showDashboard(mainWindow);
+
+		// Every view is an arrangement of the same projects, so the project is
+		// reachable in each of them.
+		await viewMode(mainWindow, 'projects').click();
+		await expect(dashboard(mainWindow)).toHaveAttribute(
+			'data-terminay-dashboard-view',
+			'projects',
+		);
+		await expect(
+			mainWindow.locator(
+				`[data-terminay-dashboard-project-card="${projectId}"]`,
+			),
+		).toBeVisible();
+
+		await viewMode(mainWindow, 'board').click();
+		await expect(dashboard(mainWindow)).toHaveAttribute(
+			'data-terminay-dashboard-view',
+			'board',
+		);
+		// A Board column with nothing in it is still shown: an empty column is a
+		// true statement about the workspace.
+		await expect(
+			mainWindow.locator('[data-terminay-dashboard-column]'),
+		).toHaveCount(4);
+		await expect(
+			mainWindow.locator('[data-terminay-dashboard-column="idle"] .workspace-dashboard__card'),
+		).not.toHaveCount(0);
+
+		// Leaving Home and coming back keeps the remembered view.
+		await mainWindow.locator('.project-tab').first().click();
+		await expect(dashboard(mainWindow)).toHaveCount(0);
+		await homeControl(mainWindow).click();
+		await expect(dashboard(mainWindow)).toHaveAttribute(
+			'data-terminay-dashboard-view',
+			'board',
+		);
+
+		await viewMode(mainWindow, 'list').click();
+	});
+
+	test('activating a card lands on its panel, exactly as a row does', async ({
+		mainWindow,
+	}) => {
+		const projectId = await activeProjectId(mainWindow);
+		await showDashboard(mainWindow);
+		await viewMode(mainWindow, 'projects').click();
+
+		const card = mainWindow
+			.locator(
+				`[data-terminay-dashboard-project-card="${projectId}"] .workspace-dashboard__card`,
+			)
+			.first();
+		await expect(card).toBeVisible();
+		await card.click();
+
+		await expect(dashboard(mainWindow)).toHaveCount(0);
+		await expect(mainWindow.locator('.project-tab--active')).toHaveAttribute(
+			'data-project-id',
+			projectId,
+		);
+		await expect(
+			mainWindow.locator('.project-workspace--active .terminal-panel'),
+		).toHaveCount(1);
+
+		await showDashboard(mainWindow);
+	});
+
+	test('a filter that matches nothing says so rather than looking like an empty workspace', async ({
+		mainWindow,
+	}) => {
+		const projectId = await activeProjectId(mainWindow);
+		await showDashboard(mainWindow);
+		await expect(projectRow(mainWindow, projectId)).toBeVisible();
+
+		await dashboardFilter(mainWindow).fill('nothing-matches-this-at-all');
+		await expect(projectRow(mainWindow, projectId)).toHaveCount(0);
+		await expect(
+			mainWindow.locator('.workspace-dashboard__empty'),
+		).toContainText('clear the filter');
+
+		await mainWindow
+			.locator('[data-terminay-dashboard-clear-filter]')
+			.click();
+		await expect(projectRow(mainWindow, projectId)).toBeVisible();
+	});
+
+	test('the summary counts the workspace', async ({ mainWindow }) => {
+		await showDashboard(mainWindow);
+		await expect(
+			mainWindow.locator('[data-terminay-dashboard-summary="idle"]'),
+		).toContainText('idle');
+		await expect(
+			mainWindow.locator('.workspace-dashboard__summary-projects'),
+		).toContainText('project');
 	});
 });

@@ -411,3 +411,55 @@ test('a device with no storage at all still works', async () => {
   assert.doesNotThrow(() => module.rememberHomeSelected('server-a', 'view-1', true))
   assert.equal(module.recallHomeSelected('server-a', 'view-1'), false)
 })
+
+/**
+ * Which shape a device shows the dashboard in is the same kind of fact as
+ * which tab it has selected: the person at the screen owns it, and a device
+ * that cannot remember simply starts on the List view.
+ */
+test('a device remembers the dashboard view it was last using', async () => {
+  const { module } = await loadModule()
+  globalThis.localStorage = fakeStorage()
+  try {
+    assert.equal(module.recallDashboardViewMode(), 'list')
+    module.rememberDashboardViewMode('board')
+    assert.equal(module.recallDashboardViewMode(), 'board')
+    module.rememberDashboardViewMode('projects')
+    assert.equal(module.recallDashboardViewMode(), 'projects')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('a stored dashboard view that is not one of the three is the List view', async () => {
+  const { module } = await loadModule()
+  globalThis.localStorage = fakeStorage({
+    'terminay.view.dashboard-mode.v1': 'kanban',
+  })
+  try {
+    assert.equal(module.recallDashboardViewMode(), 'list')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('storage that throws leaves the dashboard on the List view rather than failing', async () => {
+  const { module } = await loadModule()
+  globalThis.localStorage = {
+    getItem() { throw new Error('storage disabled') },
+    setItem() { throw new Error('storage disabled') },
+  }
+  try {
+    assert.doesNotThrow(() => module.rememberDashboardViewMode('board'))
+    assert.equal(module.recallDashboardViewMode(), 'list')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('a device with no storage at all still picks a dashboard view', async () => {
+  const { module } = await loadModule()
+  delete globalThis.localStorage
+  assert.doesNotThrow(() => module.rememberDashboardViewMode('projects'))
+  assert.equal(module.recallDashboardViewMode(), 'list')
+})
