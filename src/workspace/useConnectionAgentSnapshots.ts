@@ -9,19 +9,15 @@
  * still show that something over there is waiting for a person.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { WorkspaceConnection } from '../shared/connections/connectionRegistry.ts';
 import {
 	adaptServerAgentSnapshot,
 	subscribeServerAgentSnapshots,
 } from '../shared/rendererAgentConnection';
 import type { AgentStatusSnapshot } from '../types/agentStatus';
-import type { ActivityCountBadge } from './activityCountBadge.ts';
 import { subscriptionKey } from './connectionSubscriptionIdentity.ts';
-import {
-	agentBadgesForOtherServers,
-	type AgentSnapshotsByServer,
-} from './crossServerAgentBadges.ts';
+import type { AgentSnapshotsByServer } from './crossServerAgentBadges.ts';
 
 export type { AgentSnapshotsByServer };
 export {
@@ -83,20 +79,4 @@ export function useConnectionAgentSnapshots(
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [identity]);
 	return snapshots;
-}
-
-export function useCrossServerAgentBadges(
-	connections: readonly WorkspaceConnection[],
-	activeServerId: string | undefined,
-	projectForSession: (
-		serverId: string,
-		activationTerminalSessionId: string,
-	) => string | undefined,
-): Readonly<Record<string, ActivityCountBadge>> {
-	const snapshots = useConnectionAgentSnapshots(connections);
-	return useMemo(
-		() =>
-			agentBadgesForOtherServers(snapshots, activeServerId, projectForSession),
-		[activeServerId, projectForSession, snapshots],
-	);
 }
