@@ -30,6 +30,7 @@ import {
 	type GitServiceOptions,
 	type GitServiceReplay,
 	type GitStatusChangeEvent,
+	type GitStatusEntry,
 	type GitStatusResult,
 	type GitWorktreeId,
 	type GitWorktreeListResult,
@@ -231,7 +232,11 @@ export class GitService {
 					...empty,
 					state: 'ready',
 					branch,
-					entries: parsed.entries,
+					entries: await this.markDirectoryEntries(
+						parsed.entries,
+						discovery.worktreeRoot,
+						target.signal,
+					),
 					head,
 					bounded: parsed.bounded,
 				};
@@ -452,7 +457,11 @@ export class GitService {
 						statusResult.stdout,
 						this.limits.maxStatusEntries,
 					);
-					entries = parsed.entries;
+					entries = await this.markDirectoryEntries(
+						parsed.entries,
+						record.path,
+						target.signal,
+					);
 					statusBounded = parsed.bounded;
 					branch = {
 						...parsed.branch,
@@ -1348,6 +1357,43 @@ export class GitService {
 			'worktree-not-found',
 			'worktree is not part of the project repository',
 		);
+	}
+
+	/**
+	 * Git reports every status path as a plain name, so a symlinked directory
+	 * (a worktree's `node_modules` linked to its main checkout, for example) is
+	 * indistinguishable from a file. Only untracked entries can be directories,
+	 * so one bounded stat per untracked entry settles it for the UI.
+	 */
+	private async markDirectoryEntries(
+		entries: readonly GitStatusEntry[],
+		worktreeRoot: string,
+		signal?: AbortSignal,
+	): Promise<readonly GitStatusEntry[]> {
+		if (!entries.some((entry) => entry.kind === 'untracked')) return entries;
+		const marked: GitStatusEntry[] = [];
+		for (const entry of entries) {
+			if (entry.kind !== 'untracked' || entry.isDirectory) {
+				marked.push(entry);
+				continue;
+			}
+			if (signal?.aborted === true) {
+				marked.push(entry);
+				continue;
+			}
+			let isDirectory = false;
+			try {
+				// `stat` follows symlinks, which is what makes a linked directory
+				// present as the folder the user sees on disk.
+				isDirectory =
+					(await this.pathAdapter.stat(resolve(worktreeRoot, entry.path)))
+						.isDirectory === true;
+			} catch {
+				isDirectory = false;
+			}
+			marked.push(isDirectory ? { ...entry, isDirectory: true } : entry);
+		}
+		return marked;
 	}
 
 	private async discover(
