@@ -1,7 +1,12 @@
 /*
- * Every row is exactly one line. Truncation is CSS only — fixed-width cells for
- * the status, colour, kind and emoji, and one text cell that ellipsises — so a
- * narrow window can only shorten a row, never reflow, reorder, or hide one.
+ * Three views, one surface.
+ *
+ * In the List view every row is exactly one line, and truncation is CSS only —
+ * fixed-width cells for the status, colour, kind and emoji, and text cells that
+ * ellipsise — so a narrow window can only shorten a row, never reflow, reorder,
+ * or hide one. The card views reflow into fewer columns as the window narrows,
+ * but every field inside a card still truncates rather than wrapping, and no
+ * card is ever hidden.
  */
 
 .workspace-dashboard {
@@ -16,10 +21,27 @@
 	overflow: hidden;
 }
 
+/* --- Header ------------------------------------------------------------- */
+
 .workspace-dashboard__header {
 	flex: 0 0 auto;
-	padding: 18px 20px 10px;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 14px 20px 12px;
 	border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.workspace-dashboard__header-top {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 16px;
+	flex-wrap: wrap;
+}
+
+.workspace-dashboard__heading-box {
+	min-width: 0;
 }
 
 .workspace-dashboard__heading {
@@ -35,6 +57,163 @@
 	color: rgba(220, 226, 240, 0.55);
 }
 
+.workspace-dashboard__controls {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex: 0 1 auto;
+	min-width: 0;
+}
+
+.workspace-dashboard__filter {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	max-width: 260px;
+	padding: 0 8px;
+	height: 26px;
+	border-radius: 6px;
+	background: rgba(255, 255, 255, 0.06);
+	color: rgba(220, 226, 240, 0.5);
+}
+
+.workspace-dashboard__filter:focus-within {
+	outline: 1px solid rgba(120, 170, 255, 0.75);
+	outline-offset: -1px;
+	color: rgba(220, 226, 240, 0.8);
+}
+
+.workspace-dashboard__filter-input {
+	all: unset;
+	box-sizing: border-box;
+	min-width: 0;
+	width: 190px;
+	max-width: 100%;
+	font-size: 12px;
+	color: #dce2f0;
+}
+
+.workspace-dashboard__filter-input::placeholder {
+	color: rgba(220, 226, 240, 0.38);
+}
+
+.workspace-dashboard__modes {
+	display: flex;
+	align-items: center;
+	flex: 0 0 auto;
+	gap: 2px;
+	padding: 2px;
+	border-radius: 7px;
+	background: rgba(255, 255, 255, 0.06);
+}
+
+.workspace-dashboard__mode {
+	all: unset;
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	height: 22px;
+	padding: 0 9px;
+	border-radius: 5px;
+	cursor: pointer;
+	font-size: 11.5px;
+	font-weight: 500;
+	white-space: nowrap;
+	color: rgba(220, 226, 240, 0.62);
+}
+
+.workspace-dashboard__mode:hover {
+	color: #dce2f0;
+}
+
+.workspace-dashboard__mode--selected {
+	background: rgba(255, 255, 255, 0.11);
+	color: #ffffff;
+}
+
+.workspace-dashboard__mode:focus-visible {
+	outline: 1px solid rgba(120, 170, 255, 0.75);
+	outline-offset: -1px;
+}
+
+.workspace-dashboard__summary {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+	min-width: 0;
+}
+
+.workspace-dashboard__summary-chip {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 5px;
+	padding: 2px 9px;
+	border-radius: 999px;
+	font-size: 11.5px;
+	white-space: nowrap;
+	background: rgba(255, 255, 255, 0.05);
+	color: rgba(220, 226, 240, 0.55);
+}
+
+.workspace-dashboard__summary-count {
+	font-size: 13px;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+}
+
+.workspace-dashboard__summary-chip--attention {
+	color: #ffb4ae;
+	background: rgba(238, 98, 88, 0.16);
+}
+
+.workspace-dashboard__summary-chip--working {
+	color: #f0d17c;
+	background: rgba(232, 185, 49, 0.16);
+}
+
+.workspace-dashboard__summary-chip--done {
+	color: #8fe0ab;
+	background: rgba(69, 200, 116, 0.16);
+}
+
+.workspace-dashboard__summary-projects {
+	font-size: 11.5px;
+	color: rgba(220, 226, 240, 0.42);
+	white-space: nowrap;
+}
+
+.workspace-dashboard__clear-filter {
+	all: unset;
+	box-sizing: border-box;
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	margin-left: auto;
+	padding: 2px 9px;
+	border-radius: 999px;
+	cursor: pointer;
+	font-size: 11.5px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: rgba(220, 226, 240, 0.72);
+	background: rgba(120, 170, 255, 0.16);
+}
+
+.workspace-dashboard__clear-filter:hover {
+	color: #ffffff;
+}
+
+.workspace-dashboard__clear-filter:focus-visible {
+	outline: 1px solid rgba(120, 170, 255, 0.75);
+	outline-offset: -1px;
+}
+
+/* --- List view ---------------------------------------------------------- */
+
 .workspace-dashboard__list {
 	flex: 1;
 	min-height: 0;
@@ -46,7 +225,9 @@
 
 .workspace-dashboard__empty {
 	margin: 18px 10px;
+	max-width: 46ch;
 	font-size: 13px;
+	line-height: 1.5;
 	color: rgba(220, 226, 240, 0.55);
 }
 
@@ -84,8 +265,11 @@
 	margin-top: 0;
 }
 
+/* Status, colour, kind, title, then the agent detail that fills what is left.
+   The detail cell is `minmax(0, auto)` so it surrenders width before the title
+   does: which agent it is matters more than which model it is running. */
 .workspace-dashboard__row--panel {
-	grid-template-columns: 14px 3px 15px minmax(0, 1fr);
+	grid-template-columns: 14px 3px 15px minmax(0, auto) minmax(0, 1fr);
 	gap: 7px;
 	padding-left: 22px;
 	color: rgba(220, 226, 240, 0.82);
@@ -96,10 +280,12 @@
 	height: 15px;
 	border-radius: 999px;
 	background: var(--row-color, #4c5563);
+	flex: 0 0 auto;
 }
 
 .workspace-dashboard__kind {
 	color: rgba(220, 226, 240, 0.45);
+	flex: 0 0 auto;
 }
 
 .workspace-dashboard__title {
@@ -108,6 +294,25 @@
 	text-overflow: ellipsis;
 	white-space: nowrap;
 	font-size: 12.5px;
+}
+
+.workspace-dashboard__row-detail {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 11.5px;
+	color: rgba(220, 226, 240, 0.42);
+}
+
+.workspace-dashboard__unread {
+	display: inline-block;
+	width: 6px;
+	height: 6px;
+	margin-left: 6px;
+	border-radius: 999px;
+	background: #78aaff;
+	vertical-align: middle;
 }
 
 .workspace-dashboard__counts {
@@ -147,14 +352,302 @@
 	font-weight: 500;
 }
 
-
 /* The server a row belongs to. Rendered only when the window has more than
    one connection attached: with one server it says nothing. */
 .workspace-dashboard__server {
-  flex: 0 0 auto;
-  margin-left: auto;
-  padding-left: 0.75rem;
-  opacity: 0.6;
-  font-size: 0.85em;
-  white-space: nowrap;
+	flex: 0 0 auto;
+	padding-left: 0.75rem;
+	opacity: 0.6;
+	font-size: 0.85em;
+	white-space: nowrap;
+}
+
+.workspace-dashboard__row--project .workspace-dashboard__server {
+	margin-left: auto;
+}
+
+/* --- Board view --------------------------------------------------------- */
+
+.workspace-dashboard__board {
+	flex: 1;
+	min-height: 0;
+	min-width: 0;
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 10px;
+	padding: 12px 14px 16px;
+	overflow: hidden;
+}
+
+@media (max-width: 900px) {
+	.workspace-dashboard__board {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		overflow-y: auto;
+	}
+}
+
+@media (max-width: 520px) {
+	.workspace-dashboard__board {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+.workspace-dashboard__column {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+	border-radius: 9px;
+	background: rgba(255, 255, 255, 0.03);
+}
+
+.workspace-dashboard__column-head {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	flex: 0 0 auto;
+	padding: 9px 11px 7px;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.workspace-dashboard__column-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 11.5px;
+	font-weight: 700;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: rgba(220, 226, 240, 0.6);
+}
+
+.workspace-dashboard__column--attention .workspace-dashboard__column-name {
+	color: #ffb4ae;
+}
+
+.workspace-dashboard__column--working .workspace-dashboard__column-name {
+	color: #f0d17c;
+}
+
+.workspace-dashboard__column--done .workspace-dashboard__column-name {
+	color: #8fe0ab;
+}
+
+.workspace-dashboard__column-count {
+	margin-left: auto;
+	flex: 0 0 auto;
+	padding: 0 6px;
+	border-radius: 999px;
+	font-size: 11px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	color: rgba(220, 226, 240, 0.6);
+	background: rgba(255, 255, 255, 0.07);
+}
+
+.workspace-dashboard__column-body {
+	display: flex;
+	flex-direction: column;
+	gap: 7px;
+	min-height: 0;
+	min-width: 0;
+	padding: 8px;
+	overflow-y: auto;
+	overflow-x: hidden;
+}
+
+.workspace-dashboard__column-empty {
+	margin: 6px 3px;
+	font-size: 11.5px;
+	color: rgba(220, 226, 240, 0.32);
+}
+
+/* --- Projects view ------------------------------------------------------ */
+
+.workspace-dashboard__projects {
+	flex: 1;
+	min-height: 0;
+	min-width: 0;
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+	align-content: start;
+	gap: 10px;
+	padding: 12px 14px 16px;
+	overflow-y: auto;
+	overflow-x: hidden;
+}
+
+.workspace-dashboard__project-card {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	border-radius: 9px;
+	background: rgba(255, 255, 255, 0.03);
+	overflow: hidden;
+}
+
+.workspace-dashboard__project-card-head {
+	all: unset;
+	box-sizing: border-box;
+	display: grid;
+	grid-template-columns: 3px minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 9px 11px;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+	cursor: pointer;
+	font-weight: 600;
+	white-space: nowrap;
+	color: inherit;
+}
+
+.workspace-dashboard__project-card-head:hover {
+	background: rgba(255, 255, 255, 0.04);
+}
+
+.workspace-dashboard__project-card-head:focus-visible {
+	outline: 1px solid rgba(120, 170, 255, 0.75);
+	outline-offset: -1px;
+}
+
+.workspace-dashboard__project-card-body {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	min-width: 0;
+	padding: 8px;
+}
+
+/* --- Cards -------------------------------------------------------------- */
+
+.workspace-dashboard__card {
+	all: unset;
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	width: 100%;
+	min-width: 0;
+	padding: 8px 10px;
+	border-radius: 7px;
+	border-left: 2px solid var(--row-color, #4c5563);
+	cursor: pointer;
+	background: rgba(255, 255, 255, 0.045);
+	color: #dce2f0;
+}
+
+.workspace-dashboard__card:hover {
+	background: rgba(255, 255, 255, 0.08);
+}
+
+.workspace-dashboard__card:focus-visible {
+	outline: 1px solid rgba(120, 170, 255, 0.75);
+	outline-offset: -1px;
+}
+
+.workspace-dashboard__card--unread {
+	background: rgba(120, 170, 255, 0.1);
+}
+
+.workspace-dashboard__card-head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
+.workspace-dashboard__card-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12.5px;
+	font-weight: 600;
+}
+
+.workspace-dashboard__project-chip {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	min-width: 0;
+	font-size: 11px;
+	color: rgba(220, 226, 240, 0.5);
+}
+
+.workspace-dashboard__project-chip-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.workspace-dashboard__meta {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 11px;
+	color: rgba(220, 226, 240, 0.45);
+}
+
+/* The prompt is the one field allowed two lines: it is a sentence, and one
+   line of it is often not enough to tell two agents apart. It still clamps. */
+.workspace-dashboard__prompt {
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	line-clamp: 2;
+	min-width: 0;
+	overflow: hidden;
+	font-size: 11.5px;
+	line-height: 1.4;
+	color: rgba(220, 226, 240, 0.68);
+}
+
+.workspace-dashboard__footnotes {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	font-size: 10.5px;
+	color: rgba(220, 226, 240, 0.4);
+}
+
+.workspace-dashboard__state {
+	flex: 0 0 auto;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	font-weight: 700;
+}
+
+.workspace-dashboard__card[data-terminay-dashboard-status='waiting']
+	.workspace-dashboard__state,
+.workspace-dashboard__card[data-terminay-dashboard-status='blocked']
+	.workspace-dashboard__state {
+	color: #ffb4ae;
+}
+
+.workspace-dashboard__card[data-terminay-dashboard-status='working']
+	.workspace-dashboard__state {
+	color: #f0d17c;
+}
+
+.workspace-dashboard__card[data-terminay-dashboard-status='done']
+	.workspace-dashboard__state {
+	color: #8fe0ab;
+}
+
+.workspace-dashboard__elapsed,
+.workspace-dashboard__subagents {
+	flex: 0 0 auto;
+}
+
+.workspace-dashboard__note {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
