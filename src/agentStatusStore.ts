@@ -242,22 +242,25 @@ function applyLifecycleEvent(
 				completionOutcome: undefined,
 				summary: undefined,
 			});
+		// Which tool is running is an observation about a state something else
+		// established. A tool record written behind the work it describes must
+		// not put a session that has already finished back to work.
 		case 'tool.started':
-			return withState(entry, 'working', event, {
+			return withState(entry, entry.state, event, {
 				active: true,
 				activeTools: addTool(entry.activeTools, {
 					...event.tool,
 					startedAt: event.occurredAt,
 				}),
-				waitingReason: undefined,
+				inferred: entry.inferred,
 			});
 		case 'tool.finished':
-			return withState(entry, 'working', event, {
+			return withState(entry, entry.state, event, {
 				active: true,
 				activeTools: entry.activeTools.filter(
 					(tool) => tool.id !== event.toolId,
 				),
-				waitingReason: undefined,
+				inferred: entry.inferred,
 			});
 		case 'wait.started':
 			return withState(entry, event.state, event, {
