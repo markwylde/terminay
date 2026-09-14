@@ -1,7 +1,4 @@
 import type { AgentRecordContext } from '@terminay/extension-api';
-import { QUIET_RECORD } from './quiescence.js';
-
-const QUIET_RECORD_TYPE = QUIET_RECORD.type;
 
 /**
  * The synthetic record a conversation switch produces. It never reaches a
@@ -15,21 +12,61 @@ export const CONVERSATION_SWITCH_RECORD = {
 const CONVERSATION_SWITCH_RECORD_TYPE = CONVERSATION_SWITCH_RECORD.type;
 
 /**
- * The synthetic record the provider injects when the process's own session
- * file reports `status: "idle"`. The CLI writes that itself, so it outranks
- * anything inferred from journals: no subagent can still be running once the
- * process that owns it says it is idle.
+ * The synthetic record the provider injects for the `status` its own
+ * `~/.claude/sessions/<pid>.json` reports, and again for every change to it.
+ *
+ * This is the only thing that moves the root between working, waiting and
+ * done. The CLI maintains that word itself, for itself, and rewrites it within
+ * milliseconds of the state changing; a journal, by contrast, says only what
+ * has been written down so far, which is why reading a turn's end out of it
+ * needed a heuristic and still missed. Nothing here is inferred.
  */
-export const SESSION_IDLE_RECORD_TYPE = 'terminay-session-idle';
-/** Builds the idle record; `idleSince` is the file's own `statusUpdatedAt`. */
-export function sessionIdleRecord(idleSince: number | undefined): {
-	readonly type: typeof SESSION_IDLE_RECORD_TYPE;
-	readonly idleSince?: number;
-} {
+export const SESSION_STATUS_RECORD_TYPE = 'terminay-session-status';
+/**
+ * The CLI's own status vocabulary, as written to its session file. Captured
+ * from the 2.1.270 binary, which validates the word it reads back against
+ * exactly this list and drops anything else.
+ *
+ * `shell` is the CLI having handed the terminal to a shell. Like `idle` it
+ * means no work is in flight, so the two are one state here and moving between
+ * them publishes nothing.
+ */
+export type ClaudeSessionStatus = 'busy' | 'shell' | 'idle' | 'waiting';
+const CLAUDE_SESSION_STATUSES: readonly ClaudeSessionStatus[] = [
+	'busy',
+	'shell',
+	'idle',
+	'waiting',
+];
+/** The three states the row actually has; `shell` and `idle` are both quiet. */
+type RootStatus = 'busy' | 'waiting' | 'quiet';
+function rootStatusFor(status: ClaudeSessionStatus): RootStatus {
+	return status === 'busy' || status === 'waiting' ? status : 'quiet';
+}
+export interface SessionStatusRecord {
+	readonly type: typeof SESSION_STATUS_RECORD_TYPE;
+	readonly status: ClaudeSessionStatus;
+	/** The file's own `statusUpdatedAt`, epoch milliseconds. */
+	readonly statusUpdatedAt?: number;
+	/** The file's own `waitingFor`, when it says what the wait is for. */
+	readonly waitingFor?: string;
+}
+export function sessionStatusRecord(
+	status: ClaudeSessionStatus,
+	statusUpdatedAt: number | undefined,
+	waitingFor: string | undefined,
+): SessionStatusRecord {
 	return {
-		type: SESSION_IDLE_RECORD_TYPE,
-		...(idleSince === undefined ? {} : { idleSince }),
+		type: SESSION_STATUS_RECORD_TYPE,
+		status,
+		...(statusUpdatedAt === undefined ? {} : { statusUpdatedAt }),
+		...(waitingFor === undefined ? {} : { waitingFor }),
 	};
+}
+export function isClaudeSessionStatus(
+	value: unknown,
+): value is ClaudeSessionStatus {
+	return CLAUDE_SESSION_STATUSES.includes(value as ClaudeSessionStatus);
 }
 
 import { safeAgentString } from '@terminay/extension-api';
@@ -92,17 +129,26 @@ function metadata(message: JsonObject): { model?: { id: string } } {
 	return value ? { model: value } : {};
 }
 
-/** Permission modes in which Claude Code never prompts the user. */
-const NON_PROMPTING_MODES = new Set(['bypassPermissions', 'plan']);
-
 interface ClaudeState {
 	started: boolean;
-	/** True between a turn header and that turn's `turn_duration`. */
-	turnOpen: boolean;
-	/** True while the entry is held `waiting` by the quiescence inference. */
-	inferredWaiting: boolean;
-	/** The session's most recent recorded permission mode. */
-	permissionMode?: string;
+	/**
+	 * The last status published for the root, so a repeated status word
+	 * republishes nothing. `undefined` until the session file is first read.
+	 */
+	status?: RootStatus;
+	/**
+	 * True once this mapper has published a state for the row. `session.started`
+	 * leaves it idle, which is what a session that has run nothing should read
+	 * as; everything after that is a state something asserted.
+	 */
+	announced: boolean;
+	/**
+	 * True while a recorded fault stands. The CLI writes no `turn_duration`
+	 * after one and returns to its prompt, so the file reports idle within
+	 * moments; completing the turn there would replace the fault with a
+	 * successful completion and the user would never see it.
+	 */
+	faulted: boolean;
 	/** True once the session's first turn header has been consumed. */
 	headerSeen: boolean;
 	/** True once an `ai-title` has named the root, so a prompt no longer relabels it. */
@@ -130,10 +176,10 @@ interface ClaudeState {
 function newState(): ClaudeState {
 	return {
 		started: false,
+		announced: false,
+		faulted: false,
 		headerSeen: false,
 		titled: false,
-		turnOpen: false,
-		inferredWaiting: false,
 		children: new Set<string>(),
 		completed: new Set<string>(),
 	};
@@ -148,27 +194,36 @@ function newState(): ClaudeState {
 function resetConversation(state: ClaudeState): void {
 	state.headerSeen = false;
 	state.titled = false;
-	state.turnOpen = false;
-	state.inferredWaiting = false;
-	delete state.permissionMode;
+	state.faulted = false;
 	state.children.clear();
 	state.completed.clear();
 }
 
 /**
- * Claude Code project-session JSONL mapping v0.1. It reads only lifecycle
- * fields and an allowlisted user-text preview. Tool input/output and assistant
- * text never cross the extension boundary.
+ * Claude Code session mapping. It reads only lifecycle fields and an
+ * allowlisted user-text preview. Tool input/output and assistant text never
+ * cross the extension boundary.
  *
- * Two behaviours of the real CLI shape this mapping. Its header block is
- * rewritten after every user prompt and again after every `turn_duration`,
- * not only at session start, so a later header is bookkeeping: it neither
- * restarts the session nor opens a turn. The user prompt record opens a turn
- * and `turn_duration` closes it. And an assistant
- * record is flushed together with its `tool_result` once the tool completes, so
- * the journal never shows an outstanding tool call: `AskUserQuestion` records
- * the question only after it has been answered and is therefore not a live
- * waiting signal.
+ * The published `mappingVersion` is deliberately unchanged. It names the
+ * records this mapping reads, and those are the same records as before; what
+ * changed is which of them is allowed to decide the row's state. Bumping it
+ * stops the host binding the provider at all, so whatever couples that version
+ * to admission is its own contract and not this fix's to unpick.
+ *
+ * Two lanes, and they do not overlap:
+ *
+ * - The session file says what the root *is*. Its `status` — `busy`, `idle`,
+ *   `shell`, `waiting` — is the only thing that moves the root between
+ *   working, waiting and done. The CLI maintains that word for its own use and rewrites it as
+ *   the state changes, so there is nothing to infer and nothing to miss.
+ * - The journal says what the root is *doing*. Title, prompt, model, which
+ *   tool is running, and the subagents it launched. None of it sets the root's
+ *   state: a journal is written behind the work it describes, and a record
+ *   landing after the CLI has gone idle must not put a finished session back
+ *   to work.
+ *
+ * Subagents keep their own journal-derived lifecycle: they have no session
+ * file of their own, and `idle` on the parent's file ends any that are left.
  */
 export function createClaudeRecordMapper(): (
 	record: unknown,
@@ -199,75 +254,16 @@ export function mapClaudeRecord(
 		// The process changed conversation in place. Anything the conversation
 		// left open ends with it — a turn abandoned by `/clear` is cancelled, not
 		// completed — and the entry then follows the process: the next journal's
-		// own records relabel it and open its turns.
-		if (scope.inferredWaiting)
-			publisher.waitFinished({
-				waitId: `inferred-wait:${session.binding.providerSessionId}`,
-			});
+		// own records relabel it and carry none of its subagents.
 		for (const child of scope.children)
 			publisher.subagentDone({ subagentId: child, outcome: 'cancelled' });
-		if (scope.turnOpen) publisher.done({ outcome: 'cancelled' });
 		resetConversation(scope);
 		return;
 	}
 
-	if (type === SESSION_IDLE_RECORD_TYPE) {
-		// A child whose completion was never recorded — killed, or interrupted
-		// before its journal closed — would otherwise hold the root `working`
-		// for ever. The process says it is idle, so every open child is over.
-		if (typeof envelope.idleSince === 'number')
-			scope.idleSince = Math.max(scope.idleSince ?? 0, envelope.idleSince);
-		// The same goes for the root: a turn still open when the CLI says idle
-		// never wrote its `turn_duration` — interrupted, or lost — and is over.
-		if (scope.inferredWaiting) {
-			scope.inferredWaiting = false;
-			publisher.waitFinished({
-				waitId: `inferred-wait:${session.binding.providerSessionId}`,
-			});
-		}
-		if (scope.turnOpen) {
-			scope.turnOpen = false;
-			publisher.done({ outcome: 'cancelled' });
-		}
-		for (const child of scope.children) {
-			scope.completed.add(child);
-			publisher.subagentDone({ subagentId: child, outcome: 'cancelled' });
-		}
-		scope.children.clear();
+	if (type === SESSION_STATUS_RECORD_TYPE) {
+		applySessionStatus(envelope, session, scope);
 		return;
-	}
-
-	if (type === QUIET_RECORD_TYPE) {
-		// Silence is only evidence of a prompt inside an open turn, and only in a
-		// mode that can prompt at all. A bypassing session never asks.
-		if (!scope.turnOpen || scope.inferredWaiting) return;
-		if (
-			scope.permissionMode !== undefined &&
-			NON_PROMPTING_MODES.has(scope.permissionMode)
-		)
-			return;
-		scope.inferredWaiting = true;
-		publisher.waitStarted({
-			waitId: `inferred-wait:${session.binding.providerSessionId}`,
-			state: 'waiting',
-			reason: 'input-request-inferred',
-			inferred: true,
-		});
-		return;
-	}
-	// Any record the provider actually wrote answers an inferred wait.
-	if (scope.inferredWaiting) {
-		scope.inferredWaiting = false;
-		publisher.waitFinished({
-			waitId: `inferred-wait:${session.binding.providerSessionId}`,
-		});
-	}
-
-	// The recorded permission mode decides whether this session can prompt at
-	// all, so it is tracked before any early return in the header handling.
-	if (type === 'permission-mode') {
-		const mode = bounded(envelope.permissionMode, 64);
-		if (mode !== undefined) scope.permissionMode = mode;
 	}
 
 	// The header block is preceded by `last-prompt` and `ai-title` in the real
@@ -277,17 +273,14 @@ export function mapClaudeRecord(
 		!scope.started &&
 		(TURN_HEADER.has(type) || type === 'ai-title' || type === 'last-prompt')
 	) {
-		scope.started = true;
+		start(session, scope, metadata(message));
 		scope.headerSeen = TURN_HEADER.has(type);
-		publisher.sessionStarted({ title: 'Claude Code', ...metadata(message) });
 		if (TURN_HEADER.has(type)) return;
 	}
 	if (TURN_HEADER.has(type)) {
-		// Header blocks are bookkeeping, not turn boundaries. The real CLI writes
-		// one at session start, another after the user prompt has been recorded,
-		// and another after `turn_duration`, so opening a turn here would leave a
-		// phantom turn open after every completed one. The user prompt record
-		// opens a turn and `turn_duration` closes it.
+		// Header blocks are bookkeeping. The real CLI writes one at session
+		// start, another after the user prompt has been recorded, and another
+		// after `turn_duration`; none of them is a state boundary.
 		scope.headerSeen = true;
 		return;
 	}
@@ -306,32 +299,36 @@ export function mapClaudeRecord(
 		if (prompt && !scope.titled) publisher.metadataChanged({ title: prompt });
 		return;
 	}
-	// Everything below changes state. A record written at or before the CLI's
-	// last idle mark is history: replaying it live would show a turn that ended
-	// before this terminal bound, for as long as the replay takes.
-	if (beforeIdle(envelope, scope)) {
-		// A turn that finished before the mark still ends with its outcome, so
-		// a terminal binding just after a turn shows DONE rather than nothing;
-		// it just never passes through `working` on the way.
-		if (type === 'system' && envelope.subtype === 'turn_duration') {
-			scope.turnOpen = false;
-			publisher.done({ outcome: 'success' });
-		}
-		return;
-	}
-	if (type === 'user' && interrupted(message)) {
-		// The turn was stopped before its `turn_duration` could be written.
-		if (scope.turnOpen) {
-			scope.turnOpen = false;
-			publisher.done({ outcome: 'cancelled' });
-		}
-		return;
+	// Everything below is what the root is doing, not what it is.
+	//
+	// Which tool is running is only true of the present, so a record written at
+	// or before the CLI's last idle mark — the journal is replayed from its
+	// start on every bind — contributes nothing but the subagents it has to
+	// keep closed. What the session is *about* has no such expiry: the model it
+	// runs and the prompt it was given are read from those records too, or a
+	// session that was already idle when this terminal bound would show a row
+	// with no label and no model.
+	const stale = beforeIdle(envelope, scope);
+	// A finished turn in the journal is history, and history is the one thing a
+	// journal is authoritative about. A session bound while it is quiet, whose
+	// journal already holds a completed turn — a resumed conversation, say —
+	// reads done rather than idle. It fires once, and never for a row the
+	// session file has put to work: the file still owns the present.
+	if (
+		!scope.announced &&
+		scope.status === 'quiet' &&
+		((type === 'system' && envelope.subtype === 'turn_duration') ||
+			(type === 'assistant' && message.stop_reason === 'end_turn'))
+	) {
+		scope.announced = true;
+		publisher.done({ outcome: 'success' });
 	}
 	if (type === 'user' && message.role === 'user' && envelope.isMeta !== true) {
 		const results = content(message).filter(
 			(item) => item.type === 'tool_result',
 		);
 		if (results.length > 0) {
+			if (stale) return;
 			for (const item of results) {
 				const toolId = id(item.tool_use_id, 'tool', envelope.uuid);
 				if (toolId)
@@ -343,35 +340,32 @@ export function mapClaudeRecord(
 			return;
 		}
 		if (finishSubagent(message, scope, publisher)) return;
+		// The prompt labels the row. Whether the session is working on it is the
+		// session file's to say.
 		const promptText = userText(message);
-		if (promptText === undefined) return;
-		const turnId = id(envelope.promptId, 'user', envelope.uuid);
-		if (turnId) {
-			scope.turnOpen = true;
-			publisher.turnStarted({ turnId, promptText });
-		}
+		if (promptText !== undefined) publisher.metadataChanged({ promptText });
 		return;
 	}
 	if (type === 'assistant' && message.role === 'assistant') {
 		if (envelope.isApiErrorMessage === true) {
-			// A recorded fault that halts the turn. A `turn_duration` arriving
-			// afterwards completes the turn and supersedes this.
+			// A recorded fault, and the one thing the journal says that the status
+			// word does not. It is an attention signal, not a claim about whether
+			// work is in flight, and the session going to work again supersedes
+			// it.
+			if (stale) return;
 			const waitId = id(envelope.uuid, 'error', envelope.requestId);
-			if (waitId)
-				publisher.waitStarted({
-					waitId,
-					state: 'blocked',
-					reason: 'api-error',
-				});
+			if (!waitId) return;
+			scope.faulted = true;
+			scope.announced = true;
+			publisher.waitStarted({
+				waitId,
+				state: 'blocked',
+				reason: 'api-error',
+			});
 			return;
 		}
-		const turnId = id(envelope.uuid, 'assistant', envelope.requestId);
 		const modelMetadata = metadata(message);
 		if (modelMetadata.model) publisher.metadataChanged(modelMetadata);
-		if (turnId) {
-			scope.turnOpen = true;
-			publisher.turnStarted({ turnId });
-		}
 		for (const item of content(message).filter(
 			(candidate) => candidate.type === 'tool_use',
 		)) {
@@ -383,7 +377,7 @@ export function mapClaudeRecord(
 				// The launch record is replayed from the start of the journal, so a
 				// child that already completed must not be re-opened by it.
 				if (scope.completed.has(toolId)) continue;
-				if (beforeIdle(envelope, scope)) {
+				if (stale) {
 					// Launched before the CLI last went idle: finished, one way or
 					// another, and its own journal must not re-open it either.
 					scope.completed.add(toolId);
@@ -400,18 +394,96 @@ export function mapClaudeRecord(
 					...(childPrompt ? { promptText: childPrompt } : {}),
 					...metadata(message),
 				});
-			} else {
+			} else if (!stale) {
 				publisher.toolStarted({ toolId, name });
 			}
 		}
-		if (message.stop_reason === 'end_turn')
-			publisher.done({ outcome: 'success' });
 		return;
 	}
-	if (type === 'system' && envelope.subtype === 'turn_duration') {
-		scope.turnOpen = false;
-		publisher.done({ outcome: 'success' });
+}
+
+/**
+ * The root's state, and the only thing that sets it.
+ *
+ * `busy`, `waiting` and `idle` are the CLI's own words about itself, so each
+ * is published as it arrives and a repeated word publishes nothing. `idle`
+ * additionally closes any subagent still open: the process that owns them says
+ * it is doing nothing, so whatever they were doing is over, whether or not
+ * their journals ever said so.
+ *
+ * The first status read is a baseline, not a transition. Binding to a session
+ * that is sitting at its prompt must leave the row idle: `done` is a turn
+ * having ended, it marks the row unread, and a session that has not run
+ * anything since this terminal bound has ended nothing.
+ */
+function applySessionStatus(
+	envelope: JsonObject,
+	session: AgentRecordContext,
+	scope: ClaudeState,
+): void {
+	const word = envelope.status;
+	if (!isClaudeSessionStatus(word)) return;
+	start(session, scope, {});
+	const publisher = session.publish;
+	const status = rootStatusFor(word);
+	const at = envelope.statusUpdatedAt;
+	if (typeof at === 'number' && Number.isFinite(at) && status === 'quiet')
+		scope.idleSince = Math.max(scope.idleSince ?? 0, at);
+	if (scope.status === status) return;
+	const previous = scope.status;
+	scope.status = status;
+	const waitId = `session-wait:${session.binding.providerSessionId}`;
+	if (status === 'waiting') {
+		scope.announced = true;
+		publisher.waitStarted({
+			waitId,
+			state: 'waiting',
+			reason: bounded(envelope.waitingFor, 200) ?? 'input-request',
+		});
+		return;
 	}
+	// Leaving a wait is its own event; the store admits a completion straight
+	// from `waiting`, but not a turn.
+	if (previous === 'waiting' && status === 'busy') {
+		scope.announced = true;
+		scope.faulted = false;
+		publisher.waitFinished({ waitId });
+		return;
+	}
+	if (status === 'busy') {
+		scope.announced = true;
+		scope.faulted = false;
+		publisher.turnStarted({
+			turnId: `status:${typeof at === 'number' ? at : Date.now()}`,
+		});
+		return;
+	}
+	for (const child of scope.children) {
+		scope.completed.add(child);
+		publisher.subagentDone({ subagentId: child, outcome: 'cancelled' });
+	}
+	scope.children.clear();
+	// Quiet is only a completion if there was something to complete. The entry
+	// is already idle from `session.started`, which is what a session sitting
+	// at its prompt should read as.
+	if (!scope.announced) return;
+	// A turn that ended in a recorded fault ended in that fault. The CLI is back
+	// at its prompt either way, so the file says idle either way, and completing
+	// here would replace an attention state with a success the user never got.
+	// The block stands until the session goes to work again.
+	if (scope.faulted) return;
+	publisher.done({ outcome: 'success' });
+}
+
+/** One `session.started` per bound session, from whichever lane arrives first. */
+function start(
+	session: AgentRecordContext,
+	scope: ClaudeState,
+	extra: { model?: { id: string } },
+): void {
+	if (scope.started) return;
+	scope.started = true;
+	session.publish.sessionStarted({ title: 'Claude Code', ...extra });
 }
 
 /**

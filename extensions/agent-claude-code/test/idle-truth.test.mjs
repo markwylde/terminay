@@ -34,7 +34,7 @@ const projectDirectory = `${home}/${claudeProjectDirectoryPath(sessionFile.cwd)}
 const journalPath = `${projectDirectory}/${sessionFile.sessionId}.jsonl`;
 const sessionFilePath = `${home}/.claude/sessions/${sessionFile.pid}.json`;
 
-function terminal(file, records) {
+function terminal(file, records, rewrites) {
 	return fixtureTerminal({
 		foregroundExecutable: 'claude',
 		cwd: file.cwd,
@@ -42,6 +42,9 @@ function terminal(file, records) {
 		startedAt: new Date(file.startedAt).toISOString(),
 		openFilePaths: [],
 		files: { [journalPath]: records, [sessionFilePath]: [file] },
+		...(rewrites
+			? { fileRewrites: { [sessionFilePath]: rewrites.map((one) => [one]) } }
+			: {}),
 	});
 }
 
@@ -64,10 +67,11 @@ test('a session the CLI reports idle is not shown working, whatever its journal 
 	}
 });
 
-test('a root turn stopped before its turn_duration is closed by the interruption record', async () => {
-	// Records written after the idle mark are live. A prompt opens a turn; the
-	// user stops it; the CLI writes only the interruption, never a
-	// `turn_duration`.
+test('a turn the CLI never wrote a turn_duration for still ends, because the file says so', async () => {
+	// The case that used to strand a row: the user stops a turn, so the CLI
+	// writes the interruption and never a `turn_duration`. Nothing in the
+	// journal closes the turn. The file going idle does, and that is the only
+	// thing that has to be right.
 	const after = (seconds) =>
 		new Date(sessionFile.statusUpdatedAt + seconds * 1000).toISOString();
 	const live = [
@@ -105,17 +109,23 @@ test('a root turn stopped before its turn_duration is closed by the interruption
 			},
 		},
 	];
+	const working = {
+		...sessionFile,
+		status: 'busy',
+		statusUpdatedAt: sessionFile.statusUpdatedAt + 25_000,
+	};
+	const stopped = {
+		...sessionFile,
+		status: 'idle',
+		statusUpdatedAt: sessionFile.statusUpdatedAt + 45_000,
+	};
 	const harness = await createAgentExtensionHarness(extension);
 	try {
-		await harness.observe(terminal(sessionFile, live));
+		await harness.observe(terminal(working, live, [stopped]));
 		const kinds = harness.events().map((event) => event.kind);
-		assert.ok(kinds.includes('turn.started'), 'the live prompt opened a turn');
-		assert.equal(harness.projection().working, false, 'the turn was stopped');
-		assert.equal(
-			harness.events().findLast((event) => event.kind === 'agent.done')
-				?.outcome,
-			'cancelled',
-		);
+		assert.ok(kinds.includes('turn.started'), 'the busy file opened a turn');
+		assert.equal(kinds.at(-1), 'agent.done', 'the idle file closed it');
+		assert.equal(harness.projection().working, false);
 	} finally {
 		await harness.dispose();
 	}
