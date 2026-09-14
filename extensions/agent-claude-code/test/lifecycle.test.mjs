@@ -122,6 +122,28 @@ test('the session file working, then idle, is the whole of a turn', () => {
 	assert.equal(events.at(-1).outcome, 'success');
 });
 
+test('binding to a session sitting at its prompt reads idle, never done', () => {
+	// `done` is a turn having ended, and it marks the row unread. A session
+	// that has run nothing since this terminal bound has ended nothing, so the
+	// first status read is a baseline and not a transition.
+	const events = collect([status('idle', 1_000), ...header()]);
+	assert.deepEqual(
+		events.map((event) => event.kind),
+		['sessionStarted', 'metadataChanged'],
+	);
+	// And the first turn after it still completes normally.
+	const whole = collect([
+		status('idle', 1_000),
+		...header(),
+		status('busy', 2_000),
+		status('idle', 3_000),
+	]);
+	assert.deepEqual(whole.map((event) => event.kind).slice(-2), [
+		'turnStarted',
+		'done',
+	]);
+});
+
 test('a repeated status word republishes nothing, and shell is quiet like idle', () => {
 	const events = collect([
 		status('busy', 1_000),

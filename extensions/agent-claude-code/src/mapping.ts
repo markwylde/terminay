@@ -372,6 +372,11 @@ export function mapClaudeRecord(
  * additionally closes any subagent still open: the process that owns them says
  * it is doing nothing, so whatever they were doing is over, whether or not
  * their journals ever said so.
+ *
+ * The first status read is a baseline, not a transition. Binding to a session
+ * that is sitting at its prompt must leave the row idle: `done` is a turn
+ * having ended, it marks the row unread, and a session that has not run
+ * anything since this terminal bound has ended nothing.
  */
 function applySessionStatus(
 	envelope: JsonObject,
@@ -415,7 +420,10 @@ function applySessionStatus(
 		publisher.subagentDone({ subagentId: child, outcome: 'cancelled' });
 	}
 	scope.children.clear();
-	publisher.done({ outcome: 'success' });
+	// Quiet is only a completion if there was something to complete. The entry
+	// is already idle from `session.started`, which is what a session sitting
+	// at its prompt should read as.
+	if (previous !== undefined) publisher.done({ outcome: 'success' });
 }
 
 /** One `session.started` per bound session, from whichever lane arrives first. */
