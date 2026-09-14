@@ -136,6 +136,12 @@ interface ClaudeState {
 	 * republishes nothing. `undefined` until the session file is first read.
 	 */
 	status?: RootStatus;
+	/**
+	 * True once this mapper has published a state for the row. `session.started`
+	 * leaves it idle, which is what a session that has run nothing should read
+	 * as; everything after that is a state something asserted.
+	 */
+	announced: boolean;
 	/** True once the session's first turn header has been consumed. */
 	headerSeen: boolean;
 	/** True once an `ai-title` has named the root, so a prompt no longer relabels it. */
@@ -163,6 +169,7 @@ interface ClaudeState {
 function newState(): ClaudeState {
 	return {
 		started: false,
+		announced: false,
 		headerSeen: false,
 		titled: false,
 		children: new Set<string>(),
@@ -287,6 +294,20 @@ export function mapClaudeRecord(
 	// session that was already idle when this terminal bound would show a row
 	// with no label and no model.
 	const stale = beforeIdle(envelope, scope);
+	// A finished turn in the journal is history, and history is the one thing a
+	// journal is authoritative about. A session bound while it is quiet, whose
+	// journal already holds a completed turn — a resumed conversation, say —
+	// reads done rather than idle. It fires once, and never for a row the
+	// session file has put to work: the file still owns the present.
+	if (
+		!scope.announced &&
+		scope.status === 'quiet' &&
+		((type === 'system' && envelope.subtype === 'turn_duration') ||
+			(type === 'assistant' && message.stop_reason === 'end_turn'))
+	) {
+		scope.announced = true;
+		publisher.done({ outcome: 'success' });
+	}
 	if (type === 'user' && message.role === 'user' && envelope.isMeta !== true) {
 		const results = content(message).filter(
 			(item) => item.type === 'tool_result',
@@ -396,6 +417,7 @@ function applySessionStatus(
 	scope.status = status;
 	const waitId = `session-wait:${session.binding.providerSessionId}`;
 	if (status === 'waiting') {
+		scope.announced = true;
 		publisher.waitStarted({
 			waitId,
 			state: 'waiting',
@@ -406,10 +428,12 @@ function applySessionStatus(
 	// Leaving a wait is its own event; the store admits a completion straight
 	// from `waiting`, but not a turn.
 	if (previous === 'waiting' && status === 'busy') {
+		scope.announced = true;
 		publisher.waitFinished({ waitId });
 		return;
 	}
 	if (status === 'busy') {
+		scope.announced = true;
 		publisher.turnStarted({
 			turnId: `status:${typeof at === 'number' ? at : Date.now()}`,
 		});
@@ -423,7 +447,8 @@ function applySessionStatus(
 	// Quiet is only a completion if there was something to complete. The entry
 	// is already idle from `session.started`, which is what a session sitting
 	// at its prompt should read as.
-	if (previous !== undefined) publisher.done({ outcome: 'success' });
+	if (!scope.announced) return;
+	publisher.done({ outcome: 'success' });
 }
 
 /** One `session.started` per bound session, from whichever lane arrives first. */

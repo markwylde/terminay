@@ -144,6 +144,49 @@ test('binding to a session sitting at its prompt reads idle, never done', () => 
 	]);
 });
 
+test('a quiet session whose journal holds a finished turn reads done', () => {
+	// A resumed conversation: the process is idle, but the journal it reopened
+	// already carries a completed turn. History is the one thing a journal is
+	// authoritative about, so the row reads done rather than idle.
+	const events = collect([
+		status('idle', 9_000),
+		...header(),
+		{
+			type: 'assistant',
+			sessionId,
+			uuid: 'a1',
+			timestamp: '2026-09-06T10:00:00.000Z',
+			message: { role: 'assistant', content: [], stop_reason: 'end_turn' },
+		},
+	]);
+	assert.equal(events.at(-1).kind, 'done');
+	assert.equal(
+		events.filter((event) => event.kind === 'done').length,
+		1,
+		'history settles the row once, not once per record',
+	);
+});
+
+test('journal history never moves a row the session file has put to work', () => {
+	const events = collect([
+		status('busy', 9_000),
+		...header(),
+		{
+			type: 'assistant',
+			sessionId,
+			uuid: 'a1',
+			timestamp: '2026-09-06T10:00:00.000Z',
+			message: { role: 'assistant', content: [], stop_reason: 'end_turn' },
+		},
+		{ type: 'system', subtype: 'turn_duration', sessionId },
+	]);
+	assert.equal(
+		events.some((event) => event.kind === 'done'),
+		false,
+		'the file says busy; no journal record may complete that turn',
+	);
+});
+
 test('a repeated status word republishes nothing, and shell is quiet like idle', () => {
 	const events = collect([
 		status('busy', 1_000),
