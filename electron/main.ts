@@ -3,10 +3,12 @@ import { randomUUID } from 'node:crypto';
 import {
 	chmodSync,
 	existsSync,
+	type FSWatcher,
 	mkdirSync,
 	readFileSync,
 	renameSync,
 	rmSync,
+	watch as watchFileSystemPath,
 	writeFileSync,
 } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
@@ -239,6 +241,22 @@ if (!app.requestSingleInstanceLock()) {
 	app.exit(1);
 	process.exit(1);
 }
+
+/** The settings files are read on nearly every host interaction. Re-reading
+ * them from disk each time is invisible in this process's own CPU numbers but
+ * shows up as sustained load in any endpoint-security agent that authorizes
+ * every open. Cache the parsed value and let a directory watch invalidate it,
+ * so an external edit is still picked up without a read per call.
+ *
+ * These live here, above every module-scope construction below, because the
+ * first `readTerminalSettings()` runs while this module is still evaluating —
+ * `TerminalRecordingService` calls it from its constructor. Declared further
+ * down, the bundler hoists them as uninitialised bindings, the watch is armed
+ * against them anyway, and the first event the app's own startup writes trips
+ * over a value that is still `undefined`. */
+let cachedTerminalSettings: TerminalSettings | undefined;
+let terminalSettingsWatcher: FSWatcher | undefined;
+
 const embeddedDesktopInstance = resolveDesktopInstanceIdentity(
 	app.getPath('userData'),
 );
@@ -2105,6 +2123,7 @@ function writeRemoteAccessSettings(
 	settings: TerminalSettings['remoteAccess'],
 ): void {
 	const settingsPath = getRemoteAccessSettingsPath();
+	invalidateTerminalSettingsCache();
 	mkdirSync(path.dirname(settingsPath), { recursive: true });
 	writeFileSync(settingsPath, JSON.stringify(settings, null, 2), {
 		mode: 0o600,
@@ -2119,7 +2138,63 @@ function getSecretsPath(): string {
 	return path.join(app.getPath('userData'), 'secrets.json');
 }
 
+function invalidateTerminalSettingsCache(): void {
+	cachedTerminalSettings = undefined;
+}
+
+/** Arm the watch that makes caching safe. Caching only happens once this has
+ * produced a live watcher: without one, a stale value could never be noticed.
+ *
+ * Nothing reached from here may read a module binding declared below the first
+ * call site, and no callback may throw: this runs during module evaluation, and
+ * an uncaught exception in the main process aborts the app. */
+function ensureTerminalSettingsWatcher(): void {
+	if (terminalSettingsWatcher !== undefined) return;
+	try {
+		const directory = app.getPath('userData');
+		mkdirSync(directory, { recursive: true });
+		// Held in the closure rather than at module scope, so the set exists
+		// whenever the watch can fire.
+		const watchedNames = new Set([
+			'terminal-settings.json',
+			'remote-access-settings.json',
+		]);
+		const watcher = watchFileSystemPath(
+			directory,
+			{ persistent: false },
+			(_event, name) => {
+				try {
+					if (name === null || watchedNames.has(String(name)))
+						invalidateTerminalSettingsCache();
+				} catch {
+					/* a settings read falls back to disk rather than take the app down */
+				}
+			},
+		);
+		watcher.on('error', () => {
+			try {
+				terminalSettingsWatcher = undefined;
+				cachedTerminalSettings = undefined;
+				watcher.close();
+			} catch {
+				/* a faulted watcher may already be closed */
+			}
+		});
+		terminalSettingsWatcher = watcher;
+	} catch {
+		terminalSettingsWatcher = undefined;
+	}
+}
+
 function readTerminalSettings(): TerminalSettings {
+	ensureTerminalSettingsWatcher();
+	if (cachedTerminalSettings !== undefined) return cachedTerminalSettings;
+	const settings = loadTerminalSettingsFromDisk();
+	if (terminalSettingsWatcher !== undefined) cachedTerminalSettings = settings;
+	return settings;
+}
+
+function loadTerminalSettingsFromDisk(): TerminalSettings {
 	const settingsPath = getTerminalSettingsPath();
 	const remoteAccess = readRemoteAccessSettings();
 
@@ -2148,6 +2223,7 @@ function readTerminalSettings(): TerminalSettings {
 function writeTerminalSettings(settings: TerminalSettings): TerminalSettings {
 	const normalized = normalizeTerminalSettings(settings);
 	const settingsPath = getTerminalSettingsPath();
+	invalidateTerminalSettingsCache();
 	writeRemoteAccessSettings(normalized.remoteAccess);
 
 	mkdirSync(path.dirname(settingsPath), { recursive: true });
