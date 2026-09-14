@@ -209,8 +209,8 @@ static void encode_cwd(const char *cwd, char *out, size_t size) {
 }
 
 /**
- * The real CLI keeps its own `status` in this file — `busy` while it is
- * working, `idle` when it is not — and rewrites the file in place as that
+ * The real CLI keeps its own status word in this file — busy while it is
+ * working, idle when it is not — and rewrites the file in place as that
  * changes. It is what the provider binds the row's state to, so the stub
  * maintains it the same way rather than leaving one word there for ever.
  */
