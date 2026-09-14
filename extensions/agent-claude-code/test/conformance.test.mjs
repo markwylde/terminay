@@ -71,9 +71,12 @@ const descriptor = {
 		title: 'Y',
 		idle: 'Y',
 		working: 'Y',
-		// Claude Code writes nothing while a permission prompt is open, so
-		// waiting is derived from silence inside an open turn.
-		waiting: 'Y*',
+		// Not derived. The CLI records `status: "waiting"` about itself in its
+		// own session file, with a `waitingFor` reason, and the provider
+		// publishes the wait straight from that. This was `Y*` while waiting
+		// was inferred from silence inside an open turn; that inference is
+		// gone, and with it the only reason the row was ever a guess.
+		waiting: 'Y',
 		// A halting fault is not derived: the CLI writes it into the journal as
 		// an assistant record carrying `isApiErrorMessage` with the HTTP status
 		// and error code, and the provider publishes the block straight from

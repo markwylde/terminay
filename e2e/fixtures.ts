@@ -208,8 +208,14 @@ static void encode_cwd(const char *cwd, char *out, size_t size) {
   out[index] = '\0';
 }
 
+/**
+ * The real CLI keeps its own status word in this file — busy while it is
+ * working, idle when it is not — and rewrites the file in place as that
+ * changes. It is what the provider binds the row's state to, so the stub
+ * maintains it the same way rather than leaving one word there for ever.
+ */
 static void write_session_file(const char *session_id, const char *cwd,
-    long long started_at, const char *name) {
+    long long started_at, const char *name, const char *status) {
   FILE *stream = fopen(session_file, "w");
   if (!stream) return;
   time_t seconds = (time_t)(started_at / 1000);
@@ -223,9 +229,9 @@ static void write_session_file(const char *session_id, const char *cwd,
     "\"procStart\":\"%s\",\"version\":\"%s\",\"kind\":\"interactive\","
     "\"entrypoint\":\"cli\",\"pidDomain\":\"%s\",\"name\":\"%s\","
     "\"nameSource\":\"derived\",\"nameSince\":%lld,\"updatedAt\":%lld,"
-    "\"status\":\"idle\",\"statusUpdatedAt\":%lld}\n",
+    "\"status\":\"%s\",\"statusUpdatedAt\":%lld}\n",
     (int)getpid(), session_id, cwd, started_at, proc_start, VERSION, PID_DOMAIN, name,
-    started_at, updated_at, updated_at);
+    started_at, updated_at, status, updated_at);
   fclose(stream);
 }
 
@@ -348,7 +354,7 @@ int main(int argc, char **argv) {
   snprintf(sessions, sizeof(sessions), "%s/.claude/sessions", home);
   directories(sessions);
   snprintf(session_file, sizeof(session_file), "%s/%d.json", sessions, (int)getpid());
-  write_session_file(session_id, cwd, started_at, label);
+  write_session_file(session_id, cwd, started_at, label, "idle");
   atexit(remove_session_file);
   signal(SIGTERM, handle_signal);
   signal(SIGINT, handle_signal);
@@ -389,11 +395,12 @@ int main(int argc, char **argv) {
       write_label(journal, session_id, label);
       // The record is rewritten in place: same pid, same start time, new
       // session. This is the only evidence that the terminal's session moved.
-      write_session_file(session_id, cwd, started_at, label);
+      write_session_file(session_id, cwd, started_at, label, "idle");
       fputs("Claude e2e cleared\n", stdout);
       continue;
     }
     turn += 1;
+    write_session_file(session_id, cwd, started_at, label, "busy");
     fprintf(journal, "{\"type\":\"ai-title\",\"aiTitle\":\"%s\",\"sessionId\":\"%s\"}\n",
       label, session_id);
     fprintf(journal,
@@ -405,6 +412,7 @@ int main(int argc, char **argv) {
       "{\"type\":\"system\",\"subtype\":\"turn_duration\",\"sessionId\":\"%s\","
       "\"durationMs\":2000}\n", session_id);
     write_header(journal, session_id, cwd);
+    write_session_file(session_id, cwd, started_at, label, "idle");
     fputs("Claude e2e turn done\n", stdout);
   }
   return 0;

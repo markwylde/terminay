@@ -138,3 +138,24 @@ export function claudeTerminal({
 		...rest,
 	});
 }
+
+/**
+ * The lifecycle events a fixture's session-file status contributes, dropped.
+ *
+ * The status is the root's state and is asserted directly in
+ * `lifecycle.test.mjs` and `idle-truth.test.mjs`. A test about binding,
+ * journal resolution or subagent mapping is not about the state the fixture's
+ * status happens to imply, so it reads the rest of the stream through this.
+ */
+export function withoutSessionStatus(events) {
+	const synthetic = (value, prefix) =>
+		typeof value === 'string' && value.startsWith(prefix);
+	return events.filter(
+		(event) =>
+			!(
+				(event.kind === 'turn.started' && synthetic(event.turnId, 'status:')) ||
+				((event.kind === 'wait.started' || event.kind === 'wait.finished') &&
+					synthetic(event.waitId, 'session-wait:'))
+			),
+	);
+}

@@ -176,12 +176,16 @@ test("an inferred wait survives to the snapshot and clears when an explicit reco
   assert.equal(root.state, "waiting");
   assert.equal(root.inferred, true);
 
+  // A tool record observes what is running; it does not claim the session is
+  // working, so it neither clears the wait nor the flag that says it was
+  // inferred.
   store.dispatch(
     event("tool.started", 3, 300, { tool: { id: "tool-1", name: "shell" } }),
   );
   root = rootOf(store);
-  assert.equal(root.state, "working");
-  assert.equal(root.inferred, false);
+  assert.equal(root.state, "waiting");
+  assert.equal(root.inferred, true);
+  assert.equal(root.activeTools.length, 1);
 
   // An explicit (non-inferred) wait record also leaves the flag clear.
   store.dispatch(
