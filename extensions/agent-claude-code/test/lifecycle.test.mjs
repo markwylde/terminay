@@ -278,7 +278,11 @@ test('an api error record blocks the entry', () => {
 	assert.equal(wait.reason, 'api-error');
 });
 
-test('an api error blocks until the session file reports the session idle', () => {
+test('a recorded fault stands through the idle that follows it', () => {
+	// The CLI writes no `turn_duration` after a fault and returns to its
+	// prompt, so its file reports idle within moments. Completing the turn
+	// there would replace an attention state with a success that never
+	// happened, and the fault would be gone before anyone saw it.
 	const events = collect([
 		status('busy'),
 		...header(),
@@ -291,10 +295,37 @@ test('an api error blocks until the session file reports the session idle', () =
 		},
 		status('idle', 9_000),
 	]);
-	assert.deepEqual(events.map((event) => event.kind).slice(-2), [
-		'waitStarted',
-		'done',
+	assert.equal(events.at(-1).kind, 'waitStarted');
+	assert.equal(events.at(-1).state, 'blocked');
+	assert.equal(
+		events.some((event) => event.kind === 'done'),
+		false,
+		'idle after a fault completes nothing',
+	);
+});
+
+test('the session going back to work clears a standing fault', () => {
+	const events = collect([
+		status('busy', 1_000),
+		...header(),
+		{
+			type: 'assistant',
+			sessionId,
+			uuid: 'err-1',
+			isApiErrorMessage: true,
+			message: { role: 'assistant', content: [] },
+		},
+		status('idle', 9_000),
+		status('busy', 10_000),
+		status('idle', 11_000),
 	]);
+	const kinds = events.map((event) => event.kind);
+	assert.deepEqual(kinds.slice(-2), ['turnStarted', 'done']);
+	assert.equal(
+		events.at(-1).outcome,
+		'success',
+		'the next turn completes normally once the fault is behind it',
+	);
 });
 
 test('a subagent starts at its launch and completes on its task notification', () => {
