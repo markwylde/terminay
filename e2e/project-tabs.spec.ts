@@ -749,9 +749,15 @@ test.describe('project tabs', () => {
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
 			0,
 		);
+		for (let index = 0; index < 5; index += 1) {
+			await mainWindow.getByLabel('Create project').click();
+			await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
+				0,
+			);
+		}
 		const nativeWindow = await electronApp.browserWindow(mainWindow);
-		// A narrow-but-not-compact bar: the strip overflows, so the switcher menu
-		// and its rows are still the surface under test.
+		// A narrow-but-not-compact bar, filled until it overflows: the switcher
+		// menu and its rows are still the surface under test.
 		await nativeWindow.evaluate((window) => {
 			window.setBounds({ x: 40, y: 40, width: 700, height: 740 });
 		});

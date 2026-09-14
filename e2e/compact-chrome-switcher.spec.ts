@@ -193,14 +193,9 @@ test.describe('compact chrome', () => {
 
 		// The terminal of the project that is not in front.
 		const backgroundRow = switcher
-			.locator('.compact-switcher__group')
-			.filter({
-				has: switcher.locator(
-					`[data-compact-switcher-project*="${firstProject}"]`,
-				),
-			})
-			.locator('.compact-switcher__terminal')
+			.locator(`.compact-switcher__terminal[data-project-id="${firstProject}"]`)
 			.first();
+		await expect(backgroundRow).toBeVisible();
 		await backgroundRow.click();
 
 		await expect(switcher).toHaveCount(0);
