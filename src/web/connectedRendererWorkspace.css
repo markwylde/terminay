@@ -475,3 +475,56 @@ html.is-framed .responsive-workspace-shell {
 	overflow: hidden;
 	background: #10151b;
 }
+
+/* The workspace, not this file, decides what "compact" means: it observes the
+   bar it already measures and stamps the shell. The band reacts to that
+   decision rather than measuring the viewport a second time and disagreeing.
+   Below that width the same menus live in the chrome row's single control. */
+.connected-web-renderer-workspace:has(
+	.app-shell[data-terminay-compact-chrome="true"]
+) .connected-web-menubar {
+	display: none;
+}
+
+.connected-web-compact-menu {
+	position: relative;
+	display: flex;
+	align-items: center;
+	flex: 0 0 auto;
+}
+
+.connected-web-compact-menu__popup {
+	position: absolute;
+	top: calc(100% + 4px);
+	left: 0;
+	z-index: 3000;
+	min-width: 232px;
+	max-height: 70vh;
+	overflow-y: auto;
+	padding: 5px;
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	border-radius: 10px;
+	background: #1b1f28;
+	box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55);
+}
+
+/* The four menus keep their names here: one control, still File, Edit, View
+   and Help rather than one undifferentiated list. */
+.connected-web-compact-menu__group + .connected-web-compact-menu__group {
+	margin-top: 4px;
+	padding-top: 4px;
+	border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.connected-web-compact-menu__label {
+	padding: 6px 10px 3px;
+	color: rgba(220, 226, 240, 0.45);
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+
+.connected-web-compact-menu__popup .connected-web-menu__item {
+	width: 100%;
+}
