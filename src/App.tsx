@@ -36,6 +36,7 @@ import {
 	type FormEvent,
 	forwardRef,
 	type MouseEvent,
+	type MutableRefObject,
 	type KeyboardEvent as ReactKeyboardEvent,
 	type ReactNode,
 	useCallback,
@@ -165,7 +166,18 @@ import {
 	observeTerminalClosePreflight,
 } from './workspace/closeProtection';
 import { FileExplorerTree } from './workspace/FileExplorerTree';
+import { CompactChromeRow } from './workspace/CompactChromeRow';
+import { CompactSwitcher } from './workspace/CompactSwitcher';
+import type {
+	CompactSwitcherProjectGroup,
+	CompactSwitcherTerminalRow,
+} from './workspace/compactSwitcherModel';
+import {
+	buildCompactSwitcherGroups,
+	filterCompactSwitcherGroups,
+} from './workspace/compactSwitcherModel';
 import { ProjectTabList } from './workspace/ProjectTabList';
+import { useCompactChrome } from './workspace/useCompactChrome';
 import {
 	createProjectTab,
 	type ProjectTab,
@@ -513,6 +525,13 @@ type ProjectWorkspaceProps = {
 	popoutUrl: string;
 	project: ProjectTab;
 	projects: ProjectTab[];
+	/** Decided once by the shell; hides the panel tab strip at phone width. */
+	isCompactChrome?: boolean;
+	/** Window-wide registry so surfaces outside this project can read a buffer
+	 * this window already renders. Never a protocol read. */
+	sharedTerminalContextReaders?: MutableRefObject<
+		Map<string, TerminalContextReader>
+	>;
 	/** Optional connection-scoped client used by migrated terminal panels. */
 	terminalClientContext?: Omit<TerminalPanelClientContextValue, 'projectId'>;
 	/** Terminals to reattach instead of seeding a fresh terminal (adopted project). */
@@ -1204,6 +1223,7 @@ const ProjectWorkspace = forwardRef<
 			agentStatusSnapshot,
 			auxiliaryRoutes,
 			isActive,
+			isCompactChrome = false,
 			isMac,
 			macros,
 			onAddProject,
@@ -1218,6 +1238,7 @@ const ProjectWorkspace = forwardRef<
 			popoutUrl,
 			project,
 			projects,
+			sharedTerminalContextReaders,
 			terminalClientContext,
 		},
 		ref,
@@ -1345,9 +1366,11 @@ const ProjectWorkspace = forwardRef<
 		}, [settings]);
 		const dockviewApiRef = useRef<DockviewApi | null>(null);
 		const panelSessionMapRef = useRef<Map<string, string>>(new Map());
-		const terminalContextReadersRef = useRef<
+		const ownTerminalContextReadersRef = useRef<
 			Map<string, TerminalContextReader>
 		>(new Map());
+		const terminalContextReadersRef =
+			sharedTerminalContextReaders ?? ownTerminalContextReadersRef;
 		const terminalControlStateRef = useRef(createTerminalControlState());
 		const aiGenerationInFlightRef = useRef<Set<string>>(new Set());
 		const movingTerminalSessionIdsRef = useRef<Set<string>>(new Set());
@@ -3863,7 +3886,10 @@ const ProjectWorkspace = forwardRef<
 
 		useEffect(() => {
 			syncFocusedTerminalTabs(focusedSessionId);
-		}, [focusedSessionId, syncFocusedTerminalTabs]);
+			// The panel in front is what the compact breadcrumb names, so a focus
+			// change has to reach the published inventory too.
+			publishWorkspaceInventory();
+		}, [focusedSessionId, publishWorkspaceInventory, syncFocusedTerminalTabs]);
 
 		useEffect(() => {
 			syncRunningMacroTabs();
@@ -4719,7 +4745,7 @@ const ProjectWorkspace = forwardRef<
 							ref={(element) => {
 								workspaceRef.current = element;
 							}}
-							className="workspace dockview-theme-dark"
+							className={`workspace dockview-theme-dark${isCompactChrome ? ' workspace--compact-chrome' : ''}`}
 						>
 							<TerminalPanelClientContext.Provider
 								value={terminalPanelClientContext}
@@ -5172,6 +5198,12 @@ export type AppProps = {
 	hostPresentation?: Readonly<{
 		nativeMenus: boolean;
 		nativeWindowControls: boolean;
+		/**
+		 * Drawn by hosts that render their own application menu in-page, so the
+		 * compact row can hold it without the shared workspace learning any
+		 * host-only command. Absent on hosts with native menus.
+		 */
+		renderCompactApplicationMenu?: () => ReactNode;
 	}>;
 	subscribeAppCommands?: (
 		listener: (command: AppCommand) => Promise<void> | void,
@@ -5652,6 +5684,44 @@ function App({
 		useState<AppUpdateStatus | null>(null);
 	const activityMenuRef = useRef<HTMLDivElement | null>(null);
 	const [isActivityMenuOpen, setIsActivityMenuOpen] = useState(false);
+	// One observation of the bar decides compact chrome for every surface that
+	// changes at phone width, so a row and the strip under it cannot disagree.
+	const isCompactChrome = useCompactChrome(projectTabBarRef);
+	// Every mounted terminal panel in this window registers its buffer reader
+	// here. The switcher reads it; nothing leaves the window.
+	const sharedTerminalContextReadersRef = useRef<
+		Map<string, TerminalContextReader>
+	>(new Map());
+	const pendingCompactTerminalRef = useRef<{
+		projectId: string;
+		serverId: string;
+	} | null>(null);
+	const [isCompactSwitcherOpen, setIsCompactSwitcherOpen] = useState(false);
+	const [compactSwitcherQuery, setCompactSwitcherQuery] = useState('');
+	const compactBreadcrumbRef = useRef<HTMLButtonElement | null>(null);
+	const compactConnectionRef = useRef<HTMLButtonElement | null>(null);
+	const compactSwitcherTriggerRef = useRef<HTMLButtonElement | null>(null);
+	const openCompactSwitcher = useCallback(
+		(source: 'breadcrumb' | 'connection') => {
+			compactSwitcherTriggerRef.current =
+				source === 'breadcrumb'
+					? compactBreadcrumbRef.current
+					: compactConnectionRef.current;
+			setIsRemoteMenuOpen(false);
+			setIsActivityMenuOpen(false);
+			setCompactSwitcherQuery('');
+			setIsCompactSwitcherOpen(true);
+		},
+		[setIsRemoteMenuOpen],
+	);
+	const closeCompactSwitcher = useCallback(() => {
+		setIsCompactSwitcherOpen(false);
+		compactSwitcherTriggerRef.current?.focus();
+	}, []);
+	// Two overlays must never stack: opening either header menu closes this one.
+	useEffect(() => {
+		if (isRemoteMenuOpen || isActivityMenuOpen) setIsCompactSwitcherOpen(false);
+	}, [isActivityMenuOpen, isRemoteMenuOpen]);
 	const createInitialTerminalForProject = useCallback(
 		async (projectId: string) => {
 			const terminalClient = terminalClientContext?.client;
@@ -6226,6 +6296,37 @@ function App({
 		},
 		[activateProject],
 	);
+	/**
+	 * The compact switcher's list. Built from the same sources the dashboard
+	 * renders, with preview text read from buffers this window already holds —
+	 * a terminal on another connection simply has none.
+	 */
+	const compactSwitcherGroups = useMemo(
+		() =>
+			buildCompactSwitcherGroups({
+				activityBadgesByProject,
+				previewForSession: (sessionId) =>
+					sharedTerminalContextReadersRef.current
+						.get(sessionId)
+						?.().recentOutput,
+				sources: dashboardSources,
+			}),
+		[activityBadgesByProject, dashboardSources],
+	);
+	const compactSwitcherFilteredGroups = useMemo(
+		() =>
+			filterCompactSwitcherGroups(compactSwitcherGroups, compactSwitcherQuery),
+		[compactSwitcherGroups, compactSwitcherQuery],
+	);
+	const activeCompactTerminal = useMemo(() => {
+		if (isHomeSelected || activeProjectId === undefined) return undefined;
+		const entries = inventoryByProject[activeProjectId] ?? [];
+		return entries.find(
+			(entry) => entry.kind === 'terminal' && entry.isActivePanel === true,
+		);
+	}, [activeProjectId, inventoryByProject, isHomeSelected]);
+	const currentServerReachable =
+		byServerId.get(currentServerId)?.context !== undefined;
 	const activateDashboardRow = useCallback(
 		(serverId: string, row: DashboardRow) => {
 			if (activateAnotherServer(serverId, row.projectId)) return;
@@ -6248,6 +6349,67 @@ function App({
 	);
 	// Activating an agent is activating the panel it runs in, resolved the same
 	// way and at the same moment, so a finished agent is as safe as a stale row.
+	/**
+	 * A switcher row activates exactly the way a dashboard row does — the path
+	 * that already knows how to cross to another server and select the project
+	 * before the panel. There is no second activation route to keep honest.
+	 */
+	const activateCompactSwitcherTerminal = useCallback(
+		(row: CompactSwitcherTerminalRow) => {
+			activateDashboardRow(row.serverId, {
+				agents: [],
+				color: '',
+				emoji: '',
+				isAgentStatus: row.isAgentStatus,
+				kind: 'panel',
+				panelId: row.panelId,
+				panelKind: 'terminal',
+				projectId: row.projectId,
+				status: row.state,
+				title: row.title,
+				...(row.sessionId === undefined ? {} : { sessionId: row.sessionId }),
+			});
+		},
+		[activateDashboardRow],
+	);
+	/**
+	 * Creating in a project the window is not working in means going to its
+	 * server first; the intent is held until that binding lands, the same way a
+	 * cross-server tab activation waits for its projects to arrive.
+	 */
+	const createCompactSwitcherTerminal = useCallback(
+		(group: CompactSwitcherProjectGroup) => {
+			if (group.serverId !== currentServerId) {
+				pendingCompactTerminalRef.current = {
+					projectId: group.projectId,
+					serverId: group.serverId,
+				};
+				activateAnotherServer(group.serverId, group.projectId);
+				return;
+			}
+			activateProject(group.projectId);
+			void createInitialTerminalForProject(group.projectId);
+		},
+		[
+			activateAnotherServer,
+			activateProject,
+			createInitialTerminalForProject,
+			currentServerId,
+		],
+	);
+	useEffect(() => {
+		const pending = pendingCompactTerminalRef.current;
+		if (pending === null || pending.serverId !== currentServerId) return;
+		if (!projects.some((project) => project.id === pending.projectId)) return;
+		pendingCompactTerminalRef.current = null;
+		activateProject(pending.projectId);
+		void createInitialTerminalForProject(pending.projectId);
+	}, [
+		activateProject,
+		createInitialTerminalForProject,
+		currentServerId,
+		projects,
+	]);
 	const activateDashboardAgent = useCallback(
 		(serverId: string, projectId: string, agent: DashboardAgent) => {
 			if (activateAnotherServer(serverId, projectId)) return;
@@ -6520,11 +6682,27 @@ function App({
 	const updateLabel = appUpdateStatus?.latestVersion
 		? `Update Now (${appUpdateStatus.latestVersion})`
 		: 'Update Now';
+	const appUpdateAction = hasAppUpdate ? (
+		<div className="app-update-status">
+			<button
+				type="button"
+				className="app-update-button"
+				onClick={() =>
+					void openExternalUrl(appUpdateStatus.releaseUrl as string)
+				}
+				title={`Open release page for v${appUpdateStatus?.latestVersion}`}
+			>
+				<span className="app-update-button__dot" aria-hidden="true" />
+				<span className="app-update-button__label">{updateLabel}</span>
+			</button>
+		</div>
+	) : null;
 
 	return (
 		<div
 			className={`app-shell${isMac && hasNativeWindowControls ? ' app-shell--macos' : ''}`}
 			data-terminay-app-component={TERMINAY_APP_COMPONENT_ID}
+			data-terminay-compact-chrome={isCompactChrome ? 'true' : 'false'}
 			data-terminay-active-project-id={displayedActiveProjectId}
 			data-terminay-selected-view={isHomeSelected ? 'home' : 'project'}
 			data-terminay-server-id={terminalClientContext?.serverId}
@@ -6542,8 +6720,40 @@ function App({
 		>
 			<header
 				ref={projectTabBarRef}
-				className={`project-tabbar${isProjectDropTarget ? ' project-tabbar--drop-target' : ''}`}
+				className={`project-tabbar${isProjectDropTarget ? ' project-tabbar--drop-target' : ''}${isCompactChrome ? ' project-tabbar--compact' : ''}`}
 			>
+				{isCompactChrome ? (
+					<CompactChromeRow
+						applicationMenu={hostPresentation?.renderCompactApplicationMenu?.()}
+						breadcrumbButtonRef={compactBreadcrumbRef}
+						connection={{
+							isExposed: Boolean(remoteStatus?.isRunning),
+							isReachable: currentServerReachable,
+							serverLabel: currentServerLabel,
+							tone: remoteButtonTone,
+						}}
+						connectionButtonRef={compactConnectionRef}
+						isExplorerOpen={activeProject?.isFileExplorerOpen === true}
+						isHomeSelected={isHomeSelected}
+						isSwitcherOpen={isCompactSwitcherOpen}
+						onOpenSwitcher={openCompactSwitcher}
+						onShowDashboard={selectHome}
+						onToggleExplorer={toggleActiveProjectExplorer}
+						projectTitle={
+							isHomeSelected
+								? 'Dashboard'
+								: (displayedActiveProject?.title ?? 'No project')
+						}
+						updateAction={appUpdateAction}
+						{...(displayedActiveProject?.color === undefined
+							? {}
+							: { projectColor: displayedActiveProject.color })}
+						{...(activeCompactTerminal === undefined
+							? {}
+							: { terminalTitle: activeCompactTerminal.title })}
+					/>
+				) : (
+					<>
 				<div className="project-tab-sidebar-toggle-box">
 					<button
 						type="button"
@@ -6665,21 +6875,7 @@ function App({
 					)}
 				</div>
 				<div className="header-actions">
-					{hasAppUpdate ? (
-						<div className="app-update-status">
-							<button
-								type="button"
-								className="app-update-button"
-								onClick={() =>
-									void openExternalUrl(appUpdateStatus.releaseUrl as string)
-								}
-								title={`Open release page for v${appUpdateStatus?.latestVersion}`}
-							>
-								<span className="app-update-button__dot" aria-hidden="true" />
-								<span className="app-update-button__label">{updateLabel}</span>
-							</button>
-						</div>
-					) : null}
+					{appUpdateAction}
 					<TerminalActivityOverview
 						activityMenuRef={activityMenuRef}
 						attentionCount={terminalActivityItems.attentionCount}
@@ -6722,7 +6918,53 @@ function App({
 						tone={remoteButtonTone}
 					/>
 				</div>
+					</>
+				)}
 			</header>
+			{isCompactChrome && isCompactSwitcherOpen ? (
+				<CompactSwitcher
+					groups={compactSwitcherFilteredGroups}
+					onActivateTerminal={(row) => {
+						closeCompactSwitcher();
+						activateCompactSwitcherTerminal(row);
+					}}
+					onAddConnection={() => {
+						closeCompactSwitcher();
+						if (onOpenConnectionManager === undefined) {
+							setConnectionSwitcherError(
+								'Connection management is unavailable in this host.',
+							);
+							return;
+						}
+						onOpenConnectionManager();
+					}}
+					onDismiss={closeCompactSwitcher}
+					onEditProject={(group) => {
+						closeCompactSwitcher();
+						void openEditComposedTab(
+							compositionTabKey(group.serverId, group.projectId),
+						);
+					}}
+					onNewProject={() => {
+						closeCompactSwitcher();
+						void createProjectOnServer(currentServerId);
+					}}
+					onNewTerminal={(group) => {
+						closeCompactSwitcher();
+						void createCompactSwitcherTerminal(group);
+					}}
+					onQueryChange={setCompactSwitcherQuery}
+					query={compactSwitcherQuery}
+					{...(activeCompactTerminal === undefined
+						? {}
+						: {
+								activeTerminalKey: compositionTabKey(
+									currentServerId,
+									activeCompactTerminal.panelId,
+								),
+							})}
+				/>
+			) : null}
 
 			<div className="workspace-stack">
 				{isPendingProjectFailure ? (
