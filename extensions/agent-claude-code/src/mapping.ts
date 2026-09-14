@@ -142,6 +142,13 @@ interface ClaudeState {
 	 * as; everything after that is a state something asserted.
 	 */
 	announced: boolean;
+	/**
+	 * True while a recorded fault stands. The CLI writes no `turn_duration`
+	 * after one and returns to its prompt, so the file reports idle within
+	 * moments; completing the turn there would replace the fault with a
+	 * successful completion and the user would never see it.
+	 */
+	faulted: boolean;
 	/** True once the session's first turn header has been consumed. */
 	headerSeen: boolean;
 	/** True once an `ai-title` has named the root, so a prompt no longer relabels it. */
@@ -170,6 +177,7 @@ function newState(): ClaudeState {
 	return {
 		started: false,
 		announced: false,
+		faulted: false,
 		headerSeen: false,
 		titled: false,
 		children: new Set<string>(),
@@ -186,6 +194,7 @@ function newState(): ClaudeState {
 function resetConversation(state: ClaudeState): void {
 	state.headerSeen = false;
 	state.titled = false;
+	state.faulted = false;
 	state.children.clear();
 	state.completed.clear();
 }
@@ -340,17 +349,19 @@ export function mapClaudeRecord(
 	if (type === 'assistant' && message.role === 'assistant') {
 		if (envelope.isApiErrorMessage === true) {
 			// A recorded fault, and the one thing the journal says that the status
-			// word does not: the CLI stays `busy` while it retries. It is an
-			// attention signal, not a claim about whether work is in flight, and
-			// the next status the file reports supersedes it.
+			// word does not. It is an attention signal, not a claim about whether
+			// work is in flight, and the session going to work again supersedes
+			// it.
 			if (stale) return;
 			const waitId = id(envelope.uuid, 'error', envelope.requestId);
-			if (waitId)
-				publisher.waitStarted({
-					waitId,
-					state: 'blocked',
-					reason: 'api-error',
-				});
+			if (!waitId) return;
+			scope.faulted = true;
+			scope.announced = true;
+			publisher.waitStarted({
+				waitId,
+				state: 'blocked',
+				reason: 'api-error',
+			});
 			return;
 		}
 		const modelMetadata = metadata(message);
@@ -435,11 +446,13 @@ function applySessionStatus(
 	// from `waiting`, but not a turn.
 	if (previous === 'waiting' && status === 'busy') {
 		scope.announced = true;
+		scope.faulted = false;
 		publisher.waitFinished({ waitId });
 		return;
 	}
 	if (status === 'busy') {
 		scope.announced = true;
+		scope.faulted = false;
 		publisher.turnStarted({
 			turnId: `status:${typeof at === 'number' ? at : Date.now()}`,
 		});
@@ -454,6 +467,11 @@ function applySessionStatus(
 	// is already idle from `session.started`, which is what a session sitting
 	// at its prompt should read as.
 	if (!scope.announced) return;
+	// A turn that ended in a recorded fault ended in that fault. The CLI is back
+	// at its prompt either way, so the file says idle either way, and completing
+	// here would replace an attention state with a success the user never got.
+	// The block stands until the session goes to work again.
+	if (scope.faulted) return;
 	publisher.done({ outcome: 'success' });
 }
 
