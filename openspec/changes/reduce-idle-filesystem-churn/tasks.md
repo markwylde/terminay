@@ -59,8 +59,13 @@
 - [x] 5.1 `npm run test:ci --workspace @terminay/server-core` passes.
 - [x] 5.2 `npm run lint` and `npm run typecheck:workspaces` pass.
 - [x] 5.3 `npm run smoke` passes.
-- [ ] 5.4 `npm run test:e2e` passes in Docker — required because the settings
+- [x] 5.4 `npm run test:e2e` passes in Docker — required because the settings
   read path runs in the packaged app and `e2e/installed-sidebar-resize-repro.spec.ts`
   seeds `terminal-settings.json` directly.
 - [x] 5.5 `npx openspec validate reduce-idle-filesystem-churn` reports the change
   valid.
+- [x] 5.6 Every pull-request status on the head commit is `success` or
+  `skipped`. Verified by reading them back from
+  `/repos/markwylde/terminay/commits/<head>/statuses` — the ten sharded E2E
+  jobs and the packaged macOS startup smoke are the ones that boot the app, so
+  a startup regression shows up there and nowhere in the unit gate.
