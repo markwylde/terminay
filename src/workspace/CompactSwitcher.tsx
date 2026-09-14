@@ -92,7 +92,12 @@ export function CompactSwitcher({
 			className="compact-switcher-scrim"
 			data-compact-switcher="true"
 			onPointerDown={(event) => {
-				if (event.target === event.currentTarget) onDismiss();
+				if (event.target !== event.currentTarget) return;
+				// The default mousedown action would move focus to the scrim's
+				// nearest focusable ancestor — the body — right after we hand it
+				// back to the control that opened the switcher.
+				event.preventDefault();
+				onDismiss();
 			}}
 		>
 			<div
@@ -168,6 +173,7 @@ export function CompactSwitcher({
 													aria-current={terminal.key === activeTerminalKey}
 													style={{ borderLeftColor: project.color }}
 													data-compact-switcher-terminal={terminal.key}
+													data-project-id={terminal.projectId}
 												>
 													<span
 														className="compact-switcher__terminal-state"
