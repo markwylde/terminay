@@ -12,6 +12,7 @@ import {
 	sessionFile,
 	sessionFilePath,
 	titled,
+	withoutSessionStatus,
 } from './claude-terminal.mjs';
 
 const sessionId = '5f2aff08-eab3-4852-96eb-48235fc7f471';
@@ -24,7 +25,7 @@ async function observe(terminal) {
 	try {
 		await harness.observe(terminal);
 		return {
-			events: harness.events(),
+			events: withoutSessionStatus(harness.events()),
 			state: harness.observation()?.state,
 			sessionId: harness.observation()?.binding?.providerSessionId,
 		};
@@ -343,7 +344,7 @@ test('a journal written after a first unbound observation binds on the next one'
 				journals: { [sessionId]: [header(sessionId)] },
 			}),
 		);
-		assert.deepEqual(harness.events(), [
+		assert.deepEqual(withoutSessionStatus(harness.events()), [
 			{ kind: 'session.started', title: 'Claude Code' },
 		]);
 	} finally {
@@ -368,7 +369,7 @@ test('a session file written after a first unbound observation binds on the next
 				journals: { [sessionId]: [header(sessionId)] },
 			}),
 		);
-		assert.deepEqual(harness.events(), [
+		assert.deepEqual(withoutSessionStatus(harness.events()), [
 			{ kind: 'session.started', title: 'Claude Code' },
 		]);
 	} finally {

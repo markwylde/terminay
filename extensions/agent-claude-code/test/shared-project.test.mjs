@@ -12,6 +12,7 @@ import {
 	sessionFile,
 	sessionFilePath,
 	titled,
+	withoutSessionStatus,
 } from './claude-terminal.mjs';
 
 /**
@@ -43,7 +44,7 @@ async function observed(terminal) {
 		return {
 			sessionId: harness.observation()?.binding?.providerSessionId,
 			state: harness.observation()?.state,
-			events: harness.events(),
+			events: withoutSessionStatus(harness.events()),
 		};
 	} finally {
 		await harness.dispose();
@@ -322,7 +323,7 @@ test('the session file naming a new session moves the entry to the new journal',
 			}),
 		);
 		assert.deepEqual(
-			harness.events().map((event) => event.kind),
+			withoutSessionStatus(harness.events()).map((event) => event.kind),
 			['session.started', 'agent.metadata', 'agent.metadata'],
 			'one root, relabelled by the conversation the process moved to',
 		);
@@ -387,17 +388,18 @@ test('a conversation switch does not carry the previous conversation’s state',
 				.at(-1)?.title,
 			'Second conversation',
 		);
-		assert.equal(
-			harness.projection().working,
-			false,
-			'a turn abandoned by the switch does not leave the entry working',
-		);
+		// The switch carries none of the previous conversation's subagents, and
+		// it invents no completion for it either: the process is the same
+		// process and its file still says busy, so the row stays working until
+		// that file says otherwise.
+		assert.equal(harness.projection().working, true);
 		assert.deepEqual(
 			harness
 				.events()
 				.filter((event) => event.kind === 'agent.done')
 				.map((event) => event.outcome),
-			['cancelled'],
+			[],
+			'the switch completes nothing; only the session file does',
 		);
 	} finally {
 		await harness.dispose();

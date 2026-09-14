@@ -5,7 +5,12 @@ import {
 	fixtureTerminal,
 } from '@terminay/extension-api/testing';
 import extension, { PROVIDER_ID } from '../dist/index.js';
-import { PID, sessionFile, sessionFilePath } from './claude-terminal.mjs';
+import {
+	PID,
+	sessionFile,
+	sessionFilePath,
+	withoutSessionStatus,
+} from './claude-terminal.mjs';
 
 const sessionId = '5f2aff08-eab3-4852-96eb-48235fc7f471';
 const projects = '/home/test/.claude/projects/-workspace';
@@ -124,16 +129,14 @@ test('Claude Code registers its public provider and maps root lifecycle facts', 
 				},
 			}),
 		);
-		assert.deepEqual(harness.events(), [
+		// The journal's contribution, with the session file's own status filtered
+		// out: a label, a model, the tools and the subagent. No turn, and no
+		// completion — those are the session file's, and only the session file's.
+		assert.deepEqual(withoutSessionStatus(harness.events()), [
 			{ kind: 'session.started', title: 'Claude Code' },
 			{ kind: 'agent.metadata', title: 'Investigate the parser' },
-			{
-				kind: 'turn.started',
-				turnId: 'prompt-1',
-				promptText: 'Inspect the parser',
-			},
+			{ kind: 'agent.metadata', promptText: 'Inspect the parser' },
 			{ kind: 'agent.metadata', model: { id: 'claude-opus-4-8' } },
-			{ kind: 'turn.started', turnId: 'assistant-1' },
 			{ kind: 'tool.started', toolId: 'toolu-shell', name: 'Bash' },
 			{
 				kind: 'subagent.started',
@@ -152,9 +155,15 @@ test('Claude Code registers its public provider and maps root lifecycle facts', 
 			},
 			{ kind: 'tool.finished', toolId: 'toolu-shell', outcome: 'success' },
 			{ kind: 'agent.metadata', model: { id: 'claude-opus-4-8' } },
-			{ kind: 'turn.started', turnId: 'assistant-2' },
-			{ kind: 'agent.done', outcome: 'success' },
 		]);
+		// And the status the fixture's file reports is the state.
+		assert.deepEqual(
+			harness
+				.events()
+				.filter((event) => event.kind === 'turn.started')
+				.map((event) => event.turnId.replace(/\d+/u, '<at>')),
+			['status:<at>'],
+		);
 	} finally {
 		await harness.dispose();
 	}
@@ -210,7 +219,7 @@ test('Claude Code never chooses among journals by filename or time', async () =>
 				},
 			}),
 		);
-		assert.deepEqual(harness.events(), [
+		assert.deepEqual(withoutSessionStatus(harness.events()), [
 			{ kind: 'session.started', title: 'Claude Code' },
 			{ kind: 'agent.metadata', title: 'Mine' },
 		]);
@@ -237,7 +246,7 @@ test('Claude Code binds a resumed session before the CLI opens its journal for w
 		});
 		terminal.observation.processes.openFiles = async () => [];
 		await harness.observe(terminal);
-		assert.deepEqual(harness.events(), [
+		assert.deepEqual(withoutSessionStatus(harness.events()), [
 			{ kind: 'session.started', title: 'Claude Code' },
 		]);
 	} finally {

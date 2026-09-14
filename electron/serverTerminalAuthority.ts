@@ -27,6 +27,7 @@ import {
 	createExtensionAgentBroker,
 	ExtensionAgentRuntimeRegistry,
 	type ExtensionAgentAdmissionFailure,
+	type ExtensionAgentLifecycleRejection,
 } from '../packages/server-core/src/activity/index';
 import type { ActivitySessionIdentity } from '../packages/server-core/src/activity/service';
 import { TerminalActivityService } from '../packages/server-core/src/activity/service';
@@ -266,6 +267,11 @@ export interface ServerTerminalAuthorityOptions {
 	readonly onAgentAdmissionFailure?: (
 		failure: ExtensionAgentAdmissionFailure,
 	) => void;
+	/** Report a published lifecycle event the canonical store could not apply.
+	 * Without it a lost transition — a completion among them — is invisible. */
+	readonly onAgentLifecycleRejected?: (
+		rejection: ExtensionAgentLifecycleRejection,
+	) => void;
 	/** Every agent observation outcome for a terminal, so a terminal that never
 	 * binds is distinguishable from one that was never matched. */
 	readonly onAgentObservationDiagnostic?: AgentObservationDiagnosticListener;
@@ -414,6 +420,13 @@ export class ServerTerminalAuthority {
 			activity: this.activity,
 			providerDisplayName: (providerId) =>
 				extensionAgentRuntimeForLabels?.providerDisplayName(providerId),
+			onLifecycleRejected: (rejection) => {
+				try {
+					options.onAgentLifecycleRejected?.(rejection);
+				} catch {
+					/* host diagnostics cannot affect lifecycle ingest */
+				}
+			},
 		});
 		this.git = new GitService({
 			limits: {

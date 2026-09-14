@@ -36,7 +36,32 @@ export interface AgentStatusServiceOptions {
 	readonly processInstanceId?: string;
 	/** Manifest display name for a provider id. Looked up at ingest time. */
 	readonly providerDisplayName?: (providerId: string) => string | undefined;
+	/** Notified for every published event the canonical store could not apply. */
+	readonly onLifecycleRejected?: (
+		rejection: ExtensionAgentLifecycleRejection,
+	) => void;
 }
+
+/**
+ * Evidence that one published lifecycle event was not applied.
+ *
+ * The provider, opaque terminal identity, event kind and sequence say which
+ * transition was lost and where; the reason says which rule refused it. It
+ * carries no prompt, tool input, result, summary or path.
+ */
+export interface ExtensionAgentLifecycleRejection {
+	readonly kind: 'agent-lifecycle-rejected';
+	readonly provider: string;
+	readonly terminal: Readonly<ActivitySessionIdentity>;
+	readonly eventKind: CanonicalAgentLifecycleEvent['kind'];
+	readonly sequence: number;
+	readonly reason: 'precondition' | 'not-reducible';
+}
+
+/** Events that refine a row without asserting what state it is in. */
+const OBSERVATIONAL_EVENT_KINDS: ReadonlySet<
+	CanonicalAgentLifecycleEvent['kind']
+> = new Set(['agent.metadata', 'tool.started', 'tool.finished']);
 
 interface ProviderBinding {
 	readonly provider: AgentProvider;
@@ -83,6 +108,9 @@ export class AgentStatusService {
 	private readonly providerDisplayName?: (
 		providerId: string,
 	) => string | undefined;
+	private readonly onLifecycleRejected?: (
+		rejection: ExtensionAgentLifecycleRejection,
+	) => void;
 	private lastInnerSnapshot: AgentStatusSnapshot | undefined;
 	private lastStampedSnapshot: AgentStatusSnapshot | undefined;
 
@@ -93,6 +121,7 @@ export class AgentStatusService {
 		this.enabled = options.enabled ?? true;
 		this.processInstanceId = options.processInstanceId ?? randomUUID();
 		this.providerDisplayName = options.providerDisplayName;
+		this.onLifecycleRejected = options.onLifecycleRejected;
 	}
 
 	get processId(): string {
@@ -393,26 +422,50 @@ export class AgentStatusService {
 					startSequence + index,
 				),
 			);
-			validateLifecycleTransitions(this.store.getSnapshot(), rawCanonical);
-			const canonical = rawCanonical.map((event) =>
+			// One inadmissible event is evidence about that event and nothing
+			// else. Rejecting its whole publication would discard the events
+			// behind it — a completion among them leaves the row working for
+			// ever, with no record of why — so the batch is partitioned and
+			// every admissible event is still dispatched.
+			const { admitted, rejected } = partitionLifecycleTransitions(
+				this.store.getSnapshot(),
+				rawCanonical,
+			);
+			for (const rejection of rejected)
+				this.onLifecycleRejected?.(
+					Object.freeze({
+						kind: 'agent-lifecycle-rejected',
+						provider: providerId,
+						terminal: identity,
+						eventKind: rejection.event.kind,
+						sequence: rejection.event.sequence,
+						reason: rejection.reason,
+					}),
+				);
+			const canonical = admitted.map((event) =>
 				this.correlateSubagentLaunch(event),
 			);
 			if (canonical.length > 0 && !this.store.dispatchBatch(canonical))
 				throw new Error('extension lifecycle transition is invalid');
 			if (validatedBinding?.ok)
 				this.bindings.set(identity.sessionId, activeBinding);
-			if (canonical.length > 0) {
+			if (rawCanonical.length > 0) {
 				const sequences =
 					this.sequences.get(identity.sessionId) ?? new Map<string, number>();
 				this.sequences.set(identity.sessionId, sequences);
-				sequences.set(providerId, startSequence + canonical.length);
+				// Every number handed out is spent, admitted or not: the store
+				// admits a strictly increasing sequence, so a rejected event
+				// leaves a gap rather than a number a later event could reuse.
+				sequences.set(providerId, startSequence + rawCanonical.length);
 			}
+			// Observational events say nothing about whether the terminal is
+			// working, so they never move the activity indicator either.
 			for (const event of canonical)
-				if (event.kind !== 'agent.metadata')
+				if (!OBSERVATIONAL_EVENT_KINDS.has(event.kind))
 					this.activity.ingestProvider(identity, toProviderUpdate(event));
 			return Object.freeze({
 				acceptedEventCount: canonical.length,
-				rejectedEventCount: 0,
+				rejectedEventCount: rejected.length,
 			});
 		} catch (error) {
 			return Object.freeze({
@@ -763,10 +816,30 @@ function isMappingVersion(value: string): boolean {
 	return typeof value === 'string' && value.length > 0 && value.length <= 64;
 }
 
-function validateLifecycleTransitions(
+/**
+ * Splits a publication into the events the canonical store can apply and the
+ * events it cannot, projecting each admitted event forward so the rest of the
+ * batch is judged against the state it actually lands on.
+ *
+ * A rejected event is dropped on its own. It never withholds the events behind
+ * it: a stale `tool.finished` must not be able to swallow the `agent.done`
+ * published in the same batch.
+ */
+function partitionLifecycleTransitions(
 	snapshot: AgentStatusSnapshot,
 	events: readonly CanonicalAgentLifecycleEvent[],
-): void {
+): {
+	readonly admitted: readonly CanonicalAgentLifecycleEvent[];
+	readonly rejected: readonly {
+		readonly event: CanonicalAgentLifecycleEvent;
+		readonly reason: ExtensionAgentLifecycleRejection['reason'];
+	}[];
+} {
+	const admitted: CanonicalAgentLifecycleEvent[] = [];
+	const rejected: {
+		event: CanonicalAgentLifecycleEvent;
+		reason: ExtensionAgentLifecycleRejection['reason'];
+	}[] = [];
 	let projected = snapshot;
 	for (const event of events) {
 		const root =
@@ -841,10 +914,17 @@ function validateLifecycleTransitions(
 				valid = target?.kind === 'subagent' && target.active;
 				break;
 		}
-		if (!valid) throw new Error('extension lifecycle transition is invalid');
+		if (!valid) {
+			rejected.push({ event, reason: 'precondition' });
+			continue;
+		}
 		const next = reduceAgentStatusSnapshot(projected, event);
-		if (next === projected)
-			throw new Error('extension lifecycle transition is invalid');
+		if (next === projected) {
+			rejected.push({ event, reason: 'not-reducible' });
+			continue;
+		}
 		projected = next;
+		admitted.push(event);
 	}
+	return { admitted, rejected };
 }

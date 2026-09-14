@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+	applyConformanceEvent,
 	assertRowIsComplete,
 	createConformanceHarness,
 	openConformancePty,
@@ -224,4 +225,39 @@ test('the working directory outlives the harness that seeded it', async () => {
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
 	}
+});
+
+test('the projection reduces tool records the way the canonical store does', () => {
+	// This projection exists to show what a user would see, so it has to agree
+	// with the server's agent store. There, a tool record updates which tool is
+	// running and leaves the state alone — so a tool flushed while a permission
+	// prompt is open must not read as the session working again. When these two
+	// disagree, conformance reports a state no user would ever have seen.
+	const projection = {
+		bound: false,
+		state: 'idle',
+		inferred: false,
+		active: false,
+		rootDonePending: false,
+		children: new Map(),
+		events: [],
+	};
+	for (const event of [
+		{ kind: 'session.started' },
+		{ kind: 'turn.started', turnId: 't1' },
+		{ kind: 'wait.started', state: 'waiting', reason: 'permission' },
+		{ kind: 'tool.started', tool: { id: 'tool-1', name: 'Bash' } },
+		{ kind: 'tool.finished', toolId: 'tool-1' },
+	])
+		applyConformanceEvent(projection, event);
+	assert.equal(
+		projection.state,
+		'waiting',
+		'the wait survives the tool records',
+	);
+	assert.equal(projection.active, true);
+
+	// Leaving the wait is what resumes the turn.
+	applyConformanceEvent(projection, { kind: 'wait.finished' });
+	assert.equal(projection.state, 'working');
 });

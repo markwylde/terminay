@@ -6,7 +6,10 @@ import {
 	fixtureTerminal,
 } from '@terminay/extension-api/testing';
 import extension from '../dist/index.js';
-import { createClaudeRecordMapper } from '../dist/mapping.js';
+import {
+	createClaudeRecordMapper,
+	sessionStatusRecord,
+} from '../dist/mapping.js';
 import { PID, sessionFile, sessionFilePath } from './claude-terminal.mjs';
 
 const sessionId = '5f2aff08-eab3-4852-96eb-48235fc7f471';
@@ -32,6 +35,9 @@ function collect(records) {
 	return events;
 }
 
+/** What the provider injects for the session file's own status word. */
+const status = (word, at = 1_000) => sessionStatusRecord(word, at, undefined);
+
 const header = (mode = 'default') => [
 	{ type: 'last-prompt', lastPrompt: 'Investigate the parser', sessionId },
 	{ type: 'mode', mode: 'normal', sessionId },
@@ -55,11 +61,12 @@ test('the first header block starts the session exactly once', () => {
 	assert.equal(events[1].title, 'Investigate the parser');
 });
 
-test('a later header block neither restarts the session nor opens a turn', () => {
-	// The real CLI rewrites its header block as bookkeeping — at session start,
-	// again after the user prompt, and again after `turn_duration` — so a header
-	// arriving after a completed turn must leave the entry done.
+test('no journal record of a turn moves the entry between states', () => {
+	// Everything the old mapping read a turn boundary out of, in one journal:
+	// the prompt, the rewritten header blocks, `turn_duration`. None of it is a
+	// state boundary now, so the entry sits wherever the session file put it.
 	const events = collect([
+		status('busy'),
 		...header(),
 		{
 			type: 'user',
@@ -86,19 +93,20 @@ test('a later header block neither restarts the session nor opens a turn', () =>
 	);
 	assert.deepEqual(kinds, [
 		'sessionStarted',
-		'metadataChanged',
 		'turnStarted',
-		'done',
+		'metadataChanged',
+		'metadataChanged',
 	]);
 	assert.equal(
-		kinds.lastIndexOf('turnStarted') < kinds.lastIndexOf('done'),
-		true,
-		'the trailing header block leaves the entry done, never working',
+		kinds.indexOf('done'),
+		-1,
+		'no journal record completes a turn; only the session file does',
 	);
 });
 
-test('a turn completes on turn_duration', () => {
+test('the session file working, then idle, is the whole of a turn', () => {
 	const events = collect([
+		status('busy', 1_000),
 		...header(),
 		{
 			type: 'user',
@@ -106,13 +114,107 @@ test('a turn completes on turn_duration', () => {
 			promptId: 'p1',
 			message: { role: 'user', content: 'Inspect the parser' },
 		},
-		{ type: 'system', subtype: 'turn_duration', durationMs: 4_000, sessionId },
+		status('idle', 5_000),
 	]);
-	assert.deepEqual(events.map((event) => event.kind).slice(-2), [
+	const kinds = events.map((event) => event.kind);
+	assert.equal(kinds[1], 'turnStarted');
+	assert.equal(kinds.at(-1), 'done');
+	assert.equal(events.at(-1).outcome, 'success');
+});
+
+test('binding to a session sitting at its prompt reads idle, never done', () => {
+	// `done` is a turn having ended, and it marks the row unread. A session
+	// that has run nothing since this terminal bound has ended nothing, so the
+	// first status read is a baseline and not a transition.
+	const events = collect([status('idle', 1_000), ...header()]);
+	assert.deepEqual(
+		events.map((event) => event.kind),
+		['sessionStarted', 'metadataChanged'],
+	);
+	// And the first turn after it still completes normally.
+	const whole = collect([
+		status('idle', 1_000),
+		...header(),
+		status('busy', 2_000),
+		status('idle', 3_000),
+	]);
+	assert.deepEqual(whole.map((event) => event.kind).slice(-2), [
 		'turnStarted',
 		'done',
 	]);
-	assert.equal(events.at(-1).outcome, 'success');
+});
+
+test('a quiet session whose journal holds a finished turn reads done', () => {
+	// A resumed conversation: the process is idle, but the journal it reopened
+	// already carries a completed turn. History is the one thing a journal is
+	// authoritative about, so the row reads done rather than idle.
+	const events = collect([
+		status('idle', 9_000),
+		...header(),
+		{
+			type: 'assistant',
+			sessionId,
+			uuid: 'a1',
+			timestamp: '2026-09-06T10:00:00.000Z',
+			message: { role: 'assistant', content: [], stop_reason: 'end_turn' },
+		},
+	]);
+	assert.equal(events.at(-1).kind, 'done');
+	assert.equal(
+		events.filter((event) => event.kind === 'done').length,
+		1,
+		'history settles the row once, not once per record',
+	);
+});
+
+test('journal history never moves a row the session file has put to work', () => {
+	const events = collect([
+		status('busy', 9_000),
+		...header(),
+		{
+			type: 'assistant',
+			sessionId,
+			uuid: 'a1',
+			timestamp: '2026-09-06T10:00:00.000Z',
+			message: { role: 'assistant', content: [], stop_reason: 'end_turn' },
+		},
+		{ type: 'system', subtype: 'turn_duration', sessionId },
+	]);
+	assert.equal(
+		events.some((event) => event.kind === 'done'),
+		false,
+		'the file says busy; no journal record may complete that turn',
+	);
+});
+
+test('a repeated status word republishes nothing, and shell is quiet like idle', () => {
+	const events = collect([
+		status('busy', 1_000),
+		status('busy', 2_000),
+		status('idle', 3_000),
+		status('shell', 4_000),
+		status('idle', 5_000),
+	]);
+	assert.deepEqual(
+		events.map((event) => event.kind),
+		['sessionStarted', 'turnStarted', 'done'],
+	);
+});
+
+test('the session file waiting is a wait, and leaving it resumes the turn', () => {
+	const events = collect([
+		sessionStatusRecord('busy', 1_000, undefined),
+		sessionStatusRecord('waiting', 2_000, 'permission'),
+		sessionStatusRecord('busy', 3_000, undefined),
+		sessionStatusRecord('idle', 4_000, undefined),
+	]);
+	const [, turn, wait, resumed, done] = events;
+	assert.equal(turn.kind, 'turnStarted');
+	assert.equal(wait.kind, 'waitStarted');
+	assert.equal(wait.state, 'waiting');
+	assert.equal(wait.reason, 'permission');
+	assert.equal(resumed.kind, 'waitFinished');
+	assert.equal(done.kind, 'done');
 });
 
 test('a title supersedes the prompt label and a later prompt does not overwrite it', () => {
@@ -160,6 +262,7 @@ test('AskUserQuestion is an ordinary tool, never a live wait', () => {
 
 test('an api error record blocks the entry', () => {
 	const events = collect([
+		status('busy'),
 		...header(),
 		{
 			type: 'assistant',
@@ -175,8 +278,13 @@ test('an api error record blocks the entry', () => {
 	assert.equal(wait.reason, 'api-error');
 });
 
-test('an api error followed by a completed turn ends as done', () => {
+test('a recorded fault stands through the idle that follows it', () => {
+	// The CLI writes no `turn_duration` after a fault and returns to its
+	// prompt, so its file reports idle within moments. Completing the turn
+	// there would replace an attention state with a success that never
+	// happened, and the fault would be gone before anyone saw it.
 	const events = collect([
+		status('busy'),
 		...header(),
 		{
 			type: 'assistant',
@@ -185,12 +293,39 @@ test('an api error followed by a completed turn ends as done', () => {
 			isApiErrorMessage: true,
 			message: { role: 'assistant', content: [] },
 		},
-		{ type: 'system', subtype: 'turn_duration', sessionId },
+		status('idle', 9_000),
 	]);
-	assert.deepEqual(events.map((event) => event.kind).slice(-2), [
-		'waitStarted',
-		'done',
+	assert.equal(events.at(-1).kind, 'waitStarted');
+	assert.equal(events.at(-1).state, 'blocked');
+	assert.equal(
+		events.some((event) => event.kind === 'done'),
+		false,
+		'idle after a fault completes nothing',
+	);
+});
+
+test('the session going back to work clears a standing fault', () => {
+	const events = collect([
+		status('busy', 1_000),
+		...header(),
+		{
+			type: 'assistant',
+			sessionId,
+			uuid: 'err-1',
+			isApiErrorMessage: true,
+			message: { role: 'assistant', content: [] },
+		},
+		status('idle', 9_000),
+		status('busy', 10_000),
+		status('idle', 11_000),
 	]);
+	const kinds = events.map((event) => event.kind);
+	assert.deepEqual(kinds.slice(-2), ['turnStarted', 'done']);
+	assert.equal(
+		events.at(-1).outcome,
+		'success',
+		'the next turn completes normally once the fault is behind it',
+	);
 });
 
 test('a subagent starts at its launch and completes on its task notification', () => {
@@ -365,7 +500,11 @@ test('a child journal never projects prompts or assistant text', () => {
  * start, after the user prompt, and after `turn_duration` — so it is the
  * evidence that a header is bookkeeping rather than a turn boundary.
  */
-test('the real one-turn journal ends done, with no turn opened by its rewritten headers', async () => {
+test('the real one-turn journal contributes no state, and the status word is the turn', async () => {
+	// A captured journal from the real CLI, replayed whole. Every boundary the
+	// old mapping read out of it — the prompt, `end_turn`, `turn_duration`, the
+	// rewritten header blocks — is present here and none of it may move the
+	// entry. The session file going busy then idle is the entire turn.
 	const capturedSession = '359d528f-27eb-4030-9375-7c6ade9b29f8';
 	const records = (
 		await readFile(
@@ -376,6 +515,7 @@ test('the real one-turn journal ends done, with no turn opened by its rewritten 
 		.trim()
 		.split('\n')
 		.map((line) => JSON.parse(line));
+	const startedAt = Date.parse('2026-09-06T11:00:00.000Z');
 	const harness = await createAgentExtensionHarness(extension);
 	try {
 		await harness.observe(
@@ -389,48 +529,49 @@ test('the real one-turn journal ends done, with no turn opened by its rewritten 
 					[`/home/test/.claude/projects/-workspace/${capturedSession}.jsonl`]:
 						records,
 					[sessionFilePath(PID)]: [
-						sessionFile({
-							sessionId: capturedSession,
-							startedAt: Date.parse('2026-09-06T11:00:00.000Z'),
-						}),
+						sessionFile({ sessionId: capturedSession, startedAt }),
+					],
+				},
+				fileRewrites: {
+					[sessionFilePath(PID)]: [
+						[
+							sessionFile({
+								sessionId: capturedSession,
+								startedAt,
+								status: 'idle',
+								statusUpdatedAt: startedAt + 120_000,
+							}),
+						],
 					],
 				},
 			}),
 		);
 		const events = harness.events();
-		assert.deepEqual(
-			events.map((event) => event.kind),
-			[
-				'session.started',
-				// The user prompt opens the only turn the prompt is responsible for.
-				'turn.started',
-				'agent.metadata',
-				'agent.metadata',
-				'agent.metadata',
-				// The assistant record re-asserts working under its own turn id.
-				'turn.started',
-				// `end_turn` completes the turn, and `turn_duration` confirms it.
-				'agent.done',
-				'agent.done',
-				// Only the trailing title metadata follows; the headers emit nothing.
-				'agent.metadata',
-			],
-		);
-		const starts = events.filter((event) => event.kind === 'turn.started');
-		assert.deepEqual(
-			starts.map((event) => event.turnId),
-			[
-				'acdd451b-f02c-4f3e-b133-1aea28468dee',
-				'ec83b685-31c6-4e79-9027-67ded43a24ea',
-			],
-			'only the user prompt and the assistant record open turns',
-		);
-		assert.equal(starts[0].promptText, 'Reply with the single word ready.');
 		const kinds = events.map((event) => event.kind);
 		assert.equal(
-			kinds.slice(kinds.lastIndexOf('agent.done')).includes('turn.started'),
-			false,
-			'nothing after the final agent.done projects the entry as working',
+			kinds.filter((kind) => kind === 'turn.started').length,
+			1,
+			'only the session file opens a turn',
+		);
+		assert.equal(
+			kinds.filter((kind) => kind === 'agent.done').length,
+			1,
+			'only the session file completes one',
+		);
+		assert.equal(kinds[0], 'session.started');
+		assert.equal(kinds.at(-1), 'agent.done', 'the entry ends done');
+		const [turn] = events.filter((event) => event.kind === 'turn.started');
+		assert.match(
+			turn.turnId,
+			/^status:/u,
+			'the turn is the status, not a record',
+		);
+		assert.deepEqual(
+			events
+				.filter((event) => event.kind === 'agent.metadata' && event.title)
+				.map((event) => event.title),
+			['Reply with the single word ready.', 'Ready', 'Ready'],
+			'the journal still supplies the label',
 		);
 	} finally {
 		await harness.dispose();
