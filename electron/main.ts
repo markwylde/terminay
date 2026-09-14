@@ -3,10 +3,12 @@ import { randomUUID } from 'node:crypto';
 import {
 	chmodSync,
 	existsSync,
+	type FSWatcher,
 	mkdirSync,
 	readFileSync,
 	renameSync,
 	rmSync,
+	watch as watchFileSystemPath,
 	writeFileSync,
 } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
@@ -2105,6 +2107,7 @@ function writeRemoteAccessSettings(
 	settings: TerminalSettings['remoteAccess'],
 ): void {
 	const settingsPath = getRemoteAccessSettingsPath();
+	invalidateTerminalSettingsCache();
 	mkdirSync(path.dirname(settingsPath), { recursive: true });
 	writeFileSync(settingsPath, JSON.stringify(settings, null, 2), {
 		mode: 0o600,
@@ -2119,7 +2122,58 @@ function getSecretsPath(): string {
 	return path.join(app.getPath('userData'), 'secrets.json');
 }
 
+/** The settings files are read on nearly every host interaction. Re-reading
+ * them from disk each time is invisible in this process's own CPU numbers but
+ * shows up as sustained load in any endpoint-security agent that authorizes
+ * every open. Cache the parsed value and let a directory watch invalidate it,
+ * so an external edit is still picked up without a read per call. */
+let cachedTerminalSettings: TerminalSettings | undefined;
+let terminalSettingsWatcher: FSWatcher | undefined;
+
+const WATCHED_SETTINGS_FILE_NAMES: ReadonlySet<string> = new Set([
+	'terminal-settings.json',
+	'remote-access-settings.json',
+]);
+
+function invalidateTerminalSettingsCache(): void {
+	cachedTerminalSettings = undefined;
+}
+
+/** Arm the watch that makes caching safe. Caching only happens once this has
+ * produced a live watcher: without one, a stale value could never be noticed. */
+function ensureTerminalSettingsWatcher(): void {
+	if (terminalSettingsWatcher !== undefined) return;
+	try {
+		const directory = app.getPath('userData');
+		mkdirSync(directory, { recursive: true });
+		const watcher = watchFileSystemPath(
+			directory,
+			{ persistent: false },
+			(_event, name) => {
+				if (name === null || WATCHED_SETTINGS_FILE_NAMES.has(String(name)))
+					invalidateTerminalSettingsCache();
+			},
+		);
+		watcher.on('error', () => {
+			watcher.close();
+			terminalSettingsWatcher = undefined;
+			invalidateTerminalSettingsCache();
+		});
+		terminalSettingsWatcher = watcher;
+	} catch {
+		terminalSettingsWatcher = undefined;
+	}
+}
+
 function readTerminalSettings(): TerminalSettings {
+	ensureTerminalSettingsWatcher();
+	if (cachedTerminalSettings !== undefined) return cachedTerminalSettings;
+	const settings = loadTerminalSettingsFromDisk();
+	if (terminalSettingsWatcher !== undefined) cachedTerminalSettings = settings;
+	return settings;
+}
+
+function loadTerminalSettingsFromDisk(): TerminalSettings {
 	const settingsPath = getTerminalSettingsPath();
 	const remoteAccess = readRemoteAccessSettings();
 
@@ -2148,6 +2202,7 @@ function readTerminalSettings(): TerminalSettings {
 function writeTerminalSettings(settings: TerminalSettings): TerminalSettings {
 	const normalized = normalizeTerminalSettings(settings);
 	const settingsPath = getTerminalSettingsPath();
+	invalidateTerminalSettingsCache();
 	writeRemoteAccessSettings(normalized.remoteAccess);
 
 	mkdirSync(path.dirname(settingsPath), { recursive: true });

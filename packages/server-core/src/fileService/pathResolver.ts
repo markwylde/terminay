@@ -9,6 +9,18 @@ export interface CanonicalProjectPathOptions {
 	readonly requireFile?: boolean;
 	readonly requireDirectory?: boolean;
 	readonly maxPathLength?: number;
+	/**
+	 * A canonical project root this same operation has already obtained from
+	 * `root()`.
+	 *
+	 * Canonicalizing the root is a full ancestor walk, and a directory listing
+	 * that resolves one path per entry paid for that walk once per entry. Taking
+	 * it once per operation and threading it through keeps the check that
+	 * matters — a root replaced between operations is still caught, because the
+	 * next operation canonicalizes it again — while removing the repetition
+	 * inside one listing. Only ever pass a value returned by `root()`.
+	 */
+	readonly canonicalRoot?: string;
 }
 
 export interface CanonicalProjectPathResolverOptions
@@ -109,7 +121,7 @@ export class CanonicalProjectPathResolver {
 				{ requested: requestedPath },
 			);
 
-		const root = await this.root();
+		const root = options.canonicalRoot ?? (await this.root());
 		if (
 			!isAbsolutePath(requestedPath) &&
 			(requestedPath === '.' || requestedPath === '')
@@ -125,10 +137,11 @@ export class CanonicalProjectPathResolver {
 		const candidate = isAbsolutePath(requestedPath)
 			? requestedPath
 			: joinPath(root, requestedPath);
-		const canonical = await this.canonicalTarget(
+		const target = await this.canonicalTarget(
 			candidate,
 			options.allowMissing ?? this.options.allowMissing ?? false,
 		);
+		const canonical = target.canonical;
 		if (!isWithin(root, canonical))
 			throw new FileServiceError(
 				'path_escape',
@@ -138,7 +151,9 @@ export class CanonicalProjectPathResolver {
 
 		let stat: PathStat;
 		try {
-			stat = await this.adapter.stat(canonical);
+			// Canonicalization already took this stat for an existing path; taking
+			// it again only doubles the syscalls a directory listing makes.
+			stat = target.stat ?? (await this.adapter.stat(canonical));
 		} catch {
 			if (options.allowMissing ?? this.options.allowMissing ?? false)
 				return canonical;
@@ -200,15 +215,16 @@ export class CanonicalProjectPathResolver {
 	private async canonicalTarget(
 		path: string,
 		allowMissing: boolean,
-	): Promise<string> {
+	): Promise<{ readonly canonical: string; readonly stat?: PathStat }> {
 		try {
 			const canonical = await this.adapter.realpath(path);
 			if (typeof canonical !== 'string' || canonical.length === 0)
 				throw new Error('invalid realpath result');
 			// A stat call is deliberately part of canonicalization. This closes the
-			// gap where a host's realpath implementation returns a stale path.
-			await this.adapter.stat(canonical);
-			return canonical;
+			// gap where a host's realpath implementation returns a stale path. Its
+			// result is carried back so callers need not repeat it.
+			const stat = await this.adapter.stat(canonical);
+			return { canonical, stat };
 		} catch (error) {
 			if (!allowMissing || !isMissingError(error)) {
 				if (error instanceof FileServiceError) throw error;
@@ -230,7 +246,7 @@ export class CanonicalProjectPathResolver {
 					if (!isMissingError(leafError)) throw leafError;
 				}
 			}
-			return this.canonicalMissing(path);
+			return { canonical: await this.canonicalMissing(path) };
 		}
 	}
 
