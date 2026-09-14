@@ -35,6 +35,7 @@
 ## 7. Verification
 
 - [x] 7.1 Add the compact e2e coverage as its own spec file and register it the way sibling suites are. Verified by the new spec passing under `npm run test:e2e` in the Docker harness, never Playwright on the host.
+- [x] 7.5 Register the new suites in the `smoke` script so CI actually runs them; `scripts/browser-app-capability-boundary.test.mjs` was unreferenced by any CI script and is registered alongside them. Verified by the suites appearing in `npm run test:ci`'s chain and passing there.
 - [x] 7.2 Run `npm run lint`, `npm run typecheck:workspaces`, and the new and touched `node --test` suites locally. Verified by all three completing clean.
 - [x] 7.3 Run `openspec validate --all`. Verified by a clean report.
 - [ ] 7.4 Open the pull request against `origin` (Gitea) with `tea`, then read back every commit status on the head SHA until each is `success` or `skipped`. Verified by the status list itself, not by the pull request existing.
