@@ -58,12 +58,18 @@ export function applyConformanceEvent(projection, event) {
 			if (event.title) projection.title = event.title;
 			return;
 		case 'turn.started':
-		case 'tool.started':
-		case 'tool.finished':
 		case 'wait.finished':
 			projection.state = 'working';
 			projection.active = true;
 			projection.inferred = false;
+			return;
+		// Which tool is running is an observation about a state something else
+		// established, and the canonical store treats it as one: it updates the
+		// active tools and leaves the state alone. A tool record flushed while a
+		// permission prompt is open must not read as the session working again.
+		case 'tool.started':
+		case 'tool.finished':
+			projection.active = true;
 			return;
 		case 'wait.started':
 			projection.state = event.state;
