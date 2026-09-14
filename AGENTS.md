@@ -35,6 +35,27 @@ whose schema is vendored at `openspec/schemas/spec-driven-with-adr/`.
 - Validate with `openspec validate --all` (add `--archived` to cover the archive,
   which `--all` does not walk).
 
+## Remotes and CI
+
+- **`origin` is the canonical repository**: a self-hosted Gitea at
+  `ssh://git@git.i.wylde.net:4222/markwylde/terminay.git`. Branches, pull
+  requests, reviews, and CI all live there. Drive it with the `tea` CLI.
+- **`github` is a mirror, not a destination.** `https://github.com/markwylde/terminay.git`
+  carries a repository ruleset that forbids creating refs, so pushing a new
+  branch to it is rejected with `Cannot create ref due to creations being
+  restricted`. Never open a pull request there, and never read CI status from
+  it. `gh` is the wrong tool for this repository.
+- **Pull-request CI is `.gitea/workflows/`**, not `.github/workflows/`.
+  `ci.yml` and `agent-conformance.yml` trigger on `pull_request` and publish
+  around twenty commit statuses on the head SHA, including ten sharded E2E jobs
+  and a packaged macOS startup smoke. `.github/workflows/` holds mirror-side
+  release plumbing that fires only on push to `main`, on tags, or on dispatch —
+  the absence of a `pull_request` trigger there says nothing about whether a
+  pull request is gated.
+- A pull request is not finished until those statuses are read back and every
+  one is `success` or `skipped`. Opening a pull request and reporting its number
+  is not evidence that anything passed.
+
 ## Engineering boundaries
 
 - Keep Electron privileged. Renderer code uses the preload API; filesystem,
