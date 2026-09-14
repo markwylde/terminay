@@ -191,9 +191,15 @@ function resetConversation(state: ClaudeState): void {
 }
 
 /**
- * Claude Code session mapping v0.2. It reads only lifecycle fields and an
+ * Claude Code session mapping. It reads only lifecycle fields and an
  * allowlisted user-text preview. Tool input/output and assistant text never
  * cross the extension boundary.
+ *
+ * The published `mappingVersion` is deliberately unchanged. It names the
+ * records this mapping reads, and those are the same records as before; what
+ * changed is which of them is allowed to decide the row's state. Bumping it
+ * stops the host binding the provider at all, so whatever couples that version
+ * to admission is its own contract and not this fix's to unpick.
  *
  * Two lanes, and they do not overlap:
  *

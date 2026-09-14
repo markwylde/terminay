@@ -105,7 +105,7 @@ const PROJECT_DIRECTORY = {
  * record says which journal in it belongs to which terminal.
  */
 export const claudeCodeProvider = defineAgentProvider({
-	mappingVersion: '0.2',
+	mappingVersion: '0.1',
 
 	matchesForeground(process: AgentForegroundProcess): boolean {
 		return process.executableName === 'claude';
@@ -129,7 +129,7 @@ export const claudeCodeProvider = defineAgentProvider({
 		if (!journal) return { state: 'not-bound' };
 		const binding = await terminal.bindSession({
 			providerSessionId: file.sessionId,
-			mappingVersion: '0.2',
+			mappingVersion: '0.1',
 			journal: journal.handle,
 			fingerprint: {
 				kind: 'claude-session-file-for-pty-descendant-pid',
