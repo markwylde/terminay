@@ -7025,6 +7025,8 @@ function App({
 							!isPendingProjectFailure &&
 							project.id === activeProjectId
 						}
+						isCompactChrome={isCompactChrome}
+						sharedTerminalContextReaders={sharedTerminalContextReadersRef}
 						isMac={isMac}
 						macros={macros}
 						onAddProject={createServerProject}

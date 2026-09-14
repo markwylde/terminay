@@ -79,6 +79,17 @@ test('the panel tab strip is hidden by the same flag, and nothing else is', asyn
 	assert.doesNotMatch(css, /\.workspace--compact-chrome \.dv-groupview/);
 });
 
+test('the flag and the reader registry actually reach the workspace', async () => {
+	// Declaring the props and never passing them left the panel tab strip
+	// visible at phone width and the preview registry empty in the real app.
+	const app = await read('src/App.tsx');
+	assert.match(app, /<ProjectWorkspace[\s\S]*?isCompactChrome=\{isCompactChrome\}/);
+	assert.match(
+		app,
+		/<ProjectWorkspace[\s\S]*?sharedTerminalContextReaders=\{sharedTerminalContextReadersRef\}/,
+	);
+});
+
 test('the compact row renders only below the breakpoint', async () => {
 	const app = await read('src/App.tsx');
 	assert.match(app, /\{isCompactChrome \? \(\s*<CompactChromeRow/);
