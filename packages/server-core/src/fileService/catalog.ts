@@ -246,8 +246,13 @@ export class FileCatalog {
 	): Promise<FileCatalogPage> {
 		throwIfAborted(options.signal);
 		const root = normalizeRelative(requestedPath);
+		// Canonicalize the project root once for the whole listing. Resolving it
+		// again per entry re-walked every ancestor directory, which is what made
+		// one idle refresh cost hundreds of path lookups.
+		const canonicalRoot = await this.resolver.root();
 		const canonical = await this.resolver.resolve(root || '.', {
 			requireDirectory: true,
+			canonicalRoot,
 		});
 		const offset = boundedOffset(options.offset ?? 0, 'offset');
 		const limit = boundedLimit(
@@ -270,7 +275,7 @@ export class FileCatalog {
 				continue;
 			const entry =
 				listingMetadataEntry(relativePath, raw) ??
-				(await this.describe(relativePath, raw, options.signal));
+				(await this.describe(relativePath, raw, options.signal, canonicalRoot));
 			if (entry !== undefined) entries.push(entry);
 		}
 		entries.sort(compareEntries);
@@ -737,14 +742,22 @@ export class FileCatalog {
 		relativePath: string,
 		raw: FileDirectoryEntry,
 		signal?: AbortSignal,
+		canonicalRoot?: string,
 	): Promise<FileCatalogEntry | undefined> {
 		throwIfAborted(signal);
+		// A directory read that already reports link-ness has answered this; an
+		// extra `lstat` per entry only repeats what the dirent said, and each one
+		// re-canonicalized the project root on top of that.
 		const symbolic =
-			raw.isSymbolicLink === true ||
-			(this.storage.lstat !== undefined &&
-				(await this.isSymlink(relativePath, signal)));
+			typeof raw.isSymbolicLink === 'boolean'
+				? raw.isSymbolicLink
+				: this.storage.lstat !== undefined &&
+					(await this.isSymlink(relativePath, signal));
 		try {
-			const canonical = await this.resolver.resolve(relativePath);
+			const canonical = await this.resolver.resolve(
+				relativePath,
+				canonicalRoot === undefined ? {} : { canonicalRoot },
+			);
 			const stat = await this.storage.stat(canonical);
 			const resolvedKind = classify(stat, raw);
 			const kind = symbolic ? 'symlink' : resolvedKind;
