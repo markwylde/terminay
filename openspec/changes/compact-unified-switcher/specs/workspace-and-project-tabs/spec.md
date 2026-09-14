@@ -2,7 +2,7 @@
 
 ### Requirement: Compact bar presentation
 
-On a compact bar at phone width or 640px and below, the workspace chrome SHALL be a single row holding, in order: the application menu control where the host renders one, the file-explorer toggle, the dashboard control, a project-and-terminal breadcrumb that grows to fill the remaining width, and the connection control on the trailing edge. The breadcrumb SHALL name the active project and the active terminal, SHALL truncate the project name before the terminal title when space runs out, and SHALL open the unified switcher wherever it is pressed. The panel tab strip SHALL be absent on a compact workspace, and New project SHALL live in the switcher instead of as header `+` chrome. Above 640px the bar SHALL present the full project tab strip, its overflow switcher, the named connection control, and the panel tab strip.
+On a compact bar at phone width or 640px and below, the workspace chrome SHALL be a single row holding, in order: the application menu control where the host renders one, the file-explorer toggle, the dashboard control, a project-and-terminal breadcrumb that grows to fill the remaining width, and the connection control on the trailing edge. The breadcrumb SHALL name the active project and the active terminal, SHALL truncate the project name before the terminal title when space runs out, and SHALL open the unified switcher wherever it is pressed. The panel tab strip SHALL be absent on a compact workspace, and New project SHALL live in the switcher instead of as header `+` chrome. A pending application update SHALL stay visible on the row rather than being folded away. Above 640px the bar SHALL present the full project tab strip, its overflow switcher, the named connection control, and the panel tab strip.
 
 #### Scenario: Phone-width chrome
 - **WHEN** the project bar is at 640px or narrower
@@ -19,6 +19,10 @@ On a compact bar at phone width or 640px and below, the workspace chrome SHALL b
 #### Scenario: Compact All projects menu
 - **WHEN** the compact switcher opens
 - **THEN** it spans the window with compact rows listing every project of every attached connection, and offers New project instead of header `+` chrome
+
+#### Scenario: A pending update stays visible
+- **WHEN** an application update is pending on a compact bar
+- **THEN** its control stays on the row, between the breadcrumb and the connection control
 
 #### Scenario: Wide bar is unchanged
 - **WHEN** the project bar is wider than 640px
@@ -49,6 +53,22 @@ A compact workspace SHALL provide one switcher that presents every terminal of e
 #### Scenario: Single connection still names its server
 - **WHEN** exactly one connection is attached
 - **THEN** its heading still appears above its project groups
+
+### Requirement: Compact project editing survives the collapse
+
+A project group heading in the switcher SHALL open that project's editor on a
+long press, the same gesture a project switcher row carries, so editing a
+project stays reachable at a width where no project tab is rendered. A short
+press on a heading SHALL do nothing, leaving activation to the terminal rows
+beneath it.
+
+#### Scenario: Long-pressing a project heading
+- **WHEN** a user long-presses a project group heading in the switcher
+- **THEN** that project's editor opens
+
+#### Scenario: A short press on a heading is inert
+- **WHEN** a user taps a project group heading without holding
+- **THEN** nothing is activated and the switcher stays open
 
 ### Requirement: Compact switcher filtering
 
