@@ -4022,7 +4022,8 @@ body.project-tabbar-reordering .project-tabbar {
   white-space: nowrap;
 }
 
-.compact-switcher__add {
+.compact-switcher__add,
+.compact-switcher__close {
   all: unset;
   flex: none;
   display: inline-flex;
@@ -4035,9 +4036,22 @@ body.project-tabbar-reordering .project-tabbar {
   cursor: pointer;
 }
 
-.compact-switcher__add:hover {
+.compact-switcher__add:hover,
+.compact-switcher__close:hover {
   background: rgba(255, 255, 255, 0.09);
   color: #fff;
+}
+
+.compact-switcher__row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: calc(100% - 10px);
+  margin-left: 10px;
+}
+
+.compact-switcher__row + .compact-switcher__row {
+  margin-top: 1px;
 }
 
 /* A thumb-sized target: the switcher exists because 30px tabs are not. */
@@ -4050,17 +4064,13 @@ body.project-tabbar-reordering .project-tabbar {
   display: flex;
   align-items: center;
   gap: 10px;
-  width: calc(100% - 10px);
+  flex: 1 1 auto;
+  min-width: 0;
   min-height: 38px;
-  margin-left: 10px;
   padding: 4px 10px;
   border-radius: 0 9px 9px 0;
   border-left: 2px solid rgba(255, 255, 255, 0.07);
   cursor: pointer;
-}
-
-.compact-switcher__terminal + .compact-switcher__terminal {
-  margin-top: 1px;
 }
 
 .compact-switcher__terminal:hover {
@@ -4080,6 +4090,7 @@ body.project-tabbar-reordering .project-tabbar {
 
 .compact-switcher__terminal:focus-visible,
 .compact-switcher__add:focus-visible,
+.compact-switcher__close:focus-visible,
 .compact-switcher__actions button:focus-visible {
   outline: 2px solid var(--accent, #4db5ff);
   outline-offset: -2px;
