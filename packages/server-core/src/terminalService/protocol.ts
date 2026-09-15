@@ -11,6 +11,10 @@ import type {
 	QueryRequest,
 } from '../types.js';
 import { type TerminalAttachment, TerminalServiceAdapter } from './adapter.js';
+import {
+	TERMINAL_MATERIALIZE_CLIPBOARD_IMAGE_OPERATION,
+	writeClipboardImage,
+} from './clipboardImage.js';
 import { TerminalServiceError } from './errors.js';
 import {
 	type TerminalInputSource,
@@ -68,6 +72,8 @@ export interface TerminalOperationRegistryOptions {
 	/** Reconcile a newly-created PTY with other server-owned authorities before
 	 * its identity is returned to the client. */
 	readonly onSessionCreated?: (snapshot: TerminalSessionSnapshot) => void;
+	/** Server-owned clipboard scratch directory. Defaults to os.tmpdir(). */
+	readonly clipboardScratchDirectory?: string;
 }
 
 export interface TerminalOperationRegistry {
@@ -156,6 +162,9 @@ export function createTerminalOperationRegistry(
 		'terminal.presentation': (request: CommandRequest) => presentation(request),
 		'terminal.kill': (request: CommandRequest) => kill(request),
 		'terminal.detach': (request: CommandRequest) => detach(request),
+		[TERMINAL_MATERIALIZE_CLIPBOARD_IMAGE_OPERATION]: (
+			request: CommandRequest,
+		) => materializeClipboardImage(request),
 	};
 	const queries = {
 		'terminal.list': (request: QueryRequest) => list(request),
@@ -184,6 +193,7 @@ export function createTerminalOperationRegistry(
 				'terminal.presentation': { scope: 'write' },
 				'terminal.kill': { scope: 'write' },
 				'terminal.detach': { scope: 'read' },
+				[TERMINAL_MATERIALIZE_CLIPBOARD_IMAGE_OPERATION]: { scope: 'write' },
 			},
 		},
 		closeConnection: (connectionId) => {
@@ -1109,6 +1119,46 @@ export function createTerminalOperationRegistry(
 		// Releasing the lease never affects the PTY itself.
 		inputSources.releaseClient(value.identity, value.clientId);
 		return { attachmentId: value.attachment.attachmentId, detached: true };
+	}
+
+	async function materializeClipboardImage(
+		request: CommandRequest,
+	): Promise<JsonValue> {
+		const payload = objectPayload(request.envelope.payload);
+		for (const key of Object.keys(payload)) {
+			if (key !== 'identity' && key !== 'mimeType')
+				throw new TerminalServiceError(
+					'invalid_identity',
+					'clipboard image payload contains an unsupported field',
+				);
+		}
+		const identity = parseIdentity(payload.identity, options.service.serverId);
+		authorizationFor(identity, request, 'write');
+		assertProjectClaim(request, identity.projectId);
+		const session = options.service.getSession(identity);
+		if (
+			session === undefined ||
+			session.projectId !== identity.projectId ||
+			session.serverId !== identity.serverId
+		)
+			throw new TerminalServiceError(
+				'session_not_found',
+				'terminal session was not found',
+				{ serverId: identity.serverId, projectId: identity.projectId, sessionId: identity.sessionId },
+			);
+		if (typeof payload.mimeType !== 'string')
+			throw new TerminalServiceError(
+				'invalid_bytes',
+				'clipboard image type is not supported',
+			);
+		const path = await writeClipboardImage({
+			bytes: request.body,
+			mimeType: payload.mimeType,
+			...(options.clipboardScratchDirectory === undefined
+				? {}
+				: { directory: options.clipboardScratchDirectory }),
+		});
+		return { path };
 	}
 
 	function list(request: QueryRequest): JsonValue {
