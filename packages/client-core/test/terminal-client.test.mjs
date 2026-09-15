@@ -197,8 +197,14 @@ test('a remounted blank emulator forces position-zero recovery despite a reconne
 	transport.emit(output(3, 'def'));
 	assert.equal(first.position, 6);
 	await first.detach();
-	const fresh = await client.resume({ ...identity, clientId: 'client-a', freshPresentation: true });
-	const call = transport.calls.filter(([operation]) => operation === 'terminal.resume').at(-1);
+	const fresh = await client.resume({
+		...identity,
+		clientId: 'client-a',
+		freshPresentation: true,
+	});
+	const call = transport.calls
+		.filter(([operation]) => operation === 'terminal.resume')
+		.at(-1);
 	assert.equal(call[1].fromPosition, 0);
 	assert.equal(call[1].freshPresentation, true);
 	assert.equal(new TextDecoder().decode(fresh.initialEvents[0].bytes), 'abc');
@@ -556,4 +562,72 @@ test('TerminayTerminalClient rejects a conflicting compatibility authorization i
 		/authorization identity must match the attachment identity/,
 	);
 	assert.deepEqual(transport.calls, []);
+});
+
+test('materializeClipboardImage uploads raw bytes and returns the server path', async () => {
+	const calls = [];
+	// A class-based transport, because the real renderer transport is one. A
+	// transport method invoked without its receiver must not silently pass here.
+	class BinaryTransport {
+		constructor() {
+			this.calls = calls;
+		}
+		async command() {
+			return null;
+		}
+		async commandWithBody(operation, payload, body) {
+			this.calls.push({ operation, payload, body: Array.from(body) });
+			return { path: '/tmp/terminay-clipboard/clipboard-1.png' };
+		}
+		async subscribe() {
+			return {
+				id: 'sub',
+				fromRevision: 0,
+				unsubscribe: async () => {},
+				onEvent() {
+					return () => {};
+				},
+			};
+		}
+	}
+	const client = new TerminayTerminalClient(new BinaryTransport());
+	const path = await client.materializeClipboardImage({
+		identity,
+		mimeType: 'image/png',
+		bytes: Uint8Array.from([1, 2, 3]),
+	});
+	assert.equal(path, '/tmp/terminay-clipboard/clipboard-1.png');
+	assert.equal(calls[0].operation, 'terminal.materialize-clipboard-image');
+	assert.deepEqual(calls[0].payload, {
+		identity,
+		mimeType: 'image/png',
+	});
+	assert.deepEqual(calls[0].body, [1, 2, 3]);
+});
+
+test('materializeClipboardImage fails closed when binary upload is unavailable', async () => {
+	const client = new TerminayTerminalClient({
+		async command() {
+			return null;
+		},
+		async subscribe() {
+			return {
+				id: 'sub',
+				fromRevision: 0,
+				unsubscribe: async () => {},
+				onEvent() {
+					return () => {};
+				},
+			};
+		},
+	});
+	await assert.rejects(
+		() =>
+			client.materializeClipboardImage({
+				identity,
+				mimeType: 'image/png',
+				bytes: Uint8Array.from([1]),
+			}),
+		/does not support clipboard image upload/,
+	);
 });

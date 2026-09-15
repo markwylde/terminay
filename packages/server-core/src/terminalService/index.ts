@@ -1,4 +1,5 @@
 export * from './adapter.js';
+export * from './clipboardImage.js';
 export * from './consumers.js';
 export * from './errors.js';
 export * from './inputSources.js';

@@ -29,7 +29,11 @@ import type { ILinkHandler } from '@xterm/xterm';
 import { Terminal } from '@xterm/xterm';
 import type { IDockviewPanelProps } from 'dockview';
 import { KeyboardOff } from 'lucide-react';
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
+import type {
+	ClipboardEvent as ReactClipboardEvent,
+	CSSProperties,
+	PointerEvent as ReactPointerEvent,
+} from 'react';
 import {
 	createContext,
 	useCallback,
@@ -114,8 +118,14 @@ import {
 	ServerTerminalInputQueue,
 	type TerminalPasteProgress,
 } from './terminalPanelInputQueue';
+import type { TerminalClipboardContents } from './terminalPasteInteraction';
 import {
+	createTerminalPasteActivation,
+	pasteOrMaterializeTerminalClipboard,
 	pasteTerminalClipboard,
+	readBrowserTerminalClipboard,
+	readPasteEventClipboard,
+	shouldClaimBrowserImagePaste,
 	shouldHandleTerminalPasteShortcut,
 } from './terminalPasteInteraction';
 import { buildTerminalPresentationOptions } from './terminalPresentationInteraction';
@@ -459,6 +469,13 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		  >
 		| undefined
 	>(undefined);
+	const browserClipboardContextRef = useRef<
+		| Readonly<{
+				client: TerminayTerminalClient;
+				identity: TerminalClientIdentity;
+		  }>
+		| undefined
+	>(undefined);
 	const tabColorRef = useRef(props.params.color);
 	const zoomLevelRef = useRef(0);
 	const remoteSizeOverrideRef = useRef<{ cols: number; rows: number } | null>(
@@ -486,6 +503,17 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 					fileViewerClient: terminalClientContext.fileViewerClient,
 					projectId: terminalClientContext.projectId,
 					projectRoot: terminalClientContext.projectRoot,
+				};
+	browserClipboardContextRef.current =
+		terminalClientContext === null
+			? undefined
+			: {
+					client: terminalClientContext.client,
+					identity: {
+						serverId: terminalClientContext.serverId,
+						projectId: terminalClientContext.projectId,
+						sessionId: props.params.sessionId,
+					},
 				};
 	const contextPanelClient = useMemo(() => {
 		if (terminalClientContext === null) return undefined;
@@ -634,14 +662,138 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		],
 	);
 
+	const writeClipboardImageFailure = useCallback(() => {
+		terminalRef.current?.write(
+			'\r\n\x1b[31m[clipboard image failed: the file could not be uploaded]\x1b[0m\r\n',
+		);
+	}, []);
+
+	// WebKit only reads the clipboard for a live user activation, and an xterm
+	// offers iOS nothing to raise its own Paste callout over: the rows are
+	// user-select: none and the editable textarea is hidden under the cursor
+	// rather than under the finger. When the read is refused, hand the user a
+	// real focused textarea instead, which is exactly the editable element iOS
+	// does offer Paste for, and take the resulting paste event at full fidelity.
+	const [isClipboardFallbackOpen, setIsClipboardFallbackOpen] = useState(false);
+	const clipboardFallbackInputRef = useRef<HTMLTextAreaElement | null>(null);
+
+	const browserPasteOptions = useCallback(
+		(announceInput: () => void) => {
+			const context = browserClipboardContextRef.current;
+			return {
+				announceInput,
+				paste: (text: string) => pasteTerminalTextRef.current(text),
+				focus: () => terminalRef.current?.focus(),
+				escapePath: escapeTerminalPathForShell,
+				onImageUploadFailed: writeClipboardImageFailure,
+				...(context === undefined
+					? {}
+					: {
+							materializeImage: (
+								image: Extract<
+									TerminalClipboardContents,
+									{ kind: 'image' }
+								>,
+							) =>
+								context.client.materializeClipboardImage({
+									identity: context.identity,
+									mimeType: image.mimeType,
+									bytes: image.bytes,
+								}),
+						}),
+			};
+		},
+		[writeClipboardImageFailure],
+	);
+
+	const pasteFromFocusedTerminal = useCallback(
+		(announceInput: () => void) => {
+			if (canUseDesktopTerminalClipboard()) {
+				void pasteTerminalClipboard(readTerminalClipboard, {
+					announceInput,
+					paste: (text) => pasteTerminalTextRef.current(text),
+					focus: () => terminalRef.current?.focus(),
+				});
+				return;
+			}
+			void pasteOrMaterializeTerminalClipboard(
+				() => readBrowserTerminalClipboard(navigator.clipboard),
+				{
+					...browserPasteOptions(announceInput),
+					// A refused read is not an error to report, it is a route that is
+					// closed. Offer the one that stays open rather than a red line the
+					// user can do nothing about.
+					onClipboardReadFailed: () => setIsClipboardFallbackOpen(true),
+				},
+			);
+		},
+		[browserPasteOptions],
+	);
+	const pasteFromFocusedTerminalRef = useRef(pasteFromFocusedTerminal);
+	pasteFromFocusedTerminalRef.current = pasteFromFocusedTerminal;
+
 	const pasteFromMobileTerminalAccessory = useCallback(() => {
 		resetMobileTerminalModifiers();
-		void pasteTerminalClipboard(readTerminalClipboard, {
-			announceInput: announceMobileTerminalInput,
-			paste: (text) => pasteTerminalTextRef.current(text),
-			focus: () => terminalRef.current?.focus(),
-		});
-	}, [announceMobileTerminalInput, resetMobileTerminalModifiers]);
+		pasteFromFocusedTerminal(announceMobileTerminalInput);
+	}, [
+		announceMobileTerminalInput,
+		pasteFromFocusedTerminal,
+		resetMobileTerminalModifiers,
+	]);
+
+	// The sheet exists only to put the caret in an editable element the platform
+	// will offer Paste for, so it is useless unfocused. Focus it without scroll,
+	// because iOS otherwise scrolls the focused field into view and drags the
+	// whole fixed-height app up underneath the status bar.
+	useEffect(() => {
+		if (!isClipboardFallbackOpen) return;
+		clipboardFallbackInputRef.current?.focus({ preventScroll: true });
+		// WebKit ignores preventScroll while a software keyboard is up and still
+		// scrolls its scrolling element, even though this app shell is
+		// overflow: hidden and has nowhere legitimate to scroll to. Undo it on the
+		// next frame, once that scroll has actually happened.
+		const frame = window.requestAnimationFrame(() => window.scrollTo(0, 0));
+		return () => window.cancelAnimationFrame(frame);
+	}, [isClipboardFallbackOpen]);
+
+	const closeClipboardFallback = useCallback(() => {
+		setIsClipboardFallbackOpen(false);
+		terminalRef.current?.focus();
+	}, []);
+
+	// A native paste event carries what the Clipboard API would not hand over,
+	// images included, because the user reached it through the platform's own
+	// paste control rather than programmatically.
+	const acceptClipboardFallbackPaste = useCallback(
+		(event: ReactClipboardEvent<HTMLTextAreaElement>) => {
+			event.preventDefault();
+			setIsClipboardFallbackOpen(false);
+			void pasteOrMaterializeTerminalClipboard(
+				() => readPasteEventClipboard(event.nativeEvent),
+				browserPasteOptions(announceMobileTerminalInput),
+			).finally(() => terminalRef.current?.focus());
+		},
+		[announceMobileTerminalInput, browserPasteOptions],
+	);
+
+	// Typing or a paste iOS delivered straight into the field without an event
+	// we saw still has to reach the terminal, so commit the value as well.
+	const commitClipboardFallbackText = useCallback(
+		(value: string) => {
+			setIsClipboardFallbackOpen(false);
+			if (value.length > 0) {
+				announceMobileTerminalInput();
+				pasteTerminalTextRef.current(value);
+			}
+			terminalRef.current?.focus();
+		},
+		[announceMobileTerminalInput],
+	);
+
+	const mobileTerminalPasteActivation = useMemo(
+		() => createTerminalPasteActivation(pasteFromMobileTerminalAccessory),
+		[pasteFromMobileTerminalAccessory],
+	);
 
 	const dismissMobileTerminalKeyboard = useCallback(() => {
 		resetMobileTerminalModifiers();
@@ -1153,14 +1305,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 					return false;
 				}
 
-				void pasteTerminalClipboard(readTerminalClipboard, {
-					// xterm emits this paste through onData, so both local and
-					// server-backed panels use writePanelInput below. Do not call a
-					// terminal preload write method from this UI-only clipboard path.
-					announceInput: announceTerminalUserInput,
-					paste: pasteTerminalText,
-					focus: () => terminal.focus(),
-				});
+				pasteFromFocusedTerminalRef.current(announceTerminalUserInput);
 
 				return false;
 			}
@@ -2299,21 +2444,52 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		};
 
 		const handleNativeTerminalPaste = (event: ClipboardEvent) => {
-			if (!canUseDesktopTerminalClipboard()) {
+			if (canUseDesktopTerminalClipboard()) {
+				// macOS Edit > Paste can bypass xterm's key handler. Intercept the
+				// trusted native paste before xterm consumes only text clipboard data,
+				// then use the same Desktop smart-paste path as Cmd+V.
+				event.preventDefault();
+				event.stopPropagation();
+				void pasteTerminalClipboard(readTerminalClipboard, {
+					announceInput: announceTerminalUserInput,
+					paste: pasteTerminalText,
+					focus: () => terminal.focus(),
+				});
+				return;
+			}
+
+			if (!shouldClaimBrowserImagePaste(event, false)) {
 				announceTerminalUserInput();
 				return;
 			}
 
-			// macOS Edit > Paste can bypass xterm's key handler. Intercept the
-			// trusted native paste before xterm consumes only text clipboard data,
-			// then use the same Desktop smart-paste path as Cmd+V.
 			event.preventDefault();
 			event.stopPropagation();
-			void pasteTerminalClipboard(readTerminalClipboard, {
-				announceInput: announceTerminalUserInput,
-				paste: pasteTerminalText,
-				focus: () => terminal.focus(),
-			});
+			const context = browserClipboardContextRef.current;
+			void pasteOrMaterializeTerminalClipboard(
+				() => readPasteEventClipboard(event),
+				{
+					announceInput: announceTerminalUserInput,
+					paste: pasteTerminalText,
+					focus: () => terminal.focus(),
+					escapePath: escapeTerminalPathForShell,
+					onImageUploadFailed: () => {
+						terminal.write(
+							'\r\n\x1b[31m[clipboard image failed: the file could not be uploaded]\x1b[0m\r\n',
+						);
+					},
+					...(context === undefined
+						? {}
+						: {
+								materializeImage: (image) =>
+									context.client.materializeClipboardImage({
+										identity: context.identity,
+										mimeType: image.mimeType,
+										bytes: image.bytes,
+									}),
+							}),
+				},
+			);
 		};
 
 		// Commands initiated by another renderer surface (for example dictation)
@@ -2724,16 +2900,12 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			return;
 		}
 
-		void pasteTerminalClipboard(readTerminalClipboard, {
-			announceInput: () => {
-				window.dispatchEvent(
-					new CustomEvent('terminay-terminal-user-input', {
-						detail: { sessionId: props.params.sessionId },
-					}),
-				);
-			},
-			paste: (text) => pasteTerminalTextRef.current(text),
-			focus: () => terminalRef.current?.focus(),
+		pasteFromFocusedTerminal(() => {
+			window.dispatchEvent(
+				new CustomEvent('terminay-terminal-user-input', {
+					detail: { sessionId: props.params.sessionId },
+				}),
+			);
 		});
 	};
 
@@ -2932,6 +3104,51 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 					</button>
 				</div>
 			) : null}
+			{isClipboardFallbackOpen ? (
+				<div
+					className="terminal-clipboard-fallback"
+					role="dialog"
+					aria-modal="true"
+					aria-label="Paste into terminal"
+				>
+					<p className="terminal-clipboard-fallback__hint">
+						This browser would not hand over the clipboard. Touch and hold the
+						box below, then choose Paste.
+					</p>
+					<textarea
+						className="terminal-clipboard-fallback__input"
+						autoComplete="off"
+						autoCorrect="off"
+						autoCapitalize="off"
+						spellCheck={false}
+						aria-label="Paste target"
+						ref={clipboardFallbackInputRef}
+						onPaste={acceptClipboardFallbackPaste}
+						onKeyDown={(event) => {
+							if (event.key === 'Escape') {
+								event.preventDefault();
+								closeClipboardFallback();
+							}
+						}}
+					/>
+					<div className="terminal-clipboard-fallback__actions">
+						<button type="button" onClick={closeClipboardFallback}>
+							Cancel
+						</button>
+						<button
+							type="button"
+							onPointerDown={(event) => event.preventDefault()}
+							onClick={() =>
+								commitClipboardFallbackText(
+									clipboardFallbackInputRef.current?.value ?? '',
+								)
+							}
+						>
+							Insert
+						</button>
+					</div>
+				</div>
+			) : null}
 			{isMobileKeyboardVisible ? (
 				<fieldset
 					className="terminal-mobile-keyboard-accessory"
@@ -3015,7 +3232,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 						className="terminal-mobile-keyboard-accessory__key"
 						disabled={!canReadTerminalClipboard()}
 						onPointerDown={preserveMobileTerminalFocus}
-						onClick={pasteFromMobileTerminalAccessory}
+						onPointerUp={mobileTerminalPasteActivation.onPointerUp}
+						onClick={mobileTerminalPasteActivation.onClick}
 					>
 						Paste
 					</button>

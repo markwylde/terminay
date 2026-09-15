@@ -74,6 +74,10 @@ export function canReadClipboardText(): boolean {
 	return navigator.clipboard?.readText !== undefined;
 }
 
+export function canReadClipboardItems(): boolean {
+	return navigator.clipboard?.read !== undefined;
+}
+
 /** A Desktop terminal paste can safely read native clipboard formats within a
  * real user gesture. Browser hosts remain on their exact-origin text route. */
 export async function readTerminalClipboard(): Promise<string> {
@@ -91,7 +95,11 @@ export async function readTerminalClipboard(): Promise<string> {
 }
 
 export function canReadTerminalClipboard(): boolean {
-	return bridge()?.readTerminalClipboard !== undefined || canReadClipboardText();
+	return (
+		bridge()?.readTerminalClipboard !== undefined ||
+		canReadClipboardText() ||
+		canReadClipboardItems()
+	);
 }
 
 export function canUseDesktopTerminalClipboard(): boolean {

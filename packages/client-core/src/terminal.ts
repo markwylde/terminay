@@ -17,6 +17,10 @@ import type {
 /** The attachment-scoped binary query used to hydrate a genuinely new xterm. */
 export const TERMINAL_PRESENTATION_CHECKPOINT_OPERATION = 'terminal.presentation-checkpoint';
 
+/** Bounded binary command that writes a clipboard image into server scratch. */
+export const TERMINAL_MATERIALIZE_CLIPBOARD_IMAGE_OPERATION =
+	'terminal.materialize-clipboard-image';
+
 /**
  * A bounded amount of raw PTY output may arrive after an attachment is
  * subscribed but before its binary checkpoint has been written to xterm.
@@ -251,6 +255,12 @@ export interface TerminalClientTransport {
 	readonly command: <T extends JsonValue = JsonValue>(
 		operation: string,
 		payload?: JsonValue,
+		options?: CommandOptions,
+	) => Promise<ClientCommandResult<T> | T>;
+	readonly commandWithBody?: <T extends JsonValue = JsonValue>(
+		operation: string,
+		payload?: JsonValue,
+		body?: Uint8Array<ArrayBuffer>,
 		options?: CommandOptions,
 	) => Promise<ClientCommandResult<T> | T>;
 	readonly subscribe: <T = JsonValue>(
@@ -1063,6 +1073,56 @@ export class TerminayTerminalClient {
 			},
 			options,
 		);
+	}
+
+	async materializeClipboardImage(
+		input: {
+			readonly identity: TerminalClientIdentity;
+			readonly mimeType: string;
+			readonly bytes: Uint8Array;
+		},
+		options: CommandOptions = {},
+	): Promise<string> {
+		const commandWithBody = this.transport.commandWithBody;
+		if (typeof commandWithBody !== 'function') {
+			throw new Error(
+				'the connected server transport does not support clipboard image upload',
+			);
+		}
+		if (!(input.bytes instanceof Uint8Array) || input.bytes.byteLength === 0)
+			throw new TypeError('clipboard image bytes are invalid');
+		// Invoke through the transport so a class-based client (TerminayClient,
+		// QueryCommandClient) keeps its receiver. An unbound call throws inside the
+		// transport and reaches the user only as a failed clipboard image upload.
+		const response = await commandWithBody.call(
+			this.transport,
+			TERMINAL_MATERIALIZE_CLIPBOARD_IMAGE_OPERATION,
+			{
+				identity: identityPayload(input.identity),
+				mimeType: input.mimeType,
+			},
+			Uint8Array.from(input.bytes),
+			options,
+		);
+		if (isCommandEnvelope(response) && response.ok === false) {
+			const detail =
+				typeof response.error?.message === 'string' &&
+				response.error.message.length > 0
+					? `: ${response.error.message}`
+					: '';
+			throw new Error(
+				`terminal operation ${TERMINAL_MATERIALIZE_CLIPBOARD_IMAGE_OPERATION} failed${detail}`,
+			);
+		}
+		const result = isCommandEnvelope(response) ? response.result : response;
+		if (
+			typeof result !== 'object' ||
+			result === null ||
+			typeof (result as { path?: unknown }).path !== 'string' ||
+			(result as { path: string }).path.length === 0
+		)
+			throw new Error('clipboard image upload returned no path');
+		return (result as { path: string }).path;
 	}
 
 	async write(
