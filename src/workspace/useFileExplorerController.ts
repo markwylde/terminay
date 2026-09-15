@@ -33,16 +33,7 @@ import {
 } from './gitFilesystemScope';
 
 const WATCH_REFRESH_DELAY_MS = 120;
-/**
- * Never refresh Git status more often than this.
- *
- * One `git status --untracked-files=all` takes about 0.28 s on a
- * ten-thousand-file tree, and a refresh issues several commands, so anything
- * near the old 120 ms debounce schedules work faster than the work completes.
- * A second is comfortably above one refresh's cost while still keeping the
- * panel current: the first event after a quiet period is not delayed at all.
- */
-const GIT_STATUS_REFRESH_INTERVAL_MS = 1_000;
+
 const EMPTY_WORKTREE_PANEL_STATUS: WorktreePanelStatus = Object.freeze({
 	gitAvailable: true,
 	repoRoot: null,
@@ -1063,7 +1054,6 @@ export function useFileExplorerController({
 		// it forces a full refresh however few named ones accompany it.
 		let sawUnattributedChange = false;
 		const schedule = createRefreshSchedule({
-			minIntervalMs: GIT_STATUS_REFRESH_INTERVAL_MS,
 			run: () => {
 				// Exactly one worktree changed during this interval, so the refresh
 				// can name it. Several, or none identified, must refresh everything —
