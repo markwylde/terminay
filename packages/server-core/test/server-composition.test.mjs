@@ -173,6 +173,7 @@ test("composition enumerates every server-ready AI, Git, recording, and settings
       "settings.update", "settings.reset",
       "terminal.create", "terminal.attach", "terminal.resume", "terminal.ack",
       "terminal.input", "terminal.presentation", "terminal.resize", "terminal.kill", "terminal.detach",
+      "terminal.materialize-clipboard-image",
     ];
     assert.deepEqual([...composition.operations.queries.keys()].sort(), expectedQueries.sort());
     assert.deepEqual([...composition.operations.commands.keys()].sort(), expectedCommands.sort());
