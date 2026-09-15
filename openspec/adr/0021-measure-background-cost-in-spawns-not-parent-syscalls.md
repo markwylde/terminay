@@ -62,6 +62,13 @@ tree walk, now invisible.
 
 ## Open items
 
+- Bound terminals sample topology at the base interval indefinitely: the
+  widening back-off applies only to terminals that are still unbound, so a
+  quiet bound terminal keeps spawning `lsof` and `ps` every 1.5 s. Widening it
+  for bound terminals too would cut the dominant remaining cost, at the price of
+  detecting a new subagent more slowly. That trade-off needs its own change and
+  its own measurement, not a cadence tweak smuggled into a performance fix.
+
 - `localAgentObservation` still shells out to `lsof` and `ps`. Streaming repeat
   mode reduces the rate; replacing them with `proc_pidinfo` and `proc_listpids`
   removes them, and needs its own ADR covering the packaging impact.

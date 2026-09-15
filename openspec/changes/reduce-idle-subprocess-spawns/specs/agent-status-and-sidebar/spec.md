@@ -32,31 +32,19 @@ spawned per idle second — for a user who has turned it off.
 - **THEN** observation resumes for terminals that are still alive, without
   restarting them
 
-### Requirement: Topology sampling does not spawn per sample
+### Requirement: Topology sampling backs off while nothing changes
 
-Where the host can observe process topology through a long-lived stream, it
-SHALL do so rather than spawning one process per sample. A repeat-mode
-observation SHALL be started once for a fixed set of terminals and restarted
-only when that set changes, which happens when a terminal opens or closes
-rather than on every sampling interval.
+Topology sampling for a terminal that keeps finding no new evidence SHALL widen
+the interval between samples up to a ceiling rather than sample at its fastest
+cadence indefinitely, because each sample spawns a process. New evidence SHALL
+reset the interval.
 
-A host without a streaming observation available SHALL fall back to per-sample
-invocation, and the fallback SHALL remain subject to the cadence and gating
-requirements above.
+#### Scenario: Nothing changes
 
-#### Scenario: Steady terminal set
+- **WHEN** repeated topology samples for a terminal find no change
+- **THEN** the interval between samples widens up to a ceiling
 
-- **WHEN** topology is sampled repeatedly while no terminal opens or closes
-- **THEN** the observation process started for that terminal set is reused
-- **AND** no additional process is spawned per sample
+#### Scenario: Evidence arrives
 
-#### Scenario: Terminal set changes
-
-- **WHEN** a terminal opens or closes
-- **THEN** the observation is restarted for the new set
-
-#### Scenario: Streaming unavailable
-
-- **WHEN** the host cannot start a streaming observation
-- **THEN** sampling falls back to per-sample invocation, still gated on the
-  integration setting and still bounded in cadence
+- **WHEN** the process topology changes for a terminal that had backed off
+- **THEN** the interval resets and sampling resumes promptly
