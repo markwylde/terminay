@@ -13,10 +13,29 @@
  * run at the end of the interval, so nothing is dropped and the rate is
  * bounded no matter how the events arrive.
  */
+/**
+ * The ramp, per ADR-0022. Sustained change widens the gap between runs; a quiet
+ * period drops back to the fastest step. Held at the last value rather than
+ * growing without bound.
+ */
+export const REFRESH_RAMP_MS: readonly number[] = Object.freeze([
+	1_000, 2_000, 3_000, 5_000, 10_000, 20_000,
+]);
+
 export interface RefreshScheduleOptions {
-	/** Never run more often than this. Set above the cost of one run so runs
-	 *  cannot queue behind one another. */
-	readonly minIntervalMs: number;
+	/**
+	 * Minimum time between runs, widening through this ramp while changes keep
+	 * arriving and resetting after a quiet period. Defaults to
+	 * `REFRESH_RAMP_MS`. A single value pins the interval.
+	 *
+	 * This is a floor between runs, not a delay after the last event: a trailing
+	 * debounce re-fires for every event spaced wider than its delay, so it bounds
+	 * latency rather than frequency.
+	 */
+	readonly rampMs?: readonly number[];
+	/** Quiet time after which the ramp returns to its first step. Defaults to
+	 *  twice the widest step. */
+	readonly resetAfterMs?: number;
 	readonly run: () => void;
 	readonly now?: () => number;
 	readonly setTimer?: (callback: () => void, delayMs: number) => unknown;
@@ -33,9 +52,14 @@ export interface RefreshSchedule {
 export function createRefreshSchedule(
 	options: RefreshScheduleOptions,
 ): RefreshSchedule {
-	const { minIntervalMs } = options;
-	if (!Number.isFinite(minIntervalMs) || minIntervalMs < 0)
-		throw new RangeError('minIntervalMs must be a non-negative finite number');
+	const ramp = options.rampMs ?? REFRESH_RAMP_MS;
+	if (ramp.length === 0) throw new RangeError('rampMs must not be empty');
+	for (const step of ramp)
+		if (!Number.isFinite(step) || step < 0)
+			throw new RangeError('every ramp step must be a non-negative finite number');
+	const resetAfterMs = options.resetAfterMs ?? ramp[ramp.length - 1] * 2;
+	if (!Number.isFinite(resetAfterMs) || resetAfterMs < 0)
+		throw new RangeError('resetAfterMs must be a non-negative finite number');
 
 	const now = options.now ?? (() => Date.now());
 	const setTimer =
@@ -47,26 +71,34 @@ export function createRefreshSchedule(
 
 	let lastRunAt: number | undefined;
 	let timer: unknown;
+	let step = 0;
 
 	const run = (): void => {
 		lastRunAt = now();
+		// Changes are still arriving, so widen for the next one. Held at the last
+		// step rather than growing without bound.
+		step = Math.min(step + 1, ramp.length - 1);
 		options.run();
 	};
 
 	return {
 		request(): void {
 			// A run is already pending; this request is covered by it. That is what
-			// makes a burst cost one refresh rather than one per event.
+			// makes a burst cost one run rather than one per event.
 			if (timer !== undefined) return;
-			const elapsed = lastRunAt === undefined ? Number.POSITIVE_INFINITY : now() - lastRunAt;
-			if (elapsed >= minIntervalMs) {
+			const elapsed =
+				lastRunAt === undefined ? Number.POSITIVE_INFINITY : now() - lastRunAt;
+			// Quiet for long enough that this is a fresh burst, not a continuation.
+			if (elapsed >= resetAfterMs) step = 0;
+			const interval = ramp[step] ?? 0;
+			if (elapsed >= interval) {
 				run();
 				return;
 			}
 			timer = setTimer(() => {
 				timer = undefined;
 				run();
-			}, minIntervalMs - elapsed);
+			}, interval - elapsed);
 		},
 		cancel(): void {
 			if (timer === undefined) return;
