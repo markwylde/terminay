@@ -96,6 +96,9 @@ export type WorkspaceInventoryEntry = {
 	projectEmoji: string;
 	projectId: string;
 	projectTitle: string;
+	/** True for the panel in front of its project, which is what the compact
+	 * breadcrumb names. Presentation only: it confers no authority. */
+	isActivePanel?: boolean;
 	/** Present for terminal panels; file and folder panels have no session. */
 	sessionId?: string;
 	status: WorkspaceInventoryStatus;
@@ -105,6 +108,7 @@ export type WorkspaceInventoryEntry = {
 export type InventoryPanelParams = PanelTabAppearance & {
 	filePath?: string;
 	folderPath?: string;
+	isFocused?: boolean;
 	sessionId?: string;
 	terminalActivityState?: TerminalActivityState;
 };
@@ -163,6 +167,7 @@ export function buildProjectInventoryEntries(options: {
 			projectId: project.id,
 			projectTitle: project.title,
 			title: panel.title ?? defaultPanelTitle(kind),
+			...(params?.isFocused === true ? { isActivePanel: true } : {}),
 			...(sessionId === undefined ? {} : { sessionId }),
 		};
 

@@ -1,3 +1,4 @@
+import { Menu as MenuIcon } from 'lucide-react';
 import {
 	RecordingsClient,
 	SettingsClient,
@@ -495,6 +496,17 @@ export function ConnectedWebRendererWorkspace({
 							presentation: Object.freeze({
 								nativeMenus: hasNativeMenus,
 								nativeWindowControls: hasNativeWindowControls,
+								...(hasNativeMenus
+									? {}
+									: {
+											renderCompactApplicationMenu: () => (
+												<ConnectedBrowserMenuBar
+													onBack={onBack}
+													onOpenAuxiliaryRoute={requestBrowserAuxiliaryRoute}
+													variant="compact"
+												/>
+											),
+										}),
 							}),
 							subscribeAppCommands,
 						})}
@@ -552,9 +564,12 @@ export function ConnectedWebRendererWorkspace({
 function ConnectedBrowserMenuBar({
 	onBack,
 	onOpenAuxiliaryRoute,
+	variant = 'bar',
 }: Readonly<{
 	onBack: () => void;
 	onOpenAuxiliaryRoute: (route: BrowserAuxiliaryRoute) => void;
+	/** `compact` folds the four menus into one control for the chrome row. */
+	variant?: 'bar' | 'compact';
 }>) {
 	const [openMenu, setOpenMenu] = useState<BrowserMenuId | null>(null);
 	const menuButtonRefs = useRef(new Map<BrowserMenuId, HTMLButtonElement>());
@@ -827,13 +842,82 @@ function ConnectedBrowserMenuBar({
 		if (openMenu === null) return;
 		const onPointerDown = (event: PointerEvent) => {
 			const target = event.target;
-			if (target instanceof Element && target.closest('.connected-web-menubar'))
+			if (
+				target instanceof Element &&
+				target.closest('.connected-web-menubar, .connected-web-compact-menu')
+			)
 				return;
 			setOpenMenu(null);
 		};
 		window.addEventListener('pointerdown', onPointerDown);
 		return () => window.removeEventListener('pointerdown', onPointerDown);
 	}, [openMenu]);
+
+	if (variant === 'compact') {
+		return (
+			<div className="connected-web-compact-menu">
+				<button
+					type="button"
+					className="compact-chrome__icon connected-web-compact-menu__button"
+					aria-haspopup="menu"
+					aria-expanded={openMenu !== null}
+					aria-label="Application menu"
+					title="Application menu"
+					onClick={() =>
+						setOpenMenu((current) => (current === null ? 'file' : null))
+					}
+				>
+					<MenuIcon size={17} aria-hidden="true" />
+				</button>
+				{openMenu === null ? null : (
+					<div
+						className="connected-web-compact-menu__popup"
+						role="menu"
+						aria-label="Application menu"
+					>
+						{menuOrder.map((menuId) => (
+							<div className="connected-web-compact-menu__group" key={menuId}>
+								{/* The four menus keep their names, so one control still
+								    reads as File, Edit, View, and Help. */}
+								<div className="connected-web-compact-menu__label">
+									{menuLabels[menuId]}
+								</div>
+								{menuItems[menuId].map((item) => (
+									<button
+										key={item.id}
+										type="button"
+										className="connected-web-menu__item"
+										role={
+											item.checked === undefined
+												? 'menuitem'
+												: 'menuitemcheckbox'
+										}
+										{...(item.checked === undefined
+											? {}
+											: { 'aria-checked': item.checked })}
+										onClick={() => {
+											setOpenMenu(null);
+											item.onSelect();
+										}}
+									>
+										{item.checked === undefined ? null : (
+											<span
+												className="connected-web-menu__check"
+												aria-hidden="true"
+											>
+												{item.checked ? '✓' : ''}
+											</span>
+										)}
+										{item.label}
+									</button>
+								))}
+							</div>
+						))}
+					</div>
+				)}
+			</div>
+		);
+	}
 
 	return (
 		<nav className="connected-web-menubar" aria-label="Application menu">
