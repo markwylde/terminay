@@ -30,7 +30,7 @@
 
 ## 6. Styling
 
-- [x] 6.1 Add the compact row and switcher styles to `src/App.css` and the responsive workspace styles, keeping the row at 40px, icons narrowing before the breadcrumb truncates, and 44px minimum row targets in the sheet. Verified by an e2e case at 320px asserting no horizontal overflow of the chrome row and by `npm run lint`.
+- [x] 6.1 Add the compact row and switcher styles to `src/App.css` and the responsive workspace styles, keeping the row at 40px, icons narrowing before the breadcrumb truncates, and row targets in the sheet that stay tappable without holding a one-line row open at the height a two-line row needs. Verified by an e2e case at 320px asserting no horizontal overflow of the chrome row and by `npm run lint`.
 
 ## 8. Touch-host layout stability
 
