@@ -4147,3 +4147,79 @@ body.project-tabbar-reordering .project-tabbar {
 .compact-switcher__actions button:hover {
   background: rgba(255, 255, 255, 0.11);
 }
+
+/* WebKit refuses a programmatic clipboard read without a live user activation,
+ * and an xterm gives iOS nothing to raise its own Paste callout over. This row
+ * supplies the one thing the platform does offer Paste for: a focused,
+ * editable field.
+ *
+ * It is a row in the panel's flex column rather than an overlay, for the same
+ * reason the keyboard accessory is: the visual viewport shrinks for the
+ * software keyboard, so a normal row lands above it without covering terminal
+ * output. Its colours are literal, because the panel surface variable carries
+ * the user's theme background and that background may be translucent. */
+.terminal-clipboard-fallback {
+  position: relative;
+  z-index: 4;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-inline-size: 0;
+  border-top: 1px solid #282e2f;
+  background: #15191a;
+  color: #e7f4ef;
+  padding: 8px max(8px, env(safe-area-inset-right, 0px)) 8px max(8px, env(safe-area-inset-left, 0px));
+  font-family: 'Open Sans', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+.terminal-clipboard-fallback__hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #b8c4c0;
+}
+
+.terminal-clipboard-fallback__input {
+  box-sizing: border-box;
+  inline-size: 100%;
+  block-size: 56px;
+  padding: 8px;
+  color: #e7f4ef;
+  background: #0f1213;
+  border: 1px solid #3a4244;
+  border-radius: 6px;
+  font-family: inherit;
+  /* iOS zooms the page when a field smaller than 16px takes focus. */
+  font-size: 16px;
+  resize: none;
+}
+
+.terminal-clipboard-fallback__input:focus-visible {
+  outline: 2px solid #71d9bb;
+  outline-offset: 1px;
+}
+
+.terminal-clipboard-fallback__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.terminal-clipboard-fallback__actions button {
+  appearance: none;
+  padding: 7px 14px;
+  color: #e7f4ef;
+  background: #232a2b;
+  border: 1px solid #3a4244;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.terminal-clipboard-fallback__actions button:focus-visible {
+  outline: 2px solid #71d9bb;
+  outline-offset: 1px;
+}
