@@ -112,6 +112,18 @@ export const appCommandMetadata: AppCommandMetadata[] = [
     keywords: 'open command bar launcher palette search commands macros',
   },
   {
+    command: 'edit-active-tab',
+    title: 'Edit active tab',
+    description: 'Rename, colour, or annotate the terminal, file, or folder tab in front.',
+    keywords: 'edit active tab rename colour color emoji note terminal file folder settings',
+  },
+  {
+    command: 'edit-active-project',
+    title: 'Edit active project',
+    description: 'Rename the project in front, or change its root folder, colour, or icon.',
+    keywords: 'edit active project rename root folder colour color icon emoji settings',
+  },
+  {
     command: 'start-dictation',
     title: 'Start dictation',
     description: 'Record speech and type the transcript into the active terminal.',
@@ -148,6 +160,8 @@ export const defaultKeyboardShortcuts: KeyboardShortcutSettings = {
   'popout-active': 'CmdOrCtrl+Shift+P',
   'close-active': 'CmdOrCtrl+W',
   'open-command-bar': 'CmdOrCtrl+L',
+  'edit-active-tab': '',
+  'edit-active-project': '',
   'start-dictation': 'CmdOrCtrl+Shift+D',
   'toggle-file-explorer-sidebar': 'CmdOrCtrl+O',
   'set-project-root-folder-to-working-directory': 'CmdOrCtrl+R',
