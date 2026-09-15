@@ -423,4 +423,60 @@ test.describe('compact chrome', () => {
 		expect(Math.round(after.y)).toBe(Math.round(before.y));
 		expect(Math.round(after.width)).toBe(Math.round(before.width));
 	});
+
+	test('closes a terminal from the switcher and keeps the sheet open', async ({
+		appHarness,
+		electronApp,
+		mainWindow,
+	}) => {
+		await appHarness.sendAppCommand('new-terminal');
+		await expect(
+			mainWindow.getByLabel('Close terminal'),
+		).toHaveCount(2);
+
+		await resize(mainWindow, electronApp, PHONE);
+		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
+		const switcher = switcherOf(mainWindow);
+		await expect(switcher).toBeVisible();
+		const rows = switcher.locator('[data-compact-switcher-terminal]');
+		await expect(rows).toHaveCount(2);
+		const closedTitle = (
+			await rows.first().locator('.compact-switcher__terminal-title').innerText()
+		).trim();
+		await switcher
+			.locator('.compact-switcher__row')
+			.first()
+			.getByRole('button', { name: `Close ${closedTitle}` })
+			.click();
+		await expect(rows).toHaveCount(1);
+		await expect(switcher).toBeVisible();
+	});
+
+	test('closes a project from the switcher heading', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		await expect(mainWindow.locator('.project-tab')).not.toHaveCount(0);
+		await mainWindow.getByLabel('Create project').click();
+		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
+			0,
+		);
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+
+		await resize(mainWindow, electronApp, PHONE);
+		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
+		const switcher = switcherOf(mainWindow);
+		await expect(switcher).toBeVisible();
+		const headings = switcher.locator('[data-compact-switcher-project]');
+		await expect(headings).toHaveCount(2);
+		const closedTitle = (
+			await headings
+				.last()
+				.locator('.compact-switcher__project-name')
+				.innerText()
+		).trim();
+		await switcher.getByRole('button', { name: `Close ${closedTitle}` }).click();
+		await expect(headings).toHaveCount(1);
+		await expect(switcher).toBeVisible();
+	});
 });
