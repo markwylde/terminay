@@ -1502,7 +1502,9 @@ body.project-tabbar-reordering .project-tabbar {
   position: relative;
   height: 100%;
   width: 100%;
-  padding: 0 10px;
+  /* The close button carries 5px of its own inset around the 10px glyph, so the
+     right padding is trimmed to keep the gap beside the × even with the left. */
+  padding: 0 4px 0 10px;
   gap: 8px;
   box-sizing: border-box;
   background: transparent;
@@ -3743,8 +3745,11 @@ body.project-tabbar-reordering .project-tabbar {
   font-weight: 700;
 }
 
+/* The chevron is the affordance for the whole control, so it sits hard against
+   the right edge rather than trailing the label like another breadcrumb crumb. */
 .compact-breadcrumb__chevron {
   flex: 0 0 auto;
+  margin-left: auto;
   opacity: 0.6;
 }
 
