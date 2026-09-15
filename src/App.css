@@ -3836,14 +3836,40 @@ body.project-tabbar-reordering .project-tabbar {
   color: rgba(220, 226, 240, 0.45);
 }
 
-.compact-switcher__search input {
-  all: unset;
+/* iOS zooms the whole page when a control whose COMPUTED font-size is under
+   16px takes focus, and it has ignored `user-scalable=no` since iOS 10 — there
+   is no viewport declaration that turns this off. The only lever is the
+   computed size, so the field is set at 16px and scaled back to the sheet's
+   13.5px: iOS reads 16 and leaves the page alone, and the rendered type is
+   identical to everything around it.
+
+   The wrapper owns the layout box. The input is absolutely positioned inside
+   it at 1/0.84375 of its size, then scaled by that factor from the top-left,
+   so it paints exactly inside the box it was given. Change one of these three
+   numbers and you must change the others. */
+.compact-switcher__field {
+  position: relative;
   flex: 1 1 auto;
   min-width: 0;
+  height: 20px;
+}
+
+.compact-switcher__field input {
+  all: unset;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 118.5185%; /* 100 / 0.84375 */
+  height: 118.5185%;
   color: #dce2f0;
-  /* Deliberately the same size as every other control here. The page does not
-     scale on focus, so type does not have to grow to prevent it. */
-  font-size: 13.5px;
+  font-size: 16px; /* what iOS reads */
+  line-height: 20px;
+  transform: scale(0.84375); /* 13.5 / 16 — what the reader sees */
+  transform-origin: left top;
+}
+
+.compact-switcher__field input::placeholder {
+  color: rgba(220, 226, 240, 0.4);
 }
 
 .compact-switcher__search-close {

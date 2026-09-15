@@ -275,11 +275,21 @@ test.describe('compact chrome', () => {
 		mainWindow,
 	}) => {
 		await resize(mainWindow, electronApp, PHONE);
-		const viewport = await mainWindow
-			.locator('meta[name="viewport"]')
-			.getAttribute('content');
-		expect(viewport).toContain('maximum-scale=1');
-		expect(viewport).toContain('user-scalable=no');
+		// The filter declares the size iOS demands and renders at the sheet's own,
+		// so there is nothing for the platform to zoom.
+		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
+		await expect(switcherOf(mainWindow)).toBeVisible();
+		await mainWindow.locator('.compact-switcher__search-open').click();
+		const field = mainWindow.locator('.compact-switcher__field input');
+		const rendered = await field.evaluate((element) => {
+			const style = getComputedStyle(element);
+			const declared = Number.parseFloat(style.fontSize);
+			const scale = new DOMMatrixReadOnly(style.transform).a;
+			return { declared, rendered: declared * scale };
+		});
+		expect(rendered.declared).toBeGreaterThanOrEqual(16);
+		expect(rendered.rendered).toBeCloseTo(13.5, 1);
+		await mainWindow.keyboard.press('Escape');
 
 		// Focusing the filter must not move the chrome row or change its size —
 		// the failure mode being guarded is the page scaling and scrolling the
