@@ -3786,22 +3786,37 @@ body.project-tabbar-reordering .project-tabbar {
 }
 
 .compact-switcher__grab {
-  flex: none;
+  position: absolute;
+  left: 50%;
+  top: 8px;
   width: 38px;
   height: 4px;
-  margin: 8px auto 6px;
+  margin-left: -19px;
   border-radius: 2px;
   background: rgba(255, 255, 255, 0.22);
 }
 
 /* The filter is an affordance, not a prompt: a 30px glyph until it is asked
    for, then it grows across the row. Nothing about it takes focus on open. */
+/* The grab handle and the filter share one band: a collapsed filter sits on
+   the trailing edge like a toolbar control instead of stranding an icon on a
+   row of its own. */
 .compact-switcher__tools {
+  position: relative;
   flex: none;
   display: flex;
   align-items: center;
-  height: 36px;
-  margin: 2px 12px 8px;
+  justify-content: flex-end;
+  height: 34px;
+  margin: 4px 10px 2px;
+}
+
+.compact-switcher__tools--searching {
+  margin-bottom: 6px;
+}
+
+.compact-switcher__tools--searching .compact-switcher__grab {
+  display: none;
 }
 
 .compact-switcher__search-open {
@@ -3917,13 +3932,20 @@ body.project-tabbar-reordering .project-tabbar {
   align-items: center;
   gap: 8px;
   margin: 0;
-  padding: 12px 8px 5px;
+  padding: 14px 8px 6px;
   background: #14171e;
   color: rgba(220, 226, 240, 0.42);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.compact-switcher__connection-rule {
+  flex: 1 1 auto;
+  height: 1px;
+  margin-left: 2px;
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .compact-switcher__connection-dot {
@@ -3934,11 +3956,15 @@ body.project-tabbar-reordering .project-tabbar {
   background: #4fd08a;
 }
 
+.compact-switcher__group + .compact-switcher__group {
+  margin-top: 4px;
+}
+
 .compact-switcher__project {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 9px 8px 5px;
+  padding: 8px 8px 4px;
   color: #dce2f0;
   font-size: 13px;
   font-weight: 700;
@@ -4003,19 +4029,26 @@ body.project-tabbar-reordering .project-tabbar {
 }
 
 /* A thumb-sized target: the switcher exists because 30px tabs are not. */
+/* The rail is what makes a run of terminals read as belonging to the project
+   above them, so it is continuous: rows sit flush against each other and only
+   the active one lifts out as a chip. */
 .compact-switcher__terminal {
   all: unset;
   box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 10px;
-  width: calc(100% - 9px);
+  width: calc(100% - 10px);
   min-height: 46px;
-  margin-left: 9px;
-  padding: 6px 10px;
-  border-radius: 9px;
+  margin-left: 10px;
+  padding: 5px 10px;
+  border-radius: 0 9px 9px 0;
   border-left: 2px solid rgba(255, 255, 255, 0.07);
   cursor: pointer;
+}
+
+.compact-switcher__terminal + .compact-switcher__terminal {
+  margin-top: 1px;
 }
 
 .compact-switcher__terminal:hover {
@@ -4023,8 +4056,14 @@ body.project-tabbar-reordering .project-tabbar {
 }
 
 .compact-switcher__terminal[aria-current='true'] {
-  background: var(--terminal-tab-bg-active, #241a4d);
+  background: var(--terminal-tab-active, #4b3d96);
   border-left-color: transparent !important;
+  border-radius: 9px;
+}
+
+.compact-switcher__terminal[aria-current='true']
+  .compact-switcher__terminal-preview {
+  color: rgba(255, 255, 255, 0.62);
 }
 
 .compact-switcher__terminal:focus-visible,
@@ -4079,7 +4118,11 @@ body.project-tabbar-reordering .project-tabbar {
 .compact-switcher__actions button {
   all: unset;
   flex: 1 1 auto;
-  padding: 10px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 10px 8px;
   border-radius: 9px;
   background: rgba(255, 255, 255, 0.06);
   color: #dce2f0;

@@ -38,6 +38,13 @@
 - [x] 8.2 Collapse the switcher filter to a search control that expands on demand, take no focus when the switcher opens, and clear the filter when it collapses. Verified by unit assertions that the sheet renders no field and nothing is autofocused, and by the e2e filter case opening the control before typing.
 - [x] 8.3 Keep the filter's rendered type identical to the rest of the sheet rather than inflating it. Verified by a unit assertion that declared size times scale equals the sheet's 13.5px.
 
+## 9. Bringing the sheet back to the agreed design
+
+- [x] 9.1 Restore the grouping the prototype had: a rule on each connection heading, terminal rows flush against a continuous project-coloured rail with only the active row lifting out as a chip, and a neutral dot on idle rows so titles keep one left margin. Verified by `scripts/compact-switcher-ui.test.mjs` asserting the rule and the idle indicator, and by reading the sheet against the prototype.
+- [x] 9.2 Put the filter in the sheet header band beside the grab handle rather than on a row of its own. Verified by the rendered-markup suite and the compact e2e.
+- [x] 9.3 Return New terminal to the footer, acting on the project in front and absent when none is. Verified by unit assertions for both states.
+- [x] 9.4 Prove the preview line reaches a row in a running app rather than only in the model. Verified by an e2e case that types into a live terminal and asserts its switcher row carries a non-empty preview.
+
 ## 7. Verification
 
 - [x] 7.1 Add the compact e2e coverage as its own spec file and register it the way sibling suites are. Verified by the new spec passing under `npm run test:e2e` in the Docker harness, never Playwright on the host.
