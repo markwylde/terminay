@@ -53,23 +53,31 @@ Desktop and web SHALL render the same projects, panels, files, terminals, settin
 
 ### Requirement: Focusing a control never scales the workspace
 
-The workspace document SHALL declare a fixed viewport scale so that focusing a
-text field, or any other control, does not scale the page, reflow the layout, or
-scroll the chrome out of view. Control type SHALL NOT be enlarged to avoid that
-scaling: the workspace's type scale is a design decision and SHALL be identical
-whether or not a platform would otherwise zoom on focus.
+Focusing a text field, or any other control, SHALL NOT scale the workspace,
+reflow its layout, or scroll its chrome out of view. Where a touch platform
+scales the page on focus below a minimum control type size, the control SHALL
+declare at least that size and SHALL be scaled back so the type it renders is
+the workspace's own. The rendered type scale SHALL be identical whether or not
+the platform imposes such a minimum, and SHALL NOT be enlarged to satisfy it. A
+viewport declaration SHALL NOT be relied on to suppress that scaling, and the
+workspace SHALL NOT forbid user scaling to obtain it.
 
 #### Scenario: Focusing a filter leaves the layout alone
 
-- **WHEN** a user focuses the switcher's filter on a touch host
+- **WHEN** a user focuses the switcher's filter on a touch host that scales the
+  page for small controls
 - **THEN** the page scale is unchanged, the chrome row stays where it was, and
-  the field's type is the same size as the rest of the sheet
+  the field renders at the same type size as the rest of the sheet
 
-#### Scenario: One declaration covers every control
+#### Scenario: The reader sees no larger type
 
-- **WHEN** any text field in the workspace takes focus
-- **THEN** the same fixed viewport scale applies, with no per-control type
-  inflation
+- **WHEN** the filter is compared with the labels and rows around it
+- **THEN** its rendered type is the same size as theirs
+
+#### Scenario: Pinch zoom is left alone
+
+- **WHEN** the workspace document declares its viewport
+- **THEN** it does not forbid user scaling
 
 ### Requirement: Compact switcher overlays rather than compresses
 
