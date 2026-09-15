@@ -32,7 +32,7 @@ On a compact bar at phone width or 640px and below, the workspace chrome SHALL b
 
 ### Requirement: Unified compact switcher
 
-A compact workspace SHALL provide one switcher that presents every terminal of every project of every attached connection, grouped by connection and then by project. Each project group SHALL name its project with that project's colour and SHALL offer a new terminal for that project. Each terminal row SHALL name its terminal and SHALL activate that terminal on its own server when pressed, selecting that terminal's project first when it is not the active one. A connection heading SHALL appear for every attached connection, including when only one is attached, so a row's owning server is never ambiguous. The switcher SHALL offer New project and Add connection alongside the per-group new terminal, so every create action absorbed from the collapsed chrome remains reachable. The switcher SHALL open from the breadcrumb and from the connection control, presenting the same content from both.
+A compact workspace SHALL provide one switcher that presents every terminal of every project of every attached connection, grouped by connection and then by project. Each project group SHALL name its project with that project's colour and SHALL offer a new terminal for that project. Each terminal row SHALL name its terminal and SHALL activate that terminal on its own server when pressed, selecting that terminal's project first when it is not the active one. A connection heading SHALL appear for every attached connection, including when only one is attached, so a row's owning server is never ambiguous. The switcher SHALL offer New terminal for the project in front, New project, and Add connection alongside the per-group new terminal, so every create action absorbed from the collapsed chrome remains reachable. New terminal SHALL be absent when no project is in front rather than acting on an arbitrary one. The switcher SHALL open from the breadcrumb and from the connection control, presenting the same content from both.
 
 #### Scenario: Grouped by connection and project
 - **WHEN** the switcher opens with two attached connections holding projects with terminals
@@ -47,8 +47,12 @@ A compact workspace SHALL provide one switcher that presents every terminal of e
 - **THEN** the unified switcher opens with the same grouped content the breadcrumb opens
 
 #### Scenario: Create actions survive the collapse
-- **WHEN** the switcher is open
-- **THEN** it offers a new terminal for each project group, New project, and Add connection
+- **WHEN** the switcher is open with a project in front
+- **THEN** it offers a new terminal for each project group, New terminal, New project, and Add connection
+
+#### Scenario: No project in front
+- **WHEN** the switcher is open while the dashboard is selected
+- **THEN** New terminal is absent and the other create actions remain
 
 #### Scenario: Single connection still names its server
 - **WHEN** exactly one connection is attached

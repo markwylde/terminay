@@ -34,6 +34,8 @@ export type CompactSwitcherProps = Readonly<{
 	onEditProject: (group: CompactSwitcherProjectGroup) => void;
 	onNewProject: () => void;
 	onNewTerminal: (group: CompactSwitcherProjectGroup) => void;
+	/** Creates in the project in front; absent when no project is active. */
+	onNewTerminalHere?: () => void;
 	onQueryChange: (query: string) => void;
 	query: string;
 }>;
@@ -79,6 +81,7 @@ export function CompactSwitcher({
 	onEditProject,
 	onNewProject,
 	onNewTerminal,
+	onNewTerminalHere,
 	onQueryChange,
 	query,
 }: CompactSwitcherProps) {
@@ -124,10 +127,10 @@ export function CompactSwitcher({
 				aria-modal="true"
 				aria-label="Switch terminal"
 			>
-				<span className="compact-switcher__grab" aria-hidden="true" />
 				<div
 					className={`compact-switcher__tools${isSearchOpen ? ' compact-switcher__tools--searching' : ''}`}
 				>
+					<span className="compact-switcher__grab" aria-hidden="true" />
 					{isSearchOpen ? (
 						<div className="compact-switcher__search">
 							<Search size={15} aria-hidden="true" />
@@ -186,6 +189,10 @@ export function CompactSwitcher({
 										aria-hidden="true"
 									/>
 									{connection.serverLabel}
+									<span
+										className="compact-switcher__connection-rule"
+										aria-hidden="true"
+									/>
 								</h2>
 								{connection.projects.map((project) => (
 									<div className="compact-switcher__group" key={project.key}>
@@ -225,6 +232,7 @@ export function CompactSwitcher({
 														<AgentStatusIndicator
 															state={terminal.state}
 															size="small"
+															showIdle
 														/>
 													</span>
 													<span className="compact-switcher__terminal-text">
@@ -247,6 +255,11 @@ export function CompactSwitcher({
 					)}
 				</div>
 				<div className="compact-switcher__actions">
+					{onNewTerminalHere === undefined ? null : (
+						<button type="button" onClick={onNewTerminalHere}>
+							New terminal
+						</button>
+					)}
 					<button type="button" onClick={onNewProject}>
 						New project
 					</button>
