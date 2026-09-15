@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import App from '../App';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
 import type { AppCommand } from '../types/terminay';
@@ -14,6 +15,12 @@ export type RendererHostAdapters = Readonly<{
 	presentation?: Readonly<{
 		nativeMenus: boolean;
 		nativeWindowControls: boolean;
+		/**
+		 * Supplied only by hosts that draw an application menu in-page, so the
+		 * compact chrome row can hold one without the shared workspace ever
+		 * learning a host-only command. Hosts with native menus omit it.
+		 */
+		renderCompactApplicationMenu?: () => ReactNode;
 	}>;
 	subscribeAppCommands?: (
 		listener: (command: AppCommand) => Promise<void> | void,
