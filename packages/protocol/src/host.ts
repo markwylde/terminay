@@ -164,6 +164,8 @@ export type TerminayHostRouteDisposition =
 export const TERMINAY_HOST_MENU_COMMANDS = [
 	'clear-terminal',
 	'close-active',
+	'edit-active-project',
+	'edit-active-tab',
 	'new-project',
 	'new-terminal',
 	'open-command-bar',

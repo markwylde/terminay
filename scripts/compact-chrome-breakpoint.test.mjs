@@ -188,3 +188,58 @@ test('the switcher overlays the workspace rather than taking height from it', as
 	assert.match(scrim, /position: absolute;/);
 	assert.match(scrim, /inset: 0;/);
 });
+
+test('the compact row carries the Command Bar between dashboard and breadcrumb', async () => {
+	const row = await read('src/workspace/CompactChromeRow.tsx');
+	const order = [
+		...row.matchAll(
+			/data-terminay-home-control(?==)|data-compact-command-bar(?==)|data-compact-breadcrumb(?==)|data-compact-connection(?==)/g,
+		),
+	].map((match) => match[0]);
+	assert.deepEqual(order, [
+		'data-terminay-home-control',
+		'data-compact-command-bar',
+		'data-compact-breadcrumb',
+		'data-compact-connection',
+	]);
+
+	// It names itself; the glyph alone says nothing about what it opens.
+	assert.match(row, /aria-label="Open command bar"/);
+	// The command acts on the project in front, so the control says when there
+	// is none rather than looking live and doing nothing.
+	assert.match(row, /disabled=\{!isCommandBarAvailable\}/);
+});
+
+test('the Command Bar control takes the same dispatch as the accelerator', async () => {
+	const app = await read('src/App.tsx');
+	assert.match(
+		app,
+		/const openCompactCommandBar = useCallback\(\(\) => \{\s*void executeCommandOnActiveProject\('open-command-bar'\);/,
+	);
+	assert.match(
+		app,
+		/<CompactChromeRow[\s\S]*?onOpenCommandBar=\{openCompactCommandBar\}/,
+	);
+	assert.match(
+		app,
+		/<CompactChromeRow[\s\S]*?isCommandBarAvailable=\{!isHomeSelected && activeProject !== null\}/,
+	);
+	// One definition of what opening the Command Bar means: the control must not
+	// reach past the command into the launcher's own state.
+	assert.equal(app.match(/setIsMacroLauncherOpen\(true\)/g).length, 1);
+});
+
+test('an unavailable chrome control reads as unavailable', async () => {
+	const css = await read('src/App.css');
+	const rule = css.match(
+		/\.compact-chrome__icon:disabled \{([\s\S]*?)\n\}/,
+	)?.[1];
+	assert.ok(rule, 'the disabled state has a rule');
+	assert.match(rule, /opacity: 0\.35;/);
+	assert.match(rule, /cursor: default;/);
+	// And it must not light up under a hover it will not answer.
+	assert.match(
+		css,
+		/\.compact-chrome__icon:disabled:hover \{[\s\S]*?background: none;/,
+	);
+});
