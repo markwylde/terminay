@@ -93,6 +93,13 @@ export class GitService {
 	private readonly statusPollTimers = new Map<string, GitStatusPollTimer>();
 	private revisionValue = 0;
 	private readonly statusFingerprints = new Map<string, string>();
+	/** Last measured summary per worktree, by repository. Lets a listing that
+	 *  names one worktree carry the others forward instead of re-running their
+	 *  Git commands. */
+	private readonly lastWorktreeSummaries = new Map<
+		string,
+		Map<GitWorktreeId, GitWorktreeSummary>
+	>();
 	private closed = false;
 
 	constructor(options: GitServiceOptions = {}) {
@@ -414,12 +421,36 @@ export class GitService {
 		);
 		const mainPath = records.find((record) => !record.isBare)?.path;
 		const summaries: GitWorktreeSummary[] = [];
+		// A status change names the worktree it came from, so a listing raised by
+		// one worktree's change need not re-run four Git commands against every
+		// other worktree in the repository. Reuse is exact — the summary the
+		// previous listing produced — rather than time-based: a worktree is
+		// skipped only when the caller said the change was somewhere else, and an
+		// unattributed listing still measures all of them.
+		const previous = this.lastWorktreeSummaries.get(
+			discovery.repositoryId ?? '',
+		);
+		const scopeTo =
+			target.worktreeId !== undefined && previous !== undefined
+				? target.worktreeId
+				: undefined;
+		const measured = new Map<GitWorktreeId, GitWorktreeSummary>();
 		for (const record of selected) {
 			const canonicalPath = await this.canonicalWorktreePath(record.path);
 			const id = worktreeId(
 				discovery.repositoryId as GitRepositoryId,
 				canonicalPath,
 			);
+			if (scopeTo !== undefined && id !== scopeTo) {
+				const carried = previous?.get(id);
+				if (carried !== undefined) {
+					summaries.push(carried);
+					measured.set(id, carried);
+					continue;
+				}
+				// No prior summary: this worktree is new since the last listing, so
+				// it is measured even though the event named another one.
+			}
 			let entries: readonly import('./types.js').GitStatusEntry[] = [];
 			let error: GitErrorInfo | undefined;
 			let statusBounded = false;
@@ -516,6 +547,7 @@ export class GitService {
 				...(error === undefined ? {} : { error }),
 			} satisfies GitWorktreeSummary;
 			summaries.push(summary);
+			measured.set(id, summary);
 			if (!mutating) {
 				this.publishStatusChange({
 					projectId: target.projectId,
@@ -532,6 +564,7 @@ export class GitService {
 				});
 			}
 		}
+		this.lastWorktreeSummaries.set(discovery.repositoryId ?? '', measured);
 		return {
 			...empty,
 			state: 'ready',
