@@ -127,6 +127,9 @@ const MAX_NOT_BOUND_DISCOVERY_RETRIES = 10;
  */
 export class ExtensionAgentRuntimeRegistry {
 	private readonly terminals = new Map<string, TrackedTerminal>();
+	/** Mirrors the agent-integration setting. While false, nothing here may
+	 *  schedule observation: its samples spawn processes. */
+	private observationEnabled = true;
 	private readonly localObservationCapabilities: readonly string[];
 	private readonly platform: 'darwin' | 'linux' | 'win32';
 	private readonly makeContextId: NonNullable<
@@ -190,6 +193,12 @@ export class ExtensionAgentRuntimeRegistry {
 			((callback, milliseconds) => setTimeout(callback, milliseconds));
 		this.cancelSchedule =
 			options.cancelSchedule ?? ((timer) => clearTimeout(timer));
+		// Start from the setting rather than assuming on, or a runtime built while
+		// integration is already off samples until the next time it is toggled.
+		this.observationEnabled = options.agents.integrationEnabled;
+		options.agents.observeIntegrationEnabled((enabled) => {
+			this.setObservationEnabled(enabled);
+		});
 	}
 
 	providerDisplayName(providerId: string): string | undefined {
@@ -657,6 +666,34 @@ export class ExtensionAgentRuntimeRegistry {
 				this.terminalExited(terminal.identity, 'terminal-closed');
 	}
 
+	/**
+	 * Stop or resume observation for the agent-integration setting.
+	 *
+	 * Turning the feature off has to cancel the work, not discard its results:
+	 * topology polling spawns a process per sample, so a runtime that kept its
+	 * timers armed would keep paying the whole cost of a feature the user has
+	 * switched off. Each terminal is released through the same identity-checked
+	 * path admission uses, so a sample already in flight cannot re-arm behind
+	 * the flag.
+	 *
+	 * Re-enabling arms nothing by itself. Live terminals are re-registered by
+	 * the caller that owns them, which is what admits them again.
+	 */
+	setObservationEnabled(enabled: boolean): void {
+		if (typeof enabled !== 'boolean')
+			throw new TypeError('observation enabled must be boolean');
+		if (this.observationEnabled === enabled) return;
+		this.observationEnabled = enabled;
+		if (enabled) return;
+		for (const terminal of [...this.terminals.values()])
+			this.terminalExited(terminal.identity, 'terminal-closed');
+	}
+
+	/** Whether observation is currently permitted to schedule work. */
+	get observationIsEnabled(): boolean {
+		return this.observationEnabled;
+	}
+
 	/** Resolve only a currently admitted, exact terminal context for the local
 	 * observation adapter. The extension never calls this directly. */
 	observationTerminal(
@@ -695,6 +732,7 @@ export class ExtensionAgentRuntimeRegistry {
 
 	private scheduleTopologyPoll(terminal: TrackedTerminal): void {
 		if (
+			!this.observationEnabled ||
 			this.options.topologySignature === undefined ||
 			terminal.topologyTimer !== undefined ||
 			terminal.context === undefined
@@ -724,6 +762,7 @@ export class ExtensionAgentRuntimeRegistry {
 	private async pollTopology(terminal: TrackedTerminal): Promise<void> {
 		const context = terminal.context;
 		if (
+			!this.observationEnabled ||
 			context === undefined ||
 			terminal.topologyPolling ||
 			this.options.topologySignature === undefined

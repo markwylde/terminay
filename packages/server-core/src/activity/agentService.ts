@@ -104,6 +104,9 @@ export class AgentStatusService {
 	>();
 	private started = false;
 	private enabled: boolean;
+	private readonly integrationObservers = new Set<
+		(enabled: boolean) => void
+	>();
 	private readonly processInstanceId: string;
 	private readonly providerDisplayName?: (
 		providerId: string,
@@ -187,11 +190,37 @@ export class AgentStatusService {
 		this.started = false;
 	}
 
+	/**
+	 * Observe the integration setting.
+	 *
+	 * The observation runtime needs this because turning the feature off has to
+	 * cancel its scheduled work, not just stop its results being recorded — its
+	 * topology sampling spawns a process per sample, so a runtime that never
+	 * hears about the change keeps paying the full cost of a disabled feature.
+	 */
+	observeIntegrationEnabled(
+		listener: (enabled: boolean) => void,
+	): () => void {
+		if (typeof listener !== 'function')
+			throw new TypeError('integration listener must be a function');
+		this.integrationObservers.add(listener);
+		return () => {
+			this.integrationObservers.delete(listener);
+		};
+	}
+
 	setIntegrationEnabled(enabled: boolean): boolean {
 		if (typeof enabled !== 'boolean')
 			throw new TypeError('agent integration enabled must be boolean');
 		if (this.enabled === enabled) return false;
 		this.enabled = enabled;
+		for (const listener of [...this.integrationObservers]) {
+			try {
+				listener(enabled);
+			} catch {
+				/* an observer must not block the setting from applying */
+			}
+		}
 		if (!enabled) {
 			this.active.clear();
 			this.sessionScopes.clear();

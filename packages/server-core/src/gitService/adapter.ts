@@ -52,6 +52,11 @@ export interface GitWorktreeListRequest {
 	readonly authorization: GitAuthorization;
 	readonly projectId?: string;
 	readonly repositoryId?: GitRepositoryId;
+	/** Scope hint: the worktree whose change raised this listing. Other
+	 *  worktrees are carried forward from the previous listing instead of being
+	 *  re-measured. Omitted for a first load or an unattributed refresh, which
+	 *  measures every worktree. */
+	readonly worktreeId?: GitWorktreeId;
 }
 
 export interface GitOpenTerminalRequest extends GitWorktreeRef {
@@ -181,6 +186,9 @@ export class ServerGitAdapter {
 			...(request.repositoryId === undefined
 				? {}
 				: { repositoryId: request.repositoryId }),
+			...(request.worktreeId === undefined
+				? {}
+				: { worktreeId: request.worktreeId }),
 		});
 		return boundGitQueryResult(result as unknown as JsonValue);
 	}
@@ -554,6 +562,9 @@ export class ServerGitAdapter {
 			...(stringValue(payload.repositoryId) === undefined
 				? {}
 				: { repositoryId: stringValue(payload.repositoryId) }),
+			...(stringValue(payload.worktreeId) === undefined
+				? {}
+				: { worktreeId: stringValue(payload.worktreeId) }),
 		};
 	}
 
