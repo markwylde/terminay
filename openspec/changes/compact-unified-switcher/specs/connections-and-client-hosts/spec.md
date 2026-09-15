@@ -51,6 +51,26 @@ Desktop and web SHALL render the same projects, panels, files, terminals, settin
 
 ## ADDED Requirements
 
+### Requirement: Focusing a control never scales the workspace
+
+The workspace document SHALL declare a fixed viewport scale so that focusing a
+text field, or any other control, does not scale the page, reflow the layout, or
+scroll the chrome out of view. Control type SHALL NOT be enlarged to avoid that
+scaling: the workspace's type scale is a design decision and SHALL be identical
+whether or not a platform would otherwise zoom on focus.
+
+#### Scenario: Focusing a filter leaves the layout alone
+
+- **WHEN** a user focuses the switcher's filter on a touch host
+- **THEN** the page scale is unchanged, the chrome row stays where it was, and
+  the field's type is the same size as the rest of the sheet
+
+#### Scenario: One declaration covers every control
+
+- **WHEN** any text field in the workspace takes focus
+- **THEN** the same fixed viewport scale applies, with no per-control type
+  inflation
+
 ### Requirement: Compact switcher overlays rather than compresses
 
 The unified switcher SHALL overlay the workspace rather than reduce the height given to the terminal, SHALL be dismissible by pressing outside it or by the platform's dismiss key, and SHALL return focus to the control that opened it. While it is open the workspace beneath SHALL keep its layout so dismissing it requires no terminal relayout.
