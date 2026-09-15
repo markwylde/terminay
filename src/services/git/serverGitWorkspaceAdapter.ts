@@ -20,8 +20,18 @@ export type ServerGitWorkspaceProjection = {
 export async function loadServerGitWorkspace(
 	client: TerminayGitClient,
 	projectId: string,
+	/** The worktree whose change raised this refresh, when exactly one did. The
+	 *  server carries the other worktrees forward rather than re-measuring them;
+	 *  omitting it measures every worktree. */
+	worktreeId?: string,
 ): Promise<ServerGitWorkspaceProjection> {
-	const result = record(await client.list({ projectId }), 'Git worktree list');
+	const result = record(
+		await client.list({
+			projectId,
+			...(worktreeId === undefined ? {} : { worktreeId }),
+		}),
+		'Git worktree list',
+	);
 	const repositoryRoot =
 		result.repositoryRoot === null
 			? null
