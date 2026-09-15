@@ -169,8 +169,8 @@ import { FileExplorerTree } from './workspace/FileExplorerTree';
 import { CompactChromeRow } from './workspace/CompactChromeRow';
 import { CompactSwitcher } from './workspace/CompactSwitcher';
 import type {
+	CompactSwitcherPanelRow,
 	CompactSwitcherProjectGroup,
-	CompactSwitcherTerminalRow,
 } from './workspace/compactSwitcherModel';
 import {
 	buildCompactSwitcherGroups,
@@ -464,6 +464,7 @@ type ProjectWorkspaceHandle = {
 		terminalSessionStatus?: 'running' | 'exited' | 'interrupted',
 	) => boolean;
 	reconcileServerPanels: (panels: readonly ServerWorkspacePanel[]) => void;
+	activatePanel: (panelId: string) => void;
 	activateTerminal: (panelId: string, sessionId: string) => void;
 	executeCommand: (command: AppCommand) => Promise<void>;
 	exportTerminalForMove: (panelId: string) => MovedTerminalTab | null;
@@ -2072,6 +2073,9 @@ const ProjectWorkspace = forwardRef<
 			},
 			[markTerminalActivityViewed],
 		);
+		const activatePanel = useCallback((panelId: string) => {
+			dockviewApiRef.current?.getPanel(panelId)?.api.setActive();
+		}, []);
 		const activateAgentTerminal = useCallback(
 			(terminalSessionId: string) => {
 				const panel = getPanelForSession(terminalSessionId);
@@ -3862,6 +3866,7 @@ const ProjectWorkspace = forwardRef<
 				acceptMovedTerminal,
 				acceptServerTerminal,
 				reconcileServerPanels,
+				activatePanel,
 				activateTerminal,
 				executeCommand(command: AppCommand) {
 					return executeAppCommand(command);
@@ -3876,6 +3881,7 @@ const ProjectWorkspace = forwardRef<
 				acceptMovedTerminal,
 				acceptServerTerminal,
 				reconcileServerPanels,
+				activatePanel,
 				activateTerminal,
 				executeAppCommand,
 				exportTerminalForMove,
@@ -6341,6 +6347,11 @@ function App({
 			(entry) => entry.kind === 'terminal' && entry.isActivePanel === true,
 		);
 	}, [activeProjectId, inventoryByProject, isHomeSelected]);
+	const activeCompactPanel = useMemo(() => {
+		if (isHomeSelected || activeProjectId === undefined) return undefined;
+		const entries = inventoryByProject[activeProjectId] ?? [];
+		return entries.find((entry) => entry.isActivePanel === true);
+	}, [activeProjectId, inventoryByProject, isHomeSelected]);
 	const currentServerReachable =
 		byServerId.get(currentServerId)?.context !== undefined;
 	const activateDashboardRow = useCallback(
@@ -6370,8 +6381,8 @@ function App({
 	 * that already knows how to cross to another server and select the project
 	 * before the panel. There is no second activation route to keep honest.
 	 */
-	const activateCompactSwitcherTerminal = useCallback(
-		(row: CompactSwitcherTerminalRow) => {
+	const activateCompactSwitcherPanel = useCallback(
+		(row: CompactSwitcherPanelRow) => {
 			activateDashboardRow(row.serverId, {
 				agents: [],
 				color: '',
@@ -6379,34 +6390,66 @@ function App({
 				isAgentStatus: row.isAgentStatus,
 				kind: 'panel',
 				panelId: row.panelId,
-				panelKind: 'terminal',
+				panelKind: row.panelKind,
 				projectId: row.projectId,
 				status: row.state,
 				title: row.title,
 				...(row.sessionId === undefined ? {} : { sessionId: row.sessionId }),
 			});
+			if (row.panelKind === 'terminal') return;
+			window.requestAnimationFrame(() => {
+				workspaceRefs.current.get(row.projectId)?.activatePanel(row.panelId);
+			});
 		},
 		[activateDashboardRow],
 	);
 	/**
-	 * Editing a terminal from the switcher names the panel rather than relying
+	 * Editing a panel from the switcher names the panel rather than relying
 	 * on it having become active: a project whose dockview does not hold that
-	 * panel ignores the event, so exactly one terminal answers and no ordering
+	 * panel ignores the event, so exactly one panel answers and no ordering
 	 * between activation and edit has to hold. That also draws the same line
 	 * the hidden tab strip drew — it only ever showed this window's own panels,
 	 * so a row on another server activates, as a press always did, and its
 	 * editor opens once this window is working in that server.
 	 */
-	const editCompactSwitcherTerminal = useCallback(
-		(row: CompactSwitcherTerminalRow) => {
-			activateCompactSwitcherTerminal(row);
+	const editCompactSwitcherPanel = useCallback(
+		(row: CompactSwitcherPanelRow) => {
+			activateCompactSwitcherPanel(row);
 			window.dispatchEvent(
 				new CustomEvent('terminay-edit-terminal', {
 					detail: { panelId: row.panelId },
 				}),
 			);
 		},
-		[activateCompactSwitcherTerminal],
+		[activateCompactSwitcherPanel],
+	);
+	/**
+	 * Close is the path the hidden tab already used: terminals go through
+	 * `terminay-request-close-terminal`, files and folders through
+	 * `terminay-request-close-file`, both of which land in requestClosePanel.
+	 * A row on another server activates first, the same as create and edit.
+	 */
+	const closeCompactSwitcherPanel = useCallback(
+		(row: CompactSwitcherPanelRow) => {
+			if (row.serverId !== currentServerId) {
+				activateCompactSwitcherPanel(row);
+				return;
+			}
+			if (row.panelKind === 'terminal' && row.sessionId !== undefined) {
+				window.dispatchEvent(
+					new CustomEvent('terminay-request-close-terminal', {
+						detail: { panelId: row.panelId, sessionId: row.sessionId },
+					}),
+				);
+				return;
+			}
+			window.dispatchEvent(
+				new CustomEvent('terminay-request-close-file', {
+					detail: { panelId: row.panelId },
+				}),
+			);
+		},
+		[activateCompactSwitcherPanel, currentServerId],
 	);
 	/**
 	 * Creating in a project the window is not working in means going to its
@@ -6987,9 +7030,9 @@ function App({
 			{isCompactChrome && isCompactSwitcherOpen ? (
 				<CompactSwitcher
 					groups={compactSwitcherFilteredGroups}
-					onActivateTerminal={(row) => {
+					onActivatePanel={(row) => {
 						closeCompactSwitcher();
-						activateCompactSwitcherTerminal(row);
+						activateCompactSwitcherPanel(row);
 					}}
 					onAddConnection={() => {
 						closeCompactSwitcher();
@@ -7001,6 +7044,12 @@ function App({
 						}
 						onOpenConnectionManager();
 					}}
+					onClosePanel={closeCompactSwitcherPanel}
+					onCloseProject={(group) => {
+						closeComposedTab(
+							compositionTabKey(group.serverId, group.projectId),
+						);
+					}}
 					onDismiss={closeCompactSwitcher}
 					onEditProject={(group) => {
 						closeCompactSwitcher();
@@ -7008,9 +7057,9 @@ function App({
 							compositionTabKey(group.serverId, group.projectId),
 						);
 					}}
-					onEditTerminal={(row) => {
+					onEditPanel={(row) => {
 						closeCompactSwitcher();
-						editCompactSwitcherTerminal(row);
+						editCompactSwitcherPanel(row);
 					}}
 					onNewProject={() => {
 						closeCompactSwitcher();
@@ -7030,12 +7079,12 @@ function App({
 							})}
 					onQueryChange={setCompactSwitcherQuery}
 					query={compactSwitcherQuery}
-					{...(activeCompactTerminal === undefined
+					{...(activeCompactPanel === undefined
 						? {}
 						: {
-								activeTerminalKey: compositionTabKey(
+								activePanelKey: compositionTabKey(
 									currentServerId,
-									activeCompactTerminal.panelId,
+									activeCompactPanel.panelId,
 								),
 							})}
 				/>
