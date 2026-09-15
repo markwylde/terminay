@@ -48,11 +48,31 @@ import './index.css';
  * session's is the server the manager opened. */
 const PRIMARY_PROFILE_ID = 'primary';
 
+/** Drawn inline, not fetched. This mark is the first thing a connecting or
+ * reconnecting window shows, and the framed PWA host rewrites relative URLs
+ * only for the entry document's own references — a relative `src` from the
+ * bundle's JavaScript resolves against the session bootstrap path and renders
+ * as a broken image for as long as the shell is up. */
 function TerminayMark({
 	className,
 }: Readonly<{ className: string }>): React.JSX.Element {
 	return (
-		<img alt="" aria-hidden="true" className={className} src="./terminay.svg" />
+		<svg
+			aria-hidden="true"
+			className={className}
+			viewBox="0 0 24 24"
+			xmlns="http://www.w3.org/2000/svg"
+			fill="none"
+			stroke="#ffffff"
+			strokeWidth="1.75"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
+			<rect width="24" height="24" fill="#000000" stroke="none" />
+			<polygon points="12 4 4.5 7.75 12 11.5 19.5 7.75 12 4" />
+			<polyline points="4.5 15.25 12 19 19.5 15.25" />
+			<polyline points="4.5 11.5 12 15.25 19.5 11.5" />
+		</svg>
 	);
 }
 
