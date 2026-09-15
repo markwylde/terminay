@@ -154,11 +154,12 @@ const groups = [
 				key: 'local:p1',
 				projectId: 'p1',
 				serverId: 'local',
-				terminals: [
+				panels: [
 					{
 						isAgentStatus: false,
 						key: 'local:panel-a',
 						panelId: 'panel-a',
+						panelKind: 'terminal',
 						preview: '✓ built in 2.41s',
 						projectId: 'p1',
 						serverId: 'local',
@@ -170,6 +171,7 @@ const groups = [
 						isAgentStatus: true,
 						key: 'local:panel-b',
 						panelId: 'panel-b',
+						panelKind: 'terminal',
 						projectId: 'p1',
 						serverId: 'local',
 						sessionId: 's-b',
@@ -188,13 +190,15 @@ const groups = [
 const switcher = (overrides) =>
 	renderToStaticMarkup(
 		React.createElement(CompactSwitcher, {
-			activeTerminalKey: 'local:panel-a',
+			activePanelKey: 'local:panel-a',
 			groups,
-			onActivateTerminal: noop,
+			onActivatePanel: noop,
 			onAddConnection: noop,
+			onClosePanel: noop,
+			onCloseProject: noop,
 			onDismiss: noop,
 			onEditProject: noop,
-			onEditTerminal: noop,
+			onEditPanel: noop,
 			onNewProject: noop,
 			onNewTerminal: noop,
 			onQueryChange: noop,
@@ -295,30 +299,41 @@ test('a terminal row is the long-press target for editing that terminal', () => 
 	// this width, so the row that replaced it carries the gesture.
 	const markup = switcher({});
 	assert.match(markup, /data-compact-switcher-terminal="local:panel-a"/);
-	assert.match(markup, /title="Long-press to edit terminal"/);
-	// Every terminal row, not only the one in front.
-	assert.equal(markup.match(/title="Long-press to edit terminal"/g).length, 2);
+	assert.match(markup, /title="Long-press to edit tab"/);
+	// Every panel row, not only the one in front.
+	assert.equal(markup.match(/title="Long-press to edit tab"/g).length, 2);
 });
 
 test('a short press on a terminal row still activates it', async () => {
 	const source = await readFile('src/workspace/CompactSwitcher.tsx', 'utf8');
 	const component = source.slice(
-		source.indexOf('function CompactSwitcherTerminal('),
+		source.indexOf('function CompactSwitcherPanel('),
 		source.indexOf('function CompactSwitcherProjectHeading('),
 	);
 	// bindClick is what lets a completed long press swallow the click that
 	// follows it, so activation and editing cannot both fire from one press.
 	assert.match(component, /onClick=\{longPress\.bindClick\(onActivate\)\}/);
 	assert.match(component, /const longPress = useLongPress\(onEdit\);/);
+	// Close is a sibling button, not nested inside the activate target.
+	assert.match(component, /className="compact-switcher__row"/);
+	assert.match(component, /className="compact-switcher__close"/);
+	assert.match(component, /aria-label=\{`Close \$\{panel\.title\}`\}/);
+	assert.match(component, /onClick=\{onClose\}/);
 });
 
-test('editing a switcher terminal names the panel rather than racing activation', async () => {
+test('each project heading carries a close control beside new terminal', () => {
+	const markup = switcher({});
+	assert.match(markup, /aria-label="Close Paged"/);
+	assert.match(markup, /aria-label="New terminal in Paged"/);
+});
+
+test('editing a switcher panel names the panel rather than racing activation', async () => {
 	const app = await readFile('src/App.tsx', 'utf8');
 	const handler = app.slice(
-		app.indexOf('const editCompactSwitcherTerminal'),
-		app.indexOf('const createCompactSwitcherTerminal'),
+		app.indexOf('const editCompactSwitcherPanel'),
+		app.indexOf('const closeCompactSwitcherPanel'),
 	);
-	assert.match(handler, /activateCompactSwitcherTerminal\(row\)/);
+	assert.match(handler, /activateCompactSwitcherPanel\(row\)/);
 	// The panel is named, so a project that does not hold it ignores the event
 	// and no ordering between activation and edit has to hold.
 	assert.match(
@@ -326,4 +341,27 @@ test('editing a switcher terminal names the panel rather than racing activation'
 		/'terminay-edit-terminal',\s*\{\s*detail: \{ panelId: row\.panelId \}/,
 	);
 	assert.doesNotMatch(handler, /requestAnimationFrame|setTimeout/);
+});
+
+test('closing a switcher panel uses the hidden tab close events', async () => {
+	const app = await readFile('src/App.tsx', 'utf8');
+	const handler = app.slice(
+		app.indexOf('const closeCompactSwitcherPanel'),
+		app.indexOf('const createCompactSwitcherTerminal'),
+	);
+	assert.match(handler, /terminay-request-close-terminal/);
+	assert.match(handler, /terminay-request-close-file/);
+	assert.match(handler, /panelId: row\.panelId/);
+	assert.match(handler, /sessionId: row\.sessionId/);
+	assert.doesNotMatch(handler, /closePanel\(/);
+});
+
+test('closing a switcher project uses the project tab close path', async () => {
+	const app = await readFile('src/App.tsx', 'utf8');
+	const wiring = app.slice(
+		app.indexOf('<CompactSwitcher'),
+		app.indexOf('onDismiss={closeCompactSwitcher}'),
+	);
+	assert.match(wiring, /onCloseProject=\{\(group\) => \{/);
+	assert.match(wiring, /closeComposedTab\(/);
 });
