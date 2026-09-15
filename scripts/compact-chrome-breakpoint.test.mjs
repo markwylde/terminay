@@ -168,11 +168,17 @@ test('no document tries to forbid zoom instead', async () => {
 	assert.doesNotMatch(viewport, /maximum-scale/);
 });
 
-test('switcher rows stay thumb-sized', async () => {
+test('switcher rows stay tappable without padding out to nothing', async () => {
 	const css = await read('src/App.css');
 	const row = css.match(/\.compact-switcher__terminal \{([\s\S]*?)\n\}/)?.[1];
 	assert.ok(row);
-	assert.match(row, /min-height: 46px;/);
+	// The floor keeps a row tappable; a row carrying a preview grows past it on
+	// its own. Holding every row at the two-line height turned a terminal with
+	// no preview into a tall empty box.
+	const floor = Number(row.match(/min-height: (\d+)px;/)?.[1]);
+	assert.ok(floor >= 36 && floor <= 40, `min-height ${floor}px`);
+	const padding = Number(row.match(/padding: (\d+)px/)?.[1]);
+	assert.ok(padding <= 6, `vertical padding ${padding}px`);
 });
 
 test('the switcher overlays the workspace rather than taking height from it', async () => {
