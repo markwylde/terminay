@@ -1,8 +1,8 @@
 /**
- * The one surface that answers "which terminal".
+ * The one surface that answers "which panel".
  *
- * Projects, terminals, and connections stopped being three menus here: they are
- * three levels of one list. A row names its terminal and, when this window
+ * Projects, panels, and connections stopped being three menus here: they are
+ * three levels of one list. A row names its panel and, when this window
  * holds that terminal's buffer, the last line it printed — which is how a user
  * recognises the terminal they meant rather than the name they half-remember.
  *
@@ -16,24 +16,26 @@ import { AgentStatusIndicator } from '../components/AgentStatusIndicator';
 import { useLongPress } from '../hooks/useLongPress';
 import type {
 	CompactSwitcherConnectionGroup,
+	CompactSwitcherPanelRow,
 	CompactSwitcherProjectGroup,
-	CompactSwitcherTerminalRow,
 } from './compactSwitcherModel.ts';
 import { compactSwitcherIsEmpty } from './compactSwitcherModel.ts';
 import { ProjectTabActivityBadge } from './ProjectTabActivityBadge';
 
 export type CompactSwitcherProps = Readonly<{
-	/** The row for the terminal in front, so the list says where you already are. */
-	activeTerminalKey?: string;
+	/** The row for the panel in front, so the list says where you already are. */
+	activePanelKey?: string;
 	groups: readonly CompactSwitcherConnectionGroup[];
-	onActivateTerminal: (row: CompactSwitcherTerminalRow) => void;
+	onActivatePanel: (row: CompactSwitcherPanelRow) => void;
 	onAddConnection: () => void;
+	onClosePanel: (row: CompactSwitcherPanelRow) => void;
+	onCloseProject: (group: CompactSwitcherProjectGroup) => void;
 	onDismiss: () => void;
 	/** Long-pressing a project heading edits it, the gesture the project
 	 * switcher rows already carry. */
 	onEditProject: (group: CompactSwitcherProjectGroup) => void;
-	/** Long-pressing a terminal row edits it, the gesture its hidden tab held. */
-	onEditTerminal: (row: CompactSwitcherTerminalRow) => void;
+	/** Long-pressing a panel row edits it, the gesture its hidden tab held. */
+	onEditPanel: (row: CompactSwitcherPanelRow) => void;
 	onNewProject: () => void;
 	onNewTerminal: (group: CompactSwitcherProjectGroup) => void;
 	/** Creates in the project in front; absent when no project is active. */
@@ -43,61 +45,78 @@ export type CompactSwitcherProps = Readonly<{
 }>;
 
 /**
- * The terminal row carries the gesture the hidden tab used to carry.
+ * The panel row carries the gesture the hidden tab used to carry.
  *
- * Long-pressing a terminal tab opened its editor; at this width no tab strip is
+ * Long-pressing a panel tab opened its editor; at this width no tab strip is
  * drawn, so the row that replaced it takes the press. The project heading above
  * already edits on a long press, which makes this the consistent reading rather
  * than a second idiom — except that a short press here still activates, because
- * activating is what a terminal row is for.
+ * activating is what a panel row is for. Close sits beside the row so it is
+ * not a nested button.
  */
-function CompactSwitcherTerminal({
+function CompactSwitcherPanel({
 	isActive,
 	onActivate,
+	onClose,
 	onEdit,
 	projectColor,
-	terminal,
+	panel,
 }: Readonly<{
 	isActive: boolean;
 	onActivate: () => void;
+	onClose: () => void;
 	onEdit: () => void;
 	projectColor: string;
-	terminal: CompactSwitcherTerminalRow;
+	panel: CompactSwitcherPanelRow;
 }>) {
 	const longPress = useLongPress(onEdit);
 	return (
-		<button
-			type="button"
-			className="compact-switcher__terminal"
-			onPointerDown={longPress.onPointerDown}
-			onPointerMove={longPress.onPointerMove}
-			onPointerUp={longPress.onPointerUp}
-			onPointerCancel={longPress.onPointerCancel}
-			onContextMenu={longPress.onContextMenu}
-			onClick={longPress.bindClick(onActivate)}
-			aria-current={isActive}
-			style={{ borderLeftColor: projectColor }}
-			data-compact-switcher-terminal={terminal.key}
-			data-project-id={terminal.projectId}
-			title="Long-press to edit terminal"
-		>
-			<span
-				className="compact-switcher__terminal-state"
-				aria-hidden={terminal.state === 'idle'}
+		<div className="compact-switcher__row">
+			<button
+				type="button"
+				className="compact-switcher__terminal"
+				onPointerDown={longPress.onPointerDown}
+				onPointerMove={longPress.onPointerMove}
+				onPointerUp={longPress.onPointerUp}
+				onPointerCancel={longPress.onPointerCancel}
+				onContextMenu={longPress.onContextMenu}
+				onClick={longPress.bindClick(onActivate)}
+				aria-current={isActive}
+				style={{ borderLeftColor: projectColor }}
+				data-compact-switcher-panel={panel.key}
+				data-compact-switcher-terminal={
+					panel.panelKind === 'terminal' ? panel.key : undefined
+				}
+				data-project-id={panel.projectId}
+				title="Long-press to edit tab"
 			>
-				<AgentStatusIndicator state={terminal.state} size="small" showIdle />
-			</span>
-			<span className="compact-switcher__terminal-text">
-				<span className="compact-switcher__terminal-title">
-					{terminal.title}
+				<span
+					className="compact-switcher__terminal-state"
+					aria-hidden={panel.state === 'idle'}
+				>
+					<AgentStatusIndicator state={panel.state} size="small" showIdle />
 				</span>
-				{terminal.preview === undefined ? null : (
-					<span className="compact-switcher__terminal-preview">
-						{terminal.preview}
+				<span className="compact-switcher__terminal-text">
+					<span className="compact-switcher__terminal-title">
+						{panel.title}
 					</span>
-				)}
-			</span>
-		</button>
+					{panel.preview === undefined ? null : (
+						<span className="compact-switcher__terminal-preview">
+							{panel.preview}
+						</span>
+					)}
+				</span>
+			</button>
+			<button
+				type="button"
+				className="compact-switcher__close"
+				onClick={onClose}
+				aria-label={`Close ${panel.title}`}
+				title={`Close ${panel.title}`}
+			>
+				<X size={14} aria-hidden="true" />
+			</button>
+		</div>
 	);
 }
 
@@ -134,13 +153,15 @@ function CompactSwitcherProjectHeading({
 }
 
 export function CompactSwitcher({
-	activeTerminalKey,
+	activePanelKey,
 	groups,
-	onActivateTerminal,
+	onActivatePanel,
 	onAddConnection,
+	onClosePanel,
+	onCloseProject,
 	onDismiss,
 	onEditProject,
-	onEditTerminal,
+	onEditPanel,
 	onNewProject,
 	onNewTerminal,
 	onNewTerminalHere,
@@ -149,7 +170,7 @@ export function CompactSwitcher({
 }: CompactSwitcherProps) {
 	const searchRef = useRef<HTMLInputElement>(null);
 	// The switcher opens to be read, not typed into: nearly every use is a tap
-	// on a project or a terminal. Nothing takes focus until a user asks for the
+	// on a project or a panel. Nothing takes focus until a user asks for the
 	// filter, so opening the sheet never raises a keyboard.
 	const [isSearchOpen, setIsSearchOpen] = useState(false);
 	useEffect(() => {
@@ -265,6 +286,15 @@ export function CompactSwitcher({
 											/>
 											<button
 												type="button"
+												className="compact-switcher__close"
+												onClick={() => onCloseProject(project)}
+												aria-label={`Close ${project.title}`}
+												title={`Close ${project.title}`}
+											>
+												<X size={14} aria-hidden="true" />
+											</button>
+											<button
+												type="button"
 												className="compact-switcher__add"
 												onClick={() => onNewTerminal(project)}
 												aria-label={`New terminal in ${project.title}`}
@@ -273,17 +303,18 @@ export function CompactSwitcher({
 												<Plus size={14} aria-hidden="true" />
 											</button>
 										</div>
-										{project.terminals.length === 0 ? (
-											<p className="compact-switcher__none">No terminals</p>
+										{project.panels.length === 0 ? (
+											<p className="compact-switcher__none">No panels</p>
 										) : (
-											project.terminals.map((terminal) => (
-												<CompactSwitcherTerminal
-													key={terminal.key}
-													isActive={terminal.key === activeTerminalKey}
-													onActivate={() => onActivateTerminal(terminal)}
-													onEdit={() => onEditTerminal(terminal)}
+											project.panels.map((panel) => (
+												<CompactSwitcherPanel
+													key={panel.key}
+													isActive={panel.key === activePanelKey}
+													onActivate={() => onActivatePanel(panel)}
+													onClose={() => onClosePanel(panel)}
+													onEdit={() => onEditPanel(panel)}
 													projectColor={project.color}
-													terminal={terminal}
+													panel={panel}
 												/>
 											))
 										)}
