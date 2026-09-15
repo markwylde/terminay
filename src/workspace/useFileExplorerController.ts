@@ -7,6 +7,10 @@ import type {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { writeClipboardText } from '../host/nativeActions';
 import {
+	createRefreshSchedule,
+	type RefreshSchedule,
+} from './gitRefreshSchedule';
+import {
 	getPathRelativeToRoot,
 	toContainedProjectRelativePath,
 } from '../pathUtils';
@@ -29,6 +33,7 @@ import {
 } from './gitFilesystemScope';
 
 const WATCH_REFRESH_DELAY_MS = 120;
+
 const EMPTY_WORKTREE_PANEL_STATUS: WorktreePanelStatus = Object.freeze({
 	gitAvailable: true,
 	repoRoot: null,
@@ -213,6 +218,7 @@ type GitWorkspaceProjection = {
 export async function loadGitWorkspaceFromServer(
 	gitClient: TerminayGitClient | undefined,
 	project: Pick<ProjectTab, 'id' | 'rootFolder'>,
+	worktreeId?: string,
 ): Promise<GitWorkspaceProjection> {
 	if (gitClient === undefined) {
 		return {
@@ -221,7 +227,7 @@ export async function loadGitWorkspaceFromServer(
 			worktrees: GIT_UNAVAILABLE_WORKTREE_PANEL_STATUS,
 		};
 	}
-	return await loadServerGitWorkspace(gitClient, project.id);
+	return await loadServerGitWorkspace(gitClient, project.id, worktreeId);
 }
 
 /**
@@ -238,17 +244,23 @@ export async function applyGitWorkspaceRefresh({
 	preserveLastProjection,
 	onOperationError,
 	onOperationSucceeded,
+	worktreeId,
 }: {
 	gitClient: TerminayGitClient | undefined;
 	project: Pick<ProjectTab, 'id' | 'rootFolder'>;
 	isCurrent: () => boolean;
+	worktreeId?: string;
 	publish: (projection: GitWorkspaceProjection) => void;
 	preserveLastProjection: () => void;
 	onOperationError: (feature: 'Explorer' | 'Git', error: unknown) => string;
 	onOperationSucceeded: (feature: 'Explorer' | 'Git') => void;
 }): Promise<void> {
 	try {
-		const projection = await loadGitWorkspaceFromServer(gitClient, project);
+		const projection = await loadGitWorkspaceFromServer(
+			gitClient,
+			project,
+			worktreeId,
+		);
 		if (!isCurrent()) return;
 		publish(projection);
 		onOperationSucceeded('Git');
@@ -326,7 +338,9 @@ export function useFileExplorerController({
 		new Map(),
 	);
 	const worktreeDeleteQueueRef = useRef(Promise.resolve());
-	const gitStatusRefreshTimerRef = useRef<number | undefined>(undefined);
+	const gitStatusRefreshScheduleRef = useRef<RefreshSchedule | undefined>(
+		undefined,
+	);
 	const refreshTimersRef = useRef<Map<string, number>>(new Map());
 	const unavailableWatchFallbacksRef = useRef<Set<string>>(new Set());
 	const loadVersionsRef = useRef<Map<string, number>>(new Map());
@@ -483,6 +497,9 @@ export function useFileExplorerController({
 	const refreshGitStatusesForRoot = useCallback(async (
 		rootFolder: string,
 		markAsCurrent = false,
+		/** Set when exactly one worktree's change raised this refresh, so the
+		 *  server can carry the others forward instead of re-measuring them. */
+		worktreeId?: string,
 	) => {
 		if (markAsCurrent) latestGitRootRef.current = rootFolder;
 		const targetRootFolder = markAsCurrent
@@ -506,6 +523,7 @@ export function useFileExplorerController({
 		await applyGitWorkspaceRefresh({
 			gitClient,
 			project: { id: project.id, rootFolder: targetRootFolder },
+			...(worktreeId === undefined ? {} : { worktreeId }),
 			isCurrent: () =>
 				gitRefreshRequestIdRef.current === requestId &&
 				latestGitRootRef.current === targetRootFolder,
@@ -1027,17 +1045,38 @@ export function useFileExplorerController({
 		if (gitClient === undefined || !project.rootFolder) return;
 		let disposed = false;
 		let unsubscribe: (() => void) | undefined;
+		// Each refresh spawns Git commands, so its rate is a cost rather than a
+		// latency preference. A minimum interval bounds that rate however the
+		// events arrive; a trailing debounce did not, and re-fired for every event
+		// spaced wider than its delay.
+		const pendingWorktreeIds = new Set<string>();
+		// An event that names no worktree tells us nothing about what changed, so
+		// it forces a full refresh however few named ones accompany it.
+		let sawUnattributedChange = false;
+		const schedule = createRefreshSchedule({
+			run: () => {
+				// Exactly one worktree changed during this interval, so the refresh
+				// can name it. Several, or none identified, must refresh everything —
+				// scoping to one of them would drop the others' changes.
+				const scoped =
+					!sawUnattributedChange && pendingWorktreeIds.size === 1
+						? [...pendingWorktreeIds][0]
+						: undefined;
+				pendingWorktreeIds.clear();
+				sawUnattributedChange = false;
+				if (!disposed)
+					void refreshGitStatusesForRoot(project.rootFolder, true, scoped);
+			},
+		});
+		gitStatusRefreshScheduleRef.current = schedule;
 			void gitClient
 				.subscribeStatusChanges(
 					(event) => {
 						if (disposed || event.projectId !== project.id) return;
-						if (gitStatusRefreshTimerRef.current !== undefined) {
-							window.clearTimeout(gitStatusRefreshTimerRef.current);
-						}
-						gitStatusRefreshTimerRef.current = window.setTimeout(() => {
-							gitStatusRefreshTimerRef.current = undefined;
-							if (!disposed) void refreshGitStatusesForRoot(project.rootFolder, true);
-						}, WATCH_REFRESH_DELAY_MS);
+						if (typeof event.worktreeId === 'string' && event.worktreeId.length > 0)
+							pendingWorktreeIds.add(event.worktreeId);
+						else sawUnattributedChange = true;
+						schedule.request();
 					},
 					() => {
 						if (!disposed)
@@ -1054,10 +1093,9 @@ export function useFileExplorerController({
 			.catch(() => undefined);
 		return () => {
 			disposed = true;
-			if (gitStatusRefreshTimerRef.current !== undefined) {
-				window.clearTimeout(gitStatusRefreshTimerRef.current);
-				gitStatusRefreshTimerRef.current = undefined;
-			}
+			schedule.cancel();
+			if (gitStatusRefreshScheduleRef.current === schedule)
+				gitStatusRefreshScheduleRef.current = undefined;
 			unsubscribe?.();
 		};
 	}, [gitClient, project.id, project.rootFolder, refreshGitStatusesForRoot]);
