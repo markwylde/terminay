@@ -3385,8 +3385,12 @@ const ProjectWorkspace = forwardRef<
 					id: 'edit-tab-settings',
 					title: 'Edit tab settings',
 					description: 'Open settings for the active tab.',
-					searchText:
-						'edit tab settings rename emoji color file folder terminal',
+					searchText: `edit tab settings rename emoji color file folder terminal ${getCommandShortcut(settings.keyboardShortcuts, 'edit-active-tab')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'edit-active-tab',
+						isMac,
+					),
 					onSelect: () => {
 						openActiveTerminalSettings();
 					},
@@ -3413,8 +3417,12 @@ const ProjectWorkspace = forwardRef<
 					id: 'edit-project-settings',
 					title: 'Edit project settings',
 					description: 'Open settings for the current project tab.',
-					searchText:
-						'edit project settings project tab root folder emoji color',
+					searchText: `edit project settings project tab root folder emoji color ${getCommandShortcut(settings.keyboardShortcuts, 'edit-active-project')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'edit-active-project',
+						isMac,
+					),
 					onSelect: () => {
 						openProjectSettings();
 					},
@@ -3729,6 +3737,12 @@ const ProjectWorkspace = forwardRef<
 					case 'clear-terminal':
 						clearActiveTerminal();
 						break;
+					case 'edit-active-tab':
+						openActiveTerminalSettings();
+						break;
+					case 'edit-active-project':
+						openProjectSettings();
+						break;
 					case 'open-command-bar':
 						setMacroQuery('');
 						setSelectedMacroIndex(0);
@@ -3764,6 +3778,8 @@ const ProjectWorkspace = forwardRef<
 				closeActivePanel,
 				onAddProject,
 				onShowDashboard,
+				openActiveTerminalSettings,
+				openProjectSettings,
 				popoutActivePanel,
 				saveActivePanel,
 				setProjectRootFolderToWorkingDirectory,
@@ -6373,6 +6389,26 @@ function App({
 		[activateDashboardRow],
 	);
 	/**
+	 * Editing a terminal from the switcher names the panel rather than relying
+	 * on it having become active: a project whose dockview does not hold that
+	 * panel ignores the event, so exactly one terminal answers and no ordering
+	 * between activation and edit has to hold. That also draws the same line
+	 * the hidden tab strip drew — it only ever showed this window's own panels,
+	 * so a row on another server activates, as a press always did, and its
+	 * editor opens once this window is working in that server.
+	 */
+	const editCompactSwitcherTerminal = useCallback(
+		(row: CompactSwitcherTerminalRow) => {
+			activateCompactSwitcherTerminal(row);
+			window.dispatchEvent(
+				new CustomEvent('terminay-edit-terminal', {
+					detail: { panelId: row.panelId },
+				}),
+			);
+		},
+		[activateCompactSwitcherTerminal],
+	);
+	/**
 	 * Creating in a project the window is not working in means going to its
 	 * server first; the intent is held until that binding lands, the same way a
 	 * cross-server tab activation waits for its projects to arrive.
@@ -6430,6 +6466,14 @@ function App({
 		],
 	);
 
+	// The compact row's only route into the command set. It takes the same
+	// dispatch as the accelerator and the native menu rather than reaching for
+	// the launcher state directly, so there stays one definition of what
+	// opening the Command Bar means.
+	const openCompactCommandBar = useCallback(() => {
+		void executeCommandOnActiveProject('open-command-bar');
+	}, [executeCommandOnActiveProject]);
+
 	const activateTerminalFromOverview = useCallback(
 		(item: TerminalActivityOverviewItem) => {
 			setIsActivityMenuOpen(false);
@@ -6452,6 +6496,23 @@ function App({
 			unsubscribeCommand?.();
 		};
 	}, [executeCommandOnActiveProject, subscribeAppCommands]);
+
+	// A host that draws its menu in-page has no accelerator to lean on for a
+	// command that ships unbound, and synthesising a keystroke for one would
+	// invent a binding the user never chose. It names the command instead, and
+	// lands on the same dispatch the native menu and the accelerator take.
+	useEffect(() => {
+		const onHostCommand = (event: Event) => {
+			const { command } = (event as CustomEvent<{ command: AppCommand }>)
+				.detail;
+			if (!command) return;
+			void executeCommandOnActiveProject(command);
+		};
+		window.addEventListener('terminay-app-command', onHostCommand);
+		return () => {
+			window.removeEventListener('terminay-app-command', onHostCommand);
+		};
+	}, [executeCommandOnActiveProject]);
 
 	useEffect(() => {
 		let isMounted = true;
@@ -6733,9 +6794,11 @@ function App({
 							tone: remoteButtonTone,
 						}}
 						connectionButtonRef={compactConnectionRef}
+						isCommandBarAvailable={!isHomeSelected && activeProject !== null}
 						isExplorerOpen={activeProject?.isFileExplorerOpen === true}
 						isHomeSelected={isHomeSelected}
 						isSwitcherOpen={isCompactSwitcherOpen}
+						onOpenCommandBar={openCompactCommandBar}
 						onOpenSwitcher={openCompactSwitcher}
 						onShowDashboard={selectHome}
 						onToggleExplorer={toggleActiveProjectExplorer}
@@ -6944,6 +7007,10 @@ function App({
 						void openEditComposedTab(
 							compositionTabKey(group.serverId, group.projectId),
 						);
+					}}
+					onEditTerminal={(row) => {
+						closeCompactSwitcher();
+						editCompactSwitcherTerminal(row);
 					}}
 					onNewProject={() => {
 						closeCompactSwitcher();

@@ -7,13 +7,19 @@
  * sends the rest to the unified switcher, which the breadcrumb and the
  * connection glyph both open.
  *
+ * The Command Bar control is the one door the collapse could not do without.
+ * Every command the hidden bands used to carry — new terminal, split, clear,
+ * save, dictation, tab and project editing, every macro — is reachable through
+ * it and through nothing else at this width, because a phone has no key to
+ * press. One control for all of them costs the row less than one control each.
+ *
  * The breadcrumb says where you are rather than listing where you could go, so
  * it truncates the project before the terminal: the terminal is the thing being
  * typed into, and the one a user needs to read to know their keystrokes are
  * landing in the right place.
  */
 
-import { ChevronDown, LayoutDashboard, Server } from 'lucide-react';
+import { ChevronDown, LayoutDashboard, Search, Server } from 'lucide-react';
 import type { ReactNode, RefObject } from 'react';
 
 export type CompactConnectionPresentation = Readonly<{
@@ -30,10 +36,13 @@ export type CompactChromeRowProps = Readonly<{
 	applicationMenu?: ReactNode;
 	connection: CompactConnectionPresentation;
 	connectionButtonRef?: RefObject<HTMLButtonElement | null>;
+	/** False on the dashboard, where the command acts on no project. */
+	isCommandBarAvailable: boolean;
 	isExplorerOpen: boolean;
 	isHomeSelected: boolean;
 	isSwitcherOpen: boolean;
 	breadcrumbButtonRef?: RefObject<HTMLButtonElement | null>;
+	onOpenCommandBar: () => void;
 	onOpenSwitcher: (source: 'breadcrumb' | 'connection') => void;
 	onShowDashboard: () => void;
 	onToggleExplorer: () => void;
@@ -50,9 +59,11 @@ export function CompactChromeRow({
 	breadcrumbButtonRef,
 	connection,
 	connectionButtonRef,
+	isCommandBarAvailable,
 	isExplorerOpen,
 	isHomeSelected,
 	isSwitcherOpen,
+	onOpenCommandBar,
 	onOpenSwitcher,
 	onShowDashboard,
 	onToggleExplorer,
@@ -98,6 +109,17 @@ export function CompactChromeRow({
 				data-terminay-home-control="true"
 			>
 				<LayoutDashboard size={14} aria-hidden="true" />
+			</button>
+			<button
+				type="button"
+				className="compact-chrome__icon"
+				onClick={onOpenCommandBar}
+				disabled={!isCommandBarAvailable}
+				aria-label="Open command bar"
+				title="Open command bar"
+				data-compact-command-bar="true"
+			>
+				<Search size={14} aria-hidden="true" />
 			</button>
 			<button
 				ref={breadcrumbButtonRef}
