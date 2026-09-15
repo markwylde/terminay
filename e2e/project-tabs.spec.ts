@@ -436,46 +436,40 @@ test.describe('project tabs', () => {
 			mainWindow.locator('.project-tab--active .project-tab-title'),
 		).toHaveText(overflowedTitle);
 
+		// At phone width the strip is gone entirely: one row, and the switcher
+		// it opens.
 		await nativeWindow.evaluate((window) => {
 			window.setBounds({ x: 40, y: 40, width: 390, height: 740 });
 		});
+		const compactRow = mainWindow.locator('[data-compact-chrome="true"]');
+		await expect(compactRow).toBeVisible();
+		await expect(mainWindow.locator('.project-tabbar-projects')).toHaveCount(0);
+		await expect(mainWindow.locator('.remote-access-button')).toHaveCount(0);
+		await expect(add).toHaveCount(0);
 		await expect(
-			mainWindow.locator('.project-tabbar-projects'),
-		).toHaveAttribute('data-project-tab-layout', 'compact');
-		await expect(mainWindow.locator('.remote-access-button')).toBeVisible();
-		await expect(mainWindow.locator('.project-switcher-button')).toContainText(
-			overflowedTitle,
-		);
-		await mainWindow.locator('.project-switcher-button').click();
-		const compactMenu = mainWindow.locator('.project-switcher-menu');
-		await expect(compactMenu).toBeVisible();
-		const compactMenuBox = await compactMenu.boundingBox();
-		if (!compactMenuBox) {
-			throw new Error('Expected a compact project switcher menu');
-		}
-		expect(compactMenuBox.width).toBeGreaterThan(330);
-		await expect(
-			compactMenu.getByRole('menuitem', { name: overflowedTitle }),
-		).toBeVisible();
-		await expect(add).toBeHidden();
-		const compactCreate = compactMenu.getByRole('menuitem', {
-			name: /^Create project/u,
+			mainWindow.locator('[data-compact-breadcrumb-segment="project"]'),
+		).toHaveText(overflowedTitle);
+
+		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
+		const switcher = mainWindow.getByRole('dialog', {
+			name: 'Switch terminal',
 		});
-		await expect(compactCreate).toBeVisible();
-		const compactSwitcherBox = await mainWindow
-			.locator('.project-switcher-button')
-			.boundingBox();
-		const countBox = await mainWindow
-			.locator('.project-switcher-button__count')
-			.boundingBox();
-		if (!compactSwitcherBox || !countBox) {
-			throw new Error('Expected compact switcher trailing chrome');
-		}
-		expect(
-			compactSwitcherBox.x +
-				compactSwitcherBox.width -
-				(countBox.x + countBox.width),
-		).toBeLessThan(28);
+		await expect(switcher).toBeVisible();
+		await expect(
+			switcher.locator('[data-compact-switcher-project]'),
+		).toHaveCount(12);
+		await expect(
+			switcher.getByRole('button', { name: 'New project' }),
+		).toBeVisible();
+
+		// The connection glyph opens the same surface rather than a menu of its
+		// own, and never shows the server's name.
+		await mainWindow.keyboard.press('Escape');
+		await expect(switcher).toHaveCount(0);
+		const connection = mainWindow.locator('[data-compact-connection="true"]');
+		await expect(connection).not.toContainText(/\S/u);
+		await connection.click();
+		await expect(switcher).toBeVisible();
 	});
 
 	test('project tab activity badges keep the overflow strip measured and reach the switcher rows', async ({
@@ -720,7 +714,7 @@ test.describe('project tabs', () => {
 		await expect(menu).toBeVisible();
 	});
 
-	test('long-pressing the compact project switcher opens project editing', async ({
+	test('long-pressing a compact switcher project heading opens project editing', async ({
 		electronApp,
 		mainWindow,
 	}) => {
@@ -729,16 +723,22 @@ test.describe('project tabs', () => {
 			window.setBounds({ x: 40, y: 40, width: 390, height: 740 });
 		});
 		await expect(
-			mainWindow.locator('.project-tabbar-projects'),
-		).toHaveAttribute('data-project-tab-layout', 'compact');
-		await longPress(mainWindow.locator('.project-switcher-button'));
+			mainWindow.locator('[data-compact-chrome="true"]'),
+		).toBeVisible();
+		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
+		const switcher = mainWindow.getByRole('dialog', {
+			name: 'Switch terminal',
+		});
+		await expect(switcher).toBeVisible();
+		await longPress(switcher.locator('[data-compact-switcher-project]').first());
 		await expect(
 			mainWindow.getByRole('heading', { name: 'Edit Project Tab' }),
 		).toBeVisible();
 		await cancelEditWindow(mainWindow);
-		await expect(mainWindow.locator('.project-switcher-menu')).toHaveCount(0);
-		await mainWindow.locator('.project-switcher-button').click();
-		await expect(mainWindow.locator('.project-switcher-menu')).toBeVisible();
+		// Editing closed the switcher; the breadcrumb opens it again.
+		await expect(switcher).toHaveCount(0);
+		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
+		await expect(switcher).toBeVisible();
 	});
 
 	test('long-pressing a project switcher row opens that project editor', async ({
@@ -749,13 +749,19 @@ test.describe('project tabs', () => {
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
 			0,
 		);
+		for (let index = 0; index < 5; index += 1) {
+			await mainWindow.getByLabel('Create project').click();
+			await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
+				0,
+			);
+		}
 		const nativeWindow = await electronApp.browserWindow(mainWindow);
+		// A narrow-but-not-compact bar, filled until it overflows: the switcher
+		// menu and its rows are still the surface under test.
 		await nativeWindow.evaluate((window) => {
-			window.setBounds({ x: 40, y: 40, width: 390, height: 740 });
+			window.setBounds({ x: 40, y: 40, width: 700, height: 740 });
 		});
-		await expect(
-			mainWindow.locator('.project-tabbar-projects'),
-		).toHaveAttribute('data-project-tab-layout', 'compact');
+		await expect(mainWindow.locator('.project-switcher-button')).toBeVisible();
 		await mainWindow.locator('.project-switcher-button').click();
 		const menu = mainWindow.locator('.project-switcher-menu');
 		await expect(menu).toBeVisible();

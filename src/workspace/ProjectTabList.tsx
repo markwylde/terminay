@@ -11,7 +11,6 @@ import { type ProjectTab, projectTabIsBusy } from './projectTabModel';
 import {
 	fitProjectTabOverflow,
 	insertVisibleIdByClientX,
-	isProjectTabBarCompact,
 	mergeVisibleProjectReorderByIds,
 	PROJECT_TAB_OVERFLOW_ESTIMATED_WIDTH,
 	PROJECT_TAB_OVERFLOW_FADE_WIDTH,
@@ -28,6 +27,8 @@ export type ProjectTabDropPreview = {
 type ProjectTabListProps = {
 	activeProjectId: string;
 	activityBadgesByProject?: Record<string, ActivityCountBadge>;
+	/** Decided once by the shell from the bar it already measures. */
+	isCompactChrome?: boolean;
 	draggingProjectId: string | null;
 	dropPreview: ProjectTabDropPreview | null;
 	isDraggingTabTornOff: boolean;
@@ -81,6 +82,7 @@ export function activityBadgeLayoutKey(
 export function ProjectTabList({
 	activeProjectId,
 	activityBadgesByProject,
+	isCompactChrome = false,
 	draggingProjectId,
 	dropPreview,
 	isDraggingTabTornOff,
@@ -119,7 +121,9 @@ export function ProjectTabList({
 	const listRef = useRef<HTMLDivElement>(null);
 	const widthsRef = useRef(new Map<string, number>());
 	const [hiddenIds, setHiddenIds] = useState<string[]>([]);
-	const [compact, setCompact] = useState(false);
+	// The shell owns this decision; the strip must not re-derive it from its own
+	// measurement and end up disagreeing with the chrome around it.
+	const compact = isCompactChrome;
 	const hidden = new Set(hiddenIds);
 	const visibleProjects = projects.filter(
 		(project) => !hidden.has(keyOf(project)),
@@ -146,7 +150,6 @@ export function ProjectTabList({
 
 		const layout = () => {
 			if (draggingProjectId !== null) return;
-			const nextCompact = isProjectTabBarCompact(tabbar.clientWidth);
 			for (const element of list.querySelectorAll<HTMLElement>(
 				'[data-tab-handle]',
 			)) {
@@ -189,14 +192,13 @@ export function ProjectTabList({
 					tabbar.clientWidth,
 					reservedWidth,
 				),
-				compact: nextCompact,
+				compact,
 				items,
 				overlapWidth: Math.max(
 					PROJECT_TAB_OVERFLOW_FADE_WIDTH,
 					Math.round(switcherWidth * 0.85),
 				),
 			});
-			setCompact(result.layout === 'compact');
 			setHiddenIds((current) =>
 				sameIdList(current, result.hiddenIds) ? current : result.hiddenIds,
 			);
@@ -210,7 +212,7 @@ export function ProjectTabList({
 			observer.disconnect();
 			document.body.classList.remove('project-tabbar-reordering');
 		};
-	}, [activeProjectId, badgeLayoutKey, draggingProjectId, projects]);
+	}, [activeProjectId, badgeLayoutKey, compact, draggingProjectId, projects]);
 
 	const handleTabKeyDown = (
 		event: KeyboardEvent<HTMLElement>,
