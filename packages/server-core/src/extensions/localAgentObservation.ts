@@ -1319,6 +1319,8 @@ function fileIdentity(value: object): string | undefined {
  * already treats a process snapshot as transient evidence rather than truth.
  */
 const PROCESS_TABLE_SHARE_WINDOW_MS = 400;
+/** A wedged `ps` must not strand the terminals sharing its round. */
+const PROCESS_TABLE_TIMEOUT_MS = 5_000;
 let processTableSnapshot:
 	| { readonly at: number; readonly output: Promise<string> }
 	| undefined;
@@ -1331,15 +1333,27 @@ export function sharedProcessTable(): Promise<string> {
 		now - cached.at < PROCESS_TABLE_SHARE_WINDOW_MS
 	)
 		return cached.output;
-	// Deliberately not the caller's signal. The snapshot is shared, so one
-	// terminal cancelling its own sample must not abort the `ps` every other
-	// terminal in this round is waiting on. It is a short, size-bounded command.
+	// Deliberately not the caller's signal: the snapshot is shared, so one
+	// terminal cancelling its own sample must not abort the `ps` that every
+	// other terminal in this round is awaiting.
+	//
+	// It still needs a deadline of its own. `commandText` has no timeout — the
+	// signal is its only cancellation — so a signal that never fires would leave
+	// a wedged `ps` running and every caller awaiting it hung forever.
+	const controller = new AbortController();
+	const deadline = setTimeout(
+		() => controller.abort(),
+		PROCESS_TABLE_TIMEOUT_MS,
+	);
+	deadline.unref?.();
 	const output = commandText(
 		unixTool('ps'),
 		['-axo', 'pid=,ppid=,comm='],
 		4 * 1024 * 1024,
-		new AbortController().signal,
-	);
+		controller.signal,
+	).finally(() => {
+		clearTimeout(deadline);
+	});
 	// A rejection must not be cached past its own round, or one aborted sample
 	// poisons every terminal that shares the window.
 	output.catch(() => {
