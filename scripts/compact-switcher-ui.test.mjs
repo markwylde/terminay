@@ -233,9 +233,10 @@ test('the terminal in front is the current row', () => {
 
 test('row state uses the shared activity vocabulary', () => {
 	const markup = switcher({});
-	// `working` shows the shared indicator; `idle` stays neutral.
+	// Both states use the shared vocabulary; idle is neutral, not absent, so a
+	// run of rows keeps one left margin.
 	assert.match(markup, /agent-status-indicator--working/);
-	assert.doesNotMatch(markup, /agent-status-indicator--idle/);
+	assert.match(markup, /agent-status-indicator--idle/);
 });
 
 test('the project heading carries its activity badge', () => {
@@ -244,10 +245,22 @@ test('the project heading carries its activity badge', () => {
 });
 
 test('every create action survives the collapse', () => {
-	const markup = switcher({});
+	const markup = switcher({ onNewTerminalHere: noop });
 	assert.match(markup, /aria-label="New terminal in Paged"/);
+	assert.match(markup, />New terminal</);
 	assert.match(markup, />New project</);
 	assert.match(markup, />Add connection</);
+});
+
+test('a connection heading carries its rule', () => {
+	const markup = switcher({});
+	assert.match(markup, /compact-switcher__connection-rule/);
+});
+
+test('New terminal is absent when no project is in front', () => {
+	const markup = switcher({});
+	assert.doesNotMatch(markup, />New terminal</);
+	assert.match(markup, />New project</);
 });
 
 test('a filter that matches nothing says so and keeps its actions', () => {
