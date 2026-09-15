@@ -3661,6 +3661,18 @@ body.project-tabbar-reordering .project-tabbar {
   color: #fff;
 }
 
+/* The Command Bar acts on the project in front, so on the dashboard it says it
+   is unavailable rather than looking live and doing nothing. */
+.compact-chrome__icon:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.compact-chrome__icon:disabled:hover {
+  background: none;
+  color: rgba(214, 227, 240, 0.6);
+}
+
 .compact-chrome__icon--active {
   color: var(--tab-text-selected);
   background: rgba(255, 255, 255, 0.07);

@@ -32,6 +32,8 @@ export type CompactSwitcherProps = Readonly<{
 	/** Long-pressing a project heading edits it, the gesture the project
 	 * switcher rows already carry. */
 	onEditProject: (group: CompactSwitcherProjectGroup) => void;
+	/** Long-pressing a terminal row edits it, the gesture its hidden tab held. */
+	onEditTerminal: (row: CompactSwitcherTerminalRow) => void;
 	onNewProject: () => void;
 	onNewTerminal: (group: CompactSwitcherProjectGroup) => void;
 	/** Creates in the project in front; absent when no project is active. */
@@ -39,6 +41,65 @@ export type CompactSwitcherProps = Readonly<{
 	onQueryChange: (query: string) => void;
 	query: string;
 }>;
+
+/**
+ * The terminal row carries the gesture the hidden tab used to carry.
+ *
+ * Long-pressing a terminal tab opened its editor; at this width no tab strip is
+ * drawn, so the row that replaced it takes the press. The project heading above
+ * already edits on a long press, which makes this the consistent reading rather
+ * than a second idiom — except that a short press here still activates, because
+ * activating is what a terminal row is for.
+ */
+function CompactSwitcherTerminal({
+	isActive,
+	onActivate,
+	onEdit,
+	projectColor,
+	terminal,
+}: Readonly<{
+	isActive: boolean;
+	onActivate: () => void;
+	onEdit: () => void;
+	projectColor: string;
+	terminal: CompactSwitcherTerminalRow;
+}>) {
+	const longPress = useLongPress(onEdit);
+	return (
+		<button
+			type="button"
+			className="compact-switcher__terminal"
+			onPointerDown={longPress.onPointerDown}
+			onPointerMove={longPress.onPointerMove}
+			onPointerUp={longPress.onPointerUp}
+			onPointerCancel={longPress.onPointerCancel}
+			onContextMenu={longPress.onContextMenu}
+			onClick={longPress.bindClick(onActivate)}
+			aria-current={isActive}
+			style={{ borderLeftColor: projectColor }}
+			data-compact-switcher-terminal={terminal.key}
+			data-project-id={terminal.projectId}
+			title="Long-press to edit terminal"
+		>
+			<span
+				className="compact-switcher__terminal-state"
+				aria-hidden={terminal.state === 'idle'}
+			>
+				<AgentStatusIndicator state={terminal.state} size="small" showIdle />
+			</span>
+			<span className="compact-switcher__terminal-text">
+				<span className="compact-switcher__terminal-title">
+					{terminal.title}
+				</span>
+				{terminal.preview === undefined ? null : (
+					<span className="compact-switcher__terminal-preview">
+						{terminal.preview}
+					</span>
+				)}
+			</span>
+		</button>
+	);
+}
 
 function CompactSwitcherProjectHeading({
 	onEdit,
@@ -79,6 +140,7 @@ export function CompactSwitcher({
 	onAddConnection,
 	onDismiss,
 	onEditProject,
+	onEditTerminal,
 	onNewProject,
 	onNewTerminal,
 	onNewTerminalHere,
@@ -215,37 +277,14 @@ export function CompactSwitcher({
 											<p className="compact-switcher__none">No terminals</p>
 										) : (
 											project.terminals.map((terminal) => (
-												<button
-													type="button"
-													className="compact-switcher__terminal"
+												<CompactSwitcherTerminal
 													key={terminal.key}
-													onClick={() => onActivateTerminal(terminal)}
-													aria-current={terminal.key === activeTerminalKey}
-													style={{ borderLeftColor: project.color }}
-													data-compact-switcher-terminal={terminal.key}
-													data-project-id={terminal.projectId}
-												>
-													<span
-														className="compact-switcher__terminal-state"
-														aria-hidden={terminal.state === 'idle'}
-													>
-														<AgentStatusIndicator
-															state={terminal.state}
-															size="small"
-															showIdle
-														/>
-													</span>
-													<span className="compact-switcher__terminal-text">
-														<span className="compact-switcher__terminal-title">
-															{terminal.title}
-														</span>
-														{terminal.preview === undefined ? null : (
-															<span className="compact-switcher__terminal-preview">
-																{terminal.preview}
-															</span>
-														)}
-													</span>
-												</button>
+													isActive={terminal.key === activeTerminalKey}
+													onActivate={() => onActivateTerminal(terminal)}
+													onEdit={() => onEditTerminal(terminal)}
+													projectColor={project.color}
+													terminal={terminal}
+												/>
 											))
 										)}
 									</div>

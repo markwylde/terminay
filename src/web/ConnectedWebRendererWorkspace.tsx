@@ -599,6 +599,15 @@ function ConnectedBrowserMenuBar({
 		[isMac],
 	);
 
+	// Commands that ship unbound cannot be reached by synthesising a keystroke,
+	// so the menu names the command itself. Both routes end at the same
+	// dispatch the Desktop native menu uses.
+	const dispatchCommand = useCallback((command: AppCommand) => {
+		window.dispatchEvent(
+			new CustomEvent('terminay-app-command', { detail: { command } }),
+		);
+	}, []);
+
 	const menuItems = useMemo<
 		Readonly<Record<BrowserMenuId, readonly BrowserMenuItem[]>>
 	>(
@@ -702,6 +711,22 @@ function ConnectedBrowserMenuBar({
 					onSelect: () => dispatchShortcut('0'),
 				},
 				{
+					id: 'open-command-bar',
+					label: 'Open Command Bar',
+					startsGroup: true,
+					onSelect: () => dispatchCommand('open-command-bar'),
+				},
+				{
+					id: 'edit-active-tab',
+					label: 'Edit Active Tab…',
+					onSelect: () => dispatchCommand('edit-active-tab'),
+				},
+				{
+					id: 'edit-active-project',
+					label: 'Edit Active Project…',
+					onSelect: () => dispatchCommand('edit-active-project'),
+				},
+				{
 					id: 'set-project-root',
 					startsGroup: true,
 					label: 'Set Project Root to Working Directory',
@@ -714,7 +739,13 @@ function ConnectedBrowserMenuBar({
 				},
 			],
 		}),
-		[dispatchShortcut, onBack, onOpenAuxiliaryRoute, touchTextSelection],
+		[
+			dispatchCommand,
+			dispatchShortcut,
+			onBack,
+			onOpenAuxiliaryRoute,
+			touchTextSelection,
+		],
 	);
 
 	const focusMenuButton = useCallback((menuId: BrowserMenuId) => {
