@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { cancelEditWindow, longPress } from './support/ui';
 
 const PHONE = { x: 40, y: 40, width: 390, height: 740 } as const;
 
@@ -112,12 +113,98 @@ test.describe('compact chrome', () => {
 		// Every control is still on the row.
 		await expect(mainWindow.getByLabel('Toggle file explorer')).toBeVisible();
 		await expect(mainWindow.getByLabel('Show dashboard')).toBeVisible();
+		await expect(mainWindow.getByLabel('Open command bar')).toBeVisible();
 		await expect(
 			mainWindow.locator('[data-compact-breadcrumb="true"]'),
 		).toBeVisible();
 		await expect(
 			mainWindow.locator('[data-compact-connection="true"]'),
 		).toBeVisible();
+	});
+
+	test('the command bar opens from the row, with no key to press', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		await resize(mainWindow, electronApp, PHONE);
+		const control = mainWindow.locator('[data-compact-command-bar="true"]');
+		await expect(control).toBeVisible();
+		await expect(control).toBeEnabled();
+		await control.click();
+
+		const commandBar = mainWindow.getByRole('dialog', { name: 'Command bar' });
+		await expect(commandBar).toBeVisible();
+		// It opened the command bar and nothing else.
+		await expect(switcherOf(mainWindow)).toHaveCount(0);
+
+		// And it reaches a command the collapsed chrome draws no control for.
+		await mainWindow
+			.getByRole('searchbox', { name: 'Search commands' })
+			.fill('edit tab');
+		await expect(
+			commandBar.getByText('Edit tab settings', { exact: true }),
+		).toBeVisible();
+		await mainWindow.keyboard.press('Escape');
+		await expect(commandBar).toHaveCount(0);
+	});
+
+	test('the command bar control is unavailable on the dashboard', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		await resize(mainWindow, electronApp, PHONE);
+		await mainWindow.getByLabel('Show dashboard').click();
+		await expect(mainWindow.locator('.app-shell')).toHaveAttribute(
+			'data-terminay-selected-view',
+			'home',
+		);
+		// The command acts on the project in front; with none it says so rather
+		// than looking live and doing nothing.
+		await expect(
+			mainWindow.locator('[data-compact-command-bar="true"]'),
+		).toBeDisabled();
+	});
+
+	test('long-pressing a switcher terminal row opens that terminal editor', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		await resize(mainWindow, electronApp, PHONE);
+		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
+		const switcher = switcherOf(mainWindow);
+		await expect(switcher).toBeVisible();
+
+		const terminalRow = switcher
+			.locator('[data-compact-switcher-terminal]')
+			.first();
+		await expect(terminalRow).toBeVisible();
+		// The tab strip that used to carry this gesture is not drawn here.
+		await expect(
+			mainWindow.locator('.dv-tabs-and-actions-container:visible'),
+		).toHaveCount(0);
+		await longPress(terminalRow);
+
+		await expect(
+			mainWindow.getByRole('heading', { name: 'Edit Terminal Tab' }),
+		).toBeVisible();
+		await cancelEditWindow(mainWindow);
+	});
+
+	test('a short press on a terminal row still activates it', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		await resize(mainWindow, electronApp, PHONE);
+		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
+		const switcher = switcherOf(mainWindow);
+		await expect(switcher).toBeVisible();
+		await switcher.locator('[data-compact-switcher-terminal]').first().click();
+
+		// Activation, not editing: the press is short.
+		await expect(switcher).toHaveCount(0);
+		await expect(
+			mainWindow.getByRole('heading', { name: 'Edit Terminal Tab' }),
+		).toHaveCount(0);
 	});
 
 	test('the switcher overlays the terminal rather than resizing it', async ({

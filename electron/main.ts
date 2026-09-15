@@ -3117,6 +3117,11 @@ function createAppMenu(
 					click: () => sendCommandToFocusedWindow('popout-active'),
 				},
 				{
+					label: 'Edit Active Tab…',
+					accelerator: getMenuShortcut(settings, 'edit-active-tab'),
+					click: () => sendCommandToFocusedWindow('edit-active-tab'),
+				},
+				{
 					label: 'Open Command Bar',
 					accelerator: getMenuShortcut(settings, 'open-command-bar'),
 					click: () => sendCommandToFocusedWindow('open-command-bar'),
@@ -3182,6 +3187,11 @@ function createAppMenu(
 					click: () => sendCommandToFocusedWindow('show-dashboard'),
 				},
 				{ type: 'separator' },
+				{
+					label: 'Edit Active Project…',
+					accelerator: getMenuShortcut(settings, 'edit-active-project'),
+					click: () => sendCommandToFocusedWindow('edit-active-project'),
+				},
 				{
 					label: 'Set Project Root to Working Directory',
 					accelerator: getMenuShortcut(

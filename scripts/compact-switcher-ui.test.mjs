@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -47,9 +47,11 @@ const row = (overrides) =>
 				serverLabel: 'Marks-MacBook-Air',
 				tone: 'remote-access-button--idle',
 			},
+			isCommandBarAvailable: true,
 			isExplorerOpen: false,
 			isHomeSelected: false,
 			isSwitcherOpen: false,
+			onOpenCommandBar: noop,
 			onOpenSwitcher: noop,
 			onShowDashboard: noop,
 			onToggleExplorer: noop,
@@ -60,7 +62,7 @@ const row = (overrides) =>
 		}),
 	);
 
-test('the compact row holds its five controls in order', () => {
+test('the compact row holds its six controls in order', () => {
 	const markup = row({
 		applicationMenu: React.createElement(
 			'button',
@@ -72,6 +74,7 @@ test('the compact row holds its five controls in order', () => {
 		'connected-web-compact-menu__button',
 		'Toggle file explorer',
 		'Show dashboard',
+		'data-compact-command-bar',
 		'compact-breadcrumb',
 		'data-compact-connection',
 	];
@@ -191,6 +194,7 @@ const switcher = (overrides) =>
 			onAddConnection: noop,
 			onDismiss: noop,
 			onEditProject: noop,
+			onEditTerminal: noop,
 			onNewProject: noop,
 			onNewTerminal: noop,
 			onQueryChange: noop,
@@ -284,4 +288,42 @@ test('a project heading is the long-press target for editing', () => {
 	const markup = switcher({});
 	assert.match(markup, /data-compact-switcher-project="local:p1"/);
 	assert.match(markup, /title="Long-press to edit project"/);
+});
+
+test('a terminal row is the long-press target for editing that terminal', () => {
+	// Long-pressing a terminal tab opened its editor; no tab strip is drawn at
+	// this width, so the row that replaced it carries the gesture.
+	const markup = switcher({});
+	assert.match(markup, /data-compact-switcher-terminal="local:panel-a"/);
+	assert.match(markup, /title="Long-press to edit terminal"/);
+	// Every terminal row, not only the one in front.
+	assert.equal(markup.match(/title="Long-press to edit terminal"/g).length, 2);
+});
+
+test('a short press on a terminal row still activates it', async () => {
+	const source = await readFile('src/workspace/CompactSwitcher.tsx', 'utf8');
+	const component = source.slice(
+		source.indexOf('function CompactSwitcherTerminal('),
+		source.indexOf('function CompactSwitcherProjectHeading('),
+	);
+	// bindClick is what lets a completed long press swallow the click that
+	// follows it, so activation and editing cannot both fire from one press.
+	assert.match(component, /onClick=\{longPress\.bindClick\(onActivate\)\}/);
+	assert.match(component, /const longPress = useLongPress\(onEdit\);/);
+});
+
+test('editing a switcher terminal names the panel rather than racing activation', async () => {
+	const app = await readFile('src/App.tsx', 'utf8');
+	const handler = app.slice(
+		app.indexOf('const editCompactSwitcherTerminal'),
+		app.indexOf('const createCompactSwitcherTerminal'),
+	);
+	assert.match(handler, /activateCompactSwitcherTerminal\(row\)/);
+	// The panel is named, so a project that does not hold it ignores the event
+	// and no ordering between activation and edit has to hold.
+	assert.match(
+		handler,
+		/'terminay-edit-terminal',\s*\{\s*detail: \{ panelId: row\.panelId \}/,
+	);
+	assert.doesNotMatch(handler, /requestAnimationFrame|setTimeout/);
 });
