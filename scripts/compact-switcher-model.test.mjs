@@ -63,7 +63,7 @@ test('groups by connection and then by project', () => {
 		['Paged', 'dotfiles'],
 	);
 	assert.deepEqual(
-		groups[0].projects[0].terminals.map((row) => row.title),
+		groups[0].projects[0].panels.map((row) => row.title),
 		['server', 'build'],
 	);
 });
@@ -82,7 +82,7 @@ test('the same project id on two servers stays two groups', () => {
 	);
 	assert.equal(new Set(keys).size, keys.length);
 	const rows = groups.flatMap((connection) =>
-		connection.projects.flatMap((project) => project.terminals),
+		connection.projects.flatMap((project) => project.panels),
 	);
 	for (const row of rows) {
 		assert.ok(row.serverId === 'local' || row.serverId === 'remote');
@@ -93,7 +93,7 @@ test('the same project id on two servers stays two groups', () => {
 	);
 });
 
-test('non-terminal panels never become rows', () => {
+test('file and folder panels become rows beside terminals', () => {
 	const groups = buildCompactSwitcherGroups({
 		sources: [
 			source('local', 'Local', [paged], {
@@ -106,8 +106,32 @@ test('non-terminal panels never become rows', () => {
 		],
 	});
 	assert.deepEqual(
-		groups[0].projects[0].terminals.map((row) => row.title),
-		['server'],
+		groups[0].projects[0].panels.map((row) => [row.title, row.panelKind]),
+		[
+			['server', 'terminal'],
+			['README.md', 'file'],
+			['src', 'folder'],
+		],
+	);
+});
+
+test('filtering by file title keeps only that row', () => {
+	const groups = filterCompactSwitcherGroups(
+		buildCompactSwitcherGroups({
+			sources: [
+				source('local', 'Local', [paged], {
+					p1: [
+						terminal('panel-a', 'server', 's-a'),
+						panel({ kind: 'file', panelId: 'panel-file', title: 'README.md' }),
+					],
+				}),
+			],
+		}),
+		'README',
+	);
+	assert.deepEqual(
+		groups[0].projects[0].panels.map((row) => row.title),
+		['README.md'],
 	);
 });
 
@@ -129,8 +153,8 @@ test('preview comes from the window buffer, and is absent without one', () => {
 			sessionId === 's-a' ? 'npm run build\n✓ built in 2.41s\n\n' : undefined,
 		sources: [twoServers[0]],
 	});
-	assert.equal(groups[0].projects[0].terminals[0].preview, '✓ built in 2.41s');
-	assert.equal(groups[0].projects[0].terminals[1].preview, undefined);
+	assert.equal(groups[0].projects[0].panels[0].preview, '✓ built in 2.41s');
+	assert.equal(groups[0].projects[0].panels[1].preview, undefined);
 });
 
 test('preview skips trailing blank lines and truncates to one line', () => {
@@ -152,7 +176,7 @@ test('resolving a preview changes no activity state', () => {
 		},
 		sources: [twoServers[0]],
 	});
-	const rows = groups[0].projects.flatMap((project) => project.terminals);
+	const rows = groups[0].projects.flatMap((project) => project.panels);
 	for (const row of rows) assert.equal(row.state, 'idle');
 	assert.ok(states.length > 0);
 });
@@ -165,7 +189,7 @@ test('filtering by terminal title keeps only that row', () => {
 	assert.equal(groups.length, 1);
 	assert.equal(groups[0].projects.length, 1);
 	assert.deepEqual(
-		groups[0].projects[0].terminals.map((row) => row.title),
+		groups[0].projects[0].panels.map((row) => row.title),
 		['build'],
 	);
 });
@@ -177,7 +201,7 @@ test('filtering by project name keeps the whole group', () => {
 	);
 	assert.equal(groups.length, 1);
 	assert.deepEqual(
-		groups[0].projects[0].terminals.map((row) => row.title),
+		groups[0].projects[0].panels.map((row) => row.title),
 		['zsh'],
 	);
 });
@@ -190,7 +214,7 @@ test('filtering by connection name keeps every project of that server', () => {
 	assert.equal(groups.length, 1);
 	assert.equal(groups[0].serverLabel, 'paged-prod');
 	assert.deepEqual(
-		groups[0].projects[0].terminals.map((row) => row.title),
+		groups[0].projects[0].panels.map((row) => row.title),
 		['deploy'],
 	);
 });
