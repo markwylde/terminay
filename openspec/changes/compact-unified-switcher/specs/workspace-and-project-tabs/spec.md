@@ -72,7 +72,15 @@ beneath it.
 
 ### Requirement: Compact switcher filtering
 
-The switcher SHALL offer a text filter that matches terminal titles, project names, and connection names. A filter SHALL keep a group whose project or connection name matches, keep a terminal row whose title matches, and SHALL hide groups left with no rows. Clearing the filter SHALL restore the full grouped list. The filter SHALL NOT change which terminal is active.
+The switcher SHALL offer a text filter that matches terminal titles, project names, and connection names. The filter SHALL start collapsed as a search control and SHALL expand into a field only when a user asks for it; nothing in the switcher SHALL take focus when it opens, so reaching a project or terminal never raises a software keyboard. Collapsing the filter SHALL clear it and restore the full grouped list. A filter SHALL keep a group whose project or connection name matches, keep a terminal row whose title matches, and SHALL hide groups left with no rows. Clearing the filter SHALL restore the full grouped list. The filter SHALL NOT change which terminal is active.
+
+#### Scenario: The switcher opens without taking focus
+- **WHEN** the switcher opens
+- **THEN** the filter is a collapsed search control, no field holds focus, and no software keyboard is raised
+
+#### Scenario: Collapsing the filter restores the list
+- **WHEN** a user collapses an expanded filter that was narrowing the list
+- **THEN** the filter clears and every group returns
 
 #### Scenario: Filtering by terminal title
 - **WHEN** a user types text matching one terminal's title

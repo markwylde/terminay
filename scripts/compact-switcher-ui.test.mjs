@@ -257,9 +257,14 @@ test('a filter that matches nothing says so and keeps its actions', () => {
 	assert.match(markup, />Add connection</);
 });
 
-test('the filter field is labelled', () => {
+test('the filter starts collapsed and takes no focus', () => {
 	const markup = switcher({});
+	// A collapsed control, not a field: opening the sheet must not raise a
+	// keyboard, and nothing here is autofocused.
+	assert.match(markup, /compact-switcher__search-open/);
 	assert.match(markup, /aria-label="Search terminals and projects"/);
+	assert.doesNotMatch(markup, /<input/);
+	assert.doesNotMatch(markup, /autoFocus|autofocus/);
 });
 
 test('a project heading is the long-press target for editing', () => {

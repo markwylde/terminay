@@ -32,6 +32,12 @@
 
 - [x] 6.1 Add the compact row and switcher styles to `src/App.css` and the responsive workspace styles, keeping the row at 40px, icons narrowing before the breadcrumb truncates, and 44px minimum row targets in the sheet. Verified by an e2e case at 320px asserting no horizontal overflow of the chrome row and by `npm run lint`.
 
+## 8. Touch-host layout stability
+
+- [x] 8.1 Declare a fixed viewport scale on the workspace document so focusing any control cannot scale the page or scroll the chrome away, matching the manager shell that already declares it. Verified by `scripts/compact-chrome-breakpoint.test.mjs` asserting both documents pin the scale, and by an e2e case asserting the chrome row does not move when the filter takes focus.
+- [x] 8.2 Collapse the switcher filter to a search control that expands on demand, take no focus when the switcher opens, and clear the filter when it collapses. Verified by unit assertions that the sheet renders no field and nothing is autofocused, and by the e2e filter case opening the control before typing.
+- [x] 8.3 Keep the filter field on the same type scale as the rest of the sheet rather than inflating it. Verified by a unit assertion pinning its font size to the sheet's.
+
 ## 7. Verification
 
 - [x] 7.1 Add the compact e2e coverage as its own spec file and register it the way sibling suites are. Verified by the new spec passing under `npm run test:e2e` in the Docker harness, never Playwright on the host.

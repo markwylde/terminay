@@ -119,6 +119,34 @@ test('the breadcrumb truncates the project before the terminal', async () => {
 	);
 });
 
+test('the workspace document pins its scale so focus never zooms', async () => {
+	const workspaceDocument = await read('server.html');
+	const managerShell = await read('remote.html');
+	for (const [name, html] of [
+		['server.html', workspaceDocument],
+		['remote.html', managerShell],
+	]) {
+		const viewport = html.match(
+			/<meta[\s\S]*?name="viewport"[\s\S]*?content="([^"]+)"/,
+		)?.[1];
+		assert.ok(viewport, `${name} declares a viewport`);
+		assert.match(viewport, /maximum-scale=1/, name);
+		assert.match(viewport, /user-scalable=no/, name);
+		assert.match(viewport, /viewport-fit=cover/, name);
+	}
+});
+
+test('control type is not inflated to dodge platform zoom', async () => {
+	const css = await read('src/App.css');
+	// Every compact control shares one type scale; a 16px field would be a
+	// workaround wearing the costume of a design decision.
+	const field = css.match(
+		/\.compact-switcher__search input \{([\s\S]*?)\n\}/,
+	)?.[1];
+	assert.ok(field);
+	assert.match(field, /font-size: 13\.5px;/);
+});
+
 test('switcher rows stay thumb-sized', async () => {
 	const css = await read('src/App.css');
 	const row = css.match(/\.compact-switcher__terminal \{([\s\S]*?)\n\}/)?.[1];

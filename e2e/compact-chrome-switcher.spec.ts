@@ -20,6 +20,22 @@ const switcherOf = (page: Page) =>
 const activeProjectId = (page: Page) =>
 	page.locator('.app-shell').getAttribute('data-terminay-active-project-id');
 
+async function settledHeight(
+	locator: import('@playwright/test').Locator,
+): Promise<number> {
+	let previous = -1;
+	await expect
+		.poll(async () => {
+			const box = await locator.boundingBox();
+			const height = Math.round(box?.height ?? 0);
+			const settled = height > 0 && height === previous;
+			previous = height;
+			return settled;
+		})
+		.toBe(true);
+	return previous;
+}
+
 const activeSessionId = (page: Page) =>
 	page
 		.locator('.project-workspace--active .terminal-panel:visible')
@@ -113,6 +129,7 @@ test.describe('compact chrome', () => {
 			.locator('.project-workspace--active .terminal-panel:visible')
 			.first();
 		await expect(terminal).toBeVisible();
+		const beforeHeight = await settledHeight(terminal);
 		const before = await terminal.boundingBox();
 
 		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
@@ -121,7 +138,7 @@ test.describe('compact chrome', () => {
 
 		const during = await terminal.boundingBox();
 		if (!before || !during) throw new Error('Expected terminal geometry');
-		expect(Math.round(during.height)).toBe(Math.round(before.height));
+		expect(Math.round(during.height)).toBe(beforeHeight);
 		expect(Math.round(during.width)).toBe(Math.round(before.width));
 
 		// Every create action the collapsed chrome absorbed is here.
@@ -225,7 +242,17 @@ test.describe('compact chrome', () => {
 		)?.trim();
 		if (!firstTitle) throw new Error('Expected a terminal row');
 
+		// The filter is collapsed until it is asked for, and nothing in the sheet
+		// holds focus before then.
+		await expect(switcher.locator('input')).toHaveCount(0);
+		await expect(
+			mainWindow.locator('.compact-switcher input:focus'),
+		).toHaveCount(0);
+		await switcher
+			.locator('.compact-switcher__search-open')
+			.click();
 		const filter = switcher.getByLabel('Search terminals and projects');
+		await expect(filter).toBeFocused();
 		await filter.fill(firstTitle);
 		await expect(rows).not.toHaveCount(0);
 
@@ -237,7 +264,38 @@ test.describe('compact chrome', () => {
 			switcher.getByRole('button', { name: 'New project' }),
 		).toBeVisible();
 
-		await filter.fill('');
+		// Collapsing clears the filter and restores every group.
+		await switcher.getByLabel('Close search').click();
+		await expect(switcher.locator('input')).toHaveCount(0);
 		await expect(rows).not.toHaveCount(0);
+	});
+
+	test('the workspace document forbids the scale change iOS makes on focus', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		await resize(mainWindow, electronApp, PHONE);
+		const viewport = await mainWindow
+			.locator('meta[name="viewport"]')
+			.getAttribute('content');
+		expect(viewport).toContain('maximum-scale=1');
+		expect(viewport).toContain('user-scalable=no');
+
+		// Focusing the filter must not move the chrome row or change its size —
+		// the failure mode being guarded is the page scaling and scrolling the
+		// header away.
+		const row = mainWindow.locator('[data-compact-chrome="true"]');
+		const before = await row.boundingBox();
+		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
+		const switcher = switcherOf(mainWindow);
+		await expect(switcher).toBeVisible();
+		await switcher.locator('.compact-switcher__search-open').click();
+		await expect(
+			switcher.getByLabel('Search terminals and projects'),
+		).toBeFocused();
+		const after = await row.boundingBox();
+		if (!before || !after) throw new Error('Expected the compact row');
+		expect(Math.round(after.y)).toBe(Math.round(before.y));
+		expect(Math.round(after.width)).toBe(Math.round(before.width));
 	});
 });

@@ -10,8 +10,8 @@
  * switcher never resizes a terminal and dismissing it never costs a relayout.
  */
 
-import { Plus, Search } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { Plus, Search, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { AgentStatusIndicator } from '../components/AgentStatusIndicator';
 import { useLongPress } from '../hooks/useLongPress';
 import type {
@@ -83,9 +83,27 @@ export function CompactSwitcher({
 	query,
 }: CompactSwitcherProps) {
 	const searchRef = useRef<HTMLInputElement>(null);
+	// The switcher opens to be read, not typed into: nearly every use is a tap
+	// on a project or a terminal. Nothing takes focus until a user asks for the
+	// filter, so opening the sheet never raises a keyboard.
+	const [isSearchOpen, setIsSearchOpen] = useState(false);
 	useEffect(() => {
-		searchRef.current?.focus();
-	}, []);
+		if (isSearchOpen) searchRef.current?.focus();
+	}, [isSearchOpen]);
+	const closeSearch = () => {
+		setIsSearchOpen(false);
+		onQueryChange('');
+	};
+	useEffect(() => {
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key !== 'Escape') return;
+			event.stopPropagation();
+			onDismiss();
+		};
+		window.addEventListener('keydown', onKeyDown, { capture: true });
+		return () =>
+			window.removeEventListener('keydown', onKeyDown, { capture: true });
+	}, [onDismiss]);
 	const isEmpty = groups.length === 0 || compactSwitcherIsEmpty(groups);
 	return (
 		<div
@@ -105,26 +123,46 @@ export function CompactSwitcher({
 				role="dialog"
 				aria-modal="true"
 				aria-label="Switch terminal"
-				onKeyDown={(event) => {
-					if (event.key !== 'Escape') return;
-					event.stopPropagation();
-					onDismiss();
-				}}
 			>
 				<span className="compact-switcher__grab" aria-hidden="true" />
-				<div className="compact-switcher__search">
-					<Search size={15} aria-hidden="true" />
-					<input
-						ref={searchRef}
-						id="compact-switcher-filter"
-						type="search"
-						value={query}
-						onChange={(event) => onQueryChange(event.target.value)}
-						placeholder="Search terminals and projects"
-						aria-label="Search terminals and projects"
-						autoComplete="off"
-						spellCheck={false}
-					/>
+				<div
+					className={`compact-switcher__tools${isSearchOpen ? ' compact-switcher__tools--searching' : ''}`}
+				>
+					{isSearchOpen ? (
+						<div className="compact-switcher__search">
+							<Search size={15} aria-hidden="true" />
+							<input
+								ref={searchRef}
+								id="compact-switcher-filter"
+								type="search"
+								value={query}
+								onChange={(event) => onQueryChange(event.target.value)}
+								placeholder="Search terminals and projects"
+								aria-label="Search terminals and projects"
+								autoComplete="off"
+								spellCheck={false}
+							/>
+							<button
+								type="button"
+								className="compact-switcher__search-close"
+								onClick={closeSearch}
+								aria-label="Close search"
+							>
+								<X size={15} aria-hidden="true" />
+							</button>
+						</div>
+					) : (
+						<button
+							type="button"
+							className="compact-switcher__search-open"
+							onClick={() => setIsSearchOpen(true)}
+							aria-label="Search terminals and projects"
+							aria-expanded={false}
+							title="Search terminals and projects"
+						>
+							<Search size={15} aria-hidden="true" />
+						</button>
+					)}
 				</div>
 				<div className="compact-switcher__body">
 					{isEmpty ? (
