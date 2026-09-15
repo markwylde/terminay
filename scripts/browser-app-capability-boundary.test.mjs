@@ -73,3 +73,46 @@ test('browser-only adapters fail closed for unavailable secret operations', () =
 	}
 	assert.doesNotMatch(browserAdapters, /window\.terminay|electron|ipcRenderer/u);
 });
+
+test('the compact application menu crosses the host boundary as a capability', async () => {
+	const sharedApp = await readFile('src/App.tsx', 'utf8');
+
+	// The host supplies the control; the shared workspace only draws whatever it
+	// is handed, so no browser-only command reaches the tree every host renders.
+	assert.match(
+		sharedWorkspace,
+		/renderCompactApplicationMenu\?: \(\) => ReactNode;/u,
+	);
+	assert.match(
+		webWorkspace,
+		/renderCompactApplicationMenu: \(\) => \([\s\S]*?variant="compact"/u,
+	);
+	// A host with native menus supplies nothing at all.
+	assert.match(webWorkspace, /\.\.\.\(hasNativeMenus\s*\?\s*\{\}/u);
+
+	assert.match(
+		sharedApp,
+		/applicationMenu=\{hostPresentation\?\.renderCompactApplicationMenu\?\.\(\)\}/u,
+	);
+	// The browser's own menu vocabulary stays in the browser composition.
+	for (const command of ['Disconnect', 'Remote Control', 'Recordings']) {
+		assert.ok(
+			webWorkspace.includes(command),
+			`${command} belongs to the browser composition`,
+		);
+		assert.ok(
+			!sharedApp.includes(`label: '${command}'`),
+			`${command} must not move into the shared workspace`,
+		);
+	}
+});
+
+test('the compact menu keeps every wide-menu command and its capability gating', () => {
+	// One control, still four named menus built from one definition — there is
+	// no second item list that could drift from the menu bar's.
+	assert.equal(webWorkspace.match(/const menuItems = useMemo</gu).length, 1);
+	assert.match(
+		webWorkspace,
+		/variant === 'compact'[\s\S]*?menuOrder\.map\(\(menuId\) => \([\s\S]*?menuLabels\[menuId\][\s\S]*?menuItems\[menuId\]\.map/u,
+	);
+});
