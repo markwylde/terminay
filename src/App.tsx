@@ -6953,6 +6953,14 @@ function App({
 						closeCompactSwitcher();
 						void createCompactSwitcherTerminal(group);
 					}}
+					{...(isHomeSelected || activeProjectId === undefined
+						? {}
+						: {
+								onNewTerminalHere: () => {
+									closeCompactSwitcher();
+									void createInitialTerminalForProject(activeProjectId);
+								},
+							})}
 					onQueryChange={setCompactSwitcherQuery}
 					query={compactSwitcherQuery}
 					{...(activeCompactTerminal === undefined

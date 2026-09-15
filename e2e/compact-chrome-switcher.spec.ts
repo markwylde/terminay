@@ -224,6 +224,34 @@ test.describe('compact chrome', () => {
 		).toBeVisible();
 	});
 
+	test('a live terminal row shows its own last line', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		// The preview is a read of the buffer this window is already rendering.
+		// Only a running app can prove that registry is actually wired up.
+		const terminal = mainWindow
+			.locator('.project-workspace--active .terminal-panel:visible')
+			.first();
+		await expect(terminal).toBeVisible();
+		await terminal.click();
+		await mainWindow.keyboard.type('echo switcher-preview-marker');
+		await mainWindow.keyboard.press('Enter');
+		await expect(
+			mainWindow.locator('.project-workspace--active .xterm-rows'),
+		).toContainText('switcher-preview-marker');
+
+		await resize(mainWindow, electronApp, PHONE);
+		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
+		const switcher = switcherOf(mainWindow);
+		await expect(switcher).toBeVisible();
+		const preview = switcher
+			.locator('.compact-switcher__terminal-preview')
+			.first();
+		await expect(preview).toBeVisible();
+		await expect(preview).not.toBeEmpty();
+	});
+
 	test('filters to a terminal and reports when nothing matches', async ({
 		electronApp,
 		mainWindow,
