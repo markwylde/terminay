@@ -131,17 +131,22 @@ export function CompactSwitcher({
 					{isSearchOpen ? (
 						<div className="compact-switcher__search">
 							<Search size={15} aria-hidden="true" />
-							<input
-								ref={searchRef}
-								id="compact-switcher-filter"
-								type="search"
-								value={query}
-								onChange={(event) => onQueryChange(event.target.value)}
-								placeholder="Search terminals and projects"
-								aria-label="Search terminals and projects"
-								autoComplete="off"
-								spellCheck={false}
-							/>
+							{/* The field owns the layout box; the input inside it is set at
+							    the 16px iOS demands and scaled back to the sheet's type
+							    size, so focusing it cannot zoom the page. */}
+							<span className="compact-switcher__field">
+								<input
+									ref={searchRef}
+									id="compact-switcher-filter"
+									type="search"
+									value={query}
+									onChange={(event) => onQueryChange(event.target.value)}
+									placeholder="Search terminals and projects"
+									aria-label="Search terminals and projects"
+									autoComplete="off"
+									spellCheck={false}
+								/>
+							</span>
 							<button
 								type="button"
 								className="compact-switcher__search-close"

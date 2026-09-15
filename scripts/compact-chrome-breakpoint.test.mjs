@@ -119,32 +119,53 @@ test('the breadcrumb truncates the project before the terminal', async () => {
 	);
 });
 
-test('the workspace document pins its scale so focus never zooms', async () => {
-	const workspaceDocument = await read('server.html');
-	const managerShell = await read('remote.html');
-	for (const [name, html] of [
-		['server.html', workspaceDocument],
-		['remote.html', managerShell],
-	]) {
-		const viewport = html.match(
-			/<meta[\s\S]*?name="viewport"[\s\S]*?content="([^"]+)"/,
-		)?.[1];
-		assert.ok(viewport, `${name} declares a viewport`);
-		assert.match(viewport, /maximum-scale=1/, name);
-		assert.match(viewport, /user-scalable=no/, name);
-		assert.match(viewport, /viewport-fit=cover/, name);
-	}
+test('the filter is sized so iOS has no reason to zoom', async () => {
+	const css = await read('src/App.css');
+	const field = css.match(
+		/\.compact-switcher__field input \{([\s\S]*?)\n\}/,
+	)?.[1];
+	assert.ok(field, 'the filter has a field rule');
+
+	// iOS zooms when the COMPUTED size is under 16px, and has ignored
+	// user-scalable=no since iOS 10 — the computed size is the only lever.
+	const computed = field.match(/font-size: (\d+(?:\.\d+)?)px/)?.[1];
+	assert.ok(computed !== undefined);
+	assert.ok(
+		Number(computed) >= 16,
+		`computed font-size ${computed}px would still zoom`,
+	);
+
+	// …and it is scaled back so the reader sees the sheet's own type size.
+	const scale = field.match(/transform: scale\((\d+(?:\.\d+)?)\)/)?.[1];
+	assert.ok(scale !== undefined);
+	const rendered = Number(computed) * Number(scale);
+	assert.ok(
+		Math.abs(rendered - 13.5) < 0.01,
+		`renders at ${rendered}px, not the sheet's 13.5px`,
+	);
+	assert.match(field, /transform-origin: left top;/);
+
+	// The wrapper owns the layout box, and the input fills it at the inverse
+	// of the scale so it paints exactly inside it.
+	const wrapper = css.match(
+		/\.compact-switcher__field \{([\s\S]*?)\n\}/,
+	)?.[1];
+	assert.ok(wrapper);
+	assert.match(wrapper, /position: relative;/);
+	const width = Number(field.match(/width: (\d+(?:\.\d+)?)%/)?.[1]);
+	assert.ok(Math.abs(width - 100 / Number(scale)) < 0.01, `width ${width}%`);
 });
 
-test('control type is not inflated to dodge platform zoom', async () => {
-	const css = await read('src/App.css');
-	// Every compact control shares one type scale; a 16px field would be a
-	// workaround wearing the costume of a design decision.
-	const field = css.match(
-		/\.compact-switcher__search input \{([\s\S]*?)\n\}/,
+test('no document tries to forbid zoom instead', async () => {
+	// A viewport declaration cannot stop the focus zoom on iOS, and pinning the
+	// scale only costs pinch-zoom. The workspace document must not pretend.
+	const workspaceDocument = await read('server.html');
+	const viewport = workspaceDocument.match(
+		/<meta[\s\S]*?name="viewport"[\s\S]*?content="([^"]+)"/,
 	)?.[1];
-	assert.ok(field);
-	assert.match(field, /font-size: 13\.5px;/);
+	assert.ok(viewport);
+	assert.doesNotMatch(viewport, /user-scalable=no/);
+	assert.doesNotMatch(viewport, /maximum-scale/);
 });
 
 test('switcher rows stay thumb-sized', async () => {
