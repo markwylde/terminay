@@ -7,13 +7,13 @@ import { createRefreshSchedule } from '../src/workspace/gitRefreshSchedule.ts';
  * latency preference. These assert the rate is bounded however the events
  * arrive — the property a trailing debounce does not have.
  */
-function harness(minIntervalMs) {
+function harness(rampMs) {
 	let clock = 0;
 	let runs = 0;
 	const timers = new Map();
 	let nextId = 1;
 	const schedule = createRefreshSchedule({
-		minIntervalMs,
+		rampMs: Array.isArray(rampMs) ? rampMs : [rampMs],
 		run: () => {
 			runs += 1;
 		},
@@ -66,6 +66,50 @@ test('a steady event stream is bounded by the minimum interval', () => {
 	assert.ok(runs() >= 9, `expected refreshes to keep up, saw ${runs()}`);
 });
 
+test('sustained change ramps the interval and quiet resets it', () => {
+	const ramp = [1000, 2000, 3000, 5000, 10_000, 20_000];
+	const { schedule, advance, runs } = harness(ramp);
+
+	// Keep asking throughout. The gap between runs must widen through the ramp
+	// rather than holding at the fastest step.
+	const runAt = [];
+	let clock = 0;
+	const before = runs();
+	for (let tick = 0; tick < 600; tick += 1) {
+		schedule.request();
+		if (runs() > before + runAt.length) runAt.push(clock);
+		advance(100);
+		clock += 100;
+	}
+	const gaps = runAt.slice(1).map((at, index) => at - runAt[index]);
+	assert.ok(gaps.length >= 5, `expected several runs, saw ${runAt.length}`);
+	assert.ok(
+		gaps[gaps.length - 1] > gaps[0],
+		`expected the gap to widen, saw ${gaps.join(',')}`,
+	);
+	assert.ok(
+		gaps.every((gap) => gap <= 20_000),
+		`expected the ramp to hold at 20s, saw ${gaps.join(',')}`,
+	);
+});
+
+test('the ramp holds at its widest step rather than growing', () => {
+	const { schedule, advance, runs } = harness([1000, 2000]);
+	for (let tick = 0; tick < 200; tick += 1) {
+		schedule.request();
+		advance(100);
+	}
+	// 20s of continuous change at a 2s ceiling: about ten runs, not one.
+	assert.ok(runs() >= 8, `expected the ceiling to keep running, saw ${runs()}`);
+});
+
+test('an empty ramp is rejected', () => {
+	assert.throws(
+		() => createRefreshSchedule({ rampMs: [], run: () => {} }),
+		RangeError,
+	);
+});
+
 test('requests during an interval collapse into exactly one run', () => {
 	const { schedule, advance, runs } = harness(1000);
 	schedule.request();
@@ -98,11 +142,11 @@ test('cancel drops the pending run', () => {
 
 test('a non-finite or negative interval is rejected', () => {
 	assert.throws(
-		() => createRefreshSchedule({ minIntervalMs: -1, run: () => {} }),
+		() => createRefreshSchedule({ rampMs: [-1], run: () => {} }),
 		RangeError,
 	);
 	assert.throws(
-		() => createRefreshSchedule({ minIntervalMs: Number.NaN, run: () => {} }),
+		() => createRefreshSchedule({ rampMs: [Number.NaN], run: () => {} }),
 		RangeError,
 	);
 });

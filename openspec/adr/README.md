@@ -49,3 +49,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0019](./0019-language-intelligence-from-server-hosted-language-server-extensions.md) | Language intelligence comes from language-server extensions on the Terminay Server, behind a core-owned bounded protocol surface | accepted | 2026-09-09 |
 | [0020](./0020-per-operation-canonical-roots.md) | Canonicalize a project root once per filesystem operation, and never cache one across operations | accepted | 2026-09-14 |
 | [0021](./0021-measure-background-cost-in-spawns-not-parent-syscalls.md) | Measure idle background cost in child processes, not in the parent's syscalls | accepted | 2026-09-15 |
+| [0022](./0022-watch-do-not-poll.md) | Watch for changes; never poll for anything a watch can observe | accepted | 2026-09-15 |
