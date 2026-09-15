@@ -34,9 +34,13 @@ work it schedules and free-runs at roughly 8 Hz. And agent observation's
   agent-integration setting is off**. Today `ExtensionAgentRuntime` has no
   reference to that flag at all, so its topology polling continues after the
   feature is disabled.
-- Where a long-lived observation is possible, the host **streams** rather than
-  re-spawning: `lsof` repeat mode emits a marker, sleeps and repeats from one
-  process, instead of one spawn per cycle.
+Streaming `lsof` in repeat mode, so a fixed terminal set costs one process
+instead of one per sample, was scoped out after measurement: the fan-out
+accounts for essentially all of the 8.6 spawns per second (20 per refresh at
+~0.43 refreshes per second), and `lsof`/`ps` for the smaller ~0.43/s batch.
+Introducing a long-lived child with its own lifecycle and marker parsing for
+that remainder was not worth the risk in the same change. It is recorded as an
+open item on ADR-0021.
 
 ## Capabilities
 
@@ -51,13 +55,20 @@ None.
   minimum interval rather than only debounced.
 - `agent-status-and-sidebar`: observation is gated on the agent-integration
   setting — while it is off, no topology polling, process enumeration, or
-  open-file inspection runs — and topology sampling reuses a streaming
-  observation instead of spawning one process per sample.
+  open-file inspection runs — and sampling for a terminal that keeps finding
+  nothing backs off rather than sampling at its fastest cadence indefinitely.
 
 ## Impact
 
-- `electron/fileViewer/gitDiffService.ts` — the worktree loop at `:294` and the
-  per-worktree command set at `:314`, `:188`, `:237`.
+- `packages/server-core/src/gitService/service.ts` — `worktrees()` gains a
+  worktree scope. This, not `electron/fileViewer/gitDiffService.ts`, is the live
+  fan-out: that file's `getWorktreePanelStatus` has no production caller and is
+  reached only from `scripts/git-worktree-status.test.mjs`.
+- `packages/server-core/src/gitService/adapter.ts`,
+  `packages/client-core/src/gitClient.ts`,
+  `src/services/git/serverGitWorkspaceAdapter.ts` — carry the scope from the
+  event to the query. `GitReadOnlyRequest` already had an optional
+  `worktreeId`, so no protocol shape changed.
 - `src/workspace/useFileExplorerController.ts` — `WATCH_REFRESH_DELAY_MS` at
   `:31` and the debounce at `:1037`.
 - `packages/server-core/src/activity/extensionAgentRuntime.ts` — gating the

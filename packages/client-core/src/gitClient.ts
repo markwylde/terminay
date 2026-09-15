@@ -66,7 +66,7 @@ export class TerminayGitClient {
     this.host = createHostCapabilityProvider(options.capabilities ?? {});
   }
 
-  list(request: { readonly projectId?: string; readonly repositoryId?: string } = {}, options: QueryOptions = {}): Promise<JsonValue> {
+  list(request: { readonly projectId?: string; readonly repositoryId?: string; readonly worktreeId?: string } = {}, options: QueryOptions = {}): Promise<JsonValue> {
     return this.transport.query(GIT_CLIENT_OPERATIONS.listWorktrees, boundedObject(request, "Git worktree list"), options);
   }
 
