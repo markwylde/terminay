@@ -91,9 +91,13 @@ code { border-radius: 6px; background: #0b1119; color: #d5e1ee; padding: 2px 5px
 }
 
 .browser-host-shell__connection-logo {
+  display: block;
   width: 72px;
   height: 72px;
   border-radius: 18px;
+  /* The mark is an inline SVG whose black plate fills the viewBox; the rounded
+   * corners come from this clip, as they did when it was an <img>. */
+  overflow: hidden;
 }
 
 .browser-host-shell__connection-brand {
