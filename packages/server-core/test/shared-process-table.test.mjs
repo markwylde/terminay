@@ -64,3 +64,25 @@ test('a failed read is not cached past its own round', darwinOnly, async () => {
 	resetSharedProcessTable();
 	assert.doesNotThrow(() => sharedProcessTable());
 });
+
+test('a shared read has a deadline of its own', darwinOnly, async () => {
+	const { sharedProcessTable, resetSharedProcessTable } = await import(
+		'../dist/index.js'
+	);
+	resetSharedProcessTable();
+	// `commandText` has no timeout; the abort signal is its only cancellation,
+	// and the shared read deliberately does not use the caller's. It must
+	// therefore carry its own, or one wedged `ps` strands every terminal in the
+	// round forever. Settling at all is the property under test.
+	const settled = await Promise.race([
+		sharedProcessTable().then(
+			() => 'settled',
+			() => 'settled',
+		),
+		new Promise((resolve) => {
+			const timer = setTimeout(() => resolve('hung'), 10_000);
+			timer.unref?.();
+		}),
+	]);
+	assert.equal(settled, 'settled');
+});
