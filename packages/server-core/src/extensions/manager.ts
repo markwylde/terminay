@@ -148,7 +148,14 @@ export class ExtensionHostManager {
 				return status;
 			});
 		} catch (error) {
-			await host.stop();
+			// A host that crashed between start and publication has already
+			// recorded its failure and scheduled its restart. Stopping it would
+			// turn that failed state into a deliberate stop, which cancels the
+			// pending restart and leaves the extension dead until someone asks.
+			// Only a host that is still up needs stopping here, which is the
+			// contribution ownership conflict.
+			const state = host.status().state;
+			if (state !== 'failed' && state !== 'quarantined') await host.stop();
 			throw error;
 		}
 	}
