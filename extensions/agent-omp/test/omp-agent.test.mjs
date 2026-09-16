@@ -155,6 +155,37 @@ test("a resume flag admits the earlier session the breadcrumb names", async () =
   assert.equal(result.binding.providerSessionId, "continued-session");
 });
 
+// omp 18.2 appends a `cwdstat <dev> <ino>` line after the session-file line
+// so `--continue` can tell a moved project from a deleted one. A parser that
+// took only `fresh` as a third line refused every breadcrumb that release
+// writes, which left binding to the open-journal race alone.
+test("a breadcrumb carrying the cwdstat identity line binds", async () => {
+  const rootPath = "/home/test/.omp/agent/sessions/project/root.jsonl";
+  for (const breadcrumb of [
+    `/workspace\n${rootPath}\ncwdstat 64769 1310855\n`,
+    `/workspace\n${rootPath}\nfresh\ncwdstat 64769 1310855\n`,
+  ]) {
+    const fixture = ompObservationFixture("root", "Cwd identity", { breadcrumb, writer: false });
+    const result = await ompAgentProvider.observe(fixture.terminal);
+    assert.equal(result.state, "bound", breadcrumb);
+    assert.equal(result.binding.providerSessionId, "root");
+  }
+});
+
+test("a breadcrumb with a marker this extension does not understand fails closed", async () => {
+  const rootPath = "/home/test/.omp/agent/sessions/project/root.jsonl";
+  for (const breadcrumb of [
+    `/workspace\n${rootPath}\ncwdstat not-a-device\n`,
+    `/workspace\n${rootPath}\nfresh\nfresh\n`,
+    `/workspace\n${rootPath}\nsomething-else\n`,
+    `/workspace\n${rootPath}\nfresh\ncwdstat 1 2\nfresh\ncwdstat 1 2\nfresh\n`,
+  ]) {
+    const fixture = ompObservationFixture("root", "Refused", { breadcrumb, writer: false });
+    const result = await ompAgentProvider.observe(fixture.terminal);
+    assert.equal(result.state, "not-bound", breadcrumb);
+  }
+});
+
 test("a malformed breadcrumb and unrelated non-writer journal fail closed", async () => {
   const fixture = ompObservationFixture("root", "No leak", { breadcrumb: "not-a-provider-breadcrumb", writer: false });
   const result = await ompAgentProvider.observe(fixture.terminal);
