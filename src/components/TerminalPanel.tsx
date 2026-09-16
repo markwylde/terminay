@@ -54,6 +54,8 @@ import {
 	writeClipboardText,
 } from '../host/nativeActions';
 import { subscribeTerminalZoom } from '../host/nativeEvents';
+import { useServerConnection } from '../shared/connections/ConnectionsContext';
+import { isConnectionReconnecting } from '../shared/connections/connectionRegistry';
 import { recordRendererDiagnostic } from '../shared/rendererDiagnostics';
 import { isTouchTextSelectionEnabled } from '../shared/touchTextSelectionPreference';
 import type { WorkspaceSnapshotStore } from '../shared/WorkspaceSnapshotStore';
@@ -483,6 +485,12 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	);
 	const { settings, settingsClient } = useTerminalSettings();
 	const terminalClientContext = useContext(TerminalPanelClientContext);
+	// An attach or renewal that failed on the dying transport is the reconnect's
+	// story, and the workspace overlay is already telling it. The rebind onto
+	// the replacement connection clears the error either way.
+	const connectionReconnecting = isConnectionReconnecting(
+		useServerConnection(terminalClientContext?.serverId)?.phase,
+	);
 	const connectionActionsRef = useRef(terminalClientContext);
 	connectionActionsRef.current = terminalClientContext;
 	const boundTerminalClientRef = useRef(terminalClientContext?.client);
@@ -3274,7 +3282,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 					</button>
 				</fieldset>
 			) : null}
-			{serverTerminalError ? (
+			{serverTerminalError && !connectionReconnecting ? (
 				<div className="terminal-panel-connection-error" role="alert">
 					<p>{serverTerminalError}</p>
 					{isTerminalRetryActionable({
