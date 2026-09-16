@@ -129,7 +129,7 @@ function clock() {
         if (timer !== undefined) return timer;
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
-      assert.fail("no restart was scheduled");
+      assert.fail(`no restart was scheduled${this.describe === undefined ? "" : `: ${this.describe()}`}`);
     },
     async runNext() {
       await this.next();
@@ -145,6 +145,10 @@ async function fixture(crashes) {
   const counterPath = join(dataRoot, "activations");
   const records = [];
   const timers = clock();
+  // When no restart arrives, say what the host did instead: the transitions
+  // it recorded and the state it settled in are what tell a race apart.
+  timers.describe = () =>
+    `host ${JSON.stringify(management.hosts.statuses().map((status) => status.state))}, transitions ${JSON.stringify(records.map((record) => record.transition))}`;
   const management = createDefaultExtensionManagement({
     dataRoot,
     authorityLabel: "Test server",
@@ -233,6 +237,50 @@ test("a supervised restart re-publishes contributions so running terminals are o
     assert.ok(
       republished.some((providers) => providers.includes(`${EXTENSION}/cli`)),
       "contribution listeners are notified, so existing terminals are re-observed",
+    );
+  } finally {
+    await value.cleanup();
+  }
+});
+
+test("a host that crashes before its contributions are published is still restarted", async () => {
+  const value = await fixture(2);
+  try {
+    await value.management.initialize();
+    await value.waitForFailures(1);
+    const sinceCrash = value.records.length;
+
+    // Hold contribution publication until the restarted child has died, so the
+    // manager finds a failed host where it expected a running one. Under CI
+    // load the fixture's crash lands in exactly that gap on its own; here the
+    // gap is forced so the outcome does not depend on the runner. Only the
+    // publication that follows a start is held: the ownership cleanup a
+    // deliberate stop runs sees a host that is not running and goes straight
+    // through.
+    const hosts = value.management.hosts;
+    const publish = hosts.mutateContributions.bind(hosts);
+    hosts.mutateContributions = (work) =>
+      publish(async () => {
+        if (value.status()?.state === "running") await value.waitForFailures(2);
+        return work();
+      });
+    await value.timers.runNext();
+    hosts.mutateContributions = publish;
+
+    assert.equal(value.status().state, "failed", "the crash is the host's state, not a deliberate stop");
+    await value.timers.next();
+    assert.equal(value.timers.pending(), 1, "the crash still schedules a restart");
+    assert.ok(
+      !value.records.slice(sinceCrash).some((record) => record.transition === "stopped"),
+      "nothing stopped the host on the manager's behalf",
+    );
+
+    await value.timers.runNext();
+    assert.equal(value.status().state, "running", "the next restart brings the host back");
+    assert.deepEqual(
+      value.management.hosts.agentProviderContributions().map((provider) => provider.id),
+      [`${EXTENSION}/cli`],
+      "and publishes its provider",
     );
   } finally {
     await value.cleanup();
