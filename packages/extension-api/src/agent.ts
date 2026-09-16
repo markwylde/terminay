@@ -1,9 +1,87 @@
 import { EXTENSION_LIMITS } from './constants.js';
 import type {
+	AgentAwaitedDirectory,
+	AgentDirectoryHandle,
 	AgentJsonlSession,
 	AgentJsonlSessionOptions,
 	AgentLifecycleEvent,
+	AgentNotBoundResult,
+	AgentTerminalContext,
 } from './types.js';
+
+/**
+ * A `not-bound` result that names the directories the host must watch before
+ * trying this provider again. A bare handle watches that directory's own
+ * entries; wrap it in {@link awaitedTree} for evidence that appears deeper.
+ * Unresolved directories are dropped, so a provider can list every place its
+ * evidence might appear and name only the ones that exist.
+ */
+export function notBound(
+	awaiting: readonly (
+		| AgentDirectoryHandle
+		| AgentAwaitedDirectory
+		| undefined
+	)[] = [],
+): AgentNotBoundResult {
+	const seen = new Map<string, AgentAwaitedDirectory>();
+	for (const entry of awaiting) {
+		if (entry === undefined) continue;
+		const awaited: AgentAwaitedDirectory =
+			'directory' in entry ? entry : { directory: entry };
+		const previous = seen.get(awaited.directory.id);
+		// The same directory named twice is watched once, as widely as asked.
+		if (previous === undefined || (awaited.recursive && !previous.recursive))
+			seen.set(awaited.directory.id, awaited);
+	}
+	return seen.size === 0
+		? { state: 'not-bound' }
+		: { state: 'not-bound', awaiting: Object.freeze([...seen.values()]) };
+}
+
+/** A wait-set entry for evidence that appears somewhere below a directory. */
+export function awaitedTree(
+	directory: AgentDirectoryHandle | undefined,
+): AgentAwaitedDirectory | undefined {
+	return directory === undefined ? undefined : { directory, recursive: true };
+}
+
+/**
+ * Resolves a home-relative directory for a wait set, or nothing. A missing
+ * directory, a broker without the operation, or a refusal all mean the same
+ * thing here: there is nothing at that path to watch yet.
+ */
+export async function awaitedHomeDirectory(
+	terminal: AgentTerminalContext,
+	relativePath: string,
+): Promise<AgentDirectoryHandle | undefined> {
+	try {
+		return (
+			(await terminal.observation.files.resolveHomeDirectory?.(relativePath, {
+				signal: terminal.signal,
+			})) ?? undefined
+		);
+	} catch {
+		return undefined;
+	}
+}
+
+/** As {@link awaitedHomeDirectory}, below one declared environment variable. */
+export async function awaitedEnvironmentDirectory(
+	terminal: AgentTerminalContext,
+	environmentVariable: string,
+	relativePath: string,
+): Promise<AgentDirectoryHandle | undefined> {
+	try {
+		return (
+			(await terminal.observation.files.resolveDirectoryRelativeToEnvironment?.(
+				relativePath,
+				{ environmentVariable, signal: terminal.signal },
+			)) ?? undefined
+		);
+	} catch {
+		return undefined;
+	}
+}
 import {
 	validateAgentChildJournalSources,
 	validateAgentLifecycleEvent,

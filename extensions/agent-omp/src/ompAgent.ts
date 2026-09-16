@@ -1,7 +1,13 @@
 import {
+  awaitedEnvironmentDirectory,
+  awaitedHomeDirectory,
+  awaitedTree,
   defineAgentProvider,
   jsonlSession,
+  notBound,
   safeAgentString,
+  type AgentAwaitedDirectory,
+  type AgentDirectoryHandle,
   type AgentFileHandle,
   type AgentProcessSnapshot,
   type AgentRecordContext,
@@ -110,9 +116,46 @@ export const ompAgentProvider = defineAgentProvider({
     // The conservative compatibility path is still exact process evidence:
     // a root journal opened for writing by a descendant of this terminal. It
     // never scans a directory or selects the newest same-CWD journal.
-    return bindFromOpenRootJournal(terminal);
+    const bound = await bindFromOpenRootJournal(terminal);
+    if (bound.state !== "not-bound") return bound;
+    return notBound(await ompWaitSet(terminal));
   },
 });
+
+/**
+ * Where OMP's evidence will appear: every candidate sessions root that exists
+ * and, beside each, the breadcrumb directory the CLI writes for this TTY.
+ */
+async function ompWaitSet(
+  terminal: AgentTerminalContext,
+): Promise<readonly (AgentAwaitedDirectory | AgentDirectoryHandle | undefined)[]> {
+  let environment: Record<string, string> = {};
+  try {
+    environment = await terminal.observation.processes.environment(
+      OMP_TERMINAL_ENVIRONMENT_VARIABLES,
+      { signal: terminal.signal },
+    );
+  } catch {
+    environment = {};
+  }
+  const handles: (AgentAwaitedDirectory | AgentDirectoryHandle | undefined)[] = [];
+  for (const root of ompObservationRoots(environment)) {
+    // Journals sit below a per-project directory; breadcrumbs sit in the
+    // directory itself.
+    handles.push(awaitedTree(await awaitedScopedDirectory(terminal, root.sessions)));
+    handles.push(await awaitedScopedDirectory(terminal, root.terminalSessions));
+  }
+  return handles;
+}
+
+function awaitedScopedDirectory(
+  terminal: AgentTerminalContext,
+  scope: OmpRootScope,
+): Promise<AgentDirectoryHandle | undefined> {
+  return scope.kind === "home"
+    ? awaitedHomeDirectory(terminal, scope.root)
+    : awaitedEnvironmentDirectory(terminal, scope.environmentVariable, scope.root);
+}
 
 async function bindFromBreadcrumb(terminal: AgentTerminalContext) {
   const terminalId = terminal.tty?.deviceId;

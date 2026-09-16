@@ -681,9 +681,35 @@ export interface AgentObservationDiagnostic {
 	message?: string;
 }
 
+/**
+ * One directory a provider is waiting on. The handle must have been resolved
+ * through the same terminal context. By default only the directory's own
+ * entries are watched; `recursive` watches the whole tree below it, for
+ * evidence that appears at an unknown depth. Name the narrowest directory
+ * that will see the change: a recursive watch on a wide tree is what it costs.
+ */
+export interface AgentAwaitedDirectory {
+	readonly directory: AgentDirectoryHandle;
+	readonly recursive?: boolean;
+}
+
+/**
+ * A provider that cannot bind yet names the directories whose contents decide
+ * whether it can. The host watches every named directory for the life of the
+ * terminal incarnation and re-runs `observe` on the first change in any of
+ * them. Nothing else re-runs discovery: a `not-bound` result that names no
+ * directory ends discovery for the incarnation until the next foreground
+ * edge. A provider whose CLI is running in the terminal must therefore always
+ * be able to name where its evidence will appear.
+ */
+export interface AgentNotBoundResult {
+	state: 'not-bound';
+	awaiting?: readonly AgentAwaitedDirectory[];
+}
+
 export type AgentObservationResult =
 	| AgentJsonlSession
-	| { state: 'not-bound' }
+	| AgentNotBoundResult
 	| { state: 'unavailable'; reason: AgentUnavailableReason };
 
 export interface AgentTerminalContext {
@@ -905,6 +931,12 @@ export interface AgentJsonlSessionOptions {
 export interface AgentProviderDefinition {
 	mappingVersion: string;
 	matchesForeground(process: AgentForegroundProcess): boolean;
+	/**
+	 * One discovery attempt for one terminal incarnation. It runs on a
+	 * foreground edge and again whenever a directory a previous `not-bound`
+	 * result named changes; it is never re-run on a timer. See
+	 * {@link AgentNotBoundResult} for what a not-yet-bindable provider reports.
+	 */
 	observe(terminal: AgentTerminalContext): Promise<AgentObservationResult>;
 }
 
