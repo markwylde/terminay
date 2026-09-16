@@ -1,4 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { watch as watchPath } from 'node:fs';
+import { isAbsolute } from 'node:path';
 import type { AgentProviderContribution } from '@terminay/extension-api';
 import type { LocalAgentTerminal } from '../extensions/localAgentObservation.js';
 import type { ExtensionHostManager } from '../extensions/manager.js';
@@ -13,6 +15,7 @@ import type {
 } from '../extensions/diagnostics.js';
 import { extensionErrorDetail } from '../extensions/diagnostics.js';
 import { AgentStatusService } from './agentService.js';
+import { createRampSchedule, type RampSchedule } from './rampSchedule.js';
 import type { ActivitySessionIdentity } from './service.js';
 
 /**
@@ -67,17 +70,20 @@ export interface ExtensionAgentRuntimeRegistryOptions {
 	 * terminal that never shows an agent is otherwise indistinguishable from
 	 * one that was never matched at all. */
 	readonly onObservation?: AgentObservationDiagnosticListener;
-	readonly reobserveDebounceMs?: number;
-	/** Host-private, terminal-scoped topology probe. It may inspect only the
-	 * admitted terminal's descendants/open-file identity and must not expose
-	 * paths or process data to an extension. */
-	readonly topologySignature?: (
-		context: ExtensionAgentTerminalContext,
-		signal: AbortSignal,
-	) => Promise<string | undefined>;
-	readonly topologyPollIntervalMs?: number;
-	/** Ceiling for the widening wait between sweeps that keep finding nothing. */
-	readonly maximumUnboundPollIntervalMs?: number;
+	/** Host-private directory watch used while a terminal is unbound. The
+	 * default is a non-persistent `fs.watch`, recursive only when the provider
+	 * asked for the tree. A test supplies its own to drive change events
+	 * without a filesystem. */
+	readonly watchDirectory?: (
+		path: string,
+		onChange: () => void,
+		recursive: boolean,
+	) => DiscoveryWatcher | undefined;
+	/** Minimum spacing between re-observations while watched directories keep
+	 * changing; ADR-0022's ramp by default. */
+	readonly rampIntervalsMs?: readonly number[];
+	/** Clock for the ramp; tests drive it. */
+	readonly now?: () => number;
 	readonly schedule?: (
 		callback: () => void,
 		milliseconds: number,
@@ -85,28 +91,50 @@ export interface ExtensionAgentRuntimeRegistryOptions {
 	readonly cancelSchedule?: (timer: ReturnType<typeof setTimeout>) => void;
 }
 
+export interface DiscoveryWatcher {
+	close(): void;
+}
+
+/**
+ * What an unbound foreground incarnation is waiting on.
+ *
+ * It exists from the first `not-bound` result until the incarnation binds,
+ * returns to the shell, is replaced, or exits. It holds only the directories
+ * providers named and the damping in front of re-observation: no counter, no
+ * timer of its own, and nothing that samples.
+ */
+interface AwaitedDirectory {
+	readonly path: string;
+	readonly recursive: boolean;
+}
+
+interface Discovery {
+	readonly processName: string;
+	readonly watchers: Map<
+		string,
+		{ readonly watcher: DiscoveryWatcher; readonly recursive: boolean }
+	>;
+	readonly ramp: RampSchedule;
+	/** Providers already attempted since the last change. A generic wrapper
+	 * walks every capable provider once per change, not once per tick. */
+	readonly tried: Set<string>;
+}
+
 interface TrackedTerminal {
 	readonly identity: ActivitySessionIdentity;
 	shellPid?: number;
 	incarnation: number;
-	notBoundRetries: number;
 	context?: ExtensionAgentTerminalContext;
 	lastProcessName?: string;
+	discovery?: Discovery;
+	/** A re-observation in flight, and the one to run after it when edges
+	 * arrive faster than a context can be replaced. */
+	reobserving?: Promise<void>;
 	pendingReobserve?: {
 		readonly contribution: AgentProviderContribution;
 		readonly processName: string;
+		readonly keepDiscovery: boolean;
 	};
-	reobserveTimer?: ReturnType<typeof setTimeout>;
-	topologyTimer?: ReturnType<typeof setTimeout>;
-	topologySignature?: string;
-	topologyPolling?: boolean;
-	/** After the fast not-bound window, topology polling must keep trying until
-	 * a journal is proven or the shell returns. The first sample after
-	 * exhaustion may be the first one that can see the provider's journal. */
-	unboundTopologyReobserve?: boolean;
-	/** Fast windows this terminal has exhausted without binding and without new
-	 * evidence. It widens the wait before the next one. */
-	unboundSweeps: number;
 }
 
 const LOCAL_CAPABILITIES = Object.freeze([
@@ -114,7 +142,10 @@ const LOCAL_CAPABILITIES = Object.freeze([
 	'filesystem-observation',
 	'agent-journal',
 ]);
-const MAX_NOT_BOUND_DISCOVERY_RETRIES = 10;
+/** Directories one unbound terminal may hold open across every provider it
+ * tries. Wider than any single provider's wait set, narrower than a leak. */
+const MAX_DISCOVERY_WATCHERS = 32;
+const MAX_AWAITED_PATH_LENGTH = 4_096;
 
 /**
  * Server-side admission authority for manifest-declared agent providers.
@@ -128,16 +159,17 @@ const MAX_NOT_BOUND_DISCOVERY_RETRIES = 10;
 export class ExtensionAgentRuntimeRegistry {
 	private readonly terminals = new Map<string, TrackedTerminal>();
 	/** Mirrors the agent-integration setting. While false, nothing here may
-	 *  schedule observation: its samples spawn processes. */
+	 *  observe or watch: an attempt spawns a process. */
 	private observationEnabled = true;
 	private readonly localObservationCapabilities: readonly string[];
 	private readonly platform: 'darwin' | 'linux' | 'win32';
 	private readonly makeContextId: NonNullable<
 		ExtensionAgentRuntimeRegistryOptions['contextId']
 	>;
-	private readonly reobserveDebounceMs: number;
-	private readonly topologyPollIntervalMs: number;
-	private readonly maximumUnboundPollIntervalMs: number;
+	private readonly watchDirectory: NonNullable<
+		ExtensionAgentRuntimeRegistryOptions['watchDirectory']
+	>;
+	private readonly rampIntervalsMs: readonly number[] | undefined;
 	private readonly schedule: NonNullable<
 		ExtensionAgentRuntimeRegistryOptions['schedule']
 	>;
@@ -179,15 +211,8 @@ export class ExtensionAgentRuntimeRegistry {
 			options.contextId ??
 			((identity, incarnation) =>
 				`extension-agent:${authorityNonce}:${identityDigest(identity)}:${incarnation}`);
-		this.reobserveDebounceMs = Math.max(0, options.reobserveDebounceMs ?? 100);
-		this.topologyPollIntervalMs = Math.max(
-			100,
-			options.topologyPollIntervalMs ?? 1_500,
-		);
-		this.maximumUnboundPollIntervalMs = Math.max(
-			this.topologyPollIntervalMs,
-			options.maximumUnboundPollIntervalMs ?? 60_000,
-		);
+		this.watchDirectory = options.watchDirectory ?? nodeWatchDirectory;
+		this.rampIntervalsMs = options.rampIntervalsMs;
 		this.schedule =
 			options.schedule ??
 			((callback, milliseconds) => setTimeout(callback, milliseconds));
@@ -211,11 +236,10 @@ export class ExtensionAgentRuntimeRegistry {
 		const current = this.terminals.get(identity.sessionId);
 		if (current !== undefined && sameIdentity(current.identity, identity))
 			return;
+		if (current !== undefined) this.endDiscovery(current);
 		this.terminals.set(identity.sessionId, {
 			identity: Object.freeze({ ...identity }),
 			incarnation: (current?.incarnation ?? 0) + 1,
-			notBoundRetries: 0,
-			unboundSweeps: 0,
 		});
 	}
 
@@ -233,9 +257,6 @@ export class ExtensionAgentRuntimeRegistry {
 		shellForeground = false,
 	): boolean {
 		const terminal = this.requireTerminal(identity);
-		// A different foreground process is new evidence, so a terminal that had
-		// backed off starts again at the base interval.
-		if (terminal.lastProcessName !== processName) terminal.unboundSweeps = 0;
 		terminal.lastProcessName = processName;
 		// A provider journal may be shared by a later `resume` in another
 		// Terminay authority.  Once this exact PTY returns to its shell, its
@@ -245,12 +266,9 @@ export class ExtensionAgentRuntimeRegistry {
 		if (shellForeground) {
 			const previous = terminal.context;
 			if (previous === undefined) return false;
-			this.clearTimers(terminal);
+			this.endDiscovery(terminal);
 			terminal.context = undefined;
 			terminal.incarnation += 1;
-			terminal.notBoundRetries = 0;
-			terminal.unboundSweeps = 0;
-			terminal.unboundTopologyReobserve = false;
 			this.recordObservation(
 				terminal.identity,
 				previous.providerId,
@@ -346,7 +364,7 @@ export class ExtensionAgentRuntimeRegistry {
 		for (const terminal of this.terminals.values()) {
 			const context = terminal.context;
 			if (context === undefined || available.has(context.providerId)) continue;
-			this.clearTimers(terminal);
+			this.endDiscovery(terminal);
 			await this.options.hosts
 				.cancelAgentTerminal({
 					contextId: context.contextId,
@@ -356,8 +374,6 @@ export class ExtensionAgentRuntimeRegistry {
 			if (terminal.context !== context) continue;
 			terminal.context = undefined;
 			terminal.incarnation += 1;
-			terminal.notBoundRetries = 0;
-			terminal.unboundTopologyReobserve = false;
 			this.recordObservation(
 				terminal.identity,
 				context.providerId,
@@ -377,46 +393,13 @@ export class ExtensionAgentRuntimeRegistry {
 		return retired;
 	}
 
-	/** A host process/open-file watcher can call this when a still-matching
-	 * terminal topology changes. Debouncing prevents a burst of native process
-	 * events from creating overlapping child observers. */
-	topologyChanged(identity: ActivitySessionIdentity): void {
-		const terminal = this.terminals.get(identity.sessionId);
-		if (
-			terminal?.context === undefined ||
-			!sameIdentity(terminal.identity, identity)
-		)
-			return;
-		// A collaboration worker is a new descendant and can hold its own native
-		// journal. That is ordinary activity inside the already-proven root PTY,
-		// not evidence that its root writer was replaced. Re-admitting here
-		// cancels the root stream just as its subagent events arrive. Explicit
-		// foreground replacement and shell return retain the authority to retire
-		// a bound context; topology polling remains the recovery path only until
-		// a provider has actually bound.
-		if (terminal.unboundTopologyReobserve !== true) return;
-		const queue = this.discoveryQueue(terminal.lastProcessName ?? '');
-		const contribution =
-			queue.find((provider) => provider.id === terminal.context!.providerId) ??
-			queue[0] ??
-			this.options.hosts
-				.agentProviderContributions()
-				.find((value) => value.id === terminal.context!.providerId);
-		if (contribution !== undefined)
-			this.scheduleReobserve(
-				terminal,
-				contribution,
-				terminal.lastProcessName ?? '',
-			);
-	}
-
 	private claimAndAdmit(
 		terminal: TrackedTerminal,
 		contribution: AgentProviderContribution,
 		processName: string,
 	): boolean {
 		const identity = terminal.identity;
-		if (contribution === undefined) return false;
+		if (contribution === undefined || !this.observationEnabled) return false;
 		let claimed = false;
 		try {
 			claimed = this.options.agents.claimExtensionProvider(
@@ -452,91 +435,206 @@ export class ExtensionAgentRuntimeRegistry {
 				this.recordObservation(identity, contribution.id, 'admitted', {
 					...(state === undefined ? {} : { reason: state }),
 				});
-				if (state === 'bound')
+				if (state === 'bound') {
 					this.recordObservation(identity, contribution.id, 'bound');
+					// The incarnation is bound: whatever it was waiting on no longer
+					// matters, and nothing may re-run discovery beneath a proven root.
+					this.endDiscovery(terminal);
+					return;
+				}
 				if (state === 'not-bound') {
-					const next = this.nextDiscoveryProvider(contribution, processName);
-					if (next !== undefined && next.id !== contribution.id) {
-						this.scheduleReobserve(terminal, next, processName);
-						return;
-					}
-					this.scheduleDiscoveryRetry(
+					this.notBound(
 						terminal,
-						this.discoveryQueue(processName)[0] ??
-							contribution,
+						contribution,
 						processName,
+						admissionAwaiting(result),
 					);
 					return;
 				}
-				terminal.notBoundRetries = 0;
-				terminal.unboundSweeps = 0;
-				terminal.unboundTopologyReobserve = false;
-				// A generic wrapper can have queued a fallback before its eventual
-				// provider opened the journal. Once that provider proves its binding,
-				// discard the stale fallback: otherwise it can retire the new observer
-				// while its first JSONL chunk is still being read.
-				this.clearReobserve(terminal);
-				this.scheduleTopologyPoll(terminal);
+				this.endDiscovery(terminal);
 			})
 			.catch((error: unknown) => {
 				// Observation can throw before the journal is visible (IPC that cannot
 				// clone AbortSignal, missing shell pid, lsof races). Keep the claim on
-				// this PTY and retry the same way as `not-bound`; releasing here left
-				// a running agent with an empty Agents pane. An unmatched wrapper must
-				// still walk the queue: one failed observation cannot pin discovery
-				// away from a later provider that can bind.
+				// this PTY and treat it as `not-bound` with whatever the incarnation
+				// was already waiting on; releasing here left a running agent with an
+				// empty Agents pane. An unmatched wrapper must still walk the queue:
+				// one failed observation cannot pin discovery away from a later
+				// provider that can bind.
 				if (terminal.context !== context) return;
 				this.reportAdmissionFailure(identity, contribution.id, error);
-				const next = this.nextDiscoveryProvider(contribution, processName);
-				if (next !== undefined && next.id !== contribution.id) {
-					this.scheduleReobserve(terminal, next, processName);
-					return;
-				}
-				this.scheduleDiscoveryRetry(terminal, contribution, processName);
+				this.notBound(terminal, contribution, processName, []);
 			});
 		return true;
 	}
 
+	/**
+	 * A provider could not bind this incarnation.
+	 *
+	 * The directories it named join the incarnation's wait set. A generic
+	 * wrapper then moves to the next capable provider it has not yet tried
+	 * since the last change; a matched provider, or the last one in the queue,
+	 * leaves the incarnation waiting. With nothing to wait on, discovery ends
+	 * here: only the next foreground edge can start it again.
+	 */
+	private notBound(
+		terminal: TrackedTerminal,
+		contribution: AgentProviderContribution,
+		processName: string,
+		awaiting: readonly AwaitedDirectory[],
+	): void {
+		if (!this.observationEnabled) return;
+		const discovery = this.discoveryFor(terminal, processName);
+		discovery.tried.add(contribution.id);
+		for (const directory of awaiting) this.watch(terminal, discovery, directory);
+		const next = this.discoveryQueue(processName).find(
+			(provider) => !discovery.tried.has(provider.id),
+		);
+		if (next !== undefined) {
+			void this.reobserve(terminal, next, processName, true);
+			return;
+		}
+		if (discovery.watchers.size === 0) this.endDiscovery(terminal);
+	}
+
+	private discoveryFor(
+		terminal: TrackedTerminal,
+		processName: string,
+	): Discovery {
+		if (terminal.discovery !== undefined) return terminal.discovery;
+		const discovery: Discovery = {
+			processName,
+			watchers: new Map(),
+			tried: new Set(),
+			ramp: createRampSchedule(
+				() => this.discoveryChanged(terminal, discovery),
+				{
+					schedule: this.schedule,
+					cancelSchedule: this.cancelSchedule,
+					...(this.options.now === undefined ? {} : { now: this.options.now }),
+					...(this.rampIntervalsMs === undefined
+						? {}
+						: { intervalsMs: this.rampIntervalsMs }),
+				},
+			),
+		};
+		terminal.discovery = discovery;
+		return discovery;
+	}
+
+	private watch(
+		terminal: TrackedTerminal,
+		discovery: Discovery,
+		directory: AwaitedDirectory,
+	): void {
+		const { path, recursive } = directory;
+		// A directory already watched as a tree covers a later shallow request;
+		// the reverse widens the watch.
+		const current = discovery.watchers.get(path);
+		if (current !== undefined && (current.recursive || !recursive)) return;
+		if (current === undefined && discovery.watchers.size >= MAX_DISCOVERY_WATCHERS)
+			return;
+		let watcher: DiscoveryWatcher | undefined;
+		try {
+			watcher = this.watchDirectory(
+				path,
+				() => {
+					if (terminal.discovery !== discovery) return;
+					discovery.ramp.request();
+				},
+				recursive,
+			);
+		} catch {
+			watcher = undefined;
+		}
+		if (watcher === undefined) return;
+		if (current !== undefined) {
+			try {
+				current.watcher.close();
+			} catch {
+				/* closing is best effort */
+			}
+		}
+		discovery.watchers.set(path, { watcher, recursive });
+	}
+
+	/** A watched directory changed: every capable provider gets one more look,
+	 * starting from the head of the queue. */
+	private discoveryChanged(
+		terminal: TrackedTerminal,
+		discovery: Discovery,
+	): void {
+		if (terminal.discovery !== discovery || !this.observationEnabled) return;
+		discovery.tried.clear();
+		const contribution = this.discoveryQueue(discovery.processName)[0];
+		if (contribution === undefined) {
+			this.endDiscovery(terminal);
+			return;
+		}
+		void this.reobserve(terminal, contribution, discovery.processName, true);
+	}
+
+	private endDiscovery(terminal: TrackedTerminal): void {
+		const discovery = terminal.discovery;
+		terminal.discovery = undefined;
+		if (discovery === undefined) return;
+		discovery.ramp.dispose();
+		for (const { watcher } of discovery.watchers.values()) {
+			try {
+				watcher.close();
+			} catch {
+				/* closing is best effort */
+			}
+		}
+		discovery.watchers.clear();
+	}
+
+	/** A foreground edge replaces the current context with a fresh admission
+	 * of `contribution`. It ends whatever the old incarnation was waiting on:
+	 * the wait set belongs to the foreground edge, and this is a new one. */
 	private scheduleReobserve(
 		terminal: TrackedTerminal,
 		contribution: AgentProviderContribution,
 		processName: string,
 	): void {
-		terminal.pendingReobserve = { contribution, processName };
-		if (terminal.reobserveTimer !== undefined) return;
-		terminal.reobserveTimer = this.schedule(() => {
-			terminal.reobserveTimer = undefined;
-			const pending = terminal.pendingReobserve;
-			terminal.pendingReobserve = undefined;
-			if (pending !== undefined)
-				void this.reobserve(
-					terminal,
-					pending.contribution,
-					pending.processName,
-				);
-		}, this.reobserveDebounceMs);
+		void this.reobserve(terminal, contribution, processName, false);
 	}
 
-	/** A provider may receive the foreground edge before its process/journal is
-	 * visible. Keep the claim scoped to that PTY and retry only a short bounded
-	 * window; a shell edge, replacement, or teardown clears this timer. */
-	private scheduleDiscoveryRetry(
+	/** Cancel the current context and admit `contribution` in its place. With
+	 * `keepDiscovery` the incarnation's wait set survives, because the
+	 * replacement is one more provider's look at the same foreground edge. */
+	private reobserve(
 		terminal: TrackedTerminal,
 		contribution: AgentProviderContribution,
 		processName: string,
-	): void {
-		if (terminal.notBoundRetries >= MAX_NOT_BOUND_DISCOVERY_RETRIES) {
-			terminal.unboundTopologyReobserve = true;
-			this.scheduleTopologyPoll(terminal);
-			return;
+		keepDiscovery: boolean,
+	): Promise<void> {
+		if (terminal.reobserving !== undefined) {
+			// Edges can arrive faster than a context is replaced. The latest one
+			// wins, once, after the replacement in flight has settled.
+			terminal.pendingReobserve = { contribution, processName, keepDiscovery };
+			return terminal.reobserving;
 		}
-		terminal.notBoundRetries += 1;
-		// A matched provider stays put. Unmatched wrappers rotate in
-		// `claimAndAdmit` before this retry wraps the queue.
-		this.scheduleReobserve(terminal, contribution, processName);
+		if (!keepDiscovery) this.endDiscovery(terminal);
+		const run = this.replaceContext(terminal, contribution, processName)
+			.catch(() => undefined)
+			.then(() => {
+				terminal.reobserving = undefined;
+				const pending = terminal.pendingReobserve;
+				terminal.pendingReobserve = undefined;
+				if (pending === undefined) return undefined;
+				return this.reobserve(
+					terminal,
+					pending.contribution,
+					pending.processName,
+					pending.keepDiscovery,
+				);
+			});
+		terminal.reobserving = run;
+		return run;
 	}
 
-	private async reobserve(
+	private async replaceContext(
 		terminal: TrackedTerminal,
 		contribution: AgentProviderContribution,
 		processName: string,
@@ -582,7 +680,7 @@ export class ExtensionAgentRuntimeRegistry {
 		if (terminal === undefined || !sameIdentity(terminal.identity, identity))
 			return;
 		this.terminals.delete(identity.sessionId);
-		this.clearTimers(terminal);
+		this.endDiscovery(terminal);
 		if (terminal.context !== undefined) {
 			void this.options.hosts
 				.cancelAgentTerminal({ contextId: terminal.context.contextId, reason })
@@ -597,7 +695,7 @@ export class ExtensionAgentRuntimeRegistry {
 			| 'server-stopping' = 'server-stopping',
 	): Promise<void> {
 		if (this.terminals.size === 0) return;
-		for (const terminal of this.terminals.values()) this.clearTimers(terminal);
+		for (const terminal of this.terminals.values()) this.endDiscovery(terminal);
 		this.terminals.clear();
 		await this.options.hosts.drainAgentObservers(reason);
 	}
@@ -612,7 +710,7 @@ export class ExtensionAgentRuntimeRegistry {
 			(terminal) => terminal.context?.providerId === providerId,
 		);
 		for (const terminal of retiring) {
-			this.clearTimers(terminal);
+			this.endDiscovery(terminal);
 			const context = terminal.context!;
 			await this.options.hosts
 				.cancelAgentTerminal({ contextId: context.contextId, reason })
@@ -644,7 +742,7 @@ export class ExtensionAgentRuntimeRegistry {
 				candidate.context.providerId === providerId,
 		);
 		if (terminal?.context === undefined) return false;
-		this.clearTimers(terminal);
+		this.endDiscovery(terminal);
 		terminal.context = undefined;
 		this.recordObservation(terminal.identity, providerId, 'released', {
 			reason: 'context-retired',
@@ -670,10 +768,10 @@ export class ExtensionAgentRuntimeRegistry {
 	 * Stop or resume observation for the agent-integration setting.
 	 *
 	 * Turning the feature off has to cancel the work, not discard its results:
-	 * topology polling spawns a process per sample, so a runtime that kept its
-	 * timers armed would keep paying the whole cost of a feature the user has
-	 * switched off. Each terminal is released through the same identity-checked
-	 * path admission uses, so a sample already in flight cannot re-arm behind
+	 * an unbound terminal holds directory watches whose first change re-runs
+	 * observation, and an observation spawns a process. Each terminal is
+	 * released through the same identity-checked path admission uses, so its
+	 * watches are closed and a result already in flight cannot re-arm behind
 	 * the flag.
 	 *
 	 * Re-enabling arms nothing by itself. Live terminals are re-registered by
@@ -723,96 +821,9 @@ export class ExtensionAgentRuntimeRegistry {
 		const created: TrackedTerminal = {
 			identity: Object.freeze({ ...identity }),
 			incarnation: 1,
-			notBoundRetries: 0,
-			unboundSweeps: 0,
 		};
 		this.terminals.set(identity.sessionId, created);
 		return created;
-	}
-
-	private scheduleTopologyPoll(terminal: TrackedTerminal): void {
-		if (
-			!this.observationEnabled ||
-			this.options.topologySignature === undefined ||
-			terminal.topologyTimer !== undefined ||
-			terminal.context === undefined
-		)
-			return;
-		terminal.topologyTimer = this.schedule(() => {
-			terminal.topologyTimer = undefined;
-			void this.pollTopology(terminal);
-		}, this.unboundPollDelay(terminal));
-	}
-
-	/**
-	 * How long to wait before arming discovery again.
-	 *
-	 * The base interval while anything is still changing, doubling for each
-	 * consecutive sweep that found nothing, to a ceiling. Any new evidence
-	 * resets the count, so a journal that appears late is still admitted at the
-	 * base interval rather than after a long wait.
-	 */
-	private unboundPollDelay(terminal: TrackedTerminal): number {
-		return Math.min(
-			this.topologyPollIntervalMs * 2 ** Math.min(terminal.unboundSweeps, 30),
-			this.maximumUnboundPollIntervalMs,
-		);
-	}
-
-	private async pollTopology(terminal: TrackedTerminal): Promise<void> {
-		const context = terminal.context;
-		if (
-			!this.observationEnabled ||
-			context === undefined ||
-			terminal.topologyPolling ||
-			this.options.topologySignature === undefined
-		)
-			return;
-		terminal.topologyPolling = true;
-		const controller = new AbortController();
-		try {
-			const signature = await this.options.topologySignature(
-				context,
-				controller.signal,
-			);
-			if (terminal.context !== context || signature === undefined) return;
-			const changed =
-				terminal.topologySignature !== undefined &&
-				terminal.topologySignature !== signature;
-			const retryUnbound = terminal.unboundTopologyReobserve === true;
-			// Something actually moved, so this is not the quiet case the backoff
-			// exists for: start again at the base interval. A sample that re-arms an
-			// unbound terminal while nothing has changed is another fruitless sweep,
-			// and the wait before the next one widens.
-			if (changed) terminal.unboundSweeps = 0;
-			else if (retryUnbound) terminal.unboundSweeps += 1;
-			terminal.topologySignature = signature;
-			if (changed || retryUnbound) {
-				this.topologyChanged(terminal.identity);
-				// `topologyChanged` needs this fact to admit the late unbound writer;
-				// clear it only after scheduling that one recovery attempt.
-				terminal.unboundTopologyReobserve = false;
-			}
-		} catch {
-			/* unavailable local/remote topology remains non-authoritative */
-		} finally {
-			terminal.topologyPolling = false;
-			if (terminal.context === context) this.scheduleTopologyPoll(terminal);
-		}
-	}
-
-	private clearTimers(terminal: TrackedTerminal): void {
-		this.clearReobserve(terminal);
-		if (terminal.topologyTimer !== undefined)
-			this.cancelSchedule(terminal.topologyTimer);
-		terminal.topologyTimer = undefined;
-	}
-
-	private clearReobserve(terminal: TrackedTerminal): void {
-		if (terminal.reobserveTimer !== undefined)
-			this.cancelSchedule(terminal.reobserveTimer);
-		terminal.reobserveTimer = undefined;
-		terminal.pendingReobserve = undefined;
 	}
 
 	private match(processName: string): AgentProviderContribution | undefined {
@@ -836,20 +847,6 @@ export class ExtensionAgentRuntimeRegistry {
 		if (executableName(processName).length === 0) return [];
 		const matched = this.match(processName);
 		return matched === undefined ? this.capableProviders() : [matched];
-	}
-
-	private nextDiscoveryProvider(
-		current: AgentProviderContribution,
-		processName: string,
-	): AgentProviderContribution | undefined {
-		const queue = this.discoveryQueue(processName);
-		if (queue.length === 0) return undefined;
-		const index = queue.findIndex((provider) => provider.id === current.id);
-		// A generic wrapper (such as a Node CLI shim) has no provider identity.
-		// Cycle its capable providers until one can prove its writer-bound
-		// journal; stopping on the final provider made a delayed rollout
-		// permanently undiscoverable after the first pass.
-		return index >= 0 ? queue[(index + 1) % queue.length] : queue[0];
 	}
 
 	private capableProviders(): AgentProviderContribution[] {
@@ -997,6 +994,51 @@ function classifyAdmissionFailure(
 	)
 		return 'unavailable';
 	return 'failed';
+}
+function nodeWatchDirectory(
+	path: string,
+	onChange: () => void,
+	recursive: boolean,
+): DiscoveryWatcher | undefined {
+	const watcher = watchPath(path, { persistent: false, recursive });
+	watcher.on('change', onChange);
+	// A directory that disappears, or a watch the platform drops, is not an
+	// error to anyone: the next foreground edge re-runs discovery regardless.
+	watcher.on('error', () => watcher.close());
+	return watcher;
+}
+/** The directories a `not-bound` admission says it is waiting on. They were
+ * resolved by the terminal-scoped broker, so each is a bounded absolute path
+ * or it is dropped. A bare string is a shallow watch. */
+function admissionAwaiting(value: unknown): readonly AwaitedDirectory[] {
+	const awaiting =
+		typeof value === 'object' && value !== null && !Array.isArray(value)
+			? (value as Record<string, unknown>).awaiting
+			: undefined;
+	if (!Array.isArray(awaiting)) return [];
+	const directories = new Map<string, boolean>();
+	for (const entry of awaiting) {
+		const path =
+			typeof entry === 'string'
+				? entry
+				: typeof entry === 'object' && entry !== null
+					? (entry as Record<string, unknown>).path
+					: undefined;
+		if (
+			typeof path !== 'string' ||
+			path.length === 0 ||
+			path.length > MAX_AWAITED_PATH_LENGTH ||
+			!isAbsolute(path) ||
+			path.includes('\0')
+		)
+			continue;
+		const recursive =
+			typeof entry === 'object' &&
+			(entry as Record<string, unknown>).recursive === true;
+		directories.set(path, (directories.get(path) ?? false) || recursive);
+		if (directories.size >= MAX_DISCOVERY_WATCHERS) break;
+	}
+	return [...directories].map(([path, recursive]) => ({ path, recursive }));
 }
 function admissionState(value: unknown): string | undefined {
 	return typeof value === 'object' &&

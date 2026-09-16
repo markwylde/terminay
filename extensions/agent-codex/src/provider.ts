@@ -1,10 +1,15 @@
 import {
+  awaitedEnvironmentDirectory,
+  awaitedHomeDirectory,
+  awaitedTree,
   createJsonlRecordDecoder,
   defineAgentProvider,
   jsonlSession,
+  notBound,
   type AgentFileHandle,
   type AgentFileWatchChunk,
   type AgentFileWatcher,
+  type AgentAwaitedDirectory,
   type AgentChildJournalSource,
   type AgentDirectoryHandle,
   type AgentLifecyclePublisher,
@@ -77,7 +82,7 @@ export const codexAgentProvider = defineAgentProvider({
     const rollout = restore
       ? (await findRestoredRootRollout(terminal, restore)) ?? (await findProcessBoundRootRollout(terminal))
       : await findProcessBoundRootRollout(terminal);
-    if (!rollout) return { state: "not-bound" as const };
+    if (!rollout) return notBound(await rolloutWaitSet(terminal));
 
     const binding = await terminal.bindSession({
       providerSessionId: rollout.sessionId,
@@ -312,6 +317,29 @@ async function findSessionIndex(terminal: AgentTerminalContext): Promise<AgentFi
     // an already proven writer-bound rollout.
     return undefined;
   }
+}
+
+/**
+ * Where a rollout will appear: the sessions tree below `CODEX_HOME` or
+ * `~/.codex`, watched recursively so a new day directory is seen too. Before
+ * the CLI has ever written a session, the Codex home itself is the only thing
+ * that can be watched for the tree being created.
+ */
+async function rolloutWaitSet(terminal: AgentTerminalContext): Promise<readonly (AgentAwaitedDirectory | AgentDirectoryHandle | undefined)[]> {
+  const sessions = await findSessionsDirectory(terminal);
+  if (sessions) return [awaitedTree(sessions)];
+  let codexHome: string | undefined;
+  try {
+    const environment = await terminal.observation.processes.environment(["CODEX_HOME"], { signal: terminal.signal });
+    codexHome = environment.CODEX_HOME;
+  } catch {
+    codexHome = undefined;
+  }
+  return [
+    codexHome
+      ? await awaitedEnvironmentDirectory(terminal, "CODEX_HOME", ".")
+      : await awaitedHomeDirectory(terminal, ".codex"),
+  ];
 }
 
 /**

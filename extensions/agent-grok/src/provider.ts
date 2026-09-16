@@ -10,7 +10,10 @@ import {
 	type AgentProcessSnapshot,
 	type AgentRecordContext,
 	type AgentTerminalContext,
+	awaitedEnvironmentDirectory,
+	awaitedHomeDirectory,
 	defineAgentProvider,
+	notBound,
 	jsonlSession,
 } from '@terminay/extension-api';
 import { LIMITS, MAPPING_VERSION, SESSION_TITLE_RECORD } from './constants.js';
@@ -100,7 +103,7 @@ export const grokAgentProvider = defineAgentProvider({
 		const root =
 			(await findProcessBoundRoot(terminal)) ??
 			(await findActiveSessionRoot(terminal));
-		if (!root) return { state: 'not-bound' as const };
+		if (!root) return notBound(await grokWaitSet(terminal));
 
 		const binding = await terminal.bindSession({
 			providerSessionId: root.sessionId,
@@ -125,6 +128,29 @@ export const grokAgentProvider = defineAgentProvider({
 		});
 	},
 });
+
+/**
+ * Where Grok's evidence will appear: the home that holds the live-session
+ * registry and, below it, the session directories whose `events.jsonl` a
+ * descendant opens for writing. Both are under `GROK_HOME` when it is set.
+ */
+async function grokWaitSet(
+	terminal: AgentTerminalContext,
+): Promise<readonly (AgentDirectoryHandle | undefined)[]> {
+	let grokHome: string | undefined;
+	try {
+		const environment = await terminal.observation.processes.environment(
+			['GROK_HOME'],
+			{ signal: terminal.signal },
+		);
+		grokHome = environment.GROK_HOME?.trim() || undefined;
+	} catch {
+		grokHome = undefined;
+	}
+	return grokHome
+		? [await awaitedEnvironmentDirectory(terminal, 'GROK_HOME', '.')]
+		: [await awaitedHomeDirectory(terminal, '.grok')];
+}
 
 async function findProcessBoundRoot(
 	terminal: AgentTerminalContext,

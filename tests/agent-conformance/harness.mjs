@@ -281,6 +281,17 @@ export async function createConformanceHarness(options) {
 			log(
 				`observe: ${result?.state ?? 'nothing'}${result?.reason ? ` (${result.reason})` : ''}`,
 			);
+			// The host re-runs discovery only when a directory the provider named
+			// changes. A running CLI whose provider names nothing would therefore
+			// never bind in the app, however this harness polls, so the matrix
+			// fails its Detect cell on this record.
+			if (
+				result?.state === 'not-bound' &&
+				(!Array.isArray(result.awaiting) || result.awaiting.length === 0)
+			) {
+				log('observe: not-bound with nothing to await while the CLI is running');
+				projection.events.push({ kind: 'harness.not-bound-without-wait-set' });
+			}
 			controller.abort();
 			return undefined;
 		}
