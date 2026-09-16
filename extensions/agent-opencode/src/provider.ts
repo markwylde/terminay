@@ -3,9 +3,13 @@ import {
 	type AgentFileWatcher,
 	type AgentObservationResult,
 	type AgentRecordContext,
+	type AgentDirectoryHandle,
 	type AgentTerminalContext,
+	awaitedEnvironmentDirectory,
+	awaitedHomeDirectory,
 	defineAgentProvider,
 	jsonlSession,
+	notBound,
 } from '@terminay/extension-api';
 import {
 	emptyState,
@@ -242,7 +246,7 @@ export const openCodeProvider = defineAgentProvider({
 		}
 
 		const directories = openCodeWorkingDirectories(descendants);
-		if (directories.size === 0) return { state: 'not-bound' };
+		if (directories.size === 0) return notBound(await storeWaitSet(terminal));
 		const now = Date.now();
 		const device = terminalDeviceKey(writers);
 		const remembered = device ? rememberedOpenCodeRoot(device) : undefined;
@@ -303,9 +307,40 @@ export const openCodeProvider = defineAgentProvider({
 				store.close();
 			}
 		}
-		return { state: 'not-bound' };
+		return notBound(await storeWaitSet(terminal));
 	},
 });
+
+/**
+ * Where OpenCode's evidence will appear: its data root, which holds the
+ * session store a descendant opens for writing. `XDG_DATA_HOME/opencode` when
+ * that variable is set, otherwise `~/.local/share/opencode`; before the CLI has
+ * run at all, the parent directory that will receive it.
+ */
+async function storeWaitSet(
+	terminal: AgentTerminalContext,
+): Promise<readonly (AgentDirectoryHandle | undefined)[]> {
+	let dataHome: string | undefined;
+	try {
+		const environment = await terminal.observation.processes.environment(
+			['XDG_DATA_HOME'],
+			{ signal: terminal.signal },
+		);
+		dataHome = environment.XDG_DATA_HOME?.trim() || undefined;
+	} catch {
+		dataHome = undefined;
+	}
+	if (dataHome) {
+		return [
+			(await awaitedEnvironmentDirectory(terminal, 'XDG_DATA_HOME', 'opencode')) ??
+				(await awaitedEnvironmentDirectory(terminal, 'XDG_DATA_HOME', '.')),
+		];
+	}
+	return [
+		(await awaitedHomeDirectory(terminal, '.local/share/opencode')) ??
+			(await awaitedHomeDirectory(terminal, '.local/share')),
+	];
+}
 
 /**
  * The store has no journal to follow, so its append-only `event` rows are

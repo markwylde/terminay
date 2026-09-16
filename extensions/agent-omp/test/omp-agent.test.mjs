@@ -227,6 +227,8 @@ test("binds the exact PTY breadcrumb and attaches only direct writer-proven chil
       },
       files: {
         async resolveHomeRelative(relativePath) { const path = `/home/test/${relativePath}`; return files.has(path) ? handle(path) : undefined; },
+        async resolveHomeDirectory(relativePath) { const root = `/home/test/${relativePath}`; return [...files.keys()].some((path) => path.startsWith(`${root}/`)) ? handle(root) : undefined; },
+        async resolveDirectoryRelativeToEnvironment() { return undefined; },
         async resolvePathUnderHome(providerPath, options) { const prefix = `/home/test/${options.beneath.homeRelative}/`; return providerPath.startsWith(prefix) && files.has(providerPath) ? handle(providerPath) : undefined; },
         async homeRelativePath(file, options) { const prefix = `/home/test/${options.beneath.homeRelative}/`; return file.id.startsWith(prefix) ? file.id.slice(prefix.length) : undefined; },
         async canonicalFile(file) { return files.has(file.id) ? file : undefined; }, async realpath(file) { return file; },
@@ -270,6 +272,8 @@ function ompObservationFixture(sessionId, title, options = {}) {
       },
       files: {
         async resolveHomeRelative(relativePath) { const path = `/home/test/${relativePath}`; return files.has(path) ? handle(path) : undefined; },
+        async resolveHomeDirectory(relativePath) { const root = `/home/test/${relativePath}`; return [...files.keys()].some((path) => path.startsWith(`${root}/`)) ? handle(root) : undefined; },
+        async resolveDirectoryRelativeToEnvironment() { return undefined; },
         async resolvePathUnderHome(providerPath, request) { const prefix = `/home/test/${request.beneath.homeRelative}/`; return providerPath.startsWith(prefix) && files.has(providerPath) ? handle(providerPath) : undefined; },
         async homeRelativePath(file, request) { const prefix = `/home/test/${request.beneath.homeRelative}/`; return file.id.startsWith(prefix) ? file.id.slice(prefix.length) : undefined; },
         async canonicalFile(file) { return files.has(file.id) ? file : undefined; }, async realpath(file) { return file; },
@@ -282,3 +286,13 @@ function ompObservationFixture(sessionId, title, options = {}) {
   };
   return { terminal, get bindingRequest() { return bindingRequest; } };
 }
+
+test("an unbound OMP names every existing sessions root and breadcrumb directory", async () => {
+  const fixture = ompObservationFixture("root", "No leak", { breadcrumb: "not-a-provider-breadcrumb", writer: false });
+  const result = await ompAgentProvider.observe(fixture.terminal);
+  assert.equal(result.state, "not-bound");
+  assert.deepEqual(result.awaiting.map((entry) => `${entry.directory.id}${entry.recursive ? "/**" : ""}`), [
+    "/home/test/.omp/agent/sessions/**",
+    "/home/test/.omp/agent/terminal-sessions",
+  ]);
+});

@@ -68,6 +68,44 @@ test('does not bind a Codex-looking record outside a rollout writer', async () =
 	}
 });
 
+const awaitedPaths = (observation) =>
+	(observation?.awaiting ?? []).map((entry) => `${entry.directory.id.split(':dir:').at(-1)}${entry.recursive ? '/**' : ''}`);
+
+test('an unbound Codex names its sessions tree, so the rollout appearing re-runs discovery', async () => {
+	const harness = await createAgentExtensionHarness(extension);
+	try {
+		await harness.observe(
+			fixtureTerminal({
+				foregroundExecutable: 'codex',
+				files: { '/home/test/.codex/sessions/2026/08/older-rollout-elsewhere.txt': [''] },
+				openFilePaths: [],
+			}),
+		);
+		assert.equal(harness.observation()?.state, 'not-bound');
+		assert.deepEqual(awaitedPaths(harness.observation()), ['/home/test/.codex/sessions/**'], 'the whole tree, since rollouts sit under a date path');
+	} finally {
+		await harness.dispose();
+	}
+});
+
+test('before the sessions tree exists an unbound Codex names its home under CODEX_HOME', async () => {
+	const harness = await createAgentExtensionHarness(extension);
+	try {
+		await harness.observe(
+			fixtureTerminal({
+				foregroundExecutable: 'codex',
+				environment: { CODEX_HOME: '/srv/codex-home' },
+				files: { '/srv/codex-home/session_index.jsonl': [''] },
+				openFilePaths: [],
+			}),
+		);
+		assert.equal(harness.observation()?.state, 'not-bound');
+		assert.deepEqual(awaitedPaths(harness.observation()), ['/srv/codex-home']);
+	} finally {
+		await harness.dispose();
+	}
+});
+
 test('maps titles, collaboration children, completion and privacy allowlists', () => {
 	const events = [];
 	const publish = {

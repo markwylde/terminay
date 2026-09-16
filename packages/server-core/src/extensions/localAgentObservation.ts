@@ -255,6 +255,8 @@ export class LocalAgentObservationAdapter {
 				);
 			case 'filesystem.list-directory':
 				return this.listDirectory(state, payload, signal);
+			case 'filesystem.directory-path':
+				return this.directoryPath(state, payload);
 			case 'filesystem.watch-directory':
 				return this.watchDirectory(state, payload, signal);
 			case 'filesystem.unwatch-directory':
@@ -284,40 +286,6 @@ export class LocalAgentObservationAdapter {
 			default:
 				throw new Error('agent observation operation is unavailable');
 		}
-	}
-
-	/** A host-private topology fact for re-observation. It deliberately returns
-	 * only a stable signature: native process ids and open paths never cross
-	 * into the extension or public protocol. */
-	async topologySignature(
-		terminal: ExtensionAgentTerminalContext,
-		signal: AbortSignal,
-	): Promise<string | undefined> {
-		const local = await this.requireLocalTerminal(terminal, signal);
-		const shellPid = requiredPid(local);
-		const descendants = await this.system.descendants(shellPid, signal);
-		if (descendants.length > MAX_PROCESSES) return undefined;
-		if (
-			descendants.some(
-				(process) =>
-					!validPid(process.pid) || !safeText(process.executableName, 512),
-			)
-		)
-			return undefined;
-		const processes = descendants
-			.map((process) => process.pid)
-			.sort((left, right) => left - right);
-		const files = selectObservedOpenFiles(
-			await this.system.openFiles(processes, 'writable', signal),
-		);
-		const processFacts = descendants
-			.map((process) => `${process.pid}:${process.executableName}`)
-			.sort();
-		const fileFacts = files
-			.map((file) => `${file.access}:${safePath(file.path) ?? ''}`)
-			.filter((value) => !value.endsWith(':'))
-			.sort();
-		return JSON.stringify([processFacts, fileFacts]);
 	}
 
 	/** Terminal teardown must call this after cancelling its extension child.
@@ -551,6 +519,17 @@ export class LocalAgentObservationAdapter {
 		if ((await this.system.stat(canonical, signal))?.kind !== 'directory')
 			return null;
 		return { id: this.registerDirectory(state, canonical).id };
+	}
+
+	/** The canonical path behind a directory handle this context resolved. The
+	 * host uses it to watch the directory a provider says it is waiting on; the
+	 * handle is the authority, so a path is never accepted the other way. */
+	private directoryPath(
+		state: TerminalState,
+		payload: JsonValue,
+	): JsonValue {
+		const root = this.directoryFor(state, record(payload)?.handle);
+		return { path: root.path };
 	}
 
 	private async listDirectory(

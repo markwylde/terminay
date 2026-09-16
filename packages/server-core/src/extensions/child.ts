@@ -426,6 +426,13 @@ async function admitAgentTerminal(frame: HostFrame): Promise<void> {
 		).call(runtime, bridge.terminal);
 		void consumeAgentSession(result, bridge.publisher, controller.signal);
 		const state = object(result)?.state;
+		const awaiting =
+			state === 'not-bound'
+				? await awaitedDirectoryPaths(
+						object(result)?.awaiting,
+						bridge.directoryPath,
+					)
+				: [];
 		if (
 			!send({
 				protocolVersion: 1,
@@ -434,6 +441,7 @@ async function admitAgentTerminal(frame: HostFrame): Promise<void> {
 				payload: {
 					contextId,
 					state: typeof state === 'string' ? state : 'unknown',
+					...(awaiting.length === 0 ? {} : { awaiting }),
 				},
 			})
 		)
@@ -442,6 +450,32 @@ async function admitAgentTerminal(frame: HostFrame): Promise<void> {
 		agentTerminals.delete(contextId);
 		failure(frame.id, error);
 	}
+}
+
+/** How many directories one `not-bound` result may ask the host to watch. */
+const MAX_AWAITED_DIRECTORIES = 16;
+
+/**
+ * The canonical paths behind the directory handles a `not-bound` result names.
+ * Only handles this context resolved translate to a path; anything else is
+ * dropped, so a provider cannot make the host watch a directory it never
+ * obtained through the terminal-scoped broker.
+ */
+async function awaitedDirectoryPaths(
+	awaiting: unknown,
+	directoryPath: (handle: unknown) => Promise<string | undefined>,
+): Promise<Array<{ path: string; recursive: boolean }>> {
+	if (!Array.isArray(awaiting)) return [];
+	const paths = new Map<string, boolean>();
+	for (const entry of awaiting.slice(0, MAX_AWAITED_DIRECTORIES)) {
+		const id = object(object(entry)?.directory)?.id;
+		if (typeof id !== 'string' || id.length === 0) continue;
+		const path = await directoryPath({ id }).catch(() => undefined);
+		if (path === undefined) continue;
+		const recursive = object(entry)?.recursive === true;
+		paths.set(path, (paths.get(path) ?? false) || recursive);
+	}
+	return [...paths].map(([path, recursive]) => ({ path, recursive }));
 }
 
 async function cancelAgentTerminal(frame: HostFrame): Promise<void> {
@@ -515,6 +549,8 @@ export async function createAgentTerminalContext(
 ): Promise<{
 	readonly terminal: Record<string, unknown>;
 	readonly publisher: Record<string, (event: unknown) => Promise<unknown>>;
+	/** Host-private: the path behind a directory handle this context resolved. */
+	readonly directoryPath: (handle: unknown) => Promise<string | undefined>;
 }> {
 	const contextId = String(context.contextId);
 	const providerId = String(context.providerId);
@@ -534,6 +570,11 @@ export async function createAgentTerminalContext(
 					(payload ?? null) as JsonValue,
 					signal,
 				);
+	// The API promises `undefined` for a handle or fact that does not exist.
+	// The adapter answers `null` over JSON, and a provider that checks for
+	// `undefined` would otherwise carry `null` into its next call and throw.
+	const optional = async (operation: string, payload: unknown) =>
+		(await request(operation, payload)) ?? undefined;
 	const publish = (binding: unknown, events: unknown[]) =>
 		agentRequest('agent.lifecycle.publish', {
 			contextId,
@@ -624,7 +665,7 @@ export async function createAgentTerminalContext(
 		}),
 		files: Object.freeze({
 			resolveHomeDirectory: (relativePath: unknown, options: unknown = {}) =>
-				request('filesystem.resolve-home-directory', {
+				optional('filesystem.resolve-home-directory', {
 					relativePath,
 					...object(options),
 				}),
@@ -632,7 +673,7 @@ export async function createAgentTerminalContext(
 				relativePath: unknown,
 				options: unknown,
 			) =>
-				request('filesystem.resolve-directory-relative-to-environment', {
+				optional('filesystem.resolve-directory-relative-to-environment', {
 					relativePath,
 					...object(options),
 				}),
@@ -644,41 +685,41 @@ export async function createAgentTerminalContext(
 			watchDirectory: async (root: unknown, options: unknown) =>
 				pollingDirectoryWatcher(request, root, options, signal),
 			resolveHomeRelative: (relativePath: unknown, options: unknown = {}) =>
-				request('filesystem.resolve-home-relative', {
+				optional('filesystem.resolve-home-relative', {
 					relativePath,
 					...object(options),
 				}),
 			resolvePathUnderHome: (providerPath: unknown, options: unknown) =>
-				request('filesystem.resolve-path-under-home', {
+				optional('filesystem.resolve-path-under-home', {
 					providerPath,
 					...object(options),
 				}),
 			homeRelativePath: (handle: unknown, options: unknown) =>
-				request('filesystem.home-relative-path', {
+				optional('filesystem.home-relative-path', {
 					handle,
 					...object(options),
 				}),
 			resolveRelativeToEnvironment: (relativePath: unknown, options: unknown) =>
-				request('filesystem.resolve-relative-to-environment', {
+				optional('filesystem.resolve-relative-to-environment', {
 					relativePath,
 					...object(options),
 				}),
 			resolvePathUnderEnvironment: (providerPath: unknown, options: unknown) =>
-				request('filesystem.resolve-path-under-environment', {
+				optional('filesystem.resolve-path-under-environment', {
 					providerPath,
 					...object(options),
 				}),
 			environmentRelativePath: (handle: unknown, options: unknown) =>
-				request('filesystem.environment-relative-path', {
+				optional('filesystem.environment-relative-path', {
 					handle,
 					...object(options),
 				}),
 			canonicalFile: (handle: unknown, options: unknown = {}) =>
-				request('filesystem.realpath', { handle, options }),
+				optional('filesystem.realpath', { handle, options }),
 			realpath: (handle: unknown, options: unknown = {}) =>
-				request('filesystem.realpath', { handle, options }),
+				optional('filesystem.realpath', { handle, options }),
 			stat: (handle: unknown, options: unknown = {}) =>
-				request('filesystem.stat', { handle, options }),
+				optional('filesystem.stat', { handle, options }),
 			read: async (handle: unknown, options: unknown) =>
 				decodeAgentObservationBytes(
 					await request('filesystem.read', { handle, options }),
@@ -765,7 +806,13 @@ export async function createAgentTerminalContext(
 			return Object.freeze(structuredClone(binding));
 		},
 	});
-	return Object.freeze({ terminal, publisher });
+	const directoryPath = async (handle: unknown): Promise<string | undefined> => {
+		const resolved = object(
+			await request('filesystem.directory-path', { handle }),
+		);
+		return typeof resolved?.path === 'string' ? resolved.path : undefined;
+	};
+	return Object.freeze({ terminal, publisher, directoryPath });
 }
 
 /** File bytes cross the host IPC as JSON-safe integer arrays. Keep that

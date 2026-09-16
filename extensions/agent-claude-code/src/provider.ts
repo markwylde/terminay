@@ -11,8 +11,10 @@ import type {
 	AgentTerminalContext,
 } from '@terminay/extension-api';
 import {
+	awaitedHomeDirectory,
 	defineAgentProvider,
 	jsonlSession,
+	notBound,
 	safeAgentString,
 } from '@terminay/extension-api';
 import {
@@ -123,10 +125,11 @@ export const claudeCodeProvider = defineAgentProvider({
 			if (file) accepted.push(file);
 		}
 		// A `claude` nested inside a `claude` is not a case worth guessing at.
-		if (accepted.length !== 1) return { state: 'not-bound' };
+		if (accepted.length !== 1)
+			return notBound(await sessionFileWaitSet(terminal));
 		const file = accepted[0]!;
 		const journal = await journalFor(terminal, file.cwd, file.sessionId);
-		if (!journal) return { state: 'not-bound' };
+		if (!journal) return notBound(await journalWaitSet(terminal, file.cwd));
 		const binding = await terminal.bindSession({
 			providerSessionId: file.sessionId,
 			mappingVersion: '0.1',
@@ -163,6 +166,40 @@ export const claudeCodeProvider = defineAgentProvider({
 		});
 	},
 });
+
+/**
+ * Where the pid-keyed session file will appear. The CLI creates
+ * `.claude/sessions` on its first run, so before that only `.claude` itself
+ * can be watched for the directory being made.
+ */
+async function sessionFileWaitSet(
+	terminal: AgentTerminalContext,
+): Promise<readonly (AgentDirectoryHandle | undefined)[]> {
+	const sessions = await awaitedHomeDirectory(terminal, CLAUDE_SESSIONS);
+	return sessions
+		? [sessions]
+		: [await awaitedHomeDirectory(terminal, '.claude')];
+}
+
+/**
+ * Where the journal for an accepted session file will appear: the project
+ * directory derived from the process cwd, which the CLI creates with the first
+ * prompt, the projects root that sees that directory being made, and the
+ * sessions directory in case the session file comes to name another session.
+ */
+async function journalWaitSet(
+	terminal: AgentTerminalContext,
+	cwd: string,
+): Promise<readonly (AgentDirectoryHandle | undefined)[]> {
+	const project = claudeProjectDirectoryPath(cwd);
+	return [
+		project === undefined
+			? undefined
+			: await awaitedHomeDirectory(terminal, project),
+		await awaitedHomeDirectory(terminal, CLAUDE_PROJECTS),
+		await awaitedHomeDirectory(terminal, CLAUDE_SESSIONS),
+	];
+}
 
 /** One accepted `sessions/<pid>.json`, reduced to the fields that are read. */
 interface SessionFile {
@@ -300,7 +337,7 @@ async function journalFor(
 		},
 	);
 	const admitted =
-		derived === undefined
+		!derived
 			? undefined
 			: await admitJournal(terminal, derived, sessionId);
 	return admitted ?? (await journalElsewhere(terminal, sessionId));
@@ -351,7 +388,8 @@ async function journalElsewhere(
 		signal: terminal.signal,
 	});
 	// A limit reached before the journal was seen makes the snapshot evidence of
-	// nothing. Discovery retries and topology polling remain free to try again.
+	// nothing. The projects root is in the wait set, so a later change there
+	// runs this lookup again.
 	if (listing.truncated) return undefined;
 	const candidates = listing.entries.filter(
 		(entry) => entry.relativePath.split('/').at(-1) === named,
