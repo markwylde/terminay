@@ -42,8 +42,11 @@ test('a real process-bound Codex wrapper retries its delayed rollout, then publi
 
 		// This intentionally mirrors the production macOS shape: zsh launches a
 		// Node CLI shim which later owns a native executable named codex. The first
-		// foreground snapshot has no descendant, so it must return not-bound and
-		// retry before the exact one-child chain can bind.
+		// foreground snapshot has no descendant, so every provider returns
+		// not-bound naming where its evidence will appear; Codex names its home,
+		// and the rollout the native binary writes there is the change that
+		// re-runs discovery and lets the exact one-child chain bind. No timer is
+		// involved.
 		await typeInVisibleTerminal(
 			mainWindow,
 			"node -e \"setTimeout(() => require('node:child_process').spawn('codex', [], { stdio: 'inherit' }), 350); setInterval(() => {}, 1000)\"\n",

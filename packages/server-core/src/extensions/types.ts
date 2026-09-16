@@ -59,6 +59,7 @@ export type ExtensionAgentObservationOperation =
 	| 'filesystem.resolve-path-under-environment'
 	| 'filesystem.environment-relative-path'
 	| 'filesystem.list-directory'
+	| 'filesystem.directory-path'
 	| 'filesystem.watch-directory'
 	| 'filesystem.unwatch-directory'
 	| 'filesystem.realpath'

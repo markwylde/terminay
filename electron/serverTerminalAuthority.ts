@@ -650,7 +650,6 @@ export class ServerTerminalAuthority {
 						extensionAgents = new ExtensionAgentRuntimeRegistry({
 						hosts: management.hosts,
 						agents: this.agents,
-						topologySignature: (context, signal) => observation.topologySignature(context, signal),
 						onAdmissionFailure: (failure) => {
 							try { options.onAgentAdmissionFailure?.(failure); } catch { /* host diagnostics cannot affect terminal fallback */ }
 						},

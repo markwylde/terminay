@@ -482,7 +482,9 @@ export function fixtureTerminal(
 						request.environmentVariable
 					]?.replace(/\/$/, '');
 					const root = environmentRoot
-						? `${environmentRoot}/${relativePath.replace(/\/$/, '')}`
+						? relativePath === '.'
+							? environmentRoot
+							: `${environmentRoot}/${relativePath.replace(/\/$/, '')}`
 						: undefined;
 					return root &&
 						[...files.keys()].some(
