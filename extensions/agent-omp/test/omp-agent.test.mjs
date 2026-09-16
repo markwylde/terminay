@@ -318,6 +318,31 @@ function ompObservationFixture(sessionId, title, options = {}) {
   return { terminal, get bindingRequest() { return bindingRequest; } };
 }
 
+// A fresh profile has none of omp's directories until omp writes the first
+// one. The provider must still name somewhere, or the app never re-runs
+// discovery for that terminal and a first-run omp never binds.
+test("an unbound OMP on a fresh profile names the nearest existing ancestor", async () => {
+  const observe = (existing) => {
+    const fixture = ompObservationFixture("root", "Fresh", { breadcrumb: "not-a-provider-breadcrumb", writer: false });
+    const files = fixture.terminal.observation.files;
+    files.resolveHomeDirectory = async (relativePath) => {
+      const root = relativePath === "." ? "/home/test" : `/home/test/${relativePath}`;
+      return existing.includes(root) ? { id: root } : undefined;
+    };
+    fixture.terminal.observation.processes.environment = async () => ({ OMP_PROFILE: "conformance" });
+    return ompAgentProvider.observe(fixture.terminal);
+  };
+  const awaiting = (result) => result.awaiting.map((entry) => `${entry.directory.id}${entry.recursive ? "/**" : ""}`);
+
+  const configured = await observe(["/home/test", "/home/test/.omp", "/home/test/.omp/profiles/conformance/agent"]);
+  assert.equal(configured.state, "not-bound");
+  assert.deepEqual(awaiting(configured), ["/home/test/.omp/profiles/conformance/agent"], "the profile's agent directory, watched shallowly, announces both roots");
+
+  const firstRun = await observe(["/home/test"]);
+  assert.equal(firstRun.state, "not-bound");
+  assert.deepEqual(awaiting(firstRun), ["/home/test"], "a home with no omp directory at all is watched shallowly, never as a tree");
+});
+
 test("an unbound OMP names every existing sessions root and breadcrumb directory", async () => {
   const fixture = ompObservationFixture("root", "No leak", { breadcrumb: "not-a-provider-breadcrumb", writer: false });
   const result = await ompAgentProvider.observe(fixture.terminal);
