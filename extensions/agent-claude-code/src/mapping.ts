@@ -12,6 +12,20 @@ export const CONVERSATION_SWITCH_RECORD = {
 const CONVERSATION_SWITCH_RECORD_TYPE = CONVERSATION_SWITCH_RECORD.type;
 
 /**
+ * The synthetic record a journal relocation produces. The provider injects it
+ * when the process's session file comes to report a different `cwd` for the
+ * same conversation: the CLI has moved the journal, history included, to the
+ * project directory for that cwd, and the provider follows it there from its
+ * start. It is the same conversation continuing, so unlike a switch it resets
+ * nothing — the session stays started, the title stands, the status and idle
+ * mark are kept, and the replayed history re-opens no completed child.
+ */
+export const JOURNAL_RELOCATION_RECORD = {
+	type: 'terminay-journal-relocation',
+} as const;
+const JOURNAL_RELOCATION_RECORD_TYPE = JOURNAL_RELOCATION_RECORD.type;
+
+/**
  * The synthetic record the provider injects for the `status` its own
  * `~/.claude/sessions/<pid>.json` reports, and again for every change to it.
  *
@@ -258,6 +272,13 @@ export function mapClaudeRecord(
 		for (const child of scope.children)
 			publisher.subagentDone({ subagentId: child, outcome: 'cancelled' });
 		resetConversation(scope);
+		return;
+	}
+
+	if (type === JOURNAL_RELOCATION_RECORD_TYPE) {
+		// The same conversation, read again from its new location. Every guard
+		// that makes a replay safe on binding — one start, a standing title, the
+		// idle mark, completed children — is state this scope already holds.
 		return;
 	}
 
