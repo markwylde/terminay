@@ -1,5 +1,7 @@
 import {
+  awaitedEnvironmentAncestor,
   awaitedEnvironmentDirectory,
+  awaitedHomeAncestor,
   awaitedHomeDirectory,
   awaitedTree,
   defineAgentProvider,
@@ -140,10 +142,15 @@ async function ompWaitSet(
   }
   const handles: (AgentAwaitedDirectory | AgentDirectoryHandle | undefined)[] = [];
   for (const root of ompObservationRoots(environment)) {
-    // Journals sit below a per-project directory; breadcrumbs sit in the
-    // directory itself.
-    handles.push(awaitedTree(await awaitedScopedDirectory(terminal, root.sessions)));
-    handles.push(await awaitedScopedDirectory(terminal, root.terminalSessions));
+    // Journals sit below a per-project directory, so an existing sessions
+    // root is watched as a tree. Breadcrumbs sit in their directory itself.
+    // A fresh profile has neither directory until omp writes the first one,
+    // so a root that does not exist yet is stood in for by its nearest
+    // existing ancestor, watched shallowly: the change that creates the next
+    // segment re-runs discovery, which then names the deeper directory.
+    const sessions = await awaitedScopedDirectory(terminal, root.sessions);
+    handles.push(sessions ? awaitedTree(sessions) : await awaitedScopedAncestor(terminal, root.sessions));
+    handles.push(await awaitedScopedAncestor(terminal, root.terminalSessions));
   }
   return handles;
 }
@@ -155,6 +162,16 @@ function awaitedScopedDirectory(
   return scope.kind === "home"
     ? awaitedHomeDirectory(terminal, scope.root)
     : awaitedEnvironmentDirectory(terminal, scope.environmentVariable, scope.root);
+}
+
+/** The directory itself, or the nearest existing directory above it. */
+function awaitedScopedAncestor(
+  terminal: AgentTerminalContext,
+  scope: OmpRootScope,
+): Promise<AgentDirectoryHandle | undefined> {
+  return scope.kind === "home"
+    ? awaitedHomeAncestor(terminal, scope.root)
+    : awaitedEnvironmentAncestor(terminal, scope.environmentVariable, scope.root);
 }
 
 async function bindFromBreadcrumb(terminal: AgentTerminalContext) {
