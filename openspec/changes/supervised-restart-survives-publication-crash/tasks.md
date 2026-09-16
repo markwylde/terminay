@@ -10,4 +10,4 @@
 ## 3. Checks
 
 - [x] 3.1 Run `openspec validate --all`, `npm run lint`, and `npm run test -w @terminay/server-core`. Verified by all three reporting clean.
-- [ ] 3.2 Open the pull request on Gitea with `tea`, then read back every commit status on the head SHA and confirm each is `success` or `skipped` before calling it green. Verified by the status listing itself.
+- [x] 3.2 Open the pull request on Gitea with `tea`, then read back every commit status on the head SHA and confirm each is `success` or `skipped` before calling it green. Verified by the status listing itself.
