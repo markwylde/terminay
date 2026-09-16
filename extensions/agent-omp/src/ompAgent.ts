@@ -451,14 +451,34 @@ async function readOmpTitle(terminal: AgentTerminalContext, journal: AgentFileHa
   return record?.type === "title" ? boundedString(record.title, 200) : undefined;
 }
 
+/** Marker lines OMP appends after the CWD and session-file lines. */
+const OMP_BREADCRUMB_MARKER_LINES = 4;
+const OMP_BREADCRUMB_MARKER_BYTES = 256;
+
+/**
+ * OMP's breadcrumb is the CWD, the session-file path, and then marker lines:
+ * `fresh` while the journal is not yet materialized, and `cwdstat <dev> <ino>`
+ * recording the identity of the directory the session was started in so a
+ * later `--continue` can tell a moved project from a deleted one. Only the
+ * markers this extension understands are accepted, each once, and a bounded
+ * number of them, so an unexpected line still fails closed.
+ */
 function parseBreadcrumb(bytes: Uint8Array): OmpBreadcrumb | undefined {
   if (bytes.byteLength === 0 || bytes.byteLength > 8 * 1024 || bytes.includes(0)) return undefined;
   const value = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   const lines = (value.endsWith("\n") ? value.slice(0, -1) : value).split("\n");
-  if (lines.length < 2 || lines.length > 3) return undefined;
-  const [, sessionFile, marker] = lines;
-  if (!sessionFile || sessionFile.length > 4 * 1024 || (marker !== undefined && marker !== "fresh")) return undefined;
-  return { sessionFile, fresh: marker === "fresh" };
+  if (lines.length < 2 || lines.length > 2 + OMP_BREADCRUMB_MARKER_LINES) return undefined;
+  const [, sessionFile, ...markers] = lines;
+  if (!sessionFile || sessionFile.length > 4 * 1024) return undefined;
+  let fresh = false;
+  let cwdIdentity = false;
+  for (const marker of markers) {
+    if (marker.length > OMP_BREADCRUMB_MARKER_BYTES) return undefined;
+    if (marker === "fresh" && !fresh) fresh = true;
+    else if (/^cwdstat \d+ \d+$/u.test(marker) && !cwdIdentity) cwdIdentity = true;
+    else return undefined;
+  }
+  return { sessionFile, fresh };
 }
 
 /**
