@@ -329,15 +329,25 @@ test('neither age nor recency selects between journals in other directories', as
 	);
 });
 
+/** The directories a `not-bound` observation asks the host to watch. */
+const awaitedPaths = (observation) =>
+	(observation?.awaiting ?? []).map((entry) => entry.directory.id.split(':dir:').at(-1));
+
 test('a journal written after a first unbound observation binds on the next one', async () => {
-	// The host retries `not-bound` through its discovery window and then keeps
-	// discovery armed by topology polling, so a `claude` process observed before
-	// it has written its journal binds on a later sample rather than on the next
-	// foreground change. The provider stays a single bounded sample.
+	// The host re-runs observation when a directory the provider named
+	// changes, and never on a timer. A `claude` process observed before it has
+	// written its journal therefore names where the journal will appear, and
+	// binds on the change that writes it. The provider stays a single bounded
+	// sample.
 	const harness = await createAgentExtensionHarness(extension);
 	try {
 		await harness.observe(claudeTerminal({ sessionId }));
 		assert.deepEqual(harness.events(), [], 'no journal yet, so nothing binds');
+		assert.deepEqual(
+			awaitedPaths(harness.observation()),
+			['/home/test/.claude/sessions'],
+			'no project directory exists yet, so it waits on the session file being rewritten',
+		);
 		await harness.observe(
 			claudeTerminal({
 				sessionId,
@@ -363,6 +373,11 @@ test('a session file written after a first unbound observation binds on the next
 			}),
 		);
 		assert.deepEqual(harness.events(), [], 'no session file yet');
+		assert.deepEqual(
+			awaitedPaths(harness.observation()),
+			['/home/test/.claude/sessions'],
+			'waits on the directory the pid-keyed session file is written into',
+		);
 		await harness.observe(
 			claudeTerminal({
 				sessionId,
@@ -372,6 +387,45 @@ test('a session file written after a first unbound observation binds on the next
 		assert.deepEqual(withoutSessionStatus(harness.events()), [
 			{ kind: 'session.started', title: 'Claude Code' },
 		]);
+	} finally {
+		await harness.dispose();
+	}
+});
+
+test('an existing project directory is named ahead of the projects root while the journal is missing', async () => {
+	const harness = await createAgentExtensionHarness(extension);
+	try {
+		await harness.observe(
+			claudeTerminal({
+				sessionId,
+				// Somebody else's journal already made the project directory.
+				journals: { [other]: [header(other)] },
+			}),
+		);
+		assert.equal(harness.observation()?.state, 'not-bound');
+		assert.deepEqual(awaitedPaths(harness.observation()), [
+			'/home/test/.claude/projects/-workspace',
+			'/home/test/.claude/projects',
+			'/home/test/.claude/sessions',
+		]);
+	} finally {
+		await harness.dispose();
+	}
+});
+
+test('before the sessions directory exists the provider waits on the Claude home itself', async () => {
+	const harness = await createAgentExtensionHarness(extension);
+	try {
+		await harness.observe(
+			claudeTerminal({
+				sessionId,
+				omitSessionFile: true,
+				keyFile: false,
+				extraFiles: { '/home/test/.claude/settings.json': ['{}'] },
+			}),
+		);
+		assert.equal(harness.observation()?.state, 'not-bound');
+		assert.deepEqual(awaitedPaths(harness.observation()), ['/home/test/.claude']);
 	} finally {
 		await harness.dispose();
 	}

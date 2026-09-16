@@ -514,3 +514,23 @@ test('a PTY with two live Grok pids in active_sessions.json still binds the prim
 	assert.equal(result.state, 'bound');
 	assert.equal(result.binding.providerSessionId, sessionId);
 });
+
+test('an unbound Grok names its home, where the registry and session journals appear', async () => {
+	const harness = await createAgentExtensionHarness(extension);
+	try {
+		await harness.observe(
+			fixtureTerminal({
+				foregroundExecutable: 'grok',
+				files: { '/home/test/.grok/settings.json': ['{}'] },
+				openFilePaths: [],
+			}),
+		);
+		assert.equal(harness.observation()?.state, 'not-bound');
+		assert.deepEqual(
+			(harness.observation()?.awaiting ?? []).map((entry) => entry.directory.id.split(':dir:').at(-1)),
+			['/home/test/.grok'],
+		);
+	} finally {
+		await harness.dispose();
+	}
+});

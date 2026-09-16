@@ -3,6 +3,8 @@ import test from "node:test";
 import { AgentStatusService, ExtensionAgentRuntimeRegistry, TerminalActivityService } from "../dist/index.js";
 
 const identity = Object.freeze({ serverId: "server-1", projectId: "project-1", sessionId: "terminal-1" });
+/** Let a chain of admissions, cancellations, and re-admissions settle. */
+const settle = async () => { for (let i = 0; i < 12; i += 1) await new Promise((resolve) => setImmediate(resolve)); };
 const provider = Object.freeze({
   id: "com.terminay.agent-test/test",
   displayName: "Test Agent",
@@ -15,17 +17,17 @@ test("extension provider claims one terminal incarnation before host admission",
   activity.register(identity);
   const agents = new AgentStatusService({ activity });
   await agents.start(); agents.register(identity);
-  const admitted = []; const cancelled = [];
+  const admitted = []; const cancelled = []; const watchers = [];
   const registry = new ExtensionAgentRuntimeRegistry({
     agents,
     hosts: {
       agentProviderContributions: () => [provider],
-      async admitAgentTerminal(value) { admitted.push(value); },
+      async admitAgentTerminal(value) { admitted.push(value); return { state: "bound" }; },
       async cancelAgentTerminal(value) { cancelled.push(value); return true; },
       async drainAgentObservers() {},
     },
     contextId: (_identity, incarnation) => `context-${incarnation}`,
-    reobserveDebounceMs: 0,
+    watchDirectory: (path, onChange) => { const watcher = { path, onChange, close() {} }; watchers.push(watcher); return watcher; },
   });
 
   registry.register(identity); registry.terminalStarted(identity, 4321);
@@ -56,12 +58,9 @@ test("extension provider claims one terminal incarnation before host admission",
   assert.deepEqual(admitted.map(({ context }) => context.contextId), ["context-1"]);
   assert.deepEqual(cancelled, []);
 
-  // A worker joining the process topology must not cancel the already-proven
-  // root observer. Explicit foreground replacement owns that transition.
-  registry.topologyChanged(identity);
-  await new Promise((resolve) => setTimeout(resolve, 5));
-  assert.deepEqual(admitted.map(({ context }) => context.contextId), ["context-1"]);
-  assert.deepEqual(cancelled, []);
+  // A bound terminal waits on nothing: no watch is open and nothing is
+  // scheduled, so nothing can re-run discovery beneath the proven root.
+  assert.equal(watchers.length, 0);
 
   registry.terminalExited(identity);
   await new Promise((resolve) => setImmediate(resolve));
@@ -143,14 +142,11 @@ test("an admission throw retries discovery instead of giving up on the foregroun
   });
   registry.register(identity); registry.terminalStarted(identity, 4321);
   assert.equal(registry.foregroundProcessChanged(identity, "node"), true);
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(attempts, 1);
-  assert.equal(scheduled.length, 1);
-  await scheduled.shift().callback();
-  await new Promise((resolve) => setImmediate(resolve));
+  await settle();
   assert.equal(attempts, 2);
   assert.equal(admitted.length, 2);
   assert.deepEqual(admitted.map((value) => value.context.providerId), [provider.id, omp.id]);
+  assert.equal(scheduled.length, 0, "a wrapper walks its providers on the edge, not on a timer");
   await agents.stop();
 });
 
@@ -201,12 +197,9 @@ test("a node wrapper does not stay on the first alphabetical provider when a lat
   });
   registry.register(identity); registry.terminalStarted(identity, 4321);
   assert.equal(registry.foregroundProcessChanged(identity, "node"), true);
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(admitted[0].context.providerId, claude.id);
-  assert.equal(scheduled.length, 1);
-  await scheduled.shift().callback();
-  await new Promise((resolve) => setImmediate(resolve));
+  await settle();
   assert.deepEqual(admitted.map((value) => value.context.providerId), [claude.id, codex.id]);
+  assert.equal(scheduled.length, 0);
   await agents.stop();
 });
 
@@ -296,7 +289,6 @@ test("a same-terminal resume re-admits an exited provider when the shell edge wa
       async drainAgentObservers() {},
     },
     contextId: (_identity, incarnation) => `resume-context-${incarnation}`,
-    reobserveDebounceMs: 0,
   });
   registry.register(identity); registry.terminalStarted(identity, 4321);
   assert.equal(registry.foregroundProcessChanged(identity, "test-agent"), true);
@@ -328,7 +320,6 @@ test("a same-terminal quit then resume re-admits after an explicit shell return"
       async drainAgentObservers() {},
     },
     contextId: (_identity, incarnation) => `quit-resume-${incarnation}`,
-    reobserveDebounceMs: 0,
   });
   registry.register(identity); registry.terminalStarted(identity, 4321);
   assert.equal(registry.foregroundProcessChanged(identity, "test-agent"), true);
@@ -363,47 +354,112 @@ test("a throwing unmatched provider does not pin discovery away from a later bin
       async cancelAgentTerminal() { return true; },
       async drainAgentObservers() {},
     },
-    reobserveDebounceMs: 0,
     schedule(callback, milliseconds) { const timer = { callback, milliseconds }; scheduled.push(timer); return timer; },
     cancelSchedule() {},
   });
   registry.register(identity); registry.terminalStarted(identity, 4321);
   assert.equal(registry.foregroundProcessChanged(identity, "node"), true);
-  await new Promise((resolve) => setImmediate(resolve));
-  const rotate = scheduled.find((timer) => timer.milliseconds === 0);
-  assert.ok(rotate, "a throwing unmatched provider must rotate to the next capable provider");
-  await rotate.callback();
-  await new Promise((resolve) => setImmediate(resolve));
+  await settle();
   assert.deepEqual(admitted, [claude.id, codex.id]);
+  assert.equal(scheduled.length, 0);
   registry.terminalExited(identity); await agents.stop();
 });
 
-test("a not-bound foreground provider retries its exact terminal until its journal appears", async () => {
+test("a not-bound provider's named directory is watched, and its first change re-admits with no timer", async () => {
   const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
   const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
-  const admitted = []; const cancelled = []; const scheduled = [];
+  const admitted = []; const cancelled = []; const scheduled = []; const watchers = [];
   let state = "not-bound";
   const registry = new ExtensionAgentRuntimeRegistry({
     agents,
     hosts: {
       agentProviderContributions: () => [provider],
-      async admitAgentTerminal(value) { admitted.push(value); return { state }; },
+      async admitAgentTerminal(value) { admitted.push(value); return { state, awaiting: ["/home/user/.test-agent/sessions"] }; },
       async cancelAgentTerminal(value) { cancelled.push(value); return true; },
       async drainAgentObservers() {},
     },
+    watchDirectory: (path, onChange) => { const watcher = { path, onChange, closed: false, close() { watcher.closed = true; } }; watchers.push(watcher); return watcher; },
     schedule(callback, milliseconds) { const timer = { callback, milliseconds }; scheduled.push(timer); return timer; },
     cancelSchedule() {},
   });
   registry.register(identity);
   assert.equal(registry.foregroundProcessChanged(identity, "test-agent"), true);
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(scheduled.length, 1);
-  assert.equal(scheduled[0].milliseconds, 100);
+  await settle();
+  assert.equal(admitted.length, 1);
+  assert.deepEqual(watchers.map((watcher) => watcher.path), ["/home/user/.test-agent/sessions"]);
+  assert.equal(scheduled.length, 0, "nothing re-runs discovery but the directory changing");
   state = "bound";
-  await scheduled.shift().callback(); await new Promise((resolve) => setImmediate(resolve));
+  watchers[0].onChange();
+  await settle();
   assert.equal(admitted.length, 2);
   assert.deepEqual(cancelled, [{ contextId: admitted[0].context.contextId, reason: "terminal-replaced" }]);
+  assert.ok(watchers.every((watcher) => watcher.closed), "binding closes the wait set");
+  assert.equal(scheduled.length, 0);
   await agents.stop();
+});
+
+test("a provider that names a tree gets a recursive watch, a plain directory a shallow one, and the same path is watched once", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
+  const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
+  const watchers = [];
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: {
+      agentProviderContributions: () => [provider],
+      async admitAgentTerminal() {
+        return { state: "not-bound", awaiting: [
+          { path: "/home/user/.codex/sessions", recursive: true },
+          { path: "/home/user/.codex", recursive: false },
+          "/home/user/.codex",
+          { path: "relative/path", recursive: true },
+        ] };
+      },
+      async cancelAgentTerminal() { return true; },
+      async drainAgentObservers() {},
+    },
+    watchDirectory: (path, onChange, recursive) => { const watcher = { path, recursive, onChange, close() {} }; watchers.push(watcher); return watcher; },
+    schedule() { throw new Error("nothing may be scheduled"); },
+    cancelSchedule() {},
+  });
+  registry.register(identity);
+  registry.foregroundProcessChanged(identity, "test-agent");
+  await settle();
+  assert.deepEqual(
+    watchers.map((watcher) => [watcher.path, watcher.recursive]),
+    [["/home/user/.codex/sessions", true], ["/home/user/.codex", false]],
+    "a relative path is dropped, and a directory named twice is watched once",
+  );
+  registry.terminalExited(identity); await agents.stop();
+});
+
+test("a not-bound provider that names nothing ends discovery until the next foreground edge", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
+  const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
+  const admitted = []; const scheduled = []; const watchers = [];
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: {
+      agentProviderContributions: () => [provider],
+      async admitAgentTerminal(value) { admitted.push(value); return { state: "not-bound" }; },
+      async cancelAgentTerminal() { return true; },
+      async drainAgentObservers() {},
+    },
+    watchDirectory: (path, onChange) => { const watcher = { path, onChange, close() {} }; watchers.push(watcher); return watcher; },
+    schedule(callback, milliseconds) { const timer = { callback, milliseconds }; scheduled.push(timer); return timer; },
+    cancelSchedule() {},
+  });
+  registry.register(identity);
+  assert.equal(registry.foregroundProcessChanged(identity, "test-agent"), true);
+  await settle();
+  assert.equal(admitted.length, 1);
+  assert.equal(watchers.length, 0);
+  assert.equal(scheduled.length, 0);
+  // Only a new foreground edge starts discovery again.
+  registry.foregroundProcessChanged(identity, "zsh", true);
+  assert.equal(registry.foregroundProcessChanged(identity, "test-agent"), true);
+  await settle();
+  assert.equal(admitted.length, 2);
+  registry.terminalExited(identity); await agents.stop();
 });
 
 test("a late-published agent provider re-admits an already-running matching terminal", async () => {
@@ -496,199 +552,158 @@ test("a failed agent admission is observable before the sidebar falls back to no
   await agents.stop();
 });
 
-test("topology polling keeps discovery armed after the fast not-bound window so a late Codex journal still binds", async () => {
+test("churn in a watched directory re-observes at most once per ramp interval, widens to the ceiling, and resets after quiet", async () => {
   const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
   const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
-  const admitted = []; const cancelled = []; const scheduled = [];
-  let state = "not-bound";
+  const admitted = []; const scheduled = []; const watchers = [];
+  let now = 1_000_000;
   const registry = new ExtensionAgentRuntimeRegistry({
     agents,
     hosts: {
       agentProviderContributions: () => [provider],
-      async admitAgentTerminal(value) { admitted.push(value); return { state }; },
-      async cancelAgentTerminal(value) { cancelled.push(value); return true; },
-      async drainAgentObservers() {},
-    },
-    reobserveDebounceMs: 0,
-    topologyPollIntervalMs: 100,
-    topologySignature: async () => "codex-journal-open",
-    schedule(callback, milliseconds) { const timer = { callback, milliseconds }; scheduled.push(timer); return timer; },
-    cancelSchedule() {},
-  });
-  registry.register(identity); registry.terminalStarted(identity, 4321);
-  assert.equal(registry.foregroundProcessChanged(identity, "codex"), true);
-  await new Promise((resolve) => setImmediate(resolve));
-  for (let attempt = 0; attempt < 16 && state === "not-bound"; attempt += 1) {
-    const retry = scheduled.find((timer) => timer.milliseconds === 0);
-    if (retry === undefined) break;
-    scheduled.splice(scheduled.indexOf(retry), 1);
-    await retry.callback();
-    await new Promise((resolve) => setImmediate(resolve));
-  }
-  const beforeTopology = admitted.length;
-  assert.ok(beforeTopology >= 11, "the fast window must exhaust before topology takes over");
-  state = "bound";
-  const topology = scheduled.find((timer) => timer.milliseconds === 100);
-  assert.ok(topology, "exhausted discovery must arm topology polling");
-  scheduled.splice(scheduled.indexOf(topology), 1);
-  await topology.callback();
-  await new Promise((resolve) => setImmediate(resolve));
-  const reobserve = scheduled.find((timer) => timer.milliseconds === 0);
-  assert.ok(reobserve, "the first topology sample after exhaustion must reobserve even when the signature is unchanged");
-  await reobserve.callback();
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.ok(admitted.length > beforeTopology, "a journal that appears after the fast window must still be admitted");
-  registry.terminalExited(identity); await agents.stop();
-});
-
-test("a terminal that never binds widens the wait between sweeps, and new evidence resets it", async () => {
-  // One terminal produced 6,673 observation records in a recorded session —
-  // one sweep of every installed provider every poll interval, for hours,
-  // because nothing there could ever bind. Discovery stays armed; it just
-  // stops asking at full speed.
-  const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
-  const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
-  const scheduled = []; let signature = "unchanged";
-  const registry = new ExtensionAgentRuntimeRegistry({
-    agents,
-    hosts: {
-      agentProviderContributions: () => [provider],
-      async admitAgentTerminal() { return { state: "not-bound" }; },
+      async admitAgentTerminal(value) { admitted.push(value); return { state: "not-bound", awaiting: ["/home/user/.codex/sessions"] }; },
       async cancelAgentTerminal() { return true; },
       async drainAgentObservers() {},
     },
-    reobserveDebounceMs: 0,
-    topologyPollIntervalMs: 100,
-    maximumUnboundPollIntervalMs: 800,
-    topologySignature: async () => signature,
+    rampIntervalsMs: [100, 200, 400],
+    now: () => now,
+    watchDirectory: (path, onChange) => { const watcher = { path, onChange, close() {} }; watchers.push(watcher); return watcher; },
     schedule(callback, milliseconds) { const timer = { callback, milliseconds }; scheduled.push(timer); return timer; },
     cancelSchedule() {},
   });
-
-  const drainFastWindow = async () => {
-    for (let attempt = 0; attempt < 24; attempt += 1) {
-      const retry = scheduled.find((timer) => timer.milliseconds === 0);
-      if (retry === undefined) return;
-      scheduled.splice(scheduled.indexOf(retry), 1);
-      await retry.callback();
-      await new Promise((resolve) => setImmediate(resolve));
-    }
-  };
-  const nextPoll = () => {
-    const poll = scheduled.find((timer) => timer.milliseconds >= 100);
-    assert.ok(poll, "discovery must stay armed");
-    scheduled.splice(scheduled.indexOf(poll), 1);
-    return poll;
-  };
-
   registry.register(identity); registry.terminalStarted(identity, 4321);
   assert.equal(registry.foregroundProcessChanged(identity, "codex"), true);
-  await new Promise((resolve) => setImmediate(resolve));
+  await settle();
+  assert.equal(admitted.length, 1);
+  assert.equal(watchers.length, 1, "the wait set is one directory, however often it is named");
 
+  // The first change after a quiet period is acted on at once.
+  const change = watchers[0].onChange;
+  change(); await settle();
+  assert.equal(admitted.length, 2);
+  assert.equal(scheduled.length, 0);
+
+  // Changes inside the floor collapse into one run at its end, and each such
+  // run widens the floor: 100, 200, 400, then held at 400.
   const waits = [];
-  for (let sweep = 0; sweep < 4; sweep += 1) {
-    await drainFastWindow();
-    const poll = nextPoll();
-    waits.push(poll.milliseconds);
-    await poll.callback();
-    await new Promise((resolve) => setImmediate(resolve));
+  for (const expected of [100, 200, 400, 400]) {
+    now += 10;
+    change(); change(); change();
+    assert.equal(scheduled.length, 1, "changes inside an interval collapse into one pending run");
+    const timer = scheduled.shift();
+    waits.push(timer.milliseconds);
+    now += timer.milliseconds;
+    timer.callback(); await settle();
+    void expected;
   }
-  assert.deepEqual(waits, [100, 200, 400, 800], "each fruitless sweep waits longer, up to the ceiling");
+  assert.deepEqual(waits, [90, 190, 390, 390]);
+  assert.equal(admitted.length, 6);
+  assert.equal(watchers.length, 1, "re-observation never opens a second watch on the same directory");
 
-  await drainFastWindow();
-  const held = nextPoll();
-  assert.equal(held.milliseconds, 800, "and stays at the ceiling rather than growing without bound");
-  signature = "a new descendant appeared";
-  await held.callback();
-  await new Promise((resolve) => setImmediate(resolve));
-
-  await drainFastWindow();
-  assert.equal(nextPoll().milliseconds, 100, "new evidence returns discovery to its base interval");
+  // Quiet for the whole interval: back to the floor, and prompt again.
+  now += 1_000;
+  change(); await settle();
+  assert.equal(admitted.length, 7);
+  assert.equal(scheduled.length, 0);
   registry.terminalExited(identity); await agents.stop();
 });
 
-test("returning to the shell resets a terminal that had backed off", async () => {
+test("returning to the shell closes the wait set, and a late change on it re-runs nothing", async () => {
   const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
   const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
-  const scheduled = [];
+  const admitted = []; const scheduled = []; const watchers = [];
   const registry = new ExtensionAgentRuntimeRegistry({
     agents,
     hosts: {
       agentProviderContributions: () => [provider],
-      async admitAgentTerminal() { return { state: "not-bound" }; },
+      async admitAgentTerminal(value) { admitted.push(value); return { state: "not-bound", awaiting: ["/home/user/.codex/sessions"] }; },
       async cancelAgentTerminal() { return true; },
       async drainAgentObservers() {},
     },
-    reobserveDebounceMs: 0,
-    topologyPollIntervalMs: 100,
-    topologySignature: async () => "unchanged",
+    watchDirectory: (path, onChange) => { const watcher = { path, onChange, closed: false, close() { watcher.closed = true; } }; watchers.push(watcher); return watcher; },
     schedule(callback, milliseconds) { const timer = { callback, milliseconds }; scheduled.push(timer); return timer; },
     cancelSchedule() {},
   });
-  const drainFastWindow = async () => {
-    for (let attempt = 0; attempt < 24; attempt += 1) {
-      const retry = scheduled.find((timer) => timer.milliseconds === 0);
-      if (retry === undefined) return;
-      scheduled.splice(scheduled.indexOf(retry), 1);
-      await retry.callback();
-      await new Promise((resolve) => setImmediate(resolve));
-    }
-  };
-  const takePoll = () => {
-    const poll = scheduled.find((timer) => timer.milliseconds >= 100);
-    assert.ok(poll, "discovery must stay armed");
-    scheduled.splice(scheduled.indexOf(poll), 1);
-    return poll;
-  };
-
   registry.register(identity); registry.terminalStarted(identity, 4321);
   registry.foregroundProcessChanged(identity, "codex");
-  await new Promise((resolve) => setImmediate(resolve));
-  for (let sweep = 0; sweep < 3; sweep += 1) {
-    await drainFastWindow();
-    const poll = takePoll();
-    await poll.callback();
-    await new Promise((resolve) => setImmediate(resolve));
-  }
-  await drainFastWindow();
-  const backedOff = takePoll();
-  assert.ok(backedOff.milliseconds > 100, "the terminal has backed off");
-  await backedOff.callback();
-  await new Promise((resolve) => setImmediate(resolve));
-  await drainFastWindow();
-  scheduled.splice(0, scheduled.length);
+  await settle();
+  assert.equal(watchers.length, 1);
 
-  // The shell coming back ends this incarnation; whatever runs next deserves
-  // discovery at full speed again.
   registry.foregroundProcessChanged(identity, "zsh", true);
+  assert.ok(watchers[0].closed, "the shell coming back ends this incarnation's wait");
+  watchers[0].onChange();
+  await settle();
+  assert.equal(admitted.length, 1, "a change on a closed watch is not evidence for anything");
+  assert.equal(scheduled.length, 0);
+
+  // Whatever runs next gets its own wait set.
   registry.foregroundProcessChanged(identity, "codex");
-  await new Promise((resolve) => setImmediate(resolve));
-  await drainFastWindow();
-  assert.equal(takePoll().milliseconds, 100, "a new incarnation starts at the base interval");
+  await settle();
+  assert.equal(admitted.length, 2);
+  assert.equal(watchers.length, 2);
+  assert.equal(watchers[1].closed, false);
   registry.terminalExited(identity); await agents.stop();
 });
 
-test("topology polling is inert after a proven binding, including when workers change the topology", async () => {
+test("a wrapper's providers each name their wait set, and a change re-walks the queue from its head", async () => {
   const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
   const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
-  const admitted = []; const cancelled = []; const scheduled = []; let signature = "one";
+  const claude = { ...provider, id: "com.terminay.agent.claude-code/cli", displayName: "Claude Code", processMatchers: [{ executableName: "claude" }] };
+  const codex = { ...provider, id: "com.terminay.agent.codex/cli", displayName: "Codex", processMatchers: [{ executableName: "codex" }] };
+  const admitted = []; const scheduled = []; const watchers = [];
+  let codexState = "not-bound";
   const registry = new ExtensionAgentRuntimeRegistry({
     agents,
-    hosts: { agentProviderContributions: () => [provider], async admitAgentTerminal(value) { admitted.push(value); }, async cancelAgentTerminal(value) { cancelled.push(value); return true; }, async drainAgentObservers() {} },
-    reobserveDebounceMs: 0,
-    topologyPollIntervalMs: 100,
-    topologySignature: async () => signature,
+    hosts: {
+      agentProviderContributions: () => [claude, codex],
+      async admitAgentTerminal(value) {
+        admitted.push(value.context.providerId);
+        return value.context.providerId === codex.id
+          ? { state: codexState, awaiting: ["/home/user/.codex/sessions"] }
+          : { state: "not-bound", awaiting: ["/home/user/.claude/sessions"] };
+      },
+      async cancelAgentTerminal() { return true; },
+      async drainAgentObservers() {},
+    },
+    watchDirectory: (path, onChange) => { const watcher = { path, onChange, closed: false, close() { watcher.closed = true; } }; watchers.push(watcher); return watcher; },
+    schedule(callback, milliseconds) { const timer = { callback, milliseconds }; scheduled.push(timer); return timer; },
+    cancelSchedule() {},
+  });
+  registry.register(identity); registry.terminalStarted(identity, 4321);
+  assert.equal(registry.foregroundProcessChanged(identity, "node"), true);
+  await settle();
+  assert.deepEqual(admitted, [claude.id, codex.id], "every capable provider gets one look per edge");
+  assert.deepEqual(watchers.map((watcher) => watcher.path).sort(), ["/home/user/.claude/sessions", "/home/user/.codex/sessions"]);
+  assert.equal(scheduled.length, 0);
+
+  // The rollout Codex was waiting on appears: the walk starts again, and this
+  // time Codex proves its binding.
+  codexState = "bound";
+  watchers.find((watcher) => watcher.path === "/home/user/.codex/sessions").onChange();
+  await settle();
+  assert.deepEqual(admitted, [claude.id, codex.id, claude.id, codex.id]);
+  assert.ok(watchers.every((watcher) => watcher.closed));
+  registry.terminalExited(identity); await agents.stop();
+});
+
+test("a bound terminal holds no watch and nothing scheduled, so nothing can re-run discovery beneath its root", async () => {
+  const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
+  const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
+  const admitted = []; const cancelled = []; const scheduled = []; const watchers = [];
+  const registry = new ExtensionAgentRuntimeRegistry({
+    agents,
+    hosts: { agentProviderContributions: () => [provider], async admitAgentTerminal(value) { admitted.push(value); return { state: "bound" }; }, async cancelAgentTerminal(value) { cancelled.push(value); return true; }, async drainAgentObservers() {} },
+    watchDirectory: (path, onChange) => { const watcher = { path, onChange, close() {} }; watchers.push(watcher); return watcher; },
     schedule(callback, milliseconds) { const timer = { callback, milliseconds }; scheduled.push(timer); return timer; },
     cancelSchedule() {},
   });
   registry.register(identity); registry.foregroundProcessChanged(identity, "test-agent");
-  await new Promise((resolve) => setImmediate(resolve));
-  // First sample establishes the baseline; its successor finds no change.
-  await scheduled.shift().callback(); await new Promise((resolve) => setImmediate(resolve));
-  await scheduled.shift().callback(); await new Promise((resolve) => setImmediate(resolve));
+  await settle();
   assert.equal(admitted.length, 1); assert.equal(cancelled.length, 0);
-  signature = "two";
-  await scheduled.shift().callback(); await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(watchers.length, 0); assert.equal(scheduled.length, 0);
+  // A worker joining the process tree is ordinary activity beneath the root.
+  assert.equal(registry.foregroundProcessChanged(identity, "worker"), true);
+  await settle();
   assert.equal(admitted.length, 1); assert.deepEqual(cancelled, []);
   registry.terminalExited(identity); await agents.stop();
 });
@@ -709,7 +724,6 @@ test("two terminals of the same provider both keep an active root", async () => 
       async cancelAgentTerminal() { return true; },
       async drainAgentObservers() {},
     },
-    reobserveDebounceMs: 0,
   });
   registry.register(left); registry.register(right);
   registry.terminalStarted(left, 19049); registry.terminalStarted(right, 44903);
@@ -742,38 +756,33 @@ test("two terminals of the same provider both keep an active root", async () => 
   registry.terminalExited(left); registry.terminalExited(right); await agents.stop();
 });
 
-test("a topology change does not tear down a proven writer; terminal replacement still owns retirement", async () => {
+test("a proven writer's terminal is retired only by terminal replacement, never by discovery", async () => {
   const activity = new TerminalActivityService({ serverId: identity.serverId }); activity.register(identity);
   const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
-  const admitted = []; const cancelled = []; const scheduled = [];
-  let signature = "writer-present";
-  let state = "bound";
+  const admitted = []; const cancelled = []; const scheduled = []; const watchers = [];
   const registry = new ExtensionAgentRuntimeRegistry({
     agents,
     hosts: {
       agentProviderContributions: () => [provider],
-      async admitAgentTerminal(value) { admitted.push(value); return { state }; },
+      async admitAgentTerminal(value) { admitted.push(value); return { state: "bound" }; },
       async cancelAgentTerminal(value) { cancelled.push(value); return true; },
       async drainAgentObservers() {},
     },
-    reobserveDebounceMs: 0,
-    topologyPollIntervalMs: 100,
-    topologySignature: async () => signature,
+    watchDirectory: (path, onChange) => { const watcher = { path, onChange, close() {} }; watchers.push(watcher); return watcher; },
     schedule(callback, milliseconds) { const timer = { callback, milliseconds }; scheduled.push(timer); return timer; },
     cancelSchedule() {},
   });
   registry.register(identity);
   assert.equal(registry.foregroundProcessChanged(identity, "test-agent"), true);
-  await new Promise((resolve) => setImmediate(resolve));
+  await settle();
   const binding = { providerSessionId: "writer-session", mappingVersion: "test-v1", fingerprint: { kind: "fixture", process: { id: "writer-1" }, metadata: { source: "test" } } };
   assert.equal((await agents.ingestExtensionLifecycle(identity, provider.id, "test-v1", binding, [{ kind: "session.started", title: "Local writer" }])).acceptedEventCount, 1);
-  await scheduled.shift().callback(); await new Promise((resolve) => setImmediate(resolve));
-  signature = "writer-left";
-  state = "not-bound";
-  await scheduled.shift().callback(); await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(watchers.length, 0); assert.equal(scheduled.length, 0);
   assert.deepEqual(cancelled, []);
   const continued = await agents.ingestExtensionLifecycle(identity, provider.id, "test-v1", undefined, [{ kind: "turn.started", turnId: "same-pty-turn" }]);
   assert.equal(continued.acceptedEventCount, 1);
+  registry.foregroundProcessChanged(identity, "zsh", true);
+  assert.deepEqual(cancelled, [{ contextId: admitted[0].context.contextId, reason: "terminal-replaced" }]);
   registry.terminalExited(identity); await agents.stop();
 });
 
@@ -846,8 +855,11 @@ test("a stalled provider retirement does not disturb a healthy provider context"
   registry.register(identity);registry.register(otherIdentity);registry.foregroundProcessChanged(identity,"test-agent");registry.foregroundProcessChanged(otherIdentity,"other-agent");await new Promise((resolve)=>setImmediate(resolve));
   const retiring=registry.retireProvider(provider.id);await new Promise((resolve)=>setImmediate(resolve));
   assert.notEqual(registry.observationTerminal(admitted[1].context),undefined);
-  assert.equal(registry.foregroundProcessChanged(otherIdentity,"other-agent"),true);unblock();await retiring;
-  assert.notEqual(registry.observationTerminal(admitted[1].context),undefined);await agents.stop();
+  assert.equal(registry.foregroundProcessChanged(otherIdentity,"other-agent"),true);unblock();await retiring;await settle();
+  // The repeated match found no live root and re-admitted the other terminal
+  // at once; its newest context, not the stalled retirement, owns it.
+  const latest=admitted.filter((value)=>value.context.terminalSessionId===otherIdentity.sessionId).at(-1);
+  assert.notEqual(registry.observationTerminal(latest.context),undefined);await agents.stop();
 });
 
 /**
@@ -885,7 +897,6 @@ test("two terminals running one provider are each admitted with their own contex
   const registry = new ExtensionAgentRuntimeRegistry({
     agents,
     hosts: admittingHost(admitted, cancelled),
-    reobserveDebounceMs: 0,
   });
 
   for (const [terminal, shellPid] of [[identity, 4321], [secondIdentity, 4322]]) {
@@ -930,7 +941,6 @@ test("observation records tell a bound terminal apart from one that never binds"
       async drainAgentObservers() {},
     },
     onObservation: (record) => observations.push(record),
-    reobserveDebounceMs: 0,
     schedule: (callback, milliseconds) => {
       const timer = { callback, milliseconds };
       heldTimers.push(timer);
@@ -997,7 +1007,6 @@ test("observation records carry no journal, prompt, tool input, tool result, or 
     },
     onObservation: (record) => observations.push(record),
     onAdmissionFailure: (failure) => failures.push(failure),
-    reobserveDebounceMs: 0,
   });
 
   registry.register(identity);
@@ -1029,7 +1038,6 @@ test("releasing an observer is recorded with the reason it was released", async 
     agents,
     hosts: admittingHost([], []),
     onObservation: (record) => observations.push(record),
-    reobserveDebounceMs: 0,
   });
 
   registry.register(identity);
@@ -1058,7 +1066,6 @@ test("the issued context id distinguishes terminals at the same incarnation", as
       async cancelAgentTerminal() { return true; },
       async drainAgentObservers() {},
     },
-    reobserveDebounceMs: 0,
   });
 
   for (const [terminal, shellPid] of [[identity, 4321], [secondIdentity, 4322]]) {

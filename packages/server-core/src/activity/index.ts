@@ -6,6 +6,7 @@ export * from './extensionAgentBridge.js';
 export * from './extensionAgentRuntime.js';
 export * from './parser.js';
 export * from './protocol.js';
+export * from './rampSchedule.js';
 export * from './reducer.js';
 export * from './service.js';
 export * from './types.js';

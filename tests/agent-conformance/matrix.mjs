@@ -201,6 +201,17 @@ export async function runConformance(descriptor, options = {}) {
 				seededSessionId,
 				`${descriptor.name} bound the session under test to the earlier session already in the directory (${seededSessionId}) instead of its own`,
 			);
+			// Every attempt that could not bind while the CLI was running must
+			// have named where its evidence would appear; the app has no other way
+			// to know when to look again.
+			const silent = harness.projection.events.filter(
+				(event) => event.kind === 'harness.not-bound-without-wait-set',
+			).length;
+			assert.equal(
+				silent,
+				0,
+				`${descriptor.name} reported not-bound ${silent} time(s) without naming a directory to await while its CLI was running; the app would never re-run discovery for it`,
+			);
 		});
 
 		// Idle: a bound session with no work yet. The launch gesture carries the
