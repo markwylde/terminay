@@ -42,7 +42,7 @@
 
 - [x] 7.1 Update `e2e/extension-agent-runtime.spec.ts` to describe the watch-driven bind (the wrapper already writes its rollout after launch). Verified by the spec passing in the Docker e2e container.
 - [x] 7.2 Tighten `e2e/real-claude-code-agent-runtime.spec.ts` so the Agents row must appear within 15 s of the first prompt. Verified by review; the real-CLI lane (`test:e2e:ai-real-claude`) needs an authenticated `claude` and was not run here.
-- [ ] 7.3 Sync delta specs into `openspec/specs/` for `agent-status-and-sidebar`, `extension-platform`, and `agent-provider-conformance`. Done at archive time with `/opsx:archive`, as this repository's other changes are.
+- [x] 7.3 Sync delta specs into `openspec/specs/` for `agent-status-and-sidebar`, `extension-platform`, and `agent-provider-conformance`. Done at archive time with `/opsx:archive`, as this repository's other changes are.
 - [x] 7.4 Docs: `docs/` holds no description of agent discovery polling; the only "topology" references left in code are the two comments about collaboration process trees. Verified by grep.
 
 ## 8. Verification
