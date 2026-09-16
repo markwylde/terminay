@@ -12,4 +12,4 @@
 ## 3. Checks
 
 - [x] 3.1 Run `openspec validate --all`, `npm run lint`, and `npm test` in `extensions/agent-claude-code`. Verified by all three reporting clean.
-- [ ] 3.2 Open the pull request on Gitea with `tea`, then read back every commit status on the head SHA and confirm each is `success` or `skipped`. Verified by the status listing itself.
+- [x] 3.2 Open the pull request on Gitea with `tea`, then read back every commit status on the head SHA and confirm each is `success` or `skipped`. Verified by the status listing itself: pull request #260, head `0e221791`, 21 of 21 statuses `success`, including the real-CLI `agent-claude-code` conformance run. The first run failed on the conformance selection job because the runner that took it carries no `jq`; the job now builds its list with the shell alone. E2E shard 10 failed once on a tab-bar squeeze test unrelated to this change and passed on re-run.
