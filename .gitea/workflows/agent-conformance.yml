@@ -64,13 +64,15 @@ jobs:
             exit 0
           fi
 
-          selected='[]'
+          # Built with the shell alone: the names are fixed identifiers, and a
+          # runner is not guaranteed to carry jq.
+          selected=''
           for extension in agent-claude-code agent-codex agent-grok agent-opencode agent-omp; do
             if echo "$changed" | grep -q "^extensions/$extension/"; then
-              selected=$(printf '%s' "$selected" | jq -c --arg e "$extension" '. + [$e]')
+              selected="${selected:+$selected,}\"$extension\""
             fi
           done
-          echo "extensions=$selected" >> "$GITHUB_OUTPUT"
+          echo "extensions=[$selected]" >> "$GITHUB_OUTPUT"
 
   conformance:
     name: ${{ matrix.extension }}
