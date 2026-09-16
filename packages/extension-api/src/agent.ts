@@ -38,6 +38,25 @@ export function notBound(
 		: { state: 'not-bound', awaiting: Object.freeze([...seen.values()]) };
 }
 
+/** As {@link awaitedHomeAncestor}, below one declared environment variable:
+ * the directory, its nearest existing parent, or the variable's root. */
+export async function awaitedEnvironmentAncestor(
+	terminal: AgentTerminalContext,
+	environmentVariable: string,
+	relativePath: string,
+): Promise<AgentDirectoryHandle | undefined> {
+	const segments = relativePath.split('/').filter((segment) => segment.length > 0);
+	for (let depth = segments.length; depth > 0; depth -= 1) {
+		const handle = await awaitedEnvironmentDirectory(
+			terminal,
+			environmentVariable,
+			segments.slice(0, depth).join('/'),
+		);
+		if (handle) return handle;
+	}
+	return awaitedEnvironmentDirectory(terminal, environmentVariable, '.');
+}
+
 /** A wait-set entry for evidence that appears somewhere below a directory. */
 export function awaitedTree(
 	directory: AgentDirectoryHandle | undefined,
@@ -63,6 +82,25 @@ export async function awaitedHomeDirectory(
 	} catch {
 		return undefined;
 	}
+}
+
+/**
+ * The nearest existing ancestor of a home-relative directory, as a wait-set
+ * entry: the directory itself when it exists, otherwise the closest parent
+ * that does, and the home directory itself when none of them exist yet.
+ * Evidence a CLI has not created yet still has a place whose change will
+ * announce it, so a fresh profile is watched from its first run.
+ */
+export async function awaitedHomeAncestor(
+	terminal: AgentTerminalContext,
+	relativePath: string,
+): Promise<AgentDirectoryHandle | undefined> {
+	const segments = relativePath.split('/').filter((segment) => segment.length > 0);
+	for (let depth = segments.length; depth > 0; depth -= 1) {
+		const handle = await awaitedHomeDirectory(terminal, segments.slice(0, depth).join('/'));
+		if (handle) return handle;
+	}
+	return awaitedHomeDirectory(terminal, '.');
 }
 
 /** As {@link awaitedHomeDirectory}, below one declared environment variable. */
