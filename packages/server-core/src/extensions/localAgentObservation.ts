@@ -510,10 +510,12 @@ export class LocalAgentObservationAdapter {
 			safeRelativePath(request.beneathRelative)
 				? resolve(root, request.beneathRelative)
 				: root;
+		// The root itself is a valid answer: a provider waiting for the tree
+		// below an environment home to be created names that home.
 		if (
 			canonical === undefined ||
 			safePath(canonical) === undefined ||
-			!contained(beneath, canonical)
+			(canonical !== beneath && !contained(beneath, canonical))
 		)
 			return null;
 		if ((await this.system.stat(canonical, signal))?.kind !== 'directory')
