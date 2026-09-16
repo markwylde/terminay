@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -505,6 +505,14 @@ function openCodeObserveTerminal(
 				async canonicalFile(handle) {
 					return handle === storeHandle ? handle : undefined;
 				},
+				async resolveDirectoryRelativeToEnvironment(relativePath, request) {
+					if (request.environmentVariable !== 'XDG_DATA_HOME') return undefined;
+					const root = join(dataHome, relativePath);
+					return existsSync(root) ? { id: root } : undefined;
+				},
+				async resolveHomeDirectory() {
+					return undefined;
+				},
 			},
 		},
 		abort() {
@@ -512,6 +520,22 @@ function openCodeObserveTerminal(
 		},
 	};
 }
+
+test('an unbound opencode names its data root, where the session store appears', async () => {
+	const directory = mkdtempSync(join(tmpdir(), 'opencode-unbound-'));
+	const dataRoot = join(directory, 'opencode');
+	mkdirSync(dataRoot);
+	try {
+		// The store is not open for writing by any descendant yet.
+		const terminal = openCodeObserveTerminal(join(directory, 'elsewhere.db'), directory, '/work', []);
+		const observed = await openCodeProvider.observe(terminal);
+		terminal.abort();
+		assert.equal(observed.state, 'not-bound');
+		assert.deepEqual(observed.awaiting.map((entry) => entry.directory.id), [dataRoot]);
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
 
 test('opencode --continue binds the writable store for this cwd', async () => {
 	const directory = mkdtempSync(join(tmpdir(), 'opencode-continue-'));
