@@ -5,4 +5,4 @@
 ## 2. Checks
 
 - [x] 2.1 Run `openspec validate --all` and `npm run lint`. Verified by both reporting clean.
-- [ ] 2.2 Read back the `Agent conformance / agent-omp` status on the pull request head and confirm it is `success`. Verified by the status listing itself.
+- [x] 2.2 Read back the `Agent conformance / agent-omp` status on the pull request head and confirm it is `success`. Verified by the status listing itself.
