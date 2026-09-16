@@ -19,6 +19,7 @@ import {
 } from '@terminay/extension-api';
 import {
 	CONVERSATION_SWITCH_RECORD,
+	JOURNAL_RELOCATION_RECORD,
 	createClaudeRecordMapper,
 	isClaudeSessionStatus,
 	sessionStatusRecord,
@@ -249,14 +250,26 @@ async function sessionFileFor(
 		process,
 		handle,
 		relativePath,
+		process.cwd,
 	);
 }
 
+/**
+ * The file is accepted only when everything in it that identifies a process
+ * agrees with the observed one: the pid it is keyed by and the `startedAt`
+ * the CLI recorded. `expectedCwd` is the one further check binding makes —
+ * the file must describe the process where the process actually is — and it
+ * is a bind-time check only. A bound process that changes directory rewrites
+ * the same file with its new `cwd`; that is the same process reporting where
+ * it now is, and rejecting it would leave the row deaf for the rest of the
+ * session.
+ */
 function acceptSessionFile(
 	value: unknown,
 	process: AgentProcessSnapshot,
 	handle: AgentFileHandle,
 	relativePath: string,
+	expectedCwd: string | undefined,
 ): SessionFile | undefined {
 	const envelope = record(value);
 	if (!envelope) return undefined;
@@ -276,7 +289,8 @@ function acceptSessionFile(
 		200,
 	);
 	if (pid !== process.pid) return undefined;
-	if (!cwd || cwd !== process.cwd) return undefined;
+	if (!cwd || (expectedCwd !== undefined && cwd !== expectedCwd))
+		return undefined;
 	if (!sessionId || !SESSION_ID.test(sessionId)) return undefined;
 	const observedStart = process.startedAt
 		? Date.parse(process.startedAt)
@@ -336,10 +350,9 @@ async function journalFor(
 			signal: terminal.signal,
 		},
 	);
-	const admitted =
-		!derived
-			? undefined
-			: await admitJournal(terminal, derived, sessionId);
+	const admitted = !derived
+		? undefined
+		: await admitJournal(terminal, derived, sessionId);
 	return admitted ?? (await journalElsewhere(terminal, sessionId));
 }
 
@@ -408,6 +421,15 @@ const SWITCH_CHUNK: AgentFileWatchChunk = {
 	),
 };
 
+const RELOCATION_CHUNK: AgentFileWatchChunk = {
+	// The relocated journal is followed from its start, so the decoder must not
+	// join its first line to whatever partial line the old path left behind.
+	type: 'truncate',
+	bytes: new TextEncoder().encode(
+		`${JSON.stringify(JOURNAL_RELOCATION_RECORD)}\n`,
+	),
+};
+
 /**
  * The session file's own status word, as a record for the mapper. This is the
  * root's state: it is published on binding and again on every change, so the
@@ -432,9 +454,15 @@ type Lane =
 
 /**
  * Reports each time this process's own session file comes to name a session
- * other than the bound one, or to report a different status. The CLI rewrites the file in place rather than
+ * other than the bound one, to report a different status, or to report a
+ * different working directory. The CLI rewrites the file in place rather than
  * appending to it, so its directory is watched and only the one entry this pid
  * names is ever read from the listing.
+ *
+ * Each rewrite is held against the process the file bound with — pid and
+ * start time — and against nothing else. The cwd is what changes when the
+ * process enters a worktree, and a rewrite that reports a new one is exactly
+ * the report this stream exists to deliver.
  */
 async function* renamedSessions(
 	terminal: AgentTerminalContext,
@@ -451,6 +479,7 @@ async function* renamedSessions(
 		signal: terminal.signal,
 	});
 	let status = file.status;
+	let cwd = file.cwd;
 	try {
 		for await (const listing of watcher) {
 			const entry = listing.entries.find(
@@ -465,10 +494,17 @@ async function* renamedSessions(
 				file.process,
 				entry.handle,
 				file.relativePath,
+				undefined,
 			);
 			if (!named) continue;
-			if (named.sessionId === bound() && named.status === status) continue;
+			if (
+				named.sessionId === bound() &&
+				named.status === status &&
+				named.cwd === cwd
+			)
+				continue;
 			status = named.status;
+			cwd = named.cwd;
 			yield named;
 		}
 	} finally {
@@ -507,6 +543,8 @@ function rootSource(
 
 	async function* iterate(): AsyncGenerator<AgentFileWatchChunk> {
 		let bound = file.sessionId;
+		let cwd = file.cwd;
+		let followed = journal;
 		// The status goes first, ahead of any replayed record: it is the root's
 		// state, and it also tells every lane which launches are already history.
 		const opening = statusChunk(file);
@@ -561,8 +599,37 @@ function rootSource(
 				continue;
 			}
 			if (settled.session.sessionId === bound) {
-				// Same conversation, new status word — the only thing that moves
-				// the root between working, waiting and done.
+				// Same conversation. A new working directory means the CLI has
+				// moved the journal, history and all, to the project directory
+				// for that cwd; the row follows it there. The status goes out
+				// after the relocation so the replayed history is read against
+				// the file's current word, exactly as it is on binding.
+				if (settled.session.cwd !== cwd) {
+					const relocated = await journalFor(
+						terminal,
+						settled.session.cwd,
+						bound,
+					);
+					// A journal that cannot be resolved yet leaves the status lane
+					// running and the old cwd standing, so the file's next change
+					// looks again. The same journal found again — the CLI has not
+					// moved it, or the lookup found it where it was — is not a
+					// relocation.
+					if (relocated) cwd = settled.session.cwd;
+					if (relocated && relocated.handle.id !== followed.id) {
+						yield RELOCATION_CHUNK;
+						followed = relocated.handle;
+						await follower.dispose();
+						follower = await terminal.observation.files.follow(followed, {
+							signal: terminal.signal,
+						});
+						records = follower[Symbol.asyncIterator]();
+						recordsDone = false;
+						nextRecord = undefined;
+					}
+				}
+				// A new status word is the only thing that moves the root between
+				// working, waiting and done.
 				const changed = statusChunk(settled.session);
 				if (changed) yield changed;
 				continue;
@@ -575,8 +642,10 @@ function rootSource(
 			if (!moved) continue;
 			yield SWITCH_CHUNK;
 			bound = settled.session.sessionId;
+			cwd = settled.session.cwd;
+			followed = moved.handle;
 			await follower.dispose();
-			follower = await terminal.observation.files.follow(moved.handle, {
+			follower = await terminal.observation.files.follow(followed, {
 				signal: terminal.signal,
 			});
 			records = follower[Symbol.asyncIterator]();
