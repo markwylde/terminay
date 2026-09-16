@@ -120,13 +120,16 @@ import {
 } from './shared/auxiliaryRoutes';
 import {
 	clearSucceededFeatureFailure,
+	clearTransportFeatureFailure,
 	describeFeatureFailure,
 	describeServerFeatureFailure,
 	featureProjectRoot,
 	isCancelledFeatureFailure,
 	isOptionalObservationFailure,
+	isTransportFeatureFailure,
 	resolveProjectFeatureAuthority,
 } from './shared/featureQueryAuthority';
+import { isConnectionReconnecting } from './shared/connections/connectionRegistry';
 import { composeProjectTerminalClientContext } from './shared/projectTerminalClientContext';
 import { RemotePairingModal } from './shared/RemotePairingModal';
 import {
@@ -196,7 +199,10 @@ import {
 	agentBadgesForOtherServers,
 	useConnectionAgentSnapshots,
 } from './workspace/useConnectionAgentSnapshots';
-import { useConnections } from './shared/connections/ConnectionsContext';
+import {
+	useConnections,
+	useServerConnection,
+} from './shared/connections/ConnectionsContext';
 import {
 	type CompositionTabHandle,
 	compositionTabKey,
@@ -1417,6 +1423,14 @@ const ProjectWorkspace = forwardRef<
 		const featureFailureRef = useRef<
 			import('./shared/featureQueryAuthority').VisibleFeatureFailure | null
 		>(null);
+		// While the connection that owns this project is between transports,
+		// the reconnecting surface is the one message. A refresh that hit the
+		// dead transport is that same outage, not a feature failure to report.
+		const connectionReconnecting = isConnectionReconnecting(
+			useServerConnection(terminalClientContext?.serverId)?.phase,
+		);
+		const connectionReconnectingRef = useRef(connectionReconnecting);
+		connectionReconnectingRef.current = connectionReconnecting;
 		const reportFeatureFailure = useCallback(
 			(feature: 'Explorer' | 'Agents' | 'Git' | 'Settings', error: unknown) => {
 				if (featureAvailability.state === 'unavailable') {
@@ -1425,18 +1439,32 @@ const ProjectWorkspace = forwardRef<
 				}
 				if (isCancelledFeatureFailure(error)) return '';
 				if (isOptionalObservationFailure(error)) return '';
+				const transport = isTransportFeatureFailure(error);
+				if (transport && connectionReconnectingRef.current) return '';
 				const failure = describeFeatureFailure(
 					feature,
 					error,
 					featureAvailability.authority.scope,
 				);
 				const message = `${failure.title}. ${failure.detail}`;
-				featureFailureRef.current = { feature, message };
+				featureFailureRef.current = { feature, message, transport };
 				setErrorText(message);
 				return message;
 			},
 			[featureAvailability],
 		);
+		useEffect(() => {
+			// The transport can reject an in-flight refresh before the registry
+			// has flipped to reconnecting. Once it has, that notice is stale.
+			if (!connectionReconnecting) return;
+			const failure = featureFailureRef.current;
+			if (failure === null || !failure.transport) return;
+			setErrorText((current) => {
+				const next = clearTransportFeatureFailure(failure, current);
+				featureFailureRef.current = next;
+				return next === null ? null : current;
+			});
+		}, [connectionReconnecting]);
 		const clearFeatureFailure = useCallback((feature: 'Explorer' | 'Git') => {
 			const failure = featureFailureRef.current;
 			if (failure === null) return;
