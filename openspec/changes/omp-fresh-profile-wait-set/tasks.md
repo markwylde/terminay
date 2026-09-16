@@ -6,4 +6,4 @@
 ## 2. Checks
 
 - [x] 2.1 Run `openspec validate --all` and `npm run lint`. Verified by both reporting clean.
-- [ ] 2.2 Open the pull request on Gitea with `tea`, then read back every commit status on the head SHA and confirm each is `success` or `skipped`. Verified by the status listing itself.
+- [x] 2.2 Open the pull request on Gitea with `tea`, then read back every commit status on the head SHA and confirm each is `success` or `skipped`. Verified by the status listing itself.
