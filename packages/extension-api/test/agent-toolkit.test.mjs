@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  awaitedEnvironmentAncestor,
+  awaitedHomeAncestor,
   createAgentLifecyclePublisher,
   createJsonlRecordDecoder,
   selectAgentMapping,
@@ -127,4 +129,57 @@ test("agent harness stops between chunks and disposes an acquired watcher", asyn
   assert.equal(mapped, 1);
   assert.equal(disposed, true);
   await harness.dispose();
+});
+
+/** A terminal whose broker resolves only the directories listed. */
+function directoryTerminal(existing) {
+  const asked = [];
+  const resolve = (root) => async (relativePath) => {
+    asked.push(relativePath);
+    const path = relativePath === "." ? root : `${root}/${relativePath}`;
+    return existing.includes(path) ? { id: path } : undefined;
+  };
+  return {
+    asked,
+    terminal: {
+      signal: new AbortController().signal,
+      observation: {
+        files: {
+          resolveHomeDirectory: resolve("/home/test"),
+          resolveDirectoryRelativeToEnvironment: (relativePath, options) =>
+            resolve(`/env/${options.environmentVariable}`)(relativePath),
+        },
+      },
+    },
+  };
+}
+
+test("an awaited ancestor is the directory itself, else the nearest parent, else the root", async () => {
+  const full = directoryTerminal(["/home/test/.omp/agent/sessions", "/home/test/.omp/agent", "/home/test/.omp", "/home/test"]);
+  assert.deepEqual(await awaitedHomeAncestor(full.terminal, ".omp/agent/sessions"), { id: "/home/test/.omp/agent/sessions" });
+  assert.deepEqual(full.asked, [".omp/agent/sessions"], "an existing directory is asked for once");
+
+  const partial = directoryTerminal(["/home/test/.omp", "/home/test"]);
+  assert.deepEqual(await awaitedHomeAncestor(partial.terminal, ".omp/agent/sessions"), { id: "/home/test/.omp" });
+  assert.deepEqual(partial.asked, [".omp/agent/sessions", ".omp/agent", ".omp"], "parents are tried from the deepest up");
+
+  const fresh = directoryTerminal(["/home/test"]);
+  assert.deepEqual(await awaitedHomeAncestor(fresh.terminal, ".omp/agent/sessions"), { id: "/home/test" }, "a fresh home is watched itself");
+
+  const none = directoryTerminal([]);
+  assert.equal(await awaitedHomeAncestor(none.terminal, ".omp/agent/sessions"), undefined, "no home means nothing to watch");
+});
+
+test("an awaited environment ancestor falls back to the variable's own root", async () => {
+  const partial = directoryTerminal(["/env/XDG_STATE_HOME/omp", "/env/XDG_STATE_HOME"]);
+  assert.deepEqual(
+    await awaitedEnvironmentAncestor(partial.terminal, "XDG_STATE_HOME", "omp/agent/sessions"),
+    { id: "/env/XDG_STATE_HOME/omp" },
+  );
+  const fresh = directoryTerminal(["/env/XDG_STATE_HOME"]);
+  assert.deepEqual(
+    await awaitedEnvironmentAncestor(fresh.terminal, "XDG_STATE_HOME", "omp/agent/sessions"),
+    { id: "/env/XDG_STATE_HOME" },
+  );
+  assert.deepEqual(fresh.asked, ["omp/agent/sessions", "omp/agent", "omp", "."]);
 });
