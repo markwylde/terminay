@@ -116,7 +116,7 @@ test("This-server observation in the extension child binds a live writable journ
   `);
   await manager.start(descriptor);
 
-  const runtime = new ExtensionAgentRuntimeRegistry({ agents, hosts: manager, reobserveDebounceMs: 0 });
+  const runtime = new ExtensionAgentRuntimeRegistry({ agents, hosts: manager });
   runtime.register(identity);
   runtime.terminalStarted(identity, tree.shell.pid);
   assert.equal(runtime.foregroundProcessChanged(identity, "codex"), true);
