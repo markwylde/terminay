@@ -3,11 +3,13 @@ import { describe, it } from 'node:test';
 import { ClientError } from '@terminay/client-core';
 import {
 	clearSucceededFeatureFailure,
+	clearTransportFeatureFailure,
 	describeFeatureFailure,
 	describeServerFeatureFailure,
 	featureProjectRoot,
 	isCancelledFeatureFailure,
 	isOptionalObservationFailure,
+	isTransportFeatureFailure,
 	resolveProjectFeatureAuthority,
 } from './featureQueryAuthority';
 
@@ -92,6 +94,7 @@ describe('feature failures', () => {
 		const failure = {
 			feature: 'Explorer' as const,
 			message: 'Explorer could not be loaded. files.list failed.',
+			transport: false,
 		};
 		assert.equal(
 			clearSucceededFeatureFailure(failure, 'Explorer', failure.message),
@@ -154,6 +157,48 @@ describe('feature failures', () => {
 		});
 		assert.equal(isOptionalObservationFailure(error), true);
 		assert.equal(isCancelledFeatureFailure(error), false);
+	});
+
+	it('tells a transport outage apart from a feature refusal', () => {
+		const outage = Object.assign(new Error('git.worktrees.list failed'), {
+			operation: 'git.worktrees.list',
+			cause: new ClientError('disconnected', 'socket closed', { retryable: true }),
+		});
+		assert.equal(isTransportFeatureFailure(outage), true);
+		assert.equal(
+			isTransportFeatureFailure(new ClientError('unavailable', 'server is unavailable')),
+			true,
+		);
+		assert.equal(
+			isTransportFeatureFailure(new ClientError('deadline', 'operation deadline exceeded')),
+			true,
+		);
+		assert.equal(
+			isTransportFeatureFailure(new ClientError('forbidden', 'access denied')),
+			false,
+		);
+		assert.equal(isTransportFeatureFailure(new Error('read failed')), false);
+	});
+
+	it('clears only a transport-caused notice once the connection is reconnecting', () => {
+		const outage = {
+			feature: 'Git' as const,
+			message: 'Git is temporarily unavailable. Reconnect to server-1 and retry git.worktrees.list.',
+			transport: true,
+		};
+		const refusal = {
+			feature: 'Git' as const,
+			message: 'Git access was denied. The selected server account cannot access project project-1 on server server-1.',
+			transport: false,
+		};
+		assert.equal(clearTransportFeatureFailure(outage, outage.message), null);
+		assert.deepEqual(clearTransportFeatureFailure(refusal, refusal.message), refusal);
+		// A newer, unrelated message in the banner is not the outage's to clear.
+		assert.deepEqual(
+			clearTransportFeatureFailure(outage, 'Failed to open terminal.'),
+			outage,
+		);
+		assert.equal(clearTransportFeatureFailure(null, null), null);
 	});
 
 	it('treats a query deadline as a retryable outage', () => {
