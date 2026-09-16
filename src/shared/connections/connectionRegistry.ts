@@ -64,6 +64,18 @@ export type ConnectionPhase =
 	 * match. Its tabs stay in the strip, greyed, and receive no operations. */
 	| 'incompatible';
 
+/**
+ * The connection is between transports and the reconnecting surface is
+ * already saying so. A failure a surface collected from the dead transport
+ * is not a second thing to tell the user; it is the same thing, and the
+ * rebind onto the replacement clears it.
+ */
+export function isConnectionReconnecting(
+	phase: ConnectionPhase | undefined,
+): boolean {
+	return phase === 'reconnecting';
+}
+
 export type WorkspaceConnection = Readonly<{
 	profileId: string;
 	role: ConnectionRole;

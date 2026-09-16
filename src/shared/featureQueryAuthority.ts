@@ -87,7 +87,21 @@ export type FeatureFailure = Readonly<{
 export type VisibleFeatureFailure = Readonly<{
 	feature: 'Explorer' | 'Agents' | 'Git' | 'Settings';
 	message: string;
+	/** The operation failed because the connection itself was gone, not
+	 * because the feature refused it. Recovery, not the user, repairs it. */
+	transport: boolean;
 }>;
+
+/** Only a failure the transport caused is the reconnect's to explain. A
+ * feature refusal stays visible whatever the connection is doing. */
+export function clearTransportFeatureFailure(
+	failure: VisibleFeatureFailure | null,
+	visibleMessage: string | null,
+): VisibleFeatureFailure | null {
+	if (failure === null || !failure.transport) return failure;
+	if (visibleMessage !== failure.message) return failure;
+	return null;
+}
 
 /** Clear only the feature notice which a successful follow-up operation has
  * repaired. A success in Explorer must never erase a newer terminal, Git, or
@@ -215,16 +229,35 @@ function readOperation(error: unknown): string | undefined {
 	return typeof error.operation === 'string' ? error.operation : undefined;
 }
 
-/** A superseded or unmounted query must not occupy the workspace banner. */
-export function isCancelledFeatureFailure(error: unknown): boolean {
-	const source =
-		typeof error === 'object' &&
+function failureSource(error: unknown): unknown {
+	return typeof error === 'object' &&
 		error !== null &&
 		'cause' in error &&
 		error.cause !== undefined
-			? error.cause
-			: error;
+		? error.cause
+		: error;
+}
+
+/** A superseded or unmounted query must not occupy the workspace banner. */
+export function isCancelledFeatureFailure(error: unknown): boolean {
+	const source = failureSource(error);
 	return source instanceof ClientError && source.code === 'cancelled';
+}
+
+/**
+ * The connection, not the feature, failed: the client was closed, the server
+ * was unreachable, or the request outlived its deadline. While the owning
+ * connection is reconnecting these are the reconnect's to explain, and its
+ * overlay already does.
+ */
+export function isTransportFeatureFailure(error: unknown): boolean {
+	const source = failureSource(error);
+	return (
+		source instanceof ClientError &&
+		(source.code === 'disconnected' ||
+			source.code === 'unavailable' ||
+			source.code === 'deadline')
+	);
 }
 
 /** A transient `files.watch.*` or `files.folder-size.*` failure degrades the
