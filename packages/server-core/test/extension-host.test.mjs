@@ -244,7 +244,7 @@ test("a running manager reconciles four late agents and re-admits an existing Co
   const agents = new AgentStatusService({ activity }); await agents.start(); agents.register(identity);
   t.after(async () => { await agents.stop().catch(() => undefined); });
   const failures = [];
-  const runtime = new ExtensionAgentRuntimeRegistry({ agents, hosts: manager, reobserveDebounceMs: 0, onAdmissionFailure: (failure) => failures.push(failure) });
+  const runtime = new ExtensionAgentRuntimeRegistry({ agents, hosts: manager, onAdmissionFailure: (failure) => failures.push(failure) });
   manager.onContributionsChanged(() => { runtime.reobserveExistingTerminals(); });
   runtime.register(identity); runtime.terminalStarted(identity, 4242);
   assert.equal(runtime.foregroundProcessChanged(identity, "codex"), false, "no provider is installed yet");

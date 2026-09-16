@@ -47,7 +47,12 @@ test('a real Claude Code session shows working, done and waiting in the app', as
 
 	await selectSidebarGroup(mainWindow, 'agents');
 	const root = mainWindow.locator('.agents-sidebar__tree-item');
-	await expect(root).toBeVisible({ timeout: 90_000 });
+	// Trusting the folder sends the launch prompt, and the CLI writes its
+	// journal at once. The row must follow that write, not a later poll: the
+	// host re-runs discovery on the directory change the provider named, so
+	// the bound is the ramp's first interval plus the CLI's own startup, not
+	// the tens of seconds a backed-off sweep used to take.
+	await expect(root).toBeVisible({ timeout: 15_000 });
 	await expect(root.locator('.agents-sidebar__metadata')).toContainText('Claude Code');
 
 	// Green: the launch turn completes.

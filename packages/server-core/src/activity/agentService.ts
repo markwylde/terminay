@@ -194,9 +194,10 @@ export class AgentStatusService {
 	 * Observe the integration setting.
 	 *
 	 * The observation runtime needs this because turning the feature off has to
-	 * cancel its scheduled work, not just stop its results being recorded — its
-	 * topology sampling spawns a process per sample, so a runtime that never
-	 * hears about the change keeps paying the full cost of a disabled feature.
+	 * cancel its work, not just stop its results being recorded — an unbound
+	 * terminal holds directory watches whose first change re-runs observation,
+	 * and an observation spawns a process, so a runtime that never hears about
+	 * the change keeps paying the full cost of a disabled feature.
 	 */
 	observeIntegrationEnabled(
 		listener: (enabled: boolean) => void,

@@ -51,3 +51,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0021](./0021-measure-background-cost-in-spawns-not-parent-syscalls.md) | Measure idle background cost in child processes, not in the parent's syscalls | accepted | 2026-09-15 |
 | [0022](./0022-watch-do-not-poll.md) | Watch for changes; never poll for anything a watch can observe | accepted | 2026-09-15 |
 | [0023](./0023-server-owned-clipboard-scratch.md) | Materialise browser clipboard images in a server-owned scratch directory | accepted | 2026-09-15 |
+| [0024](./0024-providers-name-the-directories-they-await.md) | An agent provider that cannot bind names the directories it awaits; the host watches them and nothing else re-runs discovery | accepted | 2026-09-16 |
