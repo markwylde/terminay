@@ -633,6 +633,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			);
 			mobileTerminalModifiersRef.current = next;
 			setMobileTerminalModifiers(next);
+			// iOS still moves focus to the tapped button despite the cancelled
+			// pointerdown, which blurs xterm and drops the keyboard. Reclaim it
+			// inside the tap's activation, as the keys that send input do.
+			terminalRef.current?.focus();
 		},
 		[],
 	);
