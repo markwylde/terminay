@@ -174,7 +174,14 @@ export class FileWatchService {
       activeSubscription.debounceTimer = null
       const pendingEventType = activeSubscription.pendingEventType ?? 'change'
       activeSubscription.pendingEventType = null
-      void this.handleWatchEvent(resolvedPath, pendingEventType)
+      // A watched path can become unreadable (EACCES, ENOTDIR) between the
+      // event and the stat. That is this file's problem, not the application's:
+      // an unhandled rejection here would end the main process.
+      this.handleWatchEvent(resolvedPath, pendingEventType).catch((error: unknown) => {
+        console.warn(
+          `[Terminay file watch] ${pendingEventType} event could not be handled: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      })
     }, FILE_WATCH_DEBOUNCE_MS)
   }
 

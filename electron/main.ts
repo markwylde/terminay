@@ -1639,6 +1639,23 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 						...(diagnostic.deliberate === undefined
 							? {}
 							: { deliberate: diagnostic.deliberate }),
+						...(diagnostic.afterChildGone === undefined
+							? {}
+							: { afterChildGone: diagnostic.afterChildGone }),
+						...(diagnostic.errorCode === undefined
+							? {}
+							: { errorCode: diagnostic.errorCode }),
+						...(diagnostic.failedWrites === undefined
+							? {}
+							: { failedWrites: diagnostic.failedWrites }),
+						...(diagnostic.pendingCalls === undefined
+							? {}
+							: { pendingCalls: diagnostic.pendingCalls }),
+						...(diagnostic.activeAgentPublications === undefined
+							? {}
+							: {
+									activeAgentPublications: diagnostic.activeAgentPublications,
+								}),
 						...(diagnostic.error === undefined
 							? {}
 							: {
@@ -1653,7 +1670,12 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 						diagnostic.transition === 'failed' ||
 						diagnostic.transition === 'quarantined'
 							? 'error'
-							: 'info',
+							: diagnostic.transition === 'channel-write-failed' ||
+									diagnostic.transition === 'child-error' ||
+									(diagnostic.transition === 'child-exited' &&
+										diagnostic.deliberate !== true)
+								? 'warning'
+								: 'info',
 					source: 'local-server-extensions',
 				},
 				{ channel: 'lifecycle' },
