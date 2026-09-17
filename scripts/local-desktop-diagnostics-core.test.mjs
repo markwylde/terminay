@@ -176,6 +176,24 @@ test('a stack keeps the paths that say which code threw', () => {
 	assert.equal(sanitized.includes('journal directory vanished'), true);
 });
 
+test('a stack keeps module file URLs and still reduces other URLs', () => {
+	// An ES module names itself in a stack by file URL. A packaged main-process
+	// crash whose every frame read `<url:redacted>` could not be traced.
+	const stack = [
+		'Error: write EPIPE',
+		'    at target._send (node:internal/child_process:917:20)',
+		'    at aU.send (file:///Applications/Terminay.app/Contents/Resources/app.asar/dist-electron/main.js:412:9021)',
+		'    at load (file:///Users/alice/terminay/dist/provider.js?v=query-canary#fragment-canary:5:1)',
+		'    fetched from https://example.test/private?q=query-canary',
+	].join('\n');
+	const sanitized = sanitizeDiagnosticText(stack);
+	assert.match(sanitized, /file:\/\/\/Applications\/Terminay\.app\/Contents\/Resources\/app\.asar\/dist-electron\/main\.js:412:9021/u);
+	assert.match(sanitized, /file:\/\/\/Users\/alice\/terminay\/dist\/provider\.js/u);
+	assert.equal(sanitized.includes('query-canary'), false);
+	assert.equal(sanitized.includes('fragment-canary'), false);
+	assert.match(sanitized, /fetched from <url:redacted>/u);
+});
+
 test('secret-shaped fields are recursively redacted even when values have no label', () => {
 	const event = normalizeDiagnosticEvent(
 		input({

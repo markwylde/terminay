@@ -21,6 +21,11 @@ export type ExtensionHostTransition =
 	| 'child-exited'
 	/** A frame could not be written because the child's channel had closed. */
 	| 'channel-closed'
+	/** The operating system refused a frame the channel had accepted, the
+	 * first time for this child; later refusals are counted on its exit. */
+	| 'channel-write-failed'
+	/** The child process emitted an `error` event (spawn, kill, or write). */
+	| 'child-error'
 	/** The host killed the child itself, rather than observing it exit. */
 	| 'child-terminated'
 	/** A failure was counted against the crash window. */
@@ -67,6 +72,14 @@ export interface ExtensionHostDiagnostic {
 	/** True for a failure discovered after this incarnation's child had gone,
 	 * recorded for the reader but not counted again against the threshold. */
 	readonly afterChildGone?: boolean;
+	/** The system error code, such as `EPIPE`, when the error carried one. */
+	readonly errorCode?: string;
+	/** Frames the operating system refused for this child before it exited. */
+	readonly failedWrites?: number;
+	/** Calls to the child still awaiting a reply when it exited. */
+	readonly pendingCalls?: number;
+	/** Lifecycle publications still being ingested when the child exited. */
+	readonly activeAgentPublications?: number;
 }
 
 export type ExtensionHostDiagnosticListener = (
