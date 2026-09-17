@@ -614,7 +614,12 @@ function runCli(options: {
 		child.stderr.on('data', (chunk) => {
 			stderr = append(stderr, chunk);
 		});
-		child.once('error', (error) => finish(error));
+		child.on('error', (error) => finish(error));
+		// A CLI that exits before reading its whole prompt (signed out, a bad
+		// flag) fails the write with EPIPE on stdin, not on the child. Unheard,
+		// that error is uncaught in the process running this; `close` still
+		// reports the exit, which is the useful account of what went wrong.
+		child.stdin.on('error', () => undefined);
 		child.once('close', (code, signal) => {
 			if (tooLarge)
 				finish(

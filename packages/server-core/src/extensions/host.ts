@@ -173,6 +173,8 @@ export class ExtensionHost {
 	private deathCounted = false;
 	/** Whether an exit status has already been observed for this incarnation. */
 	private exitRecorded = false;
+	/** Writes the operating system refused after the channel accepted them. */
+	private failedWrites = 0;
 	private readonly limits: Required<ExtensionHostLimits>;
 	private readonly now: () => number;
 
@@ -210,6 +212,7 @@ export class ExtensionHost {
 		this.fatalReport = undefined;
 		this.deathCounted = false;
 		this.exitRecorded = false;
+		this.failedWrites = 0;
 		this.setState({
 			extensionId: this.extensionId,
 			state: 'starting',
@@ -231,9 +234,11 @@ export class ExtensionHost {
 			consecutiveFailures: this.state.consecutiveCrashes,
 		});
 		child.on('message', (message) => this.receive(message));
-		child.once('error', (error) => {
-			if (this.child === child) this.childFailed(error);
-		});
+		// `on`, not `once`: a ChildProcess emits `error` for every failed write or
+		// kill, and one with no listener is an uncaught exception in the process
+		// that owns it. Here that is Terminay's main process, which aborts on one,
+		// so a single extension dying mid-burst took the whole application down.
+		child.on('error', (error) => this.childError(child, error));
 		child.once('exit', (code, signal) => {
 			if (this.child === child) this.childExited(code, signal);
 		});
@@ -528,8 +533,17 @@ export class ExtensionHost {
 			return 'too-large';
 		if (this.child === undefined || !this.child.connected)
 			return 'channel-closed';
+		const child = this.child;
 		try {
-			return this.child.send(frame) ? 'sent' : 'channel-closed';
+			// `false` only means the channel's write queue is long; the frame is
+			// queued and will be delivered. A write the operating system refuses
+			// later (EPIPE when the child has died) arrives at the callback, which
+			// keeps it from being emitted as an `error` event instead.
+			child.send(frame, (error) => {
+				if (error !== null && error !== undefined)
+					this.channelWriteFailed(child, error);
+			});
+			return 'sent';
 		} catch {
 			// `send` throws once the channel is closing, which is the same fact.
 			return 'channel-closed';
@@ -1060,8 +1074,42 @@ export class ExtensionHost {
 		this.terminateChild();
 		this.recordFailure(new Error(message));
 	}
-	private childFailed(error: Error): void {
-		if (!this.stopping) this.recordFailure(error);
+	/**
+	 * An `error` event from a child. The first one for the current incarnation
+	 * is a failure of that child; any after it, or from a child already
+	 * replaced, is recorded so the reader can see it and is otherwise inert.
+	 */
+	private childError(child: ChildProcess, error: Error): void {
+		if (this.child === child && !this.deathCounted) {
+			this.recordDiagnostic('child-error', {
+				error: extensionErrorDetail(error),
+				...errorCodeDetail(error),
+			});
+			if (!this.stopping) this.recordFailure(error);
+			return;
+		}
+		this.recordDiagnostic('child-error', {
+			error: extensionErrorDetail(error),
+			...errorCodeDetail(error),
+			afterChildGone: true,
+		});
+	}
+
+	/**
+	 * A frame the channel accepted and the operating system then refused. It
+	 * means the child has gone; its exit is handled by the path that owns it.
+	 * The first refusal is recorded with its cause, and the rest are counted
+	 * onto the exit record rather than flooding the history.
+	 */
+	private channelWriteFailed(child: ChildProcess, error: Error): void {
+		if (this.child !== child) return;
+		this.failedWrites += 1;
+		if (this.failedWrites > 1) return;
+		this.recordDiagnostic('channel-write-failed', {
+			consecutiveFailures: this.state.consecutiveCrashes,
+			error: extensionErrorDetail(error),
+			...errorCodeDetail(error),
+		});
 	}
 	private childExited(code: number | null, signal: string | null): void {
 		this.child = undefined;
@@ -1072,6 +1120,9 @@ export class ExtensionHost {
 			exitCode: code,
 			signal,
 			deliberate: this.stopping,
+			...(this.failedWrites === 0 ? {} : { failedWrites: this.failedWrites }),
+			pendingCalls: this.pending.size,
+			activeAgentPublications: this.agentPublicationsInFlight,
 			...(this.fatalReport === undefined
 				? {}
 				: {
@@ -1227,12 +1278,20 @@ export class ExtensionHost {
 					: { error: this.reportedFatalDetail() }),
 			});
 		child.removeAllListeners();
+		// A write queued before this point can still fail, and `kill` itself can.
+		// Either arrives as an `error` event, which must never go unheard.
+		child.on('error', (error) => this.childError(child, error));
 		child.kill('SIGKILL');
 	}
 	private rejectPending(error: Error): void {
 		for (const id of [...this.pending.keys()])
 			this.finishPending(id, undefined, error);
 	}
+}
+
+function errorCodeDetail(error: Error): { errorCode?: string } {
+	const code = (error as NodeJS.ErrnoException).code;
+	return typeof code === 'string' ? { errorCode: code } : {};
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
