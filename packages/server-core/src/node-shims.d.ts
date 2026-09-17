@@ -44,6 +44,7 @@ declare module 'node:child_process' {
 	interface ChildInput {
 		end(data?: string | Uint8Array): void;
 		write(data: string | Uint8Array): boolean;
+		on(event: 'error', listener: (error: NodeJS.ErrnoException) => void): this;
 	}
 	interface ChildStream {
 		on(event: 'data', listener: (chunk: Buffer | string) => void): this;
@@ -54,8 +55,12 @@ declare module 'node:child_process' {
 		readonly stderr: ChildStream;
 		readonly connected: boolean;
 		kill(signal?: string): boolean;
-		send(message: unknown): boolean;
+		send(
+			message: unknown,
+			callback?: (error: NodeJS.ErrnoException | null) => void,
+		): boolean;
 		on(event: 'message', listener: (message: unknown) => void): this;
+		on(event: 'error', listener: (error: NodeJS.ErrnoException) => void): this;
 		once(
 			event: 'error',
 			listener: (error: NodeJS.ErrnoException) => void,
