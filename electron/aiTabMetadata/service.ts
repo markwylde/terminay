@@ -390,6 +390,9 @@ function runCodexExec(args: string[], options: { cwd: string; env: NodeJS.Proces
       child.kill('SIGTERM')
     }, options.timeout)
 
+    // stdin is not the child: a write it refuses (EPIPE when the CLI exits
+    // early) is its own `error` event, uncaught unless heard. `close` settles.
+    child.stdin.on('error', () => undefined)
     child.stdin.end()
 
     const appendOutput = (current: string, chunk: Buffer) => {
@@ -528,6 +531,10 @@ function runClaudeCodePrint(
       child.kill('SIGTERM')
     }, options.timeout)
 
+    // stdin is not the child: a write it refuses (EPIPE when the CLI exits
+    // before reading the prompt) is its own `error` event, uncaught unless
+    // heard. `close` settles with the CLI's own account.
+    child.stdin.on('error', () => undefined)
     child.stdin.end(prompt)
 
     const appendOutput = (current: string, chunk: Buffer) => {
