@@ -191,6 +191,13 @@ export class ParakeetRuntime {
 					this.pending.delete(id);
 					reject(new Error('On-device Parakeet transcription timed out.'));
 				}, WORKER_TIMEOUT_MS);
+				// The worker can die during the conversion above, and `stop` has
+				// then already rejected everything pending; do not write to it.
+				if (this.child !== child) {
+					clearTimeout(timer);
+					reject(new Error('The on-device Parakeet worker exited.'));
+					return;
+				}
 				this.pending.set(id, { reject, resolve, timer });
 				child.stdin.write(
 					`${JSON.stringify({ id, audioPath: convertedPath })}\n`,
@@ -411,7 +418,10 @@ export class ParakeetRuntime {
 						),
 					);
 			});
-			child.once('error', (error) => fail(error));
+			child.on('error', (error) => fail(error));
+			child.stdin.on('error', (error) =>
+				fail(new Error(`The on-device Parakeet worker stopped reading: ${error.message}`)),
+			);
 			child.once('exit', () =>
 				fail(new Error('The on-device Parakeet worker exited.')),
 			);

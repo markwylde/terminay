@@ -445,7 +445,7 @@ async function admitAgentTerminal(frame: HostFrame): Promise<void> {
 				},
 			})
 		)
-			process.exit(73);
+			exitUndeliverable();
 	} catch (error) {
 		agentTerminals.delete(contextId);
 		failure(frame.id, error);
@@ -492,7 +492,7 @@ async function cancelAgentTerminal(frame: HostFrame): Promise<void> {
 				payload: { contextId, alreadyCancelled: true },
 			})
 		)
-			process.exit(73);
+			exitUndeliverable();
 		return;
 	}
 	terminal.controller.abort();
@@ -505,7 +505,7 @@ async function cancelAgentTerminal(frame: HostFrame): Promise<void> {
 			payload: { contextId },
 		})
 	)
-		process.exit(73);
+		exitUndeliverable();
 }
 
 async function drainAgentTerminals(frame: HostFrame): Promise<void> {
@@ -519,7 +519,7 @@ async function drainAgentTerminals(frame: HostFrame): Promise<void> {
 			payload: { drained: true },
 		})
 	)
-		process.exit(73);
+		exitUndeliverable();
 }
 
 /**
@@ -1077,7 +1077,7 @@ async function invokeLanguage(frame: HostFrame): Promise<void> {
 				payload: result,
 			})
 		)
-			process.exit(73);
+			exitUndeliverable();
 	} catch (error) {
 		failure(frame.id, error);
 	} finally {
@@ -1105,7 +1105,7 @@ async function invoke(frame: HostFrame): Promise<void> {
 				payload: result,
 			})
 		)
-			process.exit(73);
+			exitUndeliverable();
 	} catch (error) {
 		failure(frame.id, error);
 	} finally {
@@ -1151,7 +1151,7 @@ function brokerRequest(
 			})
 		) {
 			brokerCalls.delete(id);
-			reject(new Error('broker IPC send failed'));
+			reject(new Error(`broker IPC send failed: ${lastSendFailure}`));
 		}
 	});
 }
@@ -1165,24 +1165,48 @@ function agentRequest(
 		brokerCalls.set(id, { resolve, reject });
 		if (!send({ protocolVersion: 1, kind, id, payload })) {
 			brokerCalls.delete(id);
-			reject(new Error('agent IPC send failed'));
+			reject(new Error(`agent IPC send failed: ${lastSendFailure}`));
 		}
 	});
 }
 
+/**
+ * End a child whose reply to the host could not be written. The host is owed
+ * the reply, so carrying on would leave it waiting; the fatal report says
+ * which frame was refused and why, where an exit code alone said nothing.
+ */
+function exitUndeliverable(): void {
+	reportFatal(new Error(`host IPC send failed: ${lastSendFailure}`), 73);
+}
+
+/** Why the last refused `send` was refused, so the error it becomes says so. */
+let lastSendFailure = 'not sent';
+
 function send(frame: ChildFrame): boolean {
 	const safe = jsonIpcValue(frame);
-	if (
-		safe === undefined ||
-		frameByteLength(safe) > MAX_MESSAGE_BYTES ||
-		typeof process.send !== 'function' ||
-		!process.connected
-	)
+	const refuse = (reason: string): false => {
+		lastSendFailure = `${frame.kind} frame ${reason}`;
 		return false;
+	};
+	if (safe === undefined) return refuse('is not JSON-serializable');
+	const bytes = frameByteLength(safe);
+	if (bytes > MAX_MESSAGE_BYTES)
+		return refuse(`is ${bytes} bytes, over the ${MAX_MESSAGE_BYTES} byte limit`);
+	if (typeof process.send !== 'function' || !process.connected)
+		return refuse('has no connected host channel');
 	try {
-		return process.send(safe as ChildFrame);
-	} catch {
-		return false;
+		// `process.send` returns false when the channel's write queue is long, not
+		// when the frame was lost: it is queued and still delivered. Treating that
+		// as a failure killed an agent child whenever it published a burst of
+		// lifecycle events faster than the host drained them. A write the
+		// operating system later refuses reaches the callback, and the
+		// `disconnect` handler ends this child when the host has gone.
+		process.send(safe as ChildFrame, undefined, undefined, () => undefined);
+		return true;
+	} catch (error) {
+		return refuse(
+			`was rejected by process.send: ${error instanceof Error ? error.message : String(error)}`,
+		);
 	}
 }
 
