@@ -1260,7 +1260,17 @@ export class RemoteAccessService {
 					: null,
 				reason,
 			})
-			.then(() => this.emitStatus());
+			.then(
+				() => this.emitStatus(),
+				(error: unknown) => {
+					// The connection is already gone; a failed audit write (a full
+					// disk, unwritable user data) must not become an unhandled
+					// rejection, which ends the main process.
+					console.warn(
+						`[Terminay remote] connection-closed audit write failed: ${error instanceof Error ? error.message : String(error)}`,
+					);
+				},
+			);
 		this.emitStatus();
 	}
 

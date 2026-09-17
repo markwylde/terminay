@@ -100,6 +100,8 @@ export const DIAGNOSTIC_EVENT_NAMES = [
 	'local-server.extension.ready',
 	'local-server.extension.child-exited',
 	'local-server.extension.channel-closed',
+	'local-server.extension.channel-write-failed',
+	'local-server.extension.child-error',
 	'local-server.extension.child-terminated',
 	'local-server.extension.failed',
 	'local-server.extension.restart-scheduled',
@@ -184,8 +186,13 @@ const SECRET_FIELD_PATTERN =
 export function sanitizeDiagnosticText(value: string): string {
 	let result = value;
 	result = result.replace(
-		/\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"']+/gi,
-		'<url:redacted>',
+		/\b([a-z][a-z0-9+.-]*):\/\/[^\s<>"']+/gi,
+		(url, scheme: string) =>
+			// A `file:` URL is a filesystem path in URL form, and it is how an ES
+			// module names itself in a stack. Reducing it left every frame of a
+			// packaged main-process crash reading `<url:redacted>`. Its path is
+			// kept, and a query or fragment is still dropped.
+			scheme.toLowerCase() === 'file' ? url.replace(/[?#].*$/u, '') : '<url:redacted>',
 	);
 	for (const [pattern, replacement] of secretPatterns)
 		result = result.replace(pattern, replacement);

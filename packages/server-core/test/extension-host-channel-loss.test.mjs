@@ -128,3 +128,90 @@ test("a child dying with publications in flight counts one death, not one per ac
   );
   await host.stop();
 });
+
+test("a write refused after the child has gone and repeated child errors never become uncaught", async () => {
+  const value = await fixture();
+  const records = [];
+  const host = new ExtensionHost(value.descriptor.extensionId, {
+    broker: { async request() {} },
+    childEntrypoint: value.childEntrypoint,
+    onDiagnostic: (record) => records.push(record),
+    agents: { async observe() { return {}; }, async publish() { return { acceptedEventCount: 1 }; } },
+  });
+  await host.start(value.descriptor);
+  const child = host["child"];
+  // The incident: the channel still reads as connected, the peer has died, and
+  // the operating system refuses each queued write with EPIPE. Node reports
+  // that on the callback when there is one, or as an `error` event otherwise.
+  child.send = (_frame, callback) => {
+    const error = Object.assign(new Error("write EPIPE"), { code: "EPIPE", errno: -32, syscall: "write" });
+    if (typeof callback === "function") process.nextTick(callback, error);
+    else process.nextTick(() => child.emit("error", error));
+    return true;
+  };
+  for (let index = 0; index < 5; index += 1)
+    host["send"]({ protocolVersion: 1, kind: "agent.lifecycle.ack", id: `ack-${index}`, payload: {} });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  // A ChildProcess emits `error` once per failed write or kill. An emitter
+  // with no listener throws, which in Terminay's main process is an abort.
+  const error = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+  assert.doesNotThrow(() => child.emit("error", error));
+  assert.doesNotThrow(() => child.emit("error", error));
+
+  const refused = records.filter((record) => record.transition === "channel-write-failed");
+  assert.equal(refused.length, 1, "the first refused write is recorded, the rest are counted");
+  assert.equal(refused[0].errorCode, "EPIPE");
+  const errors = records.filter((record) => record.transition === "child-error");
+  assert.equal(errors.length, 2, "every child error is recorded");
+  assert.equal(errors[0].errorCode, "EPIPE");
+  assert.equal(
+    records.filter((record) => record.transition === "failed" && record.afterChildGone !== true).length,
+    1,
+    "repeated errors from one child count as one failure",
+  );
+
+  process.kill(child.pid, "SIGKILL");
+  await waitFor(
+    () => records.some((record) => record.transition === "child-exited"),
+    "the child never exited",
+  );
+  const exited = records.find((record) => record.transition === "child-exited");
+  assert.equal(exited.failedWrites, 5, "the exit record carries how many writes the child never received");
+  assert.equal(typeof exited.pendingCalls, "number");
+  await host.stop();
+});
+
+test("an extension child keeps running when its channel's write queue is long", async () => {
+  const value = await fixture();
+  // Run the real child, but make `process.send` report a long write queue the
+  // way Node does under a burst: the frame is queued and delivered, and the
+  // call returns false. The child used to treat that as a lost frame and exit.
+  const wrapper = join(value.descriptor.packageRoot, "backlogged-child.mjs");
+  await writeFile(
+    wrapper,
+    `const send = process.send.bind(process);
+process.send = (...args) => { send(...args); return false; };
+await import(${JSON.stringify(new URL("../dist/extensions/child.js", import.meta.url).href)});
+`,
+    { mode: 0o600 },
+  );
+  await writeFile(
+    join(value.descriptor.packageRoot, "extension.js"),
+    "export function activate() { return { methods: { echo(input) { return input; } } }; }",
+    { mode: 0o600 },
+  );
+  const records = [];
+  const host = new ExtensionHost("example.backlog", {
+    broker: { async request() {} },
+    childEntrypoint: wrapper,
+    onDiagnostic: (record) => records.push(record),
+  });
+  const { agentProviders: _unused, ...descriptor } = value.descriptor;
+  await host.start({ ...descriptor, extensionId: "example.backlog", permissions: [] });
+  for (let index = 0; index < 5; index += 1)
+    assert.equal(await host.invoke({ method: "echo", input: index }), index);
+  assert.equal(host.status().state, "running");
+  assert.equal(records.some((record) => record.transition === "child-exited"), false, "the child never exited");
+  await host.stop();
+});
