@@ -37,12 +37,52 @@ test('touch focus session is limited to a trusted touch pointer or the legacy to
 	assert.equal(interaction.shouldFocusTerminalForTouchStart(false), true);
 });
 
+test('a mobile modifier taps through one-shot, locked, and off, like iOS Shift', () => {
+	const { EMPTY_TERMINAL_MOBILE_MODIFIERS: empty } = interaction;
+	const once = interaction.advanceTerminalMobileModifier(empty, 'ctrl');
+	const locked = interaction.advanceTerminalMobileModifier(once, 'ctrl');
+	const off = interaction.advanceTerminalMobileModifier(locked, 'ctrl');
+
+	assert.deepEqual(once, { alt: 'off', ctrl: 'once', shift: 'off' });
+	assert.deepEqual(locked, { alt: 'off', ctrl: 'locked', shift: 'off' });
+	assert.deepEqual(off, empty);
+	assert.equal(interaction.hasTerminalMobileModifier(off), false);
+	assert.equal(interaction.applyTerminalMobileModifiers('c', locked), '\x03');
+});
+
+test('an input spends a one-shot modifier and leaves a locked one on', () => {
+	const { EMPTY_TERMINAL_MOBILE_MODIFIERS: empty } = interaction;
+	const shiftOnce = interaction.advanceTerminalMobileModifier(empty, 'shift');
+	const ctrlLocked = interaction.advanceTerminalMobileModifier(
+		interaction.advanceTerminalMobileModifier(shiftOnce, 'ctrl'),
+		'ctrl',
+	);
+
+	assert.deepEqual(interaction.consumeTerminalMobileModifiers(ctrlLocked), {
+		alt: 'off',
+		ctrl: 'locked',
+		shift: 'off',
+	});
+	assert.deepEqual(
+		interaction.consumeTerminalMobileModifiers(shiftOnce),
+		empty,
+	);
+	let modifiers = ctrlLocked;
+	const sent = [];
+	for (const key of 'cd') {
+		sent.push(interaction.applyTerminalMobileModifiers(key, modifiers));
+		modifiers = interaction.consumeTerminalMobileModifiers(modifiers);
+	}
+	// Shift spent on the first key; the locked Ctrl applies to both.
+	assert.deepEqual(sent, ['\x03', '\x04']);
+});
+
 test('mobile modifiers are one-shot state that derives terminal-compatible bytes', () => {
 	const { EMPTY_TERMINAL_MOBILE_MODIFIERS: empty } = interaction;
-	const ctrl = interaction.toggleTerminalMobileModifier(empty, 'ctrl');
-	const ctrlAlt = interaction.toggleTerminalMobileModifier(ctrl, 'alt');
+	const ctrl = interaction.advanceTerminalMobileModifier(empty, 'ctrl');
+	const ctrlAlt = interaction.advanceTerminalMobileModifier(ctrl, 'alt');
 
-	assert.deepEqual(ctrl, { alt: false, ctrl: true, shift: false });
+	assert.deepEqual(ctrl, { alt: 'off', ctrl: 'once', shift: 'off' });
 	assert.equal(interaction.hasTerminalMobileModifier(empty), false);
 	assert.equal(interaction.hasTerminalMobileModifier(ctrlAlt), true);
 	assert.equal(interaction.applyTerminalMobileModifiers('c', ctrl), '\x03');
@@ -67,9 +107,9 @@ test('terminal-generated reports do not consume a latched mobile modifier', () =
 
 test('mobile accessory arrows and reverse tab use xterm modifier sequences', () => {
 	const { EMPTY_TERMINAL_MOBILE_MODIFIERS: empty } = interaction;
-	const shift = interaction.toggleTerminalMobileModifier(empty, 'shift');
-	const ctrl = interaction.toggleTerminalMobileModifier(empty, 'ctrl');
-	const alt = interaction.toggleTerminalMobileModifier(empty, 'alt');
+	const shift = interaction.advanceTerminalMobileModifier(empty, 'shift');
+	const ctrl = interaction.advanceTerminalMobileModifier(empty, 'ctrl');
+	const alt = interaction.advanceTerminalMobileModifier(empty, 'alt');
 
 	assert.equal(
 		interaction.applyTerminalMobileModifiers('\x1b[A', empty),
