@@ -53,6 +53,18 @@ test('mobile modifiers are one-shot state that derives terminal-compatible bytes
 	);
 });
 
+test('terminal-generated reports do not consume a latched mobile modifier', () => {
+	assert.equal(interaction.isTerminalMobileModifierTarget('c'), true);
+	assert.equal(interaction.isTerminalMobileModifierTarget('hello '), true);
+	assert.equal(interaction.isTerminalMobileModifierTarget('\x1b[I'), false);
+	assert.equal(interaction.isTerminalMobileModifierTarget('\x1b[O'), false);
+	assert.equal(
+		interaction.isTerminalMobileModifierTarget('\x1b[<0;3;4M'),
+		false,
+	);
+	assert.equal(interaction.isTerminalMobileModifierTarget(''), false);
+});
+
 test('mobile accessory arrows and reverse tab use xterm modifier sequences', () => {
 	const { EMPTY_TERMINAL_MOBILE_MODIFIERS: empty } = interaction;
 	const shift = interaction.toggleTerminalMobileModifier(empty, 'shift');
