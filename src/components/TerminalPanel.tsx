@@ -94,6 +94,7 @@ import {
 	createTerminalTapSession,
 	EMPTY_TERMINAL_MOBILE_MODIFIERS,
 	hasTerminalMobileModifier,
+	isTerminalMobileModifierTarget,
 	shouldFocusTerminalForTouchPointer,
 	shouldFocusTerminalForTouchStart,
 	type TerminalMobileModifier,
@@ -2051,7 +2052,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
 		const dataDisposer = terminal.onData((data) => {
 			const modifiers = mobileTerminalModifiersRef.current;
-			if (hasTerminalMobileModifier(modifiers)) {
+			if (
+				hasTerminalMobileModifier(modifiers) &&
+				isTerminalMobileModifierTarget(data)
+			) {
 				resetMobileTerminalModifiers();
 				writePanelInput(applyTerminalMobileModifiers(data, modifiers));
 				return;
