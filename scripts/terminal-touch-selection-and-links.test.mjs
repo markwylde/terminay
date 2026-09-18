@@ -264,47 +264,55 @@ test('a hold outside mouse tracking leaves the selection service untouched', asy
   assert.deepEqual(calls, [])
 })
 
-test('a tap replays the move and release xterm needs to activate a link', async () => {
+test('a tap resolves the link under the finger and opens it before returning', async () => {
   const { touchSelection } = await loadModules()
   fakeMouseEvent()
   const { dispatched, element } = recordingElement()
-  const deferred = []
+  const opened = []
+  let hovered = null
+  const hoveringElement = {
+    ...element,
+    dispatchEvent: (event) => {
+      element.dispatchEvent(event)
+      // Stand in for xterm's synchronous link providers: only the move to the
+      // finger lands on the link.
+      hovered = event.clientX === 12 && event.clientY === 34 ? 'https://example.com/a' : null
+      return true
+    },
+  }
 
   touchSelection.activateTerminalLinkAtTouch({
-    afterFrame: (run) => deferred.push(run),
+    linkUnderPointer: () => hovered,
+    open: (uri) => opened.push(uri),
     point: point(12, 34),
-    screenElement: element,
+    screenElement: hoveringElement,
   })
 
-  assert.deepEqual(dispatched, [['screen', 'mousemove', 0]])
-  // Link resolution is asynchronous, so the release must wait a frame or the
-  // linkifier has nothing to activate yet.
-  for (const run of deferred) run()
+  // Opened synchronously, inside the tap's user activation, or iOS blocks it.
+  assert.deepEqual(opened, ['https://example.com/a'])
+  // Two off-grid moves first so the last one always resolves fresh, and no
+  // mousedown or mouseup that a mouse-tracking program could see as a click.
   assert.deepEqual(dispatched, [
     ['screen', 'mousemove', 0],
-    ['screen', 'mouseup', 1],
+    ['screen', 'mousemove', 0],
+    ['screen', 'mousemove', 0],
   ])
 })
 
-test('a tap activates a link inside a mouse-tracking program too', async () => {
+test('a tap off any link opens nothing', async () => {
   const { touchSelection } = await loadModules()
   fakeMouseEvent()
-  const { dispatched, element } = recordingElement()
+  const { element } = recordingElement()
+  const opened = []
 
-  // An interactive program having mouse tracking on is the common case — it is
-  // where the links worth tapping are. Neither synthesised event reaches the
-  // program as a button report: xterm binds its mouse-up reporting inside its
-  // own mousedown handler, and no mousedown is synthesised.
   touchSelection.activateTerminalLinkAtTouch({
-    afterFrame: (run) => run(),
+    linkUnderPointer: () => null,
+    open: (uri) => opened.push(uri),
     point: point(12, 34),
     screenElement: element,
   })
 
-  assert.deepEqual(dispatched, [
-    ['screen', 'mousemove', 0],
-    ['screen', 'mouseup', 1],
-  ])
+  assert.deepEqual(opened, [])
 })
 
 test('the copy pill stays inside the panel, and below the finger when the top is out of room', async () => {
