@@ -855,6 +855,7 @@ export class ServerTerminalAuthority {
 						shellProfiles: options.shellProfiles,
 						terminalProfiles: options.shellProfiles,
 						terminalLaunchEnvironment: {
+							FORCE_HYPERLINK: '1',
 							...process.env,
 							COLORTERM: 'truecolor',
 						},
