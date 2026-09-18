@@ -509,6 +509,25 @@ test.describe('terminal behavior', () => {
 		).toContainText(`${marker}=truecolor`);
 	});
 
+	test('new terminals ask hyperlink-aware tools for OSC 8 links', async ({
+		mainWindow,
+	}) => {
+		const marker = 'terminay-force-hyperlink';
+
+		await createTerminal(mainWindow);
+		await expect(mainWindow.locator('.terminal-tab-content')).toHaveCount(2);
+		await writeToTerminal(
+			mainWindow,
+			`printf '\\r\\n${marker}=%s\\r\\n' "\${FORCE_HYPERLINK-unset}"\r`,
+		);
+
+		await expect(
+			mainWindow.locator(
+				'.project-workspace--active .terminal-panel .xterm-rows',
+			),
+		).toContainText(`${marker}=1`);
+	});
+
 	test('selects terminal text with a plain drag', async ({
 		electronApp,
 		mainWindow,

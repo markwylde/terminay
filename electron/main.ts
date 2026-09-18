@@ -2440,6 +2440,10 @@ function getTerminalSpawnEnv(capability?: {
 	// xterm.js renders true color, but many CLI tools only enable 24-bit output
 	// when COLORTERM explicitly advertises it.
 	env.COLORTERM = 'truecolor';
+	// xterm.js follows OSC 8 hyperlinks, which keep a URL whole when a program
+	// hard-wraps it across rows. Tools using supports-hyperlinks, Claude Code
+	// among them, only emit them for terminals they recognise or when told to.
+	env.FORCE_HYPERLINK = process.env.FORCE_HYPERLINK ?? '1';
 	Object.assign(env, getTerminalControlEnv(capability));
 
 	if (process.platform !== 'darwin') {
