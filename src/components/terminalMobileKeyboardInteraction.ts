@@ -35,6 +35,18 @@ export function hasTerminalMobileModifier(
 	return modifiers.alt || modifiers.ctrl || modifiers.shift;
 }
 
+/**
+ * Whether a chunk xterm emitted through onData is something the user typed,
+ * and so should consume a latched modifier. A software keyboard cannot type
+ * ESC, so data that starts with one is a report xterm generated itself, such
+ * as the focus-in report an app that enabled DECSET 1004 gets when a tap on
+ * the accessory row blurs and refocuses the terminal. Letting that report take
+ * the modifier left the next typed key unmodified.
+ */
+export function isTerminalMobileModifierTarget(data: string): boolean {
+	return data.length > 0 && !data.startsWith('\x1b');
+}
+
 export function toggleTerminalMobileModifier(
 	modifiers: TerminalMobileModifiers,
 	modifier: TerminalMobileModifier,
