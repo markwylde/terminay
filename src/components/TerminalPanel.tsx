@@ -90,7 +90,9 @@ import {
 } from './terminalFocusInteraction';
 import { createTerminalLinkInteraction } from './terminalLinkInteraction';
 import {
+	advanceTerminalMobileModifier,
 	applyTerminalMobileModifiers,
+	consumeTerminalMobileModifiers,
 	createTerminalTapSession,
 	EMPTY_TERMINAL_MOBILE_MODIFIERS,
 	hasTerminalMobileModifier,
@@ -98,8 +100,8 @@ import {
 	shouldFocusTerminalForTouchPointer,
 	shouldFocusTerminalForTouchStart,
 	type TerminalMobileModifier,
+	type TerminalMobileModifierLatch,
 	type TerminalMobileModifiers,
-	toggleTerminalMobileModifier,
 } from './terminalMobileKeyboardInteraction';
 import { suppressNonFiniteMouseReportCoords } from './terminalMouseReportCoords';
 import { shouldInsertTerminalMultilineNewline } from './terminalMultilineInteraction';
@@ -260,6 +262,15 @@ export const TERMINAL_PANEL_INPUT_EVENT = 'terminay-terminal-panel-input';
 export const TERMINAL_PANEL_OUTPUT_EVENT = 'terminay-terminal-panel-output';
 export const TERMINAL_PANEL_EXIT_EVENT = 'terminay-terminal-panel-exit';
 const TERMINAL_CONTEXT_MAX_LINES = 200;
+function mobileTerminalModifierKeyClassName(
+	latch: TerminalMobileModifierLatch,
+): string {
+	const base = 'terminal-mobile-keyboard-accessory__key';
+	if (latch === 'off') return base;
+	const active = `${base} ${base}--active`;
+	return latch === 'locked' ? `${active} ${base}--locked` : active;
+}
+
 // A tap is the deliberate gesture on touch, so it carries no modifier and has
 // no default for the link handler to prevent.
 const TOUCH_LINK_ACTIVATION = {
@@ -633,9 +644,17 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		setMobileTerminalModifiers(EMPTY_TERMINAL_MOBILE_MODIFIERS);
 	}, []);
 
-	const toggleMobileTerminalModifier = useCallback(
+	const consumeMobileTerminalModifiers = useCallback(() => {
+		const next = consumeTerminalMobileModifiers(
+			mobileTerminalModifiersRef.current,
+		);
+		mobileTerminalModifiersRef.current = next;
+		setMobileTerminalModifiers(next);
+	}, []);
+
+	const advanceMobileTerminalModifier = useCallback(
 		(modifier: TerminalMobileModifier) => {
-			const next = toggleTerminalMobileModifier(
+			const next = advanceTerminalMobileModifier(
 				mobileTerminalModifiersRef.current,
 				modifier,
 			);
@@ -666,7 +685,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				input,
 				mobileTerminalModifiersRef.current,
 			);
-			resetMobileTerminalModifiers();
+			consumeMobileTerminalModifiers();
 			terminal.focus();
 			announceMobileTerminalInput();
 			window.dispatchEvent(
@@ -677,8 +696,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		},
 		[
 			announceMobileTerminalInput,
+			consumeMobileTerminalModifiers,
 			props.params.sessionId,
-			resetMobileTerminalModifiers,
 		],
 	);
 
@@ -753,12 +772,12 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	pasteFromFocusedTerminalRef.current = pasteFromFocusedTerminal;
 
 	const pasteFromMobileTerminalAccessory = useCallback(() => {
-		resetMobileTerminalModifiers();
+		consumeMobileTerminalModifiers();
 		pasteFromFocusedTerminal(announceMobileTerminalInput);
 	}, [
 		announceMobileTerminalInput,
+		consumeMobileTerminalModifiers,
 		pasteFromFocusedTerminal,
-		resetMobileTerminalModifiers,
 	]);
 
 	// The sheet exists only to put the caret in an editable element the platform
@@ -2063,7 +2082,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				hasTerminalMobileModifier(modifiers) &&
 				isTerminalMobileModifierTarget(data)
 			) {
-				resetMobileTerminalModifiers();
+				consumeMobileTerminalModifiers();
 				writePanelInput(applyTerminalMobileModifiers(data, modifiers));
 				return;
 			}
@@ -2713,7 +2732,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		props.params.terminalClientMode,
 		props.params.terminalPanelClient,
 		resolvedTerminalClient,
-		resetMobileTerminalModifiers,
+		consumeMobileTerminalModifiers,
 		settingsClient,
 	]);
 
@@ -3200,14 +3219,15 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 					</button>
 					<button
 						type="button"
-						className={`terminal-mobile-keyboard-accessory__key${
-							mobileTerminalModifiers.ctrl
-								? ' terminal-mobile-keyboard-accessory__key--active'
-								: ''
-						}`}
-						aria-pressed={mobileTerminalModifiers.ctrl}
+						className={mobileTerminalModifierKeyClassName(
+							mobileTerminalModifiers.ctrl,
+						)}
+						aria-pressed={mobileTerminalModifiers.ctrl !== 'off'}
+						aria-description={
+							mobileTerminalModifiers.ctrl === 'locked' ? 'Locked' : undefined
+						}
 						onPointerDown={preserveMobileTerminalFocus}
-						onClick={() => toggleMobileTerminalModifier('ctrl')}
+						onClick={() => advanceMobileTerminalModifier('ctrl')}
 					>
 						Ctrl
 					</button>
@@ -3222,14 +3242,15 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 					</button>
 					<button
 						type="button"
-						className={`terminal-mobile-keyboard-accessory__key${
-							mobileTerminalModifiers.shift
-								? ' terminal-mobile-keyboard-accessory__key--active'
-								: ''
-						}`}
-						aria-pressed={mobileTerminalModifiers.shift}
+						className={mobileTerminalModifierKeyClassName(
+							mobileTerminalModifiers.shift,
+						)}
+						aria-pressed={mobileTerminalModifiers.shift !== 'off'}
+						aria-description={
+							mobileTerminalModifiers.shift === 'locked' ? 'Locked' : undefined
+						}
 						onPointerDown={preserveMobileTerminalFocus}
-						onClick={() => toggleMobileTerminalModifier('shift')}
+						onClick={() => advanceMobileTerminalModifier('shift')}
 					>
 						Shift
 					</button>
@@ -3244,14 +3265,15 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 					</button>
 					<button
 						type="button"
-						className={`terminal-mobile-keyboard-accessory__key${
-							mobileTerminalModifiers.alt
-								? ' terminal-mobile-keyboard-accessory__key--active'
-								: ''
-						}`}
-						aria-pressed={mobileTerminalModifiers.alt}
+						className={mobileTerminalModifierKeyClassName(
+							mobileTerminalModifiers.alt,
+						)}
+						aria-pressed={mobileTerminalModifiers.alt !== 'off'}
+						aria-description={
+							mobileTerminalModifiers.alt === 'locked' ? 'Locked' : undefined
+						}
 						onPointerDown={preserveMobileTerminalFocus}
-						onClick={() => toggleMobileTerminalModifier('alt')}
+						onClick={() => advanceMobileTerminalModifier('alt')}
 					>
 						Alt
 					</button>
