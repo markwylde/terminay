@@ -1,15 +1,28 @@
 export type TerminalMobileModifier = 'alt' | 'ctrl' | 'shift';
 
-export type TerminalMobileModifiers = Readonly<{
-	alt: boolean;
-	ctrl: boolean;
-	shift: boolean;
-}>;
+/**
+ * A modifier on the accessory row works like Shift on the iOS keyboard. One tap
+ * applies it to the next key only; a second tap locks it on for every key until
+ * a third tap releases it.
+ */
+export type TerminalMobileModifierLatch = 'off' | 'once' | 'locked';
+
+export type TerminalMobileModifiers = Readonly<
+	Record<TerminalMobileModifier, TerminalMobileModifierLatch>
+>;
 
 export const EMPTY_TERMINAL_MOBILE_MODIFIERS: TerminalMobileModifiers = {
-	alt: false,
-	ctrl: false,
-	shift: false,
+	alt: 'off',
+	ctrl: 'off',
+	shift: 'off',
+};
+
+const NEXT_LATCH: Readonly<
+	Record<TerminalMobileModifierLatch, TerminalMobileModifierLatch>
+> = {
+	off: 'once',
+	once: 'locked',
+	locked: 'off',
 };
 
 const CONTROL_CHARACTER_CODES: Readonly<Record<string, number>> = {
@@ -32,7 +45,11 @@ const ARROW_FINALS: Readonly<Record<string, string>> = {
 export function hasTerminalMobileModifier(
 	modifiers: TerminalMobileModifiers,
 ): boolean {
-	return modifiers.alt || modifiers.ctrl || modifiers.shift;
+	return (
+		modifiers.alt !== 'off' ||
+		modifiers.ctrl !== 'off' ||
+		modifiers.shift !== 'off'
+	);
 }
 
 /**
@@ -47,26 +64,47 @@ export function isTerminalMobileModifierTarget(data: string): boolean {
 	return data.length > 0 && !data.startsWith('\x1b');
 }
 
-export function toggleTerminalMobileModifier(
+export function advanceTerminalMobileModifier(
 	modifiers: TerminalMobileModifiers,
 	modifier: TerminalMobileModifier,
 ): TerminalMobileModifiers {
-	return { ...modifiers, [modifier]: !modifiers[modifier] };
+	return { ...modifiers, [modifier]: NEXT_LATCH[modifiers[modifier]] };
+}
+
+/**
+ * The modifiers left after one input: a one-shot modifier is spent, and a
+ * locked one stays on until the user taps it off.
+ */
+export function consumeTerminalMobileModifiers(
+	modifiers: TerminalMobileModifiers,
+): TerminalMobileModifiers {
+	const spend = (latch: TerminalMobileModifierLatch) =>
+		latch === 'once' ? 'off' : latch;
+	return {
+		alt: spend(modifiers.alt),
+		ctrl: spend(modifiers.ctrl),
+		shift: spend(modifiers.shift),
+	};
 }
 
 /**
  * Applies the familiar terminal modifier encoding to one accessory or virtual
- * keyboard input. Modifiers are intentionally consumed by the caller after a
- * single input so a user cannot accidentally leave Ctrl latched in a shell.
+ * keyboard input. The caller consumes the modifiers after each input, so a
+ * one-shot modifier affects exactly one key.
  */
 export function applyTerminalMobileModifiers(
 	input: string,
-	modifiers: TerminalMobileModifiers,
+	latches: TerminalMobileModifiers,
 ): string {
+	const modifiers = {
+		alt: latches.alt !== 'off',
+		ctrl: latches.ctrl !== 'off',
+		shift: latches.shift !== 'off',
+	};
 	let data = input;
 	const arrowFinal = ARROW_FINALS[data];
 	let altIsEncoded = false;
-	if (arrowFinal !== undefined && hasTerminalMobileModifier(modifiers)) {
+	if (arrowFinal !== undefined && hasTerminalMobileModifier(latches)) {
 		const modifierParameter =
 			1 +
 			(modifiers.shift ? 1 : 0) +

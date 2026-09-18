@@ -2,7 +2,7 @@
 
 ### Requirement: Touch input and software keyboard accessory
 
-On touch devices, xterm SHALL own scrollback and the terminal mouse and key sequences required by interactive TUIs; Terminay SHALL NOT translate or suppress touch input over the xterm surface, except for the remainder of a gesture that has entered text selection. A synchronous, non-cancelling touch focus bridge SHALL focus xterm's helper textarea so iOS can present its software keyboard, and that bridge SHALL claim focus only for a tap — a touch that is released without travelling beyond a small movement threshold. A touch that scrolls, drags, or is cancelled SHALL NOT focus the terminal and SHALL NOT cause a software keyboard to be presented. While that keyboard is visible, Terminay SHALL present a compact accessory row immediately above it for Escape, Tab, one-shot Control, Shift, and Alt modifiers, arrow keys, Enter, Paste, and keyboard dismissal. The accessory SHALL send its bytes through the terminal panel's normal input boundary and SHALL NOT implement scrolling or gesture translation.
+On touch devices, xterm SHALL own scrollback and the terminal mouse and key sequences required by interactive TUIs; Terminay SHALL NOT translate or suppress touch input over the xterm surface, except for the remainder of a gesture that has entered text selection. A synchronous, non-cancelling touch focus bridge SHALL focus xterm's helper textarea so iOS can present its software keyboard, and that bridge SHALL claim focus only for a tap — a touch that is released without travelling beyond a small movement threshold. A touch that scrolls, drags, or is cancelled SHALL NOT focus the terminal and SHALL NOT cause a software keyboard to be presented. While that keyboard is visible, Terminay SHALL present a compact accessory row immediately above it for Escape, Tab, Control, Shift, and Alt modifiers, arrow keys, Enter, Paste, and keyboard dismissal. Each modifier SHALL behave like Shift on the iOS keyboard: one tap applies it to the next input only, a second tap locks it on for every input until a third tap releases it, and each state SHALL be visibly distinct on the key. Dismissing the keyboard from the accessory SHALL release every modifier, locked or not. The accessory SHALL send its bytes through the terminal panel's normal input boundary and SHALL NOT implement scrolling or gesture translation.
 
 #### Scenario: Touching the terminal on iOS
 
@@ -36,6 +36,23 @@ On touch devices, xterm SHALL own scrollback and the terminal mouse and key sequ
 
 - **WHEN** the software keyboard is visible and the user activates an accessory control
 - **THEN** its bytes are sent through the terminal panel's normal input boundary
+
+#### Scenario: One tap modifies the next input only
+
+- **WHEN** the user taps Control once and then types `c` and `d`
+- **THEN** `c` is sent as Control-C and `d` is sent unmodified
+- **AND** the Control key no longer shows as active
+
+#### Scenario: Two taps lock a modifier
+
+- **WHEN** the user taps Control twice and then types `c` and `d`
+- **THEN** both are sent with Control applied
+- **AND** the Control key shows as locked, distinct from the one-shot state, until the user taps it a third time
+
+#### Scenario: Dismissing the keyboard releases modifiers
+
+- **WHEN** a modifier is one-shot or locked and the user dismisses the keyboard from the accessory row
+- **THEN** every modifier is released
 
 ### Requirement: Terminal link and input safety
 
