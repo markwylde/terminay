@@ -3191,6 +3191,16 @@ body.project-tabbar-reordering .project-tabbar {
     color: #e9fff8;
   }
 
+  /* Locked for every key, like Caps Lock: filled solid so it reads apart from
+   * the one-shot state at a glance. */
+  .terminal-mobile-keyboard-accessory__key--locked {
+    border-color: #71d9bb;
+    background: #48a98f;
+    color: #0b1f1a;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
   .terminal-mobile-keyboard-accessory__key:disabled {
     color: #687071;
     opacity: 0.56;
