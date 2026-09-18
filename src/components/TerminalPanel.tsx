@@ -28,7 +28,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import type { ILinkHandler } from '@xterm/xterm';
 import { Terminal } from '@xterm/xterm';
 import type { IDockviewPanelProps } from 'dockview';
-import { KeyboardOff } from 'lucide-react';
+import { KeyboardOff, Lock } from 'lucide-react';
 import type {
 	ClipboardEvent as ReactClipboardEvent,
 	CSSProperties,
@@ -3229,6 +3229,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 						onPointerDown={preserveMobileTerminalFocus}
 						onClick={() => advanceMobileTerminalModifier('ctrl')}
 					>
+						{mobileTerminalModifiers.ctrl === 'locked' ? (
+							<Lock aria-hidden="true" size={11} strokeWidth={2.75} />
+						) : null}
 						Ctrl
 					</button>
 					<button
@@ -3252,6 +3255,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 						onPointerDown={preserveMobileTerminalFocus}
 						onClick={() => advanceMobileTerminalModifier('shift')}
 					>
+						{mobileTerminalModifiers.shift === 'locked' ? (
+							<Lock aria-hidden="true" size={11} strokeWidth={2.75} />
+						) : null}
 						Shift
 					</button>
 					<button
@@ -3275,6 +3281,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 						onPointerDown={preserveMobileTerminalFocus}
 						onClick={() => advanceMobileTerminalModifier('alt')}
 					>
+						{mobileTerminalModifiers.alt === 'locked' ? (
+							<Lock aria-hidden="true" size={11} strokeWidth={2.75} />
+						) : null}
 						Alt
 					</button>
 					<button
