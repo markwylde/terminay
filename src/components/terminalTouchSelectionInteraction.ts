@@ -224,41 +224,46 @@ export function createTerminalTouchSelectionDriver({
 }
 
 /**
- * A tap that may be on a link. xterm resolves links from mouse movement and
- * activates them on mouse up, and touch delivers neither, so replay that pair
- * at the tap position. Resolution is asynchronous, so the release is deferred
- * by one frame; when the tap was not on a link both events are inert.
+ * A tap that may be on a link. xterm resolves links from mouse movement, and
+ * touch delivers none, so replay a move at the tap position; both link
+ * providers answer synchronously, so the hover callback has already reported
+ * the link under the finger when the dispatch returns. Open it right here
+ * rather than through xterm's own mouse-up activation, which needs a mousedown
+ * the tap never sends, and which would run after the tap's user activation has
+ * ended, where iOS silently blocks the window it opens.
  *
- * This runs whatever the foreground program is doing, including one in mouse
- * tracking mode — which is exactly where the links worth tapping tend to be.
- * Neither event becomes a button report the program never saw pressed: xterm
- * binds its mouse-up reporting inside its own mousedown handler, and no
- * mousedown is synthesised here.
+ * xterm skips a move to the cell it last resolved, which would leave a link
+ * cleared since then unresolved. Two moves to opposite corners of the grid
+ * (clamped by xterm) come first, so the move to the finger always resolves
+ * fresh. None of these moves is a button report: xterm reports a mouse button
+ * only between a mousedown and its mouse-up, and no mousedown is sent.
  */
 export function activateTerminalLinkAtTouch({
-	afterFrame = (run) =>
-		typeof requestAnimationFrame === 'function'
-			? void requestAnimationFrame(() => run())
-			: void setTimeout(run, 16),
+	linkUnderPointer,
+	open,
 	point,
 	screenElement,
 }: {
-	afterFrame?: (run: () => void) => void;
+	linkUnderPointer: () => string | null;
+	open: (uri: string) => void;
 	point: TouchSelectionPoint;
 	screenElement: MouseEventTarget;
 }): void {
-	screenElement.dispatchEvent(
-		new MouseEvent('mousemove', {
-			...mouseEventInit(point, 0),
-			buttons: 0,
-		}),
-	);
-	afterFrame(() => {
+	const moveTo = (clientX: number, clientY: number) =>
 		screenElement.dispatchEvent(
-			new MouseEvent('mouseup', { ...mouseEventInit(point, 1), buttons: 0 }),
+			new MouseEvent('mousemove', {
+				...mouseEventInit({ ...point, clientX, clientY }, 0),
+				buttons: 0,
+			}),
 		);
-	});
+	moveTo(-OFF_GRID_PX, -OFF_GRID_PX);
+	moveTo(OFF_GRID_PX, OFF_GRID_PX);
+	moveTo(point.clientX, point.clientY);
+	const uri = linkUnderPointer();
+	if (uri !== null) open(uri);
 }
+
+const OFF_GRID_PX = 1_000_000;
 
 /**
  * Where to float the copy affordance for a finished touch selection. Touch has
