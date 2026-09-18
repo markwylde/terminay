@@ -259,6 +259,13 @@ export const TERMINAL_PANEL_INPUT_EVENT = 'terminay-terminal-panel-input';
 export const TERMINAL_PANEL_OUTPUT_EVENT = 'terminay-terminal-panel-output';
 export const TERMINAL_PANEL_EXIT_EVENT = 'terminay-terminal-panel-exit';
 const TERMINAL_CONTEXT_MAX_LINES = 200;
+// A tap is the deliberate gesture on touch, so it carries no modifier and has
+// no default for the link handler to prevent.
+const TOUCH_LINK_ACTIVATION = {
+	ctrlKey: false,
+	metaKey: false,
+	preventDefault: () => {},
+};
 const TERMINAL_CONTEXT_MAX_CHARS = 20_000;
 // Replay is base64 in a protocol header; leave room for the result envelope.
 const MAX_INITIAL_SERVER_TERMINAL_REPLAY_BYTES = 32 * 1024;
@@ -2175,7 +2182,12 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		};
 
 		const openTouchLinkAt = (point: TouchSelectionPoint) => {
-			activateTerminalLinkAtTouch({ point, screenElement: touchEventTarget });
+			activateTerminalLinkAtTouch({
+				linkUnderPointer: () => hoveredLinkRef.current,
+				open: (uri) => openTerminalLink(TOUCH_LINK_ACTIVATION, uri),
+				point,
+				screenElement: touchEventTarget,
+			});
 		};
 
 		const handleTouchPointerDown = (event: PointerEvent) => {
