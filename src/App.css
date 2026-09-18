@@ -3172,8 +3172,16 @@ body.project-tabbar-reordering .project-tabbar {
     font-size: 13px;
     font-weight: 650;
     line-height: 1;
+    gap: 4px;
     padding: 0;
     touch-action: manipulation;
+  }
+
+  /* iOS leaves a tapped button in :hover, where the global button:hover rule
+   * outranks these single-class selectors. Restate each state under :hover so
+   * a key looks the same after a tap as it does before one. */
+  .terminal-mobile-keyboard-accessory__key:hover {
+    background: #1d2223;
   }
 
   .terminal-mobile-keyboard-accessory__key--icon {
@@ -3185,20 +3193,26 @@ body.project-tabbar-reordering .project-tabbar {
     flex: 0 0 16px;
   }
 
-  .terminal-mobile-keyboard-accessory__key--active {
+  .terminal-mobile-keyboard-accessory__key--active,
+  .terminal-mobile-keyboard-accessory__key--active:hover {
     border-color: #48a98f;
     background: #1e4f45;
     color: #e9fff8;
   }
 
-  /* Locked for every key, like Caps Lock: filled solid so it reads apart from
-   * the one-shot state at a glance. */
-  .terminal-mobile-keyboard-accessory__key--locked {
-    border-color: #71d9bb;
-    background: #48a98f;
-    color: #0b1f1a;
-    text-decoration: underline;
-    text-underline-offset: 3px;
+  /* Locked for every key, like Caps Lock: lit solid with a lock glyph, so it
+   * reads apart from the outlined one-shot state at a glance. */
+  .terminal-mobile-keyboard-accessory__key--locked,
+  .terminal-mobile-keyboard-accessory__key--locked:hover {
+    border-color: #8ae6c8;
+    background: #56c29f;
+    color: #03241b;
+    box-shadow: 0 0 8px rgb(113 217 187 / 45%);
+  }
+
+  .terminal-mobile-keyboard-accessory__key--locked svg {
+    display: block;
+    flex: 0 0 auto;
   }
 
   .terminal-mobile-keyboard-accessory__key:disabled {
