@@ -367,3 +367,34 @@ test('a Documentation panel without a preview fills the panel at a phone viewpor
 	await expect(editor.getByText('Phone heading', { exact: true })).toBeVisible();
 	await expect(surface).toHaveCSS('border-bottom-width', '0px');
 });
+
+test('Documentation renders an HTML image with a relative source', async ({
+	createWorkspace,
+	mainWindow,
+}) => {
+	const svg =
+		'<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="red"/></svg>';
+	const workspace = await createWorkspace({
+		name: 'documentation-relative-image',
+		seed: {
+			directories: ['docs/images'],
+			files: {
+				'README.md': `# Images\n\n<img src="docs/images/matrix.svg" alt="Matrix" width="40">\n`,
+				'docs/images/matrix.svg': svg,
+			},
+		},
+	});
+	await setProjectRoot(mainWindow, workspace.rootDir);
+	await openDocumentationSidebar(mainWindow);
+	await mainWindow.getByRole('treeitem', { name: /^Readme$/i }).click();
+	const image = mainWindow.locator('.documentation-editor img[alt="Matrix"]');
+	await expect(image).toBeVisible();
+	await expect
+		.poll(() =>
+			image.evaluate((element) => ({
+				src: (element as HTMLImageElement).src.slice(0, 5),
+				loaded: (element as HTMLImageElement).naturalWidth > 0,
+			})),
+		)
+		.toEqual({ src: 'blob:', loaded: true });
+});
