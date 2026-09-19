@@ -224,7 +224,8 @@ type SettingsCategoryId =
 	| 'keyboard'
 	| 'scrolling'
 	| 'accessibility'
-	| 'theme';
+	| 'theme'
+	| 'updates';
 
 export type SettingsFieldDefinition = {
 	key: string;
@@ -318,6 +319,11 @@ export const terminalSettingsCategories: SettingsCategoryDefinition[] = [
 		label: 'Theme',
 		description: 'Base colors, selection, and ANSI palette.',
 	},
+	{
+		id: 'updates',
+		label: 'Updates',
+		description: 'Which Terminay Desktop releases this device installs.',
+	},
 ];
 
 export const DEFAULT_GIT_PUSH_AGENT_PROMPT = `You are helping me commit and push my work from the terminal.
@@ -401,6 +407,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 		tabSwitchSuppressionSeconds: 1,
 	},
 	autoCloseTerminalOnExitZero: false,
+	updateChannel: 'stable',
 	convertEol: true,
 	cursorBlink: true,
 	cursorStyle: 'block',
@@ -1787,6 +1794,29 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 		],
 	},
 	{
+		id: 'update-channel',
+		categoryId: 'updates',
+		title: 'Update channel',
+		description:
+			'Terminay Desktop downloads updates in the background and installs them when you restart.',
+		fields: [
+			makeField({
+				key: 'updateChannel',
+				label: 'Update channel',
+				description:
+					'Stable follows tagged releases. Beta follows every merge to main and may be unstable. Switching never installs an older version.',
+				sectionId: 'update-channel',
+				categoryId: 'updates',
+				input: 'select',
+				options: [
+					{ label: 'Stable', value: 'stable' },
+					{ label: 'Beta', value: 'beta' },
+				],
+				keywords: ['update', 'upgrade', 'beta', 'prerelease', 'release'],
+			}),
+		],
+	},
+	{
 		id: 'readability',
 		categoryId: 'accessibility',
 		title: 'Readability',
@@ -2412,6 +2442,7 @@ export function normalizeTerminalSettings(
 			typeof input.autoCloseTerminalOnExitZero === 'boolean'
 				? input.autoCloseTerminalOnExitZero
 				: defaultTerminalSettings.autoCloseTerminalOnExitZero,
+		updateChannel: input.updateChannel === 'beta' ? 'beta' : 'stable',
 		convertEol:
 			typeof input.convertEol === 'boolean'
 				? input.convertEol

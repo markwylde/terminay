@@ -441,13 +441,37 @@ export type TerminalRecordingChangeMessage = {
 	state: TerminalRecordingState;
 };
 
+export type AppUpdateChannel = 'stable' | 'beta';
+
+export type AppUpdateState =
+	| 'idle'
+	| 'checking'
+	| 'downloading'
+	| 'available'
+	| 'ready'
+	| 'error';
+
+export type AppReleaseNote = {
+	version: string;
+	url: string | null;
+	markdown: string;
+};
+
 export type AppUpdateStatus = {
 	checkedAt: string | null;
 	currentVersion: string;
 	errorMessage: string | null;
+	/** True when there is something to act on: a downloaded update, or a newer release to open. */
 	hasUpdate: boolean;
 	latestVersion: string | null;
 	releaseUrl: string | null;
+	// The fields below are absent when an older desktop host answers.
+	state?: AppUpdateState;
+	channel?: AppUpdateChannel;
+	canInstallInPlace?: boolean;
+	downloadPercent?: number | null;
+	releaseNotes?: AppReleaseNote[] | null;
+	releaseNotesError?: string | null;
 };
 
 export type AiTabMetadataProvider = 'claudeCode' | 'codex';
