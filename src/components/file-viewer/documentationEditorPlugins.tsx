@@ -11,6 +11,7 @@ import {
 	directivesPlugin,
 	frontmatterPlugin,
 	headingsPlugin,
+	type ImagePreviewHandler,
 	InsertAdmonition,
 	InsertCodeBlock,
 	InsertFrontmatter,
@@ -62,14 +63,19 @@ export const documentationLexicalTheme = {
 	},
 };
 
-/** Configured once for every Documentation editor instance. */
-export const documentationEditorPlugins = [
+/**
+ * Built once per Documentation editor instance, so each can load the images
+ * its own document references.
+ */
+export const createDocumentationEditorPlugins = (
+	imagePreviewHandler?: ImagePreviewHandler,
+) => [
 	headingsPlugin(),
 	listsPlugin(),
 	quotePlugin(),
 	thematicBreakPlugin(),
 	linkPlugin(),
-	imagePlugin(),
+	imagePlugin({ imagePreviewHandler }),
 	tablePlugin(),
 	codeBlockPlugin(),
 	codeMirrorPlugin({
