@@ -169,3 +169,44 @@ export function groupBoardItemsByColumn(
 	for (const item of items) columns[boardColumnFor(item.state)].push(item);
 	return columns;
 }
+
+/**
+ * One project's band on the grouped Board.
+ *
+ * Grouping is a second arrangement of the same cards, not a second Board: a
+ * lane holds exactly the items the ungrouped Board would have shown for its
+ * project, bucketed into the same four columns. A project with nothing in any
+ * column gets no lane, for the same reason it gets no card ungrouped.
+ */
+export type DashboardBoardLane = Readonly<{
+	columns: Record<DashboardBoardColumn, readonly DashboardBoardItem[]>;
+	key: string;
+	project: DashboardProjectRow;
+	serverId: string;
+	serverLabel?: string;
+	total: number;
+}>;
+
+/** The Board's lanes, in the order the projects arrived in. */
+export function buildDashboardBoardLanes(
+	groups: readonly ServerScopedRow<DashboardProjectGroup>[],
+): readonly DashboardBoardLane[] {
+	const lanes: DashboardBoardLane[] = [];
+	for (const scoped of groups) {
+		const items = buildDashboardBoardItems([scoped]);
+		if (items.length === 0) continue;
+		lanes.push(
+			Object.freeze({
+				columns: groupBoardItemsByColumn(items),
+				key: scoped.key,
+				project: scoped.row.project,
+				serverId: scoped.serverId,
+				...(scoped.serverLabel === undefined
+					? {}
+					: { serverLabel: scoped.serverLabel }),
+				total: items.length,
+			}),
+		);
+	}
+	return lanes;
+}
