@@ -88,7 +88,6 @@ function CompactSwitcherPanel({
 					panel.panelKind === 'terminal' ? panel.key : undefined
 				}
 				data-project-id={panel.projectId}
-				title="Long-press to edit tab"
 			>
 				<span
 					className="compact-switcher__terminal-state"
