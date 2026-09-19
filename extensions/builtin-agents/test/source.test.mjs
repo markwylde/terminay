@@ -189,6 +189,27 @@ test('a session without a pid or an absolute cwd is never published', async (t) 
 	harness.assertConformant();
 });
 
+test('a background shell wait is reported as running, not as waiting on the user', async (t) => {
+	const { driver, harnesses } = memoryHarnesses();
+	const harness = await start(t, { harnesses });
+
+	await driver.createLiveSession({
+		id: 'live',
+		pid: 251,
+		cwd: '/work/app',
+		status: 'waiting',
+	});
+	await harness.waitFor((h) => h.sessions()[0]?.status === 'waiting');
+
+	await driver.startBackgroundWait('live');
+	await harness.waitFor((h) => h.sessions()[0]?.status === 'running');
+	assert.equal(harness.sessions()[0].waitingFor, undefined);
+
+	await driver.endBackgroundWait('live');
+	await harness.waitFor((h) => h.sessions()[0]?.status === 'idle');
+	harness.assertConformant();
+});
+
 test('subagents are reported with their status', async (t) => {
 	const { driver, harnesses } = memoryHarnesses();
 	await driver.createLiveSession({
