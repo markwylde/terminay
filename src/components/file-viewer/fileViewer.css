@@ -369,6 +369,72 @@
 	color: #e7c4ee;
 }
 
+/*
+ * Code blocks get a header bar holding the language picker and delete
+ * button, instead of MDXEditor's toolbar floating over the first lines.
+ */
+.documentation-editor__content [class*="_codeMirrorWrapper_"] {
+	margin: 1.4em 0;
+	padding: 0;
+	border: 1px solid #293240;
+	border-radius: 8px;
+	background: #11151b;
+}
+
+.documentation-editor__content [class*="_codeMirrorToolbar_"] {
+	position: static;
+	justify-content: space-between;
+	align-items: center;
+	gap: 4px;
+	padding: 3px 6px;
+	border-bottom: 1px solid #293240;
+	border-radius: 0;
+	background: #171c24;
+	font-size: 13px;
+	line-height: 1.4;
+}
+
+.documentation-editor__content
+	[class*="_codeMirrorToolbar_"]
+	[role="combobox"] {
+	width: auto;
+	min-width: 0;
+	height: 26px;
+	gap: 6px;
+	padding: 0 8px;
+	border: 1px solid transparent;
+	border-radius: 6px;
+	background: transparent;
+	color: #aeb8c8;
+	font-size: 13px;
+}
+
+.documentation-editor__content
+	[class*="_codeMirrorToolbar_"]
+	[role="combobox"]:hover {
+	border-color: #303846;
+	background: #1d2430;
+	color: #f4f7fb;
+}
+
+.documentation-editor__content [class*="_codeMirrorToolbar_"] button:not([role="combobox"]) {
+	padding: 3px;
+	color: #aeb8c8;
+}
+
+.documentation-editor__content
+	[class*="_codeMirrorToolbar_"]
+	button:not([role="combobox"])
+	svg {
+	width: 18px;
+	height: 18px;
+}
+
+.documentation-editor__content [class*="_codeMirrorWrapper_"] .cm-editor {
+	padding: 8px 0;
+	background: transparent;
+}
+
 .documentation-editor__content pre {
 	margin: 1.4em 0;
 	line-height: 1.58;
@@ -399,9 +465,18 @@
 	font-weight: 600;
 }
 
+/*
+ * The table editor wraps the table in tool cells: a row of column menus
+ * above, row menus to the left, and add-column/add-row buttons to the right
+ * and below. Pull those into the page gutter so the table itself lines up
+ * with the surrounding text.
+ */
 .documentation-editor__content [class*="_tableEditor_"] {
+	--documentation-table-tool: 32px;
+	width: calc(100% + 2 * var(--documentation-table-tool));
 	height: auto;
-	margin: 1.5em 0;
+	margin: calc(1.4em - var(--documentation-table-tool))
+		calc(-1 * var(--documentation-table-tool));
 	border-collapse: separate;
 	border-spacing: 0;
 	color: #dce2f0;
@@ -433,6 +508,46 @@
 .documentation-editor__content [class*="_tableEditor_"] [data-active="true"] {
 	outline: 2px solid #9255a4;
 	outline-offset: -2px;
+}
+
+.documentation-editor__content
+	[class*="_tableEditor_"]
+	> colgroup
+	> col:is(:first-child, :last-child) {
+	width: var(--documentation-table-tool);
+}
+
+.documentation-editor__content
+	[class*="_tableEditor_"]
+	> :is(thead, tfoot)
+	> tr
+	> th {
+	height: var(--documentation-table-tool);
+	padding: 0;
+	border: 0;
+	background: transparent;
+	vertical-align: middle;
+}
+
+.documentation-editor__content
+	[class*="_tableEditor_"]
+	:is([class*="_addRowButton_"], [class*="_addColumnButton_"]) {
+	margin: 0;
+	border-radius: 6px;
+	background: transparent;
+}
+
+.documentation-editor__content
+	[class*="_tableEditor_"]
+	[class*="_addRowButton_"] {
+	height: var(--documentation-table-tool);
+}
+
+.documentation-editor__content
+	[class*="_tableEditor_"]
+	[class*="_addColumnButton_"] {
+	width: var(--documentation-table-tool);
+	justify-content: center;
 }
 
 .documentation-editor__content [class*="_tableEditor_"] [class*="_toolCell_"] {
@@ -604,7 +719,7 @@
 
 @media (max-width: 560px) {
 	.documentation-editor__surface .documentation-editor__content {
-		padding: 20px 22px max(80px, 80cqh);
+		padding: 20px 36px max(80px, 80cqh);
 	}
 }
 

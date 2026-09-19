@@ -106,6 +106,7 @@ function DocumentationEditorSurface({
 	const [previewGeneration, setPreviewGeneration] = useState(0);
 	const [downloadInFlight, setDownloadInFlight] = useState(false);
 	const valueRef = useRef(markdown);
+	const rootRef = useRef<HTMLDivElement>(null);
 	const editorRef = useRef<MDXEditorMethods>(null);
 	const suppressModeChangeRef = useRef(false);
 	const suppressModeChangeTimerRef = useRef<number | undefined>(undefined);
@@ -175,6 +176,33 @@ function DocumentationEditorSurface({
 		},
 		[],
 	);
+	useEffect(() => {
+		const root = rootRef.current;
+		if (!root) return;
+		// Dockview detaches an inactive tab's DOM, which drops every scroll
+		// offset inside it; put them back when the tab is shown again.
+		const offsets = new Map<Element, number>();
+		let hidden = false;
+		const onScroll = (event: Event) => {
+			if (!hidden && event.target instanceof Element)
+				offsets.set(event.target, event.target.scrollTop);
+		};
+		const observer = new ResizeObserver(() => {
+			const visible = root.isConnected && root.clientHeight > 0;
+			if (visible && hidden)
+				for (const [element, scrollTop] of offsets) {
+					if (element.isConnected) element.scrollTop = scrollTop;
+					else offsets.delete(element);
+				}
+			hidden = !visible;
+		});
+		root.addEventListener('scroll', onScroll, { capture: true, passive: true });
+		observer.observe(root);
+		return () => {
+			root.removeEventListener('scroll', onScroll, { capture: true });
+			observer.disconnect();
+		};
+	}, []);
 	useEffect(() => {
 		const urls = imageUrlsRef.current;
 		return () => {
@@ -326,6 +354,7 @@ function DocumentationEditorSurface({
 	const hasStatus = Boolean(status || message);
 	return (
 		<div
+			ref={rootRef}
 			className={`documentation-editor${preview ? ' documentation-editor--with-preview' : ''}${hasStatus ? ' documentation-editor--with-status' : ''}`}
 			onBlur={flush}
 			onPointerDownCapture={(event) => {
