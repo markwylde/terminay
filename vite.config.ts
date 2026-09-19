@@ -27,6 +27,7 @@ const nodeBuiltins = [
   'node:module',
   'node:process',
   'node-pty',
+  'electron-updater',
   'esbuild',
   'qrcode',
   'selfsigned',
