@@ -5,39 +5,41 @@ import {
 	resolveDocumentationImagePath,
 } from './documentationImages.ts';
 
-const doc = '/repo/docs/guide/README.md';
+const doc = 'docs/guide/README.md';
 
 test('relative image sources resolve against the document folder', () => {
+	assert.equal(resolveDocumentationImagePath('a.svg', doc), 'docs/guide/a.svg');
 	assert.equal(
-		resolveDocumentationImagePath('a.svg', doc, '/repo'),
-		'/repo/docs/guide/a.svg',
+		resolveDocumentationImagePath('./images/a%20b.png?raw=1#x', doc),
+		'docs/guide/images/a b.png',
 	);
 	assert.equal(
-		resolveDocumentationImagePath('./images/a%20b.png?raw=1#x', doc, '/repo'),
-		'/repo/docs/guide/images/a b.png',
+		resolveDocumentationImagePath('../../logo.png', doc),
+		'logo.png',
 	);
 	assert.equal(
-		resolveDocumentationImagePath('../../logo.png', doc, '/repo'),
-		'/repo/logo.png',
+		resolveDocumentationImagePath('docs/images/c.svg', 'README.md'),
+		'docs/images/c.svg',
 	);
 });
 
 test('root-relative sources resolve against the project root', () => {
 	assert.equal(
-		resolveDocumentationImagePath('/docs/images/c.svg', doc, '/repo'),
-		'/repo/docs/images/c.svg',
+		resolveDocumentationImagePath('/docs/images/c.svg', doc),
+		'docs/images/c.svg',
 	);
 });
 
-test('URLs the browser can load are left alone', () => {
+test('URLs, and paths that leave the project, are left alone', () => {
 	for (const src of [
 		'https://x.test/a.png',
 		'//cdn.test/a.png',
 		'data:image/png;base64,AA',
 		'blob:abc',
 		'',
+		'../../../outside.png',
 	])
-		assert.equal(resolveDocumentationImagePath(src, doc, '/repo'), undefined);
+		assert.equal(resolveDocumentationImagePath(src, doc), undefined);
 });
 
 test('SVG gets an image type an <img> will render', () => {
