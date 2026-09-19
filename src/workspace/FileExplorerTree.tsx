@@ -20,6 +20,7 @@ import type {
 	FileExplorerEntry,
 	FileExplorerGitStatus,
 } from '../types/terminay';
+import { createFileExplorerTouchPress } from './fileExplorerTouchPress.ts';
 
 const DROP_FILE_EXPLORER_PATH_EVENT = 'terminay-drop-file-explorer-path';
 const FILE_EXPLORER_DRAG_THRESHOLD = 6;
@@ -171,6 +172,31 @@ export function FileExplorerTree({
 		target: HTMLButtonElement;
 	} | null>(null);
 	const suppressClickRef = useRef(false);
+	const treeRef = useRef<HTMLDivElement | null>(null);
+	// The entry under a touch that is still being held; it becomes the
+	// pending drag only once the hold arms.
+	const touchPressEntryRef = useRef<{
+		name: string;
+		path: string;
+		isDirectory: boolean;
+		startX: number;
+		startY: number;
+		target: HTMLButtonElement;
+	} | null>(null);
+	const touchPressRef = useRef<ReturnType<
+		typeof createFileExplorerTouchPress
+	> | null>(null);
+	if (touchPressRef.current === null) {
+		touchPressRef.current = createFileExplorerTouchPress({
+			onArm: (pointerId) => {
+				const entry = touchPressEntryRef.current;
+				if (!entry) return;
+				entry.target.classList.add('file-explorer-tree-item--drag-armed');
+				pendingDragRef.current = { ...entry, pointerId };
+			},
+		});
+	}
+	const touchPress = touchPressRef.current;
 	const [activeDrag, setActiveDrag] = useState<{
 		name: string;
 		x: number;
@@ -231,7 +257,15 @@ export function FileExplorerTree({
 	);
 
 	useEffect(() => {
+		const clearTouchPress = () => {
+			touchPressEntryRef.current?.target.classList.remove(
+				'file-explorer-tree-item--drag-armed',
+			);
+			touchPressEntryRef.current = null;
+		};
+
 		const clearPendingDrag = () => {
+			clearTouchPress();
 			const pendingDrag = pendingDragRef.current;
 			if (pendingDrag) {
 				pendingDrag.target.classList.remove(
@@ -248,6 +282,7 @@ export function FileExplorerTree({
 		};
 
 		const handlePointerMove = (event: PointerEvent) => {
+			touchPress.pointerMove(event);
 			const pendingDrag = pendingDragRef.current;
 			if (!pendingDrag || event.pointerId !== pendingDrag.pointerId) {
 				return;
@@ -264,6 +299,9 @@ export function FileExplorerTree({
 			event.preventDefault();
 
 			if (!activeDragRef.current) {
+				pendingDrag.target.classList.remove(
+					'file-explorer-tree-item--drag-armed',
+				);
 				pendingDrag.target.classList.add('file-explorer-tree-item--dragging');
 			}
 
@@ -279,6 +317,10 @@ export function FileExplorerTree({
 		};
 
 		const handlePointerUp = (event: PointerEvent) => {
+			const touchWasArmed = touchPress.pointerUp(event);
+			if (!pendingDragRef.current) {
+				clearTouchPress();
+			}
 			const pendingDrag = pendingDragRef.current;
 			if (!pendingDrag || event.pointerId !== pendingDrag.pointerId) {
 				return;
@@ -290,6 +332,17 @@ export function FileExplorerTree({
 			clearPendingDrag();
 
 			if (!wasDragging) {
+				// A touch held still and released asks for the entry's actions,
+				// since a touch has no right button.
+				if (touchWasArmed) {
+					setContextMenu({
+						x: event.clientX,
+						y: event.clientY,
+						path: droppedPath,
+						isDirectory: droppedIsDirectory,
+						isRootBlankSpace: false,
+					});
+				}
 				return;
 			}
 
@@ -323,17 +376,41 @@ export function FileExplorerTree({
 			);
 		};
 
+		const handlePointerCancel = (event: PointerEvent) => {
+			touchPress.pointerCancel(event);
+			clearPendingDrag();
+		};
+
+		const handleBlur = () => {
+			touchPress.dispose();
+			clearPendingDrag();
+		};
+
+		// touch-action cannot change mid-gesture, so once a hold has armed a
+		// drag the only way to stop the browser panning is to cancel the
+		// touchmove. This must be a non-passive listener.
+		const handleTouchMove = (event: TouchEvent) => {
+			if (touchPress.armedPointerId() !== null && event.cancelable) {
+				event.preventDefault();
+			}
+		};
+
+		const tree = treeRef.current;
 		window.addEventListener('pointermove', handlePointerMove);
 		window.addEventListener('pointerup', handlePointerUp);
-		window.addEventListener('pointercancel', clearPendingDrag);
-		window.addEventListener('blur', clearPendingDrag);
+		window.addEventListener('pointercancel', handlePointerCancel);
+		window.addEventListener('blur', handleBlur);
+		tree?.addEventListener('touchmove', handleTouchMove, { passive: false });
 		return () => {
 			window.removeEventListener('pointermove', handlePointerMove);
 			window.removeEventListener('pointerup', handlePointerUp);
-			window.removeEventListener('pointercancel', clearPendingDrag);
-			window.removeEventListener('blur', clearPendingDrag);
+			window.removeEventListener('pointercancel', handlePointerCancel);
+			window.removeEventListener('blur', handleBlur);
+			tree?.removeEventListener('touchmove', handleTouchMove);
 		};
-	}, [onOpenFile, onOpenFolder]);
+	}, [onOpenFile, onOpenFolder, touchPress]);
+
+	useEffect(() => () => touchPress.dispose(), [touchPress]);
 
 	const renderBranch = useCallback(
 		(dirPath: string, depth: number): JSX.Element | null => {
@@ -369,16 +446,28 @@ export function FileExplorerTree({
 										.join(' ')}
 									style={{ paddingLeft: `${depth * 12 + 8}px` }}
 									onClick={() => {
-										if (suppressClickRef.current) {
+										if (touchPress.consumeClick() || suppressClickRef.current) {
 											return;
 										}
 										if (isDirectory) {
 											onToggleDirectory(entry.path);
 										}
 									}}
-									onContextMenu={(e) =>
-										handleContextMenu(e, entry.path, isDirectory)
-									}
+									onMouseDown={(e) => {
+										// Chromium follows a long touch with a synthetic
+										// mousedown; it must not close the menu the touch opened.
+										if (touchPress.suppressContextMenu()) {
+											e.stopPropagation();
+										}
+									}}
+									onContextMenu={(e) => {
+										if (touchPress.suppressContextMenu()) {
+											e.preventDefault();
+											e.stopPropagation();
+											return;
+										}
+										handleContextMenu(e, entry.path, isDirectory);
+									}}
 									onDoubleClick={() => {
 										if (isDirectory) {
 											onOpenFolder(entry.path);
@@ -398,7 +487,25 @@ export function FileExplorerTree({
 									}}
 									title={entry.path}
 									onPointerDown={(event) => {
+										touchPress.pointerDown(event);
 										if (event.button !== 0) {
+											return;
+										}
+
+										if (event.pointerType === 'touch') {
+											// Leave the touch to the browser so it can scroll;
+											// only a still hold arms the drag.
+											touchPressEntryRef.current?.target.classList.remove(
+												'file-explorer-tree-item--drag-armed',
+											);
+											touchPressEntryRef.current = {
+												name: entry.name,
+												path: entry.path,
+												isDirectory,
+												startX: event.clientX,
+												startY: event.clientY,
+												target: event.currentTarget,
+											};
 											return;
 										}
 
@@ -532,6 +639,7 @@ export function FileExplorerTree({
 
 	return (
 		<div
+			ref={treeRef}
 			className="file-explorer-tree"
 			onContextMenu={(e) => handleContextMenu(e, rootPath, true, true)}
 		>
