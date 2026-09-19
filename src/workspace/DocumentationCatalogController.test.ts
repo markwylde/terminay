@@ -227,3 +227,111 @@ test('expansion and selection survive a catalog refresh', async () => {
 	assert.equal(controller.snapshot.expandedFolders.has('docs'), true);
 	controller.dispose();
 });
+
+test('stopping an in-flight build keeps the last good tree and drops the late response', async () => {
+	let resolveSlow: ((value: DocumentationCatalog) => void) | undefined;
+	let calls = 0;
+	const client = {
+		async catalog() {
+			calls += 1;
+			if (calls === 1) return catalog([document('README.md')]);
+			return new Promise<DocumentationCatalog>((resolve) => {
+				resolveSlow = resolve;
+			});
+		},
+	} as unknown as DocumentationClient;
+	const controller = new DocumentationCatalogController({
+		client,
+		projectId: 'project-a',
+		scopeKey: '/project',
+	});
+	controller.refresh('immediate');
+	await Promise.resolve();
+	controller.refresh('fresh');
+	assert.equal(controller.snapshot.loading, true);
+	controller.stop();
+	assert.equal(controller.snapshot.loading, false);
+	assert.equal(controller.snapshot.catalog?.documents[0].relativePath, 'README.md');
+	resolveSlow?.(catalog([document('late.md')]));
+	await Promise.resolve();
+	await Promise.resolve();
+	assert.equal(controller.snapshot.catalog?.documents[0].relativePath, 'README.md');
+	assert.equal(controller.snapshot.loading, false);
+	controller.dispose();
+});
+
+test('stopping the first build leaves an empty tree rather than an error', async () => {
+	const client = {
+		async catalog() {
+			return new Promise<DocumentationCatalog>(() => {});
+		},
+	} as unknown as DocumentationClient;
+	const controller = new DocumentationCatalogController({
+		client,
+		projectId: 'project-a',
+		scopeKey: '/project',
+	});
+	controller.refresh('immediate');
+	controller.stop();
+	await Promise.resolve();
+	assert.equal(controller.snapshot.catalog, undefined);
+	assert.equal(controller.snapshot.error, undefined);
+	assert.equal(controller.snapshot.loading, false);
+	controller.dispose();
+});
+
+test('stop cancels a pending coalesced refresh but keeps the watch subscription', async () => {
+	const timers: Array<{ id: number; callback: () => void }> = [];
+	let nextId = 1;
+	const stopped: string[] = [];
+	let listener: ((event: FileWatchEvent) => void) | undefined;
+	const observationClient = {
+		async startWatch() {
+			return { subscriptionId: 'watch-1', projectId: 'project-a', resource: '', cursor: 0 };
+		},
+		async readWatch() {
+			return { subscriptionId: 'watch-1', cursor: 0, events: [], resyncRequired: false };
+		},
+		async stopWatch(id: string) {
+			stopped.push(id);
+		},
+		async subscribeWatch(_handle: FileWatchHandle, next: (event: FileWatchEvent) => void) {
+			listener = next;
+			return () => {
+				stopped.push('unsubscribe');
+			};
+		},
+	} as unknown as FileObservationClient;
+	const controller = new DocumentationCatalogController({
+		client: fakeClient([
+			catalog([document('README.md')]),
+			catalog([document('README.md'), document('guide.md')]),
+		]),
+		observationClient,
+		projectId: 'project-a',
+		scopeKey: '/project',
+		delayMs: 20,
+		setTimeoutFn: (callback) => {
+			const id = nextId++;
+			timers.push({ id, callback });
+			return id;
+		},
+		clearTimeoutFn: (id) => {
+			const index = timers.findIndex((timer) => timer.id === id);
+			if (index >= 0) timers.splice(index, 1);
+		},
+	});
+	await controller.start();
+	await Promise.resolve();
+	controller.handleWatchEvent({ kind: 'changed' });
+	assert.equal(timers.length, 1);
+	controller.stop();
+	assert.equal(timers.length, 0);
+	assert.deepEqual(stopped, []);
+	listener?.({ kind: 'changed' } as FileWatchEvent);
+	assert.equal(timers.length, 1);
+	timers[0]?.callback();
+	await Promise.resolve();
+	assert.equal(controller.snapshot.catalog?.documents.length, 2);
+	controller.dispose();
+});
