@@ -264,7 +264,7 @@ test('a hold outside mouse tracking leaves the selection service untouched', asy
   assert.deepEqual(calls, [])
 })
 
-test('a tap resolves the link under the finger and opens it before returning', async () => {
+test('a tap resolves the link under the finger and hands it on before returning', async () => {
   const { touchSelection } = await loadModules()
   fakeMouseEvent()
   const { dispatched, element } = recordingElement()
@@ -281,14 +281,14 @@ test('a tap resolves the link under the finger and opens it before returning', a
     },
   }
 
-  touchSelection.activateTerminalLinkAtTouch({
+  const found = touchSelection.activateTerminalLinkAtTouch({
     linkUnderPointer: () => hovered,
     open: (uri) => opened.push(uri),
     point: point(12, 34),
     screenElement: hoveringElement,
   })
 
-  // Opened synchronously, inside the tap's user activation, or iOS blocks it.
+  assert.equal(found, true)
   assert.deepEqual(opened, ['https://example.com/a'])
   // Two off-grid moves first so the last one always resolves fresh, and no
   // mousedown or mouseup that a mouse-tracking program could see as a click.
@@ -305,13 +305,14 @@ test('a tap off any link opens nothing', async () => {
   const { element } = recordingElement()
   const opened = []
 
-  touchSelection.activateTerminalLinkAtTouch({
+  const found = touchSelection.activateTerminalLinkAtTouch({
     linkUnderPointer: () => null,
     open: (uri) => opened.push(uri),
     point: point(12, 34),
     screenElement: element,
   })
 
+  assert.equal(found, false)
   assert.deepEqual(opened, [])
 })
 
@@ -335,22 +336,35 @@ test('the copy pill stays inside the panel, and below the finger when the top is
   assert.ok(nearTop.y > 10, 'flipped below the finger rather than off the top')
 })
 
-test('a touch tap opens a link without the modifier a touch device cannot hold', async () => {
+test('a plain click never opens a link, so a tap can only offer the link menu', async () => {
   const { linkInteraction } = await loadModules()
   const opened = []
-  let isTouch = false
   const interaction = linkInteraction.createTerminalLinkInteraction({
     isMac: true,
-    isTouchActivation: () => isTouch,
     openExternal: (uri) => opened.push(uri),
     pointerTarget: { style: { cursor: '' } },
   })
-  const event = () => ({ ctrlKey: false, metaKey: false, preventDefault: () => {} })
 
-  interaction.activate(event(), 'https://example.com/one')
-  assert.deepEqual(opened, [], 'a plain desktop click still must not open a link')
+  interaction.activate({ ctrlKey: false, metaKey: false, preventDefault: () => {} }, 'https://example.com/one')
+  assert.deepEqual(opened, [])
+})
 
-  isTouch = true
-  interaction.activate(event(), 'https://example.com/two')
-  assert.deepEqual(opened, ['https://example.com/two'])
+test('the platform browser handoff URL escapes the in-app sheet on iOS and Android only', async () => {
+  const { linkInteraction } = await loadModules()
+  const { detectBrowserHandoffPlatform: detect, platformBrowserUrl: handoff } = linkInteraction
+
+  assert.equal(detect({ userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)' }), 'ios')
+  assert.equal(detect({ userAgent: 'Mozilla/5.0 (Macintosh)', platform: 'MacIntel', maxTouchPoints: 5 }), 'ios')
+  assert.equal(detect({ userAgent: 'Mozilla/5.0 (Linux; Android 15; Pixel 9)' }), 'android')
+  assert.equal(detect({ userAgent: 'Mozilla/5.0 (Macintosh)', platform: 'MacIntel', maxTouchPoints: 0 }), null)
+
+  assert.equal(handoff('https://example.com/a?b=1#c', 'ios'), 'x-safari-https://example.com/a?b=1#c')
+  assert.equal(handoff('http://example.com/', 'ios'), 'x-safari-http://example.com/')
+  assert.equal(
+    handoff('https://example.com/a?b=1', 'android'),
+    'intent://example.com/a?b=1#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=https%3A%2F%2Fexample.com%2Fa%3Fb%3D1;end',
+  )
+  assert.equal(handoff('https://user:pw@example.com/', 'ios'), null, 'credentials are never handed on')
+  assert.equal(handoff('file:///etc/passwd', 'android'), null)
+  assert.equal(handoff('not a url', 'ios'), null)
 })
