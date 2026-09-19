@@ -192,9 +192,7 @@ test('Documentation autosave does not report its own root-file write as an exter
 	});
 	await setProjectRoot(mainWindow, workspace.rootDir);
 	await openDocumentationSidebar(mainWindow);
-	await mainWindow
-		.getByRole('treeitem', { name: /^Agents$/i })
-		.click();
+	await mainWindow.getByRole('treeitem', { name: /^Agents$/i }).click();
 
 	const editor = mainWindow.locator('.documentation-editor');
 	const heading = editor.getByText('Editing instructions', { exact: true });
@@ -245,9 +243,7 @@ test('repeated AGENTS.md autosaves do not conflict with their own filesystem eve
 	});
 	await setProjectRoot(mainWindow, workspace.rootDir);
 	await openDocumentationSidebar(mainWindow);
-	await mainWindow
-		.getByRole('treeitem', { name: /^Agents$/i })
-		.click();
+	await mainWindow.getByRole('treeitem', { name: /^Agents$/i }).click();
 
 	const editor = mainWindow.locator('.documentation-editor');
 	const paragraph = editor.getByText(
@@ -297,9 +293,7 @@ test('a task checkbox autosave does not conflict with the next document edit', a
 	});
 	await setProjectRoot(mainWindow, workspace.rootDir);
 	await openDocumentationSidebar(mainWindow);
-	await mainWindow
-		.getByRole('treeitem', { name: /^Agents$/i })
-		.click();
+	await mainWindow.getByRole('treeitem', { name: /^Agents$/i }).click();
 	const editor = mainWindow.locator('.documentation-editor');
 	const taskCheckbox = editor.getByRole('checkbox').first();
 	await taskCheckbox.click({ position: { x: 8, y: 8 } });
@@ -364,7 +358,9 @@ test('a Documentation panel without a preview fills the panel at a phone viewpor
 		.toBeGreaterThan(0.8);
 
 	await expect(editor.locator('.mdxeditor-toolbar')).toBeVisible();
-	await expect(editor.getByText('Phone heading', { exact: true })).toBeVisible();
+	await expect(
+		editor.getByText('Phone heading', { exact: true }),
+	).toBeVisible();
 	await expect(surface).toHaveCSS('border-bottom-width', '0px');
 });
 
@@ -397,4 +393,198 @@ test('Documentation renders an HTML image with a relative source', async ({
 			})),
 		)
 		.toEqual({ src: 'blob:', loaded: true });
+});
+
+// A hand-wrapped document: paragraphs, a list item, and a quote broken over
+// source lines the way people keep raw Markdown readable, plus a blank-line
+// paragraph break and a real hard break to prove the correction is precise.
+const handWrappedDocument = [
+	'# Soft line breaks',
+	'',
+	'Short wrapped',
+	'paragraph.',
+	'',
+	'Another wrapped',
+	'paragraph stays.',
+	'',
+	'Hard break here\\',
+	'and the next line.',
+	'',
+	'- List item',
+	'  continues here.',
+	'',
+	'> Quote line',
+	'> continues here.',
+	'',
+].join('\n');
+
+/**
+ * The number of visual lines a node occupies, counted as the distinct tops of
+ * the client rects its contents produce. One row of rects is one rendered line.
+ */
+function visualLines(
+	target: import('@playwright/test').Locator,
+): Promise<number> {
+	return target.evaluate((element) => {
+		const range = document.createRange();
+		range.selectNodeContents(element);
+		const tops = new Set<number>();
+		for (const rect of Array.from(range.getClientRects())) {
+			if (rect.width < 1 || rect.height < 1) continue;
+			tops.add(Math.round(rect.top));
+		}
+		return tops.size;
+	});
+}
+
+test('Documentation renders a Markdown soft line break as a space', async ({
+	createWorkspace,
+	mainWindow,
+}) => {
+	const workspace = await createWorkspace({
+		name: 'documentation-soft-line-breaks',
+		seed: { files: { 'README.md': handWrappedDocument } },
+	});
+	await setProjectRoot(mainWindow, workspace.rootDir);
+	await openDocumentationSidebar(mainWindow);
+	await mainWindow.getByRole('treeitem', { name: /^Readme$/i }).click();
+	const editor = mainWindow.locator('.documentation-editor');
+	await expect(editor).toBeVisible();
+	const richText = editor.locator('.documentation-editor__content');
+	await expect(
+		richText.getByText('Short wrapped paragraph.', { exact: true }),
+	).toBeVisible();
+
+	// The wrapped paragraph is far shorter than the reading canvas, so a second
+	// line could only come from the source newline rendering as a break.
+	const wrapped = richText.locator('p', { hasText: 'Short wrapped' }).first();
+	expect(await visualLines(wrapped)).toBe(1);
+
+	// A blank line is still a paragraph boundary.
+	await expect(
+		richText.locator('p', { hasText: 'Another wrapped' }),
+	).toHaveCount(1);
+	expect(
+		await wrapped.evaluate((element) => element.nextElementSibling?.tagName),
+	).toBe('P');
+
+	// A hard break still breaks.
+	const hardBreak = richText
+		.locator('p', { hasText: 'Hard break here' })
+		.first();
+	await expect(hardBreak.locator('br')).toHaveCount(1);
+	expect(await visualLines(hardBreak)).toBe(2);
+
+	// List items and block quotes wrap in source too.
+	expect(
+		await visualLines(richText.locator('li', { hasText: 'List item' }).first()),
+	).toBe(1);
+	expect(await visualLines(richText.locator('blockquote p').first())).toBe(1);
+
+	// Source mode still shows the file as it is written, newlines and all.
+	await editor.getByRole('radio', { name: 'Source mode' }).click();
+	await expect(editor.locator('.cm-sourceView')).toBeVisible();
+	await expect(editor.locator('.cm-content')).toContainText('Short wrapped');
+	expect(
+		await editor
+			.locator('.cm-content .cm-line')
+			.filter({ hasText: 'Short wrapped' })
+			.count(),
+	).toBe(1);
+});
+
+test('Documentation does not rewrite a document that was only read', async ({
+	createWorkspace,
+	mainWindow,
+}) => {
+	const workspace = await createWorkspace({
+		name: 'documentation-soft-line-breaks-read-only',
+		seed: { files: { 'README.md': handWrappedDocument } },
+	});
+	await setProjectRoot(mainWindow, workspace.rootDir);
+	await openDocumentationSidebar(mainWindow);
+	await mainWindow.getByRole('treeitem', { name: /^Readme$/i }).click();
+	const editor = mainWindow.locator('.documentation-editor');
+	await expect(
+		editor
+			.locator('.documentation-editor__content')
+			.getByText('Short wrapped paragraph.', { exact: true }),
+	).toBeVisible();
+
+	// Collapsing a soft line break changes what the editor holds, and the editor
+	// reports that normalization the moment it parses the document. Opening a
+	// file must not be an edit: well past the one-second autosave delay, the
+	// bytes on disk are still the author's.
+	await mainWindow.waitForTimeout(2_500);
+	expect(await workspace.readText('README.md')).toBe(handWrappedDocument);
+	await expect(mainWindow.locator('.file-status-bar')).not.toContainText(
+		'Unsaved changes',
+	);
+});
+
+test('Documentation keeps typed whitespace and the wrapping of untouched prose', async ({
+	createWorkspace,
+	mainWindow,
+}) => {
+	const workspace = await createWorkspace({
+		name: 'documentation-soft-line-break-editing',
+		seed: { files: { 'README.md': handWrappedDocument } },
+	});
+	await setProjectRoot(mainWindow, workspace.rootDir);
+	await openDocumentationSidebar(mainWindow);
+	await mainWindow.getByRole('treeitem', { name: /^Readme$/i }).click();
+	const editor = mainWindow.locator('.documentation-editor');
+	const richText = editor.locator('.documentation-editor__content');
+	const wrapped = richText.getByText('Short wrapped paragraph.', {
+		exact: true,
+	});
+	await expect(wrapped).toBeVisible();
+
+	// End reaches the end of the whole paragraph rather than stopping at the
+	// source newline, so the wrap behaves as one continuous line.
+	await wrapped.click();
+	await mainWindow.keyboard.press('Home');
+	await mainWindow.keyboard.press('End');
+	expect(
+		await mainWindow.evaluate(() => {
+			const selection = window.getSelection();
+			return {
+				offset: selection?.focusOffset ?? -1,
+				length: selection?.focusNode?.textContent?.length ?? -1,
+			};
+		}),
+	).toEqual({ offset: 24, length: 24 });
+
+	// Typed whitespace stays significant: a trailing space takes up room.
+	const width = () =>
+		wrapped.evaluate((element) => {
+			const range = document.createRange();
+			range.selectNodeContents(element);
+			return range.getBoundingClientRect().width;
+		});
+	const beforeSpace = await width();
+	await mainWindow.keyboard.type(' ');
+	expect(await width()).toBeGreaterThan(beforeSpace);
+	await mainWindow.keyboard.type(' edited.');
+	await expect(
+		richText.getByText('Short wrapped paragraph.  edited.', { exact: true }),
+	).toBeVisible();
+
+	// Deleting runs straight through the wrap point: 20 strokes remove
+	// ' edited.', the extra space, and 'paragraph.', leaving no seam behind.
+	for (let stroke = 0; stroke < 20; stroke += 1) {
+		await mainWindow.keyboard.press('Backspace');
+	}
+	await expect(
+		richText.getByText('Short wrapped', { exact: true }),
+	).toBeVisible();
+
+	// Saving writes the document the editor holds, where a wrapped paragraph is
+	// one paragraph. The prose is unchanged; only its line breaks are.
+	await expect
+		.poll(() => workspace.readText('README.md'))
+		.toContain('Another wrapped paragraph stays.');
+	const saved = await workspace.readText('README.md');
+	expect(saved).toContain('Short wrapped');
+	expect(saved).not.toContain('Another wrapped\nparagraph stays.');
 });
