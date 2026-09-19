@@ -16,6 +16,7 @@ The built-in agents extension depends on `@markwylde/all-your-agents`. That libr
 3. **Install lifecycle scripts are never run.** A native dependency that works only after its install script fails the activation probe, which is the existing fail-closed path.
 4. **Built-in staging includes optional dependencies.** It ships the same bytes in every distribution. Staging does not prune per-architecture binaries, because the Electron and standalone inventories are byte-identical.
 5. **Release assembly checks native modules.** It fails when a built-in carries a native module with no prebuild for a supported distribution target.
+6. **Built-in macOS native modules are signed at staging.** When a Developer ID identity is available, staging signs each Mach-O `.node` (hardened runtime, timestamp) before the inventory hashes it, and electron-builder's `mac.signIgnore` leaves them alone. The hashed bytes are the shipped bytes, and notarisation still sees every binary signed. Without an identity nothing is signed, as before.
 
 ## Consequences
 
