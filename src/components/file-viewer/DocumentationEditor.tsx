@@ -20,7 +20,7 @@ import {
 	type DocumentationAutosaveSession,
 } from './DocumentationAutosaveController';
 import {
-	documentationEditorPlugins,
+	createDocumentationEditorPlugins,
 	documentationLexicalTheme,
 } from './documentationEditorPlugins';
 import { selfCloseVoidHtmlElements } from './documentationMarkdownCompat';
@@ -41,6 +41,8 @@ type DocumentationEditorProps = Readonly<{
 	projectId: string;
 	serverId: string;
 	runtimeClient?: MdxRuntimeClient;
+	/** Reads an image the document references, or undefined to leave its src as is. */
+	loadImage?: (src: string) => Promise<Blob | undefined>;
 }>;
 
 export function DocumentationEditor(props: DocumentationEditorProps) {
@@ -89,6 +91,7 @@ function DocumentationEditorSurface({
 	projectId,
 	serverId,
 	runtimeClient,
+	loadImage,
 }: DocumentationEditorProps) {
 	const [state, setState] = useState<
 		'idle' | 'dirty' | 'saving' | 'saved' | 'conflict' | 'failed'
@@ -112,6 +115,22 @@ function DocumentationEditorSurface({
 	const runtimeRef = useRef<string | undefined>(undefined);
 	const downloadAbortRef = useRef<AbortController | undefined>(undefined);
 	const resourceUrlsRef = useRef<string[]>([]);
+	const loadImageRef = useRef(loadImage);
+	loadImageRef.current = loadImage;
+	const imageUrlsRef = useRef(new Map<string, Promise<string>>());
+	const [plugins] = useState(() =>
+		createDocumentationEditorPlugins((src) => {
+			let url = imageUrlsRef.current.get(src);
+			if (url === undefined) {
+				url = (async () => {
+					const blob = await loadImageRef.current?.(src).catch(() => undefined);
+					return blob === undefined ? src : URL.createObjectURL(blob);
+				})();
+				imageUrlsRef.current.set(src, url);
+			}
+			return url;
+		}),
+	);
 	if (autosaveRef.current === undefined)
 		autosaveRef.current = new DocumentationAutosaveController(
 			autosaveSession,
@@ -156,6 +175,16 @@ function DocumentationEditorSurface({
 		},
 		[],
 	);
+	useEffect(() => {
+		const urls = imageUrlsRef.current;
+		return () => {
+			for (const [src, url] of urls)
+				void url.then((value) => {
+					if (value !== src) URL.revokeObjectURL(value);
+				});
+			urls.clear();
+		};
+	}, []);
 	useEffect(() => {
 		const listener = (event: Event) => {
 			if (
@@ -351,7 +380,7 @@ function DocumentationEditorSurface({
 				className="documentation-editor__surface mdxeditor-full-height"
 				contentEditableClassName="documentation-editor__content"
 				lexicalTheme={documentationLexicalTheme}
-				plugins={documentationEditorPlugins}
+				plugins={plugins}
 				onChange={handleChange}
 				onError={(error) => setMessage(`Editor parser error: ${error.error}`)}
 			/>
