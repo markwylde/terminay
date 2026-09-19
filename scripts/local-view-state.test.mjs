@@ -463,3 +463,39 @@ test('a device with no storage at all still picks a dashboard view', async () =>
   assert.doesNotThrow(() => module.rememberDashboardViewMode('projects'))
   assert.equal(module.recallDashboardViewMode(), 'list')
 })
+
+test('a device remembers whether it groups the board by project', async () => {
+  const { module } = await loadModule()
+  globalThis.localStorage = fakeStorage()
+  try {
+    assert.equal(module.recallDashboardBoardGrouped(), false)
+    module.rememberDashboardBoardGrouped(true)
+    assert.equal(module.recallDashboardBoardGrouped(), true)
+    module.rememberDashboardBoardGrouped(false)
+    assert.equal(module.recallDashboardBoardGrouped(), false)
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('a board grouping that cannot be read is the ungrouped board', async () => {
+  const { module } = await loadModule()
+  globalThis.localStorage = fakeStorage({
+    'terminay.view.dashboard-board-grouped.v1': 'yes',
+  })
+  try {
+    assert.equal(module.recallDashboardBoardGrouped(), false)
+  } finally {
+    delete globalThis.localStorage
+  }
+  globalThis.localStorage = {
+    getItem() { throw new Error('storage disabled') },
+    setItem() { throw new Error('storage disabled') },
+  }
+  try {
+    assert.doesNotThrow(() => module.rememberDashboardBoardGrouped(true))
+    assert.equal(module.recallDashboardBoardGrouped(), false)
+  } finally {
+    delete globalThis.localStorage
+  }
+})
