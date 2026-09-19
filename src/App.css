@@ -2926,6 +2926,7 @@ body.project-tabbar-reordering .project-tabbar {
   font-weight: 500;
   transition: all 100ms ease;
   user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .file-explorer-tree-item:active {
@@ -2939,6 +2940,11 @@ body.project-tabbar-reordering .project-tabbar {
 
 .file-explorer-tree-item--dragging {
   opacity: 0.45;
+}
+
+.file-explorer-tree-item--drag-armed {
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 2px 0 0 #4c9aff;
 }
 
 .file-explorer-tree-name {
