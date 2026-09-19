@@ -479,4 +479,76 @@ test.describe('compact chrome', () => {
 		await expect(headings).toHaveCount(1);
 		await expect(switcher).toBeVisible();
 	});
+
+	test('creating a terminal from the switcher shows the new terminal', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		await resize(mainWindow, electronApp, PHONE);
+		await expect(mainWindow.locator('.terminal-panel')).toHaveCount(1);
+		const originalSessionId = await activeSessionId(mainWindow);
+
+		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
+		const switcher = switcherOf(mainWindow);
+		await expect(switcher).toBeVisible();
+		await switcher.getByRole('button', { name: 'New terminal', exact: true }).click();
+		await expect(switcher).toHaveCount(0);
+
+		// The terminal on screen is the one just created, not the one the user
+		// was looking at when they asked for it.
+		await expect(mainWindow.getByLabel('Close terminal')).toHaveCount(2);
+		await expect
+			.poll(() => activeSessionId(mainWindow))
+			.not.toBe(originalSessionId);
+
+		// And the switcher agrees with the screen about which one is current.
+		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
+		const rows = switcherOf(mainWindow).locator(
+			'[data-compact-switcher-terminal]',
+		);
+		await expect(rows).toHaveCount(2);
+		await expect(rows.last()).toHaveAttribute('aria-current', 'true');
+	});
+
+	test('creating a terminal in a background project shows it there', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		await expect(mainWindow.locator('.project-tab')).not.toHaveCount(0);
+		const firstProject = await activeProjectId(mainWindow);
+		const firstSession = await activeSessionId(mainWindow);
+
+		await mainWindow.getByLabel('Create project').click();
+		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
+			0,
+		);
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+		const secondSession = await activeSessionId(mainWindow);
+
+		await resize(mainWindow, electronApp, PHONE);
+		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
+		const switcher = switcherOf(mainWindow);
+		await expect(switcher).toBeVisible();
+		await switcher
+			.locator('.compact-switcher__group')
+			.filter({
+				has: mainWindow.locator(
+					`.compact-switcher__terminal[data-project-id="${firstProject}"]`,
+				),
+			})
+			.locator('.compact-switcher__add')
+			.click();
+
+		await expect(switcher).toHaveCount(0);
+		await expect.poll(() => activeProjectId(mainWindow)).toBe(firstProject);
+		// Neither terminal that existed before is the one on screen.
+		await expect
+			.poll(async () => {
+				const shown = await activeSessionId(mainWindow);
+				return (
+					shown !== null && shown !== firstSession && shown !== secondSession
+				);
+			})
+			.toBe(true);
+	});
 });
