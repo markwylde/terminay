@@ -14,45 +14,49 @@ interface ExtensionChildFrameBase {
 	readonly payload?: unknown;
 }
 
-/**
- * Messages initiated by Server Core. Agent messages are additive to the
- * existing extension-runtime protocol: the legacy child continues to reject
- * them until its agent runtime is enabled.
- */
+/** Messages initiated by Server Core. */
 export type HostFrame = ExtensionHostFrameBase & {
-	readonly kind:
-		| 'activate'
-		| 'invoke'
-		| 'cancel'
-		| 'deactivate'
-		| 'broker.result'
-		| 'agent.terminal.admit'
-		| 'agent.terminal.cancel'
-		| 'agent.drain'
-		| 'agent.observation.result'
-		| 'agent.lifecycle.ack'
-		| 'agent.lifecycle.backpressure'
-		| 'language.request';
+	readonly kind: HostFrameKind;
 };
+
+export const HOST_FRAME_KINDS = [
+	'activate',
+	'invoke',
+	'cancel',
+	'deactivate',
+	'broker.result',
+	/** Start, stop, or re-scope one registered session source. */
+	'agent.source.start',
+	'agent.source.stop',
+	'agent.source.harnesses',
+	/** The host's answer to one `agent.source.publish`. */
+	'agent.source.ack',
+	/** One status, install, or uninstall call on an MCP install target. */
+	'mcp.target.invoke',
+	'language.request',
+] as const;
+export type HostFrameKind = (typeof HOST_FRAME_KINDS)[number];
+
+export const CHILD_FRAME_KINDS = [
+	'ready',
+	'result',
+	'failure',
+	'broker.request',
+	'broker.cancel',
+	'deactivated',
+	'agent.source.publish',
+	'agent.source.diagnostic',
+	'agent.source.disposed',
+	'mcp.target.disposed',
+	'language.diagnostics',
+	'language.session.exited',
+	'fatal',
+] as const;
+export type ChildFrameKind = (typeof CHILD_FRAME_KINDS)[number];
 
 /** Messages initiated by an extension child. */
 export type ChildFrame = ExtensionChildFrameBase & {
-	readonly kind:
-		| 'ready'
-		| 'result'
-		| 'failure'
-		| 'broker.request'
-		| 'broker.cancel'
-		| 'deactivated'
-		| 'agent.provider.disposed'
-		| 'agent.lifecycle.publish'
-		| 'agent.observation.request'
-		| 'agent.terminal.admitted'
-		| 'agent.terminal.cancelled'
-		| 'agent.drain.completed'
-		| 'language.diagnostics'
-		| 'language.session.exited'
-		| 'fatal';
+	readonly kind: ChildFrameKind;
 };
 
 /**
@@ -116,6 +120,19 @@ export function jsonIpcValue(value: unknown): unknown {
 	return result;
 }
 
+export function isHostFrame(value: unknown): value is HostFrame {
+	if (typeof value !== 'object' || value === null || Array.isArray(value))
+		return false;
+	const frame = value as Record<string, unknown>;
+	return (
+		frame.protocolVersion === EXTENSION_HOST_PROTOCOL_VERSION &&
+		typeof frame.id === 'string' &&
+		frame.id.length > 0 &&
+		frame.id.length <= 200 &&
+		(HOST_FRAME_KINDS as readonly unknown[]).includes(frame.kind)
+	);
+}
+
 export function isChildFrame(value: unknown): value is ChildFrame {
 	if (typeof value !== 'object' || value === null || Array.isArray(value))
 		return false;
@@ -125,20 +142,6 @@ export function isChildFrame(value: unknown): value is ChildFrame {
 		typeof frame.id === 'string' &&
 		frame.id.length > 0 &&
 		frame.id.length <= 200 &&
-		(frame.kind === 'ready' ||
-			frame.kind === 'result' ||
-			frame.kind === 'failure' ||
-			frame.kind === 'broker.request' ||
-			frame.kind === 'broker.cancel' ||
-			frame.kind === 'deactivated' ||
-			frame.kind === 'agent.provider.disposed' ||
-			frame.kind === 'agent.lifecycle.publish' ||
-			frame.kind === 'agent.observation.request' ||
-			frame.kind === 'agent.terminal.admitted' ||
-			frame.kind === 'agent.terminal.cancelled' ||
-			frame.kind === 'agent.drain.completed' ||
-			frame.kind === 'language.diagnostics' ||
-			frame.kind === 'language.session.exited' ||
-			frame.kind === 'fatal')
+		(CHILD_FRAME_KINDS as readonly unknown[]).includes(frame.kind)
 	);
 }

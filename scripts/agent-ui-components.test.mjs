@@ -29,7 +29,7 @@ const { AgentStatusIndicator } = await bundleComponent(
 	'src/components/AgentStatusIndicator.tsx',
 	'agent-status-indicator.cjs',
 );
-const { AgentsSidebar } = await bundleComponent(
+const { AgentsSidebar, activateAgentFromSnapshot } = await bundleComponent(
 	'src/components/AgentsSidebar.tsx',
 	'agents-sidebar.cjs',
 );
@@ -211,7 +211,8 @@ test('sidebar does not use a generic terminal tab title as the agent name', () =
 	const grokEntry = {
 		entryId: 'grok-root-entry',
 		kind: 'root',
-		provider: 'com.terminay.agent.grok/cli',
+		provider: 'com.terminay.builtin-agents/agents',
+		harness: 'grok',
 		providerDisplayName: 'Grok',
 		agentId: 'grok-root',
 		sessionId: 'grok-session',
@@ -270,7 +271,8 @@ test('sidebar presents omp with its provider display name', () => {
 	const ompEntry = {
 		entryId: 'omp-root-entry',
 		kind: 'root',
-		provider: 'com.terminay.agent.omp/cli',
+		provider: 'com.terminay.builtin-agents/agents',
+		harness: 'oh-my-pi',
 		providerDisplayName: 'omp',
 		agentId: 'omp-root',
 		sessionId: 'omp-session',
@@ -298,6 +300,69 @@ test('sidebar presents omp with its provider display name', () => {
 	);
 
 	assert.match(markup, />omp</);
+});
+
+test('sidebar marks an external session and makes its row inert', () => {
+	const externalEntry = {
+		entryId: 'com.terminay.builtin-agents/agents/session-x',
+		kind: 'root',
+		provider: 'com.terminay.builtin-agents/agents',
+		harness: 'claude-code',
+		harnessDisplayName: 'Claude Code',
+		agentId: 'session-x',
+		sessionId: 'session-x',
+		activationTerminalSessionId: null,
+		external: true,
+		projectIds: ['project-a'],
+		state: 'done',
+		stateStartedAt: 10,
+		updatedAt: 10,
+		lastEventSequence: 0,
+		active: true,
+		activeTools: [],
+		unread: true,
+		terminalSessionId: null,
+		inProcess: false,
+	};
+
+	const markup = renderToStaticMarkup(
+		React.createElement(AgentsSidebar, {
+			projectId: 'project-a',
+			agents: [{ entry: externalEntry, projectId: 'project-a' }],
+			expandedEntryIds: [],
+			onToggleEntryExpanded: () => {},
+			onActivateTerminal: () => {},
+		}),
+	);
+	assert.match(markup, />External</);
+	assert.match(markup, />Claude Code</);
+	assert.match(markup, /data-agent-external="true"/);
+	assert.match(markup, /aria-disabled="true"/);
+	assert.doesNotMatch(markup, /agents-sidebar__row--unread/);
+
+	const activated = [];
+	const acknowledged = [];
+	activateAgentFromSnapshot(
+		externalEntry,
+		(sessionId) => activated.push(sessionId),
+		(entryId) => acknowledged.push(entryId),
+	);
+	assert.deepEqual(activated, []);
+	assert.deepEqual(acknowledged, []);
+
+	const boundEntry = {
+		...externalEntry,
+		activationTerminalSessionId: 'term-a',
+		terminalSessionId: 'term-a',
+		external: false,
+	};
+	activateAgentFromSnapshot(
+		boundEntry,
+		(sessionId) => activated.push(sessionId),
+		(entryId) => acknowledged.push(entryId),
+	);
+	assert.deepEqual(activated, ['term-a']);
+	assert.deepEqual(acknowledged, [boundEntry.entryId]);
 });
 
 test('sidebar disables its row and disclosure animation when reduced motion is requested', async () => {

@@ -107,6 +107,11 @@ export type AiTabMetadataSettings = {
 
 export type AgentIntegrationSettings = {
 	enabled: boolean;
+	/**
+	 * Harness switches keyed `<sourceId>/<harnessId>`. A missing key means on;
+	 * only switched-off harnesses need an entry.
+	 */
+	harnesses: Record<string, boolean>;
 };
 
 export type GitPushAgentProvider = 'disabled' | 'codex' | 'claudeCode';

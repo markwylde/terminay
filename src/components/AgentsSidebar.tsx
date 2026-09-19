@@ -43,6 +43,11 @@ export function activateAgentFromSnapshot(
 	onActivateTerminal: AgentsSidebarProps['onActivateTerminal'],
 	onAcknowledgeEntry?: AgentsSidebarProps['onAcknowledgeEntry'],
 ): void {
+	// An external session runs outside every Terminay terminal: its row is
+	// listed for awareness only, so activating it does nothing.
+	if (entry.external || entry.activationTerminalSessionId === null) {
+		return;
+	}
 	onActivateTerminal(entry.activationTerminalSessionId, entry);
 	if (entry.unread) {
 		onAcknowledgeEntry?.(entry.entryId);
@@ -134,12 +139,14 @@ function AgentRow({
 	const childrenExpanded = expandedEntryIds.has(entry.entryId);
 	const childCount = node.children.length;
 	const childGroupId = `agents-sidebar-subagents-${entry.entryId}`;
+	const external = entry.external || entry.activationTerminalSessionId === null;
 
 	return (
 		<li className="agents-sidebar__tree-item">
 			<div
-				className={`agents-sidebar__row${entry.unread ? ' agents-sidebar__row--unread' : ''}`}
+				className={`agents-sidebar__row${entry.unread && !external ? ' agents-sidebar__row--unread' : ''}${external ? ' agents-sidebar__row--external' : ''}`}
 				data-agent-state={entry.state}
+				data-agent-external={external ? 'true' : undefined}
 				style={{ paddingLeft: `${10 + depth * 12}px` }}
 			>
 				{childCount > 0 ? (
@@ -168,6 +175,7 @@ function AgentRow({
 					type="button"
 					className="agents-sidebar__agent"
 					data-agent-state={entry.state}
+					aria-disabled={external ? true : undefined}
 					onClick={() =>
 						activateAgentFromSnapshot(
 							entry,
@@ -175,8 +183,19 @@ function AgentRow({
 							onAcknowledgeEntry,
 						)
 					}
-					aria-label={`Focus ${name} terminal`}
-					title={[name, metadata, prompt].filter(Boolean).join('\n')}
+					aria-label={
+						external
+							? `${name}, running outside Terminay`
+							: `Focus ${name} terminal`
+					}
+					title={[
+						name,
+						external ? 'External: running outside Terminay' : undefined,
+						metadata,
+						prompt,
+					]
+						.filter(Boolean)
+						.join('\n')}
 				>
 					<AgentStatusIndicator state={entry.state} showIdle size="medium" />
 					<span className="agents-sidebar__content">
@@ -186,6 +205,9 @@ function AgentRow({
 								<span className="agents-sidebar__child-count">
 									{childCount}
 								</span>
+							) : null}
+							{external && entry.kind === 'root' ? (
+								<span className="agents-sidebar__external">External</span>
 							) : null}
 							<span className="agents-sidebar__state">{entry.state}</span>
 						</span>

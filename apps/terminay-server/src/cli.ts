@@ -28,6 +28,8 @@ import {
 } from '@terminay/protocol';
 import {
 	AgentStatusService,
+	agentHarnessSwitchesFromSettings,
+	agentIntegrationEnabledFromSettings,
 	AiService,
 	CanonicalProjectPathResolver,
 	FileWorkspaceStateBackend,
@@ -47,6 +49,7 @@ import {
 	OpenAiDictationProvider,
 	OrderedEventJournal,
 	openCanonicalWorkspace,
+	ProjectAgentScope,
 	ParakeetRuntime,
 	RecordingService,
 	type RemoteRegisteredDevice,
@@ -62,7 +65,10 @@ import {
 	ServerRecordingAdapter,
 	type ServerRuntimeServices,
 	ServerSettingsRepository,
+	SessionSourceBridge,
+	SessionSourceSupervisor,
 	ShellProfileCatalogueService,
+	withdrawnAgentExtensionSwitches,
 	ShellProfileDiscoveryService,
 	TerminalActivityService,
 	TerminalReplayRegistry,
@@ -507,16 +513,28 @@ async function createServerComposition(
 > {
 	const eventJournal = new OrderedEventJournal();
 	const activity = new TerminalActivityService({ serverId: options.serverId });
-	let extensionHosts:
-		| { agentProviderContributions(): readonly { readonly id: string; readonly displayName: string }[] }
-		| undefined
 	const agents = new AgentStatusService({
 		activity,
 		enabled: options.agentIntegrationEnabled,
-		providerDisplayName: (providerId) =>
-			extensionHosts
-				?.agentProviderContributions()
-				.find((provider) => provider.id === providerId)?.displayName,
+	});
+	const agentScope = new ProjectAgentScope();
+	const agentBridge = new SessionSourceBridge({
+		agents,
+		scope: agentScope,
+		onDiagnostic: ({ sourceId, diagnostic }) => {
+			process.stderr.write(
+				`[terminay-server] agent source ${sourceId}: ${diagnostic.code}: ${diagnostic.message}\n`,
+			);
+		},
+	});
+	const agentSources = new SessionSourceSupervisor({
+		bridge: agentBridge,
+		agents,
+		onStartFailure: (sourceId, error) => {
+			process.stderr.write(
+				`[terminay-server] agent source ${sourceId} failed to start: ${error instanceof Error ? error.message : String(error)}\n`,
+			);
+		},
 	});
 	const workspaceRepository = await openCanonicalWorkspace({
 		backend: new FileWorkspaceStateBackend(join(options.dataRoot, 'workspace.v3.json')),
@@ -544,6 +562,15 @@ async function createServerComposition(
 	);
 	const settings = createStandaloneSettingsRepository(options.dataRoot);
 	await settings.load();
+	// The command-line switch decides agent status for this run; the harness
+	// switches follow the server settings live.
+	const applyAgentSettings = (value: unknown) => {
+		if (options.agentIntegrationEnabled)
+			agents.setIntegrationEnabled(agentIntegrationEnabledFromSettings(value));
+		agentSources.setHarnessSwitches(agentHarnessSwitchesFromSettings(value));
+	};
+	applyAgentSettings(settings.settings);
+	settings.onChange((state) => applyAgentSettings(state.settings));
 	const shellProfiles = new ShellProfileCatalogueService({
 		settings,
 		discovery: new ShellProfileDiscoveryService(
@@ -576,8 +603,21 @@ async function createServerComposition(
 		authorityLabel: 'This server',
 		builtInArtifactRoot: resolveBuiltInExtensionArtifactRoot(),
 		vault,
+		agents: agentSources,
+		// A per-agent built-in the user had switched off stays off as a harness
+		// switch of the bundled source that replaced it.
+		onBuiltInWithdrawn: async (record) => {
+			const switches = withdrawnAgentExtensionSwitches(record);
+			if (switches === undefined) return;
+			await settings.apply({
+				command: {
+					type: 'merge',
+					settings: { agentIntegration: { harnesses: { ...switches } } },
+				},
+			});
+		},
 	});
-	extensionHosts = extensions.hosts;
+	agentSources.attach(extensions.hosts);
 	const git = new ServerGitAdapter({
 		serverId: options.serverId,
 		git: gitService,
@@ -690,9 +730,23 @@ async function createServerComposition(
 		}),
 		activity,
 		agents,
+		agentSessions: {
+			supervisor: agentSources,
+			bridge: agentBridge,
+			scope: agentScope,
+		},
 		workspace,
 		workspaceOperations: {
-			prepareProjectRootUpdate: files.prepareProjectRootUpdate,
+			prepareProjectRootUpdate: async (projectId, root) => {
+				const prepared = await files.prepareProjectRootUpdate(projectId, root);
+				return Object.freeze({
+					canonicalRoot: prepared.canonicalRoot,
+					commit: () => {
+						prepared.commit();
+						agentScope.setProject(projectId, prepared.canonicalRoot);
+					},
+				});
+			},
 		},
 		// What a restored workspace contains is server policy; this supplies only
 		// the act of making a session. Without it a restart republished the
@@ -741,6 +795,10 @@ async function createServerComposition(
 		serviceLifecycle: {
 			start: async () => {
 				await gitService.bindProject('default', options.projectRoot);
+				agentScope.setProject(
+					'default',
+					await realpath(options.projectRoot).catch(() => options.projectRoot),
+				);
 			},
 		},
 		macros: {

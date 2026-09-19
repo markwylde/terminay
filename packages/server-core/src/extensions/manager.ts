@@ -1,4 +1,9 @@
-import type { LanguageServerContribution } from '@terminay/extension-api';
+import type {
+	AgentSessionSourceContribution,
+	LanguageServerContribution,
+	McpInstallTargetContribution,
+	McpServerCommand,
+} from '@terminay/extension-api';
 import type { ServerVaultService } from '../settings/vault.js';
 import type { ExtensionHostDiagnosticListener } from './diagnostics.js';
 import { ExtensionHost, type ExtensionLanguageInvocation } from './host.js';
@@ -8,8 +13,6 @@ import type {
 } from './languageProtocol.js';
 import type {
 	ExtensionAgentBroker,
-	ExtensionAgentTerminalAdmission,
-	ExtensionAgentTerminalCancellation,
 	ExtensionBroker,
 	ExtensionHostLimits,
 	ExtensionHostStatus,
@@ -45,6 +48,18 @@ export interface LanguageServerProvider {
 	readonly contribution: LanguageServerContribution;
 }
 
+/** One session source a running extension registered. */
+export interface SessionSourceProvider {
+	readonly extensionId: string;
+	readonly contribution: AgentSessionSourceContribution;
+}
+
+/** One MCP install target a running extension registered. */
+export interface McpInstallTargetProvider {
+	readonly extensionId: string;
+	readonly contribution: McpInstallTargetContribution;
+}
+
 export type ExtensionLanguageDiagnosticsListener = (
 	notification: ExtensionLanguageDiagnosticsNotification & {
 		readonly extensionId: string;
@@ -59,7 +74,8 @@ export type ExtensionLanguageSessionExitListener = (
  * to escape manager lifecycle methods or affect another host. */
 export class ExtensionHostManager {
 	private readonly hosts = new Map<string, ExtensionHost>();
-	private readonly agentProviderOwners = new Map<string, string>();
+	/** Source and target id → owning extension. */
+	private readonly contributionOwners = new Map<string, string>();
 	private readonly publishedExtensions = new Set<string>();
 	private readonly contributionListeners = new Set<
 		() => void | Promise<void>
@@ -141,8 +157,11 @@ export class ExtensionHostManager {
 				if (status.state !== 'running')
 					throw new Error('extension host stopped before provider publication');
 				this.assertContributionOwnership(status, descriptor.extensionId);
-				for (const provider of status.agentProviders ?? [])
-					this.agentProviderOwners.set(provider.id, descriptor.extensionId);
+				for (const contribution of [
+					...(status.agentSessionSources ?? []),
+					...(status.mcpInstallTargets ?? []),
+				])
+					this.contributionOwners.set(contribution.id, descriptor.extensionId);
 				this.publishedExtensions.add(descriptor.extensionId);
 				this.notifyContributionListeners();
 				return status;
@@ -160,15 +179,84 @@ export class ExtensionHostManager {
 		}
 	}
 
-	agentProviderContributions() {
+	/** Every session source registered by a running, published extension. */
+	sessionSourceContributions(): readonly SessionSourceProvider[] {
 		return Object.freeze(
 			this.statuses().flatMap((status) =>
 				status.state === 'running' &&
 				this.publishedExtensions.has(status.extensionId)
-					? (status.agentProviders ?? [])
+					? (status.agentSessionSources ?? []).map((contribution) =>
+							Object.freeze({ extensionId: status.extensionId, contribution }),
+						)
 					: [],
 			),
 		);
+	}
+
+	/** Every MCP install target registered by a running, published extension,
+	 * in declaration order. */
+	mcpInstallTargetContributions(): readonly McpInstallTargetProvider[] {
+		return Object.freeze(
+			this.statuses().flatMap((status) =>
+				status.state === 'running' &&
+				this.publishedExtensions.has(status.extensionId)
+					? (status.mcpInstallTargets ?? []).map((contribution) =>
+							Object.freeze({ extensionId: status.extensionId, contribution }),
+						)
+					: [],
+			),
+		);
+	}
+
+	async startSessionSource(
+		sourceId: string,
+		enabledHarnesses: readonly string[],
+	): Promise<void> {
+		return this.ownerHost(sourceId).startSessionSource(
+			sourceId,
+			enabledHarnesses,
+		);
+	}
+
+	async stopSessionSource(sourceId: string): Promise<void> {
+		const owner = this.contributionOwners.get(sourceId);
+		if (owner === undefined) return;
+		await this.hosts.get(owner)?.stopSessionSource(sourceId);
+	}
+
+	async setSessionSourceHarnesses(
+		sourceId: string,
+		enabledHarnesses: readonly string[],
+	): Promise<void> {
+		return this.ownerHost(sourceId).setSessionSourceHarnesses(
+			sourceId,
+			enabledHarnesses,
+		);
+	}
+
+	async invokeMcpTarget(
+		targetId: string,
+		operation: 'status' | 'install' | 'uninstall',
+		server: McpServerCommand,
+		signal?: AbortSignal,
+	): Promise<unknown> {
+		return this.ownerHost(targetId).invokeMcpTarget(
+			targetId,
+			operation,
+			server,
+			signal,
+		);
+	}
+
+	private ownerHost(contributionId: string): ExtensionHost {
+		const owner = this.contributionOwners.get(contributionId);
+		const host = owner === undefined ? undefined : this.hosts.get(owner);
+		if (host === undefined)
+			throw Object.assign(new Error('extension contribution is unavailable'), {
+				code: 'unavailable',
+				retryable: true,
+			});
+		return host;
 	}
 
 	/** Every language server contributed by a running, published extension. */
@@ -251,34 +339,6 @@ export class ExtensionHostManager {
 		return () => this.hostStateListeners.delete(listener);
 	}
 
-	async admitAgentTerminal(
-		admission: ExtensionAgentTerminalAdmission,
-		signal?: AbortSignal,
-	): Promise<unknown> {
-		const owner = this.agentProviderOwners.get(admission.context.providerId);
-		if (owner === undefined) throw new Error('agent provider is unavailable');
-		const host = this.hosts.get(owner);
-		if (host === undefined)
-			throw new Error('agent extension host does not exist');
-		return host.admitAgentTerminal(admission, signal);
-	}
-
-	async cancelAgentTerminal(
-		cancellation: ExtensionAgentTerminalCancellation,
-	): Promise<boolean> {
-		for (const host of this.hosts.values())
-			if (await host.cancelAgentTerminal(cancellation)) return true;
-		return false;
-	}
-
-	async drainAgentObservers(
-		reason: 'provider-disabled' | 'extension-stopped' | 'server-stopping',
-	): Promise<void> {
-		await Promise.all(
-			[...this.hosts.values()].map((host) => host.drainAgentObservers(reason)),
-		);
-	}
-
 	invoke(
 		extensionId: string,
 		invocation: ExtensionInvocation,
@@ -308,12 +368,11 @@ export class ExtensionHostManager {
 	}
 
 	async shutdown(): Promise<void> {
-		await this.drainAgentObservers('server-stopping');
 		const results = await Promise.allSettled(
 			[...this.hosts.values()].map((host) => host.stop()),
 		);
 		await this.mutateContributions(() => {
-			this.agentProviderOwners.clear();
+			this.contributionOwners.clear();
 			this.publishedExtensions.clear();
 			this.notifyContributionListeners();
 		});
@@ -331,17 +390,22 @@ export class ExtensionHostManager {
 		status: ExtensionHostStatus,
 		extensionId: string,
 	): void {
-		for (const provider of status.agentProviders ?? []) {
-			const owner = this.agentProviderOwners.get(provider.id);
+		for (const contribution of [
+			...(status.agentSessionSources ?? []),
+			...(status.mcpInstallTargets ?? []),
+		]) {
+			const owner = this.contributionOwners.get(contribution.id);
 			if (owner !== undefined && owner !== extensionId)
-				throw new Error(`agent provider already registered: ${provider.id}`);
+				throw new Error(
+					`extension contribution already registered: ${contribution.id}`,
+				);
 		}
 	}
 
 	private removeContributionOwnership(extensionId: string): void {
 		const wasPublished = this.publishedExtensions.delete(extensionId);
-		for (const [providerId, owner] of this.agentProviderOwners)
-			if (owner === extensionId) this.agentProviderOwners.delete(providerId);
+		for (const [contributionId, owner] of this.contributionOwners)
+			if (owner === extensionId) this.contributionOwners.delete(contributionId);
 		if (wasPublished) this.notifyContributionListeners();
 	}
 

@@ -1,29 +1,19 @@
 import { randomUUID } from 'node:crypto';
 import {
-	type AgentLifecycleEvent as ExtensionAgentLifecycleEvent,
-	validateAgentLifecycleEvent,
-	validateAgentSessionBindingRequest,
-} from '@terminay/extension-api';
-import {
 	AgentStatusStore,
-	makeAgentStatusEntryId,
-	makeAgentStatusStreamId,
-	reduceAgentStatusSnapshot,
 	selectAgentStatusEntry,
 	selectAgentStatusesForTerminal,
 } from './agentStore.js';
-import {
-	type AgentProvider,
-	type AgentStatusListener,
-	type AgentStatusSnapshot,
-	type AgentLifecycleEvent as CanonicalAgentLifecycleEvent,
-	isExtensionAgentProvider,
+import type {
+	AgentStatusEntry,
+	AgentStatusListener,
+	AgentStatusSnapshot,
+	RootAgentStatusEntry,
 } from './agentTypes.js';
 import type {
 	ActivitySessionIdentity,
 	TerminalActivityService,
 } from './service.js';
-import type { ProviderActivityState, ProviderActivityUpdate } from './types.js';
 
 /** Options for the canonical, provider-neutral sidebar projection. */
 export interface AgentStatusServiceOptions {
@@ -34,86 +24,50 @@ export interface AgentStatusServiceOptions {
 	/** Live process identity for Agents snapshots. Generated at construction
 	 * when omitted; never persisted in user-data. */
 	readonly processInstanceId?: string;
-	/** Manifest display name for a provider id. Looked up at ingest time. */
-	readonly providerDisplayName?: (providerId: string) => string | undefined;
-	/** Notified for every published event the canonical store could not apply. */
-	readonly onLifecycleRejected?: (
-		rejection: ExtensionAgentLifecycleRejection,
-	) => void;
+}
+
+/** One live server-owned terminal and the PTY shell process it spawned. */
+export interface AgentTerminal {
+	readonly identity: ActivitySessionIdentity;
+	readonly shellPid?: number;
 }
 
 /**
- * Evidence that one published lifecycle event was not applied.
- *
- * The provider, opaque terminal identity, event kind and sequence say which
- * transition was lost and where; the reason says which rule refused it. It
- * carries no prompt, tool input, result, summary or path.
+ * A terminal lifecycle edge. Session binding is re-evaluated only on these
+ * edges, never on a timer.
  */
-export interface ExtensionAgentLifecycleRejection {
-	readonly kind: 'agent-lifecycle-rejected';
-	readonly provider: string;
-	readonly terminal: Readonly<ActivitySessionIdentity>;
-	readonly eventKind: CanonicalAgentLifecycleEvent['kind'];
-	readonly sequence: number;
-	readonly reason: 'precondition' | 'not-reducible';
-}
-
-/** Events that refine a row without asserting what state it is in. */
-const OBSERVATIONAL_EVENT_KINDS: ReadonlySet<
-	CanonicalAgentLifecycleEvent['kind']
-> = new Set(['agent.metadata', 'tool.started', 'tool.finished']);
-
-interface ProviderBinding {
-	readonly provider: AgentProvider;
-	readonly providerSessionId: string;
-	readonly mappingVersion: string;
-}
-
-export interface ExtensionLifecycleIngestResult {
-	readonly acceptedEventCount: number;
-	readonly rejectedEventCount: number;
-	readonly failure?: string;
-}
+export type AgentTerminalEdge =
+	| { readonly kind: 'started'; readonly terminal: AgentTerminal }
+	| { readonly kind: 'exited'; readonly terminal: AgentTerminal }
+	| {
+			readonly kind: 'foreground';
+			readonly terminal: AgentTerminal;
+			readonly shellForeground: boolean;
+	  };
 
 /**
- * Canonical lifecycle reducer for extension-published agent events.
+ * The canonical agent authority: live terminals, the reduced entry snapshot,
+ * acknowledgement, and the agent status setting.
  *
- * Provider discovery, transcript observation, and native-record mapping are
- * extension responsibilities. This service accepts only public validated DTOs
- * after a host has admitted an exact terminal incarnation.
+ * Session detection lives in extensions and reaches this service only as
+ * entries a session source bridge reduced from bounded snapshots. The service
+ * reads no provider file and infers no agent state.
  */
 export class AgentStatusService {
 	private readonly activity: TerminalActivityService;
 	private readonly now: () => number;
 	private readonly store: AgentStatusStore;
-	private readonly active = new Map<string, ActivitySessionIdentity>();
-	private readonly sessionScopes = new Map<string, ActivitySessionIdentity>();
-	private readonly bindings = new Map<string, ProviderBinding>();
-	private readonly extensionProviderBySession = new Map<
-		string,
-		AgentProvider
+	private readonly terminals = new Map<string, AgentTerminal>();
+	private readonly terminalObservers = new Set<
+		(edge: AgentTerminalEdge) => void
 	>();
-	private readonly sequences = new Map<string, Map<string, number>>();
-	private readonly pendingSubagentLaunches = new Map<
-		string,
-		Array<{
-			readonly displayName?: string;
-			readonly promptText?: string;
-			readonly toolId: string;
-		}>
-	>();
+	private readonly activitySequences = new Map<string, number>();
 	private started = false;
 	private enabled: boolean;
 	private readonly integrationObservers = new Set<
 		(enabled: boolean) => void
 	>();
 	private readonly processInstanceId: string;
-	private readonly providerDisplayName?: (
-		providerId: string,
-	) => string | undefined;
-	private readonly onLifecycleRejected?: (
-		rejection: ExtensionAgentLifecycleRejection,
-	) => void;
 	private lastInnerSnapshot: AgentStatusSnapshot | undefined;
 	private lastStampedSnapshot: AgentStatusSnapshot | undefined;
 
@@ -123,8 +77,6 @@ export class AgentStatusService {
 		this.store = options.store ?? new AgentStatusStore();
 		this.enabled = options.enabled ?? true;
 		this.processInstanceId = options.processInstanceId ?? randomUUID();
-		this.providerDisplayName = options.providerDisplayName;
-		this.onLifecycleRejected = options.onLifecycleRejected;
 	}
 
 	get processId(): string {
@@ -134,7 +86,7 @@ export class AgentStatusService {
 		return this.withProcessInstance(this.store.getSnapshot());
 	}
 	isSessionActive(identity: ActivitySessionIdentity): boolean {
-		const current = this.active.get(identity.sessionId);
+		const current = this.terminals.get(identity.sessionId)?.identity;
 		return (
 			current !== undefined &&
 			current.serverId === identity.serverId &&
@@ -146,16 +98,16 @@ export class AgentStatusService {
 			this.filterSnapshotForProject(this.store.getSnapshot(), projectId),
 		);
 	}
+	/** Entries the server stamped with `projectId`. A project claim never sees
+	 * another project's sessions, bound or external. */
 	filterSnapshotForProject(
 		snapshot: AgentStatusSnapshot,
 		projectId: string | undefined,
 	): AgentStatusSnapshot {
 		if (projectId === undefined) return snapshot;
 		const entries = Object.fromEntries(
-			Object.entries(snapshot.entries).filter(
-				([, entry]) =>
-					this.sessionScopes.get(entry.activationTerminalSessionId)
-						?.projectId === projectId,
+			Object.entries(snapshot.entries).filter(([, entry]) =>
+				entry.projectIds.includes(projectId),
 			),
 		);
 		return Object.freeze({ ...snapshot, entries: Object.freeze(entries) });
@@ -179,25 +131,15 @@ export class AgentStatusService {
 		this.started = true;
 	}
 	async stop(): Promise<void> {
-		for (const identity of [...this.active.values()])
-			this.terminalExited(identity);
-		this.active.clear();
-		this.sessionScopes.clear();
-		this.bindings.clear();
-		this.extensionProviderBySession.clear();
-		this.sequences.clear();
-		this.pendingSubagentLaunches.clear();
+		this.terminals.clear();
+		this.activitySequences.clear();
+		this.store.clear();
 		this.started = false;
 	}
 
 	/**
-	 * Observe the integration setting.
-	 *
-	 * The observation runtime needs this because turning the feature off has to
-	 * cancel its work, not just stop its results being recorded — an unbound
-	 * terminal holds directory watches whose first change re-runs observation,
-	 * and an observation spawns a process, so a runtime that never hears about
-	 * the change keeps paying the full cost of a disabled feature.
+	 * Observe the agent status setting. Session sources must stop, not merely
+	 * be ignored, when it is switched off, so their watches are released.
 	 */
 	observeIntegrationEnabled(
 		listener: (enabled: boolean) => void,
@@ -215,6 +157,7 @@ export class AgentStatusService {
 			throw new TypeError('agent integration enabled must be boolean');
 		if (this.enabled === enabled) return false;
 		this.enabled = enabled;
+		if (!enabled) this.store.clear();
 		for (const listener of [...this.integrationObservers]) {
 			try {
 				listener(enabled);
@@ -222,82 +165,91 @@ export class AgentStatusService {
 				/* an observer must not block the setting from applying */
 			}
 		}
-		if (!enabled) {
-			this.active.clear();
-			this.sessionScopes.clear();
-			this.bindings.clear();
-			this.extensionProviderBySession.clear();
-			this.sequences.clear();
-			this.pendingSubagentLaunches.clear();
-			this.store.clear();
-		}
 		return true;
+	}
+
+	/** Terminals whose shell process a session can descend from. */
+	liveTerminals(): readonly AgentTerminal[] {
+		return [...this.terminals.values()];
+	}
+	terminal(sessionId: string): AgentTerminal | undefined {
+		return this.terminals.get(sessionId);
+	}
+	observeTerminals(listener: (edge: AgentTerminalEdge) => void): () => void {
+		this.terminalObservers.add(listener);
+		return () => {
+			this.terminalObservers.delete(listener);
+		};
 	}
 
 	register(identity: ActivitySessionIdentity): void {
 		if (!this.started) throw new Error('agent status service is not running');
-		if (!this.enabled) return;
-		const frozen = Object.freeze({ ...identity });
-		this.active.set(identity.sessionId, frozen);
-		this.sessionScopes.set(identity.sessionId, frozen);
+		this.terminals.set(identity.sessionId, {
+			identity: Object.freeze({ ...identity }),
+		});
 	}
 
-	/** Terminal process details are owned by extension admission, not this reducer. */
-	terminalStarted(identity: ActivitySessionIdentity, _shellPid: number): void {
+	terminalStarted(identity: ActivitySessionIdentity, shellPid: number): void {
 		this.assertActive(identity);
+		if (!Number.isSafeInteger(shellPid) || shellPid <= 0) return;
+		const terminal = Object.freeze({
+			identity: this.terminals.get(identity.sessionId)!.identity,
+			shellPid,
+		});
+		this.terminals.set(identity.sessionId, terminal);
+		this.notifyTerminal({ kind: 'started', terminal });
 	}
 
-	terminalExited(
-		identity: ActivitySessionIdentity,
-		options: { readonly exitCode?: number; readonly signal?: string } = {},
-	): void {
-		const current = this.active.get(identity.sessionId);
-		if (
-			!current ||
-			current.projectId !== identity.projectId ||
-			current.serverId !== identity.serverId
-		)
+	terminalExited(identity: ActivitySessionIdentity): void {
+		const terminal = this.terminals.get(identity.sessionId);
+		if (terminal === undefined || !sameScope(terminal.identity, identity))
 			return;
-		this.active.delete(identity.sessionId);
-		this.bindings.delete(identity.sessionId);
-		this.extensionProviderBySession.delete(identity.sessionId);
-		this.sequences.delete(identity.sessionId);
-		this.removePendingSubagentLaunches(identity.sessionId);
-		const entries = selectAgentStatusesForTerminal(
-			this.store.getSnapshot(),
-			identity.sessionId,
-		).filter((entry) => entry.active);
-		let exitSequence =
-			Math.max(0, ...entries.map((entry) => entry.lastEventSequence)) + 1;
-		for (const entry of entries)
-			this.store.dispatch({
-				provider: entry.provider,
-				sessionId: entry.sessionId,
-				activationTerminalSessionId: identity.sessionId,
-				agentId: entry.agentId,
-				kind: 'agent.exited',
-				sequence: exitSequence++,
-				occurredAt: Math.max(this.now(), entry.updatedAt),
-				...(options.exitCode === undefined
-					? {}
-					: { exitCode: options.exitCode }),
-				...(options.signal === undefined ? {} : { signal: options.signal }),
-			});
+		this.terminals.delete(identity.sessionId);
+		this.activitySequences.delete(identity.sessionId);
+		this.notifyTerminal({ kind: 'exited', terminal });
 	}
 
 	abandonTerminalSession(identity: ActivitySessionIdentity): void {
-		const current = this.active.get(identity.sessionId);
-		if (
-			!current ||
-			current.projectId !== identity.projectId ||
-			current.serverId !== identity.serverId
-		)
+		this.terminalExited(identity);
+	}
+
+	foregroundProcessChanged(
+		identity: ActivitySessionIdentity,
+		_processName: string,
+		shellForeground: boolean,
+	): void {
+		const terminal = this.terminals.get(identity.sessionId);
+		if (terminal === undefined || !sameScope(terminal.identity, identity))
 			return;
-		this.active.delete(identity.sessionId);
-		this.bindings.delete(identity.sessionId);
-		this.extensionProviderBySession.delete(identity.sessionId);
-		this.sequences.delete(identity.sessionId);
-		this.removePendingSubagentLaunches(identity.sessionId);
+		this.notifyTerminal({ kind: 'foreground', terminal, shellForeground });
+	}
+
+	/**
+	 * Replace and remove entries in one revision. Bound roots whose state or
+	 * binding changed drive their terminal's activity indicator; external
+	 * entries never do.
+	 */
+	applyEntries(
+		upserts: readonly AgentStatusEntry[],
+		removals: readonly string[] = [],
+	): boolean {
+		if (!this.enabled) return false;
+		const before = this.store.getSnapshot();
+		if (!this.store.apply(upserts, removals)) return false;
+		const after = this.store.getSnapshot();
+		for (const entryId of new Set([
+			...removals,
+			...upserts.map((entry) => entry.entryId),
+		])) {
+			const previous = before.entries[entryId];
+			const next = after.entries[entryId];
+			if (previous?.kind !== 'root' && next?.kind !== 'root') continue;
+			this.forwardActivity(
+				previous as RootAgentStatusEntry | undefined,
+				next as RootAgentStatusEntry | undefined,
+			);
+		}
+		return true;
 	}
 
 	acknowledge(identity: ActivitySessionIdentity, entryId?: string): boolean {
@@ -316,476 +268,62 @@ export class AgentStatusService {
 		return changed;
 	}
 
-	claimExtensionProvider(
-		identity: ActivitySessionIdentity,
-		providerId: string,
-	): boolean {
-		this.assertActive(identity);
-		this.assertExtensionProvider(providerId);
-		const previousOwner = this.extensionProviderBySession.get(
-			identity.sessionId,
-		);
-		if (previousOwner !== undefined && previousOwner !== providerId)
-			throw new Error(
-				'another extension provider already owns this terminal session',
-			);
-		if (previousOwner === providerId) return false;
-		const previousBinding = this.bindings.get(identity.sessionId);
-		if (
-			previousBinding !== undefined &&
-			previousBinding.provider !== providerId
-		)
-			this.retireBinding(identity, previousBinding);
-		this.extensionProviderBySession.set(identity.sessionId, providerId);
-		return true;
+	/** Bound entries of one terminal. */
+	entriesForTerminal(sessionId: string): readonly AgentStatusEntry[] {
+		return selectAgentStatusesForTerminal(this.store.getSnapshot(), sessionId);
 	}
 
-	releaseExtensionProvider(
-		identity: ActivitySessionIdentity,
-		providerId: string,
-	): boolean {
-		this.assertActive(identity);
-		if (this.extensionProviderBySession.get(identity.sessionId) !== providerId)
-			return false;
-		const binding = this.bindings.get(identity.sessionId);
-		if (binding?.provider === providerId) {
-			this.retireBinding(identity, binding, 'extension-released');
-			this.bindings.delete(identity.sessionId);
-		}
-		this.extensionProviderBySession.delete(identity.sessionId);
-		return true;
+	private forwardActivity(
+		previous: RootAgentStatusEntry | undefined,
+		next: RootAgentStatusEntry | undefined,
+	): void {
+		const previousTerminal = previous?.activationTerminalSessionId ?? null;
+		const nextTerminal = next?.activationTerminalSessionId ?? null;
+		if (previousTerminal !== null && previousTerminal !== nextTerminal)
+			this.ingestActivity(previousTerminal, previous!, 'idle');
+		if (
+			nextTerminal !== null &&
+			(previousTerminal !== nextTerminal || previous?.state !== next!.state)
+		)
+			this.ingestActivity(nextTerminal, next!, next!.state);
 	}
 
-	bindExtensionSession(
-		identity: ActivitySessionIdentity,
-		providerId: string,
-		mappingVersion: string,
-		binding: unknown,
-	): boolean {
-		this.assertActive(identity);
-		this.assertExtensionClaim(identity, providerId);
-		const validated = validateAgentSessionBindingRequest(binding);
-		if (!validated.ok)
-			throw new Error('extension agent session binding is invalid');
-		if (
-			!isMappingVersion(mappingVersion) ||
-			validated.value.mappingVersion !== mappingVersion
-		)
-			throw new Error('extension agent mapping version is invalid');
-		const previous = this.bindings.get(identity.sessionId);
-		if (
-			previous !== undefined &&
-			(previous.provider !== providerId ||
-				previous.providerSessionId !== validated.value.providerSessionId)
-		)
-			this.retireBinding(identity, previous);
-		this.bindings.set(identity.sessionId, {
-			provider: providerId,
-			providerSessionId: validated.value.providerSessionId,
-			mappingVersion,
-		});
-		return true;
-	}
-
-	async ingestExtensionLifecycle(
-		identity: ActivitySessionIdentity,
-		providerId: string,
-		mappingVersion: string,
-		binding: unknown | undefined,
-		events: readonly unknown[],
-	): Promise<ExtensionLifecycleIngestResult> {
+	private ingestActivity(
+		terminalSessionId: string,
+		entry: RootAgentStatusEntry,
+		state: AgentStatusEntry['state'],
+	): void {
+		const terminal = this.terminals.get(terminalSessionId);
+		if (terminal === undefined) return;
+		const sequence = (this.activitySequences.get(terminalSessionId) ?? 0) + 1;
+		this.activitySequences.set(terminalSessionId, sequence);
 		try {
-			this.assertActive(identity);
-			this.assertExtensionClaim(identity, providerId);
-			if (!isMappingVersion(mappingVersion))
-				throw new Error('extension agent mapping version is invalid');
-			const validatedBinding =
-				binding === undefined
-					? undefined
-					: validateAgentSessionBindingRequest(binding);
-			if (validatedBinding !== undefined && !validatedBinding.ok)
-				throw new Error('extension agent session binding is invalid');
-			if (
-				validatedBinding?.ok &&
-				validatedBinding.value.mappingVersion !== mappingVersion
-			)
-				throw new Error('extension agent mapping version is invalid');
-			const currentBinding = this.bindings.get(identity.sessionId);
-			const activeBinding: ProviderBinding | undefined = validatedBinding?.ok
-				? {
-						provider: providerId,
-						providerSessionId: validatedBinding.value.providerSessionId,
-						mappingVersion,
-					}
-				: currentBinding;
-			if (
-				activeBinding === undefined ||
-				activeBinding.provider !== providerId ||
-				activeBinding.mappingVersion !== mappingVersion
-			)
-				throw new Error('extension agent session is not bound');
-			if (!Array.isArray(events) || events.length > 64)
-				throw new Error('extension lifecycle publication is invalid');
-			const validatedEvents: ExtensionAgentLifecycleEvent[] = [];
-			for (const candidate of events) {
-				const validated = validateAgentLifecycleEvent(candidate);
-				if (!validated.ok)
-					throw new Error('extension lifecycle event is invalid');
-				validatedEvents.push(validated.value);
-			}
-			const replacing =
-				currentBinding !== undefined &&
-				(currentBinding.provider !== providerId ||
-					currentBinding.providerSessionId !== activeBinding.providerSessionId);
-			if (replacing)
-				throw new Error(
-					'extension agent session replacement requires a separate binding publication',
-				);
-			const startSequence =
-				this.sequences.get(identity.sessionId)?.get(providerId) ?? 1;
-			const rawCanonical = validatedEvents.map((event, index) =>
-				this.toCanonicalExtensionEventAt(
-					identity,
-					providerId,
-					activeBinding,
-					event,
-					startSequence + index,
-				),
-			);
-			// One inadmissible event is evidence about that event and nothing
-			// else. Rejecting its whole publication would discard the events
-			// behind it — a completion among them leaves the row working for
-			// ever, with no record of why — so the batch is partitioned and
-			// every admissible event is still dispatched.
-			const { admitted, rejected } = partitionLifecycleTransitions(
-				this.store.getSnapshot(),
-				rawCanonical,
-			);
-			for (const rejection of rejected)
-				this.onLifecycleRejected?.(
-					Object.freeze({
-						kind: 'agent-lifecycle-rejected',
-						provider: providerId,
-						terminal: identity,
-						eventKind: rejection.event.kind,
-						sequence: rejection.event.sequence,
-						reason: rejection.reason,
-					}),
-				);
-			const canonical = admitted.map((event) =>
-				this.correlateSubagentLaunch(event),
-			);
-			if (canonical.length > 0 && !this.store.dispatchBatch(canonical))
-				throw new Error('extension lifecycle transition is invalid');
-			if (validatedBinding?.ok)
-				this.bindings.set(identity.sessionId, activeBinding);
-			if (rawCanonical.length > 0) {
-				const sequences =
-					this.sequences.get(identity.sessionId) ?? new Map<string, number>();
-				this.sequences.set(identity.sessionId, sequences);
-				// Every number handed out is spent, admitted or not: the store
-				// admits a strictly increasing sequence, so a rejected event
-				// leaves a gap rather than a number a later event could reuse.
-				sequences.set(providerId, startSequence + rawCanonical.length);
-			}
-			// Observational events say nothing about whether the terminal is
-			// working, so they never move the activity indicator either.
-			for (const event of canonical)
-				if (!OBSERVATIONAL_EVENT_KINDS.has(event.kind))
-					this.activity.ingestProvider(identity, toProviderUpdate(event));
-			return Object.freeze({
-				acceptedEventCount: canonical.length,
-				rejectedEventCount: rejected.length,
+			this.activity.ingestProvider(terminal.identity, {
+				provider: entry.provider,
+				state,
+				sequence,
+				agentId: entry.sessionId,
+				source: `extension:${entry.provider}`,
 			});
-		} catch (error) {
-			return Object.freeze({
-				acceptedEventCount: 0,
-				rejectedEventCount: Array.isArray(events) ? events.length : 0,
-				failure:
-					error instanceof Error
-						? error.message
-						: 'extension lifecycle publication failed',
-			});
+		} catch {
+			/* a terminal leaving activity supervision cannot fail agent status */
 		}
 	}
 
-	/** @deprecated Native records are no longer accepted by Server Core. */
-	async ingestJournalRecord(
-		identity: ActivitySessionIdentity,
-		_provider: string,
-		_record: Readonly<Record<string, unknown>>,
-	): Promise<boolean> {
-		this.assertActive(identity);
-		return false;
+	private notifyTerminal(edge: AgentTerminalEdge): void {
+		for (const listener of [...this.terminalObservers]) {
+			try {
+				listener(edge);
+			} catch {
+				/* terminal lifecycle cannot be blocked by an observer */
+			}
+		}
 	}
-	/** @deprecated Process matching belongs to manifest-owned extension providers. */
-	foregroundProcessChanged(
-		_identity: ActivitySessionIdentity,
-		_processName: string,
-		_shellForeground: boolean,
-	): void {}
 
 	private assertActive(identity: ActivitySessionIdentity): void {
-		const current = this.active.get(identity.sessionId);
-		if (
-			!current ||
-			current.serverId !== identity.serverId ||
-			current.projectId !== identity.projectId
-		)
+		const current = this.terminals.get(identity.sessionId)?.identity;
+		if (current === undefined || !sameScope(current, identity))
 			throw new Error('agent session is not active for this project');
-	}
-	private nextSequence(provider: string, sessionId: string): number {
-		const sequences =
-			this.sequences.get(sessionId) ?? new Map<string, number>();
-		this.sequences.set(sessionId, sequences);
-		const next = sequences.get(provider) ?? 1;
-		sequences.set(provider, next + 1);
-		return next;
-	}
-	private retireBinding(
-		identity: ActivitySessionIdentity,
-		binding: ProviderBinding,
-		reason = 'session-replaced',
-	): void {
-		const root = selectAgentStatusesForTerminal(
-			this.store.getSnapshot(),
-			identity.sessionId,
-		).find(
-			(entry) =>
-				entry.kind === 'root' &&
-				entry.provider === binding.provider &&
-				entry.sessionId === binding.providerSessionId &&
-				entry.active,
-		);
-		if (!root) return;
-		const event: CanonicalAgentLifecycleEvent = {
-			kind: 'session.stopped',
-			provider: binding.provider,
-			sessionId: binding.providerSessionId,
-			activationTerminalSessionId: identity.sessionId,
-			sequence: this.nextSequence(binding.provider, identity.sessionId),
-			occurredAt: Math.max(this.now(), root.updatedAt),
-			reason,
-		};
-		this.store.dispatch(event);
-		this.activity.ingestProvider(identity, toProviderUpdate(event));
-	}
-	private correlateSubagentLaunch(
-		event: CanonicalAgentLifecycleEvent,
-	): CanonicalAgentLifecycleEvent {
-		const streamId = makeAgentStatusStreamId(
-			event.provider,
-			event.activationTerminalSessionId,
-			event.sessionId,
-		);
-		if (
-			event.kind === 'tool.started' &&
-			event.tool.subagentLaunch !== undefined
-		) {
-			const pending = this.pendingSubagentLaunches.get(streamId) ?? [];
-			this.pendingSubagentLaunches.set(
-				streamId,
-				[
-					...pending,
-					{ ...event.tool.subagentLaunch, toolId: event.tool.id },
-				].slice(-32),
-			);
-			return event;
-		}
-		if (event.kind === 'tool.finished') {
-			const child = selectAgentStatusEntry(
-				this.store.getSnapshot(),
-				makeAgentStatusEntryId(
-					event.activationTerminalSessionId,
-					event.sessionId,
-					event.toolId,
-				),
-			);
-			if (child?.kind === 'subagent' && child.active)
-				return {
-					...event,
-					kind: 'agent.done',
-					agentId: child.agentId,
-					outcome: event.outcome,
-				};
-			const pending = this.pendingSubagentLaunches.get(streamId);
-			if (pending !== undefined) {
-				const next = pending.filter(
-					(candidate) => candidate.toolId !== event.toolId,
-				);
-				if (next.length === 0) this.pendingSubagentLaunches.delete(streamId);
-				else this.pendingSubagentLaunches.set(streamId, next);
-			}
-			return event;
-		}
-		if (event.kind !== 'subagent.started') return event;
-		const pending = this.pendingSubagentLaunches.get(streamId);
-		const launch = pending?.shift();
-		if (pending !== undefined && pending.length === 0)
-			this.pendingSubagentLaunches.delete(streamId);
-		return launch === undefined
-			? event
-			: {
-					...event,
-					displayName: launch.displayName ?? event.displayName,
-					promptText: event.promptText ?? launch.promptText,
-				};
-	}
-	private removePendingSubagentLaunches(sessionId: string): void {
-		for (const [streamId] of this.pendingSubagentLaunches)
-			if (
-				streamId
-					.split(':')
-					.some((part) => decodeURIComponent(part) === sessionId)
-			)
-				this.pendingSubagentLaunches.delete(streamId);
-	}
-	private assertExtensionProvider(
-		providerId: string,
-	): asserts providerId is AgentProvider {
-		if (!isExtensionAgentProvider(providerId))
-			throw new Error(
-				'extension agent provider id must be a bounded namespaced id',
-			);
-	}
-	private assertExtensionClaim(
-		identity: ActivitySessionIdentity,
-		providerId: string,
-	): void {
-		this.assertExtensionProvider(providerId);
-		if (this.extensionProviderBySession.get(identity.sessionId) !== providerId)
-			throw new Error(
-				'extension agent provider does not own this terminal session',
-			);
-	}
-	private toCanonicalExtensionEventAt(
-		identity: ActivitySessionIdentity,
-		provider: AgentProvider,
-		binding: ProviderBinding,
-		event: ExtensionAgentLifecycleEvent,
-		sequence: number,
-	): CanonicalAgentLifecycleEvent {
-		const providerDisplayName = this.providerDisplayName?.(provider);
-		const common = {
-			provider,
-			sessionId: binding.providerSessionId,
-			activationTerminalSessionId: identity.sessionId,
-			sequence,
-			occurredAt: this.now(),
-			...(providerDisplayName === undefined ? {} : { providerDisplayName }),
-		} as const;
-		switch (event.kind) {
-			case 'session.started':
-				return {
-					...common,
-					kind: event.kind,
-					...(event.title === undefined ? {} : { displayName: event.title }),
-					...(event.promptText === undefined
-						? {}
-						: { promptText: event.promptText }),
-					...(event.model === undefined ? {} : { model: event.model }),
-				};
-			case 'agent.metadata':
-				return {
-					...common,
-					kind: event.kind,
-					...(event.agentId === undefined ? {} : { agentId: event.agentId }),
-					...(event.title === undefined ? {} : { displayName: event.title }),
-					...(event.promptText === undefined
-						? {}
-						: { promptText: event.promptText }),
-					...(event.model === undefined ? {} : { model: event.model }),
-				};
-			case 'session.stopped':
-				return {
-					...common,
-					kind: event.kind,
-					...(event.reason === undefined ? {} : { reason: event.reason }),
-				};
-			case 'turn.started':
-				return {
-					...common,
-					kind: event.kind,
-					...(event.agentId === undefined ? {} : { agentId: event.agentId }),
-					turnId: event.turnId,
-					...(event.promptText === undefined
-						? {}
-						: { promptText: event.promptText }),
-				};
-			case 'tool.started':
-				return {
-					...common,
-					kind: event.kind,
-					...(event.agentId === undefined ? {} : { agentId: event.agentId }),
-					tool: {
-						id: event.toolId,
-						name: event.name,
-						...(event.description === undefined
-							? {}
-							: { description: event.description }),
-					},
-				};
-			case 'tool.finished':
-				return {
-					...common,
-					kind: event.kind,
-					...(event.agentId === undefined ? {} : { agentId: event.agentId }),
-					toolId: event.toolId,
-					...(event.outcome === undefined ? {} : { outcome: event.outcome }),
-				};
-			case 'wait.started':
-				return {
-					...common,
-					kind: event.kind,
-					...(event.agentId === undefined ? {} : { agentId: event.agentId }),
-					state: event.state,
-					...(event.reason === undefined ? {} : { reason: event.reason }),
-				};
-			case 'wait.finished':
-				return {
-					...common,
-					kind: event.kind,
-					...(event.agentId === undefined ? {} : { agentId: event.agentId }),
-				};
-			case 'agent.done':
-				return {
-					...common,
-					kind: event.kind,
-					...(event.agentId === undefined ? {} : { agentId: event.agentId }),
-					outcome: event.outcome,
-					...(event.summary === undefined ? {} : { summary: event.summary }),
-				};
-			case 'agent.exited':
-				return {
-					...common,
-					kind: event.kind,
-					...(event.agentId === undefined ? {} : { agentId: event.agentId }),
-					...(event.exitCode === undefined ? {} : { exitCode: event.exitCode }),
-					...(event.signal === undefined ? {} : { signal: event.signal }),
-				};
-			case 'subagent.started':
-				return {
-					...common,
-					kind: event.kind,
-					subagentId: event.subagentId,
-					...(event.parentAgentId === undefined
-						? {}
-						: { parentAgentId: event.parentAgentId }),
-					...(event.title === undefined ? {} : { displayName: event.title }),
-					...(event.promptText === undefined
-						? {}
-						: { promptText: event.promptText }),
-					...(event.model === undefined ? {} : { model: event.model }),
-				};
-			case 'subagent.done':
-				return {
-					...common,
-					kind: 'subagent.stopped',
-					subagentId: event.subagentId,
-					outcome: event.outcome,
-					...(event.summary === undefined ? {} : { summary: event.summary }),
-				};
-		}
 	}
 
 	private withProcessInstance(
@@ -809,152 +347,11 @@ export class AgentStatusService {
 	}
 }
 
-function toProviderUpdate(
-	event: CanonicalAgentLifecycleEvent,
-): ProviderActivityUpdate {
-	let state: ProviderActivityState;
-	switch (event.kind) {
-		case 'session.started':
-		case 'session.stopped':
-			state = 'idle';
-			break;
-		case 'wait.started':
-			state = event.state;
-			break;
-		case 'agent.done':
-		case 'agent.exited':
-			state = 'done';
-			break;
-		default:
-			state = 'working';
-	}
-	const agentId =
-		'subagentId' in event
-			? event.subagentId
-			: 'agentId' in event && event.agentId
-				? event.agentId
-				: event.sessionId;
-	return Object.freeze({
-		provider: event.provider,
-		state,
-		sequence: event.sequence,
-		agentId,
-		source: `extension:${event.provider}`,
-	});
-}
-function isMappingVersion(value: string): boolean {
-	return typeof value === 'string' && value.length > 0 && value.length <= 64;
-}
-
-/**
- * Splits a publication into the events the canonical store can apply and the
- * events it cannot, projecting each admitted event forward so the rest of the
- * batch is judged against the state it actually lands on.
- *
- * A rejected event is dropped on its own. It never withholds the events behind
- * it: a stale `tool.finished` must not be able to swallow the `agent.done`
- * published in the same batch.
- */
-function partitionLifecycleTransitions(
-	snapshot: AgentStatusSnapshot,
-	events: readonly CanonicalAgentLifecycleEvent[],
-): {
-	readonly admitted: readonly CanonicalAgentLifecycleEvent[];
-	readonly rejected: readonly {
-		readonly event: CanonicalAgentLifecycleEvent;
-		readonly reason: ExtensionAgentLifecycleRejection['reason'];
-	}[];
-} {
-	const admitted: CanonicalAgentLifecycleEvent[] = [];
-	const rejected: {
-		event: CanonicalAgentLifecycleEvent;
-		reason: ExtensionAgentLifecycleRejection['reason'];
-	}[] = [];
-	let projected = snapshot;
-	for (const event of events) {
-		const root =
-			projected.entries[
-				makeAgentStatusEntryId(
-					event.activationTerminalSessionId,
-					event.sessionId,
-				)
-			];
-		const targetId =
-			'subagentId' in event
-				? event.subagentId
-				: 'agentId' in event && event.agentId
-					? event.agentId
-					: event.sessionId;
-		const target =
-			projected.entries[
-				makeAgentStatusEntryId(
-					event.activationTerminalSessionId,
-					event.sessionId,
-					targetId,
-				)
-			];
-		let valid = true;
-		switch (event.kind) {
-			case 'session.started':
-				valid = targetId === event.sessionId && root?.active !== true;
-				break;
-			case 'agent.metadata':
-				valid = target?.active === true;
-				break;
-			case 'session.stopped':
-				valid = targetId === event.sessionId && root?.active === true;
-				break;
-			case 'turn.started':
-				valid = target?.active === true;
-				break;
-			case 'tool.started':
-				valid =
-					target?.active === true &&
-					!target.activeTools.some((tool) => tool.id === event.tool.id);
-				break;
-			case 'tool.finished':
-				valid =
-					target?.active === true &&
-					target.activeTools.some((tool) => tool.id === event.toolId);
-				break;
-			case 'wait.started':
-				valid = target?.active === true && target.state !== 'done';
-				break;
-			case 'wait.finished':
-				valid =
-					target?.active === true &&
-					(target.state === 'waiting' || target.state === 'blocked');
-				break;
-			case 'agent.done':
-				valid = target?.active === true;
-				break;
-			case 'agent.exited':
-				valid = target?.active === true;
-				break;
-			// A provider-native child may resume under the same durable child id.
-			// Reopen its existing row rather than creating a duplicate or dropping
-			// the later lifecycle after a parent/session reconnect.
-			case 'subagent.started':
-				valid =
-					root?.active === true &&
-					(target === undefined ||
-						(target.kind === 'subagent' && target.active === false));
-				break;
-			case 'subagent.stopped':
-				valid = target?.kind === 'subagent' && target.active;
-				break;
-		}
-		if (!valid) {
-			rejected.push({ event, reason: 'precondition' });
-			continue;
-		}
-		const next = reduceAgentStatusSnapshot(projected, event);
-		if (next === projected) {
-			rejected.push({ event, reason: 'not-reducible' });
-			continue;
-		}
-		projected = next;
-		admitted.push(event);
-	}
-	return { admitted, rejected };
+function sameScope(
+	left: ActivitySessionIdentity,
+	right: ActivitySessionIdentity,
+): boolean {
+	return (
+		left.serverId === right.serverId && left.projectId === right.projectId
+	);
 }

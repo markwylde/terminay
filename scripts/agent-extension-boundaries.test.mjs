@@ -18,7 +18,7 @@ async function sourceFiles(directory) {
 }
 
 test("extension implementations use public SDK imports, never private Terminay modules", async () => {
-  const roots = [join(root, "extensions"), join(root, "packages/extension-api/fixtures/agent-provider")];
+  const roots = [join(root, "extensions"), join(root, "packages/extension-api/fixtures/session-source")];
   const violations = [];
   for (const directory of roots) {
     for (const file of await sourceFiles(directory)) {
@@ -39,7 +39,6 @@ test("generic agent core and renderer contain no provider implementation details
     join(root, "packages/server-core/src/activity"),
     join(root, "packages/server-core/src/terminalService/types.ts"),
     join(root, "packages/server-core/src/terminalService/service.ts"),
-    join(root, "packages/server-core/src/extensions/localAgentObservation.ts"),
     join(root, "packages/client-core/src/agentStatus.ts"),
     join(root, "src/agentStatusStore.ts"),
   ];

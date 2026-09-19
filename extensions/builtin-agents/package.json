@@ -1,0 +1,145 @@
+{
+	"name": "terminay-builtin-agents",
+	"version": "0.1.0",
+	"description": "Official coding-agent status and MCP registration extension for Terminay",
+	"type": "module",
+	"license": "AGPL-3.0-or-later",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/terminay/terminay.git",
+		"directory": "extensions/builtin-agents"
+	},
+	"publishConfig": {
+		"access": "public",
+		"provenance": true
+	},
+	"engines": {
+		"node": ">=24"
+	},
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"default": "./dist/index.js"
+		},
+		"./mcp": {
+			"types": "./dist/mcp/index.d.ts",
+			"import": "./dist/mcp/index.js",
+			"default": "./dist/mcp/index.js"
+		}
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"LICENSE"
+	],
+	"scripts": {
+		"compile": "tsc -p tsconfig.json",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"test": "npm run compile && node --test test/*.test.mjs",
+		"test:ci": "node --test test/*.test.mjs",
+		"test:packed": "npm run compile && node --test test/packed.test.mjs"
+	},
+	"dependencies": {
+		"@markwylde/all-your-agents": "1.4.0"
+	},
+	"peerDependencies": {
+		"@terminay/extension-api": "^3.0.0"
+	},
+	"peerDependenciesMeta": {
+		"@terminay/extension-api": {
+			"optional": true
+		}
+	},
+	"devDependencies": {
+		"@terminay/extension-api": "^3.0.0",
+		"@types/node": "^24.0.0",
+		"typescript": "^6.0.0"
+	},
+	"terminay": {
+		"manifestVersion": 1,
+		"id": "com.terminay.builtin-agents",
+		"displayName": "Built-in Agents",
+		"description": "Shows Claude Code, Codex, Grok, and oh-my-pi sessions in the Agents panel, and registers the Terminay MCP server with coding-agent CLIs.",
+		"api": "^3.0.0",
+		"engines": {
+			"terminay": ">=1.0.0",
+			"node": ">=24"
+		},
+		"entrypoint": "dist/index.js",
+		"platforms": [
+			"darwin",
+			"linux"
+		],
+		"permissions": [
+			"agent-observation",
+			"mcp-registration"
+		],
+		"contributes": {
+			"agentSessionSources": [
+				{
+					"id": "com.terminay.builtin-agents/agents",
+					"displayName": "Built-in Agents",
+					"description": "Live coding-agent sessions on this machine, detected by all-your-agents.",
+					"platforms": [
+						"darwin",
+						"linux"
+					],
+					"harnesses": [
+						{
+							"id": "claude-code",
+							"displayName": "Claude Code"
+						},
+						{
+							"id": "codex",
+							"displayName": "Codex"
+						},
+						{
+							"id": "grok",
+							"displayName": "Grok"
+						},
+						{
+							"id": "oh-my-pi",
+							"displayName": "oh-my-pi"
+						}
+					],
+					"environmentVariables": [
+						"CLAUDE_CONFIG_DIR",
+						"CODEX_HOME",
+						"GROK_HOME",
+						"PI_CONFIG_DIR",
+						"PI_CODING_AGENT_DIR",
+						"XDG_DATA_HOME",
+						"XDG_STATE_HOME"
+					]
+				}
+			],
+			"mcpInstallTargets": [
+				{
+					"id": "com.terminay.builtin-agents/claude-code",
+					"displayName": "Claude Code"
+				},
+				{
+					"id": "com.terminay.builtin-agents/codex",
+					"displayName": "Codex"
+				},
+				{
+					"id": "com.terminay.builtin-agents/cursor",
+					"displayName": "Cursor CLI"
+				},
+				{
+					"id": "com.terminay.builtin-agents/gemini",
+					"displayName": "Gemini CLI"
+				},
+				{
+					"id": "com.terminay.builtin-agents/grok",
+					"displayName": "Grok"
+				},
+				{
+					"id": "com.terminay.builtin-agents/opencode",
+					"displayName": "OpenCode"
+				}
+			]
+		}
+	}
+}
