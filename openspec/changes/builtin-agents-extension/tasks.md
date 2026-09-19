@@ -99,7 +99,7 @@
   - Verified by `npm run test:e2e -- extension-agent-runtime`.
 - [x] 8.2 Delete `e2e/extension-grok-agent-runtime.spec.ts`, `real-claude-code-agent-runtime.spec.ts`, `real-codex-agent-runtime.spec.ts`, and `claude-code-multi-terminal.spec.ts`. Update `agent-status-sidebar.spec.ts` to the new source ids.
   - Verified by `npm run test:e2e`.
-- [ ] 8.3 Update the packaged built-in lifecycle matrix for the two built-ins.
+- [x] 8.3 Update the packaged built-in lifecycle matrix for the two built-ins.
   - Verified by `scripts/packaged-built-in-extension-runtime.test.mjs` passing in CI.
 
 ## 9. Specs, docs, and release gates

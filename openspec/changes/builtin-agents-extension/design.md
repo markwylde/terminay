@@ -155,6 +155,7 @@ The installer and staging change as follows:
 - npm keeps `--ignore-scripts`, so a package whose native module needs its install script to work simply fails its activation probe. That is the existing fail-closed path.
 - `stage-built-in-extensions.mjs` stages `optionalDependencies` too, so koffi's prebuilds ship.
 - Staging does not prune per-architecture binaries, because the Electron and standalone inventories must stay byte-identical.
+- On macOS with a Developer ID identity (`CSC_NAME`, or auto-discovered unless `CSC_IDENTITY_AUTO_DISCOVERY=false`), staging codesigns each Mach-O `.node` before hashing, and `electron-builder.json5` sets `mac.signIgnore` for `built-in-extensions/**.node`. Re-signing inside electron-builder would change their bytes and fail the inventory check; pre-signing keeps the hash true and notarisation satisfied.
 
 **Boundary:** ADR-0011's npm-registry → installer boundary. Extensions were already trusted Node programs with the server account's authority, so a prebuilt `.node` adds no authority an extension lacked; it adds supply-chain surface of the same class as any JS dependency. This decision is recorded as a new ADR.
 

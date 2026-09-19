@@ -104,6 +104,7 @@ export async function stageBuiltInExtensions(options = {}) {
 				join(artifactDirectory, 'package-lock.json'),
 				`${JSON.stringify(lockForArtifact(rootLock, packageJson, archive, sdk, copied), null, 2)}\n`,
 			);
+			await signMacNativeModules(artifactDirectory);
 			const tree = await inventoryTree(artifactDirectory);
 			const lockHash = sha256(
 				await readFile(join(artifactDirectory, 'package-lock.json')),
@@ -262,6 +263,50 @@ async function inventoryTree(root) {
 	}
 	await walk(root);
 	return files.sort((left, right) => left.path.localeCompare(right.path));
+}
+
+/** Sign macOS native modules before they are hashed. electron-builder skips
+ * them (`mac.signIgnore`), so the bytes the inventory records are the bytes
+ * that ship and notarisation still finds every Mach-O signed. Without a
+ * signing identity (CI, Linux) nothing changes. */
+async function signMacNativeModules(root) {
+	const identity = await macSigningIdentity();
+	if (!identity) return;
+	for (const { path } of await inventoryTree(root)) {
+		if (!path.endsWith('.node')) continue;
+		const file = join(root, path);
+		if (!isMachO(await readFile(file))) continue;
+		await runFile('codesign', [
+			'--force',
+			'--options',
+			'runtime',
+			'--timestamp',
+			'--sign',
+			identity,
+			file,
+		]);
+	}
+}
+
+async function macSigningIdentity() {
+	if (process.platform !== 'darwin') return null;
+	if (process.env.CSC_IDENTITY_AUTO_DISCOVERY === 'false') return null;
+	if (process.env.CSC_NAME) return process.env.CSC_NAME;
+	const { stdout } = await runFile('security', [
+		'find-identity',
+		'-v',
+		'-p',
+		'codesigning',
+	]);
+	return /"(Developer ID Application: [^"]+)"/.exec(stdout)?.[1] ?? null;
+}
+
+function isMachO(bytes) {
+	if (bytes.byteLength < 4) return false;
+	const magic = bytes.readUInt32BE(0);
+	return [0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe, 0xcafebabe].includes(
+		magic,
+	);
 }
 
 async function assertRegularTree(root) {

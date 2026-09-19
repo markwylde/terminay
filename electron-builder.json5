@@ -39,6 +39,11 @@
   "mac": {
     "icon": "public/icon.icns",
     "hardenedRuntime": true,
+    // Built-in extension native modules are signed while staging, before the
+    // release inventory hashes them; re-signing here would change their bytes.
+    "signIgnore": [
+      "built-in-extensions/.+\\.node$"
+    ],
     "entitlements": "build/entitlements.mac.plist",
     "entitlementsInherit": "build/entitlements.mac.inherit.plist",
     "extendInfo": {
