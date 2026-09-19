@@ -23,6 +23,7 @@ import {
 	documentationEditorPlugins,
 	documentationLexicalTheme,
 } from './documentationEditorPlugins';
+import { selfCloseVoidHtmlElements } from './documentationMarkdownCompat';
 import '@fontsource/open-sans/latin-400.css';
 import '@fontsource/open-sans/latin-600.css';
 import '@fontsource/open-sans/latin-700.css';
@@ -139,7 +140,7 @@ function DocumentationEditorSurface({
 	useEffect(() => {
 		if (markdown === valueRef.current) return;
 		valueRef.current = markdown;
-		editorRef.current?.setMarkdown(markdown);
+		editorRef.current?.setMarkdown(selfCloseVoidHtmlElements(markdown));
 	}, [markdown]);
 	useEffect(
 		() => () => {
@@ -345,7 +346,7 @@ function DocumentationEditorSurface({
 			) : null}
 			<MDXEditor
 				ref={editorRef}
-				markdown={markdown}
+				markdown={selfCloseVoidHtmlElements(markdown)}
 				trim={false}
 				className="documentation-editor__surface mdxeditor-full-height"
 				contentEditableClassName="documentation-editor__content"
