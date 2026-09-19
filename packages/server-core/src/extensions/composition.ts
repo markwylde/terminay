@@ -6,7 +6,10 @@ import type {
 	ExtensionHostDiagnosticListener,
 	ExtensionHostTransition,
 } from './diagnostics.js';
-import { ExtensionInstaller } from './installer.js';
+import {
+	ExtensionInstaller,
+	type ExtensionInstallerOptions,
+} from './installer.js';
 import type {
 	BuiltInExtensionArtifactSource,
 	ExtensionRegistrySnapshot,
@@ -40,6 +43,8 @@ export interface DefaultExtensionManagementOptions {
 	) => ReturnType<typeof setTimeout>;
 	readonly cancelSchedule?: (timer: ReturnType<typeof setTimeout>) => void;
 	readonly now?: () => number;
+	/** See `ExtensionInstallerOptions.onBuiltInWithdrawn`. */
+	readonly onBuiltInWithdrawn?: ExtensionInstallerOptions['onBuiltInWithdrawn'];
 }
 
 /** Construct the identical selected-server extension authority for Desktop's
@@ -116,6 +121,9 @@ export function createDefaultExtensionManagement(
 			: { builtIns: options.builtIns }),
 		onBuiltInsReconciled: async (before, after) =>
 			activateReconciled?.(before, after),
+		...(options.onBuiltInWithdrawn === undefined
+			? {}
+			: { onBuiltInWithdrawn: options.onBuiltInWithdrawn }),
 		probe: async ({ extensionId, packageRoot, entrypoint, manifest }) => {
 			const root = join(options.dataRoot, 'extensions');
 			const directories = {
@@ -141,7 +149,8 @@ export function createDefaultExtensionManagement(
 				dataDirectory: directories.data,
 				cacheDirectory: directories.cache,
 				permissions: manifest.permissions,
-				agentProviders: manifest.contributes.agentProviders ?? [],
+				agentSessionSources: manifest.contributes.agentSessionSources ?? [],
+				mcpInstallTargets: manifest.contributes.mcpInstallTargets ?? [],
 				languageServers: manifest.contributes.languageServers ?? [],
 				extensionDependencies: manifest.extensionDependencies ?? [],
 			});
@@ -173,7 +182,8 @@ export function createDefaultExtensionManagement(
 			dataDirectory: directories.data,
 			cacheDirectory: directories.cache,
 			permissions: descriptor.manifest.permissions,
-			agentProviders: descriptor.agentProviders,
+			agentSessionSources: descriptor.agentSessionSources,
+			mcpInstallTargets: descriptor.mcpInstallTargets,
 			languageServers: descriptor.languageServers,
 			extensionDependencies: descriptor.manifest.extensionDependencies ?? [],
 		});
@@ -356,6 +366,7 @@ export function createProductionExtensionManagement(
 		agents?: ExtensionAgentBroker;
 		builtInArtifactRoot?: string;
 		onHostDiagnostic?: ExtensionHostDiagnosticListener;
+		onBuiltInWithdrawn?: ExtensionInstallerOptions['onBuiltInWithdrawn'];
 	}>,
 ) {
 	const management = createDefaultExtensionManagement({
@@ -373,6 +384,9 @@ export function createProductionExtensionManagement(
 		...(options.onHostDiagnostic === undefined
 			? {}
 			: { onHostDiagnostic: options.onHostDiagnostic }),
+		...(options.onBuiltInWithdrawn === undefined
+			? {}
+			: { onBuiltInWithdrawn: options.onBuiltInWithdrawn }),
 	});
 	return Object.freeze({
 		...management,

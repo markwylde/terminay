@@ -31,12 +31,27 @@ async function createFixture() {
     identities.set(value.sessionId, value)
     activity.register(value)
     agents.register(value)
-    await agents.ingestJournalRecord(value, 'codex', {
-      type: 'session_meta', payload: { id: `codex-${value.sessionId}` },
-    })
-    await agents.ingestJournalRecord(value, 'codex', {
-      type: 'event_msg', payload: { type: 'request_user_input' },
-    })
+    agents.applyEntries([{
+      entryId: `entry-${value.sessionId}`,
+      kind: 'root',
+      provider: 'com.example/agents',
+      harness: 'example-cli',
+      agentId: `agent-${value.sessionId}`,
+      sessionId: `agent-${value.sessionId}`,
+      activationTerminalSessionId: value.sessionId,
+      external: false,
+      projectIds: [value.projectId],
+      state: 'waiting',
+      stateStartedAt: 100,
+      createdAt: 100,
+      updatedAt: 100,
+      active: true,
+      activeTools: [],
+      unread: true,
+      terminalSessionId: value.sessionId,
+      inProcess: false,
+      openSubagents: 0,
+    }])
     const entry = Object.values(agents.getSnapshot().entries)
       .find((candidate) => candidate.activationTerminalSessionId === value.sessionId)
     assert.ok(entry, `expected an agent entry for ${value.sessionId}`)
@@ -113,9 +128,7 @@ test('server agent IPC adapter never publishes stale or cross-project remapped s
 
     const published = []
     const unsubscribe = fixture.adapter.subscribe((snapshot) => published.push(snapshot))
-    await fixture.agents.ingestJournalRecord(liveIdentity, 'codex', {
-      type: 'event_msg', payload: { type: 'task_complete' },
-    })
+    fixture.agents.applyEntries([{ ...live, state: 'done', updatedAt: 200 }])
     unsubscribe()
     assert.ok(published.length > 0)
     assert.equal(published.at(-1).entries[stale.entryId], undefined)

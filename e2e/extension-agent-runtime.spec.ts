@@ -1,101 +1,239 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import { type ChildProcess, execFile, spawn } from 'node:child_process';
+import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { _electron as electron } from '@playwright/test';
-import { expect, test } from './fixtures';
+import { promisify } from 'node:util';
+import { createClaudeFixtureDriver } from '@markwylde/all-your-agents/testing';
+import type { Page } from '@playwright/test';
+import { agentFixtureClaudeHome, expect, test } from './fixtures';
+import { sendAppCommand } from './support/app';
 import { typeInVisibleTerminal } from './support/terminal-input';
-import { selectSidebarGroup } from './support/ui';
+import { settledTerminalSessionId } from './support/terminal-session';
+import { selectSidebarGroup, setProjectRoot } from './support/ui';
 
-test('a real process-bound Codex wrapper retries its delayed rollout, then publishes a root, late child, and live title update', async ({
-	mainWindow,
-	appHarness,
-	tempDir,
-}) => {
-	// A separately launched development instance must not inherit this
-	// instance's terminal observation or agent projection. Use a distinct
-	// profile before starting Codex, then re-check it after the root appears.
-	const isolatedTempDir = await mkdtemp(
-		path.join(os.tmpdir(), 'terminay-e2e-isolated-'),
+const execFileAsync = promisify(execFile);
+
+// Claude Code keys its live index by UUID session ids.
+const freshId = '11111111-1111-4111-8111-111111111111';
+const resumedId = '22222222-2222-4222-8222-222222222222';
+const subdirectoryId = '33333333-3333-4333-8333-333333333333';
+const worktreeId = '44444444-4444-4444-8444-444444444444';
+const unrelatedId = '55555555-5555-4555-8555-555555555555';
+
+async function activeSessionId(page: Page): Promise<string> {
+	return await settledTerminalSessionId(
+		page.locator('.project-workspace--active .terminal-panel:visible').first(),
 	);
-	const isolatedUserDataDir = path.join(isolatedTempDir, 'user-data');
-	const isolatedApp = await electron.launch({
-		args: ['.'],
-		env: {
-			...process.env,
-			CI: '1',
-			ELECTRON_ENABLE_LOGGING: '1',
-			TEMP: isolatedTempDir,
-			TERMINAY_E2E_TEMP_DIR: isolatedTempDir,
-			TERMINAY_TEST: '1',
-			TERMINAY_USER_DATA_DIR: isolatedUserDataDir,
-			TMP: isolatedTempDir,
-			TMPDIR: isolatedTempDir,
-		},
-	});
+}
+
+async function newTerminal(page: Page): Promise<string> {
+	const previous = await activeSessionId(page);
+	await sendAppCommand(page, 'new-terminal');
+	let created = previous;
+	await expect
+		.poll(async () => {
+			created = await activeSessionId(page);
+			return created;
+		})
+		.not.toBe(previous);
+	return created;
+}
+
+/**
+ * Start a real long-lived process inside the focused terminal and return its
+ * pid and start time. The process is a descendant of the terminal's PTY, so
+ * binding it to that terminal is decided by the operating system's process
+ * tree, not by a claim in a fixture.
+ */
+async function runAgentProcessInTerminal(
+	page: Page,
+	pidFile: string,
+): Promise<{ pid: number; startedAt: number }> {
+	await typeInVisibleTerminal(
+		page,
+		`sh -c 'echo $$ > ${pidFile}; exec sleep 600'\n`,
+	);
+	let pid = 0;
+	await expect
+		.poll(async () => {
+			pid = Number((await readFile(pidFile, 'utf8').catch(() => '')).trim());
+			return pid;
+		})
+		.toBeGreaterThan(0);
+	return { pid, startedAt: Date.now() };
+}
+
+/** A real process Terminay did not start: an agent in another terminal app. */
+function runExternalAgentProcess(processes: ChildProcess[]): {
+	pid: number;
+	startedAt: number;
+} {
+	const child = spawn('sleep', ['600'], { stdio: 'ignore' });
+	processes.push(child);
+	if (child.pid === undefined)
+		throw new Error('external process did not start');
+	return { pid: child.pid, startedAt: Date.now() };
+}
+
+/** Claude's project-directory encoding: every non-alphanumeric becomes '-'. */
+function claudeProjectDirectory(home: string, cwd: string): string {
+	return path.join(home, 'projects', cwd.replace(/[^A-Za-z0-9]/gu, '-'));
+}
+
+test('the built-in agents extension scopes live Claude Code sessions to the project and its worktrees', async ({
+	mainWindow,
+	tempDir,
+	createWorkspace,
+}) => {
+	const processes: ChildProcess[] = [];
 	try {
-		const isolatedWindow = await isolatedApp.firstWindow();
-		await appHarness.prepareWindow(isolatedWindow);
-		await selectSidebarGroup(isolatedWindow, 'agents');
-		await expect(
-			isolatedWindow.locator('.agents-sidebar__tree-item'),
-		).toHaveCount(0);
-
-		// This intentionally mirrors the production macOS shape: zsh launches a
-		// Node CLI shim which later owns a native executable named codex. The first
-		// foreground snapshot has no descendant, so every provider returns
-		// not-bound naming where its evidence will appear; Codex names its home,
-		// and the rollout the native binary writes there is the change that
-		// re-runs discovery and lets the exact one-child chain bind. No timer is
-		// involved.
-		await typeInVisibleTerminal(
-			mainWindow,
-			"node -e \"setTimeout(() => require('node:child_process').spawn('codex', [], { stdio: 'inherit' }), 350); setInterval(() => {}, 1000)\"\n",
+		const workspace = await createWorkspace({
+			name: 'agents-project',
+			seed: { directories: ['src'] },
+		});
+		const projectRoot = await realpath(workspace.rootDir);
+		const worktree = path.join(
+			await realpath(tempDir),
+			'agents-linked-worktree',
 		);
+		const unrelated = path.join(await realpath(tempDir), 'agents-unrelated');
+		await mkdir(unrelated, { recursive: true });
+		const git = (...args: string[]) =>
+			execFileAsync('git', args, { cwd: projectRoot });
+		await git('init', '-q');
+		await git(
+			'-c',
+			'user.email=e2e@terminay.test',
+			'-c',
+			'user.name=E2E',
+			'commit',
+			'-q',
+			'--allow-empty',
+			'-m',
+			'root',
+		);
+		await git('worktree', 'add', '-q', '-b', 'agents-worktree', worktree);
+		await setProjectRoot(mainWindow, projectRoot);
+
+		const home = agentFixtureClaudeHome(tempDir);
 		await selectSidebarGroup(mainWindow, 'agents');
-		const root = mainWindow
-			.locator('.agents-sidebar__tree-item')
-			.filter({ hasText: 'Native Codex root prompt' });
-		await expect(root).toBeVisible({ timeout: 15_000 });
-		await expect(root.locator('.agents-sidebar__metadata')).toContainText(
-			'Codex · gpt-e2e-codex',
+		const rows = mainWindow.locator('.agents-sidebar__tree-item');
+		const row = (title: string) => rows.filter({ hasText: title });
+
+		// Terminal 1: a fresh session, bound to the terminal whose PTY owns it.
+		const firstTerminal = await activeSessionId(mainWindow);
+		const fresh = await runAgentProcessInTerminal(
+			mainWindow,
+			path.join(tempDir, 'fresh.pid'),
+		);
+		await createClaudeFixtureDriver(home, fresh.startedAt).createLiveSession({
+			id: freshId,
+			pid: fresh.pid,
+			cwd: projectRoot,
+			status: 'busy',
+			title: 'Fresh terminal agent',
+		});
+		await expect(row('Fresh terminal agent')).toBeVisible({ timeout: 15_000 });
+		await expect(row('Fresh terminal agent')).not.toHaveAttribute(
+			'data-agent-external',
+			'true',
 		);
 		await expect(
-			isolatedWindow.locator('.agents-sidebar__tree-item'),
-		).toHaveCount(0);
+			row('Fresh terminal agent').locator(
+				'.agent-status-indicator[data-agent-state="working"]',
+			),
+		).toBeVisible();
 
-		const home = path.join(tempDir, 'native-codex-home');
-		const sessionDirectory = path.join(home, 'sessions', '2026', '08', '24');
-		await mkdir(sessionDirectory, { recursive: true });
+		// Terminal 2: the same harness resumes an earlier conversation. Its
+		// journal already exists, so the library opens rather than creates it.
+		const secondTerminal = await newTerminal(mainWindow);
+		expect(secondTerminal).not.toBe(firstTerminal);
+		const journalDirectory = claudeProjectDirectory(home, projectRoot);
+		await mkdir(journalDirectory, { recursive: true });
 		await writeFile(
-			path.join(sessionDirectory, 'rollout-e2e-child.jsonl'),
-			`${JSON.stringify({
-				type: 'session_meta',
-				payload: {
-					id: 'e2e-native-child',
-					originator: 'codex-tui',
-					source: {
-						subagent: { thread_spawn: { parent_thread_id: 'e2e-native-root' } },
-					},
-					agent_nickname: 'Native child',
-				},
-			})}\n`,
+			path.join(journalDirectory, `${resumedId}.jsonl`),
+			`${JSON.stringify({ type: 'user', sessionId: resumedId, cwd: projectRoot, message: { content: 'earlier work' } })}\n`,
 		);
-		await expect(
-			mainWindow.getByRole('button', {
-				name: 'Expand 1 subagent for Native Codex root prompt',
-			}),
-		).toBeVisible({ timeout: 15_000 });
+		const resumed = await runAgentProcessInTerminal(
+			mainWindow,
+			path.join(tempDir, 'resumed.pid'),
+		);
+		await createClaudeFixtureDriver(home, resumed.startedAt).createLiveSession({
+			id: resumedId,
+			pid: resumed.pid,
+			cwd: projectRoot,
+			status: 'idle',
+			title: 'Resumed terminal agent',
+		});
+		await expect(row('Resumed terminal agent')).toBeVisible({
+			timeout: 15_000,
+		});
+		await expect(row('Fresh terminal agent')).toBeVisible();
 
-		await writeFile(
-			path.join(home, 'session_index.jsonl'),
-			`${JSON.stringify({ id: 'e2e-native-root', thread_name: 'Renamed native Codex session' })}\n`,
+		// Clicking a bound row focuses the terminal that owns the agent.
+		await row('Fresh terminal agent')
+			.locator('.agents-sidebar__row')
+			.first()
+			.click();
+		await expect.poll(() => activeSessionId(mainWindow)).toBe(firstTerminal);
+
+		// Outside Terminay: a subdirectory of the project and a linked worktree
+		// outside the root both belong to the project and read External.
+		const subdirectory = runExternalAgentProcess(processes);
+		await createClaudeFixtureDriver(
+			home,
+			subdirectory.startedAt,
+		).createLiveSession({
+			id: subdirectoryId,
+			pid: subdirectory.pid,
+			cwd: path.join(projectRoot, 'src'),
+			status: 'waiting',
+			title: 'Subdirectory external agent',
+		});
+		const linked = runExternalAgentProcess(processes);
+		await createClaudeFixtureDriver(home, linked.startedAt).createLiveSession({
+			id: worktreeId,
+			pid: linked.pid,
+			cwd: worktree,
+			status: 'busy',
+			title: 'Worktree external agent',
+		});
+		// An agent in an unrelated directory is never this project's.
+		const stranger = runExternalAgentProcess(processes);
+		await createClaudeFixtureDriver(home, stranger.startedAt).createLiveSession(
+			{
+				id: unrelatedId,
+				pid: stranger.pid,
+				cwd: unrelated,
+				status: 'busy',
+				title: 'Unrelated external agent',
+			},
 		);
-		await expect(mainWindow.locator('.agents-sidebar__name')).toContainText(
-			'Renamed native Codex session',
-			{ timeout: 15_000 },
-		);
+
+		for (const title of [
+			'Subdirectory external agent',
+			'Worktree external agent',
+		]) {
+			await expect(row(title)).toBeVisible({ timeout: 15_000 });
+			await expect(row(title).locator('.agents-sidebar__external')).toHaveText(
+				'External',
+			);
+		}
+		// External rows are inert: clicking one leaves the focused terminal alone.
+		await row('Worktree external agent')
+			.locator('.agents-sidebar__row')
+			.first()
+			.click({ force: true });
+		await expect.poll(() => activeSessionId(mainWindow)).toBe(firstTerminal);
+		await expect(row('Unrelated external agent')).toHaveCount(0);
+		await expect(rows).toHaveCount(4);
+
+		// When the external process exits, its row goes with it.
+		processes[1]?.kill('SIGKILL');
+		await expect(row('Worktree external agent')).toHaveCount(0, {
+			timeout: 15_000,
+		});
+		await expect(rows).toHaveCount(3);
 	} finally {
-		await isolatedApp.close();
-		await rm(isolatedTempDir, { recursive: true, force: true });
+		for (const child of processes) child.kill('SIGKILL');
 	}
 });

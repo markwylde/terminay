@@ -4,19 +4,19 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { createDefaultExtensionManagement, ExtensionInstaller } from "../dist/extensions/index.js";
+import { createDefaultExtensionManagement, ExtensionInstaller, withdrawnAgentExtensionSwitches } from "../dist/extensions/index.js";
 
 const PACKAGE = "terminay-built-in-fixture";
 const EXTENSION = "com.terminay.built-in-fixture";
 const INTEGRITY = `sha512-${Buffer.alloc(64, 3).toString("base64")}`;
 
 function manifest() {
-  return { manifestVersion: 1, id: EXTENSION, displayName: "Built in fixture", api: "^2.0.0", engines: { terminay: ">=1", node: ">=22" }, entrypoint: "dist/extension.js", permissions: ["agent-observation"], contributes: { agentProviders: [{ id: `${EXTENSION}/cli`, displayName: "Fixture" }] } };
+  return { manifestVersion: 1, id: EXTENSION, displayName: "Built in fixture", api: "^3.0.0", engines: { terminay: ">=1", node: ">=22" }, entrypoint: "dist/extension.js", permissions: ["agent-observation"], contributes: { agentSessionSources: [{ id: `${EXTENSION}/cli`, displayName: "Fixture", harnesses: [{ id: "fixture", displayName: "Fixture" }] }] } };
 }
 
 function tree(version, metadata = manifest()) {
   const packageJson = JSON.stringify({ name: PACKAGE, version, type: "module", exports: { ".": "./dist/extension.js" }, terminay: metadata });
-  const source = `export function activate(context) { context.agents.registerProvider("${EXTENSION}/cli", { mappingVersion: "v1", matchesForeground() { return true; }, async observe() { return { state: "not-bound" }; } }); }\n`;
+  const source = `export function activate(context) { context.agents.registerSessionSource("${EXTENSION}/cli", { start() {} }); }\n`;
   const lock = JSON.stringify({ lockfileVersion: 3, packages: { "": {}, [`node_modules/${PACKAGE}`]: { version, resolved: `file:${PACKAGE}-${version}.tgz`, integrity: INTEGRITY } } });
   const files = [["package-lock.json", lock], [`node_modules/${PACKAGE}/package.json`, packageJson], [`node_modules/${PACKAGE}/dist/extension.js`, source]];
   const inventory = files.map(([path, body]) => ({ path, size: Buffer.byteLength(body), hash: createHash("sha256").update(body).digest("hex") })).sort((a, b) => a.path.localeCompare(b.path));
@@ -72,7 +72,7 @@ test("post-start reconciliation hot-activates a newly materialized enabled built
     value.builtIns.available = false;
     const management = createDefaultExtensionManagement({ dataRoot: value.dataRoot, authorityLabel: "Test server", builtIns: value.builtIns });
     await management.initialize();
-    assert.deepEqual(management.hosts.agentProviderContributions(), []);
+    assert.deepEqual(management.hosts.sessionSourceContributions(), []);
 
     value.builtIns.available = true;
     // The installer is also used by release/runtime recovery paths, so its
@@ -80,7 +80,7 @@ test("post-start reconciliation hot-activates a newly materialized enabled built
     const state = await management.installer.reconcileBuiltIns();
     assert.equal(state.extensions[EXTENSION].state, "installed");
     assert.equal(state.extensions[EXTENSION].enabled, true);
-    assert.deepEqual(management.hosts.agentProviderContributions().map(({ id }) => id), [`${EXTENSION}/cli`]);
+    assert.deepEqual(management.hosts.sessionSourceContributions().map(({ contribution }) => contribution.id), [`${EXTENSION}/cli`]);
     await management.hosts.shutdown();
   } finally { await value.cleanup(); }
 });
@@ -148,6 +148,29 @@ test("a built-in this release no longer ships is forgotten rather than left fail
     const after = await restarted.initialize();
     assert.equal(after.extensions[EXTENSION], undefined);
   } finally { await value.cleanup(); }
+});
+
+test("a withdrawn built-in reports whether the user had disabled it before it is forgotten", async () => {
+  const dataRoot = await mkdtemp(join(tmpdir(), "terminay-built-in-withdrawn-"));
+  const npm = new Npm(); const builtIns = new BuiltIns("1.0.0");
+  const withdrawn = [];
+  const installer = new ExtensionInstaller({ dataRoot, registryClient: npm, materializer: npm, builtIns, onBuiltInWithdrawn: (record) => { withdrawn.push(record); } });
+  try {
+    await installer.reconcileBuiltIns();
+    await installer.disable(EXTENSION);
+    builtIns.available = false;
+    const state = await installer.reconcileBuiltIns();
+    assert.deepEqual(withdrawn, [{ extensionId: EXTENSION, enabled: false }]);
+    assert.equal(state.extensions[EXTENSION], undefined);
+  } finally { await rm(dataRoot, { recursive: true, force: true }); }
+});
+
+test("a disabled per-agent built-in becomes a switched-off harness of the bundled source", () => {
+  assert.deepEqual(withdrawnAgentExtensionSwitches({ extensionId: "com.terminay.agent.grok", enabled: false }), { "com.terminay.builtin-agents/agents/grok": false });
+  assert.deepEqual(withdrawnAgentExtensionSwitches({ extensionId: "com.terminay.agent.omp", enabled: false }), { "com.terminay.builtin-agents/agents/oh-my-pi": false });
+  assert.equal(withdrawnAgentExtensionSwitches({ extensionId: "com.terminay.agent.grok", enabled: true }), undefined);
+  assert.equal(withdrawnAgentExtensionSwitches({ extensionId: "com.terminay.agent.opencode", enabled: false }), undefined);
+  assert.equal(withdrawnAgentExtensionSwitches({ extensionId: "com.example.other", enabled: false }), undefined);
 });
 
 test("a withdrawn built-in the user overrode from npm stays installed", async () => {

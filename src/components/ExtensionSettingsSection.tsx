@@ -10,9 +10,13 @@ import './extensionManager.css';
 export function ExtensionSettingsSection({
 	applicationClient,
 	serverName,
+	harnessSwitches,
+	onHarnessSwitchChange,
 }: Readonly<{
 	applicationClient?: TerminayClient;
 	serverName: string;
+	harnessSwitches?: Readonly<Record<string, boolean>>;
+	onHarnessSwitchChange?: (key: string, enabled: boolean) => void;
 }>) {
 	const [extensions, setExtensions] = useState<readonly ExtensionSummaryDto[]>([]);
 	const [revision, setRevision] = useState(0);
@@ -84,6 +88,8 @@ export function ExtensionSettingsSection({
 					onInstall={(digest) => run(() => client!.install(digest, revision), 'Extension installed.')}
 					onUpdate={(id, digest) => run(() => client!.update(id, digest, revision), 'Extension updated.')}
 					onAction={(action, id) => run(() => client!.action(action, id, revision), `Extension ${action} completed.`)}
+					harnessSwitches={harnessSwitches}
+					onHarnessSwitchChange={onHarnessSwitchChange}
 			/>
 			{busy ? <div className="settings-status-message" role="status"><progress /> Working on {authorityLabel}…</div> : null}
 			{announcement ? <div className="settings-status-message" role="status">{announcement}</div> : null}

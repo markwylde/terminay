@@ -8,13 +8,13 @@ import test from "node:test";
 import { bundledNpmCliPath, createDefaultExtensionManagement, ExtensionInstaller, inspectNpmPackArchive, NpmCliRegistryClient } from "../dist/extensions/index.js";
 
 const executeFile = promisify(execFile);
-const manifest = { manifestVersion: 1, id: "dev.example.uploaded", displayName: "Uploaded fixture", api: "^2.0.0", engines: { terminay: ">=1", node: ">=22" }, entrypoint: "dist/extension.js", permissions: ["agent-observation"], contributes: { agentProviders: [{ id: "dev.example.uploaded/cli", displayName: "Uploaded" }] } };
+const manifest = { manifestVersion: 1, id: "dev.example.uploaded", displayName: "Uploaded fixture", api: "^3.0.0", engines: { terminay: ">=1", node: ">=22" }, entrypoint: "dist/extension.js", permissions: ["agent-observation"], contributes: { agentSessionSources: [{ id: "dev.example.uploaded/cli", displayName: "Uploaded", harnesses: [{ id: "fixture", displayName: "Fixture" }] }] } };
 
 async function packedFixture() {
   const root = await mkdtemp(join(tmpdir(), "terminay-uploaded-extension-")); const source = join(root, "source"); const packs = join(root, "packs");
   await mkdir(join(source, "dist"), { recursive: true }); await mkdir(packs);
   await writeFile(join(source, "package.json"), JSON.stringify({ name: "terminay-unpublished-fixture", version: "1.2.3", type: "module", exports: { ".": "./dist/extension.js" }, terminay: manifest }));
-  await writeFile(join(source, "dist", "extension.js"), "export function activate(context) { context.agents.registerProvider('dev.example.uploaded/cli', { mappingVersion: 'v1', matchesForeground() { return true; }, async observe() { return { state: 'not-bound' }; } }); }\n");
+  await writeFile(join(source, "dist", "extension.js"), "export function activate(context) { context.agents.registerSessionSource('dev.example.uploaded/cli', { start() {} }); }\n");
   await executeFile(process.execPath, [bundledNpmCliPath(), "pack", source, "--pack-destination", packs, "--ignore-scripts"]);
   return { root, bytes: await readFile(join(packs, "terminay-unpublished-fixture-1.2.3.tgz")), cleanup: () => rm(root, { recursive: true, force: true }) };
 }
@@ -26,8 +26,8 @@ test("an npm pack archive previews as uploaded/unverified and installs through t
     const preview = await installer.previewArchive("terminay-unpublished-fixture-1.2.3.tgz", fixture.bytes);
     assert.equal(preview.source, "uploaded"); assert.equal(preview.official, false); assert.equal(preview.provenance, "unverified"); assert.match(preview.integrity, /^sha512-/u);
     const state = await installer.confirm(preview.previewDigest); const installed = state.extensions[manifest.id]; assert.equal(installed.packageName, "terminay-unpublished-fixture"); assert.equal(installed.slots[installed.activeSlotId].receipt.integrity, preview.integrity);
-    await management.activate(manifest.id); assert.deepEqual(management.hosts.agentProviderContributions().map(({ id }) => id), ["dev.example.uploaded/cli"]);
-    await management.hosts.shutdown(); await management.activateEnabled(); assert.deepEqual(management.hosts.agentProviderContributions().map(({ id }) => id), ["dev.example.uploaded/cli"]);
+    await management.activate(manifest.id); assert.deepEqual(management.hosts.sessionSourceContributions().map(({ contribution }) => contribution.id), ["dev.example.uploaded/cli"]);
+    await management.hosts.shutdown(); await management.activateEnabled(); assert.deepEqual(management.hosts.sessionSourceContributions().map(({ contribution }) => contribution.id), ["dev.example.uploaded/cli"]);
   } finally { await management.hosts.shutdown(); await fixture.cleanup(); }
 });
 

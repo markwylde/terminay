@@ -394,16 +394,26 @@ if (
 	contextBridge.exposeInMainWorld(
 		'terminayAgentStatusTest',
 		Object.freeze({
-			publishLifecycle: (payload: {
-				provider: string;
-				terminalSessionId: string;
-				providerSessionId: string;
-				events: ReadonlyArray<Record<string, unknown>>;
+			/** Publish a session-source batch through the server's bridge. */
+			publishSessions: (payload: {
+				sourceId?: string;
+				harnesses?: ReadonlyArray<{ id: string; displayName: string }>;
+				publication: {
+					reset?: ReadonlyArray<Record<string, unknown>>;
+					upserts?: ReadonlyArray<Record<string, unknown>>;
+					removals?: readonly string[];
+				};
 			}) =>
 				ipcRenderer.invoke(
-					'test:publish-agent-lifecycle',
+					'test:publish-agent-sessions',
 					payload,
 				) as Promise<boolean>,
+			/** PTY shell pid of a server terminal, for ancestry-bound fixtures. */
+			terminalShellPid: (terminalSessionId: string) =>
+				ipcRenderer.invoke(
+					'test:agent-terminal-shell-pid',
+					terminalSessionId,
+				) as Promise<number | null>,
 		}),
 	);
 }

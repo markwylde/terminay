@@ -12,7 +12,7 @@ test.after(async () => { await rm(directory, { recursive: true, force: true }) }
 
 function entry(overrides = {}) {
 	return {
-		entryId: 'term-a:session-a:agent-a', kind: 'root', provider: 'com.terminay.agent.codex/cli', agentId: 'agent-a', sessionId: 'session-a', activationTerminalSessionId: 'term-a', terminalSessionId: 'term-a', inProcess: false,
+		entryId: 'term-a:session-a:agent-a', kind: 'root', provider: 'com.terminay.builtin-agents/agents', agentId: 'agent-a', sessionId: 'session-a', activationTerminalSessionId: 'term-a', terminalSessionId: 'term-a', inProcess: false,
 		state: 'waiting', stateStartedAt: 10, updatedAt: 11, lastEventKind: 'wait.started', lastEventSequence: 4, active: true, activeTools: [], unread: true,
 		...overrides,
 	}
@@ -24,6 +24,19 @@ test('adapts only a valid reduced server agent snapshot into the shared UI shape
 	assert.equal(snapshot.entries['term-a:session-a:agent-a'].kind, 'root')
 	assert.deepEqual(snapshot.eventCursors, {})
 	assert.throws(() => adaptServerAgentSnapshot({ revision: 8, cursor: '8', entries: { bad: entry({ terminalSessionId: null }) } }), /root agent shape/u)
+})
+
+test('adapts an external session scoped to projects and keeps it unbound', () => {
+	const snapshot = adaptServerAgentSnapshot({ revision: 9, cursor: '9', entries: { 'ext:session-x': entry({ entryId: 'ext:session-x', provider: 'com.terminay.builtin-agents/agents', activationTerminalSessionId: null, terminalSessionId: null, external: true, projectIds: ['project-a'], harness: 'claude-code', harnessDisplayName: 'Claude Code', lastEventKind: undefined, lastEventSequence: undefined }) } })
+	const external = snapshot.entries['ext:session-x']
+	assert.equal(external.external, true)
+	assert.equal(external.activationTerminalSessionId, null)
+	assert.equal(external.terminalSessionId, null)
+	assert.deepEqual(external.projectIds, ['project-a'])
+	assert.equal(external.harnessDisplayName, 'Claude Code')
+	assert.throws(() => adaptServerAgentSnapshot({ revision: 10, cursor: '10', entries: { bad: entry({ entryId: 'bad', external: true, activationTerminalSessionId: null }) } }), /root agent shape/u)
+	assert.throws(() => adaptServerAgentSnapshot({ revision: 11, cursor: '11', entries: { bad: entry({ entryId: 'bad', projectIds: 'project-a' }) } }), /projectIds/u)
+	assert.equal(adaptServerAgentSnapshot({ revision: 12, cursor: '12', entries: { 'term-a:session-a:agent-a': entry() } }).entries['term-a:session-a:agent-a'].external, false)
 })
 
 test('connected agent source uses its server client and stops on unsubscribe', () => {

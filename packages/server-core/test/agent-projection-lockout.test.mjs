@@ -97,12 +97,16 @@ test("extension lifecycle replay cannot close the application connection or bloc
     serverWriteGate = new Promise((resolve) => { releaseServerWrites = resolve; });
 
     const providerId = "example.agent/pressure";
-    assert.equal(agents.claimExtensionProvider(identity, providerId), true);
-    const binding = { providerSessionId: "large-resumed-session", mappingVersion: "1", fingerprint: { kind: "test", process: { id: "process-1" }, metadata: { proof: "fixture" } } };
-    await agents.ingestExtensionLifecycle(identity, providerId, "1", binding, [{ kind: "session.started" }]);
+    const base = {
+      entryId: "pressure", kind: "root", provider: providerId, harness: "fixture",
+      agentId: "large-resumed-session", sessionId: "large-resumed-session",
+      activationTerminalSessionId: identity.sessionId, external: false, projectIds: [identity.projectId],
+      stateStartedAt: 1, createdAt: 1, active: true, activeTools: [], unread: true,
+      terminalSessionId: identity.sessionId, inProcess: false, openSubagents: 0,
+    };
     for (let index = 0; index < 2_000; index += 1) {
       now += 1;
-      await agents.ingestExtensionLifecycle(identity, providerId, "1", undefined, [{ kind: "wait.started", waitId: `wait-${index}`, state: "waiting", reason: "approval" }]);
+      agents.applyEntries([{ ...base, state: index % 2 === 0 ? "waiting" : "working", waitingReason: `approval-${index}`, updatedAt: now }]);
     }
     await new Promise((resolve) => setImmediate(resolve));
 

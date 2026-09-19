@@ -1,0 +1,77 @@
+title: terminay-builtin-agents — open decisions
+intro: |
+  Only the things the library and current architecture force a choice on.
+
+status: submitted
+submitted_at: "2026-09-19T14:50:46+01:00"
+
+questions:
+  - id: foreign_agents
+    type: select
+    prompt: An agent in the project dir that is NOT running in a Terminay terminal (e.g. started in iTerm) — what does clicking its sidebar row do?
+    help: |
+      Today every row is tied to a Terminay tab and clicking focuses it. Agents inside
+      Terminay terminals will still map to their tab (pid → terminal ancestry) and keep
+      the tab status dot. I'd show foreign ones with an "external" marker and no action.
+    options:
+      - Show it, marked external, click does nothing
+      - Show it, click opens a new terminal that resumes the session
+      - Show it, click opens a read-only transcript view
+      - Don't show agents outside Terminay terminals
+    answer: Show it, marked external, click does nothing
+
+  - id: opencode
+    type: select
+    prompt: all-your-agents has no OpenCode provider. What happens to OpenCode status?
+    help: I'd drop it until the library ships an OpenCode provider. Keeping our old code for it contradicts "remove all our logic".
+    options:
+      - Drop OpenCode status until the library supports it
+      - I'll add an OpenCode provider to all-your-agents first; block on that
+    answer: Drop OpenCode status until the library supports it
+
+  - id: koffi
+    type: select
+    prompt: The library uses optional native `koffi` for instant process-exit detection. Our extension installer rejects any `.node` file. How do we handle it?
+    help: |
+      Without koffi, a closed agent lingers until its next file change or a host
+      reconcile(pid). The host already knows when terminal processes exit, so it can call
+      reconcile for in-Terminay agents — but external agents would linger. I'd allow native
+      deps for signed built-ins only.
+    options:
+      - Allow native deps for bundled built-in extensions only, ship koffi
+      - No koffi; host calls reconcile(pid) on terminal process exit
+      - Allow native deps for all extensions
+    answer: Allow native deps for all extensions
+
+  - id: sdk_break
+    type: select
+    prompt: The old provider API (observe / jsonlSession / processMatchers / mapRecord) — delete it from the extension SDK?
+    help: |
+      The new model is "extension pushes a session list; host filters by project dir".
+      Deleting the old API is a breaking SDK 3.0 and kills any third-party agent
+      extensions. I'd delete it — nothing but our five use it, as far as I know.
+    options:
+      - Delete it, bump SDK to 3.0
+      - Keep it alongside the new session-feed API
+    answer: Delete it, bump SDK to 3.0
+
+  - id: mcp_ui
+    type: select
+    prompt: Extensions have no UI/command API today. How should the MCP installer live in the extension?
+    help: |
+      Narrow option: extension implements status/install/uninstall per target (Claude,
+      Codex, Cursor, Gemini, Grok, OpenCode); the host keeps rendering the existing modal and
+      palette command, and hands the extension the MCP server command path. Generic option:
+      build a real extension UI-contribution surface (commands + declarative dialogs) first.
+      I'd go narrow.
+    options:
+      - Narrow mcpInstallTargets contribution, host keeps the modal
+      - Build a generic extension UI/command surface first
+    answer: Narrow mcpInstallTargets contribution, host keeps the modal
+    comment: Wait, what does it do now. my understaning was the  install mcp menu was hard coded into terminay, but the logic to install the tool was inside the extesnion?
+
+  - id: per_agent_toggle
+    type: boolean
+    prompt: Keep a per-harness on/off switch (e.g. disable Grok only) inside the new extension's settings?
+    help: With one extension the Settings → Extensions toggle becomes all-or-nothing. I'd skip it unless you use it.
+    answer: true

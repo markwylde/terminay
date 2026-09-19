@@ -143,3 +143,24 @@ test('a model label prefers the display name over the id', () => {
 	assert.equal(agentModelLabel(root({ model: { id: 'claude-opus-5' } })), 'claude-opus-5');
 	assert.equal(agentModelLabel(root()), undefined);
 });
+
+test('one source reporting several harnesses is labelled by the harness it declared', () => {
+	const entry = root({
+		provider: 'com.terminay.builtin-agents/agents',
+		providerDisplayName: 'Built-in Agents',
+		harness: 'oh-my-pi',
+		harnessDisplayName: 'oh-my-pi',
+	});
+	assert.equal(providerLabel(entry), 'oh-my-pi');
+	assert.equal(resolveAgentPresentation(entry).name, 'oh-my-pi');
+	assert.equal(
+		providerLabel(
+			root({
+				provider: 'com.terminay.builtin-agents/agents',
+				providerDisplayName: undefined,
+				harness: 'claude-code',
+			}),
+		),
+		'Claude Code',
+	);
+});

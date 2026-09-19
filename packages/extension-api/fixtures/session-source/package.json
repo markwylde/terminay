@@ -1,0 +1,49 @@
+{
+	"name": "@terminay/session-source-conformance-fixture",
+	"version": "1.0.0",
+	"description": "Independent third-party session source conformance fixture.",
+	"license": "MIT",
+	"type": "module",
+	"exports": {
+		".": "./dist/extension.js"
+	},
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"peerDependencies": {
+		"@terminay/extension-api": "^3.0.0"
+	},
+	"terminay": {
+		"manifestVersion": 1,
+		"id": "dev.terminay.agent-fixture",
+		"displayName": "Fixture Agent",
+		"description": "A portable session source conformance fixture.",
+		"api": "^3.0.0",
+		"engines": {
+			"terminay": ">=1.0.0",
+			"node": ">=24"
+		},
+		"entrypoint": "dist/extension.js",
+		"permissions": [
+			"agent-observation"
+		],
+		"contributes": {
+			"agentSessionSources": [
+				{
+					"id": "dev.terminay.agent-fixture/sessions",
+					"displayName": "Fixture Agent",
+					"harnesses": [
+						{
+							"id": "fixture-agent",
+							"displayName": "Fixture Agent"
+						}
+					],
+					"environmentVariables": [
+						"FIXTURE_AGENT_HOME"
+					]
+				}
+			]
+		}
+	}
+}

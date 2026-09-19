@@ -330,6 +330,10 @@ function extensionDto(
 			active?.receipt.manifest.contributes?.languageServers ??
 				bundled?.receipt.manifest.contributes?.languageServers,
 		),
+		...agentSessionSourcesDto(
+			active?.receipt.manifest.contributes?.agentSessionSources ??
+				bundled?.receipt.manifest.contributes?.agentSessionSources,
+		),
 		enabled: value.enabled,
 		compatible: value.state !== 'incompatible',
 		runtimeState: runtimeState(value, hosts),
@@ -355,6 +359,26 @@ function languageServersDto(
 			...(contribution.runtimeNotes === undefined
 				? {}
 				: { runtimeNotes: contribution.runtimeNotes }),
+		})),
+	} as Record<string, JsonValue>;
+}
+
+/** What Settings shows for a session source: its harnesses, so each can be
+ * switched on or off. Never an environment variable or a provider path. */
+function agentSessionSourcesDto(
+	value:
+		| readonly import('@terminay/extension-api').AgentSessionSourceContribution[]
+		| undefined,
+): Record<string, JsonValue> {
+	if (value === undefined || value.length === 0) return {};
+	return {
+		agentSessionSources: value.slice(0, 32).map((contribution) => ({
+			id: contribution.id,
+			displayName: contribution.displayName,
+			harnesses: contribution.harnesses.slice(0, 16).map((harness) => ({
+				id: harness.id,
+				displayName: harness.displayName,
+			})),
 		})),
 	} as Record<string, JsonValue>;
 }

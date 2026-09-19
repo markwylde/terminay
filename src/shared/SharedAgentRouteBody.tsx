@@ -7,6 +7,8 @@ export interface SharedAgentRouteBodyProps {
 }
 
 function providerLabel(agent: AgentClientEntry): string {
+	const harness = agent.harnessDisplayName
+	if (typeof harness === 'string' && harness.trim()) return harness.trim()
 	const declared = agent.providerDisplayName
 	if (typeof declared === 'string' && declared.trim()) return declared.trim()
 	return agent.provider.split('/').at(-1) ?? agent.provider
@@ -51,7 +53,8 @@ export function SharedAgentRouteBody({ client, loading = false }: SharedAgentRou
             <li key={agent.entryId} className="shared-production-route__card">
               <strong>{providerLabel(agent)} {agent.kind === 'subagent' ? 'subagent' : 'agent'}</strong>
               <span>{agentStateLabel(agent.state)}</span>
-              {agent.unread && <span>Unread activity</span>}
+              {agent.external === true && <span>External</span>}
+              {agent.unread && agent.external !== true && <span>Unread activity</span>}
             </li>
           ))}
         </ul>

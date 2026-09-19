@@ -62,7 +62,8 @@ test('obsolete renderer-owned profile and broadcast helpers stay deleted', () =>
 
 test('canonical host routes retain server-owned application operations', () => {
 	assert.match(main, /applicationFeatures:\s*\{/u);
-	assert.match(main, /mcpInstall:\s*\{/u);
+	assert.match(main, /mcpInstall:\s*\{\s*serverCommand:/u);
+	assert.match(terminalAuthority, /new McpInstallRouter\(/u);
 	assert.match(terminalAuthority, /'mcp-install\.status':/u);
 	assert.match(terminalAuthority, /'mcp-install\.install':/u);
 	assert.match(terminalAuthority, /'mcp-install\.uninstall':/u);
@@ -76,14 +77,10 @@ test('canonical host routes retain server-owned application operations', () => {
 	assert.match(main, /loadRememberedRemoteConnections\(\)/u);
 });
 
-test('MCP install command validation accepts every supported provider', () => {
-	for (const agent of ['claudeCode', 'codex', 'cursor', 'gemini', 'grok', 'openCode']) {
-		assert.match(
-			terminalAuthority,
-			new RegExp(`agent !== '${agent}'`, 'u'),
-			agent,
-		);
-	}
+test('MCP install commands name an extension install target, not a hardcoded client', () => {
+	assert.match(terminalAuthority, /const mcpTarget = \(request: CommandRequest\): string =>/u);
+	for (const agent of ['claudeCode', 'codex', 'cursor', 'gemini', 'grok', 'openCode'])
+		assert.doesNotMatch(terminalAuthority, new RegExp(`agent !== '${agent}'`, 'u'), agent);
 });
 
 test('Desktop MCP terminal listing tolerates restored sessions without live activity records', () => {
