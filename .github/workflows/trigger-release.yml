@@ -177,16 +177,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # asset_templates lists every payload the lane publishes. The first is
+          # the installer; the rest serve in-place updates. update_metadata is
+          # never attached here: publish-release-notes attaches it last.
           - os: macos-latest
             label: macOS
             script: npm run build:mac
-            pattern: release/**/*.dmg
-            asset_template: Terminay-Mac-%VERSION%-Installer.dmg
+            asset_templates: Terminay-Mac-%VERSION%-Installer.dmg Terminay-Mac-%VERSION%.zip Terminay-Mac-%VERSION%.zip.blockmap
+            update_payload: Terminay-Mac-%VERSION%.zip
+            update_metadata: latest-mac.yml
           - os: ubuntu-latest
             label: Linux
             script: npm run build:linux
-            pattern: release/**/*.AppImage
-            asset_template: Terminay-Linux-%VERSION%.AppImage
+            asset_templates: Terminay-Linux-%VERSION%.AppImage
+            update_payload: Terminay-Linux-%VERSION%.AppImage
+            update_metadata: latest-linux.yml
 
     steps:
       - name: Check out code
@@ -266,9 +271,11 @@ jobs:
           ${{ matrix.script }}
 
       - name: Verify exact release asset selection
+        id: asset_selection
         env:
           TAG: ${{ needs.release.outputs.tag }}
-          ASSET_TEMPLATE: ${{ matrix.asset_template }}
+          ASSET_TEMPLATES: ${{ matrix.asset_templates }}
+          UPDATE_METADATA: ${{ matrix.update_metadata }}
         run: |
           if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Release tag is not a supported semantic version: $TAG" >&2
@@ -276,15 +283,42 @@ jobs:
           fi
 
           VERSION="${TAG#v}"
-          EXPECTED_ASSET="${ASSET_TEMPLATE//%VERSION%/$VERSION}"
-          EXPECTED_FILE="release/$VERSION/$EXPECTED_ASSET"
-          test -f "$EXPECTED_FILE"
-          test ! -L "$EXPECTED_FILE"
+          EXPECTED_FILES=""
+          for ASSET_TEMPLATE in $ASSET_TEMPLATES; do
+            EXPECTED_ASSET="${ASSET_TEMPLATE//%VERSION%/$VERSION}"
+            EXPECTED_FILE="release/$VERSION/$EXPECTED_ASSET"
+            test -f "$EXPECTED_FILE"
+            test ! -L "$EXPECTED_FILE"
+            EXPECTED_FILES="$EXPECTED_FILES$EXPECTED_FILE"$'\n'
+          done
+          EXPECTED_FILES="$(printf '%s' "$EXPECTED_FILES" | LC_ALL=C sort)"
+          EXPECTED_COUNT="$(printf '%s\n' "$EXPECTED_FILES" | wc -l | tr -d '[:space:]')"
 
-          CANDIDATE_COUNT="$(find release -type f \( -name '*.dmg' -o -name '*.AppImage' \) -print | wc -l | tr -d '[:space:]')"
-          test "$CANDIDATE_COUNT" = 1
-          ACTUAL_FILE="$(find release -type f \( -name '*.dmg' -o -name '*.AppImage' \) -print | sort)"
-          test "$ACTUAL_FILE" = "$EXPECTED_FILE"
+          # Every publishable payload electron-builder wrote must be one of the
+          # reviewed names: a stale or unexpected payload fails packaging. The
+          # unpacked app directories are not payloads and are not searched.
+          CANDIDATE_COUNT="$(find release \( -type d \( -name '*.app' -o -name '*-unpacked' \) -prune \) -o -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' -o -name '*.AppImage' \) -print | wc -l | tr -d '[:space:]')"
+          test "$CANDIDATE_COUNT" = "$EXPECTED_COUNT"
+          ACTUAL_FILES="$(find release \( -type d \( -name '*.app' -o -name '*-unpacked' \) -prune \) -o -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' -o -name '*.AppImage' \) -print | LC_ALL=C sort)"
+          test "$ACTUAL_FILES" = "$EXPECTED_FILES"
+
+          # Exactly one update-metadata file, for this lane's stable channel.
+          METADATA_FILE="release/$VERSION/$UPDATE_METADATA"
+          test -f "$METADATA_FILE"
+          test ! -L "$METADATA_FILE"
+          ACTUAL_METADATA="$(find release -type f \( -name 'latest*.yml' -o -name 'beta*.yml' -o -name 'alpha*.yml' \) -print)"
+          test "$ACTUAL_METADATA" = "$METADATA_FILE"
+
+          {
+            echo "files=$(printf '%s' "$EXPECTED_FILES" | tr '\n' ' ')"
+            echo "metadata=$METADATA_FILE"
+            echo "artifact_paths<<TERMINAY_RELEASE_ASSET_PATHS"
+            for file in $EXPECTED_FILES; do
+              echo "$file"
+              echo "$file.sha256"
+            done
+            echo "TERMINAY_RELEASE_ASSET_PATHS"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Verify macOS microphone entitlement
         if: matrix.os == 'macos-latest'
@@ -359,6 +393,38 @@ jobs:
           export TERMINAY_RELEASE_DIAGNOSTICS_DIR="$RUNNER_TEMP/terminay-packaged-smoke"
           bash scripts/run-packaged-macos-smoke.sh
 
+      - name: Verify macOS signed and notarized update zip
+        if: matrix.os == 'macos-latest'
+        env:
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          VERSION="${TAG#v}"
+          ZIP="release/$VERSION/Terminay-Mac-$VERSION.zip"
+          test -f "$ZIP"
+          test ! -L "$ZIP"
+
+          # Squirrel.Mac installs the app inside this zip. electron-builder
+          # notarizes and staples the app before archiving it, so the app that
+          # comes out of the published bytes must pass every Gatekeeper check
+          # the DMG's app passed.
+          EXTRACTED="$RUNNER_TEMP/terminay-release-zip"
+          test ! -e "$EXTRACTED"
+          mkdir -p "$EXTRACTED"
+          ditto -x -k "$ZIP" "$EXTRACTED"
+          APP_BUNDLE_COUNT="$(find "$EXTRACTED" -type d -name 'Terminay.app' -print | wc -l | tr -d '[:space:]')"
+          test "$APP_BUNDLE_COUNT" = 1
+          APP_BUNDLE="$EXTRACTED/Terminay.app"
+          test -d "$APP_BUNDLE"
+          test ! -L "$APP_BUNDLE"
+          APP_EXECUTABLE="$APP_BUNDLE/Contents/MacOS/Terminay"
+          test -f "$APP_EXECUTABLE"
+          test ! -L "$APP_EXECUTABLE"
+          codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+          codesign -dvv "$APP_BUNDLE" 2>&1 | grep -F "TeamIdentifier=$APPLE_TEAM_ID"
+          spctl --assess --type execute --verbose=4 "$APP_BUNDLE"
+          xcrun stapler validate "$APP_BUNDLE"
+
       - name: Preserve packaged startup diagnostics
         if: ${{ always() && matrix.os == 'macos-latest' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -367,13 +433,28 @@ jobs:
           path: ${{ runner.temp }}/terminay-packaged-smoke
           if-no-files-found: ignore
 
+      - name: Verify generated update metadata
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+          UPDATE_PAYLOAD: ${{ matrix.update_payload }}
+          METADATA_FILE: ${{ steps.asset_selection.outputs.metadata }}
+        run: |
+          VERSION="${TAG#v}"
+          # Runs after the DMG is stapled, so metadata that still described a
+          # rewritten payload would fail here rather than on a client.
+          node scripts/verify-update-metadata.mjs \
+            --metadata "$METADATA_FILE" \
+            --assets-dir "release/$VERSION" \
+            --version "$VERSION" \
+            --expect-file "${UPDATE_PAYLOAD//%VERSION%/$VERSION}"
+
       - name: Write release asset checksums
         env:
-          ASSET_PATTERN: ${{ matrix.pattern }}
+          ASSET_FILES: ${{ steps.asset_selection.outputs.files }}
         run: |
           found=false
-          for file in $ASSET_PATTERN; do
-            test -f "$file" || continue
+          for file in $ASSET_FILES; do
+            test -f "$file"
             test ! -L "$file"
             # A stale sidecar must not be followed or replaced through a
             # symlink when a runner retries packaging in its workspace.
@@ -390,11 +471,11 @@ jobs:
 
       - name: Verify release asset checksums before upload
         env:
-          ASSET_PATTERN: ${{ matrix.pattern }}
+          ASSET_FILES: ${{ steps.asset_selection.outputs.files }}
         run: |
           found=false
-          for file in $ASSET_PATTERN; do
-            test -f "$file" || continue
+          for file in $ASSET_FILES; do
+            test -f "$file"
             test -f "$file.sha256"
             test ! -L "$file"
             test ! -L "$file.sha256"
@@ -410,9 +491,18 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.label }} binary
-          path: |
-            ${{ matrix.pattern }}
-            ${{ matrix.pattern }}.sha256
+          path: ${{ steps.asset_selection.outputs.artifact_paths }}
+          if-no-files-found: error
+          include-hidden-files: false
+
+      # Update metadata leaves this job only as a workflow artifact. A client
+      # can see an update only once this file is attached to the release, and
+      # publish-release-notes attaches it after the notes are final.
+      - name: Upload update metadata workflow artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: update-metadata-${{ matrix.label }}
+          path: ${{ steps.asset_selection.outputs.metadata }}
           if-no-files-found: error
           include-hidden-files: false
 
@@ -421,9 +511,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.release.outputs.tag }}
-          ASSET_PATTERN: ${{ matrix.pattern }}
+          ASSET_FILES: ${{ steps.asset_selection.outputs.files }}
         run: |
-          for file in $ASSET_PATTERN; do
+          for file in $ASSET_FILES; do
             test -f "$file"
             test -f "$file.sha256"
             test ! -L "$file"
@@ -719,6 +809,18 @@ jobs:
         with:
           name: release-notes
 
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+
+      - name: Download update metadata artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: update-metadata-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/update-metadata
+
       - name: Verify immutable Desktop release assets before notes
         env:
           GH_TOKEN: ${{ github.token }}
@@ -727,12 +829,16 @@ jobs:
         run: |
           test -n "$TAG"
           VERSION="${TAG#v}"
-          ASSET_NAMES="$(gh release view "$TAG" --repo "$GH_REPO" --json assets --jq '.assets[].name' | sort)"
+          ASSET_NAMES="$(gh release view "$TAG" --repo "$GH_REPO" --json assets --jq '.assets[].name' | LC_ALL=C sort)"
           EXPECTED_ASSET_NAMES="$(cat <<EOF
           Terminay-Linux-${VERSION}.AppImage
           Terminay-Linux-${VERSION}.AppImage.sha256
           Terminay-Mac-${VERSION}-Installer.dmg
           Terminay-Mac-${VERSION}-Installer.dmg.sha256
+          Terminay-Mac-${VERSION}.zip
+          Terminay-Mac-${VERSION}.zip.blockmap
+          Terminay-Mac-${VERSION}.zip.blockmap.sha256
+          Terminay-Mac-${VERSION}.zip.sha256
           terminay-server-${VERSION}-linux-arm64.tar.gz
           terminay-server-${VERSION}-linux-arm64.tar.gz.sha256
           terminay-server-${VERSION}-linux-arm64.tar.gz.sig
@@ -742,7 +848,8 @@ jobs:
           EOF
           )"
           # A release retry must not publish notes for a mixture of the exact
-          # verified assets and stale or substituted attachments.
+          # verified assets and stale or substituted attachments. The update
+          # metadata is not attached yet: it is attached only after the notes.
           test "$ASSET_NAMES" = "$EXPECTED_ASSET_NAMES"
 
       - name: Verify published Desktop asset checksums before notes
@@ -759,6 +866,10 @@ jobs:
           for expected in \
             "Terminay-Mac-${VERSION}-Installer.dmg" \
             "Terminay-Mac-${VERSION}-Installer.dmg.sha256" \
+            "Terminay-Mac-${VERSION}.zip" \
+            "Terminay-Mac-${VERSION}.zip.sha256" \
+            "Terminay-Mac-${VERSION}.zip.blockmap" \
+            "Terminay-Mac-${VERSION}.zip.blockmap.sha256" \
             "Terminay-Linux-${VERSION}.AppImage" \
             "Terminay-Linux-${VERSION}.AppImage.sha256" \
             "terminay-server-${VERSION}-linux-x64.tar.gz" \
@@ -772,6 +883,8 @@ jobs:
           done
           for asset in \
             "$ASSET_DIR/Terminay-Mac-${VERSION}-Installer.dmg" \
+            "$ASSET_DIR/Terminay-Mac-${VERSION}.zip" \
+            "$ASSET_DIR/Terminay-Mac-${VERSION}.zip.blockmap" \
             "$ASSET_DIR/Terminay-Linux-${VERSION}.AppImage" \
             "$ASSET_DIR/terminay-server-${VERSION}-linux-x64.tar.gz" \
             "$ASSET_DIR/terminay-server-${VERSION}-linux-arm64.tar.gz"; do
@@ -787,6 +900,34 @@ jobs:
           node scripts/release-signature.mjs verify \
             "$ASSET_DIR/terminay-server-${VERSION}-linux-arm64.tar.gz" \
             "$ASSET_DIR/terminay-server-${VERSION}-linux-arm64.tar.gz.sig"
+
+      - name: Verify update metadata against published assets before notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.release.outputs.tag }}
+          METADATA_DIR: ${{ runner.temp }}/update-metadata
+        run: |
+          test -n "$TAG"
+          VERSION="${TAG#v}"
+          ASSET_DIR="release/$VERSION"
+          # Exactly the two stable-channel files, nothing smuggled beside them.
+          test "$(find "$METADATA_DIR" -mindepth 1 -print | LC_ALL=C sort | tr '\n' ' ')" = "$METADATA_DIR/latest-linux.yml $METADATA_DIR/latest-mac.yml "
+          gh release view "$TAG" --repo "$GH_REPO" --json assets --jq '.assets[].name' > "$RUNNER_TEMP/release-asset-names"
+          # Every file a client would download must be an asset of this
+          # release, and its bytes as published must match the metadata digest.
+          node scripts/verify-update-metadata.mjs \
+            --metadata "$METADATA_DIR/latest-mac.yml" \
+            --assets-dir "$ASSET_DIR" \
+            --version "$VERSION" \
+            --expect-file "Terminay-Mac-${VERSION}.zip" \
+            --release-assets "$RUNNER_TEMP/release-asset-names"
+          node scripts/verify-update-metadata.mjs \
+            --metadata "$METADATA_DIR/latest-linux.yml" \
+            --assets-dir "$ASSET_DIR" \
+            --version "$VERSION" \
+            --expect-file "Terminay-Linux-${VERSION}.AppImage" \
+            --release-assets "$RUNNER_TEMP/release-asset-names"
 
       - name: Append release asset summary
         env:
@@ -809,3 +950,36 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.release.outputs.tag }}
         run: gh release edit "$TAG" --repo "$GH_REPO" --notes-file RELEASE.md
+
+      # Installed clients find an update only through these files, so they are
+      # attached last: no client can see a release whose body still reads
+      # "Release in progress." or whose payloads are not all attached.
+      - name: Attach update metadata after the release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.release.outputs.tag }}
+          METADATA_DIR: ${{ runner.temp }}/update-metadata
+        run: |
+          test -n "$TAG"
+          for metadata in latest-mac.yml latest-linux.yml; do
+            test -f "$METADATA_DIR/$metadata"
+            test ! -L "$METADATA_DIR/$metadata"
+          done
+          # Deliberately omit --clobber, as for every other release asset.
+          gh release upload "$TAG" "$METADATA_DIR/latest-mac.yml" "$METADATA_DIR/latest-linux.yml" --repo "$GH_REPO"
+
+      - name: Verify the published update metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.release.outputs.tag }}
+          METADATA_DIR: ${{ runner.temp }}/update-metadata
+        run: |
+          test -n "$TAG"
+          PUBLISHED="$RUNNER_TEMP/published-update-metadata"
+          mkdir -p "$PUBLISHED"
+          for metadata in latest-mac.yml latest-linux.yml; do
+            gh release download "$TAG" --repo "$GH_REPO" --dir "$PUBLISHED" --pattern "$metadata"
+            cmp "$PUBLISHED/$metadata" "$METADATA_DIR/$metadata"
+          done

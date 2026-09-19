@@ -146,16 +146,225 @@ jobs:
           if-no-files-found: error
           include-hidden-files: false
 
+  build-main-desktop:
+    name: Build Main Desktop Beta (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    # Its own job, so a signing or notarization outage never holds back the
+    # server archives: the channel then keeps its previous desktop set.
+    timeout-minutes: 60
+    strategy:
+      # Neither platform is published unless both were built from this commit.
+      fail-fast: true
+      matrix:
+        include:
+          # The asset names are fixed so each run replaces the last rather
+          # than accumulating; the beta metadata names them exactly.
+          - os: macos-latest
+            label: macOS
+            platform: mac
+            target: zip
+            asset: terminay-desktop-main-mac.zip
+            metadata: beta-mac.yml
+          - os: ubuntu-latest
+            label: Linux
+            platform: linux
+            target: AppImage
+            asset: terminay-desktop-main-linux-x86_64.AppImage
+            metadata: beta-linux.yml
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          # The beta version and notes are derived from the commits since the
+          # latest release tag, so the full history and tags are needed.
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+          cache: npm
+
+      - name: Verify the build commit
+        env:
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          test -n "$EXPECTED_COMMIT"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+
+      - name: Install dependencies
+        run: |
+          npm install --global npm@12.0.2
+          npm ci
+
+      - name: Check macOS signing secrets
+        if: matrix.os == 'macos-latest'
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ vars.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          missing=""
+          for name in MACOS_CERTIFICATE_P12 MACOS_CERTIFICATE_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "$(printenv "$name")" ]; then
+              missing="$missing $name"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "Refusing to publish an unsigned or unnotarized macOS beta; missing:$missing" >&2
+            exit 1
+          fi
+
+      - name: Import Apple signing certificate
+        if: matrix.os == 'macos-latest'
+        uses: apple-actions/import-codesign-certs@2dbeb2d7c37642111f938c56ef0feb5d51dad55d # v4.0.1
+        with:
+          p12-file-base64: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          p12-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+
+      - name: Derive the beta version and release notes
+        id: beta_version
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          # `<next stable version>-beta.<run number>`: run numbers only grow, so
+          # every beta sorts above the last one and below the release it leads to.
+          VERSION="$(node scripts/main-beta-version.mjs --run-number "$RUN_NUMBER" --notes-out "$RUNNER_TEMP/beta-release-notes.md")"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$ ]]
+          test "${VERSION##*-beta.}" = "$RUN_NUMBER"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Sync package version to the beta version
+        env:
+          VERSION: ${{ steps.beta_version.outputs.version }}
+        run: node scripts/sync-package-version.mjs "$VERSION"
+
+      - name: Build packaged beta app
+        env:
+          APPLE_ID: ${{ matrix.os == 'macos-latest' && vars.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.os == 'macos-latest' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ matrix.os == 'macos-latest' && vars.APPLE_TEAM_ID || '' }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.os == 'macos-latest' && 'true' || 'false' }}
+          PLATFORM: ${{ matrix.platform }}
+          TARGET: ${{ matrix.target }}
+          ASSET: ${{ matrix.asset }}
+        run: |
+          test ! -e release
+          node scripts/stage-selected-secure-werift-runtime.mjs
+          npm run build:app
+          # The GitHub publish provider takes its channel from configuration,
+          # not from the version's prerelease component, so the beta channel is
+          # named explicitly: that is what makes electron-builder write
+          # beta-*.yml rather than latest-*.yml. The metadata references the
+          # fixed artifact name set here.
+          node_modules/.bin/electron-builder "--$PLATFORM" "$TARGET" --publish never \
+            -c.directories.output=release/main-desktop \
+            -c.publish.channel=beta \
+            "-c.$PLATFORM.artifactName=$ASSET" \
+            "-c.releaseInfo.releaseNotesFile=$RUNNER_TEMP/beta-release-notes.md"
+
+      - name: Verify exact beta asset selection
+        env:
+          ASSET: ${{ matrix.asset }}
+          METADATA: ${{ matrix.metadata }}
+        run: |
+          OUTPUT="release/main-desktop"
+          test -f "$OUTPUT/$ASSET"
+          test ! -L "$OUTPUT/$ASSET"
+          # The macOS zip also gets a blockmap. Beta clients never download
+          # differentially (the previous blockmap is overwritten every run), so
+          # it is expected here but never published.
+          EXPECTED_FILES="$OUTPUT/$ASSET"
+          if [ "$ASSET" = terminay-desktop-main-mac.zip ]; then
+            EXPECTED_FILES="$(printf '%s\n' "$OUTPUT/$ASSET" "$OUTPUT/$ASSET.blockmap" | LC_ALL=C sort)"
+          fi
+          ACTUAL_FILES="$(find release \( -type d \( -name '*.app' -o -name '*-unpacked' \) -prune \) -o -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' -o -name '*.AppImage' \) -print | LC_ALL=C sort)"
+          test "$ACTUAL_FILES" = "$EXPECTED_FILES"
+          test -f "$OUTPUT/$METADATA"
+          test ! -L "$OUTPUT/$METADATA"
+          ACTUAL_METADATA="$(find release -type f \( -name 'latest*.yml' -o -name 'beta*.yml' -o -name 'alpha*.yml' \) -print)"
+          test "$ACTUAL_METADATA" = "$OUTPUT/$METADATA"
+
+      - name: Verify macOS signed and notarized beta zip
+        if: matrix.os == 'macos-latest'
+        env:
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          ASSET: ${{ matrix.asset }}
+        run: |
+          ZIP="release/main-desktop/$ASSET"
+          test -f "$ZIP"
+          test ! -L "$ZIP"
+          # electron-builder notarizes and staples the app before archiving it,
+          # so the app that comes out of these bytes must pass Gatekeeper.
+          EXTRACTED="$RUNNER_TEMP/terminay-beta-zip"
+          test ! -e "$EXTRACTED"
+          mkdir -p "$EXTRACTED"
+          ditto -x -k "$ZIP" "$EXTRACTED"
+          APP_BUNDLE_COUNT="$(find "$EXTRACTED" -type d -name 'Terminay.app' -print | wc -l | tr -d '[:space:]')"
+          test "$APP_BUNDLE_COUNT" = 1
+          APP_BUNDLE="$EXTRACTED/Terminay.app"
+          test -d "$APP_BUNDLE"
+          test ! -L "$APP_BUNDLE"
+          APP_EXECUTABLE="$APP_BUNDLE/Contents/MacOS/Terminay"
+          test -f "$APP_EXECUTABLE"
+          test ! -L "$APP_EXECUTABLE"
+          codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+          codesign -dvv "$APP_BUNDLE" 2>&1 | grep -F "TeamIdentifier=$APPLE_TEAM_ID"
+          spctl --assess --type execute --verbose=4 "$APP_BUNDLE"
+          xcrun stapler validate "$APP_BUNDLE"
+
+      - name: Verify generated beta update metadata
+        env:
+          VERSION: ${{ steps.beta_version.outputs.version }}
+          ASSET: ${{ matrix.asset }}
+          METADATA: ${{ matrix.metadata }}
+        run: |
+          node scripts/verify-update-metadata.mjs \
+            --metadata "release/main-desktop/$METADATA" \
+            --assets-dir release/main-desktop \
+            --version "$VERSION" \
+            --expect-file "$ASSET" \
+            --require-release-notes
+
+      - name: Write and verify beta checksum
+        env:
+          ASSET: ${{ matrix.asset }}
+        run: |
+          PAYLOAD="release/main-desktop/$ASSET"
+          node scripts/release-checksum.mjs write "$PAYLOAD" "$PAYLOAD.sha256"
+          node scripts/release-checksum.mjs verify "$PAYLOAD" "$PAYLOAD.sha256"
+
+      - name: Upload beta workflow artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: main-desktop-${{ matrix.platform }}
+          path: |
+            release/main-desktop/${{ matrix.asset }}
+            release/main-desktop/${{ matrix.asset }}.sha256
+            release/main-desktop/${{ matrix.metadata }}
+          if-no-files-found: error
+          include-hidden-files: false
+
   publish-main-prerelease:
     name: Replace Main Prerelease Assets
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: build-main-archives
+    # The desktop payloads are large; the swap and its re-verification still
+    # must not hold a write-capable token without a bound.
+    timeout-minutes: 30
+    needs: [build-main-archives, build-main-desktop]
     # A dry run proves the build and signature path on a branch without ever
-    # touching the published channel.
-    if: github.event_name == 'push' || inputs.dry_run != true
+    # touching the published channel. The server archives publish whenever
+    # they were built; the desktop beta joins them only when it was built too.
+    if: ${{ !cancelled() && needs.build-main-archives.result == 'success' && (github.event_name == 'push' || inputs.dry_run != true) }}
     permissions:
       contents: write
+    env:
+      DESKTOP_BETA: ${{ needs.build-main-desktop.result }}
 
     steps:
       - name: Check out verification code
@@ -175,6 +384,14 @@ jobs:
           merge-multiple: true
           path: release/main
 
+      - name: Download built desktop beta assets
+        if: needs.build-main-desktop.result == 'success'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: main-desktop-*
+          merge-multiple: true
+          path: release/main-desktop
+
       - name: Verify every downloaded asset before publication
         env:
           EXPECTED_COMMIT: ${{ github.sha }}
@@ -190,6 +407,34 @@ jobs:
             node scripts/release-checksum.mjs verify "$ARCHIVE" "$ARCHIVE.sha256"
             node scripts/release-signature.mjs verify "$ARCHIVE" "$ARCHIVE.sig"
           done
+
+      - name: Verify every downloaded desktop beta asset before publication
+        if: needs.build-main-desktop.result == 'success'
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          OUTPUT="release/main-desktop"
+          test "$(find "$OUTPUT" -mindepth 1 -print | LC_ALL=C sort | tr '\n' ' ')" = "$OUTPUT/beta-linux.yml $OUTPUT/beta-mac.yml $OUTPUT/terminay-desktop-main-linux-x86_64.AppImage $OUTPUT/terminay-desktop-main-linux-x86_64.AppImage.sha256 $OUTPUT/terminay-desktop-main-mac.zip $OUTPUT/terminay-desktop-main-mac.zip.sha256 "
+          for payload in terminay-desktop-main-mac.zip terminay-desktop-main-linux-x86_64.AppImage; do
+            test -f "$OUTPUT/$payload"
+            test ! -L "$OUTPUT/$payload"
+            test ! -L "$OUTPUT/$payload.sha256"
+            node scripts/release-checksum.mjs verify "$OUTPUT/$payload" "$OUTPUT/$payload.sha256"
+          done
+          MAC_VERSION="$(node scripts/verify-update-metadata.mjs \
+            --metadata "$OUTPUT/beta-mac.yml" \
+            --assets-dir "$OUTPUT" \
+            --expect-file terminay-desktop-main-mac.zip \
+            --require-release-notes)"
+          LINUX_VERSION="$(node scripts/verify-update-metadata.mjs \
+            --metadata "$OUTPUT/beta-linux.yml" \
+            --assets-dir "$OUTPUT" \
+            --expect-file terminay-desktop-main-linux-x86_64.AppImage \
+            --require-release-notes)"
+          # Both platforms are one beta of this run, never a mixed pair.
+          test "$MAC_VERSION" = "$LINUX_VERSION"
+          [[ "$MAC_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$ ]]
+          test "${MAC_VERSION##*-beta.}" = "$RUN_NUMBER"
 
       - name: Ensure the main prerelease exists
         env:
@@ -222,6 +467,18 @@ jobs:
               gh release upload main-latest "release/main/$NAME.incoming" --repo "$GH_REPO" --clobber
             done
           done
+          if [ "$DESKTOP_BETA" = success ]; then
+            for NAME in \
+              terminay-desktop-main-mac.zip \
+              terminay-desktop-main-mac.zip.sha256 \
+              terminay-desktop-main-linux-x86_64.AppImage \
+              terminay-desktop-main-linux-x86_64.AppImage.sha256 \
+              beta-mac.yml \
+              beta-linux.yml; do
+              cp "release/main-desktop/$NAME" "release/main-desktop/$NAME.incoming"
+              gh release upload main-latest "release/main-desktop/$NAME.incoming" --repo "$GH_REPO" --clobber
+            done
+          fi
 
       - name: Rename temporary assets over the published main channel
         env:
@@ -233,18 +490,35 @@ jobs:
           # served under a channel name.
           RELEASE_ID="$(gh release view main-latest --repo "$GH_REPO" --json databaseId --jq '.databaseId')"
           test -n "$RELEASE_ID"
+          promote() {
+            NAME="$1"
+            INCOMING_ID="$(gh api "repos/$GH_REPO/releases/$RELEASE_ID/assets" --paginate --jq ".[] | select(.name == \"$NAME.incoming\") | .id")"
+            test -n "$INCOMING_ID"
+            PUBLISHED_ID="$(gh api "repos/$GH_REPO/releases/$RELEASE_ID/assets" --paginate --jq ".[] | select(.name == \"$NAME\") | .id")"
+            if [ -n "$PUBLISHED_ID" ]; then
+              gh api -X DELETE "repos/$GH_REPO/releases/assets/$PUBLISHED_ID"
+            fi
+            gh api -X PATCH "repos/$GH_REPO/releases/assets/$INCOMING_ID" -f "name=$NAME"
+          }
           for target in linux-x64 linux-arm64; do
             for suffix in "" ".sha256" ".sig"; do
-              NAME="terminay-server-main-$target.tar.gz$suffix"
-              INCOMING_ID="$(gh api "repos/$GH_REPO/releases/$RELEASE_ID/assets" --paginate --jq ".[] | select(.name == \"$NAME.incoming\") | .id")"
-              test -n "$INCOMING_ID"
-              PUBLISHED_ID="$(gh api "repos/$GH_REPO/releases/$RELEASE_ID/assets" --paginate --jq ".[] | select(.name == \"$NAME\") | .id")"
-              if [ -n "$PUBLISHED_ID" ]; then
-                gh api -X DELETE "repos/$GH_REPO/releases/assets/$PUBLISHED_ID"
-              fi
-              gh api -X PATCH "repos/$GH_REPO/releases/assets/$INCOMING_ID" -f "name=$NAME"
+              promote "terminay-server-main-$target.tar.gz$suffix"
             done
           done
+          if [ "$DESKTOP_BETA" = success ]; then
+            for NAME in \
+              terminay-desktop-main-mac.zip \
+              terminay-desktop-main-mac.zip.sha256 \
+              terminay-desktop-main-linux-x86_64.AppImage \
+              terminay-desktop-main-linux-x86_64.AppImage.sha256; do
+              promote "$NAME"
+            done
+            # The beta metadata moves last. Until it does, clients keep reading
+            # the previous metadata; one that fetches a payload mid-swap gets
+            # bytes that fail its digest check and retries at the next check.
+            promote beta-mac.yml
+            promote beta-linux.yml
+          fi
 
       - name: Verify the published main channel set
         env:
@@ -253,8 +527,14 @@ jobs:
           EXPECTED_COMMIT: ${{ github.sha }}
           TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64: ${{ vars.TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64 }}
         run: |
-          ASSET_NAMES="$(gh release view main-latest --repo "$GH_REPO" --json assets --jq '.assets[].name' | sort)"
+          ASSET_NAMES="$(gh release view main-latest --repo "$GH_REPO" --json assets --jq '.assets[].name' | LC_ALL=C sort)"
           EXPECTED_ASSET_NAMES="$(cat <<EOF
+          beta-linux.yml
+          beta-mac.yml
+          terminay-desktop-main-linux-x86_64.AppImage
+          terminay-desktop-main-linux-x86_64.AppImage.sha256
+          terminay-desktop-main-mac.zip
+          terminay-desktop-main-mac.zip.sha256
           terminay-server-main-linux-arm64.tar.gz
           terminay-server-main-linux-arm64.tar.gz.sha256
           terminay-server-main-linux-arm64.tar.gz.sig
@@ -263,7 +543,12 @@ jobs:
           terminay-server-main-linux-x64.tar.gz.sig
           EOF
           )"
-          test "$ASSET_NAMES" = "$EXPECTED_ASSET_NAMES"
+          # When the desktop beta did not build, the channel keeps its previous
+          # complete desktop set; before the first desktop beta there is none.
+          SERVER_ASSET_NAMES="$(printf '%s\n' "$EXPECTED_ASSET_NAMES" | grep '^terminay-server-main-')"
+          if [ "$DESKTOP_BETA" = success ] || [ "$ASSET_NAMES" != "$SERVER_ASSET_NAMES" ]; then
+            test "$ASSET_NAMES" = "$EXPECTED_ASSET_NAMES"
+          fi
           PUBLISHED="$RUNNER_TEMP/published"
           mkdir -p "$PUBLISHED"
           for target in linux-x64 linux-arm64; do
@@ -277,3 +562,37 @@ jobs:
               "$PUBLISHED/terminay-server-main-$target.tar.gz" \
               "$PUBLISHED/terminay-server-main-$target.tar.gz.sig"
           done
+          if [ "$ASSET_NAMES" = "$EXPECTED_ASSET_NAMES" ]; then
+            printf '%s\n' "$ASSET_NAMES" > "$RUNNER_TEMP/main-latest-asset-names"
+            for NAME in \
+              terminay-desktop-main-mac.zip \
+              terminay-desktop-main-mac.zip.sha256 \
+              terminay-desktop-main-linux-x86_64.AppImage \
+              terminay-desktop-main-linux-x86_64.AppImage.sha256 \
+              beta-mac.yml \
+              beta-linux.yml; do
+              gh release download main-latest --repo "$GH_REPO" --dir "$PUBLISHED" --pattern "$NAME"
+            done
+            for payload in terminay-desktop-main-mac.zip terminay-desktop-main-linux-x86_64.AppImage; do
+              node scripts/release-checksum.mjs verify "$PUBLISHED/$payload" "$PUBLISHED/$payload.sha256"
+            done
+            # Every file the published beta metadata sends a client to must be
+            # on the release, with the bytes the metadata's digest names.
+            node scripts/verify-update-metadata.mjs \
+              --metadata "$PUBLISHED/beta-mac.yml" \
+              --assets-dir "$PUBLISHED" \
+              --expect-file terminay-desktop-main-mac.zip \
+              --release-assets "$RUNNER_TEMP/main-latest-asset-names" \
+              --require-release-notes
+            node scripts/verify-update-metadata.mjs \
+              --metadata "$PUBLISHED/beta-linux.yml" \
+              --assets-dir "$PUBLISHED" \
+              --expect-file terminay-desktop-main-linux-x86_64.AppImage \
+              --release-assets "$RUNNER_TEMP/main-latest-asset-names" \
+              --require-release-notes
+            if [ "$DESKTOP_BETA" = success ]; then
+              # The published metadata is this run's, not a survivor.
+              cmp "$PUBLISHED/beta-mac.yml" release/main-desktop/beta-mac.yml
+              cmp "$PUBLISHED/beta-linux.yml" release/main-desktop/beta-linux.yml
+            fi
+          fi
