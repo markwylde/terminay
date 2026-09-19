@@ -337,10 +337,7 @@ export function ProjectTabList({
 							role="tab"
 							aria-selected={keyOf(project) === activeProjectId}
 							aria-disabled={isInert(project) || undefined}
-							title={
-								inertReason(project) ??
-								'Double-click or long-press to edit tab'
-							}
+							title={inertReason(project)}
 							tabIndex={keyOf(project) === activeProjectId ? 0 : -1}
 							style={{ '--project-color': project.color } as CSSProperties}
 							dragMomentum={false}
