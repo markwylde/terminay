@@ -457,6 +457,14 @@ function getCategoryIcon(id: CategoryId) {
 					<path d="M7 20.662V19a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1.662" />
 				</>,
 			);
+		case 'updates':
+			return renderCategoryIcon(
+				'Updates',
+				<>
+					<path d="M21 12a9 9 0 1 1-2.64-6.36" />
+					<polyline points="21 3 21 9 15 9" />
+				</>,
+			);
 		case 'theme':
 			return renderCategoryIcon(
 				'Theme',

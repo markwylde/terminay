@@ -500,6 +500,24 @@ test('the performance snapshot is a closed Desktop host action and bound event',
 	);
 });
 
+test('updater install is a closed, capability-gated host action', () => {
+	assert.deepEqual(parseTerminayHostAction({ type: 'updater.install' }), {
+		type: 'updater.install',
+	});
+	assert.throws(
+		() =>
+			parseTerminayHostAction({
+				type: 'updater.install',
+				url: 'https://example.com/evil.zip',
+			}),
+		/updater action/u,
+	);
+	assert.equal(
+		requiredTerminayHostCapability({ type: 'updater.install' }),
+		'updater',
+	);
+});
+
 test('device settings use a closed host action and bound event snapshot', () => {
 	const settings = { keyboardShortcuts: { 'new-terminal': 'CmdOrCtrl+Y' } };
 	assert.deepEqual(parseTerminayHostAction({

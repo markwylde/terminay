@@ -1,7 +1,9 @@
 import './headlessBootstrap';
 import { randomUUID } from 'node:crypto';
 import {
+	accessSync,
 	chmodSync,
+	constants as fsConstants,
 	existsSync,
 	type FSWatcher,
 	mkdirSync,
@@ -98,7 +100,6 @@ import type { TerminalSettings } from '../src/types/settings';
 import type {
 	AiTabMetadataModel,
 	AppCommand,
-	AppUpdateStatus,
 	RemoteAccessStatus,
 } from '../src/types/terminay';
 import {
@@ -144,6 +145,11 @@ import { FileBufferService } from './fileViewer/fileBufferService';
 import { FileWatchService } from './fileViewer/fileWatchService';
 import { GitDiffService } from './fileViewer/gitDiffService';
 import { registerFileViewerIpcHandlers } from './fileViewer/ipc';
+import {
+	type AppUpdater,
+	createAppUpdater,
+	UPDATE_CHECK_INTERVAL_MS,
+} from './appUpdater';
 import { createGracefulQuitHandler } from './gracefulQuit';
 import {
 	bindMainWindowCloseConfirmation,
@@ -203,9 +209,6 @@ import {
 import { embeddedTerminalReplayBytesOverride } from './testTerminalLimits';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const RELEASES_LATEST_URL =
-	'https://github.com/markwylde/terminay/releases/latest';
-const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const DICTATION_OPENAI_SECRET_ID = 'dictation-openai-api-key';
 const DICTATION_OPENAI_SECRET_NAME = 'OpenAI API key';
 /**
@@ -1215,8 +1218,6 @@ const parakeetRuntime = new ParakeetRuntime({
 	rootDirectory: path.join(app.getPath('userData'), 'dictation', 'parakeet'),
 });
 warmAiTabMetadataProviderEnv();
-let cachedAppUpdateStatus: AppUpdateStatus | null = null;
-let appUpdateFetchPromise: Promise<AppUpdateStatus> | null = null;
 
 const recordingService = new TerminalRecordingService({
 	getHomePath: () => app.getPath('home'),
@@ -1961,123 +1962,36 @@ function attachServerTerminalRenderer(
 	);
 }
 
-function normalizeVersion(value: string): string | null {
-	const match = /^v?(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$/.exec(
-		value.trim(),
-	);
-	if (!match?.groups) {
-		return null;
-	}
+let appUpdater: AppUpdater | null = null;
 
-	return `${match.groups.major}.${match.groups.minor}.${match.groups.patch}`;
-}
-
-function compareVersions(left: string, right: string): number {
-	const leftParts = left.split('.').map((part) => Number.parseInt(part, 10));
-	const rightParts = right.split('.').map((part) => Number.parseInt(part, 10));
-
-	for (
-		let index = 0;
-		index < Math.max(leftParts.length, rightParts.length);
-		index += 1
-	) {
-		const leftPart = leftParts[index] ?? 0;
-		const rightPart = rightParts[index] ?? 0;
-		if (leftPart !== rightPart) {
-			return leftPart - rightPart;
-		}
-	}
-
-	return 0;
-}
-
-async function fetchAppUpdateStatus(): Promise<AppUpdateStatus> {
-	const currentVersion = normalizeVersion(app.getVersion()) ?? '0.0.0';
-
-	if (currentVersion === '0.0.0') {
-		return {
-			checkedAt: new Date().toISOString(),
-			currentVersion,
-			errorMessage: null,
-			hasUpdate: false,
-			latestVersion: null,
-			releaseUrl: null,
-		};
-	}
-
-	try {
-		const response = await fetch(RELEASES_LATEST_URL, {
-			headers: {
-				Accept: 'text/html',
-				'User-Agent': `Terminay/${currentVersion}`,
+function getAppUpdater(): AppUpdater {
+	if (appUpdater === null) {
+		appUpdater = createAppUpdater({
+			currentVersion: app.getVersion(),
+			isPackaged: app.isPackaged,
+			platform: process.platform,
+			appImagePath: process.env.APPIMAGE,
+			isWritable: (target) => {
+				try {
+					accessSync(target, fsConstants.W_OK);
+					return true;
+				} catch {
+					return false;
+				}
 			},
-			redirect: 'follow',
+			channel: readTerminalSettings().updateChannel,
+			loadUpdater: async () => {
+				const { default: electronUpdater } = await import('electron-updater');
+				return electronUpdater.autoUpdater;
+			},
+			fetch: (url, init) => fetch(url, { ...init, redirect: 'follow' }),
+			log: (message, error) => console.warn(message, error ?? ''),
 		});
-
-		if (!response.ok) {
-			throw new Error(`GitHub responded with ${response.status}`);
-		}
-
-		const releaseUrl = response.url;
-		const latestTag =
-			releaseUrl.match(/\/tag\/(v?\d+\.\d+\.\d+)\/?$/)?.[1] ?? null;
-		const latestVersion = latestTag ? normalizeVersion(latestTag) : null;
-
-		if (!latestVersion) {
-			throw new Error(
-				'Could not determine the latest version from the GitHub release URL.',
-			);
-		}
-
-		return {
-			checkedAt: new Date().toISOString(),
-			currentVersion,
-			errorMessage: null,
-			hasUpdate: compareVersions(latestVersion, currentVersion) > 0,
-			latestVersion,
-			releaseUrl,
-		};
-	} catch (error) {
-		return {
-			checkedAt: new Date().toISOString(),
-			currentVersion,
-			errorMessage:
-				error instanceof Error ? error.message : 'Unable to check for updates.',
-			hasUpdate: false,
-			latestVersion: null,
-			releaseUrl: null,
-		};
+		setInterval(() => {
+			void appUpdater?.check({ force: true });
+		}, UPDATE_CHECK_INTERVAL_MS).unref();
 	}
-}
-
-async function getAppUpdateStatus(options?: {
-	force?: boolean;
-}): Promise<AppUpdateStatus> {
-	const force = options?.force === true;
-	const checkedAtMs = cachedAppUpdateStatus?.checkedAt
-		? Date.parse(cachedAppUpdateStatus.checkedAt)
-		: Number.NaN;
-	const isCachedValueFresh =
-		cachedAppUpdateStatus !== null &&
-		Number.isFinite(checkedAtMs) &&
-		Date.now() - checkedAtMs < UPDATE_CHECK_INTERVAL_MS;
-
-	if (!force && isCachedValueFresh && cachedAppUpdateStatus) {
-		return cachedAppUpdateStatus;
-	}
-
-	if (!appUpdateFetchPromise) {
-		appUpdateFetchPromise = fetchAppUpdateStatus()
-			.then((status) => {
-				cachedAppUpdateStatus = status;
-				return status;
-			})
-			.finally(() => {
-				appUpdateFetchPromise = null;
-			});
-	}
-
-	return appUpdateFetchPromise;
+	return appUpdater;
 }
 
 function getTerminalSettingsPath(): string {
@@ -3899,7 +3813,13 @@ function createWindow(options?: {
 						}).show();
 						return;
 					case 'updater.check':
-						return getAppUpdateStatus({ force: true });
+						// Renderers poll for status; the host's own timer paces the network.
+						return getAppUpdater().check();
+					case 'updater.install':
+						if (!getAppUpdater().requestRestartToUpdate())
+							throw new Error('No downloaded update is ready to install.');
+						app.quit();
+						return;
 					case 'preview.download':
 						return savePreviewDownload(window, action);
 					case 'os.open-external':
@@ -3949,6 +3869,8 @@ function createWindow(options?: {
 						});
 						createAppMenu(settings);
 						broadcastDeviceTerminalSettings();
+						if (settings.updateChannel !== current.updateChannel)
+							void getAppUpdater().setChannel(settings.updateChannel);
 						return selectDeviceTerminalSettings(settings);
 					}
 					case 'route.present':
@@ -4108,7 +4030,7 @@ function createWindow(options?: {
 		deferredCanonicalLaunches.set(windowWebContentsId, launchWithRecovery);
 	else void launchWithRecovery();
 
-	void getAppUpdateStatus();
+	void getAppUpdater().check();
 
 	return window;
 }
@@ -5045,7 +4967,14 @@ app.on('web-contents-created', (_event, contents) => {
 });
 
 const handleBeforeQuit = createGracefulQuitHandler({
-	app,
+	app: {
+		// After shutdown settles, a requested restart to update hands the final
+		// quit to the updater so it installs and relaunches.
+		quit: () =>
+			appUpdater === null
+				? app.quit()
+				: appUpdater.finishQuit(() => app.quit()),
+	},
 	shutdown: async () => {
 		let clean = false;
 		try {
@@ -5114,7 +5043,10 @@ app.on('before-quit', (event) => {
 				);
 		void confirmation
 			.then(({ response }) => {
-				if (response !== 0) return;
+				if (response !== 0) {
+					appUpdater?.cancelRestartToUpdate();
+					return;
+				}
 				isQuitConfirmed = true;
 				isQuitting = true;
 				app.quit();
