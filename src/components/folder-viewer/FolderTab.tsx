@@ -39,7 +39,6 @@ export function FolderTab(
 			panelId={props.api.id}
 			isActive={isFocused}
 			hasCustomColor={hasCustomColor}
-			titleAttribute="Double-click or long-press to edit tab"
 			style={style}
 			onDoubleClick={onDoubleClick}
 			closeAriaLabel="Close folder tab"

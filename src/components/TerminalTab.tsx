@@ -613,7 +613,6 @@ export function TerminalTab(
 				agentState={displayedAgentState}
 				agentNeedsAttention={displayedAgentNeedsAttention}
 				agentStatusLabel={displayedAgentStatusLabel}
-				titleAttribute="Double-click or long-press to edit tab"
 				style={style}
 				onClick={onClick}
 				onDoubleClick={onDoubleClick}
