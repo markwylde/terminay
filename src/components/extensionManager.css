@@ -19,3 +19,5 @@
 .extension-card-languages { flex-wrap: wrap; align-items: flex-start; }
 .extension-language-server { display: grid; gap: 4px; }
 .settings-chip--muted { background: color-mix(in srgb, var(--settings-text-muted) 14%, transparent); color: var(--settings-text-muted); }
+.extension-card-harnesses { flex-direction: column; align-items: stretch; gap: 0; }
+.extension-harness-row { padding-inline: 0; border-bottom: none; }

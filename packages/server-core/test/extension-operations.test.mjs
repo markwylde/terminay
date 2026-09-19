@@ -21,7 +21,7 @@ function installer() {
 test("fixed extension operations expose bounded catalogue and preview DTOs", async () => {
   const handlers = createExtensionOperationHandlers({ installer: installer(), authorityLabel: "Remote Terminay" });
   const list = await handlers.queries["extensions.list"](query("extensions.list", {}));
-  assert.equal(list.authorityLabel, "Remote Terminay"); assert.equal(list.catalogue.length, 6); assert.equal(list.catalogue[0].official, true);
+  assert.equal(list.authorityLabel, "Remote Terminay"); assert.equal(list.catalogue.length, 2); assert.equal(list.catalogue[0].official, true);
   const preview = await handlers.queries["extensions.preview-install"](query("extensions.preview-install", { spec: "fixture-extension" }, ["extensions:manage"]));
   assert.equal(preview.exactVersion, "1.2.3"); assert.equal(preview.extensionId, "dev.example.fixture"); assert.deepEqual(preview.permissions, ["network"]); assert.equal(preview.trustedCodeWarning, "trusted code");
 });
@@ -46,11 +46,11 @@ test("extension operations enforce transport permissions and optimistic revision
 });
 
 test("Settings receives one merged built-in override entry and reflects disablement and reversion", async () => {
-  const extensionId = "com.terminay.agent.codex";
+  const extensionId = "com.terminay.builtin-agents";
   const manifest = { displayName: "Codex", id: extensionId };
   const bundled = { slotId: "built-in-v1", version: "1.0.0", receipt: { source: "built-in", manifest } };
   const override = { slotId: "npm-v2", version: "2.0.0", receipt: { source: "npmjs", manifest } };
-  let snapshot = { schemaVersion: 1, revision: 3, extensions: { [extensionId]: { extensionId, packageName: "terminay-agent-codex", enabled: true, state: "installed", activeSlotId: override.slotId, pendingSlotId: bundled.slotId, slots: { [bundled.slotId]: bundled, [override.slotId]: override } } } };
+  let snapshot = { schemaVersion: 1, revision: 3, extensions: { [extensionId]: { extensionId, packageName: "terminay-builtin-agents", enabled: true, state: "installed", activeSlotId: override.slotId, pendingSlotId: bundled.slotId, slots: { [bundled.slotId]: bundled, [override.slotId]: override } } } };
   const fixture = {
     snapshot: async () => snapshot,
     disable: async () => (snapshot = { ...snapshot, revision: 4, extensions: { [extensionId]: { ...snapshot.extensions[extensionId], enabled: false, state: "disabled" } } }),

@@ -15,7 +15,11 @@ export interface AgentClientEntry {
   readonly provider: string;
   readonly agentId: string;
   readonly sessionId: string;
-  readonly activationTerminalSessionId: string;
+  /** `null` for an external session that no Terminay terminal owns. */
+  readonly activationTerminalSessionId: string | null;
+  /** Server-computed projects the session belongs to. */
+  readonly projectIds?: readonly string[];
+  readonly external?: boolean;
   readonly state: AgentClientState;
   readonly active: boolean;
   readonly unread: boolean;
@@ -68,6 +72,7 @@ export class AgentStatusClient {
   private current: AgentClientSnapshot = freezeSnapshot({ revision: 0, cursor: "0", entries: {} });
   private sourceEntries: Readonly<Record<string, AgentClientEntry>> = Object.freeze({});
   private readonly sessions = new Set<string>();
+  private readonly projects = new Set<string>();
   private readonly listeners = new Set<(snapshot: AgentClientSnapshot) => void>();
   private unsubscribe: (() => void) | undefined;
   private pinnedProcessInstanceId: string | undefined;
@@ -168,6 +173,15 @@ export class AgentStatusClient {
     this.publishScopedEntries();
   }
 
+  /** Extend the presentation scope with projects shown by this client. An
+   * entry belongs to a project when the server stamped it with that project
+   * id: by working directory, repository worktree, or terminal binding. That
+   * includes external sessions that no terminal owns. */
+  mergeProjectScope(projectIds: readonly string[]): void {
+    for (const projectId of projectIds) if (ID_PATTERN.test(projectId)) this.projects.add(projectId);
+    this.publishScopedEntries();
+  }
+
   private publishScopedEntries(): void {
     const entries = this.projectEntries(this.sourceEntries);
     if (sameEntryProjection(this.current.entries, entries)) return;
@@ -259,7 +273,7 @@ export class AgentStatusClient {
   }
 
   entriesForSession(sessionId: string): readonly AgentClientEntry[] {
-    return Object.values(this.current.entries).filter((entry) => entry.activationTerminalSessionId === sessionId);
+    return Object.values(this.current.entries).filter((entry) => entry.external !== true && entry.activationTerminalSessionId === sessionId);
   }
 
   private normalizeSnapshot(snapshot: AgentClientSnapshot): Readonly<Record<string, AgentClientEntry>> {
@@ -274,12 +288,18 @@ export class AgentStatusClient {
   }
 
   private normalizeEntry(value: AgentClientEntry): AgentClientEntry {
-    if (!value || typeof value !== "object" || !ID_PATTERN.test(value.entryId) || !ID_PATTERN.test(value.sessionId) || !ID_PATTERN.test(value.activationTerminalSessionId) || !isProviderId(value.provider) || (value.kind !== "root" && value.kind !== "subagent") || !["working", "waiting", "blocked", "done", "idle"].includes(value.state) || typeof value.active !== "boolean" || typeof value.unread !== "boolean") throw new TypeError("agent entry is invalid");
+    if (!value || typeof value !== "object" || !ID_PATTERN.test(value.entryId) || !ID_PATTERN.test(value.sessionId) || (value.activationTerminalSessionId !== null && !ID_PATTERN.test(value.activationTerminalSessionId)) || (value.projectIds !== undefined && (!Array.isArray(value.projectIds) || value.projectIds.some((projectId) => typeof projectId !== "string" || !ID_PATTERN.test(projectId)))) || (value.external !== undefined && typeof value.external !== "boolean") || !isProviderId(value.provider) || (value.kind !== "root" && value.kind !== "subagent") || !["working", "waiting", "blocked", "done", "idle"].includes(value.state) || typeof value.active !== "boolean" || typeof value.unread !== "boolean") throw new TypeError("agent entry is invalid");
     return Object.freeze({ ...value });
   }
 
   private projectEntries(entries: Readonly<Record<string, AgentClientEntry>>): Readonly<Record<string, AgentClientEntry>> {
-    return Object.fromEntries(Object.entries(entries).filter(([, entry]) => this.sessions.has(entry.activationTerminalSessionId)));
+    const inScope = (entry: AgentClientEntry) =>
+      (entry.activationTerminalSessionId !== null && this.sessions.has(entry.activationTerminalSessionId))
+      || (entry.projectIds ?? []).some((projectId) => this.projects.has(projectId));
+    // A child follows its root, so a subagent is never shown without it.
+    const rootKey = (entry: AgentClientEntry) => `${entry.provider}\u0000${entry.sessionId}`;
+    const roots = new Set(Object.values(entries).filter((entry) => entry.kind === "root" && inScope(entry)).map(rootKey));
+    return Object.fromEntries(Object.entries(entries).filter(([, entry]) => inScope(entry) || roots.has(rootKey(entry))));
   }
 
   private publish(): void { for (const listener of this.listeners) { try { listener(this.current); } catch { /* observer failures cannot change projection */ } } }

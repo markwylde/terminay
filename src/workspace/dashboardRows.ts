@@ -42,8 +42,11 @@ export type DashboardStatusCounts = {
  * three more cards into a column.
  */
 export type DashboardAgent = {
-	/** The terminal the agent was started in — how a card finds its panel. */
-	activationTerminalSessionId: string;
+	/** The terminal the agent was started in — how a card finds its panel.
+	 * `null` for an external session that runs outside every terminal. */
+	activationTerminalSessionId: string | null;
+	/** Runs outside Terminay: listed, never activated, never counted. */
+	external: boolean;
 	activeToolName?: string;
 	entryId: string;
 	/** Provider · model, with anything the name already said left out. */
@@ -165,6 +168,7 @@ function toDashboardAgent(
 	return {
 		activationTerminalSessionId: entry.activationTerminalSessionId,
 		entryId: entry.entryId,
+		external: entry.external === true,
 		name: presentation.name,
 		provider: presentation.provider,
 		state: entry.state,
@@ -251,7 +255,9 @@ function countStatuses(
 	// of its own.
 	const statuses = [
 		...entries.map((entry) => dashboardStatusFor(entry.status)),
-		...detachedAgents.map((agent) => agent.state),
+		...detachedAgents
+			.filter((agent) => !agent.external)
+			.map((agent) => agent.state),
 	];
 	for (const status of statuses) {
 		if (status === 'waiting' || status === 'blocked') counts.attention += 1;
@@ -285,12 +291,14 @@ export function buildDashboardGroups(
 				.map((entry) => [entry.sessionId as string, entry.title]),
 		);
 		const terminalTitleFor = (entry: AgentStatusEntry) =>
-			panelTitleBySession.get(entry.activationTerminalSessionId);
+			entry.activationTerminalSessionId === null
+				? undefined
+				: panelTitleBySession.get(entry.activationTerminalSessionId);
 		const agentsBySession = new Map<string, AgentStatusEntry[]>();
 		const detached: AgentStatusEntry[] = [];
 		for (const agent of agents) {
 			const sessionId = agent.activationTerminalSessionId;
-			if (!panelTitleBySession.has(sessionId)) {
+			if (sessionId === null || !panelTitleBySession.has(sessionId)) {
 				detached.push(agent);
 				continue;
 			}
@@ -441,6 +449,9 @@ export function resolveAgentActivation(
 	inventoryByProject: Readonly<Record<string, WorkspaceInventoryEntry[]>>,
 ): DashboardActivation {
 	if (!projects.some((project) => project.id === projectId))
+		return { kind: 'stale' };
+	// An external agent has nothing to activate.
+	if (agent.external || agent.activationTerminalSessionId === null)
 		return { kind: 'stale' };
 	const entry = (inventoryByProject[projectId] ?? []).find(
 		(candidate) =>

@@ -2756,6 +2756,22 @@ export function SettingsWindow({
 				<ExtensionSettingsSection
 					applicationClient={applicationClient}
 					serverName={serverIdentity}
+					harnessSwitches={draft.agentIntegration.harnesses}
+					onHarnessSwitchChange={(key, enabled) => {
+						const current = draftRef.current;
+						// Committed before it shows, like a shortcut: closing Settings
+						// must not abandon a switch that only looked saved.
+						void saveDraft({
+							...current,
+							agentIntegration: {
+								...current.agentIntegration,
+								harnesses: {
+									...current.agentIntegration.harnesses,
+									[key]: enabled,
+								},
+							},
+						}, false);
+					}}
 				/>
 			) : null}
 			{displayedCategories.map((cat) => {

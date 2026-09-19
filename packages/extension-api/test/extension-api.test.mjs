@@ -4,39 +4,45 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import * as sdk from "../dist/index.js";
 import {
+  EXTENSION_API_VERSION,
   EXTENSION_EVENT_NAMES,
+  EXTENSION_LIMITS,
   EXTENSION_OPERATION_NAMES,
   OPERATION_POLICIES,
-  createAgentExtensionHarness,
-  defineAgentProvider,
-  defineExtension,
-  fixtureTerminal,
+  boundedAgentText,
   hostileManifestFixtures,
-  jsonlSession,
   namespacedId,
   validManifestFixture,
-  validateAgentBindingFingerprint,
-  validateAgentChildJournalSources,
-  validateAgentEnvironmentRelativePath,
-  validateAgentEnvironmentRelativePathRequest,
-  validateAgentEnvironmentVariableNames,
-  validateAgentHomeRelativeFileRequest,
-  validateAgentHomeRelativePathRequest,
-  validateAgentLifecycleEvent,
-  validateAgentModelMetadata,
-  validateAgentObservationDiagnostic,
-  validateAgentObservedEnvironment,
-  validateAgentPathUnderEnvironmentRequest,
-  validateAgentPathUnderHomeRequest,
-  validateAgentProcessEnvironmentRequest,
-  validateAgentProviderContribution,
-  validateAgentProviderDefinition,
-  validateAgentSessionBindingRequest,
-  validateAgentTerminalTtyFact,
-  validateAgentRelativeToEnvironmentRequest,
+  validateAgentSessionReset,
+  validateAgentSessionSnapshot,
+  validateAgentSessionSourceContribution,
+  validateAgentSessionSourceDiagnostic,
   validateExtensionManifest,
+  validateMcpInstallTargetActionResult,
+  validateMcpInstallTargetContribution,
+  validateMcpInstallTargetStatus,
+  validateMcpServerCommand,
 } from "../dist/index.js";
+
+const snapshot = Object.freeze({
+  id: "session-1",
+  harness: "fixture-agent",
+  pid: 4242,
+  cwd: "/home/test/project",
+  title: "Fix the build",
+  model: "fixture-model",
+  status: "running",
+  tool: "Bash",
+  lastTurn: "completed",
+  lastTurnEndedAt: 1_700_000_000_000,
+  subagents: [{ id: "sub-1", type: "explore", title: "Look around", status: "running" }],
+});
+
+test("the SDK is major version 3", () => {
+  assert.equal(EXTENSION_API_VERSION, "3.0.0");
+});
 
 test("every public extension operation and event obeys the wire protocol grammar", () => {
   const operationPattern = /^[a-z][a-z0-9._:-]{0,255}$/;
@@ -57,291 +63,138 @@ test("hostile manifests fail closed before import", () => {
   }
 });
 
-test("agent-observation is the manifest permission every agent contribution requires", () => {
-  assert.equal(validateExtensionManifest(validManifestFixture).ok, true);
-
-  const missingPermission = validateExtensionManifest({
-    ...validManifestFixture,
-    permissions: ["network"],
-  });
-  assert.equal(missingPermission.ok, false);
-  assert.ok(missingPermission.issues.some((issue) => issue.path === "$.permissions" && issue.code === "missing_permission"));
+test("session sources require agent-observation and install targets require mcp-registration", () => {
+  for (const [fixture, message] of [
+    [hostileManifestFixtures.missingAgentObservation, /agent-observation/],
+    [hostileManifestFixtures.missingMcpRegistration, /mcp-registration/],
+  ]) {
+    const result = validateExtensionManifest(fixture);
+    assert.equal(result.ok, false);
+    assert.ok(result.issues.some((issue) => issue.path === "$.permissions" && issue.code === "missing_permission" && message.test(issue.message)));
+  }
 });
 
-test("an agent provider contribution is the only supported contribution array", () => {
+test("session sources, MCP install targets, and language servers are the supported contribution arrays", () => {
   const noContributions = validateExtensionManifest({ ...validManifestFixture, contributes: {} });
   assert.equal(noContributions.ok, false);
   assert.ok(noContributions.issues.some((issue) => issue.path === "$.contributes" && issue.code === "missing_contribution"));
 
-  const environments = validateExtensionManifest(hostileManifestFixtures.projectEnvironments);
-  assert.equal(environments.ok, false, "projectEnvironments is no longer a contribution kind");
-  assert.ok(environments.issues.some((issue) => issue.code === "unknown_field"), "it fails as an unknown key");
+  const sourceOnly = validateExtensionManifest({
+    ...validManifestFixture,
+    permissions: ["agent-observation"],
+    contributes: { agentSessionSources: validManifestFixture.contributes.agentSessionSources },
+  });
+  assert.equal(sourceOnly.ok, true);
+
+  for (const name of ["projectEnvironments", "agentProviders"]) {
+    const result = validateExtensionManifest(hostileManifestFixtures[name]);
+    assert.equal(result.ok, false, `${name} is not a contribution kind`);
+    assert.ok(result.issues.some((issue) => issue.code === "unknown_field"), `${name} fails as an unknown key`);
+  }
 });
 
-test("agent provider contribution declarations are namespaced, bounded, and declarative", () => {
-  const valid = {
-    id: "dev.terminay.fixture/agent",
-    displayName: "Fixture Agent",
-    description: "Observes the fixture CLI.",
-    icon: "terminal",
-    platforms: ["darwin", "linux"],
-    processMatchers: [{ executableName: "fixture-agent", arguments: ["--json"] }],
-    mappings: [{ mappingVersion: "0.1", providerVersionRange: ">=1" }],
-    requiredEnvironmentVariables: ["FIXTURE_AGENT_HOME"],
-  };
-  assert.equal(validateAgentProviderContribution(valid, "dev.terminay.fixture").ok, true);
-
-  for (const [name, value, code] of [
-    ["foreign provider id", { ...valid, id: "dev.other/agent" }, "invalid_namespace"],
-    ["removed capability declaration", { ...valid, requiredEnvironmentCapabilities: ["process-observation"] }, "unknown_field"],
-    ["unsafe environment variable name", { ...valid, requiredEnvironmentVariables: ["BAD-NAME"] }, "invalid_environment_variable"],
-    ["executable callback", { ...valid, observe: () => {} }, "unknown_field"],
-    ["unsafe matcher", { ...valid, processMatchers: [{ executableName: "fixture-agent", command: "fixture-agent --json" }] }, "unknown_field"],
+test("the terminal-scoped provider surface is gone from the public SDK", () => {
+  for (const name of [
+    "jsonlSession",
+    "notBound",
+    "defineAgentProvider",
+    "fixtureTerminal",
+    "createAgentLifecyclePublisher",
+    "createJsonlRecordDecoder",
+    "validateAgentProviderContribution",
+    "validateAgentLifecycleEvent",
+    "validateAgentSessionBindingRequest",
   ]) {
-    const result = validateAgentProviderContribution(value, "dev.terminay.fixture");
+    assert.equal(name in sdk, false, name);
+  }
+});
+
+test("session source declarations are namespaced, bounded, and declarative", () => {
+  const valid = {
+    id: "dev.terminay.fixture/agents",
+    displayName: "Fixture Agents",
+    description: "Reports fixture sessions.",
+    platforms: ["darwin", "linux"],
+    harnesses: [{ id: "fixture-agent", displayName: "Fixture Agent" }],
+    environmentVariables: ["FIXTURE_AGENT_HOME"],
+  };
+  assert.equal(validateAgentSessionSourceContribution(valid, "dev.terminay.fixture").ok, true);
+
+  const tooMany = Array.from({ length: EXTENSION_LIMITS.agentSourceHarnesses + 1 }, (_, index) => ({ id: `h-${index}`, displayName: `H ${index}` }));
+  for (const [name, value, code] of [
+    ["foreign source id", { ...valid, id: "dev.other/agents" }, "invalid_namespace"],
+    ["no harnesses", { ...valid, harnesses: [] }, "invalid_array"],
+    ["too many harnesses", { ...valid, harnesses: tooMany }, "invalid_array"],
+    ["duplicate harness", { ...valid, harnesses: [valid.harnesses[0], valid.harnesses[0]] }, "duplicate"],
+    ["unsafe harness id", { ...valid, harnesses: [{ id: "../claude", displayName: "Claude" }] }, "invalid_id"],
+    ["unsafe environment variable name", { ...valid, environmentVariables: ["BAD-NAME"] }, "invalid_environment_variable"],
+    ["removed matcher", { ...valid, processMatchers: [{ executableName: "fixture-agent" }] }, "unknown_field"],
+  ]) {
+    const result = validateAgentSessionSourceContribution(value, "dev.terminay.fixture");
     assert.equal(result.ok, false, name);
     assert.ok(result.issues.some((issue) => issue.code === code), name);
   }
 });
 
-test("agent runtime provider declarations accept only the public callback contract", () => {
-  const valid = {
-    mappingVersion: "0.1",
-    matchesForeground() { return true; },
-    async observe() { return { state: "not-bound" }; },
-  };
-  assert.equal(validateAgentProviderDefinition(valid).ok, true);
+test("MCP install target declarations are namespaced and closed", () => {
+  const valid = { id: "dev.terminay.fixture/claude-code", displayName: "Claude Code" };
+  assert.equal(validateMcpInstallTargetContribution(valid, "dev.terminay.fixture").ok, true);
+  assert.equal(validateMcpInstallTargetContribution({ ...valid, id: "dev.other/claude-code" }, "dev.terminay.fixture").ok, false);
+  assert.equal(validateMcpInstallTargetContribution({ ...valid, configPath: "~/.claude.json" }, "dev.terminay.fixture").ok, false);
+});
 
-  for (const [name, definition] of [
-    ["missing matcher", { mappingVersion: "0.1", observe: valid.observe }],
-    ["missing observer", { mappingVersion: "0.1", matchesForeground: valid.matchesForeground }],
-    ["non-function matcher", { ...valid, matchesForeground: true }],
-    ["host lifecycle callback", { ...valid, dispose() {} }],
+test("session snapshots are closed, bounded, and name an enabled harness", () => {
+  assert.equal(validateAgentSessionSnapshot(snapshot, ["fixture-agent"]).ok, true);
+  assert.equal(validateAgentSessionSnapshot({ id: "s", harness: "fixture-agent", pid: 1, cwd: "/" }).ok, true, "only identity, pid, and cwd are required");
+
+  for (const [name, value, code, harnesses] of [
+    ["undeclared harness", snapshot, "harness_not_enabled", ["other-agent"]],
+    ["transcript content", { ...snapshot, transcript: "secret" }, "unknown_field"],
+    ["raw record", { ...snapshot, raw: {} }, "unknown_field"],
+    ["relative cwd", { ...snapshot, cwd: "project" }, "invalid_path"],
+    ["no pid", { ...snapshot, pid: undefined }, "invalid_integer"],
+    ["unknown status", { ...snapshot, status: "busy" }, "invalid_enum"],
+    ["oversized title", { ...snapshot, title: "x".repeat(EXTENSION_LIMITS.agentTitleLength + 1) }, "invalid_string"],
+    ["oversized error", { ...snapshot, error: "x".repeat(EXTENSION_LIMITS.agentErrorLength + 1) }, "invalid_string"],
+    ["subagent without status", { ...snapshot, subagents: [{ id: "a", type: "t" }] }, "invalid_enum"],
+    ["duplicate subagent", { ...snapshot, subagents: [snapshot.subagents[0], snapshot.subagents[0]] }, "duplicate"],
+    ["too many subagents", { ...snapshot, subagents: Array.from({ length: EXTENSION_LIMITS.agentSubagents + 1 }, (_, index) => ({ id: `s${index}`, type: "t", status: "running" })) }, "invalid_array"],
   ]) {
-    const result = validateAgentProviderDefinition(definition);
+    const result = validateAgentSessionSnapshot(value, harnesses);
     assert.equal(result.ok, false, name);
-    assert.ok(result.issues.length > 0, name);
+    assert.ok(result.issues.some((issue) => issue.code === code), name);
   }
 });
 
-test("agent binding, metadata, and diagnostic validators reject nested or host-owned data", () => {
-  assert.equal(validateAgentBindingFingerprint({ kind: "writable-file", file: { id: "file-1" }, metadata: { source: "journal", attempt: 1 } }).ok, true);
-  assert.equal(validateAgentSessionBindingRequest({
-    providerSessionId: "session-1",
-    mappingVersion: "0.1",
-    fingerprint: { kind: "writable-file", file: { id: "file-1" }, metadata: { source: "journal" } },
-    metadata: { title: "Fixture task" },
-  }).ok, true);
-  assert.equal(validateAgentModelMetadata({ id: "fixture-1", displayName: "Fixture", contextWindowTokens: 128_000 }).ok, true);
-  assert.equal(validateAgentObservationDiagnostic({ reason: "session-not-found", message: "No active session" }).ok, true);
-
-  for (const [name, result] of [
-    ["nested fingerprint metadata", validateAgentBindingFingerprint({ kind: "writer", file: { id: "file-1" }, metadata: { nested: { value: "no" } } })],
-    ["nested session metadata", validateAgentSessionBindingRequest({ providerSessionId: "session-1", mappingVersion: "0.1", fingerprint: { kind: "writer", file: { id: "file-1" } }, metadata: { nested: ["no"] } })],
-    ["host scope in diagnostic", validateAgentObservationDiagnostic({ reason: "session-not-found", terminalId: "terminal-1" })],
-    ["unsafe diagnostic payload", validateAgentObservationDiagnostic({ reason: "session-not-found", error: { stack: "secret" } })],
-    ["oversized model id", validateAgentModelMetadata({ id: "x".repeat(257) })],
-  ]) {
-    assert.equal(result.ok, false, name);
-    assert.ok(result.issues.length > 0, name);
-  }
+test("a reset never reports one session twice", () => {
+  assert.equal(validateAgentSessionReset([snapshot, { ...snapshot, id: "session-2" }]).ok, true);
+  const duplicate = validateAgentSessionReset([snapshot, snapshot]);
+  assert.equal(duplicate.ok, false);
+  assert.ok(duplicate.issues.some((issue) => issue.code === "duplicate"));
 });
 
-test("terminal TTY facts and constrained journal path requests are bounded and fail closed", () => {
-  assert.equal(validateAgentTerminalTtyFact({ deviceId: "pts/7", deviceName: "pts/7" }).ok, true);
-  assert.equal(validateAgentHomeRelativeFileRequest({
-    relativePath: ".claude/projects/demo/resume.jsonl",
-    beneath: { homeRelative: ".claude/projects" }, extension: ".jsonl",
-  }).ok, true);
-  assert.equal(validateAgentPathUnderHomeRequest({
-    providerPath: "/home/test/.omp/sessions/root.jsonl",
-    beneath: { homeRelative: ".omp/sessions" }, extension: ".jsonl",
-  }).ok, true);
-  assert.equal(validateAgentHomeRelativePathRequest({
-    handle: { id: "opaque-file" }, beneath: { homeRelative: ".omp/sessions" },
-  }).ok, true);
-
-  for (const [name, result] of [
-    ["oversized TTY device id", validateAgentTerminalTtyFact({ deviceId: "x".repeat(257) })],
-    ["TTY path field", validateAgentTerminalTtyFact({ deviceId: "pts/7", path: "/dev/pts/7" })],
-    ["absolute home-relative path", validateAgentHomeRelativeFileRequest({ relativePath: "/etc/passwd" })],
-    ["home-relative traversal", validateAgentHomeRelativeFileRequest({ relativePath: ".claude/../secret.jsonl" })],
-    ["backslash home-relative path", validateAgentHomeRelativeFileRequest({ relativePath: ".claude\\resume.jsonl" })],
-    ["relative provider path", validateAgentPathUnderHomeRequest({ providerPath: ".omp/sessions/root.jsonl", beneath: { homeRelative: ".omp/sessions" } })],
-    ["unsafe provider root", validateAgentPathUnderHomeRequest({ providerPath: "/home/test/.omp/sessions/root.jsonl", beneath: { homeRelative: "../.omp" } })],
-    ["missing fact-only root", validateAgentHomeRelativePathRequest({ handle: { id: "opaque-file" } })],
-  ]) {
-    assert.equal(result.ok, false, name);
-    assert.ok(result.issues.length > 0, name);
-  }
+test("diagnostics carry a kebab-case code and a bounded message", () => {
+  assert.equal(validateAgentSessionSourceDiagnostic({ code: "provider-error", message: "Grok provider failed" }).ok, true);
+  assert.equal(validateAgentSessionSourceDiagnostic({ code: "Provider Error", message: "x" }).ok, false);
+  assert.equal(validateAgentSessionSourceDiagnostic({ code: "provider-error", message: "x", path: "/home" }).ok, false);
 });
 
-test("declared terminal environment facts and environment-root resolvers are bounded", () => {
-  assert.equal(validateAgentEnvironmentVariableNames(["PI_CODING_AGENT_DIR"]).ok, true);
-  assert.equal(validateAgentProcessEnvironmentRequest({ names: ["PI_CODING_AGENT_DIR"] }).ok, true);
-  assert.equal(validateAgentObservedEnvironment({ PI_CODING_AGENT_DIR: "/var/lib/pi" }, ["PI_CODING_AGENT_DIR"]).ok, true);
-  assert.equal(validateAgentRelativeToEnvironmentRequest({
-    relativePath: "breadcrumbs/current.json", environmentVariable: "PI_CODING_AGENT_DIR",
-  }).ok, true);
-  assert.equal(validateAgentPathUnderEnvironmentRequest({
-    providerPath: "/var/lib/pi/sessions/root.jsonl", environmentVariable: "PI_CODING_AGENT_DIR",
-    beneathRelative: "sessions", extension: ".jsonl",
-  }).ok, true);
-  assert.equal(validateAgentEnvironmentRelativePathRequest({
-    handle: { id: "opaque-file" }, environmentVariable: "PI_CODING_AGENT_DIR", beneathRelative: "sessions",
-  }).ok, true);
-  assert.equal(validateAgentEnvironmentRelativePath("root.jsonl").ok, true);
-
-  for (const [name, result] of [
-    ["duplicate declared variable", validateAgentEnvironmentVariableNames(["PI_CODING_AGENT_DIR", "PI_CODING_AGENT_DIR"])],
-    ["unsafe declared variable", validateAgentProcessEnvironmentRequest({ names: ["PI-CODING-AGENT-DIR"] })],
-    ["ambient unrequested fact", validateAgentObservedEnvironment({ HOME: "/host/home" }, ["PI_CODING_AGENT_DIR"])],
-    ["oversized observed value", validateAgentObservedEnvironment({ PI_CODING_AGENT_DIR: "x".repeat(4_097) }, ["PI_CODING_AGENT_DIR"])],
-    ["environment path traversal", validateAgentRelativeToEnvironmentRequest({ relativePath: "../journal.jsonl", environmentVariable: "PI_CODING_AGENT_DIR" })],
-    ["raw environment root", validateAgentRelativeToEnvironmentRequest({ relativePath: "journal.jsonl", environmentVariable: "/var/lib/pi" })],
-    ["relative provider environment path", validateAgentPathUnderEnvironmentRequest({ providerPath: "sessions/root.jsonl", environmentVariable: "PI_CODING_AGENT_DIR" })],
-    ["environment root traversal", validateAgentPathUnderEnvironmentRequest({ providerPath: "/var/lib/pi/sessions/root.jsonl", environmentVariable: "PI_CODING_AGENT_DIR", beneathRelative: "../sessions" })],
-    ["missing environment fact variable", validateAgentEnvironmentRelativePathRequest({ handle: { id: "opaque-file" } })],
-    ["escaping environment fact", validateAgentEnvironmentRelativePath("../root.jsonl")],
-  ]) {
-    assert.equal(result.ok, false, name);
-    assert.ok(result.issues.length > 0, name);
-  }
+test("MCP server commands and target results are bounded", () => {
+  assert.equal(validateMcpServerCommand({ command: "/usr/bin/terminay", args: ["mcp"], env: { ELECTRON_RUN_AS_NODE: "1" } }).ok, true);
+  assert.equal(validateMcpServerCommand({ command: "/usr/bin/terminay", args: "mcp" }).ok, false);
+  assert.equal(validateMcpServerCommand({ command: "/usr/bin/terminay", args: [], env: { "BAD-NAME": "1" } }).ok, false);
+  assert.equal(validateMcpInstallTargetStatus({ state: "installed", configPath: "/home/test/.claude.json" }).ok, true);
+  assert.equal(validateMcpInstallTargetStatus({ state: "maybe", configPath: "/home/test/.claude.json" }).ok, false);
+  assert.equal(validateMcpInstallTargetActionResult({ ok: true, installed: true }).ok, true);
+  assert.equal(validateMcpInstallTargetActionResult({ ok: "yes", installed: true }).ok, false);
 });
 
-test("JSONL child sources require stable bounded child evidence", () => {
-  const watcher = { async *[Symbol.asyncIterator]() {}, dispose() {} };
-  assert.equal(validateAgentChildJournalSources([
-    { childId: "child-1", journal: { id: "child-journal" }, source: watcher },
-  ]).ok, true);
-  assert.equal(validateAgentChildJournalSources([
-    { childId: "child-1", journal: { id: "child-a" }, source: watcher },
-    { childId: "child-1", journal: { id: "child-b" }, source: watcher },
-  ]).ok, false);
-  assert.throws(() => jsonlSession({
-    binding: { providerSessionId: "root" }, source: watcher,
-    childSources: [{ childId: "child-1", journal: { id: "child-journal" }, source: {} }],
-    mapRecord() {},
-  }));
-});
-
-test("in-memory agent harness preserves TTY fallback, home bounds, and root/child JSONL context", async () => {
-  const rootPath = "/home/test/.omp/sessions/root.jsonl";
-  const childPath = "/home/test/.omp/sessions/children/child.jsonl";
-  const externalRoot = "/var/lib/pi-agent";
-  const externalJournalPath = `${externalRoot}/sessions/current.jsonl`;
-  const terminal = fixtureTerminal({
-    foregroundExecutable: "fixture-agent",
-    tty: { deviceId: "pts/7", deviceName: "pts/7" },
-    environment: { PI_CODING_AGENT_DIR: externalRoot },
-    files: {
-      [rootPath]: [{ type: "root" }],
-      [childPath]: [{ type: "child" }],
-      "/home/test/.claude/projects/demo/resume.jsonl": [{ type: "resume" }],
-      [externalJournalPath]: [{ type: "external" }],
-    },
-  });
-
-  assert.equal(terminal.tty?.deviceId, "pts/7");
-  const resume = await terminal.observation.files.resolveHomeRelative(
-    ".claude/projects/demo/resume.jsonl",
-    { beneath: { homeRelative: ".claude/projects" }, extension: ".jsonl" },
-  );
-  assert.ok(resume);
-  assert.deepEqual(await terminal.observation.processes.environment(["PI_CODING_AGENT_DIR"]), {
-    PI_CODING_AGENT_DIR: externalRoot,
-  });
-  const externalJournal = await terminal.observation.files.resolveRelativeToEnvironment("sessions/current.jsonl", {
-    environmentVariable: "PI_CODING_AGENT_DIR", extension: ".jsonl",
-  });
-  assert.ok(externalJournal);
-  assert.equal(await terminal.observation.files.environmentRelativePath(externalJournal, {
-    environmentVariable: "PI_CODING_AGENT_DIR", beneathRelative: "sessions",
-  }), "current.jsonl");
-  assert.equal(await terminal.observation.files.resolvePathUnderEnvironment(externalJournalPath, {
-    environmentVariable: "PI_CODING_AGENT_DIR", beneathRelative: "other", extension: ".jsonl",
-  }), undefined);
-  assert.equal(await terminal.observation.files.resolvePathUnderHome(rootPath, {
-    beneath: { homeRelative: ".omp/other" }, extension: ".jsonl",
-  }), undefined);
-
-  const seenJournals = [];
-  const extension = defineExtension({
-    activate(context) {
-      context.subscriptions.add(context.agents.registerProvider("test/fixture", defineAgentProvider({
-        mappingVersion: "0.1",
-        matchesForeground(process) { return process.executableName === "fixture-agent"; },
-        async observe(observedTerminal) {
-          const root = await observedTerminal.observation.files.resolvePathUnderHome(rootPath, {
-            beneath: { homeRelative: ".omp/sessions" }, extension: ".jsonl", signal: observedTerminal.signal,
-          });
-          const child = await observedTerminal.observation.files.resolvePathUnderHome(childPath, {
-            beneath: { homeRelative: ".omp/sessions" }, extension: ".jsonl", signal: observedTerminal.signal,
-          });
-          if (!root || !child) return { state: "not-bound" };
-          assert.equal(await observedTerminal.observation.files.homeRelativePath(child, {
-            beneath: { homeRelative: ".omp/sessions" }, signal: observedTerminal.signal,
-          }), "children/child.jsonl");
-          const binding = await observedTerminal.bindSession({
-            providerSessionId: "root-session", mappingVersion: "0.1", journal: root,
-            fingerprint: { kind: "fixture-root", file: root },
-          });
-          return jsonlSession({
-            binding,
-            source: observedTerminal.observation.files.follow(root, { signal: observedTerminal.signal }),
-            childSources: [{
-              childId: "child-1", journal: child,
-              source: observedTerminal.observation.files.follow(child, { signal: observedTerminal.signal }),
-            }],
-            mapRecord(record, recordContext) {
-              seenJournals.push(recordContext.journal);
-              if (record?.type === "root") recordContext.publish.sessionStarted({ title: "Root" });
-              if (record?.type === "child" && recordContext.journal.role === "child") {
-                recordContext.publish.subagentStarted({ subagentId: recordContext.journal.childId, title: "Child" });
-              }
-            },
-          });
-        },
-      })));
-    },
-  });
-  const harness = await createAgentExtensionHarness(extension);
-  await harness.observe(terminal);
-  assert.deepEqual(seenJournals, [{ role: "root" }, { role: "child", childId: "child-1" }]);
-  assert.deepEqual(harness.events().map((event) => event.kind), ["session.started", "subagent.started"]);
-  await harness.dispose();
-
-  const withoutTty = fixtureTerminal({ foregroundExecutable: "fixture-agent" });
-  assert.equal(withoutTty.tty, undefined, "TTY absence is a normal fallback state");
-});
-
-test("public agent lifecycle validator accepts only bounded provider-neutral event DTOs", () => {
-  for (const event of [
-    { kind: "session.started", title: "Fixture task", model: { id: "fixture-1", displayName: "Fixture" } },
-    { kind: "turn.started", turnId: "turn-1", promptText: "Fix the fixtures" },
-    { kind: "tool.started", toolId: "tool-1", name: "read_file" },
-    { kind: "wait.started", waitId: "wait-1", state: "waiting", reason: "Approval required" },
-    { kind: "agent.done", outcome: "success", summary: "Completed" },
-    { kind: "subagent.done", subagentId: "child-1", outcome: "cancelled" },
-  ]) {
-    assert.equal(validateAgentLifecycleEvent(event).ok, true, event.kind);
-  }
-
-  for (const [name, event] of [
-    ["terminal scope", { kind: "agent.done", outcome: "success", terminalId: "terminal-1" }],
-    ["project scope", { kind: "agent.done", outcome: "success", projectId: "project-1" }],
-    ["server scope", { kind: "agent.done", outcome: "success", serverId: "server-1" }],
-    ["session scope", { kind: "agent.done", outcome: "success", sessionId: "session-1" }],
-    ["host sequence", { kind: "agent.done", outcome: "success", sequence: 1 }],
-    ["unknown event field", { kind: "agent.done", outcome: "success", rawRecord: { credential: "secret" } }],
-    ["oversized title", { kind: "session.started", title: "x".repeat(513) }],
-    ["oversized prompt", { kind: "turn.started", turnId: "turn-1", promptText: "x".repeat(4_097) }],
-    ["nested metadata", { kind: "session.started", model: { id: "fixture-1", nested: { value: { value: { value: "no" } } } } }],
-  ]) {
-    const result = validateAgentLifecycleEvent(event);
-    assert.equal(result.ok, false, name);
-    assert.ok(result.issues.length > 0, name);
-  }
+test("bounded agent text never splits a surrogate pair", () => {
+  assert.equal(boundedAgentText("hello", 10), "hello");
+  assert.equal(boundedAgentText("hello", 3), "hel");
+  assert.equal(boundedAgentText("a\u{1F600}", 2), "a");
+  assert.equal(boundedAgentText("", 3), undefined);
+  assert.equal(boundedAgentText(42, 3), undefined);
 });
 
 test("namespacing rejects traversal and core-shaped local ids", () => {

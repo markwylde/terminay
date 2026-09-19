@@ -15,12 +15,12 @@ function manifest() {
     manifestVersion: 1,
     id: EXTENSION,
     displayName: "Crashing fixture",
-    api: "^2.0.0",
+    api: "^3.0.0",
     engines: { terminay: ">=1", node: ">=22" },
     entrypoint: "dist/extension.js",
     permissions: ["agent-observation"],
     contributes: {
-      agentProviders: [{ id: `${EXTENSION}/cli`, displayName: "Fixture" }],
+      agentSessionSources: [{ id: `${EXTENSION}/cli`, displayName: "Fixture", harnesses: [{ id: "fixture", displayName: "Fixture" }] }],
     },
   };
 }
@@ -45,7 +45,7 @@ function tree(version, counterPath, crashes) {
   const source = `
     import { readFileSync, writeFileSync } from "node:fs";
     export function activate(context) {
-      context.agents.registerProvider("${EXTENSION}/cli", { mappingVersion: "v1", matchesForeground() { return true; }, async observe() { return { state: "not-bound" }; } });
+      context.agents.registerSessionSource("${EXTENSION}/cli", { start() {} });
       let attempts = 0;
       try { attempts = Number(readFileSync(${JSON.stringify(counterPath)}, "utf8")) || 0; } catch {}
       writeFileSync(${JSON.stringify(counterPath)}, String(attempts + 1));
@@ -172,7 +172,7 @@ async function fixture(crashes) {
     },
     /**
      * The failure diagnostic is recorded before the host's own status leaves
-     * `running`, and `agentProviderContributions()` is derived from that
+     * `running`, and `sessionSourceContributions()` is derived from that
      * status. Waiting for the record alone let a loaded CI runner observe a
      * crashed host still publishing its providers, so wait for the status the
      * assertions actually read.
@@ -222,15 +222,15 @@ test("a supervised restart re-publishes contributions so running terminals are o
     // an already-running CLI binds again without a new terminal.
     const republished = [];
     value.management.hosts.onContributionsChanged(() => {
-      republished.push(value.management.hosts.agentProviderContributions().map((provider) => provider.id));
+      republished.push(value.management.hosts.sessionSourceContributions().map((provider) => provider.contribution.id));
     });
     await value.management.initialize();
     await value.waitForFailures(1);
-    assert.deepEqual(value.management.hosts.agentProviderContributions(), [], "a crashed host publishes nothing");
+    assert.deepEqual(value.management.hosts.sessionSourceContributions(), [], "a crashed host publishes nothing");
 
     await value.timers.runNext();
     assert.deepEqual(
-      value.management.hosts.agentProviderContributions().map((provider) => provider.id),
+      value.management.hosts.sessionSourceContributions().map((provider) => provider.contribution.id),
       [`${EXTENSION}/cli`],
       "the restarted host publishes its provider again",
     );
@@ -278,7 +278,7 @@ test("a host that crashes before its contributions are published is still restar
     await value.timers.runNext();
     assert.equal(value.status().state, "running", "the next restart brings the host back");
     assert.deepEqual(
-      value.management.hosts.agentProviderContributions().map((provider) => provider.id),
+      value.management.hosts.sessionSourceContributions().map((provider) => provider.contribution.id),
       [`${EXTENSION}/cli`],
       "and publishes its provider",
     );

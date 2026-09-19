@@ -156,6 +156,23 @@
 	line-height: 1;
 }
 
+.agents-sidebar__external {
+	flex: 0 0 auto;
+	padding: 0 5px;
+	border: 1px solid rgba(214, 227, 240, 0.18);
+	border-radius: 4px;
+	color: rgba(214, 227, 240, 0.55);
+	font-size: 9px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	line-height: 14px;
+	text-transform: uppercase;
+}
+
+.agents-sidebar__row--external .agents-sidebar__agent {
+	cursor: default;
+}
+
 .agents-sidebar__state {
 	flex: 0 0 auto;
 	font-size: 10px;

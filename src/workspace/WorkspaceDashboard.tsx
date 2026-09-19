@@ -366,7 +366,8 @@ function AgentCard({
 }) {
 	return (
 		<button
-			className={`workspace-dashboard__card${agent.unread ? ' workspace-dashboard__card--unread' : ''}`}
+			className={`workspace-dashboard__card${agent.unread && !agent.external ? ' workspace-dashboard__card--unread' : ''}`}
+			aria-disabled={agent.external ? true : undefined}
 			data-terminay-dashboard-agent={agent.entryId}
 			data-terminay-dashboard-status={agent.state}
 			onClick={onActivate}
@@ -376,7 +377,15 @@ function AgentCard({
 			<span className="workspace-dashboard__card-head">
 				<AgentStatusIndicator showIdle size="medium" state={agent.state} />
 				<span className="workspace-dashboard__card-name">{agent.name}</span>
-				{agent.unread ? (
+				{agent.external ? (
+					<span
+						className="workspace-dashboard__external"
+						title="Running outside Terminay"
+					>
+						External
+					</span>
+				) : null}
+				{agent.unread && !agent.external ? (
 					<span
 						aria-label="Unread result"
 						className="workspace-dashboard__unread"

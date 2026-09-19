@@ -9,7 +9,9 @@ import {
 	createAgentOperationRegistry,
 } from './activity/agentProtocol.js';
 import { AgentStatusService } from './activity/agentService.js';
-import { ExtensionAgentRuntimeRegistry } from './activity/extensionAgentRuntime.js';
+import type { ProjectAgentScope } from './activity/projectAgentScope.js';
+import type { SessionSourceBridge } from './activity/sessionSourceBridge.js';
+import type { SessionSourceSupervisor } from './extensions/sessionSources.js';
 import {
 	type ActivityOperationRegistry,
 	createActivityEventProjector,
@@ -183,10 +185,10 @@ export interface ServerCoreCompositionOptions
 	/** Optional server-owned provider-journal and agent status authority. It shares
 	 * the terminal lifecycle with activity; it is never a renderer service. */
 	readonly agents?: AgentStatusService;
-	/** Optional extension-backed agent admission authority. It claims an exact
-	 * terminal incarnation before an installed provider can publish sidebar
-	 * lifecycle state; generic terminal activity remains the fallback. */
-	readonly extensionAgentRuntime?: ExtensionAgentRuntimeRegistry;
+	/** Optional extension session sources: the supervisor that starts them,
+	 * the bridge that reduces their snapshots, and the project scope that
+	 * places each session. Generic terminal activity remains the fallback. */
+	readonly agentSessions?: AgentSessionComposition;
 	/** Other server-owned operation handlers to merge with terminal handlers. */
 	readonly operations?: OperationRegistries;
 	/** Optional selected-server extension manager. Fixed operations are merged
@@ -273,6 +275,12 @@ export interface ServerCoreCompositionOptions
 	) => void;
 }
 
+export interface AgentSessionComposition {
+	readonly supervisor: SessionSourceSupervisor;
+	readonly bridge: SessionSourceBridge;
+	readonly scope: ProjectAgentScope;
+}
+
 /**
  * The complete server-side surface needed by a transport adapter.
  *
@@ -292,7 +300,7 @@ export interface ServerCoreComposition {
 	readonly workspace?: WorkspaceStore;
 	readonly activity?: TerminalActivityService;
 	readonly agents?: AgentStatusService;
-	readonly extensionAgentRuntime?: ExtensionAgentRuntimeRegistry;
+	readonly agentSessions?: AgentSessionComposition;
 	readonly activityOperations?: ActivityOperationRegistry;
 	readonly agentOperations?: AgentOperationRegistry;
 	readonly terminalOperations: TerminalOperationRegistry;
@@ -861,9 +869,9 @@ export function createServerCoreComposition(
 				),
 			);
 			connections.clear();
-			await attempt(() =>
-				options.extensionAgentRuntime?.drain('server-stopping'),
-			);
+			await attempt(() => options.agentSessions?.supervisor.dispose());
+			await attempt(() => options.agentSessions?.bridge.dispose());
+			await attempt(() => options.agentSessions?.scope.dispose());
 			// Terminal exit is a final agent lifecycle input, so terminal stops
 			// before the agent service. Every later cleanup still runs if it fails.
 			await attempt(() => terminal.shutdown());
@@ -898,9 +906,9 @@ export function createServerCoreComposition(
 		...(language === undefined ? {} : { languageSessions: language.sessions }),
 		...(options.activity === undefined ? {} : { activity: options.activity }),
 		...(options.agents === undefined ? {} : { agents: options.agents }),
-		...(options.extensionAgentRuntime === undefined
+		...(options.agentSessions === undefined
 			? {}
-			: { extensionAgentRuntime: options.extensionAgentRuntime }),
+			: { agentSessions: options.agentSessions }),
 		...(activityOperations === undefined ? {} : { activityOperations }),
 		...(agentOperations === undefined ? {} : { agentOperations }),
 		terminalOperations,
@@ -948,16 +956,13 @@ function composeTerminal(
 		...terminalOptions,
 		serverId: options.serverId,
 		ptyFactory: options.ptyFactory,
-		...(options.activity === undefined &&
-		options.agents === undefined &&
-		options.extensionAgentRuntime === undefined
+		...(options.activity === undefined && options.agents === undefined
 			? {}
 			: {
 					sessionLifecycle: composeActivityLifecycle(
 						options.activity,
 						options.agents,
 						terminalOptions.sessionLifecycle,
-						options.extensionAgentRuntime,
 					),
 				}),
 	});
@@ -1005,19 +1010,16 @@ export function composeActivityLifecycle(
 	activity: TerminalActivityService | undefined,
 	agents: AgentStatusService | undefined,
 	lifecycle: ComposedTerminalSessionLifecycle | undefined,
-	extensionAgents?: ExtensionAgentRuntimeRegistry,
 ): ComposedTerminalSessionLifecycle {
 	return {
 		prepareTerminalSession: (identity) => {
 			if (activity !== undefined) ensureActivitySession(activity, identity);
 			agents?.register(identity);
-			extensionAgents?.register(identity);
 			const hostEnvironment = lifecycle?.prepareTerminalSession(identity) ?? {};
 			return { ...hostEnvironment };
 		},
 		terminalStarted: (identity, shellPid) => {
 			agents?.terminalStarted(identity, shellPid);
-			extensionAgents?.terminalStarted(identity, shellPid);
 			lifecycle?.terminalStarted?.(identity, shellPid);
 		},
 		terminalInput: (identity) => {
@@ -1031,8 +1033,7 @@ export function composeActivityLifecycle(
 					/* terminal exit remains authoritative */
 				}
 			}
-			extensionAgents?.terminalExited(identity);
-			agents?.terminalExited(identity, exit);
+			agents?.terminalExited(identity);
 			lifecycle?.terminalExited(identity, exit);
 		},
 		foregroundProcessChanged: (identity, event) => {
@@ -1054,11 +1055,6 @@ export function composeActivityLifecycle(
 					// Foreground observation cannot change PTY supervision.
 				}
 			}
-			extensionAgents?.foregroundProcessChanged(
-				identity,
-				event.processName,
-				event.shellForeground,
-			);
 			agents?.foregroundProcessChanged(
 				identity,
 				event.processName,

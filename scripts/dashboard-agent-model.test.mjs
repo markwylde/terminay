@@ -195,6 +195,29 @@ test('an agent whose panel this window does not hold is shown as detached', () =
 	assert.equal(books.project.counts.attention, 1);
 });
 
+test('an external agent is listed as detached but never counted or activated', () => {
+	const external = agent({
+		activationTerminalSessionId: null,
+		displayName: 'Outside work',
+		external: true,
+		projectIds: ['p-b'],
+		state: 'waiting',
+		terminalSessionId: null,
+		unread: true,
+	});
+	const groups = buildDashboardGroups(projects, {}, { 'p-b': [external] });
+	const books = groups[1];
+	assert.deepEqual(
+		books.detachedAgents.map((entry) => [entry.name, entry.external]),
+		[['Outside work', true]],
+	);
+	assert.equal(books.project.counts.attention, 0);
+	assert.deepEqual(
+		resolveAgentActivation(books.detachedAgents[0], 'p-b', projects, {}),
+		{ kind: 'stale' },
+	);
+});
+
 test('a panel and the agent inside it are counted once, not twice', () => {
 	const groups = buildDashboardGroups(
 		projects,

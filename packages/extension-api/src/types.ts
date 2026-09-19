@@ -12,7 +12,8 @@ export type ExtensionPermission =
 	| 'cache:write'
 	| 'network'
 	| 'secrets:resolve'
-	| 'agent-observation';
+	| 'agent-observation'
+	| 'mcp-registration';
 
 export interface ExtensionDependency {
 	extensionId: string;
@@ -20,30 +21,41 @@ export interface ExtensionDependency {
 	optional?: boolean;
 }
 
-/** A deliberately small, safe foreground-process matcher declared in a manifest. */
-export interface AgentProcessMatcher {
-	executableName: string;
-	/** Optional exact argument tokens. This is not a regular expression or shell command. */
-	arguments?: string[];
+export type ExtensionPlatform = 'darwin' | 'linux' | 'win32';
+
+/** One coding-agent harness a session source can report, e.g. Claude Code. */
+export interface AgentSessionHarnessDeclaration {
+	/** Stable, source-local, kebab-case, e.g. `claude-code`. */
+	id: string;
+	displayName: string;
 }
 
-/** Maps a provider release range to a provider-owned record mapping. */
-export interface AgentMappingDeclaration {
-	mappingVersion: string;
-	providerVersionRange: string;
-}
-
-/** Declarative metadata for one coding-agent provider. */
-export interface AgentProviderContribution {
+/**
+ * Declarative metadata for one machine-wide agent session source. The source
+ * reports live sessions on the server's machine; the host decides which
+ * project each belongs to and which terminal, if any, it binds to.
+ */
+export interface AgentSessionSourceContribution {
+	/** Namespaced: `<extensionId>/<local-id>`. */
 	id: string;
 	displayName: string;
 	description?: string;
-	icon?: ExtensionIcon;
-	platforms?: Array<'darwin' | 'linux' | 'win32'>;
-	processMatchers?: AgentProcessMatcher[];
-	mappings?: AgentMappingDeclaration[];
-	/** Names requested from the exact foreground/descendant process only. */
-	requiredEnvironmentVariables?: string[];
+	platforms?: ExtensionPlatform[];
+	harnesses: AgentSessionHarnessDeclaration[];
+	/**
+	 * Server environment variable names the source needs, such as a harness's
+	 * home-directory override. The host passes each one to the extension child
+	 * when it is set on the server.
+	 */
+	environmentVariables?: string[];
+}
+
+/** Declarative metadata for one client the Terminay MCP server can be registered with. */
+export interface McpInstallTargetContribution {
+	/** Namespaced: `<extensionId>/<local-id>`. */
+	id: string;
+	/** The client's name as the install surface shows it, e.g. `Claude Code`. */
+	displayName: string;
 }
 
 /**
@@ -76,11 +88,12 @@ export interface TerminayExtensionManifest {
 		node: string;
 	};
 	entrypoint: string;
-	platforms?: Array<'darwin' | 'linux' | 'win32'>;
+	platforms?: ExtensionPlatform[];
 	permissions: ExtensionPermission[];
 	extensionDependencies?: ExtensionDependency[];
 	contributes: {
-		agentProviders?: AgentProviderContribution[];
+		agentSessionSources?: AgentSessionSourceContribution[];
+		mcpInstallTargets?: McpInstallTargetContribution[];
 		languageServers?: LanguageServerContribution[];
 	};
 }
@@ -212,15 +225,19 @@ export interface ExtensionContext {
 	extensionId: string;
 	apiVersion: string;
 	paths: { configuration: string; data: string; cache: string };
-	/** Agent observation is available only to manifests granted agent-observation. */
-	agents: AgentProviderRegistry;
+	/** Session sources are available only to manifests granted agent-observation. */
+	agents: AgentSessionSourceRegistry;
+	/** MCP install targets are available only to manifests granted mcp-registration. */
+	mcp: McpInstallTargetRegistry;
 	/** Host-disposed registrations and observers owned by this activation. */
 	subscriptions: ExtensionSubscriptions;
 	/**
 	 * Registers a language server this manifest contributed. An undeclared id,
 	 * or a second registration of the same id, is refused.
 	 */
-	registerLanguageServerProvider(registration: LanguageServerRegistration): void;
+	registerLanguageServerProvider(
+		registration: LanguageServerRegistration,
+	): void;
 }
 
 export interface TerminayExtension {
@@ -232,7 +249,8 @@ export interface TerminayExtension {
  * Authoring entry: default-export the value returned by `defineExtension`.
  * There is no global Terminay singleton. Every grant arrives on `context`
  * or a callback argument. Node APIs may be used for ordinary work on the
- * Terminay Server account; terminal-scoped evidence must use `observation`.
+ * Terminay Server account. The host, never an extension, decides which
+ * terminal a reported session belongs to.
  */
 export function defineExtension(
 	extension: TerminayExtension,
@@ -249,712 +267,188 @@ export interface ExtensionSubscriptions {
 	add(subscription: Disposable): Disposable;
 }
 
-/** Opaque handles are valid only for the issued terminal observation context. */
-export interface AgentTerminalHandle {
-	readonly id: string;
-	readonly __agentTerminalHandle: unique symbol;
-}
-export interface AgentProjectHandle {
-	readonly id: string;
-	readonly __agentProjectHandle: unique symbol;
-}
-export interface AgentEnvironmentHandle {
-	readonly id: string;
-	readonly __agentEnvironmentHandle: unique symbol;
-}
-export interface AgentProcessHandle {
-	readonly id: string;
-	readonly __agentProcessHandle: unique symbol;
-}
-export interface AgentFileHandle {
-	readonly id: string;
-	readonly __agentFileHandle: unique symbol;
-}
-/** An opaque, terminal-scoped directory root. It is only usable for bounded discovery. */
-export interface AgentDirectoryHandle {
-	readonly id: string;
-	readonly __agentDirectoryHandle: unique symbol;
+export type AgentSessionStatus = 'running' | 'waiting' | 'blocked' | 'idle';
+export type AgentSessionTurnOutcome = 'completed' | 'failed' | 'interrupted';
+export type AgentSubagentStatus =
+	| 'running'
+	| 'completed'
+	| 'failed'
+	| 'cancelled';
+
+/** One subagent a session launched. Ids are stable within the session. */
+export interface AgentSubagentSnapshot {
+	id: string;
+	/** Another subagent of the same session, for nested subagents. */
+	parentId?: string;
+	type: string;
+	title?: string;
+	status: AgentSubagentStatus;
 }
 
 /**
- * A bounded fact about the terminal device. It can be used to derive a
- * provider-specific terminal identifier, but is never accepted as a path or
- * filesystem authority by this API.
+ * Bounded facts about one live session. Only these fields cross to the host:
+ * transcripts, prompts beyond the title, tool arguments, and raw records never
+ * do. Times are epoch milliseconds.
  */
-export interface AgentTerminalTtyFact {
-	deviceId: string;
-	deviceName?: string;
+export interface AgentSessionSnapshot {
+	/** Source-scoped and stable for the conversation. */
+	id: string;
+	/** A harness id the source declared and that is switched on. */
+	harness: string;
+	/** The live process holding the session. */
+	pid: number;
+	/** Absolute working directory of the session. */
+	cwd: string;
+	title?: string;
+	model?: string;
+	status?: AgentSessionStatus;
+	/** What a `waiting` or `blocked` session waits for, e.g. a tool approval. */
+	waitingFor?: string;
+	/** Name of the tool currently running. */
+	tool?: string;
+	lastTurn?: AgentSessionTurnOutcome;
+	lastTurnEndedAt?: number;
+	/** Bounded, redacted message for a failed turn. */
+	error?: string;
+	subagents?: AgentSubagentSnapshot[];
 }
 
-export interface AgentForegroundProcess {
-	executableName: string;
-	/** Safe, bounded process arguments supplied only when the environment can prove them. */
-	arguments?: readonly string[];
-	startedAt?: string;
+/**
+ * A typed, bounded diagnostic. It must carry no paths or conversation
+ * content. `code` is kebab-case, e.g. `provider-error`.
+ */
+export interface AgentSessionSourceDiagnostic {
+	code: string;
+	message: string;
 }
 
-export interface AgentProcessSnapshot {
-	handle: AgentProcessHandle;
-	executableName: string;
-	startedAt?: string;
-	cwd?: string;
+/**
+ * Publishes a source's live sessions. A `reset` replaces every session the
+ * source reported before; `upsert` replaces one session by id; `remove`
+ * forgets one. Calls take effect in order. After the start signal aborts,
+ * every call is ignored.
+ */
+export interface AgentSessionPublisher {
+	reset(sessions: readonly AgentSessionSnapshot[]): void;
+	upsert(session: AgentSessionSnapshot): void;
+	remove(sessionId: string): void;
+	diagnostic(diagnostic: AgentSessionSourceDiagnostic): void;
+}
+
+export interface AgentSessionSourceStart {
+	/** Declared harness ids currently switched on. */
+	enabledHarnesses: readonly string[];
+	publisher: AgentSessionPublisher;
 	/**
-	 * Host-observed OS pid for this descendant, when the environment can prove
-	 * it. Providers may join it to a provider-owned live-session registry; it is
-	 * not a path and does not grant filesystem authority.
+	 * Aborts when the source is disposed, the extension is disabled, or agent
+	 * status is switched off. The source must then release every watch.
 	 */
-	pid?: number;
+	signal: AbortSignal;
 	/**
-	 * The process's own command line after its executable, bounded, when the
-	 * environment can read it. It is per-process evidence: a session id or a
-	 * resume flag on it belongs to exactly this process.
+	 * Called with the new enabled set whenever the user switches a harness. The
+	 * source must stop reporting a harness switched off and report the live
+	 * sessions of a harness switched on.
 	 */
-	arguments?: readonly string[];
+	onEnabledHarnessesChanged(
+		listener: (enabledHarnesses: readonly string[]) => void,
+	): Disposable;
 }
 
-export interface AgentOpenFile {
-	handle: AgentFileHandle;
-	/** A safe display path, never an authority to read a local path. */
-	path: string;
-	access: 'readable' | 'writable' | 'read-write';
-}
-
-export interface AgentFileStat {
-	handle: AgentFileHandle;
-	kind: 'file';
-	size: number;
-	modifiedAt?: string;
-	/** File creation time where the environment can prove one. */
-	createdAt?: string;
-}
-
-export interface AgentCanonicalFileOptions {
-	beneath?: { homeRelative: string };
-	extension?: string;
-	signal?: CancellationSignal;
-}
-
-/** Constraints for resolving one known file beneath the environment home. */
-export interface AgentHomeRelativeFileOptions {
-	beneath?: { homeRelative: string };
-	extension?: string;
-	signal?: CancellationSignal;
-}
-
-/** Closed, serializable form of a home-relative resolution request. */
-export interface AgentHomeRelativeFileRequest {
-	relativePath: string;
-	beneath?: { homeRelative: string };
-	extension?: string;
-}
-
-/** Constraints for one provider-record path canonicalized beneath an allowed home root. */
-export interface AgentPathUnderHomeOptions {
-	beneath: { homeRelative: string };
-	extension?: string;
-	signal?: CancellationSignal;
-}
-
-/** Closed, serializable form of a constrained provider-record path request. */
-export interface AgentPathUnderHomeRequest {
-	providerPath: string;
-	beneath: { homeRelative: string };
-	extension?: string;
-}
-
-/** Constraints for a fact-only normalized path lookup on an opaque file handle. */
-export interface AgentHomeRelativePathOptions {
-	beneath: { homeRelative: string };
-	signal?: CancellationSignal;
-}
-
-/** Closed transport shape for a fact-only home-relative path lookup. */
-export interface AgentHomeRelativePathRequest {
-	handle: AgentFileHandle;
-	beneath: { homeRelative: string };
-}
-
-/** A regular file discovered below an already-issued opaque directory root. */
-export interface AgentDiscoveredFile {
-	handle: AgentFileHandle;
-	/** A normalized non-escaping fact relative to the opaque root; never authority. */
-	relativePath: string;
-	size: number;
-	modifiedAt?: string;
+export interface AgentSessionSourceRuntime {
 	/**
-	 * File creation time, where the environment can prove one. Providers compare
-	 * it against a descendant process `startedAt` to admit a journal the provider
-	 * wrote for that process. It is provider-documented association, not a
-	 * nearest-file heuristic: `modifiedAt` remains unusable for selection.
+	 * Starts watching. Resolves once the source is running; it keeps publishing
+	 * until `signal` aborts.
 	 */
-	createdAt?: string;
+	start(start: AgentSessionSourceStart): void | Promise<void>;
 }
 
-/** Explicit caller limits for a provider's journal discovery. */
-export interface AgentDirectoryListOptions {
-	/** Only these file suffixes are returned. At least one suffix is required. */
-	extensions: readonly string[];
+export interface AgentSessionSourceRegistration extends Disposable {
+	readonly sourceId: string;
+}
+
+export interface AgentSessionSourceRegistry {
 	/**
-	 * Only files with exactly these names are considered, and only they are
-	 * charged against the limits below.
-	 *
-	 * A caller that already knows the filename it wants — a provider resolving
-	 * one session's journal, say — would otherwise spend its whole byte budget
-	 * on unrelated files and be truncated before reaching the one file it asked
-	 * for. Declaring the name keeps the walk bounded by what was actually
-	 * requested rather than by everything that happens to share the directory.
-	 * Each entry is one path segment; omit the field to return every match.
+	 * Registers a session source this manifest contributed. An undeclared id,
+	 * a second registration of the same id, or a registration after
+	 * deactivation is refused.
 	 */
-	names?: readonly string[];
-	/** Directory nesting below the opaque root, where zero is the root itself. */
-	maxDepth: number;
-	maxEntries: number;
-	maxBytes: number;
-	signal?: CancellationSignal;
+	registerSessionSource(
+		sourceId: string,
+		runtime: AgentSessionSourceRuntime,
+	): AgentSessionSourceRegistration;
 }
 
-export interface AgentDirectoryListing {
-	entries: readonly AgentDiscoveredFile[];
-	/** True when a declared limit stopped the snapshot early. */
-	truncated: boolean;
+export function defineSessionSource(
+	runtime: AgentSessionSourceRuntime,
+): AgentSessionSourceRuntime {
+	return runtime;
 }
 
-/** A host-driven snapshot stream for one opaque directory root. */
-export interface AgentDirectoryWatcher
-	extends AsyncIterable<AgentDirectoryListing>,
-		Disposable {}
-
-/** Resolves a provider-known directory under the terminal environment's home. */
-export interface AgentHomeRelativeDirectoryOptions {
-	beneath?: { homeRelative: string };
-	signal?: CancellationSignal;
+/**
+ * The host-supplied launch command for the Terminay MCP server. A target
+ * writes exactly this into its client's configuration and nothing else.
+ */
+export interface McpServerCommand {
+	command: string;
+	args: string[];
+	env?: Record<string, string>;
 }
 
-/** Resolves a provider-known directory below one exact terminal environment value. */
-export interface AgentEnvironmentRelativeDirectoryOptions {
-	environmentVariable: string;
-	beneathRelative?: string;
-	signal?: CancellationSignal;
-}
+export type McpInstallTargetState =
+	| 'not-installed'
+	| 'installed'
+	| 'changed'
+	| 'unavailable'
+	| 'error';
 
-export interface AgentReadOptions {
-	maxBytes: number;
-	signal?: CancellationSignal;
-}
-
-export interface AgentJsonLineOptions extends AgentReadOptions {
-	position: 'first' | 'last';
-}
-
-export interface AgentFileWatchOptions {
-	signal?: CancellationSignal;
-	/** Maximum bytes delivered per chunk; the host may lower this value. */
-	maxChunkBytes?: number;
-}
-
-export interface AgentFileWatchChunk {
-	type: 'append' | 'replace' | 'truncate';
-	bytes: Uint8Array;
-}
-
-export interface AgentFileWatcher
-	extends AsyncIterable<AgentFileWatchChunk>,
-		Disposable {}
-
-export interface AgentProcessObservationBroker {
-	descendants(options?: {
-		signal?: CancellationSignal;
-	}): Promise<AgentProcessSnapshot[]>;
-	openFiles(
-		processes: readonly AgentProcessSnapshot[] | readonly AgentProcessHandle[],
-		options: {
-			access: 'writable' | 'readable';
-			signal?: CancellationSignal;
-		},
-	): Promise<AgentOpenFile[]>;
-	/**
-	 * Reads only manifest-declared, bounded values from the exact terminal's
-	 * foreground process or descendant. It never exposes the extension host's
-	 * ambient Node environment.
-	 */
-	environment(
-		names: readonly string[],
-		options?: { signal?: CancellationSignal },
-	): Promise<Record<string, string>>;
-}
-
-/** Closed transport form for an environment fact request. */
-export interface AgentProcessEnvironmentRequest {
-	names: string[];
-}
-
-/** Constraints for resolving a known path below one declared process environment value. */
-export interface AgentRelativeToEnvironmentOptions {
-	environmentVariable: string;
-	extension?: string;
-	signal?: CancellationSignal;
-}
-
-export interface AgentRelativeToEnvironmentRequest {
-	relativePath: string;
-	environmentVariable: string;
-	extension?: string;
-}
-
-/** Constraints for canonicalizing provider-record path data below one declared environment value. */
-export interface AgentPathUnderEnvironmentOptions {
-	environmentVariable: string;
-	beneathRelative?: string;
-	extension?: string;
-	signal?: CancellationSignal;
-}
-
-export interface AgentPathUnderEnvironmentRequest {
-	providerPath: string;
-	environmentVariable: string;
-	beneathRelative?: string;
-	extension?: string;
-}
-
-/** Constraints for a fact-only path lookup below one terminal environment value. */
-export interface AgentEnvironmentRelativePathOptions {
-	environmentVariable: string;
-	beneathRelative?: string;
-	signal?: CancellationSignal;
-}
-
-export interface AgentEnvironmentRelativePathRequest {
-	handle: AgentFileHandle;
-	environmentVariable: string;
-	beneathRelative?: string;
-}
-
-export interface AgentFileObservationBroker {
-	/**
-	 * Issues an opaque root for bounded discovery below the terminal home. A
-	 * provider cannot turn a returned relative path into read authority.
-	 */
-	resolveHomeDirectory(
-		relativePath: string,
-		options?: AgentHomeRelativeDirectoryOptions,
-	): Promise<AgentDirectoryHandle | undefined>;
-	/** Issues an opaque root below one declared terminal environment variable. */
-	resolveDirectoryRelativeToEnvironment(
-		relativePath: string,
-		options: AgentEnvironmentRelativeDirectoryOptions,
-	): Promise<AgentDirectoryHandle | undefined>;
-	/** Lists only regular files below an opaque root, subject to all supplied limits. */
-	listDirectory(
-		root: AgentDirectoryHandle,
-		options: AgentDirectoryListOptions,
-	): Promise<AgentDirectoryListing>;
-	/**
-	 * Follows bounded changes below an opaque root. The first iteration is the
-	 * current snapshot; later iterations are emitted only after it changes.
-	 */
-	watchDirectory(
-		root: AgentDirectoryHandle,
-		options: AgentDirectoryListOptions,
-	): Promise<AgentDirectoryWatcher>;
-	/**
-	 * Resolves a non-escaping path below the value of one declared terminal
-	 * process environment variable. The host holds the root value internally.
-	 */
-	resolveRelativeToEnvironment(
-		relativePath: string,
-		options: AgentRelativeToEnvironmentOptions,
-	): Promise<AgentFileHandle | undefined>;
-	/**
-	 * Canonicalizes provider-record absolute path data only below the value of
-	 * one declared terminal process environment variable; it is not arbitrary
-	 * absolute-path access.
-	 */
-	resolvePathUnderEnvironment(
-		providerPath: string,
-		options: AgentPathUnderEnvironmentOptions,
-	): Promise<AgentFileHandle | undefined>;
-	/**
-	 * Returns a normalized relative path fact below one declared terminal
-	 * environment value (and optional contained subdirectory). It grants no
-	 * read authority: read and follow still require the opaque file handle.
-	 */
-	environmentRelativePath(
-		handle: AgentFileHandle,
-		options: AgentEnvironmentRelativePathOptions,
-	): Promise<string | undefined>;
-	/**
-	 * Resolves one known non-escaping path in the selected environment's home.
-	 * The returned opaque handle is the only authority for subsequent reads or
-	 * follows; the input path itself never grants local filesystem access.
-	 */
-	resolveHomeRelative(
-		relativePath: string,
-		options?: AgentHomeRelativeFileOptions,
-	): Promise<AgentFileHandle | undefined>;
-	/**
-	 * Canonicalizes a provider-record absolute path only beneath the explicit
-	 * home-relative root. This is not arbitrary absolute-path access.
-	 */
-	resolvePathUnderHome(
-		providerPath: string,
-		options: AgentPathUnderHomeOptions,
-	): Promise<AgentFileHandle | undefined>;
-	/**
-	 * Returns a normalized path fact relative to the explicit home-relative
-	 * constraint for a canonical regular file. The string cannot be passed to
-	 * read or follow; those methods continue to require the original opaque
-	 * handle.
-	 */
-	homeRelativePath(
-		handle: AgentFileHandle,
-		options: AgentHomeRelativePathOptions,
-	): Promise<string | undefined>;
-	canonicalFile(
-		handle: AgentFileHandle,
-		options?: AgentCanonicalFileOptions,
-	): Promise<AgentFileHandle | undefined>;
-	realpath(
-		handle: AgentFileHandle,
-		options?: { signal?: CancellationSignal },
-	): Promise<AgentFileHandle | undefined>;
-	stat(
-		handle: AgentFileHandle,
-		options?: { signal?: CancellationSignal },
-	): Promise<AgentFileStat | undefined>;
-	read(handle: AgentFileHandle, options: AgentReadOptions): Promise<Uint8Array>;
-	readJson<T = JsonValue>(
-		handle: AgentFileHandle,
-		options: AgentReadOptions,
-	): Promise<T | undefined>;
-	readJsonLine<T = JsonValue>(
-		handle: AgentFileHandle,
-		options: AgentJsonLineOptions,
-	): Promise<T | undefined>;
-	follow(
-		handle: AgentFileHandle,
-		options?: AgentFileWatchOptions,
-	): Promise<AgentFileWatcher>;
-}
-
-/** All observation operations are terminal-scoped and run on the server host. */
-export interface AgentObservationBroker {
-	processes: AgentProcessObservationBroker;
-	files: AgentFileObservationBroker;
-}
-
-export interface AgentBindingFingerprint {
-	kind: string;
-	/** Only scoped process/file handles and bounded primitive metadata are allowed. */
-	process?: AgentProcessHandle;
-	file?: AgentFileHandle;
-	metadata?: Record<string, JsonPrimitive>;
-}
-
-export interface AgentSessionBindingRequest {
-	providerSessionId: string;
-	mappingVersion: string;
-	journal?: AgentFileHandle;
-	fingerprint: AgentBindingFingerprint;
-	metadata?: Record<string, JsonPrimitive>;
-}
-
-/** Host-validated session identity, opaque outside its issuing terminal context. */
-export interface AgentSessionBinding {
-	readonly providerSessionId: string;
-	readonly mappingVersion: string;
-	readonly journal?: AgentFileHandle;
-	readonly __agentSessionBinding: unique symbol;
-}
-
-export type AgentUnavailableReason =
-	| 'process-not-recognized'
-	| 'session-not-found'
-	| 'session-not-bound'
-	| 'unsupported-provider-version'
-	| 'malformed-observation'
-	| 'observation-limit-exceeded'
-	| 'cancelled';
-
-export interface AgentObservationDiagnostic {
-	reason: AgentUnavailableReason;
-	/** Safe display text only; it must not contain paths, prompts, credentials, or raw records. */
+export interface McpInstallTargetStatus {
+	state: McpInstallTargetState;
+	/** The provider-owned configuration file the target inspects. */
+	configPath: string;
+	/** Bounded, redacted detail, e.g. why the registration differs. */
 	message?: string;
 }
 
-/**
- * One directory a provider is waiting on. The handle must have been resolved
- * through the same terminal context. By default only the directory's own
- * entries are watched; `recursive` watches the whole tree below it, for
- * evidence that appears at an unknown depth. Name the narrowest directory
- * that will see the change: a recursive watch on a wide tree is what it costs.
- */
-export interface AgentAwaitedDirectory {
-	readonly directory: AgentDirectoryHandle;
-	readonly recursive?: boolean;
+export interface McpInstallTargetActionResult {
+	ok: boolean;
+	installed: boolean;
+	message?: string;
+	error?: string;
 }
 
-/**
- * A provider that cannot bind yet names the directories whose contents decide
- * whether it can. The host watches every named directory for the life of the
- * terminal incarnation and re-runs `observe` on the first change in any of
- * them. Nothing else re-runs discovery: a `not-bound` result that names no
- * directory ends discovery for the incarnation until the next foreground
- * edge. A provider whose CLI is running in the terminal must therefore always
- * be able to name where its evidence will appear.
- */
-export interface AgentNotBoundResult {
-	state: 'not-bound';
-	awaiting?: readonly AgentAwaitedDirectory[];
+export interface McpInstallTargetRequest {
+	server: McpServerCommand;
+	/** Aborts on the call's deadline or when the target is disposed. */
+	signal: AbortSignal;
 }
 
-export type AgentObservationResult =
-	| AgentJsonlSession
-	| AgentNotBoundResult
-	| { state: 'unavailable'; reason: AgentUnavailableReason };
-
-export interface AgentTerminalContext {
-	terminal: AgentTerminalHandle;
-	project: AgentProjectHandle;
-	environment: AgentEnvironmentHandle;
-	process: AgentProcessHandle;
-	foreground: AgentForegroundProcess;
-	/** Present only when the environment can prove the registered PTY's TTY. */
-	tty?: AgentTerminalTtyFact;
-	observation: AgentObservationBroker;
-	signal: CancellationSignal;
-	bindSession(
-		request: AgentSessionBindingRequest,
-	): Promise<AgentSessionBinding>;
+export interface McpInstallTargetRuntime {
+	status(request: McpInstallTargetRequest): Promise<McpInstallTargetStatus>;
+	install(
+		request: McpInstallTargetRequest,
+	): Promise<McpInstallTargetActionResult>;
+	uninstall(
+		request: McpInstallTargetRequest,
+	): Promise<McpInstallTargetActionResult>;
 }
 
-export interface AgentModelMetadata {
-	id: string;
-	displayName?: string;
-	reasoningEffort?: string;
-	contextWindowTokens?: number;
+export interface McpInstallTargetRegistration extends Disposable {
+	readonly targetId: string;
 }
 
-export type AgentCompletionOutcome = 'success' | 'error' | 'cancelled';
-export type AgentWaitState = 'waiting' | 'blocked';
-
-export type AgentLifecycleEvent =
-	| {
-			kind: 'session.started';
-			title?: string;
-			promptText?: string;
-			model?: AgentModelMetadata;
-			occurredAt?: string;
-	  }
-	| {
-			kind: 'agent.metadata';
-			agentId?: string;
-			title?: string;
-			promptText?: string;
-			model?: AgentModelMetadata;
-			occurredAt?: string;
-	  }
-	| {
-			kind: 'turn.started';
-			agentId?: string;
-			turnId: string;
-			promptText?: string;
-			occurredAt?: string;
-	  }
-	| {
-			kind: 'tool.started';
-			agentId?: string;
-			toolId: string;
-			name: string;
-			description?: string;
-			occurredAt?: string;
-	  }
-	| {
-			kind: 'tool.finished';
-			agentId?: string;
-			toolId: string;
-			outcome?: AgentCompletionOutcome;
-			occurredAt?: string;
-	  }
-	| {
-			kind: 'wait.started';
-			agentId?: string;
-			waitId: string;
-			state: AgentWaitState;
-			reason?: string;
-			/**
-			 * True when the state was derived from the provider's journal rather
-			 * than read from an explicit record. Surfaces may label it; it never
-			 * changes how the state itself is reduced.
-			 */
-			inferred?: boolean;
-			occurredAt?: string;
-	  }
-	| {
-			kind: 'wait.finished';
-			agentId?: string;
-			waitId: string;
-			occurredAt?: string;
-	  }
-	| {
-			kind: 'agent.done';
-			agentId?: string;
-			outcome: AgentCompletionOutcome;
-			summary?: string;
-			occurredAt?: string;
-	  }
-	| {
-			kind: 'agent.exited';
-			agentId?: string;
-			exitCode?: number;
-			signal?: string;
-			occurredAt?: string;
-	  }
-	| { kind: 'session.stopped'; reason?: string; occurredAt?: string }
-	| {
-			kind: 'subagent.started';
-			subagentId: string;
-			parentAgentId?: string;
-			title?: string;
-			promptText?: string;
-			model?: AgentModelMetadata;
-			occurredAt?: string;
-	  }
-	| {
-			kind: 'subagent.done';
-			subagentId: string;
-			outcome: AgentCompletionOutcome;
-			summary?: string;
-			occurredAt?: string;
-	  };
-
-export interface AgentLifecyclePublisher {
-	sessionStarted(
-		event: Omit<
-			Extract<AgentLifecycleEvent, { kind: 'session.started' }>,
-			'kind'
-		>,
-	): void | Promise<void>;
-	metadataChanged(
-		event: Omit<
-			Extract<AgentLifecycleEvent, { kind: 'agent.metadata' }>,
-			'kind'
-		>,
-	): void | Promise<void>;
-	turnStarted(
-		event: Omit<Extract<AgentLifecycleEvent, { kind: 'turn.started' }>, 'kind'>,
-	): void | Promise<void>;
-	toolStarted(
-		event: Omit<Extract<AgentLifecycleEvent, { kind: 'tool.started' }>, 'kind'>,
-	): void | Promise<void>;
-	toolFinished(
-		event: Omit<
-			Extract<AgentLifecycleEvent, { kind: 'tool.finished' }>,
-			'kind'
-		>,
-	): void | Promise<void>;
-	waitStarted(
-		event: Omit<Extract<AgentLifecycleEvent, { kind: 'wait.started' }>, 'kind'>,
-	): void | Promise<void>;
-	waitFinished(
-		event: Omit<
-			Extract<AgentLifecycleEvent, { kind: 'wait.finished' }>,
-			'kind'
-		>,
-	): void | Promise<void>;
-	done(
-		event: Omit<Extract<AgentLifecycleEvent, { kind: 'agent.done' }>, 'kind'>,
-	): void | Promise<void>;
-	exited(
-		event: Omit<Extract<AgentLifecycleEvent, { kind: 'agent.exited' }>, 'kind'>,
-	): void | Promise<void>;
-	sessionStopped(
-		event: Omit<
-			Extract<AgentLifecycleEvent, { kind: 'session.stopped' }>,
-			'kind'
-		>,
-	): void | Promise<void>;
-	subagentStarted(
-		event: Omit<
-			Extract<AgentLifecycleEvent, { kind: 'subagent.started' }>,
-			'kind'
-		>,
-	): void | Promise<void>;
-	subagentDone(
-		event: Omit<
-			Extract<AgentLifecycleEvent, { kind: 'subagent.done' }>,
-			'kind'
-		>,
-	): void | Promise<void>;
-}
-
-export interface AgentRecordContext {
-	binding: AgentSessionBinding;
-	/** Identifies which journal under this one root binding produced the record. */
-	journal: { role: 'root' } | { role: 'child'; childId: string };
-	publish: AgentLifecyclePublisher;
-	signal: CancellationSignal;
-}
-
-/**
- * A provider-native child journal. It is attached to the existing root
- * binding and must carry a stable child id; it cannot create another root.
- */
-export interface AgentChildJournalSource {
-	childId: string;
-	journal: AgentFileHandle;
-	source: AgentFileWatcher | Promise<AgentFileWatcher>;
-}
-
-/** A host-driven JSONL observer declaration. The host owns replay limits and flow control. */
-export interface AgentJsonlSession {
-	state: 'bound';
-	binding: AgentSessionBinding;
-	source: AgentFileWatcher | Promise<AgentFileWatcher>;
-	childSources?: readonly AgentChildJournalSource[];
-	/** New provider-native children discovered after root observation begins. */
-	childSourceDiscovery?:
-		| AsyncIterable<AgentChildJournalSource>
-		| Promise<AsyncIterable<AgentChildJournalSource>>;
-	mapRecord(record: unknown, session: AgentRecordContext): void | Promise<void>;
-}
-
-export interface AgentJsonlSessionOptions {
-	binding: AgentSessionBinding;
-	source: AgentFileWatcher | Promise<AgentFileWatcher>;
-	childSources?: readonly AgentChildJournalSource[];
-	childSourceDiscovery?:
-		| AsyncIterable<AgentChildJournalSource>
-		| Promise<AsyncIterable<AgentChildJournalSource>>;
-	mapRecord(record: unknown, session: AgentRecordContext): void | Promise<void>;
-}
-
-export interface AgentProviderDefinition {
-	mappingVersion: string;
-	matchesForeground(process: AgentForegroundProcess): boolean;
+export interface McpInstallTargetRegistry {
 	/**
-	 * One discovery attempt for one terminal incarnation. It runs on a
-	 * foreground edge and again whenever a directory a previous `not-bound`
-	 * result named changes; it is never re-run on a timer. See
-	 * {@link AgentNotBoundResult} for what a not-yet-bindable provider reports.
+	 * Registers an MCP install target this manifest contributed. An undeclared
+	 * or duplicate id is refused.
 	 */
-	observe(terminal: AgentTerminalContext): Promise<AgentObservationResult>;
+	registerInstallTarget(
+		targetId: string,
+		runtime: McpInstallTargetRuntime,
+	): McpInstallTargetRegistration;
 }
 
-export type AgentProviderRuntime = AgentProviderDefinition;
-
-export interface AgentProviderRegistration extends Disposable {
-	readonly providerId: string;
-}
-
-export interface AgentProviderRegistry {
-	registerProvider(
-		providerId: string,
-		runtime: AgentProviderRuntime,
-	): AgentProviderRegistration;
-}
-
-export function defineAgentProvider(
-	provider: AgentProviderDefinition,
-): AgentProviderDefinition {
-	return provider;
+export function defineMcpInstallTarget(
+	runtime: McpInstallTargetRuntime,
+): McpInstallTargetRuntime {
+	return runtime;
 }

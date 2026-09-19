@@ -60,7 +60,11 @@ import {
 import { createProtectedHostKeyStore } from '../apps/terminay-server/src/remote/hostedHostKey';
 import { parseHostedIceServers } from '../apps/terminay-server/src/remote/hostedPeerLifecycle';
 import { loadOrCreateSessionOrigin } from '../apps/terminay-server/src/remote/sessionOrigin';
-import type { AgentLifecycleEvent } from '../packages/extension-api/src/index';
+import type { McpServerCommand } from '../packages/extension-api/src/index';
+import {
+	agentHarnessSwitchesFromSettings,
+	agentIntegrationEnabledFromSettings,
+} from '../packages/server-core/src/extensions/sessionSources';
 import { ParakeetRuntime } from '../packages/server-core/src/aiService/parakeetRuntime';
 import { MacroRepository } from '../packages/server-core/src/macroService/repository';
 import {
@@ -89,7 +93,6 @@ import {
 	normalizeTerminalSettings,
 	selectDeviceTerminalSettings,
 } from '../src/terminalSettings';
-import { isAgentProvider } from '../src/types/agentStatus';
 import type { MacroDefinition } from '../src/types/macros';
 import type { TerminalSettings } from '../src/types/settings';
 import type {
@@ -146,12 +149,6 @@ import {
 	bindMainWindowCloseConfirmation,
 	createCloseConfirmationDialog,
 } from './mainWindowCloseConfirmation';
-import {
-	getMcpInstallStatus,
-	installMcpAgent,
-	type McpServerCommand,
-	uninstallMcpAgent,
-} from './mcpInstall';
 import { TerminalRecordingService } from './recording/service';
 import {
 	connectDesktopHostedRemote,
@@ -737,22 +734,7 @@ function applyAgentIntegrationSetting(
 				await serverTerminalAuthority?.composition.start();
 				serverAgents.setIntegrationEnabled(enabled);
 			}
-			if (enabled) {
-				// Rebind terminals that remained alive while observation was disabled.
-				if (serverAgents !== undefined && serverTerminalAuthority !== null) {
-					for (const session of serverTerminalAuthority.list()) {
-						const identity = serverTerminalAuthority.agentIdentity(session.id);
-						if (identity !== undefined) {
-							serverAgents.register(identity);
-							if (session.pid !== undefined)
-								serverAgents.terminalStarted(identity, session.pid);
-						}
-					}
-				}
-				appliedAgentIntegrationSetting = true;
-				return;
-			}
-			appliedAgentIntegrationSetting = false;
+			appliedAgentIntegrationSetting = enabled;
 		})
 		.catch((error) => {
 			appliedAgentIntegrationSetting = null;
@@ -1502,6 +1484,9 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 	);
 	endStartupPhase('workspace-restore');
 	beginStartupPhase('server-compose');
+	// The harness switches below are read at construction, so the settings
+	// must be loaded first. Composition's own load is idempotent after this.
+	await embeddedServerSettings.load();
 	// E2E-only: a smaller retained replay window so a suite can outrun it during
 	// a real Local transport loss. Inert without the E2E marker.
 	const replayBytesOverride = embeddedTerminalReplayBytesOverride(process.env);
@@ -1535,11 +1520,7 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		settings: embeddedServerSettings,
 		workspaceRepository: embeddedWorkspace,
 		applicationFeatures: {
-			mcpInstall: {
-				getStatus: () => getMcpInstallStatus(getMcpServerCommand()),
-				install: (agent) => installMcpAgent(agent, getMcpServerCommand()),
-				uninstall: (agent) => uninstallMcpAgent(agent, getMcpServerCommand()),
-			},
+			mcpInstall: { serverCommand: getMcpServerCommand },
 			remoteAccess: {
 				getStatus: () => currentRemoteAccessStatus(),
 				command: async (operation, value) => {
@@ -1681,22 +1662,22 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 				{ channel: 'lifecycle' },
 			);
 		},
-		// A published lifecycle event the canonical store refused. A lost
-		// completion leaves an agent row working for ever, so the transition
-		// that was dropped has to be recorded where it was dropped.
-		onAgentLifecycleRejected: (rejection) => {
+		agentHarnessSwitches: agentHarnessSwitchesFromSettings(
+			embeddedServerSettings.settings,
+		),
+		// A session source's own account of what went wrong, such as a provider
+		// it could not read or a process watch running degraded. It carries no
+		// path or conversation content.
+		onAgentSessionSourceDiagnostic: (record) => {
 			void desktopDiagnostics.record(
 				{
 					component: 'local-server',
-					event: 'local-server.agent.lifecycle-rejected',
+					event: 'local-server.agent.source-diagnostic',
 					fields: {
-						providerId: rejection.provider,
-						serverId: rejection.terminal.serverId,
-						projectId: rejection.terminal.projectId,
-						sessionId: rejection.terminal.sessionId,
-						eventKind: rejection.eventKind,
-						sequence: rejection.sequence,
-						reason: rejection.reason,
+						sourceId: record.sourceId,
+						extensionId: record.extensionId,
+						code: record.diagnostic.code,
+						message: record.diagnostic.message,
 					},
 					severity: 'warning',
 					source: 'local-server-agents',
@@ -1704,37 +1685,17 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 				{ channel: 'lifecycle' },
 			);
 		},
-		// Which terminals an agent provider reached, and where it stopped. A
-		// terminal that never shows an agent is otherwise indistinguishable from
-		// one no provider ever matched.
-		onAgentObservationDiagnostic: (diagnostic) => {
+		onAgentSessionSourceStartFailure: (sourceId, error) => {
 			void desktopDiagnostics.record(
 				{
 					component: 'local-server',
-					event: `local-server.agent.${diagnostic.transition}`,
+					event: 'local-server.agent.source-start-failed',
 					fields: {
-						providerId: diagnostic.providerId,
-						serverId: diagnostic.terminal.serverId,
-						projectId: diagnostic.terminal.projectId,
-						sessionId: diagnostic.terminal.sessionId,
-						...(diagnostic.failureClass === undefined
-							? {}
-							: { failureClass: diagnostic.failureClass }),
-						...(diagnostic.reason === undefined
-							? {}
-							: { reason: diagnostic.reason }),
-						...(diagnostic.error === undefined
-							? {}
-							: {
-									errorName: diagnostic.error.name,
-									errorMessage: diagnostic.error.message,
-									...(diagnostic.error.stack === undefined
-										? {}
-										: { errorStack: diagnostic.error.stack }),
-								}),
+						sourceId,
+						errorMessage:
+							error instanceof Error ? error.message : String(error),
 					},
-					severity:
-						diagnostic.transition === 'admission-failed' ? 'warning' : 'info',
+					severity: 'warning',
 					source: 'local-server-agents',
 				},
 				{ channel: 'lifecycle' },
@@ -1805,9 +1766,10 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 	beginStartupPhase('mcp-endpoint');
 	applyMcpSetting(embeddedServerSettings.settings);
 	removeMcpSettingsObserver?.();
-	removeMcpSettingsObserver = embeddedServerSettings.onChange((state) =>
-		applyMcpSetting(state.settings),
-	);
+	removeMcpSettingsObserver = embeddedServerSettings.onChange((state) => {
+		applyMcpSetting(state.settings);
+		applyServerAgentSettings(state.settings);
+	});
 	await startMcpControlEndpoint();
 	endStartupPhase('mcp-endpoint');
 	beginStartupPhase('bundle-hosts');
@@ -2492,6 +2454,19 @@ function getMcpServerCommand(): McpServerCommand {
 		args: [getMcpEntryPath()],
 		env: { ELECTRON_RUN_AS_NODE: '1' },
 	};
+}
+
+/** Agent status and per-harness switches, as the server settings hold them.
+ * Sources stop when agent status is off and drop a harness switched off. */
+function applyServerAgentSettings(settings: Record<string, unknown>): void {
+	const authority = serverTerminalAuthority;
+	if (authority === null) return;
+	authority.agents.setIntegrationEnabled(
+		agentIntegrationEnabledFromSettings(settings),
+	);
+	authority.agentSources.setHarnessSwitches(
+		agentHarnessSwitchesFromSettings(settings),
+	);
 }
 
 function applyMcpSetting(settings: Record<string, unknown>): void {
@@ -4933,70 +4908,53 @@ if (process.env.TERMINAY_TEST === '1') {
 		},
 	);
 
+	// Test-only session source: e2e publishes snapshots through the same bridge
+	// the extension host uses, so binding, scoping, and mapping are real.
 	ipcMain.handle(
-		'test:publish-agent-lifecycle',
+		'test:publish-agent-sessions',
 		async (
 			event,
 			payload?: {
-				provider?: unknown;
-				terminalSessionId?: unknown;
-				providerSessionId?: unknown;
-				events?: unknown;
+				sourceId?: unknown;
+				harnesses?: unknown;
+				publication?: unknown;
 			},
 		) => {
 			assertBoundServerUiEvent(event);
-			if (!isAgentProvider(payload?.provider)) {
-				throw new Error('A supported agent provider is required.');
-			}
-			if (
-				typeof payload?.terminalSessionId !== 'string' ||
-				payload.terminalSessionId.length === 0
-			) {
-				throw new Error('A terminal session id is required.');
-			}
-			if (
-				typeof payload?.providerSessionId !== 'string' ||
-				payload.providerSessionId.length === 0
-			)
-				throw new Error('An agent provider session id is required.');
-			if (!Array.isArray(payload.events) || payload.events.length === 0)
-				throw new Error('Agent lifecycle events are required.');
-			const events = payload.events as AgentLifecycleEvent[];
-			const serverSession = serverTerminalAuthority?.get(
-				payload.terminalSessionId,
-			);
-			if (serverSession !== undefined) {
-				serverTerminalAuthority!.agents.claimExtensionProvider(
-					{
-						serverId: serverSession.serverId,
-						projectId: serverSession.projectId,
-						sessionId: serverSession.id,
-					},
-					payload.provider,
+			const bridge = serverTerminalAuthority?.agentBridge;
+			if (bridge === undefined)
+				throw new Error('The server agent bridge is not available.');
+			const sourceId =
+				typeof payload?.sourceId === 'string'
+					? payload.sourceId
+					: 'com.terminay.e2e/agents';
+			const extensionId = sourceId.slice(0, sourceId.indexOf('/'));
+			const harnesses = Array.isArray(payload?.harnesses)
+				? (payload.harnesses as { id: string; displayName: string }[])
+				: [{ id: 'fixture', displayName: 'Fixture Agent' }];
+			if (!bridge.hasSource(sourceId))
+				bridge.registerSource(
+					{ id: sourceId, extensionId, harnesses },
+					harnesses.map((harness) => harness.id),
 				);
-				return serverTerminalAuthority!.agents
-					.ingestExtensionLifecycle(
-						{
-							serverId: serverSession.serverId,
-							projectId: serverSession.projectId,
-							sessionId: serverSession.id,
-						},
-						payload.provider,
-						'e2e',
-						{
-							providerSessionId: payload.providerSessionId,
-							mappingVersion: 'e2e',
-							fingerprint: {
-								kind: 'test',
-								process: { id: `e2e:${serverSession.id}` },
-								metadata: { source: 'electron-e2e' },
-							},
-						},
-						events,
-					)
-					.then((result) => result.acceptedEventCount === events.length);
-			}
-			throw new Error('The terminal session is not available.');
+			const result = await bridge.publish({
+				extensionId,
+				sourceId,
+				publication: (payload?.publication ?? {}) as Record<string, unknown[]>,
+			});
+			await bridge.settled();
+			return result.ok;
+		},
+	);
+	ipcMain.handle(
+		'test:agent-terminal-shell-pid',
+		(event, terminalSessionId?: unknown) => {
+			assertBoundServerUiEvent(event);
+			if (typeof terminalSessionId !== 'string') return null;
+			return (
+				serverTerminalAuthority?.agents.terminal(terminalSessionId)?.shellPid ??
+				null
+			);
 		},
 	);
 }

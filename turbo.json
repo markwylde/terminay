@@ -32,22 +32,7 @@
       "outputs": [],
       "cache": false
     },
-    "terminay-agent-codex#test:ci": {
-      "dependsOn": ["compile", "^build"],
-      "outputs": [],
-      "cache": false
-    },
-    "terminay-agent-grok#test:ci": {
-      "dependsOn": ["compile", "^build"],
-      "outputs": [],
-      "cache": false
-    },
-    "terminay-agent-opencode#test:ci": {
-      "dependsOn": ["compile", "^build"],
-      "outputs": [],
-      "cache": false
-    },
-    "terminay-agent-omp#test:ci": {
+    "terminay-builtin-agents#test:ci": {
       "dependsOn": ["compile", "^build"],
       "outputs": [],
       "cache": false
@@ -72,11 +57,7 @@
         "@terminay/server-core#build",
         "@terminay/ui-bundle#build",
         "@terminay/web#build",
-        "terminay-agent-claude-code#compile",
-        "terminay-agent-codex#compile",
-        "terminay-agent-grok#compile",
-        "terminay-agent-omp#compile",
-        "terminay-agent-opencode#compile",
+        "terminay-builtin-agents#compile",
         "terminay-language-typescript#compile"
       ],
       "inputs": [
