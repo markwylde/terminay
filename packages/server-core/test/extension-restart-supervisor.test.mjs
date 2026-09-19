@@ -184,7 +184,7 @@ async function fixture(crashes) {
         if (failures >= count && settled) return;
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
-      assert.fail(`only ${records.filter((r) => r.transition === "failed").length} failures were recorded, wanted ${count}`);
+      assert.fail(`only ${records.filter((r) => r.transition === "failed").length} failures were recorded, wanted ${count}: ${timers.describe()}`);
     },
     cleanup: async () => {
       management.stopSupervision();

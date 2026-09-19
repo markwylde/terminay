@@ -189,6 +189,37 @@ export function recallDashboardViewMode(): DashboardViewMode {
 	}
 }
 
+/**
+ * Whether this device bands the Board by project.
+ *
+ * The same kind of hint as the view mode it refines, and kept beside it for the
+ * same reason. Anything other than a stored `true` is the ungrouped Board.
+ */
+const DASHBOARD_BOARD_GROUPED_STORAGE_KEY =
+	'terminay.view.dashboard-board-grouped.v1';
+
+export function rememberDashboardBoardGrouped(grouped: boolean): void {
+	try {
+		globalThis.localStorage?.setItem(
+			DASHBOARD_BOARD_GROUPED_STORAGE_KEY,
+			grouped ? 'true' : 'false',
+		);
+	} catch {
+		/* A device that cannot remember still works; it starts ungrouped. */
+	}
+}
+
+export function recallDashboardBoardGrouped(): boolean {
+	try {
+		return (
+			globalThis.localStorage?.getItem(DASHBOARD_BOARD_GROUPED_STORAGE_KEY) ===
+			'true'
+		);
+	} catch {
+		return false;
+	}
+}
+
 export interface AdoptedTerminalActivation {
 	/** True when this device asked for the terminal: a tab dragged into this
 	 * project, or a terminal this device created. False when it merely appeared

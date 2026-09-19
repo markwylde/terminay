@@ -39,12 +39,16 @@ import {
 	DASHBOARD_VIEW_MODE_LABELS,
 	DASHBOARD_VIEW_MODES,
 	type DashboardBoardItem,
+	type DashboardBoardLane,
 	type DashboardViewMode,
 	buildDashboardBoardItems,
+	buildDashboardBoardLanes,
 	groupBoardItemsByColumn,
 } from './dashboardViewMode';
 import {
+	recallDashboardBoardGrouped,
 	recallDashboardViewMode,
+	rememberDashboardBoardGrouped,
 	rememberDashboardViewMode,
 } from './localViewState';
 import './workspaceDashboard.css';
@@ -460,13 +464,17 @@ function BoardCard({
 	now,
 	onActivateAgent,
 	onActivateRow,
+	showProject = true,
 }: {
 	item: DashboardBoardItem;
 	now: number;
 	onActivateAgent: DashboardActivateAgent;
 	onActivateRow: DashboardActivateRow;
+	/** False inside a lane, which has already named the project. */
+	showProject?: boolean;
 }) {
-	const { agent, panel, project, serverId, serverLabel } = item;
+	const { agent, panel, project, serverId } = item;
+	const serverLabel = showProject ? item.serverLabel : undefined;
 	if (agent !== undefined) {
 		return (
 			<AgentCard
@@ -477,7 +485,7 @@ function BoardCard({
 				}
 				project={project}
 				serverLabel={serverLabel}
-				showProject
+				showProject={showProject}
 			/>
 		);
 	}
@@ -488,7 +496,7 @@ function BoardCard({
 			project={project}
 			row={panel}
 			serverLabel={serverLabel}
-			showProject
+			showProject={showProject}
 		/>
 	);
 }
@@ -538,6 +546,112 @@ function BoardColumn({
 				)}
 			</div>
 		</section>
+	);
+}
+
+/**
+ * The grouped Board: the same four columns, banded by project.
+ *
+ * The column names are stated once, above every lane, so a lane is read across
+ * rather than re-learned. A narrow window cannot hold four cells side by side,
+ * so there each cell names its own column and an empty cell steps aside.
+ */
+function BoardLanes({
+	lanes,
+	now,
+	onActivateAgent,
+	onActivateRow,
+}: {
+	lanes: readonly DashboardBoardLane[];
+	now: number;
+	onActivateAgent: DashboardActivateAgent;
+	onActivateRow: DashboardActivateRow;
+}) {
+	return (
+		<div
+			className="workspace-dashboard__lanes"
+			data-terminay-dashboard-board-grouped="true"
+		>
+			<div className="workspace-dashboard__lanes-head">
+				{DASHBOARD_BOARD_COLUMNS.map((column) => (
+					<span
+						className={`workspace-dashboard__column-head workspace-dashboard__column--${column}`}
+						key={column}
+					>
+						<span className="workspace-dashboard__column-name">
+							{DASHBOARD_BOARD_COLUMN_LABELS[column]}
+						</span>
+						<span className="workspace-dashboard__column-count">
+							{lanes.reduce(
+								(total, lane) => total + lane.columns[column].length,
+								0,
+							)}
+						</span>
+					</span>
+				))}
+			</div>
+			{lanes.length === 0 ? (
+				<p className="workspace-dashboard__column-empty">
+					Nothing is open in any project
+				</p>
+			) : null}
+			{lanes.map((lane) => (
+				<section
+					aria-label={lane.project.title}
+					className="workspace-dashboard__lane"
+					data-terminay-dashboard-lane={lane.project.projectId}
+					key={lane.key}
+					style={{ '--row-color': lane.project.color } as CSSProperties}
+				>
+					<button
+						className="workspace-dashboard__lane-head"
+						data-terminay-dashboard-project={lane.project.projectId}
+						onClick={() => onActivateRow(lane.serverId, lane.project)}
+						type="button"
+					>
+						<span className="workspace-dashboard__swatch" aria-hidden="true" />
+						<span className="workspace-dashboard__title">
+							{lane.project.emoji ? `${lane.project.emoji} ` : ''}
+							{lane.project.title}
+						</span>
+						{lane.serverLabel === undefined ? null : (
+							<span className="workspace-dashboard__server">
+								{lane.serverLabel}
+							</span>
+						)}
+						<span className="workspace-dashboard__column-count">
+							{lane.total}
+						</span>
+					</button>
+					<div className="workspace-dashboard__lane-cells">
+						{DASHBOARD_BOARD_COLUMNS.map((column) => {
+							const items = lane.columns[column];
+							return (
+								<div
+									className={`workspace-dashboard__lane-cell workspace-dashboard__column--${column}${items.length === 0 ? ' workspace-dashboard__lane-cell--empty' : ''}`}
+									data-terminay-dashboard-column={column}
+									key={column}
+								>
+									<span className="workspace-dashboard__lane-cell-label workspace-dashboard__column-name">
+										{DASHBOARD_BOARD_COLUMN_LABELS[column]}
+									</span>
+									{items.map((item) => (
+										<BoardCard
+											item={item}
+											key={item.key}
+											now={now}
+											onActivateAgent={onActivateAgent}
+											onActivateRow={onActivateRow}
+											showProject={false}
+										/>
+									))}
+								</div>
+							);
+						})}
+					</div>
+				</section>
+			))}
+		</div>
 	);
 }
 
@@ -721,6 +835,9 @@ export function WorkspaceDashboard({
 	// Transient by design: a filter is what you are doing right now, not a
 	// setting. It is never persisted and never leaves this device.
 	const [filter, setFilter] = useState('');
+	const [boardGrouped, setBoardGrouped] = useState(
+		recallDashboardBoardGrouped,
+	);
 	const now = useNow();
 
 	const allGroups = useMemo(
@@ -741,6 +858,10 @@ export function WorkspaceDashboard({
 	const selectMode = (next: DashboardViewMode) => {
 		setMode(next);
 		rememberDashboardViewMode(next);
+	};
+	const selectBoardGrouped = (next: boolean) => {
+		setBoardGrouped(next);
+		rememberDashboardBoardGrouped(next);
 	};
 
 	return (
@@ -773,6 +894,17 @@ export function WorkspaceDashboard({
 								value={filter}
 							/>
 						</label>
+						{mode === 'board' ? (
+							<label className="workspace-dashboard__toggle">
+								<input
+									checked={boardGrouped}
+									data-terminay-dashboard-group-by-project="true"
+									onChange={(event) => selectBoardGrouped(event.target.checked)}
+									type="checkbox"
+								/>
+								Group by project
+							</label>
+						) : null}
 						<ViewModeSwitcher mode={mode} onChange={selectMode} />
 					</div>
 				</div>
@@ -802,6 +934,7 @@ export function WorkspaceDashboard({
 				</div>
 			</header>
 			<DashboardBody
+				boardGrouped={boardGrouped}
 				emptyLabel={
 					filtering
 						? 'Nothing matches this filter. The workspace is not empty — clear the filter to see it.'
@@ -818,6 +951,7 @@ export function WorkspaceDashboard({
 }
 
 function DashboardBody({
+	boardGrouped,
 	emptyLabel,
 	groups,
 	mode,
@@ -825,6 +959,7 @@ function DashboardBody({
 	onActivate,
 	onActivateAgent,
 }: {
+	boardGrouped: boolean;
 	emptyLabel: string;
 	groups: readonly ServerScopedRow<DashboardProjectGroup>[];
 	mode: DashboardViewMode;
@@ -834,10 +969,17 @@ function DashboardBody({
 }): ReactNode {
 	const boardColumns = useMemo(
 		() =>
-			mode === 'board'
+			mode === 'board' && !boardGrouped
 				? groupBoardItemsByColumn(buildDashboardBoardItems(groups))
 				: undefined,
-		[groups, mode],
+		[boardGrouped, groups, mode],
+	);
+	const boardLanes = useMemo(
+		() =>
+			mode === 'board' && boardGrouped
+				? buildDashboardBoardLanes(groups)
+				: undefined,
+		[boardGrouped, groups, mode],
 	);
 	const rows = useMemo(
 		() => (mode === 'list' ? flattenCrossServerDashboardGroups(groups) : []),
@@ -851,6 +993,17 @@ function DashboardBody({
 			<div className="workspace-dashboard__list">
 				<p className="workspace-dashboard__empty">{emptyLabel}</p>
 			</div>
+		);
+	}
+
+	if (boardLanes !== undefined) {
+		return (
+			<BoardLanes
+				lanes={boardLanes}
+				now={now}
+				onActivateAgent={onActivateAgent}
+				onActivateRow={onActivate}
+			/>
 		);
 	}
 
