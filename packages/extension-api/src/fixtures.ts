@@ -1,32 +1,45 @@
 import { namespacedId } from './constants.js';
 import type {
-	AgentProviderContribution,
+	AgentSessionSourceContribution,
 	LanguageServerContribution,
+	McpInstallTargetContribution,
 	TerminayExtensionManifest,
 } from './types.js';
 
 export const fixtureExtensionId = 'dev.terminay.fixture';
 
-/** A provider-neutral manifest contribution for public agent SDK conformance. */
-export const validAgentProviderContributionFixture: AgentProviderContribution =
+/** A harness-neutral session source contribution for public agent SDK conformance. */
+export const validAgentSessionSourceContributionFixture: AgentSessionSourceContribution =
 	Object.freeze({
-		id: namespacedId(fixtureExtensionId, 'agent'),
-		displayName: 'Fixture Agent',
-		processMatchers: [{ executableName: 'fixture-agent' }],
-		mappings: [{ mappingVersion: '0.1', providerVersionRange: '>=0.1' }],
-		requiredEnvironmentVariables: ['FIXTURE_AGENT_HOME'],
-	} satisfies AgentProviderContribution);
+		id: namespacedId(fixtureExtensionId, 'agents'),
+		displayName: 'Fixture Agents',
+		harnesses: [
+			{ id: 'fixture-agent', displayName: 'Fixture Agent' },
+			{ id: 'other-agent', displayName: 'Other Agent' },
+		],
+		environmentVariables: ['FIXTURE_AGENT_HOME'],
+	} satisfies AgentSessionSourceContribution);
+
+/** A client-neutral MCP install target contribution. */
+export const validMcpInstallTargetContributionFixture: McpInstallTargetContribution =
+	Object.freeze({
+		id: namespacedId(fixtureExtensionId, 'fixture-client'),
+		displayName: 'Fixture Client',
+	} satisfies McpInstallTargetContribution);
 
 export const validManifestFixture: TerminayExtensionManifest = Object.freeze({
 	manifestVersion: 1,
 	id: fixtureExtensionId,
 	displayName: 'Fixture Agent Extension',
 	description: 'A portable conformance fixture.',
-	api: '^2.0.0',
+	api: '^3.0.0',
 	engines: { terminay: '>=1.0.0', node: '>=22' },
 	entrypoint: 'dist/extension.js',
-	permissions: ['agent-observation'],
-	contributes: { agentProviders: [validAgentProviderContributionFixture] },
+	permissions: ['agent-observation', 'mcp-registration'],
+	contributes: {
+		agentSessionSources: [validAgentSessionSourceContributionFixture],
+		mcpInstallTargets: [validMcpInstallTargetContributionFixture],
+	},
 } satisfies TerminayExtensionManifest);
 
 /** The agent manifest under its historical name, kept for existing callers. */
@@ -53,7 +66,7 @@ export const validLanguageServerManifestFixture: TerminayExtensionManifest =
 		id: languageServerFixtureExtensionId,
 		displayName: 'Fixture Language Extension',
 		description: 'A portable language server conformance fixture.',
-		api: '^2.1.0',
+		api: '^3.0.0',
 		engines: { terminay: '>=1.0.0', node: '>=22' },
 		entrypoint: 'dist/extension.js',
 		permissions: [],
@@ -83,10 +96,10 @@ export const hostileManifestFixtures: Readonly<Record<string, unknown>> =
 		wrongNamespace: {
 			...validManifestFixture,
 			contributes: {
-				agentProviders: [
+				agentSessionSources: [
 					{
-						...validAgentProviderContributionFixture,
-						id: 'example.other/agent',
+						...validAgentSessionSourceContributionFixture,
+						id: 'example.other/agents',
 					},
 				],
 			},
@@ -94,10 +107,34 @@ export const hostileManifestFixtures: Readonly<Record<string, unknown>> =
 		coreCollision: {
 			...validManifestFixture,
 			contributes: {
-				agentProviders: [
-					{ ...validAgentProviderContributionFixture, id: 'terminal.create' },
+				agentSessionSources: [
+					{
+						...validAgentSessionSourceContributionFixture,
+						id: 'terminal.create',
+					},
 				],
 			},
+		},
+		/** The terminal-scoped provider contribution kind was removed in 3.0. */
+		agentProviders: {
+			...validManifestFixture,
+			contributes: {
+				agentProviders: [
+					{
+						id: namespacedId(fixtureExtensionId, 'agent'),
+						displayName: 'Fixture Agent',
+						processMatchers: [{ executableName: 'fixture-agent' }],
+					},
+				],
+			},
+		},
+		missingAgentObservation: {
+			...validManifestFixture,
+			permissions: ['mcp-registration'],
+		},
+		missingMcpRegistration: {
+			...validManifestFixture,
+			permissions: ['agent-observation'],
 		},
 		unknownPermission: {
 			...validManifestFixture,

@@ -14,6 +14,7 @@ const {
 	selectAgentStatusesByProvider,
 	selectAgentStatusesByState,
 	selectAgentStatusesForTerminal,
+	selectLiveAgentStatusesForProject,
 	selectLiveAgentStatusesForTerminal,
 	selectRootAgentStatuses,
 	selectRootAgentStatusForTerminal,
@@ -380,3 +381,91 @@ async function importStore() {
 	});
 	return import(outputPath);
 }
+
+test('project selection includes scoped external sessions and their children but no tab status', () => {
+	const common = {
+		provider: 'com.terminay.builtin-agents/agents',
+		state: 'done',
+		stateStartedAt: 1,
+		updatedAt: 1,
+		lastEventKind: 'agent.metadata',
+		lastEventSequence: 0,
+		active: true,
+		activeTools: [],
+		unread: false,
+	};
+	const externalRoot = {
+		...common,
+		entryId: 'src/ext',
+		kind: 'root',
+		agentId: 'ext',
+		sessionId: 'ext',
+		activationTerminalSessionId: null,
+		terminalSessionId: null,
+		inProcess: false,
+		external: true,
+		projectIds: ['project-a'],
+	};
+	const externalChild = {
+		...common,
+		entryId: 'src/ext/child',
+		kind: 'subagent',
+		agentId: 'child',
+		sessionId: 'ext',
+		activationTerminalSessionId: null,
+		terminalSessionId: null,
+		inProcess: true,
+		parentAgentId: 'ext',
+		parentEntryId: 'src/ext',
+		external: true,
+		projectIds: [],
+	};
+	const boundElsewhere = {
+		...common,
+		entryId: 'src/bound',
+		kind: 'root',
+		agentId: 'bound',
+		sessionId: 'bound',
+		activationTerminalSessionId: 'terminal-a',
+		terminalSessionId: 'terminal-a',
+		inProcess: false,
+		external: false,
+		projectIds: [],
+	};
+	const unrelated = {
+		...externalRoot,
+		entryId: 'src/other',
+		agentId: 'other',
+		sessionId: 'other',
+		projectIds: ['project-b'],
+	};
+	const snapshot = {
+		revision: 1,
+		eventCursors: {},
+		entries: Object.fromEntries(
+			[externalRoot, externalChild, boundElsewhere, unrelated].map((entry) => [
+				entry.entryId,
+				entry,
+			]),
+		),
+	};
+	assert.deepEqual(
+		selectLiveAgentStatusesForProject(snapshot, 'project-a', new Set(['terminal-a']))
+			.map((entry) => entry.entryId)
+			.sort(),
+		['src/bound', 'src/ext', 'src/ext/child'],
+	);
+	assert.deepEqual(
+		selectLiveAgentStatusesForProject(snapshot, 'project-b').map((entry) => entry.entryId),
+		['src/other'],
+	);
+	assert.deepEqual(selectAgentStatusesForTerminal(snapshot, null), []);
+	// An entry flagged external never drives a tab, even if it names one.
+	const flagged = {
+		...snapshot,
+		entries: {
+			'src/ext': { ...externalRoot, activationTerminalSessionId: 'terminal-a' },
+		},
+	};
+	assert.deepEqual(selectLiveAgentStatusesForTerminal(flagged, 'terminal-a'), []);
+});

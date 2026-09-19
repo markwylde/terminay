@@ -41,7 +41,7 @@ const featureRows = [
 			'scripts/task9-mcp-control-environment.test.mjs',
 			'packages/responsive-ui/test/ui.test.mjs',
 			'scripts/mcp-stdio.test.mjs',
-			'scripts/mcp-install-providers.test.mjs',
+			'extensions/builtin-agents/test/mcp-install-providers.test.mjs',
 			'e2e/shared-production-routes.spec.ts',
 			'openspec/adr/evidence/task19-mobile-chromium-mcp.md',
 		],

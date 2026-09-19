@@ -157,7 +157,15 @@ function hasNativeSettingsHost(): boolean {
 	return typeof window !== 'undefined' && window.terminayHost !== undefined;
 }
 
-function selectServerSettings(value: JsonValue, shape: JsonValue): JsonValue {
+/** Server settings whose keys are data, not schema: the whole map is sent,
+ * because the current value's keys cannot say which new ones are allowed. */
+const OPEN_SERVER_SETTING_MAPS = new Set(['agentIntegration.harnesses']);
+
+function selectServerSettings(
+	value: JsonValue,
+	shape: JsonValue,
+	path = '',
+): JsonValue {
 	if (
 		typeof value !== 'object' ||
 		value === null ||
@@ -175,11 +183,12 @@ function selectServerSettings(value: JsonValue, shape: JsonValue): JsonValue {
 				typeof childShape === 'object' &&
 				childShape !== null &&
 				!Array.isArray(childShape) &&
+				!OPEN_SERVER_SETTING_MAPS.has(`${path}${key}`) &&
 				typeof child === 'object' &&
 				child !== null &&
 				!Array.isArray(child)
 			)
-				return [[key, selectServerSettings(child, childShape)]];
+				return [[key, selectServerSettings(child, childShape, `${path}${key}.`)]];
 			return [[key, child]];
 		}),
 	) as JsonValue;

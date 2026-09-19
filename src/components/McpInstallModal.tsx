@@ -158,7 +158,7 @@ export function McpInstallModal({
 				setBusyAgent(null);
 			}
 		},
-		[busyAgent, refreshStatus],
+		[busyAgent, client, refreshStatus],
 	);
 
 	if (!open) {
@@ -206,8 +206,8 @@ export function McpInstallModal({
 				</div>
 
 				<p className="mcp-install-description">
-					Let Claude Code, Codex, Cursor CLI, Gemini CLI, and OpenCode running in a
-					Terminay terminal control the tabs in this window.
+					Let coding agents running in a Terminay terminal control the tabs in
+					this window.
 				</p>
 
 				{loadError ? (
@@ -219,18 +219,12 @@ export function McpInstallModal({
 				) : null}
 
 				{status ? (
-					<ul className="mcp-install-list">
-						{status.agents.map((agent) => (
-							<McpAgentRow
-								key={agent.id}
-								agent={agent}
-								busy={busyAgent === agent.id}
-								disabled={busyAgent !== null && busyAgent !== agent.id}
-								error={rowErrors[agent.id]}
-								onAction={() => void runAction(agent.id, agent.installed)}
-							/>
-						))}
-					</ul>
+					<McpInstallTargetList
+						status={status}
+						busyTarget={busyAgent}
+						rowErrors={rowErrors}
+						onAction={(agent) => void runAction(agent.id, agent.installed)}
+					/>
 				) : null}
 
 				<div className="project-edit-actions">
@@ -240,6 +234,49 @@ export function McpInstallModal({
 				</div>
 			</div>
 		</div>
+	);
+}
+
+export interface McpInstallTargetListProps {
+	status: McpInstallStatus;
+	busyTarget: McpAgentId | null;
+	rowErrors: Partial<Record<McpAgentId, string>>;
+	onAction: (agent: McpAgentInstallState) => void;
+}
+
+/**
+ * One row per contributed install target, keyed by target id. With no targets
+ * the Built-in Agents extension that contributes them is disabled or missing,
+ * so there is nothing to install.
+ */
+export function McpInstallTargetList({
+	status,
+	busyTarget,
+	rowErrors,
+	onAction,
+}: McpInstallTargetListProps): JSX.Element {
+	if (status.agents.length === 0) {
+		return (
+			<div className="mcp-install-empty" role="note">
+				MCP install targets come from the Built-in Agents extension, which is
+				disabled or missing on this server. Enable it in Settings → Extensions
+				to install Terminay MCP.
+			</div>
+		);
+	}
+	return (
+		<ul className="mcp-install-list">
+			{status.agents.map((agent) => (
+				<McpAgentRow
+					key={agent.id}
+					agent={agent}
+					busy={busyTarget === agent.id}
+					disabled={busyTarget !== null && busyTarget !== agent.id}
+					error={rowErrors[agent.id]}
+					onAction={() => onAction(agent)}
+				/>
+			))}
+		</ul>
 	);
 }
 
@@ -267,10 +304,12 @@ function McpAgentRow({
 				? 'Not installed'
 				: agent.state === 'changed'
 					? 'Changed — review config'
-					: 'Unavailable';
+					: agent.state === 'error'
+						? 'Error'
+						: 'Unavailable';
 
 	return (
-		<li className="mcp-install-row">
+		<li className="mcp-install-row" data-mcp-install-target={agent.id}>
 			<div className="mcp-install-row-main">
 				<span
 					className={`mcp-install-status-icon${agent.state === 'installed' ? ' mcp-install-status-icon--installed' : ''}`}

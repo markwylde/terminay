@@ -122,9 +122,9 @@ export function validateNpmLockfile(
 		}
 		if (record.link === true)
 			throw new Error('linked dependencies are unsupported');
-		const scripts = record.hasInstallScript;
-		if (scripts === true)
-			throw new Error('install-script-dependent packages are unsupported');
+		// `hasInstallScript` is not refused here: scripts never run, and whether a
+		// package needs its install script is decided on the materialized tree,
+		// where a prebuilt native module proves it does not.
 		for (const field of [
 			'dependencies',
 			'optionalDependencies',
@@ -168,6 +168,8 @@ async function inventoryTree(
 	root: string,
 ): Promise<readonly { path: string; size: number; hash: string }[]> {
 	const output: { path: string; size: number; hash: string }[] = [];
+	const scriptedPackages: string[] = [];
+	const nativeModules: string[] = [];
 	let bytes = 0;
 	async function walk(directory: string): Promise<void> {
 		for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -181,12 +183,16 @@ async function inventoryTree(
 			}
 			if (!entry.isFile())
 				throw new Error('extension trees can contain regular files only');
+			// A prebuilt `.node` module is accepted; a node-gyp build is not,
+			// because nothing may build or run package code during installation.
 			if (
-				relativePath.endsWith('.node') ||
 				relativePath.endsWith('/binding.gyp') ||
 				relativePath === 'binding.gyp'
 			)
-				throw new Error('native extension dependencies are unsupported');
+				throw new Error(
+					'native builds in extension dependencies are unsupported',
+				);
+			if (relativePath.endsWith('.node')) nativeModules.push(relativePath);
 			const contents = await readFile(absolute);
 			bytes += contents.byteLength;
 			output.push({
@@ -203,11 +209,18 @@ async function inventoryTree(
 					json.scripts !== null &&
 					Object.keys(json.scripts).some((name) => INSTALL_SCRIPTS.has(name))
 				)
-					throw new Error('install lifecycle scripts are unsupported');
+					scriptedPackages.push(relativePath.slice(0, -'package.json'.length));
 			}
 		}
 	}
 	await walk(root);
+	// Install scripts are never run. A package that ships a prebuilt native
+	// module under its own directory does not require its install script (it
+	// typically only fetches or verifies a prebuild); any other install script
+	// is required, so the package cannot work and the tree is refused.
+	for (const directory of scriptedPackages)
+		if (!nativeModules.some((path) => path.startsWith(directory)))
+			throw new Error('install lifecycle scripts are unsupported');
 	return output.sort((left, right) => left.path.localeCompare(right.path));
 }
 

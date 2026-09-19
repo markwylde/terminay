@@ -146,7 +146,19 @@ type AgentStatusEntryBase = {
 	agentId: string;
 	/** Provider session id of the root agent. */
 	sessionId: string;
-	activationTerminalSessionId: string;
+	/**
+	 * Terminal whose process tree owns the session, or `null` for an external
+	 * session that runs outside every Terminay terminal on its server.
+	 */
+	activationTerminalSessionId: string | null;
+	/** True when no Terminay terminal owns the session. External rows are inert. */
+	external: boolean;
+	/** Server-computed projects the session belongs to (directory or worktree). */
+	projectIds: readonly string[];
+	/** Harness id declared by the session source, for example `claude-code`. */
+	harness?: string;
+	/** Display name the session source declared for `harness`. */
+	harnessDisplayName?: string;
 	displayName?: string;
 	providerDisplayName?: string;
 	promptText?: string;
@@ -177,7 +189,8 @@ type AgentStatusEntryBase = {
 
 export type RootAgentStatusEntry = AgentStatusEntryBase & {
 	kind: 'root';
-	terminalSessionId: string;
+	/** `null` for an external session. */
+	terminalSessionId: string | null;
 	inProcess: false;
 };
 

@@ -78,7 +78,7 @@ test('development builds the same generated server workspace used by releases', 
 		true,
 	);
 	assert.equal(
-		desktopViteTask.dependsOn.includes('terminay-agent-codex#compile'),
+		desktopViteTask.dependsOn.includes('terminay-builtin-agents#compile'),
 		true,
 	);
 	assert.doesNotMatch(

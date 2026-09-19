@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { spawn } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import test from 'node:test'
+import { createClaudeFixtureDriver } from '@markwylde/all-your-agents/testing'
 import {
   DirectoryBuiltInExtensionArtifactSource,
   ExtensionInstaller,
@@ -10,17 +12,20 @@ import {
 } from '../packages/server-core/dist/extensions/index.js'
 import {
   AgentStatusService,
+  ProjectAgentScope,
+  SessionSourceBridge,
+  SessionSourceSupervisor,
   TerminalActivityService,
 } from '../packages/server-core/dist/index.js'
 
-const CODEX_ID = 'com.terminay.agent.codex'
-const CODEX_PACKAGE = 'terminay-agent-codex'
+const AGENTS_ID = 'com.terminay.builtin-agents'
+const AGENTS_PACKAGE = 'terminay-builtin-agents'
 // Held back from the first install so a later bundle proves a newly
 // bundled floor is default-enabled.
-const LATE_BUNDLED_ID = 'com.terminay.agent.opencode'
+const LATE_BUNDLED_ID = 'com.terminay.language.typescript'
 const OVERRIDE_VERSION = '9.9.9'
 const OVERRIDE_INTEGRITY = `sha512-${Buffer.alloc(64, 9).toString('base64')}`
-const CODEX_PROVIDER_ID = `${CODEX_ID}/cli`
+const AGENTS_SOURCE_ID = `${AGENTS_ID}/agents`
 
 class FilteredBuiltIns {
   constructor(source, omitted = new Set()) {
@@ -38,8 +43,8 @@ class FilteredBuiltIns {
 class CorruptOneBuiltIn extends FilteredBuiltIns {
   async materialize(artifact, root, signal) {
     await super.materialize(artifact, root, signal)
-    if (artifact.extensionId === CODEX_ID) {
-      await writeFile(join(root, 'node_modules', CODEX_PACKAGE, ...artifact.manifestMetadata.entrypoint.split('/')), 'tampered\n')
+    if (artifact.extensionId === AGENTS_ID) {
+      await writeFile(join(root, 'node_modules', AGENTS_PACKAGE, ...artifact.manifestMetadata.entrypoint.split('/')), 'tampered\n')
     }
   }
 }
@@ -50,7 +55,7 @@ class OverrideRegistry {
     this.npmVersion = '12.0.2'
   }
   async resolve(packageName, selector) {
-    assert.equal(packageName, CODEX_PACKAGE)
+    assert.equal(packageName, AGENTS_PACKAGE)
     assert.equal(selector, OVERRIDE_VERSION)
     return {
       packageName,
@@ -73,7 +78,7 @@ class OverrideRegistry {
 function overrideTree(manifest, tarballUrl) {
   const entrypoint = manifest.entrypoint
   const packageJson = JSON.stringify({
-    name: CODEX_PACKAGE,
+    name: AGENTS_PACKAGE,
     version: OVERRIDE_VERSION,
     type: 'module',
     exports: { '.': `./${entrypoint}` },
@@ -84,7 +89,7 @@ function overrideTree(manifest, tarballUrl) {
     lockfileVersion: 3,
     packages: {
       '': {},
-      [`node_modules/${CODEX_PACKAGE}`]: {
+      [`node_modules/${AGENTS_PACKAGE}`]: {
         version: OVERRIDE_VERSION,
         resolved: tarballUrl,
         integrity: OVERRIDE_INTEGRITY,
@@ -93,8 +98,8 @@ function overrideTree(manifest, tarballUrl) {
   })
   return { files: [
     ['package-lock.json', lock],
-    [`node_modules/${CODEX_PACKAGE}/package.json`, packageJson],
-    [`node_modules/${CODEX_PACKAGE}/${entrypoint}`, source],
+    [`node_modules/${AGENTS_PACKAGE}/package.json`, packageJson],
+    [`node_modules/${AGENTS_PACKAGE}/${entrypoint}`, source],
   ] }
 }
 
@@ -107,36 +112,36 @@ function active(state, extensionId) {
 async function exercisePackagedRoot(label, artifactRoot) {
   const source = new DirectoryBuiltInExtensionArtifactSource(resolve(artifactRoot))
   const artifacts = await source.list()
-  assert.equal(artifacts.length, 6, `${label} must expose the complete built-in inventory`)
-  const codex = artifacts.find((artifact) => artifact.extensionId === CODEX_ID)
-  assert.ok(codex)
-  const registry = new OverrideRegistry(codex.manifestMetadata)
+  assert.equal(artifacts.length, 2, `${label} must expose the complete built-in inventory`)
+  const agentsArtifact = artifacts.find((artifact) => artifact.extensionId === AGENTS_ID)
+  assert.ok(agentsArtifact)
+  const registry = new OverrideRegistry(agentsArtifact.manifestMetadata)
   const dataRoot = await mkdtemp(join(tmpdir(), `terminay-${label}-built-ins-`))
   try {
     const initialSource = new FilteredBuiltIns(source, new Set([LATE_BUNDLED_ID]))
     let installer = new ExtensionInstaller({ dataRoot, registryClient: registry, materializer: registry, builtIns: initialSource })
     let state = await installer.initialize()
-    assert.equal(Object.keys(state.extensions).length, 5)
+    assert.equal(Object.keys(state.extensions).length, 1)
     assert.ok(Object.values(state.extensions).every((record) => record.enabled))
 
-    await installer.disable(CODEX_ID)
+    await installer.disable(AGENTS_ID)
     installer = new ExtensionInstaller({ dataRoot, registryClient: registry, materializer: registry, builtIns: initialSource })
     state = await installer.initialize()
-    assert.equal(state.extensions[CODEX_ID].enabled, false, `${label} restart must preserve disablement`)
+    assert.equal(state.extensions[AGENTS_ID].enabled, false, `${label} restart must preserve disablement`)
 
-    const preview = await installer.preview(`${CODEX_PACKAGE}@${OVERRIDE_VERSION}`)
+    const preview = await installer.preview(`${AGENTS_PACKAGE}@${OVERRIDE_VERSION}`)
     state = await installer.confirm(preview.previewDigest)
-    assert.equal(active(state, CODEX_ID).version, OVERRIDE_VERSION)
-    assert.equal(state.extensions[CODEX_ID].enabled, false)
+    assert.equal(active(state, AGENTS_ID).version, OVERRIDE_VERSION)
+    assert.equal(state.extensions[AGENTS_ID].enabled, false)
 
     installer = new ExtensionInstaller({ dataRoot, registryClient: registry, materializer: registry, builtIns: source })
     state = await installer.initialize()
     assert.equal(state.extensions[LATE_BUNDLED_ID].enabled, true, `${label} must default-enable a newly bundled floor`)
-    assert.equal(active(state, CODEX_ID).version, OVERRIDE_VERSION, `${label} must retain the npm override`)
+    assert.equal(active(state, AGENTS_ID).version, OVERRIDE_VERSION, `${label} must retain the npm override`)
 
-    state = await installer.remove(CODEX_ID)
-    assert.equal(active(state, CODEX_ID).version, codex.version, `${label} removal must roll back to the packaged floor`)
-    assert.equal(state.extensions[CODEX_ID].enabled, false)
+    state = await installer.remove(AGENTS_ID)
+    assert.equal(active(state, AGENTS_ID).version, agentsArtifact.version, `${label} removal must roll back to the packaged floor`)
+    assert.equal(state.extensions[AGENTS_ID].enabled, false)
   } finally {
     await rm(dataRoot, { recursive: true, force: true })
   }
@@ -146,96 +151,13 @@ async function exercisePackagedRoot(label, artifactRoot) {
     const bad = new CorruptOneBuiltIn(source)
     const installer = new ExtensionInstaller({ dataRoot: badRoot, registryClient: registry, materializer: registry, builtIns: bad })
     const state = await installer.initialize()
-    assert.equal(state.extensions[CODEX_ID].state, 'failed')
+    assert.equal(state.extensions[AGENTS_ID].state, 'failed')
     assert.equal(Object.values(state.extensions).filter((record) => record.state === 'failed').length, 1, JSON.stringify(state.extensions))
-    assert.equal(Object.keys(state.extensions).length, 6)
+    assert.equal(Object.keys(state.extensions).length, 2)
   } finally {
     await rm(badRoot, { recursive: true, force: true })
   }
   return await readFile(join(resolve(artifactRoot), 'inventory.v1.json'))
-}
-
-function codexRuntimeBroker({ agentStatus, identity, publications, cancellations }) {
-  const rollout = Object.freeze({ id: 'rollout-fixture' })
-  const sessionIndex = Object.freeze({ id: 'session-index-fixture' })
-  const sessions = Object.freeze({ id: 'sessions-fixture' })
-  const rolloutBytes = new TextEncoder().encode(`${JSON.stringify({
-    timestamp: '2026-08-24T12:00:00.000Z',
-    type: 'session_meta',
-    payload: {
-      id: 'packaged-codex-session',
-      originator: 'codex-tui',
-      source: 'cli',
-      model: 'gpt-packaged',
-    },
-  })}\n`)
-  let rolloutDelivered = false
-  return {
-    async observe(request) {
-      switch (request.operation) {
-        case 'process.descendants':
-          return [{ handle: { id: 'codex-process' }, executableName: 'codex' }]
-        case 'process.open-files':
-          return [{
-            handle: rollout,
-            path: '/fixture/codex/sessions/2026/08/24/rollout-fixture.jsonl',
-            access: 'writable',
-          }]
-        case 'process.environment':
-          return { CODEX_HOME: '/fixture/codex' }
-        case 'filesystem.realpath':
-          return request.payload.handle
-        case 'filesystem.stat':
-          return {
-            handle: request.payload.handle,
-            kind: 'file',
-            size: rolloutBytes.byteLength,
-            modifiedAt: '2026-08-24T12:00:00.000Z',
-          }
-        case 'filesystem.read':
-          return [...rolloutBytes]
-        case 'filesystem.resolve-relative-to-environment':
-          return sessionIndex
-        case 'filesystem.resolve-directory-relative-to-environment':
-          return sessions
-        case 'filesystem.list-directory':
-          return { entries: [] }
-        case 'filesystem.follow': {
-          const watcherId = request.payload.watcherId
-          if (watcherId === undefined)
-            return { watcherId: request.payload.handle.id === rollout.id ? 'rollout-watch' : 'index-watch' }
-          if (watcherId === 'rollout-watch' && !rolloutDelivered) {
-            rolloutDelivered = true
-            return { events: [{ type: 'append', bytes: [...rolloutBytes] }], closed: false }
-          }
-          return { events: [], closed: false }
-        }
-        case 'filesystem.unfollow':
-          return { stopped: true }
-        case 'filesystem.watch-directory':
-          return request.payload.watcherId === undefined
-            ? { watcherId: 'sessions-watch', snapshot: { entries: [] } }
-            : { listings: [], closed: false }
-        case 'filesystem.unwatch-directory':
-          return { stopped: true }
-        default:
-          throw new Error(`unexpected packaged Codex observation: ${request.operation}`)
-      }
-    },
-    async publish(request) {
-      publications.push(request)
-      return agentStatus.ingestExtensionLifecycle(
-        identity,
-        request.providerId,
-        request.mappingVersion,
-        request.binding,
-        request.events,
-      )
-    },
-    terminalCancelled(request) {
-      cancellations.push(request)
-    },
-  }
 }
 
 async function startEnabled(installer, hosts, dataRoot) {
@@ -254,7 +176,9 @@ async function startEnabled(installer, hosts, dataRoot) {
       dataDirectory: directories.data,
       cacheDirectory: directories.cache,
       permissions: descriptor.manifest.permissions,
-      agentProviders: descriptor.agentProviders,
+      agentSessionSources: descriptor.agentSessionSources,
+      mcpInstallTargets: descriptor.mcpInstallTargets,
+      languageServers: descriptor.languageServers,
       extensionDependencies: descriptor.manifest.extensionDependencies ?? [],
     })
   }
@@ -278,38 +202,57 @@ async function waitFor(assertion, label) {
 async function exercisePackagedHostRuntime(label, artifactRoot) {
   const source = new DirectoryBuiltInExtensionArtifactSource(resolve(artifactRoot))
   const artifacts = await source.list()
-  const codex = artifacts.find((artifact) => artifact.extensionId === CODEX_ID)
-  assert.ok(codex, `${label} must package Codex for lifecycle admission`)
+  const agentsArtifact = artifacts.find((artifact) => artifact.extensionId === AGENTS_ID)
+  assert.ok(agentsArtifact, `${label} must package the built-in agents extension`)
+  const sessionSource = agentsArtifact.manifestMetadata.contributes.agentSessionSources?.find((contribution) => contribution.id === AGENTS_SOURCE_ID)
   assert.deepEqual(
-    codex.manifestMetadata.contributes.agentProviders?.find((provider) => provider.id === CODEX_PROVIDER_ID)?.requiredEnvironmentVariables,
-    ['CODEX_HOME'],
-    `${label} must package Codex's declared terminal-scoped observation input`,
+    sessionSource?.harnesses.map((harness) => harness.id),
+    ['claude-code', 'codex', 'grok', 'oh-my-pi'],
+    `${label} must package the four library harnesses`,
   )
-  const registry = new OverrideRegistry(codex.manifestMetadata)
-  const dataRoot = await mkdtemp(join(tmpdir(), `terminay-${label}-built-in-host-`))
+  assert.ok(sessionSource.environmentVariables.includes('CLAUDE_CONFIG_DIR'), `${label} must declare the harness home variables`)
+  const registry = new OverrideRegistry(agentsArtifact.manifestMetadata)
+  const dataRoot = await realpath(await mkdtemp(join(tmpdir(), `terminay-${label}-built-in-host-`)))
+  const project = join(dataRoot, 'project')
+  const claudeHome = join(dataRoot, 'claude-home')
+  await mkdir(project, { recursive: true })
+  const previousClaudeHome = process.env.CLAUDE_CONFIG_DIR
+  // The declared home variable reaches the packaged child from the host environment.
+  process.env.CLAUDE_CONFIG_DIR = claudeHome
+  // A real process stands in for the agent so liveness comes from the OS.
+  const agent = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60_000)'], { stdio: 'ignore' })
+  await new Promise((resolveSpawn) => agent.once('spawn', resolveSpawn))
+  await createClaudeFixtureDriver(claudeHome, Date.now()).createLiveSession({
+    id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+    pid: agent.pid,
+    cwd: project,
+    status: 'busy',
+    title: 'Packaged Claude session',
+  })
   let hosts
   let agentStatus
+  let scope
   try {
-    const publications = []
-    const cancellations = []
-    const identity = {
-      serverId: `${label}-server`,
-      projectId: `${label}-project`,
-      sessionId: `${label}-terminal`,
-    }
-    const activity = new TerminalActivityService({ serverId: identity.serverId })
-    activity.register(identity)
+    const activity = new TerminalActivityService({ serverId: `${label}-server` })
     agentStatus = new AgentStatusService({ activity })
     await agentStatus.start()
-    agentStatus.register(identity)
-    agentStatus.claimExtensionProvider(identity, CODEX_PROVIDER_ID)
-    const agents = codexRuntimeBroker({ agentStatus, identity, publications, cancellations })
+    scope = new ProjectAgentScope()
+    scope.setProject(`${label}-project`, project)
+    await scope.settled()
+    const bridge = new SessionSourceBridge({ agents: agentStatus, scope })
+    const supervisor = new SessionSourceSupervisor({ bridge, agents: agentStatus })
+    const packagedEntries = () => Object.values(agentStatus.getSnapshotForProject(`${label}-project`).entries)
+    const newHosts = () => {
+      const created = new ExtensionHostManager({ broker: { async request() {} }, agents: supervisor })
+      supervisor.attach(created)
+      return created
+    }
     let installer = new ExtensionInstaller({ dataRoot, registryClient: registry, materializer: registry, builtIns: source })
-    hosts = new ExtensionHostManager({ broker: { async request() {} }, agents })
+    hosts = newHosts()
     let state = await installer.initialize()
     const enabledByDefault = new Set(await installer.enabledExtensionIds())
-    for (const extensionId of ['com.terminay.agent.opencode', ...artifacts.map((artifact) => artifact.extensionId)]) {
-      assert.equal(enabledByDefault.has(extensionId), true, `${label} must enable ${extensionId} by default`)
+    for (const artifact of artifacts) {
+      assert.equal(enabledByDefault.has(artifact.extensionId), true, `${label} must enable ${artifact.extensionId} by default`)
     }
     await startEnabled(installer, hosts, dataRoot)
     assert.deepEqual(
@@ -318,69 +261,58 @@ async function exercisePackagedHostRuntime(label, artifactRoot) {
       `${label} first run must activate every staged extension child`,
     )
     assert.deepEqual(
-      hosts.agentProviderContributions().map((provider) => provider.id),
-      [
-        'com.terminay.agent.claude-code/cli',
-        CODEX_PROVIDER_ID,
-        'com.terminay.agent.grok/cli',
-        'com.terminay.agent.omp/cli',
-        'com.terminay.agent.opencode/cli',
-      ],
-      `${label} must publish all staged agent contributions only after activation`,
+      hosts.sessionSourceContributions().map((provider) => provider.contribution.id),
+      [AGENTS_SOURCE_ID],
+      `${label} must publish the staged session source only after activation`,
     )
-
-    await hosts.admitAgentTerminal({
-      context: {
-        contextId: `${label}-codex-context`,
-        serverId: identity.serverId,
-        projectId: identity.projectId,
-        terminalSessionId: identity.sessionId,
-        terminalIncarnationId: '1',
-        providerId: CODEX_PROVIDER_ID,
-      },
-      observationCapabilities: ['process-observation', 'filesystem-observation', 'agent-journal'],
-    })
     await waitFor(() => {
-      assert.ok(publications.some((publication) => publication.binding?.providerSessionId === 'packaged-codex-session'))
-      assert.ok(publications.some((publication) => publication.events.some((event) => event.kind === 'session.started')))
-      assert.ok(
-        Object.values(agentStatus.getSnapshot().entries).some((entry) => entry.provider === CODEX_PROVIDER_ID && entry.displayName === 'Codex'),
-        `${label} must reduce the packaged lifecycle into a canonical agent root`,
-      )
-    }, `${label} packaged Codex lifecycle admission`)
+      const entry = packagedEntries().find((candidate) => candidate.displayName === 'Packaged Claude session')
+      assert.ok(entry, `${label} must reduce the packaged library session into a canonical agent root`)
+      assert.equal(entry.state, 'working')
+      assert.equal(entry.external, true)
+      assert.equal(entry.harness, 'claude-code')
+    }, `${label} packaged built-in agents session`)
 
-    state = await installer.disable(CODEX_ID)
-    await hosts.stop(CODEX_ID)
-    assert.equal(state.extensions[CODEX_ID].enabled, false)
-    assert.equal(hosts.statuses().find((status) => status.extensionId === CODEX_ID)?.state, 'stopped')
-    assert.equal(hosts.agentProviderContributions().some((provider) => provider.id === CODEX_PROVIDER_ID), false)
-    assert.equal(cancellations.length, 1, `${label} disabling a live provider must drain its admitted terminal`)
+    state = await installer.disable(AGENTS_ID)
+    await hosts.stop(AGENTS_ID)
+    assert.equal(state.extensions[AGENTS_ID].enabled, false)
+    assert.equal(hosts.statuses().find((status) => status.extensionId === AGENTS_ID)?.state, 'stopped')
+    assert.equal(hosts.sessionSourceContributions().length, 0)
+    await waitFor(() => assert.equal(packagedEntries().length, 0), `${label} disabling the source must withdraw its sessions`)
     await hosts.shutdown()
 
     // This deliberately constructs a new server authority against the same
-    // isolated profile: release restart must not silently re-enable Codex.
+    // isolated profile: release restart must not silently re-enable the agents.
     installer = new ExtensionInstaller({ dataRoot, registryClient: registry, materializer: registry, builtIns: source })
-    hosts = new ExtensionHostManager({ broker: { async request() {} }, agents })
+    hosts = newHosts()
     state = await installer.initialize()
     await startEnabled(installer, hosts, dataRoot)
-    assert.equal(state.extensions[CODEX_ID].enabled, false, `${label} restart must preserve explicit disablement`)
-    assert.equal(hosts.statuses().find((status) => status.extensionId === CODEX_ID), undefined)
+    assert.equal(state.extensions[AGENTS_ID].enabled, false, `${label} restart must preserve explicit disablement`)
+    assert.equal(hosts.statuses().find((status) => status.extensionId === AGENTS_ID), undefined)
 
-    const preview = await installer.preview(`${CODEX_PACKAGE}@${OVERRIDE_VERSION}`)
+    const preview = await installer.preview(`${AGENTS_PACKAGE}@${OVERRIDE_VERSION}`)
     state = await installer.confirm(preview.previewDigest)
-    assert.equal(active(state, CODEX_ID).version, OVERRIDE_VERSION)
-    state = await installer.enable(CODEX_ID)
+    assert.equal(active(state, AGENTS_ID).version, OVERRIDE_VERSION)
+    state = await installer.enable(AGENTS_ID)
     await startEnabled(installer, hosts, dataRoot)
-    assert.equal(active(state, CODEX_ID).version, OVERRIDE_VERSION)
-    assert.equal(hosts.statuses().find((status) => status.extensionId === CODEX_ID)?.state, 'running')
+    assert.equal(active(state, AGENTS_ID).version, OVERRIDE_VERSION)
+    assert.equal(hosts.statuses().find((status) => status.extensionId === AGENTS_ID)?.state, 'running')
 
-    await hosts.stop(CODEX_ID)
-    state = await installer.remove(CODEX_ID)
-    assert.equal(active(state, CODEX_ID).version, codex.version, `${label} rollback must select the packaged floor`)
+    await hosts.stop(AGENTS_ID)
+    state = await installer.remove(AGENTS_ID)
+    assert.equal(active(state, AGENTS_ID).version, agentsArtifact.version, `${label} rollback must select the packaged floor`)
     await startEnabled(installer, hosts, dataRoot)
-    assert.ok(hosts.agentProviderContributions().some((provider) => provider.id === CODEX_PROVIDER_ID), `${label} rollback must reactivate the staged Codex provider`)
+    assert.ok(hosts.sessionSourceContributions().some((provider) => provider.contribution.id === AGENTS_SOURCE_ID), `${label} rollback must reactivate the staged session source`)
+    await waitFor(
+      () => assert.ok(packagedEntries().some((entry) => entry.displayName === 'Packaged Claude session')),
+      `${label} rollback must report the live session again`,
+    )
   } finally {
+    agent.kill('SIGKILL')
+    if (previousClaudeHome === undefined) delete process.env.CLAUDE_CONFIG_DIR
+    else process.env.CLAUDE_CONFIG_DIR = previousClaudeHome
     await hosts?.shutdown().catch(() => undefined)
+    scope?.dispose()
     await agentStatus?.stop().catch(() => undefined)
     await rm(dataRoot, { recursive: true, force: true })
   }
@@ -411,7 +343,7 @@ test('selected packaged resources pass the complete offline built-in lifecycle',
   }
 })
 
-test('selected packaged resources activate staged extensions and admit lifecycle through real extension children', async () => {
+test('selected packaged resources activate staged extensions and report sessions through real extension children', async () => {
   if (target === 'both' || target === 'electron') {
     await exercisePackagedHostRuntime('electron', requiredArtifactRoot('TERMINAY_ELECTRON_BUILT_INS'))
   }

@@ -1,0 +1,61 @@
+{
+	"name": "terminay-example-session-source",
+	"version": "1.0.0",
+	"type": "module",
+	"license": "MIT",
+	"exports": {
+		".": "./extension.js"
+	},
+	"scripts": {
+		"test": "node --test test.mjs"
+	},
+	"peerDependencies": {
+		"@terminay/extension-api": "^3.0.0"
+	},
+	"devDependencies": {
+		"@terminay/extension-api": "^3.0.0"
+	},
+	"terminay": {
+		"manifestVersion": 1,
+		"id": "com.example.agent",
+		"displayName": "Example Agent",
+		"description": "Shows Example Agent sessions in Terminay and registers the Terminay MCP server with it.",
+		"api": "^3.0.0",
+		"engines": {
+			"terminay": ">=1.0.0",
+			"node": ">=24"
+		},
+		"entrypoint": "extension.js",
+		"platforms": [
+			"darwin",
+			"linux"
+		],
+		"permissions": [
+			"agent-observation",
+			"mcp-registration"
+		],
+		"contributes": {
+			"agentSessionSources": [
+				{
+					"id": "com.example.agent/sessions",
+					"displayName": "Example Agent",
+					"harnesses": [
+						{
+							"id": "example-agent",
+							"displayName": "Example Agent"
+						}
+					],
+					"environmentVariables": [
+						"EXAMPLE_AGENT_HOME"
+					]
+				}
+			],
+			"mcpInstallTargets": [
+				{
+					"id": "com.example.agent/example-agent",
+					"displayName": "Example Agent"
+				}
+			]
+		}
+	}
+}
