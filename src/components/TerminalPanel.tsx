@@ -25,7 +25,7 @@ import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
-import type { ILinkHandler } from '@xterm/xterm';
+import type { IBufferRange, ILinkHandler } from '@xterm/xterm';
 import { Terminal } from '@xterm/xterm';
 import type { IDockviewPanelProps } from 'dockview';
 import { KeyboardOff, Lock } from 'lucide-react';
@@ -88,7 +88,11 @@ import {
 	shouldClaimCreatedTerminalFocus,
 	shouldRestoreTerminalFocusAfterWindowActivation,
 } from './terminalFocusInteraction';
-import { createTerminalLinkInteraction } from './terminalLinkInteraction';
+import {
+	createTerminalLinkInteraction,
+	detectBrowserHandoffPlatform,
+	platformBrowserUrl,
+} from './terminalLinkInteraction';
 import {
 	advanceTerminalMobileModifier,
 	applyTerminalMobileModifiers,
@@ -271,13 +275,25 @@ function mobileTerminalModifierKeyClassName(
 	return latch === 'locked' ? `${active} ${base}--locked` : active;
 }
 
-// A tap is the deliberate gesture on touch, so it carries no modifier and has
-// no default for the link handler to prevent.
-const TOUCH_LINK_ACTIVATION = {
-	ctrlKey: false,
-	metaKey: false,
-	preventDefault: () => {},
-};
+/** The text an xterm link range covers, joining soft-wrapped rows. Ranges are
+ * 1-based and their end column is inclusive. */
+function readBufferRangeText(terminal: Terminal, range: IBufferRange): string {
+	const buffer = terminal.buffer.active;
+	let text = '';
+	for (let y = range.start.y; y <= range.end.y; y++) {
+		const line = buffer.getLine(y - 1);
+		if (!line) break;
+		text += line.translateToString(
+			true,
+			y === range.start.y ? range.start.x - 1 : 0,
+			y === range.end.y ? range.end.x : undefined,
+		);
+	}
+	return text;
+}
+
+const BROWSER_HANDOFF_PLATFORM =
+	typeof navigator === 'undefined' ? null : detectBrowserHandoffPlatform(navigator);
 const TERMINAL_CONTEXT_MAX_CHARS = 20_000;
 // Replay is base64 in a protocol header; leave room for the result envelope.
 const MAX_INITIAL_SERVER_TERMINAL_REPLAY_BYTES = 32 * 1024;
@@ -456,7 +472,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	);
 	const webglCustomGlyphsRef = useRef<boolean | null>(null);
 	const hoveredLinkRef = useRef<string | null>(null);
-	const lastPointerWasTouchRef = useRef(false);
+	// What the hovered link shows in the terminal. An OSC-8 hyperlink's text is
+	// not its URL, and touch has no other way to copy it.
+	const hoveredLinkTextRef = useRef<string | null>(null);
 	const terminalPanelResizeRef = useRef<(cols: number, rows: number) => void>(
 		() => {},
 	);
@@ -636,6 +654,13 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	const [touchSelectionCopy, setTouchSelectionCopy] = useState<{
 		x: number;
 		y: number;
+	} | null>(null);
+	// A tap on a link asks what to do with it rather than navigating away.
+	const [touchLinkMenu, setTouchLinkMenu] = useState<{
+		x: number;
+		y: number;
+		uri: string;
+		text: string;
 	} | null>(null);
 	const hasTerminalNote = typeof props.params.terminalNote === 'string';
 
@@ -960,23 +985,27 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			// workspace's terminal renderer a broad preload API.
 			openExternal: openExternalUrl,
 			pointerTarget: document.body,
-			isTouchActivation: () => lastPointerWasTouchRef.current,
 		});
 		const openTerminalLink = terminalLinkInteraction.activate;
 		const linkHover = (_event: MouseEvent, uri: string) => {
 			hoveredLinkRef.current = uri;
+			hoveredLinkTextRef.current = uri;
 			terminalLinkInteraction.hover();
 		};
 		const linkLeave = (_event: MouseEvent, uri: string) => {
 			if (hoveredLinkRef.current === uri) {
 				hoveredLinkRef.current = null;
+				hoveredLinkTextRef.current = null;
 			}
 			terminalLinkInteraction.leave();
 		};
 
 		const oscLinkHandler: ILinkHandler = {
 			activate: openTerminalLink,
-			hover: linkHover,
+			hover: (event, uri, range) => {
+				linkHover(event, uri);
+				hoveredLinkTextRef.current = readBufferRangeText(terminal, range) || uri;
+			},
 			leave: linkLeave,
 		};
 
@@ -2204,20 +2233,25 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			event.stopPropagation();
 		};
 
-		const openTouchLinkAt = (point: TouchSelectionPoint) => {
+		const showTouchLinkMenuAt = (point: TouchSelectionPoint) =>
 			activateTerminalLinkAtTouch({
 				linkUnderPointer: () => hoveredLinkRef.current,
-				open: (uri) => openTerminalLink(TOUCH_LINK_ACTIVATION, uri),
+				open: (uri) =>
+					setTouchLinkMenu({
+						x: point.clientX,
+						y: point.clientY,
+						uri,
+						text: hoveredLinkTextRef.current ?? uri,
+					}),
 				point,
 				screenElement: touchEventTarget,
 			});
-		};
 
 		const handleTouchPointerDown = (event: PointerEvent) => {
-			lastPointerWasTouchRef.current = shouldFocusTerminalForTouchPointer(
-				event.pointerType,
-			);
-			if (!lastPointerWasTouchRef.current) return;
+			if (!shouldFocusTerminalForTouchPointer(event.pointerType)) return;
+			// xterm cancels the compatibility mousedown a touch would send, so the
+			// menu's own outside-click dismissal never sees a tap on the terminal.
+			setTouchLinkMenu(null);
 			setTouchSelectionCopy(null);
 			tapSession.pointerDown(event);
 			touchSelection.pointerDown(event);
@@ -2233,7 +2267,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			touchSelection.pointerUp(event);
 			const isTap = tapSession.pointerUp(event);
 			if (wasSelecting || !isTap) return;
-			openTouchLinkAt(event);
+			// Keep the keyboard down so it does not cover the link menu.
+			if (showTouchLinkMenuAt(event)) return;
 			focusTerminalFromTouch();
 		};
 		const handleTouchPointerCancel = (event: PointerEvent) => {
@@ -2245,7 +2280,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			if (!shouldFocusTerminalForTouchStart('PointerEvent' in window)) return;
 			const point = legacyTouchPoint(event);
 			if (point === null) return;
-			lastPointerWasTouchRef.current = true;
+			setTouchLinkMenu(null);
 			setTouchSelectionCopy(null);
 			tapSession.pointerDown(point);
 			touchSelection.pointerDown(point);
@@ -2265,7 +2300,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			touchSelection.pointerUp(point);
 			const isTap = tapSession.pointerUp(point);
 			if (wasSelecting || !isTap) return;
-			openTouchLinkAt(point);
+			if (showTouchLinkMenuAt(point)) return;
 			focusTerminalFromTouch();
 		};
 		const handleTouchCancel = (event: TouchEvent) => {
@@ -2718,6 +2753,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			terminalRef.current = null;
 			renderedPositionRef.current = null;
 			hoveredLinkRef.current = null;
+			hoveredLinkTextRef.current = null;
 			restoreMouseReportCoords();
 			terminal.dispose();
 		};
@@ -2959,6 +2995,11 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	const copyContextMenuLink = (link: string) => {
 		void copyTerminalSelection(link, writeClipboardText);
 	};
+
+	const touchLinkBrowserUrl =
+		touchLinkMenu && BROWSER_HANDOFF_PLATFORM
+			? platformBrowserUrl(touchLinkMenu.uri, BROWSER_HANDOFF_PLATFORM)
+			: null;
 
 	return (
 		<div
@@ -3390,6 +3431,43 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 						setTerminalContextMenu(null);
 						terminalRef.current?.focus();
 					}}
+				/>
+			) : null}
+			{touchLinkMenu ? (
+				<ContextMenu
+					x={touchLinkMenu.x}
+					y={touchLinkMenu.y}
+					items={[
+						{
+							key: 'terminal-link-copy-text',
+							label: 'Copy Text',
+							onClick: () => copyContextMenuLink(touchLinkMenu.text),
+						},
+						{
+							key: 'terminal-link-copy-link',
+							label: 'Copy Link',
+							onClick: () => copyContextMenuLink(touchLinkMenu.uri),
+						},
+						{
+							key: 'terminal-link-open',
+							label: 'Open Link',
+							// The button's click is the user activation Safari needs to allow
+							// the window this opens.
+							onClick: () => void openExternalUrl(touchLinkMenu.uri),
+						},
+						...(touchLinkBrowserUrl
+							? [
+									{
+										key: 'terminal-link-open-in-browser',
+										label: 'Open in Browser',
+										onClick: () => {
+											window.open(touchLinkBrowserUrl, '_blank', 'noopener');
+										},
+									},
+								]
+							: []),
+					]}
+					onClose={() => setTouchLinkMenu(null)}
 				/>
 			) : null}
 		</div>
