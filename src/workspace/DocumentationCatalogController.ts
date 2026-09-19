@@ -100,6 +100,20 @@ export class DocumentationCatalogController {
 		void this.run(mode);
 	}
 
+	/** Abandons any in-flight or pending build without discarding the last good
+	 * tree. The root watch stays subscribed: losing it would leave the tree
+	 * silently stale, so a later change still schedules a coalesced refresh. */
+	stop(): void {
+		if (this.disposed) return;
+		if (this.timer !== undefined) {
+			this.clearTimeoutFn(this.timer);
+			this.timer = undefined;
+		}
+		this.requestId += 1;
+		this.loadingValue = false;
+		this.emit();
+	}
+
 	handleWatchEvent(event: Pick<FileWatchEvent, 'kind'>): void {
 		if (event.kind === 'resync' || event.kind === 'unavailable') this.refresh('fresh');
 		else this.refresh('coalesced');
