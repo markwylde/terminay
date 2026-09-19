@@ -1525,7 +1525,10 @@ function renderDocumentationSurface(
 			serverId={terminalClientContext.serverId}
 			runtimeClient={terminalClientContext.mdxRuntimeClient}
 			loadImage={async (src) => {
-				const path = resolveDocumentationImagePath(src, fileInfo.path, projectRoot);
+				const path = resolveDocumentationImagePath(
+					src,
+					toProjectRelativePath(projectRoot, fileInfo.path),
+				);
 				if (path === undefined) return undefined;
 				const info = await fileGateway.getFileInfo(path);
 				const bytes = await fileGateway.readFileBytes(path, { offset: 0, length: info.size });
