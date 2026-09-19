@@ -1,0 +1,121 @@
+.app-update-dialog__title-icon {
+  margin-right: 6px;
+  vertical-align: -2px;
+  color: #ffcc57;
+}
+
+.project-edit-modal-title:has(.app-update-dialog__title-icon) {
+  display: inline-flex;
+  align-items: center;
+}
+
+.app-update-dialog__summary {
+  margin: 0;
+  color: rgba(214, 227, 240, 0.68);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.app-update-dialog__notes {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: min(56vh, 520px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.app-update-dialog__release {
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: #090b0e;
+}
+
+.app-update-dialog__release-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #e6edf3;
+}
+
+.app-update-dialog__release-link {
+  all: unset;
+  cursor: pointer;
+  color: #4db5ff;
+}
+
+.app-update-dialog__release-link:hover {
+  text-decoration: underline;
+}
+
+.app-update-dialog__markdown {
+  font-size: 13px;
+  line-height: 1.55;
+  color: rgba(214, 227, 240, 0.86);
+  overflow-wrap: anywhere;
+}
+
+.app-update-dialog__markdown > :first-child {
+  margin-top: 0;
+}
+
+.app-update-dialog__markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.app-update-dialog__markdown h1,
+.app-update-dialog__markdown h2,
+.app-update-dialog__markdown h3,
+.app-update-dialog__markdown h4 {
+  margin: 12px 0 6px;
+  font-size: 13px;
+  color: #e6edf3;
+}
+
+.app-update-dialog__markdown ul,
+.app-update-dialog__markdown ol {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+
+.app-update-dialog__markdown code {
+  font-size: 12px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.app-update-dialog__markdown a {
+  color: #4db5ff;
+}
+
+.app-update-dialog__empty {
+  border-radius: 6px;
+  border: 1px solid rgba(214, 227, 240, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(214, 227, 240, 0.72);
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.app-update-dialog__error {
+  border-radius: 6px;
+  border: 1px solid rgba(255, 123, 114, 0.25);
+  background: rgba(255, 123, 114, 0.1);
+  color: #ff7b72;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.app-update-dialog .project-edit-actions .app-update-dialog__primary {
+  border-color: #3b82f6;
+  background: #3b82f6;
+  color: #fff;
+}
+
+.app-update-dialog .project-edit-actions .app-update-dialog__primary:hover:not(:disabled) {
+  border-color: #2563eb;
+  background: #2563eb;
+}

@@ -1,0 +1,61 @@
+title: Desktop auto-update
+intro: |
+  Moving Terminay's update check to electron-updater, so macOS (signed zip) and
+  Linux (AppImage) builds update themselves from GitHub Releases. A few calls
+  to make before I write the proposal.
+
+status: submitted
+submitted_at: "2026-09-19T18:16:34+01:00"
+
+questions:
+  - id: download
+    type: select
+    prompt: When is the update downloaded?
+    help: |
+      I'd go with background download. The user only sees "Restart to update"
+      once the update is on disk and ready to install. Downloading only after
+      a click means waiting for a ~150 MB download at the moment they chose
+      to update.
+    required: true
+    options:
+      - Automatically in the background, then prompt to restart (recommended)
+      - Only after the user clicks "Update"
+    answer: Automatically in the background, then prompt to restart (recommended)
+
+  - id: install_on_quit
+    type: boolean
+    prompt: Install a downloaded update automatically the next time the user quits Terminay?
+    help: |
+      I recommend yes. The update gets applied without interrupting anyone,
+      and "Restart now" still installs it straight away.
+    answer: true
+
+  - id: changelog
+    type: select
+    prompt: What changelog do we show?
+    help: |
+      electron-updater provides the GitHub release notes (our AI-generated
+      RELEASE.md). With fullChangelog it returns notes for every release
+      between the installed version and the latest one. I'd show all of
+      them, newest first, in an in-app dialog.
+    required: true
+    options:
+      - Every release since the installed version, in an in-app dialog (recommended)
+      - Only the latest release's notes, in an in-app dialog
+      - No in-app notes; just link to the GitHub release
+    answer: Every release since the installed version, in an in-app dialog (recommended)
+
+  - id: unsupported
+    type: select
+    prompt: What should builds that can't update themselves do (dev builds, a .deb, an AppImage run without write access)?
+    help: I'd keep today's behaviour for these builds - say an update exists and link to the release.
+    options:
+      - Keep today's notify-and-link behaviour (recommended)
+      - Show nothing
+    answer: Keep today's notify-and-link behaviour (recommended)
+
+  - id: channel
+    type: boolean
+    prompt: Offer the main-branch prereleases as an opt-in "beta" update channel?
+    help: I'd leave this out of this change and keep it to stable releases only.
+    answer: true

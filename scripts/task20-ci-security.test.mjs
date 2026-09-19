@@ -129,7 +129,7 @@ test("every release job has an explicit bounded runtime", () => {
   const jobs = new Map([...jobsSection.matchAll(/^ {2}([a-z][\w-]*):\n([\s\S]*?)(?=^ {2}[a-z][\w-]*:\n|(?![\s\S]))/gmu)]
     .map(([, name, body]) => [name, body]));
 
-  assert.deepEqual([...jobs.keys()], ["smoke-test", "release", "build-binaries", "build-standalone-server", "publish-release-notes"]);
+  assert.deepEqual([...jobs.keys()], ["smoke-test", "release", "build-binaries", "build-standalone-server", "publish-cli", "publish-release-notes"]);
   for (const [name, body] of jobs) {
     const timeout = body.match(/^ {4}timeout-minutes:\s*(\d+)\s*$/mu);
     assert.ok(timeout, `${name} must define an explicit job timeout`);
@@ -171,10 +171,13 @@ test("release write permission is isolated to jobs that mutate release state", (
   const jobsSection = release.slice(jobsStart + "\njobs:\n".length);
   const jobs = new Map([...jobsSection.matchAll(/^ {2}([a-z][\w-]*):\n([\s\S]*?)(?=^ {2}[a-z][\w-]*:\n|(?![\s\S]))/gmu)]
     .map(([, name, body]) => [name, body]));
-  assert.deepEqual([...jobs.keys()], ["smoke-test", "release", "build-binaries", "build-standalone-server", "publish-release-notes"]);
+  assert.deepEqual([...jobs.keys()], ["smoke-test", "release", "build-binaries", "build-standalone-server", "publish-cli", "publish-release-notes"]);
 
   assert.doesNotMatch(jobs.get("smoke-test"), /^ {4}permissions:/mu,
     "smoke-test must inherit the read-only workflow token");
+  // npm trusted publishing needs an OIDC token, never release write access.
+  assert.match(jobs.get("publish-cli"), /^ {4}permissions:\n {6}contents: read\n(?: {6}#.*\n)* {6}id-token: write$/mu,
+    "publish-cli must hold a read-only contents token beside its OIDC token");
   for (const name of ["release", "build-binaries", "build-standalone-server", "publish-release-notes"]) {
     assert.match(jobs.get(name), /^ {4}permissions:\n {6}contents: write$/mu,
       `${name} must explicitly declare the narrowly scoped release-write token`);
@@ -299,10 +302,27 @@ test("release notes accept exactly the verified release asset set", () => {
     "release notes must verify the immutable asset set before downloading checksums");
 
   const step = release.slice(verification, checksums);
-  assert.match(step, /ASSET_NAMES="\$\(gh release view "\$TAG" --repo "\$GH_REPO" --json assets --jq '\.assets\[\]\.[^']+' \| sort\)"/u,
-    "the release asset list must be read from the selected immutable release and sorted");
+  assert.match(step, /ASSET_NAMES="\$\(gh release view "\$TAG" --repo "\$GH_REPO" --json assets --jq '\.assets\[\]\.[^']+' \| LC_ALL=C sort\)"/u,
+    "the release asset list must be read from the selected immutable release and sorted bytewise");
   assert.match(step, /EXPECTED_ASSET_NAMES="\$\(cat <<EOF[\s\S]*Terminay-Linux-\$\{VERSION\}\.AppImage[\s\S]*terminay-server-\$\{VERSION\}-linux-x64\.tar\.gz\.sig[\s\S]*EOF\n\s*\)"/u,
     "the expected Desktop, checksum, standalone archive, and signature names must be explicit");
+  const expected = step.slice(step.indexOf("<<EOF\n"), step.indexOf("\n          EOF\n")).split("\n").slice(1).map((line) => line.trim().replace(/\$\{VERSION\}/u, "X"));
+  assert.deepEqual(expected, [
+    "Terminay-Linux-X.AppImage",
+    "Terminay-Linux-X.AppImage.sha256",
+    "Terminay-Mac-X-Installer.dmg",
+    "Terminay-Mac-X-Installer.dmg.sha256",
+    "Terminay-Mac-X.zip",
+    "Terminay-Mac-X.zip.blockmap",
+    "Terminay-Mac-X.zip.blockmap.sha256",
+    "Terminay-Mac-X.zip.sha256",
+    "terminay-server-X-linux-arm64.tar.gz",
+    "terminay-server-X-linux-arm64.tar.gz.sha256",
+    "terminay-server-X-linux-arm64.tar.gz.sig",
+    "terminay-server-X-linux-x64.tar.gz",
+    "terminay-server-X-linux-x64.tar.gz.sha256",
+    "terminay-server-X-linux-x64.tar.gz.sig",
+  ], "the pre-notes asset set is exactly the payloads and sidecars, in bytewise order, and no update metadata");
   assert.match(step, /test "\$ASSET_NAMES" = "\$EXPECTED_ASSET_NAMES"/u,
     "release notes must reject stale or substituted extra attachments rather than checking only for required names");
   assert.doesNotMatch(step, /grep -Fx -- "\$expected"/u,
@@ -429,9 +449,9 @@ test("release workflow artifacts explicitly exclude hidden files", () => {
   assert.ok(release, "trigger-release.yml must exist");
 
   const uploadSteps = [...release.matchAll(
-    /^ {6}- name: (?:Upload release notes artifact|Upload workflow artifact|Upload standalone server workflow artifact)\n([\s\S]*?)(?=^ {6}- name:|^ {2}[a-z][\w-]*:|$(?![\s\S]))/gmu,
+    /^ {6}- name: (?:Upload release notes artifact|Upload workflow artifact|Upload update metadata workflow artifact|Upload standalone server workflow artifact)\n([\s\S]*?)(?=^ {6}- name:|^ {6}#|^ {2}[a-z][\w-]*:|$(?![\s\S]))/gmu,
   )];
-  assert.equal(uploadSteps.length, 3,
+  assert.equal(uploadSteps.length, 4,
     "release workflow must retain exactly the reviewed workflow-artifact uploads");
 
   for (const [, step] of uploadSteps) {
@@ -534,44 +554,142 @@ test("macOS packaging proves microphone capability and a non-empty user disclosu
     "the microphone usage disclosure must not be empty or whitespace");
 });
 
-test("binary packaging selects exactly one release-tagged Desktop asset before checksumming", () => {
+test("binary packaging selects exactly the release-tagged Desktop assets before checksumming", () => {
   const release = workflows.get("trigger-release.yml");
   assert.ok(release, "trigger-release.yml must exist");
 
   const matrixStart = release.indexOf("      matrix:\n");
   const matrix = release.slice(matrixStart, release.indexOf("\n    steps:\n", matrixStart));
-  assert.match(matrix, /asset_template: Terminay-Mac-%VERSION%-Installer\.dmg/u,
-    "the macOS lane must declare its deterministic release asset name");
-  assert.match(matrix, /asset_template: Terminay-Linux-%VERSION%\.AppImage/u,
-    "the Linux lane must declare its deterministic release asset name");
+  assert.match(matrix, /asset_templates: Terminay-Mac-%VERSION%-Installer\.dmg Terminay-Mac-%VERSION%\.zip Terminay-Mac-%VERSION%\.zip\.blockmap\n/u,
+    "the macOS lane must declare its installer, update zip, and zip blockmap names");
+  assert.match(matrix, /asset_templates: Terminay-Linux-%VERSION%\.AppImage\n/u,
+    "the Linux lane must declare its deterministic release asset name; the AppImage carries its blockmap inside");
+  assert.match(matrix, /update_metadata: latest-mac\.yml\n/u);
+  assert.match(matrix, /update_metadata: latest-linux\.yml\n/u);
 
   const verification = release.indexOf("- name: Verify exact release asset selection");
+  const nextStep = release.indexOf("- name: Verify macOS microphone entitlement");
   const checksums = release.indexOf("- name: Write release asset checksums");
   assert.ok(verification >= 0, "binary packaging must verify its exact release asset selection");
-  assert.ok(checksums > verification,
+  assert.ok(nextStep > verification && checksums > nextStep,
     "exact asset selection must finish before checksumming makes bytes publishable");
 
-  const selectionStep = release.slice(verification, checksums);
+  const selectionStep = release.slice(verification, nextStep);
   assert.match(selectionStep, /TAG: \$\{\{ needs\.release\.outputs\.tag \}\}/u,
     "asset selection must derive the expected artifact from the release-created tag");
   assert.match(selectionStep, /\[\[ "\$TAG" =~ \^v\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\$/u,
     "asset selection must reject a malformed release tag before using it in a path");
+  assert.match(selectionStep, /for ASSET_TEMPLATE in \$ASSET_TEMPLATES; do/u);
   assert.match(selectionStep, /EXPECTED_FILE="release\/\$VERSION\/\$EXPECTED_ASSET"/u,
     "asset selection must require the deterministic release output path");
   assert.match(selectionStep, /test -f "\$EXPECTED_FILE"/u,
     "the expected release artifact must exist");
   assert.match(selectionStep, /test ! -L "\$EXPECTED_FILE"/u,
     "the deterministic desktop artifact must not be a symlink");
-  assert.match(selectionStep, /find release -type f/u,
+  assert.match(selectionStep, /find release \\\( -type d \\\( -name '\*\.app' -o -name '\*-unpacked' \\\) -prune \\\) -o -type f/u,
     "asset selection must enumerate publishable desktop artifacts rather than trusting an upload glob");
-  assert.match(selectionStep, /-name '\*\.dmg'/u,
-    "asset selection must include every DMG candidate");
-  assert.match(selectionStep, /-name '\*\.AppImage'/u,
-    "asset selection must include every AppImage candidate");
-  assert.match(selectionStep, /test "\$CANDIDATE_COUNT" = 1/u,
-    "a stale second desktop artifact must fail packaging");
-  assert.match(selectionStep, /test "\$ACTUAL_FILE" = "\$EXPECTED_FILE"/u,
-    "the sole selected artifact must be the tag-derived candidate");
+  for (const extension of ["dmg", "zip", "blockmap", "AppImage"]) {
+    assert.match(selectionStep, new RegExp(`-name '\\*\\.${extension}'`, "u"),
+      `asset selection must include every ${extension} candidate`);
+  }
+  assert.match(selectionStep, /test "\$CANDIDATE_COUNT" = "\$EXPECTED_COUNT"/u,
+    "a stale extra desktop artifact must fail packaging");
+  assert.match(selectionStep, /test "\$ACTUAL_FILES" = "\$EXPECTED_FILES"/u,
+    "the selected artifacts must be exactly the tag-derived candidates");
+  assert.match(selectionStep, /test "\$ACTUAL_METADATA" = "\$METADATA_FILE"/u,
+    "exactly one update-metadata file, for the stable channel, must be produced");
+  assert.match(selectionStep, /test ! -L "\$METADATA_FILE"/u);
+});
+
+test("update metadata is verified after the DMG is stapled and never attached by the build job", () => {
+  const release = workflows.get("trigger-release.yml");
+  assert.ok(release, "trigger-release.yml must exist");
+  const job = release.slice(release.indexOf("  build-binaries:\n"), release.indexOf("  build-standalone-server:\n"));
+
+  const staple = job.indexOf("- name: Verify macOS signed and notarized release DMG");
+  const zip = job.indexOf("- name: Verify macOS signed and notarized update zip");
+  const metadata = job.indexOf("- name: Verify generated update metadata");
+  const checksums = job.indexOf("- name: Write release asset checksums");
+  const metadataArtifact = job.indexOf("- name: Upload update metadata workflow artifact");
+  const attach = job.indexOf("- name: Attach checksummed binaries to GitHub release");
+  assert.ok(staple >= 0 && zip > staple && metadata > zip && checksums > metadata,
+    "the zip and the metadata must be verified after the DMG is rewritten by stapling and before checksums");
+  assert.ok(metadataArtifact > checksums && attach > metadataArtifact);
+
+  const metadataStep = job.slice(metadata, checksums);
+  assert.match(metadataStep, /node scripts\/verify-update-metadata\.mjs/u);
+  assert.match(metadataStep, /--version "\$VERSION"/u);
+  assert.match(metadataStep, /--expect-file "\$\{UPDATE_PAYLOAD\/\/%VERSION%\/\$VERSION\}"/u,
+    "the metadata must reference exactly the lane's update payload");
+
+  const artifactStep = job.slice(metadataArtifact, attach);
+  assert.match(artifactStep, /name: update-metadata-\$\{\{ matrix\.label \}\}/u);
+  assert.match(artifactStep, /path: \$\{\{ steps\.asset_selection\.outputs\.metadata \}\}/u);
+
+  // The metadata leaves this job only as a workflow artifact.
+  const attachStep = job.slice(attach);
+  assert.match(attachStep, /for file in \$ASSET_FILES; do/u);
+  assert.match(attachStep, /gh release upload "\$TAG" "\$file" "\$file\.sha256" --repo "\$GH_REPO"/u);
+  assert.doesNotMatch(attachStep, /gh release upload[^\n]*--clobber/u);
+  assert.doesNotMatch(attachStep, /\.yml|metadata/u,
+    "the build job must never attach update metadata to the release");
+  assert.equal((job.match(/gh release upload/gu) ?? []).length, 1,
+    "the payload attach step is the build job's only release upload");
+});
+
+test("the macOS update zip carries the same signed, notarized, stapled app as the DMG", () => {
+  const release = workflows.get("trigger-release.yml");
+  assert.ok(release, "trigger-release.yml must exist");
+  const start = release.indexOf("- name: Verify macOS signed and notarized update zip");
+  const step = release.slice(start, release.indexOf("- name:", start + 1));
+  assert.match(step, /if: matrix\.os == 'macos-latest'/u);
+  assert.match(step, /ZIP="release\/\$VERSION\/Terminay-Mac-\$VERSION\.zip"/u);
+  assert.match(step, /test ! -L "\$ZIP"/u);
+  assert.match(step, /test ! -e "\$EXTRACTED"/u, "the zip must be extracted into a fresh directory");
+  assert.match(step, /ditto -x -k "\$ZIP" "\$EXTRACTED"/u);
+  assert.match(step, /test "\$APP_BUNDLE_COUNT" = 1/u);
+  assert.match(step, /test ! -L "\$APP_BUNDLE"/u);
+  assert.match(step, /test ! -L "\$APP_EXECUTABLE"/u);
+  assert.match(step, /codesign --verify --deep --strict --verbose=2 "\$APP_BUNDLE"/u);
+  assert.match(step, /grep -F "TeamIdentifier=\$APPLE_TEAM_ID"/u);
+  assert.match(step, /spctl --assess --type execute --verbose=4 "\$APP_BUNDLE"/u);
+  assert.match(step, /xcrun stapler validate "\$APP_BUNDLE"/u);
+});
+
+test("stable update metadata is verified against published bytes and attached only after the release notes", () => {
+  const release = workflows.get("trigger-release.yml");
+  assert.ok(release, "trigger-release.yml must exist");
+  const job = release.slice(release.indexOf("  publish-release-notes:\n"));
+
+  const download = job.indexOf("- name: Download update metadata artifacts");
+  const checksums = job.indexOf("- name: Verify published Desktop asset checksums before notes");
+  const verify = job.indexOf("- name: Verify update metadata against published assets before notes");
+  const edit = job.indexOf("- name: Update GitHub release notes");
+  const attach = job.indexOf("- name: Attach update metadata after the release notes");
+  const published = job.indexOf("- name: Verify the published update metadata");
+  assert.ok(download >= 0 && checksums > download && verify > checksums && edit > verify,
+    "the metadata must be checked against the downloaded release bytes before the notes");
+  assert.ok(attach > edit, "update metadata must be attached only after the notes edit succeeds");
+  assert.ok(published > attach);
+
+  assert.match(job.slice(download, checksums), /pattern: update-metadata-\*/u);
+  assert.match(job.slice(checksums, verify), /"Terminay-Mac-\$\{VERSION\}\.zip" \\/u);
+  assert.match(job.slice(checksums, verify), /"\$ASSET_DIR\/Terminay-Mac-\$\{VERSION\}\.zip\.blockmap"; do|"\$ASSET_DIR\/Terminay-Mac-\$\{VERSION\}\.zip\.blockmap" \\/u);
+
+  const verifyStep = job.slice(verify, edit);
+  assert.match(verifyStep, /\$METADATA_DIR\/latest-linux\.yml \$METADATA_DIR\/latest-mac\.yml /u,
+    "exactly the two stable metadata files may arrive from the build jobs");
+  assert.match(verifyStep, /--metadata "\$METADATA_DIR\/latest-mac\.yml"[\s\S]*--expect-file "Terminay-Mac-\$\{VERSION\}\.zip"[\s\S]*--release-assets "\$RUNNER_TEMP\/release-asset-names"/u);
+  assert.match(verifyStep, /--metadata "\$METADATA_DIR\/latest-linux\.yml"[\s\S]*--expect-file "Terminay-Linux-\$\{VERSION\}\.AppImage"[\s\S]*--release-assets "\$RUNNER_TEMP\/release-asset-names"/u);
+  assert.equal((verifyStep.match(/--version "\$VERSION"/gu) ?? []).length, 2);
+
+  // Nothing but the metadata is uploaded here, and nothing before the edit.
+  assert.equal((job.match(/gh release upload/gu) ?? []).length, 1);
+  const attachStep = job.slice(attach, published);
+  assert.match(attachStep, /gh release upload "\$TAG" "\$METADATA_DIR\/latest-mac\.yml" "\$METADATA_DIR\/latest-linux\.yml" --repo "\$GH_REPO"/u);
+  assert.doesNotMatch(attachStep, /gh release upload[^\n]*--clobber/u);
+  assert.match(attachStep, /test ! -L "\$METADATA_DIR\/\$metadata"/u);
+  assert.match(job.slice(published), /cmp "\$PUBLISHED\/\$metadata" "\$METADATA_DIR\/\$metadata"/u);
 });
 
 test("binary packaging checks out the immutable release tag before syncing or building", () => {

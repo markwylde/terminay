@@ -190,12 +190,36 @@ function parseUpdateStatus(value: unknown): AppUpdateStatus {
 		(status.releaseUrl !== null && typeof status.releaseUrl !== 'string')
 	)
 		throw new TypeError('native updater returned an invalid status');
+	const notes = status.releaseNotes;
+	if (
+		(status.state !== undefined && typeof status.state !== 'string') ||
+		(status.canInstallInPlace !== undefined &&
+			typeof status.canInstallInPlace !== 'boolean') ||
+		(notes !== undefined &&
+			notes !== null &&
+			(!Array.isArray(notes) ||
+				!notes.every(
+					(note) =>
+						typeof note === 'object' &&
+						note !== null &&
+						typeof note.version === 'string' &&
+						typeof note.markdown === 'string' &&
+						(note.url === null || typeof note.url === 'string'),
+				)))
+	)
+		throw new TypeError('native updater returned an invalid status');
 	return status as AppUpdateStatus;
 }
 
 export async function checkForAppUpdate(): Promise<AppUpdateStatus | null> {
 	const response = await request({ type: 'updater.check' });
 	return response.handled ? parseUpdateStatus(response.result) : null;
+}
+
+/** Quit through the host's normal quit path and relaunch into the downloaded update. */
+export async function installAppUpdate(): Promise<boolean> {
+	const response = await request({ type: 'updater.install' });
+	return response.handled;
 }
 
 export async function closeHostPresentation(): Promise<void> {

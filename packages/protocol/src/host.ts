@@ -273,6 +273,8 @@ export type TerminayHostAction =
 	| Readonly<{ type: 'clipboard.write'; text: string }>
 	| Readonly<{ type: 'notification.show'; title: string; body?: string }>
 	| Readonly<{ type: 'updater.check' }>
+	/** Restart into an update the host has already downloaded and verified. */
+	| Readonly<{ type: 'updater.install' }>
 	| Readonly<{
 			/** A bounded preview payload. The host alone chooses its destination. */
 			type: 'preview.download';
@@ -1024,6 +1026,9 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 		case 'updater.check':
 			exactKeys(action, ['type'], 'updater action');
 			return Object.freeze({ type: 'updater.check' });
+		case 'updater.install':
+			exactKeys(action, ['type'], 'updater action');
+			return Object.freeze({ type: 'updater.install' });
 		case 'preview.download': {
 			exactKeys(
 				action,
@@ -1207,6 +1212,7 @@ export function requiredTerminayHostCapability(
 		case 'notification.show':
 			return 'notifications';
 		case 'updater.check':
+		case 'updater.install':
 			return 'updater';
 		case 'preview.download':
 			return 'osIntegration';

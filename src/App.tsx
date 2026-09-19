@@ -70,6 +70,7 @@ import {
 import type { FolderPanelInstanceParams } from './components/folder-viewer';
 import { FolderPanel, FolderTab } from './components/folder-viewer';
 import { WorktreesPanel } from './components/git-panel/WorktreesPanel';
+import { AppUpdateDialog } from './components/AppUpdateDialog';
 import { McpInstallModal } from './components/McpInstallModal';
 import { SidebarGroupTabs } from './components/sidebar/SidebarGroupTabs';
 import {
@@ -103,7 +104,11 @@ import {
 	createServerTerminalSettingsClient,
 	useTerminalSettings,
 } from './hooks/useTerminalSettings';
-import { checkForAppUpdate, openExternalUrl } from './host/nativeActions';
+import {
+	checkForAppUpdate,
+	installAppUpdate,
+	openExternalUrl,
+} from './host/nativeActions';
 import {
 	findCommandForKeyboardEvent,
 	getCommandShortcut,
@@ -5743,6 +5748,15 @@ function App({
 	const pairingModal = useDraggableModal(isPairingModalOpen);
 	const [appUpdateStatus, setAppUpdateStatus] =
 		useState<AppUpdateStatus | null>(null);
+	const [isAppUpdateDialogOpen, setIsAppUpdateDialogOpen] = useState(false);
+	const [isInstallingAppUpdate, setIsInstallingAppUpdate] = useState(false);
+	const [appUpdateInstallError, setAppUpdateInstallError] = useState<
+		string | null
+	>(null);
+	const closeAppUpdateDialog = useCallback(() => {
+		setIsAppUpdateDialogOpen(false);
+		setAppUpdateInstallError(null);
+	}, []);
 	const activityMenuRef = useRef<HTMLDivElement | null>(null);
 	const [isActivityMenuOpen, setIsActivityMenuOpen] = useState(false);
 	// One observation of the bar decides compact chrome for every surface that
@@ -6610,27 +6624,32 @@ function App({
 	useEffect(() => {
 		let isMounted = true;
 
-		const refreshUpdateStatus = async (force = false) => {
-			const status = force ? await checkForAppUpdate() : null;
-			if (!status) {
-				return;
+		let timeoutId: number | undefined;
+
+		// The host paces its own network checks and downloads in the background;
+		// this only reads its status, often while a download is in progress.
+		const refreshUpdateStatus = async () => {
+			let status: AppUpdateStatus | null = null;
+			try {
+				status = await checkForAppUpdate();
+			} catch {
+				status = null;
 			}
-			if (isMounted) {
-				setAppUpdateStatus(status);
-			}
+			if (!isMounted) return;
+			if (status) setAppUpdateStatus(status);
+			const isBusy =
+				status?.state === 'checking' || status?.state === 'downloading';
+			timeoutId = window.setTimeout(
+				() => void refreshUpdateStatus(),
+				isBusy ? 5_000 : 5 * 60 * 1000,
+			);
 		};
 
-		void refreshUpdateStatus(true);
-		const intervalId = window.setInterval(
-			() => {
-				void refreshUpdateStatus(true);
-			},
-			60 * 60 * 1000,
-		);
+		void refreshUpdateStatus();
 
 		return () => {
 			isMounted = false;
-			window.clearInterval(intervalId);
+			window.clearTimeout(timeoutId);
 		};
 	}, []);
 
@@ -6833,22 +6852,58 @@ function App({
 	const hasAppUpdate =
 		appUpdateStatus?.hasUpdate === true &&
 		typeof appUpdateStatus.releaseUrl === 'string';
-	const updateLabel = appUpdateStatus?.latestVersion
-		? `Update Now (${appUpdateStatus.latestVersion})`
-		: 'Update Now';
+	const isAppUpdateReady = appUpdateStatus?.state === 'ready';
+	// An older host reports no state; it can only link to the release page.
+	const canShowWhatsNew = appUpdateStatus?.state !== undefined;
+	const updateVersionSuffix = appUpdateStatus?.latestVersion
+		? ` (${appUpdateStatus.latestVersion})`
+		: '';
+	const updateLabel = isAppUpdateReady
+		? `Restart to Update${updateVersionSuffix}`
+		: `Update Available${updateVersionSuffix}`;
+	const installDownloadedUpdate = async () => {
+		setIsInstallingAppUpdate(true);
+		setAppUpdateInstallError(null);
+		try {
+			await installAppUpdate();
+		} catch (error) {
+			setAppUpdateInstallError(
+				error instanceof Error ? error.message : 'The update could not be installed.',
+			);
+		} finally {
+			// Cancelling the quit confirmation leaves the app running.
+			setIsInstallingAppUpdate(false);
+		}
+	};
 	const appUpdateAction = hasAppUpdate ? (
 		<div className="app-update-status">
 			<button
 				type="button"
 				className="app-update-button"
-				onClick={() =>
-					void openExternalUrl(appUpdateStatus.releaseUrl as string)
+				onClick={() => {
+					if (canShowWhatsNew) setIsAppUpdateDialogOpen(true);
+					else void openExternalUrl(appUpdateStatus.releaseUrl as string);
+				}}
+				title={
+					canShowWhatsNew
+						? `See what's new in ${appUpdateStatus?.latestVersion}`
+						: `Open release page for v${appUpdateStatus?.latestVersion}`
 				}
-				title={`Open release page for v${appUpdateStatus?.latestVersion}`}
+				data-terminay-app-update-state={appUpdateStatus?.state ?? 'available'}
 			>
 				<span className="app-update-button__dot" aria-hidden="true" />
 				<span className="app-update-button__label">{updateLabel}</span>
 			</button>
+			{appUpdateStatus !== null ? (
+				<AppUpdateDialog
+					status={appUpdateStatus}
+					open={isAppUpdateDialogOpen}
+					isInstalling={isInstallingAppUpdate}
+					installError={appUpdateInstallError}
+					onClose={closeAppUpdateDialog}
+					onInstall={() => void installDownloadedUpdate()}
+				/>
+			) : null}
 		</div>
 	) : null;
 
