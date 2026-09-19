@@ -1,13 +1,13 @@
 /**
- * Resolve an image `src` from a Markdown document to a file path in the
- * project. Relative sources resolve against the document's folder and a
- * leading `/` against the project root, as GitHub renders a README. Returns
- * undefined for anything the browser can load itself (URLs, data, blobs).
+ * Resolve an image `src` from a Markdown document to a project-relative
+ * path. `documentPath` is project-relative too. Relative sources resolve
+ * against the document's folder and a leading `/` against the project root,
+ * as GitHub renders a README. Returns undefined for anything the browser can
+ * load itself (URLs, data, blobs) and for paths that climb out of the project.
  */
 export function resolveDocumentationImagePath(
 	src: string,
 	documentPath: string,
-	projectRoot: string,
 ): string | undefined {
 	if (!src || /^(?:[a-z][a-z\d+.-]*:|\/\/)/iu.test(src)) return undefined;
 	let path = src.replace(/[?#].*$/u, '');
@@ -16,16 +16,15 @@ export function resolveDocumentationImagePath(
 	} catch {
 		// Keep the raw path when it is not valid percent-encoding.
 	}
-	const base = path.startsWith('/')
-		? projectRoot
-		: documentPath.slice(0, documentPath.lastIndexOf('/'));
-	const parts: string[] = [];
-	for (const part of `${base}/${path}`.split('/')) {
+	const parts = path.startsWith('/')
+		? []
+		: documentPath.split('/').slice(0, -1);
+	for (const part of path.split('/')) {
 		if (part === '' || part === '.') continue;
-		if (part === '..') parts.pop();
-		else parts.push(part);
+		if (part !== '..') parts.push(part);
+		else if (parts.pop() === undefined) return undefined;
 	}
-	return `/${parts.join('/')}`;
+	return parts.length ? parts.join('/') : undefined;
 }
 
 const IMAGE_TYPES: Readonly<Record<string, string>> = {
