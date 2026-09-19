@@ -41,7 +41,7 @@
 		"test:packed": "npm run compile && node --test test/packed.test.mjs"
 	},
 	"dependencies": {
-		"@markwylde/all-your-agents": "1.4.0"
+		"@markwylde/all-your-agents": "1.4.1"
 	},
 	"peerDependencies": {
 		"@terminay/extension-api": "^3.0.0"
