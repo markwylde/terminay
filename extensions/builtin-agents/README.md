@@ -14,7 +14,7 @@ and Node.js. It does not import Terminay Server Core, Electron, or renderer code
 ## Detection
 
 All detection is done by [`@markwylde/all-your-agents`](https://github.com/markwylde/all-your-agents),
-pinned to exactly **1.4.0**. The extension runs one library instance with the
+pinned to exactly **1.4.1**. The extension runs one library instance with the
 providers of the switched-on harnesses. It has no journal parser, process
 matcher, status inference, or timer of its own, and it never polls.
 
@@ -27,7 +27,7 @@ matcher, status inference, or timer of its own, and it never polls.
 
 OpenCode sessions are not reported until the library has an OpenCode provider.
 
-### Capability matrix (all-your-agents 1.4.0)
+### Capability matrix (all-your-agents 1.4.1)
 
 
 | Agent | Live detection | Status | Waiting for | Titles | Model | Tools | Turn outcome | Subagents | Transcript | History | Print mode |
@@ -47,6 +47,11 @@ OpenCode sessions are not reported until the library has an OpenCode provider.
 6. omp writes no transcript until the first reply of a new session ends. That first turn is read from omp's prompt history, which needs SQLite: Node ≥ 22.13, or your own `sqlite` reader. Without it a new session reads `idle` until its transcript appears.
 7. A pending `ask` tool reads `waiting`. Permission approvals never reach disk, so a session blocked on one reads `running` (omp's default approval mode asks for none).
 8. omp names a run after the terminal on its stdin, in print mode too: `omp -p` typed in a terminal is live and reads `interactive`. Piped or detached, it has no terminal and appears in history only. Nothing on disk marks a run `headless`.
+
+The library reports `waiting` both for a session blocked on the user and for one
+whose turn has ended while a background shell or monitor it started will wake
+it (`waitingFor` `shell` or `monitor`). Terminay's `waiting` means the user is
+needed, so the extension reports the second kind as `running`.
 
 Terminay shows what the library knows and nothing more. Gaps are fixed in the
 library, not here.
