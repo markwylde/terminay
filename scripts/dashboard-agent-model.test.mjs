@@ -13,6 +13,7 @@ import {
 import {
 	boardColumnFor,
 	buildDashboardBoardItems,
+	buildDashboardBoardLanes,
 	groupBoardItemsByColumn,
 	isDashboardViewMode,
 } from '../src/workspace/dashboardViewMode.ts';
@@ -477,4 +478,49 @@ test('only the three view modes are view modes', () => {
 	assert.equal(isDashboardViewMode('projects'), true);
 	assert.equal(isDashboardViewMode('kanban'), false);
 	assert.equal(isDashboardViewMode(undefined), false);
+});
+
+test('the grouped board bands the same cards by project, in project order', () => {
+	const scoped = buildCrossServerDashboardGroups([
+		{
+			serverId: 'srv-1',
+			serverLabel: 'Local',
+			projects: [...projects, { color: '#112233', id: 'p-c', title: 'Empty' }],
+			inventoryByProject: {
+				'p-a': [
+					panel({ isAgentStatus: true, panelId: 'a', sessionId: 's1', status: 'working' }),
+					panel({ kind: 'file', panelId: 'b', title: 'notes.md' }),
+				],
+				'p-b': [panel({ kind: 'file', panelId: 'c', title: 'draft.md' })],
+			},
+			agentsByProject: {
+				'p-a': [agent({ displayName: 'First', entryId: 'e-1', state: 'working' })],
+			},
+		},
+	]);
+
+	const lanes = buildDashboardBoardLanes(scoped);
+	// A project with nothing in any column gets no lane, as it gets no card.
+	assert.deepEqual(
+		lanes.map((lane) => lane.project.title),
+		['Terminay', 'Books'],
+	);
+	assert.deepEqual(
+		lanes[0].columns.working.map((item) => item.agent?.name),
+		['First'],
+	);
+	assert.deepEqual(
+		lanes[0].columns.idle.map((item) => item.panel?.title),
+		['notes.md'],
+	);
+	assert.equal(lanes[0].total, 2);
+
+	// Grouping re-arranges the Board; it never adds or loses a card.
+	const ungrouped = buildDashboardBoardItems(scoped).map((item) => item.key);
+	const grouped = lanes.flatMap((lane) =>
+		Object.values(lane.columns).flatMap((items) =>
+			items.map((item) => item.key),
+		),
+	);
+	assert.deepEqual([...grouped].sort(), [...ungrouped].sort());
 });

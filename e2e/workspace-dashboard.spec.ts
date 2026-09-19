@@ -367,6 +367,53 @@ test.describe('workspace dashboard', () => {
 		await viewMode(mainWindow, 'list').click();
 	});
 
+	test('the Board groups by project, keeps every card, and remembers it', async ({
+		mainWindow,
+	}) => {
+		const projectId = await activeProjectId(mainWindow);
+		const groupByProject = mainWindow.locator(
+			'[data-terminay-dashboard-group-by-project]',
+		);
+		const cards = mainWindow.locator('.workspace-dashboard__card');
+		await showDashboard(mainWindow);
+
+		// Grouping refines the Board, so nothing else offers it.
+		await expect(groupByProject).toHaveCount(0);
+		await viewMode(mainWindow, 'board').click();
+		await expect(groupByProject).not.toBeChecked();
+		const ungroupedCards = await cards.count();
+
+		await groupByProject.check();
+		const lane = mainWindow.locator(
+			`[data-terminay-dashboard-lane="${projectId}"]`,
+		);
+		await expect(lane).toBeVisible();
+		await expect(lane.locator('[data-terminay-dashboard-column]')).toHaveCount(
+			4,
+		);
+		await expect(cards).toHaveCount(ungroupedCards);
+
+		// Leaving Home and coming back keeps the grouping.
+		await mainWindow.locator('.project-tab').first().click();
+		await expect(dashboard(mainWindow)).toHaveCount(0);
+		await homeControl(mainWindow).click();
+		await expect(groupByProject).toBeChecked();
+		await expect(lane).toBeVisible();
+
+		// A lane heading activates its project, as a project heading does.
+		await lane.locator(`[data-terminay-dashboard-project="${projectId}"]`).click();
+		await expect(dashboard(mainWindow)).toHaveCount(0);
+		await expect(mainWindow.locator('.project-tab--active')).toHaveAttribute(
+			'data-project-id',
+			projectId,
+		);
+
+		await showDashboard(mainWindow);
+		await viewMode(mainWindow, 'board').click();
+		await groupByProject.uncheck();
+		await viewMode(mainWindow, 'list').click();
+	});
+
 	test('activating a card lands on its panel, exactly as a row does', async ({
 		mainWindow,
 	}) => {

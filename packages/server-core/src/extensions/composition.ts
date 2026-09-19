@@ -195,6 +195,10 @@ export function createDefaultExtensionManagement(
 					?.state === 'running'
 			)
 				continue;
+			// A host that reconciliation started and that has already crashed is
+			// the supervisor's to bring back, on the backoff the host chose.
+			// Activating it here as well would restart it twice and skip the wait.
+			if (restarts.has(extensionId)) continue;
 			try {
 				await activate(extensionId);
 			} catch (error) {
