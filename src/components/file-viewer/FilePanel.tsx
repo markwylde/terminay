@@ -33,6 +33,7 @@ import {
 import type {
 	FileInfo,
 	FileViewerEngine,
+	FileViewerGateway,
 	FileViewerMode,
 	FileWatchEvent,
 	GitFileDiff,
@@ -57,6 +58,10 @@ import {
 	documentationUnsupportedMessage,
 } from './documentationDocumentState';
 import type { DocumentationAutosaveSession } from './DocumentationAutosaveController';
+import {
+	documentationImageType,
+	resolveDocumentationImagePath,
+} from './documentationImages';
 import { FileAuthorityUnavailableState } from './FileAuthorityUnavailableState';
 import { FileConflictBanner } from './FileConflictBanner';
 import { FileLargeFileChooser } from './FileLargeFileChooser';
@@ -1356,6 +1361,7 @@ function CanonicalFilePanel(
 					documentationSessionRef.current,
 					projectRoot,
 					terminalClientContext,
+					fileGateway,
 				) : null}
 				{isMdxPreview ? (
 					<LiveMdxPreview
@@ -1491,6 +1497,7 @@ function renderDocumentationSurface(
 	session: { readonly draftRevision: number; readonly diskRevision: number } | undefined,
 	projectRoot: string,
 	terminalClientContext: TerminalPanelClientContextValue,
+	fileGateway: FileViewerGateway,
 ) {
 	const reason = documentationDocumentReason({
 		path: fileInfo.name,
@@ -1517,6 +1524,15 @@ function renderDocumentationSurface(
 			projectId={terminalClientContext.projectId}
 			serverId={terminalClientContext.serverId}
 			runtimeClient={terminalClientContext.mdxRuntimeClient}
+			loadImage={async (src) => {
+				const path = resolveDocumentationImagePath(src, fileInfo.path, projectRoot);
+				if (path === undefined) return undefined;
+				const info = await fileGateway.getFileInfo(path);
+				const bytes = await fileGateway.readFileBytes(path, { offset: 0, length: info.size });
+				return new Blob([toArrayBuffer(decodeBase64ToUint8Array(bytes.base64))], {
+					type: documentationImageType(path, info.mimeType),
+				});
+			}}
 		/>
 	);
 }
