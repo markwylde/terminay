@@ -87,6 +87,7 @@ export function useDocumentationController(options: {
 		expandedFolders: snapshot.expandedFolders,
 		loading: snapshot.loading,
 		refresh: () => controllerRef.current?.refresh('fresh'),
+		stop: () => controllerRef.current?.stop(),
 		toggleFolder,
 	} as const;
 }

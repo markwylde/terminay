@@ -13,6 +13,7 @@ import type { DockviewApi } from 'dockview';
 import { DockviewReact } from 'dockview';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
+	CircleStop,
 	Eraser,
 	FolderPlus,
 	FolderSync,
@@ -21,6 +22,7 @@ import {
 	GitPullRequestArrow,
 	History,
 	LayoutDashboard,
+	Loader2,
 	Mic,
 	Play,
 	Plug,
@@ -253,6 +255,7 @@ import {
 } from './workspace/terminalTransferOrchestration';
 import { useDictationController } from './workspace/useDictationController';
 import { useDockviewPanelLifecycle } from './workspace/useDockviewPanelLifecycle';
+import { shouldAutoExpandDocumentationPane } from './workspace/documentationAutoExpand';
 import { useDocumentationController } from './workspace/useDocumentationController';
 import { useFileExplorerController } from './workspace/useFileExplorerController';
 import {
@@ -1338,8 +1341,35 @@ const ProjectWorkspace = forwardRef<
 		const { settings, error: settingsError } =
 			useTerminalSettings(serverSettingsClient);
 		const serverFileViewerClient = featureAuthority?.fileViewerClient;
+		const activeSidebarGroup = resolveVisibleSidebarGroup(
+			project.sidebarActiveGroup,
+			settings.agentIntegration.enabled,
+		);
+		const isDocumentationGroupVisible =
+			project.isFileExplorerOpen && activeSidebarGroup === 'documentation';
+		// Indexing latches on at the first visit and then belongs to the project:
+		// collapsing the pane or switching sidebar group must not cancel a build.
+		const [isDocumentationIndexingStarted, setDocumentationIndexingStarted] =
+			useState(false);
+		useEffect(() => {
+			if (!isDocumentationGroupVisible) return;
+			setDocumentationIndexingStarted(true);
+			if (
+				!shouldAutoExpandDocumentationPane(
+					project.id,
+					project.isDocumentationPaneCollapsed,
+				)
+			)
+				return;
+			onUpdateProject(project.id, { isDocumentationPaneCollapsed: false });
+		}, [
+			isDocumentationGroupVisible,
+			onUpdateProject,
+			project.id,
+			project.isDocumentationPaneCollapsed,
+		]);
 		const documentation = useDocumentationController({
-			enabled: !project.isDocumentationPaneCollapsed,
+			enabled: isDocumentationIndexingStarted,
 			client: featureAuthority?.documentationClient,
 			observationClient: featureAuthority?.fileObservationClient,
 			projectId: project.id,
@@ -4635,7 +4665,27 @@ const ProjectWorkspace = forwardRef<
 							isDocumentationPaneCollapsed:
 								!project.isDocumentationPaneCollapsed,
 						}),
-					actions: (
+					actions: documentation.loading ? (
+						<>
+							<span
+								className="sidebar-pane__action-spinner"
+								role="status"
+								aria-label="Indexing documentation"
+								title="Indexing documentation"
+							>
+								<Loader2 size={14} aria-hidden="true" />
+							</span>
+							<button
+								type="button"
+								className="sidebar-pane__action-button"
+								onClick={documentation.stop}
+								aria-label="Stop indexing documentation"
+								title="Stop indexing documentation"
+							>
+								<CircleStop size={14} aria-hidden="true" />
+							</button>
+						</>
+					) : (
 						<button
 							type="button"
 							className="sidebar-pane__action-button"
@@ -4668,10 +4718,6 @@ const ProjectWorkspace = forwardRef<
 			['explorer', 'documentation', 'agents'] as const
 		).filter(
 			(groupId) => settings.agentIntegration.enabled || groupId !== 'agents',
-		);
-		const activeSidebarGroup = resolveVisibleSidebarGroup(
-			project.sidebarActiveGroup,
-			settings.agentIntegration.enabled,
 		);
 		const groupedSidebarPanelIds = panelsInSidebarGroup(
 			activeSidebarGroup,
