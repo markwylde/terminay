@@ -1,11 +1,5 @@
 import { pathToFileURL } from 'node:url';
-import {
-	EXTENSION_API_VERSION,
-	type JsonValue,
-	validateAgentChildJournalSources,
-	validateAgentProviderDefinition,
-} from '@terminay/extension-api';
-import { LocalAgentObservationAdapter } from './localAgentObservation.js';
+import { EXTENSION_API_VERSION } from '@terminay/extension-api';
 import { parseExtensionLanguageRequest } from './languageProtocol.js';
 import {
 	LanguageSessionRuntime,
@@ -13,15 +7,11 @@ import {
 } from './languageSessionRuntime.js';
 import {
 	type ChildFrame,
-	EXTENSION_HOST_PROTOCOL_VERSION,
 	frameByteLength,
 	type HostFrame,
+	isHostFrame,
 	jsonIpcValue,
 } from './protocol.js';
-import type {
-	ExtensionAgentObservationOperation,
-	ExtensionAgentTerminalContext,
-} from './types.js';
 
 const MAX_MESSAGE_BYTES = 256 * 1024;
 /** How long a dying child waits for its fatal report to reach the host. */
@@ -39,15 +29,26 @@ let callbacks: Record<
 		context: { signal: AbortSignal },
 	) => unknown | Promise<unknown>
 > = {};
-const agentRuntimes = new Map<string, Record<string, unknown>>();
-const agentTerminals = new Map<
-	string,
-	{
-		readonly providerId: string;
-		readonly controller: AbortController;
-		readonly context: Record<string, unknown>;
-	}
->();
+/** One registered session source and, while it runs, its publisher state. */
+interface ChildSessionSource {
+	readonly runtime: { start(start: unknown): unknown };
+	controller?: AbortController;
+	enabled: readonly string[];
+	readonly listeners: Set<(enabled: readonly string[]) => void>;
+	/** What the host holds once every sent batch applies. */
+	live: Map<string, unknown>;
+	/** Calls not yet sent, coalesced by session id. */
+	pending: {
+		reset?: Map<string, unknown>;
+		upserts: Map<string, unknown>;
+		removals: Set<string>;
+	};
+	flushing: boolean;
+}
+const sessionSources = new Map<string, ChildSessionSource>();
+const mcpTargets = new Map<string, Record<string, unknown>>();
+/** Frames stay well under the host's limit so one session never overflows. */
+const PUBLICATION_BUDGET_BYTES = 192 * 1024;
 let subscriptions: Array<{ dispose(): unknown | Promise<unknown> }> = [];
 let sequence = 0;
 /** Every language server this extension runs, and their sessions. Created on
@@ -140,39 +141,13 @@ async function receive(message: unknown): Promise<void> {
 				);
 		return;
 	}
-	if (message.kind === 'agent.observation.result') {
+	if (message.kind === 'agent.source.ack') {
 		const pending = brokerCalls.get(message.id);
 		if (pending === undefined) return;
 		brokerCalls.delete(message.id);
-		const payload = object(message.payload);
-		payload?.ok === true
-			? pending.resolve(payload.value)
-			: pending.reject(
-					new Error(
-						typeof payload?.failure === 'string'
-							? payload.failure
-							: 'agent observation failed',
-					),
-				);
+		pending.resolve(object(message.payload) ?? { ok: false });
 		return;
 	}
-	if (message.kind === 'agent.lifecycle.ack') {
-		const pending = brokerCalls.get(message.id);
-		if (pending === undefined) return;
-		brokerCalls.delete(message.id);
-		const payload = object(message.payload);
-		payload?.acceptedEventCount !== undefined
-			? pending.resolve(payload)
-			: pending.reject(
-					new Error(
-						typeof payload?.failure === 'string'
-							? payload.failure
-							: 'agent lifecycle publication rejected',
-					),
-				);
-		return;
-	}
-	if (message.kind === 'agent.lifecycle.backpressure') return;
 	if (message.kind === 'activate') {
 		await activateExtension(message);
 		return;
@@ -184,8 +159,7 @@ async function receive(message: unknown): Promise<void> {
 	if (message.kind === 'deactivate') {
 		for (const controller of invocations.values()) controller.abort();
 		await languageRuntime?.stopAll().catch(() => undefined);
-		for (const terminal of agentTerminals.values()) terminal.controller.abort();
-		agentTerminals.clear();
+		stopAllSources();
 		try {
 			try {
 				await deactivate?.();
@@ -199,11 +173,10 @@ async function receive(message: unknown): Promise<void> {
 		return;
 	}
 	if (message.kind === 'invoke') await invoke(message);
-	if (message.kind === 'agent.terminal.admit')
-		await admitAgentTerminal(message);
-	if (message.kind === 'agent.terminal.cancel')
-		await cancelAgentTerminal(message);
-	if (message.kind === 'agent.drain') await drainAgentTerminals(message);
+	if (message.kind === 'agent.source.start') await startSource(message);
+	if (message.kind === 'agent.source.stop') stopSource(message);
+	if (message.kind === 'agent.source.harnesses') setSourceHarnesses(message);
+	if (message.kind === 'mcp.target.invoke') await invokeMcpTarget(message);
 }
 
 async function activateExtension(frame: HostFrame): Promise<void> {
@@ -220,11 +193,12 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 			extension?.activate ?? imported.activate ?? imported.default;
 		if (typeof activate !== 'function')
 			throw new Error('extension must export activate(context)');
-		const agentProviders: string[] = [];
-		agentRuntimes.clear();
+		const agentSessionSources: string[] = [];
+		const mcpInstallTargets: string[] = [];
+		stopAllSources();
+		sessionSources.clear();
+		mcpTargets.clear();
 		subscriptions = [];
-		for (const terminal of agentTerminals.values()) terminal.controller.abort();
-		agentTerminals.clear();
 		const declaredLanguageServers = new Set(
 			Array.isArray(payload.languageServers)
 				? payload.languageServers
@@ -251,13 +225,16 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 				});
 			},
 		});
-		const declaredAgentProviders = new Set(
-			Array.isArray(payload.agentProviders)
-				? payload.agentProviders
-						.map((entry) => object(entry)?.id)
-						.filter((id): id is string => typeof id === 'string')
-				: [],
-		);
+		const declaredIds = (value: unknown) =>
+			new Set(
+				Array.isArray(value)
+					? value
+							.map((entry) => object(entry)?.id)
+							.filter((id): id is string => typeof id === 'string')
+					: [],
+			);
+		const declaredSources = declaredIds(payload.agentSessionSources);
+		const declaredTargets = declaredIds(payload.mcpInstallTargets);
 		const result = await activate(
 			Object.freeze({
 				extensionId: payload.extensionId,
@@ -271,36 +248,74 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 					cache: payload.cacheDirectory,
 				}),
 				agents: Object.freeze({
-					registerProvider(providerId: string, runtime: unknown) {
+					registerSessionSource(sourceId: string, runtime: unknown) {
+						const value = object(runtime);
 						if (
-							typeof providerId !== 'string' ||
-							!declaredAgentProviders.has(providerId) ||
-							agentRuntimes.has(providerId) ||
-							!validateAgentProviderDefinition(runtime).ok
-						) {
+							typeof sourceId !== 'string' ||
+							!declaredSources.has(sourceId) ||
+							sessionSources.has(sourceId) ||
+							value === undefined ||
+							typeof value.start !== 'function'
+						)
 							throw new Error(
-								'agent provider registration is undeclared or invalid',
+								'session source registration is undeclared or invalid',
 							);
-						}
-						agentRuntimes.set(providerId, runtime as Record<string, unknown>);
-						agentProviders.push(providerId);
+						sessionSources.set(sourceId, {
+							runtime: value as ChildSessionSource['runtime'],
+							enabled: [],
+							listeners: new Set(),
+							live: new Map(),
+							pending: { upserts: new Map(), removals: new Set() },
+							flushing: false,
+						});
+						agentSessionSources.push(sourceId);
 						let disposed = false;
 						return Object.freeze({
-							providerId,
+							sourceId,
 							dispose() {
 								if (disposed) return;
 								disposed = true;
-								agentRuntimes.delete(providerId);
-								for (const [contextId, terminal] of agentTerminals) {
-									if (terminal.providerId !== providerId) continue;
-									terminal.controller.abort();
-									agentTerminals.delete(contextId);
-								}
+								sessionSources.get(sourceId)?.controller?.abort();
+								sessionSources.delete(sourceId);
 								send({
 									protocolVersion: 1,
-									kind: 'agent.provider.disposed',
+									kind: 'agent.source.disposed',
 									id: `agent-dispose:${++sequence}`,
-									payload: { providerId },
+									payload: { sourceId },
+								});
+							},
+						});
+					},
+				}),
+				mcp: Object.freeze({
+					registerInstallTarget(targetId: string, runtime: unknown) {
+						const value = object(runtime);
+						if (
+							typeof targetId !== 'string' ||
+							!declaredTargets.has(targetId) ||
+							mcpTargets.has(targetId) ||
+							value === undefined ||
+							typeof value.status !== 'function' ||
+							typeof value.install !== 'function' ||
+							typeof value.uninstall !== 'function'
+						)
+							throw new Error(
+								'MCP install target registration is undeclared or invalid',
+							);
+						mcpTargets.set(targetId, value);
+						mcpInstallTargets.push(targetId);
+						let disposed = false;
+						return Object.freeze({
+							targetId,
+							dispose() {
+								if (disposed) return;
+								disposed = true;
+								mcpTargets.delete(targetId);
+								send({
+									protocolVersion: 1,
+									kind: 'mcp.target.disposed',
+									id: `mcp-dispose:${++sequence}`,
+									payload: { targetId },
 								});
 							},
 						});
@@ -384,7 +399,8 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 			id: frame.id,
 			payload: {
 				methods: Object.keys(callbacks).sort(),
-				agentProviders,
+				agentSessionSources,
+				mcpInstallTargets,
 				languageServers,
 			},
 		});
@@ -399,655 +415,277 @@ async function disposeSubscriptions(): Promise<void> {
 	for (const subscription of owned.reverse()) await subscription.dispose();
 }
 
-async function admitAgentTerminal(frame: HostFrame): Promise<void> {
-	const payload = object(frame.payload);
-	const context = object(payload?.context);
-	const providerId =
-		typeof context?.providerId === 'string' ? context.providerId : '';
-	const contextId =
-		typeof context?.contextId === 'string' ? context.contextId : '';
-	const runtime = agentRuntimes.get(providerId);
-	if (
-		!context ||
-		!contextId ||
-		!runtime ||
-		typeof runtime.observe !== 'function' ||
-		agentTerminals.has(contextId)
-	) {
-		failure(frame.id, new Error('agent terminal admission is invalid'));
-		return;
-	}
-	const controller = new AbortController();
-	const bridge = await createAgentTerminalContext(context, controller.signal);
-	agentTerminals.set(contextId, { providerId, controller, context });
+function enabledHarnessesOf(value: unknown): readonly string[] {
+	const list = object(value)?.enabledHarnesses;
+	return Object.freeze(
+		Array.isArray(list)
+			? list.filter((id): id is string => typeof id === 'string')
+			: [],
+	);
+}
+
+function sourceFor(frame: HostFrame): [string, ChildSessionSource] {
+	const sourceId = object(frame.payload)?.sourceId;
+	const source =
+		typeof sourceId === 'string' ? sessionSources.get(sourceId) : undefined;
+	if (source === undefined || typeof sourceId !== 'string')
+		throw new Error('session source is not registered');
+	return [sourceId, source];
+}
+
+/**
+ * Start one source. Its publisher coalesces calls per session and sends one
+ * batch at a time, so a burst of changes costs one frame, not one per change,
+ * and the host is never sent more than it has acknowledged.
+ */
+async function startSource(frame: HostFrame): Promise<void> {
 	try {
-		const result = await (
-			runtime.observe as (value: unknown) => Promise<unknown>
-		).call(runtime, bridge.terminal);
-		void consumeAgentSession(result, bridge.publisher, controller.signal);
-		const state = object(result)?.state;
-		const awaiting =
-			state === 'not-bound'
-				? await awaitedDirectoryPaths(
-						object(result)?.awaiting,
-						bridge.directoryPath,
-					)
-				: [];
-		if (
-			!send({
-				protocolVersion: 1,
-				kind: 'agent.terminal.admitted',
-				id: frame.id,
-				payload: {
-					contextId,
-					state: typeof state === 'string' ? state : 'unknown',
-					...(awaiting.length === 0 ? {} : { awaiting }),
+		const [sourceId, source] = sourceFor(frame);
+		source.controller?.abort();
+		const controller = new AbortController();
+		source.controller = controller;
+		source.enabled = enabledHarnessesOf(frame.payload);
+		source.listeners.clear();
+		source.live = new Map();
+		source.pending = { upserts: new Map(), removals: new Set() };
+		const active = () =>
+			!controller.signal.aborted && source.controller === controller;
+		const publisher = Object.freeze({
+			reset(sessions: readonly unknown[]) {
+				if (!active() || !Array.isArray(sessions)) return;
+				const reset = new Map(
+					sessions.map((session) => [sessionId(session), session]),
+				);
+				source.live = new Map(reset);
+				source.pending = { reset, upserts: new Map(), removals: new Set() };
+				scheduleFlush(sourceId, source);
+			},
+			upsert(session: unknown) {
+				if (!active()) return;
+				const id = sessionId(session);
+				source.live.set(id, session);
+				if (source.pending.reset !== undefined)
+					source.pending.reset.set(id, session);
+				else {
+					source.pending.removals.delete(id);
+					source.pending.upserts.set(id, session);
+				}
+				scheduleFlush(sourceId, source);
+			},
+			remove(id: unknown) {
+				if (!active() || typeof id !== 'string') return;
+				source.live.delete(id);
+				if (source.pending.reset !== undefined) source.pending.reset.delete(id);
+				else {
+					source.pending.upserts.delete(id);
+					source.pending.removals.add(id);
+				}
+				scheduleFlush(sourceId, source);
+			},
+			diagnostic(diagnostic: unknown) {
+				if (!active()) return;
+				send({
+					protocolVersion: 1,
+					kind: 'agent.source.diagnostic',
+					id: `agent-diagnostic:${++sequence}`,
+					payload: { sourceId, diagnostic } as Record<string, unknown>,
+				});
+			},
+		});
+		await source.runtime.start(
+			Object.freeze({
+				enabledHarnesses: source.enabled,
+				publisher,
+				signal: controller.signal,
+				onEnabledHarnessesChanged(
+					listener: (enabled: readonly string[]) => void,
+				) {
+					if (typeof listener !== 'function')
+						throw new TypeError('harness listener must be a function');
+					source.listeners.add(listener);
+					return Object.freeze({
+						dispose() {
+							source.listeners.delete(listener);
+						},
+					});
 				},
-			})
-		)
-			exitUndeliverable();
+			}),
+		);
+		send({ protocolVersion: 1, kind: 'result', id: frame.id });
 	} catch (error) {
-		agentTerminals.delete(contextId);
 		failure(frame.id, error);
 	}
 }
 
-/** How many directories one `not-bound` result may ask the host to watch. */
-const MAX_AWAITED_DIRECTORIES = 16;
-
-/**
- * The canonical paths behind the directory handles a `not-bound` result names.
- * Only handles this context resolved translate to a path; anything else is
- * dropped, so a provider cannot make the host watch a directory it never
- * obtained through the terminal-scoped broker.
- */
-async function awaitedDirectoryPaths(
-	awaiting: unknown,
-	directoryPath: (handle: unknown) => Promise<string | undefined>,
-): Promise<Array<{ path: string; recursive: boolean }>> {
-	if (!Array.isArray(awaiting)) return [];
-	const paths = new Map<string, boolean>();
-	for (const entry of awaiting.slice(0, MAX_AWAITED_DIRECTORIES)) {
-		const id = object(object(entry)?.directory)?.id;
-		if (typeof id !== 'string' || id.length === 0) continue;
-		const path = await directoryPath({ id }).catch(() => undefined);
-		if (path === undefined) continue;
-		const recursive = object(entry)?.recursive === true;
-		paths.set(path, (paths.get(path) ?? false) || recursive);
+function stopSource(frame: HostFrame): void {
+	try {
+		const [, source] = sourceFor(frame);
+		source.controller?.abort();
+		source.controller = undefined;
+		source.listeners.clear();
+		send({ protocolVersion: 1, kind: 'result', id: frame.id });
+	} catch (error) {
+		failure(frame.id, error);
 	}
-	return [...paths].map(([path, recursive]) => ({ path, recursive }));
 }
 
-async function cancelAgentTerminal(frame: HostFrame): Promise<void> {
+function stopAllSources(): void {
+	for (const source of sessionSources.values()) {
+		source.controller?.abort();
+		source.controller = undefined;
+		source.listeners.clear();
+	}
+}
+
+function setSourceHarnesses(frame: HostFrame): void {
+	try {
+		const [, source] = sourceFor(frame);
+		source.enabled = enabledHarnessesOf(frame.payload);
+		for (const listener of [...source.listeners]) listener(source.enabled);
+		send({ protocolVersion: 1, kind: 'result', id: frame.id });
+	} catch (error) {
+		failure(frame.id, error);
+	}
+}
+
+function sessionId(session: unknown): string {
+	const id = object(session)?.id;
+	return typeof id === 'string' ? id : `invalid:${++sequence}`;
+}
+
+function scheduleFlush(sourceId: string, source: ChildSessionSource): void {
+	if (source.flushing) return;
+	source.flushing = true;
+	setImmediate(() => {
+		void flushSource(sourceId, source).finally(() => {
+			source.flushing = false;
+			if (hasPending(source) && source.controller !== undefined)
+				scheduleFlush(sourceId, source);
+		});
+	});
+}
+
+function hasPending(source: ChildSessionSource): boolean {
+	return (
+		source.pending.reset !== undefined ||
+		source.pending.upserts.size > 0 ||
+		source.pending.removals.size > 0
+	);
+}
+
+async function flushSource(
+	sourceId: string,
+	source: ChildSessionSource,
+): Promise<void> {
+	while (hasPending(source) && source.controller !== undefined) {
+		const controller = source.controller;
+		const batch = source.pending;
+		source.pending = { upserts: new Map(), removals: new Set() };
+		for (const payload of publicationFrames(sourceId, batch)) {
+			const ack = await sessionRequest(payload);
+			if (source.controller !== controller) return;
+			if (ack.resend === true) {
+				// The host dropped what it had queued: send the whole live set.
+				source.pending = {
+					reset: new Map(source.live),
+					upserts: new Map(),
+					removals: new Set(),
+				};
+				break;
+			}
+		}
+	}
+}
+
+/** Split one coalesced batch into frames under the IPC budget. A reset that
+ * does not fit continues as upserts; removals ride on the last frame. */
+function publicationFrames(
+	sourceId: string,
+	batch: ChildSessionSource['pending'],
+): Record<string, unknown>[] {
+	const frames: Record<string, unknown>[] = [];
+	let current: unknown[] = [];
+	let bytes = 0;
+	let resetOpen = batch.reset !== undefined;
+	const close = () => {
+		frames.push({
+			sourceId,
+			...(resetOpen ? { reset: current } : { upserts: current }),
+		});
+		resetOpen = false;
+		current = [];
+		bytes = 0;
+	};
+	for (const session of [
+		...(batch.reset?.values() ?? []),
+		...batch.upserts.values(),
+	]) {
+		const size = frameByteLength(jsonIpcValue(session));
+		if (current.length > 0 && bytes + size > PUBLICATION_BUDGET_BYTES) close();
+		current.push(session);
+		bytes += size;
+	}
+	if (current.length > 0 || resetOpen || batch.removals.size > 0) close();
+	const last = frames[frames.length - 1]!;
+	if (batch.removals.size > 0) last.removals = [...batch.removals];
+	return frames;
+}
+
+function sessionRequest(
+	payload: Record<string, unknown>,
+): Promise<{ ok?: unknown; resend?: unknown }> {
+	const id = `agent:${++sequence}`;
+	return new Promise((resolve) => {
+		brokerCalls.set(id, {
+			resolve: (value) => resolve(object(value) ?? {}),
+			reject: () => resolve({ ok: false }),
+		});
+		if (
+			!send({ protocolVersion: 1, kind: 'agent.source.publish', id, payload })
+		) {
+			brokerCalls.delete(id);
+			resolve({ ok: false });
+		}
+	});
+}
+
+async function invokeMcpTarget(frame: HostFrame): Promise<void> {
 	const payload = object(frame.payload);
-	const contextId =
-		typeof payload?.contextId === 'string' ? payload.contextId : '';
-	const terminal = agentTerminals.get(contextId);
-	if (terminal === undefined) {
+	const target =
+		typeof payload?.targetId === 'string'
+			? mcpTargets.get(payload.targetId)
+			: undefined;
+	const operation = payload?.operation;
+	const method =
+		operation === 'status' ||
+		operation === 'install' ||
+		operation === 'uninstall'
+			? target?.[operation]
+			: undefined;
+	if (typeof method !== 'function') {
+		failure(frame.id, new Error('MCP install target is not registered'));
+		return;
+	}
+	const controller = new AbortController();
+	invocations.set(frame.id, controller);
+	try {
+		const result = await (
+			method as (request: unknown) => Promise<unknown>
+		).call(target, { server: payload?.server, signal: controller.signal });
 		if (
 			!send({
 				protocolVersion: 1,
-				kind: 'agent.terminal.cancelled',
+				kind: 'result',
 				id: frame.id,
-				payload: { contextId, alreadyCancelled: true },
+				payload: result,
 			})
 		)
 			exitUndeliverable();
-		return;
+	} catch (error) {
+		failure(frame.id, error);
+	} finally {
+		invocations.delete(frame.id);
 	}
-	terminal.controller.abort();
-	agentTerminals.delete(contextId);
-	if (
-		!send({
-			protocolVersion: 1,
-			kind: 'agent.terminal.cancelled',
-			id: frame.id,
-			payload: { contextId },
-		})
-	)
-		exitUndeliverable();
-}
-
-async function drainAgentTerminals(frame: HostFrame): Promise<void> {
-	for (const terminal of agentTerminals.values()) terminal.controller.abort();
-	agentTerminals.clear();
-	if (
-		!send({
-			protocolVersion: 1,
-			kind: 'agent.drain.completed',
-			id: frame.id,
-			payload: { drained: true },
-		})
-	)
-		exitUndeliverable();
-}
-
-/**
- * Builds the terminal context an agent provider sees. Exported so the
- * conformance harness drives providers through this exact construction rather
- * than a second implementation of it.
- */
-/** A terminal device is a local fact; anything slower than this is not coming. */
-const TTY_FACT_TIMEOUT_MS = 2_000;
-
-/** `/dev/pts/3` names the device and `pts-3` identifies it, matching the
- * identifier providers find in their own per-terminal records. */
-function ttyFactFor(path: string): Readonly<{
-	deviceId: string;
-	deviceName: string;
-}> | undefined {
-	if (!path.startsWith('/dev/')) return undefined;
-	const deviceId = path.slice('/dev/'.length).replaceAll('/', '-');
-	return deviceId
-		? Object.freeze({ deviceId, deviceName: path })
-		: undefined;
-}
-
-export async function createAgentTerminalContext(
-	context: Record<string, unknown>,
-	signal: AbortSignal,
-): Promise<{
-	readonly terminal: Record<string, unknown>;
-	readonly publisher: Record<string, (event: unknown) => Promise<unknown>>;
-	/** Host-private: the path behind a directory handle this context resolved. */
-	readonly directoryPath: (handle: unknown) => Promise<string | undefined>;
-}> {
-	const contextId = String(context.contextId);
-	const providerId = String(context.providerId);
-	const terminalContext = localObservationContext(context);
-	const local = localObservationAdapter(context);
-	const request = (operation: string, payload: unknown) =>
-		local === undefined
-			? agentRequest('agent.observation.request', {
-					contextId,
-					providerId,
-					operation,
-					payload,
-				})
-			: local.observe(
-					terminalContext,
-					operation as ExtensionAgentObservationOperation,
-					(payload ?? null) as JsonValue,
-					signal,
-				);
-	// The API promises `undefined` for a handle or fact that does not exist.
-	// The adapter answers `null` over JSON, and a provider that checks for
-	// `undefined` would otherwise carry `null` into its next call and throw.
-	const optional = async (operation: string, payload: unknown) =>
-		(await request(operation, payload)) ?? undefined;
-	const publish = (binding: unknown, events: unknown[]) =>
-		agentRequest('agent.lifecycle.publish', {
-			contextId,
-			providerId,
-			publicationId: `${contextId}:${++sequence}`,
-			mappingVersion:
-				typeof binding === 'object' &&
-				binding !== null &&
-				typeof (binding as Record<string, unknown>).mappingVersion === 'string'
-					? (binding as Record<string, unknown>).mappingVersion
-					: '0.1',
-			binding,
-			events,
-		});
-	let rootSessionStarted = false;
-	const publisher = Object.freeze({
-		sessionStarted(event: unknown) {
-			const payload = object(event) ?? {};
-			if (rootSessionStarted)
-				return publish(undefined, [{ kind: 'agent.metadata', ...payload }]);
-			rootSessionStarted = true;
-			return publish(undefined, [{ kind: 'session.started', ...payload }]);
-		},
-		metadataChanged(event: unknown) {
-			return publish(undefined, [
-				{ kind: 'agent.metadata', ...(object(event) ?? {}) },
-			]);
-		},
-		turnStarted(event: unknown) {
-			return publish(undefined, [
-				{ kind: 'turn.started', ...(object(event) ?? {}) },
-			]);
-		},
-		toolStarted(event: unknown) {
-			return publish(undefined, [
-				{ kind: 'tool.started', ...(object(event) ?? {}) },
-			]);
-		},
-		toolFinished(event: unknown) {
-			return publish(undefined, [
-				{ kind: 'tool.finished', ...(object(event) ?? {}) },
-			]);
-		},
-		waitStarted(event: unknown) {
-			return publish(undefined, [
-				{ kind: 'wait.started', ...(object(event) ?? {}) },
-			]);
-		},
-		waitFinished(event: unknown) {
-			return publish(undefined, [
-				{ kind: 'wait.finished', ...(object(event) ?? {}) },
-			]);
-		},
-		done(event: unknown) {
-			return publish(undefined, [
-				{ kind: 'agent.done', ...(object(event) ?? {}) },
-			]);
-		},
-		exited(event: unknown) {
-			return publish(undefined, [
-				{ kind: 'agent.exited', ...(object(event) ?? {}) },
-			]);
-		},
-		sessionStopped(event: unknown) {
-			return publish(undefined, [
-				{ kind: 'session.stopped', ...(object(event) ?? {}) },
-			]);
-		},
-		subagentStarted(event: unknown) {
-			return publish(undefined, [
-				{ kind: 'subagent.started', ...(object(event) ?? {}) },
-			]);
-		},
-		subagentDone(event: unknown) {
-			return publish(undefined, [
-				{ kind: 'subagent.done', ...(object(event) ?? {}) },
-			]);
-		},
-	});
-	const observation = Object.freeze({
-		processes: Object.freeze({
-			descendants: (options: unknown = {}) =>
-				request('process.descendants', options),
-			openFiles: (processes: unknown, options: unknown = {}) =>
-				request('process.open-files', { processes, options }),
-			environment: (names: unknown) =>
-				request('process.environment', { names }),
-		}),
-		files: Object.freeze({
-			resolveHomeDirectory: (relativePath: unknown, options: unknown = {}) =>
-				optional('filesystem.resolve-home-directory', {
-					relativePath,
-					...object(options),
-				}),
-			resolveDirectoryRelativeToEnvironment: (
-				relativePath: unknown,
-				options: unknown,
-			) =>
-				optional('filesystem.resolve-directory-relative-to-environment', {
-					relativePath,
-					...object(options),
-				}),
-			listDirectory: (root: unknown, options: unknown) =>
-				request('filesystem.list-directory', {
-					root,
-					options: object(options),
-				}),
-			watchDirectory: async (root: unknown, options: unknown) =>
-				pollingDirectoryWatcher(request, root, options, signal),
-			resolveHomeRelative: (relativePath: unknown, options: unknown = {}) =>
-				optional('filesystem.resolve-home-relative', {
-					relativePath,
-					...object(options),
-				}),
-			resolvePathUnderHome: (providerPath: unknown, options: unknown) =>
-				optional('filesystem.resolve-path-under-home', {
-					providerPath,
-					...object(options),
-				}),
-			homeRelativePath: (handle: unknown, options: unknown) =>
-				optional('filesystem.home-relative-path', {
-					handle,
-					...object(options),
-				}),
-			resolveRelativeToEnvironment: (relativePath: unknown, options: unknown) =>
-				optional('filesystem.resolve-relative-to-environment', {
-					relativePath,
-					...object(options),
-				}),
-			resolvePathUnderEnvironment: (providerPath: unknown, options: unknown) =>
-				optional('filesystem.resolve-path-under-environment', {
-					providerPath,
-					...object(options),
-				}),
-			environmentRelativePath: (handle: unknown, options: unknown) =>
-				optional('filesystem.environment-relative-path', {
-					handle,
-					...object(options),
-				}),
-			canonicalFile: (handle: unknown, options: unknown = {}) =>
-				optional('filesystem.realpath', { handle, options }),
-			realpath: (handle: unknown, options: unknown = {}) =>
-				optional('filesystem.realpath', { handle, options }),
-			stat: (handle: unknown, options: unknown = {}) =>
-				optional('filesystem.stat', { handle, options }),
-			read: async (handle: unknown, options: unknown) =>
-				decodeAgentObservationBytes(
-					await request('filesystem.read', { handle, options }),
-				),
-			readJson: async (handle: unknown, options: unknown) =>
-				parseObservedJson(
-					decodeAgentObservationBytes(
-						await request('filesystem.read', {
-							handle,
-							options: { ...object(options), encoding: 'json' },
-						}),
-					),
-				),
-			readJsonLine: async (handle: unknown, options: unknown) =>
-				parseObservedJsonLine(
-					decodeAgentObservationBytes(
-						await request('filesystem.read', {
-							handle,
-							options: { ...object(options), encoding: 'jsonl' },
-						}),
-					),
-					object(options)?.position,
-				),
-			follow: async (handle: unknown, options: unknown = {}) =>
-				pollingWatcher(request, handle, options, signal),
-		}),
-	});
-	// The PTY device this terminal is, as a bounded fact rather than a path a
-	// provider could roam from. A provider whose CLI records the terminal it
-	// runs in — omp writes a per-device breadcrumb — has no other way to prove
-	// which of several terminals it is looking at, and the broker has always
-	// exposed this operation while nothing ever asked it for one.
-	//
-	// A terminal with no device simply leaves the fact absent: it is
-	// enrichment, never a precondition for binding.
-	const tty = await (async () => {
-		// The device is read straight from the admission context where the host
-		// proved one, and otherwise only through a local adapter — never as an
-		// unsolicited broker round-trip, which would put a request the provider
-		// did not make on every admission.
-		const issued = typeof context.ttyPath === 'string' ? context.ttyPath : undefined;
-		if (issued) return ttyFactFor(issued);
-		if (local === undefined) return undefined;
-		try {
-			// Bounded, because this must never hold up admission. A host that
-			// cannot answer — or does not answer at all — leaves the fact absent,
-			// which is the documented contract: enrichment, never a precondition
-			// for binding.
-			const answered = await Promise.race([
-				request('terminal.tty', null),
-				new Promise<undefined>((resolve) => {
-					const timer = setTimeout(() => resolve(undefined), TTY_FACT_TIMEOUT_MS);
-					timer.unref?.();
-				}),
-			]);
-			const fact = object(answered);
-			const deviceId = typeof fact?.terminalId === 'string' ? fact.terminalId : undefined;
-			if (!deviceId) return undefined;
-			return Object.freeze({
-				deviceId,
-				...(typeof fact?.path === 'string' ? { deviceName: fact.path } : {}),
-			});
-		} catch {
-			return undefined;
-		}
-	})();
-	const terminal = Object.freeze({
-		terminal: Object.freeze({ id: context.terminalSessionId }),
-		...(tty === undefined ? {} : { tty }),
-		project: Object.freeze({ id: context.projectId }),
-		environment: Object.freeze({ id: context.serverId }),
-		process: Object.freeze({ id: context.contextId }),
-		foreground: Object.freeze({ executableName: '' }),
-		observation,
-		signal,
-		async bindSession(binding: unknown) {
-			await publish(binding, []);
-			// Binding is exact evidence that this provider owns a live session in
-			// this PTY. Materialize the root immediately, then let the first native
-			// session record refine it as metadata. This prevents a late watcher or
-			// an optional enrichment stream from leaving a proven live session
-			// absent from the Agents pane.
-			await publisher.sessionStarted({});
-			return Object.freeze(structuredClone(binding));
-		},
-	});
-	const directoryPath = async (handle: unknown): Promise<string | undefined> => {
-		const resolved = object(
-			await request('filesystem.directory-path', { handle }),
-		);
-		return typeof resolved?.path === 'string' ? resolved.path : undefined;
-	};
-	return Object.freeze({ terminal, publisher, directoryPath });
-}
-
-/** File bytes cross the host IPC as JSON-safe integer arrays. Keep that
- * transport detail inside the private bridge so public extension methods keep
- * their documented `Uint8Array` / parsed-JSON contracts. */
-export function decodeAgentObservationBytes(value: unknown): Uint8Array {
-	if (value instanceof Uint8Array) {
-		if (value.byteLength > 4 * 1024 * 1024)
-			throw new Error('agent file observation exceeds its byte limit');
-		return value;
-	}
-	if (Array.isArray(value) && value.length > 4 * 1024 * 1024) {
-		throw new Error('agent file observation exceeds its byte limit');
-	}
-	if (
-		!Array.isArray(value) ||
-		value.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)
-	) {
-		throw new Error('agent file observation returned invalid bytes');
-	}
-	return new Uint8Array(value);
-}
-
-export function parseObservedJson(bytes: Uint8Array): unknown | undefined {
-	const text = new TextDecoder().decode(bytes).trim();
-	if (!text) return undefined;
-	try {
-		return JSON.parse(text);
-	} catch {
-		return undefined;
-	}
-}
-
-export function parseObservedJsonLine(
-	bytes: Uint8Array,
-	position: unknown,
-): unknown | undefined {
-	const lines = new TextDecoder().decode(bytes).split('\n').filter(Boolean);
-	const line = position === 'last' ? lines.at(-1) : lines[0];
-	if (!line) return undefined;
-	try {
-		return JSON.parse(line);
-	} catch {
-		return undefined;
-	}
-}
-
-/**
- * Feeds a bound provider session through its own mapper. Exported so the
- * conformance harness pumps a real CLI's journals exactly as the child does.
- */
-export async function consumeAgentSession(
-	result: unknown,
-	publisher: Record<string, (event: unknown) => Promise<unknown>>,
-	signal: AbortSignal,
-): Promise<void> {
-	const session = object(result);
-	if (
-		session?.state !== 'bound' ||
-		typeof session.mapRecord !== 'function' ||
-		!('source' in session) ||
-		!session.binding ||
-		typeof session.binding !== 'object'
-	)
-		return;
-	const mapping = session.mapRecord as (
-		record: unknown,
-		context: unknown,
-	) => unknown | Promise<unknown>;
-	let releaseRootFirstRecord: (() => void) | undefined;
-	const rootFirstRecord = new Promise<void>((resolve) => {
-		releaseRootFirstRecord = resolve;
-	});
-	const consume = async (
-		sourceValue: unknown,
-		journal: Record<string, unknown>,
-	): Promise<void> => {
-		try {
-			const source = (await Promise.resolve(sourceValue)) as {
-				[Symbol.asyncIterator]?: () => AsyncIterator<unknown>;
-				dispose?: () => unknown | Promise<unknown>;
-			};
-			if (typeof source?.[Symbol.asyncIterator] !== 'function') return;
-			for await (const chunk of source as AsyncIterable<unknown>) {
-				if (signal.aborted) return;
-				const bytes = object(chunk)?.bytes;
-				if (!Array.isArray(bytes) && !(bytes instanceof Uint8Array)) continue;
-				const text = new TextDecoder().decode(
-					bytes instanceof Uint8Array
-						? bytes
-						: new Uint8Array(bytes as number[]),
-				);
-				for (const line of text.split('\n')) {
-					if (!line) continue;
-					try {
-						await mapping(
-							JSON.parse(line),
-							Object.freeze({
-								binding: session.binding,
-								journal,
-								publish: publisher,
-								signal,
-							}),
-						);
-					} catch {
-						/* Provider parsing failures remain local. */
-					}
-					if (journal.role === 'root') releaseRootFirstRecord?.();
-				}
-			}
-			await source.dispose?.();
-		} catch {
-			/* Observation disappearance/cancellation is provider-local fallback. */
-		} finally {
-			if (journal.role === 'root') releaseRootFirstRecord?.();
-		}
-	};
-	const childSources = Array.isArray(session.childSources)
-		? session.childSources
-		: [];
-	const consumedChildIds = new Set<string>();
-	const consumeChild = (child: unknown): Promise<void> | undefined => {
-		const source = object(child);
-		const childId =
-			typeof source?.childId === 'string' ? source.childId : undefined;
-		if (
-			!childId ||
-			source === undefined ||
-			!('source' in source) ||
-			consumedChildIds.has(childId) ||
-			!validateAgentChildJournalSources([source]).ok
-		)
-			return undefined;
-		consumedChildIds.add(childId);
-		return consume(source.source, Object.freeze({ role: 'child', childId }));
-	};
-	const root = consume(session.source, Object.freeze({ role: 'root' }));
-	// A child source cannot legitimately precede its owning root session. Wait
-	// until the root mapper has seen its first journal record so concurrent
-	// initial replay cannot race lifecycle validation in the host.
-	const children = (async () => {
-		await rootFirstRecord;
-		const staticChildren = childSources.flatMap((child) => {
-			const task = consumeChild(child);
-			return task === undefined ? [] : [task];
-		});
-		const discovery = async (): Promise<void> => {
-			const stream =
-				session.childSourceDiscovery === undefined
-					? undefined
-					: ((await Promise.resolve(session.childSourceDiscovery)) as {
-							[Symbol.asyncIterator]?: () => AsyncIterator<unknown>;
-						});
-			if (!stream || typeof stream[Symbol.asyncIterator] !== 'function') return;
-			for await (const child of stream as AsyncIterable<unknown>) {
-				if (signal.aborted) return;
-				// Do not await the child stream: a long-lived JSONL watcher must not
-				// block discovery of its siblings. The source has its own cancellation
-				// path via the admitted terminal controller.
-				void consumeChild(child);
-			}
-		};
-		await Promise.all([...staticChildren, discovery()]);
-	})();
-	await Promise.all([root, children]);
-}
-
-async function pollingWatcher(
-	request: (operation: string, payload: unknown) => Promise<unknown>,
-	handle: unknown,
-	options: unknown,
-	signal: AbortSignal,
-): Promise<{
-	[Symbol.asyncIterator](): AsyncIterator<unknown>;
-	dispose(): Promise<void>;
-}> {
-	const opened = object(
-		await request('filesystem.follow', { handle, options }),
-	);
-	const watcherId =
-		typeof opened?.watcherId === 'string' ? opened.watcherId : undefined;
-	if (!watcherId) throw new Error('agent file follow is unavailable');
-	return Object.freeze({
-		async *[Symbol.asyncIterator](): AsyncGenerator<unknown> {
-			while (!signal.aborted) {
-				const next = object(await request('filesystem.follow', { watcherId }));
-				const events = Array.isArray(next?.events) ? next.events : [];
-				for (const event of events) yield event;
-				if (next?.closed === true) return;
-				if (events.length === 0)
-					await new Promise((resolve) => setTimeout(resolve, 50));
-			}
-		},
-		async dispose(): Promise<void> {
-			await request('filesystem.unfollow', { watcherId });
-		},
-	});
-}
-
-async function pollingDirectoryWatcher(
-	request: (operation: string, payload: unknown) => Promise<unknown>,
-	root: unknown,
-	options: unknown,
-	signal: AbortSignal,
-): Promise<{
-	[Symbol.asyncIterator](): AsyncIterator<unknown>;
-	dispose(): Promise<void>;
-}> {
-	const opened = object(
-		await request('filesystem.watch-directory', {
-			root,
-			options: object(options),
-		}),
-	);
-	const watcherId =
-		typeof opened?.watcherId === 'string' ? opened.watcherId : undefined;
-	if (!watcherId) throw new Error('agent directory watcher is unavailable');
-	const initial = object(opened?.snapshot);
-	return Object.freeze({
-		async *[Symbol.asyncIterator](): AsyncGenerator<unknown> {
-			if (initial) yield initial;
-			while (!signal.aborted) {
-				const next = object(
-					await request('filesystem.watch-directory', { watcherId }),
-				);
-				const snapshot = object(next?.snapshot);
-				if (snapshot) yield snapshot;
-				if (next?.closed === true) return;
-				if (!snapshot) await new Promise((resolve) => setTimeout(resolve, 50));
-			}
-		},
-		async dispose(): Promise<void> {
-			await request('filesystem.unwatch-directory', { watcherId });
-		},
-	});
 }
 
 /**
@@ -1156,20 +794,6 @@ function brokerRequest(
 	});
 }
 
-function agentRequest(
-	kind: 'agent.observation.request' | 'agent.lifecycle.publish',
-	payload: unknown,
-): Promise<unknown> {
-	const id = `agent:${++sequence}`;
-	return new Promise((resolve, reject) => {
-		brokerCalls.set(id, { resolve, reject });
-		if (!send({ protocolVersion: 1, kind, id, payload })) {
-			brokerCalls.delete(id);
-			reject(new Error(`agent IPC send failed: ${lastSendFailure}`));
-		}
-	});
-}
-
 /**
  * End a child whose reply to the host could not be written. The host is owed
  * the reply, so carrying on would leave it waiting; the fatal report says
@@ -1227,64 +851,4 @@ function object(value: unknown): Record<string, unknown> | undefined {
 	return typeof value === 'object' && value !== null && !Array.isArray(value)
 		? (value as Record<string, unknown>)
 		: undefined;
-}
-function localPid(value: unknown): number | undefined {
-	return typeof value === 'number' &&
-		Number.isInteger(value) &&
-		value > 0 &&
-		value <= 4_194_304
-		? value
-		: undefined;
-}
-function localObservationContext(
-	context: Record<string, unknown>,
-): ExtensionAgentTerminalContext {
-	const shellPid = localPid(context.shellPid);
-	const ttyPath =
-		typeof context.ttyPath === 'string' ? context.ttyPath : undefined;
-	return Object.freeze({
-		contextId: String(context.contextId),
-		serverId: String(context.serverId),
-		projectId: String(context.projectId),
-		terminalSessionId: String(context.terminalSessionId),
-		terminalIncarnationId: String(context.terminalIncarnationId),
-		providerId: String(context.providerId),
-		...(shellPid === undefined ? {} : { shellPid }),
-		...(ttyPath === undefined ? {} : { ttyPath }),
-	});
-}
-function localObservationAdapter(
-	context: Record<string, unknown>,
-): LocalAgentObservationAdapter | undefined {
-	const shellPid = localPid(context.shellPid);
-	if (shellPid === undefined) return undefined;
-	const ttyPath =
-		typeof context.ttyPath === 'string' ? context.ttyPath : undefined;
-	return new LocalAgentObservationAdapter({
-		resolveTerminal: () => ({
-			shellPid,
-			...(ttyPath === undefined ? {} : { ttyPath }),
-		}),
-	});
-}
-function isHostFrame(value: unknown): value is HostFrame {
-	const frame = object(value);
-	return (
-		frame?.protocolVersion === EXTENSION_HOST_PROTOCOL_VERSION &&
-		typeof frame.id === 'string' &&
-		frame.id.length > 0 &&
-		frame.id.length <= 200 &&
-		(frame.kind === 'activate' ||
-			frame.kind === 'invoke' ||
-			frame.kind === 'cancel' ||
-			frame.kind === 'deactivate' ||
-			frame.kind === 'broker.result' ||
-			frame.kind === 'agent.terminal.admit' ||
-			frame.kind === 'agent.terminal.cancel' ||
-			frame.kind === 'agent.drain' ||
-			frame.kind === 'agent.observation.result' ||
-			frame.kind === 'agent.lifecycle.ack' ||
-			frame.kind === 'agent.lifecycle.backpressure' ||
-			frame.kind === 'language.request')
-	);
 }

@@ -79,6 +79,17 @@ protocol, and the client runs no language service of its own: diagnostics,
 completion, hover, and definition are computed on the server that owns the
 project or are absent.
 
+Coding-agent awareness is another. The server bundles two built-in extensions:
+`terminay-builtin-agents` and `terminay-language-typescript`. The agents
+extension reports every live Claude Code, Codex, Grok, and oh-my-pi session on
+the server's machine through one session source, detected by the
+[`@markwylde/all-your-agents`](https://github.com/markwylde/all-your-agents)
+library. The server decides which project a session belongs to (its working
+directory is under the project root or inside one of the repository's linked
+worktrees) and which terminal owns it (its process descends from that
+terminal's PTY). The same extension contributes the MCP install targets that
+Desktop's Install Terminay MCP dialog offers.
+
 It runs either as a Desktop-supervised Local child or as a standalone headless
 process. One runtime-validated application protocol carries commands, events,
 terminal streams, and bounded content over authenticated local or WebRTC

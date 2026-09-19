@@ -46,7 +46,7 @@ whose schema is vendored at `openspec/schemas/spec-driven-with-adr/`.
   restricted`. Never open a pull request there, and never read CI status from
   it. `gh` is the wrong tool for this repository.
 - **Pull-request CI is `.gitea/workflows/`**, not `.github/workflows/`.
-  `ci.yml` and `agent-conformance.yml` trigger on `pull_request` and publish
+  `ci.yml` triggers on `pull_request` and publishes
   around twenty commit statuses on the head SHA, including ten sharded E2E jobs
   and a packaged macOS startup smoke. `.github/workflows/` holds mirror-side
   release plumbing that fires only on push to `main`, on tags, or on dispatch —

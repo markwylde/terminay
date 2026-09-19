@@ -49,6 +49,7 @@ import {
 import {
 	EMPTY_AGENT_STATUS_SNAPSHOT,
 	selectLiveAgentStatusEntries,
+	selectLiveAgentStatusesForProject,
 	selectLiveAgentStatusesForTerminal,
 } from './agentStatusStore';
 import {
@@ -1535,13 +1536,15 @@ const ProjectWorkspace = forwardRef<
 				done: 3,
 				idle: 4,
 			};
-			return [...terminalSessionIds]
-				.flatMap((terminalSessionId) =>
-					selectLiveAgentStatusesForTerminal(
-						agentStatusSnapshot,
-						terminalSessionId,
-					),
-				)
+			// The server scopes each session to projects by directory and worktree,
+			// including sessions started outside Terminay; a session bound to one of
+			// this project's terminals belongs here wherever its directory is.
+			return selectLiveAgentStatusesForProject(
+				agentStatusSnapshot,
+				project.id,
+				terminalSessionIds,
+			)
+				.slice()
 				.sort(
 					(left, right) =>
 						priority[left.state] - priority[right.state] ||
@@ -1553,9 +1556,10 @@ const ProjectWorkspace = forwardRef<
 					projectId: project.id,
 					model: entry.model?.displayName ?? entry.model?.id,
 					prompt: entry.promptText,
-					terminalTitle: terminalTitlesBySession.get(
-						entry.activationTerminalSessionId,
-					),
+					terminalTitle:
+						entry.activationTerminalSessionId === null
+							? undefined
+							: terminalTitlesBySession.get(entry.activationTerminalSessionId),
 				}));
 		}, [
 			agentStatusSnapshot,
@@ -1920,7 +1924,10 @@ const ProjectWorkspace = forwardRef<
 			serverAgentStatusClient.mergeSessionScope([
 				...new Set(panelSessionMapRef.current.values()),
 			]);
-		}, [focusedSessionId, isDockviewReady, serverAgentStatusClient]);
+			// Sessions outside every terminal still belong to this project when the
+			// server scoped them to it by directory or worktree.
+			serverAgentStatusClient.mergeProjectScope([project.id]);
+		}, [focusedSessionId, isDockviewReady, project.id, serverAgentStatusClient]);
 
 		useEffect(() => {
 			if (serverActivityClient === undefined) {
@@ -3329,9 +3336,9 @@ const ProjectWorkspace = forwardRef<
 					id: 'install-terminay-mcp',
 					title: 'Install Terminay MCP',
 					description:
-						'Let Claude Code, Codex, Cursor CLI, Gemini CLI, or OpenCode control sibling terminals in this project.',
+						'Let Claude Code, Codex, Cursor CLI, Gemini CLI, Grok, or OpenCode control sibling terminals in this project.',
 					searchText:
-						'install terminay mcp model context protocol claude codex cursor gemini opencode terminal control',
+						'install terminay mcp model context protocol claude codex cursor gemini grok opencode terminal control',
 					onSelect: () => {
 						setIsMacroLauncherOpen(false);
 						setMacroQuery('');
@@ -4552,7 +4559,11 @@ const ProjectWorkspace = forwardRef<
 								onActivateTerminal={activateAgentTerminal}
 								onAcknowledgeEntry={(entryId) => {
 									const entry = agentStatusSnapshot.entries[entryId];
-									if (entry !== undefined) {
+									if (
+										entry !== undefined &&
+										!entry.external &&
+										entry.activationTerminalSessionId !== null
+									) {
 										void serverAgentStatusClient
 											?.acknowledge({
 												projectId: project.id,
@@ -6260,16 +6271,25 @@ function App({
 		for (const [serverId, snapshot] of Object.entries(agentSnapshotsByServer)) {
 			const byProject: Record<string, AgentStatusEntry[]> = {};
 			for (const entry of selectLiveAgentStatusEntries(snapshot)) {
-				const projectId = projectForSession(
-					serverId,
-					entry.activationTerminalSessionId,
-				);
-				// An agent whose terminal this window cannot place in a project is
-				// not dropped into the wrong one.
-				if (projectId === undefined) continue;
-				const bucket = byProject[projectId] ?? [];
-				bucket.push(entry);
-				byProject[projectId] = bucket;
+				// A bound agent belongs to its terminal's project; an external one to
+				// the projects the server scoped it to by directory or worktree.
+				const terminalProjectId =
+					entry.activationTerminalSessionId === null
+						? undefined
+						: projectForSession(serverId, entry.activationTerminalSessionId);
+				// An agent this window cannot place in a project is not dropped into
+				// the wrong one.
+				const projectIds =
+					terminalProjectId !== undefined
+						? [terminalProjectId]
+						: entry.external
+							? entry.projectIds
+							: [];
+				for (const projectId of projectIds) {
+					const bucket = byProject[projectId] ?? [];
+					bucket.push(entry);
+					byProject[projectId] = bucket;
+				}
 			}
 			byServer[serverId] = byProject;
 		}
@@ -6519,6 +6539,8 @@ function App({
 	]);
 	const activateDashboardAgent = useCallback(
 		(serverId: string, projectId: string, agent: DashboardAgent) => {
+			// External agents run outside Terminay: nothing to activate.
+			if (agent.external) return;
 			if (activateAnotherServer(serverId, projectId)) return;
 			applyDashboardActivation(
 				resolveAgentActivation(

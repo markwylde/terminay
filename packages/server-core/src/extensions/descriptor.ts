@@ -50,7 +50,8 @@ export async function extensionLaunchDescriptor(
 		dataDirectory: input.dataDirectory,
 		cacheDirectory: input.cacheDirectory,
 		permissions: manifest.permissions,
-		agentProviders: manifest.contributes.agentProviders ?? [],
+		agentSessionSources: manifest.contributes.agentSessionSources ?? [],
+		mcpInstallTargets: manifest.contributes.mcpInstallTargets ?? [],
 		languageServers: manifest.contributes.languageServers ?? [],
 		extensionDependencies: manifest.extensionDependencies ?? [],
 	});

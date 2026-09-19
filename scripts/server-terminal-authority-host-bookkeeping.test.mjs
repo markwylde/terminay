@@ -793,10 +793,29 @@ test('embedded framed clients receive canonical agent and folder projections', a
 		// The injected TerminalService fixture deliberately has no lifecycle observer.
 		authority.activity.register(identity);
 		authority.agents.register(identity);
-		await authority.agents.ingestJournalRecord(identity, 'codex', {
-			type: 'session_meta',
-			payload: { id: 'codex-embedded-projection', model: 'gpt-test-codex' },
+		const agentEntry = (state) => ({
+			entryId: 'embedded-projection',
+			kind: 'root',
+			provider: 'com.example/agents',
+			harness: 'example-cli',
+			agentId: 'embedded-projection',
+			sessionId: 'embedded-projection',
+			activationTerminalSessionId: created.sessionId,
+			external: false,
+			projectIds: ['desktop'],
+			model: { id: 'gpt-test-model' },
+			state,
+			stateStartedAt: 1,
+			createdAt: 1,
+			updatedAt: state === 'idle' ? 1 : 2,
+			active: true,
+			activeTools: [],
+			unread: false,
+			terminalSessionId: created.sessionId,
+			inProcess: false,
+			openSubagents: 0,
 		});
+		authority.agents.applyEntries([agentEntry('idle')]);
 		const subscription = await protocol.subscribe('agent');
 		const eventPromise = new Promise((resolve) => {
 			const remove = subscription.onEvent((event) => {
@@ -805,14 +824,7 @@ test('embedded framed clients receive canonical agent and folder projections', a
 			});
 		});
 
-		await authority.agents.ingestJournalRecord(identity, 'codex', {
-			type: 'event_msg',
-			payload: {
-				type: 'user_message',
-				message: 'Project canonical status',
-				model: 'gpt-test-codex',
-			},
-		});
+		authority.agents.applyEntries([agentEntry('working')]);
 
 		const event = await eventPromise;
 		assert.equal(

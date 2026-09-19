@@ -19,7 +19,7 @@ const clients = [
 
 try {
   execFileSync('esbuild', [
-    'electron/mcpInstall/index.ts',
+    'extensions/builtin-agents/src/mcp/index.ts',
     '--bundle',
     '--format=esm',
     '--platform=node',

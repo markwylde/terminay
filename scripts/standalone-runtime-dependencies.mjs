@@ -69,16 +69,28 @@ export async function stageProductionDependencyClosure({
 	runtimeModules,
 	workspacePackages = {},
 	rootPackages,
+	optionalRootPackages = [],
 }) {
-	if (!Array.isArray(rootPackages) || rootPackages.length === 0) {
+	if (
+		!Array.isArray(rootPackages) ||
+		!Array.isArray(optionalRootPackages) ||
+		rootPackages.length + optionalRootPackages.length === 0
+	) {
 		throw new TypeError('rootPackages must name at least one package');
 	}
 	const destination = resolve(destinationModules);
 	const runtimeRoot = await regularDirectory(runtimeModules, 'runtime modules');
 	await mkdir(destination, { recursive: true });
-	const pending = [...new Set(rootPackages)]
-		.sort()
-		.map((name) => ({ name, fromDirectory: runtimeRoot, optional: false }));
+	const required = new Set(rootPackages);
+	const pending = [
+		...[...required]
+			.sort()
+			.map((name) => ({ name, fromDirectory: runtimeRoot, optional: false })),
+		...[...new Set(optionalRootPackages)]
+			.filter((name) => !required.has(name))
+			.sort()
+			.map((name) => ({ name, fromDirectory: runtimeRoot, optional: true })),
+	];
 	const copied = new Set();
 	while (pending.length > 0) {
 		const { name: packageName, fromDirectory, optional } = pending.shift();

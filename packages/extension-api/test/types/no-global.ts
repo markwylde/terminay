@@ -5,7 +5,8 @@ const noGlobal: HasGlobalTerminay = false;
 void noGlobal;
 
 export function activate(context: ExtensionContext): void {
-  void context.agents.registerProvider;
+  void context.agents.registerSessionSource;
+  void context.mcp.registerInstallTarget;
 }
 
 // @ts-expect-error There is no global Terminay singleton an extension can reach for.

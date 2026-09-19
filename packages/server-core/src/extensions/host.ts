@@ -1,11 +1,16 @@
 import { type ChildProcess, fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-	type AgentProviderContribution,
+	type AgentSessionSourceContribution,
 	EXTENSION_API_VERSION,
+	EXTENSION_LIMITS,
 	isNamespacedId,
 	type LanguageServerContribution,
-	validateAgentLifecycleEvent,
+	type McpInstallTargetContribution,
+	type McpServerCommand,
+	validateMcpInstallTargetActionResult,
+	validateMcpInstallTargetStatus,
+	validateMcpServerCommand,
 } from '@terminay/extension-api';
 import { validateExtensionLaunchDescriptor } from './descriptor.js';
 import {
@@ -33,11 +38,6 @@ import {
 } from './protocol.js';
 import type {
 	ExtensionAgentBroker,
-	ExtensionAgentLifecyclePublication,
-	ExtensionAgentObservationRequest,
-	ExtensionAgentTerminalAdmission,
-	ExtensionAgentTerminalCancellation,
-	ExtensionAgentTerminalContext,
 	ExtensionBroker,
 	ExtensionHostLimits,
 	ExtensionHostStatus,
@@ -115,15 +115,16 @@ const INHERITED_CHILD_ENV = Object.freeze([
 const UNIX_PATH = '/usr/sbin:/usr/bin:/bin:/sbin';
 
 /** Bounded host environment for an extension child. npm's sterile env stays
- * on the installer; agent observation needs PATH/HOME so `ps` and `lsof`
- * resolve the same way they did in the Electron process on main. */
+ * on the installer. A session source may name further variables, such as a
+ * harness's home-directory override; each is passed only when it is set. */
 export function extensionChildEnvironment(
 	source: NodeJS.ProcessEnv = process.env,
+	declared: readonly string[] = [],
 ): NodeJS.ProcessEnv {
 	// Electron augments ProcessEnv with application variables that are required
 	// in its own process but deliberately absent from an extension child.
 	const env = {} as NodeJS.ProcessEnv;
-	for (const key of INHERITED_CHILD_ENV) {
+	for (const key of [...INHERITED_CHILD_ENV, ...declared]) {
 		const value = source[key];
 		if (typeof value === 'string' && value.length > 0) env[key] = value;
 	}
@@ -156,13 +157,12 @@ export class ExtensionHost {
 	private readonly crashTimes: number[] = [];
 	private sequence = 0;
 	private stopping = false;
-	private agentProviders: readonly AgentProviderContribution[] = Object.freeze(
-		[],
-	);
-	private readonly agentContexts = new Map<
-		string,
-		ExtensionAgentTerminalContext
-	>();
+	private agentSessionSources: readonly AgentSessionSourceContribution[] =
+		Object.freeze([]);
+	private mcpInstallTargets: readonly McpInstallTargetContribution[] =
+		Object.freeze([]);
+	/** Sources the host started and has not yet seen stop. */
+	private readonly runningSources = new Set<string>();
 	private languageServers: readonly LanguageServerContribution[] = Object.freeze(
 		[],
 	);
@@ -190,7 +190,8 @@ export class ExtensionHost {
 	status(): ExtensionHostStatus {
 		return Object.freeze({
 			...this.state,
-			agentProviders: this.agentProviders,
+			agentSessionSources: this.agentSessionSources,
+			mcpInstallTargets: this.mcpInstallTargets,
 			languageServers: this.languageServers,
 		});
 	}
@@ -225,7 +226,12 @@ export class ExtensionHost {
 			cwd: this.descriptor.packageRoot,
 			execPath: this.options.nodeExecutable,
 			execArgv: [],
-			env: extensionChildEnvironment(),
+			env: extensionChildEnvironment(
+				process.env,
+				(this.descriptor.agentSessionSources ?? []).flatMap(
+					(source) => source.environmentVariables ?? [],
+				),
+			),
 			stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
 			serialization: 'json',
 		});
@@ -253,10 +259,14 @@ export class ExtensionHost {
 					dataDirectory: this.descriptor.dataDirectory,
 					cacheDirectory: this.descriptor.cacheDirectory,
 					permissions: [...this.descriptor.permissions],
-					agentProviders:
-						this.descriptor.agentProviders === undefined
+					agentSessionSources:
+						this.descriptor.agentSessionSources === undefined
 							? []
-							: structuredClone(this.descriptor.agentProviders),
+							: structuredClone(this.descriptor.agentSessionSources),
+					mcpInstallTargets:
+						this.descriptor.mcpInstallTargets === undefined
+							? []
+							: structuredClone(this.descriptor.mcpInstallTargets),
 					languageServers:
 						this.descriptor.languageServers === undefined
 							? []
@@ -266,9 +276,19 @@ export class ExtensionHost {
 				undefined,
 				true,
 			);
-			this.agentProviders = validateAgentProviders(
-				record(activated)?.agentProviders,
+			this.agentSessionSources = validateRegistrations(
+				record(activated)?.agentSessionSources,
+				this.descriptor.agentSessionSources ?? [],
 				this.descriptor,
+				'agent-observation',
+				'agent session source',
+			);
+			this.mcpInstallTargets = validateRegistrations(
+				record(activated)?.mcpInstallTargets,
+				this.descriptor.mcpInstallTargets ?? [],
+				this.descriptor,
+				'mcp-registration',
+				'MCP install target',
 			);
 			this.languageServers = validateLanguageServers(
 				record(activated)?.languageServers,
@@ -353,7 +373,7 @@ export class ExtensionHost {
 				});
 			return;
 		}
-		await this.drainAgentObservers('extension-stopped').catch(() => undefined);
+		await this.stopSessionSources();
 		try {
 			await this.call('deactivate', undefined, this.limits.shutdownTimeoutMs);
 		} catch {
@@ -370,7 +390,8 @@ export class ExtensionHost {
 			deliberate: true,
 			consecutiveFailures: this.state.consecutiveCrashes,
 		});
-		this.agentProviders = Object.freeze([]);
+		this.agentSessionSources = Object.freeze([]);
+		this.mcpInstallTargets = Object.freeze([]);
 		this.languageServers = Object.freeze([]);
 	}
 
@@ -395,58 +416,108 @@ export class ExtensionHost {
 			this.recordDiagnostic('quarantine-cleared', { consecutiveFailures: 0 });
 	}
 
-	/** Admit exactly one server-issued terminal incarnation to one registered
-	 * agent provider. The child cannot manufacture this context. */
-	async admitAgentTerminal(
-		admission: ExtensionAgentTerminalAdmission,
-		signal?: AbortSignal,
-	): Promise<unknown> {
-		const context = validateAgentTerminalAdmission(
-			admission,
-			this.extensionId,
-			this.agentProviders,
-		);
-		if (this.agentContexts.has(context.contextId))
-			throw new Error('agent terminal context is already admitted');
-		this.agentContexts.set(context.contextId, context);
+	/** Registered session sources and MCP install targets. */
+	sessionSourceContributions(): readonly AgentSessionSourceContribution[] {
+		return this.agentSessionSources;
+	}
+	mcpInstallTargetContributions(): readonly McpInstallTargetContribution[] {
+		return this.mcpInstallTargets;
+	}
+
+	/** Start one registered source with the harnesses switched on. */
+	async startSessionSource(
+		sourceId: string,
+		enabledHarnesses: readonly string[],
+	): Promise<void> {
+		this.assertSource(sourceId);
+		if (this.runningSources.has(sourceId)) {
+			await this.setSessionSourceHarnesses(sourceId, enabledHarnesses);
+			return;
+		}
+		this.runningSources.add(sourceId);
 		try {
-			return await this.call(
-				'agent.terminal.admit',
-				admission,
+			await this.call(
+				'agent.source.start',
+				{ sourceId, enabledHarnesses: [...enabledHarnesses] },
 				this.limits.invocationTimeoutMs,
-				signal,
 			);
 		} catch (error) {
-			await this.retireAgentContext(context.contextId, 'terminal-replaced');
+			this.sourceStopped(sourceId);
 			throw error;
 		}
 	}
 
-	async cancelAgentTerminal(
-		cancellation: ExtensionAgentTerminalCancellation,
-	): Promise<boolean> {
-		const context = this.agentContexts.get(cancellation.contextId);
-		if (context === undefined) return false;
+	async stopSessionSource(sourceId: string): Promise<void> {
+		if (!this.runningSources.has(sourceId)) return;
 		await this.call(
-			'agent.terminal.cancel',
-			cancellation,
+			'agent.source.stop',
+			{ sourceId },
 			this.limits.shutdownTimeoutMs,
 		).catch(() => undefined);
-		await this.retireAgentContext(cancellation.contextId, cancellation.reason);
-		return true;
+		this.sourceStopped(sourceId);
 	}
 
-	async drainAgentObservers(
-		reason: 'provider-disabled' | 'extension-stopped' | 'server-stopping',
+	async setSessionSourceHarnesses(
+		sourceId: string,
+		enabledHarnesses: readonly string[],
 	): Promise<void> {
-		if (this.agentContexts.size === 0) return;
+		if (!this.runningSources.has(sourceId)) return;
 		await this.call(
-			'agent.drain',
-			{ reason },
-			this.limits.shutdownTimeoutMs,
-		).catch(() => undefined);
-		for (const contextId of [...this.agentContexts.keys()])
-			await this.retireAgentContext(contextId, reason);
+			'agent.source.harnesses',
+			{ sourceId, enabledHarnesses: [...enabledHarnesses] },
+			this.limits.invocationTimeoutMs,
+		);
+	}
+
+	/** One call on a registered MCP install target. The result is validated
+	 * before it leaves the host. */
+	async invokeMcpTarget(
+		targetId: string,
+		operation: 'status' | 'install' | 'uninstall',
+		server: McpServerCommand,
+		signal?: AbortSignal,
+	): Promise<unknown> {
+		if (!this.mcpInstallTargets.some((target) => target.id === targetId))
+			throw unavailable('MCP install target is unavailable');
+		if (!validateMcpServerCommand(server).ok)
+			throw new TypeError('MCP server command is invalid');
+		const result = await this.call(
+			'mcp.target.invoke',
+			{ targetId, operation, server: structuredClone(server) },
+			this.limits.invocationTimeoutMs,
+			signal,
+		);
+		const validated =
+			operation === 'status'
+				? validateMcpInstallTargetStatus(result)
+				: validateMcpInstallTargetActionResult(result);
+		if (!validated.ok)
+			throw new Error('MCP install target returned an invalid result');
+		return validated.value;
+	}
+
+	private assertSource(sourceId: string): void {
+		if (!this.agentSessionSources.some((source) => source.id === sourceId))
+			throw unavailable('agent session source is unavailable');
+	}
+
+	private async stopSessionSources(): Promise<void> {
+		for (const sourceId of [...this.runningSources])
+			await this.stopSessionSource(sourceId);
+	}
+
+	/** A source ends exactly once however it ends, and the bridge forgets its
+	 * sessions then. */
+	private sourceStopped(sourceId: string): void {
+		if (!this.runningSources.delete(sourceId)) return;
+		try {
+			this.options.agents?.sourceStopped?.({
+				extensionId: this.extensionId,
+				sourceId,
+			});
+		} catch {
+			/* the bridge's teardown cannot affect the host */
+		}
 	}
 
 	private call(
@@ -589,12 +660,12 @@ export class ExtensionHost {
 			void this.handleBrokerRequest(message);
 			return;
 		}
-		if (message.kind === 'agent.observation.request') {
-			void this.handleAgentObservationRequest(message);
+		if (message.kind === 'agent.source.publish') {
+			void this.handleSessionPublication(message);
 			return;
 		}
-		if (message.kind === 'agent.lifecycle.publish') {
-			void this.handleAgentLifecyclePublication(message);
+		if (message.kind === 'agent.source.diagnostic') {
+			this.handleSessionDiagnostic(message);
 			return;
 		}
 		if (message.kind === 'language.diagnostics') {
@@ -630,8 +701,30 @@ export class ExtensionHost {
 			if (exit.reason === 'exited') this.recordLanguageServerCrash(exit);
 			return;
 		}
-		if (message.kind === 'agent.provider.disposed') {
-			void this.handleAgentProviderDisposed(message);
+		if (message.kind === 'agent.source.disposed') {
+			const sourceId = boundedId(record(message.payload)?.sourceId);
+			if (
+				sourceId === undefined ||
+				!this.agentSessionSources.some((source) => source.id === sourceId)
+			) {
+				this.protocolViolation('agent session source disposal is invalid');
+				return;
+			}
+			this.agentSessionSources = Object.freeze(
+				this.agentSessionSources.filter((source) => source.id !== sourceId),
+			);
+			this.sourceStopped(sourceId);
+			return;
+		}
+		if (message.kind === 'mcp.target.disposed') {
+			const targetId = boundedId(record(message.payload)?.targetId);
+			if (targetId === undefined) {
+				this.protocolViolation('MCP install target disposal is invalid');
+				return;
+			}
+			this.mcpInstallTargets = Object.freeze(
+				this.mcpInstallTargets.filter((target) => target.id !== targetId),
+			);
 			return;
 		}
 		if (message.kind === 'fatal') {
@@ -644,10 +737,7 @@ export class ExtensionHost {
 		if (
 			message.kind === 'ready' ||
 			message.kind === 'result' ||
-			message.kind === 'deactivated' ||
-			message.kind === 'agent.terminal.admitted' ||
-			message.kind === 'agent.terminal.cancelled' ||
-			message.kind === 'agent.drain.completed'
+			message.kind === 'deactivated'
 		)
 			this.finishPending(message.id, message.payload);
 		else
@@ -703,113 +793,41 @@ export class ExtensionHost {
 		}
 	}
 
-	private async handleAgentObservationRequest(
-		frame: ChildFrame,
-	): Promise<void> {
-		const request = parseAgentObservationRequest(frame.payload);
-		if (request === undefined) {
-			this.sendAgentObservationResult(frame.id, {
-				contextId: '',
-				ok: false,
-				failure: 'invalid agent observation request',
-			});
-			return;
-		}
-		const context = this.agentContexts.get(request.contextId);
+	/**
+	 * One batch of publisher calls from a running source. The frame is checked
+	 * here; every snapshot is validated by the bridge before anything applies.
+	 * A source that publishes faster than the bridge drains is told to resend
+	 * its live set rather than being queued without bound.
+	 */
+	private async handleSessionPublication(frame: ChildFrame): Promise<void> {
+		const payload = record(frame.payload);
+		const sourceId = boundedId(payload?.sourceId);
+		const reset = payload?.reset;
+		const upserts = payload?.upserts;
+		const removals = payload?.removals;
+		const shapeValid =
+			sourceId !== undefined &&
+			(reset === undefined || Array.isArray(reset)) &&
+			(upserts === undefined || Array.isArray(upserts)) &&
+			(removals === undefined || Array.isArray(removals));
 		if (
-			context === undefined ||
-			context.providerId !== request.providerId ||
+			!shapeValid ||
+			!this.runningSources.has(sourceId) ||
 			this.options.agents === undefined
 		) {
-			this.sendAgentObservationResult(frame.id, {
-				contextId: request.contextId,
+			this.sendSessionAck(frame.id, {
 				ok: false,
-				failure: 'agent observation scope is unavailable',
-			});
-			return;
-		}
-		const controller = new AbortController();
-		this.activeBrokerCalls.set(frame.id, controller);
-		try {
-			const value = await this.options.agents.observe(
-				{
-					extensionId: this.extensionId,
-					providerId: request.providerId,
-					terminal: context,
-					operation: request.operation,
-					payload: request.payload,
-				},
-				controller.signal,
-			);
-			this.sendAgentObservationResult(frame.id, {
-				contextId: request.contextId,
-				ok: true,
-				value,
-			});
-		} catch (error) {
-			this.sendAgentObservationResult(frame.id, {
-				contextId: request.contextId,
-				ok: false,
-				failure: safeFailure(
-					error instanceof Error
-						? error
-						: new Error('agent observation failed'),
-				),
-			});
-		} finally {
-			this.activeBrokerCalls.delete(frame.id);
-		}
-	}
-
-	private async handleAgentLifecyclePublication(
-		frame: ChildFrame,
-	): Promise<void> {
-		const publication = parseAgentLifecyclePublication(frame.payload);
-		if (publication === undefined) {
-			this.sendAgentLifecycleAck(frame.id, {
-				contextId: '',
-				publicationId: '',
-				acceptedEventCount: 0,
-				rejectedEventCount: 0,
-				failure: 'invalid agent lifecycle publication',
-			});
-			return;
-		}
-		const context = this.agentContexts.get(publication.contextId);
-		if (
-			context === undefined ||
-			context.providerId !== publication.providerId ||
-			this.options.agents === undefined
-		) {
-			this.sendAgentLifecycleAck(frame.id, {
-				contextId: publication.contextId,
-				publicationId: publication.publicationId,
-				acceptedEventCount: 0,
-				rejectedEventCount: publication.events.length,
-				failure: 'agent lifecycle scope is unavailable',
+				failure: 'agent session source is not running',
 			});
 			return;
 		}
 		if (
 			this.agentPublicationsInFlight >= this.limits.maxConcurrentInvocations
 		) {
-			this.send({
-				protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION,
-				kind: 'agent.lifecycle.backpressure',
-				id: frame.id,
-				payload: {
-					contextId: publication.contextId,
-					state: 'pause',
-					maxInFlightPublications: this.limits.maxConcurrentInvocations,
-					retryAfterMs: 50,
-				},
-			});
-			this.sendAgentLifecycleAck(frame.id, {
-				contextId: publication.contextId,
-				publicationId: publication.publicationId,
-				acceptedEventCount: 0,
-				rejectedEventCount: publication.events.length,
-				failure: 'agent lifecycle publication is backpressured',
+			this.sendSessionAck(frame.id, {
+				ok: false,
+				resend: true,
+				failure: 'agent session publication is backpressured',
 			});
 			return;
 		}
@@ -820,151 +838,73 @@ export class ExtensionHost {
 			const result = await this.options.agents.publish(
 				{
 					extensionId: this.extensionId,
-					providerId: publication.providerId,
-					terminal: context,
-					publicationId: publication.publicationId,
-					mappingVersion: publication.mappingVersion,
-					...(publication.binding === undefined
-						? {}
-						: { binding: publication.binding }),
-					events: publication.events,
+					sourceId,
+					publication: {
+						...(reset === undefined ? {} : { reset: reset as unknown[] }),
+						...(upserts === undefined
+							? {}
+							: { upserts: upserts as unknown[] }),
+						...(removals === undefined
+							? {}
+							: { removals: removals as unknown[] }),
+					},
 				},
 				controller.signal,
 			);
-			this.sendAgentLifecycleAck(frame.id, {
-				contextId: publication.contextId,
-				publicationId: publication.publicationId,
-				acceptedEventCount: result.acceptedEventCount,
-				rejectedEventCount: result.rejectedEventCount ?? 0,
+			this.sendSessionAck(frame.id, {
+				ok: result.ok,
+				...(result.resend === true ? { resend: true } : {}),
 				...(result.failure === undefined
 					? {}
 					: { failure: safeFailure(new Error(result.failure)) }),
 			});
 		} catch (error) {
-			this.sendAgentLifecycleAck(frame.id, {
-				contextId: publication.contextId,
-				publicationId: publication.publicationId,
-				acceptedEventCount: 0,
-				rejectedEventCount: publication.events.length,
+			this.sendSessionAck(frame.id, {
+				ok: false,
 				failure: safeFailure(
 					error instanceof Error
 						? error
-						: new Error('agent lifecycle publication failed'),
+						: new Error('agent session publication failed'),
 				),
 			});
 		} finally {
 			this.activeBrokerCalls.delete(frame.id);
 			this.agentPublicationsInFlight -= 1;
-			this.send({
-				protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION,
-				kind: 'agent.lifecycle.backpressure',
-				id: frame.id,
-				payload: {
-					contextId: publication.contextId,
-					state: 'normal',
-					maxInFlightPublications: this.limits.maxConcurrentInvocations,
-				},
+		}
+	}
+
+	private handleSessionDiagnostic(frame: ChildFrame): void {
+		const payload = record(frame.payload);
+		const sourceId = boundedId(payload?.sourceId);
+		if (sourceId === undefined || !this.runningSources.has(sourceId)) return;
+		try {
+			this.options.agents?.diagnostic?.({
+				extensionId: this.extensionId,
+				sourceId,
+				diagnostic: payload?.diagnostic,
 			});
+		} catch {
+			/* a diagnostic sink cannot affect the extension */
 		}
 	}
 
-	private async handleAgentProviderDisposed(frame: ChildFrame): Promise<void> {
-		const providerId = boundedId(record(frame.payload)?.providerId);
-		if (
-			providerId === undefined ||
-			!this.agentProviders.some((provider) => provider.id === providerId)
-		) {
-			this.protocolViolation('agent provider disposal is invalid');
-			return;
-		}
-		this.agentProviders = Object.freeze(
-			this.agentProviders.filter((provider) => provider.id !== providerId),
-		);
-		for (const [contextId, context] of this.agentContexts)
-			if (context.providerId === providerId)
-				await this.retireAgentContext(contextId, 'provider-disabled');
-	}
-
-	private sendAgentObservationResult(
-		id: string,
-		result: {
-			readonly contextId: string;
-			readonly ok: boolean;
-			readonly value?: unknown;
-			readonly failure?: string;
-		},
-	): void {
-		const delivery = this.send({
-			protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION,
-			kind: 'agent.observation.result',
-			id,
-			payload: result,
-		});
-		if (delivery === 'sent') return;
-		// Nobody is left to receive it, and the exit path owns that fact.
-		if (delivery === 'channel-closed') {
-			this.recordDiagnostic('channel-closed', {
-				consecutiveFailures: this.state.consecutiveCrashes,
-			});
-			return;
-		}
-		// A huge success payload is ordinary discovery evidence (lsof of a Node
-		// tree), not a protocol violation. Fail the pending observe() so the
-		// provider can retry; do not terminate the extension child.
-		if (result.ok === false) {
-			this.protocolViolation('agent observation result exceeds IPC limit');
-			return;
-		}
-		const failure = {
-			contextId: result.contextId,
-			ok: false as const,
-			failure: 'agent observation result exceeds IPC limit',
-		};
-		this.sendOrViolate(
-			{
-				protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION,
-				kind: 'agent.observation.result',
-				id,
-				payload: failure,
-			},
-			'agent observation result exceeds IPC limit',
-		);
-	}
-
-	private sendAgentLifecycleAck(
+	private sendSessionAck(
 		id: string,
 		acknowledgement: {
-			readonly contextId: string;
-			readonly publicationId: string;
-			readonly acceptedEventCount: number;
-			readonly rejectedEventCount: number;
+			readonly ok: boolean;
+			readonly resend?: boolean;
 			readonly failure?: string;
 		},
 	): void {
 		this.sendOrViolate(
 			{
 				protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION,
-				kind: 'agent.lifecycle.ack',
+				kind: 'agent.source.ack',
 				id,
 				payload: acknowledgement,
 			},
-			'agent lifecycle acknowledgement exceeds IPC limit',
+			'agent session acknowledgement exceeds IPC limit',
 		);
-	}
-
-	private async retireAgentContext(
-		contextId: string,
-		reason: ExtensionAgentTerminalCancellation['reason'],
-	): Promise<void> {
-		const context = this.agentContexts.get(contextId);
-		if (context === undefined) return;
-		this.agentContexts.delete(contextId);
-		await this.options.agents?.terminalCancelled?.({
-			extensionId: this.extensionId,
-			providerId: context.providerId,
-			terminal: context,
-			reason,
-		});
 	}
 
 	private async resolveSecret(
@@ -1139,7 +1079,8 @@ export class ExtensionHost {
 		for (const controller of this.activeBrokerCalls.values())
 			controller.abort();
 		this.activeBrokerCalls.clear();
-		void this.drainAgentObservers('extension-stopped');
+		for (const sourceId of [...this.runningSources])
+			this.sourceStopped(sourceId);
 		if (
 			!this.stopping &&
 			this.state.state !== 'failed' &&
@@ -1177,7 +1118,10 @@ export class ExtensionHost {
 			this.crashTimes.shift();
 		const crashes = this.crashTimes.length;
 		this.rejectPending(error);
-		this.agentProviders = Object.freeze([]);
+		for (const sourceId of [...this.runningSources])
+			this.sourceStopped(sourceId);
+		this.agentSessionSources = Object.freeze([]);
+		this.mcpInstallTargets = Object.freeze([]);
 		// The child's own report is the only account of what actually threw; the
 		// host-side error is usually just the exit that followed it.
 		const detail = this.reportedFatalDetail() ?? extensionErrorDetail(error);
@@ -1314,38 +1258,44 @@ function boundedId(value: unknown): string | undefined {
 		? value
 		: undefined;
 }
-function validateAgentProviders(
+/**
+ * Every source or target the child registered must be one the manifest
+ * contributed, under this extension's namespace and permission. An undeclared
+ * registration is an activation failure, not a silently ignored one.
+ */
+function validateRegistrations<T extends { readonly id: string }>(
 	value: unknown,
+	declaredContributions: readonly T[],
 	descriptor: ExtensionLaunchDescriptor,
-): readonly AgentProviderContribution[] {
+	permission: string,
+	label: string,
+): readonly T[] {
+	if (value === undefined) return Object.freeze([]);
 	if (
 		!Array.isArray(value) ||
-		value.length > 32 ||
-		(value.length > 0 && !descriptor.permissions.includes('agent-observation'))
-	) {
-		throw new Error('extension returned invalid agent provider registrations');
-	}
+		value.length > EXTENSION_LIMITS.contributions ||
+		(value.length > 0 && !descriptor.permissions.includes(permission))
+	)
+		throw new Error(`extension returned invalid ${label} registrations`);
 	const declared = new Map(
-		(descriptor.agentProviders ?? []).map((provider) => [
-			provider.id,
-			provider,
+		declaredContributions.map((contribution) => [
+			contribution.id,
+			contribution,
 		]),
 	);
 	const seen = new Set<string>();
-	const result: AgentProviderContribution[] = [];
-	for (const valueId of value) {
+	const result: T[] = [];
+	for (const id of value) {
 		if (
-			typeof valueId !== 'string' ||
-			seen.has(valueId) ||
-			!isNamespacedId(valueId, descriptor.extensionId)
+			typeof id !== 'string' ||
+			seen.has(id) ||
+			!isNamespacedId(id, descriptor.extensionId)
 		)
-			throw new Error(
-				'extension returned invalid agent provider registrations',
-			);
-		const contribution = declared.get(valueId);
+			throw new Error(`extension returned invalid ${label} registrations`);
+		const contribution = declared.get(id);
 		if (contribution === undefined)
-			throw new Error('extension registered an undeclared agent provider');
-		seen.add(valueId);
+			throw new Error(`extension registered an undeclared ${label}`);
+		seen.add(id);
 		result.push(structuredClone(contribution));
 	}
 	return Object.freeze(result);
@@ -1388,177 +1338,4 @@ function unavailable(message: string): Error {
 		code: 'unavailable',
 		retryable: true,
 	});
-}
-
-function validateAgentTerminalAdmission(
-	value: ExtensionAgentTerminalAdmission,
-	extensionId: string,
-	providers: readonly AgentProviderContribution[],
-): ExtensionAgentTerminalContext {
-	const context = value?.context;
-	if (
-		!context ||
-		!boundedId(context.contextId) ||
-		!boundedId(context.serverId) ||
-		!boundedId(context.projectId) ||
-		!boundedId(context.terminalSessionId) ||
-		!boundedId(context.terminalIncarnationId) ||
-		!boundedId(context.providerId) ||
-		!providers.some((provider) => provider.id === context.providerId)
-	) {
-		throw new Error(
-			'agent terminal admission is outside the registered provider scope',
-		);
-	}
-	if (
-		context.shellPid !== undefined &&
-		(!Number.isInteger(context.shellPid) ||
-			context.shellPid <= 0 ||
-			context.shellPid > 4_194_304)
-	) {
-		throw new Error('agent terminal admission has an invalid shell pid');
-	}
-	if (
-		context.ttyPath !== undefined &&
-		(typeof context.ttyPath !== 'string' ||
-			context.ttyPath.length === 0 ||
-			context.ttyPath.length > 4_096)
-	) {
-		throw new Error('agent terminal admission has an invalid tty path');
-	}
-	if (
-		!Array.isArray(value.observationCapabilities) ||
-		value.observationCapabilities.length > 16 ||
-		value.observationCapabilities.some(
-			(capability) =>
-				typeof capability !== 'string' ||
-				capability.length === 0 ||
-				capability.length > 100,
-		)
-	) {
-		throw new Error(
-			'agent terminal admission has invalid observation capabilities',
-		);
-	}
-	// The manager is the only API that calls this method; this check documents
-	// and enforces the same extension/provider namespace ownership at runtime.
-	if (!isNamespacedId(context.providerId, extensionId))
-		throw new Error('agent terminal admission provider is invalid');
-	return Object.freeze(structuredClone(context));
-}
-
-function parseAgentObservationRequest(
-	value: unknown,
-): ExtensionAgentObservationRequest | undefined {
-	const payload = record(value);
-	const contextId = boundedId(payload?.contextId);
-	const providerId = boundedId(payload?.providerId);
-	const operation = payload?.operation;
-	if (
-		!contextId ||
-		!providerId ||
-		typeof operation !== 'string' ||
-		![
-			'process.foreground',
-			'process.descendants',
-			'process.open-files',
-			'process.environment',
-			'terminal.tty',
-			'filesystem.resolve-home-relative',
-			'filesystem.resolve-home-directory',
-			'filesystem.resolve-path-under-home',
-			'filesystem.home-relative-path',
-			'filesystem.resolve-relative-to-environment',
-			'filesystem.resolve-directory-relative-to-environment',
-			'filesystem.resolve-path-under-environment',
-			'filesystem.environment-relative-path',
-			'filesystem.list-directory',
-			'filesystem.directory-path',
-			'filesystem.watch-directory',
-			'filesystem.unwatch-directory',
-			'filesystem.realpath',
-			'filesystem.stat',
-			'filesystem.read',
-			'filesystem.follow',
-			'filesystem.unfollow',
-		].includes(operation) ||
-		!jsonValue(payload?.payload)
-	)
-		return undefined;
-	return Object.freeze({
-		contextId,
-		providerId,
-		operation:
-			operation as import('./types.js').ExtensionAgentObservationOperation,
-		payload: structuredClone(
-			payload!.payload,
-		) as import('@terminay/extension-api').JsonValue,
-	});
-}
-
-function parseAgentLifecyclePublication(
-	value: unknown,
-): ExtensionAgentLifecyclePublication | undefined {
-	const payload = record(value);
-	const contextId = boundedId(payload?.contextId);
-	const providerId = boundedId(payload?.providerId);
-	const publicationId = boundedId(payload?.publicationId);
-	if (
-		!contextId ||
-		!providerId ||
-		!publicationId ||
-		typeof payload?.mappingVersion !== 'string' ||
-		payload.mappingVersion.length === 0 ||
-		payload.mappingVersion.length > 64 ||
-		!Array.isArray(payload.events) ||
-		payload.events.length > 64 ||
-		(payload.binding !== undefined && !jsonValue(payload.binding))
-	)
-		return undefined;
-	const events = [] as import('@terminay/extension-api').AgentLifecycleEvent[];
-	for (const event of payload.events) {
-		const validation = validateAgentLifecycleEvent(event);
-		if (!validation.ok) return undefined;
-		events.push(structuredClone(validation.value));
-	}
-	return Object.freeze({
-		contextId,
-		providerId,
-		publicationId,
-		mappingVersion: payload.mappingVersion,
-		...(payload.binding === undefined
-			? {}
-			: {
-					binding: structuredClone(
-						payload.binding,
-					) as import('@terminay/extension-api').JsonValue,
-				}),
-		events: Object.freeze(events),
-	});
-}
-
-function jsonValue(
-	value: unknown,
-	depth = 0,
-): value is import('@terminay/extension-api').JsonValue {
-	if (
-		depth > 8 ||
-		value === null ||
-		typeof value === 'string' ||
-		typeof value === 'boolean'
-	)
-		return (
-			depth <= 8 && (typeof value !== 'string' || value.length <= 64 * 1024)
-		);
-	if (typeof value === 'number') return Number.isFinite(value);
-	if (Array.isArray(value))
-		return (
-			value.length <= 256 && value.every((item) => jsonValue(item, depth + 1))
-		);
-	const objectValue = record(value);
-	if (objectValue === undefined || Object.keys(objectValue).length > 128)
-		return false;
-	return Object.entries(objectValue).every(
-		([key, item]) => key.length <= 256 && jsonValue(item, depth + 1),
-	);
 }

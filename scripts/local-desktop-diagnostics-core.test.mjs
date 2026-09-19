@@ -145,7 +145,7 @@ test('an extension failure record keeps its stack and still encodes as one line'
 			component: 'local-server',
 			event: 'local-server.extension.failed',
 			fields: {
-				extensionId: 'com.terminay.agent.claude-code',
+				extensionId: 'com.terminay.builtin-agents',
 				consecutiveFailures: 1,
 				errorName: 'TypeError',
 				errorMessage: 'journal directory vanished',

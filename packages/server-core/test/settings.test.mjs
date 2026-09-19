@@ -116,3 +116,24 @@ test("persisted settings migration refuses to overwrite without recoverable back
   const repository = new ServerSettingsRepository({ async load() { return { shell: { program: "/bin/zsh" } }; }, async commit() { assert.fail("must not commit"); } });
   await assert.rejects(repository.load(), /requires recoverable backup/);
 });
+
+test("per-harness agent switches keep boolean entries keyed by namespaced harness", () => {
+  const { settings } = normalizeSettingsAndSecrets({
+    agentIntegration: {
+      enabled: true,
+      harnesses: {
+        "com.terminay.builtin-agents/agents/grok": false,
+        "com.terminay.builtin-agents/agents/codex": true,
+        "com.terminay.builtin-agents/agents/bad": "off",
+      },
+    },
+  });
+  assert.deepEqual(settings.agentIntegration, {
+    enabled: true,
+    harnesses: {
+      "com.terminay.builtin-agents/agents/grok": false,
+      "com.terminay.builtin-agents/agents/codex": true,
+    },
+  });
+  assert.deepEqual(DEFAULT_SERVER_SETTINGS.agentIntegration, { enabled: true, harnesses: {} });
+});

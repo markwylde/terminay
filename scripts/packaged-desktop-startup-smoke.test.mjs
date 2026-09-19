@@ -293,11 +293,7 @@ async function requireBuiltInExtensionsInstalled(electronApp, window, failures) 
 	try {
 		await settings.getByRole('heading', { name: 'Settings' }).waitFor({ timeout: 15_000 });
 		for (const packageName of [
-			'terminay-agent-codex',
-			'terminay-agent-claude-code',
-			'terminay-agent-grok',
-			'terminay-agent-opencode',
-			'terminay-agent-omp',
+			'terminay-builtin-agents',
 			'terminay-language-typescript',
 		]) {
 			const card = settings.locator('.extension-card').filter({ hasText: packageName });
