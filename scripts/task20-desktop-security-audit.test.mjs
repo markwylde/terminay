@@ -110,6 +110,7 @@ test('reviewed native host actions are semantic and capability-gated', async () 
 		'file.choose',
 		'notification.show',
 		'updater.check',
+		'updater.install',
 		'os.open-external',
 		'route.close',
 		'route.focus',

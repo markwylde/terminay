@@ -8,7 +8,9 @@ if (!rawVersion) {
   process.exit(1)
 }
 
-if (!/^\d+\.\d+\.\d+$/.test(rawVersion)) {
+// A tag releases x.y.z. The rolling main channel builds the next stable
+// version as a beta, x.y.z-beta.<run>, and nothing else.
+if (!/^\d+\.\d+\.\d+(?:-beta\.[1-9]\d*)?$/.test(rawVersion)) {
   console.error(`Invalid semantic version: ${rawVersion}`)
   process.exit(1)
 }

@@ -9,6 +9,17 @@
     "dist-electron/**"
   ],
   "productName": "Terminay",
+  // electron-updater reads latest-mac.yml / latest-linux.yml from the GitHub
+  // release; electron-builder writes them beside the artifacts because this
+  // block exists. Every build still passes --publish never: the release
+  // workflow uploads the payloads itself and attaches the metadata last,
+  // after the release notes are final.
+  "publish": {
+    "provider": "github",
+    "owner": "markwylde",
+    "repo": "terminay",
+    "releaseType": "release"
+  },
   "directories": {
     "output": "release/${version}"
   },
@@ -49,10 +60,18 @@
     "extendInfo": {
       "NSMicrophoneUsageDescription": "Terminay uses the microphone to record dictation and transcribe it into the active terminal."
     },
+    // Squirrel.Mac installs updates from the zip; the DMG stays the installer.
     "target": [
-      "dmg"
+      "dmg",
+      "zip"
     ],
-    "artifactName": "${productName}-Mac-${version}-Installer.${ext}"
+    "artifactName": "${productName}-Mac-${version}.${ext}"
+  },
+  "dmg": {
+    "artifactName": "${productName}-Mac-${version}-Installer.${ext}",
+    // The release stapler rewrites the DMG after it is built, so its digest
+    // would go stale in latest-mac.yml. Updates come only from the zip.
+    "writeUpdateInfo": false
   },
   "win": {
     "icon": "public/terminay.png",

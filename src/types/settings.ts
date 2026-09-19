@@ -156,6 +156,8 @@ export type TerminalSettings = {
 	altClickMovesCursor: boolean;
 	activityIndicators: TerminalActivityIndicatorSettings;
 	autoCloseTerminalOnExitZero: boolean;
+	/** Device setting: which Terminay Desktop release channel this machine follows. */
+	updateChannel: 'stable' | 'beta';
 	convertEol: boolean;
 	cursorBlink: boolean;
 	cursorStyle: 'block' | 'underline' | 'bar';

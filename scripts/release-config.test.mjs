@@ -202,3 +202,51 @@ test('the release workflow publishes the CLI only after the key check passes', (
   assert.match(job, /--provenance/)
   assert.match(job, /--access public/)
 })
+
+test('version sync accepts the rolling beta version and nothing looser', async () => {
+  const fixture = await mkdtemp(join(tmpdir(), 'terminay-version-sync-beta-'))
+  try {
+    await mkdir(join(fixture, 'apps/terminay-server'), { recursive: true })
+    await mkdir(join(fixture, 'apps/terminay-cli'), { recursive: true })
+    for (const path of ['package.json', 'package-lock.json', 'apps/terminay-server/package.json', 'apps/terminay-cli/package.json']) {
+      await writeFile(join(fixture, path), JSON.stringify({ name: 'terminay', version: '0.0.0' }))
+    }
+    const sync = resolve('scripts/sync-package-version.mjs')
+    await execFileAsync(process.execPath, [sync, '4.3.0-beta.118'], { cwd: fixture })
+    assert.equal(JSON.parse(await readFile(join(fixture, 'package.json'), 'utf8')).version, '4.3.0-beta.118')
+    for (const invalid of ['4.3.0-beta', '4.3.0-beta.0', '4.3.0-rc.1', '4.3.0-beta.1.2', 'v4.3.0']) {
+      await assert.rejects(execFileAsync(process.execPath, [sync, invalid], { cwd: fixture }), /Invalid semantic version/)
+    }
+  } finally {
+    await rm(fixture, { recursive: true, force: true })
+  }
+})
+
+test('packaging writes update metadata for the GitHub releases and never publishes on its own', () => {
+  const builder = readFileSync(resolve('electron-builder.json5'), 'utf8')
+  const scripts = JSON.parse(readFileSync(resolve('package.json'), 'utf8')).scripts
+
+  assert.match(builder, /"publish": \{\n\s+"provider": "github",\n\s+"owner": "markwylde",\n\s+"repo": "terminay",\n\s+"releaseType": "release"\n\s+\}/)
+  assert.match(builder, /"target": \[\n\s+"dmg",\n\s+"zip"\n\s+\],\n\s+"artifactName": "\$\{productName\}-Mac-\$\{version\}\.\$\{ext\}"/)
+  assert.match(builder, /"dmg": \{\n\s+"artifactName": "\$\{productName\}-Mac-\$\{version\}-Installer\.\$\{ext\}",[\s\S]*?"writeUpdateInfo": false\n\s+\}/)
+  assert.equal(scripts['build:mac'], 'npm run build:app && electron-builder --mac dmg zip --publish never')
+  assert.equal(scripts['build:linux'], 'npm run build:app && electron-builder --linux AppImage --publish never')
+  assert.match(scripts.build, /electron-builder --publish never$/)
+})
+
+test('stable update metadata reaches the release only after the release notes', () => {
+  const workflow = readFileSync(resolve('.github/workflows/trigger-release.yml'), 'utf8')
+  const buildJob = workflow.slice(workflow.indexOf('  build-binaries:\n'), workflow.indexOf('  build-standalone-server:\n'))
+  const notesJob = workflow.slice(workflow.indexOf('  publish-release-notes:\n'))
+
+  // The build job hands the metadata over as a workflow artifact only.
+  assert.match(buildJob, /name: update-metadata-\$\{\{ matrix\.label \}\}/)
+  const attach = buildJob.slice(buildJob.indexOf('- name: Attach checksummed binaries to GitHub release'))
+  assert.doesNotMatch(attach, /\.yml|metadata/)
+
+  const verify = notesJob.indexOf('node scripts/verify-update-metadata.mjs')
+  const edit = notesJob.indexOf('gh release edit "$TAG" --repo "$GH_REPO" --notes-file RELEASE.md')
+  const upload = notesJob.indexOf('gh release upload "$TAG" "$METADATA_DIR/latest-mac.yml" "$METADATA_DIR/latest-linux.yml"')
+  assert.ok(verify >= 0 && edit > verify && upload > edit, 'metadata is verified, then the notes are edited, then the metadata is attached')
+  assert.equal((notesJob.match(/gh release upload/g) ?? []).length, 1)
+})
