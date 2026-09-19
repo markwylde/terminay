@@ -6560,6 +6560,25 @@ function App({
 		[activateCompactSwitcherPanel, currentServerId],
 	);
 	/**
+	 * A switcher create is the project's own new-terminal command, so the
+	 * terminal it makes is shown and focused like any other. The workspace of a
+	 * project that was just selected may mount a frame or more later, so the
+	 * dispatch waits for its handle rather than dropping the request.
+	 */
+	const createTerminalInProject = useCallback((projectId: string) => {
+		const startedAt = performance.now();
+		const dispatch = () => {
+			const workspace = workspaceRefs.current.get(projectId);
+			if (workspace) {
+				void workspace.executeCommand('new-terminal');
+				return;
+			}
+			if (performance.now() - startedAt >= 1_000) return;
+			window.requestAnimationFrame(dispatch);
+		};
+		dispatch();
+	}, []);
+	/**
 	 * Creating in a project the window is not working in means going to its
 	 * server first; the intent is held until that binding lands, the same way a
 	 * cross-server tab activation waits for its projects to arrive.
@@ -6575,12 +6594,14 @@ function App({
 				return;
 			}
 			activateProject(group.projectId);
-			void createInitialTerminalForProject(group.projectId);
+			window.requestAnimationFrame(() => {
+				createTerminalInProject(group.projectId);
+			});
 		},
 		[
 			activateAnotherServer,
 			activateProject,
-			createInitialTerminalForProject,
+			createTerminalInProject,
 			currentServerId,
 		],
 	);
@@ -6590,13 +6611,10 @@ function App({
 		if (!projects.some((project) => project.id === pending.projectId)) return;
 		pendingCompactTerminalRef.current = null;
 		activateProject(pending.projectId);
-		void createInitialTerminalForProject(pending.projectId);
-	}, [
-		activateProject,
-		createInitialTerminalForProject,
-		currentServerId,
-		projects,
-	]);
+		window.requestAnimationFrame(() => {
+			createTerminalInProject(pending.projectId);
+		});
+	}, [activateProject, createTerminalInProject, currentServerId, projects]);
 	const activateDashboardAgent = useCallback(
 		(serverId: string, projectId: string, agent: DashboardAgent) => {
 			// External agents run outside Terminay: nothing to activate.
@@ -7225,7 +7243,7 @@ function App({
 						: {
 								onNewTerminalHere: () => {
 									closeCompactSwitcher();
-									void createInitialTerminalForProject(activeProjectId);
+									createTerminalInProject(activeProjectId);
 								},
 							})}
 					onQueryChange={setCompactSwitcherQuery}
