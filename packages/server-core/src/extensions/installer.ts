@@ -68,6 +68,14 @@ export interface ExtensionInstallerOptions {
 		before: ExtensionRegistrySnapshot,
 		after: ExtensionRegistrySnapshot,
 	) => Promise<void>;
+	/**
+	 * Runs once for each withdrawn built-in, before its record is forgotten, so
+	 * a user's choice about it can be carried to whatever replaced it. A
+	 * failure is ignored: the record is retired either way.
+	 */
+	readonly onBuiltInWithdrawn?: (
+		record: Readonly<{ extensionId: string; enabled: boolean }>,
+	) => Promise<void> | void;
 }
 
 /** Transactional immutable-slot installer. The active registry pointer is the
@@ -168,6 +176,14 @@ export class ExtensionInstaller {
 			// install or activation failed, with nothing of the user's in it.
 			const slots = Object.values(record.slots);
 			if (slots.some((slot) => slot.receipt.source !== 'built-in')) continue;
+			try {
+				await this.options.onBuiltInWithdrawn?.({
+					extensionId: record.extensionId,
+					enabled: record.enabled,
+				});
+			} catch {
+				/* carrying a choice forward never blocks retiring the record */
+			}
 			next = await this.forget(next, record, 'extension.built_in_withdrawn');
 		}
 		return next;
@@ -555,7 +571,8 @@ export class ExtensionInstaller {
 			extensionId: string;
 			packageRoot: string;
 			entrypoint: string;
-			agentProviders: readonly import('@terminay/extension-api').AgentProviderContribution[];
+			agentSessionSources: readonly import('@terminay/extension-api').AgentSessionSourceContribution[];
+			mcpInstallTargets: readonly import('@terminay/extension-api').McpInstallTargetContribution[];
 			languageServers: readonly import('@terminay/extension-api').LanguageServerContribution[];
 			manifest: ExtensionReceipt['manifest'];
 		}>
@@ -570,8 +587,13 @@ export class ExtensionInstaller {
 			extensionId,
 			packageRoot: this.slotPackageRoot(slot),
 			entrypoint: slot.receipt.manifest.entrypoint,
-			agentProviders: Object.freeze(
-				structuredClone(slot.receipt.manifest.contributes.agentProviders ?? []),
+			agentSessionSources: Object.freeze(
+				structuredClone(
+					slot.receipt.manifest.contributes.agentSessionSources ?? [],
+				),
+			),
+			mcpInstallTargets: Object.freeze(
+				structuredClone(slot.receipt.manifest.contributes.mcpInstallTargets ?? []),
 			),
 			languageServers: Object.freeze(
 				structuredClone(slot.receipt.manifest.contributes.languageServers ?? []),

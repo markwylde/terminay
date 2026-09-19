@@ -28,8 +28,7 @@ USER node
 RUN curl https://cursor.com/install -fsS | bash
 
 WORKDIR /workspace
-COPY --chown=node:node electron/mcpInstall electron/mcpInstall
-COPY --chown=node:node src/types/terminay.ts src/types/terminay.ts
+COPY --chown=node:node extensions/builtin-agents/src/mcp extensions/builtin-agents/src/mcp
 COPY --chown=node:node scripts/mcp-cli-real-compat.test.mjs scripts/mcp-cli-real-compat.test.mjs
 
 ENTRYPOINT ["node", "scripts/mcp-cli-real-compat.test.mjs"]

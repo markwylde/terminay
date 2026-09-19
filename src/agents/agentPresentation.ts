@@ -34,9 +34,17 @@ export type AgentPresentation = {
 	provider: string;
 };
 
+/**
+ * The harness a session runs, as its session source declared it (`Claude
+ * Code`, `Codex`). One source reports several harnesses, so the source id says
+ * nothing a reader wants; there is no hardcoded map of ids either.
+ */
 export function providerLabel(entry: AgentStatusEntry): string {
+	if (entry.harnessDisplayName?.trim()) return entry.harnessDisplayName.trim();
 	if (entry.providerDisplayName?.trim()) return entry.providerDisplayName.trim();
-	const name = entry.provider.split('/').at(-1) ?? entry.provider;
+	const name =
+		entry.harness?.trim() ||
+		(entry.provider.split('/').at(-1) ?? entry.provider);
 	return name
 		.replace(/[-_.]+/gu, ' ')
 		.replace(/\b\w/gu, (value) => value.toUpperCase());
@@ -113,7 +121,7 @@ export function fallbackEntryName(entry: AgentStatusEntry): string {
 export type AgentPresentationOptions = {
 	/** The parent's resolved model, so a subagent does not repeat it. */
 	parentModel?: string;
-	/** The parent's raw provider id, so a subagent does not repeat it. */
+	/** The parent's provider label, so a subagent does not repeat it. */
 	parentProvider?: string;
 	/** Position among its siblings, for a subagent with nothing else to go on. */
 	siblingIndex?: number;
@@ -154,7 +162,10 @@ export function resolveAgentPresentation(
 	const name =
 		displayName ?? prompt ?? `Subagent ${(options.siblingIndex ?? 0) + 1}`;
 	const metadata = joinMetadata([
-		options.parentProvider !== entry.provider ? provider : undefined,
+		options.parentProvider !== entry.provider &&
+		options.parentProvider !== provider
+			? provider
+			: undefined,
 		context.model && context.model !== options.parentModel
 			? context.model
 			: undefined,

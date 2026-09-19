@@ -43,6 +43,9 @@ export function agentBadgesForOtherServers(
 		for (const entry of selectAgentStatusEntries(
 			snapshot ?? EMPTY_AGENT_STATUS_SNAPSHOT,
 		)) {
+			// External sessions never count towards project activity.
+			if (entry.external || entry.activationTerminalSessionId === null)
+				continue;
 			const projectId = projectForSession(
 				serverId,
 				entry.activationTerminalSessionId,

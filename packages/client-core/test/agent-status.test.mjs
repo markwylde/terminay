@@ -314,3 +314,23 @@ test("agent client rejects a query-command compatibility bridge before it can re
     /agent status subscriptions are required on this transport/u,
   );
 });
+
+test("agent client shows external and worktree sessions scoped to a project it displays", () => {
+  const external = (sessionId, projectIds) => ({ ...entry(sessionId), activationTerminalSessionId: null, external: true, projectIds });
+  const child = { ...entry("ext-a", "ext-a:child"), kind: "subagent", activationTerminalSessionId: null, external: true };
+  const client = new AgentStatusClient([]);
+  client.applySnapshot({ revision: 1, cursor: "1", entries: {
+    "ext-a:root": external("ext-a", ["project-a"]),
+    "ext-a:child": child,
+    "ext-b:root": external("ext-b", ["project-b"]),
+  } });
+  assert.deepEqual(Object.keys(client.snapshot.entries), []);
+  client.mergeProjectScope(["project-a"]);
+  assert.deepEqual(Object.keys(client.snapshot.entries).sort(), ["ext-a:child", "ext-a:root"]);
+  assert.equal(client.entriesForSession("ext-a").length, 0);
+});
+
+test("agent client rejects a malformed project scope stamp", () => {
+  const client = new AgentStatusClient(["session-a"]);
+  assert.throws(() => client.applySnapshot({ revision: 1, cursor: "1", entries: { "session-a:root": { ...entry("session-a"), projectIds: "project-a" } } }), /agent entry is invalid/);
+});

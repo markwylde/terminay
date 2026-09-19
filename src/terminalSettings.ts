@@ -358,6 +358,7 @@ export const DEFAULT_FOLDER_TASK_IGNORED_DIRECTORIES = [
 export const defaultTerminalSettings: TerminalSettings = {
 	agentIntegration: {
 		enabled: true,
+		harnesses: {},
 	},
 	aiTabMetadata: {
 		title: {
@@ -2263,6 +2264,7 @@ export function normalizeTerminalSettings(
 				typeof agentIntegrationInput.enabled === 'boolean'
 					? agentIntegrationInput.enabled
 					: defaultTerminalSettings.agentIntegration.enabled,
+			harnesses: normalizeHarnessSwitches(agentIntegrationInput.harnesses),
 		},
 		aiTabMetadata: {
 			title: {
@@ -2838,4 +2840,23 @@ export function normalizeTerminalSettings(
 					: defaultTerminalSettings.theme.brightWhite,
 		},
 	};
+}
+
+const HARNESS_SWITCH_KEY =
+	/^[a-z0-9](?:[a-z0-9.-]{1,126}[a-z0-9])?\/[a-z][a-z0-9-]{0,63}\/[a-z][a-z0-9-]{0,63}$/u;
+const MAX_HARNESS_SWITCHES = 256;
+
+/** Keep only well-formed `<sourceId>/<harnessId>` keys with boolean values. */
+function normalizeHarnessSwitches(value: unknown): Record<string, boolean> {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+		return {};
+	}
+	const harnesses: Record<string, boolean> = {};
+	for (const [key, enabled] of Object.entries(value)) {
+		if (Object.keys(harnesses).length >= MAX_HARNESS_SWITCHES) break;
+		if (HARNESS_SWITCH_KEY.test(key) && typeof enabled === 'boolean') {
+			harnesses[key] = enabled;
+		}
+	}
+	return harnesses;
 }

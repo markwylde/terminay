@@ -13,15 +13,40 @@ import {
   createInitialWorkspace,
 } from "../dist/index.js";
 
-async function publishAgentLifecycle(agents, identity, events) {
+/**
+ * Publish reduced entries as the session-source bridge would: one revision per
+ * step, bound to the terminal `identity` names.
+ */
+async function publishAgentLifecycle(agents, identity, steps) {
   const providerId = "example.agent/test";
-  assert.equal(agents.claimExtensionProvider(identity, providerId), true);
-  const result = await agents.ingestExtensionLifecycle(identity, providerId, "1", {
-    providerSessionId: `provider-${identity.sessionId}`,
-    mappingVersion: "1",
-    fingerprint: { kind: "test", process: { id: "process-1" }, metadata: { proof: "fixture" } },
-  }, events);
-  assert.equal(result.rejectedEventCount, 0);
+  const sessionId = `provider-${identity.sessionId}`;
+  let current = {
+    entryId: `entry-${identity.sessionId}`,
+    kind: "root",
+    provider: providerId,
+    harness: "example-cli",
+    agentId: sessionId,
+    sessionId,
+    activationTerminalSessionId: identity.sessionId,
+    external: false,
+    projectIds: [identity.projectId],
+    state: "idle",
+    stateStartedAt: 1,
+    createdAt: 1,
+    updatedAt: 1,
+    active: true,
+    activeTools: [],
+    unread: false,
+    terminalSessionId: identity.sessionId,
+    inProcess: false,
+    openSubagents: 0,
+  };
+  for (const step of steps) {
+    current = step.kind === "wait.started"
+      ? { ...current, state: step.state, waitingReason: step.reason, unread: true, updatedAt: current.updatedAt + 1 }
+      : { ...current, ...(step.title === undefined ? {} : { displayName: step.title }), updatedAt: current.updatedAt + 1 };
+    assert.equal(agents.applyEntries([current]), true);
+  }
 }
 
 async function eventually(read, message = "condition did not become true") {

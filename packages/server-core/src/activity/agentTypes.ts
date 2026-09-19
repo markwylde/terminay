@@ -1,12 +1,12 @@
 /**
- * Provider-neutral agent lifecycle types owned by Terminay Server.
+ * Provider-neutral agent status types owned by Terminay Server.
  *
- * Native provider payloads must be normalized before they cross the server
- * boundary. These types intentionally contain no Electron, renderer, or
- * provider-specific configuration details.
+ * Session sources report bounded snapshots through the Extension API; Server
+ * Core reduces each snapshot into these entries. They intentionally contain no
+ * Electron, renderer, provider journal, or provider configuration details.
  */
 
-/** A bounded, manifest-owned extension provider id. */
+/** A bounded, manifest-owned session source id: `<extensionId>/<local-id>`. */
 export type AgentProvider = string;
 
 export const AGENT_STATES = [
@@ -20,153 +20,63 @@ export type AgentState = (typeof AGENT_STATES)[number];
 
 export type AgentEntryKind = 'root' | 'subagent';
 export type AgentCompletionOutcome = 'success' | 'error' | 'cancelled';
-export type AgentToolOutcome = AgentCompletionOutcome;
 
 export interface AgentModelMetadata {
 	readonly id: string;
 	readonly displayName?: string;
-	readonly reasoningEffort?: string;
-	readonly contextWindowTokens?: number;
 }
 
 export interface AgentToolStatus {
 	readonly id: string;
 	readonly name: string;
-	readonly description?: string;
-	readonly subagentLaunch?: {
-		readonly displayName?: string;
-		readonly promptText?: string;
-	};
 	readonly startedAt: number;
 }
-
-interface AgentLifecycleEventBase {
-	readonly provider: AgentProvider;
-	readonly sessionId: string;
-	readonly activationTerminalSessionId: string;
-	readonly sequence: number;
-	readonly occurredAt: number;
-	readonly promptText?: string;
-	readonly model?: AgentModelMetadata;
-	/** Manifest `displayName` for this provider. Never a renderer allowlist. */
-	readonly providerDisplayName?: string;
-}
-
-interface TargetedAgentEvent {
-	readonly agentId?: string;
-}
-
-export type AgentLifecycleEvent =
-	| (AgentLifecycleEventBase & {
-			readonly kind: 'session.started';
-			readonly displayName?: string;
-	  })
-	/** Updates bounded provider metadata without changing lifecycle state. */
-	| (AgentLifecycleEventBase &
-			TargetedAgentEvent & {
-				readonly kind: 'agent.metadata';
-				readonly displayName?: string;
-			})
-	| (AgentLifecycleEventBase & {
-			readonly kind: 'session.stopped';
-			readonly reason?: string;
-	  })
-	| (AgentLifecycleEventBase &
-			TargetedAgentEvent & {
-				readonly kind: 'turn.started';
-				readonly turnId?: string;
-			})
-	| (AgentLifecycleEventBase &
-			TargetedAgentEvent & {
-				readonly kind: 'tool.started';
-				readonly tool: {
-					readonly id: string;
-					readonly name: string;
-					readonly description?: string;
-					readonly subagentLaunch?: {
-						readonly displayName?: string;
-						readonly promptText?: string;
-					};
-				};
-			})
-	| (AgentLifecycleEventBase &
-			TargetedAgentEvent & {
-				readonly kind: 'tool.finished';
-				readonly toolId: string;
-				readonly outcome?: AgentToolOutcome;
-			})
-	| (AgentLifecycleEventBase &
-			TargetedAgentEvent & {
-				readonly kind: 'wait.started';
-				readonly state: 'waiting' | 'blocked';
-				readonly reason?: string;
-				readonly inferred?: boolean;
-			})
-	| (AgentLifecycleEventBase &
-			TargetedAgentEvent & { readonly kind: 'wait.finished' })
-	| (AgentLifecycleEventBase &
-			TargetedAgentEvent & {
-				readonly kind: 'agent.done';
-				readonly outcome?: AgentCompletionOutcome;
-				readonly summary?: string;
-			})
-	| (AgentLifecycleEventBase & {
-			readonly kind: 'subagent.started';
-			readonly subagentId: string;
-			readonly parentAgentId?: string;
-			readonly displayName?: string;
-	  })
-	| (AgentLifecycleEventBase & {
-			readonly kind: 'subagent.stopped';
-			readonly subagentId: string;
-			readonly outcome?: AgentCompletionOutcome;
-			readonly summary?: string;
-	  })
-	| (AgentLifecycleEventBase &
-			TargetedAgentEvent & {
-				readonly kind: 'agent.exited';
-				readonly exitCode?: number;
-				readonly signal?: string;
-			});
 
 interface AgentStatusEntryBase {
 	readonly entryId: string;
 	readonly kind: AgentEntryKind;
+	/** The session source that reported the entry. */
 	readonly provider: AgentProvider;
+	/** Harness id the source declared, e.g. `example-cli`. */
+	readonly harness: string;
+	/** Display name the source declared for `harness`. */
+	readonly harnessDisplayName?: string;
+	/** Same as `harnessDisplayName`; the label an untitled root uses. */
+	readonly providerDisplayName?: string;
 	readonly agentId: string;
 	readonly sessionId: string;
-	readonly activationTerminalSessionId: string;
+	/**
+	 * Terminal whose process tree owns the session, or `null` for an external
+	 * session no terminal on this server owns.
+	 */
+	readonly activationTerminalSessionId: string | null;
+	/** True when no terminal on this server owns the session. */
+	readonly external: boolean;
+	/** Projects the session belongs to: by directory, worktree, or terminal. */
+	readonly projectIds: readonly string[];
 	readonly displayName?: string;
-	readonly providerDisplayName?: string;
-	readonly promptText?: string;
 	readonly model?: AgentModelMetadata;
 	readonly state: AgentState;
 	readonly stateStartedAt: number;
+	readonly createdAt: number;
 	readonly updatedAt: number;
-	readonly lastEventKind: AgentLifecycleEvent['kind'];
-	readonly lastEventSequence: number;
 	readonly active: boolean;
 	readonly activeTools: readonly AgentToolStatus[];
-	readonly currentTurnId?: string;
 	readonly waitingReason?: string;
-	/** True when the current state was derived from a journal rather than read from an explicit record. */
-	readonly inferred?: boolean;
-	/** True on a root whose own turn completed while a child was still
-	 * working. The recorded completion is held until the last working child
-	 * completes, so a root never goes `done` ahead of its children. */
-	readonly completionHeldByChildren?: boolean;
 	readonly completionOutcome?: AgentCompletionOutcome;
+	/** Bounded error text of a failed turn. */
 	readonly summary?: string;
-	readonly exitCode?: number;
-	readonly exitSignal?: string;
 	readonly unread: boolean;
 	readonly acknowledgedAt?: number;
 }
 
 export type RootAgentStatusEntry = AgentStatusEntryBase & {
 	readonly kind: 'root';
-	readonly terminalSessionId: string;
+	/** `null` for an external session. */
+	readonly terminalSessionId: string | null;
 	readonly inProcess: false;
+	/** Subagents the source reports as still running. */
+	readonly openSubagents: number;
 };
 
 export type SubagentStatusEntry = AgentStatusEntryBase & {
@@ -179,14 +89,9 @@ export type SubagentStatusEntry = AgentStatusEntryBase & {
 
 export type AgentStatusEntry = RootAgentStatusEntry | SubagentStatusEntry;
 
-export interface AgentEventCursor {
-	readonly sequence: number;
-	readonly occurredAt: number;
-}
 export interface AgentStatusSnapshot {
 	readonly revision: number;
 	readonly entries: Readonly<Record<string, AgentStatusEntry>>;
-	readonly eventCursors: Readonly<Record<string, AgentEventCursor>>;
 	/** Ephemeral id of the emitting Terminay process. Absent only on empty
 	 * store-internal snapshots before the service stamps its boot identity. */
 	readonly processInstanceId?: string;

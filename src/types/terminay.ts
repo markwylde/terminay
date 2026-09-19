@@ -584,19 +584,17 @@ export type EditWindowResult =
 			kind: 'terminal';
 	  };
 
-/** A provider whose user-wide MCP registration Terminay can manage. */
-export type McpAgentId =
-	| 'claudeCode'
-	| 'codex'
-	| 'cursor'
-	| 'gemini'
-	| 'grok'
-	| 'openCode';
+/**
+ * An extension-contributed MCP install target id, namespaced by its extension
+ * (for example `com.terminay.builtin-agents/claude-code`). Rows are keyed by it.
+ */
+export type McpAgentId = string;
 export type McpAgentRegistrationState =
 	| 'not-installed'
 	| 'installed'
 	| 'changed'
-	| 'unavailable';
+	| 'unavailable'
+	| 'error';
 
 export interface McpAgentInstallState {
 	id: McpAgentId;
@@ -609,6 +607,8 @@ export interface McpAgentInstallState {
 }
 
 export interface McpInstallStatus {
+	/** Every target contributed by an enabled extension, in declaration order.
+	 * Empty when no enabled extension contributes one. */
 	agents: McpAgentInstallState[];
 }
 

@@ -60,8 +60,8 @@ function compareEntries(
 	right: AgentStatusEntry,
 ): number {
 	return (
-		left.activationTerminalSessionId.localeCompare(
-			right.activationTerminalSessionId,
+		(left.activationTerminalSessionId ?? '').localeCompare(
+			right.activationTerminalSessionId ?? '',
 		) ||
 		left.sessionId.localeCompare(right.sessionId) ||
 		(left.kind === right.kind ? 0 : left.kind === 'root' ? -1 : 1) ||
@@ -81,6 +81,8 @@ function rootEntryFor(event: AgentLifecycleEvent): RootAgentStatusEntry {
 		agentId: event.sessionId,
 		sessionId: event.sessionId,
 		activationTerminalSessionId: event.activationTerminalSessionId,
+		external: false,
+		projectIds: [],
 		...(event.providerDisplayName === undefined
 			? {}
 			: { providerDisplayName: event.providerDisplayName }),
@@ -118,6 +120,8 @@ function subagentEntryFor(
 		agentId: event.subagentId,
 		sessionId: event.sessionId,
 		activationTerminalSessionId: event.activationTerminalSessionId,
+		external: false,
+		projectIds: [],
 		...(event.providerDisplayName === undefined
 			? {}
 			: { providerDisplayName: event.providerDisplayName }),
@@ -440,6 +444,7 @@ export function selectAgentStatusesForTerminal(
 ): readonly AgentStatusEntry[] {
 	return selectAgentStatusEntries(snapshot).filter(
 		(entry) =>
+			!entry.external &&
 			entry.activationTerminalSessionId === activationTerminalSessionId,
 	);
 }
@@ -485,6 +490,35 @@ export function selectLiveAgentStatusesForTerminal(
 	return selectLiveAgentStatuses(
 		selectAgentStatusesForTerminal(snapshot, activationTerminalSessionId),
 	);
+}
+
+/**
+ * Live entries that belong to one project: every root the server scoped to
+ * the project by directory or worktree, every root bound to one of the
+ * project's terminals, and the children of those roots. External roots are
+ * included; they are listed, not activated.
+ */
+export function selectLiveAgentStatusesForProject(
+	snapshot: AgentStatusSnapshot,
+	projectId: string,
+	terminalSessionIds: ReadonlySet<string> = new Set(),
+): readonly AgentStatusEntry[] {
+	const live = selectLiveAgentStatuses(selectAgentStatusEntries(snapshot));
+	const rootKey = (entry: AgentStatusEntry) =>
+		`${entry.provider}\u0000${entry.sessionId}`;
+	const includedRoots = new Set(
+		live
+			.filter(
+				(entry) =>
+					entry.kind === 'root' &&
+					(entry.projectIds.includes(projectId) ||
+						(!entry.external &&
+							entry.activationTerminalSessionId !== null &&
+							terminalSessionIds.has(entry.activationTerminalSessionId))),
+			)
+			.map(rootKey),
+	);
+	return live.filter((entry) => includedRoots.has(rootKey(entry)));
 }
 
 /** Every live entry in a snapshot, for a surface that spans terminals. */

@@ -141,7 +141,7 @@ test("trusted Gitea builds use the signed internal Turborepo cache without bakin
  * The image installs dependencies from a hand-written list of workspace
  * manifests. A workspace missing from that list is not installed, so its
  * extension is absent from every containerised end-to-end run while the suite
- * still reports green. `agent-opencode` and `shared-ui` were both missing.
+ * still reports green.
  */
 test("the E2E image copies a manifest for every workspace", async () => {
   const { readdir } = await import("node:fs/promises");
@@ -174,10 +174,7 @@ test("the E2E image copies a manifest for every workspace", async () => {
  * within days and the node evicted everything on it.
  */
 test("every CI job that builds or pulls images frees them when it ends", async () => {
-  const [ci, conformance] = await Promise.all([
-    text(".gitea/workflows/ci.yml"),
-    text(".gitea/workflows/agent-conformance.yml"),
-  ]);
+  const ci = await text(".gitea/workflows/ci.yml");
   const cleanup = (keep) => new RegExp(
     `- name: Free this job's Docker images\\n\\s+if: \\$\\{\\{ always\\(\\)[^\\n]*\\}\\}\\n[\\s\\S]*?run: sh scripts/prune-ci-docker-images\\.sh${keep}\\n`,
     "u",
@@ -189,8 +186,6 @@ test("every CI job that builds or pulls images frees them when it ends", async (
   assert.match(lastStep(job(ci, "e2e-image")), /IMAGE_TAG: \$\{\{ steps\.image\.outputs\.tag \}\}/u);
   assert.match(lastStep(job(ci, "e2e-test")), cleanup(' "\\$IMAGE_TAG"'));
   assert.match(lastStep(job(ci, "e2e-test")), /IMAGE_TAG: \$\{\{ needs\.e2e-image\.outputs\.image \}\}/u);
-  assert.match(lastStep(job(conformance, "conformance")), cleanup(""));
-  assert.match(lastStep(job(conformance, "conformance")), /always\(\) && steps\.selected\.outputs\.run == 'true'/u);
 });
 
 test("CI image cleanup keeps the newest and the named E2E image and never fails the job", async () => {

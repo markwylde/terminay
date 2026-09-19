@@ -1,6 +1,6 @@
 import type { AgentStatusService } from '../../packages/server-core/src/activity/agentService'
 import type { ActivitySessionIdentity } from '../../packages/server-core/src/activity/service'
-import type { AgentStatusSnapshot } from '../../src/types/agentStatus'
+import type { AgentStatusSnapshot } from '../../packages/server-core/src/activity/agentTypes'
 
 /** Server-owned compatibility projection. This is deliberately Electron-free:
  * application renderers consume it through the authenticated server protocol,
@@ -29,6 +29,7 @@ export function createServerAgentStatusIpcAdapter({
 }: ServerAgentStatusIpcAdapterOptions): AgentStatusIpcAuthority {
   const scopedSnapshot = (snapshot: AgentStatusSnapshot): AgentStatusSnapshot => {
     const entries = Object.fromEntries(Object.entries(snapshot.entries).filter(([, entry]) => {
+      if (entry.activationTerminalSessionId === null) return false
       const identity = agentIdentity(entry.activationTerminalSessionId)
       return identity !== undefined && agents.isSessionActive(identity)
     }))
@@ -47,7 +48,7 @@ export function createServerAgentStatusIpcAdapter({
     subscribe: (listener) => agents.subscribe((snapshot) => listener(scopedSnapshot(snapshot))),
     markAcknowledged: (entryId) => {
       const entry = agents.getSnapshot().entries[entryId]
-      const identity = entry === undefined ? undefined : agentIdentity(entry.activationTerminalSessionId)
+      const identity = entry?.activationTerminalSessionId == null ? undefined : agentIdentity(entry.activationTerminalSessionId)
       if (identity === undefined) return false
       try {
         return agents.acknowledge(identity, entryId)

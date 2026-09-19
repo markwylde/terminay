@@ -10,26 +10,16 @@ import {
 	PROVIDER_VAULT_KEY_PATTERN,
 } from './constants.js';
 import type {
-	AgentBindingFingerprint,
-	AgentChildJournalSource,
-	AgentDirectoryListOptions,
-	AgentEnvironmentRelativePathRequest,
-	AgentHomeRelativeFileRequest,
-	AgentHomeRelativePathRequest,
-	AgentLifecycleEvent,
-	AgentModelMetadata,
-	AgentObservationDiagnostic,
-	AgentPathUnderEnvironmentRequest,
-	AgentPathUnderHomeRequest,
-	AgentProcessEnvironmentRequest,
-	AgentProviderContribution,
-	AgentProviderDefinition,
-	AgentRelativeToEnvironmentRequest,
-	AgentSessionBindingRequest,
-	AgentTerminalTtyFact,
+	AgentSessionSnapshot,
+	AgentSessionSourceContribution,
+	AgentSessionSourceDiagnostic,
 	ExtensionPermission,
 	LanguageServerContribution,
 	LanguageServerLaunch,
+	McpInstallTargetActionResult,
+	McpInstallTargetContribution,
+	McpInstallTargetStatus,
+	McpServerCommand,
 	ProviderVaultPutRequest,
 	ProviderVaultPutResult,
 	ProviderVaultRemoveRequest,
@@ -57,6 +47,7 @@ const permissions = new Set<ExtensionPermission>([
 	'network',
 	'secrets:resolve',
 	'agent-observation',
+	'mcp-registration',
 ]);
 const manifestKeys = new Set([
 	'manifestVersion',
@@ -240,41 +231,66 @@ export function validateExtensionManifest(
 	else {
 		closed(
 			value.contributes,
-			new Set(['agentProviders', 'languageServers']),
+			new Set(['agentSessionSources', 'mcpInstallTargets', 'languageServers']),
 			'$.contributes',
 			out,
 		);
 		const extensionId = typeof value.id === 'string' ? value.id : '';
-		const agentProviders = value.contributes.agentProviders;
-		const languageServers = value.contributes.languageServers;
-		if (agentProviders === undefined && languageServers === undefined) {
+		const { agentSessionSources, mcpInstallTargets, languageServers } =
+			value.contributes;
+		if (
+			agentSessionSources === undefined &&
+			mcpInstallTargets === undefined &&
+			languageServers === undefined
+		) {
 			out.push({
 				path: '$.contributes',
 				code: 'missing_contribution',
 				message: 'Declare at least one supported contribution',
 			});
 		}
-		if (agentProviders !== undefined)
-			validateAgentContributions(agentProviders, extensionId, out);
+		if (agentSessionSources !== undefined)
+			validateNamespacedContributions(
+				agentSessionSources,
+				'agentSessionSources',
+				EXTENSION_LIMITS.contributions,
+				extensionId,
+				validateAgentSessionSourceContribution,
+				out,
+			);
+		if (mcpInstallTargets !== undefined)
+			validateNamespacedContributions(
+				mcpInstallTargets,
+				'mcpInstallTargets',
+				EXTENSION_LIMITS.mcpInstallTargets,
+				extensionId,
+				validateMcpInstallTargetContribution,
+				out,
+			);
 		if (languageServers !== undefined)
 			validateLanguageServerContributions(languageServers, out);
-		if (
-			Array.isArray(agentProviders) &&
-			agentProviders.length > 0 &&
-			!Array.isArray(value.permissions)
-		) {
-			// The permission array validator reports the more specific type error.
-		} else if (
-			Array.isArray(agentProviders) &&
-			agentProviders.length > 0 &&
-			Array.isArray(value.permissions) &&
-			!value.permissions.includes('agent-observation')
-		) {
-			out.push({
-				path: '$.permissions',
-				code: 'missing_permission',
-				message: 'Agent providers require agent-observation',
-			});
+		// The permission array validator reports a malformed array itself.
+		if (Array.isArray(value.permissions)) {
+			if (
+				Array.isArray(agentSessionSources) &&
+				agentSessionSources.length > 0 &&
+				!value.permissions.includes('agent-observation')
+			)
+				out.push({
+					path: '$.permissions',
+					code: 'missing_permission',
+					message: 'Agent session sources require agent-observation',
+				});
+			if (
+				Array.isArray(mcpInstallTargets) &&
+				mcpInstallTargets.length > 0 &&
+				!value.permissions.includes('mcp-registration')
+			)
+				out.push({
+					path: '$.permissions',
+					code: 'missing_permission',
+					message: 'MCP install targets require mcp-registration',
+				});
 		}
 	}
 	return out.length === 0
@@ -323,38 +339,6 @@ function validateDependencies(value: unknown, out: SchemaIssue[]): void {
 		ids.push(item.extensionId);
 	});
 	unique(ids, '$.extensionDependencies', out);
-}
-
-function validateAgentContributions(
-	value: unknown,
-	extensionId: string,
-	out: SchemaIssue[],
-): void {
-	if (
-		!Array.isArray(value) ||
-		value.length === 0 ||
-		value.length > EXTENSION_LIMITS.contributions
-	) {
-		out.push({
-			path: '$.contributes.agentProviders',
-			code: 'invalid_array',
-			message: 'Expected one or more bounded contributions',
-		});
-		return;
-	}
-	const ids: unknown[] = [];
-	value.forEach((item, index) => {
-		const result = validateAgentProviderContribution(item, extensionId);
-		if (!result.ok)
-			out.push(
-				...result.issues.map((issue) => ({
-					...issue,
-					path: `$.contributes.agentProviders[${index}]${issue.path.slice(1)}`,
-				})),
-			);
-		if (record(item)) ids.push(item.id);
-	});
-	unique(ids, '$.contributes.agentProviders', out);
 }
 
 function validateLanguageServerContributions(
@@ -492,13 +476,7 @@ export function validateLanguageServerLaunch(
 	if (!record(value)) return invalidObject();
 	closed(
 		value,
-		new Set([
-			'command',
-			'args',
-			'env',
-			'initializationOptions',
-			'description',
-		]),
+		new Set(['command', 'args', 'env', 'initializationOptions', 'description']),
 		'$',
 		out,
 	);
@@ -563,10 +541,60 @@ export function validateLanguageServerLaunch(
 }
 
 /** Validates a standalone agent-provider manifest contribution. */
-export function validateAgentProviderContribution(
+
+function validateNamespacedContributions(
+	value: unknown,
+	key: 'agentSessionSources' | 'mcpInstallTargets',
+	maximum: number,
+	extensionId: string,
+	validate: (item: unknown, extensionId: string) => ValidationResult<unknown>,
+	out: SchemaIssue[],
+): void {
+	const path = `$.contributes.${key}`;
+	if (!Array.isArray(value) || value.length === 0 || value.length > maximum) {
+		out.push({
+			path,
+			code: 'invalid_array',
+			message: 'Expected one or more bounded contributions',
+		});
+		return;
+	}
+	const ids: unknown[] = [];
+	value.forEach((item, index) => {
+		const result = validate(item, extensionId);
+		if (!result.ok)
+			out.push(
+				...result.issues.map((issue) => ({
+					...issue,
+					path: `${path}[${index}]${issue.path.slice(1)}`,
+				})),
+			);
+		if (record(item)) ids.push(item.id);
+	});
+	unique(ids, path, out);
+}
+
+function namespacedContributionId(
 	value: unknown,
 	extensionId: string,
-): ValidationResult<AgentProviderContribution> {
+	out: SchemaIssue[],
+): void {
+	if (
+		string(value, '$.id', out, EXTENSION_LIMITS.providerIdLength) &&
+		!isNamespacedId(value, extensionId)
+	)
+		out.push({
+			path: '$.id',
+			code: 'invalid_namespace',
+			message: 'Contribution id must be namespaced by the extension id',
+		});
+}
+
+/** Validates a standalone agent session source manifest contribution. */
+export function validateAgentSessionSourceContribution(
+	value: unknown,
+	extensionId: string,
+): ValidationResult<AgentSessionSourceContribution> {
 	const out: SchemaIssue[] = [];
 	if (!record(value)) return invalidObject();
 	closed(
@@ -575,25 +603,14 @@ export function validateAgentProviderContribution(
 			'id',
 			'displayName',
 			'description',
-			'icon',
 			'platforms',
-			'processMatchers',
-			'mappings',
-			'requiredEnvironmentVariables',
+			'harnesses',
+			'environmentVariables',
 		]),
 		'$',
 		out,
 	);
-	if (
-		string(value.id, '$.id', out, EXTENSION_LIMITS.providerIdLength) &&
-		!isNamespacedId(value.id, extensionId)
-	) {
-		out.push({
-			path: '$.id',
-			code: 'invalid_namespace',
-			message: 'Provider id must be namespaced by the extension id',
-		});
-	}
+	namespacedContributionId(value.id, extensionId, out);
 	string(
 		value.displayName,
 		'$.displayName',
@@ -607,37 +624,436 @@ export function validateAgentProviderContribution(
 			out,
 			EXTENSION_LIMITS.descriptionLength,
 		);
+	validatePlatforms(value.platforms, '$.platforms', out);
 	if (
-		value.icon !== undefined &&
-		![
-			'terminal',
-			'server',
-			'cloud',
-			'key',
-			'folder',
-			'network',
-			'database',
-			'warning',
-			'info',
-		].includes(String(value.icon))
+		!Array.isArray(value.harnesses) ||
+		value.harnesses.length === 0 ||
+		value.harnesses.length > EXTENSION_LIMITS.agentSourceHarnesses
 	) {
 		out.push({
-			path: '$.icon',
-			code: 'invalid_icon',
-			message: 'Unsupported icon',
+			path: '$.harnesses',
+			code: 'invalid_array',
+			message: 'Expected one or more bounded harnesses',
 		});
+	} else {
+		const ids: unknown[] = [];
+		value.harnesses.forEach((harness, index) => {
+			const path = `$.harnesses[${index}]`;
+			if (!record(harness)) {
+				out.push({ path, code: 'invalid_type', message: 'Expected an object' });
+				return;
+			}
+			closed(harness, new Set(['id', 'displayName']), path, out);
+			localId(harness.id, `${path}.id`, out);
+			string(
+				harness.displayName,
+				`${path}.displayName`,
+				out,
+				EXTENSION_LIMITS.displayNameLength,
+			);
+			ids.push(harness.id);
+		});
+		unique(ids, '$.harnesses', out);
 	}
-	validatePlatforms(value.platforms, '$.platforms', out);
-	validateAgentProcessMatchers(value.processMatchers, out);
-	validateAgentMappings(value.mappings, out);
-	validateAgentEnvironmentVariableNamesInto(
-		value.requiredEnvironmentVariables,
-		'$.requiredEnvironmentVariables',
+	validateEnvironmentVariableNamesInto(
+		value.environmentVariables,
+		'$.environmentVariables',
 		out,
-		true,
 	);
 	return out.length === 0
-		? { ok: true, value: value as unknown as AgentProviderContribution }
+		? { ok: true, value: value as unknown as AgentSessionSourceContribution }
+		: { ok: false, issues: out };
+}
+
+/** Validates a standalone MCP install target manifest contribution. */
+export function validateMcpInstallTargetContribution(
+	value: unknown,
+	extensionId: string,
+): ValidationResult<McpInstallTargetContribution> {
+	const out: SchemaIssue[] = [];
+	if (!record(value)) return invalidObject();
+	closed(value, new Set(['id', 'displayName']), '$', out);
+	namespacedContributionId(value.id, extensionId, out);
+	string(
+		value.displayName,
+		'$.displayName',
+		out,
+		EXTENSION_LIMITS.displayNameLength,
+	);
+	return out.length === 0
+		? { ok: true, value: value as unknown as McpInstallTargetContribution }
+		: { ok: false, issues: out };
+}
+
+function localId(value: unknown, path: string, out: SchemaIssue[]): void {
+	if (string(value, path, out, 64) && !LOCAL_ID_PATTERN.test(value))
+		out.push({
+			path,
+			code: 'invalid_id',
+			message: 'Use a lowercase kebab-case id',
+		});
+}
+
+function optionalText(
+	value: unknown,
+	path: string,
+	maximum: number,
+	out: SchemaIssue[],
+): void {
+	if (value !== undefined) string(value, path, out, maximum);
+}
+
+function optionalEnum(
+	value: unknown,
+	path: string,
+	allowed: readonly string[],
+	out: SchemaIssue[],
+): void {
+	if (value !== undefined && !allowed.includes(value as string))
+		out.push({
+			path,
+			code: 'invalid_enum',
+			message: `Expected one of ${allowed.join(', ')}`,
+		});
+}
+
+function absolutePath(value: unknown, path: string, out: SchemaIssue[]): void {
+	if (
+		string(value, path, out, EXTENSION_LIMITS.agentPathLength) &&
+		(!value.startsWith('/') || value.includes('\0'))
+	)
+		out.push({
+			path,
+			code: 'invalid_path',
+			message: 'Expected an absolute path',
+		});
+}
+
+const sessionStatuses = ['running', 'waiting', 'blocked', 'idle'] as const;
+const turnOutcomes = ['completed', 'failed', 'interrupted'] as const;
+const subagentStatuses = [
+	'running',
+	'completed',
+	'failed',
+	'cancelled',
+] as const;
+
+/**
+ * Validates one session snapshot before it crosses the host boundary. When
+ * `harnesses` is given, the snapshot must name one of them: the source's
+ * declared harnesses, or only those switched on.
+ */
+export function validateAgentSessionSnapshot(
+	value: unknown,
+	harnesses?: ReadonlySet<string> | readonly string[],
+): ValidationResult<AgentSessionSnapshot> {
+	const out: SchemaIssue[] = [];
+	if (!record(value)) return invalidObject();
+	closed(
+		value,
+		new Set([
+			'id',
+			'harness',
+			'pid',
+			'cwd',
+			'title',
+			'model',
+			'status',
+			'waitingFor',
+			'tool',
+			'lastTurn',
+			'lastTurnEndedAt',
+			'error',
+			'subagents',
+		]),
+		'$',
+		out,
+	);
+	string(value.id, '$.id', out, EXTENSION_LIMITS.agentSessionIdLength);
+	localId(value.harness, '$.harness', out);
+	if (
+		harnesses !== undefined &&
+		typeof value.harness === 'string' &&
+		!(harnesses instanceof Set
+			? harnesses.has(value.harness)
+			: (harnesses as readonly string[]).includes(value.harness))
+	)
+		out.push({
+			path: '$.harness',
+			code: 'harness_not_enabled',
+			message: 'Harness is undeclared or switched off',
+		});
+	boundedInteger(value.pid, '$.pid', 1, 2 ** 31 - 1, out);
+	absolutePath(value.cwd, '$.cwd', out);
+	optionalText(value.title, '$.title', EXTENSION_LIMITS.agentTitleLength, out);
+	optionalText(value.model, '$.model', EXTENSION_LIMITS.agentModelLength, out);
+	optionalEnum(value.status, '$.status', sessionStatuses, out);
+	optionalText(
+		value.waitingFor,
+		'$.waitingFor',
+		EXTENSION_LIMITS.agentWaitingForLength,
+		out,
+	);
+	optionalText(value.tool, '$.tool', EXTENSION_LIMITS.agentToolNameLength, out);
+	optionalEnum(value.lastTurn, '$.lastTurn', turnOutcomes, out);
+	if (value.lastTurnEndedAt !== undefined)
+		boundedInteger(
+			value.lastTurnEndedAt,
+			'$.lastTurnEndedAt',
+			0,
+			Number.MAX_SAFE_INTEGER,
+			out,
+		);
+	optionalText(value.error, '$.error', EXTENSION_LIMITS.agentErrorLength, out);
+	if (value.subagents !== undefined) {
+		if (
+			!Array.isArray(value.subagents) ||
+			value.subagents.length > EXTENSION_LIMITS.agentSubagents
+		) {
+			out.push({
+				path: '$.subagents',
+				code: 'invalid_array',
+				message: 'Expected a bounded subagent array',
+			});
+		} else {
+			const ids: unknown[] = [];
+			value.subagents.forEach((subagent, index) => {
+				const path = `$.subagents[${index}]`;
+				if (!record(subagent)) {
+					out.push({
+						path,
+						code: 'invalid_type',
+						message: 'Expected an object',
+					});
+					return;
+				}
+				closed(
+					subagent,
+					new Set(['id', 'parentId', 'type', 'title', 'status']),
+					path,
+					out,
+				);
+				string(
+					subagent.id,
+					`${path}.id`,
+					out,
+					EXTENSION_LIMITS.agentSessionIdLength,
+				);
+				optionalText(
+					subagent.parentId,
+					`${path}.parentId`,
+					EXTENSION_LIMITS.agentSessionIdLength,
+					out,
+				);
+				string(
+					subagent.type,
+					`${path}.type`,
+					out,
+					EXTENSION_LIMITS.agentSubagentTypeLength,
+				);
+				optionalText(
+					subagent.title,
+					`${path}.title`,
+					EXTENSION_LIMITS.agentTitleLength,
+					out,
+				);
+				if (!subagentStatuses.includes(subagent.status as never))
+					out.push({
+						path: `${path}.status`,
+						code: 'invalid_enum',
+						message: `Expected one of ${subagentStatuses.join(', ')}`,
+					});
+				ids.push(subagent.id);
+			});
+			unique(ids, '$.subagents', out);
+		}
+	}
+	return out.length === 0
+		? { ok: true, value: value as unknown as AgentSessionSnapshot }
+		: { ok: false, issues: out };
+}
+
+/** Validates a full reset: bounded, and no session id reported twice. */
+export function validateAgentSessionReset(
+	value: unknown,
+	harnesses?: ReadonlySet<string> | readonly string[],
+): ValidationResult<AgentSessionSnapshot[]> {
+	const out: SchemaIssue[] = [];
+	if (
+		!Array.isArray(value) ||
+		value.length > EXTENSION_LIMITS.agentSessionsPerReset
+	)
+		return {
+			ok: false,
+			issues: [
+				{
+					path: '$',
+					code: 'invalid_array',
+					message: 'Expected a bounded session array',
+				},
+			],
+		};
+	const ids: unknown[] = [];
+	value.forEach((session, index) => {
+		const result = validateAgentSessionSnapshot(session, harnesses);
+		if (!result.ok)
+			out.push(
+				...result.issues.map((issue) => ({
+					...issue,
+					path: `$[${index}]${issue.path.slice(1)}`,
+				})),
+			);
+		if (record(session)) ids.push(session.id);
+	});
+	unique(ids, '$', out);
+	return out.length === 0
+		? { ok: true, value: value as AgentSessionSnapshot[] }
+		: { ok: false, issues: out };
+}
+
+/** Validates a session source diagnostic: a kebab-case code and a bounded message. */
+export function validateAgentSessionSourceDiagnostic(
+	value: unknown,
+): ValidationResult<AgentSessionSourceDiagnostic> {
+	const out: SchemaIssue[] = [];
+	if (!record(value)) return invalidObject();
+	closed(value, new Set(['code', 'message']), '$', out);
+	if (
+		string(
+			value.code,
+			'$.code',
+			out,
+			EXTENSION_LIMITS.agentDiagnosticCodeLength,
+		) &&
+		!LOCAL_ID_PATTERN.test(value.code)
+	)
+		out.push({
+			path: '$.code',
+			code: 'invalid_id',
+			message: 'Use a lowercase kebab-case code',
+		});
+	string(
+		value.message,
+		'$.message',
+		out,
+		EXTENSION_LIMITS.agentDiagnosticLength,
+	);
+	return out.length === 0
+		? { ok: true, value: value as unknown as AgentSessionSourceDiagnostic }
+		: { ok: false, issues: out };
+}
+
+/** Validates the host-supplied Terminay MCP server command. */
+export function validateMcpServerCommand(
+	value: unknown,
+): ValidationResult<McpServerCommand> {
+	const out: SchemaIssue[] = [];
+	if (!record(value)) return invalidObject();
+	closed(value, new Set(['command', 'args', 'env']), '$', out);
+	string(value.command, '$.command', out, EXTENSION_LIMITS.mcpCommandLength);
+	if (
+		!Array.isArray(value.args) ||
+		value.args.length > EXTENSION_LIMITS.mcpCommandArgs
+	)
+		out.push({
+			path: '$.args',
+			code: 'invalid_array',
+			message: 'Expected a bounded argument array',
+		});
+	else
+		value.args.forEach((arg, index) => {
+			string(arg, `$.args[${index}]`, out, EXTENSION_LIMITS.mcpCommandLength);
+		});
+	if (value.env !== undefined) {
+		if (
+			!record(value.env) ||
+			Object.keys(value.env).length > EXTENSION_LIMITS.mcpCommandEnvEntries
+		)
+			out.push({
+				path: '$.env',
+				code: 'invalid_type',
+				message: 'Expected a bounded environment object',
+			});
+		else
+			for (const [name, entry] of Object.entries(value.env)) {
+				validateEnvironmentVariableName(name, `$.env.${name}`, out);
+				if (
+					typeof entry !== 'string' ||
+					entry.length > EXTENSION_LIMITS.mcpCommandLength
+				)
+					out.push({
+						path: `$.env.${name}`,
+						code: 'invalid_string',
+						message: 'Expected a bounded string',
+					});
+			}
+	}
+	return out.length === 0
+		? { ok: true, value: value as unknown as McpServerCommand }
+		: { ok: false, issues: out };
+}
+
+const mcpStates = [
+	'not-installed',
+	'installed',
+	'changed',
+	'unavailable',
+	'error',
+] as const;
+
+/** Validates what an MCP install target returns from `status`. */
+export function validateMcpInstallTargetStatus(
+	value: unknown,
+): ValidationResult<McpInstallTargetStatus> {
+	const out: SchemaIssue[] = [];
+	if (!record(value)) return invalidObject();
+	closed(value, new Set(['state', 'configPath', 'message']), '$', out);
+	if (!mcpStates.includes(value.state as never))
+		out.push({
+			path: '$.state',
+			code: 'invalid_enum',
+			message: `Expected one of ${mcpStates.join(', ')}`,
+		});
+	string(
+		value.configPath,
+		'$.configPath',
+		out,
+		EXTENSION_LIMITS.mcpConfigPathLength,
+	);
+	optionalText(
+		value.message,
+		'$.message',
+		EXTENSION_LIMITS.mcpMessageLength,
+		out,
+	);
+	return out.length === 0
+		? { ok: true, value: value as unknown as McpInstallTargetStatus }
+		: { ok: false, issues: out };
+}
+
+/** Validates what an MCP install target returns from `install` or `uninstall`. */
+export function validateMcpInstallTargetActionResult(
+	value: unknown,
+): ValidationResult<McpInstallTargetActionResult> {
+	const out: SchemaIssue[] = [];
+	if (!record(value)) return invalidObject();
+	closed(value, new Set(['ok', 'installed', 'message', 'error']), '$', out);
+	for (const key of ['ok', 'installed'] as const)
+		if (typeof value[key] !== 'boolean')
+			out.push({
+				path: `$.${key}`,
+				code: 'invalid_type',
+				message: 'Expected boolean',
+			});
+	optionalText(
+		value.message,
+		'$.message',
+		EXTENSION_LIMITS.mcpMessageLength,
+		out,
+	);
+	optionalText(value.error, '$.error', EXTENSION_LIMITS.mcpMessageLength, out);
+	return out.length === 0
+		? { ok: true, value: value as unknown as McpInstallTargetActionResult }
 		: { ok: false, issues: out };
 }
 
@@ -667,122 +1083,12 @@ function validatePlatforms(
 	});
 }
 
-function validateAgentProcessMatchers(
-	value: unknown,
-	out: SchemaIssue[],
-): void {
-	if (value === undefined) return;
-	if (
-		!Array.isArray(value) ||
-		value.length === 0 ||
-		value.length > EXTENSION_LIMITS.agentProcessMatchers
-	) {
-		out.push({
-			path: '$.processMatchers',
-			code: 'invalid_array',
-			message: 'Expected bounded process matchers',
-		});
-		return;
-	}
-	const identities: unknown[] = [];
-	value.forEach((matcher, index) => {
-		const path = `$.processMatchers[${index}]`;
-		if (!record(matcher)) {
-			out.push({ path, code: 'invalid_type', message: 'Expected an object' });
-			return;
-		}
-		closed(matcher, new Set(['executableName', 'arguments']), path, out);
-		if (
-			string(matcher.executableName, `${path}.executableName`, out, 128) &&
-			/[\\/\0\r\n]/.test(matcher.executableName)
-		) {
-			out.push({
-				path: `${path}.executableName`,
-				code: 'invalid_matcher',
-				message: 'Executable name must not contain a path or control character',
-			});
-		}
-		if (matcher.arguments !== undefined) {
-			if (!Array.isArray(matcher.arguments) || matcher.arguments.length > 16)
-				out.push({
-					path: `${path}.arguments`,
-					code: 'invalid_array',
-					message: 'Expected bounded argument tokens',
-				});
-			else
-				matcher.arguments.forEach((argument, argumentIndex) => {
-					string(argument, `${path}.arguments[${argumentIndex}]`, out, 256);
-				});
-		}
-		identities.push(
-			JSON.stringify([matcher.executableName, matcher.arguments]),
-		);
-	});
-	unique(identities, '$.processMatchers', out);
-}
-
-function validateAgentMappings(value: unknown, out: SchemaIssue[]): void {
-	if (value === undefined) return;
-	if (
-		!Array.isArray(value) ||
-		value.length === 0 ||
-		value.length > EXTENSION_LIMITS.agentMappings
-	) {
-		out.push({
-			path: '$.mappings',
-			code: 'invalid_array',
-			message: 'Expected bounded mapping declarations',
-		});
-		return;
-	}
-	const versions: unknown[] = [];
-	value.forEach((mapping, index) => {
-		const path = `$.mappings[${index}]`;
-		if (!record(mapping)) {
-			out.push({ path, code: 'invalid_type', message: 'Expected an object' });
-			return;
-		}
-		closed(
-			mapping,
-			new Set(['mappingVersion', 'providerVersionRange']),
-			path,
-			out,
-		);
-		string(
-			mapping.mappingVersion,
-			`${path}.mappingVersion`,
-			out,
-			EXTENSION_LIMITS.agentProviderVersionLength,
-		);
-		string(
-			mapping.providerVersionRange,
-			`${path}.providerVersionRange`,
-			out,
-			EXTENSION_LIMITS.agentProviderVersionLength,
-		);
-		versions.push(mapping.mappingVersion);
-	});
-	unique(versions, '$.mappings', out);
-}
-
-/** Validates a declared/requested bounded environment-variable name list. */
-export function validateAgentEnvironmentVariableNames(
-	value: unknown,
-): ValidationResult<string[]> {
-	const out: SchemaIssue[] = [];
-	validateAgentEnvironmentVariableNamesInto(value, '$.names', out);
-	return out.length === 0
-		? { ok: true, value: value as string[] }
-		: { ok: false, issues: out };
-}
-
-function validateAgentEnvironmentVariableNamesInto(
+function validateEnvironmentVariableNamesInto(
 	value: unknown,
 	path: string,
 	out: SchemaIssue[],
-	optional = false,
 ): void {
-	if (value === undefined && optional) return;
+	if (value === undefined) return;
 	if (
 		!Array.isArray(value) ||
 		value.length === 0 ||
@@ -802,200 +1108,6 @@ function validateAgentEnvironmentVariableNamesInto(
 }
 
 /** Validates one closed process-environment request before host routing. */
-export function validateAgentProcessEnvironmentRequest(
-	value: unknown,
-): ValidationResult<AgentProcessEnvironmentRequest> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	closed(value, new Set(['names']), '$', out);
-	validateAgentEnvironmentVariableNamesInto(value.names, '$.names', out);
-	return out.length === 0
-		? { ok: true, value: value as unknown as AgentProcessEnvironmentRequest }
-		: { ok: false, issues: out };
-}
-
-/** Validates bounded values returned from terminal-scoped process observation. */
-export function validateAgentObservedEnvironment(
-	value: unknown,
-	requestedNames?: readonly string[],
-): ValidationResult<Record<string, string>> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	const requested =
-		requestedNames === undefined ? undefined : new Set(requestedNames);
-	const entries = Object.entries(value);
-	if (entries.length > EXTENSION_LIMITS.agentEnvironmentVariables)
-		out.push({
-			path: '$',
-			code: 'limit_exceeded',
-			message: 'Too many observed environment variables',
-		});
-	entries.forEach(([name, observed]) => {
-		validateEnvironmentVariableName(name, `$.${name}`, out);
-		if (requested !== undefined && !requested.has(name))
-			out.push({
-				path: `$.${name}`,
-				code: 'undeclared_environment_variable',
-				message: 'Observed variable was not requested',
-			});
-		if (
-			typeof observed !== 'string' ||
-			observed.length > EXTENSION_LIMITS.agentEnvironmentVariableValueLength
-		) {
-			out.push({
-				path: `$.${name}`,
-				code: 'invalid_environment_value',
-				message: `Expected a string of at most ${EXTENSION_LIMITS.agentEnvironmentVariableValueLength} characters`,
-			});
-		}
-	});
-	return out.length === 0
-		? { ok: true, value: value as Record<string, string> }
-		: { ok: false, issues: out };
-}
-
-/** Validates a known path resolved below one declared terminal environment value. */
-export function validateAgentRelativeToEnvironmentRequest(
-	value: unknown,
-): ValidationResult<AgentRelativeToEnvironmentRequest> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	closed(
-		value,
-		new Set(['relativePath', 'environmentVariable', 'extension']),
-		'$',
-		out,
-	);
-	validateHomeRelativePath(value.relativePath, '$.relativePath', out);
-	validateEnvironmentVariableName(
-		value.environmentVariable,
-		'$.environmentVariable',
-		out,
-	);
-	if (value.extension !== undefined)
-		validateFileExtension(value.extension, '$.extension', out);
-	return out.length === 0
-		? { ok: true, value: value as unknown as AgentRelativeToEnvironmentRequest }
-		: { ok: false, issues: out };
-}
-
-/** Validates provider-record path data constrained by one declared terminal environment value. */
-export function validateAgentPathUnderEnvironmentRequest(
-	value: unknown,
-): ValidationResult<AgentPathUnderEnvironmentRequest> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	closed(
-		value,
-		new Set([
-			'providerPath',
-			'environmentVariable',
-			'beneathRelative',
-			'extension',
-		]),
-		'$',
-		out,
-	);
-	if (
-		string(
-			value.providerPath,
-			'$.providerPath',
-			out,
-			EXTENSION_LIMITS.agentProviderPathLength,
-		)
-	) {
-		if (
-			!isAbsoluteProviderPath(value.providerPath) ||
-			/[\0\r\n]/.test(value.providerPath)
-		)
-			out.push({
-				path: '$.providerPath',
-				code: 'unsafe_path',
-				message: 'Expected a bounded absolute provider-record path',
-			});
-	}
-	validateEnvironmentVariableName(
-		value.environmentVariable,
-		'$.environmentVariable',
-		out,
-	);
-	if (value.beneathRelative !== undefined)
-		validateHomeRelativePath(value.beneathRelative, '$.beneathRelative', out);
-	if (value.extension !== undefined)
-		validateFileExtension(value.extension, '$.extension', out);
-	return out.length === 0
-		? { ok: true, value: value as unknown as AgentPathUnderEnvironmentRequest }
-		: { ok: false, issues: out };
-}
-
-/** Validates a fact-only path lookup below one declared terminal environment value. */
-export function validateAgentEnvironmentRelativePathRequest(
-	value: unknown,
-): ValidationResult<AgentEnvironmentRelativePathRequest> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	closed(
-		value,
-		new Set(['handle', 'environmentVariable', 'beneathRelative']),
-		'$',
-		out,
-	);
-	validateOpaqueHandle(value.handle, '$.handle', out);
-	validateEnvironmentVariableName(
-		value.environmentVariable,
-		'$.environmentVariable',
-		out,
-	);
-	if (value.beneathRelative !== undefined)
-		validateHomeRelativePath(value.beneathRelative, '$.beneathRelative', out);
-	return out.length === 0
-		? {
-				ok: true,
-				value: value as unknown as AgentEnvironmentRelativePathRequest,
-			}
-		: { ok: false, issues: out };
-}
-
-/** Validates a normalized non-escaping relative path fact returned by the host. */
-export function validateAgentEnvironmentRelativePath(
-	value: unknown,
-): ValidationResult<string> {
-	const out: SchemaIssue[] = [];
-	validateEnvironmentRelativePath(value, '$', out);
-	return out.length === 0
-		? { ok: true, value: value as string }
-		: { ok: false, issues: out };
-}
-
-function validateEnvironmentRelativePath(
-	value: unknown,
-	path: string,
-	out: SchemaIssue[],
-): void {
-	if (
-		!string(
-			value,
-			path,
-			out,
-			EXTENSION_LIMITS.agentEnvironmentRelativePathLength,
-		)
-	)
-		return;
-	if (
-		value.startsWith('/') ||
-		value.startsWith('\\') ||
-		value.includes('\\') ||
-		value
-			.split('/')
-			.some((part) => part === '' || part === '.' || part === '..')
-	) {
-		out.push({
-			path,
-			code: 'unsafe_path',
-			message: 'Expected a normalized non-escaping relative path',
-		});
-	}
-}
 
 function validateEnvironmentVariableName(
 	value: unknown,
@@ -1238,915 +1350,6 @@ function bytes(
 			path,
 			code: 'invalid_bytes',
 			message: `Expected 1-${maximum} bytes`,
-		});
-}
-
-/** Validates display-only model metadata before it crosses the host boundary. */
-export function validateAgentModelMetadata(
-	value: unknown,
-): ValidationResult<AgentModelMetadata> {
-	const out: SchemaIssue[] = [];
-	validateAgentModelMetadataInto(value, '$', out);
-	return out.length === 0
-		? { ok: true, value: value as AgentModelMetadata }
-		: { ok: false, issues: out };
-}
-
-function validateAgentModelMetadataInto(
-	value: unknown,
-	path: string,
-	out: SchemaIssue[],
-): void {
-	if (!record(value)) {
-		out.push({ path, code: 'invalid_type', message: 'Expected an object' });
-		return;
-	}
-	closed(
-		value,
-		new Set(['id', 'displayName', 'reasoningEffort', 'contextWindowTokens']),
-		path,
-		out,
-	);
-	string(value.id, `${path}.id`, out, EXTENSION_LIMITS.agentNativeIdLength);
-	if (value.displayName !== undefined)
-		string(
-			value.displayName,
-			`${path}.displayName`,
-			out,
-			EXTENSION_LIMITS.displayNameLength,
-		);
-	if (value.reasoningEffort !== undefined)
-		string(value.reasoningEffort, `${path}.reasoningEffort`, out, 64);
-	if (
-		value.contextWindowTokens !== undefined &&
-		(!Number.isSafeInteger(value.contextWindowTokens) ||
-			Number(value.contextWindowTokens) < 1 ||
-			Number(value.contextWindowTokens) > 16 * 1024 * 1024)
-	) {
-		out.push({
-			path: `${path}.contextWindowTokens`,
-			code: 'invalid_number',
-			message: 'Context window must be a bounded positive integer',
-		});
-	}
-}
-
-/** Validates evidence used for a terminal-scoped provider session binding. */
-export function validateAgentSessionBindingRequest(
-	value: unknown,
-): ValidationResult<AgentSessionBindingRequest> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	closed(
-		value,
-		new Set([
-			'providerSessionId',
-			'mappingVersion',
-			'journal',
-			'fingerprint',
-			'metadata',
-		]),
-		'$',
-		out,
-	);
-	string(
-		value.providerSessionId,
-		'$.providerSessionId',
-		out,
-		EXTENSION_LIMITS.agentSessionIdLength,
-	);
-	string(
-		value.mappingVersion,
-		'$.mappingVersion',
-		out,
-		EXTENSION_LIMITS.agentProviderVersionLength,
-	);
-	if (value.journal !== undefined)
-		validateOpaqueHandle(value.journal, '$.journal', out);
-	validateAgentBindingFingerprintInto(value.fingerprint, '$.fingerprint', out);
-	if (value.metadata !== undefined)
-		validatePrimitiveMap(
-			value.metadata,
-			'$.metadata',
-			EXTENSION_LIMITS.agentMetadataEntries,
-			out,
-		);
-	return out.length === 0
-		? { ok: true, value: value as unknown as AgentSessionBindingRequest }
-		: { ok: false, issues: out };
-}
-
-export function validateAgentBindingFingerprint(
-	value: unknown,
-): ValidationResult<AgentBindingFingerprint> {
-	const out: SchemaIssue[] = [];
-	validateAgentBindingFingerprintInto(value, '$', out);
-	return out.length === 0
-		? { ok: true, value: value as AgentBindingFingerprint }
-		: { ok: false, issues: out };
-}
-
-/** Validates a bounded terminal device fact without treating it as a path. */
-export function validateAgentTerminalTtyFact(
-	value: unknown,
-): ValidationResult<AgentTerminalTtyFact> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	closed(value, new Set(['deviceId', 'deviceName']), '$', out);
-	string(
-		value.deviceId,
-		'$.deviceId',
-		out,
-		EXTENSION_LIMITS.agentTtyDeviceIdLength,
-	);
-	if (value.deviceName !== undefined)
-		string(
-			value.deviceName,
-			'$.deviceName',
-			out,
-			EXTENSION_LIMITS.agentTtyDeviceNameLength,
-		);
-	return out.length === 0
-		? { ok: true, value: value as unknown as AgentTerminalTtyFact }
-		: { ok: false, issues: out };
-}
-
-/**
- * Validates a known home-relative resolution request. Absolute paths,
- * backslashes, traversal, and extension escapes are rejected before routing to
- * an environment broker.
- */
-export function validateAgentHomeRelativeFileRequest(
-	value: unknown,
-): ValidationResult<AgentHomeRelativeFileRequest> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	closed(value, new Set(['relativePath', 'beneath', 'extension']), '$', out);
-	validateHomeRelativePath(value.relativePath, '$.relativePath', out);
-	if (value.beneath !== undefined) {
-		if (!record(value.beneath))
-			out.push({
-				path: '$.beneath',
-				code: 'invalid_type',
-				message: 'Expected a home-relative constraint',
-			});
-		else {
-			closed(value.beneath, new Set(['homeRelative']), '$.beneath', out);
-			validateHomeRelativePath(
-				value.beneath.homeRelative,
-				'$.beneath.homeRelative',
-				out,
-			);
-		}
-	}
-	if (value.extension !== undefined)
-		validateFileExtension(value.extension, '$.extension', out);
-	return out.length === 0
-		? { ok: true, value: value as unknown as AgentHomeRelativeFileRequest }
-		: { ok: false, issues: out };
-}
-
-/**
- * Validates one provider-record path that the host may canonicalize only under
- * a declared home-relative root. The provider path is data, never authority.
- */
-export function validateAgentPathUnderHomeRequest(
-	value: unknown,
-): ValidationResult<AgentPathUnderHomeRequest> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	closed(value, new Set(['providerPath', 'beneath', 'extension']), '$', out);
-	if (
-		string(
-			value.providerPath,
-			'$.providerPath',
-			out,
-			EXTENSION_LIMITS.agentProviderPathLength,
-		)
-	) {
-		if (
-			!isAbsoluteProviderPath(value.providerPath) ||
-			/[\0\r\n]/.test(value.providerPath)
-		)
-			out.push({
-				path: '$.providerPath',
-				code: 'unsafe_path',
-				message: 'Expected a bounded absolute provider-record path',
-			});
-	}
-	if (!record(value.beneath))
-		out.push({
-			path: '$.beneath',
-			code: 'invalid_type',
-			message: 'Expected an explicit home-relative constraint',
-		});
-	else {
-		closed(value.beneath, new Set(['homeRelative']), '$.beneath', out);
-		validateHomeRelativePath(
-			value.beneath.homeRelative,
-			'$.beneath.homeRelative',
-			out,
-		);
-	}
-	if (value.extension !== undefined)
-		validateFileExtension(value.extension, '$.extension', out);
-	return out.length === 0
-		? { ok: true, value: value as unknown as AgentPathUnderHomeRequest }
-		: { ok: false, issues: out };
-}
-
-/** Validates a fact-only normalized path lookup for an opaque file handle. */
-export function validateAgentHomeRelativePathRequest(
-	value: unknown,
-): ValidationResult<AgentHomeRelativePathRequest> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	closed(value, new Set(['handle', 'beneath']), '$', out);
-	validateOpaqueHandle(value.handle, '$.handle', out);
-	if (!record(value.beneath))
-		out.push({
-			path: '$.beneath',
-			code: 'invalid_type',
-			message: 'Expected an explicit home-relative constraint',
-		});
-	else {
-		closed(value.beneath, new Set(['homeRelative']), '$.beneath', out);
-		validateHomeRelativePath(
-			value.beneath.homeRelative,
-			'$.beneath.homeRelative',
-			out,
-		);
-	}
-	return out.length === 0
-		? { ok: true, value: value as unknown as AgentHomeRelativePathRequest }
-		: { ok: false, issues: out };
-}
-
-/** Validates bounded opaque-directory discovery without accepting paths. */
-export function validateAgentDirectoryListOptions(
-	value: unknown,
-): ValidationResult<AgentDirectoryListOptions> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	closed(
-		value,
-		new Set(['extensions', 'maxDepth', 'maxEntries', 'maxBytes']),
-		'$',
-		out,
-	);
-	const extensions = value.extensions;
-	if (
-		!Array.isArray(extensions) ||
-		extensions.length === 0 ||
-		extensions.length > 16
-	) {
-		out.push({
-			path: '$.extensions',
-			code: 'invalid_array',
-			message: 'Expected bounded file suffixes',
-		});
-	} else {
-		unique(extensions, '$.extensions', out);
-		extensions.forEach((extension, index) => {
-			validateFileExtension(extension, `$.extensions[${index}]`, out);
-		});
-	}
-	boundedInteger(
-		value.maxDepth,
-		'$.maxDepth',
-		0,
-		EXTENSION_LIMITS.agentDirectoryListDepth,
-		out,
-	);
-	boundedInteger(
-		value.maxEntries,
-		'$.maxEntries',
-		1,
-		EXTENSION_LIMITS.agentDirectoryListEntries,
-		out,
-	);
-	boundedInteger(
-		value.maxBytes,
-		'$.maxBytes',
-		1,
-		EXTENSION_LIMITS.agentDirectoryListBytes,
-		out,
-	);
-	return out.length === 0
-		? { ok: true, value: value as unknown as AgentDirectoryListOptions }
-		: { ok: false, issues: out };
-}
-
-/**
- * Child sources are bounded evidence under an already established root
- * binding. Their stable ids are required so a second root can never be
- * inferred from a child journal.
- */
-export function validateAgentChildJournalSources(
-	value: unknown,
-): ValidationResult<AgentChildJournalSource[]> {
-	const out: SchemaIssue[] = [];
-	if (
-		!Array.isArray(value) ||
-		value.length > EXTENSION_LIMITS.agentChildJournalSources
-	) {
-		out.push({
-			path: '$',
-			code: 'invalid_array',
-			message: 'Expected bounded child journal sources',
-		});
-	} else {
-		const childIds: unknown[] = [];
-		value.forEach((source, index) => {
-			const path = `$[${index}]`;
-			if (!record(source)) {
-				out.push({
-					path,
-					code: 'invalid_type',
-					message: 'Expected a child journal source',
-				});
-				return;
-			}
-			closed(source, new Set(['childId', 'journal', 'source']), path, out);
-			agentId(source.childId, `${path}.childId`, out);
-			validateOpaqueHandle(source.journal, `${path}.journal`, out);
-			if (!isWatcherOrPromise(source.source))
-				out.push({
-					path: `${path}.source`,
-					code: 'invalid_watcher',
-					message: 'Expected an async file watcher or promise',
-				});
-			childIds.push(source.childId);
-		});
-		unique(childIds, '$', out);
-	}
-	return out.length === 0
-		? { ok: true, value: value as unknown as AgentChildJournalSource[] }
-		: { ok: false, issues: out };
-}
-
-function validateHomeRelativePath(
-	value: unknown,
-	path: string,
-	out: SchemaIssue[],
-): void {
-	if (!string(value, path, out, EXTENSION_LIMITS.agentHomeRelativePathLength))
-		return;
-	if (
-		value.startsWith('/') ||
-		value.startsWith('\\') ||
-		value.includes('\\') ||
-		value
-			.split('/')
-			.some((part) => part === '' || part === '.' || part === '..')
-	) {
-		out.push({
-			path,
-			code: 'unsafe_path',
-			message:
-				'Expected a non-escaping home-relative path using forward slashes',
-		});
-	}
-}
-function isAbsoluteProviderPath(value: string): boolean {
-	return (
-		value.startsWith('/') ||
-		/^[A-Za-z]:[\\/]/.test(value) ||
-		value.startsWith('\\\\')
-	);
-}
-function validateFileExtension(
-	value: unknown,
-	path: string,
-	out: SchemaIssue[],
-): void {
-	if (!string(value, path, out, EXTENSION_LIMITS.agentFileExtensionLength))
-		return;
-	if (
-		!value.startsWith('.') ||
-		value.includes('/') ||
-		value.includes('\\') ||
-		value.includes('\0')
-	)
-		out.push({
-			path,
-			code: 'unsafe_extension',
-			message: 'Expected a filename extension',
-		});
-}
-function isWatcherOrPromise(value: unknown): boolean {
-	if (
-		(typeof value !== 'object' && typeof value !== 'function') ||
-		value === null
-	)
-		return false;
-	const candidate = value as {
-		then?: unknown;
-		[Symbol.asyncIterator]?: unknown;
-	};
-	return (
-		typeof candidate.then === 'function' ||
-		typeof candidate[Symbol.asyncIterator] === 'function'
-	);
-}
-
-function validateAgentBindingFingerprintInto(
-	value: unknown,
-	path: string,
-	out: SchemaIssue[],
-): void {
-	if (!record(value)) {
-		out.push({ path, code: 'invalid_type', message: 'Expected an object' });
-		return;
-	}
-	closed(value, new Set(['kind', 'process', 'file', 'metadata']), path, out);
-	string(value.kind, `${path}.kind`, out, 128);
-	if (value.process === undefined && value.file === undefined)
-		out.push({
-			path,
-			code: 'missing_evidence',
-			message: 'A binding fingerprint needs scoped process or file evidence',
-		});
-	if (value.process !== undefined)
-		validateOpaqueHandle(value.process, `${path}.process`, out);
-	if (value.file !== undefined)
-		validateOpaqueHandle(value.file, `${path}.file`, out);
-	if (value.metadata !== undefined)
-		validatePrimitiveMap(
-			value.metadata,
-			`${path}.metadata`,
-			EXTENSION_LIMITS.agentFingerprintEntries,
-			out,
-		);
-}
-
-function validateOpaqueHandle(
-	value: unknown,
-	path: string,
-	out: SchemaIssue[],
-): void {
-	if (!record(value) || !string(value.id, `${path}.id`, out, 256)) {
-		if (!record(value))
-			out.push({
-				path,
-				code: 'invalid_handle',
-				message: 'Expected a host-issued opaque handle',
-			});
-	}
-}
-
-function validatePrimitiveMap(
-	value: unknown,
-	path: string,
-	maximum: number,
-	out: SchemaIssue[],
-): void {
-	if (!record(value)) {
-		out.push({ path, code: 'invalid_type', message: 'Expected an object' });
-		return;
-	}
-	const entries = Object.entries(value);
-	if (entries.length > maximum) {
-		out.push({
-			path,
-			code: 'limit_exceeded',
-			message: 'Too many metadata entries',
-		});
-		return;
-	}
-	entries.forEach(([key, item]) => {
-		if (
-			key.length === 0 ||
-			key.length > 128 ||
-			(!['string', 'number', 'boolean'].includes(typeof item) && item !== null)
-		) {
-			out.push({
-				path: `${path}.${key}`,
-				code: 'invalid_metadata',
-				message: 'Metadata must use bounded JSON primitives',
-			});
-		} else if (
-			typeof item === 'string' &&
-			item.length > EXTENSION_LIMITS.stringLength
-		) {
-			out.push({
-				path: `${path}.${key}`,
-				code: 'limit_exceeded',
-				message: 'Metadata string is too long',
-			});
-		} else if (typeof item === 'number' && !Number.isFinite(item)) {
-			out.push({
-				path: `${path}.${key}`,
-				code: 'invalid_metadata',
-				message: 'Metadata number must be finite',
-			});
-		}
-	});
-}
-
-/** Closed validator for provider-neutral lifecycle events. */
-export function validateAgentLifecycleEvent(
-	value: unknown,
-): ValidationResult<AgentLifecycleEvent> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	const kind = value.kind;
-	if (typeof kind !== 'string') {
-		out.push({
-			path: '$.kind',
-			code: 'invalid_event',
-			message: 'Expected a lifecycle event kind',
-		});
-		return { ok: false, issues: out };
-	}
-	const common = ['kind', 'occurredAt'];
-	const targeted = ['agentId'];
-	switch (kind) {
-		case 'session.started':
-			closed(
-				value,
-				new Set([...common, 'title', 'promptText', 'model']),
-				'$',
-				out,
-			);
-			agentText(
-				value.title,
-				'$.title',
-				EXTENSION_LIMITS.agentTitleLength,
-				out,
-				false,
-			);
-			agentText(
-				value.promptText,
-				'$.promptText',
-				EXTENSION_LIMITS.agentPromptLength,
-				out,
-				false,
-			);
-			if (value.model !== undefined)
-				validateAgentModelMetadataInto(value.model, '$.model', out);
-			break;
-		case 'agent.metadata':
-			closed(
-				value,
-				new Set([...common, ...targeted, 'title', 'promptText', 'model']),
-				'$',
-				out,
-			);
-			validateOptionalAgentId(value.agentId, '$.agentId', out);
-			if (
-				value.title === undefined &&
-				value.promptText === undefined &&
-				value.model === undefined
-			)
-				out.push({
-					path: '$',
-					code: 'missing_metadata',
-					message: 'Metadata changes must contain metadata',
-				});
-			agentText(
-				value.title,
-				'$.title',
-				EXTENSION_LIMITS.agentTitleLength,
-				out,
-				false,
-			);
-			agentText(
-				value.promptText,
-				'$.promptText',
-				EXTENSION_LIMITS.agentPromptLength,
-				out,
-				false,
-			);
-			if (value.model !== undefined)
-				validateAgentModelMetadataInto(value.model, '$.model', out);
-			break;
-		case 'turn.started':
-			closed(
-				value,
-				new Set([...common, ...targeted, 'turnId', 'promptText']),
-				'$',
-				out,
-			);
-			validateOptionalAgentId(value.agentId, '$.agentId', out);
-			agentId(value.turnId, '$.turnId', out);
-			agentText(
-				value.promptText,
-				'$.promptText',
-				EXTENSION_LIMITS.agentPromptLength,
-				out,
-				false,
-			);
-			break;
-		case 'tool.started':
-			closed(
-				value,
-				new Set([...common, ...targeted, 'toolId', 'name', 'description']),
-				'$',
-				out,
-			);
-			validateOptionalAgentId(value.agentId, '$.agentId', out);
-			agentId(value.toolId, '$.toolId', out);
-			agentText(
-				value.name,
-				'$.name',
-				EXTENSION_LIMITS.displayNameLength,
-				out,
-				true,
-			);
-			agentText(
-				value.description,
-				'$.description',
-				EXTENSION_LIMITS.agentReasonLength,
-				out,
-				false,
-			);
-			break;
-		case 'tool.finished':
-			closed(
-				value,
-				new Set([...common, ...targeted, 'toolId', 'outcome']),
-				'$',
-				out,
-			);
-			validateOptionalAgentId(value.agentId, '$.agentId', out);
-			agentId(value.toolId, '$.toolId', out);
-			validateOutcome(value.outcome, '$.outcome', out, false);
-			break;
-		case 'wait.started':
-			closed(
-				value,
-				new Set([
-					...common,
-					...targeted,
-					'waitId',
-					'state',
-					'reason',
-					'inferred',
-				]),
-				'$',
-				out,
-			);
-			validateOptionalAgentId(value.agentId, '$.agentId', out);
-			agentId(value.waitId, '$.waitId', out);
-			if (value.state !== 'waiting' && value.state !== 'blocked')
-				out.push({
-					path: '$.state',
-					code: 'invalid_state',
-					message: 'Wait state must be waiting or blocked',
-				});
-			agentText(
-				value.reason,
-				'$.reason',
-				EXTENSION_LIMITS.agentReasonLength,
-				out,
-				false,
-			);
-			if (value.inferred !== undefined && typeof value.inferred !== 'boolean')
-				out.push({
-					path: '$.inferred',
-					code: 'invalid_type',
-					message: 'inferred must be a boolean',
-				});
-			break;
-		case 'wait.finished':
-			closed(value, new Set([...common, ...targeted, 'waitId']), '$', out);
-			validateOptionalAgentId(value.agentId, '$.agentId', out);
-			agentId(value.waitId, '$.waitId', out);
-			break;
-		case 'agent.done':
-			closed(
-				value,
-				new Set([...common, ...targeted, 'outcome', 'summary']),
-				'$',
-				out,
-			);
-			validateOptionalAgentId(value.agentId, '$.agentId', out);
-			validateOutcome(value.outcome, '$.outcome', out, true);
-			agentText(
-				value.summary,
-				'$.summary',
-				EXTENSION_LIMITS.agentSummaryLength,
-				out,
-				false,
-			);
-			break;
-		case 'agent.exited':
-			closed(
-				value,
-				new Set([...common, ...targeted, 'exitCode', 'signal']),
-				'$',
-				out,
-			);
-			validateOptionalAgentId(value.agentId, '$.agentId', out);
-			if (value.exitCode === undefined && value.signal === undefined)
-				out.push({
-					path: '$',
-					code: 'missing_exit_status',
-					message: 'Exit events require an exit code or signal',
-				});
-			if (
-				value.exitCode !== undefined &&
-				(!Number.isSafeInteger(value.exitCode) ||
-					Math.abs(Number(value.exitCode)) > 255)
-			)
-				out.push({
-					path: '$.exitCode',
-					code: 'invalid_exit_code',
-					message: 'Expected a bounded integer exit code',
-				});
-			agentText(value.signal, '$.signal', 64, out, false);
-			break;
-		case 'session.stopped':
-			closed(value, new Set([...common, 'reason']), '$', out);
-			agentText(
-				value.reason,
-				'$.reason',
-				EXTENSION_LIMITS.agentReasonLength,
-				out,
-				false,
-			);
-			break;
-		case 'subagent.started':
-			closed(
-				value,
-				new Set([
-					...common,
-					'subagentId',
-					'parentAgentId',
-					'title',
-					'promptText',
-					'model',
-				]),
-				'$',
-				out,
-			);
-			agentId(value.subagentId, '$.subagentId', out);
-			validateOptionalAgentId(value.parentAgentId, '$.parentAgentId', out);
-			agentText(
-				value.title,
-				'$.title',
-				EXTENSION_LIMITS.agentTitleLength,
-				out,
-				false,
-			);
-			agentText(
-				value.promptText,
-				'$.promptText',
-				EXTENSION_LIMITS.agentPromptLength,
-				out,
-				false,
-			);
-			if (value.model !== undefined)
-				validateAgentModelMetadataInto(value.model, '$.model', out);
-			break;
-		case 'subagent.done':
-			closed(
-				value,
-				new Set([...common, 'subagentId', 'outcome', 'summary']),
-				'$',
-				out,
-			);
-			agentId(value.subagentId, '$.subagentId', out);
-			validateOutcome(value.outcome, '$.outcome', out, true);
-			agentText(
-				value.summary,
-				'$.summary',
-				EXTENSION_LIMITS.agentSummaryLength,
-				out,
-				false,
-			);
-			break;
-		default:
-			out.push({
-				path: '$.kind',
-				code: 'invalid_event',
-				message: 'Unknown lifecycle event kind',
-			});
-	}
-	validateOccurredAt(value.occurredAt, out);
-	return out.length === 0
-		? { ok: true, value: value as unknown as AgentLifecycleEvent }
-		: { ok: false, issues: out };
-}
-
-/** Validates safe, displayable fallback diagnostics. */
-export function validateAgentObservationDiagnostic(
-	value: unknown,
-): ValidationResult<AgentObservationDiagnostic> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	closed(value, new Set(['reason', 'message']), '$', out);
-	if (
-		![
-			'environment-capability-missing',
-			'process-not-recognized',
-			'session-not-found',
-			'session-not-bound',
-			'unsupported-provider-version',
-			'malformed-observation',
-			'observation-limit-exceeded',
-			'cancelled',
-		].includes(String(value.reason))
-	) {
-		out.push({
-			path: '$.reason',
-			code: 'invalid_reason',
-			message: 'Unknown safe diagnostic reason',
-		});
-	}
-	agentText(
-		value.message,
-		'$.message',
-		EXTENSION_LIMITS.agentDiagnosticLength,
-		out,
-		false,
-	);
-	return out.length === 0
-		? { ok: true, value: value as unknown as AgentObservationDiagnostic }
-		: { ok: false, issues: out };
-}
-
-/** Runtime shape check for an activation-time agent provider implementation. */
-export function validateAgentProviderDefinition(
-	value: unknown,
-): ValidationResult<AgentProviderDefinition> {
-	const out: SchemaIssue[] = [];
-	if (!record(value)) return invalidObject();
-	closed(
-		value,
-		new Set(['mappingVersion', 'matchesForeground', 'observe']),
-		'$',
-		out,
-	);
-	string(
-		value.mappingVersion,
-		'$.mappingVersion',
-		out,
-		EXTENSION_LIMITS.agentProviderVersionLength,
-	);
-	if (typeof value.matchesForeground !== 'function')
-		out.push({
-			path: '$.matchesForeground',
-			code: 'invalid_type',
-			message: 'Expected a foreground matcher function',
-		});
-	if (typeof value.observe !== 'function')
-		out.push({
-			path: '$.observe',
-			code: 'invalid_type',
-			message: 'Expected an observation function',
-		});
-	return out.length === 0
-		? { ok: true, value: value as unknown as AgentProviderDefinition }
-		: { ok: false, issues: out };
-}
-
-function agentId(value: unknown, path: string, out: SchemaIssue[]): void {
-	string(value, path, out, EXTENSION_LIMITS.agentNativeIdLength);
-}
-function validateOptionalAgentId(
-	value: unknown,
-	path: string,
-	out: SchemaIssue[],
-): void {
-	if (value !== undefined) agentId(value, path, out);
-}
-function agentText(
-	value: unknown,
-	path: string,
-	maximum: number,
-	out: SchemaIssue[],
-	required: boolean,
-): void {
-	if (value === undefined && !required) return;
-	string(value, path, out, maximum);
-}
-function validateOutcome(
-	value: unknown,
-	path: string,
-	out: SchemaIssue[],
-	required: boolean,
-): void {
-	if (value === undefined && !required) return;
-	if (value !== 'success' && value !== 'error' && value !== 'cancelled')
-		out.push({
-			path,
-			code: 'invalid_outcome',
-			message: 'Unknown completion outcome',
-		});
-}
-function validateOccurredAt(value: unknown, out: SchemaIssue[]): void {
-	if (value === undefined) return;
-	if (
-		typeof value !== 'string' ||
-		value.length > 64 ||
-		Number.isNaN(Date.parse(value))
-	)
-		out.push({
-			path: '$.occurredAt',
-			code: 'invalid_timestamp',
-			message: 'Expected an ISO-8601 timestamp',
 		});
 }
 

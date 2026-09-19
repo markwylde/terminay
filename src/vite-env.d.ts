@@ -61,12 +61,16 @@ declare global {
 			failActiveConnection: () => Promise<{ connectionId: string }>;
 		};
 		terminayAgentStatusTest?: {
-			publishLifecycle: (payload: {
-				provider: string;
-				terminalSessionId: string;
-				providerSessionId: string;
-				events: ReadonlyArray<Record<string, unknown>>;
+			publishSessions: (payload: {
+				sourceId?: string;
+				harnesses?: ReadonlyArray<{ id: string; displayName: string }>;
+				publication: {
+					reset?: ReadonlyArray<Record<string, unknown>>;
+					upserts?: ReadonlyArray<Record<string, unknown>>;
+					removals?: readonly string[];
+				};
 			}) => Promise<boolean>;
+			terminalShellPid: (terminalSessionId: string) => Promise<number | null>;
 		};
 		terminayAiMetadataTest?: {
 			setMock: (mock: {

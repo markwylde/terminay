@@ -25,7 +25,28 @@ export type ExtensionSummaryDto = Readonly<{
 		fileExtensions: readonly string[];
 		runtimeNotes?: string;
 	}>[];
+	/** Session sources this extension contributes, each with the harnesses it
+	 * declared. Present only for agent extensions. */
+	agentSessionSources?: readonly Readonly<{
+		id: string;
+		displayName: string;
+		harnesses: readonly Readonly<{ id: string; displayName: string }>[];
+	}>[];
 }>;
+
+/** Settings key of one harness switch: `<sourceId>/<harnessId>`. */
+export function harnessSwitchKey(sourceId: string, harnessId: string): string {
+	return `${sourceId}/${harnessId}`;
+}
+
+/** A harness is on unless the user switched it off. */
+export function isHarnessEnabled(
+	switches: Readonly<Record<string, boolean>>,
+	sourceId: string,
+	harnessId: string,
+): boolean {
+	return switches[harnessSwitchKey(sourceId, harnessId)] !== false;
+}
 
 export function ExtensionManager({
 	extensions,
@@ -35,6 +56,8 @@ export function ExtensionManager({
 	onInstall,
 	onUpdate,
 	onAction,
+	harnessSwitches = {},
+	onHarnessSwitchChange,
 }: Readonly<{
 	embedded?: boolean;
 	extensions: readonly ExtensionSummaryDto[];
@@ -45,6 +68,9 @@ export function ExtensionManager({
 	onInstall: (digest: string) => Promise<void>;
 	onUpdate: (id: string, digest: string) => Promise<void>;
 	onAction: (action: ExtensionAction, id: string) => Promise<void>;
+	/** Persisted harness switches (`agentIntegration.harnesses`). */
+	harnessSwitches?: Readonly<Record<string, boolean>>;
+	onHarnessSwitchChange?: (key: string, enabled: boolean) => void;
 }>) {
 	const [query, setQuery] = useState('');
 	const [npmPackage, setNpmPackage] = useState('');
@@ -196,6 +222,8 @@ export function ExtensionManager({
 							onInstall={() => void previewPackage(extension.packageName)}
 							onUpdate={() => void previewPackage(`${extension.packageName}@latest`, extension.id)}
 							onAction={(action) => void act(action, extension.id)}
+							harnessSwitches={harnessSwitches}
+							onHarnessSwitchChange={onHarnessSwitchChange}
 						/>
 					))}
 					{filtered.length === 0 ? <p className="settings-empty-state">No matching extensions.</p> : null}
@@ -205,12 +233,14 @@ export function ExtensionManager({
 	);
 }
 
-function ExtensionCard({ extension, busy, onInstall, onUpdate, onAction }: Readonly<{
+function ExtensionCard({ extension, busy, onInstall, onUpdate, onAction, harnessSwitches, onHarnessSwitchChange }: Readonly<{
 	extension: ExtensionSummaryDto;
 	busy: boolean;
 	onInstall: () => void;
 	onUpdate: () => void;
 	onAction: (action: ExtensionAction) => void;
+	harnessSwitches: Readonly<Record<string, boolean>>;
+	onHarnessSwitchChange?: (key: string, enabled: boolean) => void;
 }>) {
 	return (
 		<article className="settings-group extension-card">
@@ -268,6 +298,35 @@ function ExtensionCard({ extension, busy, onInstall, onUpdate, onAction }: Reado
 					))}
 				</div>
 			)}
+			{(extension.agentSessionSources ?? []).map((source) => (
+				<div className="settings-group-footer extension-card-footer extension-card-harnesses" key={source.id}>
+					<span className="settings-row-description">
+						{(extension.agentSessionSources?.length ?? 0) > 1 ? `${source.displayName} agents` : 'Agents'}
+					</span>
+					{source.harnesses.map((harness) => {
+						const key = harnessSwitchKey(source.id, harness.id);
+						const enabled = isHarnessEnabled(harnessSwitches, source.id, harness.id);
+						return (
+							<div className="settings-row extension-harness-row" key={key} data-harness-switch={key}>
+								<div className="settings-row-info">
+									<span className="settings-row-label">{harness.displayName}</span>
+								</div>
+								<div className="settings-row-control">
+									<label className="settings-switch" aria-label={`Report ${harness.displayName} sessions`}>
+										<input
+											type="checkbox"
+											checked={enabled}
+											disabled={onHarnessSwitchChange === undefined}
+											onChange={(event) => onHarnessSwitchChange?.(key, event.target.checked)}
+										/>
+										<span className="settings-slider"></span>
+									</label>
+								</div>
+							</div>
+						);
+					})}
+				</div>
+			))}
 			{extension.permissions.length === 0 ? null : (
 				<div className="settings-group-footer extension-card-footer">
 					<span className="settings-row-description">Permissions</span>

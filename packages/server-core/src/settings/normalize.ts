@@ -238,6 +238,7 @@ function normalizeValue(
 	path: string,
 ): JsonValue {
 	if (value === undefined || !isJsonValue(value)) return fallback ?? null;
+	if (path === 'agentIntegration.harnesses') return harnessSwitches(value);
 	if (typeof fallback === 'string')
 		return typeof value === 'string' && value.length <= MAX_STRING
 			? value
@@ -261,6 +262,20 @@ function normalizeValue(
 		return result;
 	}
 	return fallback ?? null;
+}
+
+/** Per-harness switches keyed `<sourceId>/<harnessId>`: only booleans survive,
+ * and a missing key means on. */
+function harnessSwitches(value: JsonValue): JsonValue {
+	if (!isSettingsObject(value)) return {};
+	return Object.fromEntries(
+		Object.entries(value)
+			.filter(
+				([key, enabled]) =>
+					typeof enabled === 'boolean' && key.length > 0 && key.length <= 256,
+			)
+			.slice(0, 256),
+	);
 }
 
 function boundedNumber(path: string, value: number): number {
