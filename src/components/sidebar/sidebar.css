@@ -318,6 +318,34 @@
 	color: #57b7ff;
 }
 
+/* Matches the action button box so the header does not reflow when an index
+   replaces the refresh button with a spinner and a stop button. */
+.sidebar-pane__action-spinner {
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	color: rgba(255, 255, 255, 0.72);
+}
+
+.sidebar-pane__action-spinner svg {
+	animation: sidebar-pane-spin 900ms linear infinite;
+}
+
+@keyframes sidebar-pane-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.sidebar-pane__action-spinner svg {
+		animation: none;
+	}
+}
+
 .sidebar-pane__chevron {
 	flex-shrink: 0;
 	transition: transform 150ms ease;
