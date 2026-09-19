@@ -1,33 +1,11 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import {
-	createAgentLifecyclePublisher,
-	createJsonlRecordDecoder,
-} from './agent.js';
-import { EXTENSION_API_VERSION } from './constants.js';
+import { EXTENSION_API_VERSION, EXTENSION_LIMITS } from './constants.js';
 import type {
-	AgentDirectoryHandle,
-	AgentDirectoryListOptions,
-	AgentDiscoveredFile,
-	AgentFileHandle,
-	AgentFileWatcher,
-	AgentForegroundProcess,
-	AgentLifecycleEvent,
-	AgentModelMetadata,
-	AgentObservationResult,
-	AgentOpenFile,
-	AgentProcessHandle,
-	AgentProcessSnapshot,
-	AgentProjectHandle,
-	AgentProviderRegistration,
-	AgentProviderRuntime,
-	AgentRecordContext,
-	AgentSessionBinding,
-	AgentSessionBindingRequest,
-	AgentTerminalContext,
-	AgentTerminalHandle,
-	AgentTerminalTtyFact,
-	CancellationSignal,
+	AgentSessionPublisher,
+	AgentSessionSnapshot,
+	AgentSessionSourceDiagnostic,
+	AgentSessionSourceRuntime,
 	Disposable,
 	ExtensionContext,
 	JsonValue,
@@ -35,6 +13,11 @@ import type {
 	LanguageServerLaunchRequest,
 	LanguageServerProviderRuntime,
 	LanguageServerRegistration,
+	McpInstallTargetActionResult,
+	McpInstallTargetRequest,
+	McpInstallTargetRuntime,
+	McpInstallTargetStatus,
+	McpServerCommand,
 	ProviderVaultBinding,
 	ProviderVaultBroker,
 	TerminayExtension,
@@ -42,112 +25,18 @@ import type {
 } from './types.js';
 import {
 	ExtensionSchemaError,
+	type SchemaIssue,
+	type ValidationResult,
+	validateAgentSessionReset,
+	validateAgentSessionSnapshot,
+	validateAgentSessionSourceDiagnostic,
+	validateMcpInstallTargetActionResult,
+	validateMcpInstallTargetStatus,
+	validateMcpServerCommand,
 	validateProviderVaultPutRequest,
 	validateProviderVaultRemoveRequest,
 	validateProviderVaultWithSecretRequest,
 } from './validation.js';
-
-export type ObservationCancelReason =
-	| 'process-exit'
-	| 'terminal-close'
-	| 'extension-disable';
-export type ExtensionReleaseReason =
-	| 'disabled'
-	| 'updated'
-	| 'shutdown'
-	| 'extension-host-failure';
-
-export interface FixtureTerminalOptions {
-	foregroundExecutable: string;
-	arguments?: string[];
-	/** Safe PTY fact for testing terminal-scoped breadcrumb discovery. */
-	tty?: AgentTerminalTtyFact;
-	/** Bounded foreground/descendant CWD fact; never filesystem authority. */
-	cwd?: string;
-	/** Optional OS pid fact for provider live-session registries. */
-	pid?: number;
-	/** Values exposed only through `processes.environment(requestedNames)`. */
-	environment?: Record<string, string>;
-	files?: Record<string, unknown[]>;
-	/**
-	 * Creation times per fixture file path, so a provider's post-process-start
-	 * admission rule can be exercised. Files without an entry carry none.
-	 */
-	fileCreatedAt?: Record<string, string>;
-	/**
-	 * Modification times per fixture file path, so a provider selecting the
-	 * journal currently receiving appends can be exercised.
-	 */
-	fileModifiedAt?: Record<string, string>;
-	/**
-	 * Successive whole contents a fixture file takes while the observation runs,
-	 * for a provider store the CLI rewrites in place rather than appends to. Each
-	 * revision is applied when a directory watcher over that file's directory
-	 * next reports, so a provider watching the file observes the change and any
-	 * later read returns the new content.
-	 */
-	fileRewrites?: Record<string, unknown[][]>;
-	/**
-	 * Called with the path of every fixture file whose bytes are read, in order,
-	 * so a test can assert exactly which files a provider opened — and which it
-	 * never touched.
-	 */
-	onFileRead?: (path: string) => void;
-	/** Descendant process start time, compared against `fileCreatedAt`. */
-	startedAt?: string;
-	/**
-	 * Extra descendant processes beyond the foreground one, for providers that
-	 * inspect a process tree. Each may carry its own executable, cwd and pid.
-	 */
-	descendants?: Array<{
-		executableName: string;
-		cwd?: string;
-		pid?: number;
-		arguments?: string[];
-		startedAt?: string;
-		id?: string;
-	}>;
-	/**
-	 * Paths the fixture process holds open. Defaults to every fixture file, which
-	 * is only realistic for a CLI that keeps its journal open; a provider whose
-	 * real CLI closes its journal between writes should pass `[]`.
-	 */
-	openFilePaths?: readonly string[];
-	/** Opaque handle namespace; two fixtures never share provenance. */
-	terminalId?: string;
-	signal?: CancellationSignal;
-}
-
-export interface ObservationCancellation {
-	readonly signal: CancellationSignal;
-	cancel(reason: ObservationCancelReason): void;
-}
-
-/** Cancellation signal that fires for each observation-lifetime trigger. */
-export function createObservationCancellation(): ObservationCancellation {
-	let aborted = false;
-	let message = 'cancelled';
-	const signal: CancellationSignal = {
-		get aborted() {
-			return aborted;
-		},
-		throwIfAborted() {
-			if (aborted) throw new Error(message);
-		},
-	};
-	return {
-		signal,
-		cancel(reason) {
-			aborted = true;
-			message = reason;
-		},
-	};
-}
-
-const notCancelled: CancellationSignal = Object.freeze({
-	aborted: false,
-	throwIfAborted(): void {},
-});
 
 interface FixtureVaultEntry {
 	binding: ProviderVaultBinding;
@@ -307,544 +196,137 @@ function assertValid<T>(
 	return result.value;
 }
 
-let fixtureTerminalSequence = 0;
+export type ExtensionReleaseReason =
+	| 'disabled'
+	| 'updated'
+	| 'shutdown'
+	| 'extension-host-failure';
 
-function createIdempotentWatcher<T>(
-	items: readonly T[],
-	signal: CancellationSignal,
-): AsyncIterable<T> & Disposable {
-	let closed = false;
-	return {
-		async *[Symbol.asyncIterator]() {
-			for (const item of items) {
-				signal.throwIfAborted();
-				if (closed) return;
-				yield item;
-			}
-		},
-		async dispose() {
-			closed = true;
-		},
-	};
-}
+/** One publisher call a session source made, in order. */
+export type SessionPublication =
+	| { kind: 'reset'; sourceId: string; sessions: AgentSessionSnapshot[] }
+	| { kind: 'upsert'; sourceId: string; session: AgentSessionSnapshot }
+	| { kind: 'remove'; sourceId: string; sessionId: string };
 
-/** Creates one terminal-scoped in-memory observation context for public extension tests. */
-export function fixtureTerminal(
-	options: FixtureTerminalOptions,
-): AgentTerminalContext {
-	const encodeRecords = (records: readonly unknown[]): Uint8Array =>
-		new TextEncoder().encode(
-			records.map((record) => JSON.stringify(record)).join('\n') +
-				(records.length ? '\n' : ''),
-		);
-	const files = new Map<string, Uint8Array>();
-	for (const [path, records] of Object.entries(options.files ?? {}))
-		files.set(path, encodeRecords(records));
-	/** Pending in-place rewrites, consumed one step at a time by a watcher. */
-	const rewrites = new Map<string, unknown[][]>(
-		Object.entries(options.fileRewrites ?? {}).map(([path, revisions]) => [
-			path,
-			[...revisions],
-		]),
-	);
-	const scope =
-		options.terminalId ??
-		`fixture-terminal-${(++fixtureTerminalSequence).toString(36)}`;
-	const signal = options.signal ?? notCancelled;
-	const issue = <T>(kind: string, path: string): T =>
-		Object.freeze({ id: `${scope}:${kind}:${path}` }) as T;
-	const pathOf = (
-		handle: { id: string },
-		kind: string,
-		label: string,
-	): string => {
-		const prefix = `${scope}:${kind}:`;
-		if (typeof handle?.id !== 'string' || !handle.id.startsWith(prefix))
-			throw new Error(`${label} is unavailable`);
-		return handle.id.slice(prefix.length);
-	};
-	const fileHandle = (path: string): AgentFileHandle => issue('file', path);
-	const directoryHandle = (path: string): AgentDirectoryHandle =>
-		issue('dir', path);
-	const process = issue<AgentProcessHandle>('process', 'foreground');
-	const foreground: AgentForegroundProcess = {
-		executableName: options.foregroundExecutable,
-		arguments: options.arguments,
-	};
-	const lookup = (handle: AgentFileHandle): Uint8Array => {
-		const path = pathOf(handle, 'file', 'agent file handle');
-		options.onFileRead?.(path);
-		return files.get(path) ?? new Uint8Array();
-	};
-	const processHandleOf = (
-		value: AgentProcessSnapshot | AgentProcessHandle,
-	): AgentProcessHandle =>
-		'handle' in value && value.handle !== undefined
-			? value.handle
-			: (value as AgentProcessHandle);
-
-	return {
-		terminal: issue<AgentTerminalHandle>('terminal', scope),
-		project: { id: 'fixture-project' } as unknown as AgentProjectHandle,
-		environment: {
-			id: `${scope}:environment`,
-		} as unknown as AgentTerminalContext['environment'],
-		process,
-		foreground,
-		tty: options.tty,
-		signal,
-		async bindSession(
-			request: AgentSessionBindingRequest,
-		): Promise<AgentSessionBinding> {
-			if (request.journal) pathOf(request.journal, 'file', 'agent file handle');
-			if (request.fingerprint.file)
-				pathOf(request.fingerprint.file, 'file', 'agent file handle');
-			if (request.fingerprint.process)
-				pathOf(request.fingerprint.process, 'process', 'agent process handle');
-			return {
-				providerSessionId: request.providerSessionId,
-				mappingVersion: request.mappingVersion,
-				journal: request.journal,
-			} as unknown as AgentSessionBinding;
-		},
-		observation: {
-			processes: {
-				async descendants(): Promise<AgentProcessSnapshot[]> {
-					signal.throwIfAborted();
-					return [
-						{
-							handle: process,
-							executableName: foreground.executableName,
-							cwd: options.cwd,
-							pid: options.pid ?? 4242,
-							...(options.startedAt === undefined
-								? {}
-								: { startedAt: options.startedAt }),
-							...(options.arguments === undefined
-								? {}
-								: { arguments: options.arguments }),
-						},
-						...(options.descendants ?? []).map((child, index) => ({
-							handle: issue<AgentProcessHandle>(
-								'process',
-								child.id ?? `descendant-${index}`,
-							),
-							executableName: child.executableName,
-							...(child.cwd === undefined ? {} : { cwd: child.cwd }),
-							...(child.pid === undefined ? {} : { pid: child.pid }),
-							...(child.startedAt === undefined
-								? {}
-								: { startedAt: child.startedAt }),
-							...(child.arguments === undefined
-								? {}
-								: { arguments: child.arguments }),
-						})),
-					];
-				},
-				async openFiles(processes, request): Promise<AgentOpenFile[]> {
-					signal.throwIfAborted();
-					for (const item of processes)
-						pathOf(processHandleOf(item), 'process', 'agent process handle');
-					const access = request.access;
-					const open = options.openFilePaths ?? [...files.keys()];
-					return open
-						.filter((path) => files.has(path))
-						.map((path) => ({ handle: fileHandle(path), path, access }));
-				},
-				async environment(
-					names: readonly string[],
-				): Promise<Record<string, string>> {
-					signal.throwIfAborted();
-					const values = options.environment ?? {};
-					return Object.fromEntries(
-						names.flatMap((name) =>
-							values[name] === undefined ? [] : [[name, values[name]] as const],
-						),
-					);
-				},
-			},
-			files: {
-				async resolveHomeDirectory(relativePath: string) {
-					signal.throwIfAborted();
-					const root = `/home/test/${relativePath.replace(/\/$/, '')}`;
-					return [...files.keys()].some(
-						(path) => path.startsWith(`${root}/`) || path === root,
-					)
-						? directoryHandle(root)
-						: undefined;
-				},
-				async resolveDirectoryRelativeToEnvironment(
-					relativePath: string,
-					request: { environmentVariable: string },
-				) {
-					signal.throwIfAborted();
-					const environmentRoot = options.environment?.[
-						request.environmentVariable
-					]?.replace(/\/$/, '');
-					const root = environmentRoot
-						? relativePath === '.'
-							? environmentRoot
-							: `${environmentRoot}/${relativePath.replace(/\/$/, '')}`
-						: undefined;
-					return root &&
-						[...files.keys()].some(
-							(path) => path.startsWith(`${root}/`) || path === root,
-						)
-						? directoryHandle(root)
-						: undefined;
-				},
-				async listDirectory(
-					root: AgentDirectoryHandle,
-					request: AgentDirectoryListOptions,
-				) {
-					signal.throwIfAborted();
-					const prefix = `${pathOf(root, 'dir', 'agent directory handle').replace(/\/$/, '')}/`;
-					let bytes = 0;
-					let truncated = false;
-					const entries: AgentDiscoveredFile[] = [];
-					for (const path of [...files.keys()].sort()) {
-						const relativePath = path.startsWith(prefix)
-							? path.slice(prefix.length)
-							: undefined;
-						if (
-							!relativePath ||
-							relativePath.split('/').length - 1 > request.maxDepth ||
-							!request.extensions.some((extension) =>
-								relativePath.endsWith(extension),
-							) ||
-							// Declared names narrow the walk before any limit is charged,
-							// exactly as the host does.
-							(request.names !== undefined &&
-								!request.names.includes(relativePath.split('/').at(-1)!))
-						)
-							continue;
-						const data = files.get(path)!;
-						if (
-							entries.length >= request.maxEntries ||
-							bytes + data.byteLength > request.maxBytes
-						) {
-							truncated = true;
-							break;
-						}
-						bytes += data.byteLength;
-						const createdAt = options.fileCreatedAt?.[path];
-						const modifiedAt = options.fileModifiedAt?.[path];
-						entries.push({
-							handle: fileHandle(path),
-							relativePath,
-							size: data.byteLength,
-							...(createdAt === undefined ? {} : { createdAt }),
-							...(modifiedAt === undefined ? {} : { modifiedAt }),
-						});
-					}
-					return { entries, truncated };
-				},
-				async watchDirectory(
-					root: AgentDirectoryHandle,
-					request: AgentDirectoryListOptions,
-				) {
-					signal.throwIfAborted();
-					const prefix = `${pathOf(root, 'dir', 'agent directory handle').replace(/\/$/, '')}/`;
-					const list = () => this.listDirectory(root, request);
-					let closed = false;
-					return {
-						async *[Symbol.asyncIterator]() {
-							signal.throwIfAborted();
-							if (closed) return;
-							yield await list();
-							// One report per pending in-place rewrite below this
-							// directory, applied lazily so a provider reading the file
-							// between reports sees exactly the revision it was told about.
-							while (!closed) {
-								let changed = false;
-								for (const [path, revisions] of rewrites) {
-									if (!path.startsWith(prefix)) continue;
-									const next = revisions.shift();
-									if (next === undefined) continue;
-									files.set(path, encodeRecords(next));
-									changed = true;
-								}
-								if (!changed) return;
-								signal.throwIfAborted();
-								if (closed) return;
-								yield await list();
-							}
-						},
-						async dispose() {
-							closed = true;
-						},
-					};
-				},
-				async resolveRelativeToEnvironment(
-					relativePath: string,
-					request: { environmentVariable: string },
-				) {
-					signal.throwIfAborted();
-					const root =
-						request.environmentVariable &&
-						options.environment?.[request.environmentVariable];
-					const exact =
-						root === undefined
-							? undefined
-							: `${root.replace(/\/$/, '')}/${relativePath}`;
-					return exact !== undefined && files.has(exact)
-						? fileHandle(exact)
-						: undefined;
-				},
-				async resolvePathUnderEnvironment(
-					providerPath: string,
-					request: { environmentVariable: string; beneathRelative?: string },
-				) {
-					signal.throwIfAborted();
-					const root =
-						request.environmentVariable &&
-						options.environment?.[request.environmentVariable];
-					const prefix =
-						root === undefined
-							? undefined
-							: `${root.replace(/\/$/, '')}/${request.beneathRelative ? `${request.beneathRelative}/` : ''}`;
-					return prefix !== undefined &&
-						providerPath.startsWith(prefix) &&
-						files.has(providerPath)
-						? fileHandle(providerPath)
-						: undefined;
-				},
-				async environmentRelativePath(
-					handle: AgentFileHandle,
-					request: { environmentVariable: string; beneathRelative?: string },
-				) {
-					signal.throwIfAborted();
-					const path = pathOf(handle, 'file', 'agent file handle');
-					const root =
-						request.environmentVariable &&
-						options.environment?.[request.environmentVariable];
-					const prefix =
-						root === undefined
-							? undefined
-							: `${root.replace(/\/$/, '')}/${request.beneathRelative ? `${request.beneathRelative}/` : ''}`;
-					return prefix !== undefined &&
-						path.startsWith(prefix) &&
-						files.has(path)
-						? path.slice(prefix.length)
-						: undefined;
-				},
-				async resolveHomeRelative(relativePath: string) {
-					signal.throwIfAborted();
-					const exact = `/home/test/${relativePath}`;
-					return files.has(exact)
-						? fileHandle(exact)
-						: files.has(relativePath)
-							? fileHandle(relativePath)
-							: undefined;
-				},
-				async resolvePathUnderHome(
-					providerPath: string,
-					request: { beneath: { homeRelative: string } },
-				) {
-					signal.throwIfAborted();
-					const allowedPrefix = `/home/test/${request.beneath.homeRelative}/`;
-					return providerPath.startsWith(allowedPrefix) &&
-						files.has(providerPath)
-						? fileHandle(providerPath)
-						: undefined;
-				},
-				async homeRelativePath(
-					handle: AgentFileHandle,
-					request: { beneath: { homeRelative: string } },
-				) {
-					signal.throwIfAborted();
-					const path = pathOf(handle, 'file', 'agent file handle');
-					const allowedPrefix = `/home/test/${request.beneath.homeRelative}/`;
-					return path.startsWith(allowedPrefix) && files.has(path)
-						? path.slice(allowedPrefix.length)
-						: undefined;
-				},
-				async canonicalFile(handle: AgentFileHandle) {
-					signal.throwIfAborted();
-					const path = pathOf(handle, 'file', 'agent file handle');
-					return files.has(path) ? handle : undefined;
-				},
-				async realpath(handle: AgentFileHandle) {
-					return this.canonicalFile(handle);
-				},
-				async stat(handle: AgentFileHandle) {
-					signal.throwIfAborted();
-					const path = pathOf(handle, 'file', 'agent file handle');
-					if (!files.has(path)) return undefined;
-					const createdAt = options.fileCreatedAt?.[path];
-					const modifiedAt = options.fileModifiedAt?.[path];
-					return {
-						handle,
-						kind: 'file' as const,
-						size: lookup(handle).byteLength,
-						...(createdAt === undefined ? {} : { createdAt }),
-						...(modifiedAt === undefined ? {} : { modifiedAt }),
-					};
-				},
-				async read(handle: AgentFileHandle, request: { maxBytes: number }) {
-					signal.throwIfAborted();
-					return lookup(handle).slice(0, request.maxBytes);
-				},
-				async readJson<T>(
-					handle: AgentFileHandle,
-					request: { maxBytes: number },
-				): Promise<T | undefined> {
-					signal.throwIfAborted();
-					try {
-						return JSON.parse(
-							new TextDecoder().decode(
-								lookup(handle).slice(0, request.maxBytes),
-							),
-						) as T;
-					} catch {
-						return undefined;
-					}
-				},
-				async readJsonLine<T>(
-					handle: AgentFileHandle,
-					request: { maxBytes: number; position: 'first' | 'last' },
-				): Promise<T | undefined> {
-					signal.throwIfAborted();
-					const lines = new TextDecoder()
-						.decode(lookup(handle).slice(0, request.maxBytes))
-						.split('\n')
-						.filter(Boolean);
-					try {
-						return JSON.parse(
-							request.position === 'first' ? lines[0]! : lines.at(-1)!,
-						) as T;
-					} catch {
-						return undefined;
-					}
-				},
-				async follow(handle: AgentFileHandle): Promise<AgentFileWatcher> {
-					signal.throwIfAborted();
-					const bytes = lookup(handle).slice();
-					return createIdempotentWatcher(
-						bytes.byteLength ? [{ type: 'append' as const, bytes }] : [],
-						signal,
-					);
-				},
-			},
-		},
-	};
-}
-
-export interface HarnessLifecycleProjection {
-	sessionStarted: boolean;
-	working: boolean;
-	waiting: boolean;
-	done: boolean;
-	activeToolIds: readonly string[];
-	title?: string;
-	model?: AgentModelMetadata;
-}
-
-export interface AgentExtensionHarness {
-	observe(terminal: AgentTerminalContext): Promise<void>;
-	events(): readonly AgentLifecycleEvent[];
-	observation(): AgentObservationResult | undefined;
-	projection(): HarnessLifecycleProjection;
-	dispose(): Promise<void>;
-	release(reason: ExtensionReleaseReason): Promise<void>;
+/** A contract breach the harness observed. The host would refuse the same call. */
+export interface HarnessViolation {
+	sourceId: string;
+	call: 'reset' | 'upsert' | 'remove' | 'diagnostic';
+	issues: SchemaIssue[];
 }
 
 export interface AgentExtensionHarnessOptions {
+	/** When given, registration is checked against its declared contributions. */
 	manifest?: TerminayExtensionManifest;
 }
 
-function applyLifecycle(
-	projection: {
-		sessionStarted: boolean;
-		working: boolean;
-		waiting: boolean;
-		done: boolean;
-		activeToolIds: string[];
-		title?: string;
-		model?: AgentModelMetadata;
-	},
-	event: AgentLifecycleEvent,
-): void {
-	switch (event.kind) {
-		case 'session.started':
-			if (projection.sessionStarted)
-				throw new Error('lifecycle: session already started');
-			projection.sessionStarted = true;
-			projection.working = false;
-			projection.waiting = false;
-			projection.done = false;
-			projection.activeToolIds = [];
-			projection.title = event.title;
-			projection.model = event.model;
-			return;
-		case 'agent.metadata':
-			if (!projection.sessionStarted)
-				throw new Error('lifecycle: metadata change is not a new session');
-			if (event.title !== undefined) projection.title = event.title;
-			if (event.model !== undefined) projection.model = event.model;
-			return;
-		case 'turn.started':
-			if (!projection.sessionStarted)
-				throw new Error('lifecycle: turn requires a session');
-			projection.working = true;
-			projection.waiting = false;
-			projection.done = false;
-			return;
-		case 'tool.started':
-			if (!projection.sessionStarted)
-				throw new Error('lifecycle: tool requires a session');
-			projection.working = true;
-			projection.activeToolIds.push(event.toolId);
-			return;
-		case 'tool.finished':
-			projection.activeToolIds = projection.activeToolIds.filter(
-				(id) => id !== event.toolId,
-			);
-			return;
-		case 'wait.started':
-			projection.waiting = true;
-			projection.working = false;
-			return;
-		case 'wait.finished':
-			projection.waiting = false;
-			projection.working = true;
-			return;
-		case 'agent.done':
-			projection.done = true;
-			projection.working = false;
-			projection.waiting = false;
-			projection.activeToolIds = [];
-			return;
-		case 'session.stopped':
-		case 'agent.exited':
-			projection.sessionStarted = false;
-			projection.done = true;
-			projection.working = false;
-			projection.waiting = false;
-			projection.activeToolIds = [];
-			return;
-		case 'subagent.started':
-		case 'subagent.done':
-			if (!projection.sessionStarted)
-				throw new Error('lifecycle: subagent requires a session');
-			return;
-	}
+export interface SessionSourceStartOptions {
+	/** Defaults to every declared harness, or to none checked without a manifest. */
+	enabledHarnesses?: readonly string[];
 }
 
-/** Activates an extension in-memory and captures its validated lifecycle events. */
+export interface AgentExtensionHarness {
+	/** Source ids the extension registered, in registration order. */
+	registeredSourceIds(): readonly string[];
+	/** MCP install target ids the extension registered, in registration order. */
+	registeredTargetIds(): readonly string[];
+	/** Starts one registered source (the first when omitted). */
+	start(sourceId?: string, options?: SessionSourceStartOptions): Promise<void>;
+	/** Delivers a harness switch change to a running source, as the host does. */
+	setEnabledHarnesses(
+		enabledHarnesses: readonly string[],
+		sourceId?: string,
+	): void;
+	/** Aborts a running source's signal, as disabling agent status does. */
+	stop(sourceId?: string): void;
+	/** The live sessions the host would hold for a source, by id. */
+	sessions(sourceId?: string): readonly AgentSessionSnapshot[];
+	publications(): readonly SessionPublication[];
+	diagnostics(): readonly AgentSessionSourceDiagnostic[];
+	violations(): readonly HarnessViolation[];
+	/** Throws when any publication breached the contract. */
+	assertConformant(): void;
+	/**
+	 * Resolves once `predicate` holds for the published state, re-checked after
+	 * every publication; rejects after `timeoutMs`.
+	 */
+	waitFor(
+		predicate: (harness: AgentExtensionHarness) => boolean,
+		timeoutMs?: number,
+	): Promise<void>;
+	mcpStatus(
+		targetId: string,
+		server?: McpServerCommand,
+	): Promise<McpInstallTargetStatus>;
+	mcpInstall(
+		targetId: string,
+		server?: McpServerCommand,
+	): Promise<McpInstallTargetActionResult>;
+	mcpUninstall(
+		targetId: string,
+		server?: McpServerCommand,
+	): Promise<McpInstallTargetActionResult>;
+	release(reason: ExtensionReleaseReason): Promise<void>;
+	dispose(): Promise<void>;
+}
+
+/** A plausible host-supplied MCP server command for target tests. */
+export const fixtureMcpServerCommand: McpServerCommand = Object.freeze({
+	command: '/Applications/Terminay.app/Contents/MacOS/Terminay',
+	args: ['/Applications/Terminay.app/Contents/Resources/serverMcpEntry.js'],
+	env: { ELECTRON_RUN_AS_NODE: '1' },
+});
+
+interface RunningSource {
+	controller: AbortController;
+	enabled: Set<string>;
+	listeners: Set<(enabled: readonly string[]) => void>;
+	live: Map<string, AgentSessionSnapshot>;
+}
+
+/**
+ * Activates an agent extension in memory and applies the host's rules to its
+ * session sources and MCP install targets: manifest/registration agreement,
+ * snapshot bounds, declared and enabled harnesses, reset/upsert/removal
+ * validity, cancellation, and privacy exclusions (snapshots are closed
+ * objects, so transcript or raw record fields are refused).
+ */
 export async function createAgentExtensionHarness(
 	extension: TerminayExtension,
 	options: AgentExtensionHarnessOptions = {},
 ): Promise<AgentExtensionHarness> {
-	const registrations = new Map<string, AgentProviderRuntime>();
-	const subscriptions: AgentProviderRegistration[] = [];
-	const declared = new Set(
-		options.manifest?.contributes.agentProviders?.map(
-			(provider) => provider.id,
-		) ?? [],
+	const manifest = options.manifest;
+	const sourceDeclarations = new Map(
+		(manifest?.contributes.agentSessionSources ?? []).map((source) => [
+			source.id,
+			source,
+		]),
 	);
+	const targetDeclarations = new Set(
+		(manifest?.contributes.mcpInstallTargets ?? []).map((target) => target.id),
+	);
+	const sources = new Map<string, AgentSessionSourceRuntime>();
+	const targets = new Map<string, McpInstallTargetRuntime>();
+	const running = new Map<string, RunningSource>();
+	const subscriptions: Disposable[] = [];
+	const publications: SessionPublication[] = [];
+	const diagnostics: AgentSessionSourceDiagnostic[] = [];
+	const violations: HarnessViolation[] = [];
+	const waiters = new Set<() => void>();
+	let released = false;
+
+	const notify = (): void => {
+		for (const waiter of [...waiters]) waiter();
+	};
+	const pickSource = (sourceId?: string): string => {
+		const id = sourceId ?? sources.keys().next().value;
+		if (id === undefined || !sources.has(id))
+			throw new Error(`Unknown session source: ${String(sourceId)}`);
+		return id;
+	};
+
 	const context: ExtensionContext = {
-		extensionId: options.manifest?.id ?? 'test.extension',
+		extensionId: manifest?.id ?? 'test.extension',
 		apiVersion: EXTENSION_API_VERSION,
 		paths: {
 			configuration: '/fixture/config',
@@ -852,159 +334,288 @@ export async function createAgentExtensionHarness(
 			cache: '/fixture/cache',
 		},
 		agents: {
-			registerProvider(providerId, runtime) {
-				if (options.manifest && !declared.has(providerId))
-					throw new Error(
-						'agent provider registration is undeclared or invalid',
-					);
-				if (registrations.has(providerId))
-					throw new Error(`Duplicate agent provider: ${providerId}`);
-				registrations.set(providerId, runtime);
+			registerSessionSource(sourceId, runtime) {
+				if (released) throw new Error('extension is deactivated');
+				if (manifest && !sourceDeclarations.has(sourceId))
+					throw new Error('session source registration is undeclared');
+				if (sources.has(sourceId))
+					throw new Error(`Duplicate session source: ${sourceId}`);
+				sources.set(sourceId, runtime);
 				return {
-					providerId,
+					sourceId,
 					dispose(): void {
-						registrations.delete(providerId);
+						running.get(sourceId)?.controller.abort();
+						running.delete(sourceId);
+						sources.delete(sourceId);
+					},
+				};
+			},
+		},
+		mcp: {
+			registerInstallTarget(targetId, runtime) {
+				if (released) throw new Error('extension is deactivated');
+				if (manifest && !targetDeclarations.has(targetId))
+					throw new Error('MCP install target registration is undeclared');
+				if (targets.has(targetId))
+					throw new Error(`Duplicate MCP install target: ${targetId}`);
+				targets.set(targetId, runtime);
+				return {
+					targetId,
+					dispose(): void {
+						targets.delete(targetId);
 					},
 				};
 			},
 		},
 		subscriptions: {
 			add(subscription) {
-				subscriptions.push(subscription as AgentProviderRegistration);
+				subscriptions.push(subscription);
 				return subscription;
 			},
 		},
 		registerLanguageServerProvider() {
 			throw new Error(
-				'this harness observes agents; use createLanguageServerExtensionHarness',
+				'this harness serves agent extensions; use createLanguageServerExtensionHarness',
 			);
 		},
 	};
 	await extension.activate(context);
-	const emitted: AgentLifecycleEvent[] = [];
-	const projectionState = {
-		sessionStarted: false,
-		working: false,
-		waiting: false,
-		done: false,
-		activeToolIds: [] as string[],
-		title: undefined as string | undefined,
-		model: undefined as AgentModelMetadata | undefined,
-	};
-	let lastObservation: AgentObservationResult | undefined;
-	const publish = createAgentLifecyclePublisher((event) => {
-		applyLifecycle(projectionState, event);
-		emitted.push(event);
-	});
+
+	function publisherFor(
+		sourceId: string,
+		state: RunningSource,
+	): AgentSessionPublisher {
+		const violate = (
+			call: HarnessViolation['call'],
+			issues: SchemaIssue[],
+		): void => {
+			violations.push({ sourceId, call, issues });
+			notify();
+		};
+		const active = (): boolean => !state.controller.signal.aborted;
+		return {
+			reset(sessions) {
+				if (!active()) return;
+				const result = validateAgentSessionReset(sessions, state.enabled);
+				if (!result.ok) return violate('reset', result.issues);
+				state.live.clear();
+				for (const session of result.value)
+					state.live.set(session.id, structuredClone(session));
+				publications.push({
+					kind: 'reset',
+					sourceId,
+					sessions: structuredClone(result.value),
+				});
+				notify();
+			},
+			upsert(session) {
+				if (!active()) return;
+				const result = validateAgentSessionSnapshot(session, state.enabled);
+				if (!result.ok) return violate('upsert', result.issues);
+				state.live.set(result.value.id, structuredClone(result.value));
+				publications.push({
+					kind: 'upsert',
+					sourceId,
+					session: structuredClone(result.value),
+				});
+				notify();
+			},
+			remove(sessionId) {
+				if (!active()) return;
+				if (typeof sessionId !== 'string' || !state.live.has(sessionId))
+					return violate('remove', [
+						{
+							path: '$',
+							code: 'unknown_session',
+							message: 'Removed a session that is not live',
+						},
+					]);
+				state.live.delete(sessionId);
+				publications.push({ kind: 'remove', sourceId, sessionId });
+				notify();
+			},
+			diagnostic(diagnostic) {
+				if (!active()) return;
+				const result = validateAgentSessionSourceDiagnostic(diagnostic);
+				if (!result.ok) return violate('diagnostic', result.issues);
+				diagnostics.push({ ...result.value });
+				notify();
+			},
+		};
+	}
+
+	async function callTarget<T>(
+		targetId: string,
+		server: McpServerCommand,
+		call: (
+			runtime: McpInstallTargetRuntime,
+			request: McpInstallTargetRequest,
+		) => Promise<T>,
+		validate: (value: unknown) => ValidationResult<T>,
+	): Promise<T> {
+		const runtime = targets.get(targetId);
+		if (!runtime) throw new Error(`Unknown MCP install target: ${targetId}`);
+		const command = assertValid(
+			validateMcpServerCommand(server),
+			'Invalid MCP server command',
+		);
+		const controller = new AbortController();
+		const timer = setTimeout(
+			() => controller.abort(new Error('deadline exceeded')),
+			EXTENSION_LIMITS.deadlineMs,
+		);
+		try {
+			return assertValid(
+				validate(
+					await call(runtime, { server: command, signal: controller.signal }),
+				),
+				'Invalid MCP install target result',
+			);
+		} finally {
+			clearTimeout(timer);
+		}
+	}
+
 	async function release(reason: ExtensionReleaseReason): Promise<void> {
 		void reason;
+		released = true;
+		for (const state of running.values()) state.controller.abort();
+		running.clear();
 		const owned = subscriptions.splice(0, subscriptions.length);
 		for (const subscription of owned.reverse()) await subscription.dispose();
-		registrations.clear();
+		sources.clear();
+		targets.clear();
+		await extension.deactivate?.();
 	}
-	return {
-		async observe(terminal) {
-			// Topology replacement re-observes a new writer on the same harness.
-			projectionState.sessionStarted = false;
-			projectionState.working = false;
-			projectionState.waiting = false;
-			projectionState.done = false;
-			projectionState.activeToolIds = [];
-			projectionState.title = undefined;
-			projectionState.model = undefined;
-			for (const runtime of registrations.values()) {
-				if (!runtime.matchesForeground(terminal.foreground)) continue;
-				const result = await runtime.observe(terminal);
-				lastObservation = result;
-				if (result.state !== 'bound' || !('source' in result)) continue;
-				await replaySource(
-					result.source,
-					{
-						binding: result.binding,
-						journal: { role: 'root' },
-						publish,
-						signal: terminal.signal,
-					},
-					result.mapRecord,
-				);
-				for (const child of result.childSources ?? []) {
-					await replaySource(
-						child.source,
-						{
-							binding: result.binding,
-							journal: { role: 'child', childId: child.childId },
-							publish,
-							signal: terminal.signal,
-						},
-						result.mapRecord,
-					);
-				}
-				const discovery =
-					result.childSourceDiscovery === undefined
-						? undefined
-						: await Promise.resolve(result.childSourceDiscovery);
-				if (discovery) {
-					for await (const child of discovery) {
-						await replaySource(
-							child.source,
-							{
-								binding: result.binding,
-								journal: { role: 'child', childId: child.childId },
-								publish,
-								signal: terminal.signal,
-							},
-							result.mapRecord,
-						);
-					}
-				}
-			}
+
+	const harness: AgentExtensionHarness = {
+		registeredSourceIds() {
+			return [...sources.keys()];
 		},
-		events() {
-			return emitted;
+		registeredTargetIds() {
+			return [...targets.keys()];
 		},
-		observation() {
-			return lastObservation;
-		},
-		projection() {
-			return {
-				sessionStarted: projectionState.sessionStarted,
-				working: projectionState.working,
-				waiting: projectionState.waiting,
-				done: projectionState.done,
-				activeToolIds: [...projectionState.activeToolIds],
-				title: projectionState.title,
-				model: projectionState.model,
+		async start(sourceId, startOptions = {}) {
+			const id = pickSource(sourceId);
+			if (running.has(id)) throw new Error(`Source already running: ${id}`);
+			const declared = sourceDeclarations
+				.get(id)
+				?.harnesses.map((item) => item.id);
+			const enabled = startOptions.enabledHarnesses ?? declared ?? [];
+			if (declared)
+				for (const harnessId of enabled)
+					if (!declared.includes(harnessId))
+						throw new Error(`Undeclared harness: ${harnessId}`);
+			const state: RunningSource = {
+				controller: new AbortController(),
+				enabled: new Set(enabled),
+				listeners: new Set(),
+				live: new Map(),
 			};
+			running.set(id, state);
+			await sources.get(id)?.start({
+				enabledHarnesses: [...enabled],
+				publisher: publisherFor(id, state),
+				signal: state.controller.signal,
+				onEnabledHarnessesChanged(listener) {
+					state.listeners.add(listener);
+					return {
+						dispose(): void {
+							state.listeners.delete(listener);
+						},
+					};
+				},
+			});
 		},
-		async dispose() {
-			await release('shutdown');
+		setEnabledHarnesses(enabledHarnesses, sourceId) {
+			const id = pickSource(sourceId);
+			const state = running.get(id);
+			if (!state) throw new Error(`Source is not running: ${id}`);
+			state.enabled = new Set(enabledHarnesses);
+			// The host stops showing a harness the moment it is switched off.
+			for (const [sessionId, session] of state.live)
+				if (!state.enabled.has(session.harness)) state.live.delete(sessionId);
+			for (const listener of [...state.listeners])
+				listener([...enabledHarnesses]);
+			notify();
+		},
+		stop(sourceId) {
+			const id = pickSource(sourceId);
+			running.get(id)?.controller.abort();
+			running.delete(id);
+			notify();
+		},
+		sessions(sourceId) {
+			const id = pickSource(sourceId);
+			return [...(running.get(id)?.live.values() ?? [])];
+		},
+		publications() {
+			return publications;
+		},
+		diagnostics() {
+			return diagnostics;
+		},
+		violations() {
+			return violations;
+		},
+		assertConformant() {
+			if (violations.length > 0)
+				throw new ExtensionSchemaError(
+					`Session source breached the contract: ${violations
+						.map(
+							(violation) =>
+								`${violation.call} ${violation.issues.map((issue) => `${issue.path} ${issue.code}`).join(', ')}`,
+						)
+						.join('; ')}`,
+					violations.flatMap((violation) => violation.issues),
+				);
+		},
+		waitFor(predicate, timeoutMs = 5_000) {
+			if (predicate(harness)) return Promise.resolve();
+			return new Promise((resolve, reject) => {
+				const check = (): void => {
+					if (!predicate(harness)) return;
+					waiters.delete(check);
+					clearTimeout(timer);
+					resolve();
+				};
+				const timer = setTimeout(() => {
+					waiters.delete(check);
+					reject(new Error(`waitFor timed out after ${timeoutMs} ms`));
+				}, timeoutMs);
+				waiters.add(check);
+			});
+		},
+		mcpStatus(targetId, server = fixtureMcpServerCommand) {
+			return callTarget(
+				targetId,
+				server,
+				(runtime, request) => runtime.status(request),
+				validateMcpInstallTargetStatus,
+			);
+		},
+		mcpInstall(targetId, server = fixtureMcpServerCommand) {
+			return callTarget(
+				targetId,
+				server,
+				(runtime, request) => runtime.install(request),
+				validateMcpInstallTargetActionResult,
+			);
+		},
+		mcpUninstall(targetId, server = fixtureMcpServerCommand) {
+			return callTarget(
+				targetId,
+				server,
+				(runtime, request) => runtime.uninstall(request),
+				validateMcpInstallTargetActionResult,
+			);
 		},
 		release,
+		async dispose() {
+			if (!released) await release('shutdown');
+		},
 	};
-}
-
-async function replaySource(
-	source: AgentFileWatcher | Promise<AgentFileWatcher>,
-	context: AgentRecordContext,
-	mapRecord: (
-		record: unknown,
-		context: AgentRecordContext,
-	) => void | Promise<void>,
-): Promise<void> {
-	context.signal.throwIfAborted();
-	const watcher = await source;
-	const decoder = createJsonlRecordDecoder();
-	try {
-		for await (const chunk of watcher) {
-			context.signal.throwIfAborted();
-			for (const record of decoder.push(chunk.bytes, chunk.type !== 'append')) {
-				context.signal.throwIfAborted();
-				await mapRecord(record, context);
-			}
-		}
-	} finally {
-		await watcher.dispose();
-	}
+	return harness;
 }
 
 export interface LanguageServerExtensionHarness {
@@ -1046,7 +657,14 @@ export async function createLanguageServerExtensionHarness(
 			cache: '/fixture/cache',
 		},
 		agents: {
-			registerProvider() {
+			registerSessionSource() {
+				throw new Error(
+					'this harness serves language servers; use createAgentExtensionHarness',
+				);
+			},
+		},
+		mcp: {
+			registerInstallTarget() {
 				throw new Error(
 					'this harness serves language servers; use createAgentExtensionHarness',
 				);
@@ -1120,9 +738,15 @@ export interface LanguageServerSession {
 	request(method: string, params: JsonValue): Promise<JsonValue>;
 	notify(method: string, params: JsonValue): void;
 	didOpen(document: LanguageServerOpenDocument): void;
-	completion(path: string, position: LanguageServerPosition): Promise<JsonValue>;
+	completion(
+		path: string,
+		position: LanguageServerPosition,
+	): Promise<JsonValue>;
 	hover(path: string, position: LanguageServerPosition): Promise<JsonValue>;
-	definition(path: string, position: LanguageServerPosition): Promise<JsonValue>;
+	definition(
+		path: string,
+		position: LanguageServerPosition,
+	): Promise<JsonValue>;
 	/** Resolves with the first published diagnostics for `path` that match. */
 	waitForDiagnostics(
 		path: string,
@@ -1177,8 +801,7 @@ export async function openLanguageServerSession(
 			const call = pending.get(message.id);
 			pending.delete(message.id);
 			if (!call) return;
-			if (message.error)
-				call.reject(new Error(JSON.stringify(message.error)));
+			if (message.error) call.reject(new Error(JSON.stringify(message.error)));
 			else call.resolve((message.result ?? null) as JsonValue);
 			return;
 		}

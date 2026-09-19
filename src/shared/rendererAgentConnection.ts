@@ -67,20 +67,32 @@ function adaptEntry(value: AgentClientEntry): AgentStatusEntry {
 	const state = string('state')
 	if (!isAgentProvider(provider) || (kind !== 'root' && kind !== 'subagent') || !['working', 'waiting', 'blocked', 'done', 'idle'].includes(state ?? '')) throw new TypeError('server agent identity is invalid')
 	if (typeof record.active !== 'boolean' || typeof record.unread !== 'boolean') throw new TypeError('server agent flags are invalid')
-	const lastEventKind = string('lastEventKind') as AgentLifecycleEvent['kind']
+	// Snapshot-sourced entries carry no lifecycle event; a closed session is
+	// removed rather than marked stopped, so absence reads as a metadata update.
+	const lastEventKind = (record.lastEventKind === undefined ? 'agent.metadata' : string('lastEventKind')) as AgentLifecycleEvent['kind']
 	if (!EVENT_KINDS.has(lastEventKind)) throw new TypeError('server agent event kind is invalid')
 	const activeTools = adaptTools(record.activeTools)
+	// An external session has no owning terminal: the server sends `null` (or
+	// omits the field) and marks it `external`.
+	const activation = record.activationTerminalSessionId
+	if (activation !== undefined && activation !== null && typeof activation !== 'string') throw new TypeError('server agent activationTerminalSessionId is invalid')
+	const activationTerminalSessionId = typeof activation === 'string' ? activation : null
+	if (record.external !== undefined && typeof record.external !== 'boolean') throw new TypeError('server agent external flag is invalid')
+	const external = record.external === true || activationTerminalSessionId === null
 	const base = {
-		entryId: string('entryId')!, kind, provider, agentId: string('agentId')!, sessionId: string('sessionId')!, activationTerminalSessionId: string('activationTerminalSessionId')!,
+		entryId: string('entryId')!, kind, provider, agentId: string('agentId')!, sessionId: string('sessionId')!, activationTerminalSessionId,
+		external, projectIds: adaptProjectIds(record.projectIds), ...(optionalString(record, 'harness')), ...(optionalString(record, 'harnessDisplayName')),
 		...(optionalString(record, 'displayName')), ...(optionalString(record, 'providerDisplayName')), ...(optionalString(record, 'promptText')), ...(optionalModel(record.model)),
-		state: state as AgentState, stateStartedAt: integer('stateStartedAt'), updatedAt: integer('updatedAt'), lastEventKind, lastEventSequence: integer('lastEventSequence'),
+		state: state as AgentState, stateStartedAt: integer('stateStartedAt'), updatedAt: integer('updatedAt'), lastEventKind, lastEventSequence: record.lastEventSequence === undefined ? 0 : integer('lastEventSequence'),
 		active: record.active, activeTools, ...(optionalString(record, 'currentTurnId')), ...(optionalString(record, 'waitingReason')),
 		...(optionalOutcome(record, 'completionOutcome')), ...(optionalString(record, 'summary')), ...(optionalNumber(record, 'exitCode')), ...(optionalString(record, 'exitSignal')),
 		unread: record.unread, ...(optionalNumber(record, 'acknowledgedAt')),
 	}
 	if (kind === 'root') {
-		if (typeof record.terminalSessionId !== 'string' || record.inProcess !== false) throw new TypeError('server root agent shape is invalid')
-		return Object.freeze({ ...base, kind: 'root', terminalSessionId: record.terminalSessionId, inProcess: false })
+		// A bound root names its terminal; only an external root has none.
+		const terminalSessionId = record.terminalSessionId ?? null
+		if ((external ? terminalSessionId !== null : typeof terminalSessionId !== 'string') || record.inProcess !== false) throw new TypeError('server root agent shape is invalid')
+		return Object.freeze({ ...base, kind: 'root', terminalSessionId: terminalSessionId as string | null, inProcess: false })
 	}
 	if (record.terminalSessionId !== null || record.inProcess !== true || typeof record.parentAgentId !== 'string' || typeof record.parentEntryId !== 'string') throw new TypeError('server subagent shape is invalid')
 	return Object.freeze({ ...base, kind: 'subagent', terminalSessionId: null, inProcess: true, parentAgentId: record.parentAgentId, parentEntryId: record.parentEntryId })
@@ -94,6 +106,11 @@ function optionalModel(value: unknown): Record<string, AgentModelMetadata> {
 	if (typeof value !== 'object' || value === null || Array.isArray(value) || typeof (value as Record<string, unknown>).id !== 'string') throw new TypeError('server agent model is invalid')
 	const model = value as Record<string, unknown>
 	return { model: { id: model.id as string, ...(typeof model.displayName === 'string' ? { displayName: model.displayName } : {}), ...(typeof model.reasoningEffort === 'string' ? { reasoningEffort: model.reasoningEffort } : {}), ...(Number.isSafeInteger(model.contextWindowTokens) ? { contextWindowTokens: model.contextWindowTokens as number } : {}) } }
+}
+function adaptProjectIds(value: unknown): readonly string[] {
+	if (value === undefined) return Object.freeze([])
+	if (!Array.isArray(value) || value.some((candidate) => typeof candidate !== 'string')) throw new TypeError('server agent projectIds are invalid')
+	return Object.freeze([...new Set(value as string[])])
 }
 function adaptTools(value: unknown): readonly AgentToolStatus[] {
 	if (!Array.isArray(value)) throw new TypeError('server agent tools are invalid')

@@ -24,10 +24,9 @@ import type { JsonValue } from '@terminay/protocol';
 import { decodeFrame } from '@terminay/protocol';
 import { AgentStatusService } from '../packages/server-core/src/activity/agentService';
 import {
-	createExtensionAgentBroker,
-	ExtensionAgentRuntimeRegistry,
-	type ExtensionAgentAdmissionFailure,
-	type ExtensionAgentLifecycleRejection,
+	ProjectAgentScope,
+	SessionSourceBridge,
+	type SessionSourceDiagnosticRecord,
 } from '../packages/server-core/src/activity/index';
 import type { ActivitySessionIdentity } from '../packages/server-core/src/activity/service';
 import { TerminalActivityService } from '../packages/server-core/src/activity/service';
@@ -46,15 +45,17 @@ import {
 	type ServerCoreComposition,
 } from '../packages/server-core/src/composition';
 import { OrderedEventJournal } from '../packages/server-core/src/events';
-import type {
-	AgentObservationDiagnosticListener,
-	ExtensionHostDiagnosticListener,
-} from '../packages/server-core/src/extensions/diagnostics';
+import type { ExtensionHostDiagnosticListener } from '../packages/server-core/src/extensions/diagnostics';
 import {
+	type AgentHarnessSwitches,
+	agentHarnessSwitchesFromSettings,
 	createDefaultExtensionManagement,
-	createLocalAgentObservationAdapter,
 	createProductionExtensionManagement,
+	McpInstallRouter,
+	SessionSourceSupervisor,
+	withdrawnAgentExtensionSwitches,
 } from '../packages/server-core/src/extensions/index';
+import type { McpServerCommand } from '@terminay/extension-api';
 import {
 	CanonicalProjectPathResolver,
 	DocumentationCatalog,
@@ -117,9 +118,6 @@ import type {
 	AiTabMetadataGenerateRequest,
 	AiTabMetadataGenerateResult,
 	FileViewerSparseFileSaveRequest,
-	McpAgentId,
-	McpInstallActionResult,
-	McpInstallStatus,
 	RemoteAccessStatus,
 } from '../src/types/terminay';
 import {
@@ -261,20 +259,18 @@ export interface ServerTerminalAuthorityOptions {
 	readonly onDeliveryDiagnostic?: (
 		diagnostic: ConnectionDeliveryDiagnostic,
 	) => void;
-	/** Report when a matched provider cannot begin observing a terminal. It
-	 * carries the provider id, opaque terminal identity, failure class, and the
-	 * reported error; never a journal, prompt, tool input or result. */
-	readonly onAgentAdmissionFailure?: (
-		failure: ExtensionAgentAdmissionFailure,
+	/** A session source's typed diagnostic, such as a provider error or a
+	 * degraded process watch. It carries no path or conversation content. */
+	readonly onAgentSessionSourceDiagnostic?: (
+		record: SessionSourceDiagnosticRecord,
 	) => void;
-	/** Report a published lifecycle event the canonical store could not apply.
-	 * Without it a lost transition — a completion among them — is invisible. */
-	readonly onAgentLifecycleRejected?: (
-		rejection: ExtensionAgentLifecycleRejection,
+	/** A registered session source that failed to start. */
+	readonly onAgentSessionSourceStartFailure?: (
+		sourceId: string,
+		error: unknown,
 	) => void;
-	/** Every agent observation outcome for a terminal, so a terminal that never
-	 * binds is distinguishable from one that was never matched. */
-	readonly onAgentObservationDiagnostic?: AgentObservationDiagnosticListener;
+	/** Per-harness switches at startup (`agentIntegration.harnesses`). */
+	readonly agentHarnessSwitches?: AgentHarnessSwitches;
 	/** Extension host lifecycle, including the error behind a crash. Without it
 	 * a host that dies leaves no evidence anywhere. */
 	readonly onExtensionHostDiagnostic?: ExtensionHostDiagnosticListener;
@@ -319,10 +315,10 @@ export interface ServerTerminalAuthorityOptions {
 		request: FileViewerSparseFileSaveRequest,
 	) => Promise<unknown>;
 	readonly applicationFeatures?: {
+		/** Enables the `mcp-install.*` operations. The command is the exact
+		 * Terminay MCP server launch every install target writes. */
 		readonly mcpInstall?: {
-			getStatus(): McpInstallStatus | Promise<McpInstallStatus>;
-			install(agent: McpAgentId): Promise<McpInstallActionResult>;
-			uninstall(agent: McpAgentId): Promise<McpInstallActionResult>;
+			readonly serverCommand: () => McpServerCommand;
 		};
 		readonly remoteAccess?: {
 			getStatus(): RemoteAccessStatus | Promise<RemoteAccessStatus>;
@@ -389,6 +385,11 @@ export class ServerTerminalAuthority {
 	>();
 	private readonly fileSessionProjects = new Map<string, FileProjectContext>();
 	private readonly fileProjectRoots = new Map<string, string>();
+	private readonly agentScope: ProjectAgentScope;
+	/** Starts extension session sources and receives their publications. */
+	readonly agentSources: SessionSourceSupervisor;
+	/** Reduces session snapshots into agent entries. */
+	readonly agentBridge: SessionSourceBridge;
 	private serviceEventsUnsubscribe: Unsubscribe | undefined;
 	private shuttingDown = false;
 	private shutdownPromise: Promise<void> | undefined;
@@ -415,16 +416,31 @@ export class ServerTerminalAuthority {
 			process.env.TERMINAY_TEST === '1' ? [] : undefined;
 		this.installWorkspaceCommandTestObserver();
 		this.activity = new TerminalActivityService({ serverId: options.serverId });
-		let extensionAgentRuntimeForLabels: ExtensionAgentRuntimeRegistry | undefined;
-		this.agents = new AgentStatusService({
-			activity: this.activity,
-			providerDisplayName: (providerId) =>
-				extensionAgentRuntimeForLabels?.providerDisplayName(providerId),
-			onLifecycleRejected: (rejection) => {
+		this.agents = new AgentStatusService({ activity: this.activity });
+		this.agentScope = new ProjectAgentScope();
+		const agentBridge = new SessionSourceBridge({
+			agents: this.agents,
+			scope: this.agentScope,
+			onDiagnostic: (record) => {
 				try {
-					options.onAgentLifecycleRejected?.(rejection);
+					options.onAgentSessionSourceDiagnostic?.(record);
 				} catch {
-					/* host diagnostics cannot affect lifecycle ingest */
+					/* host diagnostics cannot affect session reporting */
+				}
+			},
+		});
+		this.agentBridge = agentBridge;
+		this.agentSources = new SessionSourceSupervisor({
+			bridge: agentBridge,
+			agents: this.agents,
+			...(options.agentHarnessSwitches === undefined
+				? {}
+				: { harnessSwitches: options.agentHarnessSwitches }),
+			onStartFailure: (sourceId, error) => {
+				try {
+					options.onAgentSessionSourceStartFailure?.(sourceId, error);
+				} catch {
+					/* host diagnostics cannot affect supervision */
 				}
 			},
 		});
@@ -495,15 +511,12 @@ export class ServerTerminalAuthority {
 			this.notifyRemoteAccessChanged();
 			return result as unknown as JsonValue;
 		};
-		const mcpAgent = (request: CommandRequest): McpAgentId => {
+		const mcpTarget = (request: CommandRequest): string => {
 			const agent = (request.envelope.payload as Record<string, unknown>).agent;
 			if (
-				agent !== 'claudeCode' &&
-				agent !== 'codex' &&
-				agent !== 'cursor' &&
-				agent !== 'gemini' &&
-				agent !== 'grok' &&
-				agent !== 'openCode'
+				typeof agent !== 'string' ||
+				agent.length === 0 ||
+				agent.length > 192
 			)
 				throw new TypeError('agent is invalid');
 			return agent;
@@ -601,72 +614,68 @@ export class ServerTerminalAuthority {
 		) {
 			throw new RangeError('maxReplayBytes must be a positive safe integer');
 		}
-		const extensionRuntime =
-			// The local broker closes the host/registry construction cycle: the
-			// adapter resolves only contexts subsequently admitted by the registry.
-			// No extension can acquire a terminal, PID, or local path through it.
-			(() => {
-				let extensionAgents: ExtensionAgentRuntimeRegistry | undefined;
-				const observation = createLocalAgentObservationAdapter({
-					resolveTerminal: (context) => extensionAgents?.observationTerminal(context),
-				});
-				const broker = createExtensionAgentBroker(this.agents, {
-					observe: (request, signal) => observation.observe(
-						request.terminal,
-						request.operation,
-						request.payload,
-						signal,
-					),
-				});
-				const management = options.dataRoot === undefined
-					? undefined
-					: options.vault === undefined
-						? createDefaultExtensionManagement({
-								dataRoot: options.dataRoot,
-								authorityLabel: 'This server',
-								agents: broker,
-								...(options.onExtensionHostDiagnostic === undefined
-									? {}
-									: { onHostDiagnostic: options.onExtensionHostDiagnostic }),
-								...(options.extensionHostChildEntrypoint === undefined
-									? {}
-									: { childEntrypoint: options.extensionHostChildEntrypoint }),
-								...(options.builtInExtensionArtifactRoot === undefined ? {} : { builtInArtifactRoot: options.builtInExtensionArtifactRoot }),
-							})
-						: createProductionExtensionManagement({
-								dataRoot: options.dataRoot,
-								authorityLabel: 'This server',
-								agents: broker,
-								...(options.onExtensionHostDiagnostic === undefined
-									? {}
-									: { onHostDiagnostic: options.onExtensionHostDiagnostic }),
-								...(options.extensionHostChildEntrypoint === undefined
-									? {}
-									: { childEntrypoint: options.extensionHostChildEntrypoint }),
-								...(options.builtInExtensionArtifactRoot === undefined ? {} : { builtInArtifactRoot: options.builtInExtensionArtifactRoot }),
-								vault: options.vault,
-							});
-				if (management !== undefined) {
-						extensionAgents = new ExtensionAgentRuntimeRegistry({
-						hosts: management.hosts,
-						agents: this.agents,
-						onAdmissionFailure: (failure) => {
-							try { options.onAgentAdmissionFailure?.(failure); } catch { /* host diagnostics cannot affect terminal fallback */ }
-						},
-						...(options.onAgentObservationDiagnostic === undefined
-							? {}
-							: { onObservation: options.onAgentObservationDiagnostic }),
+		// A per-agent built-in the user had switched off stays off as a harness
+		// switch of the bundled source that replaced it.
+		const onBuiltInWithdrawn = async (
+			record: Readonly<{ extensionId: string; enabled: boolean }>,
+		) => {
+			const switches = withdrawnAgentExtensionSwitches(record);
+			if (switches === undefined || options.settings === undefined) return;
+			const result = await options.settings.apply({
+				command: {
+					type: 'merge',
+					settings: { agentIntegration: { harnesses: { ...switches } } },
+				},
+			});
+			if (result.ok)
+				this.agentSources.setHarnessSwitches(
+					agentHarnessSwitchesFromSettings(result.state.settings),
+				);
+		};
+		const extensionManagement =
+			options.dataRoot === undefined
+				? undefined
+				: options.vault === undefined
+					? createDefaultExtensionManagement({
+							dataRoot: options.dataRoot,
+							authorityLabel: 'This server',
+							agents: this.agentSources,
+							onBuiltInWithdrawn,
+							...(options.onExtensionHostDiagnostic === undefined
+								? {}
+								: { onHostDiagnostic: options.onExtensionHostDiagnostic }),
+							...(options.extensionHostChildEntrypoint === undefined
+								? {}
+								: { childEntrypoint: options.extensionHostChildEntrypoint }),
+							...(options.builtInExtensionArtifactRoot === undefined
+								? {}
+								: { builtInArtifactRoot: options.builtInExtensionArtifactRoot }),
+						})
+					: createProductionExtensionManagement({
+							dataRoot: options.dataRoot,
+							authorityLabel: 'This server',
+							agents: this.agentSources,
+							onBuiltInWithdrawn,
+							...(options.onExtensionHostDiagnostic === undefined
+								? {}
+								: { onHostDiagnostic: options.onExtensionHostDiagnostic }),
+							...(options.extensionHostChildEntrypoint === undefined
+								? {}
+								: { childEntrypoint: options.extensionHostChildEntrypoint }),
+							...(options.builtInExtensionArtifactRoot === undefined
+								? {}
+								: { builtInArtifactRoot: options.builtInExtensionArtifactRoot }),
+							vault: options.vault,
+						});
+		if (extensionManagement !== undefined)
+			this.agentSources.attach(extensionManagement.hosts);
+		const mcpRouter =
+			mcpInstall === undefined
+				? undefined
+				: new McpInstallRouter({
+						hosts: () => extensionManagement?.hosts,
+						serverCommand: mcpInstall.serverCommand,
 					});
-					management.hosts.onContributionsChanged(async () => {
-						await extensionAgents?.reconcileProviderInventory();
-						extensionAgents?.reobserveExistingTerminals();
-					});
-				}
-				return { management, extensionAgents };
-			})();
-		const extensionManagement = extensionRuntime.management;
-		const extensionAgentRuntime = extensionRuntime.extensionAgents;
-		extensionAgentRuntimeForLabels = extensionAgentRuntime;
 		const parakeetProvider =
 			options.parakeetRuntime === undefined
 				? undefined
@@ -801,9 +810,11 @@ export class ServerTerminalAuthority {
 			},
 			activity: this.activity,
 			agents: this.agents,
-			...(extensionAgentRuntime === undefined
-				? {}
-				: { extensionAgentRuntime }),
+			agentSessions: {
+				supervisor: this.agentSources,
+				bridge: agentBridge,
+				scope: this.agentScope,
+			},
 			git: gitAdapter,
 			eventJournal,
 			...(extensionManagement === undefined
@@ -872,11 +883,11 @@ export class ServerTerminalAuthority {
 					}),
 			operations: {
 				queries: {
-					...(mcpInstall === undefined
+					...(mcpRouter === undefined
 						? {}
 						: {
 								'mcp-install.status': async () =>
-									(await mcpInstall.getStatus()) as unknown as JsonValue,
+									(await mcpRouter.status()) as unknown as JsonValue,
 							}),
 					...(remoteAccess === undefined
 						? {}
@@ -902,16 +913,16 @@ export class ServerTerminalAuthority {
 						this.getFileMutationRevision(request),
 				},
 				commands: {
-					...(mcpInstall === undefined
+					...(mcpRouter === undefined
 						? {}
 						: {
 								'mcp-install.install': (request: CommandRequest) =>
-									mcpInstall.install(
-										mcpAgent(request),
+									mcpRouter.install(
+										mcpTarget(request),
 									) as unknown as Promise<JsonValue>,
 								'mcp-install.uninstall': (request: CommandRequest) =>
-									mcpInstall.uninstall(
-										mcpAgent(request),
+									mcpRouter.uninstall(
+										mcpTarget(request),
 									) as unknown as Promise<JsonValue>,
 							}),
 					...(remoteAccess === undefined
@@ -1281,6 +1292,7 @@ export class ServerTerminalAuthority {
 			storage: nodeFileCatalogStorage,
 		});
 		this.fileProjectRoots.set(projectId, await resolver.root());
+		this.agentScope.setProject(projectId, await resolver.root());
 		this.fileContentProjects.set(projectId, {
 			projectId,
 			content: new FileContentStreamService(resolver, nodeFileCatalogStorage),
@@ -1333,6 +1345,7 @@ export class ServerTerminalAuthority {
 			commit: async () => {
 				this.mdxRuntimeProjects.get(projectId)?.runtime.disposeAll();
 				this.fileProjectRoots.set(projectId, canonicalRoot);
+				this.agentScope.setProject(projectId, canonicalRoot);
 				this.fileCatalogProjects.set(projectId, context);
 				this.documentationProjects.set(projectId, documentationContext);
 				this.mdxRuntimeProjects.set(projectId, mdxRuntimeContext);

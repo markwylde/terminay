@@ -8,7 +8,7 @@ import { ExtensionInstaller } from "../dist/extensions/index.js";
 const INTEGRITY = `sha512-${Buffer.alloc(64, 11).toString("base64")}`;
 
 function packageJson(version) {
-  return { name: "upgrade-fixture", version, type: "module", exports: { ".": "./dist/extension.js" }, terminay: { manifestVersion: 1, id: "dev.example.upgrade", displayName: "Upgrade", api: "^2.0.0", engines: { terminay: ">=1", node: ">=22" }, entrypoint: "dist/extension.js", permissions: ["agent-observation", "data:read", "data:write"], contributes: { agentProviders: [{ id: "dev.example.upgrade/cli", displayName: "Server" }] } } };
+  return { name: "upgrade-fixture", version, type: "module", exports: { ".": "./dist/extension.js" }, terminay: { manifestVersion: 1, id: "dev.example.upgrade", displayName: "Upgrade", api: "^3.0.0", engines: { terminay: ">=1", node: ">=22" }, entrypoint: "dist/extension.js", permissions: ["agent-observation", "data:read", "data:write"], contributes: { agentSessionSources: [{ id: "dev.example.upgrade/cli", displayName: "Server", harnesses: [{ id: "fixture", displayName: "Fixture" }] }] } } };
 }
 
 class UpgradeNpm {

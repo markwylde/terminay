@@ -1,12 +1,13 @@
 export const EXTENSION_MANIFEST_VERSION = 1 as const;
 /**
  * The public extension SDK version implemented by this host. 2.0 removed the
- * project-environment provider contribution kind, its declarative form and
- * status surfaces, and the agent observation capability model, so every
- * extension declaring `^1.x` is incompatible with this host. 2.1 adds the
- * language server contribution kind, which is purely additive.
+ * project-environment provider contribution kind. 2.1 added the language
+ * server contribution kind. 3.0 replaced terminal-scoped agent providers, the
+ * observation broker, the lifecycle publisher, and the driver toolkit with
+ * machine-wide agent session sources, and added MCP install targets, so every
+ * extension declaring `^2.x` is incompatible with this host.
  */
-export const EXTENSION_API_VERSION = '2.1.0' as const;
+export const EXTENSION_API_VERSION = '3.0.0' as const;
 
 export const EXTENSION_LIMITS = Object.freeze({
 	manifestBytes: 64 * 1024,
@@ -26,42 +27,31 @@ export const EXTENSION_LIMITS = Object.freeze({
 	stringLength: 4_096,
 	messageBytes: 1024 * 1024,
 	deadlineMs: 120_000,
-	agentProcessMatchers: 16,
-	agentMappings: 32,
-	agentProviderVersionLength: 64,
-	agentSessionIdLength: 256,
-	agentNativeIdLength: 256,
-	agentTitleLength: 512,
-	agentPromptLength: 4 * 1024,
-	agentReasonLength: 1_024,
-	agentSummaryLength: 4 * 1024,
-	agentDiagnosticLength: 512,
-	agentMetadataEntries: 32,
-	agentFingerprintEntries: 16,
-	agentEventDepth: 8,
-	agentInitialReplayBytes: 4 * 1024 * 1024,
-	agentRecordBytes: 256 * 1024,
-	agentFileReadBytes: 4 * 1024 * 1024,
-	agentFollowChunkBytes: 256 * 1024,
-	agentStreamInFlight: 64,
-	/** A terminal device fact is an identifier, never a filesystem capability. */
-	agentTtyDeviceIdLength: 256,
-	agentTtyDeviceNameLength: 128,
-	agentHomeRelativePathLength: 1_024,
-	agentProviderPathLength: 4_096,
-	agentAllowedHomeRoots: 8,
-	agentFileExtensionLength: 64,
-	/** Child journals share a root binding and are never root candidates. */
-	agentChildJournalSources: 64,
-	/** Declared names and observed values are bounded terminal-scoped facts. */
+	/** Harnesses one session source may report, e.g. Claude Code and Codex. */
+	agentSourceHarnesses: 16,
+	/** Server environment variable names one session source may request. */
 	agentEnvironmentVariables: 32,
 	agentEnvironmentVariableNameLength: 128,
-	agentEnvironmentVariableValueLength: 4 * 1024,
-	agentEnvironmentRelativePathLength: 4 * 1024,
-	/** Bounded, terminal-scoped provider journal discovery. */
-	agentDirectoryListDepth: 8,
-	agentDirectoryListEntries: 256,
-	agentDirectoryListBytes: 16 * 1024 * 1024,
+	/** Live sessions in one reset; a larger machine is reported by upserts. */
+	agentSessionsPerReset: 1_024,
+	agentSessionIdLength: 256,
+	agentPathLength: 4_096,
+	agentTitleLength: 512,
+	agentModelLength: 256,
+	agentWaitingForLength: 1_024,
+	agentToolNameLength: 256,
+	agentErrorLength: 1_024,
+	agentSubagents: 64,
+	agentSubagentTypeLength: 128,
+	agentDiagnosticCodeLength: 64,
+	agentDiagnosticLength: 512,
+	/** MCP install targets and the host-supplied Terminay MCP server command. */
+	mcpInstallTargets: 16,
+	mcpCommandLength: 4_096,
+	mcpCommandArgs: 64,
+	mcpCommandEnvEntries: 32,
+	mcpConfigPathLength: 4_096,
+	mcpMessageLength: 1_024,
 	/** Language server contributions and the launch they may describe. */
 	maxLanguageServers: 8,
 	maxLanguageIds: 32,

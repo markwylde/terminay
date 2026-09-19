@@ -10,19 +10,28 @@
     "id": "dev.terminay.fixture",
     "displayName": "Fixture Agent Extension",
     "description": "A portable extension host fixture.",
-    "api": "^2.0.0",
+    "api": "^3.0.0",
     "engines": {
       "terminay": ">=1.0.0",
       "node": ">=22"
     },
     "entrypoint": "dist/extension.js",
-    "permissions": ["agent-observation"],
+    "permissions": [
+      "agent-observation"
+    ],
     "contributes": {
-      "agentProviders": [{
-        "id": "dev.terminay.fixture/agent",
-        "displayName": "Fixture Agent",
-        "processMatchers": [{ "executableName": "fixture-agent" }]
-      }]
+      "agentSessionSources": [
+        {
+          "id": "dev.terminay.fixture/agents",
+          "displayName": "Fixture Agents",
+          "harnesses": [
+            {
+              "id": "fixture-agent",
+              "displayName": "Fixture Agent"
+            }
+          ]
+        }
+      ]
     }
   }
 }

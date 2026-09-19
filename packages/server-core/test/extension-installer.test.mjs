@@ -9,7 +9,7 @@ const INTEGRITY = `sha512-${Buffer.alloc(64, 7).toString("base64")}`;
 function resolution(version = "1.0.0") { return { packageName: "fixture-extension", version, integrity: INTEGRITY, tarballUrl: `https://registry.npmjs.org/fixture-extension/-/fixture-extension-${version}.tgz`, provenance: "unavailable", manifestMetadata: packageJson(version).terminay }; }
 function packageJson(version, extra = {}) { return {
   name: "fixture-extension", version, type: "module", exports: { ".": "./dist/extension.js" },
-  terminay: { manifestVersion: 1, id: "dev.example.fixture", displayName: "Fixture", api: "^2.0.0", engines: { terminay: ">=1", node: ">=22" }, entrypoint: "dist/extension.js", permissions: ["agent-observation"], contributes: { agentProviders: [{ id: "dev.example.fixture/cli", displayName: "Fixture" }] }, },
+  terminay: { manifestVersion: 1, id: "dev.example.fixture", displayName: "Fixture", api: "^3.0.0", engines: { terminay: ">=1", node: ">=22" }, entrypoint: "dist/extension.js", permissions: ["agent-observation"], contributes: { agentSessionSources: [{ id: "dev.example.fixture/agents", displayName: "Fixture", harnesses: [{ id: "fixture", displayName: "Fixture" }] }] }, },
   ...extra,
 }; }
 
@@ -17,13 +17,26 @@ class FixtureNpm {
   npmVersion = "12.0.2";
   versions = new Map([["latest", "1.0.0"]]);
   extraPackage = {};
+  /** Dependency packages materialized beside the extension, keyed by name. */
+  dependencies = {};
   invalidLock = false;
   async resolve(packageName, selector) { assert.equal(packageName, "fixture-extension"); return resolution(this.versions.get(selector) ?? selector); }
   async materialize(value, root) {
     await mkdir(join(root, "node_modules", "fixture-extension", "dist"), { recursive: true });
     await writeFile(join(root, "node_modules", "fixture-extension", "package.json"), JSON.stringify(packageJson(value.version, this.extraPackage)));
     await writeFile(join(root, "node_modules", "fixture-extension", "dist", "extension.js"), "export default { activate() {} };\n");
-    await writeFile(join(root, "package-lock.json"), JSON.stringify({ name: "terminay-extension-stage", lockfileVersion: 3, packages: { "": {}, "node_modules/fixture-extension": { version: value.version, resolved: value.tarballUrl, integrity: this.invalidLock ? undefined : value.integrity } } }));
+    const packages = { "": {}, "node_modules/fixture-extension": { version: value.version, resolved: value.tarballUrl, integrity: this.invalidLock ? undefined : value.integrity } };
+    for (const [name, { packageJson: dependencyJson, files = {}, hasInstallScript }] of Object.entries(this.dependencies)) {
+      const directory = join(root, "node_modules", name);
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, "package.json"), JSON.stringify({ name, version: "2.0.0", ...dependencyJson }));
+      for (const [path, contents] of Object.entries(files)) {
+        await mkdir(join(directory, path, ".."), { recursive: true });
+        await writeFile(join(directory, path), contents);
+      }
+      packages[`node_modules/${name}`] = { version: "2.0.0", resolved: `https://registry.npmjs.org/${name}/-/${name}-2.0.0.tgz`, integrity: INTEGRITY, optional: true, ...(hasInstallScript ? { hasInstallScript: true } : {}) };
+    }
+    await writeFile(join(root, "package-lock.json"), JSON.stringify({ name: "terminay-extension-stage", lockfileVersion: 3, packages }));
   }
 }
 
@@ -51,6 +64,37 @@ test("custom npm preview binds exact metadata and commits an immutable validated
     assert.equal(fixture.audits.at(-1).kind, "extension.installed");
     assert.doesNotMatch(await readFile(join(fixture.dataRoot, "extensions", "registry.v1.json"), "utf8"), /trusted code/u);
   } finally { await fixture.cleanup(); }
+});
+
+test("a dependency shipping prebuilt native modules installs even though it declares an install script", async () => {
+  const fixture = await harness();
+  try {
+    fixture.npm.dependencies = {
+      "native-watch": {
+        packageJson: { scripts: { install: "node fetch-prebuild.js" } },
+        files: { "build/darwin_arm64/native-watch.node": "prebuilt", "build/linux_x64/native-watch.node": "prebuilt" },
+        hasInstallScript: true,
+      },
+    };
+    const preview = await fixture.installer.preview("fixture-extension@1.0.0");
+    const state = await fixture.installer.confirm(preview.previewDigest);
+    assert.equal(state.extensions["dev.example.fixture"].state, "installed");
+  } finally { await fixture.cleanup(); }
+});
+
+test("a dependency that needs a native build, or an install script with no prebuild, is refused", async () => {
+  for (const [dependency, pattern] of [
+    [{ packageJson: {}, files: { "binding.gyp": "{}", "src/watch.cc": "" } }, /native builds/u],
+    [{ packageJson: { scripts: { install: "node-gyp rebuild" } }, files: { "src/watch.cc": "" }, hasInstallScript: true }, /lifecycle scripts/u],
+  ]) {
+    const fixture = await harness();
+    try {
+      fixture.npm.dependencies = { "native-watch": dependency };
+      const preview = await fixture.installer.preview("fixture-extension@1.0.0");
+      await assert.rejects(fixture.installer.confirm(preview.previewDigest), pattern);
+      assert.equal((await fixture.installer.snapshot()).extensions["dev.example.fixture"], undefined);
+    } finally { await fixture.cleanup(); }
+  }
 });
 
 test("failed update and interrupted staging preserve the exact active pointer", async () => {
@@ -107,7 +151,7 @@ test("hostile npm specifications, missing integrity, install scripts, and public
 });
 
 test("official catalogue is hardcoded metadata without a privileged install path", () => {
-  assert.deepEqual(OFFICIAL_EXTENSION_CATALOGUE.map((item) => item.packageName), ["terminay-agent-codex", "terminay-agent-claude-code", "terminay-agent-grok", "terminay-agent-opencode", "terminay-agent-omp", "terminay-language-typescript"]);
+  assert.deepEqual(OFFICIAL_EXTENSION_CATALOGUE.map((item) => item.packageName), ["terminay-builtin-agents", "terminay-language-typescript"]);
   assert.ok(OFFICIAL_EXTENSION_CATALOGUE.every((item) => item.official));
 });
 
