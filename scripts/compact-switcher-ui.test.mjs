@@ -299,9 +299,8 @@ test('a terminal row is the long-press target for editing that terminal', () => 
 	// this width, so the row that replaced it carries the gesture.
 	const markup = switcher({});
 	assert.match(markup, /data-compact-switcher-terminal="local:panel-a"/);
-	assert.match(markup, /title="Long-press to edit tab"/);
-	// Every panel row, not only the one in front.
-	assert.equal(markup.match(/title="Long-press to edit tab"/g).length, 2);
+	// Tab rows carry no hover tooltip.
+	assert.doesNotMatch(markup, /title="Long-press to edit tab"/);
 });
 
 test('a short press on a terminal row still activates it', async () => {

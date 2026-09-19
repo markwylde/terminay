@@ -13,7 +13,6 @@ export type DockTabChromeProps = {
 	agentState?: AgentState;
 	agentNeedsAttention?: boolean;
 	agentStatusLabel?: string;
-	titleAttribute?: string;
 	closeAriaLabel: string;
 	style?: CSSProperties;
 	onClose: (event: MouseEvent<HTMLButtonElement>) => void;
@@ -34,7 +33,6 @@ export function DockTabChrome({
 	agentState,
 	agentNeedsAttention = false,
 	agentStatusLabel,
-	titleAttribute,
 	closeAriaLabel,
 	style,
 	onClose,
@@ -67,7 +65,6 @@ export function DockTabChrome({
 			data-panel-id={panelId}
 			data-has-color={hasCustomColor}
 			data-terminal-activity={activityState}
-			title={titleAttribute ?? resolvedTitle}
 			style={style}
 			onPointerDown={longPress.onPointerDown}
 			onPointerMove={longPress.onPointerMove}
