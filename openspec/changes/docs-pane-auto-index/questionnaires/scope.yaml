@@ -1,0 +1,55 @@
+title: Documentation pane auto-expand and background indexing
+intro: |
+  Three decisions before I write the proposal for: Documentation tab auto-expands,
+  indexes in the background, and shows a spinner + stop button in the pane header.
+
+status: submitted
+submitted_at: "2026-09-19T22:25:29+01:00"
+
+questions:
+  - id: expand_policy
+    type: select
+    prompt: When should the Documentation pane auto-expand?
+    help: |
+      The collapsed/expanded state is persisted per project (isDocumentationPaneCollapsed).
+      I'd lean "every visit": simplest, matches what you described, and the pane is the
+      only thing in that sidebar group so a collapsed state there has little value.
+    required: true
+    options:
+      - every visit - selecting the Documentation sidebar group always expands the pane
+      - first visit per app session - respect a manual collapse until the app restarts
+      - first visit ever - respect a manual collapse permanently once made
+    answer: first visit per app session - respect a manual collapse until the app restarts
+
+  - id: index_lifetime
+    type: select
+    prompt: When should indexing run, and what keeps it alive?
+    help: |
+      Today the catalog controller is torn down whenever the pane is collapsed. I'd lean
+      "on first visit, then live for the project": indexing starts when you first open the
+      Documentation group, and the controller (plus its file watcher) then stays alive for
+      the project regardless of sidebar tab, sidebar visibility or pane collapse.
+    required: true
+    options:
+      - on first visit, then live for the project
+      - eagerly when the project opens, before you ever visit the tab
+      - on first visit, and disposed when the project tab is backgrounded
+    answer: on first visit, then live for the project
+
+  - id: stop_semantics
+    type: select
+    prompt: What does the stop button do to results already fetched?
+    help: |
+      The catalog is paged; a run can have several pages in flight. I'd lean "keep what
+      arrived": show the partial tree with the existing "Showing a partial document
+      catalog." note, and put the refresh icon back.
+    required: true
+    options:
+      - keep pages already fetched and show them as a partial catalog
+      - discard the run entirely and keep the previously loaded catalog (empty if none)
+    answer: discard the run entirely and keep the previously loaded catalog (empty if none)
+
+  - id: notes
+    type: textarea
+    prompt: Anything else about the behaviour or the header UI?
+    help: Optional - e.g. whether the count badge should show while indexing.
