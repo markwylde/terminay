@@ -51,3 +51,18 @@ export function selfCloseVoidHtmlElements(markdown: string): string {
 		})
 		.join('\n');
 }
+
+/**
+ * A single newline inside a Markdown paragraph is a soft line break: it renders
+ * as a space, and only a blank line starts a new paragraph. Collapse it to the
+ * space it stands for.
+ *
+ * This runs on an mdast `text` node's value, never on raw source, so the parser
+ * has already decided what is prose: code, tables, hard breaks, and list and
+ * quote markers are other node types and never reach here. Surrounding spaces
+ * and tabs go with the newline, because the wrap itself is the only thing the
+ * author meant by them.
+ */
+export function collapseSoftLineBreaks(text: string): string {
+	return text.replace(/[ \t]*\n[ \t]*/gu, ' ');
+}

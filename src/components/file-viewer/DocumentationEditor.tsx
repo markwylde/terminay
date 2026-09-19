@@ -1,7 +1,4 @@
-import {
-	MDXEditor,
-	type MDXEditorMethods,
-} from '@mdxeditor/editor';
+import { MDXEditor, type MDXEditorMethods } from '@mdxeditor/editor';
 import type { MdxRuntimeClient } from '@terminay/client-core';
 import {
 	Component,
@@ -28,8 +25,6 @@ import '@fontsource/open-sans/latin-400.css';
 import '@fontsource/open-sans/latin-600.css';
 import '@fontsource/open-sans/latin-700.css';
 import '@mdxeditor/editor/style.css';
-
-
 
 type DocumentationEditorProps = Readonly<{
 	markdown: string;
@@ -146,11 +141,17 @@ function DocumentationEditorSurface({
 		);
 	const handleChange = useCallback(
 		(next: string, initial: boolean) => {
-			if (suppressModeChangeRef.current || next === valueRef.current)
-				return;
+			if (suppressModeChangeRef.current || next === valueRef.current) return;
+			// Opening a document is not editing it. The editor reports the
+			// normalized form of what it just parsed — soft line breaks collapsed
+			// to the spaces they stand for, and whatever else its serializer spells
+			// differently — and taking that as an edit would mark a file dirty and
+			// rewrite it on disk for having been read. Keep the value so the
+			// document is not re-imported, and wait for the user.
 			valueRef.current = next;
+			if (initial) return;
 			onChange(next);
-			autosaveRef.current?.changed(next, initial);
+			autosaveRef.current?.changed(next, false);
 		},
 		[onChange],
 	);
@@ -396,7 +397,10 @@ function DocumentationEditorSurface({
 						</button>
 					) : null}
 					{state === 'failed' || state === 'conflict' ? (
-						<button type="button" onClick={() => void autosaveRef.current?.flush()}>
+						<button
+							type="button"
+							onClick={() => void autosaveRef.current?.flush()}
+						>
 							Retry save
 						</button>
 					) : null}
