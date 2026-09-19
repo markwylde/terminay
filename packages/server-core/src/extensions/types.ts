@@ -1,129 +1,9 @@
 import type {
-	AgentLifecycleEvent,
-	AgentProviderContribution,
+	AgentSessionSourceContribution,
 	ExtensionDependency,
-	JsonValue,
 	LanguageServerContribution,
+	McpInstallTargetContribution,
 } from '@terminay/extension-api';
-
-/**
- * Server-issued identity for one terminal incarnation. Lifecycle publication
- * is scoped to this context. The child also receives `shellPid` so it can
- * observe the PTY with Node.
- */
-export interface ExtensionAgentTerminalContext {
-	readonly contextId: string;
-	readonly serverId: string;
-	readonly projectId: string;
-	readonly terminalSessionId: string;
-	readonly terminalIncarnationId: string;
-	readonly providerId: string;
-	/** Present so the extension child can observe the PTY with Node. */
-	readonly shellPid?: number;
-	readonly ttyPath?: string;
-}
-
-export interface ExtensionAgentTerminalAdmission {
-	readonly context: ExtensionAgentTerminalContext;
-	readonly observationCapabilities: readonly string[];
-}
-
-export type ExtensionAgentTerminalCancellationReason =
-	| 'terminal-closed'
-	| 'terminal-replaced'
-	| 'provider-disabled'
-	| 'extension-stopped'
-	| 'server-stopping';
-
-export interface ExtensionAgentTerminalCancellation {
-	readonly contextId: string;
-	readonly reason: ExtensionAgentTerminalCancellationReason;
-}
-
-/**
- * A request made by an admitted agent runtime. The host validates both the
- * operation and payload before exposing any process or filesystem facts.
- */
-export type ExtensionAgentObservationOperation =
-	| 'process.foreground'
-	| 'process.descendants'
-	| 'process.open-files'
-	| 'process.environment'
-	| 'terminal.tty'
-	| 'filesystem.resolve-home-relative'
-	| 'filesystem.resolve-home-directory'
-	| 'filesystem.resolve-path-under-home'
-	| 'filesystem.home-relative-path'
-	| 'filesystem.resolve-relative-to-environment'
-	| 'filesystem.resolve-directory-relative-to-environment'
-	| 'filesystem.resolve-path-under-environment'
-	| 'filesystem.environment-relative-path'
-	| 'filesystem.list-directory'
-	| 'filesystem.directory-path'
-	| 'filesystem.watch-directory'
-	| 'filesystem.unwatch-directory'
-	| 'filesystem.realpath'
-	| 'filesystem.stat'
-	| 'filesystem.read'
-	| 'filesystem.follow'
-	| 'filesystem.unfollow';
-
-export interface ExtensionAgentObservationRequest {
-	readonly contextId: string;
-	readonly providerId: string;
-	readonly operation: ExtensionAgentObservationOperation;
-	readonly payload: JsonValue;
-}
-
-export interface ExtensionAgentObservationResult {
-	readonly contextId: string;
-	readonly ok: boolean;
-	readonly value?: JsonValue;
-	readonly failure?: string;
-}
-
-/**
- * Provider-normalized lifecycle events remain structured JSON at this private
- * IPC boundary. Canonical event validation, terminal ownership, and ordering
- * are host responsibilities and happen before acknowledgement.
- */
-export interface ExtensionAgentLifecyclePublication {
-	readonly contextId: string;
-	readonly providerId: string;
-	readonly publicationId: string;
-	readonly mappingVersion: string;
-	/** A bind publication contains no lifecycle events and establishes the
-	 * provider session identity before any later lifecycle publication. */
-	readonly binding?: JsonValue;
-	readonly events: readonly AgentLifecycleEvent[];
-}
-
-export interface ExtensionAgentLifecycleAcknowledgement {
-	readonly contextId: string;
-	readonly publicationId: string;
-	readonly acceptedEventCount: number;
-	readonly rejectedEventCount: number;
-	readonly failure?: string;
-}
-
-/**
- * The host can pause publication without dropping a terminal binding. A child
- * must retain its bounded pending events and resume only when the state returns
- * to normal or a later acknowledgement permits progress.
- */
-export interface ExtensionAgentLifecycleBackpressure {
-	readonly contextId: string;
-	readonly state: 'normal' | 'pause' | 'drain';
-	readonly maxInFlightPublications: number;
-	readonly retryAfterMs?: number;
-}
-
-export interface ExtensionAgentDrainRequest {
-	readonly reason:
-		| 'provider-disabled'
-		| 'extension-stopped'
-		| 'server-stopping';
-}
 
 export type ExtensionHostState =
 	| 'stopped'
@@ -143,7 +23,9 @@ export interface ExtensionLaunchDescriptor {
 	/** Parsed public manifest contribution metadata. The installer supplies it
 	 * after public manifest validation; the host uses it to reject undeclared
 	 * child registrations before they become live. */
-	readonly agentProviders?: readonly AgentProviderContribution[];
+	readonly agentSessionSources?: readonly AgentSessionSourceContribution[];
+	/** Declared MCP install targets, checked the same way. */
+	readonly mcpInstallTargets?: readonly McpInstallTargetContribution[];
 	/** Declared language servers. The host refuses a child registration that
 	 * this array does not contain. */
 	readonly languageServers?: readonly LanguageServerContribution[];
@@ -156,7 +38,8 @@ export interface ExtensionHostStatus {
 	readonly consecutiveCrashes: number;
 	readonly restartAt?: number;
 	readonly failure?: string;
-	readonly agentProviders?: readonly AgentProviderContribution[];
+	readonly agentSessionSources?: readonly AgentSessionSourceContribution[];
+	readonly mcpInstallTargets?: readonly McpInstallTargetContribution[];
 	readonly languageServers?: readonly LanguageServerContribution[];
 }
 
@@ -188,47 +71,36 @@ export interface ExtensionBroker {
 	): Promise<unknown>;
 }
 
-/** Private host bridge for public agent-runtime operations. It deliberately
- * accepts already validated public DTOs and keeps binding ownership, canonical
- * sequencing, and store reduction in Server Core. Installed extensions never
- * receive this bridge directly. */
+/**
+ * Private host bridge for session-source publications. Installed extensions
+ * never receive it: the host validates a publication's frame, then hands it
+ * here, where validation of every snapshot, ordering, project scope, and
+ * terminal binding stay in Server Core.
+ */
 export interface ExtensionAgentBroker {
-	observe(
-		request: Readonly<{
-			extensionId: string;
-			providerId: string;
-			terminal: ExtensionAgentTerminalContext;
-			operation: ExtensionAgentObservationOperation;
-			payload: JsonValue;
-		}>,
-		signal: AbortSignal,
-	): Promise<JsonValue>;
 	publish(
 		request: Readonly<{
 			extensionId: string;
-			providerId: string;
-			terminal: ExtensionAgentTerminalContext;
-			publicationId: string;
-			mappingVersion: string;
-			binding?: JsonValue;
-			events: readonly AgentLifecycleEvent[];
+			sourceId: string;
+			publication: Readonly<{
+				reset?: readonly unknown[];
+				upserts?: readonly unknown[];
+				removals?: readonly unknown[];
+			}>;
 		}>,
 		signal: AbortSignal,
-	): Promise<
-		Readonly<{
-			acceptedEventCount: number;
-			rejectedEventCount?: number;
-			failure?: string;
-		}>
-	>;
-	terminalCancelled?(
+	): Promise<Readonly<{ ok: boolean; resend?: boolean; failure?: string }>>;
+	diagnostic?(
 		request: Readonly<{
 			extensionId: string;
-			providerId: string;
-			terminal: ExtensionAgentTerminalContext;
-			reason: ExtensionAgentTerminalCancellationReason;
+			sourceId: string;
+			diagnostic: unknown;
 		}>,
-	): Promise<void> | void;
+	): void;
+	/** A source stopped: disposed, its extension stopped, or its child died. */
+	sourceStopped?(
+		request: Readonly<{ extensionId: string; sourceId: string }>,
+	): void;
 }
 
 export interface ExtensionHostLimits {

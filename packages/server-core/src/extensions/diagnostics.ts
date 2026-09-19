@@ -86,47 +86,6 @@ export type ExtensionHostDiagnosticListener = (
 	diagnostic: ExtensionHostDiagnostic,
 ) => void;
 
-/** How far a terminal got towards being observed by an agent provider. */
-export type AgentObservationTransition =
-	/** A provider matched the terminal's foreground process. */
-	| 'matched'
-	/** The provider accepted the terminal and began observing. */
-	| 'admitted'
-	/** The provider bound a session, so the terminal shows agent state. */
-	| 'bound'
-	/** Admission failed; the terminal falls back to activity signalling. */
-	| 'admission-failed'
-	/** The observer was released, by shell return, replacement, or shutdown. */
-	| 'released';
-
-/** The opaque terminal an observation record is about. */
-export interface AgentObservationTerminal {
-	readonly serverId: string;
-	readonly projectId: string;
-	readonly sessionId: string;
-}
-
-/**
- * One agent observation outcome for one terminal.
- *
- * A terminal that never shows an agent has several possible causes, and only
- * these records separate them: no provider matched, admission failed, or
- * admission succeeded and no session was ever bound.
- */
-export interface AgentObservationDiagnostic {
-	readonly providerId: string;
-	readonly terminal: AgentObservationTerminal;
-	readonly transition: AgentObservationTransition;
-	readonly at: number;
-	readonly failureClass?: string;
-	readonly reason?: string;
-	readonly error?: ExtensionErrorDetail;
-}
-
-export type AgentObservationDiagnosticListener = (
-	diagnostic: AgentObservationDiagnostic,
-) => void;
-
 /** Reduce an unknown thrown value to the detail these records carry. */
 export function extensionErrorDetail(cause: unknown): ExtensionErrorDetail {
 	if (cause instanceof Error)

@@ -29,10 +29,10 @@ test("a language-server-only manifest is a supported contribution", () => {
     ...validLanguageServerManifestFixture,
     permissions: ["agent-observation"],
     contributes: {
-      agentProviders: [{
-        id: "dev.terminay.language-fixture/agent",
-        displayName: "Fixture Agent",
-        processMatchers: [{ executableName: "fixture-agent" }],
+      agentSessionSources: [{
+        id: "dev.terminay.language-fixture/agents",
+        displayName: "Fixture Agents",
+        harnesses: [{ id: "fixture-agent", displayName: "Fixture Agent" }],
       }],
       languageServers: validLanguageServerManifestFixture.contributes.languageServers,
     },

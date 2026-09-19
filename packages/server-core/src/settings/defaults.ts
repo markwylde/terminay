@@ -7,7 +7,7 @@ import type { SettingsObject } from './types.js';
 
 /** Defaults owned by Terminay Server. Device/rendering settings are excluded. */
 export const DEFAULT_SERVER_SETTINGS: SettingsObject = {
-	agentIntegration: { enabled: true },
+	agentIntegration: { enabled: true, harnesses: {} },
 	aiTabMetadata: {
 		title: { provider: 'disabled', claudeCodeModel: '', codexModel: '' },
 		note: { provider: 'disabled', claudeCodeModel: '', codexModel: '' },

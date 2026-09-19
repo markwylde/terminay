@@ -173,7 +173,6 @@ export function createAgentEventProjector(
 				entries: entries as unknown as ReturnType<
 					AgentStatusService['getSnapshot']
 				>['entries'],
-				eventCursors: Object.freeze({}),
 			},
 			projectId,
 		);

@@ -22,11 +22,7 @@ const repository = resolve(new URL('..', import.meta.url).pathname);
 const npmCli = join(repository, 'node_modules', 'npm', 'bin', 'npm-cli.js');
 const SDK = '@terminay/extension-api';
 const expectedIds = new Set([
-	'com.terminay.agent.codex',
-	'com.terminay.agent.claude-code',
-	'com.terminay.agent.grok',
-	'com.terminay.agent.opencode',
-	'com.terminay.agent.omp',
+	'com.terminay.builtin-agents',
 	'com.terminay.language.typescript',
 ]);
 
@@ -81,13 +77,20 @@ export async function stageBuiltInExtensions(options = {}) {
 			);
 			assertPackage(entry, packageJson);
 			const dependencies = Object.keys(packageJson.dependencies ?? {}).sort();
+			// Optional dependencies ship too: a prebuilt native module such as a
+			// process-exit watcher is how an extension avoids polling. One that npm
+			// did not install on this machine is simply absent from the closure.
+			const optionalDependencies = Object.keys(
+				packageJson.optionalDependencies ?? {},
+			).sort();
 			const copied =
-				dependencies.length === 0
+				dependencies.length + optionalDependencies.length === 0
 					? []
 					: await stageProductionDependencyClosure({
 							destinationModules: join(artifactDirectory, 'node_modules'),
 							runtimeModules: join(root, 'node_modules'),
 							rootPackages: dependencies,
+							optionalRootPackages: optionalDependencies,
 						});
 			// npm pack applies ignore rules recursively, including to dependency
 			// trees nested below this package's dist directory. Strip npm's own
@@ -101,6 +104,7 @@ export async function stageBuiltInExtensions(options = {}) {
 				join(artifactDirectory, 'package-lock.json'),
 				`${JSON.stringify(lockForArtifact(rootLock, packageJson, archive, sdk, copied), null, 2)}\n`,
 			);
+			await signMacNativeModules(artifactDirectory);
 			const tree = await inventoryTree(artifactDirectory);
 			const lockHash = sha256(
 				await readFile(join(artifactDirectory, 'package-lock.json')),
@@ -261,6 +265,50 @@ async function inventoryTree(root) {
 	return files.sort((left, right) => left.path.localeCompare(right.path));
 }
 
+/** Sign macOS native modules before they are hashed. electron-builder skips
+ * them (`mac.signIgnore`), so the bytes the inventory records are the bytes
+ * that ship and notarisation still finds every Mach-O signed. Without a
+ * signing identity (CI, Linux) nothing changes. */
+async function signMacNativeModules(root) {
+	const identity = await macSigningIdentity();
+	if (!identity) return;
+	for (const { path } of await inventoryTree(root)) {
+		if (!path.endsWith('.node')) continue;
+		const file = join(root, path);
+		if (!isMachO(await readFile(file))) continue;
+		await runFile('codesign', [
+			'--force',
+			'--options',
+			'runtime',
+			'--timestamp',
+			'--sign',
+			identity,
+			file,
+		]);
+	}
+}
+
+async function macSigningIdentity() {
+	if (process.platform !== 'darwin') return null;
+	if (process.env.CSC_IDENTITY_AUTO_DISCOVERY === 'false') return null;
+	if (process.env.CSC_NAME) return process.env.CSC_NAME;
+	const { stdout } = await runFile('security', [
+		'find-identity',
+		'-v',
+		'-p',
+		'codesigning',
+	]);
+	return /"(Developer ID Application: [^"]+)"/.exec(stdout)?.[1] ?? null;
+}
+
+function isMachO(bytes) {
+	if (bytes.byteLength < 4) return false;
+	const magic = bytes.readUInt32BE(0);
+	return [0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe, 0xcafebabe].includes(
+		magic,
+	);
+}
+
 async function assertRegularTree(root) {
 	for (const entry of await inventoryTree(root)) void entry;
 }
@@ -278,10 +326,10 @@ async function loadCatalogue(path) {
 	if (
 		value?.schemaVersion !== 1 ||
 		!Array.isArray(value.extensions) ||
-		value.extensions.length !== 6
+		value.extensions.length !== expectedIds.size
 	)
 		throw new Error(
-			'built-in extension catalogue must name exactly six extensions',
+			`built-in extension catalogue must name exactly ${expectedIds.size} extensions`,
 		);
 	const entries = value.extensions.map((entry) => {
 		if (
@@ -303,8 +351,10 @@ async function loadCatalogue(path) {
 		});
 	});
 	if (
-		new Set(entries.map((entry) => entry.extensionId)).size !== 6 ||
-		new Set(entries.map((entry) => entry.packageName)).size !== 6 ||
+		new Set(entries.map((entry) => entry.extensionId)).size !==
+			expectedIds.size ||
+		new Set(entries.map((entry) => entry.packageName)).size !==
+			expectedIds.size ||
 		!entries.every((entry) => expectedIds.has(entry.extensionId))
 	)
 		throw new Error(

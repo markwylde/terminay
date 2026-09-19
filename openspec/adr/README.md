@@ -41,7 +41,7 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0011](./0011-security-trust-boundary-model.md) | Adopt an explicit trust-boundary model as the security contract for release review | accepted | 2026-07-27 |
 | [0012](./0012-pwa-framed-session-host.md) | Keep the installable PWA on the manager origin and frame the session origin | accepted | 2026-08-18 |
 | [0013](./0013-device-bound-host-approval-and-channel-only-credentials.md) | Pair with device-bound host approval, and exchange credentials only on transport-authenticated data channels | accepted | 2026-09-02 |
-| [0014](./0014-declared-provider-capabilities-proven-against-real-clis.md) | Make agent providers declare their observable capabilities and prove them against real CLIs | accepted | 2026-09-06 |
+| [0014](./0014-declared-provider-capabilities-proven-against-real-clis.md) | Make agent providers declare their observable capabilities and prove them against real CLIs | accepted (superseded by 0025) | 2026-09-06 |
 | [0015](./0015-self-hosted-direct-signaling-exposure.md) | A Terminay Server may host its own data-blind signaling endpoint, authenticated by the transport transcript alone | accepted | 2026-09-07 |
 | [0016](./0016-self-contained-server-archives-and-release-channels.md) | Distribute the standalone server as signed self-contained per-architecture archives on tag and rolling `main` channels | accepted | 2026-09-07 |
 | [0017](./0017-one-server-type-every-project-executes-on-its-server.md) | There is one kind of remote, a Terminay Server, and every project executes on the server that owns it | accepted, supersedes 0009 | 2026-09-09 |
@@ -51,4 +51,6 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0021](./0021-measure-background-cost-in-spawns-not-parent-syscalls.md) | Measure idle background cost in child processes, not in the parent's syscalls | accepted | 2026-09-15 |
 | [0022](./0022-watch-do-not-poll.md) | Watch for changes; never poll for anything a watch can observe | accepted | 2026-09-15 |
 | [0023](./0023-server-owned-clipboard-scratch.md) | Materialise browser clipboard images in a server-owned scratch directory | accepted | 2026-09-15 |
-| [0024](./0024-providers-name-the-directories-they-await.md) | An agent provider that cannot bind names the directories it awaits; the host watches them and nothing else re-runs discovery | accepted | 2026-09-16 |
+| [0024](./0024-providers-name-the-directories-they-await.md) | An agent provider that cannot bind names the directories it awaits; the host watches them and nothing else re-runs discovery | accepted (superseded by 0025) | 2026-09-16 |
+| [0025](./0025-agent-sessions-come-from-a-machine-wide-detection-library.md) | Agent sessions come from a machine-wide detection library; the host scopes them by directory and binds them by process ancestry | accepted, supersedes 0014, 0024 | 2026-09-19 |
+| [0026](./0026-extensions-may-ship-prebuilt-native-modules.md) | Extensions may ship prebuilt native modules; install scripts stay disabled | accepted | 2026-09-19 |

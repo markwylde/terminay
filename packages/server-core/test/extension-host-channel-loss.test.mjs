@@ -6,32 +6,27 @@ import { join } from "node:path";
 import { ExtensionHost } from "../dist/index.js";
 
 const PROVIDER = "example.channel-loss/cli";
-const CONTEXT = "extension-agent:test-context:1";
 
 /**
  * A child that speaks the protocol directly, so the exact shape that
- * quarantined Claude Code can be reproduced: several lifecycle publications
+ * quarantined Claude Code can be reproduced: several session publications
  * still awaiting the host when the child process dies.
  */
 const FAKE_CHILD = `
 process.on('message', (frame) => {
   if (frame.kind === 'activate') {
     process.send({ protocolVersion: 1, kind: 'ready', id: frame.id, payload: {
-      methods: [], providers: [], agentProviders: ['${PROVIDER}'], dependencyProviders: [],
+      methods: [], agentSessionSources: ['${PROVIDER}'],
     } });
     return;
   }
-  if (frame.kind === 'agent.terminal.admit') {
-    process.send({ protocolVersion: 1, kind: 'agent.terminal.admitted', id: frame.id,
-      payload: { contextId: frame.payload.context.contextId, state: 'bound' } });
+  if (frame.kind === 'agent.source.start') {
+    process.send({ protocolVersion: 1, kind: 'result', id: frame.id });
     // Publish more than the crash threshold, then die with them all in flight.
     for (let index = 0; index < 10; index += 1) {
-      process.send({ protocolVersion: 1, kind: 'agent.lifecycle.publish', id: 'publication-' + index, payload: {
-        contextId: frame.payload.context.contextId,
-        providerId: '${PROVIDER}',
-        publicationId: 'publication-' + index,
-        mappingVersion: '0.1',
-        events: [{ kind: 'session.started', title: 'Publication ' + index, occurredAt: '2026-09-09T14:41:46.000Z' }],
+      process.send({ protocolVersion: 1, kind: 'agent.source.publish', id: 'publication-' + index, payload: {
+        sourceId: '${PROVIDER}',
+        upserts: [{ id: 'session-' + index, harness: 'fixture', pid: 100 + index, cwd: '/work', title: 'Publication ' + index }],
       } });
     }
     setTimeout(() => process.exit(9), 30);
@@ -55,9 +50,10 @@ async function fixture() {
       dataDirectory: join(root, "data"),
       cacheDirectory: join(root, "cache"),
       permissions: ["agent-observation"],
-      agentProviders: [{
+      agentSessionSources: [{
         id: PROVIDER,
         displayName: "Channel loss",
+        harnesses: [{ id: "fixture", displayName: "Fixture" }],
       }],
     },
   };
@@ -84,23 +80,12 @@ test("a child dying with publications in flight counts one death, not one per ac
     // Hold every publication open, so all ten acknowledgements are still owed
     // when the child dies — the recorded incident's exact shape.
     agents: {
-      async observe() { return {}; },
-      async publish() { await held; return { acceptedEventCount: 1 }; },
+      async publish() { await held; return { ok: true }; },
     },
   });
 
   await host.start(value.descriptor);
-  await host.admitAgentTerminal({
-    context: {
-      contextId: CONTEXT,
-      serverId: "server-1",
-      projectId: "project-1",
-      terminalSessionId: "terminal-1",
-      terminalIncarnationId: "1",
-      providerId: PROVIDER,
-    },
-    observationCapabilities: ["process-observation"],
-  });
+  await host.startSessionSource(PROVIDER, ["fixture"]);
 
   await waitFor(
     () => records.some((record) => record.transition === "child-exited"),
@@ -136,7 +121,7 @@ test("a write refused after the child has gone and repeated child errors never b
     broker: { async request() {} },
     childEntrypoint: value.childEntrypoint,
     onDiagnostic: (record) => records.push(record),
-    agents: { async observe() { return {}; }, async publish() { return { acceptedEventCount: 1 }; } },
+    agents: { async publish() { return { ok: true }; } },
   });
   await host.start(value.descriptor);
   const child = host["child"];
@@ -150,7 +135,7 @@ test("a write refused after the child has gone and repeated child errors never b
     return true;
   };
   for (let index = 0; index < 5; index += 1)
-    host["send"]({ protocolVersion: 1, kind: "agent.lifecycle.ack", id: `ack-${index}`, payload: {} });
+    host["send"]({ protocolVersion: 1, kind: "agent.source.ack", id: `ack-${index}`, payload: {} });
   await new Promise((resolve) => setImmediate(resolve));
 
   // A ChildProcess emits `error` once per failed write or kill. An emitter
@@ -207,7 +192,7 @@ await import(${JSON.stringify(new URL("../dist/extensions/child.js", import.meta
     childEntrypoint: wrapper,
     onDiagnostic: (record) => records.push(record),
   });
-  const { agentProviders: _unused, ...descriptor } = value.descriptor;
+  const { agentSessionSources: _unused, ...descriptor } = value.descriptor;
   await host.start({ ...descriptor, extensionId: "example.backlog", permissions: [] });
   for (let index = 0; index < 5; index += 1)
     assert.equal(await host.invoke({ method: "echo", input: index }), index);
