@@ -28,20 +28,14 @@ export function createTerminalLinkInteraction(options: {
   openExternal(uri: string): Promise<unknown> | unknown
   pointerTarget: PointerStyleTarget
   now?: () => number
-  /**
-   * A touch device has no modifier key to hold, so requiring one there makes a
-   * link unopenable rather than deliberate. A tap is the deliberate gesture.
-   */
-  isTouchActivation?(): boolean
 }): TerminalLinkInteraction {
   const now = options.now ?? (() => performance.now())
-  const isTouchActivation = options.isTouchActivation ?? (() => false)
   let lastOpenedLink: { uri: string; openedAt: number } | undefined
 
   return {
     activate(event, uri) {
       const modifierKey = options.isMac ? event.metaKey : event.ctrlKey
-      if (!modifierKey && !isTouchActivation()) {
+      if (!modifierKey) {
         return
       }
 
@@ -68,4 +62,43 @@ export function createTerminalLinkInteraction(options: {
       options.pointerTarget.style.cursor = ''
     },
   }
+}
+
+export type BrowserHandoffPlatform = 'ios' | 'android'
+
+/**
+ * The platforms whose browser app can be reached by URL scheme. An installed
+ * web app opens `window.open` in an in-app sheet on both, so the scheme is the
+ * only way into the browser the user actually uses.
+ */
+export function detectBrowserHandoffPlatform(nav: {
+  userAgent: string
+  platform?: string
+  maxTouchPoints?: number
+}): BrowserHandoffPlatform | null {
+  if (/Android/i.test(nav.userAgent)) return 'android'
+  if (/iPhone|iPad|iPod/.test(nav.userAgent)) return 'ios'
+  // iPadOS reports itself as a Mac; only the touch points give it away.
+  if (nav.platform === 'MacIntel' && (nav.maxTouchPoints ?? 0) > 1) return 'ios'
+  return null
+}
+
+/**
+ * A URL that hands a credential-free HTTP or HTTPS link to the platform
+ * browser app: `x-safari-` on iOS 17+, a Chrome intent on Android. Neither is
+ * a web standard, so callers keep an ordinary open alongside it.
+ */
+export function platformBrowserUrl(uri: string, platform: BrowserHandoffPlatform): string | null {
+  let url: URL
+  try {
+    url = new URL(uri)
+  } catch {
+    return null
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+  if (url.username !== '' || url.password !== '') return null
+  if (platform === 'ios') return `x-safari-${url.href}`
+  const scheme = url.protocol.slice(0, -1)
+  const rest = url.href.slice(url.protocol.length + 2)
+  return `intent://${rest}#Intent;scheme=${scheme};package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(url.href)};end`
 }

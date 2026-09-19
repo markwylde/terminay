@@ -227,10 +227,9 @@ export function createTerminalTouchSelectionDriver({
  * A tap that may be on a link. xterm resolves links from mouse movement, and
  * touch delivers none, so replay a move at the tap position; both link
  * providers answer synchronously, so the hover callback has already reported
- * the link under the finger when the dispatch returns. Open it right here
+ * the link under the finger when the dispatch returns. Hand it on right here
  * rather than through xterm's own mouse-up activation, which needs a mousedown
- * the tap never sends, and which would run after the tap's user activation has
- * ended, where iOS silently blocks the window it opens.
+ * the tap never sends. Returns whether a link was under the finger.
  *
  * xterm skips a move to the cell it last resolved, which would leave a link
  * cleared since then unresolved. Two moves to opposite corners of the grid
@@ -248,7 +247,7 @@ export function activateTerminalLinkAtTouch({
 	open: (uri: string) => void;
 	point: TouchSelectionPoint;
 	screenElement: MouseEventTarget;
-}): void {
+}): boolean {
 	const moveTo = (clientX: number, clientY: number) =>
 		screenElement.dispatchEvent(
 			new MouseEvent('mousemove', {
@@ -260,7 +259,9 @@ export function activateTerminalLinkAtTouch({
 	moveTo(OFF_GRID_PX, OFF_GRID_PX);
 	moveTo(point.clientX, point.clientY);
 	const uri = linkUnderPointer();
-	if (uri !== null) open(uri);
+	if (uri === null) return false;
+	open(uri);
+	return true;
 }
 
 const OFF_GRID_PX = 1_000_000;

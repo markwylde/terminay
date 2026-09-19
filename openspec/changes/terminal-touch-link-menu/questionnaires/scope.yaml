@@ -1,0 +1,54 @@
+title: Touch link menu
+intro: |
+  Tapping a terminal link on touch/PWA currently opens it straight away via
+  window.open, which an installed PWA shows in an in-app browser sheet.
+
+  On the "real browser" question: there is no standard web API for it.
+  Workarounds exist — iOS 17+ honours `x-safari-https://…` and Android honours
+  `intent://…;package=com.android.chrome;end` — but they're undocumented and
+  can break or show a confirm prompt.
+
+status: submitted
+submitted_at: "2026-09-19T14:36:37+01:00"
+
+questions:
+  - id: menu_items
+    type: multiselect
+    prompt: Which items should the tap menu show?
+    help: Your list, plus Paste to match the desktop right-click menu. I'd skip Paste — tapping a link isn't a paste gesture.
+    required: true
+    options: [Copy Text, Copy Link, Open Link, Paste]
+    answer:
+      - Copy Text
+      - Copy Link
+      - Open Link
+    comment: Why did you need to ask me this? I already told you what ot include in the context menu.Add to your global Claude md  (under where it says to use quizme) to not ask me pointless questions you already know the answer to. you should not waste my time.
+
+  - id: copy_text_meaning
+    type: select
+    prompt: What should "Copy Text" copy?
+    help: For OSC-8 hyperlinks the visible label differs from the URL. For plain detected URLs they're identical. I'd copy the visible link text.
+    options:
+      - The link's visible text
+      - The whole terminal line
+      - The current selection
+    answer: The link's visible text
+
+  - id: scope
+    type: select
+    prompt: When should a tap show the menu instead of opening?
+    help: I'd do every touch tap (PWA and mobile Safari tabs alike) — consistent and simpler than detecting standalone mode.
+    options:
+      - Any touch tap
+      - Only in installed PWA (standalone) mode
+    answer: Any touch tap
+
+  - id: real_browser
+    type: select
+    prompt: How should "Open Link" open in the real browser?
+    help: I'd use the scheme hacks on iOS/Android with window.open as the fallback — best effort, and it degrades to today's behaviour.
+    options:
+      - Scheme hacks (x-safari-https / Android intent) with fallback
+      - Keep window.open (in-app sheet)
+      - Offer both "Open Link" and "Open in Browser"
+    answer: Offer both "Open Link" and "Open in Browser"
