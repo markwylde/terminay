@@ -5,7 +5,7 @@
 	"version": "0.0.0",
 	"description": "A desktop terminal workspace built with Electron, React, and Vite.",
 	"author": "Mark Wylde",
-	"license": "MIT",
+	"license": "AGPL-3.0-or-later",
 	"repository": {
 		"type": "git",
 		"url": "git@github.com:markwylde/terminay.git"

@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "type": "module",
   "description": "The Terminay command-line interface. Installs and controls a headless Terminay Server on Linux.",
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/markwylde/terminay.git",

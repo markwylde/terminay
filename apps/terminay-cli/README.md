@@ -161,4 +161,4 @@ your paired device records — unless you pass `--purge`.
 
 ## License
 
-MIT
+AGPL-3.0-or-later
