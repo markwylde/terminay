@@ -17,7 +17,8 @@ test("Electron remains the owner of native integration and Local supervision", a
   assert.match(main, /import\s+\{[^}]*\b(?:app|Menu|shell|safeStorage)\b[^}]*\}\s+from ['"]electron['"]/u);
   assert.match(main, /function createAppMenu\(/u);
   assert.match(main, /Menu\.setApplicationMenu\(/u);
-  assert.match(main, /async function getAppUpdateStatus\(/u);
+  assert.match(main, /function getAppUpdater\(/u);
+  assert.match(main, /createAppUpdater\(/u);
   assert.match(main, /createGracefulQuitHandler\(/u);
   assert.match(main, /app\.on\('before-quit'/u);
 
