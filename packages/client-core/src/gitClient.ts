@@ -21,6 +21,7 @@ export const GIT_CLIENT_OPERATIONS = Object.freeze({
   copy: "git.worktree.copy",
   pull: "git.worktree.pull",
   remove: "git.worktree.remove",
+  removeClean: "git.worktree.remove-clean",
   move: "git.worktree.move",
   quickPushPropose: "git.quick-push.propose",
   quickPushApprove: "git.quick-push.approve",
@@ -121,6 +122,14 @@ export class TerminayGitClient {
   remove(reference: GitWorktreeReference, expectedHead?: string | null, options: CommandOptions = {}): Promise<JsonValue> {
     const value = validatedReference(reference);
     return this.transport.command(GIT_CLIENT_OPERATIONS.remove, { ...value, ...(expectedHead === undefined ? {} : { expectedHead: boundedHead(expectedHead) }) }, options);
+  }
+
+  /** Removes the worktree only if the server still finds it clean at the reviewed HEAD. It is a separate
+   * operation from `remove`, so a server that predates it rejects the request instead of forcing a removal. */
+  removeClean(reference: GitWorktreeReference, expectedHead: string, options: CommandOptions = {}): Promise<JsonValue> {
+    const value = validatedReference(reference);
+    if (typeof expectedHead !== "string" || expectedHead.length === 0) throw new TypeError("expectedHead is required for clean-only removal");
+    return this.transport.command(GIT_CLIENT_OPERATIONS.removeClean, { ...value, expectedHead: boundedToken(expectedHead, "expectedHead", 256) }, options);
   }
 
   move(reference: GitWorktreeReference, name: string, expectedHead?: string | null, options: CommandOptions = {}): Promise<JsonValue> {
