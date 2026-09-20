@@ -429,6 +429,66 @@ test("GitService serializes concurrent worktree removals for one repository", as
   }
 });
 
+test("GitService clean-only removal deletes only worktrees that are still clean", async () => {
+  const { GitService, GitServiceError } = await import("../dist/gitService/index.js");
+  const root = await mkdtemp(join(tmpdir(), "terminay-server-git-remove-clean-"));
+  const paths = Object.fromEntries(["clean", "squashed", "untracked", "unmerged", "advanced", "locked"].map((name) => [name, join(root, name)]));
+  try {
+    await git(["init", "-b", "main"], root);
+    await git(["config", "user.email", "test@example.invalid"], root);
+    await git(["config", "user.name", "Terminay Test"], root);
+    await writeFile(join(root, "file.txt"), "base\n");
+    await git(["add", "file.txt"], root);
+    await git(["commit", "-m", "initial"], root);
+    for (const [name, path] of Object.entries(paths)) await git(["worktree", "add", path, "-b", name], root);
+    // A squash-merged branch is ahead by ancestry yet its tree is on main.
+    await writeFile(join(paths.squashed, "squashed.txt"), "squashed\n");
+    await git(["add", "squashed.txt"], paths.squashed);
+    await git(["commit", "-m", "squashed work"], paths.squashed);
+    await git(["merge", "--squash", "squashed"], root);
+    await git(["commit", "-m", "squash merge"], root);
+    await writeFile(join(paths.unmerged, "unmerged.txt"), "unmerged\n");
+    await git(["add", "unmerged.txt"], paths.unmerged);
+    await git(["commit", "-m", "unmerged work"], paths.unmerged);
+    await git(["worktree", "lock", paths.locked], root);
+
+    const service = new GitService();
+    const binding = await service.bindProject("project", root);
+    const listing = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId });
+    const find = (name) => listing.worktrees.find((worktree) => worktree.path.endsWith(`/${name}`));
+    const request = (worktree, expectedHead = worktree.head) => ({ projectId: "project", repositoryId: binding.repositoryId, worktreeId: worktree.id, expectedHead });
+    const main = listing.worktrees.find((worktree) => worktree.isMain);
+    assert.ok(main);
+
+    await assert.rejects(() => service.removeCleanWorktree(request(main)), (error) => error instanceof GitServiceError && error.code === "worktree-main");
+    await assert.rejects(() => service.removeCleanWorktree({ ...request(find("clean")), expectedHead: undefined }), (error) => error instanceof GitServiceError && error.code === "invalid-operation");
+    await assert.rejects(() => service.removeCleanWorktree(request(find("locked"))), (error) => error instanceof GitServiceError && error.code === "worktree-locked");
+    await assert.rejects(() => service.removeCleanWorktree(request(find("unmerged"))), (error) => error instanceof GitServiceError && error.code === "worktree-dirty");
+
+    // Work that lands after the reviewed listing is never swept away.
+    await writeFile(join(paths.untracked, "late.txt"), "written after the listing\n");
+    await assert.rejects(() => service.removeCleanWorktree(request(find("untracked"))), (error) => error instanceof GitServiceError && error.code === "worktree-dirty");
+    await access(join(paths.untracked, "late.txt"));
+    await writeFile(join(paths.advanced, "advanced.txt"), "advanced\n");
+    await git(["add", "advanced.txt"], paths.advanced);
+    await git(["commit", "-m", "advanced after the listing"], paths.advanced);
+    await assert.rejects(() => service.removeCleanWorktree(request(find("advanced"))), (error) => error instanceof GitServiceError && error.code === "stale-revision");
+
+    for (const name of ["clean", "squashed"]) {
+      const removed = await service.removeCleanWorktree(request(find(name)));
+      assert.equal(removed.applied, true);
+      assert.equal(removed.state, "removed");
+      await assert.rejects(() => access(paths[name]));
+      // The branch outlives its worktree.
+      await git(["rev-parse", "--verify", `refs/heads/${name}`], root);
+    }
+    const after = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId });
+    assert.deepEqual(after.worktrees.filter((worktree) => !worktree.isMain).map((worktree) => worktree.path.split("/").at(-1)).sort(), ["advanced", "locked", "unmerged", "untracked"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 async function git(args, cwd) {
   await execFileAsync("git", args, { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
 }

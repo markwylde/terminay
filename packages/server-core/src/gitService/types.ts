@@ -273,6 +273,16 @@ export interface GitWorktreeRemoveRequest {
 	readonly signal?: AbortSignal;
 }
 
+/**
+ * A clean-only removal. The reviewed HEAD is mandatory because the caller
+ * reviewed a listing, not this worktree; the server recomputes cleanliness and
+ * never forces Git.
+ */
+export interface GitWorktreeRemoveCleanRequest
+	extends GitWorktreeRemoveRequest {
+	readonly expectedHead: string;
+}
+
 export interface GitWorktreeRemoveResult {
 	readonly operation: 'remove';
 	readonly projectId: string;

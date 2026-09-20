@@ -21,6 +21,7 @@ import type {
 import { ContextMenu, type ContextMenuItem } from '../ContextMenu';
 import { GitPanel } from './GitPanel';
 import { getPathRelativeToRoot } from '../../pathUtils';
+import { isWorktreeShownClean } from '../../workspace/cleanWorktreeSweep';
 import './gitPanel.css';
 
 export type WorktreesPanelProps = {
@@ -333,7 +334,7 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 													-{worktree.lineDeletions ?? 0}
 												</span>
 											</>
-										) : hasUnmergedOrUncommittedWork ? (
+										) : !isWorktreeShownClean(worktree) ? (
 											<span className="worktrees-panel__changed">changed</span>
 										) : (
 											<span className="worktrees-panel__clean">clean</span>
