@@ -46,6 +46,18 @@ test("TerminayGitClient sends opaque references and reviewed Quick Push data", a
   assert.equal(fake.calls[6][2].targetBranch, "main");
 });
 
+test("TerminayGitClient sends clean-only removal as its own operation and requires the reviewed HEAD", async () => {
+  const fake = transport();
+  const client = new TerminayGitClient(fake, { capabilities: {} });
+  await client.removeClean(reference, "abc123");
+  assert.deepEqual(fake.calls.map(([kind, operation]) => [kind, operation]), [["command", "git.worktree.remove-clean"]]);
+  assert.deepEqual(fake.calls[0][2], { ...reference, expectedHead: "abc123" });
+  assert.throws(() => client.removeClean(reference), /expectedHead is required/);
+  assert.throws(() => client.removeClean(reference, null), /expectedHead is required/);
+  assert.throws(() => client.removeClean(reference, ""), /expectedHead is required/);
+  assert.equal(fake.calls.length, 1);
+});
+
 test("TerminayGitClient fails closed for unavailable reveal/copy capabilities", async () => {
   const fake = transport();
   const client = new TerminayGitClient(fake, { capabilities: {} });

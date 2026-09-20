@@ -319,9 +319,13 @@ test('git sidebar pane lists grouped working tree changes and opens a diff', asy
   // Modified files are colour-coded amber, matching the file tree.
   await expect(modifiedRow.locator('.git-panel__icon')).toHaveCSS('color', 'rgb(226, 192, 141)')
 
-  // The pane header shows the branch name and the number of worktrees.
+  // The pane header shows the number of worktrees and the pane menu. With only
+  // the main worktree there is nothing the bulk delete may target.
   await expect(gitPane.locator('.sidebar-pane__count')).toHaveText('1')
-  await expect(gitPane.locator('.sidebar-pane__branch')).toHaveText(/^(main|master)$/)
+  await gitPane.getByRole('button', { name: 'Git actions' }).click()
+  await expect(contextMenuItem(mainWindow, 'Delete all clean worktrees')).toBeDisabled()
+  await mainWindow.keyboard.press('Escape')
+  await expect(gitPane).not.toHaveClass(/sidebar-pane--collapsed/)
 
   // Clicking a tracked change opens it in the file viewer.
   await modifiedRow.click()
@@ -513,6 +517,77 @@ test('deleting a sibling worktree does not request its parent through Explorer',
     (event) => event.event === 'local-server.file-operation.failed',
   )
   expect(explorerFailures).toHaveLength(0)
+})
+
+test('git pane menu deletes every clean worktree and leaves changed ones alone', async ({
+  appHarness,
+  createWorkspace,
+  mainWindow,
+}) => {
+  const mainRepo = await createWorkspace({
+    name: 'git-pane-sweep-main',
+    seed: { files: { 'README.md': 'main worktree\n' } },
+  })
+  const cleanOne = await createWorkspace({ name: 'git-pane-sweep-clean-one' })
+  const cleanTwo = await createWorkspace({ name: 'git-pane-sweep-clean-two' })
+  const dirty = await createWorkspace({ name: 'git-pane-sweep-dirty' })
+  const dialogs = await appHarness.dialogs()
+  const git = (args: string[], cwd = mainRepo.rootDir) => execFileAsync('git', args, { cwd })
+
+  await git(['init'])
+  await git(['config', 'user.name', 'Terminay E2E'])
+  await git(['config', 'user.email', 'terminay@example.com'])
+  await git(['add', '.'])
+  await git(['commit', '-m', 'initial'])
+  for (const [branch, worktree] of [
+    ['sweep-clean-one', cleanOne],
+    ['sweep-clean-two', cleanTwo],
+    ['sweep-dirty', dirty],
+  ] as const) {
+    await rm(worktree.rootDir, { recursive: true, force: true })
+    await git(['worktree', 'add', '-b', branch, worktree.rootDir])
+  }
+  await dirty.writeText('untracked.txt', 'work in progress\n')
+
+  await setProjectRoot(mainWindow, mainRepo.rootDir)
+  await openFileExplorer(mainWindow)
+
+  const gitPane = mainWindow
+    .locator('.sidebar-pane')
+    .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
+  const row = (name: string) => gitPane.locator('.worktrees-panel__worktree').filter({ hasText: name })
+  await expect(row('git-pane-sweep-clean-one')).toBeVisible({ timeout: 6000 })
+  await expect(row('git-pane-sweep-clean-two')).toBeVisible()
+  await expect(row('git-pane-sweep-dirty').locator('.worktrees-panel__clean')).toHaveCount(0, { timeout: 6000 })
+
+  // Declining the confirmation removes nothing.
+  await dialogs.clearCalls()
+  await dialogs.queueConfirm(false)
+  await gitPane.getByRole('button', { name: 'Git actions' }).click()
+  await contextMenuItem(mainWindow, 'Delete all clean worktrees').click()
+  const [declined] = await dialogs.getCalls()
+  expect(declined.message).toMatch(/^Delete 2 clean worktrees\?/)
+  expect(declined.message).toContain('git-pane-sweep-clean-one')
+  expect(declined.message).toContain('git-pane-sweep-clean-two')
+  expect(declined.message).not.toContain('git-pane-sweep-dirty')
+  expect(declined.message).not.toContain('git-pane-sweep-main')
+  await expect(row('git-pane-sweep-clean-one')).toBeVisible()
+
+  await dialogs.clearCalls()
+  await dialogs.queueConfirm(true)
+  await gitPane.getByRole('button', { name: 'Git actions' }).click()
+  await contextMenuItem(mainWindow, 'Delete all clean worktrees').click()
+
+  await expect(row('git-pane-sweep-clean-one')).toHaveCount(0, { timeout: 10000 })
+  await expect(row('git-pane-sweep-clean-two')).toHaveCount(0, { timeout: 10000 })
+  await expect(row('git-pane-sweep-dirty')).toBeVisible()
+  await expect(row('git-pane-sweep-main')).toBeVisible()
+  // A full success is silent, the dirty worktree keeps its file, and branches survive.
+  expect((await dialogs.getCalls()).filter((call) => call.kind === 'alert')).toHaveLength(0)
+  expect(await dirty.readText('untracked.txt')).toBe('work in progress\n')
+  const branches = (await git(['branch', '--format=%(refname:short)'])).stdout
+  expect(branches).toContain('sweep-clean-one')
+  expect(branches).toContain('sweep-clean-two')
 })
 
 test('git sidebar pane renders a nested tree and offers a push menu', async ({
