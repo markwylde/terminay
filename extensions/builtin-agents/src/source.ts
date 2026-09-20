@@ -269,9 +269,16 @@ function toSnapshot({
 		EXTENSION_LIMITS.agentModelLength,
 	);
 	if (model) snapshot.model = model;
-	if (session.status) snapshot.status = session.status;
+	// The library also reports `waiting` for an ended turn whose background
+	// shell or monitor will wake the session. Nothing is asked of the user
+	// there, so it crosses as `running`.
+	const backgroundWait =
+		session.status === 'waiting' &&
+		(session.waitingFor === 'shell' || session.waitingFor === 'monitor');
+	if (session.status)
+		snapshot.status = backgroundWait ? 'running' : session.status;
 	const waitingFor = boundedAgentText(
-		session.waitingFor,
+		backgroundWait ? undefined : session.waitingFor,
 		EXTENSION_LIMITS.agentWaitingForLength,
 	);
 	if (waitingFor) snapshot.waitingFor = waitingFor;

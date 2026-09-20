@@ -44,7 +44,7 @@ The extension SHALL publish only live library sessions: those with a `pid`. Each
 - the library session id and the mapped harness
 - `pid` and `cwd`
 - the effective title and `model`
-- `status` and `waitingFor`
+- `status` and `waitingFor`, except that a library `waiting` whose `waitingFor` is `shell` or `monitor` — a turn that ended while background work it started will wake the session — SHALL be `running` with no `waitingFor`, because no user input is requested
 - the current tool name, the last-turn outcome and end time, and the bounded `activity.error`
 - the session's subagents, each with its id, parent id, type, title, and status
 
@@ -54,6 +54,11 @@ The extension SHALL publish only live library sessions: those with a `pid`. Each
 
 - **WHEN** the library starts with three live sessions and then emits `ready`
 - **THEN** the extension publishes one reset containing those three sessions
+
+#### Scenario: Session waits on a background shell
+
+- **WHEN** the library reports a session `waiting` with `waitingFor` `shell`
+- **THEN** the extension publishes it as `running` with no `waitingFor`
 
 #### Scenario: Session closes
 
