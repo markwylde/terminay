@@ -84,7 +84,7 @@ test('the packed tarball ships compiled code only and a valid manifest', async (
 	assert.equal(validateExtensionManifest(packageJson.terminay).ok, true);
 	assert.equal(
 		packageJson.dependencies['@markwylde/all-your-agents'],
-		'1.4.0',
+		'1.4.1',
 		'the library is pinned exactly',
 	);
 	const { stdout } = await execFileAsync(process.execPath, [
