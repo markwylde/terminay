@@ -411,6 +411,11 @@ test('performance logging is a closed Desktop host action and bound event', () =
 		windowId: 'window-a', serverId: 'server-a', profileId: 'profile-a',
 		event: { type: 'diagnostics.performance-logging.changed', enabled: false },
 	}, context).event, { type: 'diagnostics.performance-logging.changed', enabled: false });
+	assert.deepEqual(parseTerminayHostEvent({
+		schemaVersion: 1, bridgeVersion: 1, sourceId: 'source-a',
+		windowId: 'window-a', serverId: 'server-a', profileId: 'profile-a',
+		event: { type: 'updater.status.changed' },
+	}, context).event, { type: 'updater.status.changed' });
 	assert.equal(
 		requiredTerminayHostCapability({
 			type: 'diagnostics.performance-logging.set',

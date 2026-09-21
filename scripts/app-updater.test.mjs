@@ -5,6 +5,7 @@ import {
 	canInstallInPlace,
 	compareVersions,
 	createAppUpdater,
+	describeManualCheck,
 	fetchStableReleaseNotes,
 	releaseNotesFromUpdateInfo,
 } from '../electron/appUpdater.ts';
@@ -252,6 +253,58 @@ test('renderer polling does not hit the network more than hourly', async () => {
 	h.advance(HOUR);
 	await h.appUpdater.check();
 	assert.equal(h.updater.checks, 3);
+});
+
+test('a manual check reaches the network inside the hourly pacing', async () => {
+	const h = harness();
+	await h.appUpdater.check();
+	h.advance(60 * 1000);
+	await h.appUpdater.check({ force: true });
+	assert.equal(h.updater.checks, 1);
+	const status = await h.appUpdater.check({ manual: true });
+	assert.equal(h.updater.checks, 2);
+	assert.equal(describeManualCheck(status).message, 'Terminay is up to date.');
+});
+
+test('a manual check reports what it found', () => {
+	const base = {
+		checkedAt: null,
+		currentVersion: '1.0.0',
+		errorMessage: null,
+		hasUpdate: false,
+		latestVersion: null,
+		releaseUrl: null,
+		state: 'idle',
+		channel: 'beta',
+	};
+	assert.match(describeManualCheck(base).detail, /1\.0\.0.*Beta channel/u);
+	assert.equal(
+		describeManualCheck({ ...base, state: 'downloading', latestVersion: '1.1.0' })
+			.message,
+		'Terminay 1.1.0 is downloading.',
+	);
+	assert.equal(
+		describeManualCheck({
+			...base,
+			state: 'ready',
+			hasUpdate: true,
+			latestVersion: '1.1.0',
+		}).message,
+		'Terminay 1.1.0 is ready to install.',
+	);
+	assert.equal(
+		describeManualCheck({
+			...base,
+			state: 'available',
+			hasUpdate: true,
+			latestVersion: '1.1.0',
+		}).message,
+		'Terminay 1.1.0 is available.',
+	);
+	assert.deepEqual(
+		describeManualCheck({ ...base, state: 'error', errorMessage: 'offline' }),
+		{ message: 'Terminay could not check for updates.', detail: 'offline' },
+	);
 });
 
 test('a build that cannot install in place only notifies and links', async () => {
