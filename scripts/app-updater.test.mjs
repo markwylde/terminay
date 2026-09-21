@@ -370,6 +370,164 @@ test('a beta install returning to stable keeps prereleases and downgrades off', 
 	assert.equal(h.updater.feeds.at(-1).provider, 'github');
 });
 
+const BETA_METADATA_URL =
+	'https://github.com/markwylde/terminay/releases/download/main-latest/beta-mac.yml';
+const STABLE_METADATA_URL =
+	'https://github.com/markwylde/terminay/releases/latest/download/latest-mac.yml';
+const STABLE_FEED = {
+	provider: 'github',
+	owner: 'markwylde',
+	repo: 'terminay',
+	releaseType: 'release',
+};
+const BETA_FEED = {
+	provider: 'generic',
+	url: 'https://github.com/markwylde/terminay/releases/download/main-latest/',
+	channel: 'beta',
+};
+
+/** A Beta install whose two sources publish the given versions (null: unreadable). */
+function betaHarness({ beta, stable, ...overrides }) {
+	const h = harness({
+		currentVersion: '1.3.0-beta.14',
+		channel: 'beta',
+		...overrides,
+		fetch: async (url) => {
+			h.fetches.push(url);
+			if (url.startsWith('https://api.github.com/')) return jsonResponse(releases);
+			const version =
+				url === BETA_METADATA_URL ? beta : url === STABLE_METADATA_URL ? stable : null;
+			return version === null
+				? textResponse('', 404)
+				: textResponse(`version: ${version}\nfiles: []\n`);
+		},
+	});
+	return h;
+}
+
+test('beta offers a stable release that is newer than the latest beta', async () => {
+	const h = betaHarness({ beta: '1.3.0-beta.15', stable: '1.3.0' });
+	h.updater.onCheck = downloadsVersion('1.3.0');
+	const status = await h.appUpdater.check();
+	assert.deepEqual(h.updater.feeds.at(-1), STABLE_FEED);
+	assert.equal(h.updater.allowPrerelease, false);
+	assert.equal(h.updater.allowDowngrade, false);
+	assert.equal(h.updater.disableDifferentialDownload, false);
+	assert.equal(status.state, 'ready');
+	assert.equal(status.latestVersion, '1.3.0');
+	assert.equal(status.channel, 'beta');
+	assert.equal(status.releaseUrl, 'https://github.com/markwylde/terminay/releases/tag/v1.3.0');
+	assert.deepEqual(
+		status.releaseNotes.map((note) => note.version),
+		['1.3.0'],
+	);
+});
+
+test('beta keeps the rolling prerelease when it is newer than stable', async () => {
+	const h = betaHarness({ beta: '1.4.0-beta.3', stable: '1.3.0' });
+	h.updater.onCheck = downloadsVersion('1.4.0-beta.3', '- feat: beta thing');
+	const status = await h.appUpdater.check();
+	assert.deepEqual(h.updater.feeds.at(-1), BETA_FEED);
+	assert.equal(h.updater.allowPrerelease, true);
+	assert.equal(h.updater.allowDowngrade, false);
+	assert.equal(status.latestVersion, '1.4.0-beta.3');
+	assert.equal(status.releaseUrl, 'https://github.com/markwylde/terminay/releases/tag/main-latest');
+	assert.equal(status.releaseNotes[0].markdown, '- feat: beta thing');
+});
+
+test('beta resumes after a stable release without leaving the channel', async () => {
+	const h = betaHarness({ currentVersion: '1.3.0', beta: '1.4.0-beta.1', stable: '1.3.0' });
+	h.updater.onCheck = downloadsVersion('1.4.0-beta.1', '- next');
+	const status = await h.appUpdater.check();
+	assert.deepEqual(h.updater.feeds.at(-1), BETA_FEED);
+	assert.equal(status.latestVersion, '1.4.0-beta.1');
+	assert.equal(status.channel, 'beta');
+});
+
+test('beta proceeds with whichever source can be read', async () => {
+	const stableDown = betaHarness({ beta: '1.3.0-beta.15', stable: null });
+	stableDown.updater.onCheck = downloadsVersion('1.3.0-beta.15', '- beta');
+	const fromBeta = await stableDown.appUpdater.check();
+	assert.deepEqual(stableDown.updater.feeds.at(-1), BETA_FEED);
+	assert.equal(fromBeta.state, 'ready');
+	assert.equal(fromBeta.errorMessage, null);
+
+	const betaDown = betaHarness({ beta: null, stable: '1.3.0' });
+	betaDown.updater.onCheck = downloadsVersion('1.3.0');
+	const fromStable = await betaDown.appUpdater.check();
+	assert.deepEqual(betaDown.updater.feeds.at(-1), STABLE_FEED);
+	assert.equal(fromStable.latestVersion, '1.3.0');
+	assert.equal(fromStable.errorMessage, null);
+});
+
+test('beta with neither source readable fails through the updater and retries', async () => {
+	const h = betaHarness({ beta: null, stable: null });
+	h.updater.onCheck = async () => {
+		throw new Error('net::ERR_INTERNET_DISCONNECTED');
+	};
+	const status = await h.appUpdater.check();
+	assert.deepEqual(h.updater.feeds.at(-1), BETA_FEED);
+	assert.equal(status.state, 'error');
+	assert.equal(status.hasUpdate, false);
+	h.advance(11 * 60 * 1000);
+	await h.appUpdater.check();
+	assert.equal(h.updater.checks, 2);
+});
+
+test('the stable channel never reads the rolling prerelease', async () => {
+	const h = betaHarness({
+		currentVersion: '1.2.0',
+		channel: 'stable',
+		beta: '1.4.0-beta.3',
+		stable: '1.3.0',
+	});
+	h.updater.onCheck = downloadsVersion('1.3.0');
+	await h.appUpdater.check();
+	assert.deepEqual(h.updater.feeds.at(-1), STABLE_FEED);
+	assert.equal(h.fetches.includes(BETA_METADATA_URL), false);
+	assert.equal(h.fetches.includes(STABLE_METADATA_URL), false);
+});
+
+test('a notice-only beta build is told about a newer stable release and downloads nothing', async () => {
+	const h = betaHarness({
+		isPackaged: false,
+		beta: '1.3.0-beta.15',
+		stable: '1.3.0',
+		loadUpdater: async () => assert.fail('the updater must not be loaded'),
+	});
+	const status = await h.appUpdater.check();
+	assert.equal(status.state, 'available');
+	assert.equal(status.hasUpdate, true);
+	assert.equal(status.latestVersion, '1.3.0');
+	assert.equal(status.channel, 'beta');
+	assert.equal(status.releaseUrl, 'https://github.com/markwylde/terminay/releases/tag/v1.3.0');
+	assert.deepEqual(
+		status.releaseNotes.map((note) => note.version),
+		['1.3.0'],
+	);
+});
+
+test('a notice-only beta build offers nothing when neither source is newer', async () => {
+	const h = betaHarness({
+		isPackaged: false,
+		currentVersion: '1.3.0',
+		beta: '1.3.0-beta.15',
+		stable: '1.3.0',
+	});
+	const status = await h.appUpdater.check();
+	assert.equal(status.state, 'idle');
+	assert.equal(status.hasUpdate, false);
+	assert.equal(status.releaseUrl, null);
+});
+
+test('a notice-only beta build fails only when neither source can be read', async () => {
+	const h = betaHarness({ isPackaged: false, beta: null, stable: null });
+	const status = await h.appUpdater.check();
+	assert.equal(status.state, 'error');
+	assert.equal(status.hasUpdate, false);
+	assert.match(status.errorMessage, /404/u);
+});
+
 test('restart to update installs and relaunches only at the final quit', async () => {
 	const h = harness();
 	h.updater.onCheck = downloadsVersion('1.4.0');
