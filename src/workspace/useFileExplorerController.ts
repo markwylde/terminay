@@ -23,6 +23,12 @@ import type {
 	GitWorktreeStatus,
 	WorktreePanelStatus,
 } from '../types/terminay';
+import {
+	type CleanWorktreeSweepSkip,
+	cleanWorktreeSweepConfirmation,
+	cleanWorktreeSweepOutcome,
+	isBulkDeletableWorktree,
+} from './cleanWorktreeSweep';
 import type { ProjectTab } from './projectTabModel';
 import { getOrCreateDirectoryLoad } from './directoryLoadCoordinator';
 import { isDirectoryEntry } from './fileExplorerEntries';
@@ -1162,20 +1168,84 @@ export function useFileExplorerController({
 		project.rootFolder,
 		scheduleDirectoryRefresh,
 	]);
-	const currentGitBranch = useMemo(() => {
-		const worktrees = worktreePanelStatus?.worktrees;
-		if (!worktrees) return null;
-		return (
-			worktrees.find(({ isCurrent }) => isCurrent)?.branch ??
-			worktrees.find(({ path }) => path === worktreePanelStatus.repoRoot)
-				?.branch ??
-			null
+	const cleanWorktreesToDelete = useMemo(() => {
+		const busy = new Set([...deletingWorktreePaths, ...pullingWorktreePaths]);
+		return (worktreePanelStatus?.worktrees ?? []).filter((worktree) =>
+			isBulkDeletableWorktree(worktree, busy),
 		);
-	}, [worktreePanelStatus]);
+	}, [deletingWorktreePaths, pullingWorktreePaths, worktreePanelStatus]);
+	const handleDeleteCleanWorktrees = useCallback(async () => {
+		const targets = cleanWorktreesToDelete;
+		if (targets.length === 0) return;
+		if (
+			!window.confirm(
+				cleanWorktreeSweepConfirmation(targets.map(({ name }) => name)),
+			)
+		)
+			return;
+		// Marking every target up front shows the whole batch as in flight and
+		// takes it out of eligibility, so a second sweep finds nothing to do.
+		setDeletingWorktreePaths(
+			(current) => new Set([...current, ...targets.map(({ path }) => path)]),
+		);
+		let deletedCount = 0;
+		const skipped: CleanWorktreeSweepSkip[] = [];
+		const run = async () => {
+			for (const worktree of targets) {
+				try {
+					const reference = referencesRef.current.get(worktree.path);
+					if (
+						gitClient === undefined ||
+						reference === undefined ||
+						worktree.head === null
+					) {
+						throw new Error('Git worktree controls are unavailable.');
+					}
+					assertWorktreeRemoved(
+						await gitClient.removeClean(reference, worktree.head),
+					);
+					deletedCount += 1;
+				} catch (error) {
+					// One refusal never stops the sweep; it is reported at the end.
+					console.error('[terminay] git.worktree.remove-clean failed', error);
+					skipped.push({
+						name: worktree.name,
+						reason: error instanceof Error ? error.message : String(error),
+					});
+				} finally {
+					setDeletingWorktreePaths((current) => {
+						const next = new Set(current);
+						next.delete(worktree.path);
+						return next;
+					});
+				}
+			}
+			if (deletedCount > 0) onSetError(null);
+			void loadDirectory(project.rootFolder);
+			if (project.rootFolder) {
+				void refreshGitStatusesForRoot(project.rootFolder, true);
+			}
+		};
+		const queued = worktreeDeleteQueueRef.current.then(run, run);
+		worktreeDeleteQueueRef.current = queued.then(
+			() => undefined,
+			() => undefined,
+		);
+		await queued;
+		const outcome = cleanWorktreeSweepOutcome(deletedCount, skipped);
+		if (outcome !== null) window.alert(outcome);
+	}, [
+		cleanWorktreesToDelete,
+		gitClient,
+		loadDirectory,
+		onSetError,
+		project.rootFolder,
+		refreshGitStatusesForRoot,
+	]);
 
 	return {
 		cancelFileExplorerNameDialog,
-		currentGitBranch,
+		cleanWorktreeDeleteCount: cleanWorktreesToDelete.length,
 		deletingWorktreePaths,
 		directoryChildren,
 		directoryErrors,
@@ -1185,6 +1255,7 @@ export function useFileExplorerController({
 		handleCopyPath,
 		handleCopyRelativePath,
 		handleDelete,
+		handleDeleteCleanWorktrees,
 		handleDeleteWorktree,
 		handleNewFile,
 		handleNewFolder,

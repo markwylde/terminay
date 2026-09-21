@@ -388,13 +388,6 @@
 	color: rgba(255, 255, 255, 0.78);
 }
 
-.sidebar-pane__branch {
-	display: block;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
 .sidebar-pane__body {
 	flex: 1 1 auto;
 	min-height: 0;

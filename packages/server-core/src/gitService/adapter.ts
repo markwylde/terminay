@@ -27,6 +27,7 @@ export const GIT_OPERATIONS = Object.freeze({
 	copy: 'git.worktree.copy',
 	pull: 'git.worktree.pull',
 	removeWorktree: 'git.worktree.remove',
+	removeCleanWorktree: 'git.worktree.remove-clean',
 	moveWorktree: 'git.worktree.move',
 	quickPushPropose: 'git.quick-push.propose',
 	quickPushApprove: 'git.quick-push.approve',
@@ -327,6 +328,30 @@ export class ServerGitAdapter {
 		return result as unknown as JsonValue;
 	}
 
+	/** Clean-only removal is its own operation rather than a flag on `remove`:
+	 * a server that predates it rejects the unknown operation, where it would
+	 * silently ignore an unknown flag and force the removal. */
+	async removeClean(request: GitRemoveRequest): Promise<JsonValue> {
+		this.requireScope(request.authorization, 'write');
+		const projectId = this.requireProject(
+			request.authorization,
+			request.projectId,
+		);
+		if (typeof request.expectedHead !== 'string' || request.expectedHead === '')
+			throw new GitServiceError(
+				'invalid-operation',
+				'clean-only worktree removal requires the reviewed HEAD',
+			);
+		const result = await this.git.removeCleanWorktree({
+			projectId,
+			repositoryId: request.repositoryId,
+			worktreeId: request.worktreeId,
+			expectedHead: request.expectedHead,
+			...(request.signal === undefined ? {} : { signal: request.signal }),
+		});
+		return result as unknown as JsonValue;
+	}
+
 	async move(request: GitMoveRequest): Promise<JsonValue> {
 		this.requireScope(request.authorization, 'write');
 		const projectId = this.requireProject(
@@ -450,6 +475,8 @@ export class ServerGitAdapter {
 					this.pull(this.pullRequest(request)),
 				[GIT_OPERATIONS.removeWorktree]: (request) =>
 					this.remove(this.removeRequest(request)),
+				[GIT_OPERATIONS.removeCleanWorktree]: (request) =>
+					this.removeClean(this.removeRequest(request)),
 				[GIT_OPERATIONS.moveWorktree]: (request) =>
 					this.move(this.moveRequest(request)),
 				[GIT_OPERATIONS.quickPushPropose]: (request) =>
