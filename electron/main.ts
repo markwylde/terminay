@@ -149,6 +149,7 @@ import {
 	type AppUpdater,
 	createAppUpdater,
 	UPDATE_CHECK_INTERVAL_MS,
+	describeManualCheck,
 } from './appUpdater';
 import { createGracefulQuitHandler } from './gracefulQuit';
 import {
@@ -1994,6 +1995,40 @@ function getAppUpdater(): AppUpdater {
 	return appUpdater;
 }
 
+function broadcastAppUpdateStatusChanged(): void {
+	for (const window of BrowserWindow.getAllWindows()) {
+		if (window.webContents.isDestroyed()) continue;
+		window.webContents.send('server-ui-host:event', {
+			type: 'updater.status.changed',
+		});
+	}
+}
+
+let manualUpdateCheck: Promise<void> | null = null;
+
+/** Help > Check for Updates…: checks now, whatever the hourly pacing says. */
+function checkForUpdatesFromMenu(): void {
+	if (manualUpdateCheck !== null) return;
+	manualUpdateCheck = getAppUpdater()
+		.check({ manual: true })
+		.then(async (status) => {
+			broadcastAppUpdateStatusChanged();
+			const { message, detail } = describeManualCheck(status);
+			await dialog.showMessageBox({
+				type: status.errorMessage !== null && !status.hasUpdate ? 'warning' : 'info',
+				buttons: ['OK'],
+				noLink: true,
+				title: 'Check for Updates',
+				message,
+				detail,
+			});
+		})
+		.catch((error) => console.warn('[updater] manual check failed', error))
+		.finally(() => {
+			manualUpdateCheck = null;
+		});
+}
+
 function getTerminalSettingsPath(): string {
 	return path.join(app.getPath('userData'), 'terminal-settings.json');
 }
@@ -3143,7 +3178,13 @@ function createAppMenu(
 		{ role: 'windowMenu' },
 		{
 			label: 'Help',
-			submenu: createDiagnosticsHelpMenuItems({
+			submenu: [
+				{
+					label: 'Check for Updates…',
+					click: () => checkForUpdatesFromMenu(),
+				},
+				{ type: 'separator' },
+				...createDiagnosticsHelpMenuItems({
 				directory: desktopDiagnostics.directory,
 				clearManagedArtifacts: () => desktopDiagnostics.clearManagedArtifacts(),
 				recordCleared: () => desktopDiagnostics.recordCleared(),
@@ -3167,7 +3208,8 @@ function createAppMenu(
 						{ channel: 'lifecycle' },
 					);
 				},
-			}),
+				}),
+			],
 		},
 	];
 
