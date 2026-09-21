@@ -56,6 +56,19 @@ export function subscribeDesktopPerformanceLogging(
 	});
 }
 
+/** The host finished a check the renderer did not ask for (Help > Check for
+ * Updates…); its status is worth re-reading now rather than at the next poll. */
+export function subscribeAppUpdateStatusChanged(
+	listener: () => void,
+): () => void {
+	if (typeof window === 'undefined') return () => undefined;
+	const host = window.terminayHost as unknown as NativeEventBridge | undefined;
+	if (host === undefined) return () => undefined;
+	return host.subscribeEvent((message) => {
+		if (message.event.type === 'updater.status.changed') listener();
+	});
+}
+
 export function subscribeDesktopPerformanceSnapshot(
 	listener: (snapshot: import('@terminay/protocol').JsonValue) => void,
 ): () => void {
