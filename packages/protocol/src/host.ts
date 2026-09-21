@@ -222,6 +222,11 @@ export type TerminayHostEvent = Readonly<{
 				enabled: boolean;
 		  }>
 		| Readonly<{
+				/** The updater's status changed outside the renderer's own polling;
+				 * the renderer re-reads it with `updater.check`. */
+				type: 'updater.status.changed';
+		  }>
+		| Readonly<{
 				/** A bounded, main-computed projection of the startup timeline,
 				 * lightweight samples, and per-terminal outcomes. The window receives
 				 * values only; it never receives a way to read diagnostics. */
@@ -423,6 +428,9 @@ export function parseTerminayHostEvent(
 			type: 'diagnostics.performance-logging.changed',
 			enabled: event.enabled,
 		});
+	} else if (event.type === 'updater.status.changed') {
+		exactKeys(event, ['type'], 'host updater status event');
+		parsedEvent = Object.freeze({ type: 'updater.status.changed' });
 	} else if (event.type === 'diagnostics.performance-snapshot.changed') {
 		exactKeys(event, ['type', 'snapshot'], 'host performance snapshot event');
 		assertJsonValue(event.snapshot);

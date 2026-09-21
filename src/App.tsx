@@ -113,6 +113,7 @@ import {
 	installAppUpdate,
 	openExternalUrl,
 } from './host/nativeActions';
+import { subscribeAppUpdateStatusChanged } from './host/nativeEvents';
 import {
 	findCommandForKeyboardEvent,
 	getCommandShortcut,
@@ -6739,6 +6740,7 @@ function App({
 			if (status) setAppUpdateStatus(status);
 			const isBusy =
 				status?.state === 'checking' || status?.state === 'downloading';
+			window.clearTimeout(timeoutId);
 			timeoutId = window.setTimeout(
 				() => void refreshUpdateStatus(),
 				isBusy ? 5_000 : 5 * 60 * 1000,
@@ -6746,9 +6748,13 @@ function App({
 		};
 
 		void refreshUpdateStatus();
+		const unsubscribe = subscribeAppUpdateStatusChanged(
+			() => void refreshUpdateStatus(),
+		);
 
 		return () => {
 			isMounted = false;
+			unsubscribe();
 			window.clearTimeout(timeoutId);
 		};
 	}, []);

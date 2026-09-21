@@ -68,9 +68,13 @@ export interface AppUpdaterOptions {
 export interface AppUpdater {
 	/**
 	 * Current status. Checks the network first when the last check is over an
-	 * hour old, or over ten minutes old when forced or after a failure.
+	 * hour old, or over ten minutes old when forced or after a failure. A
+	 * manual check (Help > Check for Updates…) always checks the network.
 	 */
-	check(options?: { force?: boolean }): Promise<AppUpdateStatus>;
+	check(options?: {
+		force?: boolean;
+		manual?: boolean;
+	}): Promise<AppUpdateStatus>;
 	getStatus(): AppUpdateStatus;
 	setChannel(channel: AppUpdateChannel): Promise<AppUpdateStatus>;
 	/** Records that the next graceful quit should install and relaunch. */
@@ -262,6 +266,43 @@ function releasePageUrl(channel: AppUpdateChannel, version: string): string {
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : 'Unable to check for updates.';
+}
+
+/** What Help > Check for Updates… tells the user once its check settles. */
+export function describeManualCheck(status: AppUpdateStatus): {
+	message: string;
+	detail: string;
+} {
+	const version = status.latestVersion;
+	if (status.state === 'ready' && version !== null)
+		return {
+			message: `Terminay ${version} is ready to install.`,
+			detail:
+				'Choose Restart to Update in the title bar, or quit Terminay to install it.',
+		};
+	if (status.state === 'downloading' && version !== null)
+		return {
+			message: `Terminay ${version} is downloading.`,
+			detail:
+				'Restart to Update appears in the title bar once the download has been verified.',
+		};
+	if (status.hasUpdate && version !== null)
+		return {
+			message: `Terminay ${version} is available.`,
+			detail:
+				'This build cannot install updates in place. Open the release page from the title bar.',
+		};
+	if (status.errorMessage !== null)
+		return {
+			message: 'Terminay could not check for updates.',
+			detail: status.errorMessage,
+		};
+	return {
+		message: 'Terminay is up to date.',
+		detail: `Version ${status.currentVersion} is the newest release on the ${
+			status.channel === 'beta' ? 'Beta' : 'Stable'
+		} channel.`,
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -493,10 +534,14 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 		return status();
 	}
 
-	function check(checkOptions?: { force?: boolean }): Promise<AppUpdateStatus> {
+	function check(checkOptions?: {
+		force?: boolean;
+		manual?: boolean;
+	}): Promise<AppUpdateStatus> {
 		if (inFlight) return inFlight;
 		const elapsed = now() - lastCheckStartedAt;
 		const due =
+			checkOptions?.manual === true ||
 			elapsed >= UPDATE_CHECK_INTERVAL_MS ||
 			(checkOptions?.force === true && elapsed >= MIN_RECHECK_MS) ||
 			(state === 'error' && elapsed >= MIN_RECHECK_MS);
