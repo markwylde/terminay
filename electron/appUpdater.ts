@@ -248,18 +248,26 @@ export function canInstallInPlace(options: {
 	return options.isWritable(appImage) && options.isWritable(directory);
 }
 
-function channelMetadataFile(
-	channel: AppUpdateChannel,
+/**
+ * Where an offered version comes from. The Stable channel only ever reads the
+ * stable source; the Beta channel reads both and takes the higher version.
+ */
+type UpdateSource = AppUpdateChannel;
+
+function sourceMetadataUrl(
+	source: UpdateSource,
 	platform: NodeJS.Platform,
 ): string | null {
 	const suffix =
 		platform === 'darwin' ? '-mac' : platform === 'linux' ? '-linux' : null;
 	if (suffix === null) return null;
-	return `${channel === 'beta' ? 'beta' : 'latest'}${suffix}.yml`;
+	return source === 'beta'
+		? `${BETA_FEED_URL}beta${suffix}.yml`
+		: `${STABLE_FEED_URL}latest${suffix}.yml`;
 }
 
-function releasePageUrl(channel: AppUpdateChannel, version: string): string {
-	return channel === 'beta'
+function releasePageUrl(source: UpdateSource, version: string): string {
+	return source === 'beta'
 		? `${RELEASES_URL}/tag/${BETA_RELEASE_TAG}`
 		: `${RELEASES_URL}/tag/v${version}`;
 }
@@ -320,6 +328,9 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 	let checkedAt: string | null = null;
 	let lastCheckStartedAt = Number.NEGATIVE_INFINITY;
 	let latestVersion: string | null = null;
+	/** The source the running check reads, and the one the shown version came from. */
+	let checkSource: UpdateSource = channel;
+	let offeredSource: UpdateSource | null = null;
 	let downloadedVersion: string | null = null;
 	let downloadPercent: number | null = null;
 	let failure: string | null = null;
@@ -347,18 +358,24 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 			hasUpdate,
 			latestVersion: shownVersion,
 			releaseUrl:
-				shownVersion === null ? null : releasePageUrl(channel, shownVersion),
+				shownVersion === null
+					? null
+					: releasePageUrl(offeredSource ?? channel, shownVersion),
 			releaseNotes,
 			releaseNotesError,
 		};
 	}
 
-	function loadNotes(version: string, info: UpdateInfoLike | null): void {
+	function loadNotes(
+		version: string,
+		source: UpdateSource,
+		info: UpdateInfoLike | null,
+	): void {
 		if (notesVersion === version) return;
 		notesVersion = version;
 		releaseNotes = null;
 		releaseNotesError = null;
-		if (channel === 'beta') {
+		if (source === 'beta') {
 			releaseNotes = info ? releaseNotesFromUpdateInfo(info, version) : null;
 			if (releaseNotes === null)
 				releaseNotesError = 'No release notes were published with this build.';
@@ -398,17 +415,19 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 					const version = versionString(info.version);
 					if (!version) return;
 					latestVersion = version;
+					offeredSource = checkSource;
 					failure = null;
 					if (downloadedVersion !== version) {
 						state = 'downloading';
 						downloadPercent = 0;
 					}
-					loadNotes(version, info);
+					loadNotes(version, checkSource, info);
 				});
 				updater.on('update-not-available', () => {
 					if (downloadedVersion === null) {
 						state = 'idle';
 						latestVersion = null;
+						offeredSource = null;
 					}
 				});
 				updater.on('download-progress', (progress: { percent?: unknown }) => {
@@ -420,10 +439,11 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 					if (!version) return;
 					downloadedVersion = version;
 					latestVersion = version;
+					offeredSource = checkSource;
 					downloadPercent = 100;
 					failure = null;
 					state = 'ready';
-					loadNotes(version, info);
+					loadNotes(version, checkSource, info);
 				});
 				updater.on('error', (error: unknown) => {
 					log('[updater] update failed', error);
@@ -443,8 +463,8 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 		return updaterPromise;
 	}
 
-	function configureFeed(updater: UpdaterLike): void {
-		if (channel === 'beta') {
+	function configureFeed(updater: UpdaterLike, source: UpdateSource): void {
+		if (source === 'beta') {
 			updater.setFeedURL({
 				provider: 'generic',
 				url: BETA_FEED_URL,
@@ -468,25 +488,11 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 		updater.allowDowngrade = false;
 	}
 
-	async function checkInPlace(): Promise<void> {
-		const updater = await getUpdater();
-		configureFeed(updater);
-		const result = (await updater.checkForUpdates()) as {
-			downloadPromise?: Promise<unknown> | null;
-		} | null;
-		// Download progress and failure arrive as events; the promise itself only
-		// needs containing so a failed download is not an unhandled rejection.
-		void result?.downloadPromise?.catch(() => {});
-	}
-
-	async function checkForNotice(): Promise<void> {
-		const file = channelMetadataFile(channel, options.platform);
-		if (file === null) {
-			state = 'idle';
-			return;
-		}
-		const base = channel === 'beta' ? BETA_FEED_URL : STABLE_FEED_URL;
-		const response = await options.fetch(`${base}${file}`, {
+	async function probeVersion(source: UpdateSource): Promise<string> {
+		const url = sourceMetadataUrl(source, options.platform);
+		if (url === null)
+			throw new Error('This platform publishes no update metadata.');
+		const response = await options.fetch(url, {
 			headers: { 'User-Agent': `Terminay/${currentVersion}` },
 		});
 		if (!response.ok)
@@ -497,12 +503,73 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 		);
 		if (!version)
 			throw new Error('The update metadata did not name a valid version.');
+		return version;
+	}
+
+	/**
+	 * The source to check and the version it publishes. Beta is stable plus
+	 * prereleases: it takes whichever source is higher, so a stable release is
+	 * not held back until `main` next publishes a beta. One unreadable source
+	 * leaves the other; a tie keeps the rolling prerelease.
+	 */
+	async function selectSource(): Promise<{
+		source: UpdateSource;
+		version: string;
+	}> {
+		if (channel === 'stable')
+			return { source: 'stable', version: await probeVersion('stable') };
+		const [beta, stable] = await Promise.allSettled([
+			probeVersion('beta'),
+			probeVersion('stable'),
+		]);
+		if (beta.status === 'rejected') {
+			if (stable.status === 'rejected') throw beta.reason;
+			return { source: 'stable', version: stable.value };
+		}
+		if (
+			stable.status === 'fulfilled' &&
+			compareVersions(stable.value, beta.value) > 0
+		)
+			return { source: 'stable', version: stable.value };
+		return { source: 'beta', version: beta.value };
+	}
+
+	async function checkInPlace(): Promise<void> {
+		const updater = await getUpdater();
+		// Stable has one source, so only Beta pays for the probe. When neither
+		// source can be read the updater still checks the rolling prerelease and
+		// reports the failure itself.
+		checkSource =
+			channel === 'stable'
+				? 'stable'
+				: await selectSource().then(
+						(selected) => selected.source,
+						() => 'beta' as const,
+					);
+		configureFeed(updater, checkSource);
+		const result = (await updater.checkForUpdates()) as {
+			downloadPromise?: Promise<unknown> | null;
+		} | null;
+		// Download progress and failure arrive as events; the promise itself only
+		// needs containing so a failed download is not an unhandled rejection.
+		void result?.downloadPromise?.catch(() => {});
+	}
+
+	async function checkForNotice(): Promise<void> {
+		if (sourceMetadataUrl(channel, options.platform) === null) {
+			state = 'idle';
+			return;
+		}
+		const { source, version } = await selectSource();
+		checkSource = source;
 		if (compareVersions(version, currentVersion) > 0) {
 			latestVersion = version;
+			offeredSource = source;
 			state = 'available';
-			loadNotes(version, null);
+			loadNotes(version, source, null);
 		} else {
 			latestVersion = null;
+			offeredSource = null;
 			state = 'idle';
 		}
 	}
@@ -566,7 +633,10 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 			notesVersion = null;
 			releaseNotes = null;
 			releaseNotesError = null;
-			if (downloadedVersion === null) state = 'idle';
+			if (downloadedVersion === null) {
+				state = 'idle';
+				offeredSource = null;
+			}
 			if (inFlight) await inFlight.catch(() => {});
 			lastCheckStartedAt = Number.NEGATIVE_INFINITY;
 			return check({ force: true });
