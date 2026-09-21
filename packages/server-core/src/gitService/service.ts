@@ -38,6 +38,7 @@ import {
 	type GitWorktreeMoveResult,
 	type GitWorktreePullRequest,
 	type GitWorktreePullResult,
+	type GitWorktreeRemoveCleanRequest,
 	type GitWorktreeRemoveRequest,
 	type GitWorktreeRemoveResult,
 	type GitWorktreeSummary,
@@ -779,8 +780,32 @@ export class GitService {
 		);
 	}
 
+	/**
+	 * Remove a worktree only while it is still effectively clean. This is the
+	 * removal a bulk sweep uses: the caller reviewed a listing rather than this
+	 * one worktree, so the reviewed HEAD is mandatory, cleanliness is recomputed
+	 * here, and Git is never forced — a change that lands after the recheck
+	 * makes Git itself refuse.
+	 */
+	async removeCleanWorktree(
+		request: GitWorktreeRemoveCleanRequest,
+	): Promise<GitWorktreeRemoveResult> {
+		validateProjectId(request.projectId);
+		if (typeof request.expectedHead !== 'string' || request.expectedHead === '')
+			throw new GitServiceError(
+				'invalid-operation',
+				'clean-only worktree removal requires the reviewed HEAD',
+			);
+		return this.enqueueRepositoryMutation(
+			request.repositoryId,
+			request.worktreeId,
+			() => this.executeRemoveWorktree(request, true),
+		);
+	}
+
 	private async executeRemoveWorktree(
 		request: GitWorktreeRemoveRequest,
+		cleanOnly = false,
 	): Promise<GitWorktreeRemoveResult> {
 		const listing = await this.listWorktreeIdentities({
 			projectId: request.projectId,
@@ -818,6 +843,7 @@ export class GitService {
 				'worktree is not part of the project repository',
 			);
 		assertRemovableWorktree(selected, request.expectedHead);
+		if (cleanOnly) assertSweepableWorktree(selected);
 
 		if (!selected.isPrunable) {
 			// `worktrees` includes a status read, but perform a second status read
@@ -859,6 +885,25 @@ export class GitService {
 					},
 				);
 			}
+			if (cleanOnly) {
+				// The same effective-cleanliness judgement the listing shows: no
+				// working-tree entries and nothing committed that the default branch
+				// lacks. An unknown delta is not proof of cleanliness.
+				const delta = await this.worktreeDelta(
+					selected.path,
+					await this.defaultBranch(
+						listing.repositoryRoot ?? selected.path,
+						request.signal,
+					),
+					request.signal,
+				);
+				if (fresh.entries.length > 0 || delta.hasCommittedChanges !== false)
+					throw new GitServiceError(
+						'worktree-dirty',
+						'worktree is no longer clean',
+						{ worktreeId: request.worktreeId },
+					);
+			}
 		}
 
 		const binding = this.getBinding(request.projectId);
@@ -879,8 +924,12 @@ export class GitService {
 		// The client confirmation explicitly authorizes deleting uncommitted,
 		// untracked, and unmerged contents, including a leftover Git lock.
 		// Git requires `--force` twice to remove a locked worktree.
+		// A clean-only removal is never forced, so Git's own refusal of a modified
+		// or locked worktree stays in effect after the recheck above.
 		const result = await this.runGit(
-			['worktree', 'remove', '--force', '--force', '--', selected.path],
+			cleanOnly
+				? ['worktree', 'remove', '--', selected.path]
+				: ['worktree', 'remove', '--force', '--force', '--', selected.path],
 			cwd,
 			request.signal,
 		);
@@ -2020,6 +2069,21 @@ type GitWorktreeIdentity = Pick<
 	| 'isPrunable'
 	| 'locked'
 >;
+
+function assertSweepableWorktree(worktree: GitWorktreeIdentity): void {
+	if (worktree.locked)
+		throw new GitServiceError(
+			'worktree-locked',
+			'refusing clean-only removal of a locked worktree',
+			{ worktreeId: worktree.id },
+		);
+	if (worktree.isPrunable)
+		throw new GitServiceError(
+			'invalid-operation',
+			'clean-only removal does not prune a missing worktree',
+			{ worktreeId: worktree.id },
+		);
+}
 
 function assertRemovableWorktree(
 	worktree: GitWorktreeIdentity,

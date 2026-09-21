@@ -26,7 +26,9 @@ import {
 	Mic,
 	Play,
 	Plug,
+	MoreHorizontal,
 	RefreshCw,
+	Trash2,
 	Search,
 	Settings,
 	Sidebar,
@@ -2388,7 +2390,7 @@ const ProjectWorkspace = forwardRef<
 
 		const {
 			cancelFileExplorerNameDialog,
-			currentGitBranch,
+			cleanWorktreeDeleteCount,
 			deletingWorktreePaths,
 			directoryChildren,
 			directoryErrors,
@@ -2398,6 +2400,7 @@ const ProjectWorkspace = forwardRef<
 			handleCopyPath,
 			handleCopyRelativePath,
 			handleDelete,
+			handleDeleteCleanWorktrees,
 			handleDeleteWorktree,
 			handleNewFile,
 			handleNewFolder,
@@ -2428,6 +2431,10 @@ const ProjectWorkspace = forwardRef<
 			onUpdateProject,
 			project: explorerProject,
 		});
+		const [gitPaneMenuPosition, setGitPaneMenuPosition] = useState<{
+			x: number;
+			y: number;
+		} | null>(null);
 		const openFolder = useCallback(
 			(folderPath: string) => {
 				const api = dockviewApiRef.current;
@@ -4623,9 +4630,22 @@ const ProjectWorkspace = forwardRef<
 						});
 					},
 					count: worktreePanelStatus?.worktrees.length,
-					accessory: currentGitBranch ? (
-						<span className="sidebar-pane__branch">{currentGitBranch}</span>
-					) : null,
+					actions: (
+						<button
+							type="button"
+							className={`sidebar-pane__action-button${gitPaneMenuPosition ? ' sidebar-pane__action-button--active' : ''}`}
+							onClick={(event) => {
+								const rect = event.currentTarget.getBoundingClientRect();
+								setGitPaneMenuPosition({ x: rect.left, y: rect.bottom + 4 });
+							}}
+							aria-label="Git actions"
+							aria-haspopup="menu"
+							aria-expanded={gitPaneMenuPosition !== null}
+							title="Git actions"
+						>
+							<MoreHorizontal size={14} aria-hidden="true" />
+						</button>
+					),
 					children:
 						featureAvailability.state === 'unavailable' ? (
 							<FeatureUnavailableState reason={featureAvailability.reason} />
@@ -4838,6 +4858,22 @@ const ProjectWorkspace = forwardRef<
 									/>
 								</div>
 
+								{gitPaneMenuPosition ? (
+									<ContextMenu
+										x={gitPaneMenuPosition.x}
+										y={gitPaneMenuPosition.y}
+										onClose={() => setGitPaneMenuPosition(null)}
+										items={[
+											{
+												label: 'Delete all clean worktrees',
+												icon: <Trash2 size={14} aria-hidden="true" />,
+												danger: true,
+												disabled: cleanWorktreeDeleteCount === 0,
+												onClick: () => void handleDeleteCleanWorktrees(),
+											},
+										]}
+									/>
+								) : null}
 								{gitPushMenuPosition ? (
 									<ContextMenu
 										x={gitPushMenuPosition.x}
