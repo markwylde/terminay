@@ -12,6 +12,7 @@ import {
 } from '../src/workspace/dashboardRows.ts';
 import {
 	boardColumnFor,
+	DASHBOARD_BOARD_COLUMNS,
 	buildDashboardBoardItems,
 	buildDashboardBoardLanes,
 	groupBoardItemsByColumn,
@@ -303,6 +304,15 @@ test('the board takes one card per agent and one per agent-free panel', () => {
 		['notes.md'],
 	);
 	assert.equal(columns.attention[0].project.title, 'Terminay');
+});
+
+test('board columns read in lifecycle order', () => {
+	assert.deepEqual(DASHBOARD_BOARD_COLUMNS, [
+		'idle',
+		'working',
+		'attention',
+		'done',
+	]);
 });
 
 test('a board card names the server that owns it when more than one is attached', () => {
