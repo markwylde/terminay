@@ -199,6 +199,21 @@ test('workspace drag actions and state are closed logical-view contracts', () =>
 		parseTerminayHostEvent(envelope, context).event,
 		envelope.event,
 	);
+	const fullScreenEvent = { type: 'window.fullscreen-state', fullScreen: true };
+	assert.deepEqual(
+		parseTerminayHostEvent({ ...envelope, event: fullScreenEvent }, context)
+			.event,
+		fullScreenEvent,
+	);
+	assert.throws(() =>
+		parseTerminayHostEvent(
+			{
+				...envelope,
+				event: { type: 'window.fullscreen-state', fullScreen: 'yes' },
+			},
+			context,
+		),
+	);
 	assert.throws(
 		() =>
 			parseTerminayHostAction({
