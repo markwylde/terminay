@@ -11,9 +11,9 @@
 
 ## 3. End-to-end coverage
 
-- [ ] 3.1 Add E2E cases: an Explorer double-click on a `.md` and a `.mdx` file opens the Documentation presentation, and a `.ts` file opens the File Viewer. Verified by `npm run test:e2e` passing.
-- [ ] 3.2 Add E2E cases: a Markdown file opened from Git changes opens the File Viewer in Diff mode, and View source followed by an Explorer re-open stays in the File Viewer. Verified by `npm run test:e2e` passing.
-- [ ] 3.3 Update any existing E2E test that expected Explorer to open Markdown in the File Viewer. Verified by the full sharded suite passing in Gitea CI with every commit status `success` or `skipped`.
+- [x] 3.1 Add E2E cases: an Explorer double-click on a `.md` and a `.mdx` file opens the Documentation presentation, and a `.ts` file opens the File Viewer. Verified by `npm run test:e2e` passing.
+- [x] 3.2 Add E2E cases: a Markdown file opened from Git changes opens the File Viewer in Diff mode, and View source followed by an Explorer re-open stays in the File Viewer. Verified by `npm run test:e2e` passing.
+- [x] 3.3 Update any existing E2E test that expected Explorer to open Markdown in the File Viewer. Verified by the full sharded suite passing in Gitea CI with every commit status `success` or `skipped`.
 
 ## 4. Validation
 
