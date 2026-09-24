@@ -5,7 +5,7 @@ import ts from 'typescript';
 
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
 const BANNED_SHARED_MODULES = /^(?:node:|electron(?:\/|$)|ws(?:\/|$)|websocket(?:\/|$)|wrtc(?:\/|$)|@(?:roamhq|koush)\/wrtc(?:\/|$)|werift(?:\/|$)|node-datachannel(?:\/|$))/;
-const PACKAGE_SOURCE_ROOTS = new Set(['protocol', 'client-core', 'responsive-ui']);
+const PACKAGE_SOURCE_ROOTS = new Set(['protocol', 'client-core', 'responsive-ui', 'cron']);
 const BUILTIN_MODULES = new Set(builtinModules.flatMap((name) => [name, `node:${name}`]));
 
 function readJson(path) {

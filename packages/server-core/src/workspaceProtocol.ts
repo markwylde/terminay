@@ -7,15 +7,23 @@ import {
 	type WorkspaceDeltaDto,
 } from '@terminay/protocol';
 import type {
+	AuthenticatedClient,
 	CommandRequest,
 	OperationRegistries,
+	OrderedEvent,
 	OrderedEventJournalLike,
 	QueryRequest,
 } from './types.js';
+import { TerminalServiceError } from './terminalService/errors.js';
 import {
+	AUTOMATION_SPACE_TERMINAL_LIMIT,
+	automationSpaceRefusal,
+	canSeeAutomationSpace,
+	isAutomationSpace,
 	type WorkspaceCommand,
 	type WorkspaceState,
 	WorkspaceStore,
+	withholdAutomationSpace,
 } from './workspace.js';
 
 /** Protocol operation names for the server-owned workspace boundary. */
@@ -30,6 +38,18 @@ export const WORKSPACE_OPERATIONS = Object.freeze({
 	projectShellProfileReplace: 'project.shell-profile.replace',
 } as const);
 export const WORKSPACE_EVENT = 'workspace.changed';
+/** Typed project lifecycle facts, emitted once per `project.create` /
+ * `project.close` command that actually opens or closes a project. The
+ * automation space is never reported. */
+export const PROJECT_OPENED_EVENT = 'project.opened';
+export const PROJECT_CLOSED_EVENT = 'project.closed';
+
+export interface ProjectLifecycleEventPayload {
+	readonly serverId: string;
+	readonly projectId: string;
+	readonly name: string;
+	readonly revision: number;
+}
 
 export interface PreparedProjectRootUpdate {
 	readonly canonicalRoot: string;
@@ -69,6 +89,9 @@ export interface WorkspaceOperationRegistry {
 		command: WorkspaceCommand,
 		expectedRevision?: number,
 	) => ReturnType<WorkspaceStore['apply']>;
+	/** Server-internal: the automation terminal space's project id, created and
+	 * published on first use. Never reachable as a client operation. */
+	readonly ensureAutomationSpace: (root: string) => string;
 }
 
 /**
@@ -84,7 +107,10 @@ export function createWorkspaceOperationRegistry(
 	const queries = {
 		[WORKSPACE_OPERATIONS.snapshot]: (request: QueryRequest) =>
 			parseWorkspaceSnapshotDto(
-				projectScopedState(workspace.state, projectClaim(request)),
+				projectScopedState(
+					connectionVisibleState(workspace.state, request),
+					projectClaim(request),
+				),
 			) as unknown as JsonValue,
 		[WORKSPACE_OPERATIONS.delta]: (request: QueryRequest) => {
 			const payload = objectPayload(request.envelope.payload);
@@ -96,7 +122,7 @@ export function createWorkspaceOperationRegistry(
 					'workspace cursor does not match revision',
 				);
 			const delta = projectScopedDelta(
-				workspace.delta(revision),
+				connectionVisibleDelta(workspace.delta(revision), request),
 				projectClaim(request),
 			);
 			const response: WorkspaceDeltaDto = {
@@ -176,20 +202,131 @@ export function createWorkspaceOperationRegistry(
 		workspace,
 		operations: { queries, commands, policies },
 		applyHostCommand: (commandId, command, expectedRevision) => {
+			const lifecycle = observeProjectLifecycle(workspace, command);
 			const applied = workspace.apply({
 				commandId,
 				command,
 				...(expectedRevision === undefined ? {} : { expectedRevision }),
 			});
-			if (applied.ok)
+			if (applied.ok) {
 				publishWorkspaceChange(
 					options.eventJournal,
 					workspace,
 					commandProjectId(command),
 				);
+				lifecycle.publish(options.eventJournal);
+			}
 			return applied;
 		},
+		ensureAutomationSpace: (root) => {
+			const before = workspace.state.revision;
+			const projectId = workspace.ensureAutomationSpace({ root });
+			if (workspace.state.revision !== before)
+				publishWorkspaceChange(options.eventJournal, workspace, projectId);
+			return projectId;
+		},
 	};
+}
+
+/** Terminal-creation guard for the automation space, checked before any PTY
+ * is spawned: a connection that cannot see the space cannot target it, and the
+ * space refuses a terminal beyond its live-terminal limit. */
+export function automationSpaceSessionGuard(
+	workspace: WorkspaceStore,
+): (request: CommandRequest, projectId: string) => void {
+	return (request, projectId) => {
+		const state = workspace.state;
+		if (!isAutomationSpace(state.projects[projectId])) return;
+		if (!canSeeAutomationSpace(request.context.clientCapabilities))
+			throw new TerminalServiceError('forbidden', 'project not found');
+		const refusal = automationSpaceRefusal(state, {
+			type: 'terminal.create',
+			sessionId: 'automation-space-guard',
+			projectId,
+		});
+		if (refusal !== undefined)
+			throw new TerminalServiceError('session_limit', refusal, {
+				projectId,
+				max: AUTOMATION_SPACE_TERMINAL_LIMIT,
+			});
+	};
+}
+
+/** Whether an exited session is still retained for viewing: a terminal in
+ * the automation space whose panel is still open (a kept run terminal, or one
+ * a run opened through MCP). It stays viewable, read-only, until a person
+ * closes it. Sessions in ordinary projects are never retained this way. */
+export function automationSpaceRetainsExitedSession(
+	workspace: WorkspaceStore,
+): (identity: {
+	readonly projectId: string;
+	readonly sessionId: string;
+}) => boolean {
+	return (identity) => {
+		const state = workspace.state;
+		if (!isAutomationSpace(state.projects[identity.projectId])) return false;
+		return Object.values(state.panels).some(
+			(panel) =>
+				panel.type === 'terminal' &&
+				panel.projectId === identity.projectId &&
+				panel.sessionId === identity.sessionId,
+		);
+	};
+}
+
+/** A connection that did not negotiate `automations.v1` never learns of the
+ * automation space, its panels, or its terminals (ADR-0028). */
+function connectionVisibleState(
+	state: WorkspaceState,
+	request: QueryRequest | CommandRequest,
+): WorkspaceState {
+	return canSeeAutomationSpace(request.context.clientCapabilities)
+		? state
+		: withholdAutomationSpace(state);
+}
+
+function connectionVisibleDelta(
+	delta: ReturnType<WorkspaceStore['delta']>,
+	request: QueryRequest,
+): ReturnType<WorkspaceStore['delta']> {
+	if (canSeeAutomationSpace(request.context.clientCapabilities)) return delta;
+	const hiddenIds = automationSpaceIds(delta.state);
+	if (hiddenIds.size === 0) return delta;
+	return {
+		state: withholdAutomationSpace(delta.state),
+		events: delta.events.filter(
+			(event) => !event.changedIds.some((id) => hiddenIds.has(id)),
+		),
+	};
+}
+
+function automationSpaceIds(state: WorkspaceState): ReadonlySet<string> {
+	const ids = new Set<string>();
+	for (const project of Object.values(state.projects))
+		if (isAutomationSpace(project)) ids.add(project.id);
+	for (const panel of Object.values(state.panels))
+		if (ids.has(panel.projectId)) ids.add(panel.id);
+	for (const session of Object.values(state.terminalSessions))
+		if (ids.has(session.projectId)) ids.add(session.id);
+	return ids;
+}
+
+/** Refuse, with a bounded non-retryable error, a command the automation space
+ * never accepts, and hide the space from a connection that cannot see it. */
+function enforceAutomationSpace(
+	state: WorkspaceState,
+	request: CommandRequest,
+	command: WorkspaceCommand,
+): void {
+	if (
+		!canSeeAutomationSpace(request.context.clientCapabilities) &&
+		commandProjectIds(state, command).some((projectId) =>
+			isAutomationSpace(state.projects[projectId]),
+		)
+	)
+		throw protocolError('conflict', 'project not found');
+	const refusal = automationSpaceRefusal(state, command);
+	if (refusal !== undefined) throw protocolError('forbidden', refusal);
 }
 
 async function updateProjectShellProfile(
@@ -288,6 +425,11 @@ async function updateProjectRoot(
 	}
 	if (workspace.state.projects[projectId] === undefined)
 		throw protocolError('conflict', 'project not found');
+	enforceAutomationSpace(workspace.state, request, {
+		type: 'project.root.update',
+		projectId,
+		root,
+	});
 	if (
 		expectedRevision !== undefined &&
 		expectedRevision !== workspace.state.revision
@@ -345,6 +487,7 @@ async function applyCommand(
 	command: WorkspaceCommand,
 ): Promise<{ readonly result: JsonValue; readonly revision: number }> {
 	enforceProjectClaim(workspace.state, request, command);
+	enforceAutomationSpace(workspace.state, request, command);
 	if (
 		command.type === 'project.create' &&
 		options.prepareProjectRootUpdate !== undefined
@@ -373,6 +516,7 @@ async function applyCommand(
 				'project root preparation returned an invalid result',
 			);
 		}
+		const lifecycle = observeProjectLifecycle(workspace, command);
 		const applied = workspace.apply({
 			commandId: request.envelope.commandId,
 			expectedRevision: request.envelope.expectedRevision,
@@ -388,6 +532,7 @@ async function applyCommand(
 			});
 		await prepared.commit();
 		publishWorkspaceChange(options.eventJournal, workspace, command.projectId);
+		lifecycle.publish(options.eventJournal);
 		return {
 			result: {
 				revision: applied.revision,
@@ -406,6 +551,7 @@ async function applyCommand(
 		if (command.type === 'project.close')
 			await options.closeProjectTerminalSessions?.(sessionIdsToClose);
 	}
+	const lifecycle = observeProjectLifecycle(workspace, command);
 	const applied = workspace.apply({
 		commandId: request.envelope.commandId,
 		expectedRevision: request.envelope.expectedRevision,
@@ -426,6 +572,7 @@ async function applyCommand(
 		workspace,
 		commandProjectId(command),
 	);
+	lifecycle.publish(options.eventJournal);
 	return {
 		result: {
 			revision: applied.revision,
@@ -682,6 +829,74 @@ function commandProjectId(command: WorkspaceCommand): string | null {
 	return 'projectId' in command && typeof command.projectId === 'string'
 		? command.projectId
 		: null;
+}
+
+/** A project-claimed client only learns of its own project's lifecycle. */
+export function projectLifecycleEventProjector(
+	event: OrderedEvent,
+	client: AuthenticatedClient | undefined,
+): OrderedEvent | undefined {
+	if (event.event !== PROJECT_OPENED_EVENT && event.event !== PROJECT_CLOSED_EVENT)
+		return event;
+	const claims = client?.claims as unknown;
+	const claimed =
+		typeof claims === 'object' &&
+		claims !== null &&
+		!Array.isArray(claims) &&
+		typeof (claims as Record<string, unknown>).projectId === 'string'
+			? ((claims as Record<string, unknown>).projectId as string)
+			: undefined;
+	if (claimed === undefined) return event;
+	const payload = event.payload;
+	return typeof payload === 'object' &&
+		payload !== null &&
+		!Array.isArray(payload) &&
+		payload.projectId === claimed
+		? event
+		: undefined;
+}
+
+/**
+ * Capture a project's presence before a `project.create` / `project.close`
+ * command so the typed lifecycle event is published only when the command
+ * actually opened or closed it — never for an idempotent replay, a refused
+ * command, or the reserved automation space.
+ */
+function observeProjectLifecycle(
+	workspace: WorkspaceStore,
+	command: WorkspaceCommand,
+): { readonly publish: (journal: OrderedEventJournalLike | undefined) => void } {
+	if (command.type !== 'project.create' && command.type !== 'project.close')
+		return { publish: () => undefined };
+	const before = workspace.state.projects[command.projectId];
+	return {
+		publish: (journal) => {
+			if (journal === undefined) return;
+			const state = workspace.state;
+			const after = state.projects[command.projectId];
+			const project =
+				command.type === 'project.create'
+					? before === undefined
+						? after
+						: undefined
+					: after === undefined
+						? before
+						: undefined;
+			if (project === undefined || isAutomationSpace(project)) return;
+			const payload: ProjectLifecycleEventPayload = {
+				serverId: state.serverId,
+				projectId: project.id,
+				name: project.name,
+				revision: state.revision,
+			};
+			journal.append(
+				command.type === 'project.create'
+					? PROJECT_OPENED_EVENT
+					: PROJECT_CLOSED_EVENT,
+				payload as unknown as JsonValue,
+			);
+		},
+	};
 }
 
 function publishWorkspaceChange(

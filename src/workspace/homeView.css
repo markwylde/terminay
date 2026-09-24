@@ -1,0 +1,285 @@
+/*
+ * Home and its sidebar.
+ *
+ * The geometry — side-by-side columns, the width separator, and the narrow
+ * drawer — belongs to WorkspaceSplitLayout. This file styles only what Home
+ * puts in its slots: a section menu, and sections that fill the content area.
+ */
+
+.home-view {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	min-width: 0;
+	min-height: 0;
+	background: var(--terminal-panel-surface, #0f1318);
+	color: #dce2f0;
+}
+
+.home-view__panel {
+	position: relative;
+	min-width: 0;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.home-sidebar {
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	width: 100%;
+	min-height: 0;
+	overflow: hidden;
+	background: var(--terminal-panel-surface, var(--tab-bg-active));
+	border-right: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.home-sidebar__sections {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 8px 6px;
+	min-height: 0;
+	overflow-y: auto;
+}
+
+.home-sidebar__section {
+	all: unset;
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	min-width: 0;
+	height: 30px;
+	padding: 0 10px;
+	border-radius: 5px;
+	font-size: 13px;
+	color: rgba(220, 226, 240, 0.72);
+	cursor: pointer;
+}
+
+.home-sidebar__section:hover {
+	color: #ffffff;
+	background: rgba(255, 255, 255, 0.06);
+}
+
+.home-sidebar__section--active {
+	color: #ffffff;
+	background: rgba(255, 255, 255, 0.1);
+}
+
+.home-sidebar__section:focus-visible {
+	outline: 1px solid rgba(87, 183, 255, 0.7);
+	outline-offset: -1px;
+}
+
+.home-sidebar__label {
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+/* --- Sections ------------------------------------------------------------ */
+
+.home-section {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+	overflow: auto;
+	background: var(--terminal-panel-surface, #0f1318);
+	color: #dce2f0;
+}
+
+.home-section__header {
+	flex: 0 0 auto;
+	padding: 14px 20px 12px;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.home-section__heading {
+	margin: 0;
+	font-size: 15px;
+	font-weight: 600;
+	letter-spacing: 0.01em;
+}
+
+.home-section__subheading {
+	margin: 3px 0 0;
+	font-size: 12px;
+	color: rgba(220, 226, 240, 0.55);
+}
+
+/* --- Overview widgets ---------------------------------------------------- */
+
+.home-overview__grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+	gap: 12px;
+	padding: 16px 20px 20px;
+}
+
+.home-widget {
+	all: unset;
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	min-width: 0;
+	padding: 12px 14px;
+	border-radius: 8px;
+	background: rgba(255, 255, 255, 0.035);
+	border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.home-widget--action {
+	cursor: pointer;
+}
+
+.home-widget--action:hover {
+	background: rgba(255, 255, 255, 0.06);
+}
+
+.home-widget--action:focus-visible,
+.home-widget__link:focus-visible {
+	outline: 1px solid rgba(87, 183, 255, 0.7);
+	outline-offset: 1px;
+}
+
+.home-widget__title {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	font-size: 11.5px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: rgba(220, 226, 240, 0.55);
+}
+
+.home-widget__body {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 6px 16px;
+	min-width: 0;
+}
+
+.home-widget__count {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 5px;
+	white-space: nowrap;
+}
+
+.home-widget__number {
+	font-size: 20px;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+	color: #ffffff;
+}
+
+.home-widget__unit,
+.home-widget__note {
+	font-size: 12px;
+	color: rgba(220, 226, 240, 0.6);
+}
+
+.home-widget__count--needsYou .home-widget__number {
+	color: #ffb4ae;
+}
+
+.home-widget__count--working .home-widget__number {
+	color: #f0d17c;
+}
+
+.home-widget__count--done .home-widget__number {
+	color: #8fe0ab;
+}
+
+.home-widget__unavailable {
+	font-size: 11.5px;
+	color: #f0d17c;
+}
+
+.home-widget__empty {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.home-widget__link {
+	all: unset;
+	box-sizing: border-box;
+	cursor: pointer;
+	border-radius: 4px;
+	color: #9ccfff;
+	font-size: 12.5px;
+}
+
+.home-widget__link:hover {
+	text-decoration: underline;
+}
+
+.home-widget__list {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	width: 100%;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.home-widget__row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	min-width: 0;
+	color: #dce2f0;
+}
+
+.home-widget__row-text {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.home-widget__row-meta {
+	flex: 0 0 auto;
+	font-size: 11.5px;
+	font-variant-numeric: tabular-nums;
+	color: rgba(220, 226, 240, 0.55);
+}
+
+.home-widget__outcome {
+	flex: 0 0 auto;
+	padding: 1px 7px;
+	border-radius: 999px;
+	font-size: 11px;
+	background: rgba(255, 255, 255, 0.06);
+	color: rgba(220, 226, 240, 0.7);
+}
+
+.home-widget__outcome--success {
+	color: #8fe0ab;
+	background: rgba(69, 200, 116, 0.16);
+}
+
+.home-widget__outcome--failure,
+.home-widget__outcome--timed-out {
+	color: #ffb4ae;
+	background: rgba(238, 98, 88, 0.16);
+}
+
+.home-widget__outcome--running {
+	color: #f0d17c;
+	background: rgba(232, 185, 49, 0.16);
+}

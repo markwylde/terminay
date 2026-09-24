@@ -1,7 +1,8 @@
-import type {
-	WorkspaceProject,
-	WorkspaceState,
-	WorkspaceStore,
+import {
+	isAutomationSpace,
+	type WorkspaceProject,
+	type WorkspaceState,
+	type WorkspaceStore,
 } from './workspace.js';
 import { resolveWorkspaceHydration } from './workspaceHydration.js';
 
@@ -84,7 +85,10 @@ export function restoredProjectsInPresentationOrder(
 		remember(view?.activeProjectId);
 		for (const projectId of view?.projectIds ?? []) remember(projectId);
 	}
-	for (const project of Object.values(state.projects)) remember(project.id);
+	// The automation space is not a project the user restores; its terminals
+	// are created by automation runs only (ADR-0028).
+	for (const project of Object.values(state.projects))
+		if (!isAutomationSpace(project)) remember(project.id);
 	return projects;
 }
 

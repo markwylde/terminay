@@ -56,8 +56,13 @@ import {
 	type ControlRequestContext,
 	createControlEndpoint,
 	createTerminalControlAdapter,
+	assertAutomationSpaceCapacity,
 	type LocalControlEndpoint,
+	ProjectHandleCodec,
+	reachOf,
+	resolveOpenTerminalProject,
 	type TerminalControlAdapter,
+	workspaceProjectFields,
 } from '../apps/terminay-server/src/index';
 import { createProtectedHostKeyStore } from '../apps/terminay-server/src/remote/hostedHostKey';
 import { parseHostedIceServers } from '../apps/terminay-server/src/remote/hostedPeerLifecycle';
@@ -69,6 +74,9 @@ import {
 } from '../packages/server-core/src/extensions/sessionSources';
 import { ParakeetRuntime } from '../packages/server-core/src/aiService/parakeetRuntime';
 import { MacroRepository } from '../packages/server-core/src/macroService/repository';
+import { createAutomationFileBackends } from '../packages/server-core/src/automationService/fileBackend';
+import { AutomationRepository } from '../packages/server-core/src/automationService/repository';
+import { AutomationRunLog } from '../packages/server-core/src/automationService/runLog';
 import {
 	RecordingService,
 	ServerRecordingAdapter,
@@ -81,6 +89,7 @@ import {
 	ShellProfileDiscoveryService,
 } from '../packages/server-core/src/shellProfiles/index';
 import type { TerminalEvent } from '../packages/server-core/src/terminalService/index';
+import { isAutomationSpace } from '../packages/server-core/src/workspace';
 import { openCanonicalWorkspace } from '../packages/server-core/src/workspaceHydration';
 import {
 	findCommandForKeyboardEvent,
@@ -1409,6 +1418,23 @@ const embeddedMacros = new MacroRepository({
 	},
 });
 
+// Automations: automations.v1.json + automation-runs.v1.json in userData.
+const embeddedAutomationBackends = createAutomationFileBackends(
+	app.getPath('userData'),
+);
+const embeddedAutomations = new AutomationRepository(
+	embeddedAutomationBackends.definitions,
+	{
+		resolveMacro: async (macroId) =>
+			(await embeddedMacros.load()).macros.find(
+				(macro) => macro.id === macroId,
+			),
+	},
+);
+const embeddedAutomationRuns = new AutomationRunLog(
+	embeddedAutomationBackends.runs,
+);
+
 function embeddedMacroKeyBytes(key: string): Uint8Array {
 	const value = (
 		{
@@ -1517,11 +1543,16 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		parakeetRuntime,
 		defaultProjectRoot: () => app.getPath('home'),
 		shellProfiles: embeddedShellProfiles,
-		terminalLaunchEnvironmentFor: (intent) => {
+		terminalLaunchEnvironmentFor: (intent, placement) => {
 			if (!mcpCapabilities.isEnabled()) return undefined;
+			// Reach comes only from the canonical project kind the launch
+			// resolver read from server state (ADR-0028): an automation-space
+			// terminal gets workspace reach, every other terminal project reach.
 			const capability = mcpCapabilities.mint(
 				intent.identity.sessionId,
 				intent.identity.projectId,
+				'write',
+				placement,
 			);
 			return getTerminalControlEnv(capability);
 		},
@@ -1555,6 +1586,10 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 					}
 				},
 			},
+		},
+		automations: {
+			repository: embeddedAutomations,
+			runLog: embeddedAutomationRuns,
 		},
 		macros: {
 			repository: embeddedMacros,
@@ -1843,6 +1878,10 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		onStatusChanged: () => {
 			authority.notifyRemoteAccessChanged();
 		},
+		// Remote device connected trigger (automations).
+		onConnectionAdmitted: (admission) => {
+			serverTerminalAuthority?.composition.onConnectionAdmitted(admission);
+		},
 		onDiagnostic: (event) => {
 			void desktopDiagnostics.record(hostedPairingDiagnosticEvent(event), {
 				channel: 'lifecycle',
@@ -2089,7 +2128,10 @@ function checkForUpdatesFromMenu(): void {
 			broadcastAppUpdateStatusChanged();
 			const { message, detail } = describeManualCheck(status);
 			await dialog.showMessageBox({
-				type: status.errorMessage !== null && !status.hasUpdate ? 'warning' : 'info',
+				type:
+					status.errorMessage !== null && !status.hasUpdate
+						? 'warning'
+						: 'info',
 				buttons: ['OK'],
 				noLink: true,
 				title: 'Check for Updates',
@@ -2543,6 +2585,15 @@ async function stopMcpControlEndpoint(): Promise<void> {
 function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 	const terminal = (context: ControlRequestContext, reference: string) =>
 		resolveMcpTerminal(context, reference);
+	// Opaque project handles for workspace reach (ADR-0028); project reach
+	// never names a project.
+	const projectHandles = new ProjectHandleCodec(embeddedServerId);
+	const liveTerminalsIn = (projectId: string) =>
+		requireMcpAuthority()
+			.list()
+			.filter(
+				(entry) => entry.projectId === projectId && entry.status === 'running',
+			).length;
 	return {
 		getMcpCapabilities: () => ({
 			tools: desktopMcpToolAvailability(),
@@ -2550,21 +2601,29 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 		listTerminals: (context) => {
 			const authority = requireMcpAuthority();
 			const activityBySession = authority.activity.snapshot().sessions;
+			const workspaceReach = reachOf(context) === 'workspace';
 			return {
 				terminals: authority
 					.list()
-					.filter((entry) => entry.projectId === context.projectId)
+					.filter((entry) => mcpReaches(context, entry.projectId))
 					.map((entry) => {
-						const panel = mcpPanelFor(entry.id, context.projectId);
+						const panel = mcpPanelFor(entry.id, entry.projectId);
 						const activity = activityBySession[entry.id];
 						const snapshot = authority.service.getSession(entry.id);
 						return {
 							terminal: entry.id,
+							...(workspaceReach
+								? workspaceProjectFields(
+										projectHandles,
+										authority.workspace.state,
+										entry.projectId,
+									)
+								: {}),
 							name: panel?.title ?? entry.id,
 							status: entry.status,
 							active:
 								panel?.id ===
-								authority.workspace.state.projects[context.projectId]
+								authority.workspace.state.projects[entry.projectId]
 									?.activePanelId,
 							self: entry.id === context.terminalSessionId,
 							cwd: entry.cwd,
@@ -2579,7 +2638,7 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 		readTerminal: async (params, context) => {
 			const target = terminal(context, params.terminal);
 			const authority = requireMcpAuthority();
-			const authorization = mcpAuthorization(context);
+			const authorization = mcpAuthorization(target.projectId);
 			if (params.format === 'raw') {
 				const rawBytes = Math.floor(params.maxBytes / 4) * 3;
 				const read = authority.service.readRetainedOutput(target.id, {
@@ -2628,7 +2687,7 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 			const presentation = await requireMcpAuthority().service.readPresentation(
 				target.id,
 				{
-					authorization: mcpAuthorization(context),
+					authorization: mcpAuthorization(target.projectId),
 					format: 'text',
 					maxBytes: params.maxBytes,
 				},
@@ -2655,17 +2714,32 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 			};
 		},
 		openTerminal: async (params, context) => {
-			const callerPanelId = mcpPanelFor(
-				context.terminalSessionId,
-				context.projectId,
-			)?.id;
+			const state = requireMcpAuthority().workspace.state;
+			const projectId = resolveOpenTerminalProject({
+				context,
+				codec: projectHandles,
+				state,
+				project: params.project,
+				liveTerminals: liveTerminalsIn,
+			});
+			// The caller's panel anchors cwd inheritance only in its own project.
+			const callerPanelId =
+				projectId === context.projectId
+					? mcpPanelFor(context.terminalSessionId, context.projectId)?.id
+					: undefined;
 			const opened = await createServerOwnedTerminalSession(
-				context.projectId,
+				projectId,
 				params.cwd,
 				undefined,
 				callerPanelId,
 			);
-			const panel = mcpPanelFor(opened.id, context.projectId);
+			// An automation terminal's opens join the run that owns it, so the
+			// Automations section groups them under that run (ADR-0028).
+			if (reachOf(context) === 'workspace')
+				await serverTerminalAuthority?.composition.automationExecutor
+					?.recordOpenedTerminal(context.terminalSessionId, opened.id)
+					.catch(() => undefined);
+			const panel = mcpPanelFor(opened.id, projectId);
 			if (params.name !== undefined && panel !== undefined)
 				applyMcpWorkspaceCommand(context, {
 					type: 'panel.update',
@@ -2675,13 +2749,19 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 			if (params.split !== undefined && panel !== undefined)
 				applyMcpWorkspaceCommand(context, {
 					type: 'panel.split',
-					projectId: context.projectId,
+					projectId,
 					panelId: panel.id,
 					direction:
 						params.split === 'above' || params.split === 'below'
 							? 'vertical'
 							: 'horizontal',
 				});
+			if (reachOf(context) === 'workspace')
+				return {
+					terminal: opened.id,
+					...workspaceProjectFields(projectHandles, state, projectId),
+					status: opened.status,
+				};
 			return { terminal: opened.id, status: opened.status };
 		},
 		writeTerminal: async (params, context) => {
@@ -2690,7 +2770,7 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 			await requireMcpAuthority().write(
 				target.id,
 				data,
-				mcpAuthorization(context),
+				mcpAuthorization(target.projectId),
 			);
 			return {
 				terminal: target.id,
@@ -2706,7 +2786,7 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 			await requireMcpAuthority().write(
 				target.id,
 				data,
-				mcpAuthorization(context),
+				mcpAuthorization(target.projectId),
 			);
 			return {
 				terminal: target.id,
@@ -2718,12 +2798,15 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 		},
 		closeTerminal: async (params, context) => {
 			const target = terminal(context, params.terminal);
-			await requireMcpAuthority().kill(target.id, mcpAuthorization(context));
+			await requireMcpAuthority().kill(
+				target.id,
+				mcpAuthorization(target.projectId),
+			);
 			return { terminal: target.id, closed: true };
 		},
 		focusTerminal: (params, context) => {
 			const target = terminal(context, params.terminal);
-			const panel = mcpPanelFor(target.id, context.projectId);
+			const panel = mcpPanelFor(target.id, target.projectId);
 			if (panel === undefined)
 				throw new ControlEndpointError(
 					'terminal_not_found',
@@ -2731,14 +2814,14 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 				);
 			applyMcpWorkspaceCommand(context, {
 				type: 'panel.activate',
-				projectId: context.projectId,
+				projectId: target.projectId,
 				panelId: panel.id,
 			});
 			return { terminal: target.id, focused: true };
 		},
 		renameTerminal: (params, context) => {
 			const target = terminal(context, params.terminal);
-			const panel = mcpPanelFor(target.id, context.projectId);
+			const panel = mcpPanelFor(target.id, target.projectId);
 			if (panel === undefined)
 				throw new ControlEndpointError(
 					'terminal_not_found',
@@ -2753,17 +2836,23 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 		},
 		splitTerminal: async (params, context) => {
 			const target = terminal(context, params.terminal);
-			const opened = await createServerOwnedTerminalSession(
-				context.projectId,
-				undefined,
-				undefined,
-				mcpPanelFor(target.id, context.projectId)?.id,
+			assertAutomationSpaceCapacity(
+				isAutomationSpace(
+					requireMcpAuthority().workspace.state.projects[target.projectId],
+				),
+				liveTerminalsIn(target.projectId),
 			);
-			const panel = mcpPanelFor(opened.id, context.projectId);
+			const opened = await createServerOwnedTerminalSession(
+				target.projectId,
+				undefined,
+				undefined,
+				mcpPanelFor(target.id, target.projectId)?.id,
+			);
+			const panel = mcpPanelFor(opened.id, target.projectId);
 			if (panel !== undefined)
 				applyMcpWorkspaceCommand(context, {
 					type: 'panel.split',
-					projectId: context.projectId,
+					projectId: target.projectId,
 					panelId: panel.id,
 					direction:
 						params.direction === 'above' || params.direction === 'below'
@@ -2777,7 +2866,7 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 			await requireMcpAuthority().service.waitForInactivity(
 				target.id,
 				params.seconds * 1000,
-				{ authorization: mcpAuthorization(context), signal },
+				{ authorization: mcpAuthorization(target.projectId), signal },
 			);
 			return { terminal: target.id, idle: true };
 		},
@@ -2900,14 +2989,22 @@ function mcpPanelFor(sessionId: string, projectId: string) {
 	);
 }
 
+/** Whether a capability reaches a project on this server (ADR-0028). */
+function mcpReaches(
+	context: ControlRequestContext,
+	projectId: string,
+): boolean {
+	return reachOf(context) === 'workspace' || projectId === context.projectId;
+}
+
 function resolveMcpTerminal(context: ControlRequestContext, reference: string) {
 	const candidates = requireMcpAuthority()
 		.list()
-		.filter((entry) => entry.projectId === context.projectId)
+		.filter((entry) => mcpReaches(context, entry.projectId))
 		.filter(
 			(entry) =>
 				entry.id === reference ||
-				mcpPanelFor(entry.id, context.projectId)?.title === reference,
+				mcpPanelFor(entry.id, entry.projectId)?.title === reference,
 		);
 	if (candidates.length === 1) return candidates[0]!;
 	if (candidates.length > 1)
@@ -2922,10 +3019,12 @@ function resolveMcpTerminal(context: ControlRequestContext, reference: string) {
 	);
 }
 
-function mcpAuthorization(context: ControlRequestContext) {
+/** Authorize by the target's own project; `resolveMcpTerminal` has already
+ * confirmed the capability reaches it. */
+function mcpAuthorization(projectId: string) {
 	return {
 		serverId: requireMcpAuthority().service.serverId,
-		projectId: context.projectId,
+		projectId,
 		scope: 'write' as const,
 	};
 }
@@ -3275,29 +3374,31 @@ function createAppMenu(
 				},
 				{ type: 'separator' },
 				...createDiagnosticsHelpMenuItems({
-				directory: desktopDiagnostics.directory,
-				clearManagedArtifacts: () => desktopDiagnostics.clearManagedArtifacts(),
-				recordCleared: () => desktopDiagnostics.recordCleared(),
-				performanceLog: {
-					// The window is a route on the workspace bundle; without a local
-					// workspace window there is nothing to present it.
-					canOpen: () =>
-						(BrowserWindow.getFocusedWindow() ?? getFirstAppWindow()) !== null,
-					open: () => sendCommandToFocusedWindow('open-performance-log'),
-				},
-				reportFailure: (operation, error) => {
-					void desktopDiagnostics.record(
-						{
-							component: 'diagnostics',
-							event: 'diagnostics.writer.degraded',
-							fields: { operation },
-							severity: 'warning',
-							source: 'diagnostics-menu',
-							message: error,
-						},
-						{ channel: 'lifecycle' },
-					);
-				},
+					directory: desktopDiagnostics.directory,
+					clearManagedArtifacts: () =>
+						desktopDiagnostics.clearManagedArtifacts(),
+					recordCleared: () => desktopDiagnostics.recordCleared(),
+					performanceLog: {
+						// The window is a route on the workspace bundle; without a local
+						// workspace window there is nothing to present it.
+						canOpen: () =>
+							(BrowserWindow.getFocusedWindow() ?? getFirstAppWindow()) !==
+							null,
+						open: () => sendCommandToFocusedWindow('open-performance-log'),
+					},
+					reportFailure: (operation, error) => {
+						void desktopDiagnostics.record(
+							{
+								component: 'diagnostics',
+								event: 'diagnostics.writer.degraded',
+								fields: { operation },
+								severity: 'warning',
+								source: 'diagnostics-menu',
+								message: error,
+							},
+							{ channel: 'lifecycle' },
+						);
+					},
 				}),
 				...(process.platform === 'darwin'
 					? []
@@ -3909,9 +4010,7 @@ function createWindow(options?: {
 		windowConnectionsByWebContents.set(windowWebContentsId, connections);
 		const profiles = connections.list();
 		const primaryProfile: TerminayHostConnectionProfile | undefined =
-			profiles.find(
-				(candidate) => candidate.id === launch.context.profileId,
-			);
+			profiles.find((candidate) => candidate.id === launch.context.profileId);
 		const fallbackProfiles = sanitizedDesktopConnectionProfiles(
 			launch.context.profileId,
 		);
@@ -3920,7 +4019,8 @@ function createWindow(options?: {
 			context: {
 				...launch.context,
 				profile: primaryProfile ?? fallbackProfiles.profile,
-				profiles: primaryProfile === undefined ? fallbackProfiles.profiles : profiles,
+				profiles:
+					primaryProfile === undefined ? fallbackProfiles.profiles : profiles,
 				...(restoredComposition === undefined
 					? {}
 					: { composition: restoredComposition }),
@@ -4358,9 +4458,7 @@ async function openDesktopRemoteLanes(
 		return Object.freeze({
 			kind: 'http' as const,
 			transport: connected.transport,
-			...(profile.serverId === undefined
-				? {}
-				: { serverId: profile.serverId }),
+			...(profile.serverId === undefined ? {} : { serverId: profile.serverId }),
 		});
 	}
 	try {
@@ -5264,6 +5362,9 @@ async function completeDesktopStartup(): Promise<void> {
 	endStartupPhase('vault-unlock');
 	powerMonitor.on('resume', () => {
 		void desktopDiagnostics.cleanup();
+		// The scheduler arms one timer and never polls, so a machine that slept
+		// through a due time is told here rather than waiting for that timer.
+		void serverTerminalAuthority?.composition.automationScheduler?.wake();
 	});
 	await desktopDiagnostics.record(
 		{

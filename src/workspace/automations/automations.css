@@ -1,0 +1,786 @@
+/*
+ * Home's Automations section, its editor, and the missed-run notice.
+ * Colours follow homeView.css so the section reads as part of Home.
+ */
+
+/* The section scrolls as a whole; its parts keep their natural height rather
+ * than shrinking under one another. */
+.home-automations > * {
+	flex-shrink: 0;
+}
+
+.home-automations__header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 12px;
+	flex-wrap: wrap;
+}
+
+.home-automations__toolbar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.home-automations__server {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+	color: rgba(220, 226, 240, 0.7);
+}
+
+.home-automations__body {
+	display: grid;
+	grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
+	gap: 16px;
+	padding: 16px 20px;
+}
+
+@media (max-width: 760px) {
+	.home-automations__body {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+.automations-muted {
+	color: rgba(220, 226, 240, 0.58);
+	font-size: 12px;
+}
+
+.automations-note {
+	margin: 12px 20px 0;
+	font-size: 12px;
+	color: #f0d17c;
+}
+
+.automations-error {
+	margin: 12px 20px 0;
+	padding: 8px 10px;
+	border-radius: 6px;
+	font-size: 12.5px;
+	color: #ffb4ae;
+	background: rgba(238, 98, 88, 0.12);
+	border: 1px solid rgba(238, 98, 88, 0.3);
+}
+
+.automations-pane .automations-error,
+.automations-missed .automations-error {
+	margin: 8px 0 0;
+}
+
+.automations-placeholder {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 10px;
+	padding: 20px;
+	font-size: 13px;
+}
+
+.automations-subheading {
+	margin: 0 0 8px;
+	font-size: 11.5px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: rgba(220, 226, 240, 0.55);
+}
+
+/* --- Buttons ------------------------------------------------------------- */
+
+.automations-button {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	height: 28px;
+	padding: 0 10px;
+	border-radius: 6px;
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	background: rgba(255, 255, 255, 0.05);
+	color: #dce2f0;
+	font: inherit;
+	font-size: 12.5px;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.automations-button:hover:not(:disabled) {
+	background: rgba(255, 255, 255, 0.1);
+}
+
+.automations-button:focus-visible {
+	outline: 1px solid rgba(87, 183, 255, 0.7);
+	outline-offset: 1px;
+}
+
+.automations-button:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.automations-button--primary {
+	border-color: rgba(87, 183, 255, 0.55);
+	background: rgba(87, 183, 255, 0.18);
+	color: #ffffff;
+}
+
+.automations-button--primary:hover:not(:disabled) {
+	background: rgba(87, 183, 255, 0.28);
+}
+
+.automations-button--danger {
+	color: #ffb4ae;
+	border-color: rgba(238, 98, 88, 0.35);
+}
+
+.automations-button--quiet {
+	border-color: transparent;
+	background: transparent;
+	height: 24px;
+	padding: 0 6px;
+	font-size: 12px;
+}
+
+.automations-button--icon {
+	padding: 0 8px;
+}
+
+/* --- List ------------------------------------------------------------------ */
+
+.automations-list__items {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.automations-list__empty {
+	margin: 0;
+}
+
+.automations-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 8px 4px 4px;
+	border-radius: 8px;
+	background: rgba(255, 255, 255, 0.035);
+	border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.automations-row--selected {
+	border-color: rgba(87, 183, 255, 0.5);
+	background: rgba(87, 183, 255, 0.08);
+}
+
+.automations-row--disabled .automations-row__name {
+	color: rgba(220, 226, 240, 0.55);
+}
+
+.automations-row__main {
+	all: unset;
+	box-sizing: border-box;
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	gap: 3px;
+	min-width: 0;
+	padding: 6px;
+	border-radius: 6px;
+	cursor: pointer;
+}
+
+.automations-row__main:focus-visible {
+	outline: 1px solid rgba(87, 183, 255, 0.7);
+}
+
+.automations-row__name {
+	font-size: 13px;
+	font-weight: 600;
+	color: #ffffff;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.automations-row__trigger {
+	font-size: 12px;
+	color: rgba(220, 226, 240, 0.72);
+}
+
+.automations-row__meta {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 10px;
+	font-size: 11.5px;
+	color: rgba(220, 226, 240, 0.6);
+}
+
+.automations-switch {
+	position: relative;
+	display: inline-flex;
+	flex: 0 0 auto;
+	cursor: pointer;
+}
+
+.automations-switch input {
+	position: absolute;
+	inset: 0;
+	opacity: 0;
+	margin: 0;
+	cursor: pointer;
+}
+
+.automations-switch__track {
+	width: 28px;
+	height: 16px;
+	border-radius: 999px;
+	background: rgba(255, 255, 255, 0.18);
+	position: relative;
+	transition: background 120ms ease;
+}
+
+.automations-switch__track::after {
+	content: '';
+	position: absolute;
+	top: 2px;
+	left: 2px;
+	width: 12px;
+	height: 12px;
+	border-radius: 50%;
+	background: #ffffff;
+	transition: transform 120ms ease;
+}
+
+.automations-switch input:checked + .automations-switch__track {
+	background: #3f8fd8;
+}
+
+.automations-switch input:checked + .automations-switch__track::after {
+	transform: translateX(12px);
+}
+
+.automations-switch input:focus-visible + .automations-switch__track {
+	outline: 1px solid rgba(87, 183, 255, 0.7);
+	outline-offset: 2px;
+}
+
+/* --- Outcomes ---------------------------------------------------------------- */
+
+.automations-outcome {
+	flex: 0 0 auto;
+	padding: 1px 7px;
+	border-radius: 999px;
+	font-size: 11px;
+	background: rgba(255, 255, 255, 0.06);
+	color: rgba(220, 226, 240, 0.75);
+}
+
+.automations-outcome--success {
+	color: #8fe0ab;
+	background: rgba(69, 200, 116, 0.16);
+}
+
+.automations-outcome--failure {
+	color: #ffb4ae;
+	background: rgba(238, 98, 88, 0.16);
+}
+
+.automations-outcome--running {
+	color: #f0d17c;
+	background: rgba(232, 185, 49, 0.16);
+}
+
+/* --- Detail ------------------------------------------------------------------- */
+
+.automations-pane {
+	min-width: 0;
+}
+
+.automations-detail {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.automations-detail__header {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: space-between;
+	gap: 10px;
+}
+
+.automations-detail__heading {
+	min-width: 0;
+}
+
+.automations-detail__heading p {
+	margin: 3px 0 0;
+}
+
+.automations-detail__title {
+	margin: 0;
+	font-size: 15px;
+	font-weight: 600;
+}
+
+.automations-detail__actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-start;
+	gap: 6px;
+}
+
+.automations-confirm {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	padding: 10px 12px;
+	border-radius: 8px;
+	background: rgba(255, 255, 255, 0.04);
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	font-size: 12.5px;
+}
+
+.automations-confirm p {
+	margin: 0;
+	flex: 1 1 200px;
+}
+
+.automations-inline-field {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.automations-detail__runs {
+	display: grid;
+	grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+	gap: 14px;
+}
+
+@media (max-width: 960px) {
+	.automations-detail__runs {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+.automations-history__list {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	max-height: 320px;
+	overflow-y: auto;
+}
+
+.automations-history__row {
+	all: unset;
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 5px 7px;
+	border-radius: 6px;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.automations-history__row:hover,
+.automations-history__row--selected {
+	background: rgba(255, 255, 255, 0.07);
+}
+
+.automations-history__row:focus-visible {
+	outline: 1px solid rgba(87, 183, 255, 0.7);
+}
+
+.automations-history__time {
+	font-variant-numeric: tabular-nums;
+}
+
+.automations-run-detail__facts {
+	display: grid;
+	grid-template-columns: max-content minmax(0, 1fr);
+	gap: 5px 14px;
+	margin: 0 0 10px;
+	font-size: 12.5px;
+}
+
+.automations-run-detail__facts dt {
+	color: rgba(220, 226, 240, 0.55);
+}
+
+.automations-run-detail__facts dd {
+	margin: 0;
+	min-width: 0;
+}
+
+.automations-run-detail__actions {
+	display: flex;
+	gap: 6px;
+	margin-bottom: 10px;
+}
+
+.automations-run-detail__tail {
+	margin: 0;
+	max-height: 260px;
+	overflow: auto;
+	padding: 10px;
+	border-radius: 6px;
+	background: rgba(0, 0, 0, 0.35);
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+	font-size: 11.5px;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+/* --- Terminals ----------------------------------------------------------------- */
+
+.automations-terminals {
+	padding: 4px 20px 20px;
+}
+
+.automations-terminals__layout {
+	display: grid;
+	grid-template-columns: minmax(200px, 280px) minmax(0, 1fr);
+	gap: 14px;
+}
+
+@media (max-width: 760px) {
+	.automations-terminals__layout {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+.automations-terminals__groups,
+.automations-terminals__items {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.automations-terminals__groups {
+	gap: 10px;
+}
+
+.automations-terminals__group-title {
+	margin: 0 0 4px;
+	font-size: 12px;
+	color: rgba(220, 226, 240, 0.7);
+}
+
+.automations-terminals__item {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	border-radius: 6px;
+}
+
+.automations-terminals__item--selected {
+	background: rgba(87, 183, 255, 0.1);
+}
+
+.automations-terminals__open {
+	all: unset;
+	box-sizing: border-box;
+	display: flex;
+	flex: 1 1 auto;
+	justify-content: space-between;
+	gap: 8px;
+	min-width: 0;
+	padding: 5px 7px;
+	font-size: 12.5px;
+	cursor: pointer;
+}
+
+.automations-terminals__open:focus-visible {
+	outline: 1px solid rgba(87, 183, 255, 0.7);
+}
+
+.automations-terminals__views {
+	min-width: 0;
+}
+
+.automations-terminals__live[hidden] {
+	display: none;
+}
+
+.automations-exited-terminal {
+	display: flex;
+	flex-direction: column;
+	height: 360px;
+	min-width: 0;
+	border-radius: 8px;
+	overflow: hidden;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	background: #0d1117;
+}
+
+.automations-exited-terminal__header {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 6px 10px;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+	font-size: 12px;
+}
+
+.automations-exited-terminal__title {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.automations-exited-terminal__notice {
+	margin: 0;
+	padding: 12px;
+}
+
+.automations-exited-terminal__screen {
+	flex: 1 1 auto;
+	min-height: 0;
+	padding: 4px 6px;
+}
+
+.automations-exited-terminal__screen[hidden] {
+	display: none;
+}
+
+.home-automations__terminal-view {
+	position: relative;
+	height: 360px;
+	min-width: 0;
+	border-radius: 8px;
+	overflow: hidden;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* --- Editor ---------------------------------------------------------------------- */
+
+.automation-editor {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	font-size: 12.5px;
+}
+
+.automation-editor__title {
+	margin: 0;
+	font-size: 15px;
+	font-weight: 600;
+}
+
+.automation-editor__group {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	margin: 0;
+	padding: 10px 12px 12px;
+	border-radius: 8px;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	background: rgba(255, 255, 255, 0.025);
+	min-width: 0;
+}
+
+.automation-editor__legend {
+	padding: 0 4px;
+	font-size: 11.5px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: rgba(220, 226, 240, 0.55);
+}
+
+.automation-editor__row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: 10px 14px;
+}
+
+.automation-editor__field {
+	display: flex;
+	flex-direction: column;
+	gap: 5px;
+	min-width: 120px;
+}
+
+.automation-editor__field--grow {
+	flex: 1 1 220px;
+}
+
+.automation-editor__label {
+	font-size: 12px;
+	color: rgba(220, 226, 240, 0.65);
+}
+
+.automation-editor__input {
+	box-sizing: border-box;
+	min-height: 30px;
+	padding: 5px 8px;
+	border-radius: 6px;
+	border: 1px solid rgba(255, 255, 255, 0.14);
+	background: rgba(0, 0, 0, 0.25);
+	color: #dce2f0;
+	font: inherit;
+	font-size: 12.5px;
+	outline: none;
+}
+
+.automation-editor__input:focus {
+	border-color: rgba(87, 183, 255, 0.7);
+}
+
+.automation-editor__input--mono {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+textarea.automation-editor__input {
+	resize: vertical;
+}
+
+.automation-editor__check,
+.automation-editor__radio {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 30px;
+	cursor: pointer;
+}
+
+.automation-editor__segmented {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 14px;
+}
+
+.automation-editor__preview {
+	padding: 8px 10px;
+	border-radius: 6px;
+	background: rgba(0, 0, 0, 0.2);
+}
+
+.automation-editor__description {
+	margin: 0 0 4px;
+	font-weight: 600;
+}
+
+.automation-editor__next {
+	margin: 0;
+	padding-left: 18px;
+	color: rgba(220, 226, 240, 0.7);
+	font-variant-numeric: tabular-nums;
+}
+
+.automation-editor__warning,
+.automation-editor__hint {
+	margin: 0;
+	color: #f0d17c;
+	font-size: 12px;
+}
+
+.automation-editor__error {
+	margin: 0;
+	padding: 8px 10px;
+	border-radius: 6px;
+	color: #ffb4ae;
+	background: rgba(238, 98, 88, 0.12);
+	border: 1px solid rgba(238, 98, 88, 0.3);
+}
+
+.automation-editor__footer {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+}
+
+/* --- Missed-run notice -------------------------------------------------------------- */
+
+.automations-missed-backdrop {
+	position: fixed;
+	inset: 0;
+	z-index: 90;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 20px;
+	background: rgba(0, 0, 0, 0.45);
+}
+
+.automations-missed {
+	width: min(460px, 100%);
+	max-height: calc(100vh - 40px);
+	overflow: auto;
+	padding: 18px 20px;
+	border-radius: 10px;
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	background: #161b22;
+	color: #dce2f0;
+	box-shadow: 0 20px 48px rgba(0, 0, 0, 0.45);
+	font-size: 13px;
+}
+
+.automations-missed__title {
+	margin: 0 0 6px;
+	font-size: 15px;
+	font-weight: 600;
+}
+
+.automations-missed__text {
+	margin: 0 0 12px;
+	color: rgba(220, 226, 240, 0.75);
+	line-height: 1.45;
+}
+
+.automations-missed__list {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin: 0 0 12px;
+	padding: 0;
+	list-style: none;
+}
+
+.automations-missed__item {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	grid-template-rows: auto auto;
+	column-gap: 10px;
+	align-items: center;
+	padding: 8px 10px;
+	border-radius: 8px;
+	background: rgba(255, 255, 255, 0.04);
+}
+
+.automations-missed__item .automations-button {
+	grid-row: 1 / span 2;
+	grid-column: 2;
+}
+
+.automations-missed__name {
+	font-weight: 600;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.automations-missed__footer {
+	display: flex;
+	justify-content: flex-end;
+}
