@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createRefreshSchedule } from '../src/workspace/gitRefreshSchedule.ts';
+import { createRefreshSchedule } from '../dist/index.js';
 
 /**
  * A refresh spawns `git status` per worktree, so its rate is a cost, not a

@@ -49,6 +49,12 @@ export interface WorkspaceOperationRegistryOptions {
 	readonly closeProjectTerminalSessions?: (
 		sessionIds: readonly string[],
 	) => Promise<void> | void;
+	/**
+	 * Runs after `project.close` is applied, whether or not the project had
+	 * terminals, so every server-held resource keyed by the project is released
+	 * with it. A project move is not a close and does not call this.
+	 */
+	readonly releaseProject?: (projectId: string) => Promise<void> | void;
 	readonly eventJournal?: OrderedEventJournalLike;
 	readonly shellProfileExists?: (
 		profileId: string,
@@ -413,6 +419,8 @@ async function applyCommand(
 				currentCursor: applied.conflict.currentCursor,
 			},
 		});
+	if (command.type === 'project.close')
+		await options.releaseProject?.(command.projectId);
 	publishWorkspaceChange(
 		options.eventJournal,
 		workspace,

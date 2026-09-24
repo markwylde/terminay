@@ -36,7 +36,7 @@ async function countingService(GitService, DefaultRunner) {
 	const inner = new DefaultRunner();
 	const calls = [];
 	const service = new GitService({
-		statusPollIntervalMs: false,
+		
 		runner: {
 			run: (args, cwd, options) => {
 				calls.push({ args: [...args], cwd });

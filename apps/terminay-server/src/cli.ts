@@ -747,6 +747,12 @@ async function createServerComposition(
 					},
 				});
 			},
+			// Git, file observations, and language sessions are released by the
+			// composition; these are this host's own per-project records.
+			releaseProject: (projectId) => {
+				files.releaseProject(projectId);
+				agentScope.removeProject(projectId);
+			},
 		},
 		// What a restored workspace contains is server policy; this supplies only
 		// the act of making a session. Without it a restart republished the
@@ -1042,6 +1048,8 @@ function createDefaultProjectFileServices(
 	readonly documentation: ServerDocumentationCatalogAdapter;
 	readonly mdxRuntime: ServerMdxRuntimeAdapter;
 	readonly observations: ServerFileObservationAdapter;
+	/** Drop a closed project's resolvers, catalogs, and MDX runtime. */
+	readonly releaseProject: (projectId: string) => void;
 	readonly prepareProjectRootUpdate: (
 		projectId: string,
 		root: string,
@@ -1172,6 +1180,14 @@ function createDefaultProjectFileServices(
 			host: observationHost,
 			eventJournal,
 		}),
+		releaseProject: (projectId) => {
+			mdxRuntime.disposeProject(projectId);
+			sessionProjects.delete(projectId);
+			contentProjects.delete(projectId);
+			catalogProjects.delete(projectId);
+			documentationProjects.delete(projectId);
+			mdxRuntimeProjects.delete(projectId);
+		},
 		prepareProjectRootUpdate: async (projectId, root) => {
 			const nextResolver = new CanonicalProjectPathResolver(root, storage);
 			const canonicalRoot = await nextResolver.root();

@@ -4,12 +4,12 @@ import type {
 	GitWorktreeReference,
 	TerminayGitClient,
 } from '@terminay/client-core';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { writeClipboardText } from '../host/nativeActions';
 import {
 	createRefreshSchedule,
 	type RefreshSchedule,
-} from './gitRefreshSchedule';
+} from '@terminay/protocol';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { writeClipboardText } from '../host/nativeActions';
 import {
 	getPathRelativeToRoot,
 	toContainedProjectRelativePath,

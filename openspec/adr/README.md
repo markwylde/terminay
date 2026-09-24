@@ -49,9 +49,10 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0019](./0019-language-intelligence-from-server-hosted-language-server-extensions.md) | Language intelligence comes from language-server extensions on the Terminay Server, behind a core-owned bounded protocol surface | accepted | 2026-09-09 |
 | [0020](./0020-per-operation-canonical-roots.md) | Canonicalize a project root once per filesystem operation, and never cache one across operations | accepted | 2026-09-14 |
 | [0021](./0021-measure-background-cost-in-spawns-not-parent-syscalls.md) | Measure idle background cost in child processes, not in the parent's syscalls | accepted | 2026-09-15 |
-| [0022](./0022-watch-do-not-poll.md) | Watch for changes; never poll for anything a watch can observe | accepted | 2026-09-15 |
+| [0022](./0022-watch-do-not-poll.md) | Watch for changes; never poll for anything a watch can observe | accepted (superseded by 0028) | 2026-09-15 |
 | [0023](./0023-server-owned-clipboard-scratch.md) | Materialise browser clipboard images in a server-owned scratch directory | accepted | 2026-09-15 |
 | [0024](./0024-providers-name-the-directories-they-await.md) | An agent provider that cannot bind names the directories it awaits; the host watches them and nothing else re-runs discovery | accepted (superseded by 0025) | 2026-09-16 |
 | [0025](./0025-agent-sessions-come-from-a-machine-wide-detection-library.md) | Agent sessions come from a machine-wide detection library; the host scopes them by directory and binds them by process ancestry | accepted, supersedes 0014, 0024 | 2026-09-19 |
 | [0026](./0026-extensions-may-ship-prebuilt-native-modules.md) | Extensions may ship prebuilt native modules; install scripts stay disabled | accepted | 2026-09-19 |
 | [0027](./0027-desktop-updates-in-place-from-github-release-metadata.md) | Terminay Desktop updates in place from GitHub release metadata, which is published last | accepted | 2026-09-19 |
+| [0028](./0028-no-polling-without-owner-approval.md) | Never poll; a poll is a last resort that needs the owner's explicit approval | accepted, supersedes 0022 | 2026-09-24 |

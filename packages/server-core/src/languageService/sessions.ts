@@ -299,6 +299,13 @@ export class LanguageSessionManager {
 		}
 	}
 
+	/** Stop every language server running for a closed project. */
+	async closeProject(projectId: string): Promise<void> {
+		for (const record of [...this.sessions.values()])
+			if (record.projectId === projectId)
+				await this.stopSession(record, 'project closed');
+	}
+
 	async stopExtension(extensionId: string): Promise<void> {
 		for (const record of [...this.sessions.values()])
 			if (record.provider.extensionId === extensionId)
