@@ -945,6 +945,73 @@ test('a newly created project can list its Explorer root immediately', async () 
 	}
 });
 
+test('closing a project releases every per-project map, binding, and watch the host holds', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'terminay-close-project-release-'));
+	await writeFile(join(root, 'README.md'), '# Release\n');
+	const { execFile } = await import('node:child_process');
+	await new Promise((resolve, reject) =>
+		execFile('git', ['init', '-b', 'main'], { cwd: root }, (error) =>
+			error ? reject(error) : resolve(),
+		),
+	);
+	const authority = new ServerTerminalAuthority({
+		serverId: 'close-project-release',
+		terminalService: new TerminalService({
+			serverId: 'close-project-release',
+			ptyFactory: createPtyFactory(),
+		}),
+	});
+	const channel = new MessageChannel();
+	const renderer = bindRendererChannel(channel);
+	authority.acceptRendererPort(renderer.port);
+	const protocol = new TerminayClient({
+		clientId: 'embedded-renderer-close-project',
+		clientVersion: 'test',
+		capabilities: ['terminal', 'files', 'workspace'],
+		transport: new ServerPortTransport(
+			new ServerScopedMessagePort(channel.port2, 'close-project-release'),
+		),
+	});
+
+	try {
+		await authority.initializeWorkspace();
+		await protocol.connect();
+		const facade = new TerminayClientFacade(protocol);
+		const workspace = new WorkspaceClient(protocol);
+		const files = new FileViewerClient(facade);
+		const viewId = (await workspace.snapshot()).viewOrder[0];
+		const projectId = 'release-project';
+		await workspace.createProject({ projectId, viewId, root });
+		await files.listFolder('.', projectId);
+		assert.notEqual(authority.git.getBinding(projectId), undefined);
+
+		await workspace.closeProject(projectId);
+
+		for (const map of [
+			'fileCatalogProjects',
+			'documentationProjects',
+			'mdxRuntimeProjects',
+			'fileContentProjects',
+			'fileSessionProjects',
+			'fileProjectRoots',
+		])
+			assert.equal(authority[map].has(projectId), false, `${map} still holds the closed project`);
+		assert.equal(authority.git.getBinding(projectId), undefined, 'the Git binding is released');
+		assert.equal(
+			authority.git.observations.size,
+			0,
+			'no repository is observed for a closed project',
+		);
+		await assert.rejects(files.listFolder('.', projectId));
+	} finally {
+		await protocol.close().catch(() => undefined);
+		channel.port1.close();
+		channel.port2.close();
+		await authority.shutdown();
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
 test('a stale Explorer root after a server root update reproduces the forbidden files.list failure', async () => {
 	const root = await mkdtemp(join(tmpdir(), 'terminay-stale-explorer-root-'));
 	const formerRoot = join(root, 'former');

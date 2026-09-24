@@ -167,6 +167,11 @@ export class ServerGitAdapter {
 		);
 	}
 
+	/** Release a closed project's binding and watches. */
+	releaseProject(projectId: string): void {
+		this.git.releaseProject(projectId);
+	}
+
 	subscribeEvents(listener: (event: GitServiceEvent) => void): () => void {
 		return this.git.subscribe(listener);
 	}
