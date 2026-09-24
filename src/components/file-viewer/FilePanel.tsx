@@ -67,6 +67,7 @@ import { FileConflictBanner } from './FileConflictBanner';
 import { FileLargeFileChooser } from './FileLargeFileChooser';
 import { FileModeSwitcher } from './FileModeSwitcher';
 import { useFilePanelSaveRegistration } from './FilePanelSaveRegistry';
+import { isDocumentPath } from './openFilePresentation';
 import { FileStatusBar } from './FileStatusBar';
 import {
 	isDocumentationAcknowledgedWatchEvent,
@@ -1281,6 +1282,9 @@ function CanonicalFilePanel(
 			? capabilities.fallbackMode
 		: resolveFileViewerMode(capabilities, mode);
 	const isDocumentation = presentation === 'documentation';
+	const setPresentation = (next: 'file-viewer' | 'documentation') => {
+		props.api.updateParameters({ ...baseParamsRef.current, presentation: next });
+	};
 	const isMdxPreview =
 		!isDocumentation &&
 		effectiveMode === 'preview' &&
@@ -1324,6 +1328,7 @@ function CanonicalFilePanel(
 			) : null}
 
 			{!isDocumentation ? <div className="file-panel__toolbar">
+				<div className="file-panel__toolbar-row">
 				<FileModeSwitcher
 					activeMode={effectiveMode}
 					modes={availableModes}
@@ -1338,6 +1343,16 @@ function CanonicalFilePanel(
 						void handleModeChange(nextMode);
 					}}
 				/>
+				{isDocumentPath(fileInfo.name) ? (
+					<button
+						className="file-mode-switcher__button file-panel__open-as-document"
+						onClick={() => setPresentation('documentation')}
+						type="button"
+					>
+						Open as document
+					</button>
+				) : null}
+				</div>
 				{capabilities.shouldPromptForEngineChoice && showEngineChoice ? (
 					<FileLargeFileChooser
 						fileName={fileInfo.name}
@@ -1362,6 +1377,7 @@ function CanonicalFilePanel(
 					projectRoot,
 					terminalClientContext,
 					fileGateway,
+					() => setPresentation('file-viewer'),
 				) : null}
 				{isMdxPreview ? (
 					<LiveMdxPreview
@@ -1498,6 +1514,7 @@ function renderDocumentationSurface(
 	projectRoot: string,
 	terminalClientContext: TerminalPanelClientContextValue,
 	fileGateway: FileViewerGateway,
+	onViewSource: () => void,
 ) {
 	const reason = documentationDocumentReason({
 		path: fileInfo.name,
@@ -1524,6 +1541,7 @@ function renderDocumentationSurface(
 			projectId={terminalClientContext.projectId}
 			serverId={terminalClientContext.serverId}
 			runtimeClient={terminalClientContext.mdxRuntimeClient}
+			onViewSource={onViewSource}
 			loadImage={async (src) => {
 				const path = resolveDocumentationImagePath(
 					src,

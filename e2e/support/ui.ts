@@ -110,6 +110,16 @@ export function fileExplorerItem(page: Page, name: string) {
   return page.locator('.file-explorer-tree-item').filter({ hasText: name }).first()
 }
 
+/** Markdown opens as a document; this switches the panel to the File Viewer. */
+export async function viewDocumentSource(page: Page): Promise<void> {
+  const button = page
+    .locator('.documentation-editor')
+    .getByRole('button', { name: 'View source' })
+  await expect(button).toBeVisible()
+  await button.click()
+  await expect(page.locator('.file-mode-switcher')).toBeVisible()
+}
+
 export async function activateDockTab(page: Page, title: string): Promise<void> {
   const tab = page
     .locator('.terminal-tab-content')

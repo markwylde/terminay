@@ -72,6 +72,7 @@ import {
 	FileTab,
 } from './components/file-viewer';
 import type { FolderPanelInstanceParams } from './components/folder-viewer';
+import { resolveOpenPresentation } from './components/file-viewer/openFilePresentation';
 import { FolderPanel, FolderTab } from './components/folder-viewer';
 import { WorktreesPanel } from './components/git-panel/WorktreesPanel';
 import { AppUpdateDialog } from './components/AppUpdateDialog';
@@ -2192,9 +2193,14 @@ const ProjectWorkspace = forwardRef<
 				if (existingPanelId) {
 					const existingPanel = api.getPanel(existingPanelId);
 					if (existingPanel) {
+						const presentation = resolveOpenPresentation(
+							filePath,
+							options,
+							existingPanel.params?.presentation ?? 'file-viewer',
+						);
 						if (
 							existingPanel.params?.presentation === 'documentation' &&
-							options?.presentation === 'file-viewer'
+							presentation === 'file-viewer'
 						) {
 							const flush = filePanelSaveHandlersRef.current.get(
 								existingPanel.id,
@@ -2208,12 +2214,12 @@ const ProjectWorkspace = forwardRef<
 							}
 						}
 						if (
-							options?.presentation &&
-							existingPanel.params?.presentation !== options.presentation
+							presentation &&
+							existingPanel.params?.presentation !== presentation
 						) {
 							existingPanel.api.updateParameters({
 								...(existingPanel.params ?? {}),
-								presentation: options.presentation,
+								presentation,
 							});
 						}
 						if (options?.initialMode) {
@@ -2250,7 +2256,7 @@ const ProjectWorkspace = forwardRef<
 					params: {
 						color: project.color,
 						filePath,
-						presentation: options?.presentation ?? 'file-viewer',
+						presentation: resolveOpenPresentation(filePath, options),
 						initialMode: options?.initialMode,
 						inheritsProjectColor: true,
 						isFocused: false,
