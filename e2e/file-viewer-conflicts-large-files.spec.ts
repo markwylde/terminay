@@ -1,7 +1,7 @@
 import { appendFile, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, test } from './fixtures'
-import { activateDockTab, fileExplorerItem, openFileExplorer, setMonacoValue, setProjectRoot } from './support/ui'
+import { activateDockTab, fileExplorerItem, openFileExplorer, setMonacoValue, setProjectRoot, viewDocumentSource } from './support/ui'
 
 async function replaceFileAtomically(filePath: string, contents: string): Promise<void> {
   const tempPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.swap`)
@@ -43,6 +43,7 @@ test('file viewer keeps reloading after repeated atomic saves', async ({ createW
   await openFileExplorer(mainWindow)
 
   await fileExplorerItem(mainWindow, 'README.md').dblclick()
+  await viewDocumentSource(mainWindow)
   await expect(mainWindow.locator('.file-preview-markdown')).toContainText('version 1')
 
   await replaceFileAtomically(workspace.path('README.md'), '# version 2\n')

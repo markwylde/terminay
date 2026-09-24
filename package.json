@@ -64,7 +64,7 @@
 		"release:prepare-credentials": "node scripts/prepare-release-credentials.mjs",
 		"test:e2e": "sh scripts/run-e2e-container.sh",
 		"test:e2e:host": "npm run build:app && playwright test",
-		"test:documentation": "node --test --experimental-strip-types src/workspace/DocumentationCatalogController.test.ts src/workspace/documentationAutoExpand.test.ts src/components/sidebar/documentationPane.test.ts src/components/DocumentationTree.test.ts src/components/documentTitle.test.ts src/terminalSettings.documentation.test.ts",
+		"test:documentation": "node --test --experimental-strip-types src/workspace/DocumentationCatalogController.test.ts src/workspace/documentationAutoExpand.test.ts src/components/sidebar/documentationPane.test.ts src/components/DocumentationTree.test.ts src/components/documentTitle.test.ts src/terminalSettings.documentation.test.ts src/components/file-viewer/openFilePresentation.test.ts",
 		"test:desktop-diagnostics": "npm run build:shared && npm run build --workspace @terminay/ui-bundle && node --test scripts/local-desktop-diagnostics-*.test.mjs scripts/renderer-root-diagnostics.test.mjs scripts/privileged-webrtc-transport-lifecycle.test.mjs",
 		"test:desktop-diagnostics-release": "npm run build:app && TERMINAY_REQUIRE_DESKTOP_DIAGNOSTICS_BUILD=1 node --test scripts/local-desktop-diagnostics-release.test.mjs",
 		"test:e2e:remote-real": "npm run build:app && playwright test e2e/webrtc-pairing-reconnect.spec.ts",
