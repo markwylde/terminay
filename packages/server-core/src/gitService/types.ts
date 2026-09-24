@@ -458,8 +458,36 @@ export interface GitServiceOptions {
 	readonly limits?: GitServiceLimits;
 	/** Maximum retained progress/status events for authorized subscribers. */
 	readonly maxEvents?: number;
-	/** Server-owned worktree status polling. Use false for injected tests. */
-	readonly statusPollIntervalMs?: number | false;
+	/**
+	 * Observes repository and working-tree changes for bound projects. Status
+	 * follows these events; nothing runs Git on a timer (ADR-0028). Defaults to
+	 * `NodeGitStateWatcher`. Tests inject a fake.
+	 */
+	readonly watcher?: GitStateWatcher;
+	/** The ramp that damps refreshes after watch events. Defaults to the shared
+	 *  `REFRESH_RAMP_MS`. */
+	readonly refreshRampMs?: readonly number[];
+}
+
+/** One live filesystem watch. `close` is idempotent. */
+export interface GitWatchHandle {
+	close(): void;
+}
+
+export interface GitWatchOptions {
+	/** Watch the whole tree beneath `path`, not only its direct entries. */
+	readonly recursive: boolean;
+	/** Called with the changed entry's path relative to the watched path, or
+	 *  null when the host could not name it. */
+	readonly onChange: (relativePath: string | null) => void;
+	/** Called once when the watch can no longer be trusted: it failed to start,
+	 *  the host reported an error, or the watched path went away. */
+	readonly onError: (error: unknown) => void;
+}
+
+/** Host filesystem watch used by the Git service. */
+export interface GitStateWatcher {
+	watch(path: string, options: GitWatchOptions): GitWatchHandle;
 }
 
 export type GitServiceOperation =

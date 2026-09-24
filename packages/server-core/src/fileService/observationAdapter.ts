@@ -138,6 +138,15 @@ export class ServerFileObservationAdapter {
 			if (job.connectionId === connectionId) this.closeJob(id, job);
 	}
 
+	/** Stop every watch and folder-size job of a closed project, whichever
+	 *  connections still hold them. */
+	closeProject(projectId: string): void {
+		for (const [id, state] of this.watchStates)
+			if (state.projectId === projectId) this.closeWatch(id, state);
+		for (const [id, job] of this.jobs)
+			if (job.projectId === projectId) this.closeJob(id, job);
+	}
+
 	close(): void {
 		for (const [id, state] of this.watchStates) this.closeWatch(id, state);
 		for (const [id, job] of this.jobs) this.closeJob(id, job);
