@@ -202,6 +202,11 @@ import {
 	FileSafeStorageVaultRepository,
 } from './vault/safeStorageVault';
 import {
+	applyWindowMenu,
+	applyWindowMenus,
+	isMenuLessCopyInput,
+} from './windowMenuPolicy';
+import {
 	createEmbeddedWorkspaceStateBackend,
 	embeddedBuiltInExtensionArtifactRoot,
 	embeddedWorkspacePersistenceFault,
@@ -2949,6 +2954,17 @@ function bindAppShortcuts(webContents: Electron.WebContents): void {
 		);
 
 		if (!command) {
+			// Project windows receive terminal Copy from their Edit menu
+			// accelerator; menu-less windows handle it here instead.
+			const owner = BrowserWindow.fromWebContents(webContents);
+			if (
+				owner &&
+				!appWindows.has(owner) &&
+				isMenuLessCopyInput(input, process.platform)
+			) {
+				event.preventDefault();
+				sendCopyRequestToFocusedWindow(owner);
+			}
 			return;
 		}
 
@@ -2970,10 +2986,6 @@ function getMenuShortcut(
 	}
 
 	return shortcut.length > 0 ? shortcut : undefined;
-}
-
-function shouldAutoHideMenuBar(): boolean {
-	return process.platform !== 'linux';
 }
 
 function sendCopyRequestToFocusedWindow(
@@ -3215,6 +3227,13 @@ function createAppMenu(
 
 	const menu = Menu.buildFromTemplate(template);
 	Menu.setApplicationMenu(menu);
+	// setApplicationMenu re-attaches the menu to every window on Windows and
+	// Linux; only project-host windows keep it.
+	applyWindowMenus(BrowserWindow.getAllWindows(), {
+		isProjectHost: (window) => appWindows.has(window),
+		menu,
+		platform: process.platform,
+	});
 }
 
 const AUXILIARY_TITLES: Readonly<Record<string, string>> = Object.freeze({
@@ -3603,6 +3622,11 @@ function createWindow(options?: {
 	});
 	securePrimaryWindow(window);
 	if (!isAuxiliary) appWindows.add(window);
+	applyWindowMenu(window, {
+		isProjectHost: !isAuxiliary,
+		menu: Menu.getApplicationMenu(),
+		platform: process.platform,
+	});
 	// Capture the webContents id now; it's unreadable once the window is closed
 	// (accessing window.webContents after destruction throws).
 	const windowWebContentsId = window.webContents.id;
@@ -3703,7 +3727,6 @@ function createWindow(options?: {
 							y: 12,
 						}
 					: undefined,
-				autoHideMenuBar: shouldAutoHideMenuBar(),
 				webPreferences: {
 					preload: preloadPath,
 					contextIsolation: true,
@@ -4978,6 +5001,12 @@ ipcMain.handle('secrets:get-decrypted', (event, id) => {
 });
 
 app.on('browser-window-created', (_event, window) => {
+	// Windows are menu-less by default; createWindow opts project hosts back in.
+	applyWindowMenu(window, {
+		isProjectHost: false,
+		menu: null,
+		platform: process.platform,
+	});
 	void desktopDiagnostics.record(
 		{
 			component: 'main',
