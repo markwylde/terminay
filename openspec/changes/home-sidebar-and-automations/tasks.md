@@ -189,7 +189,7 @@
 
 ## 10. End-to-end scenarios and checks
 
-- [ ] 10.1 Add `e2e/automations.spec.ts` covering the user's scenarios with
+- [x] 10.1 Add `e2e/automations.spec.ts` covering the user's scenarios with
       stubbed commands:
       - Terminal needs attention runs a command that receives the subject
         context
@@ -198,7 +198,7 @@
         section and survives the run
       - Agent needs input writes text to the subject once within the cooldown
       Verified by passing under `npm run test:e2e`.
-- [ ] 10.2 Run `openspec validate --all`, `npm run lint`,
+- [x] 10.2 Run `openspec validate --all`, `npm run lint`,
       `npm run typecheck:workspaces`, `npm run test:workspaces`, and
       `npm run test:boundaries`. Verified by all reporting clean.
 - [ ] 10.3 Open the pull request on Gitea with `tea`, then read back every
