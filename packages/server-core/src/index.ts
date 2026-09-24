@@ -142,6 +142,7 @@ export {
 export * from './gitService/index.js';
 export * from './languageService/index.js';
 export * from './macroService/index.js';
+export * from './automationService/index.js';
 export * from './mdxRuntime/index.js';
 export * from './migration/index.js';
 export * from './outboundDelivery.js';
@@ -155,6 +156,7 @@ export * from './streamDiagnostics.js';
 export * from './terminalService/index.js';
 export * from './types.js';
 export * from './uiBundle/index.js';
+export * from './automationSpaceVisibility.js';
 export * from './workspace.js';
 export * from './workspaceHydration.js';
 export * from './workspaceProtocol.js';

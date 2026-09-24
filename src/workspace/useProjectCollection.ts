@@ -6,6 +6,7 @@ import {
 	useState,
 } from 'react';
 import { closeHostPresentation } from '../host/nativeActions';
+import { presentableViewProjects } from '../shared/serverWorkspaceReconciliation';
 import type { WorkspaceSnapshotStore } from '../shared/WorkspaceSnapshotStore';
 import { normalizeSidebarPanelOrder } from '../terminalSettings';
 import type { SidebarSettings } from '../types/settings';
@@ -171,10 +172,13 @@ export function useProjectCollection<TTerminal>({
 		initialViewId === null
 			? undefined
 			: initialServerSnapshot?.views[initialViewId];
+	// The project choke point: reserved server-owned spaces (the automation
+	// terminal space, ADR-0028) never become project tabs, so the tab bar,
+	// switcher, inventory, and Tabs section that read `projects` never see them.
 	const initialServerProjects =
-		initialServerView?.projectIds
-			.map((projectId) => initialServerSnapshot?.projects[projectId])
-			.filter((project) => project !== undefined) ?? [];
+		initialServerSnapshot == null
+			? []
+			: presentableViewProjects(initialServerSnapshot, initialServerView);
 	const [projects, setProjects] = useState<ProjectTab[]>(() => {
 		if (isAdoptWindow) return [];
 		if (hasServerWorkspace && initialServerSnapshot === null) return [];
@@ -322,10 +326,7 @@ export function useProjectCollection<TTerminal>({
 		return workspaceSnapshotStore.subscribe((snapshot) => {
 			const viewId = workspaceViewId ?? snapshot.viewOrder[0];
 			const view = viewId === undefined ? undefined : snapshot.views[viewId];
-			const orderedServerProjects =
-				view?.projectIds
-					.map((projectId) => snapshot.projects[projectId])
-					.filter((project) => project !== undefined) ?? [];
+			const orderedServerProjects = presentableViewProjects(snapshot, view);
 			setProjects((current) => {
 				const currentById = new Map(
 					current.map((project) => [project.id, project]),
@@ -422,11 +423,12 @@ export function useProjectCollection<TTerminal>({
 			const activeView = snapshot.views[viewId];
 			const fallbackProjectRoot =
 				defaultProjectRoot.trim().length > 0 ? defaultProjectRoot : '.';
+			const presentable = presentableViewProjects(snapshot, activeView);
 			const serverRoot =
-				snapshot.projects[activeView?.activeProjectId ?? '']?.root ??
-				activeView?.projectIds
-					.map((id) => snapshot.projects[id]?.root)
-					.find((root) => root !== undefined) ??
+				presentable.find(
+					(project) => project.id === activeView?.activeProjectId,
+				)?.root ??
+				presentable[0]?.root ??
 				fallbackProjectRoot;
 			const presentation = createProjectTab(
 				suffix,

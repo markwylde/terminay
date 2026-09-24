@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+	presentableViewProjects,
 	reconcileServerWorkspaceSelection,
 	type ServerWorkspacePanel,
 	type ServerWorkspaceProject,
@@ -76,7 +77,7 @@ export function useWorkspaceSelectionController(workspaceSnapshotStore: Workspac
 }
 
 export function viewsForSnapshot(snapshot: ServerWorkspaceSnapshot | null): readonly ServerWorkspaceView[] { return snapshot?.viewOrder.map((id) => snapshot.views[id]).filter((view): view is ServerWorkspaceView => view !== undefined) ?? [] }
-export function projectsForView(snapshot: ServerWorkspaceSnapshot | null, view: ServerWorkspaceView | undefined): readonly ServerWorkspaceProject[] { return view === undefined ? [] : view.projectIds.map((id) => snapshot?.projects[id]).filter((project): project is ServerWorkspaceProject => project !== undefined) }
+export function projectsForView(snapshot: ServerWorkspaceSnapshot | null, view: ServerWorkspaceView | undefined): readonly ServerWorkspaceProject[] { return snapshot === null ? [] : presentableViewProjects(snapshot, view) }
 function selectView(snapshot: ServerWorkspaceSnapshot | null, selectedId: string | null): ServerWorkspaceView | undefined { const views = viewsForSnapshot(snapshot); return views.find((view) => view.id === selectedId) ?? views[0] }
 function selectProject(snapshot: ServerWorkspaceSnapshot | null, view: ServerWorkspaceView | undefined, selectedId: string | null): ServerWorkspaceProject | undefined { const projects = projectsForView(snapshot, view); return projects.find((project) => project.id === selectedId) ?? projects.find((project) => project.id === view?.activeProjectId) ?? projects[0] }
 function selectPanel(snapshot: ServerWorkspaceSnapshot | null, project: ServerWorkspaceProject | undefined, selectedId: string | null): ServerWorkspacePanel | undefined { if (snapshot === null || project === undefined) return undefined; return project.panelIds.map((id) => snapshot.panels[id]).find((panel) => panel?.id === selectedId) ?? snapshot.panels[project.activePanelId ?? ''] ?? project.panelIds.map((id) => snapshot.panels[id]).find((panel) => panel !== undefined) }

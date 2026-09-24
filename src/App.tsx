@@ -21,6 +21,7 @@ import {
 	GitBranchPlus,
 	GitPullRequestArrow,
 	History,
+	House,
 	LayoutDashboard,
 	Loader2,
 	Mic,
@@ -154,6 +155,7 @@ import {
 import { recordBoundedRendererRender } from './shared/renderLoopGuard';
 import {
 	hasTerminalPresentation,
+	isReservedWorkspaceProject,
 	type ServerWorkspacePanel,
 } from './shared/serverWorkspaceReconciliation';
 import { WorkspaceSplitLayout } from './shared/WorkspaceSplitLayout';
@@ -273,6 +275,33 @@ import { useMacroLauncherController } from './workspace/useMacroLauncherControll
 import { useMacroRunController } from './workspace/useMacroRunController';
 import { useProjectCollection } from './workspace/useProjectCollection';
 import { WorkspaceDashboard } from './workspace/WorkspaceDashboard';
+import {
+	AutomationsSection,
+	type AutomationsFocusRequest,
+	type AutomationsSectionServer,
+} from './workspace/automations/AutomationsSection';
+import {
+	nextRunAt as nextAutomationRunAt,
+	overviewOutcome as automationOverviewOutcome,
+} from './workspace/automations/automationsModel';
+import { MissedRunsNotice } from './workspace/automations/MissedRunsNotice';
+import {
+	type AutomationConnectionEntry,
+	useServerAutomations,
+} from './workspace/automations/useServerAutomations';
+import {
+	HomeOverview,
+	type HomeOverviewAutomationTarget,
+} from './workspace/HomeOverview';
+import { HomeView } from './workspace/HomeView';
+import { buildHomeOverview } from './workspace/homeOverviewModel';
+import type { HomeSection } from './workspace/homeSection';
+import {
+	recallHomeSection,
+	recallHomeSidebarVisible,
+	rememberHomeSection,
+	rememberHomeSidebarVisible,
+} from './workspace/localViewState';
 import {
 	type DashboardActivation,
 	type DashboardAgent,
@@ -562,6 +591,8 @@ type ProjectWorkspaceProps = {
 };
 
 const DOCKVIEW_SASH_ACTIVITY_DEFER_MS = 300;
+/** Home's sidebar is a short menu, so it starts narrower than a project's. */
+const HOME_SIDEBAR_DEFAULT_WIDTH = 220;
 const PROJECT_DEACTIVATION_ACTIVITY_SETTLE_MS = 1_500;
 
 /** Terminal input is delivered only to the matching server-backed panel
@@ -5670,6 +5701,29 @@ function App({
 	});
 	const [pendingProjectCreation, setPendingProjectCreation] =
 		useState<PendingProjectCreation | null>(null);
+	// Home's sidebar is this device's, and it is nobody's project: its
+	// visibility and section are kept apart from every project's sidebar, so
+	// toggling one never moves the other.
+	const [isHomeSidebarVisible, setIsHomeSidebarVisible] = useState(
+		recallHomeSidebarVisible,
+	);
+	const [homeSection, setHomeSectionState] = useState<HomeSection>(
+		recallHomeSection,
+	);
+	const [homeSidebarWidth, setHomeSidebarWidth] = useState(
+		HOME_SIDEBAR_DEFAULT_WIDTH,
+	);
+	const setHomeSidebarVisibility = useCallback((visible: boolean) => {
+		setIsHomeSidebarVisible(visible);
+		rememberHomeSidebarVisible(visible);
+	}, []);
+	const toggleHomeSidebar = useCallback(() => {
+		setHomeSidebarVisibility(!isHomeSidebarVisible);
+	}, [isHomeSidebarVisible, setHomeSidebarVisibility]);
+	const selectHomeSection = useCallback((section: HomeSection) => {
+		setHomeSectionState(section);
+		rememberHomeSection(section);
+	}, []);
 	// Switching servers rebinds every workspace surface, so the project the
 	// person clicked is only reachable once this server's collection has it.
 	useEffect(() => {
@@ -6105,6 +6159,10 @@ function App({
 			if (snapshot === null) return;
 			let pendingPresentations = 0;
 			for (const session of Object.values(snapshot.terminalSessions)) {
+				// The automation space's terminals are the Automations section's to
+				// render; no project workspace will ever present them.
+				if (isReservedWorkspaceProject(snapshot.projects[session.projectId]))
+					continue;
 				const workspace = workspaceRefs.current.get(session.projectId);
 				if (workspace == null) {
 					pendingPresentations += 1;
@@ -6272,6 +6330,12 @@ function App({
 	);
 
 	const toggleActiveProjectExplorer = useCallback(() => {
+		// On Home the toggle is Home's own; the project kept as command target
+		// behind Home keeps its sidebar exactly as it was.
+		if (isHomeSelected) {
+			toggleHomeSidebar();
+			return;
+		}
 		const project = projectsRef.current.find(
 			(candidate) => candidate.id === activeProjectId,
 		);
@@ -6279,7 +6343,13 @@ function App({
 		updateProject(project.id, {
 			isFileExplorerOpen: !project.isFileExplorerOpen,
 		});
-	}, [activeProjectId, projectsRef, updateProject]);
+	}, [
+		activeProjectId,
+		isHomeSelected,
+		projectsRef,
+		toggleHomeSidebar,
+		updateProject,
+	]);
 
 	const executeCommandOnActiveProject = useCallback(
 		(command: AppCommand): Promise<void> => {
@@ -6287,6 +6357,12 @@ function App({
 			// runs with no active panel and with no projects open at all.
 			if (command === 'show-dashboard') {
 				selectHome();
+				return Promise.resolve();
+			}
+			// The sidebar command, like the toggle, answers for Home's sidebar
+			// while Home is shown rather than for the project behind it.
+			if (command === 'toggle-file-explorer-sidebar' && isHomeSelected) {
+				toggleHomeSidebar();
 				return Promise.resolve();
 			}
 			if (command === 'open-extensions') {
@@ -6309,7 +6385,13 @@ function App({
 				Promise.resolve()
 			);
 		},
-		[activeProjectId, auxiliaryRouteController, selectHome],
+		[
+			activeProjectId,
+			auxiliaryRouteController,
+			isHomeSelected,
+			selectHome,
+			toggleHomeSidebar,
+		],
 	);
 
 	const updateWorkspaceInventory = useCallback(
@@ -6445,6 +6527,142 @@ function App({
 			inventoryByProject,
 			projectTabSources,
 		],
+	);
+	/**
+	 * Home's overview counts from the same sources the dashboard renders, so a
+	 * number there can never disagree with a row here.
+	 */
+	/** Every attached server that serves automations, kept current. */
+	const automationEntries = useMemo<readonly AutomationConnectionEntry[]>(
+		() =>
+			connections.flatMap((connection) => {
+				const context =
+					connection === primary && primaryClientContext !== undefined
+						? primaryClientContext
+						: connection.context;
+				const serverId = connection.serverId ?? context?.serverId;
+				if (serverId === undefined || context === undefined) return [];
+				return [
+					{
+						serverId,
+						label: connection.label,
+						...(context.applicationClient === undefined
+							? {}
+							: { applicationClient: context.applicationClient }),
+						...(context.serverCapabilities === undefined
+							? {}
+							: { capabilities: context.serverCapabilities }),
+					},
+				];
+			}),
+		[connections, primary, primaryClientContext],
+	);
+	const serverAutomations = useServerAutomations(automationEntries);
+	const automationSectionServers = useMemo<
+		readonly AutomationsSectionServer[]
+	>(
+		() =>
+			connections.map((connection) => {
+				const context =
+					connection === primary && primaryClientContext !== undefined
+						? primaryClientContext
+						: connection.context;
+				const serverId = connection.serverId ?? context?.serverId;
+				return {
+					label: connection.label,
+					usable: context !== undefined,
+					...(serverId === undefined ? {} : { serverId }),
+					...(context?.serverCapabilities === undefined
+						? {}
+						: { capabilities: context.serverCapabilities }),
+					...(context === undefined ? {} : { context }),
+				};
+			}),
+		[connections, primary, primaryClientContext],
+	);
+	// Next-run times and "today" phrasing move with the clock, not with state.
+	const [automationClock, setAutomationClock] = useState(() => Date.now());
+	useEffect(() => {
+		const timer = window.setInterval(
+			() => setAutomationClock(Date.now()),
+			30_000,
+		);
+		return () => window.clearInterval(timer);
+	}, []);
+	const automationSources = useMemo(
+		() =>
+			[...serverAutomations.values()].map((server) => {
+				const names = new Map(
+					server.automations.map((automation) => [
+						automation.id,
+						automation.name,
+					]),
+				);
+				return {
+					serverId: server.serverId,
+					serverLabel: server.label,
+					available: server.status === 'ready',
+					automations: server.automations.map((automation) => {
+						const next = nextAutomationRunAt(
+							automation,
+							automationClock,
+							server.timeZone,
+						);
+						return {
+							automationId: automation.id,
+							name: automation.name,
+							enabled: automation.enabled,
+							...(next === undefined ? {} : { nextRunAt: next }),
+						};
+					}),
+					runs: server.runs.map((run) => ({
+						runId: run.runId,
+						automationId: run.automationId,
+						automationName: names.get(run.automationId) ?? 'Deleted automation',
+						startedAt: run.startedAt,
+						outcome: automationOverviewOutcome(run),
+					})),
+				};
+			}),
+		[automationClock, serverAutomations],
+	);
+	const homeOverview = useMemo(
+		() =>
+			buildHomeOverview({
+				automationSources,
+				sources: dashboardSources.map((source, index) => ({
+					...source,
+					available: projectTabSources[index]?.usable === true,
+					hasInventory: source.serverId === currentServerId,
+				})),
+				remoteAccess:
+					remoteStatus === null || remoteStatus === undefined
+						? null
+						: {
+								connections: remoteStatus.connections,
+								isRunning: remoteStatus.isRunning,
+								pairedDeviceCount: remoteStatus.pairedDeviceCount,
+							},
+			}),
+		[
+			automationSources,
+			currentServerId,
+			dashboardSources,
+			projectTabSources,
+			remoteStatus,
+		],
+	);
+	const [automationsFocus, setAutomationsFocus] =
+		useState<AutomationsFocusRequest>();
+	const openAutomationsFromOverview = useCallback(
+		(target: HomeOverviewAutomationTarget) => {
+			setAutomationsFocus((previous) => ({
+				target,
+				nonce: (previous?.nonce ?? 0) + 1,
+			}));
+			selectHomeSection('automations');
+		},
+		[selectHomeSection],
 	);
 	/**
 	 * A dashboard activation on another server is a place to go: bind the
@@ -6828,7 +7046,11 @@ function App({
 				settings.keyboardShortcuts,
 				isMac,
 			);
-			if (command !== 'show-dashboard') return;
+			if (
+				command !== 'show-dashboard' &&
+				!(isHomeSelected && command === 'toggle-file-explorer-sidebar')
+			)
+				return;
 			event.preventDefault();
 			event.stopPropagation();
 			if (!event.repeat) void executeCommandOnActiveProject(command);
@@ -6841,6 +7063,7 @@ function App({
 	}, [
 		executeCommandOnActiveProject,
 		hasActiveProjectWorkspace,
+		isHomeSelected,
 		isMac,
 		settings.keyboardShortcuts,
 	]);
@@ -7062,7 +7285,11 @@ function App({
 						}}
 						connectionButtonRef={compactConnectionRef}
 						isCommandBarAvailable={!isHomeSelected && activeProject !== null}
-						isExplorerOpen={activeProject?.isFileExplorerOpen === true}
+						isExplorerOpen={
+							isHomeSelected
+								? isHomeSidebarVisible
+								: activeProject?.isFileExplorerOpen === true
+						}
 						isHomeSelected={isHomeSelected}
 						isSwitcherOpen={isCompactSwitcherOpen}
 						onOpenCommandBar={openCompactCommandBar}
@@ -7071,7 +7298,7 @@ function App({
 						onToggleExplorer={toggleActiveProjectExplorer}
 						projectTitle={
 							isHomeSelected
-								? 'Dashboard'
+								? 'Home'
 								: (displayedActiveProject?.title ?? 'No project')
 						}
 						updateAction={appUpdateAction}
@@ -7087,9 +7314,9 @@ function App({
 				<div className="project-tab-sidebar-toggle-box">
 					<button
 						type="button"
-						className={`project-tab-sidebar-toggle${activeProject?.isFileExplorerOpen ? ' project-tab-sidebar-toggle--active' : ''}`}
+						className={`project-tab-sidebar-toggle${(isHomeSelected ? isHomeSidebarVisible : activeProject?.isFileExplorerOpen) ? ' project-tab-sidebar-toggle--active' : ''}`}
 						onClick={toggleActiveProjectExplorer}
-						disabled={!activeProject}
+						disabled={!isHomeSelected && !activeProject}
 						aria-label="Toggle file explorer"
 						title="Toggle file explorer"
 					>
@@ -7115,12 +7342,12 @@ function App({
 						type="button"
 						className={`project-tab-home${isHomeSelected ? ' project-tab-home--active' : ''}`}
 						onClick={selectHome}
-						aria-label="Show dashboard"
+						aria-label="Home"
 						aria-pressed={isHomeSelected}
-						title="Dashboard"
+						title="Home"
 						data-terminay-home-control="true"
 					>
-						<LayoutDashboard size={14} aria-hidden="true" />
+						<House size={14} aria-hidden="true" />
 					</button>
 				</div>
 				<ProjectTabList
@@ -7354,12 +7581,42 @@ function App({
 					</div>
 				) : null}
 				{isHomeSelected ? (
-					<WorkspaceDashboard
-						onActivate={activateDashboardRow}
-						onActivateAgent={activateDashboardAgent}
-						sources={dashboardSources}
-					/>
+					<HomeView
+						isSidebarVisible={isHomeSidebarVisible}
+						onDismissSidebar={() => setHomeSidebarVisibility(false)}
+						onSectionChosenInDrawer={() => setIsHomeSidebarVisible(false)}
+						onSelectSection={selectHomeSection}
+						onSidebarWidthCommit={setHomeSidebarWidth}
+						section={homeSection}
+						sidebarWidth={homeSidebarWidth}
+					>
+						{homeSection === 'home' ? (
+							<HomeOverview
+								now={automationClock}
+								overview={homeOverview}
+								onOpenAutomations={openAutomationsFromOverview}
+								onOpenTabs={() => selectHomeSection('tabs')}
+							/>
+						) : homeSection === 'tabs' ? (
+							<WorkspaceDashboard
+								onActivate={activateDashboardRow}
+								onActivateAgent={activateDashboardAgent}
+								sources={dashboardSources}
+							/>
+						) : (
+							<AutomationsSection
+								automations={serverAutomations}
+								now={automationClock}
+								servers={automationSectionServers}
+								workingServerId={currentServerId}
+								{...(automationsFocus === undefined
+									? {}
+									: { focus: automationsFocus })}
+							/>
+						)}
+					</HomeView>
 				) : null}
+				<MissedRunsNotice automations={serverAutomations} />
 				{projects.map((project) => (
 					<ProjectWorkspace
 						key={project.id}

@@ -31,7 +31,10 @@ import {
 	agentHarnessSwitchesFromSettings,
 	agentIntegrationEnabledFromSettings,
 	AiService,
+	AutomationRepository,
+	AutomationRunLog,
 	CanonicalProjectPathResolver,
+	createAutomationFileBackends,
 	FileWorkspaceStateBackend,
 	createNodePtyFactory,
 	createNodeShellDiscoveryHost,
@@ -344,6 +347,13 @@ else {
 						rotateHandoff: () => handoffForMode(mode, rotateShared(mode), direct),
 						acceptApplication: (transport, authenticatedClient) =>
 							composition.core.accept(transport, { authenticatedClient }),
+						// Remote device connected trigger (automations).
+						onPeerConnected: (peer) =>
+							composition.onConnectionAdmitted({
+								connectionId: peer.connectionId,
+								deviceId: peer.deviceId,
+								deviceName: peer.deviceName,
+							}),
 						handoff: modeHandoff,
 						hostKey: loadOrCreateHostedHostKey(
 							join(options.dataRoot, 'remote-host-key.v1.json'),
@@ -582,6 +592,13 @@ async function createServerComposition(
 				.map((project) => project.id),
 	});
 	const macros = createStandaloneMacroRepository(options.dataRoot);
+	// Automations: automations.v1.json + automation-runs.v1.json in the data root.
+	const automationBackends = createAutomationFileBackends(options.dataRoot);
+	const automations = new AutomationRepository(automationBackends.definitions, {
+		resolveMacro: async (macroId) =>
+			(await macros.load()).macros.find((macro) => macro.id === macroId),
+	});
+	const automationRuns = new AutomationRunLog(automationBackends.runs);
 	const recordings = new ServerRecordingAdapter(
 		new RecordingService({
 			serverId: options.serverId,
@@ -705,6 +722,7 @@ async function createServerComposition(
 			FEATURE_CAPABILITIES.agents,
 			FEATURE_CAPABILITIES.settings,
 			FEATURE_CAPABILITIES.macros,
+			FEATURE_CAPABILITIES.automations,
 			FEATURE_CAPABILITIES.recording,
 			FEATURE_CAPABILITIES.extensions,
 			FEATURE_CAPABILITIES.git,
@@ -807,6 +825,7 @@ async function createServerComposition(
 				);
 			},
 		},
+		automations: { repository: automations, runLog: automationRuns },
 		macros: {
 			repository: macros,
 			environmentFor: (request, target) => {

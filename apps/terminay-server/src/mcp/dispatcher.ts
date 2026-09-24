@@ -124,7 +124,12 @@ export interface OpenTerminalParams {
 	readonly name?: string;
 	readonly cwd?: string;
 	readonly split?: SplitDirection;
+	/** Opaque project handle from a workspace-reach `list_terminals` row. */
+	readonly project?: string;
 }
+
+/** Shape of an opaque project handle (see `workspaceReach.ts`). */
+export const PROJECT_HANDLE_PATTERN = /^prj_[A-Za-z0-9_-]{22}$/;
 export interface WriteTerminalParams {
 	readonly terminal: TerminalRef;
 	readonly text: string;
@@ -790,10 +795,17 @@ function parseOpenTerminal(
 			!SPLIT_DIRECTIONS.has(split as SplitDirection))
 	)
 		return badRequest('split direction is invalid');
+	const project = value.project;
+	if (
+		project !== undefined &&
+		(typeof project !== 'string' || !PROJECT_HANDLE_PATTERN.test(project))
+	)
+		return badRequest('project handle is invalid');
 	return {
 		...(name === undefined ? {} : { name }),
 		...(cwd === undefined ? {} : { cwd }),
 		...(split === undefined ? {} : { split: split as SplitDirection }),
+		...(project === undefined ? {} : { project }),
 	};
 }
 

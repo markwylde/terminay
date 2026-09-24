@@ -3,6 +3,8 @@ import { chmod, lstat, mkdir, unlink } from 'node:fs/promises';
 import { createServer, type Server, type Socket } from 'node:net';
 import { dirname, isAbsolute } from 'node:path';
 import type {
+	AUTOMATION_PROJECT_KIND,
+	AUTOMATION_SPACE_PROJECT_ID,
 	ServerSettingsRepository,
 	ServerSettingsState,
 } from '@terminay/server-core';
@@ -47,6 +49,53 @@ export type ControlOperation = (typeof CONTROL_OPERATIONS)[number];
 /** Compatibility spelling used by the pre-server control protocol. */
 export type ControlOp = ControlOperation;
 export type ControlScope = 'none' | 'read' | 'write' | 'admin';
+/**
+ * Which terminals a capability may address (ADR-0028). `project` reaches the
+ * terminal's own project. `workspace` reaches every project and the automation
+ * terminal space on the same server, and is held only by terminals in that
+ * space. Reach never widens the operation set and never crosses servers.
+ */
+export type ControlReach = 'project' | 'workspace';
+
+/**
+ * Canonical placement of the terminal a capability is minted for. The minting
+ * site reads it from the server's workspace state; it is never taken from a
+ * request, title, cwd, environment, or any other caller-controlled value.
+ */
+export interface ControlPlacement {
+	/** The canonical project's reserved kind; absent for ordinary projects. */
+	readonly projectKind?: string;
+}
+
+// Type-only imports keep the stdio entry, which shares this module, free of
+// server-core at runtime; `satisfies` pins the literals to their source.
+const AUTOMATION_KIND =
+	'automations' as const satisfies typeof AUTOMATION_PROJECT_KIND;
+const AUTOMATION_SPACE_ID =
+	'system:automations' as const satisfies typeof AUTOMATION_SPACE_PROJECT_ID;
+
+/**
+ * Project reach is the default and stays implicit, so every project-scope
+ * lease, resolution, and dispatch context is exactly what it was before
+ * workspace reach existed.
+ */
+function reachField(reach: ControlReach): { readonly reach?: 'workspace' } {
+	return reach === 'workspace' ? { reach } : {};
+}
+
+/** The only derivation of reach: the terminal's canonical project kind. */
+export function controlReachForPlacement(
+	projectId: string,
+	placement: ControlPlacement = {},
+): ControlReach {
+	if (placement.projectKind === undefined) return 'project';
+	if (
+		placement.projectKind !== AUTOMATION_KIND ||
+		projectId !== AUTOMATION_SPACE_ID
+	)
+		throw new TypeError('invalid control placement');
+	return 'workspace';
+}
 
 export interface ControlRequest {
 	readonly id: string;
@@ -65,6 +114,8 @@ export interface ControlCapabilityScope {
 	/** Immutable server-owned project identity, never supplied by a request. */
 	readonly projectId: string;
 	readonly scope?: ControlScope;
+	/** Server-derived reach; absent means `project`. */
+	readonly reach?: ControlReach;
 }
 
 export interface ControlCapabilityLease extends ControlCapabilityScope {
@@ -286,6 +337,7 @@ interface StoredCapability {
 	readonly terminalSessionId: string;
 	readonly projectId: string;
 	readonly scope: ControlScope;
+	readonly reach: ControlReach;
 	readonly issuedAt: number;
 	readonly expiresAt: number;
 }
@@ -312,10 +364,15 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 		assertPositiveLimit(this.ttlMs, 'ttlMs');
 	}
 
+	/**
+	 * Mint the terminal's single capability, replacing any it held. Reach is
+	 * derived here from canonical placement alone (ADR-0028).
+	 */
 	mint(
 		terminalSessionId: string,
 		projectId: string,
 		scope: ControlScope = 'write',
+		placement: ControlPlacement = {},
 	): ControlCapabilityLease {
 		if (!this.enabled)
 			throw new ControlEndpointError(
@@ -325,6 +382,7 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 		assertScopeId(terminalSessionId, 'terminal session id');
 		assertScopeId(projectId, 'project id');
 		this.assertScope(scope);
+		const reach = controlReachForPlacement(projectId, placement);
 		this.revokeSession(terminalSessionId);
 		let token = this.tokenFactory();
 		if (!isValidToken(token))
@@ -347,6 +405,7 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 			terminalSessionId,
 			projectId,
 			scope,
+			reach,
 			issuedAt,
 			expiresAt,
 		});
@@ -355,6 +414,7 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 			terminalSessionId,
 			projectId,
 			scope,
+			...reachField(reach),
 			issuedAt,
 			expiresAt,
 		});
@@ -364,8 +424,9 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 		terminalSessionId: string,
 		projectId: string,
 		scope: ControlScope = 'write',
+		placement: ControlPlacement = {},
 	): ControlCapabilityLease {
-		return this.mint(terminalSessionId, projectId, scope);
+		return this.mint(terminalSessionId, projectId, scope, placement);
 	}
 
 	revoke(token: string): boolean {
@@ -397,13 +458,18 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 		return count;
 	}
 
-	/** Atomically removes a terminal's old project capability and mints a new one. */
+	/**
+	 * Atomically removes a terminal's old capability and mints one for its new
+	 * canonical placement, so entering or leaving the automation space swaps
+	 * workspace and project reach with no window in which both are valid.
+	 */
 	moveTerminal(
 		terminalSessionId: string,
 		projectId: string,
 		scope: ControlScope = 'write',
+		placement: ControlPlacement = {},
 	): ControlCapabilityLease {
-		return this.mint(terminalSessionId, projectId, scope);
+		return this.mint(terminalSessionId, projectId, scope, placement);
 	}
 
 	setEnabled(enabled: boolean): void {
@@ -431,6 +497,7 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 			terminalSessionId: capability.terminalSessionId,
 			projectId: capability.projectId,
 			scope: capability.scope,
+			...reachField(capability.reach),
 		};
 	}
 
@@ -464,6 +531,7 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 				terminalSessionId: capability.terminalSessionId,
 				projectId: capability.projectId,
 				scope: capability.scope,
+				...reachField(capability.reach),
 				issuedAt: capability.issuedAt,
 				expiresAt: capability.expiresAt,
 			});
@@ -673,10 +741,17 @@ function normalizeScope(
 	)
 		return null;
 	if (value.scope !== undefined && !(value.scope in scopeRank)) return null;
+	if (
+		value.reach !== undefined &&
+		value.reach !== 'project' &&
+		value.reach !== 'workspace'
+	)
+		return null;
 	return {
 		terminalSessionId: value.terminalSessionId,
 		projectId: value.projectId,
 		scope: value.scope ?? 'write',
+		...reachField(value.reach ?? 'project'),
 	};
 }
 
