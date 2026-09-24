@@ -368,6 +368,23 @@ test("write text renders the Eta subset over event context, submits, and the loo
   assert.equal((await h.executor.start({ ...request, firedAt: now })).outcome, "succeeded", "fires again after the cooldown");
 });
 
+test("the loop guard holds for two events for one subject that arrive together", { skip: !posix }, async (t) => {
+  const h = await harness(t);
+  const subject = await subjectTerminal(h, "agent-burst");
+  const automation = definition({
+    trigger: { kind: "event", event: "agent.needsInput" },
+    action: { kind: "writeText", text: "continue", submit: true },
+  });
+  const request = { automation, startedBy: "trigger", firedAt: 1, event: "agent.needsInput", subject };
+  // Neither call waits for the other: the second arrives while the first is
+  // still recording its run.
+  const [first, second] = await Promise.all([h.executor.fire(request), h.executor.fire({ ...request, firedAt: 2 })]);
+  assert.equal(first?.outcome, "succeeded");
+  assert.equal(second, undefined, "the second event is suppressed");
+  assert.equal(h.inputs.filter((input) => input.text === "continue").length, 1, "written once");
+  assert.equal(h.runLog.get(first.runId).suppressedEvents, 1);
+});
+
 test("subject actions skip with subjectGone for a closed or replaced subject and write nothing anywhere", { skip: !posix }, async (t) => {
   const h = await harness(t);
   const subject = await subjectTerminal(h, "agent-3");
