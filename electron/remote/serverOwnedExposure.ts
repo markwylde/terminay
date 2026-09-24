@@ -47,6 +47,10 @@ export interface DesktopServerOwnedExposureOptions {
 	readonly resolveIceServers?: () => readonly HostedIceServer[];
 	readonly iceRecoveryGraceMs?: number;
 	readonly onStatusChanged?: () => void;
+	/** Called once per admitted remote device connection. */
+	readonly onConnectionAdmitted?: (
+		admission: Readonly<{ connectionId: string; deviceId: string; deviceName: string }>,
+	) => void;
 	readonly onDiagnostic?: (event: HostedPairingDiagnostic) => void;
 }
 
@@ -80,6 +84,7 @@ export class DesktopServerOwnedExposure {
 		| undefined;
 	private readonly webRtcUnavailableReason: string | undefined;
 	private readonly onStatusChanged: (() => void) | undefined;
+	private readonly onConnectionAdmitted: DesktopServerOwnedExposureOptions['onConnectionAdmitted'];
 	private readonly onDiagnostic:
 		| ((event: HostedPairingDiagnostic) => void)
 		| undefined;
@@ -110,6 +115,7 @@ export class DesktopServerOwnedExposure {
 		this.ensureWebRtcRuntimeAvailable = options.ensureWebRtcRuntimeAvailable;
 		this.webRtcUnavailableReason = options.webRtcUnavailableReason;
 		this.onStatusChanged = options.onStatusChanged;
+		this.onConnectionAdmitted = options.onConnectionAdmitted;
 		this.onDiagnostic = options.onDiagnostic;
 		this.runtimeError = options.webRtcUnavailableReason;
 		this.factory =
@@ -341,6 +347,15 @@ export class DesktopServerOwnedExposure {
 					},
 				];
 				this.onStatusChanged?.();
+				try {
+					this.onConnectionAdmitted?.({
+						connectionId: peer.connectionId,
+						deviceId: peer.deviceId,
+						deviceName: peer.deviceName,
+					});
+				} catch {
+					// An observer failure never undoes an admission.
+				}
 			},
 			onPeerDisconnected: (connectionId) => {
 				this.hostedConnections = this.hostedConnections.filter(

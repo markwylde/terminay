@@ -499,3 +499,106 @@ test('a board grouping that cannot be read is the ungrouped board', async () => 
     delete globalThis.localStorage
   }
 })
+
+/**
+ * Home's sidebar is this device's, and it is not any project's: its visibility
+ * and its selected section are hints like the rest of this module. A device that
+ * has never chosen sees it open on the Home overview.
+ */
+test('a device remembers whether Home shows its sidebar, open by default', async () => {
+  const { module } = await loadModule()
+  globalThis.localStorage = fakeStorage()
+  try {
+    assert.equal(module.recallHomeSidebarVisible(), true)
+    module.rememberHomeSidebarVisible(false)
+    assert.equal(module.recallHomeSidebarVisible(), false)
+    module.rememberHomeSidebarVisible(true)
+    assert.equal(module.recallHomeSidebarVisible(), true)
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('a Home sidebar visibility that cannot be read is open', async () => {
+  const { module } = await loadModule()
+  globalThis.localStorage = fakeStorage({
+    'terminay.view.home-sidebar-visible.v1': 'maybe',
+  })
+  try {
+    assert.equal(module.recallHomeSidebarVisible(), true)
+  } finally {
+    delete globalThis.localStorage
+  }
+  globalThis.localStorage = {
+    getItem() { throw new Error('storage disabled') },
+    setItem() { throw new Error('storage disabled') },
+  }
+  try {
+    assert.doesNotThrow(() => module.rememberHomeSidebarVisible(false))
+    assert.equal(module.recallHomeSidebarVisible(), true)
+  } finally {
+    delete globalThis.localStorage
+  }
+  assert.doesNotThrow(() => module.rememberHomeSidebarVisible(false))
+  assert.equal(module.recallHomeSidebarVisible(), true)
+})
+
+test('a device remembers the Home section it last showed, Home by default', async () => {
+  const { module } = await loadModule()
+  globalThis.localStorage = fakeStorage()
+  try {
+    assert.equal(module.recallHomeSection(), 'home')
+    module.rememberHomeSection('tabs')
+    assert.equal(module.recallHomeSection(), 'tabs')
+    module.rememberHomeSection('automations')
+    assert.equal(module.recallHomeSection(), 'automations')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('a Home section that is not one of the three, or cannot be read, is Home', async () => {
+  const { module } = await loadModule()
+  globalThis.localStorage = fakeStorage({
+    'terminay.view.home-section.v1': 'explorer',
+  })
+  try {
+    assert.equal(module.recallHomeSection(), 'home')
+  } finally {
+    delete globalThis.localStorage
+  }
+  globalThis.localStorage = {
+    getItem() { throw new Error('storage disabled') },
+    setItem() { throw new Error('storage disabled') },
+  }
+  try {
+    assert.doesNotThrow(() => module.rememberHomeSection('tabs'))
+    assert.equal(module.recallHomeSection(), 'home')
+  } finally {
+    delete globalThis.localStorage
+  }
+  assert.doesNotThrow(() => module.rememberHomeSection('automations'))
+  assert.equal(module.recallHomeSection(), 'home')
+})
+
+test('Home sidebar state never touches a project\'s remembered state', async () => {
+  const { module } = await loadModule()
+  const storage = fakeStorage()
+  globalThis.localStorage = storage
+  try {
+    module.rememberActiveSession('project-a', 'session-1')
+    module.rememberHomeSidebarVisible(false)
+    module.rememberHomeSection('tabs')
+    assert.equal(module.recallActiveSession('project-a'), 'session-1')
+    assert.deepEqual(
+      [...storage.raw.keys()].sort(),
+      [
+        'terminay.view.active-session.v1',
+        'terminay.view.home-section.v1',
+        'terminay.view.home-sidebar-visible.v1',
+      ],
+    )
+  } finally {
+    delete globalThis.localStorage
+  }
+})

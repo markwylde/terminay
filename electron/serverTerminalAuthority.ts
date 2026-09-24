@@ -284,6 +284,7 @@ export interface ServerTerminalAuthorityOptions {
 	readonly onAcceptedResize?: ServerTerminalHostObserver<ServerTerminalAcceptedResize>;
 	/** Optional server-owned macro protocol services supplied by the host. */
 	readonly macros?: ServerCoreCompositionOptions['macros'];
+	readonly automations?: ServerCoreCompositionOptions['automations'];
 	/** Optional server-owned recording protocol authority supplied by Desktop. */
 	readonly recordings?: ServerCoreCompositionOptions['recordings'];
 	/** Durable server settings shared by Desktop and browser renderers. */
@@ -790,6 +791,7 @@ export class ServerTerminalAuthority {
 				'git.v1',
 				'settings.v1',
 				'macros.v1',
+				...(options.automations === undefined ? [] : ['automations.v1']),
 				'recording.v1',
 				'extensions.v1',
 				...(dictationAi === undefined ? [] : ['dictation.v1']),
@@ -983,6 +985,9 @@ export class ServerTerminalAuthority {
 								: { resolveDefaultShell: options.resolveDefaultShell }),
 						},
 						...(options.macros === undefined ? {} : { macros: options.macros }),
+						...(options.automations === undefined
+							? {}
+							: { automations: options.automations }),
 					}
 				: { terminalService: options.terminalService }),
 		});

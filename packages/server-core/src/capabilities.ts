@@ -40,6 +40,7 @@ const OPERATION_NAMESPACES: ReadonlyMap<string, OperationCapability> = new Map<
 	['settings', FEATURE_CAPABILITIES.settings],
 	['shell-profiles', FEATURE_CAPABILITIES.settings],
 	['macros', FEATURE_CAPABILITIES.macros],
+	['automations', FEATURE_CAPABILITIES.automations],
 	['recordings', FEATURE_CAPABILITIES.recording],
 	['recording', FEATURE_CAPABILITIES.recording],
 	['ai', FEATURE_CAPABILITIES.dictation],

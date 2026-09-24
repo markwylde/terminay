@@ -25,6 +25,7 @@ export * from "./git.js";
 export * from "./gitClient.js";
 export * from "./settings.js";
 export * from "./macros.js";
+export * from "./automations.js";
 export * from "./health.js";
 export * from "./shellProfiles.js";
 export * from "./extensions.js";

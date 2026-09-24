@@ -17,6 +17,18 @@ export interface RemoteConnectionManagerOptions {
 	readonly maxQueuedBytes?: number;
 	readonly maxAssetQueuedBytes?: number;
 	readonly maxUsedTickets?: number;
+	/** Observes each admitted peer exactly once, after admission commits. The
+	 * counterpart of a transport's close hook; an observer failure never
+	 * undoes the admission. */
+	readonly onConnectionAdmitted?: (admission: RemoteConnectionAdmission) => void;
+}
+
+/** One authenticated device connection accepted by a host. */
+export interface RemoteConnectionAdmission {
+	readonly connectionId: ProtocolId;
+	readonly deviceId: ProtocolId;
+	/** The device's paired display name, when the host knows it. */
+	readonly deviceName?: string;
 }
 
 export interface RemoteAuthProof {
@@ -26,6 +38,7 @@ export interface RemoteAuthProof {
 	readonly deviceId: ProtocolId;
 	readonly expiresAt: number;
 	readonly authenticated: boolean;
+	readonly deviceName?: string;
 }
 
 export interface RemoteExposure {
@@ -201,7 +214,19 @@ export class RemoteConnectionManager {
 			queues: createQueues(),
 		};
 		this.peers.set(peerId, peer);
-		return this.snapshotPeer(peer);
+		const snapshot = this.snapshotPeer(peer);
+		try {
+			this.options.onConnectionAdmitted?.({
+				connectionId: peerId,
+				deviceId: proof.deviceId,
+				...(typeof proof.deviceName === 'string' && proof.deviceName.length > 0
+					? { deviceName: proof.deviceName }
+					: {}),
+			});
+		} catch {
+			// An observer failure never undoes an admission.
+		}
+		return snapshot;
 	}
 
 	send(

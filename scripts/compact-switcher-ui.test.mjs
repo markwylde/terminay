@@ -73,7 +73,7 @@ test('the compact row holds its six controls in order', () => {
 	const order = [
 		'connected-web-compact-menu__button',
 		'Toggle file explorer',
-		'Show dashboard',
+		'aria-label="Home"',
 		'data-compact-command-bar',
 		'compact-breadcrumb',
 		'data-compact-connection',

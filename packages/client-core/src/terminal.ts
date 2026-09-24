@@ -62,6 +62,11 @@ export interface TerminalClientAttachRequest extends TerminalClientIdentity {
 	/** True only when attaching a newly-created blank emulator. It forces a
 	 * complete position-zero presentation instead of using reconnect state. */
 	readonly freshPresentation?: boolean;
+	/** View an exited terminal the server still retains (a kept automation
+	 * run terminal): its bounded retained output and its exit, replayed in
+	 * the attach result. Never controls the terminal; a running or
+	 * unretained terminal is refused. */
+	readonly readOnly?: boolean;
 }
 
 export interface TerminalClientCreateRequest {
@@ -682,6 +687,7 @@ export class TerminayTerminalClient {
 				...(request.maxInitialReplayBytes === undefined
 					? {}
 					: { maxInitialReplayBytes: request.maxInitialReplayBytes }),
+				...(request.readOnly === true ? { readOnly: true } : {}),
 			} as { readonly [key: string]: JsonValue });
 		} catch (error) {
 			unsubscribeEvent();

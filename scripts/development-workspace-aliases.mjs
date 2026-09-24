@@ -25,6 +25,10 @@ export function developmentWorkspaceAliases(repositoryRoot) {
 			replacement: source('packages', 'protocol', 'src', 'index.ts'),
 		},
 		{
+			find: '@terminay/cron',
+			replacement: source('packages', 'cron', 'src', 'index.ts'),
+		},
+		{
 			find: '@terminay/client-core',
 			replacement: source('packages', 'client-core', 'src', 'index.ts'),
 		},

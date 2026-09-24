@@ -1,4 +1,8 @@
-import type { JsonValue, ProtocolId } from '@terminay/protocol';
+import {
+	FEATURE_CAPABILITIES,
+	type JsonValue,
+	type ProtocolId,
+} from '@terminay/protocol';
 
 export const WORKSPACE_SCHEMA_VERSION = 5;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -18,6 +22,7 @@ const PROJECT_KEYS = Object.freeze([
 	'panelIds',
 	'activePanelId',
 	'layout',
+	'kind',
 ]);
 const TERMINAL_SESSION_KEYS = Object.freeze([
 	'id',
@@ -143,8 +148,23 @@ export function defaultWorkspaceSidebarState(): WorkspaceSidebarState {
 		sidebarPanelOrder: [...SIDEBAR_PANEL_IDS],
 	};
 }
+/** A reserved, server-owned project kind. Ordinary user projects carry no
+ * kind. See ADR-0028: the `automations` kind is the automation terminal space,
+ * which is never presented, ordered, or selected as a project. */
+export type WorkspaceProjectKind = 'automations';
+export const AUTOMATION_PROJECT_KIND = 'automations' as const;
+/** Deterministic identity of the automation terminal space on every server. */
+export const AUTOMATION_SPACE_PROJECT_ID = 'system:automations';
+export const AUTOMATION_SPACE_NAME = 'Automations';
+/** Live (running) terminals the automation space may hold at once. */
+export const AUTOMATION_SPACE_TERMINAL_LIMIT = 50;
+/** Feature capability a connection must negotiate to see the automation space. */
+export const AUTOMATIONS_FEATURE_CAPABILITY = FEATURE_CAPABILITIES.automations;
+
 export interface WorkspaceProject {
 	readonly id: ProtocolId;
+	/** Absent for every ordinary project. */
+	readonly kind?: WorkspaceProjectKind;
 	readonly serverId: ProtocolId;
 	readonly viewId: ProtocolId;
 	readonly root: string;
@@ -222,6 +242,7 @@ export function canonicalizeWorkspaceState(
 			root: project.root,
 			rootOrigin: project.rootOrigin,
 			name: project.name,
+			...(project.kind === undefined ? {} : { kind: project.kind }),
 			...(project.color === undefined ? {} : { color: project.color }),
 			...(project.icon === undefined ? {} : { icon: project.icon }),
 			...(project.defaultShellProfileId === undefined
@@ -665,6 +686,7 @@ export function validateWorkspace(state: WorkspaceState): void {
 		)
 			throw new TypeError('active project is outside view');
 	}
+	let automationSpaces = 0;
 	for (const [id, project] of Object.entries(state.projects)) {
 		assertId(id, 'projectId');
 		if (
@@ -680,6 +702,17 @@ export function validateWorkspace(state: WorkspaceState): void {
 			project.rootOrigin !== 'legacy-unverified'
 		)
 			throw new TypeError('project root origin is invalid');
+		if (project.kind !== undefined) {
+			if (project.kind !== AUTOMATION_PROJECT_KIND)
+				throw new TypeError('project kind is invalid');
+			automationSpaces += 1;
+			if (automationSpaces > 1)
+				throw new TypeError('workspace has more than one automation space');
+			if (
+				Object.values(state.views).some((view) => view.projectIds.includes(id))
+			)
+				throw new TypeError('automation space cannot be a listed project');
+		}
 		if (project.defaultShellProfileId !== undefined)
 			assertId(project.defaultShellProfileId, 'defaultShellProfileId');
 		validateWorkspaceSidebarState(project.sidebar);
@@ -1056,11 +1089,55 @@ export class WorkspaceStore {
 		return this.state;
 	}
 
+	/** Server-internal: return the automation terminal space's project id,
+	 * creating it on first use. This is deliberately not a workspace command, so
+	 * no client can create, recreate, or shape the reserved project. The space
+	 * executes on this server's own local environment like every project
+	 * (ADR-0017); `root` is the server's default working directory for it. */
+	ensureAutomationSpace(options: { readonly root: string }): ProtocolId {
+		const existing = findAutomationSpace(this.current);
+		if (existing !== undefined) return existing.id;
+		if (this.current.projects[AUTOMATION_SPACE_PROJECT_ID] !== undefined)
+			throw new Error('automation space identity is already in use');
+		const viewId = this.current.viewOrder[0];
+		if (viewId === undefined) throw new Error('workspace has no view');
+		const next = clone(this.current) as MutableWorkspaceState;
+		next.projects[AUTOMATION_SPACE_PROJECT_ID] = {
+			id: AUTOMATION_SPACE_PROJECT_ID,
+			kind: AUTOMATION_PROJECT_KIND,
+			serverId: next.serverId,
+			viewId,
+			root: boundedPath(options.root),
+			rootOrigin: 'server-default',
+			name: AUTOMATION_SPACE_NAME,
+			sidebar: defaultWorkspaceSidebarState(),
+			panelIds: [],
+			layout: stack([]),
+		};
+		next.revision += 1;
+		next.cursor = String(next.revision);
+		validateWorkspace(next);
+		const event: WorkspaceEvent = {
+			revision: next.revision,
+			cursor: next.cursor,
+			commandId: 'system:automation-space',
+			type: 'project.create',
+			changedIds: [AUTOMATION_SPACE_PROJECT_ID],
+		};
+		this.commit?.(clone(next));
+		this.current = next;
+		this.history.push(event);
+		while (this.history.length > this.maxHistory) this.history.shift();
+		return AUTOMATION_SPACE_PROJECT_ID;
+	}
+
 	private reduce(
 		state: MutableWorkspaceState,
 		command: WorkspaceCommand,
 		changed: ProtocolId[],
 	): void {
+		const refusal = automationSpaceRefusal(state, command);
+		if (refusal !== undefined) throw new Error(refusal);
 		switch (command.type) {
 			case 'view.create': {
 				assertId(command.viewId, 'viewId');
@@ -1093,6 +1170,14 @@ export class WorkspaceStore {
 					throw new Error('cannot close the last view');
 				delete state.views[command.viewId];
 				state.viewOrder = state.viewOrder.filter((id) => id !== command.viewId);
+				// The automation space is never listed in a view, so an otherwise
+				// empty view may still be its home; move it rather than refuse.
+				const home = state.viewOrder[0];
+				for (const project of Object.values(state.projects))
+					if (project.viewId === command.viewId && home !== undefined) {
+						state.projects[project.id] = { ...project, viewId: home };
+						changed.push(project.id);
+					}
 				changed.push(command.viewId);
 				break;
 			}
@@ -1505,6 +1590,111 @@ export class WorkspaceStore {
 			}
 		}
 	}
+}
+
+export function isAutomationSpace(
+	project: Pick<WorkspaceProject, 'kind'> | undefined,
+): boolean {
+	return project?.kind === AUTOMATION_PROJECT_KIND;
+}
+
+export function findAutomationSpace(
+	state: WorkspaceState,
+): WorkspaceProject | undefined {
+	return Object.values(state.projects).find(isAutomationSpace);
+}
+
+export function liveAutomationTerminalCount(state: WorkspaceState): number {
+	const space = findAutomationSpace(state);
+	if (space === undefined) return 0;
+	return Object.values(state.terminalSessions).filter(
+		(session) => session.projectId === space.id && session.status === 'running',
+	).length;
+}
+
+/** The bounded refusal for a command the automation space never accepts, or
+ * undefined when the command is allowed. Shared by the reducer and the
+ * protocol boundary so both give the same answer. */
+export function automationSpaceRefusal(
+	state: WorkspaceState,
+	command: WorkspaceCommand,
+): string | undefined {
+	const reserved = (projectId: ProtocolId | undefined) =>
+		projectId !== undefined && isAutomationSpace(state.projects[projectId]);
+	switch (command.type) {
+		case 'project.create':
+			return command.projectId === AUTOMATION_SPACE_PROJECT_ID
+				? 'project id is reserved'
+				: undefined;
+		case 'project.close':
+			return reserved(command.projectId)
+				? 'the automation space cannot be closed'
+				: undefined;
+		case 'project.rename':
+		case 'project.update':
+		case 'project.root.update':
+			return reserved(command.projectId)
+				? 'the automation space cannot be renamed or edited'
+				: undefined;
+		case 'project.move':
+			return reserved(command.projectId)
+				? 'the automation space cannot be reordered'
+				: undefined;
+		case 'project.activate':
+			return reserved(command.projectId)
+				? 'the automation space cannot be selected as a project'
+				: undefined;
+		case 'panel.move': {
+			const panel = state.panels[command.panelId];
+			return reserved(panel?.projectId) || reserved(command.targetProjectId)
+				? 'panels cannot move into or out of the automation space'
+				: undefined;
+		}
+		case 'terminal.create':
+		case 'terminal.createPanel':
+			return reserved(command.projectId) &&
+				liveAutomationTerminalCount(state) >= AUTOMATION_SPACE_TERMINAL_LIMIT
+				? `the automation space has reached its limit of ${AUTOMATION_SPACE_TERMINAL_LIMIT} live terminals`
+				: undefined;
+		default:
+			return undefined;
+	}
+}
+
+/** Whether a connection's negotiated feature capabilities include the
+ * automations feature, and so whether it may see the automation space. */
+export function canSeeAutomationSpace(
+	capabilities: readonly string[] | undefined,
+): boolean {
+	return capabilities?.includes(AUTOMATIONS_FEATURE_CAPABILITY) === true;
+}
+
+/** Project a workspace for a connection that did not negotiate
+ * `automations.v1`: the reserved project, its panels, and its terminal
+ * sessions are absent, as though they had never existed. */
+export function withholdAutomationSpace(state: WorkspaceState): WorkspaceState {
+	const hidden = new Set(
+		Object.values(state.projects)
+			.filter(isAutomationSpace)
+			.map((project) => project.id),
+	);
+	if (hidden.size === 0) return state;
+	const keep = <T extends { readonly projectId: ProtocolId }>(
+		record: Readonly<Record<ProtocolId, T>>,
+	) =>
+		Object.fromEntries(
+			Object.entries(record).filter(
+				([, value]) => !hidden.has(value.projectId),
+			),
+		);
+	return {
+		...state,
+		projects: Object.fromEntries(
+			Object.entries(state.projects).filter(([id]) => !hidden.has(id)),
+		),
+		panels: keep(state.panels),
+		terminalSessions: keep(state.terminalSessions),
+	};
 }
 
 /** Lowest `Project N` no project holds. Derived here, inside the applied command,

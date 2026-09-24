@@ -19,6 +19,7 @@ COPY apps/terminay-desktop/package.json ./apps/terminay-desktop/package.json
 COPY apps/terminay-server/package.json ./apps/terminay-server/package.json
 COPY apps/terminay-web/package.json ./apps/terminay-web/package.json
 COPY packages/client-core/package.json ./packages/client-core/package.json
+COPY packages/cron/package.json ./packages/cron/package.json
 COPY packages/protocol/package.json ./packages/protocol/package.json
 COPY packages/protocol-conformance/package.json ./packages/protocol-conformance/package.json
 COPY packages/responsive-ui/package.json ./packages/responsive-ui/package.json
@@ -79,6 +80,8 @@ COPY --from=build --chown=terminay:terminay /workspace/packages/ui-bundle/packag
 COPY --from=build --chown=terminay:terminay /workspace/packages/ui-bundle/dist ./packages/ui-bundle/dist
 COPY --from=build --chown=terminay:terminay /workspace/packages/protocol/package.json ./packages/protocol/package.json
 COPY --from=build --chown=terminay:terminay /workspace/packages/protocol/dist ./packages/protocol/dist
+COPY --from=build --chown=terminay:terminay /workspace/packages/cron/package.json ./packages/cron/package.json
+COPY --from=build --chown=terminay:terminay /workspace/packages/cron/dist ./packages/cron/dist
 
 USER terminay
 

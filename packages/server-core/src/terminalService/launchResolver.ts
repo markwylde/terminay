@@ -11,7 +11,11 @@ import {
 	SYSTEM_SHELL_PROFILE_ID,
 	shellStartupModeFamily,
 } from '../shellProfiles/index.js';
-import type { WorkspacePanel, WorkspaceState } from '../workspace.js';
+import type {
+	WorkspacePanel,
+	WorkspaceProjectKind,
+	WorkspaceState,
+} from '../workspace.js';
 import { TerminalServiceError } from './errors.js';
 import type { TerminalDimensions, TerminalIdentity } from './types.js';
 
@@ -44,9 +48,12 @@ export interface TerminalLaunchResolverOptions {
 	readonly defaultEnvironment?: Readonly<Record<string, string | undefined>>;
 	/** Host-owned, per-session environment added after shell-profile resolution.
 	 * This is reserved for ephemeral capability material which must not be
-	 * expressible or overridden by a user shell profile. */
+	 * expressible or overridden by a user shell profile. `placement` is read
+	 * from the canonical workspace snapshot, never from the launch intent, so a
+	 * host may derive authority (such as MCP workspace scope, ADR-0028) from it. */
 	readonly environmentFor?: (
 		intent: TerminalLaunchIntent,
+		placement: TerminalLaunchPlacement,
 	) => Readonly<Record<string, string | undefined>> | undefined;
 	/** Windows environment names are case-insensitive. */
 	readonly environmentCaseInsensitive?: boolean;
@@ -54,6 +61,12 @@ export interface TerminalLaunchResolverOptions {
 	 * startup modes remain authoritative. */
 	readonly systemDefaultStartupMode?: ShellStartupMode;
 	readonly now?: () => number;
+}
+
+/** Canonical placement of a launching terminal, resolved by the server. */
+export interface TerminalLaunchPlacement {
+	/** The canonical project's reserved kind; absent for ordinary projects. */
+	readonly projectKind?: WorkspaceProjectKind;
 }
 
 /** Intent accepted from an authenticated terminal-create action. Executables,
@@ -161,7 +174,12 @@ export class TerminalLaunchResolver {
 			resolvedProfile.definition.environment,
 			this.options.environmentCaseInsensitive === true,
 		);
-		const hostEnvironment = this.options.environmentFor?.(intent);
+		const hostEnvironment = this.options.environmentFor?.(
+			intent,
+			Object.freeze(
+				project.kind === undefined ? {} : { projectKind: project.kind },
+			),
+		);
 		if (hostEnvironment !== undefined) {
 			for (const [name, value] of Object.entries(hostEnvironment)) {
 				if (value === undefined) {
@@ -313,11 +331,7 @@ export class TerminalLaunchResolver {
 
 	private async projectDirectory(
 		root: string,
-		rootOrigin:
-			| 'explicit'
-			| 'server-default'
-			| 'legacy-unverified'
-			| undefined,
+		rootOrigin: 'explicit' | 'server-default' | 'legacy-unverified' | undefined,
 	): Promise<string> {
 		if (!validCwdInput(root) || root === '.') {
 			throw new TerminalServiceError(
