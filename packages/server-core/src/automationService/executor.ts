@@ -621,8 +621,10 @@ export class AutomationExecutor implements AutomationRunController {
 		};
 		if (!this.subjectIsCurrent(request))
 			return this.skip(request, 'subjectGone', 'the subject terminal was gone');
-		const run = await this.begin(request);
+		// Guard before the first await: a second event for this subject that
+		// arrives while the run is being recorded must already be suppressed.
 		this.guard(automation, subject.sessionId);
+		const run = await this.begin(request);
 		try {
 			if (automation.action.kind === 'writeText') {
 				const text = renderMacroTemplate(
