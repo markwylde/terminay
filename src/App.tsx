@@ -113,7 +113,10 @@ import {
 	installAppUpdate,
 	openExternalUrl,
 } from './host/nativeActions';
-import { subscribeAppUpdateStatusChanged } from './host/nativeEvents';
+import {
+	subscribeAppUpdateStatusChanged,
+	subscribeWindowFullScreenState,
+} from './host/nativeEvents';
 import {
 	findCommandForKeyboardEvent,
 	getCommandShortcut,
@@ -5488,6 +5491,10 @@ function App({
 	const isMac = useMemo(() => navigator.userAgent.includes('Mac'), []);
 	const hasNativeWindowControls =
 		hostPresentation?.nativeWindowControls ?? false;
+	// Fullscreen hides the traffic lights and squares the window corners, so the
+	// macOS title-bar adjustments no longer apply.
+	const [isWindowFullScreen, setIsWindowFullScreen] = useState(false);
+	useEffect(() => subscribeWindowFullScreenState(setIsWindowFullScreen), []);
 	const currentServerId = terminalClientContext?.serverId ?? 'desktop-local';
 	const currentServerLabel =
 		terminalClientContext?.connectionLabel ??
@@ -7015,7 +7022,7 @@ function App({
 
 	return (
 		<div
-			className={`app-shell${isMac && hasNativeWindowControls ? ' app-shell--macos' : ''}`}
+			className={`app-shell${isMac && hasNativeWindowControls && !isWindowFullScreen ? ' app-shell--macos' : ''}`}
 			data-terminay-app-component={TERMINAY_APP_COMPONENT_ID}
 			data-terminay-compact-chrome={isCompactChrome ? 'true' : 'false'}
 			data-terminay-active-project-id={displayedActiveProjectId}

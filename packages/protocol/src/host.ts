@@ -214,6 +214,12 @@ export type TerminayHostEvent = Readonly<{
 				active: boolean;
 		  }>
 		| Readonly<{
+				/** The native window entered or left fullscreen, where macOS hides
+				 * the traffic lights the tab bar otherwise makes room for. */
+				type: 'window.fullscreen-state';
+				fullScreen: boolean;
+		  }>
+		| Readonly<{
 				type: 'device.settings.changed';
 				settings: JsonValue;
 		  }>
@@ -412,6 +418,14 @@ export function parseTerminayHostEvent(
 		parsedEvent = Object.freeze({
 			type: 'workspace.drag-state',
 			active: event.active,
+		});
+	} else if (event.type === 'window.fullscreen-state') {
+		exactKeys(event, ['type', 'fullScreen'], 'host window fullscreen event');
+		if (typeof event.fullScreen !== 'boolean')
+			throw new TypeError('host window fullscreen state is invalid');
+		parsedEvent = Object.freeze({
+			type: 'window.fullscreen-state',
+			fullScreen: event.fullScreen,
 		});
 	} else if (event.type === 'device.settings.changed') {
 		exactKeys(event, ['type', 'settings'], 'host device settings event');

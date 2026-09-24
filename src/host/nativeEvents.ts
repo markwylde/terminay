@@ -30,6 +30,19 @@ export function subscribeWorkspaceDragState(
 	});
 }
 
+export function subscribeWindowFullScreenState(
+	listener: (fullScreen: boolean) => void,
+): () => void {
+	if (typeof window === 'undefined') return () => undefined;
+	const host = window.terminayHost as unknown as NativeEventBridge | undefined;
+	if (host === undefined) return () => undefined;
+	return host.subscribeEvent((message) => {
+		if (message.event.type === 'window.fullscreen-state') {
+			listener(message.event.fullScreen);
+		}
+	});
+}
+
 export function subscribeDeviceTerminalSettings(
 	listener: (settings: import('@terminay/protocol').JsonValue) => void,
 ): () => void {

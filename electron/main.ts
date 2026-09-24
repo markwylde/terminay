@@ -2189,6 +2189,15 @@ function sendPerformanceLogging(webContents: Electron.WebContents): void {
 	});
 }
 
+function sendWindowFullScreenState(webContents: Electron.WebContents): void {
+	const window = BrowserWindow.fromWebContents(webContents);
+	if (window === null || webContents.isDestroyed()) return;
+	webContents.send('server-ui-host:event', {
+		type: 'window.fullscreen-state',
+		fullScreen: window.isFullScreen(),
+	});
+}
+
 function broadcastPerformanceLogging(): void {
 	for (const window of BrowserWindow.getAllWindows()) {
 		sendPerformanceLogging(window.webContents);
@@ -3646,6 +3655,15 @@ function createWindow(options?: {
 		}
 	}
 
+	// macOS hides the traffic lights in fullscreen; the renderer drops the
+	// space it reserves for them.
+	window.on('enter-full-screen', () =>
+		sendWindowFullScreenState(window.webContents),
+	);
+	window.on('leave-full-screen', () =>
+		sendWindowFullScreenState(window.webContents),
+	);
+
 	window.on('closed', () => {
 		documentEndpointUnbindByWebContents.get(windowWebContentsId)?.();
 		documentEndpointUnbindByWebContents.delete(windowWebContentsId);
@@ -4366,6 +4384,7 @@ ipcMain.on('server-ui-host:subscribe-events', (event) => {
 	sendTerminalZoom(event.sender);
 	sendDeviceTerminalSettings(event.sender);
 	sendPerformanceLogging(event.sender);
+	sendWindowFullScreenState(event.sender);
 });
 
 // Cross-window drag tracking with Chrome-style tear-off. While a project tab is
