@@ -185,6 +185,10 @@ import {
 	bindRemoteServerUiDocumentEndpoint,
 } from './serverUiDocumentEndpoint';
 import {
+	aboutWindowDocument,
+	aboutWindowExternalUrl,
+} from './aboutWindowDocument';
+import {
 	assertBoundServerUiEvent,
 	bindServerUiWindow,
 	getServerUiPartitionName,
@@ -2009,6 +2013,71 @@ function broadcastAppUpdateStatusChanged(): void {
 	}
 }
 
+let aboutWindow: BrowserWindow | null = null;
+
+/** About Terminay: one sandboxed, script-free window. Its only way out is the
+ * three links it renders, which open in the default browser. */
+function showAboutWindow(): void {
+	if (aboutWindow && !aboutWindow.isDestroyed()) {
+		aboutWindow.show();
+		aboutWindow.focus();
+		return;
+	}
+	const isMac = process.platform === 'darwin';
+	const usesOverlayTitlebar = process.platform === 'win32';
+	const window = new BrowserWindow({
+		width: 440,
+		height: 500,
+		useContentSize: true,
+		resizable: false,
+		minimizable: false,
+		maximizable: false,
+		fullscreenable: false,
+		show: false,
+		title: 'About Terminay',
+		backgroundColor: '#0d1117',
+		icon: getWindowIconPath(),
+		autoHideMenuBar: true,
+		titleBarStyle: isMac || usesOverlayTitlebar ? 'hidden' : 'default',
+		titleBarOverlay: usesOverlayTitlebar
+			? { color: '#0d1117', symbolColor: '#9bb0c8', height: 32 }
+			: false,
+		trafficLightPosition: isMac ? { x: 14, y: 14 } : undefined,
+		webPreferences: {
+			// An in-memory partition of its own, so its policy never touches a
+			// workspace session.
+			partition: 'terminay-about',
+			contextIsolation: true,
+			nodeIntegration: false,
+			sandbox: true,
+			webSecurity: true,
+			webviewTag: false,
+		},
+	});
+	const contents = window.webContents;
+	secureSession(contents.session);
+	contents.on('will-attach-webview', (event) => event.preventDefault());
+	const openLink = (url: string): void => {
+		const allowed = aboutWindowExternalUrl(url);
+		if (allowed !== null) void openInBrowser(allowed).catch(() => undefined);
+	};
+	contents.setWindowOpenHandler(({ url }) => {
+		openLink(url);
+		return { action: 'deny' };
+	});
+	contents.on('will-navigate', (event, url) => {
+		event.preventDefault();
+		openLink(url);
+	});
+	contents.on('will-redirect', (event) => event.preventDefault());
+	window.once('ready-to-show', () => window.show());
+	window.on('closed', () => {
+		if (aboutWindow === window) aboutWindow = null;
+	});
+	aboutWindow = window;
+	void window.loadURL(aboutWindowDocument({ version: app.getVersion() }));
+}
+
 let manualUpdateCheck: Promise<void> | null = null;
 
 /** Help > Check for Updates…: checks now, whatever the hourly pacing says. */
@@ -3017,7 +3086,7 @@ function createAppMenu(
 					{
 						label: 'Terminay',
 						submenu: [
-							{ role: 'about' },
+							{ label: 'About Terminay', click: () => showAboutWindow() },
 							{ type: 'separator' },
 							{ role: 'services' },
 							{ type: 'separator' },
@@ -3230,6 +3299,12 @@ function createAppMenu(
 					);
 				},
 				}),
+				...(process.platform === 'darwin'
+					? []
+					: [
+							{ type: 'separator' as const },
+							{ label: 'About Terminay', click: () => showAboutWindow() },
+						]),
 			],
 		},
 	];
@@ -5176,7 +5251,6 @@ app.on('activate', () => {
 async function completeDesktopStartup(): Promise<void> {
 	const embeddedStartupWindow = await embeddedRuntimeReady;
 	app.setName('Terminay');
-	app.setAboutPanelOptions({ applicationName: 'Terminay' });
 	// Electron safeStorage can report unavailable before app readiness even when
 	// the OS-backed protector is available immediately afterwards. Keep the
 	// server vault locked during module composition, then unlock it inside the
