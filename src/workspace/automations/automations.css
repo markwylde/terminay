@@ -94,6 +94,121 @@
 	outline-offset: 2px;
 }
 
+/* --- Empty list ------------------------------------------------------------- */
+
+.automations-empty-state {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	width: 100%;
+	max-width: 420px;
+	margin: 72px auto 24px;
+	text-align: center;
+}
+
+.automations-empty-state__icon {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 40px;
+	height: 40px;
+	margin-bottom: 14px;
+	border-radius: 10px;
+	background: rgba(255, 255, 255, 0.06);
+	color: rgba(220, 226, 240, 0.7);
+}
+
+.automations-empty-state__title {
+	margin: 0;
+	font-size: 14px;
+	font-weight: 600;
+	color: #dce2f0;
+}
+
+.automations-empty-state__text {
+	margin: 6px 0 16px;
+	font-size: 12.5px;
+	line-height: 1.5;
+	color: rgba(220, 226, 240, 0.55);
+}
+
+.automations-starts {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	width: 100%;
+	margin-top: 32px;
+	text-align: left;
+}
+
+.automations-starts__label {
+	padding: 0 10px 6px;
+	font-size: 10.5px;
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: rgba(220, 226, 240, 0.4);
+}
+
+.automations-start {
+	all: unset;
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	padding: 8px 10px;
+	border-radius: 8px;
+	cursor: pointer;
+}
+
+.automations-start:hover {
+	background: rgba(255, 255, 255, 0.05);
+}
+
+.automations-start:focus-visible {
+	outline: 1px solid rgba(120, 170, 255, 0.75);
+	outline-offset: -1px;
+}
+
+.automations-start__icon {
+	flex: 0 0 auto;
+	color: rgba(220, 226, 240, 0.5);
+}
+
+.automations-start__text {
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 auto;
+	min-width: 0;
+	gap: 1px;
+}
+
+.automations-start__title {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12.5px;
+	color: #dce2f0;
+}
+
+.automations-start__detail {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 11.5px;
+	color: rgba(220, 226, 240, 0.45);
+}
+
+.automations-start__chevron {
+	flex: 0 0 auto;
+	color: rgba(220, 226, 240, 0.3);
+}
+
+.automations-start:hover .automations-start__chevron {
+	color: rgba(220, 226, 240, 0.6);
+}
+
 /* A one-line notice under the header: an error, a confirmation, a chooser. */
 .automations-banner {
 	flex: 0 0 auto;
