@@ -548,11 +548,6 @@
 	padding: 5px 6px 6px 12px;
 }
 
-.worktrees-panel--table .worktrees-panel__worktree-header:not(.worktrees-panel__worktree-header--collapsed) {
-	background: rgba(87, 183, 255, 0.06);
-	box-shadow: inset 2px 0 0 #57b7ff;
-}
-
 .worktrees-panel--table .worktrees-panel__worktree-toggle {
 	min-height: 22px;
 	gap: 5px;
@@ -569,7 +564,7 @@
 	align-items: center;
 	column-gap: 8px;
 	min-height: 18px;
-	padding-left: 21px;
+	padding-left: 42px;
 	cursor: pointer;
 }
 
@@ -690,7 +685,7 @@
 	display: flex;
 	flex-direction: column;
 	gap: 1px;
-	padding: 6px 12px 6px 33px;
+	padding: 4px 12px 8px 54px;
 	color: rgba(220, 226, 240, 0.72);
 	font-size: 11px;
 }
