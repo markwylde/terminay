@@ -24,6 +24,7 @@ const SDK = '@terminay/extension-api';
 const expectedIds = new Set([
 	'com.terminay.builtin-agents',
 	'com.terminay.language.typescript',
+	'com.terminay.gitea',
 ]);
 
 /** Build, test, pack, and stage every official extension as a complete

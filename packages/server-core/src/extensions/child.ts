@@ -5,6 +5,7 @@ import {
 	LanguageSessionRuntime,
 	type LanguageServerProviderLike,
 } from './languageSessionRuntime.js';
+import { WorktreeInsightChild } from './worktreeInsightChild.js';
 import {
 	type ChildFrame,
 	frameByteLength,
@@ -54,6 +55,16 @@ let sequence = 0;
 /** Every language server this extension runs, and their sessions. Created on
  * activation so a child that contributes none carries no runtime at all. */
 let languageRuntime: LanguageSessionRuntime | undefined;
+const worktreeInsights = new WorktreeInsightChild({
+	send: (frame) => send(frame),
+	nextId: (prefix) => `${prefix}:${++sequence}`,
+	broker: (operation, payload, signal) =>
+		brokerRequest(operation, payload, signal),
+	result: (id) => {
+		send({ protocolVersion: 1, kind: 'result', id });
+	},
+	failure: (id, error) => failure(id, error),
+});
 
 process.on('message', (message: unknown) => {
 	void receive(message);
@@ -177,6 +188,8 @@ async function receive(message: unknown): Promise<void> {
 	if (message.kind === 'agent.source.stop') stopSource(message);
 	if (message.kind === 'agent.source.harnesses') setSourceHarnesses(message);
 	if (message.kind === 'mcp.target.invoke') await invokeMcpTarget(message);
+	if (worktreeInsights.handles(message.kind))
+		await worktreeInsights.receive(message);
 }
 
 async function activateExtension(frame: HostFrame): Promise<void> {
@@ -195,6 +208,7 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 			throw new Error('extension must export activate(context)');
 		const agentSessionSources: string[] = [];
 		const mcpInstallTargets: string[] = [];
+		const worktreeInsightSources: string[] = [];
 		stopAllSources();
 		sessionSources.clear();
 		mcpTargets.clear();
@@ -235,6 +249,7 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 			);
 		const declaredSources = declaredIds(payload.agentSessionSources);
 		const declaredTargets = declaredIds(payload.mcpInstallTargets);
+		worktreeInsights.reset([...declaredIds(payload.worktreeInsights)]);
 		const result = await activate(
 			Object.freeze({
 				extensionId: payload.extensionId,
@@ -321,6 +336,7 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 						});
 					},
 				}),
+				worktrees: worktreeInsights.registry(worktreeInsightSources),
 				registerLanguageServerProvider(registration: unknown) {
 					const value = object(registration);
 					const id = typeof value?.id === 'string' ? value.id : '';
@@ -402,6 +418,7 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 				agentSessionSources,
 				mcpInstallTargets,
 				languageServers,
+				worktreeInsightSources,
 			},
 		});
 	} catch (error) {
@@ -530,6 +547,7 @@ function stopSource(frame: HostFrame): void {
 }
 
 function stopAllSources(): void {
+	worktreeInsights.stopAll();
 	for (const source of sessionSources.values()) {
 		source.controller?.abort();
 		source.controller = undefined;
@@ -751,12 +769,24 @@ async function invoke(frame: HostFrame): Promise<void> {
 	}
 }
 
+type BrokerOperation =
+	| 'log'
+	| 'secret.resolve'
+	| 'worktree.token'
+	| 'worktree.token.reject';
+const BROKER_OPERATIONS: readonly BrokerOperation[] = [
+	'log',
+	'secret.resolve',
+	'worktree.token',
+	'worktree.token.reject',
+];
+
 function brokerRequest(
-	operation: 'log' | 'secret.resolve',
+	operation: BrokerOperation,
 	payload: unknown,
 	signal?: AbortSignal,
 ): Promise<unknown> {
-	if (operation !== 'log' && operation !== 'secret.resolve')
+	if (!BROKER_OPERATIONS.includes(operation))
 		return Promise.reject(new Error('unsupported broker operation'));
 	const id = `broker:${++sequence}`;
 	return new Promise((resolve, reject) => {
