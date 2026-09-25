@@ -2412,6 +2412,8 @@ const ProjectWorkspace = forwardRef<
 			handleDelete,
 			handleDeleteCleanWorktrees,
 			handleDeleteWorktree,
+			handleLoadWorktreeChecks,
+			handleRespondWorktreeSignIn,
 			handleNewFile,
 			handleNewFolder,
 			handleOpenGitEntry,
@@ -4682,6 +4684,8 @@ const ProjectWorkspace = forwardRef<
 								onRenamePath={handleRename}
 								onRevealWorktree={handleRevealWorktree}
 								onSwitchProjectRoot={handleSwitchProjectRootToWorktree}
+								onLoadWorktreeChecks={handleLoadWorktreeChecks}
+								onRespondSignIn={handleRespondWorktreeSignIn}
 							/>
 						),
 				},

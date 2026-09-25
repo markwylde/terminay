@@ -351,6 +351,11 @@ export async function createAgentExtensionHarness(
 				};
 			},
 		},
+		worktrees: {
+			registerInsightSource() {
+				throw new Error('this harness serves agent extensions');
+			},
+		},
 		mcp: {
 			registerInstallTarget(targetId, runtime) {
 				if (released) throw new Error('extension is deactivated');
@@ -661,6 +666,11 @@ export async function createLanguageServerExtensionHarness(
 				throw new Error(
 					'this harness serves language servers; use createAgentExtensionHarness',
 				);
+			},
+		},
+		worktrees: {
+			registerInsightSource() {
+				throw new Error('this harness serves language servers');
 			},
 		},
 		mcp: {

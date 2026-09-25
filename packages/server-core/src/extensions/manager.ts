@@ -3,6 +3,7 @@ import type {
 	LanguageServerContribution,
 	McpInstallTargetContribution,
 	McpServerCommand,
+	WorktreeInsightSourceContribution,
 } from '@terminay/extension-api';
 import type { ServerVaultService } from '../settings/vault.js';
 import type { ExtensionHostDiagnosticListener } from './diagnostics.js';
@@ -19,6 +20,7 @@ import type {
 	ExtensionInvocation,
 	ExtensionLaunchDescriptor,
 	ExtensionSecretAccessBroker,
+	ExtensionWorktreeBroker,
 } from './types.js';
 
 export interface ExtensionHostManagerOptions {
@@ -28,6 +30,7 @@ export interface ExtensionHostManagerOptions {
 	readonly nodeExecutable?: string;
 	readonly secrets?: ExtensionSecretAccessBroker;
 	readonly agents?: ExtensionAgentBroker;
+	readonly worktrees?: ExtensionWorktreeBroker;
 	readonly vault?: ServerVaultService;
 	/** Passed to every host it creates; absent means nothing is recorded. */
 	readonly onDiagnostic?: ExtensionHostDiagnosticListener;
@@ -52,6 +55,12 @@ export interface LanguageServerProvider {
 export interface SessionSourceProvider {
 	readonly extensionId: string;
 	readonly contribution: AgentSessionSourceContribution;
+}
+
+/** One worktree insight source a running extension registered. */
+export interface WorktreeInsightSourceProvider {
+	readonly extensionId: string;
+	readonly contribution: WorktreeInsightSourceContribution;
 }
 
 /** One MCP install target a running extension registered. */
@@ -160,6 +169,7 @@ export class ExtensionHostManager {
 				for (const contribution of [
 					...(status.agentSessionSources ?? []),
 					...(status.mcpInstallTargets ?? []),
+					...(status.worktreeInsightSources ?? []),
 				])
 					this.contributionOwners.set(contribution.id, descriptor.extensionId);
 				this.publishedExtensions.add(descriptor.extensionId);
@@ -246,6 +256,53 @@ export class ExtensionHostManager {
 			server,
 			signal,
 		);
+	}
+
+	/** Every worktree insight source registered by a running, published extension. */
+	worktreeInsightContributions(): readonly WorktreeInsightSourceProvider[] {
+		return Object.freeze(
+			this.statuses().flatMap((status) =>
+				status.state === 'running' &&
+				this.publishedExtensions.has(status.extensionId)
+					? (status.worktreeInsightSources ?? []).map((contribution) =>
+							Object.freeze({ extensionId: status.extensionId, contribution }),
+						)
+					: [],
+			),
+		);
+	}
+
+	async startWorktreeInsightSource(
+		sourceId: string,
+		contexts: readonly unknown[],
+	): Promise<void> {
+		return this.ownerHost(sourceId).startWorktreeInsightSource(
+			sourceId,
+			contexts,
+		);
+	}
+
+	async stopWorktreeInsightSource(sourceId: string): Promise<void> {
+		const owner = this.contributionOwners.get(sourceId);
+		if (owner === undefined) return;
+		await this.hosts.get(owner)?.stopWorktreeInsightSource(sourceId);
+	}
+
+	async setWorktreeInsightContexts(
+		sourceId: string,
+		contexts: readonly unknown[],
+	): Promise<void> {
+		return this.ownerHost(sourceId).setWorktreeInsightContexts(
+			sourceId,
+			contexts,
+		);
+	}
+
+	async notifyWorktreeCredential(
+		sourceId: string,
+		origin: string,
+	): Promise<void> {
+		return this.ownerHost(sourceId).notifyWorktreeCredential(sourceId, origin);
 	}
 
 	private ownerHost(contributionId: string): ExtensionHost {
@@ -393,6 +450,7 @@ export class ExtensionHostManager {
 		for (const contribution of [
 			...(status.agentSessionSources ?? []),
 			...(status.mcpInstallTargets ?? []),
+			...(status.worktreeInsightSources ?? []),
 		]) {
 			const owner = this.contributionOwners.get(contribution.id);
 			if (owner !== undefined && owner !== extensionId)

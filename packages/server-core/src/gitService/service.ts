@@ -2068,6 +2068,31 @@ export class GitService {
 		};
 	}
 
+	/**
+	 * Tell subscribers that something shown for a worktree changed outside Git,
+	 * such as properties an extension published. Clients re-list as they do for
+	 * any status change.
+	 */
+	announceWorktreeChange(projectId: string, worktreeId: string | null): void {
+		const binding = this.bindings.get(projectId);
+		if (binding === undefined || this.closed) return;
+		this.record(
+			Object.freeze({
+				revision: this.nextRevision(),
+				cursor: String(this.revisionValue),
+				type: 'git.status.changed',
+				projectId,
+				repositoryId: binding.repositoryId,
+				worktreeId,
+				state: binding.state,
+				branch: null,
+				head: null,
+				changedFiles: 0,
+				bounded: false,
+			}),
+		);
+	}
+
 	private publishProgress(
 		operation: GitServiceOperation,
 		phase: GitProgressPhase,

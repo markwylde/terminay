@@ -334,6 +334,10 @@ function extensionDto(
 			active?.receipt.manifest.contributes?.agentSessionSources ??
 				bundled?.receipt.manifest.contributes?.agentSessionSources,
 		),
+		...worktreeInsightsDto(
+			active?.receipt.manifest.contributes?.worktreeInsights ??
+				bundled?.receipt.manifest.contributes?.worktreeInsights,
+		),
 		enabled: value.enabled,
 		compatible: value.state !== 'incompatible',
 		runtimeState: runtimeState(value, hosts),
@@ -359,6 +363,22 @@ function languageServersDto(
 			...(contribution.runtimeNotes === undefined
 				? {}
 				: { runtimeNotes: contribution.runtimeNotes }),
+		})),
+	} as Record<string, JsonValue>;
+}
+
+/** What Settings shows for a worktree insight source: its name, so its
+ * sign-in prompts can be switched back on. */
+function worktreeInsightsDto(
+	value:
+		| readonly import('@terminay/extension-api').WorktreeInsightSourceContribution[]
+		| undefined,
+): Record<string, JsonValue> {
+	if (value === undefined || value.length === 0) return {};
+	return {
+		worktreeInsights: value.slice(0, 8).map((contribution) => ({
+			id: contribution.id,
+			displayName: contribution.displayName,
 		})),
 	} as Record<string, JsonValue>;
 }

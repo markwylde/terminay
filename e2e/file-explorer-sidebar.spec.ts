@@ -669,10 +669,12 @@ test('git sidebar pane renders a nested tree and offers a push menu', async ({
   await expect(contextMenuItem(mainWindow, 'Reveal in OS')).toHaveCount(0)
   await mainWindow.keyboard.press('Escape')
 
-  // The worktree row exposes a push-agent menu offering the four commit-and-push actions.
-  const pushButton = worktree.getByLabel(/Commit and push .* with an AI agent/)
-  await expect(pushButton).toBeVisible()
-  await pushButton.click()
+  // The worktree row's actions menu leads to the push-agent menu offering the
+  // four commit-and-push actions.
+  const actionsButton = worktree.getByLabel(/^Actions for /)
+  await expect(actionsButton).toBeVisible()
+  await actionsButton.click()
+  await contextMenuItem(mainWindow, 'Commit & push with AI…').click()
 
   const pushMenu = mainWindow.locator('.context-menu')
   const pushMenuHeadings = pushMenu.locator('.context-menu__heading')
