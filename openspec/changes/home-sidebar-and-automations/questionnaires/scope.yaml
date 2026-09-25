@@ -1,0 +1,103 @@
+title: Home sidebar and Automations
+intro: |
+  Settling scope before I draft a proposal. Nothing is written to the repo yet.
+
+status: submitted
+submitted_at: "2026-09-24T21:36:11+01:00"
+
+questions:
+  - id: split
+    type: select
+    prompt: One OpenSpec change or two?
+    help: |
+      I recommend two. home-sidebar-navigation (House icon, Home/Tabs/Automations
+      sidebar, overview widgets) is small UI work. automations needs a server
+      scheduler, event subscriptions, persistence and a security review. Splitting
+      them lets the sidebar ship first.
+    required: true
+    options: [two changes, one change]
+    answer: one change
+
+  - id: actions
+    type: multiselect
+    prompt: What can an automation do when it fires (v1 actions)?
+    help: |
+      You named triggers but not actions, and actions drive most of the design and
+      the security risk. Running an existing Macro reuses a server path that is
+      already bounded and specced; I'd start there, plus notifications.
+    required: true
+    options:
+      - Run a Macro against a terminal
+      - Open a new tab in a project and run a command
+      - Send a notification (desktop / push)
+      - Start a coding agent with a prompt
+      - Write text to an existing terminal
+    answer:
+      - Run a Macro against a terminal
+      - Open a new tab in a project and run a command
+      - Start a coding agent with a prompt
+      - Write text to an existing terminal
+
+  - id: scope
+    type: select
+    prompt: With several servers attached, where does an automation live?
+    help: |
+      The architecture makes automation server-owned, so schedules keep firing with
+      no window open. I recommend per server, with a server picker like the Macros
+      page. "Global" then means not tied to a project.
+    required: true
+    options: [per server (recommended), per device]
+    answer: per server (recommended)
+
+  - id: missed_runs
+    type: select
+    prompt: If the server was down when a schedule was due, what happens on restart?
+    help: I'd skip missed runs; catching up can fire a burst of actions.
+    options: [skip missed runs, run once to catch up, run every missed occurrence]
+    answer: skip missed runs
+    comment: I think we just skip them. But maybe we can show this as a warning next time they login. But nothing too scary. Just a little dialog with "These automations were schedules to run but missed due to Terminay being closed." Then we can list all the jobs and let them run them manually.
+
+  - id: event_triggers
+    type: multiselect
+    prompt: Which Terminay events should v1 support as triggers?
+    options:
+      - Agent Working -> Done
+      - Agent -> Needs Me
+      - Agent -> Error / fault
+      - Terminal command finished
+      - Terminal went idle
+      - Project opened / closed
+      - Remote device connected
+    answer:
+      - Agent Working -> Done
+      - Agent -> Needs Me
+      - Agent -> Error / fault
+      - Terminal command finished
+      - Terminal went idle
+      - Project opened / closed
+      - Remote device connected
+
+  - id: widgets
+    type: multiselect
+    prompt: Which widgets go on the Home overview in v1?
+    options:
+      - Open projects
+      - Open tabs / terminals
+      - Agents by state (working / needs me / done)
+      - Remote connections / devices
+      - Active automations and next scheduled run
+      - Recent automation runs
+    answer:
+      - Open projects
+      - Open tabs / terminals
+      - Agents by state (working / needs me / done)
+      - Remote connections / devices
+      - Recent automation runs
+      - Active automations and next scheduled run
+
+  - id: sidebar_default
+    type: select
+    prompt: Home sidebar visibility - remembered per device, or open every time Home is opened?
+    help: I'd go with open by default and then remember per device, matching project sidebars.
+    options: [open by default then remembered per device, always open on entering Home]
+    answer: open by default then remembered per device

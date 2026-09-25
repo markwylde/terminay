@@ -1,3 +1,4 @@
+import { nodeTerminalLaunchPathAuthority } from './terminalService/launchResolver.js';
 import {
 	FEATURE_CAPABILITIES,
 	LANGUAGE_CAPABILITY,
@@ -42,6 +43,28 @@ import {
 	LanguageSessionManager,
 } from './languageService/sessions.js';
 import type { MacroRepository, MacroRunner } from './macroService/index.js';
+// --- automations (home-sidebar-and-automations, task 4.4) ---
+import {
+	type AutomationOperationRegistry,
+	createAutomationOperationRegistry,
+} from './automationService/protocol.js';
+import type { AutomationRepository } from './automationService/repository.js';
+import type { AutomationRunLog } from './automationService/runLog.js';
+import type { AutomationRunController } from './automationService/types.js';
+// --- automations: executor and audit (tasks 7.1-7.5) ---
+import {
+	AutomationAuditLog,
+	type AutomationAuditEntry,
+} from './automationService/audit.js';
+import { AutomationExecutor } from './automationService/executor.js';
+// --- end automations: executor and audit ---
+// --- automations: scheduler and triggers (tasks 6.1-6.4) ---
+import { localTimeZone } from '@terminay/cron';
+import { AutomationScheduler } from './automationService/scheduler.js';
+import { AutomationTriggers } from './automationService/triggers.js';
+import type { RemoteConnectionAdmission } from './remote/transport.js';
+import { projectLifecycleEventProjector } from './workspaceProtocol.js';
+// --- end automations ---
 import {
 	createMacroOperationRegistry,
 	type MacroOperationRegistry,
@@ -96,6 +119,13 @@ import {
 	type WorkspaceStartupRestoreOptions,
 } from './workspaceStartup.js';
 import {
+	createAutomationSpaceEventProjector,
+	createAutomationSpaceVisibility,
+	withholdAutomationSpaceOperations,
+} from './automationSpaceVisibility.js';
+import {
+	automationSpaceRetainsExitedSession,
+	automationSpaceSessionGuard,
 	createWorkspaceOperationRegistry,
 	type WorkspaceOperationRegistryOptions,
 } from './workspaceProtocol.js';
@@ -203,6 +233,15 @@ export interface ServerCoreCompositionOptions
 			target: MacroTarget,
 		) => MacroExecutionEnvironment;
 	};
+	/** Optional server-owned automation definitions and run log. Without a
+	 * `controller`, "run now" is refused until an executor is composed. */
+	readonly automations?: {
+		readonly repository: AutomationRepository;
+		readonly runLog: AutomationRunLog;
+		readonly controller?: AutomationRunController;
+		/** Durable sink for the metadata-only automation audit trail. */
+		readonly auditSink?: (entry: AutomationAuditEntry) => void;
+	};
 	/** Optional server-owned AI authority exposed identically by embedded,
 	 * local HTTP, and framed transports. */
 	readonly ai?: AiService;
@@ -305,6 +344,19 @@ export interface ServerCoreComposition {
 	readonly agentOperations?: AgentOperationRegistry;
 	readonly terminalOperations: TerminalOperationRegistry;
 	readonly macroOperations?: MacroOperationRegistry;
+	readonly automationOperations?: AutomationOperationRegistry;
+	/** The composed run executor, when no host `controller` was supplied. */
+	readonly automationExecutor?: AutomationExecutor;
+	/** Audit trail of automation definition changes and runs. */
+	readonly automationAudit?: AutomationAuditLog;
+	/** The schedule trigger: one timer armed to the earliest due time. */
+	readonly automationScheduler?: AutomationScheduler;
+	/** Event triggers. The executor registers each run terminal here with
+	 * `markRunTerminal` so a run never triggers on itself. */
+	readonly automationTriggers?: AutomationTriggers;
+	/** Host hook, the counterpart of connection close: call once per admitted
+	 * remote device connection. Drives the Remote device connected trigger. */
+	readonly onConnectionAdmitted: (admission: RemoteConnectionAdmission) => void;
 	readonly settingsOperations?: SettingsOperationRegistry;
 	readonly shellProfileOperations?: ReturnType<
 		typeof createShellProfileOperationRegistry
@@ -414,6 +466,10 @@ export function createServerCoreComposition(
 		options.workspace === undefined
 			? undefined
 			: createWorkspaceOperationRegistry(options.workspace, {
+					defaultProjectRoot: (
+						options.terminalLaunchPathAuthority ??
+						nodeTerminalLaunchPathAuthority
+					).homeDirectory,
 					...options.workspaceOperations,
 					closeTerminalSessions: async (sessionIds) => {
 						await Promise.allSettled(
@@ -477,6 +533,148 @@ export function createServerCoreComposition(
 					eventJournal,
 					environmentFor: options.macros.environmentFor,
 				});
+	// --- automations: executor and audit (tasks 7.1-7.5) ---
+	// A host-supplied controller wins; otherwise runs execute here, under the
+	// automation principal, through the canonical launch resolver (so the MCP
+	// launch-environment hook sees every run terminal).
+	const automationAudit =
+		options.automations === undefined
+			? undefined
+			: new AutomationAuditLog({
+					serverId: options.serverId,
+					...(options.automations.auditSink === undefined
+						? {}
+						: { sink: options.automations.auditSink }),
+				});
+	const automationExecutor =
+		options.automations === undefined ||
+		options.automations.controller !== undefined ||
+		options.workspace === undefined ||
+		workspaceOperations === undefined ||
+		terminalLaunchResolver === undefined
+			? undefined
+			: new AutomationExecutor({
+					serverId: options.serverId,
+					runLog: options.automations.runLog,
+					terminal,
+					workspace: options.workspace,
+					workspaceOperations,
+					resolveLaunch: (intent) => terminalLaunchResolver.resolve(intent),
+					...(options.terminalLaunchPathAuthority === undefined
+						? {}
+						: {
+								homeDirectory:
+									options.terminalLaunchPathAuthority.homeDirectory,
+							}),
+					...(options.macros === undefined || macroOperations === undefined
+						? {}
+						: {
+								macros: {
+									repository: options.macros.repository,
+									runner: macroOperations.runner,
+									environmentFor: options.macros.environmentFor,
+								},
+							}),
+					...(options.recordings === undefined
+						? {}
+						: { recordings: options.recordings.service }),
+					// Bound lazily: the trigger module is composed below.
+					runTerminalRegistry: {
+						mark: (sessionId) => automationTriggers?.markRunTerminal(sessionId),
+						unmark: (sessionId) =>
+							automationTriggers?.unmarkRunTerminal(sessionId),
+					},
+					...(automationAudit === undefined ? {} : { audit: automationAudit }),
+				});
+	const composedAutomationController: AutomationRunController | undefined =
+		options.automations?.controller ?? automationExecutor;
+	// --- end automations: executor and audit ---
+	// --- automations ---
+	// One zone for evaluating schedules and for the previews clients show.
+	const automationTimeZone = localTimeZone();
+	const automationOperations =
+		options.automations === undefined
+			? undefined
+			: createAutomationOperationRegistry({
+					timeZone: automationTimeZone,
+					serverId: options.serverId,
+					repository: options.automations.repository,
+					runLog: options.automations.runLog,
+					eventJournal,
+					...(composedAutomationController === undefined
+						? {}
+						: { controller: composedAutomationController }),
+					...(automationAudit === undefined
+						? {}
+						: {
+								onAudit: (record) => automationAudit.recordRequest(record),
+							}),
+				});
+	// --- end automations ---
+	// --- automations: scheduler and triggers (tasks 6.1-6.4) ---
+	// Both consume the run controller only through the `automations.controller`
+	// injection point, resolved at fire time.
+	const automationController = (): AutomationRunController | undefined =>
+		composedAutomationController;
+	const automationScheduler =
+		options.automations === undefined
+			? undefined
+			: new AutomationScheduler({
+					repository: options.automations.repository,
+					runLog: options.automations.runLog,
+					controller: automationController,
+					timeZone: automationTimeZone,
+				});
+	const automationTriggers =
+		options.automations === undefined
+			? undefined
+			: new AutomationTriggers({
+					serverId: options.serverId,
+					repository: options.automations.repository,
+					runLog: options.automations.runLog,
+					controller: automationController,
+					...(options.agents === undefined ? {} : { agents: options.agents }),
+					...(options.activity === undefined
+						? {}
+						: { activity: options.activity }),
+					eventJournal,
+					describeTerminal: (sessionId) => {
+						const session = terminal.getSession(sessionId);
+						const state = options.workspace?.state;
+						const projectId =
+							session?.projectId ?? state?.terminalSessions[sessionId]?.projectId;
+						if (projectId === undefined) return undefined;
+						const panel = Object.values(state?.panels ?? {}).find(
+							(candidate) =>
+								candidate.type === 'terminal' &&
+								candidate.sessionId === sessionId,
+						);
+						const projectTitle = state?.projects[projectId]?.name;
+						return {
+							projectId,
+							...(panel?.title === undefined ? {} : { title: panel.title }),
+							...(projectTitle === undefined ? {} : { projectTitle }),
+							...(session === undefined
+								? {}
+								: { sessionCreatedAt: session.createdAt }),
+						};
+					},
+				});
+	const onConnectionAdmitted = (admission: RemoteConnectionAdmission): void => {
+		automationTriggers?.deviceConnected(admission);
+	};
+	// --- end automations: scheduler and triggers ---
+	// Automation terminal space (ADR-0030): withheld from connections without
+	// automations.v1 across terminal, activity, and agent surfaces.
+	const automationSpace =
+		options.workspace === undefined
+			? undefined
+			: {
+					workspace: options.workspace,
+					visibility: createAutomationSpaceVisibility(options.workspace, () =>
+						terminal.listSessions(),
+					),
+				};
 	const terminalOperations = createTerminalOperationRegistry({
 		service: terminal,
 		eventJournal,
@@ -492,6 +690,16 @@ export function createServerCoreComposition(
 		...(options.maxTerminalUnconfirmedBytes === undefined
 			? {}
 			: { maxTerminalUnconfirmedBytes: options.maxTerminalUnconfirmedBytes }),
+		// Automation terminal space (ADR-0030): visibility and live-terminal cap.
+		...(automationSpace === undefined
+			? {}
+			: {
+					beforeSessionCreate: automationSpaceSessionGuard(automationSpace.workspace),
+					isProjectHidden: automationSpace.visibility.isProjectHidden,
+					retainsExitedSession: automationSpaceRetainsExitedSession(
+						automationSpace.workspace,
+					),
+				}),
 		...(options.workspace === undefined
 			? {}
 			: {
@@ -721,7 +929,10 @@ export function createServerCoreComposition(
 						),
 						options.fileObservations?.operations ?? {},
 					),
-					macroOperations?.operations ?? {},
+					mergeOperationRegistries(
+						macroOperations?.operations ?? {},
+						automationOperations?.operations ?? {},
+					),
 				),
 				workspaceOperations?.operations ?? {},
 			),
@@ -744,10 +955,17 @@ export function createServerCoreComposition(
 			shellProfileOperations?.operations ?? {},
 		),
 	);
-	const completeOperations = mergeOperationRegistries(
+	const mergedOperations = mergeOperationRegistries(
 		operations,
 		terminalOperations.operations,
 	);
+	const completeOperations =
+		automationSpace === undefined
+			? mergedOperations
+			: withholdAutomationSpaceOperations(
+					mergedOperations,
+					automationSpace.visibility,
+				);
 	const onConnectionClosed = (connectionId: string, clientId: string): void => {
 		terminalOperations.closeConnection(connectionId);
 		macroOperations?.closeConnection(connectionId);
@@ -761,10 +979,14 @@ export function createServerCoreComposition(
 		eventJournal,
 		...(options.activity === undefined &&
 		options.agents === undefined &&
-		options.fileObservations === undefined
+		options.fileObservations === undefined &&
+		automationSpace === undefined
 			? {}
 			: {
 					projectEvent: composeProjectEventProjectors(
+						options.workspace === undefined
+							? undefined
+							: projectLifecycleEventProjector,
 						options.activity === undefined
 							? undefined
 							: createActivityEventProjector(options.activity),
@@ -774,6 +996,11 @@ export function createServerCoreComposition(
 						options.fileObservations === undefined
 							? undefined
 							: createFileObservationEventProjector,
+						automationSpace === undefined
+							? undefined
+							: createAutomationSpaceEventProjector(
+									automationSpace.visibility,
+								),
 					),
 				}),
 		...optionalCoreOptions(options),
@@ -853,6 +1080,11 @@ export function createServerCoreComposition(
 						createTerminal: options.workspaceStartup.createTerminal,
 					});
 				}
+				// Automations start last: a schedule that came due while the
+				// server was down is counted as missed, and nothing fires before
+				// the services a run needs are up.
+				await automationTriggers?.start();
+				await automationScheduler?.start();
 			} catch (error) {
 				// Including the window above, where this start had already
 				// published readiness: a start that throws did not succeed.
@@ -881,6 +1113,11 @@ export function createServerCoreComposition(
 					failures.push(error);
 				}
 			};
+			await attempt(() => {
+				automationScheduler?.stop();
+				automationTriggers?.stop();
+			});
+			await attempt(() => automationExecutor?.dispose());
 			await attempt(() =>
 				Promise.allSettled(
 					[...connections].map((connection) => connection.close()),
@@ -904,6 +1141,7 @@ export function createServerCoreComposition(
 			await attempt(() => options.fileObservations?.close());
 			await attempt(() => options.activity?.shutdown());
 			await attempt(() => language?.dispose());
+			await attempt(() => automationOperations?.dispose());
 			lifecycle = 'stopped';
 			if (failures.length > 0)
 				throw cleanupFailure('server composition shutdown failed', failures);
@@ -932,6 +1170,12 @@ export function createServerCoreComposition(
 		terminalOperations,
 		...(terminalLaunchResolver === undefined ? {} : { terminalLaunchResolver }),
 		...(macroOperations === undefined ? {} : { macroOperations }),
+		...(automationOperations === undefined ? {} : { automationOperations }),
+		...(automationExecutor === undefined ? {} : { automationExecutor }),
+		...(automationAudit === undefined ? {} : { automationAudit }),
+		...(automationScheduler === undefined ? {} : { automationScheduler }),
+		...(automationTriggers === undefined ? {} : { automationTriggers }),
+		onConnectionAdmitted,
 		...(settingsOperations === undefined ? {} : { settingsOperations }),
 		...(shellProfileOperations === undefined ? {} : { shellProfileOperations }),
 		start,
@@ -1139,6 +1383,9 @@ function uniqueCapabilities(
 				? []
 				: [FEATURE_CAPABILITIES.agents]),
 			...(options.macros === undefined ? [] : [FEATURE_CAPABILITIES.macros]),
+			...(options.automations === undefined
+				? []
+				: [FEATURE_CAPABILITIES.automations]),
 			...(options.ai === undefined ? [] : [FEATURE_CAPABILITIES.dictation]),
 			...(options.git === undefined ? [] : [FEATURE_CAPABILITIES.git]),
 			...(options.recordings === undefined
@@ -1249,11 +1496,11 @@ function composeProjectEventProjectors(
 		| undefined
 	)[]
 ): NonNullable<ServerCoreOptions['projectEvent']> {
-	return (event, client) => {
+	return (event, client, connection) => {
 		let current: import('./types.js').OrderedEvent | undefined = event;
 		for (const projector of projectors) {
 			if (projector === undefined || current === undefined) continue;
-			current = projector(current, client);
+			current = projector(current, client, connection);
 		}
 		return current;
 	};

@@ -640,6 +640,44 @@ test.describe('project tabs', () => {
 		await expectTerminalInputFocused(mainWindow);
 	});
 
+	test('closing the only project keeps the window open on Home', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		await electronApp.evaluate(({ dialog }) => {
+			dialog.showMessageBox = async () => ({
+				checkboxChecked: false,
+				response: 0,
+			});
+		});
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(1);
+		await mainWindow
+			.locator('.project-tab')
+			.first()
+			.getByLabel('Close Project')
+			.click();
+
+		// No project left: the window stays, showing Home.
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(0);
+		expect(mainWindow.isClosed()).toBe(false);
+		await expect(mainWindow.locator('.app-shell')).toHaveAttribute(
+			'data-terminay-selected-view',
+			'home',
+		);
+		await expect(mainWindow.locator('[data-terminay-home-band]')).toBeVisible();
+
+		// A new project from Home opens in the server's default folder and is
+		// shown, with its terminal focused.
+		await mainWindow.getByLabel('Create project').click();
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(1);
+		await expect(mainWindow.locator('.app-shell')).toHaveAttribute(
+			'data-terminay-selected-view',
+			'project',
+		);
+		await expect(mainWindow.locator('.project-tab--active')).toBeVisible();
+		await expectTerminalInputFocused(mainWindow);
+	});
+
 	test('the new-project control stays after the last project tab', async ({
 		mainWindow,
 	}) => {

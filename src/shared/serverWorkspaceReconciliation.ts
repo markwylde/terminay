@@ -14,6 +14,10 @@ export type ServerWorkspacePanel = Readonly<{
 
 export type ServerWorkspaceProject = Readonly<{
 	id: string;
+	/** Absent for an ordinary project. Any kind (today only `automations`, the
+	 * automation terminal space of ADR-0030) is a reserved, server-owned
+	 * project that is never presented, ordered, or selected as a project. */
+	kind?: string;
 	serverId: string;
 	name: string;
 	root: string;
@@ -84,6 +88,29 @@ export type ServerWorkspaceDelta = Readonly<{
 	events: WorkspaceDeltaDto['events'];
 }>;
 
+/** Whether a projected project is a reserved server-owned space rather than a
+ * user project. Every project list, ordering, switcher, tab bar, inventory,
+ * and Tabs consumer excludes these. */
+export function isReservedWorkspaceProject(
+	project: Pick<ServerWorkspaceProject, 'kind'> | undefined,
+): boolean {
+	return project?.kind !== undefined;
+}
+
+/** The user projects a view presents, in its order, without reserved kinds. */
+export function presentableViewProjects(
+	snapshot: Pick<ServerWorkspaceSnapshot, 'projects'>,
+	view: Pick<ServerWorkspaceView, 'projectIds'> | undefined,
+): readonly ServerWorkspaceProject[] {
+	if (view === undefined) return [];
+	return view.projectIds
+		.map((projectId) => snapshot.projects[projectId])
+		.filter(
+			(project): project is ServerWorkspaceProject =>
+				project !== undefined && !isReservedWorkspaceProject(project),
+		);
+}
+
 /**
  * Keep presentation selection constrained to the latest authenticated server
  * snapshot. A still-valid local project or panel is preserved when another
@@ -99,14 +126,11 @@ export function reconcileServerWorkspaceSelection(
 		snapshot.views[snapshot.viewOrder[0] ?? ''];
 	if (view === undefined)
 		return { viewId: null, projectId: null, panelId: null };
+	const presentable = presentableViewProjects(snapshot, view);
 	const project =
-		view.projectIds
-			.map((id) => snapshot.projects[id])
-			.find((candidate) => candidate?.id === previous.projectId) ??
-		snapshot.projects[view.activeProjectId ?? ''] ??
-		view.projectIds
-			.map((id) => snapshot.projects[id])
-			.find((candidate) => candidate !== undefined);
+		presentable.find((candidate) => candidate.id === previous.projectId) ??
+		presentable.find((candidate) => candidate.id === view.activeProjectId) ??
+		presentable[0];
 	if (project === undefined)
 		return { viewId: view.id, projectId: null, panelId: null };
 	const panel =
@@ -204,8 +228,11 @@ export function parseServerWorkspaceSnapshot(
 			(project.defaultShellProfileId !== undefined &&
 				typeof project.defaultShellProfileId !== 'string') ||
 			!isWorkspaceSidebarState(project.sidebar) ||
+			(project.kind !== undefined && typeof project.kind !== 'string') ||
+			snapshot.views[project.viewId] === undefined ||
+			// A reserved project is homed in a view but never listed in it.
 			snapshot.views[project.viewId]?.projectIds.includes(project.id) !==
-				true ||
+				!isReservedWorkspaceProject(project) ||
 			!isStringArray(project.panelIds) ||
 			new Set(project.panelIds).size !== project.panelIds.length ||
 			project.panelIds.some(

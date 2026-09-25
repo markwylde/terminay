@@ -10,7 +10,10 @@ import {
 	submitEditWindow,
 } from './support/ui';
 
-const homeControl = (page: Page) => page.getByLabel('Show dashboard');
+const homeControl = (page: Page) =>
+	page.getByRole('button', { name: 'Home', exact: true });
+const tabsSection = (page: Page) =>
+	page.locator('[data-terminay-home-section-tab="tabs"]');
 const dashboard = (page: Page) => page.locator('[data-terminay-dashboard]');
 const projectRow = (page: Page, projectId: string) =>
 	page.locator(`[data-terminay-dashboard-project="${projectId}"]`);
@@ -27,6 +30,9 @@ const dashboardFilter = (page: Page) =>
  */
 async function showDashboard(page: Page): Promise<void> {
 	await homeControl(page).click();
+	// The dashboard is Home's Tabs section; the section is remembered, so later
+	// returns to Home land on it again.
+	await tabsSection(page).click();
 	await expect(dashboard(page)).toBeVisible();
 	await viewMode(page, 'list').click();
 	await expect(dashboard(page)).toHaveAttribute(
@@ -250,6 +256,11 @@ test.describe('workspace dashboard', () => {
 		mainWindow,
 	}) => {
 		await sendAppCommand(mainWindow, 'show-dashboard');
+		await expect(mainWindow.locator('.app-shell')).toHaveAttribute(
+			'data-terminay-selected-view',
+			'home',
+		);
+		await tabsSection(mainWindow).click();
 		await expect(dashboard(mainWindow)).toBeVisible();
 
 		await mainWindow.reload({ waitUntil: 'domcontentloaded' });
