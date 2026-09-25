@@ -5,7 +5,7 @@ import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 
-// The automation terminal space (ADR-0028) is a reserved project kind. It
+// The automation terminal space (ADR-0029) is a reserved project kind. It
 // reaches capable clients in the workspace projection, and every project list
 // derived from that projection must leave it out.
 

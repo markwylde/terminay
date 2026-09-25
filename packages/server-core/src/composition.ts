@@ -659,7 +659,7 @@ export function createServerCoreComposition(
 		automationTriggers?.deviceConnected(admission);
 	};
 	// --- end automations: scheduler and triggers ---
-	// Automation terminal space (ADR-0028): withheld from connections without
+	// Automation terminal space (ADR-0029): withheld from connections without
 	// automations.v1 across terminal, activity, and agent surfaces.
 	const automationSpace =
 		options.workspace === undefined
@@ -685,7 +685,7 @@ export function createServerCoreComposition(
 		...(options.maxTerminalUnconfirmedBytes === undefined
 			? {}
 			: { maxTerminalUnconfirmedBytes: options.maxTerminalUnconfirmedBytes }),
-		// Automation terminal space (ADR-0028): visibility and live-terminal cap.
+		// Automation terminal space (ADR-0029): visibility and live-terminal cap.
 		...(automationSpace === undefined
 			? {}
 			: {

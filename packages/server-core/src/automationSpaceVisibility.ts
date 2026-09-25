@@ -14,7 +14,7 @@ import {
 } from './workspace.js';
 
 /**
- * Withhold the automation terminal space (ADR-0028) from every terminal and
+ * Withhold the automation terminal space (ADR-0029) from every terminal and
  * session listing and event a connection without `automations.v1` receives.
  * The workspace projection itself is withheld in `workspaceProtocol.ts`; this
  * covers the terminal, activity, and agent surfaces that name sessions and

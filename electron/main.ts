@@ -1546,7 +1546,7 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		terminalLaunchEnvironmentFor: (intent, placement) => {
 			if (!mcpCapabilities.isEnabled()) return undefined;
 			// Reach comes only from the canonical project kind the launch
-			// resolver read from server state (ADR-0028): an automation-space
+			// resolver read from server state (ADR-0029): an automation-space
 			// terminal gets workspace reach, every other terminal project reach.
 			const capability = mcpCapabilities.mint(
 				intent.identity.sessionId,
@@ -2585,7 +2585,7 @@ async function stopMcpControlEndpoint(): Promise<void> {
 function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 	const terminal = (context: ControlRequestContext, reference: string) =>
 		resolveMcpTerminal(context, reference);
-	// Opaque project handles for workspace reach (ADR-0028); project reach
+	// Opaque project handles for workspace reach (ADR-0029); project reach
 	// never names a project.
 	const projectHandles = new ProjectHandleCodec(embeddedServerId);
 	const liveTerminalsIn = (projectId: string) =>
@@ -2734,7 +2734,7 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 				callerPanelId,
 			);
 			// An automation terminal's opens join the run that owns it, so the
-			// Automations section groups them under that run (ADR-0028).
+			// Automations section groups them under that run (ADR-0029).
 			if (reachOf(context) === 'workspace')
 				await serverTerminalAuthority?.composition.automationExecutor
 					?.recordOpenedTerminal(context.terminalSessionId, opened.id)
@@ -2989,7 +2989,7 @@ function mcpPanelFor(sessionId: string, projectId: string) {
 	);
 }
 
-/** Whether a capability reaches a project on this server (ADR-0028). */
+/** Whether a capability reaches a project on this server (ADR-0029). */
 function mcpReaches(
 	context: ControlRequestContext,
 	projectId: string,
