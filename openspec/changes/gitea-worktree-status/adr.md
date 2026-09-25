@@ -14,7 +14,7 @@
 - openspec/adr/0018-one-workspace-bundle-many-server-connections.md: the chips and the sign-in modal ship in the one workspace bundle.
 - openspec/adr/0019-language-intelligence-from-server-hosted-language-server-extensions.md: the same pattern of a server-hosted extension behind a core-owned bounded surface.
 - openspec/adr/0021-measure-background-cost-in-spawns-not-parent-syscalls.md: the extension uses `fetch` only and never runs `tea`.
-- openspec/adr/0028-no-polling-without-owner-approval.md: in force (supersedes 0022). The Gitea 60 s refresh is the one poll; the owner approved it on 2026-09-24, recorded in design.md, and the timer site cites it. The tea config file is watched, not polled.
+- openspec/adr/0028-no-polling-without-owner-approval.md: in force (supersedes 0022). The Gitea refresh (10 s active, 45 s inactive, at once on focus) is the one poll; the owner approved it on 2026-09-24 and revised it on 2026-09-25, recorded in design.md, and the timer site cites it. The tea config file is watched, not polled.
 - openspec/adr/0025-agent-sessions-come-from-a-machine-wide-detection-library.md: host-side scoping by project and worktree follows the same shape.
 - openspec/adr/0026-extensions-may-ship-prebuilt-native-modules.md: not needed. The extension has no native dependencies.
 

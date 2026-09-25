@@ -71,10 +71,11 @@ client authority, workspace navigation, or direct canonical-store mutation.
 
 For each open project whose root is a Git repository, Terminay SHALL issue each
 registered worktree insight source a repository context containing the
-repository root, its remotes with names and URLs, and its worktrees with an
-opaque worktree id, path, branch, upstream, and head commit. Terminay SHALL
-re-issue the context when the worktree set or any worktree's branch, upstream,
-or head changes, and SHALL cancel the context when the project closes, the
+repository root, its remotes with names and URLs, its worktrees with an
+opaque worktree id, path, branch, upstream, and head commit, and whether a
+client has the project active. Terminay SHALL re-issue the context when the
+worktree set, any worktree's branch, upstream, or head, or the project's
+activity changes, and SHALL cancel the context when the project closes, the
 extension is disabled, or its host fails. Terminay SHALL accept worktree
 properties only for worktree ids in a context it has issued and not cancelled.
 

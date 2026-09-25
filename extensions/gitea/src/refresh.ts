@@ -14,12 +14,22 @@ import { type ForgeRepository, parseRemoteUrl, pickRemote } from './remote.js';
 import type { TeaTokenStore } from './teaConfig.js';
 
 /**
- * Remote state has no event source, so it is refreshed on this floor. This
- * is a poll: the repository owner approved it under ADR-0028 on 2026-09-24,
- * recorded in change `gitea-worktree-status` (design.md). It runs only while
- * the repository's context is live and stops when the context is cancelled.
+ * Remote state has no event source, so it is refreshed on these floors: a
+ * project the user has active refreshes every 10 s, any other every 45 s,
+ * and one refreshes at once when it becomes active. This is a poll: the
+ * repository owner approved it under ADR-0028 (2026-09-24, revised to these
+ * intervals on 2026-09-25), recorded in change `gitea-worktree-status`
+ * (design.md). It runs only while the repository's context is live and stops
+ * when the context is cancelled.
  */
-export const REFRESH_INTERVAL_MS = 60_000;
+export const ACTIVE_REFRESH_INTERVAL_MS = 10_000;
+export const INACTIVE_REFRESH_INTERVAL_MS = 45_000;
+
+export function refreshIntervalFor(context: RepositoryContext): number {
+	return context.active === true
+		? ACTIVE_REFRESH_INTERVAL_MS
+		: INACTIVE_REFRESH_INTERVAL_MS;
+}
 /** Consecutive failures widen the interval, and one success resets it. */
 export const FAILURE_BACKOFF_MS = Object.freeze([
 	60_000, 120_000, 300_000, 600_000,
@@ -122,13 +132,17 @@ class GiteaInsightSession {
 		const live = new Set<string>();
 		for (const context of contexts) {
 			live.add(context.id);
-			const fingerprint = JSON.stringify(context);
+			// Activity is not content: becoming active refreshes at once,
+			// becoming inactive only slows the next refresh.
+			const fingerprint = JSON.stringify({ ...context, active: undefined });
 			const existing = this.watchers.get(context.id);
 			if (existing !== undefined) {
-				if (existing.fingerprint === fingerprint) continue;
+				const becameActive =
+					context.active === true && existing.context.active !== true;
+				const changed = existing.fingerprint !== fingerprint;
 				existing.context = context;
 				existing.fingerprint = fingerprint;
-				this.refreshNow(existing);
+				if (changed || becameActive) this.refreshNow(existing);
 				continue;
 			}
 			const watcher: Watcher = {
@@ -179,17 +193,17 @@ class GiteaInsightSession {
 			return;
 		}
 		if (outcome === 'idle') return;
-		let delay = REFRESH_INTERVAL_MS;
+		let delay = refreshIntervalFor(watcher.context);
 		if (outcome === 'ok') watcher.failures = 0;
 		else {
 			watcher.failures += 1;
 			delay =
 				FAILURE_BACKOFF_MS[
 					Math.min(watcher.failures, FAILURE_BACKOFF_MS.length) - 1
-				] ?? REFRESH_INTERVAL_MS;
+				] ?? delay;
 		}
 		// ADR-0028 approved poll (change gitea-worktree-status); see
-		// REFRESH_INTERVAL_MS. Failures only widen it.
+		// refreshIntervalFor. Failures only widen it.
 		watcher.timer = this.clock.setTimeout(() => {
 			watcher.timer = undefined;
 			if (this.watchers.get(watcher.context.id) === watcher)

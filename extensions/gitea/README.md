@@ -45,7 +45,9 @@ needed:
 
 - It refreshes at once when a context is issued, or re-issued after a local
   change such as a push or a branch switch.
-- Otherwise it refreshes once every 60 seconds per repository. After
+- It refreshes at once when its project becomes active.
+- Otherwise it refreshes every 10 seconds for an active project and every
+  45 seconds for any other. After
   consecutive failures the interval widens to 1, 2, 5, then 10 minutes, and one
   success resets it.
 - Each refresh makes one `GET /repos/{owner}/{repo}/pulls?state=open` request,

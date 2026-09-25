@@ -28,7 +28,7 @@
 - [x] 5.1 Scaffold `extensions/gitea` (`terminay-gitea`, `com.terminay.gitea`) following `builtin-agents`; add to `extensions/builtins.json` and the built-in inventory — verified by the built-in staging/inventory tests
 - [x] 5.2 Remote parsing (HTTPS, `ssh://`, scp-style → HTTPS origin and `owner/repo`) and `/api/v1/version` probe with per-origin cache — verified by unit tests
 - [x] 5.3 Credential resolution: tea config file (XDG, macOS, Linux paths), matched by origin, held in memory and refreshed on file change or 401; fallback to vault; otherwise request sign-in; never spawn `tea` — verified by unit tests with fixture configs
-- [x] 5.4 Refresh loop per context: immediate on issue/re-issue, 60 s floor, failure back-off, stops on cancel; one pulls listing plus one status per worktree with an upstream — verified by unit tests with a fake clock and fetch
+- [x] 5.4 Refresh loop per context: immediate on issue/re-issue, interval floor (see 7.2), failure back-off, stops on cancel; one pulls listing plus one status per worktree with an upstream — verified by unit tests with a fake clock and fetch
 - [x] 5.5 Mapping: PR ↔ worktree by head branch and repository; draft detection; status state mapping; items truncated to 100 — verified by unit tests against recorded Gitea JSON
 - [x] 5.6 README for the extension — verified by review
 
@@ -37,3 +37,8 @@
 - [x] 6.1 `npm run lint`, `npm run typecheck`, and the unit test suites pass — verified by command output
 - [x] 6.2 `openspec validate --all` passes — verified by command output
 - [x] 6.3 Run the real server stack (built Gitea extension in an extension host, GitService, Git adapter, tea token) against this repository's Gitea and confirm worktrees with open pull requests list their pull request and checks — verified by the live run listing #286, #287, #288 with 15/15 passing and linked check items (a desktop screenshot was not possible: screen recording is not permitted in this session)
+
+## 7. Active-project cadence
+
+- [x] 7.1 Contexts carry `active` from the workspace's active projects, and a change of activity re-issues them — verified by `worktree-insight-service.test.mjs`
+- [x] 7.2 The Gitea extension refreshes active projects every 10 s, others every 45 s, and at once on focus — verified by `extensions/gitea/test/refresh.test.mjs`

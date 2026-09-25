@@ -81,6 +81,11 @@ export interface RepositoryContext {
 	repositoryRoot: string;
 	remotes: RepositoryRemote[];
 	worktrees: RepositoryWorktree[];
+	/**
+	 * Whether a client has this project active. Sources may refresh an active
+	 * project more often; a change of activity re-issues the context.
+	 */
+	active?: boolean;
 }
 
 export interface WorktreeSignInRequest {

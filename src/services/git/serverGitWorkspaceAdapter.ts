@@ -13,7 +13,7 @@ import type {
 import {
 	parseWorktreeProperties,
 	parseWorktreeSignInPrompt,
-} from './worktreeProperties';
+} from './worktreeProperties.ts';
 
 export type ServerGitWorkspaceProjection = {
 	referencesByPath: ReadonlyMap<string, GitWorktreeReference>;
