@@ -281,6 +281,7 @@ import {
 	type AutomationsSectionServer,
 } from './workspace/automations/AutomationsSection';
 import {
+	describeTrigger as describeAutomationTrigger,
 	nextRunAt as nextAutomationRunAt,
 	overviewOutcome as automationOverviewOutcome,
 } from './workspace/automations/automationsModel';
@@ -293,7 +294,12 @@ import {
 	HomeOverview,
 	type HomeOverviewAutomationTarget,
 } from './workspace/HomeOverview';
+import { HomeSearch } from './workspace/HomeSearch';
 import { HomeView } from './workspace/HomeView';
+import type {
+	HomeSearchAutomation,
+	HomeSearchResult,
+} from './workspace/homeSearchModel';
 import { buildHomeOverview } from './workspace/homeOverviewModel';
 import type { HomeSection } from './workspace/homeSection';
 import {
@@ -593,6 +599,8 @@ type ProjectWorkspaceProps = {
 const DOCKVIEW_SASH_ACTIVITY_DEFER_MS = 300;
 /** Home's sidebar is a short menu, so it starts narrower than a project's. */
 const HOME_SIDEBAR_DEFAULT_WIDTH = 220;
+/** Home's chrome: a neutral slate, never any project's colour. */
+const HOME_CHROME_COLOR = '#5f6b7e';
 const PROJECT_DEACTIVATION_ACTIVITY_SETTLE_MS = 1_500;
 
 /** Terminal input is delivered only to the matching server-backed panel
@@ -6668,6 +6676,18 @@ function App({
 		},
 		[selectHomeSection],
 	);
+	const homeSearchAutomations = useMemo<readonly HomeSearchAutomation[]>(
+		() =>
+			[...serverAutomations.values()].flatMap((server) =>
+				server.automations.map((automation) => ({
+					serverId: server.serverId,
+					id: automation.id,
+					name: automation.name,
+					detail: describeAutomationTrigger(automation.trigger),
+				})),
+			),
+		[serverAutomations],
+	);
 	/**
 	 * A dashboard activation on another server is a place to go: bind the
 	 * workspace there first, and let the tab activation land once its projects
@@ -6906,6 +6926,37 @@ function App({
 			applyDashboardActivation,
 			inventoryByProject,
 			projectsRef,
+		],
+	);
+	// A search result is a place to go: it opens the thing it names, exactly
+	// as activating it in the Tabs or Automations section would.
+	const chooseHomeSearchResult = useCallback(
+		(result: HomeSearchResult) => {
+			switch (result.kind) {
+				case 'section':
+					selectHomeSection(result.section);
+					return;
+				case 'project':
+				case 'panel':
+					activateDashboardRow(result.serverId, result.row);
+					return;
+				case 'agent':
+					activateDashboardAgent(result.serverId, result.projectId, result.agent);
+					return;
+				case 'automation':
+					openAutomationsFromOverview({
+						kind: 'automation',
+						serverId: result.serverId,
+						automationId: result.automationId,
+					});
+					return;
+			}
+		},
+		[
+			activateDashboardAgent,
+			activateDashboardRow,
+			openAutomationsFromOverview,
+			selectHomeSection,
 		],
 	);
 
@@ -7267,9 +7318,11 @@ function App({
 			style={
 				{
 					'--terminal-panel-surface': settings.theme.background,
-					...(isHomeSelected || !displayedActiveProject?.color
-						? {}
-						: { '--project-color': displayedActiveProject.color }),
+					...(isHomeSelected
+						? { '--project-color': HOME_CHROME_COLOR }
+						: !displayedActiveProject?.color
+							? {}
+							: { '--project-color': displayedActiveProject.color }),
 				} as CSSProperties
 			}
 		>
@@ -7586,6 +7639,13 @@ function App({
 				) : null}
 				{isHomeSelected ? (
 					<HomeView
+						band={
+							<HomeSearch
+								sources={dashboardSources}
+								automations={homeSearchAutomations}
+								onChoose={chooseHomeSearchResult}
+							/>
+						}
 						isSidebarVisible={isHomeSidebarVisible}
 						onDismissSidebar={() => setHomeSidebarVisibility(false)}
 						onSectionChosenInDrawer={() => setIsHomeSidebarVisible(false)}

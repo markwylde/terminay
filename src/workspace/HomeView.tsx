@@ -30,6 +30,11 @@ const SECTION_ICONS: Readonly<Record<HomeSection, ReactNode>> = {
 const ID_PREFIX = 'home-section';
 
 export type HomeViewProps = Readonly<{
+	/**
+	 * The band across the top of Home, in Home's chrome colour: what Home's
+	 * control opens into, as a project tab opens into its tab strip.
+	 */
+	band?: ReactNode;
 	/** The selected section's content. */
 	children: ReactNode;
 	isSidebarVisible: boolean;
@@ -48,6 +53,7 @@ export type HomeViewProps = Readonly<{
 }>;
 
 export function HomeView({
+	band,
 	children,
 	isSidebarVisible,
 	onDismissSidebar,
@@ -102,6 +108,11 @@ export function HomeView({
 
 	return (
 		<div className="home-view" data-terminay-home-view={section}>
+			{band === undefined ? null : (
+				<div className="home-band" data-terminay-home-band="true">
+					{band}
+				</div>
+			)}
 			<WorkspaceSplitLayout
 				className="home-view__layout"
 				isNavigationVisible={isSidebarVisible}
