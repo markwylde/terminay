@@ -78,7 +78,7 @@ test.describe('Automations section', () => {
 		await expect(
 			mainWindow.locator('[data-terminay-automations-server-selector]'),
 		).toHaveCount(0);
-		await expect(automations(mainWindow)).toContainText('No automations yet.');
+		await expect(automations(mainWindow)).toContainText('No automations yet');
 
 		await mainWindow.locator('[data-terminay-automation-new]').click();
 		await field(mainWindow, 'name').fill('Hourly report');
