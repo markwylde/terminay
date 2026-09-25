@@ -32,6 +32,13 @@ import type {
 	WaitParams,
 	WriteTerminalParams,
 } from './dispatcher.js';
+import {
+	canAddressSession,
+	ProjectHandleCodec,
+	reachOf,
+	resolveOpenTerminalProject,
+	workspaceProjectFields,
+} from './workspaceReach.js';
 
 export interface ServerTerminalControlAdapterOptions {
 	readonly terminal: TerminalService;
@@ -57,7 +64,25 @@ export interface ServerTerminalControlAdapterOptions {
 		context: ControlRequestContext,
 		signal: AbortSignal,
 	) => unknown | Promise<unknown>;
+	/** @internal Deterministic project-handle key for tests. */
+	readonly projectHandleKey?: Uint8Array;
+	/**
+	 * Told when a workspace-reach caller (an automation terminal) opens a
+	 * terminal, so the automation run that owns the caller records it and the
+	 * Automations section groups it under that run. Typically the composed
+	 * `automationExecutor.recordOpenedTerminal`. A failure never fails the
+	 * open.
+	 */
+	readonly recordOpenedTerminal?: (
+		callerSessionId: string,
+		openedSessionId: string,
+	) => unknown;
 }
+
+/** Adapter options with the per-adapter project-handle codec resolved. */
+type AdapterOptions = ServerTerminalControlAdapterOptions & {
+	readonly projectHandles: ProjectHandleCodec;
+};
 
 const DEFAULT_MAX_READ_BYTES = 256 * 1024;
 const DEFAULT_MAX_WAIT_SECONDS = 15 * 60;
@@ -70,10 +95,19 @@ const DEFAULT_MAX_WAIT_SECONDS = 15 * 60;
  * composed workspace persistence.
  */
 export function createServerTerminalControlAdapter(
-	options: ServerTerminalControlAdapterOptions,
+	hostOptions: ServerTerminalControlAdapterOptions,
 ): TerminalControlAdapter {
-	if (!(options.terminal instanceof TerminalService))
+	if (!(hostOptions.terminal instanceof TerminalService))
 		throw new TypeError('terminal service is required');
+	const options: AdapterOptions = {
+		...hostOptions,
+		projectHandles: new ProjectHandleCodec(
+			hostOptions.terminal.serverId,
+			...(hostOptions.projectHandleKey === undefined
+				? []
+				: [hostOptions.projectHandleKey]),
+		),
+	};
 	const maxReadBytes = positive(
 		options.maxReadBytes ?? DEFAULT_MAX_READ_BYTES,
 		'maxReadBytes',
@@ -96,7 +130,7 @@ export function createServerTerminalControlAdapter(
 		runCommand: (params, context) => runCommand(options, params, context),
 		closeTerminal: (params, context) => closeTerminal(options, params, context),
 		focusTerminal: (params, context, signal) => {
-			targetSession(options.terminal, context, params.terminal);
+			const session = targetSession(options.terminal, context, params.terminal);
 			return options.workspace === undefined
 				? options.focusTerminal === undefined
 					? unsupported('focus_terminal')
@@ -104,13 +138,14 @@ export function createServerTerminalControlAdapter(
 				: applyWorkspaceViewCommand(
 						options.workspace,
 						'focus_terminal',
-						params.terminal,
+						session.sessionId,
+						session.projectId,
 						context,
 						signal,
 					);
 		},
 		renameTerminal: (params, context, signal) => {
-			targetSession(options.terminal, context, params.terminal);
+			const session = targetSession(options.terminal, context, params.terminal);
 			return options.workspace === undefined
 				? options.renameTerminal === undefined
 					? unsupported('rename_terminal')
@@ -118,14 +153,15 @@ export function createServerTerminalControlAdapter(
 				: applyWorkspaceViewCommand(
 						options.workspace,
 						'rename_terminal',
-						params.terminal,
+						session.sessionId,
+						session.projectId,
 						context,
 						signal,
 						params.name,
 					);
 		},
 		splitTerminal: (params, context, signal) => {
-			targetSession(options.terminal, context, params.terminal);
+			const session = targetSession(options.terminal, context, params.terminal);
 			return options.workspace === undefined
 				? options.splitTerminal === undefined
 					? unsupported('split_terminal')
@@ -133,7 +169,8 @@ export function createServerTerminalControlAdapter(
 				: applyWorkspaceViewCommand(
 						options.workspace,
 						'split_terminal',
-						params.terminal,
+						session.sessionId,
+						session.projectId,
 						context,
 						signal,
 						params.direction,
@@ -148,9 +185,7 @@ export function createServerTerminalControlAdapter(
 	};
 }
 
-function getMcpCapabilities(
-	options: ServerTerminalControlAdapterOptions,
-): unknown {
+function getMcpCapabilities(options: AdapterOptions): unknown {
 	const activityAvailable = options.activity !== undefined;
 	const workspaceAvailable = options.workspace !== undefined;
 	return {
@@ -188,36 +223,44 @@ function getMcpCapabilities(
 	};
 }
 
-function listTerminals(
-	options: ServerTerminalControlAdapterOptions,
+async function listTerminals(
+	options: AdapterOptions,
 	context: ControlRequestContext,
-): unknown {
+): Promise<unknown> {
+	const workspaceReach = reachOf(context) === 'workspace';
+	// Project titles are read only for workspace reach; project reach never
+	// names a project.
+	const state =
+		workspaceReach && options.workspace !== undefined
+			? await options.workspace.load()
+			: undefined;
 	const terminals = options.terminal
 		.listSessions()
-		.filter(
-			(session) =>
-				session.serverId === options.terminal.serverId &&
-				session.projectId === context.projectId,
+		.filter((session) =>
+			canAddressSession(context, options.terminal.serverId, session),
 		)
 		.map((session) => {
-			const activity = activitySnapshot(
-				options.activity,
-				context,
-				session.sessionId,
-			);
+			const activity = activitySnapshot(options.activity, session);
 			return {
 				terminal: session.sessionId,
 				status: session.status,
 				output_position: session.outputPosition,
 				replay_from: session.replayFrom,
 				...(activity === undefined ? {} : { activity }),
+				...(workspaceReach
+					? workspaceProjectFields(
+							options.projectHandles,
+							state,
+							session.projectId,
+						)
+					: {}),
 			};
 		});
 	return { terminals };
 }
 
 async function readTerminal(
-	options: ServerTerminalControlAdapterOptions,
+	options: AdapterOptions,
 	params: ReadTerminalParams,
 	context: ControlRequestContext,
 	maxReadBytes: number,
@@ -225,7 +268,7 @@ async function readTerminal(
 	const session = targetSession(options.terminal, context, params.terminal);
 	const terminal = outputReader(options.terminal);
 	const readAuthorization = authorization(
-		context,
+		session,
 		options.terminal.serverId,
 		'read',
 	);
@@ -278,7 +321,7 @@ async function readTerminal(
 }
 
 async function searchTerminal(
-	options: ServerTerminalControlAdapterOptions,
+	options: AdapterOptions,
 	params: SearchTerminalParams,
 	context: ControlRequestContext,
 	maxReadBytes: number,
@@ -288,7 +331,7 @@ async function searchTerminal(
 	// Search is snapshot-only. Obtain a bounded text presentation large enough
 	// to search useful scrollback, then independently bound the result object.
 	const presentation = await terminal.readPresentation(session, {
-		authorization: authorization(context, options.terminal.serverId, 'read'),
+		authorization: authorization(session, options.terminal.serverId, 'read'),
 		format: 'text',
 		maxBytes: Math.max(params.maxBytes, Math.min(maxReadBytes, 64 * 1024)),
 	});
@@ -403,16 +446,12 @@ interface TerminalOutputReader {
 }
 
 function terminalStatus(
-	options: ServerTerminalControlAdapterOptions,
+	options: AdapterOptions,
 	params: TerminalParams,
 	context: ControlRequestContext,
 ): unknown {
 	const session = targetSession(options.terminal, context, params.terminal);
-	const activity = activitySnapshot(
-		options.activity,
-		context,
-		session.sessionId,
-	);
+	const activity = activitySnapshot(options.activity, session);
 	return {
 		terminal: session.sessionId,
 		status: session.status,
@@ -424,19 +463,49 @@ function terminalStatus(
 }
 
 async function openTerminal(
-	options: ServerTerminalControlAdapterOptions,
+	options: AdapterOptions,
 	params: OpenTerminalParams,
 	context: ControlRequestContext,
 ): Promise<unknown> {
-	const activePanelId = await callerPanelId(options.workspace, context);
+	const workspaceReach = reachOf(context) === 'workspace';
+	const state =
+		workspaceReach && options.workspace !== undefined
+			? await options.workspace.load()
+			: undefined;
+	const projectId = resolveOpenTerminalProject({
+		context,
+		codec: options.projectHandles,
+		state,
+		project: params.project,
+		liveTerminals: (target) =>
+			options.terminal
+				.listSessions()
+				.filter(
+					(session) =>
+						session.serverId === options.terminal.serverId &&
+						session.projectId === target &&
+						session.status === 'running',
+				).length,
+	});
+	// The caller's panel anchors cwd inheritance only inside its own project.
+	const activePanelId =
+		projectId === context.projectId
+			? await callerPanelId(options.workspace, context)
+			: undefined;
+	// The launch resolver reads the target project's canonical kind, so the
+	// new terminal's MCP reach follows where it opens (ADR-0030).
 	const launch = await options.launchResolver.resolve({
-		identity: options.terminal.allocateIdentity(context.projectId),
+		identity: options.terminal.allocateIdentity(projectId),
 		cols: 80,
 		rows: 24,
 		...(params.cwd === undefined ? {} : { explicitCwd: params.cwd }),
 		...(activePanelId === undefined ? {} : { activePanelId }),
 	});
 	const handle = await options.terminal.createResolvedSession(launch);
+	// Record the opener before the panel appears, so the terminal is shown
+	// under the run that opened it from its first projection.
+	if (workspaceReach)
+		await recordOpener(options, context.terminalSessionId, handle.sessionId);
 	try {
 		await reconcileOpenedTerminal(
 			options.workspace,
@@ -448,12 +517,35 @@ async function openTerminal(
 		await options.terminal.kill(handle.snapshot()).catch(() => undefined);
 		throw error;
 	}
+	if (workspaceReach)
+		return {
+			terminal: handle.sessionId,
+			...workspaceProjectFields(
+				options.projectHandles,
+				state,
+				handle.projectId,
+			),
+			status: handle.status,
+			...(params.split === undefined ? {} : { split: params.split }),
+		};
 	return {
 		terminal: handle.sessionId,
 		projectId: handle.projectId,
 		status: handle.status,
 		...(params.split === undefined ? {} : { split: params.split }),
 	};
+}
+
+async function recordOpener(
+	options: AdapterOptions,
+	callerSessionId: string,
+	openedSessionId: string,
+): Promise<void> {
+	try {
+		await options.recordOpenedTerminal?.(callerSessionId, openedSessionId);
+	} catch {
+		// Grouping is presentation; the terminal is open either way.
+	}
 }
 
 async function callerPanelId(
@@ -503,7 +595,7 @@ async function reconcileOpenedTerminal(
 }
 
 async function writeTerminal(
-	options: ServerTerminalControlAdapterOptions,
+	options: AdapterOptions,
 	params: WriteTerminalParams,
 	context: ControlRequestContext,
 ): Promise<unknown> {
@@ -512,7 +604,7 @@ async function writeTerminal(
 	await options.terminal.write(
 		session,
 		text,
-		authorization(context, options.terminal.serverId, 'write'),
+		authorization(session, options.terminal.serverId, 'write'),
 	);
 	return {
 		terminal: session.sessionId,
@@ -522,7 +614,7 @@ async function writeTerminal(
 }
 
 async function runCommand(
-	options: ServerTerminalControlAdapterOptions,
+	options: AdapterOptions,
 	params: RunCommandParams,
 	context: ControlRequestContext,
 ): Promise<unknown> {
@@ -532,7 +624,7 @@ async function runCommand(
 	await options.terminal.write(
 		session,
 		text,
-		authorization(context, options.terminal.serverId, 'write'),
+		authorization(session, options.terminal.serverId, 'write'),
 	);
 	return {
 		terminal: session.sessionId,
@@ -544,20 +636,20 @@ async function runCommand(
 }
 
 async function closeTerminal(
-	options: ServerTerminalControlAdapterOptions,
+	options: AdapterOptions,
 	params: TerminalParams,
 	context: ControlRequestContext,
 ): Promise<unknown> {
 	const session = targetSession(options.terminal, context, params.terminal);
 	await options.terminal.kill(
 		session,
-		authorization(context, options.terminal.serverId, 'write'),
+		authorization(session, options.terminal.serverId, 'write'),
 	);
 	return { terminal: session.sessionId, closed: true };
 }
 
 function waitForIdle(
-	options: ServerTerminalControlAdapterOptions,
+	options: AdapterOptions,
 	params: WaitForIdleParams,
 	context: ControlRequestContext,
 	signal: AbortSignal,
@@ -576,7 +668,7 @@ function waitForIdle(
 }
 
 function waitForCommand(
-	options: ServerTerminalControlAdapterOptions,
+	options: AdapterOptions,
 	params: WaitParams,
 	context: ControlRequestContext,
 	signal: AbortSignal,
@@ -599,7 +691,7 @@ function waitForCommand(
 }
 
 function waitForAttention(
-	options: ServerTerminalControlAdapterOptions,
+	options: AdapterOptions,
 	params: WaitParams,
 	context: ControlRequestContext,
 	signal: AbortSignal,
@@ -618,7 +710,7 @@ function waitForAttention(
 }
 
 function waitForActivity(
-	options: ServerTerminalControlAdapterOptions,
+	options: AdapterOptions,
 	terminal: string,
 	context: ControlRequestContext,
 	signal: AbortSignal,
@@ -641,7 +733,7 @@ function waitForActivity(
 	const session = targetSession(options.terminal, context, terminal);
 	const identity = {
 		serverId: options.terminal.serverId,
-		projectId: context.projectId,
+		projectId: session.projectId,
 		sessionId: session.sessionId,
 	};
 	const initial = activity.get(identity);
@@ -716,8 +808,7 @@ function targetSession(
 	const session = service.getSession(terminal);
 	if (
 		session === undefined ||
-		session.serverId !== service.serverId ||
-		session.projectId !== context.projectId
+		!canAddressSession(context, service.serverId, session)
 	)
 		throw new ControlEndpointError(
 			'terminal_not_found',
@@ -730,6 +821,7 @@ async function applyWorkspaceViewCommand(
 	workspace: WorkspaceRepository,
 	operation: 'focus_terminal' | 'rename_terminal' | 'split_terminal',
 	sessionId: string,
+	projectId: string,
 	context: ControlRequestContext,
 	signal: AbortSignal,
 	value?: string,
@@ -741,7 +833,7 @@ async function applyWorkspaceViewCommand(
 		(candidate): candidate is Extract<WorkspacePanel, { type: 'terminal' }> =>
 			candidate.type === 'terminal' &&
 			candidate.sessionId === sessionId &&
-			candidate.projectId === context.projectId,
+			candidate.projectId === projectId,
 	);
 	if (panel === undefined) {
 		throw new ControlEndpointError(
@@ -802,15 +894,14 @@ function throwIfAborted(signal: AbortSignal): void {
 
 function activitySnapshot(
 	activity: TerminalActivityService | undefined,
-	context: ControlRequestContext,
-	sessionId: string,
+	session: Pick<TerminalSessionSnapshot, 'projectId' | 'sessionId'>,
 ): ReturnType<TerminalActivityService['get']> | undefined {
 	if (activity === undefined) return undefined;
 	try {
 		return activity.get({
 			serverId: activity.serverId,
-			projectId: context.projectId,
-			sessionId,
+			projectId: session.projectId,
+			sessionId: session.sessionId,
 		});
 	} catch {
 		return undefined;
@@ -818,13 +909,14 @@ function activitySnapshot(
 }
 
 function authorization(
-	context: ControlRequestContext,
+	session: Pick<TerminalSessionSnapshot, 'projectId'>,
 	serverId: string,
 	scope: 'read' | 'write',
 ): TerminalAuthorization {
-	// The MCP capability scopes a project; sibling target sessions are
-	// authorized by project identity, not by the calling session id.
-	return { serverId, projectId: context.projectId, scope };
+	// Target sessions are authorized by their own project identity, not by
+	// the calling session id. `targetSession` has already confirmed the
+	// capability reaches that project (its own, or any for workspace reach).
+	return { serverId, projectId: session.projectId, scope };
 }
 
 function unsupported(operation: string): never {
@@ -838,8 +930,6 @@ function positive(value: number, name: string): number {
 		throw new RangeError(`${name} must be positive`);
 	return value;
 }
-function maxSafeWaitSeconds(
-	options: ServerTerminalControlAdapterOptions,
-): number {
+function maxSafeWaitSeconds(options: AdapterOptions): number {
 	return options.maxWaitSeconds ?? DEFAULT_MAX_WAIT_SECONDS;
 }

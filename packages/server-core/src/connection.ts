@@ -663,6 +663,7 @@ export class ServerConnection implements ServerConnectionLike {
 			...(this.authenticatedClient?.claims === undefined
 				? {}
 				: { claims: this.authenticatedClient.claims }),
+			clientCapabilities: [...this.clientCapabilities],
 			signal,
 			...(request.deadlineMs === undefined
 				? {}
@@ -867,7 +868,9 @@ export class ServerConnection implements ServerConnectionLike {
 	private projectEvent(event: OrderedEvent): OrderedEvent | undefined {
 		return this.options.projectEvent === undefined
 			? event
-			: this.options.projectEvent(event, this.authenticatedClient);
+			: this.options.projectEvent(event, this.authenticatedClient, {
+					clientCapabilities: [...this.clientCapabilities],
+				});
 	}
 
 	private cleanupConnection(): void {

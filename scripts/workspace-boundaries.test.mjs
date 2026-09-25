@@ -66,6 +66,25 @@ test('rejects platform imports from browser-safe shared packages', async () => {
   });
 });
 
+test('keeps the cron package browser-safe and importable by server-core', async () => {
+  await withFixture([
+    { kind: 'package', directory: 'cron', name: '@terminay/cron', files: { 'src/index.ts': "import fs from 'node:fs'; void fs;" } },
+    {
+      kind: 'package',
+      directory: 'server-core',
+      name: '@terminay/server-core',
+      dependencies: { '@terminay/cron': '1.0.0' },
+      files: { 'src/index.ts': "import '@terminay/cron';" },
+    },
+  ], async (root) => {
+    const violations = checkWorkspace(root).violations;
+    assert.deepEqual(
+      violations.map((item) => [item.file.replace(root, ''), item.message]),
+      [['/packages/cron/src/index.ts', 'shared package cannot import platform or concrete transport module: node:fs']],
+    );
+  });
+});
+
 test('rejects cross-application, deep, renderer-host, and quarantine bypasses', async () => {
   await withFixture([
     { kind: 'app', directory: 'a', name: '@fixture/a', files: { 'src/index.ts': "import '@fixture/b';" } },

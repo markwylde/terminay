@@ -26,6 +26,7 @@ import {
 	MAX_SEARCH_MAX_BYTES,
 	MAX_SEARCH_MAX_MATCHES,
 	MAX_SEARCH_QUERY_CHARS,
+	PROJECT_HANDLE_PATTERN,
 } from './dispatcher.js';
 import { SERVER_MCP_ENTRY } from './ownership.js';
 
@@ -213,7 +214,7 @@ function registerTools(
 		'list_terminals',
 		{
 			description:
-				'List sibling terminals in the calling project. A terminal cwd is its local launch directory and is not a remote filesystem path for an SSH session.',
+				'List sibling terminals in the calling project. From an automation terminal, list every terminal on this server, each with an opaque project handle and project title. A terminal cwd is its local launch directory and is not a remote filesystem path for an SSH session.',
 			inputSchema: {},
 			annotations: READ_ONLY_TOOL_ANNOTATIONS,
 		},
@@ -296,11 +297,13 @@ function registerTools(
 	server.registerTool(
 		'open_terminal',
 		{
-			description: 'Open a sibling terminal.',
+			description:
+				'Open a sibling terminal. From an automation terminal, the terminal opens in the automation space unless project names a project handle returned by list_terminals.',
 			inputSchema: {
 				name: name.optional(),
 				cwd: cwd.optional(),
 				split: direction.optional(),
+				project: z.string().regex(PROJECT_HANDLE_PATTERN).optional(),
 			},
 		},
 		async (params) => call('open_terminal', params),

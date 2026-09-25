@@ -13,9 +13,10 @@ test("host terminal panel creation applies one workspace revision and publishes 
   assert.equal(workspace.state.terminalSessions["session-a"].projectId, "project-a");
   assert.equal(workspace.state.panels["panel-a"].sessionId, "session-a");
   assert.deepEqual(workspace.state.projects["project-a"].panelIds, ["panel-a"]);
+  // Journal revision 2 is the typed project.opened fact for project-a.
   assert.deepEqual(journal.replay(0).events.at(-1), {
-    revision: 2,
-    cursor: "2",
+    revision: 3,
+    cursor: "3",
     event: WORKSPACE_EVENT,
     payload: { serverId: "server-a", revision: 2, cursor: "2", projectId: "project-a" },
   });
@@ -37,7 +38,8 @@ test("workspace mutations publish workspace.changed coverage for project and pan
     const before = journal.revision;
     const result = await apply();
     assert.equal(result.ok ?? true, true, operation);
-    const event = journal.replay(before).events.at(-1);
+    // Typed lifecycle facts (project.opened) may accompany the invalidation.
+    const event = journal.replay(before).events.filter((entry) => entry.event === WORKSPACE_EVENT).at(-1);
     assert.equal(event.event, WORKSPACE_EVENT, operation);
     assert.equal(event.payload.revision, workspace.state.revision, operation);
     assert.equal(event.payload.cursor, workspace.state.cursor, operation);

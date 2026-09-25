@@ -112,7 +112,7 @@ test.describe('compact chrome', () => {
 		expect(overflow).toBeLessThanOrEqual(1);
 		// Every control is still on the row.
 		await expect(mainWindow.getByLabel('Toggle file explorer')).toBeVisible();
-		await expect(mainWindow.getByLabel('Show dashboard')).toBeVisible();
+		await expect(mainWindow.getByRole('button', { name: 'Home', exact: true })).toBeVisible();
 		await expect(mainWindow.getByLabel('Open command bar')).toBeVisible();
 		await expect(
 			mainWindow.locator('[data-compact-breadcrumb="true"]'),
@@ -153,7 +153,7 @@ test.describe('compact chrome', () => {
 		mainWindow,
 	}) => {
 		await resize(mainWindow, electronApp, PHONE);
-		await mainWindow.getByLabel('Show dashboard').click();
+		await mainWindow.getByRole('button', { name: 'Home', exact: true }).click();
 		await expect(mainWindow.locator('.app-shell')).toHaveAttribute(
 			'data-terminay-selected-view',
 			'home',

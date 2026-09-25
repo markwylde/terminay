@@ -19,7 +19,7 @@
  * landing in the right place.
  */
 
-import { ChevronDown, LayoutDashboard, Search, Server } from 'lucide-react';
+import { ChevronDown, House, Search, Server } from 'lucide-react';
 import type { ReactNode, RefObject } from 'react';
 
 export type CompactConnectionPresentation = Readonly<{
@@ -36,7 +36,7 @@ export type CompactChromeRowProps = Readonly<{
 	applicationMenu?: ReactNode;
 	connection: CompactConnectionPresentation;
 	connectionButtonRef?: RefObject<HTMLButtonElement | null>;
-	/** False on the dashboard, where the command acts on no project. */
+	/** False on Home, where the command acts on no project. */
 	isCommandBarAvailable: boolean;
 	isExplorerOpen: boolean;
 	isHomeSelected: boolean;
@@ -103,12 +103,12 @@ export function CompactChromeRow({
 				type="button"
 				className={`compact-chrome__icon${isHomeSelected ? ' compact-chrome__icon--active' : ''}`}
 				onClick={onShowDashboard}
-				aria-label="Show dashboard"
+				aria-label="Home"
 				aria-pressed={isHomeSelected}
-				title="Dashboard"
+				title="Home"
 				data-terminay-home-control="true"
 			>
-				<LayoutDashboard size={14} aria-hidden="true" />
+				<House size={14} aria-hidden="true" />
 			</button>
 			<button
 				type="button"

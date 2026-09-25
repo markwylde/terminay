@@ -1075,9 +1075,35 @@
   background: rgba(255, 255, 255, 0.08);
 }
 
-.project-tab-home--active {
+/* Selected, Home's control becomes a tab: it opens downward into Home's band
+ * in the same chrome colour, exactly as the active project tab opens into its
+ * tab strip. */
+.project-tab-home-box:has(.project-tab-home--active) {
+  padding-bottom: 0;
+  padding-left: 2px;
+  padding-right: 8px;
+}
+
+.project-tab-home--active,
+.project-tab-home--active:hover {
+  position: relative;
+  z-index: 2;
+  aspect-ratio: auto;
+  width: 38px;
   color: #ffffff;
-  background: rgba(255, 255, 255, 0.13);
+  background: transparent;
+}
+
+.project-tab-home--active::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  top: 1px;
+  bottom: -2px;
+  left: 0;
+  right: 0;
+  border-radius: 10px 10px 0 0;
+  background-color: var(--project-chrome);
 }
 
 .project-switcher {

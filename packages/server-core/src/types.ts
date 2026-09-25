@@ -47,6 +47,10 @@ export interface RequestContext {
 	readonly authScope: AuthScope;
 	readonly permissions?: readonly string[];
 	readonly claims?: JsonValue;
+	/** Feature capabilities the client declared in its hello. A feature that
+	 * changes what a projection contains (for example `automations.v1`) is
+	 * served only to connections that negotiated it. */
+	readonly clientCapabilities?: readonly string[];
 	readonly signal: AbortSignal;
 	readonly deadline?: number;
 	readonly expectedRevision?: number;
@@ -161,6 +165,8 @@ export interface ServerCoreOptions extends ServerIdentity, OperationRegistries {
 	readonly projectEvent?: (
 		event: OrderedEvent,
 		client: AuthenticatedClient | undefined,
+		/** What the connection negotiated in its hello. */
+		connection?: { readonly clientCapabilities?: readonly string[] },
 	) => OrderedEvent | undefined;
 	/** Host-owned cleanup for connection-scoped protocol adapters. Teardown is
 	 * scoped to the exact connection: another live connection authenticated by

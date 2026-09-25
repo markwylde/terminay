@@ -53,6 +53,7 @@
     "//#build:dev-desktop": {
       "dependsOn": [
         "@terminay/client-core#build",
+        "@terminay/cron#build",
         "@terminay/desktop#build",
         "@terminay/extension-api#build",
         "@terminay/protocol#build",

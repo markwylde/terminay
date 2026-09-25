@@ -22,6 +22,11 @@ import {
 	type DashboardViewMode,
 	isDashboardViewMode,
 } from './dashboardViewMode.ts';
+import {
+	DEFAULT_HOME_SECTION,
+	type HomeSection,
+	isHomeSection,
+} from './homeSection.ts';
 
 const STORAGE_KEY = 'terminay.view.active-session.v1';
 /** Bounded so a long-lived browser profile cannot accumulate dead projects. */
@@ -217,6 +222,61 @@ export function recallDashboardBoardGrouped(): boolean {
 		);
 	} catch {
 		return false;
+	}
+}
+
+/**
+ * Whether this device shows Home's sidebar.
+ *
+ * Kept apart from every project's sidebar visibility: Home is not a project, so
+ * toggling one never touches the other. Stored once per device, like the
+ * dashboard view mode, because Home spans every attached server. A device with
+ * no answer — or one that cannot read it — shows the sidebar open.
+ */
+const HOME_SIDEBAR_VISIBLE_STORAGE_KEY = 'terminay.view.home-sidebar-visible.v1';
+
+export function rememberHomeSidebarVisible(visible: boolean): void {
+	try {
+		globalThis.localStorage?.setItem(
+			HOME_SIDEBAR_VISIBLE_STORAGE_KEY,
+			visible ? 'true' : 'false',
+		);
+	} catch {
+		/* A device that cannot remember still works; it starts with it open. */
+	}
+}
+
+export function recallHomeSidebarVisible(): boolean {
+	try {
+		return (
+			globalThis.localStorage?.getItem(HOME_SIDEBAR_VISIBLE_STORAGE_KEY) !==
+			'false'
+		);
+	} catch {
+		return true;
+	}
+}
+
+/**
+ * Which Home section this device last showed. A hint like everything else here:
+ * an unreadable, disabled, or nonsense value is the Home overview and no error.
+ */
+const HOME_SECTION_STORAGE_KEY = 'terminay.view.home-section.v1';
+
+export function rememberHomeSection(section: HomeSection): void {
+	try {
+		globalThis.localStorage?.setItem(HOME_SECTION_STORAGE_KEY, section);
+	} catch {
+		/* A device that cannot remember still works; it starts on Home. */
+	}
+}
+
+export function recallHomeSection(): HomeSection {
+	try {
+		const raw = globalThis.localStorage?.getItem(HOME_SECTION_STORAGE_KEY);
+		return isHomeSection(raw) ? raw : DEFAULT_HOME_SECTION;
+	} catch {
+		return DEFAULT_HOME_SECTION;
 	}
 }
 
