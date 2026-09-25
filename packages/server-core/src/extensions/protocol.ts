@@ -34,6 +34,11 @@ export const HOST_FRAME_KINDS = [
 	/** One status, install, or uninstall call on an MCP install target. */
 	'mcp.target.invoke',
 	'language.request',
+	/** Start, stop, re-scope, or notify one worktree insight source. */
+	'worktree.source.start',
+	'worktree.source.stop',
+	'worktree.source.contexts',
+	'worktree.source.credential',
 ] as const;
 export type HostFrameKind = (typeof HOST_FRAME_KINDS)[number];
 
@@ -50,6 +55,9 @@ export const CHILD_FRAME_KINDS = [
 	'mcp.target.disposed',
 	'language.diagnostics',
 	'language.session.exited',
+	'worktree.source.publish',
+	'worktree.source.sign-in',
+	'worktree.source.disposed',
 	'fatal',
 ] as const;
 export type ChildFrameKind = (typeof CHILD_FRAME_KINDS)[number];

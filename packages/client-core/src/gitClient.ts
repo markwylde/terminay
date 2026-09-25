@@ -25,7 +25,13 @@ export const GIT_CLIENT_OPERATIONS = Object.freeze({
   move: "git.worktree.move",
   quickPushPropose: "git.quick-push.propose",
   quickPushApprove: "git.quick-push.approve",
+  worktreeProperties: "git.worktree.properties",
+  signIn: "git.worktree.sign-in",
+  insightPreferences: "git.worktree-insights.preferences",
+  setInsightPrompts: "git.worktree-insights.set-prompts",
 } as const);
+
+export type GitSignInChoice = "accept" | "later" | "never";
 
 export interface GitClientTransport {
   readonly query: <T extends JsonValue = JsonValue>(operation: string, payload?: JsonValue, options?: QueryOptions) => Promise<T>;
@@ -151,6 +157,27 @@ export class TerminayGitClient {
     const actionDigest = boundedToken(request.actionDigest, "actionDigest", 128);
     if (typeof request.revision !== "object" || request.revision === null || Array.isArray(request.revision)) throw new TypeError("Quick Push revision is invalid");
     return this.transport.command(GIT_CLIENT_OPERATIONS.quickPushApprove, { proposalId, revision: request.revision, actionDigest }, options);
+  }
+
+  /** One worktree's extension-published properties, including every check item. */
+  worktreeProperties(reference: { readonly projectId: string; readonly worktreeId: string }, options: QueryOptions = {}): Promise<JsonValue> {
+    return this.transport.query(GIT_CLIENT_OPERATIONS.worktreeProperties, { projectId: boundedId(reference.projectId, "projectId"), worktreeId: boundedId(reference.worktreeId, "worktreeId") }, options);
+  }
+
+  /** Answer a forge sign-in prompt the listing reported for a project. */
+  signIn(request: { readonly projectId: string; readonly origin: string; readonly choice: GitSignInChoice; readonly token?: string }, options: CommandOptions = {}): Promise<JsonValue> {
+    if (request.choice !== "accept" && request.choice !== "later" && request.choice !== "never") throw new TypeError("sign-in choice is invalid");
+    const token = request.token === undefined ? undefined : boundedToken(request.token, "token", 4096);
+    return this.transport.command(GIT_CLIENT_OPERATIONS.signIn, { projectId: boundedId(request.projectId, "projectId"), origin: boundedToken(request.origin, "origin", 2048), choice: request.choice, ...(token === undefined ? {} : { token }) }, options);
+  }
+
+  insightPreferences(options: QueryOptions = {}): Promise<JsonValue> {
+    return this.transport.query(GIT_CLIENT_OPERATIONS.insightPreferences, {}, options);
+  }
+
+  setInsightPrompts(extensionId: string, enabled: boolean, options: CommandOptions = {}): Promise<JsonValue> {
+    if (typeof enabled !== "boolean") throw new TypeError("enabled is invalid");
+    return this.transport.command(GIT_CLIENT_OPERATIONS.setInsightPrompts, { extensionId: boundedToken(extensionId, "extensionId", 128), enabled }, options);
   }
 
   private action(operation: string, reference: GitWorktreeReference, options: CommandOptions): Promise<JsonValue> {

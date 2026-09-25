@@ -5,3 +5,4 @@ export * from './protocol.js';
 export * from './testing.js';
 export * from './types.js';
 export * from './validation.js';
+export * from './worktree.js';

@@ -505,3 +505,140 @@
 .worktrees-panel__changes .git-panel__message {
 	padding-left: 20px;
 }
+
+/* Extension-published worktree properties: pull request and check chips. */
+.worktrees-panel__properties {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	margin-top: -6px;
+	padding: 0 8px 6px 32px;
+}
+
+.worktree-chip {
+	all: unset;
+	box-sizing: border-box;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	height: 18px;
+	padding: 0 6px;
+	border-radius: 9px;
+	background: rgba(255, 255, 255, 0.08);
+	color: rgba(220, 226, 240, 0.72);
+	font-size: 10px;
+	font-weight: 600;
+	line-height: 1;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.worktree-chip:hover {
+	background: rgba(255, 255, 255, 0.14);
+}
+
+.worktree-chip:focus-visible {
+	outline: 1px solid #57b7ff;
+	outline-offset: 1px;
+}
+
+.worktree-chip--pr-open {
+	color: #73c991;
+}
+
+.worktree-chip--pr-draft,
+.worktree-chip--pr-closed {
+	color: rgba(220, 226, 240, 0.58);
+}
+
+.worktree-chip--pr-merged {
+	color: #b180d7;
+}
+
+.worktree-chip--failed {
+	box-shadow: inset 0 0 0 1px rgba(241, 76, 76, 0.45);
+}
+
+.worktree-chip--pending {
+	box-shadow: inset 0 0 0 1px rgba(204, 167, 0, 0.45);
+}
+
+.worktree-chip--passed {
+	box-shadow: inset 0 0 0 1px rgba(115, 201, 145, 0.4);
+}
+
+.worktree-chip__count {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+}
+
+.worktree-chip__count--failed,
+.worktree-chip__check-icon--failed {
+	color: #f14c4c;
+}
+
+.worktree-chip__count--passed,
+.worktree-chip__check-icon--passed {
+	color: #73c991;
+}
+
+.worktree-chip__count--pending,
+.worktree-chip__check-icon--pending {
+	color: #cca700;
+}
+
+.worktree-chip__check-icon--skipped {
+	color: rgba(220, 226, 240, 0.42);
+}
+
+.worktree-sign-in-dialog__text,
+.worktree-sign-in-dialog__hint {
+	margin: 12px 0;
+	color: rgba(220, 226, 240, 0.78);
+	font-size: 13px;
+	line-height: 1.45;
+}
+
+.worktree-sign-in-dialog__hint {
+	font-size: 12px;
+	color: rgba(220, 226, 240, 0.58);
+}
+
+.worktree-sign-in-dialog__form {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-top: 12px;
+}
+
+.worktree-sign-in-dialog__label {
+	font-size: 12px;
+	color: rgba(220, 226, 240, 0.78);
+}
+
+.worktree-sign-in-dialog__link {
+	all: unset;
+	color: #57b7ff;
+	cursor: pointer;
+	text-decoration: underline;
+}
+
+.worktree-sign-in-dialog__error {
+	margin: 8px 0;
+	color: #f14c4c;
+	font-size: 12px;
+}
+
+.worktree-sign-in-dialog .project-edit-actions .worktree-sign-in-dialog__primary {
+	border-color: #3b82f6;
+	background: #3b82f6;
+	color: #fff;
+}
+
+.worktree-sign-in-dialog .project-edit-actions .worktree-sign-in-dialog__primary:hover:not(:disabled) {
+	border-color: #2563eb;
+	background: #2563eb;
+}

@@ -1,0 +1,75 @@
+{
+	"name": "terminay-gitea",
+	"version": "0.1.0",
+	"description": "Official Gitea pull request and CI status extension for Terminay",
+	"type": "module",
+	"license": "AGPL-3.0-or-later",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/terminay/terminay.git",
+		"directory": "extensions/gitea"
+	},
+	"publishConfig": {
+		"access": "public",
+		"provenance": true
+	},
+	"engines": {
+		"node": ">=24"
+	},
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"default": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"LICENSE"
+	],
+	"scripts": {
+		"compile": "tsc -p tsconfig.json",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"test": "npm run compile && node --test test/*.test.mjs",
+		"test:ci": "node --test test/*.test.mjs",
+		"pack": "node -e \"require('node:fs').mkdirSync('.tmp-pack', { recursive: true })\" && npm pack --json --pack-destination .tmp-pack"
+	},
+	"peerDependencies": {
+		"@terminay/extension-api": "^3.1.0"
+	},
+	"peerDependenciesMeta": {
+		"@terminay/extension-api": {
+			"optional": true
+		}
+	},
+	"devDependencies": {
+		"@terminay/extension-api": "^3.1.0",
+		"@types/node": "^24.0.0"
+	},
+	"terminay": {
+		"manifestVersion": 1,
+		"id": "com.terminay.gitea",
+		"displayName": "Gitea",
+		"description": "Shows each worktree's Gitea pull request and CI status in the Git sidebar.",
+		"api": "^3.1.0",
+		"engines": {
+			"terminay": ">=1.0.0",
+			"node": ">=24"
+		},
+		"entrypoint": "dist/index.js",
+		"permissions": [
+			"network",
+			"worktree-observation"
+		],
+		"contributes": {
+			"worktreeInsights": [
+				{
+					"id": "com.terminay.gitea/gitea",
+					"displayName": "Gitea",
+					"description": "Pull requests and commit statuses from Gitea servers your remotes point at."
+				}
+			]
+		}
+	}
+}
