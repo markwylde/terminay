@@ -1,3 +1,8 @@
+import type {
+	WorktreeInsightSourceContribution,
+	WorktreeInsightSourceRegistry,
+} from './worktree.js';
+
 export type JsonPrimitive = null | boolean | number | string;
 export type JsonValue =
 	| JsonPrimitive
@@ -13,7 +18,8 @@ export type ExtensionPermission =
 	| 'network'
 	| 'secrets:resolve'
 	| 'agent-observation'
-	| 'mcp-registration';
+	| 'mcp-registration'
+	| 'worktree-observation';
 
 export interface ExtensionDependency {
 	extensionId: string;
@@ -95,6 +101,7 @@ export interface TerminayExtensionManifest {
 		agentSessionSources?: AgentSessionSourceContribution[];
 		mcpInstallTargets?: McpInstallTargetContribution[];
 		languageServers?: LanguageServerContribution[];
+		worktreeInsights?: WorktreeInsightSourceContribution[];
 	};
 }
 
@@ -229,6 +236,8 @@ export interface ExtensionContext {
 	agents: AgentSessionSourceRegistry;
 	/** MCP install targets are available only to manifests granted mcp-registration. */
 	mcp: McpInstallTargetRegistry;
+	/** Worktree insight sources are available only to manifests granted worktree-observation. */
+	worktrees: WorktreeInsightSourceRegistry;
 	/** Host-disposed registrations and observers owned by this activation. */
 	subscriptions: ExtensionSubscriptions;
 	/**

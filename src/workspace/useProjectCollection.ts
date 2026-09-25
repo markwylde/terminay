@@ -180,7 +180,7 @@ export function useProjectCollection<TTerminal>({
 			? undefined
 			: initialServerSnapshot?.views[initialViewId];
 	// The project choke point: reserved server-owned spaces (the automation
-	// terminal space, ADR-0029) never become project tabs, so the tab bar,
+	// terminal space, ADR-0030) never become project tabs, so the tab bar,
 	// switcher, inventory, and Tabs section that read `projects` never see them.
 	const initialServerProjects =
 		initialServerSnapshot == null

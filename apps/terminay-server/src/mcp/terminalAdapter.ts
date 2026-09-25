@@ -493,7 +493,7 @@ async function openTerminal(
 			? await callerPanelId(options.workspace, context)
 			: undefined;
 	// The launch resolver reads the target project's canonical kind, so the
-	// new terminal's MCP reach follows where it opens (ADR-0029).
+	// new terminal's MCP reach follows where it opens (ADR-0030).
 	const launch = await options.launchResolver.resolve({
 		identity: options.terminal.allocateIdentity(projectId),
 		cols: 80,

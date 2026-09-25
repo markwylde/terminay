@@ -151,7 +151,7 @@ test("hostile npm specifications, missing integrity, install scripts, and public
 });
 
 test("official catalogue is hardcoded metadata without a privileged install path", () => {
-  assert.deepEqual(OFFICIAL_EXTENSION_CATALOGUE.map((item) => item.packageName), ["terminay-builtin-agents", "terminay-language-typescript"]);
+  assert.deepEqual(OFFICIAL_EXTENSION_CATALOGUE.map((item) => item.packageName), ["terminay-builtin-agents", "terminay-language-typescript", "terminay-gitea"]);
   assert.ok(OFFICIAL_EXTENSION_CATALOGUE.every((item) => item.official));
 });
 

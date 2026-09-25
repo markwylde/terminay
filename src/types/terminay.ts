@@ -351,6 +351,40 @@ export type GitWorktreeStatus = {
 	isPrunable: boolean;
 	errorMessage?: string;
 	entries: GitChangeEntry[];
+	/** Server id of the worktree, for per-worktree queries. */
+	worktreeId?: string;
+	/** Facts an extension published, such as a pull request and its checks. */
+	properties?: WorktreeProperties;
+};
+
+export type WorktreePullRequestState = 'open' | 'draft' | 'merged' | 'closed';
+export type WorktreeCheckState = 'passed' | 'failed' | 'pending' | 'skipped';
+
+export type WorktreeProperties = {
+	pullRequest?: {
+		number: number;
+		title: string;
+		url: string;
+		state: WorktreePullRequestState;
+		mergeable?: boolean;
+	};
+	checks?: {
+		passed: number;
+		failed: number;
+		pending: number;
+		skipped: number;
+		total: number;
+		url?: string;
+		items: { name: string; state: WorktreeCheckState; url?: string }[];
+	};
+};
+
+/** A forge asked the user to sign in; the Worktrees panel shows the prompt. */
+export type WorktreeSignInPrompt = {
+	extensionId: string;
+	origin: string;
+	provider: string;
+	tokenPageUrl?: string;
 };
 
 export type WorktreePanelStatus = {
@@ -358,6 +392,7 @@ export type WorktreePanelStatus = {
 	repoRoot: string | null;
 	defaultBranch: string | null;
 	worktrees: GitWorktreeStatus[];
+	signIn?: WorktreeSignInPrompt;
 };
 
 export type TerminalRecordingState = {

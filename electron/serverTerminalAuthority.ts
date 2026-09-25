@@ -77,6 +77,11 @@ import { ServerFileObservationAdapter } from '../packages/server-core/src/fileSe
 import { ServerGitAdapter } from '../packages/server-core/src/gitService/adapter';
 import { GitService } from '../packages/server-core/src/gitService/service';
 import {
+	fileWorktreePromptPreferences,
+	serverVaultWorktreeCredentials,
+	WorktreeInsightService,
+} from '../packages/server-core/src/worktreeInsights/index';
+import {
 	MdxRuntime,
 	type MdxRuntimeProjectContext,
 	ServerMdxRuntimeAdapter,
@@ -391,6 +396,8 @@ export class ServerTerminalAuthority {
 	readonly agentSources: SessionSourceSupervisor;
 	/** Reduces session snapshots into agent entries. */
 	readonly agentBridge: SessionSourceBridge;
+	/** Extension-published worktree facts (pull requests, checks). */
+	readonly worktreeInsights: WorktreeInsightService;
 	private serviceEventsUnsubscribe: Unsubscribe | undefined;
 	private shuttingDown = false;
 	private shutdownPromise: Promise<void> | undefined;
@@ -457,11 +464,32 @@ export class ServerTerminalAuthority {
 				maxPathBytes: 4 * 1024,
 			},
 		});
+		// Extensions publish worktree facts; the Git listing carries them to the
+		// project's clients, and a change re-lists.
+		const git = this.git;
+		this.worktreeInsights = new WorktreeInsightService({
+			...(options.vault === undefined
+				? {}
+				: { vault: serverVaultWorktreeCredentials(options.vault.vault) }),
+			...(options.dataRoot === undefined
+				? {}
+				: {
+						preferences: fileWorktreePromptPreferences(
+							resolve(options.dataRoot, 'worktree-insights.v1.json'),
+						),
+					}),
+			isProjectOpen: (projectId) =>
+				this.workspace.state.projects[projectId] !== undefined,
+			activeProjectIds: () => this.workspace.activeProjectIds(),
+			onProjectChanged: (projectId, worktreeId) =>
+				git.announceWorktreeChange(projectId, worktreeId),
+		});
 		const gitAdapter = new ServerGitAdapter({
 			serverId: options.serverId,
 			git: this.git,
 			resolveProjectRoot: (projectId) =>
 				this.workspace.state.projects[projectId]?.root ?? null,
+			insights: this.worktreeInsights,
 		});
 		const fileCatalogAdapter = new ServerFileCatalogAdapter({
 			serverId: options.serverId,
@@ -641,6 +669,7 @@ export class ServerTerminalAuthority {
 							dataRoot: options.dataRoot,
 							authorityLabel: 'This server',
 							agents: this.agentSources,
+							worktrees: this.worktreeInsights,
 							onBuiltInWithdrawn,
 							...(options.onExtensionHostDiagnostic === undefined
 								? {}
@@ -656,6 +685,7 @@ export class ServerTerminalAuthority {
 							dataRoot: options.dataRoot,
 							authorityLabel: 'This server',
 							agents: this.agentSources,
+							worktrees: this.worktreeInsights,
 							onBuiltInWithdrawn,
 							...(options.onExtensionHostDiagnostic === undefined
 								? {}
@@ -668,8 +698,11 @@ export class ServerTerminalAuthority {
 								: { builtInArtifactRoot: options.builtInExtensionArtifactRoot }),
 							vault: options.vault,
 						});
-		if (extensionManagement !== undefined)
+		if (extensionManagement !== undefined) {
 			this.agentSources.attach(extensionManagement.hosts);
+			this.worktreeInsights.attach(extensionManagement.hosts);
+		}
+		this.workspace.subscribe(() => this.worktreeInsights.refreshActivity());
 		const mcpRouter =
 			mcpInstall === undefined
 				? undefined
