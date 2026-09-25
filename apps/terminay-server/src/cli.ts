@@ -67,6 +67,9 @@ import {
 	ServerSettingsRepository,
 	SessionSourceBridge,
 	SessionSourceSupervisor,
+	WorktreeInsightService,
+	fileWorktreePromptPreferences,
+	serverVaultWorktreeCredentials,
 	ShellProfileCatalogueService,
 	withdrawnAgentExtensionSwitches,
 	ShellProfileDiscoveryService,
@@ -598,12 +601,28 @@ async function createServerComposition(
 			? {}
 			: { unlockFd: options.vaultUnlockFd }),
 	});
+	// Extensions publish worktree facts (pull requests, checks); the Git
+	// listing carries them to the project's clients, and a change re-lists.
+	const worktreeInsights = new WorktreeInsightService({
+		vault: serverVaultWorktreeCredentials(vault.vault),
+		preferences: fileWorktreePromptPreferences(
+			join(options.dataRoot, 'worktree-insights.v1.json'),
+		),
+		isProjectOpen: (projectId) =>
+			workspace.state.projects[projectId] !== undefined,
+		onProjectChanged: (projectId, worktreeId) =>
+			gitService.announceWorktreeChange(projectId, worktreeId),
+		onError: (message) => {
+			process.stderr.write(`[terminay-server] ${message}\n`);
+		},
+	});
 	const extensions = createProductionExtensionManagement({
 		dataRoot: options.dataRoot,
 		authorityLabel: 'This server',
 		builtInArtifactRoot: resolveBuiltInExtensionArtifactRoot(),
 		vault,
 		agents: agentSources,
+		worktrees: worktreeInsights,
 		// A per-agent built-in the user had switched off stays off as a harness
 		// switch of the bundled source that replaced it.
 		onBuiltInWithdrawn: async (record) => {
@@ -618,11 +637,13 @@ async function createServerComposition(
 		},
 	});
 	agentSources.attach(extensions.hosts);
+	worktreeInsights.attach(extensions.hosts);
 	const git = new ServerGitAdapter({
 		serverId: options.serverId,
 		git: gitService,
 		resolveProjectRoot: (projectId) =>
 			workspace.state.projects[projectId]?.root ?? null,
+		insights: worktreeInsights,
 	});
 	const parakeetRuntime = new ParakeetRuntime({
 		rootDirectory: join(options.dataRoot, 'dictation', 'parakeet'),

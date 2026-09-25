@@ -32,6 +32,8 @@ export type ExtensionSummaryDto = Readonly<{
 		displayName: string;
 		harnesses: readonly Readonly<{ id: string; displayName: string }>[];
 	}>[];
+	/** Worktree insight sources this extension contributes. */
+	worktreeInsights?: readonly Readonly<{ id: string; displayName: string }>[];
 }>;
 
 /** Settings key of one harness switch: `<sourceId>/<harnessId>`. */
@@ -58,6 +60,8 @@ export function ExtensionManager({
 	onAction,
 	harnessSwitches = {},
 	onHarnessSwitchChange,
+	suppressedSignInPrompts,
+	onSignInPromptsChange,
 }: Readonly<{
 	embedded?: boolean;
 	extensions: readonly ExtensionSummaryDto[];
@@ -71,6 +75,9 @@ export function ExtensionManager({
 	/** Persisted harness switches (`agentIntegration.harnesses`). */
 	harnessSwitches?: Readonly<Record<string, boolean>>;
 	onHarnessSwitchChange?: (key: string, enabled: boolean) => void;
+	/** Extensions whose worktree sign-in prompts the user switched off. */
+	suppressedSignInPrompts?: ReadonlySet<string>;
+	onSignInPromptsChange?: (extensionId: string, enabled: boolean) => void;
 }>) {
 	const [query, setQuery] = useState('');
 	const [npmPackage, setNpmPackage] = useState('');
@@ -224,6 +231,8 @@ export function ExtensionManager({
 							onAction={(action) => void act(action, extension.id)}
 							harnessSwitches={harnessSwitches}
 							onHarnessSwitchChange={onHarnessSwitchChange}
+							signInPromptsEnabled={!suppressedSignInPrompts?.has(extension.id)}
+							onSignInPromptsChange={onSignInPromptsChange}
 						/>
 					))}
 					{filtered.length === 0 ? <p className="settings-empty-state">No matching extensions.</p> : null}
@@ -233,7 +242,7 @@ export function ExtensionManager({
 	);
 }
 
-function ExtensionCard({ extension, busy, onInstall, onUpdate, onAction, harnessSwitches, onHarnessSwitchChange }: Readonly<{
+function ExtensionCard({ extension, busy, onInstall, onUpdate, onAction, harnessSwitches, onHarnessSwitchChange, signInPromptsEnabled, onSignInPromptsChange }: Readonly<{
 	extension: ExtensionSummaryDto;
 	busy: boolean;
 	onInstall: () => void;
@@ -241,6 +250,8 @@ function ExtensionCard({ extension, busy, onInstall, onUpdate, onAction, harness
 	onAction: (action: ExtensionAction) => void;
 	harnessSwitches: Readonly<Record<string, boolean>>;
 	onHarnessSwitchChange?: (key: string, enabled: boolean) => void;
+	signInPromptsEnabled: boolean;
+	onSignInPromptsChange?: (extensionId: string, enabled: boolean) => void;
 }>) {
 	return (
 		<article className="settings-group extension-card">
@@ -327,6 +338,27 @@ function ExtensionCard({ extension, busy, onInstall, onUpdate, onAction, harness
 					})}
 				</div>
 			))}
+			{extension.worktreeInsights === undefined || extension.worktreeInsights.length === 0 ? null : (
+				<div className="settings-group-footer extension-card-footer" data-sign-in-prompts={extension.id}>
+					<div className="settings-row extension-harness-row">
+						<div className="settings-row-info">
+							<span className="settings-row-label">Ask me to sign in</span>
+							<span className="settings-row-description">Offer to connect a detected server so worktrees can show its pull requests and checks.</span>
+						</div>
+						<div className="settings-row-control">
+							<label className="settings-switch" aria-label={`Ask me to sign in for ${extension.displayName}`}>
+								<input
+									type="checkbox"
+									checked={signInPromptsEnabled}
+									disabled={onSignInPromptsChange === undefined}
+									onChange={(event) => onSignInPromptsChange?.(extension.id, event.target.checked)}
+								/>
+								<span className="settings-slider"></span>
+							</label>
+						</div>
+					</div>
+				</div>
+			)}
 			{extension.permissions.length === 0 ? null : (
 				<div className="settings-group-footer extension-card-footer">
 					<span className="settings-row-description">Permissions</span>

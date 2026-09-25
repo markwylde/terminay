@@ -20,7 +20,7 @@ export async function prepareDevelopmentBuiltInExtensions(options = {}) {
 		skipChecks: true,
 	})
 	const verified = await verifyBuiltInExtensionArtifacts(outputDirectory)
-	if (verified.length !== 2 || staged.inventory.artifacts.length !== 2) {
+	if (verified.length !== 3 || staged.inventory.artifacts.length !== 3) {
 		throw new Error('development built-in extension inventory is incomplete')
 	}
 	return Object.freeze({ outputDirectory, artifacts: verified })

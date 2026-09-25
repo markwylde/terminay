@@ -28,4 +28,13 @@ export const OFFICIAL_EXTENSION_CATALOGUE: readonly OfficialExtensionCatalogueRe
 			publisher: 'Terminay',
 			official: true,
 		}),
+		Object.freeze({
+			extensionId: 'com.terminay.gitea',
+			packageName: 'terminay-gitea',
+			displayName: 'Gitea',
+			description:
+				'Show each worktree\'s Gitea pull request and CI status in the Worktrees panel.',
+			publisher: 'Terminay',
+			official: true,
+		}),
 	]);
