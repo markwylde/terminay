@@ -21,6 +21,7 @@ import {
 	documentationLexicalTheme,
 } from './documentationEditorPlugins';
 import { selfCloseVoidHtmlElements } from './documentationMarkdownCompat';
+import { viewDocumentSource } from './openFilePresentation';
 import '@fontsource/open-sans/latin-400.css';
 import '@fontsource/open-sans/latin-600.css';
 import '@fontsource/open-sans/latin-700.css';
@@ -38,6 +39,8 @@ type DocumentationEditorProps = Readonly<{
 	runtimeClient?: MdxRuntimeClient;
 	/** Reads an image the document references, or undefined to leave its src as is. */
 	loadImage?: (src: string) => Promise<Blob | undefined>;
+	/** Switches this panel to the File Viewer once pending edits are saved. */
+	onViewSource?: () => void;
 }>;
 
 export function DocumentationEditor(props: DocumentationEditorProps) {
@@ -87,6 +90,7 @@ function DocumentationEditorSurface({
 	serverId,
 	runtimeClient,
 	loadImage,
+	onViewSource,
 }: DocumentationEditorProps) {
 	const [state, setState] = useState<
 		'idle' | 'dirty' | 'saving' | 'saved' | 'conflict' | 'failed'
@@ -113,6 +117,10 @@ function DocumentationEditorSurface({
 	const resourceUrlsRef = useRef<string[]>([]);
 	const loadImageRef = useRef(loadImage);
 	loadImageRef.current = loadImage;
+	// The toolbar is built once, so its View source button reads the latest
+	// callback through a ref.
+	const onViewSourceRef = useRef(onViewSource);
+	onViewSourceRef.current = onViewSource;
 	const imageUrlsRef = useRef(new Map<string, Promise<string>>());
 	const [plugins] = useState(() =>
 		createDocumentationEditorPlugins((src) => {
@@ -125,7 +133,14 @@ function DocumentationEditorSurface({
 				imageUrlsRef.current.set(src, url);
 			}
 			return url;
-		}),
+		}, onViewSource === undefined
+			? undefined
+			: () => {
+					void viewDocumentSource(
+						() => autosaveRef.current?.flush() ?? Promise.resolve(true),
+						() => onViewSourceRef.current?.(),
+					);
+				}),
 	);
 	if (autosaveRef.current === undefined)
 		autosaveRef.current = new DocumentationAutosaveController(

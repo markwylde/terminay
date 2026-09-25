@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { expect, test } from './fixtures'
-import { fileExplorerItem, openFileExplorer, setProjectRoot } from './support/ui'
+import { fileExplorerItem, openFileExplorer, setProjectRoot, viewDocumentSource } from './support/ui'
 
 const execFileAsync = promisify(execFile)
 
@@ -60,6 +60,7 @@ test('markdown files expose a Tasks tab with grouped stats and diff progress', a
   await expect(mainWindow.getByRole('tab', { name: 'Tasks' })).toHaveCount(0)
 
   await fileExplorerItem(mainWindow, 'plan.md').dblclick()
+  await viewDocumentSource(mainWindow)
   await mainWindow.getByRole('tab', { name: 'Tasks' }).click()
 
   // One done, three remaining overall.
@@ -118,6 +119,7 @@ test('file task groups can be sorted recursively', async ({ createWorkspace, mai
   await setProjectRoot(mainWindow, workspace.rootDir)
   await openFileExplorer(mainWindow)
   await fileExplorerItem(mainWindow, 'sorted.md').dblclick()
+  await viewDocumentSource(mainWindow)
   await mainWindow.getByRole('tab', { name: 'Tasks' }).click()
 
   const titles = mainWindow.locator('.file-tasks__section-title')
