@@ -10,6 +10,10 @@ import type {
 	GitWorktreeStatus,
 	WorktreePanelStatus,
 } from '../../types/terminay';
+import {
+	parseWorktreeProperties,
+	parseWorktreeSignInPrompt,
+} from './worktreeProperties';
 
 export type ServerGitWorkspaceProjection = {
 	referencesByPath: ReadonlyMap<string, GitWorktreeReference>;
@@ -38,6 +42,7 @@ export async function loadServerGitWorkspace(
 			: text(result.repositoryRoot, 'repository root');
 	const state = text(result.state, 'Git discovery state');
 	const rawWorktrees = array(result.worktrees, 'Git worktrees');
+	const signIn = parseWorktreeSignInPrompt(result.signIn);
 	const referencesByPath = new Map<string, GitWorktreeReference>();
 	const statuses: Record<string, FileExplorerGitStatus> = {};
 	const worktrees = rawWorktrees.map((value) => {
@@ -59,7 +64,12 @@ export async function loadServerGitWorkspace(
 		for (const entry of entries) {
 			statuses[entry.path] = entry.state === 'untracked' ? 'new' : 'modified';
 		}
-		return toWorktree(worktree, path, entries, repositoryRoot);
+		const properties = parseWorktreeProperties(worktree.properties);
+		return {
+			...toWorktree(worktree, path, entries, repositoryRoot),
+			worktreeId: id,
+			...(properties === undefined ? {} : { properties }),
+		};
 	}).sort(currentWorktreeFirst);
 	return {
 		referencesByPath,
@@ -72,6 +82,7 @@ export async function loadServerGitWorkspace(
 					? null
 					: text(result.defaultBranch, 'default branch'),
 			worktrees,
+			...(signIn === undefined ? {} : { signIn }),
 		},
 	};
 }

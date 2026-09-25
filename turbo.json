@@ -42,6 +42,11 @@
       "outputs": [],
       "cache": false
     },
+    "terminay-gitea#test:ci": {
+      "dependsOn": ["compile", "^build"],
+      "outputs": [],
+      "cache": false
+    },
     "lint": {
       "outputs": []
     },
@@ -58,7 +63,8 @@
         "@terminay/ui-bundle#build",
         "@terminay/web#build",
         "terminay-builtin-agents#compile",
-        "terminay-language-typescript#compile"
+        "terminay-language-typescript#compile",
+        "terminay-gitea#compile"
       ],
       "inputs": [
         "electron/**",

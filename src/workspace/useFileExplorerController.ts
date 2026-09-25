@@ -1,6 +1,7 @@
 import type {
 	FileObservationClient,
 	FileViewerClient,
+	GitSignInChoice,
 	GitWorktreeReference,
 	TerminayGitClient,
 } from '@terminay/client-core';
@@ -15,6 +16,7 @@ import {
 	toContainedProjectRelativePath,
 } from '../pathUtils';
 import { loadServerGitWorkspace } from '../services/git/serverGitWorkspaceAdapter';
+import { parseWorktreeProperties } from '../services/git/worktreeProperties';
 import type { FileViewerMode } from '../types/fileViewer';
 import type {
 	FileExplorerEntry,
@@ -1243,6 +1245,44 @@ export function useFileExplorerController({
 		refreshGitStatusesForRoot,
 	]);
 
+	const handleLoadWorktreeChecks = useCallback(
+		async (worktree: GitWorktreeStatus) => {
+			if (gitClient === undefined || worktree.worktreeId === undefined)
+				return worktree.properties?.checks;
+			const result = await gitClient.worktreeProperties({
+				projectId: project.id,
+				worktreeId: worktree.worktreeId,
+			});
+			const properties =
+				typeof result === 'object' && result !== null && !Array.isArray(result)
+					? parseWorktreeProperties(result.properties)
+					: undefined;
+			return properties?.checks ?? worktree.properties?.checks;
+		},
+		[gitClient, project.id],
+	);
+	const handleRespondWorktreeSignIn = useCallback(
+		async (choice: GitSignInChoice, token?: string) => {
+			const prompt = worktreePanelStatus?.signIn;
+			if (gitClient === undefined || prompt === undefined) return;
+			await gitClient.signIn({
+				projectId: project.id,
+				origin: prompt.origin,
+				choice,
+				...(token === undefined ? {} : { token }),
+			});
+			if (project.rootFolder)
+				await refreshGitStatusesForRoot(project.rootFolder, true);
+		},
+		[
+			gitClient,
+			project.id,
+			project.rootFolder,
+			refreshGitStatusesForRoot,
+			worktreePanelStatus?.signIn,
+		],
+	);
+
 	return {
 		cancelFileExplorerNameDialog,
 		cleanWorktreeDeleteCount: cleanWorktreesToDelete.length,
@@ -1257,6 +1297,8 @@ export function useFileExplorerController({
 		handleDelete,
 		handleDeleteCleanWorktrees,
 		handleDeleteWorktree,
+		handleLoadWorktreeChecks,
+		handleRespondWorktreeSignIn,
 		handleNewFile,
 		handleNewFolder,
 		handleOpenGitEntry,

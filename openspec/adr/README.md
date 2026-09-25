@@ -56,3 +56,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0026](./0026-extensions-may-ship-prebuilt-native-modules.md) | Extensions may ship prebuilt native modules; install scripts stay disabled | accepted | 2026-09-19 |
 | [0027](./0027-desktop-updates-in-place-from-github-release-metadata.md) | Terminay Desktop updates in place from GitHub release metadata, which is published last | accepted | 2026-09-19 |
 | [0028](./0028-no-polling-without-owner-approval.md) | Never poll; a poll is a last resort that needs the owner's explicit approval | accepted, supersedes 0022 | 2026-09-24 |
+| [0029](./0029-worktree-properties-are-host-owned-typed-facts.md) | Extensions publish typed worktree facts; Terminay renders them, and an approved poll keeps forge state fresh | accepted | 2026-09-24 |

@@ -22,6 +22,7 @@ import type {
 	ExtensionBroker,
 	ExtensionHostStatus,
 	ExtensionSecretAccessBroker,
+	ExtensionWorktreeBroker,
 } from './types.js';
 
 export interface DefaultExtensionManagementOptions {
@@ -31,6 +32,7 @@ export interface DefaultExtensionManagementOptions {
 	readonly childEntrypoint?: string;
 	readonly secrets?: ExtensionSecretAccessBroker;
 	readonly agents?: ExtensionAgentBroker;
+	readonly worktrees?: ExtensionWorktreeBroker;
 	readonly vault?: ServerVaultComposition /** Host-owned immutable release resource directory. */;
 	readonly builtInArtifactRoot?: string /** Test/composition seam for a host-owned verified inventory. Production uses builtInArtifactRoot. */;
 	readonly builtIns?: BuiltInExtensionArtifactSource;
@@ -95,6 +97,9 @@ export function createDefaultExtensionManagement(
 			: { childEntrypoint: options.childEntrypoint }),
 		...(options.secrets === undefined ? {} : { secrets: options.secrets }),
 		...(options.agents === undefined ? {} : { agents: options.agents }),
+		...(options.worktrees === undefined
+			? {}
+			: { worktrees: options.worktrees }),
 		...(options.vault === undefined ? {} : { vault: options.vault.vault }),
 	});
 	const npm = new NpmCliRegistryClient({
@@ -152,6 +157,7 @@ export function createDefaultExtensionManagement(
 				agentSessionSources: manifest.contributes.agentSessionSources ?? [],
 				mcpInstallTargets: manifest.contributes.mcpInstallTargets ?? [],
 				languageServers: manifest.contributes.languageServers ?? [],
+				worktreeInsights: manifest.contributes.worktreeInsights ?? [],
 				extensionDependencies: manifest.extensionDependencies ?? [],
 			});
 			await hosts.stop(extensionId);
@@ -185,6 +191,7 @@ export function createDefaultExtensionManagement(
 			agentSessionSources: descriptor.agentSessionSources,
 			mcpInstallTargets: descriptor.mcpInstallTargets,
 			languageServers: descriptor.languageServers,
+			worktreeInsights: descriptor.worktreeInsights,
 			extensionDependencies: descriptor.manifest.extensionDependencies ?? [],
 		});
 	};
@@ -368,6 +375,7 @@ export function createProductionExtensionManagement(
 		childEntrypoint?: string;
 		vault: ServerVaultComposition;
 		agents?: ExtensionAgentBroker;
+		worktrees?: ExtensionWorktreeBroker;
 		builtInArtifactRoot?: string;
 		onHostDiagnostic?: ExtensionHostDiagnosticListener;
 		onBuiltInWithdrawn?: ExtensionInstallerOptions['onBuiltInWithdrawn'];
@@ -382,6 +390,9 @@ export function createProductionExtensionManagement(
 			? {}
 			: { childEntrypoint: options.childEntrypoint }),
 		...(options.agents === undefined ? {} : { agents: options.agents }),
+		...(options.worktrees === undefined
+			? {}
+			: { worktrees: options.worktrees }),
 		...(options.builtInArtifactRoot === undefined
 			? {}
 			: { builtInArtifactRoot: options.builtInArtifactRoot }),

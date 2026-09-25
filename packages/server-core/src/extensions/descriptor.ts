@@ -53,6 +53,7 @@ export async function extensionLaunchDescriptor(
 		agentSessionSources: manifest.contributes.agentSessionSources ?? [],
 		mcpInstallTargets: manifest.contributes.mcpInstallTargets ?? [],
 		languageServers: manifest.contributes.languageServers ?? [],
+		worktreeInsights: manifest.contributes.worktreeInsights ?? [],
 		extensionDependencies: manifest.extensionDependencies ?? [],
 	});
 	return Object.freeze({ descriptor, manifest });

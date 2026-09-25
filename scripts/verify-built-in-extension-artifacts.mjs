@@ -8,6 +8,7 @@ import { DirectoryBuiltInExtensionArtifactSource } from '../packages/server-core
 const expected = [
 	'com.terminay.builtin-agents',
 	'com.terminay.language.typescript',
+	'com.terminay.gitea',
 ].sort();
 
 /**

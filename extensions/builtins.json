@@ -10,6 +10,11 @@
 			"directory": "language-typescript",
 			"extensionId": "com.terminay.language.typescript",
 			"packageName": "terminay-language-typescript"
+		},
+		{
+			"directory": "gitea",
+			"extensionId": "com.terminay.gitea",
+			"packageName": "terminay-gitea"
 		}
 	]
 }

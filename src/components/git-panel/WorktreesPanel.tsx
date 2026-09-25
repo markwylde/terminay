@@ -17,9 +17,15 @@ import type {
 	GitChangeEntry,
 	GitWorktreeStatus,
 	WorktreePanelStatus,
+	WorktreeProperties,
 } from '../../types/terminay';
 import { ContextMenu, type ContextMenuItem } from '../ContextMenu';
 import { GitPanel } from './GitPanel';
+import { WorktreePropertyChips } from './WorktreePropertyChips';
+import {
+	type WorktreeSignInChoice,
+	WorktreeSignInDialog,
+} from './WorktreeSignInDialog';
 import { getPathRelativeToRoot } from '../../pathUtils';
 import { isWorktreeShownClean } from '../../workspace/cleanWorktreeSweep';
 import './gitPanel.css';
@@ -47,6 +53,15 @@ export type WorktreesPanelProps = {
 	onRenamePath: (path: string) => void;
 	onRevealWorktree: (worktree: GitWorktreeStatus) => void;
 	onSwitchProjectRoot: (worktree: GitWorktreeStatus) => void;
+	/** Every check item for one worktree; listings carry only the counts. */
+	onLoadWorktreeChecks?: (
+		worktree: GitWorktreeStatus,
+	) => Promise<WorktreeProperties['checks'] | undefined>;
+	/** The user's answer to a forge sign-in prompt. */
+	onRespondSignIn?: (
+		choice: WorktreeSignInChoice,
+		token?: string,
+	) => Promise<void>;
 };
 
 function getWorktreeTitle(worktree: GitWorktreeStatus): string {
@@ -119,6 +134,8 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 		onRenameWorktree,
 		onRevealWorktree,
 		onSwitchProjectRoot,
+		onLoadWorktreeChecks,
+		onRespondSignIn,
 	} = props;
 	const initializedWorktreesRef = useRef<Set<string>>(new Set());
 	const [collapsedWorktrees, setCollapsedWorktrees] = useState<Set<string>>(
@@ -374,6 +391,12 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 								<Upload size={14} aria-hidden="true" />
 							</button>
 						</div>
+						{isDeleting ? null : (
+							<WorktreePropertyChips
+								worktree={worktree}
+								onLoadChecks={onLoadWorktreeChecks}
+							/>
+						)}
 						{isDeleting || collapsed ? null : worktree.errorMessage ? (
 							<div className="git-panel__message">{worktree.errorMessage}</div>
 						) : worktree.isBare ? (
@@ -400,6 +423,13 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 					</section>
 				);
 			})}
+			{status.signIn && onRespondSignIn ? (
+				<WorktreeSignInDialog
+					key={status.signIn.origin}
+					prompt={status.signIn}
+					onRespond={onRespondSignIn}
+				/>
+			) : null}
 			{contextMenu ? (
 				<ContextMenu
 					x={contextMenu.x}

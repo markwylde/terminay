@@ -11,6 +11,7 @@ import {
 	validateMcpInstallTargetActionResult,
 	validateMcpInstallTargetStatus,
 	validateMcpServerCommand,
+	type WorktreeInsightSourceContribution,
 } from '@terminay/extension-api';
 import { validateExtensionLaunchDescriptor } from './descriptor.js';
 import {
@@ -44,6 +45,7 @@ import type {
 	ExtensionInvocation,
 	ExtensionLaunchDescriptor,
 	ExtensionSecretAccessBroker,
+	ExtensionWorktreeBroker,
 } from './types.js';
 
 interface PendingCall {
@@ -61,6 +63,7 @@ export interface ExtensionHostOptions {
 	readonly now?: () => number;
 	readonly secrets?: ExtensionSecretAccessBroker;
 	readonly agents?: ExtensionAgentBroker;
+	readonly worktrees?: ExtensionWorktreeBroker;
 	/** Where lifecycle records go. Absent means they are not recorded. */
 	readonly onDiagnostic?: ExtensionHostDiagnosticListener;
 	/** Observed after every state transition, so a supervisor can act on a
@@ -163,6 +166,10 @@ export class ExtensionHost {
 		Object.freeze([]);
 	/** Sources the host started and has not yet seen stop. */
 	private readonly runningSources = new Set<string>();
+	private worktreeInsightSources: readonly WorktreeInsightSourceContribution[] =
+		Object.freeze([]);
+	/** Worktree insight sources the host started and has not yet seen stop. */
+	private readonly runningInsightSources = new Set<string>();
 	private languageServers: readonly LanguageServerContribution[] = Object.freeze(
 		[],
 	);
@@ -193,6 +200,7 @@ export class ExtensionHost {
 			agentSessionSources: this.agentSessionSources,
 			mcpInstallTargets: this.mcpInstallTargets,
 			languageServers: this.languageServers,
+			worktreeInsightSources: this.worktreeInsightSources,
 		});
 	}
 	launchDescriptor(): ExtensionLaunchDescriptor | undefined {
@@ -271,6 +279,10 @@ export class ExtensionHost {
 						this.descriptor.languageServers === undefined
 							? []
 							: structuredClone(this.descriptor.languageServers),
+					worktreeInsights:
+						this.descriptor.worktreeInsights === undefined
+							? []
+							: structuredClone(this.descriptor.worktreeInsights),
 				},
 				this.limits.startupTimeoutMs,
 				undefined,
@@ -293,6 +305,13 @@ export class ExtensionHost {
 			this.languageServers = validateLanguageServers(
 				record(activated)?.languageServers,
 				this.descriptor,
+			);
+			this.worktreeInsightSources = validateRegistrations(
+				record(activated)?.worktreeInsightSources,
+				this.descriptor.worktreeInsights ?? [],
+				this.descriptor,
+				'worktree-observation',
+				'worktree insight source',
 			);
 			this.setState({
 				extensionId: this.extensionId,
@@ -374,6 +393,7 @@ export class ExtensionHost {
 			return;
 		}
 		await this.stopSessionSources();
+		await this.stopWorktreeInsightSources();
 		try {
 			await this.call('deactivate', undefined, this.limits.shutdownTimeoutMs);
 		} catch {
@@ -393,6 +413,7 @@ export class ExtensionHost {
 		this.agentSessionSources = Object.freeze([]);
 		this.mcpInstallTargets = Object.freeze([]);
 		this.languageServers = Object.freeze([]);
+		this.worktreeInsightSources = Object.freeze([]);
 	}
 
 	/**
@@ -494,6 +515,161 @@ export class ExtensionHost {
 		if (!validated.ok)
 			throw new Error('MCP install target returned an invalid result');
 		return validated.value;
+	}
+
+	worktreeInsightContributions(): readonly WorktreeInsightSourceContribution[] {
+		return this.worktreeInsightSources;
+	}
+
+	/** Start one registered worktree insight source with the live contexts. */
+	async startWorktreeInsightSource(
+		sourceId: string,
+		contexts: readonly unknown[],
+	): Promise<void> {
+		if (!this.worktreeInsightSources.some((source) => source.id === sourceId))
+			throw unavailable('worktree insight source is unavailable');
+		if (this.runningInsightSources.has(sourceId)) {
+			await this.setWorktreeInsightContexts(sourceId, contexts);
+			return;
+		}
+		this.runningInsightSources.add(sourceId);
+		try {
+			await this.call(
+				'worktree.source.start',
+				{ sourceId, contexts: structuredClone([...contexts]) },
+				this.limits.invocationTimeoutMs,
+			);
+		} catch (error) {
+			this.insightSourceStopped(sourceId);
+			throw error;
+		}
+	}
+
+	async stopWorktreeInsightSource(sourceId: string): Promise<void> {
+		if (!this.runningInsightSources.has(sourceId)) return;
+		await this.call(
+			'worktree.source.stop',
+			{ sourceId },
+			this.limits.shutdownTimeoutMs,
+		).catch(() => undefined);
+		this.insightSourceStopped(sourceId);
+	}
+
+	/** Replace the live repository contexts a running source sees. */
+	async setWorktreeInsightContexts(
+		sourceId: string,
+		contexts: readonly unknown[],
+	): Promise<void> {
+		if (!this.runningInsightSources.has(sourceId)) return;
+		await this.call(
+			'worktree.source.contexts',
+			{ sourceId, contexts: structuredClone([...contexts]) },
+			this.limits.invocationTimeoutMs,
+		);
+	}
+
+	/** Tell a running source a credential was stored for an origin. */
+	async notifyWorktreeCredential(
+		sourceId: string,
+		origin: string,
+	): Promise<void> {
+		if (!this.runningInsightSources.has(sourceId)) return;
+		await this.call(
+			'worktree.source.credential',
+			{ sourceId, origin },
+			this.limits.invocationTimeoutMs,
+		);
+	}
+
+	private async stopWorktreeInsightSources(): Promise<void> {
+		for (const sourceId of [...this.runningInsightSources])
+			await this.stopWorktreeInsightSource(sourceId);
+	}
+
+	private insightSourceStopped(sourceId: string): void {
+		if (!this.runningInsightSources.delete(sourceId)) return;
+		try {
+			this.options.worktrees?.sourceStopped?.({
+				extensionId: this.extensionId,
+				sourceId,
+			});
+		} catch {
+			/* the broker's teardown cannot affect the host */
+		}
+	}
+
+	/** Publications and sign-in requests are fire-and-forget: the broker
+	 * validates and scopes them, and a stale one is simply dropped. */
+	private handleWorktreeInsightFrame(frame: ChildFrame): void {
+		const payload = record(frame.payload);
+		const sourceId = boundedId(payload?.sourceId);
+		const broker = this.options.worktrees;
+		if (
+			sourceId === undefined ||
+			broker === undefined ||
+			!this.runningInsightSources.has(sourceId)
+		)
+			return;
+		try {
+			if (frame.kind === 'worktree.source.publish')
+				broker.publish({
+					extensionId: this.extensionId,
+					sourceId,
+					contextId: payload?.contextId,
+					worktreeId: payload?.worktreeId,
+					properties: payload?.properties,
+				});
+			else
+				broker.requestSignIn({
+					extensionId: this.extensionId,
+					sourceId,
+					request: payload?.request,
+				});
+		} catch {
+			/* a rejected publication cannot affect the extension */
+		}
+	}
+
+	private async handleWorktreeTokenRequest(
+		id: string,
+		operation: 'worktree.token' | 'worktree.token.reject',
+		input: unknown,
+	): Promise<void> {
+		const request = record(input);
+		const sourceId = boundedId(request?.sourceId);
+		const broker = this.options.worktrees;
+		if (
+			sourceId === undefined ||
+			broker === undefined ||
+			!this.runningInsightSources.has(sourceId)
+		) {
+			this.sendBrokerResult(id, undefined, 'worktree insight source is not running');
+			return;
+		}
+		const controller = new AbortController();
+		this.activeBrokerCalls.set(id, controller);
+		try {
+			const scoped = {
+				extensionId: this.extensionId,
+				sourceId,
+				origin: request?.origin,
+			};
+			if (operation === 'worktree.token') {
+				const token = await broker.token(scoped, controller.signal);
+				this.sendBrokerResult(id, token ?? null);
+			} else {
+				await broker.rejectToken(scoped, controller.signal);
+				this.sendBrokerResult(id, null);
+			}
+		} catch (error) {
+			this.sendBrokerResult(
+				id,
+				undefined,
+				error instanceof Error ? error.message : 'worktree credential request failed',
+			);
+		} finally {
+			this.activeBrokerCalls.delete(id);
+		}
 	}
 
 	private assertSource(sourceId: string): void {
@@ -716,6 +892,28 @@ export class ExtensionHost {
 			this.sourceStopped(sourceId);
 			return;
 		}
+		if (
+			message.kind === 'worktree.source.publish' ||
+			message.kind === 'worktree.source.sign-in'
+		) {
+			this.handleWorktreeInsightFrame(message);
+			return;
+		}
+		if (message.kind === 'worktree.source.disposed') {
+			const sourceId = boundedId(record(message.payload)?.sourceId);
+			if (
+				sourceId === undefined ||
+				!this.worktreeInsightSources.some((source) => source.id === sourceId)
+			) {
+				this.protocolViolation('worktree insight source disposal is invalid');
+				return;
+			}
+			this.worktreeInsightSources = Object.freeze(
+				this.worktreeInsightSources.filter((source) => source.id !== sourceId),
+			);
+			this.insightSourceStopped(sourceId);
+			return;
+		}
 		if (message.kind === 'mcp.target.disposed') {
 			const targetId = boundedId(record(message.payload)?.targetId);
 			if (targetId === undefined) {
@@ -759,6 +957,13 @@ export class ExtensionHost {
 		}
 		const payload = record(frame.payload);
 		const operation = payload?.operation;
+		if (
+			operation === 'worktree.token' ||
+			operation === 'worktree.token.reject'
+		) {
+			await this.handleWorktreeTokenRequest(frame.id, operation, payload?.payload);
+			return;
+		}
 		if (operation !== 'log' && operation !== 'secret.resolve') {
 			this.sendBrokerResult(
 				frame.id,
@@ -1081,6 +1286,8 @@ export class ExtensionHost {
 		this.activeBrokerCalls.clear();
 		for (const sourceId of [...this.runningSources])
 			this.sourceStopped(sourceId);
+		for (const sourceId of [...this.runningInsightSources])
+			this.insightSourceStopped(sourceId);
 		if (
 			!this.stopping &&
 			this.state.state !== 'failed' &&
@@ -1120,8 +1327,11 @@ export class ExtensionHost {
 		this.rejectPending(error);
 		for (const sourceId of [...this.runningSources])
 			this.sourceStopped(sourceId);
+		for (const sourceId of [...this.runningInsightSources])
+			this.insightSourceStopped(sourceId);
 		this.agentSessionSources = Object.freeze([]);
 		this.mcpInstallTargets = Object.freeze([]);
+		this.worktreeInsightSources = Object.freeze([]);
 		// The child's own report is the only account of what actually threw; the
 		// host-side error is usually just the exit that followed it.
 		const detail = this.reportedFatalDetail() ?? extensionErrorDetail(error);
