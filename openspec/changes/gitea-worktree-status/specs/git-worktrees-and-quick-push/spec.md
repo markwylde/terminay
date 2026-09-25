@@ -2,7 +2,7 @@
 
 ### Requirement: Worktrees panel actions
 
-The Worktrees panel SHALL show known worktrees and their state as a table: one aligned row per worktree with its name, its change size, and, when any worktree has worktree properties, its pull request and checks columns. Selecting a row SHALL expand it to show its branch, pull request, checks, and changed files. Each row SHALL have an actions button that opens the same worktree actions as its context menu. Users SHALL be able to commit and push with an AI agent, open a terminal at a worktree, switch the project root, copy or reveal its path, rename its presentation, remove a worktree, and pull a worktree from origin when Git permits it. Worktree rows SHALL stay visually quiet on hover while the actions button still highlights. Changed-file and folder rows SHALL keep the Explorer hover highlight.
+The Worktrees panel SHALL show known worktrees and their state in two-line rows: the worktree's name at full width with its actions button, then its change size and, when any worktree has worktree properties, its pull request and checks in slots aligned from row to row. Selecting a row SHALL expand it to show its branch, pull request, checks, and changed files. Each row SHALL have an actions button that opens the same worktree actions as its context menu. Users SHALL be able to commit and push with an AI agent, open a terminal at a worktree, switch the project root, copy or reveal its path, rename its presentation, remove a worktree, and pull a worktree from origin when Git permits it. Worktree rows SHALL stay visually quiet on hover while the actions button still highlights. Changed-file and folder rows SHALL keep the Explorer hover highlight.
 
 #### Scenario: Worktree actions available
 
@@ -22,7 +22,7 @@ The Worktrees panel SHALL show known worktrees and their state as a table: one a
 #### Scenario: Repository without worktree properties
 
 - **WHEN** no worktree in the repository has worktree properties
-- **THEN** the table shows only the name and change-size columns
+- **THEN** rows show only the name and change size
 
 #### Scenario: Switching the project root refreshes Git
 
