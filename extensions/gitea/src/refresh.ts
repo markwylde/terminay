@@ -8,6 +8,7 @@ import {
 	type GiteaPullRequest,
 	matchPullRequest,
 	toProperties,
+	trackedBranch,
 } from './mapping.js';
 import type { FetchLike, GiteaProbe } from './probe.js';
 import { type ForgeRepository, parseRemoteUrl, pickRemote } from './remote.js';
@@ -266,7 +267,8 @@ class GiteaInsightSession {
 		const worktrees = watcher.context.worktrees;
 		const results = await Promise.all(
 			worktrees.map(async (worktree) => {
-				if (worktree.upstream === null) return null;
+				const branch = trackedBranch(worktree);
+				if (branch === undefined) return null;
 				const pull = matchPullRequest(
 					pullList,
 					worktree,
@@ -277,7 +279,7 @@ class GiteaInsightSession {
 				const ref =
 					typeof sha === 'string' && sha.length > 0
 						? sha
-						: worktree.upstream.branch;
+						: branch;
 				const status = await this.get(
 					forge.origin,
 					`${base}/commits/${encodeURIComponent(ref)}/status?limit=100`,
