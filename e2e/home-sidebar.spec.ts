@@ -248,4 +248,46 @@ test.describe('Home sidebar', () => {
 			mainWindow.locator('[data-terminay-home-overview]'),
 		).toBeVisible();
 	});
+	test('Home opens into a band whose search goes to any tab or section', async ({
+		mainWindow,
+	}) => {
+		const projectId = await activeProjectId(mainWindow);
+		await homeControl(mainWindow).click();
+		const band = mainWindow.locator('[data-terminay-home-band]');
+		await expect(band).toBeVisible();
+		await expect(homeControl(mainWindow)).toHaveClass(/project-tab-home--active/);
+
+		// `/` focuses the search while Home is shown.
+		await mainWindow.locator('[data-terminay-home-overview]').click();
+		await mainWindow.keyboard.press('/');
+		const input = mainWindow.locator('[data-terminay-home-search-input]');
+		await expect(input).toBeFocused();
+
+		// A section is a place to go.
+		await input.fill('autom');
+		const results = mainWindow.locator('[data-terminay-home-search-result]');
+		await expect(results).toHaveCount(1);
+		await input.press('Enter');
+		await expectSection(mainWindow, 'automations');
+		await expect(input).toHaveValue('');
+
+		// So is a tab: choosing it leaves Home for its project.
+		await input.fill('terminal 1');
+		await expect(results.first()).toContainText('Terminal 1');
+		await results.first().click();
+		await expect(mainWindow.locator('.app-shell')).toHaveAttribute(
+			'data-terminay-selected-view',
+			'project',
+		);
+		expect(await activeProjectId(mainWindow)).toBe(projectId);
+
+		// Nothing found says so.
+		await homeControl(mainWindow).click();
+		await input.fill('no-such-thing-anywhere');
+		await expect(
+			mainWindow.locator('[data-terminay-home-search-results]'),
+		).toContainText('Nothing matches');
+		await input.press('Escape');
+		await expect(input).toHaveValue('');
+	});
 });

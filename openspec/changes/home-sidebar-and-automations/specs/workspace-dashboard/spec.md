@@ -2,12 +2,17 @@
 
 ### Requirement: Home control presentation
 
-The Home control SHALL be an icon-only control on the project bar, and in the compact chrome row, showing a house glyph and distinguished from project tabs so that it never reads as a project. It SHALL show a selected state while Home is the selected view, SHALL be reachable by keyboard, and SHALL carry an accessible name naming Home. While Home is selected, the chrome band SHALL use a neutral Home colour rather than any project's colour.
+The Home control SHALL be an icon-only control on the project bar, and in the compact chrome row, showing a house glyph and distinguished from project tabs so that it never reads as a project. It SHALL show a selected state while Home is the selected view, SHALL be reachable by keyboard, and SHALL carry an accessible name naming Home. While Home is selected, the chrome band SHALL use a neutral Home colour rather than any project's colour. On the project bar, the selected Home control SHALL be drawn as a tab that opens into Home's band in that colour, as the active project tab opens into its project's tab strip.
 
 #### Scenario: Selected state
 
 - **WHEN** Home is the selected view
 - **THEN** the Home control shows its selected state, no project tab shows an active state, and the chrome band uses the neutral Home colour
+
+#### Scenario: Selected Home control opens into the band
+
+- **WHEN** Home is selected on the project bar
+- **THEN** the Home control is drawn as a tab joined to Home's band, both in the neutral Home colour
 
 #### Scenario: House glyph
 
@@ -115,3 +120,27 @@ Activating a widget SHALL take the user to the place that holds its detail: the 
 
 - **WHEN** the workspace holds one empty project and no automations
 - **THEN** the overview shows one project, zero tabs, zero agents, and an empty automations widget that offers to create an automation
+
+### Requirement: Home search
+
+While Home is selected, a band across the top of Home SHALL hold a search box that finds Home's sections and every project, tab, and agent of every attached connection, and every automation of every connection that serves automations. Matching SHALL be case-insensitive substring matching over names, as the dashboard filter's is, and SHALL rank a match at the start of a name or word above one elsewhere. Results SHALL be grouped by kind — sections, projects, tabs, agents, automations — and bounded per group. Choosing a result SHALL go to it exactly as activating it elsewhere in Home would: a section is selected, a project or tab is activated as a dashboard row is, an agent as a dashboard agent is, and an automation is opened in the Automations section. The search SHALL be reachable by keyboard, SHALL take focus on `/` while Home is shown and nothing is being typed into, SHALL say when nothing matches, and SHALL clear on Escape.
+
+#### Scenario: Finding a tab
+
+- **WHEN** a user types part of a tab's title into Home's search and chooses the result
+- **THEN** Home is left, that tab's project is selected, and the tab is focused
+
+#### Scenario: Finding a section
+
+- **WHEN** a user types "autom" and presses Enter
+- **THEN** the Automations section is selected and the search is cleared
+
+#### Scenario: Keyboard focus
+
+- **WHEN** Home is shown, nothing is being typed into, and the user presses `/`
+- **THEN** the search box takes focus
+
+#### Scenario: Nothing matches
+
+- **WHEN** the search text matches nothing
+- **THEN** the results say that nothing matches

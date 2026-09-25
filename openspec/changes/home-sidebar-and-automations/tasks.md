@@ -187,6 +187,15 @@
       by an e2e case that seeds a missed record, runs one entry from the notice,
       and sees it cleared.
 
+## 11. Home band and search
+
+- [x] 11.1 Draw the selected Home control as a tab that opens into a band in
+      the neutral Home chrome colour, and add `homeSearchModel.ts` with the
+      `HomeSearch` box in that band. Verified by
+      `node --test --experimental-strip-types scripts/home-search-model.test.mjs`
+      and the Home band case in `e2e/home-sidebar.spec.ts` under
+      `npm run test:e2e`.
+
 ## 10. End-to-end scenarios and checks
 
 - [x] 10.1 Add `e2e/automations.spec.ts` covering the user's scenarios with
