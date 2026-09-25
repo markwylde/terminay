@@ -105,7 +105,7 @@ Around that poll:
 - Change-driven first: a context re-issue (push, branch switch, new worktree)
   triggers an immediate refresh behind the shared minimum-interval schedule.
 - Otherwise one refresh per repository every 10 s (active) or 45 s. Cost per refresh is
-  `1 + N` HTTPS requests (N = worktrees with an upstream), not per terminal.
+  `1 + N` HTTPS requests (N = worktrees on a branch), not per terminal.
 - Nothing scheduled for cancelled contexts; nothing while the extension is
   disabled or the sign-in is outstanding.
 - After consecutive failures, back off 60 s → 2 m → 5 m → 10 m; a success
@@ -169,10 +169,14 @@ it and lets the prompt appear again.
 
 ### 7. Mapping and matching
 
-- Pull request ↔ worktree: `pr.head.ref == worktree.upstream branch` and
+- Tracked branch: the configured upstream branch, else the same-named branch
+  (a `main` cloned or created without `-u` still shows its checks, as a pull
+  without an upstream already falls back to the same-named remote branch).
+  Detached worktrees track nothing.
+- Pull request ↔ worktree: `pr.head.ref == worktree tracked branch` and
   `pr.head.repo` equals the repository (forks ignored). Draft when Gitea reports
   WIP (`draft` field or a `WIP:`/`[WIP]` title prefix).
-- Checks: commit status for the PR head SHA, else the upstream branch ref.
+- Checks: commit status for the PR head SHA, else the tracked branch ref.
   `success`→passed; `failure`,`error`→failed; `pending`→pending;
   `skipped`,`warning`→skipped. Items truncated to 100; counts reflect all.
 - Checks URL: the PR's `/checks`-equivalent is not stable across Gitea
